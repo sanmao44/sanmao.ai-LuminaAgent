@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import ModelPicker from "@/components/ModelPicker";
+import SelectMenu from "@/components/SelectMenu";
 import { uploadCanvasAsset } from "@/lib/canvas/api";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import {
@@ -599,8 +600,8 @@ export default function CanvasCloneDialog({
                     })}</div>}
                   </div>
                   <div className="clone-plan-controls">
-                    <label><span>画面生成</span><select value={shot.strategy || "text"} aria-label={`镜头 ${index + 1} 的画面生成方式`} onChange={(event) => setPlanShots((current) => current.map((item, position) => position === index ? { ...item, strategy: event.target.value as CloneJob['shots'][number]['strategy'] } : item))}><option value="reference">多参考图</option><option value="keyframe">关键帧首帧</option><option value="text">文生视频降级</option><option value="static">静态图降级</option></select></label>
-                    <label><span>声音处理</span><select value={shot.speechMode || "narration"} aria-label={`镜头 ${index + 1} 的声音方式`} onChange={(event) => setPlanShots((current) => current.map((item, position) => position === index ? { ...item, speechMode: event.target.value as NonNullable<CloneJob['shots'][number]['speechMode']> } : item))}><option value="narration">后期旁白</option><option value="talking">说话人物</option><option value="silent">静音 B-roll</option></select></label>
+                    <label><span>画面生成</span><SelectMenu value={shot.strategy || "text"} ariaLabel={`镜头 ${index + 1} 的画面生成方式`} portalZIndex={CANVAS_Z_INDEX.modalPopover} options={[{ value: "reference", label: "多参考图" }, { value: "keyframe", label: "关键帧首帧" }, { value: "text", label: "文生视频降级" }, { value: "static", label: "静态图降级" }]} onChange={(value) => setPlanShots((current) => current.map((item, position) => position === index ? { ...item, strategy: value as CloneJob['shots'][number]['strategy'] } : item))} /></label>
+                    <label><span>声音处理</span><SelectMenu value={shot.speechMode || "narration"} ariaLabel={`镜头 ${index + 1} 的声音方式`} portalZIndex={CANVAS_Z_INDEX.modalPopover} options={[{ value: "narration", label: "后期旁白" }, { value: "talking", label: "说话人物" }, { value: "silent", label: "静音 B-roll" }]} onChange={(value) => setPlanShots((current) => current.map((item, position) => position === index ? { ...item, speechMode: value as NonNullable<CloneJob['shots'][number]['speechMode']> } : item))} /></label>
                   </div>
                 </article>;
               })}
@@ -697,16 +698,7 @@ export default function CanvasCloneDialog({
                           <label className="clone-asset-row" key={key}>
                             {asset.kind === "image" ? <img src={asset.url} alt="" /> : <span className="clone-asset-kind">{asset.kind === "audio" ? "♫" : "▶"}</span>}
                             <input value={assetNames[key] ?? asset.name} aria-label="素材名称" maxLength={80} onChange={(event) => setAssetNames((current) => ({ ...current, [key]: event.target.value }))} />
-                            <select value={role} onChange={(event) => setSelectedAssets((current) => ({ ...current, [key]: event.target.value as CloneAssetRole | "" }))} disabled={!Object.prototype.hasOwnProperty.call(selectedAssets, key)}>
-                              <option value="">设定角色</option>
-                              <option value="person">人物</option>
-                              <option value="product">产品</option>
-                              <option value="brand">品牌</option>
-                              <option value="scene">场景</option>
-                              <option value="style">风格</option>
-                              <option value="broll">B-roll</option>
-                              <option value="voice">声音</option>
-                            </select><button type="button" className="clone-asset-remove" aria-label={`移除 ${asset.name}`} onClick={() => setSelectedAssets((current) => { const next = { ...current }; delete next[key]; return next; })}>×</button>
+                            <SelectMenu value={role} ariaLabel={`${asset.name}的素材角色`} portalZIndex={CANVAS_Z_INDEX.modalPopover} disabled={!Object.prototype.hasOwnProperty.call(selectedAssets, key)} options={[{ value: "", label: "设定角色" }, { value: "person", label: "人物" }, { value: "product", label: "产品" }, { value: "brand", label: "品牌" }, { value: "scene", label: "场景" }, { value: "style", label: "风格" }, { value: "broll", label: "B-roll" }, { value: "voice", label: "声音" }]} onChange={(value) => setSelectedAssets((current) => ({ ...current, [key]: value as CloneAssetRole | "" }))} /><button type="button" className="clone-asset-remove" aria-label={`移除 ${asset.name}`} onClick={() => setSelectedAssets((current) => { const next = { ...current }; delete next[key]; return next; })}>×</button>
                           </label>
                         );
                       })}

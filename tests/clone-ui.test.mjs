@@ -26,6 +26,8 @@ test("克隆弹窗是合法 TSX，并且具备三步式傻瓜操作", () => {
   assert.match(dialog, /预计最多 \{maxShots\} 次生图/);
   assert.match(dialog, /超出默认成本闸门/);
   assert.match(dialog, /capability="speech"/);
+  assert.doesNotMatch(dialog, /<select\b/);
+  assert.equal((dialog.match(/<SelectMenu\b/g) || []).length, 3, "克隆弹窗的下拉框统一使用 SelectMenu");
   // 一个在线配音模型都没配时，弹窗要提示服务端有没有「本机离线配音」兜底。
   assert.match(dialog, /fetch\("\/api\/health", \{ cache: "no-store" \}\)/);
   assert.match(dialog, /本机离线配音，免费，音色偏机械/);
@@ -185,9 +187,11 @@ test("克隆弹窗样式跟随画布主题并且窄屏可用", () => {
   // 弹窗里的模型选择器必须抬到 .clone-backdrop 之上：默认 300 会被 560 的遮罩压住，点开什么都看不到。
   assert.match(dialog, /import \{ CANVAS_Z_INDEX \} from "@\/lib\/canvas\/layers"/);
   const pickers = dialog.match(/portalZIndex=\{CANVAS_Z_INDEX\.modalPopover\}/g) || [];
-  assert.equal(pickers.length, 4, "四枚模型选择器都要显式给 z-index");
+  assert.equal(pickers.length, 7, "四枚模型选择器和三枚克隆下拉都要显式给 z-index");
   assert.match(dialog, /dialogPortalZIndex=\{CANVAS_Z_INDEX\.modalPopover\}/);
   assert.match(styles, /@media\(max-width:720px\)\{\.clone-dialog/);
+  assert.match(styles, /\.clone-asset-row \.select-menu-trigger/);
+  assert.match(styles, /\.clone-plan-controls \.select-menu-trigger/);
 });
 
 test("关掉弹窗不等于任务丢了：重开接回任务、失败可续跑、成片只放一次", () => {
