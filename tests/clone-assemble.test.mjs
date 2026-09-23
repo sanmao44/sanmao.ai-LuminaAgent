@@ -375,6 +375,11 @@ test('assemble source keeps graphics captions off reference-preserved shots', as
   assert.match(source, /enable='\$\{enable\}'/u);
   assert.match(source, /referenceFrame = shot\.preserveReferenceFrame && shot\.referenceFrameUrl/u);
   assert.match(source, /return generated \|\| referenceFrame/u);
+  assert.match(source, /textLayoutForFfmpeg/u);
+  assert.match(source, /textFileContent\(captionLayout\?\.lines/u);
+  assert.match(source, /boxcolor=black@\$\{captionBoxOpacity\.toFixed\(2\)\}/u);
+  assert.match(source, /\(h\*0\.83-text_h\/2\)/u);
+  assert.match(source, /videoEditorTextBox\(semanticGraphics\)/u);
 });
 
 test('reference-preserved shots fall back to their representative frame when source extraction fails', async (t) => {

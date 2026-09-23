@@ -14,6 +14,7 @@ async function loadTypeScript(path) {
 }
 
 const editor = await loadTypeScript('../lib/canvas/video-editor.ts');
+const textLayout = await loadTypeScript('../lib/canvas/text-layout.ts');
 const modelSource = await readFile(new URL('../lib/canvas/model.ts', import.meta.url), 'utf8');
 const componentSource = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
 const nodeSource = await readFile(new URL('../components/VideoEditorNode.tsx', import.meta.url), 'utf8');
@@ -302,6 +303,18 @@ test('normalizes reference card text boxes without allowing overflow', () => {
     clips: [{ id: 'card', track: 'graphics', type: 'caption', name: 'card', start: 0, duration: 2, sourceOffset: 0, text: 'Title', textBox: { x: 0.9, y: 0.8, width: 0.6, height: 0.5 } }],
   });
   assert.deepEqual(state.clips[0].textBox, { x: 0.9, y: 0.8, width: 0.1, height: 0.2 });
+});
+
+test('shared text layout wraps mixed scripts and fits long cards inside their box', () => {
+  const measure = (value, fontSize) => [...value].reduce((total, character) => total + (/[^\x00-\xff]/u.test(character) ? fontSize : fontSize * 0.56), 0);
+  const wrapped = textLayout.wrapCanvasText('中文标题 A-very-long-word', 120, measure, 24);
+  assert.ok(wrapped.length > 1);
+  assert.equal(wrapped.join(''), '中文标题 A-very-long-word');
+  const fitted = textLayout.fitCanvasText({ text: '这是一个非常长的画面字卡标题，用于测试边界保护', fontSize: 48, minFontSize: 12, maxWidth: 180, maxHeight: 18, measure });
+  assert.ok(fitted.fontSize <= 48);
+  assert.ok(fitted.width <= 180);
+  assert.ok(fitted.height <= 18);
+  assert.ok(fitted.lines.join('').endsWith('…'));
 });
 
 test('normalizes recovered composition regions without allowing overflow', () => {

@@ -9,6 +9,8 @@ import { resolveStoredAudioFileWithFallback } from '../audio-storage';
 import { persistVideoBuffer } from '../video-storage';
 import type { CloneJob, CloneOptions, CloneShot, CloneTimeline } from './types';
 import type { CanvasVideoEditorClip, CanvasVideoEditorLayout, CanvasVideoEditorTrack, CanvasVideoEditorTransition, CanvasVideoEditorWord } from '../canvas/types';
+import { videoEditorTextBox } from '../canvas/video-editor';
+import { fitCanvasText } from '../canvas/text-layout';
 import { runFfmpegCapture, extractVideoSegment, probeMediaSeconds } from './media';
 
 type AssemblyInput = {
@@ -256,13 +258,13 @@ function captionPlacement(position?: string) {
   return { x, y };
 }
 
-function graphicsDrawTextOptions(style?: string) {
+function graphicsDrawTextOptions(style?: string, backgroundOpacity = 0.72, fontSize = 60) {
   const value = String(style || '').toLocaleLowerCase();
   if (/card|box|solid|label|tag|banner|色块|卡片|标签|底板/u.test(value)) {
-    return 'box=1:boxcolor=black@0.72:boxborderw=18:borderw=0';
+    return `box=1:boxcolor=black@${Math.max(0, Math.min(1, backgroundOpacity)).toFixed(2)}:boxborderw=${Math.max(4, Math.round(fontSize * 0.5))}:borderw=0`;
   }
   if (/outline|outlined|stroke|描边|空心/u.test(value)) {
-    return 'borderw=3:bordercolor=black@0.9';
+    return `borderw=${Math.max(2, Math.round(fontSize * 0.045))}:bordercolor=black@0.9`;
   }
   return 'borderw=2:bordercolor=black@0.78';
 }
@@ -271,6 +273,39 @@ function canUseCaptionWords(caption: string, words?: CanvasVideoEditorWord[]) {
   if (!words?.length || !caption.trim()) return false;
   const compact = (value: string) => value.replace(/\s+/gu, '');
   return compact(words.map((word) => word.text).join('')) === compact(caption);
+}
+
+type TextRenderOptions = {
+  fontSize: number;
+  backgroundOpacity?: number;
+  textBox?: TextBox;
+  x?: number;
+  y?: number;
+};
+
+function normalizedTextBox(value?: TextBox) {
+  if (!value) return undefined;
+  const x = Math.max(0, Math.min(0.99, Number(value.x) || 0));
+  const y = Math.max(0, Math.min(0.99, Number(value.y) || 0));
+  return {
+    x,
+    y,
+    width: Math.max(0.01, Math.min(1 - x, Number(value.width) || 0.01)),
+    height: Math.max(0.01, Math.min(1 - y, Number(value.height) || 0.01)),
+  };
+}
+
+function textLayoutForFfmpeg(text: string, options: TextRenderOptions, dimensions: { width: number; height: number }) {
+  const textBox = normalizedTextBox(options.textBox);
+  const maxWidth = textBox ? textBox.width * dimensions.width : dimensions.width * 0.82;
+  const maxHeight = textBox ? textBox.height * dimensions.height : dimensions.height * 0.36;
+  return { ...fitCanvasText({ text, fontSize: options.fontSize, maxWidth, maxHeight, minFontSize: 12 }), textBox, maxWidth, maxHeight };
+}
+
+function textFileContent(lines: string[]) {
+  // drawtext treats a literal newline in textfile as a line break. Keeping
+  // the trailing newline out makes the measured box match the preview.
+  return lines.join('\n');
 }
 
 /**
@@ -571,6 +606,8 @@ async function renderSegment(
   graphics: string,
   graphicsStyle: string | undefined,
   graphicsBounds: TextBox | undefined,
+  captionOptions: TextRenderOptions | undefined,
+  graphicsOptions: TextRenderOptions | undefined,
   layout: CanvasVideoEditorLayout | undefined,
   motionPath: string | undefined,
   sources: ResolvedSources,
@@ -584,13 +621,19 @@ async function renderSegment(
   const graphicsFile = path.join(input.workingDirectory, `graphics-${String(index).padStart(3, '0')}.txt`);
   const hasCaption = Boolean(caption.trim() && font);
   const hasGraphics = Boolean(graphics.trim() && font);
+  const captionLayout = hasCaption
+    ? textLayoutForFfmpeg(caption.trim(), { fontSize: captionOptions?.fontSize || 48, ...captionOptions }, dimensions)
+    : null;
+  const graphicsLayout = hasGraphics
+    ? textLayoutForFfmpeg(graphics.trim(), { fontSize: graphicsOptions?.fontSize || 48, textBox: graphicsBounds, ...graphicsOptions }, dimensions)
+    : null;
   const timedCaptionWords = hasCaption && canUseCaptionWords(caption, captionWords)
     ? captionWords
       ?.map((word) => ({ ...word, start: Math.max(0, Math.min(duration, word.start)), end: Math.max(0, Math.min(duration, word.end)) }))
       .filter((word) => word.end > word.start && word.text.trim())
     : undefined;
-  if (hasCaption && !timedCaptionWords?.length) await writeFile(captionFile, caption.trim(), { encoding: 'utf8', flag: 'wx' });
-  if (hasGraphics) await writeFile(graphicsFile, graphics.trim(), { encoding: 'utf8', flag: 'wx' });
+  if (hasCaption && !timedCaptionWords?.length) await writeFile(captionFile, textFileContent(captionLayout?.lines || [caption.trim()]), { encoding: 'utf8', flag: 'wx' });
+  if (hasGraphics) await writeFile(graphicsFile, textFileContent(graphicsLayout?.lines || [graphics.trim()]), { encoding: 'utf8', flag: 'wx' });
   const region = layoutRegion(layout, dimensions);
   const secondaryRegion = layoutRegion(layout, dimensions, true);
   const hasMotion = Boolean(motionPath && motionPath !== 'none' && !region);
@@ -624,29 +667,46 @@ async function renderSegment(
     // FFmpeg on Windows treats an unquoted `C\:/...` textfile value as a
     // second drawtext option and fails with "Both text and text file".
     const placement = captionPlacement(shot.analysis?.graphicsPosition);
+    const captionFontSize = captionLayout?.fontSize || captionOptions?.fontSize || 48;
+    const captionBoxOpacity = Math.max(0, Math.min(1, captionOptions?.backgroundOpacity ?? 0.68));
+    const captionX = captionOptions?.x !== undefined
+      ? `(w-text_w)/2+${(captionOptions.x * dimensions.width / 2).toFixed(1)}`
+      : placement.x;
+    const captionY = captionOptions?.y !== undefined
+      ? `(h*(0.83-${captionOptions.y.toFixed(3)}*0.45)-text_h/2)`
+      : '(h*0.83-text_h/2)';
     if (timedCaptionWords?.length) {
       for (let wordIndex = 0; wordIndex < timedCaptionWords.length; wordIndex += 1) {
         const word = timedCaptionWords[wordIndex];
         const wordFile = path.join(input.workingDirectory, `caption-${String(index).padStart(3, '0')}-${String(wordIndex).padStart(3, '0')}.txt`);
         const visibleText = timedCaptionWords.slice(0, wordIndex + 1).map((item) => item.text).join('');
-        await writeFile(wordFile, visibleText, { encoding: 'utf8', flag: 'wx' });
+        const wordLayout = textLayoutForFfmpeg(visibleText, { fontSize: captionFontSize, ...captionOptions }, dimensions);
+        await writeFile(wordFile, textFileContent(wordLayout.lines), { encoding: 'utf8', flag: 'wx' });
         const nextStart = timedCaptionWords[wordIndex + 1]?.start ?? duration;
         const enable = `between(t\\,${word.start.toFixed(3)}\\,${Math.max(word.start, nextStart).toFixed(3)})`;
-        textFilterParts.push(`drawtext=fontfile='${escapeFilterPath(font as string)}':textfile='${escapeFilterPath(wordFile)}':fontcolor=white:fontsize=48:line_spacing=8:borderw=2:bordercolor=black@0.85:box=1:boxcolor=black@0.62:boxborderw=18:x=${placement.x}:y=${placement.y}:enable='${enable}'`);
+        textFilterParts.push(`drawtext=fontfile='${escapeFilterPath(font as string)}':textfile='${escapeFilterPath(wordFile)}':fontcolor=white:fontsize=${captionFontSize}:line_spacing=${Math.round(captionFontSize * 0.35)}:borderw=2:bordercolor=black@0.85:box=1:boxcolor=black@${captionBoxOpacity.toFixed(2)}:boxborderw=${Math.max(4, Math.round(captionFontSize * 0.38))}:x=${captionX}:y=${captionY}:enable='${enable}'`);
       }
     } else {
-      textFilterParts.push(`drawtext=fontfile='${escapeFilterPath(font as string)}':textfile='${escapeFilterPath(captionFile)}':fontcolor=white:fontsize=48:line_spacing=8:borderw=2:bordercolor=black@0.85:box=1:boxcolor=black@0.62:boxborderw=18:x=${placement.x}:y=${placement.y}`);
+      textFilterParts.push(`drawtext=fontfile='${escapeFilterPath(font as string)}':textfile='${escapeFilterPath(captionFile)}':fontcolor=white:fontsize=${captionFontSize}:line_spacing=${Math.round(captionFontSize * 0.35)}:borderw=2:bordercolor=black@0.85:box=1:boxcolor=black@${captionBoxOpacity.toFixed(2)}:boxborderw=${Math.max(4, Math.round(captionFontSize * 0.38))}:x=${captionX}:y=${captionY}`);
     }
   }
   if (hasGraphics) {
-    const placement = graphicsBounds
+    const placement = graphicsLayout?.textBox
       ? {
-        x: `(${((graphicsBounds.x + graphicsBounds.width / 2) * dimensions.width).toFixed(1)}-text_w/2)`,
-        y: `(${((graphicsBounds.y + graphicsBounds.height / 2) * dimensions.height).toFixed(1)}-text_h/2)`,
-        fontsize: Math.max(20, Math.round(graphicsBounds.height * dimensions.height * 0.78)),
+        x: `(${((graphicsLayout.textBox.x + graphicsLayout.textBox.width / 2) * dimensions.width).toFixed(1)}-text_w/2)`,
+        y: `(${((graphicsLayout.textBox.y + graphicsLayout.textBox.height / 2) * dimensions.height).toFixed(1)}-text_h/2)`,
+        fontsize: graphicsLayout.fontSize,
       }
-      : { ...captionPlacement(shot.analysis?.graphicsPosition), fontsize: 60 };
-    textFilterParts.push(`drawtext=fontfile='${escapeFilterPath(font as string)}':textfile='${escapeFilterPath(graphicsFile)}':fontcolor=white:fontsize=${placement.fontsize}:line_spacing=6:${graphicsDrawTextOptions(graphicsStyle)}:x=${placement.x}:y=${placement.y}`);
+      : {
+        x: graphicsOptions?.x !== undefined
+          ? `(w-text_w)/2+${(graphicsOptions.x * dimensions.width / 2).toFixed(1)}`
+          : captionPlacement(shot.analysis?.graphicsPosition).x,
+        y: graphicsOptions?.y !== undefined
+          ? `(h*0.83-text_h/2)-${(graphicsOptions.y * dimensions.height * 0.45).toFixed(1)}`
+          : captionPlacement(shot.analysis?.graphicsPosition).y,
+        fontsize: graphicsLayout?.fontSize || graphicsOptions?.fontSize || 60,
+      };
+    textFilterParts.push(`drawtext=fontfile='${escapeFilterPath(font as string)}':textfile='${escapeFilterPath(graphicsFile)}':fontcolor=white:fontsize=${placement.fontsize}:line_spacing=${Math.round(placement.fontsize * 0.35)}:${graphicsDrawTextOptions(graphicsStyle, graphicsOptions?.backgroundOpacity, placement.fontsize)}:x=${placement.x}:y=${placement.y}`);
   }
   const visualInput = sources.visual
     ? (sources.visualIsVideo ? ['-ss', sources.visualOffset.toFixed(3), '-i', sources.visual] : ['-loop', '1', '-framerate', String(fps), '-i', sources.visual])
@@ -800,12 +860,45 @@ export async function assembleCloneVideo(input: AssemblyInput) {
       const graphics = shot.preserveReferenceFrame && !shot.allowReferenceOverlays || (semanticGraphics && 'enabled' in semanticGraphics && semanticGraphics.enabled === false)
         ? ''
         : semanticGraphics?.text || '';
+      const numericClipOption = (clip: unknown, key: string, fallback: number) => {
+        if (!clip || typeof clip !== 'object') return fallback;
+        const value = (clip as Record<string, unknown>)[key];
+        return Number.isFinite(Number(value)) ? Number(value) : fallback;
+      };
+      const optionalClipNumber = (clip: unknown, key: string) => {
+        if (!clip || typeof clip !== 'object') return undefined;
+        const value = Number((clip as Record<string, unknown>)[key]);
+        return Number.isFinite(value) ? value : undefined;
+      };
+      const captionSource = input.timeline.editorState ? semanticCaption : captionClip || semanticCaption;
+      const captionOptions: TextRenderOptions | undefined = caption
+        ? {
+          fontSize: numericClipOption(captionSource, 'fontSize', 42),
+          backgroundOpacity: numericClipOption(captionSource, 'captionBackgroundOpacity', 0.68),
+          ...(optionalClipNumber(captionSource, 'x') !== undefined ? { x: optionalClipNumber(captionSource, 'x') } : {}),
+          ...(optionalClipNumber(captionSource, 'y') !== undefined ? { y: optionalClipNumber(captionSource, 'y') } : {}),
+        }
+        : undefined;
+      const graphicsSource = input.timeline.editorState ? semanticGraphics : input.timeline.clips.find((clip) => clip.id === `clone-graphics-${item.shotIndex}`) || semanticGraphics;
+      const effectiveGraphicsStyle = semanticGraphics?.graphicsStyle || component?.graphicsStyle || shot.analysis?.graphicsStyle;
+      const effectiveGraphicsBox = semanticGraphics && 'textBox' in semanticGraphics
+        ? videoEditorTextBox(semanticGraphics)
+        : undefined;
+      const graphicsOptions: TextRenderOptions | undefined = graphics
+        ? {
+          fontSize: numericClipOption(graphicsSource, 'fontSize', 48),
+          backgroundOpacity: optionalClipNumber(graphicsSource, 'captionBackgroundOpacity') ?? (/card|box|solid|label|tag|banner|色块|卡片|标签|底板/iu.test(String(effectiveGraphicsStyle || '')) ? 0.72 : 0),
+          ...(effectiveGraphicsBox ? { textBox: effectiveGraphicsBox } : {}),
+          ...(optionalClipNumber(graphicsSource, 'x') !== undefined ? { x: optionalClipNumber(graphicsSource, 'x') } : {}),
+          ...(optionalClipNumber(graphicsSource, 'y') !== undefined ? { y: optionalClipNumber(graphicsSource, 'y') } : {}),
+        }
+        : undefined;
       const renderLayout = input.timeline.editorState
         ? videoClip.layout || component?.layout || (shot.preserveReferenceFrame ? undefined : shot.analysis?.layout)
         : sources.visualIsVideo && shot.preserveReferenceFrame ? undefined : videoClip.layout || component?.layout || shot.analysis?.layout;
       const renderMotionPath = videoClip.motionPath || component?.motionPath;
       segments.push({
-        file: await renderSegment(shot, renderIndex, duration, caption, captionWords, graphics, semanticGraphics?.graphicsStyle || component?.graphicsStyle || shot.analysis?.graphicsStyle, semanticGraphics?.textBox || shot.analysis?.graphicsBounds, renderLayout, renderMotionPath, sources, input, dimensions, font),
+        file: await renderSegment(shot, renderIndex, duration, caption, captionWords, graphics, effectiveGraphicsStyle, effectiveGraphicsBox || shot.analysis?.graphicsBounds, captionOptions, graphicsOptions, renderLayout, renderMotionPath, sources, input, dimensions, font),
         duration,
         shot,
         transitionIn: videoClip.transitionIn,

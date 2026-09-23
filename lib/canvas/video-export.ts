@@ -3,6 +3,7 @@ import type {
   CanvasVideoEditorState,
 } from "./types";
 import { videoEditorAudioGain, videoEditorLayoutRegions, videoEditorMotionTransform, videoEditorTextBox } from "./video-editor";
+import { fitCanvasText } from "./text-layout";
 import { writeWebmDuration } from "./webm-duration";
 
 export type CanvasVideoEditorRenderSource = {
@@ -230,43 +231,48 @@ function drawCaption(
   const textBox = graphics ? videoEditorTextBox(clip) : undefined;
   const fontSize = Math.max(12, Math.round((clip.fontSize ?? Math.min(width, height) * 0.038) * (clip.scale ?? 1)));
   const maxWidth = textBox ? width * textBox.width : width * 0.82;
+  const maxHeight = textBox ? height * textBox.height : height * 0.36;
   context.save();
-  context.font = `700 ${fontSize}px system-ui, sans-serif`;
+  const fitted = fitCanvasText({
+    text,
+    fontSize,
+    minFontSize: 12,
+    maxWidth,
+    maxHeight,
+    measure: (value, size) => {
+      context.font = `700 ${size}px system-ui, sans-serif`;
+      return context.measureText(value).width;
+    },
+  });
+  context.font = `700 ${fitted.fontSize}px system-ui, sans-serif`;
   context.textAlign = "center";
   context.textBaseline = "middle";
-  const lines: string[] = [];
-  let line = "";
-  for (const character of text) {
-    const candidate = line + character;
-    if (line && context.measureText(candidate).width > maxWidth) {
-      lines.push(line);
-      line = character;
-    } else {
-      line = candidate;
-    }
-  }
-  if (line) lines.push(line);
-  const lineHeight = fontSize * 1.35;
+  const lines = fitted.lines;
+  const lineHeight = fitted.lineHeight;
   const centerX = textBox
     ? (textBox.x + textBox.width / 2) * width
     : width / 2 + (clip.x ?? 0) * width / 2;
   const centerY = textBox
     ? (textBox.y + textBox.height / 2) * height
     : height * (0.83 - (clip.y ?? 0) * 0.45);
-  const boxWidth = Math.min(maxWidth + fontSize, Math.max(...lines.map((value) => context.measureText(value).width), 0) + fontSize);
-  const boxHeight = lines.length * lineHeight + fontSize * 0.7;
+  const padding = Math.min(fitted.fontSize * 0.5, Math.max(4, maxWidth * 0.08));
+  const measuredWidth = Math.max(...lines.map((value) => context.measureText(value).width), 0);
+  const boxWidth = Math.min(maxWidth, measuredWidth + padding * 2);
+  const boxHeight = Math.min(maxHeight, lines.length * lineHeight + padding * 2);
+  const boundedCenterX = clamp(centerX, boxWidth / 2, width - boxWidth / 2);
+  const boundedCenterY = clamp(centerY, boxHeight / 2, height - boxHeight / 2);
   context.fillStyle = `rgba(0, 0, 0, ${clamp(clip.captionBackgroundOpacity ?? (graphics && style.card ? 0.72 : graphics ? 0 : 0.68), 0, 1)})`;
-  context.roundRect(centerX - boxWidth / 2, centerY - boxHeight / 2, boxWidth, boxHeight, fontSize * 0.3);
+  context.roundRect(boundedCenterX - boxWidth / 2, boundedCenterY - boxHeight / 2, boxWidth, boxHeight, fitted.fontSize * 0.3);
   context.fill();
   context.fillStyle = "#fff";
   lines.forEach((value, index) => {
-    const lineY = centerY + (index - (lines.length - 1) / 2) * lineHeight;
+    const lineY = boundedCenterY + (index - (lines.length - 1) / 2) * lineHeight;
     if (graphics && style.outline) {
       context.lineWidth = Math.max(2, Math.round(fontSize * 0.045));
       context.strokeStyle = "rgba(0, 0, 0, .9)";
-      context.strokeText(value, centerX, lineY);
+      context.strokeText(value, boundedCenterX, lineY);
     }
-    context.fillText(value, centerX, lineY);
+    context.fillText(value, boundedCenterX, lineY);
   });
   context.restore();
 }
