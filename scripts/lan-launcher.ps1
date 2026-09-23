@@ -1,9 +1,11 @@
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
-$passwordPath = Join-Path $root '.data\lan-password'
+. (Join-Path $PSScriptRoot 'launcher-common.ps1')
+$dataDir = Resolve-SanmaoDataDir -Root $root
+$passwordPath = Join-Path $dataDir 'lan-password'
 $startScript = Join-Path $PSScriptRoot 'start.ps1'
-$launcherLogPath = Join-Path $root '.data\logs\launcher.log'
+$launcherLogPath = Join-Path $dataDir 'logs\launcher.log'
 $startStdoutPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.out.log'
 $startStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
 $script:FormsReady = $false

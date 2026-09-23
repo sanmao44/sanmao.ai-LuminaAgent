@@ -6,7 +6,10 @@ import path from 'node:path';
 import ts from 'typescript';
 
 const source = await readFile(new URL('../lib/skills.ts', import.meta.url), 'utf8');
-const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const dataPathsSource = await readFile(new URL('../lib/data-paths.ts', import.meta.url), 'utf8');
+const dataPathsCompiled = ts.transpileModule(dataPathsSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const dataPathsUrl = `data:text/javascript;base64,${Buffer.from(dataPathsCompiled).toString('base64')}`;
+const compiled = ts.transpileModule(source.replace("from './data-paths'", `from '${dataPathsUrl}'`), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const skills = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 
 async function tempStore() {

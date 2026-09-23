@@ -7079,7 +7079,7 @@ export default function Page() {
         } catch (error) { notify(error instanceof Error ? error.message : '预览清理失败'); }
         finally { setCleanupBusy(false); }
     }
-    async function exportLocalBackup() {
+    async function exportLocalBackup(backupMode = 'content') {
         setBackupBusy(true);
         try {
             const backupPassword = window.prompt('请输入备份密码（至少 12 个字符；不会保存）：');
@@ -7109,7 +7109,7 @@ export default function Page() {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ client, backupPassword })
+                body: JSON.stringify({ client, backupPassword, backupMode })
             });
             if (!res.ok) {
                 const data = await res.json().catch(()=>({}));
@@ -7173,7 +7173,7 @@ export default function Page() {
                             const data = await res.json();
                             if (!res.ok) throw new Error(data.error || '恢复完整备份失败');
                             await restoreClientBackup(data.client);
-                            notify(`${data.externalMasterKey ? '恢复完成，但原备份依赖 SANMAO_MASTER_KEY；请在当前环境配置相同主密钥。' : `完整备份恢复完成：${data.restoredImages || 0} 个图片文件、${data.restoredSkills || 0} 个技能`}，正在重新加载`);
+                            notify(`${data.includesSecrets ? (data.externalMasterKey ? '完整备份恢复完成，但原备份依赖 SANMAO_MASTER_KEY；请在当前环境配置相同主密钥。' : '完整加密备份恢复完成') : '内容备份恢复完成（API Key 未包含，已保留当前设备密钥）'}：${data.restoredImages || 0} 个图片文件、${data.restoredSkills || 0} 个技能，正在重新加载`);
                             window.setTimeout(()=>window.location.reload(), 700);
                         } catch (error) {
                             notify(error instanceof Error ? error.message : '恢复完整备份失败');
@@ -14902,8 +14902,17 @@ export default function Page() {
                                                                 type: "button",
                                                                 className: "primary-small",
                                                                 disabled: backupBusy,
-                                                                onClick: ()=>void exportLocalBackup(),
-                                                                children: backupBusy ? '处理中…' : '导出本地备份'
+                                                                onClick: ()=>void exportLocalBackup('content'),
+                                                                children: backupBusy ? '处理中…' : '导出内容备份'
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "ghost-button",
+                                                                disabled: backupBusy,
+                                                                onClick: ()=>{
+                                                                    if (window.confirm('完整加密备份会包含可迁移的 API Key 主密钥。请确认你会安全保存备份文件和密码。')) void exportLocalBackup('complete');
+                                                                },
+                                                                children: '导出完整加密备份'
                                                             }),
                                                             /*#__PURE__*/ _jsx("button", {
                                                                 type: "button",
@@ -14950,7 +14959,7 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("small", {
                                                         className: "settings-backup-warning",
-                                                         children: "备份文件包含 API Key 恢复所需信息、图片和技能文件；即使已加密，也请勿上传 GitHub 或发送给他人。"
+                                                         children: "内容备份不包含 API Key；完整加密备份会在明确确认后包含可迁移密钥。两种备份都使用独立密码加密，请妥善保存备份文件和密码。"
                                                     })
                                                 ]
                                             }),

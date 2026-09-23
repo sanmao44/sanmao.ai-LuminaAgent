@@ -5,10 +5,12 @@ import { ensureMediaLibrary } from '@/lib/media-library';
 import { type WorkspaceSnapshot } from '@/lib/workspace-types';
 import { validateWorkspaceShape } from '@/lib/workspace-format';
 import { WORKSPACE_TEMP_PATTERN, sweepStaleWorkspaceTemps } from '@/lib/workspace-temps';
+import { ensureDataFoundation } from '@/lib/data-foundation';
+import { resolveLocalDataDir } from '@/lib/data-paths';
 
 export const runtime = 'nodejs';
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+const dataDir = resolveLocalDataDir();
 const workspacePath = path.join(dataDir, 'workspace.json');
 const maxWorkspaceBytes = 80 * 1024 * 1024;
 const workspaceTempSweepIntervalMs = 60 * 1000;
@@ -88,6 +90,7 @@ async function renameWorkspaceSnapshot(temporary: string) {
 export async function GET(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录后访问工作区。' }, { status: 401 });
   // 客户端启动时会读工作区：借这个时机把历史目录里的素材并入固定媒体库。
+  await ensureDataFoundation();
   void ensureMediaLibrary();
   try {
     const workspace = await readWorkspace();
@@ -99,6 +102,7 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录后保存工作区。' }, { status: 401 });
+  await ensureDataFoundation();
   try {
     const contentLength = Number(request.headers.get('content-length') || 0);
     if (contentLength > maxWorkspaceBytes + 4096) throw new Error('工作区数据超过 80MB');

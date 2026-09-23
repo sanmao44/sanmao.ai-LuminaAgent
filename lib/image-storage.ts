@@ -5,8 +5,9 @@ import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { GeneratedImage } from './types';
 import { knownMediaRoots, mediaDirectory } from './media-paths';
+import { resolveLocalDataDir } from './data-paths';
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+const dataDir = resolveLocalDataDir();
 const legacyStoragePath = path.join(process.cwd(), '..', 'image_generation_records');
 const MAX_STORED_IMAGE_BYTES = 100 * 1024 * 1024;
 

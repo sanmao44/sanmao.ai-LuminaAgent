@@ -3,13 +3,15 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+. "$SCRIPT_DIR/launcher-common.sh"
 PORT=${1:-0}
 OPERATION_ID=${2:?operation id is required}
 OPERATION_TOKEN=${3:?operation token is required}
-LOCK_PATH="$ROOT_DIR/.data/update-staging/update.lock"
-DRAIN_PATH="$ROOT_DIR/.data/runtime-draining.json"
-STATUS_PATH="$ROOT_DIR/.data/runtime-restart/status.json"
-BACKUP_DIR="$ROOT_DIR/.data/runtime-restart/previous-$OPERATION_ID"
+DATA_DIR=$(sanmao_data_dir "$ROOT_DIR")
+LOCK_PATH="$DATA_DIR/update-staging/update.lock"
+DRAIN_PATH="$DATA_DIR/runtime-draining.json"
+STATUS_PATH="$DATA_DIR/runtime-restart/status.json"
+BACKUP_DIR="$DATA_DIR/runtime-restart/previous-$OPERATION_ID"
 
 write_status() {
   STATE=$1
@@ -103,8 +105,8 @@ start_service() {
   # restart: the verified build is started on the original port and readiness
   # is checked before the operation lock is released.
   if [ ! -x "$ROOT_DIR/node_modules/.bin/next" ]; then return 1; fi
-  SERVER_STDOUT="$ROOT_DIR/.data/runtime-restart/server.out.log"
-  SERVER_STDERR="$ROOT_DIR/.data/runtime-restart/server.err.log"
+  SERVER_STDOUT="$DATA_DIR/runtime-restart/server.out.log"
+  SERVER_STDERR="$DATA_DIR/runtime-restart/server.err.log"
   mkdir -p "$(dirname "$SERVER_STDOUT")"
   SANMAO_RUNTIME_INSTANCE_ID=$(node -e "process.stdout.write(require('node:crypto').randomUUID())") SANMAO_NETWORK_MODE=local SANMAO_LIFECYCLE=1 nohup "$ROOT_DIR/node_modules/.bin/next" start -H 127.0.0.1 -p "$PORT" >"$SERVER_STDOUT" 2>"$SERVER_STDERR" </dev/null &
   SERVER_PID=$!

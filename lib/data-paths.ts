@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 type DataPathOptions = {
@@ -6,8 +7,41 @@ type DataPathOptions = {
   providerConfigDir?: string;
 };
 
+export type DataProfileMode = 'development' | 'portable' | 'installed' | 'custom';
+
+export type DataProfile = {
+  mode: DataProfileMode;
+  rootDir: string;
+  dataDir: string;
+  providerConfigDir: string;
+  override: boolean;
+};
+
+type DataProfileEnv = {
+  [key: string]: string | undefined;
+  SANMAO_DATA_DIR?: string;
+  SANMAO_PORTABLE?: string;
+  SANMAO_DATA_MODE?: string;
+  SANMAO_INSTALL_MODE?: string;
+  SANMAO_INSTALLED?: string;
+  LOCALAPPDATA?: string;
+};
+
 function absolutePath(root: string, value: string) {
   return path.resolve(root, value);
+}
+
+function isEnabled(value: unknown) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
+function installedDataDir(env: DataProfileEnv) {
+  const localAppData = String(env.LOCALAPPDATA || '').trim();
+  if (localAppData) return path.join(localAppData, 'SANMAO.AI');
+  let home = '';
+  try { home = os.homedir(); } catch {}
+  if (process.platform === 'win32' && home) return path.join(home, 'AppData', 'Local', 'SANMAO.AI');
+  return path.join(home || path.resolve('.'), '.local', 'share', 'SANMAO.AI');
 }
 
 function findGitEntry(start: string) {
@@ -48,10 +82,39 @@ export function resolveMainWorktreeRoot(cwd = process.cwd()) {
   return path.dirname(commonDir);
 }
 
-export function resolveLocalDataDir(cwd = process.cwd(), configured = process.env.SANMAO_DATA_DIR) {
+/**
+ * Resolves the durable-data profile without changing the historical
+ * development default. Installed and portable launchers opt in explicitly;
+ * SANMAO_DATA_DIR always wins for tests and custom layouts.
+ */
+export function resolveDataProfile(cwd = process.cwd(), env: DataProfileEnv = process.env): DataProfile {
   const root = path.resolve(cwd);
-  const value = String(configured || '').trim();
-  return value ? absolutePath(root, value) : path.join(root, '.data');
+  const configured = String(env.SANMAO_DATA_DIR || '').trim();
+  if (configured) {
+    const dataDir = absolutePath(root, configured);
+    return { mode: 'custom', rootDir: root, dataDir, providerConfigDir: dataDir, override: true };
+  }
+
+  const portable = isEnabled(env.SANMAO_PORTABLE)
+    || String(env.SANMAO_DATA_MODE || '').trim().toLowerCase() === 'portable';
+  if (portable) {
+    const dataDir = path.join(root, 'data');
+    return { mode: 'portable', rootDir: root, dataDir, providerConfigDir: dataDir, override: false };
+  }
+
+  const installed = String(env.SANMAO_INSTALL_MODE || '').trim().toLowerCase() === 'installed'
+    || isEnabled(env.SANMAO_INSTALLED);
+  if (installed) {
+    const dataDir = installedDataDir(env);
+    return { mode: 'installed', rootDir: root, dataDir, providerConfigDir: dataDir, override: false };
+  }
+
+  const dataDir = path.join(root, '.data');
+  return { mode: 'development', rootDir: root, dataDir, providerConfigDir: dataDir, override: false };
+}
+
+export function resolveLocalDataDir(cwd = process.cwd(), configured = process.env.SANMAO_DATA_DIR) {
+  return resolveDataProfile(cwd, { ...process.env, SANMAO_DATA_DIR: configured }).dataDir;
 }
 
 /**
@@ -68,5 +131,7 @@ export function resolveProviderConfigDir(cwd = process.cwd(), options: DataPathO
   const configuredDataDir = options.dataDir ?? process.env.SANMAO_DATA_DIR;
   if (String(configuredDataDir || '').trim()) return absolutePath(root, String(configuredDataDir).trim());
 
+  const profile = resolveDataProfile(root);
+  if (profile.mode !== 'development') return profile.providerConfigDir;
   return path.join(resolveMainWorktreeRoot(root) || root, '.data');
 }

@@ -7,6 +7,7 @@
  */
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { resolveLocalDataDir } from './data-paths';
 
 export type TaskRecord = { id: string; createdAt: string; idempotencyKey?: string };
 
@@ -22,7 +23,7 @@ export type TaskPageOptions<T> = {
 
 export type TaskPage<T> = { tasks: T[]; total: number; page: number; pageSize: number; totalPages: number };
 
-const DATA_DIR = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+const DATA_DIR = resolveLocalDataDir();
 
 /**
  * 临时文件改名覆盖目标时，Windows 上防病毒 / 索引器会短暂占用刚写完的文件，

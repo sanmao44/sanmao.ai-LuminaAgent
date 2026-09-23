@@ -2,6 +2,37 @@
 # Shared macOS launcher helpers for SANMAO.AI start-macos.sh / stop-macos.sh.
 # This file is sourced. Call sanmao_init before using the functions below.
 
+sanmao_data_dir() {
+  ROOT=$1
+  if [ -n "${SANMAO_DATA_DIR:-}" ]; then
+    case "$SANMAO_DATA_DIR" in
+      /*) printf '%s' "$SANMAO_DATA_DIR" ;;
+      *) printf '%s/%s' "$ROOT" "$SANMAO_DATA_DIR" ;;
+    esac
+    return 0
+  fi
+  case "${SANMAO_PORTABLE:-}" in
+    1|true|TRUE|yes|YES|on|ON) printf '%s/data' "$ROOT"; return 0 ;;
+  esac
+  case "${SANMAO_DATA_MODE:-}" in
+    portable|PORTABLE) printf '%s/data' "$ROOT"; return 0 ;;
+  esac
+  case "${SANMAO_INSTALL_MODE:-}" in
+    installed|INSTALLED)
+      if [ "$(uname -s 2>/dev/null || true)" = Darwin ]; then
+        printf '%s/.local/share/SANMAO.AI' "${HOME:-$ROOT}"
+      else
+        printf '%s/SANMAO.AI' "${XDG_DATA_HOME:-$HOME/.local/share}"
+      fi
+      return 0 ;;
+  esac
+  case "${SANMAO_INSTALLED:-}" in
+    1|true|TRUE|yes|YES|on|ON)
+      printf '%s/.local/share/SANMAO.AI' "${HOME:-$ROOT}"; return 0 ;;
+  esac
+  printf '%s/.data' "$ROOT"
+}
+
 sanmao_init() {
   SANMAO_ROOT_DIR="$1"
   SANMAO_PORT_START="$2"

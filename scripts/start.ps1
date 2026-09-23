@@ -26,6 +26,9 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+$launcherCommonPath = Join-Path $PSScriptRoot 'launcher-common.ps1'
+. $launcherCommonPath
+$dataDir = Resolve-SanmaoDataDir -Root $root
 $script:MediaRelayRequired = $false
 $requestedPort = 0
 if ($Port -ge 1024 -and $Port -le 65525) {
@@ -39,20 +42,19 @@ $portRange = $portStart..$portEnd
 $legacyPortRange = 3000..3010
 $networkMode = if ($Lan.IsPresent) { 'lan' } else { 'local' }
 $bindHost = if ($Lan.IsPresent) { '0.0.0.0' } else { '127.0.0.1' }
-$lanPasswordPath = Join-Path $root '.data\lan-password'
+$lanPasswordPath = Join-Path $dataDir 'lan-password'
 $legacyMarkerPath = Join-Path $env:TEMP 'sanmao-ai-studio-instance.lock'
 $script:serverProcess = $null
 $serverStdoutPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.out.log'
 $serverStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
 
-. (Join-Path $PSScriptRoot 'launcher-common.ps1')
 . (Join-Path $PSScriptRoot 'free-relay-common.ps1')
 # SANMAO_DATA_DIR remains the explicit all-data override; otherwise only the
 # provider configuration follows a linked worktree back to the primary checkout.
 $env:SANMAO_PROVIDER_CONFIG_DIR = Resolve-SanmaoProviderConfigDir -Root $root
-Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
+Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $dataDir 'logs\launcher.log')
 
-$operationLockPath = Join-Path $root '.data\update-staging\update.lock'
+$operationLockPath = Join-Path $dataDir 'update-staging\update.lock'
 function Assert-SanmaoOperationLock {
   if (-not (Test-Path -LiteralPath $operationLockPath)) { return }
   try {
@@ -1116,8 +1118,8 @@ if ($SkipBuild.IsPresent) {
     Start-Sleep -Milliseconds 500
     $npmOptions = @('--include=dev', '--no-audit', '--no-fund', '--prefer-offline')
     $npmOptionArgs = $npmOptions -join ' '
-    $npmLogPath = Join-Path $root '.data\logs\npm-install.log'
-    $npmMirrorLogPath = Join-Path $root '.data\logs\npm-install-mirror.log'
+    $npmLogPath = Join-Path $dataDir 'logs\npm-install.log'
+    $npmMirrorLogPath = Join-Path $dataDir 'logs\npm-install-mirror.log'
     $npmSizePath = Join-Path $root 'node_modules'
     $npmSizeLabel = '依赖目录'
     $npmQuietHint = '依赖下载阶段通常没有输出，属正常现象；请保持窗口打开。'
@@ -1342,8 +1344,8 @@ if ($freeRelayRequested) {
     # handles, otherwise a parent that pipes this script's output (e.g. restart.ps1's
     # Invoke-SanmaoScript) can block forever waiting for EOF. Redirect it to its own
     # dedicated log files instead.
-    $watchOutPath = Join-Path $root ('.data\logs\free-relay-watch-' + [guid]::NewGuid().ToString('N') + '.out.log')
-    $watchErrPath = Join-Path $root ('.data\logs\free-relay-watch-' + [guid]::NewGuid().ToString('N') + '.err.log')
+    $watchOutPath = Join-Path $dataDir ('logs\free-relay-watch-' + [guid]::NewGuid().ToString('N') + '.out.log')
+    $watchErrPath = Join-Path $dataDir ('logs\free-relay-watch-' + [guid]::NewGuid().ToString('N') + '.err.log')
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $watchOutPath) | Out-Null
     Start-Process -FilePath 'powershell.exe' `
       -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript, '-Root', $root, '-TargetProcessId', [string]$script:serverProcess.Id, '-OriginPort', [string]$port) `

@@ -3,6 +3,7 @@ set -e
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 ROOT_DIR=$SCRIPT_DIR
 cd "$ROOT_DIR"
+. "$SCRIPT_DIR/scripts/launcher-common.sh"
 . "$SCRIPT_DIR/scripts/free-relay-common.sh"
 DEPENDENCY_FINGERPRINT=`node -e 'const fs=require("fs");const crypto=require("crypto");const p=JSON.parse(fs.readFileSync("package.json","utf8"));const lines=[];for(const s of ["dependencies","optionalDependencies","peerDependencies","devDependencies"]){const d=p[s]||{};for(const n of Object.keys(d).sort())lines.push(s+"/"+n+"@"+d[n]);}process.stdout.write(crypto.createHash("sha256").update(lines.join("\n")).digest("hex").toUpperCase());' 2>/dev/null || true`
 STORED_DEPENDENCY_FINGERPRINT=`cat node_modules/.sanmao-deps.sha256 2>/dev/null | tr -d '\r\n' || true`
@@ -26,6 +27,11 @@ resolve_provider_config_dir() {
     esac
     return 0
   fi
+  case "${SANMAO_PORTABLE:-}:${SANMAO_DATA_MODE:-}:${SANMAO_INSTALL_MODE:-}:${SANMAO_INSTALLED:-}" in
+    1::*|true::*|TRUE::*|yes::*|YES::*|on::*|*:portable:*:*|*:*:installed:*|*:*:*:1|*:*:*:true|*:*:*:TRUE|*:*:*:yes|*:*:*:YES|*:*:*:on|*:*:*:ON)
+      sanmao_data_dir "$ROOT_DIR"
+      return 0 ;;
+  esac
   COMMON_DIR=`git -C "$ROOT_DIR" rev-parse --git-common-dir 2>/dev/null || true`
   if [ -n "$COMMON_DIR" ]; then
     case "$COMMON_DIR" in

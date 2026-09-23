@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { resolveLocalDataDir } from './data-paths';
 
 /**
  * 技能（Skill）系统：兼容 Agent Skills 开放格式（SKILL.md + YAML frontmatter）。
@@ -129,7 +130,7 @@ export type SkillContext = {
 export function resolveSkillDataDir(options: SkillStoreOptions = {}) {
   const configured = options.dataDir ?? process.env.SANMAO_DATA_DIR;
   const value = String(configured || '').trim();
-  return value ? path.resolve(value) : path.resolve(process.cwd(), '.data');
+  return value ? path.resolve(value) : resolveLocalDataDir();
 }
 
 export function resolveSkillsDir(options: SkillStoreOptions = {}) {

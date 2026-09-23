@@ -11,7 +11,9 @@ function toDataUrl(source) {
   return 'data:text/javascript;base64,' + Buffer.from(compiled).toString('base64');
 }
 
-const skillsUrl = toDataUrl(await readFile(new URL('../lib/skills.ts', import.meta.url), 'utf8'));
+const dataPathsUrl = toDataUrl(await readFile(new URL('../lib/data-paths.ts', import.meta.url), 'utf8'));
+const skillsUrl = toDataUrl((await readFile(new URL('../lib/skills.ts', import.meta.url), 'utf8'))
+  .replace("from './data-paths'", `from '${dataPathsUrl}'`));
 const fflateUrl = new URL('../node_modules/fflate/esm/index.mjs', import.meta.url).href;
 const archiveSource = (await readFile(new URL('../lib/skill-archive.ts', import.meta.url), 'utf8'))
   .replace("from 'fflate'", "from '" + fflateUrl + "'")

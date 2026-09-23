@@ -6,6 +6,7 @@ IFS=
 SCRIPT_DIR=`dirname $0`
 ROOT_DIR=`CDPATH= cd -- $SCRIPT_DIR/.. && pwd`
 cd $ROOT_DIR
+. "$SCRIPT_DIR/launcher-common.sh"
 
 NON_INTERACTIVE=${SANMAO_NONINTERACTIVE:-0}
 DETACH_SERVER=${SANMAO_DETACH_SERVER:-0}
@@ -39,6 +40,11 @@ resolve_provider_config_dir() {
     esac
     return 0
   fi
+  case "${SANMAO_PORTABLE:-}:${SANMAO_DATA_MODE:-}:${SANMAO_INSTALL_MODE:-}:${SANMAO_INSTALLED:-}" in
+    1::*|true::*|TRUE::*|yes::*|YES::*|on::*|*:portable:*:*|*:*:installed:*|*:*:*:1|*:*:*:true|*:*:*:TRUE|*:*:*:yes|*:*:*:YES|*:*:*:on|*:*:*:ON)
+      sanmao_data_dir "$ROOT_DIR"
+      return 0 ;;
+  esac
   COMMON_DIR=`git -C "$ROOT_DIR" rev-parse --git-common-dir 2>/dev/null || true`
   if [ -n "$COMMON_DIR" ]; then
     case "$COMMON_DIR" in
@@ -58,9 +64,8 @@ export SANMAO_PROVIDER_CONFIG_DIR=`resolve_provider_config_dir`
 LEGACY_MARKER="${TMPDIR:-/tmp}/sanmao-ai-studio-instance.lock"
 LOCK_DIR="${TMPDIR:-/tmp}/sanmao-ai-launcher.lock"
 
-. "$SCRIPT_DIR/launcher-common.sh"
 . "$SCRIPT_DIR/free-relay-common.sh"
-sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$ROOT_DIR/.data/logs/launcher.log"
+sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$(sanmao_data_dir "$ROOT_DIR")/logs/launcher.log"
 sanmao_log "启动器开始运行，根目录：${ROOT_DIR}，端口范围：${PORT_START}..${PORT_END}" INFO
 
 media_relay_required() {
@@ -80,7 +85,7 @@ BUILT_SOURCE_MARKER="$ROOT_DIR/.next/.sanmao-source-fingerprint"
 RUNNING_SOURCE_MARKER="$ROOT_DIR/.next/.sanmao-running-source-fingerprint"
 
 operation_lock_allows() {
-  LOCK_PATH="$ROOT_DIR/.data/update-staging/update.lock"
+  LOCK_PATH="$(sanmao_data_dir "$ROOT_DIR")/update-staging/update.lock"
   [ -f "$LOCK_PATH" ] || return 0
   LOCK_TOKEN=$(sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$LOCK_PATH" 2>/dev/null | head -n 1 || true)
   if [ -n "$OPERATION_TOKEN" ] && [ -n "$LOCK_TOKEN" ] && [ "$OPERATION_TOKEN" = "$LOCK_TOKEN" ]; then return 0; fi
@@ -465,8 +470,8 @@ if [ "$NEED_INSTALL" -eq 1 ]; then
   NPM_REGISTRY=`sanmao_resolve_npm_registry`
   NPM_REGISTRY_ARG=
   if [ -n "$NPM_REGISTRY" ]; then NPM_REGISTRY_ARG=" --registry=$NPM_REGISTRY"; fi
-  NPM_LOG="$ROOT_DIR/.data/logs/npm-install.log"
-  NPM_MIRROR_LOG="$ROOT_DIR/.data/logs/npm-install-mirror.log"
+  NPM_LOG="$(sanmao_data_dir "$ROOT_DIR")/logs/npm-install.log"
+  NPM_MIRROR_LOG="$(sanmao_data_dir "$ROOT_DIR")/logs/npm-install-mirror.log"
   NPM_HINT='依赖下载阶段通常没有输出，属正常现象；请保持窗口打开。'
   NPM_SIZE_DIR=node_modules
   NPM_SIZE_LABEL='依赖目录'

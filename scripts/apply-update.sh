@@ -9,9 +9,11 @@ RESTART_PORT=${7:-0}
 PROGRESS_PATH=${8:-}
 OPERATION_TOKEN=${9:-}
 STAGING_PATH=$(CDPATH= cd -- "$(dirname "$ARCHIVE_PATH")" && pwd)
+. "$TARGET_PATH/scripts/launcher-common.sh"
+DATA_DIR=$(sanmao_data_dir "$TARGET_PATH")
 EXTRACT_PATH="$STAGING_PATH/extract-$$"
 LOCK_PATH="$STAGING_PATH/update.lock"
-DRAIN_PATH="$TARGET_PATH/.data/runtime-draining.json"
+DRAIN_PATH="$DATA_DIR/runtime-draining.json"
 LOG_PATH=${5:-"$STAGING_PATH/update.log"}
 BACKUP_DIR="$STAGING_PATH/previous-update-$$"
 BACKUP_CREATED=0
@@ -66,8 +68,8 @@ NODE
 
 start_rollback_service() {
   [ -f "$TARGET_PATH/scripts/start-macos.sh" ] || return 1
-  ROLLBACK_OUT="$TARGET_PATH/.data/runtime-restart/rollback.out.log"
-  ROLLBACK_ERR="$TARGET_PATH/.data/runtime-restart/rollback.err.log"
+  ROLLBACK_OUT="$DATA_DIR/runtime-restart/rollback.out.log"
+  ROLLBACK_ERR="$DATA_DIR/runtime-restart/rollback.err.log"
   mkdir -p "$(dirname "$ROLLBACK_OUT")"
   if [ "$RESTART_PORT" -ge 1024 ] 2>/dev/null && [ "$RESTART_PORT" -le 65525 ] 2>/dev/null; then
     (cd "$TARGET_PATH" && SANMAO_PORT="$RESTART_PORT" SANMAO_OPERATION_TOKEN="$OPERATION_TOKEN" SANMAO_SKIP_BUILD=1 SANMAO_NONINTERACTIVE=1 SANMAO_DETACH_SERVER=1 nohup sh scripts/start-macos.sh >"$ROLLBACK_OUT" 2>"$ROLLBACK_ERR" </dev/null &)
@@ -97,7 +99,7 @@ rollback_update() {
   fi
   if [ "$BACKUP_COMPLETE" -eq 1 ]; then
     find "$TARGET_PATH" -mindepth 1 -maxdepth 1 \
-      ! -name .data ! -name node_modules ! -name .git ! -name .agents ! -name '.env*' \
+      ! -name .data ! -name data ! -name node_modules ! -name .git ! -name .agents ! -name '.env*' \
       -exec rm -rf {} +
   fi
   find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -exec mv {} "$TARGET_PATH"/ \;
@@ -157,7 +159,7 @@ fi
 mkdir -p "$BACKUP_DIR"
 BACKUP_CREATED=1
 if ! find "$TARGET_PATH" -mindepth 1 -maxdepth 1 \
-  ! -name .data ! -name node_modules ! -name .git ! -name .agents ! -name '.env*' \
+  ! -name .data ! -name data ! -name node_modules ! -name .git ! -name .agents ! -name '.env*' \
   -exec mv {} "$BACKUP_DIR"/ \;
 then
   rollback_update || true
@@ -202,7 +204,7 @@ else
 fi
 
 . "$TARGET_PATH/scripts/launcher-common.sh"
-sanmao_init "$TARGET_PATH" "$PROBE_START" "$PROBE_END" 3000 3010 "$TARGET_PATH/.data/logs/launcher.log"
+sanmao_init "$TARGET_PATH" "$PROBE_START" "$PROBE_END" 3000 3010 "$DATA_DIR/logs/launcher.log"
 
 write_progress starting '程序文件已替换，正在等待新服务就绪…' 99
 READY=0

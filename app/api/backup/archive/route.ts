@@ -50,10 +50,37 @@ function jsonBuffer(value: unknown) {
   return Buffer.from(JSON.stringify(value, null, 2), 'utf8');
 }
 
-function validateState(raw: Buffer) {
-  const parsed = JSON.parse(raw.toString('utf8')) as { providers?: unknown; models?: unknown; settings?: Record<string, unknown> };
+type BackupState = {
+  schemaVersion?: number;
+  providers: Array<Record<string, any>>;
+  models: unknown[];
+  settings: Record<string, any>;
+  webSearch?: Record<string, any>;
+  upscaleConnections?: Array<Record<string, any>>;
+};
+
+function validateState(raw: Buffer): BackupState {
+  const parsed = JSON.parse(raw.toString('utf8')) as BackupState;
   if (!parsed || !Array.isArray(parsed.providers) || !Array.isArray(parsed.models) || !parsed.settings || typeof parsed.settings !== 'object') throw new Error('备份中的服务端配置格式无效');
   return parsed;
+}
+
+function stripStateSecrets(state: BackupState): BackupState {
+  const stripEncryptedFields = (value: Record<string, any>) => Object.fromEntries(
+    Object.entries(value).filter(([key]) => !key.startsWith('encrypted')),
+  );
+  return {
+    ...state,
+    providers: state.providers.map(stripEncryptedFields),
+    webSearch: state.webSearch ? { provider: state.webSearch.provider } : undefined,
+    upscaleConnections: Array.isArray(state.upscaleConnections)
+      ? state.upscaleConnections.map(stripEncryptedFields)
+      : state.upscaleConnections,
+  } as BackupState;
+}
+
+function pickStateSecrets(value: Record<string, any>) {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => key.startsWith('encrypted')));
 }
 
 function isImageFile(file: string) {
@@ -89,9 +116,13 @@ async function appendMediaDirectory(entries: BackupArchiveEntry[], root: string,
   }
 }
 
-async function exportArchive(client: unknown) {
+type BackupMode = 'content' | 'complete';
+
+async function exportArchive(client: unknown, mode: BackupMode) {
+  const includeSecrets = mode === 'complete';
   const stateRaw = await readOptional(statePath);
-  const state = stateRaw.length ? validateState(stateRaw) : { schemaVersion: 2, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } };
+  const rawState = stateRaw.length ? validateState(stateRaw) : { schemaVersion: 2, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } };
+  const state = includeSecrets ? rawState : stripStateSecrets(rawState);
   const configuredImagePath = String(state.settings?.imageStoragePath || '');
   const configuredVideoPath = String((state.settings as Record<string, unknown>)?.videoStoragePath || '');
   const entries: BackupArchiveEntry[] = [
@@ -101,7 +132,7 @@ async function exportArchive(client: unknown) {
   const workspace = await readOptional(workspacePath);
   if (workspace.length) entries.push({ name: 'server/workspace.json', data: workspace });
   const masterKey = await readOptional(keyPath);
-  if (masterKey.length) entries.push({ name: 'server/master.key', data: masterKey });
+  if (includeSecrets && masterKey.length) entries.push({ name: 'server/master.key', data: masterKey });
 
   const logFilesOnDisk = (await readdir(dataDir).catch(() => [])).filter((name) => /^generation-logs(?:-\d+)?\.jsonl$/.test(name));
   for (const name of logFilesOnDisk) entries.push({ name: `server/logs/${name}`, data: await readOptional(path.join(dataDir, name)) });
@@ -138,6 +169,8 @@ async function exportArchive(client: unknown) {
   const manifest = {
     format: 'sanmao-ai-local-backup-archive',
     version: 2,
+    backupMode: mode,
+    includesSecrets: includeSecrets && Boolean(masterKey.length),
     exportedAt: new Date().toISOString(),
     imageCount: entries.filter((entry) => entry.name.startsWith('images/')).length,
     videoCount: entries.filter((entry) => entry.name.startsWith('videos/')).length,
@@ -180,6 +213,7 @@ async function restoreArchive(archive: Buffer) {
   if (manifest.format !== 'sanmao-ai-local-backup-archive' || manifest.version !== 2) throw new Error('不支持的备份版本');
   manifestEntries(entries, manifest);
   const state = validateState(stateEntry.data);
+  const backupMode: BackupMode = manifest.backupMode === 'complete' || byName.has('server/master.key') ? 'complete' : 'content';
   const clientEntry = byName.get('client/client.json');
   const client = clientEntry ? JSON.parse(clientEntry.data.toString('utf8')) as { gallery?: unknown; chatSessions?: unknown; workspace?: unknown } : {};
   if (clientEntry) {
@@ -188,6 +222,24 @@ async function restoreArchive(archive: Buffer) {
   const workspaceEntry = byName.get('server/workspace.json');
   const workspace = client.workspace || (workspaceEntry ? JSON.parse(workspaceEntry.data.toString('utf8')) : null);
   if (workspace) validateWorkspaceShape(workspace);
+  if (backupMode === 'content') {
+    const current = await readOptional(statePath).then((raw) => raw.length ? validateState(raw) : null);
+    if (current) {
+      const currentById = new Map(current.providers.map((provider) => [String(provider.id), provider]));
+      state.providers = state.providers.map((provider) => {
+        const existing = currentById.get(String(provider.id));
+        return existing ? { ...provider, ...pickStateSecrets(existing) } : provider;
+      });
+      if (current.webSearch?.encryptedApiKey && state.webSearch) state.webSearch.encryptedApiKey = current.webSearch.encryptedApiKey;
+      if (Array.isArray(current.upscaleConnections) && Array.isArray(state.upscaleConnections)) {
+        const currentByProvider = new Map(current.upscaleConnections.map((connection) => [String(connection.provider), connection]));
+        state.upscaleConnections = state.upscaleConnections.map((connection) => {
+          const existing = currentByProvider.get(String(connection.provider));
+          return existing ? { ...connection, ...pickStateSecrets(existing) } : connection;
+        });
+      }
+    }
+  }
   state.settings!.imageStoragePath = '';
   state.settings!.videoStoragePath = '';
   await mkdir(dataDir, { recursive: true });
@@ -269,7 +321,7 @@ async function restoreArchive(archive: Buffer) {
     restoredArtifacts += 1;
   }
 
-  return { client, manifest, restoredImages, restoredVideos, restoredAudio, restoredArtifacts, restoredWorkspace: Boolean(workspace), restoredSkills: restoredSkillIds.size, restoredSkillFiles, externalMasterKey: Boolean(manifest.externalMasterKey) };
+  return { client, manifest: { ...manifest, backupMode }, restoredImages, restoredVideos, restoredAudio, restoredArtifacts, restoredWorkspace: Boolean(workspace), restoredSkills: restoredSkillIds.size, restoredSkillFiles, externalMasterKey: Boolean(manifest.externalMasterKey), includesSecrets: backupMode === 'complete' };
 }
 
 export async function POST(request: Request) {
@@ -283,7 +335,9 @@ export async function POST(request: Request) {
     if (clientBytes > maxClientBytes) throw new Error('浏览器历史过大，无法生成备份');
     const backupPassword = String(body?.backupPassword || '');
     validateBackupPassword(backupPassword);
-    const result = await exportArchive(client);
+    const backupMode = body?.backupMode === 'complete' ? 'complete' : body?.backupMode === 'content' ? 'content' : null;
+    if (!backupMode) throw new Error('必须明确选择内容备份或完整加密备份');
+    const result = await exportArchive(client, backupMode);
     const encrypted = encryptBackupPayload(result.archive, backupPassword);
     return new Response(encrypted, {
       headers: {
@@ -291,6 +345,7 @@ export async function POST(request: Request) {
         'Content-Disposition': `attachment; filename="SANMAO-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.sanmao-backup"`,
         'X-SANMAO-Backup-Version': '2',
         'X-SANMAO-Backup-Encrypted': '1',
+        'X-SANMAO-Backup-Mode': result.manifest.backupMode,
         'X-SANMAO-Backup-Skills': String(result.manifest.skillCount),
       },
     });

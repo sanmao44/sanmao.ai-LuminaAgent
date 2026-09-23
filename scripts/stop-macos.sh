@@ -15,7 +15,8 @@ while [ $# -gt 0 ]; do
 done
 
 operation_lock_allows() {
-  LOCK_PATH="$ROOT_DIR/.data/update-staging/update.lock"
+  DATA_DIR=$(sanmao_data_dir "$ROOT_DIR")
+  LOCK_PATH="$DATA_DIR/update-staging/update.lock"
   [ -f "$LOCK_PATH" ] || return 0
   LOCK_TOKEN=$(sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$LOCK_PATH" 2>/dev/null | head -n 1 || true)
   if [ -n "$OPERATION_TOKEN" ] && [ -n "$LOCK_TOKEN" ] && [ "$OPERATION_TOKEN" = "$LOCK_TOKEN" ]; then return 0; fi
@@ -37,7 +38,7 @@ if [ "$PORT_START" -lt 1024 ] || [ "$PORT_START" -gt 65525 ]; then PORT_START=32
 PORT_END=$((PORT_START + 10))
 
 . "$SCRIPT_DIR/free-relay-common.sh"
-sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$ROOT_DIR/.data/logs/launcher.log"
+sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$(sanmao_data_dir "$ROOT_DIR")/logs/launcher.log"
 sanmao_log "停止器开始运行，端口范围：$PORT_START..$PORT_END" INFO
 free_relay_stop "$ROOT_DIR"
 

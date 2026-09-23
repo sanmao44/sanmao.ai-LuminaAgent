@@ -26,6 +26,34 @@ function Initialize-SanmaoLauncher {
   }
 }
 
+function Resolve-SanmaoDataDir {
+  param([Parameter(Mandatory = $true)][string]$Root)
+
+  $configured = [string]$env:SANMAO_DATA_DIR
+  if (-not [string]::IsNullOrWhiteSpace($configured)) {
+    if ([System.IO.Path]::IsPathRooted($configured)) { return [System.IO.Path]::GetFullPath($configured) }
+    return [System.IO.Path]::GetFullPath((Join-Path $Root $configured))
+  }
+
+  $portable = [string]$env:SANMAO_PORTABLE -match '^(?i:1|true|yes|on)$' -or
+    ([string]$env:SANMAO_DATA_MODE).Trim().ToLowerInvariant() -eq 'portable'
+  if ($portable) { return [System.IO.Path]::GetFullPath((Join-Path $Root 'data')) }
+
+  $installed = ([string]$env:SANMAO_INSTALL_MODE).Trim().ToLowerInvariant() -eq 'installed' -or
+    [string]$env:SANMAO_INSTALLED -match '^(?i:1|true|yes|on)$'
+  if ($installed) {
+    $localAppData = [string]$env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($localAppData)) {
+      $localAppData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'SANMAO.AI'
+    } else {
+      $localAppData = Join-Path $localAppData 'SANMAO.AI'
+    }
+    return [System.IO.Path]::GetFullPath($localAppData)
+  }
+
+  return [System.IO.Path]::GetFullPath((Join-Path $Root '.data'))
+}
+
 function Resolve-SanmaoProviderConfigDir {
   param([Parameter(Mandatory = $true)][string]$Root)
 

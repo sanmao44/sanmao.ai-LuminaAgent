@@ -10,10 +10,13 @@
 )
 
 $ErrorActionPreference = 'Stop'
+$launcherCommonPath = Join-Path $TargetPath 'scripts\launcher-common.ps1'
+if (Test-Path -LiteralPath $launcherCommonPath) { . $launcherCommonPath }
+$dataDir = if (Get-Command Resolve-SanmaoDataDir -ErrorAction SilentlyContinue) { Resolve-SanmaoDataDir -Root $TargetPath } else { Join-Path $TargetPath '.data' }
 $stagingPath = Split-Path -Parent $ArchivePath
 $extractPath = Join-Path $stagingPath ("extract-" + [guid]::NewGuid().ToString('N'))
 $lockPath = Join-Path $stagingPath 'update.lock'
-$drainPath = Join-Path $TargetPath '.data\runtime-draining.json'
+$drainPath = Join-Path $dataDir 'runtime-draining.json'
 $backupSuffix = if ($OperationToken) { $OperationToken } else { [string]$PID }
 $backupPath = Join-Path $stagingPath ("previous-update-" + $backupSuffix)
 $launcherStdoutPath = Join-Path $stagingPath ("restart-launcher-" + $backupSuffix + '.out.log')
@@ -95,7 +98,7 @@ function Backup-CurrentProgram {
   $script:programBackupComplete = $false
   try {
     Get-ChildItem -LiteralPath $TargetPath -Force |
-      Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -ne '.agents' -and $_.Name -notlike '.env*' } |
+      Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -ne '.agents' -and $_.Name -notlike '.env*' } |
       ForEach-Object { Move-Item -LiteralPath $_.FullName -Destination $backupPath -Force }
     $script:programBackupComplete = $true
   } catch {
@@ -109,7 +112,7 @@ function Restore-PreviousProgram {
   if (-not $script:programBackedUp -or -not (Test-Path -LiteralPath $backupPath)) { return $false }
   if ($script:programBackupComplete) {
     Get-ChildItem -LiteralPath $TargetPath -Force |
-      Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -ne '.agents' -and $_.Name -notlike '.env*' } |
+      Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -ne '.agents' -and $_.Name -notlike '.env*' } |
       Remove-Item -Recurse -Force
   }
   Get-ChildItem -LiteralPath $backupPath -Force | ForEach-Object {
@@ -235,7 +238,7 @@ try {
   Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
   # Use the newly installed launcher helpers for the readiness probe.
   . (Join-Path $TargetPath 'scripts\launcher-common.ps1')
-  Initialize-SanmaoLauncher -Root $TargetPath -PortStart 3210 -PortEnd 3220 -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $TargetPath '.data\logs\launcher.log')
+  Initialize-SanmaoLauncher -Root $TargetPath -PortStart 3210 -PortEnd 3220 -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $dataDir 'logs\launcher.log')
 
   $launcher = Join-Path $TargetPath 'scripts\start.ps1'
   if (-not (Test-Path -LiteralPath $launcher)) { throw '更新后找不到 Windows 启动器' }

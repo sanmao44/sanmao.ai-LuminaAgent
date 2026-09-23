@@ -6,6 +6,8 @@
 
 $ErrorActionPreference = 'SilentlyContinue'
 $root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'launcher-common.ps1')
+$dataDir = Resolve-SanmaoDataDir -Root $root
 $legacyMarkerPath = Join-Path $env:TEMP 'sanmao-ai-studio-instance.lock'
 . (Join-Path $PSScriptRoot 'free-relay-common.ps1')
 
@@ -20,11 +22,10 @@ $portEnd = $portStart + 10
 $portRange = $portStart..$portEnd
 $legacyPortRange = 3000..3010
 
-. (Join-Path $PSScriptRoot 'launcher-common.ps1')
-Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $root '.data\logs\launcher.log')
+Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $dataDir 'logs\launcher.log')
 Write-SanmaoLauncherLog "停止器开始运行，端口范围：$portStart..$portEnd" 'INFO'
 
-$operationLockPath = Join-Path $root '.data\update-staging\update.lock'
+$operationLockPath = Join-Path $dataDir 'update-staging\update.lock'
 if (Test-Path -LiteralPath $operationLockPath) {
   $allow = $false
   try {
@@ -60,7 +61,7 @@ if (-not $DryRun) { Stop-SanmaoFreeRelayWatch -Root $root | Out-Null }
 if (-not $DryRun) { Stop-SanmaoFreeRelayTunnel -Root $root }
 if (-not $DryRun) {
   # 清理旧的免费中继看门狗日志文件。
-  Get-ChildItem -LiteralPath (Join-Path $root '.data\logs') -Filter 'free-relay-watch-*.log' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+  Get-ChildItem -LiteralPath (Join-Path $dataDir 'logs') -Filter 'free-relay-watch-*.log' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 }
 
 function Stop-SanmaoLanLauncherProcesses {

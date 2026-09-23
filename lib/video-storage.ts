@@ -4,8 +4,9 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { GeneratedVideo } from './types';
 import { knownMediaRoots, mediaDirectory } from './media-paths';
+import { resolveLocalDataDir } from './data-paths';
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+const dataDir = resolveLocalDataDir();
 const MAX_VIDEO_BYTES = 1024 * 1024 * 1024;
 const MAX_DATA_URI_BYTES = 64 * 1024 * 1024;
 type PersistedVideo = GeneratedVideo & { localPath: string };

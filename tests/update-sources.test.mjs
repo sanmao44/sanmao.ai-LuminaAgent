@@ -23,6 +23,7 @@ const update = await loadTs(new URL('../lib/update.ts', import.meta.url), [
 const local = await loadTs(new URL('../lib/local-update.ts', import.meta.url), [
   ["import type { UpdateStatus } from '@/lib/update';", ''],
   ["import {\n  acquireRuntimeOperationLock,\n  beginRuntimeDrain,\n  cancelRuntimeDrain,\n  operationLockMatches,\n  removeOwnedRuntimeOperationLock,\n} from '@/lib/runtime-operation';", "const acquireRuntimeOperationLock = async () => ({ token: 'test' }); const beginRuntimeDrain = async () => ({ activeRequests: 0 }); const cancelRuntimeDrain = async () => {}; const operationLockMatches = async () => true; const removeOwnedRuntimeOperationLock = async () => true;"],
+  ["import { resolveLocalDataDir } from '@/lib/data-paths';", "const resolveLocalDataDir = (cwd = process.cwd()) => process.env.SANMAO_DATA_DIR || join(cwd, '.data');"],
 ]);
 
 test('completed progress is stale after the app reaches the recorded version', () => {

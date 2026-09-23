@@ -6,10 +6,12 @@
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$lockPath = Join-Path $root '.data\update-staging\update.lock'
-$statusPath = Join-Path $root '.data\runtime-restart\status.json'
-$drainPath = Join-Path $root '.data\runtime-draining.json'
-$backupDir = Join-Path $root ('.data\runtime-restart\previous-' + ($OperationId -replace '[^0-9A-Za-z_-]', '_'))
+. (Join-Path $PSScriptRoot 'launcher-common.ps1')
+$dataDir = Resolve-SanmaoDataDir -Root $root
+$lockPath = Join-Path $dataDir 'update-staging\update.lock'
+$statusPath = Join-Path $dataDir 'runtime-restart\status.json'
+$drainPath = Join-Path $dataDir 'runtime-draining.json'
+$backupDir = Join-Path $dataDir ('runtime-restart\previous-' + ($OperationId -replace '[^0-9A-Za-z_-]', '_'))
 $script:claimed = $false
 
 function Write-RestartStatus([string]$State, [string]$Error = '', [bool]$RolledBack = $false) {
