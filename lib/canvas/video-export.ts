@@ -2,6 +2,7 @@ import type {
   CanvasVideoEditorClip,
   CanvasVideoEditorState,
 } from "./types";
+import { videoEditorAudioGain, videoEditorLayoutRegions, videoEditorMotionTransform, videoEditorTextBox } from "./video-editor";
 import { writeWebmDuration } from "./webm-duration";
 
 export type CanvasVideoEditorRenderSource = {
@@ -113,27 +114,101 @@ function sourceTimeForClip(clip: CanvasVideoEditorClip, time: number) {
   return Math.max(0, clip.sourceOffset + (time - clip.start) * (clip.playbackRate || 1));
 }
 
+function graphicsStyleFlags(value: string | undefined) {
+  const style = String(value || "").toLocaleLowerCase();
+  return {
+    card: /card|box|solid|label|tag|banner|色块|卡片|标签|底板/u.test(style),
+    outline: /outline|outlined|stroke|描边|空心/u.test(style),
+  };
+}
+
+function drawLayoutBackdrop(context: CanvasRenderingContext2D, layout: CanvasVideoEditorClip["layout"] | undefined, width: number, height: number) {
+  if (!layout) return;
+  const regions = videoEditorLayoutRegions(layout);
+  const background = layout.backgroundColor || "#000";
+  context.save();
+  context.fillStyle = background;
+  context.fillRect(0, 0, width, height);
+  if (layout.mode !== "full") {
+    context.fillStyle = layout.surfaceColor || "rgba(255,255,255,.08)";
+    [regions.primary, regions.secondary].filter(Boolean).forEach((region) => {
+      if (!region) return;
+      context.beginPath();
+      context.roundRect(region.x * width, region.y * height, region.width * width, region.height * height, region.radius * Math.min(width, height));
+      context.fill();
+    });
+  }
+  context.restore();
+}
+
 function drawVisual(
   context: CanvasRenderingContext2D,
   item: RenderItem,
   width: number,
   height: number,
+  options: { opacity?: number; motion?: { x: number; y: number; scale: number }; region?: ReturnType<typeof videoEditorLayoutRegions>["primary"]; reveal?: { direction: "left" | "right" | "up" | "down"; progress: number }; slide?: { direction: "left" | "right" | "up" | "down"; progress: number } } = {},
 ) {
   if (!(item.element instanceof HTMLVideoElement || item.element instanceof HTMLImageElement)) return;
   const source = sourceSize(item);
+  const layout = options.region || videoEditorLayoutRegions(item.clip.layout).primary;
+  const regionWidth = width * layout.width;
+  const regionHeight = height * layout.height;
+  const regionX = width * layout.x;
+  const regionY = height * layout.y;
   const fit = item.clip.fit || "contain";
   const fitScale = fit === "cover"
-    ? Math.max(width / source.width, height / source.height)
-    : Math.min(width / source.width, height / source.height);
-  const scale = fitScale * clamp(item.clip.scale ?? 1, 0.1, 4);
+    ? Math.max(regionWidth / source.width, regionHeight / source.height)
+    : Math.min(regionWidth / source.width, regionHeight / source.height);
+  const scale = fitScale * clamp(item.clip.scale ?? 1, 0.1, 4) * (options.motion?.scale ?? 1);
   const drawWidth = source.width * scale;
   const drawHeight = source.height * scale;
-  const x = (width - drawWidth) / 2 + (item.clip.x ?? 0) * width / 2;
-  const y = (height - drawHeight) / 2 + (item.clip.y ?? 0) * height / 2;
+  let x = regionX + (regionWidth - drawWidth) / 2 + ((item.clip.x ?? 0) + (options.motion?.x ?? 0)) * width / 2;
+  let y = regionY + (regionHeight - drawHeight) / 2 + ((item.clip.y ?? 0) + (options.motion?.y ?? 0)) * height / 2;
+  if (options.slide) {
+    const distance = options.slide.direction === "left" || options.slide.direction === "right" ? regionWidth : regionHeight;
+    const sign = options.slide.direction === "right" || options.slide.direction === "down" ? 1 : -1;
+    if (options.slide.direction === "left" || options.slide.direction === "right") x += sign * distance * (1 - options.slide.progress);
+    else y += sign * distance * (1 - options.slide.progress);
+  }
   context.save();
-  context.globalAlpha = clamp(item.clip.opacity ?? 1, 0, 1);
+  context.globalAlpha = clamp((item.clip.opacity ?? 1) * (options.opacity ?? 1), 0, 1);
+  if (options.reveal) {
+    const progress = clamp(options.reveal.progress, 0, 1);
+    context.beginPath();
+    if (options.reveal.direction === "left") context.rect(regionX, regionY, regionWidth * progress, regionHeight);
+    else if (options.reveal.direction === "right") context.rect(regionX + regionWidth * (1 - progress), regionY, regionWidth * progress, regionHeight);
+    else if (options.reveal.direction === "up") context.rect(regionX, regionY, regionWidth, regionHeight * progress);
+    else context.rect(regionX, regionY + regionHeight * (1 - progress), regionWidth, regionHeight * progress);
+    context.clip();
+  }
+  if (layout.radius > 0) {
+    context.beginPath();
+    context.roundRect(regionX, regionY, regionWidth, regionHeight, layout.radius * Math.min(width, height));
+    context.clip();
+  }
   context.drawImage(item.element, x, y, drawWidth, drawHeight);
   context.restore();
+}
+
+function drawVisualLayers(
+  context: CanvasRenderingContext2D,
+  item: RenderItem,
+  width: number,
+  height: number,
+  options: Parameters<typeof drawVisual>[4] = {},
+) {
+  const regions = videoEditorLayoutRegions(item.clip.layout);
+  drawVisual(context, item, width, height, { ...options, region: regions.primary });
+  if (regions.secondary) drawVisual(context, item, width, height, { ...options, region: regions.secondary });
+}
+
+function transitionDirection(clip: CanvasVideoEditorClip) {
+  return clip.transitionDirection || "left";
+}
+
+function transitionProgress(clip: CanvasVideoEditorClip, time: number) {
+  const duration = Math.max(0.05, clip.transitionDuration || 0.24);
+  return clamp((time - clip.start) / duration, 0, 1);
 }
 
 function drawCaption(
@@ -141,11 +216,20 @@ function drawCaption(
   clip: CanvasVideoEditorClip,
   width: number,
   height: number,
+  time = clip.start,
 ) {
-  const text = clip.text?.trim();
+  const relativeTime = Math.max(0, time - clip.start);
+  const normalizedCaption = (clip.text || '').replace(/\s+/gu, '');
+  const timedText = clip.words?.length && clip.words.map((word) => word.text).join('').replace(/\s+/gu, '') === normalizedCaption
+    ? clip.words.filter((word) => word.start <= relativeTime).map((word) => word.text).join('')
+    : clip.text;
+  const text = timedText?.trim();
   if (!text) return;
+  const graphics = clip.track === "graphics";
+  const style = graphicsStyleFlags(clip.graphicsStyle);
+  const textBox = graphics ? videoEditorTextBox(clip) : undefined;
   const fontSize = Math.max(12, Math.round((clip.fontSize ?? Math.min(width, height) * 0.038) * (clip.scale ?? 1)));
-  const maxWidth = width * 0.82;
+  const maxWidth = textBox ? width * textBox.width : width * 0.82;
   context.save();
   context.font = `700 ${fontSize}px system-ui, sans-serif`;
   context.textAlign = "center";
@@ -163,15 +247,27 @@ function drawCaption(
   }
   if (line) lines.push(line);
   const lineHeight = fontSize * 1.35;
-  const centerX = width / 2 + (clip.x ?? 0) * width / 2;
-  const centerY = height * (0.83 - (clip.y ?? 0) * 0.45);
+  const centerX = textBox
+    ? (textBox.x + textBox.width / 2) * width
+    : width / 2 + (clip.x ?? 0) * width / 2;
+  const centerY = textBox
+    ? (textBox.y + textBox.height / 2) * height
+    : height * (0.83 - (clip.y ?? 0) * 0.45);
   const boxWidth = Math.min(maxWidth + fontSize, Math.max(...lines.map((value) => context.measureText(value).width), 0) + fontSize);
   const boxHeight = lines.length * lineHeight + fontSize * 0.7;
-  context.fillStyle = `rgba(0, 0, 0, ${clamp(clip.captionBackgroundOpacity ?? 0.68, 0, 1)})`;
+  context.fillStyle = `rgba(0, 0, 0, ${clamp(clip.captionBackgroundOpacity ?? (graphics && style.card ? 0.72 : graphics ? 0 : 0.68), 0, 1)})`;
   context.roundRect(centerX - boxWidth / 2, centerY - boxHeight / 2, boxWidth, boxHeight, fontSize * 0.3);
   context.fill();
   context.fillStyle = "#fff";
-  lines.forEach((value, index) => context.fillText(value, centerX, centerY + (index - (lines.length - 1) / 2) * lineHeight));
+  lines.forEach((value, index) => {
+    const lineY = centerY + (index - (lines.length - 1) / 2) * lineHeight;
+    if (graphics && style.outline) {
+      context.lineWidth = Math.max(2, Math.round(fontSize * 0.045));
+      context.strokeStyle = "rgba(0, 0, 0, .9)";
+      context.strokeText(value, centerX, lineY);
+    }
+    context.fillText(value, centerX, lineY);
+  });
   context.restore();
 }
 
@@ -201,20 +297,30 @@ export async function renderCanvasVideoEditor(
     .map(async (clip) => loadRenderItem(clip, sourceMap.get(clip.sourceNodeId as string) as CanvasVideoEditorRenderSource))))
     .filter((item): item is RenderItem => Boolean(item));
   const mediaItems = items.filter((item): item is RenderItem & { element: HTMLMediaElement } => item.element instanceof HTMLMediaElement);
+  // A clone project can contain a reference video with its original audio plus
+  // explicit A1/A2 clips. In that case the video is a picture source only;
+  // routing its embedded audio as well would duplicate the reference ambience.
+  const hasIndependentAudio = state.clips.some((clip) =>
+    (clip.track === "audio" || clip.track === "reference-audio") &&
+    !state.disabledTracks?.includes(clip.track),
+  );
   const canvasStream = canvas.captureStream(Math.max(1, Math.min(60, Math.round(state.fps || 30))));
   let audioContext: AudioContext | undefined;
   let audioDestination: MediaStreamAudioDestinationNode | undefined;
   const audioSources: MediaElementAudioSourceNode[] = [];
-  if (typeof AudioContext !== "undefined" && mediaItems.some((item) => item.clip.track === "audio" || item.clip.track === "video")) {
+  const audioGains = new Map<string, GainNode>();
+  if (typeof AudioContext !== "undefined" && mediaItems.some((item) => item.clip.track === "audio" || item.clip.track === "reference-audio" || item.clip.track === "video")) {
     audioContext = new AudioContext();
     audioDestination = audioContext.createMediaStreamDestination();
     for (const item of mediaItems) {
+      if (hasIndependentAudio && item.clip.track === "video") continue;
       if (state.mutedTracks.includes(item.clip.track) || (item.clip.volume ?? 1) <= 0) continue;
       const mediaSource = audioContext.createMediaElementSource(item.element);
       const gain = audioContext.createGain();
-      gain.gain.value = clamp(item.clip.volume ?? 1, 0, 1);
+      gain.gain.value = videoEditorAudioGain(state, item.clip, 0);
       mediaSource.connect(gain).connect(audioDestination);
       audioSources.push(mediaSource);
+      audioGains.set(item.clip.id, gain);
     }
     audioDestination.stream.getAudioTracks().forEach((track) => canvasStream.addTrack(track));
     await audioContext.resume();
@@ -252,16 +358,39 @@ export async function renderCanvasVideoEditor(
       const desired = Math.min(sourceTimeForClip(item.clip, time), Math.max(0, sourceDuration - 0.01));
       if (Math.abs(media.currentTime - desired) > 0.35) media.currentTime = desired;
       media.playbackRate = item.clip.playbackRate || 1;
+      audioGains.get(item.clip.id)?.gain.setTargetAtTime(videoEditorAudioGain(state, item.clip, time), audioContext?.currentTime || 0, 0.025);
       if (media.paused) void media.play().catch(() => undefined);
     }
   };
   const draw = (time: number) => {
     context.fillStyle = "#000";
     context.fillRect(0, 0, width, height);
-    items.filter((item) => item.clip.track === "video" && clipIsActive(item.clip, time)).forEach((item) => drawVisual(context, item, width, height));
+    const videoClips = state.clips.filter((clip) => clip.track === "video").sort((a, b) => a.start - b.start);
+    const currentClip = videoClips.find((clip) => clipIsActive(clip, time));
+    const currentItem = currentClip ? items.find((item) => item.clip.id === currentClip.id) : undefined;
+    const previousClip = currentClip ? videoClips[videoClips.indexOf(currentClip) - 1] : undefined;
+    const previousItem = previousClip ? items.find((item) => item.clip.id === previousClip.id) : undefined;
+    drawLayoutBackdrop(context, currentClip?.layout, width, height);
+    const transition = currentClip?.transitionIn;
+    const progress = currentClip ? transitionProgress(currentClip, time) : 1;
+    if (currentItem && previousItem && transition && transition !== "cut" && transition !== "none" && progress < 1) {
+      if (!previousClip || !currentClip) return;
+      const direction = transitionDirection(currentClip);
+      // The previous frame is held at the end of its source while the new
+      // shot enters; this mirrors the server's normalized transition output.
+      drawVisualLayers(context, previousItem, width, height, {
+        opacity: transition === "fade" || transition === "dissolve" ? 1 - progress : 1,
+        motion: videoEditorMotionTransform(previousClip, previousClip.start + previousClip.duration),
+      });
+      if (transition === "wipe") drawVisualLayers(context, currentItem, width, height, { reveal: { direction, progress }, motion: videoEditorMotionTransform(currentClip, time) });
+      else if (transition === "slide") drawVisualLayers(context, currentItem, width, height, { slide: { direction, progress }, motion: videoEditorMotionTransform(currentClip, time) });
+      else drawVisualLayers(context, currentItem, width, height, { opacity: progress, motion: videoEditorMotionTransform(currentClip, time) });
+    } else if (currentItem && currentClip) {
+      drawVisualLayers(context, currentItem, width, height, { motion: videoEditorMotionTransform(currentClip, time) });
+    }
     state.clips
-      .filter((clip) => clip.track === "caption" && !state.disabledTracks?.includes("caption") && clipIsActive(clip, time))
-      .forEach((clip) => drawCaption(context, clip, width, height));
+      .filter((clip) => (clip.track === "caption" || clip.track === "graphics") && !state.disabledTracks?.includes(clip.track) && clipIsActive(clip, time))
+      .forEach((clip) => drawCaption(context, clip, width, height, time));
   };
 
   try {

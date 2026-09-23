@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveFfmpeg } from '../video-trim-service';
-import { parseFfmpegDuration } from './plan';
+import { parseFfmpegDuration, parseSceneChangeTimes } from './plan';
 
 const STREAM_TIMEOUT_MS = 120_000;
 
@@ -47,12 +47,64 @@ export async function probeMediaSeconds(file: string) {
 }
 
 /**
+ * Detect hard scene boundaries locally before asking the vision model to
+ * describe the reference. The model still decides what each shot means, but
+ * it receives real cut timestamps instead of having to infer every edit from a
+ * sparse uniform sample. A detection failure is intentionally non-fatal: a
+ * reference video must still be clonable with uniform sampling.
+ */
+export async function detectSceneChanges(input: string, options: { durationSeconds?: number; threshold?: number; maxChanges?: number } = {}) {
+  const duration = Number(options.durationSeconds);
+  const threshold = Math.min(0.9, Math.max(0.05, Number(options.threshold) || 0.3));
+  const maxChanges = Math.max(1, Math.min(64, Math.round(Number(options.maxChanges) || 32)));
+  const result = await runFfmpegCapture([
+    '-hide_banner', '-loglevel', 'info', '-i', input,
+    '-an', '-vf', `select=gt(scene\\,${threshold.toFixed(2)}),showinfo`,
+    '-f', 'null', '-',
+  ], Math.max(60_000, Number.isFinite(duration) ? Math.round(duration * 4_000) : 120_000));
+  const times = parseSceneChangeTimes(result.stderr, duration, maxChanges);
+  return {
+    times,
+    error: result.code === 0 || times.length ? '' : result.stderr.replace(/\s+/g, ' ').trim().slice(0, 240),
+  };
+}
+
+/**
+ * Normalize the reference audio for the local ASR backend.  Whisper expects
+ * mono 16 kHz PCM; doing this with the same bundled FFmpeg as the rest of the
+ * clone pipeline keeps decoding deterministic across Windows and macOS.
+ */
+export async function extractSpeechAudio(input: string, output: string) {
+  const result = await runFfmpegCapture([
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-i', input,
+    '-map', '0:a:0',
+    '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
+    output,
+  ], 120_000);
+  return result.code === 0 ? output : null;
+}
+
+/** Export the reference music/ambience as one reusable local audio asset. */
+export async function extractReferenceAudioTrack(input: string, output: string) {
+  const result = await runFfmpegCapture([
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-i', input,
+    '-map', '0:a:0',
+    '-vn', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+    '-movflags', '+faststart', output,
+  ], 180_000);
+  return result.code === 0 ? output : null;
+}
+
+/**
  * 按给定时间点抽帧，输出 jpg；单帧失败只是少一帧，不打断整条管线。
  * 一帧都没抽到时会带上 ffmpeg 的报错：否则「拆不出画面」这条降级根本没法排查。
  */
 export async function extractFrameFiles(input: string, times: number[], outDir: string) {
   await mkdir(outDir, { recursive: true });
   const files: string[] = [];
+  const successfulTimes: number[] = [];
   let failure = '';
   for (const [index, time] of times.entries()) {
     const out = path.join(outDir, `frame-${String(index).padStart(2, '0')}.jpg`);
@@ -66,8 +118,36 @@ export async function extractFrameFiles(input: string, times: number[], outDir: 
       '-q:v', '4',
       out,
     ], 60_000);
-    if (result.code === 0) files.push(out);
+    if (result.code === 0) {
+      files.push(out);
+      successfulTimes.push(Math.max(0, Number(time) || 0));
+    }
     else failure = failure || result.stderr.replace(/\s+/g, ' ').trim().slice(0, 200);
   }
-  return { files, error: files.length ? '' : failure };
+  return { files, times: successfulTimes, error: files.length ? '' : failure };
+}
+
+/**
+ * Export the exact reference-video window used by one generated shot.
+ * Keeping this as a real video (rather than only a text description) lets
+ * providers that support video references preserve movement, cadence and
+ * graphics from the corresponding source interval.
+ */
+export async function extractVideoSegment(input: string, start: number, end: number, output: string) {
+  const safeStart = Math.max(0, Number.isFinite(Number(start)) ? Number(start) : 0);
+  const safeEnd = Math.max(safeStart + 0.1, Number.isFinite(Number(end)) ? Number(end) : safeStart + 0.1);
+  const result = await runFfmpegCapture([
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-ss', safeStart.toFixed(3),
+    '-i', input,
+    '-t', (safeEnd - safeStart).toFixed(3),
+    '-map', '0:v:0',
+    '-an',
+    '-vf', 'scale=min(720\\,iw):-2,fps=24',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart',
+    output,
+  ], 180_000);
+  if (result.code !== 0) throw new Error(`参考镜头片段导出失败：${result.stderr.replace(/\s+/g, ' ').trim().slice(0, 240)}`);
+  return output;
 }

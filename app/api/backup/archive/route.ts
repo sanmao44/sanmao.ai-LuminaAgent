@@ -3,11 +3,14 @@ import path from 'node:path';
 import { isAdminRequest } from '@/lib/auth';
 import { createBackupArchive, extractBackupArchive, sha256, type BackupArchiveEntry } from '@/lib/backup-archive';
 import { decryptBackupPayload, encryptBackupPayload, isEncryptedBackup, validateBackupPassword } from '@/lib/backup-crypto';
-import { getDefaultStoragePath, getStorageRoots } from '@/lib/image-storage';
+import { getDefaultStoragePath } from '@/lib/image-storage';
+import { getDefaultAudioStoragePath } from '@/lib/audio-storage';
+import { getDefaultVideoStoragePath } from '@/lib/video-storage';
 import { createLocalSnapshot } from '@/lib/local-snapshots';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { listInstalledSkillDirs, listSkillFilesForBackup, resolveSkillArchivePath, resolveSkillsDir, shouldSkipSkillPath } from '@/lib/skills';
 import { resolveLocalDataDir, resolveProviderConfigDir } from '@/lib/data-paths';
+import { validateWorkspaceShape } from '@/lib/workspace-format';
 
 export const runtime = 'nodejs';
 
@@ -17,6 +20,8 @@ const statePath = path.join(providerConfigDir, 'state.json');
 const keyPath = path.join(providerConfigDir, 'master.key');
 const maxClientBytes = 80 * 1024 * 1024;
 const maxArchiveBytes = 2 * 1024 * 1024 * 1024;
+const workspacePath = path.join(dataDir, 'workspace.json');
+const DURABLE_DATA_FILES = ['video-tasks.json', 'upscale-tasks.json', 'clone-jobs.json'] as const;
 
 async function readOptional(file: string) {
   try { return await readFile(file); } catch { return Buffer.alloc(0); }
@@ -59,30 +64,61 @@ function fileNameFromPath(file: string) {
   return file.replace(/\\/g, '/').replace(/^\/+/, '').split('/').filter((part) => part && part !== '.' && part !== '..').join('/');
 }
 
+async function appendDirectory(entries: BackupArchiveEntry[], root: string, prefix: string) {
+  const resolvedRoot = path.resolve(root);
+  for (const file of await listFiles(resolvedRoot)) {
+    const relative = fileNameFromPath(path.relative(resolvedRoot, file));
+    if (relative) entries.push({ name: `${prefix}/${relative}`, data: await readFile(file) });
+  }
+}
+
+function isMediaFile(file: string, kind: 'images' | 'videos' | 'audio') {
+  const patterns = {
+    images: /\.(png|jpe?g|webp)$/i,
+    videos: /\.(mp4|webm|mov|m4v|ogv)$/i,
+    audio: /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i,
+  } as const;
+  return patterns[kind].test(file);
+}
+
+async function appendMediaDirectory(entries: BackupArchiveEntry[], root: string, folder: 'images' | 'videos' | 'audio') {
+  const resolvedRoot = path.resolve(root);
+  for (const file of await listFiles(resolvedRoot)) {
+    const relative = fileNameFromPath(path.relative(resolvedRoot, file));
+    if (relative && isMediaFile(relative, folder)) entries.push({ name: `${folder}/${relative}`, data: await readFile(file) });
+  }
+}
+
 async function exportArchive(client: unknown) {
   const stateRaw = await readOptional(statePath);
   const state = stateRaw.length ? validateState(stateRaw) : { schemaVersion: 2, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } };
-  const configuredPath = String(state.settings?.imageStoragePath || '');
+  const configuredImagePath = String(state.settings?.imageStoragePath || '');
+  const configuredVideoPath = String((state.settings as Record<string, unknown>)?.videoStoragePath || '');
   const entries: BackupArchiveEntry[] = [
     { name: 'server/state.json', data: jsonBuffer(state) },
     { name: 'client/client.json', data: jsonBuffer(client || {}) },
   ];
+  const workspace = await readOptional(workspacePath);
+  if (workspace.length) entries.push({ name: 'server/workspace.json', data: workspace });
   const masterKey = await readOptional(keyPath);
   if (masterKey.length) entries.push({ name: 'server/master.key', data: masterKey });
 
   const logFilesOnDisk = (await readdir(dataDir).catch(() => [])).filter((name) => /^generation-logs(?:-\d+)?\.jsonl$/.test(name));
   for (const name of logFilesOnDisk) entries.push({ name: `server/logs/${name}`, data: await readOptional(path.join(dataDir, name)) });
 
-  const seen = new Set<string>();
-  for (const root of getStorageRoots(configuredPath)) {
-    for (const file of await listFiles(root)) {
-      if (!isImageFile(file)) continue;
-      const relative = fileNameFromPath(path.relative(root, file));
-      if (!relative || seen.has(relative)) continue;
-      seen.add(relative);
-      entries.push({ name: `images/${relative}`, data: await readFile(file) });
-    }
+  // Serving can search migration roots, but a portable backup only includes
+  // the active roots. Otherwise an old checkout can silently enlarge the
+  // backup and restore unrelated files.
+  await appendMediaDirectory(entries, configuredImagePath || getDefaultStoragePath(), 'images');
+  await appendMediaDirectory(entries, configuredVideoPath || getDefaultVideoStoragePath(), 'videos');
+  await appendMediaDirectory(entries, getDefaultAudioStoragePath(), 'audio');
+  for (const name of DURABLE_DATA_FILES) {
+    const data = await readOptional(path.join(dataDir, name));
+    if (data.length) entries.push({ name: `server/tasks/${name}`, data });
   }
+  const mcpConfig = await readOptional(path.join(dataDir, 'mcp', 'servers.json'));
+  if (mcpConfig.length) entries.push({ name: 'server/mcp/servers.json', data: mcpConfig });
+  await appendDirectory(entries, path.join(dataDir, 'artifacts'), 'artifacts');
 
   const skillsRoot = resolveSkillsDir();
   let skillCount = 0;
@@ -103,7 +139,13 @@ async function exportArchive(client: unknown) {
     format: 'sanmao-ai-local-backup-archive',
     version: 2,
     exportedAt: new Date().toISOString(),
-    imageCount: seen.size,
+    imageCount: entries.filter((entry) => entry.name.startsWith('images/')).length,
+    videoCount: entries.filter((entry) => entry.name.startsWith('videos/')).length,
+    audioCount: entries.filter((entry) => entry.name.startsWith('audio/')).length,
+    artifactCount: entries.filter((entry) => entry.name.startsWith('artifacts/')).length,
+    includesWorkspace: Boolean(workspace.length),
+    includesMcpConfig: Boolean(mcpConfig.length),
+    portableDirectoryAuthorizations: false,
     skillCount,
     skillFileCount,
     skillOmittedFiles,
@@ -139,13 +181,18 @@ async function restoreArchive(archive: Buffer) {
   manifestEntries(entries, manifest);
   const state = validateState(stateEntry.data);
   const clientEntry = byName.get('client/client.json');
+  const client = clientEntry ? JSON.parse(clientEntry.data.toString('utf8')) as { gallery?: unknown; chatSessions?: unknown; workspace?: unknown } : {};
   if (clientEntry) {
-    const client = JSON.parse(clientEntry.data.toString('utf8')) as { gallery?: unknown; chatSessions?: unknown };
     if (!Array.isArray(client.gallery) || !Array.isArray(client.chatSessions)) throw new Error('备份中的浏览器历史格式无效');
   }
+  const workspaceEntry = byName.get('server/workspace.json');
+  const workspace = client.workspace || (workspaceEntry ? JSON.parse(workspaceEntry.data.toString('utf8')) : null);
+  if (workspace) validateWorkspaceShape(workspace);
   state.settings!.imageStoragePath = '';
+  state.settings!.videoStoragePath = '';
   await mkdir(dataDir, { recursive: true });
   await writeAtomic(statePath, jsonBuffer(state));
+  if (workspace) await writeAtomic(workspacePath, jsonBuffer(workspace));
 
   const restoredLogs = entries.filter((entry) => entry.name.startsWith('server/logs/') && entry.name.endsWith('.jsonl'));
   for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) await rm(path.join(dataDir, name), { force: true });
@@ -166,6 +213,29 @@ async function restoreArchive(archive: Buffer) {
     restoredImages += 1;
   }
 
+  let restoredVideos = 0;
+  const videoRoot = getDefaultVideoStoragePath();
+  for (const entry of entries.filter((value) => value.name.startsWith('videos/'))) {
+    const relative = entry.name.slice('videos/'.length).replace(/\\/g, '/');
+    if (!relative || relative.startsWith('/') || relative.split('/').includes('..') || !/\.(mp4|webm|mov|m4v|ogv)$/i.test(relative)) continue;
+    const target = path.resolve(videoRoot, relative);
+    if (target !== videoRoot && !target.startsWith(`${videoRoot}${path.sep}`)) continue;
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, entry.data);
+    restoredVideos += 1;
+  }
+  let restoredAudio = 0;
+  const audioRoot = getDefaultAudioStoragePath();
+  for (const entry of entries.filter((value) => value.name.startsWith('audio/'))) {
+    const relative = entry.name.slice('audio/'.length).replace(/\\/g, '/');
+    if (!relative || relative.startsWith('/') || relative.split('/').includes('..') || !/\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i.test(relative)) continue;
+    const target = path.resolve(audioRoot, relative);
+    if (target !== audioRoot && !target.startsWith(`${audioRoot}${path.sep}`)) continue;
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, entry.data);
+    restoredAudio += 1;
+  }
+
   const skillsRoot = resolveSkillsDir();
   const restoredSkillIds = new Set<string>();
   let restoredSkillFiles = 0;
@@ -180,7 +250,26 @@ async function restoreArchive(archive: Buffer) {
     restoredSkillIds.add(relative.split('/')[0]);
   }
 
-  return { client: clientEntry ? JSON.parse(clientEntry.data.toString('utf8')) : {}, manifest, restoredImages, restoredSkills: restoredSkillIds.size, restoredSkillFiles, externalMasterKey: Boolean(manifest.externalMasterKey) };
+  for (const entry of entries.filter((value) => value.name.startsWith('server/tasks/'))) {
+    const name = path.basename(entry.name);
+    if (!(DURABLE_DATA_FILES as readonly string[]).includes(name)) continue;
+    await writeAtomic(path.join(dataDir, name), entry.data);
+  }
+  const restoredMcp = byName.get('server/mcp/servers.json');
+  if (restoredMcp) await writeAtomic(path.join(dataDir, 'mcp', 'servers.json'), restoredMcp.data);
+  let restoredArtifacts = 0;
+  const artifactRoot = path.resolve(dataDir, 'artifacts');
+  for (const entry of entries.filter((value) => value.name.startsWith('artifacts/'))) {
+    const relative = entry.name.slice('artifacts/'.length).replace(/\\/g, '/');
+    if (!relative || relative.startsWith('/') || relative.split('/').includes('..')) continue;
+    const target = path.resolve(artifactRoot, relative);
+    if (target !== artifactRoot && !target.startsWith(`${artifactRoot}${path.sep}`)) continue;
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, entry.data);
+    restoredArtifacts += 1;
+  }
+
+  return { client, manifest, restoredImages, restoredVideos, restoredAudio, restoredArtifacts, restoredWorkspace: Boolean(workspace), restoredSkills: restoredSkillIds.size, restoredSkillFiles, externalMasterKey: Boolean(manifest.externalMasterKey) };
 }
 
 export async function POST(request: Request) {

@@ -6,6 +6,8 @@ import ts from 'typescript';
 
 const MODULES = [
   'lib/data-paths',
+  'lib/agent/context-budget',
+  'lib/agent/browser-metrics',
   'lib/agent/tool-loop',
   'lib/agent/progress',
   'lib/agent-client',
@@ -136,6 +138,14 @@ export async function importTwiceByPath(entry) {
 /** 通用工具循环：纯逻辑、无依赖，单独跑真实实现。 */
 export async function buildToolLoopModule() {
   return load('lib/agent/tool-loop.mjs');
+}
+
+export async function buildContextBudgetModule() {
+  return load('lib/agent/context-budget.mjs');
+}
+
+export async function buildBrowserMetricsModule() {
+  return load('lib/agent/browser-metrics.mjs');
 }
 
 /** 长任务进度账本：落盘、TTL 与淘汰规则都要跑真实实现。 */

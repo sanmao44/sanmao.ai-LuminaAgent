@@ -45,7 +45,7 @@ import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
-import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
+import { bootstrapWorkspace, collectWorkspaceSnapshot, restoreWorkspaceSnapshot, startWorkspaceSync } from '@/lib/workspace';
 import { readWorkspaceContext } from '@/lib/workspace-context';
 import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
@@ -7099,6 +7099,7 @@ export default function Page() {
                 if (value !== null) preferences[key] = value;
             }
             const client = {
+                workspace: await collectWorkspaceSnapshot(),
                 gallery: await normalizeGalleryForBackup(await listGallery()),
                 chatSessions: await listChatSessions(),
                 preferences
@@ -7135,6 +7136,9 @@ export default function Page() {
         if (!client || !Array.isArray(client.gallery) || !Array.isArray(client.chatSessions)) throw new Error('备份缺少浏览器历史数据');
         await replaceGalleryItems(client.gallery);
         await replaceChatSessions(client.chatSessions);
+        if (client.workspace) {
+            await restoreWorkspaceSnapshot(client.workspace);
+        }
         const preferenceKeys = [
             'sanmao-theme',
             'sanmao-success-sound',
@@ -8728,7 +8732,10 @@ export default function Page() {
         setAngleResultToast(null);
     }
     async function prepareAgentMemory(sessionId, context, model, signal) {
-        const memory = await prepareConversationMemory(context, chatMemoryRef.current.get(sessionId), async (summary, transcript)=>{
+        const previous = chatMemoryRef.current.get(sessionId);
+        let memory;
+        try {
+            memory = await prepareConversationMemory(context, previous, async (summary, transcript)=>{
             const response = await fetch('/api/agent/memory', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -8738,9 +8745,14 @@ export default function Page() {
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || '整理对话记忆失败，请重试');
             return result.summary;
-        }, signal);
+            }, signal);
+        } catch (error) {
+            if (signal.aborted) throw error;
+            const safePrevious = validConversationMemory(previous, context.filter((message)=>!message.pending));
+            console.warn('[Agent] 对话摘要失败，降级为近期消息上下文', error);
+            return safePrevious?.summary || '';
+        }
         signal.throwIfAborted();
-        const previous = chatMemoryRef.current.get(sessionId);
         chatMemoryRef.current.set(sessionId, memory);
         try {
             await persistAgentSession(sessionId, pendingChatMessagesRef.current.get(sessionId) || context);

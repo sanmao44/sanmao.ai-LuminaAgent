@@ -28,11 +28,60 @@ export type CanvasVideoClipState = {
   y?: number;
   opacity?: number;
 };
-export type CanvasVideoEditorTrack = 'video' | 'audio' | 'caption';
+export type CanvasVideoEditorTrack = 'video' | 'audio' | 'reference-audio' | 'caption' | 'graphics';
 export type CanvasVideoEditorClipType = 'image' | 'video' | 'audio' | 'caption';
+export type CanvasVideoEditorTransition = 'cut' | 'fade' | 'dissolve' | 'wipe' | 'slide' | 'none';
+export type CanvasVideoEditorMotionPath = 'none' | 'pan-left' | 'pan-right' | 'pan-up' | 'pan-down' | 'zoom-in' | 'zoom-out';
+/** Normalized text box recovered from a reference frame (top-left origin). */
+export type CanvasVideoEditorTextBox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+/** A timed token inside a caption clip, relative to that clip's start. */
+export type CanvasVideoEditorWord = {
+  start: number;
+  end: number;
+  text: string;
+};
+
+/**
+ * A small, deterministic layout contract recovered from a reference shot.
+ * It describes composition rather than generated pixels so browser preview,
+ * browser export, and FFmpeg can consume the same data.
+ */
+export type CanvasVideoEditorLayoutMode = 'full' | 'split-horizontal' | 'split-vertical' | 'picture-in-picture' | 'card';
+export type CanvasVideoEditorLayoutRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  radius?: number;
+};
+export type CanvasVideoEditorLayout = {
+  mode: CanvasVideoEditorLayoutMode;
+  backgroundColor?: string;
+  surfaceColor?: string;
+  accentColor?: string;
+  gap?: number;
+  padding?: number;
+  radius?: number;
+  primary?: CanvasVideoEditorLayoutRegion;
+  secondary?: CanvasVideoEditorLayoutRegion;
+};
 
 export type CanvasVideoEditorClip = {
   id: string;
+  /** Original semantic clip id when a clone timeline is opened in the editor. */
+  sourceClipId?: string;
+  /** Original clone shot index used by the server-side re-assembler. */
+  shotIndex?: number;
+  /** Reusable clone visual component this clip instantiates, when present. */
+  componentId?: string;
+  /** Semantic clone role (performance, B-roll, graphic, transition, ...). */
+  role?: string;
   sourceNodeId?: string;
   track: CanvasVideoEditorTrack;
   type: CanvasVideoEditorClipType;
@@ -42,10 +91,20 @@ export type CanvasVideoEditorClip = {
   duration: number;
   sourceOffset: number;
   text?: string;
+  /** Word-level caption timing. Times are relative to this clip's start. */
+  words?: CanvasVideoEditorWord[];
   /** Explicit caption font size in output pixels. */
   fontSize?: number;
   /** Caption background opacity, from transparent to opaque. */
   captionBackgroundOpacity?: number;
+  /** Semantic role for text overlays; graphics are kept separate from narration captions. */
+  textRole?: 'caption' | 'graphics';
+  /** Original visual-card style hint retained for a later renderer/editor pass. */
+  graphicsStyle?: string;
+  /** Normalized visual-card text box, kept separate from the manual x/y nudge. */
+  textBox?: CanvasVideoEditorTextBox;
+  /** Explicit composition recovered from the reference shot. */
+  layout?: CanvasVideoEditorLayout;
   scale?: number;
   opacity?: number;
   x?: number;
@@ -54,6 +113,12 @@ export type CanvasVideoEditorClip = {
   playbackRate?: 0.5 | 1 | 1.5 | 2;
   fit?: 'contain' | 'cover';
   fadeIn?: number;
+  /** Transition applied when this video clip enters after the previous V1 clip. */
+  transitionIn?: CanvasVideoEditorTransition;
+  transitionDuration?: number;
+  transitionDirection?: 'left' | 'right' | 'up' | 'down';
+  /** Normalized motion cue recovered from the reference shot analysis. */
+  motionPath?: CanvasVideoEditorMotionPath;
 };
 
 export type CanvasVideoEditorState = {
@@ -65,6 +130,8 @@ export type CanvasVideoEditorState = {
   resolution?: "720p" | "1080p" | "2K" | "4K";
   clips: CanvasVideoEditorClip[];
   mutedTracks: CanvasVideoEditorTrack[];
+  /** Lower reference ambience/music while the clone voice track is speaking. */
+  referenceAudioDucking?: boolean;
   /** Tracks hidden from preview and export. Missing means every track is enabled. */
   disabledTracks?: CanvasVideoEditorTrack[];
 };

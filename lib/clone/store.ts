@@ -45,7 +45,7 @@ export async function createCloneJob(input: CreateCloneJobInput) {
     ...(input.modelIds ? { modelIds: input.modelIds } : {}),
     warnings: [...input.warnings],
     shots: [],
-    timeline: { duration: 0, fps: 30, aspect: input.options.aspect, clips: [] },
+    timeline: { duration: 0, fps: 30, aspect: input.options.aspect, clips: [], tracks: [] },
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   };
   return store.mutate((tasks) => {

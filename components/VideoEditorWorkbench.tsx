@@ -5,6 +5,7 @@ import type {
   CanvasDocument,
   CanvasNode,
   CanvasVideoEditorClip,
+  CanvasVideoEditorLayoutMode,
   CanvasVideoEditorState,
   CanvasVideoEditorTrack,
 } from "@/lib/canvas/types";
@@ -21,6 +22,10 @@ import {
   toggleVideoEditorTrackMute,
   trimVideoEditorClip,
   updateVideoEditorClip,
+  videoEditorAudioGain,
+  videoEditorLayoutRegion,
+  videoEditorMotionTransform,
+  videoEditorTextBox,
 } from "@/lib/canvas/video-editor";
 
 type VideoEditorWorkbenchProps = {
@@ -37,7 +42,9 @@ type PreviewMoveState = { clipId: string; startX: number; startY: number; pointe
 const TRACKS: Array<{ id: CanvasVideoEditorTrack; label: string; icon: string }> = [
   { id: "video", label: "视频 · V1", icon: "▶" },
   { id: "audio", label: "音频 · A1", icon: "♫" },
+  { id: "reference-audio", label: "参考环境音 / 音乐 · A2", icon: "♫" },
   { id: "caption", label: "字幕", icon: "T" },
+  { id: "graphics", label: "画面字卡", icon: "▣" },
 ];
 
 const MIN_CLIP_DURATION = 0.05;
@@ -99,6 +106,26 @@ function projectDimensions(aspect: string, resolution: string | undefined) {
   return { width, height };
 }
 
+function graphicsStyleFlags(value: string | undefined) {
+  const style = String(value || "").toLocaleLowerCase();
+  return {
+    card: /card|box|solid|label|tag|banner|色块|卡片|标签|底板/u.test(style),
+    outline: /outline|outlined|stroke|描边|空心/u.test(style),
+  };
+}
+
+function graphicsPreviewPresentation(clip: CanvasVideoEditorClip, previewFontSize: number): CSSProperties {
+  const flags = graphicsStyleFlags(clip.graphicsStyle);
+  const backgroundOpacity = clip.captionBackgroundOpacity ?? (flags.card ? 0.72 : 0);
+  return {
+    background: `rgba(0, 0, 0, ${backgroundOpacity})`,
+    fontWeight: 850,
+    letterSpacing: flags.card ? "0.04em" : "0.02em",
+    textShadow: flags.outline ? "none" : "0 2px 10px rgba(0,0,0,.72)",
+    WebkitTextStroke: flags.outline ? `${Math.max(1, Math.round(previewFontSize * 0.045))}px rgba(0,0,0,.9)` : undefined,
+  };
+}
+
 export default function VideoEditorWorkbench({ node, document, onClose, onCreate }: VideoEditorWorkbenchProps) {
   const persistedState = useMemo(() => normalizeVideoEditorState(node.data.videoEditor), [node.data.videoEditor]);
   const [draft, setDraft] = useState(persistedState);
@@ -123,6 +150,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
   const [previewBounds, setPreviewBounds] = useState({ width: 0, viewportWidth: 0, viewportHeight: 0 });
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRefs = useRef(new Map<string, HTMLAudioElement>());
   const draftRef = useRef(persistedState);
   const previewColumnRef = useRef<HTMLDivElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
@@ -133,10 +161,11 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
   const selectedClip = draft.clips.find((clip) => clip.id === selectedClipId) || null;
   const activeClips = clipsAtTime(draft, currentTime);
   const activeVideo = activeClips.find((clip) => clip.track === "video");
-  const activeAudio = activeClips.find((clip) => clip.track === "audio");
+  const activeAudio = activeClips.find((clip) => clip.track === "audio" || clip.track === "reference-audio");
   const activeCaption = activeClips.filter((clip) => clip.track === "caption").at(-1);
+  const activeGraphics = activeClips.filter((clip) => clip.track === "graphics").at(-1);
   const previewNode = activeVideo ? sourceNodeForClip(document, activeVideo) : undefined;
-  const audioNode = activeAudio ? sourceNodeForClip(document, activeAudio) : undefined;
+  const activeAudioClips = activeClips.filter((clip) => clip.track === "audio" || clip.track === "reference-audio");
   const videoSourceAvailable = draft.clips.some((clip) => {
     const source = sourceNodeForClip(document, clip);
     return clip.track === "video" && !draft.disabledTracks?.includes("video") && source?.type === "media" && (source.data.kind === "video" || source.data.kind === "image") && Boolean(source.data.url);
@@ -219,28 +248,40 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
         // be synchronized again on the next render once the element is ready.
       }
       video.playbackRate = playbackRate * (transportRate > 0 ? transportRate : 1);
-      video.volume = draft.mutedTracks.includes("video") ? 0 : clamp(activeVideo.volume ?? 1, 0, 1);
+      // A reference-video clip may carry the original soundtrack, but clone
+      // projects expose that sound as the explicit A2 track. Keep V1 visual
+      // only whenever A1/A2 is present so preview matches the exported mix.
+      video.volume = draft.mutedTracks.includes("video") || activeAudioClips.length > 0
+        ? 0
+        : clamp(activeVideo.volume ?? 1, 0, 1);
       if (playing && transportRate > 0) void video.play().catch(() => setPlaying(false));
       else video.pause();
     } else {
       video?.pause();
     }
-    const audio = audioRef.current;
-    if (audio && activeAudio) {
-      const nextTime = Math.max(0, currentTime - activeAudio.start + activeAudio.sourceOffset);
+    const activeIds = new Set(activeAudioClips.map((clip) => clip.id));
+    const primaryAudio = activeAudioClips[0];
+    if (audioRef.current && primaryAudio) audioRefs.current.set(primaryAudio.id, audioRef.current);
+    audioRefs.current.forEach((audio, id) => {
+      const clip = activeAudioClips.find((item) => item.id === id);
+      if (!clip) {
+        audio.pause();
+        audioRefs.current.delete(id);
+        return;
+      }
+      const nextTime = Math.max(0, currentTime - clip.start + clip.sourceOffset);
       try {
         if (Math.abs(audio.currentTime - nextTime) > 0.12) audio.currentTime = nextTime;
       } catch {
         // Ignore transient media state errors while an audio source is loading.
       }
-      audio.playbackRate = (activeAudio.playbackRate || 1) * (transportRate > 0 ? transportRate : 1);
-      audio.volume = draft.mutedTracks.includes("audio") ? 0 : clamp(activeAudio.volume ?? 1, 0, 1);
+      audio.playbackRate = (clip.playbackRate || 1) * (transportRate > 0 ? transportRate : 1);
+      audio.volume = draft.mutedTracks.includes(clip.track) ? 0 : videoEditorAudioGain(draft, clip, currentTime);
       if (playing && transportRate > 0) void audio.play().catch(() => setPlaying(false));
       else audio.pause();
-    } else {
-      audio?.pause();
-    }
-  }, [activeAudio, activeVideo, currentTime, draft.mutedTracks, playing, transportRate]);
+    });
+    if (!activeIds.size) audioRefs.current.forEach((audio) => audio.pause());
+  }, [activeAudioClips, activeVideo, currentTime, draft.mutedTracks, playing, transportRate]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -370,16 +411,55 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
       background: `rgba(0, 0, 0, ${activeCaption.captionBackgroundOpacity ?? 0.68})`,
     }
     : {};
+  const graphicsPreviewFontSize = Math.max(10, Math.round((activeGraphics?.fontSize || 48) * Math.max(0.25, (Number.parseFloat(String(previewFrameStyle.width || 0)) || 0) / projectSize.width)));
+  const activeGraphicsTextBox = activeGraphics ? videoEditorTextBox(activeGraphics) : undefined;
+  const graphicsPreviewStyle: CSSProperties = activeGraphics
+    ? {
+      ...(activeGraphicsTextBox
+        ? {
+          left: `${(activeGraphicsTextBox.x + activeGraphicsTextBox.width / 2) * 100}%`,
+          top: `${(activeGraphicsTextBox.y + activeGraphicsTextBox.height / 2) * 100}%`,
+          width: `${activeGraphicsTextBox.width * 100}%`,
+          maxWidth: `${activeGraphicsTextBox.width * 100}%`,
+          transform: "translate(-50%, -50%)",
+        }
+        : {
+          left: `${50 + (activeGraphics.x || 0) * 50}%`,
+          bottom: `${17 + (activeGraphics.y || 0) * 45}%`,
+          maxWidth: "82%",
+          transform: "translate(-50%, 50%)",
+        }),
+      fontSize: `${graphicsPreviewFontSize}px`,
+      opacity: activeGraphics.opacity ?? 1,
+      ...graphicsPreviewPresentation(activeGraphics, graphicsPreviewFontSize),
+    }
+    : {};
+  const activeLayout = activeVideo?.layout;
+  const activeLayoutRegion = activeVideo ? videoEditorLayoutRegion(activeLayout) : { x: 0, y: 0, width: 1, height: 1, radius: 0 };
   // Kept as an explicit mode flag for backwards-compatible diagnostics; transforms now work in both fit modes.
   const previewContainsSource = false;
   const previewStyle: CSSProperties = {
-    transform: previewContainsSource
-      ? "translate(0px, 0px) scale(1)"
-      : `translate(${(activeVideo?.x || 0) * 50}%, ${(activeVideo?.y || 0) * 50}%) scale(${activeVideo?.scale || 1})`,
+    ...(() => {
+      const motion = activeVideo ? videoEditorMotionTransform(activeVideo, currentTime) : { x: 0, y: 0, scale: 1 };
+      return {
+        transform: previewContainsSource
+          ? "translate(0px, 0px) scale(1)"
+          : `translate(${((activeVideo?.x || 0) + motion.x) * 50}%, ${((activeVideo?.y || 0) + motion.y) * 50}%) scale(${(activeVideo?.scale || 1) * motion.scale})`,
+      };
+    })(),
     transformOrigin: "center center",
     opacity: activeVideo?.opacity ?? 1,
     objectFit: activeVideo?.fit || "contain",
+    position: "absolute",
+    left: `${activeLayoutRegion.x * 100}%`,
+    top: `${activeLayoutRegion.y * 100}%`,
+    width: `${activeLayoutRegion.width * 100}%`,
+    height: `${activeLayoutRegion.height * 100}%`,
+    borderRadius: `${activeLayoutRegion.radius * 100}%`,
   };
+  const previewLayoutStyle: CSSProperties = activeLayout
+    ? { background: activeLayout.backgroundColor || "#000" }
+    : {};
 
   const seek = (time: number, clearSelection = false) => {
     setPlaying(false);
@@ -405,7 +485,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
   const splitCandidate = (() => {
     if (selectedClip && currentTime > selectedClip.start + MIN_CLIP_DURATION && currentTime < clipEnd(selectedClip) - MIN_CLIP_DURATION) return selectedClip;
     const active = draft.clips.find((clip) => clip.track === "video" && currentTime > clip.start + MIN_CLIP_DURATION && currentTime < clipEnd(clip) - MIN_CLIP_DURATION);
-    return active || draft.clips.find((clip) => clip.track === "audio" && currentTime > clip.start + MIN_CLIP_DURATION && currentTime < clipEnd(clip) - MIN_CLIP_DURATION) || null;
+    return active || draft.clips.find((clip) => (clip.track === "audio" || clip.track === "reference-audio") && currentTime > clip.start + MIN_CLIP_DURATION && currentTime < clipEnd(clip) - MIN_CLIP_DURATION) || null;
   })();
 
   const splitSelected = () => {
@@ -723,23 +803,37 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
 
         <div className="canvas-video-editor-body">
           <div className="canvas-video-editor-preview-column" ref={previewColumnRef}>
-            <div className="canvas-video-editor-preview" style={previewFrameStyle} aria-label="视频剪辑预览" onPointerDown={beginPreviewMove} onWheel={adjustPreviewScale}>
+            <div className="canvas-video-editor-preview" style={{ ...previewFrameStyle, ...previewLayoutStyle }} aria-label="视频剪辑预览" onPointerDown={beginPreviewMove} onWheel={adjustPreviewScale}>
               {previewNode?.data.url && previewNode.data.kind === "video" ? <video ref={videoRef} src={String(previewNode.data.url)} playsInline preload="metadata" style={previewStyle} onTimeUpdate={(event) => { if (!playing || transportRate < 0 || !activeVideo) return; const playbackRate = activeVideo.playbackRate || 1; const sourceElapsed = (event.currentTarget.currentTime - activeVideo.sourceOffset) / playbackRate; setCurrentTime(clamp(activeVideo.start + sourceElapsed / Math.max(1, transportRate), activeVideo.start, clipEnd(activeVideo))); }} /> : previewNode?.data.url && previewNode.data.kind === "image" ? <img src={String(previewNode.data.url)} alt={String(previewNode.data.name || "视频画面")} style={previewStyle} /> : <div className="canvas-video-editor-preview-empty"><span>✂</span><b>等待视频素材</b><small>连接一个视频节点后即可裁剪和创建新片段</small></div>}
               {activeCaption?.text && <div className="canvas-video-editor-caption-preview" style={captionPreviewStyle}>{activeCaption.text}</div>}
+              {activeGraphics?.text && <div className="canvas-video-editor-caption-preview canvas-video-editor-graphics-preview" style={graphicsPreviewStyle}>{activeGraphics.text}</div>}
               <span className="canvas-video-editor-timecode">{timecodeLabel(currentTime, true)} / {timecodeLabel(duration, true)}</span>
             </div>
             <div className="canvas-video-editor-playbar" style={previewPlaybarStyle}><button type="button" onClick={() => seek(0)} title="回到开头（Home）" aria-label="回到开头">|&lt;</button><button type="button" className="primary" onClick={togglePlayback} title={playing ? "暂停（K / 空格）" : "播放（空格）"} aria-label={playing ? "暂停" : "播放"}>{playing ? "Ⅱ" : "▶"}</button><button type="button" onClick={() => seek(duration)} title="跳到结尾（End）" aria-label="跳到结尾">&gt;|</button><input type="range" min="0" max={duration} step="0.01" value={Math.min(currentTime, duration)} onChange={(event) => seek(Number(event.target.value))} aria-label="播放头位置"/><output>{timecodeLabel(currentTime, true)}</output><span className="canvas-video-editor-transport-hint">J {transportRate < 0 ? `${Math.abs(transportRate)}×` : "倒放"} · K 停止 · L {transportRate > 0 && playing ? `${transportRate}×` : "正放"}</span></div>
           </div>
-          {audioNode?.data.url && <audio ref={audioRef} className="canvas-video-editor-audio-source" src={String(audioNode.data.url)} preload="metadata" aria-hidden="true" />}
+          {(() => {
+            const clip = activeAudioClips[0];
+            const source = clip ? sourceNodeForClip(document, clip) : undefined;
+            return clip && source?.data.url ? <audio ref={audioRef} key={clip.id} className="canvas-video-editor-audio-source" data-track={clip.track} src={String(source.data.url)} preload="metadata" aria-hidden="true" /> : null;
+          })()}
+          {activeAudioClips.slice(1).map((clip) => {
+            const source = sourceNodeForClip(document, clip);
+            if (!source?.data.url) return null;
+            return <audio key={clip.id} ref={(element) => { if (element) audioRefs.current.set(clip.id, element); else audioRefs.current.delete(clip.id); }} className="canvas-video-editor-audio-source" data-track={clip.track} src={String(source.data.url)} preload="metadata" aria-hidden="true" />;
+          })}
 
           <aside className="canvas-video-editor-inspector">
             <div className="canvas-video-editor-inspector-head"><b>检查器</b><small>{selectedClip ? clipLabel(selectedClip) : "剪辑草稿"}</small></div>
             {selectedClip ? <div className="canvas-video-editor-fields">
               <label><span>名称</span><input value={selectedClip.name} onChange={(event) => setClipPatch({ name: event.target.value })} /></label>
-              {selectedClip.track === "caption" && <label><span>字幕</span><textarea value={selectedClip.text || ""} onChange={(event) => setClipPatch({ text: event.target.value })} /></label>}
+              {(selectedClip.track === "caption" || selectedClip.track === "graphics") && <label><span>{selectedClip.track === "graphics" ? "画面字卡" : "字幕"}</span><textarea value={selectedClip.text || ""} onChange={(event) => setClipPatch({ text: event.target.value })} /></label>}
               <div className="canvas-video-editor-field-grid"><label><span>开始时间</span><output>{timecodeLabel(selectedClip.start, true)}</output></label><label><span>结束时间</span><output>{timecodeLabel(clipEnd(selectedClip), true)}</output></label><label><span>时长</span><output>{timecodeLabel(selectedClip.duration, true)}</output></label><label><span>源起点</span><output>{timecodeLabel(selectedClip.sourceOffset, true)}</output></label></div>
-              {selectedClip.track !== "caption" && <label className="canvas-video-editor-range-field"><span>音量</span><div><input aria-label="音量" type="range" min="0" max="1" step="0.05" value={Math.min(1, selectedClip.volume ?? 1)} onChange={(event) => setClipPatch({ volume: Number(event.target.value) })} /><output>{Math.round(Math.min(1, selectedClip.volume ?? 1) * 100)}%</output></div></label>}
+              {selectedClip.track !== "caption" && selectedClip.track !== "graphics" && <label className="canvas-video-editor-range-field"><span>音量</span><div><input aria-label="音量" type="range" min="0" max="1" step="0.05" value={Math.min(1, selectedClip.volume ?? 1)} onChange={(event) => setClipPatch({ volume: Number(event.target.value) })} /><output>{Math.round(Math.min(1, selectedClip.volume ?? 1) * 100)}%</output></div></label>}
               {selectedClip.track === "caption" && <div className="canvas-video-editor-caption-settings"><div className="canvas-video-editor-section-title"><b>字幕样式</b><small>可直接拖动预览调整位置</small></div><label className="canvas-video-editor-range-field"><span>字号</span><div><input aria-label="字幕字号" type="range" min="20" max="120" step="1" value={selectedClip.fontSize ?? 42} onChange={(event) => setClipPatch({ fontSize: Number(event.target.value) })} /><output>{selectedClip.fontSize ?? 42}px</output></div></label><label className="canvas-video-editor-range-field"><span>背景</span><div><input aria-label="字幕背景透明度" type="range" min="0" max="1" step="0.05" value={selectedClip.captionBackgroundOpacity ?? 0.68} onChange={(event) => setClipPatch({ captionBackgroundOpacity: Number(event.target.value) })} /><output>{Math.round((selectedClip.captionBackgroundOpacity ?? 0.68) * 100)}%</output></div></label><label className="canvas-video-editor-range-field"><span>X 位置</span><div><input aria-label="字幕 X 位置" type="range" min="-1" max="1" step="0.01" value={selectedClip.x ?? 0} onChange={(event) => setClipPatch({ x: Number(event.target.value) })} /><output>{(selectedClip.x ?? 0).toFixed(2)}</output></div></label><label className="canvas-video-editor-range-field"><span>Y 位置</span><div><input aria-label="字幕 Y 位置" type="range" min="-1" max="1" step="0.01" value={selectedClip.y ?? 0.35} onChange={(event) => setClipPatch({ y: Number(event.target.value) })} /><output>{(selectedClip.y ?? 0.35).toFixed(2)}</output></div></label><label className="canvas-video-editor-range-field"><span>不透明度</span><div><input aria-label="字幕不透明度" type="range" min="0" max="1" step="0.05" value={selectedClip.opacity ?? 1} onChange={(event) => setClipPatch({ opacity: Number(event.target.value) })} /><output>{Math.round((selectedClip.opacity ?? 1) * 100)}%</output></div></label><div className="canvas-video-editor-choice"><span>位置预设</span><div><button type="button" className={(selectedClip.y ?? 0.35) > 0.9 ? "active" : ""} onClick={() => setClipPatch({ y: 1 })}>上</button><button type="button" className={Math.abs((selectedClip.y ?? 0.35) - 0.73) < 0.08 ? "active" : ""} onClick={() => setClipPatch({ y: 0.73 })}>中</button><button type="button" className={(selectedClip.y ?? 0.35) < 0.2 ? "active" : ""} onClick={() => setClipPatch({ y: 0 })}>下</button></div></div><button type="button" className="canvas-video-editor-reset-transform" onClick={() => setClipPatch({ fontSize: 42, captionBackgroundOpacity: 0.68, x: 0, y: 0.35, opacity: 1, scale: 1 })}>重置字幕样式</button></div>}
+              {selectedClip.track === "graphics" && <div className="canvas-video-editor-caption-settings canvas-video-editor-graphics-settings"><div className="canvas-video-editor-section-title"><b>画面字卡样式</b><small>独立于口播字幕，可直接拖动预览</small></div><div className="canvas-video-editor-choice"><span>预设</span><div><button type="button" className={!selectedClip.graphicsStyle ? "active" : ""} onClick={() => setClipPatch({ graphicsStyle: "plain" })}>纯文字</button><button type="button" className={graphicsStyleFlags(selectedClip.graphicsStyle).outline ? "active" : ""} onClick={() => setClipPatch({ graphicsStyle: "outlined" })}>描边</button><button type="button" className={graphicsStyleFlags(selectedClip.graphicsStyle).card ? "active" : ""} onClick={() => setClipPatch({ graphicsStyle: "card", captionBackgroundOpacity: selectedClip.captionBackgroundOpacity ?? 0.72 })}>色块卡</button></div></div><label className="canvas-video-editor-range-field"><span>字号</span><div><input aria-label="画面字卡字号" type="range" min="20" max="160" step="1" value={selectedClip.fontSize ?? 48} onChange={(event) => setClipPatch({ fontSize: Number(event.target.value) })} /><output>{selectedClip.fontSize ?? 48}px</output></div></label><label className="canvas-video-editor-range-field"><span>底板透明度</span><div><input aria-label="画面字卡底板透明度" type="range" min="0" max="1" step="0.05" value={selectedClip.captionBackgroundOpacity ?? 0} onChange={(event) => setClipPatch({ captionBackgroundOpacity: Number(event.target.value) })} /><output>{Math.round((selectedClip.captionBackgroundOpacity ?? 0) * 100)}%</output></div></label><label className="canvas-video-editor-range-field"><span>缩放</span><div><input aria-label="画面字卡缩放" type="range" min="0.5" max="2.5" step="0.05" value={selectedClip.scale ?? 1} onChange={(event) => setClipPatch({ scale: Number(event.target.value) })} /><output>{Math.round((selectedClip.scale ?? 1) * 100)}%</output></div></label><label className="canvas-video-editor-range-field"><span>X 位置</span><div><input aria-label="画面字卡 X 位置" type="range" min="-1" max="1" step="0.01" value={selectedClip.x ?? 0} onChange={(event) => setClipPatch({ x: Number(event.target.value) })} /><output>{(selectedClip.x ?? 0).toFixed(2)}</output></div></label><label className="canvas-video-editor-range-field"><span>Y 位置</span><div><input aria-label="画面字卡 Y 位置" type="range" min="-1" max="1" step="0.01" value={selectedClip.y ?? 0.73} onChange={(event) => setClipPatch({ y: Number(event.target.value) })} /><output>{(selectedClip.y ?? 0.73).toFixed(2)}</output></div></label><label className="canvas-video-editor-range-field"><span>不透明度</span><div><input aria-label="画面字卡不透明度" type="range" min="0" max="1" step="0.05" value={selectedClip.opacity ?? 1} onChange={(event) => setClipPatch({ opacity: Number(event.target.value) })} /><output>{Math.round((selectedClip.opacity ?? 1) * 100)}%</output></div></label><button type="button" className="canvas-video-editor-reset-transform" onClick={() => setClipPatch({ graphicsStyle: "plain", fontSize: 48, captionBackgroundOpacity: 0, scale: 1, x: 0, y: 0.73, opacity: 1 })}>重置字卡样式</button></div>}
+              {selectedClip.track === "video" && selectedClip.layout && <div className="canvas-video-editor-transform canvas-video-editor-layout-settings"><div className="canvas-video-editor-section-title"><b>参考构图</b><small>布局与最终成片保持一致，可继续调整素材区域</small></div><div className="canvas-video-editor-choice"><span>版式</span><div>{(["full", "split-horizontal", "split-vertical", "picture-in-picture", "card"] as CanvasVideoEditorLayoutMode[]).map((mode) => <button type="button" key={mode} className={selectedClip.layout?.mode === mode ? "active" : ""} onClick={() => setClipPatch({ layout: { ...(selectedClip.layout || { mode: "full" }), mode } })}>{mode === "full" ? "全画面" : mode === "split-horizontal" ? "左右分栏" : mode === "split-vertical" ? "上下分区" : mode === "picture-in-picture" ? "画中画" : "卡片"}</button>)}</div></div><label className="canvas-video-editor-range-field"><span>内边距</span><div><input aria-label="参考构图内边距" type="range" min="0" max="0.2" step="0.01" value={selectedClip.layout.padding ?? 0.06} onChange={(event) => setClipPatch({ layout: { ...selectedClip.layout!, padding: Number(event.target.value) } })} /><output>{Math.round((selectedClip.layout.padding ?? 0.06) * 100)}%</output></div></label><label className="canvas-video-editor-range-field"><span>圆角</span><div><input aria-label="参考构图圆角" type="range" min="0" max="0.2" step="0.01" value={selectedClip.layout.radius ?? 0} onChange={(event) => setClipPatch({ layout: { ...selectedClip.layout!, radius: Number(event.target.value) } })} /><output>{Math.round((selectedClip.layout.radius ?? 0) * 100)}%</output></div></label></div>}
+              {selectedClip.track === "video" && selectedClip.start > 0 && <div className="canvas-video-editor-transform canvas-video-editor-transition-settings"><div className="canvas-video-editor-section-title"><b>入场转场</b><small>保留参考片的镜头衔接</small></div><div className="canvas-video-editor-choice"><span>类型</span><div><button type="button" className={!selectedClip.transitionIn || selectedClip.transitionIn === "cut" ? "active" : ""} onClick={() => setClipPatch({ transitionIn: "cut", transitionDuration: 0 })}>硬切</button><button type="button" className={selectedClip.transitionIn === "fade" ? "active" : ""} onClick={() => setClipPatch({ transitionIn: "fade" })}>淡入</button><button type="button" className={selectedClip.transitionIn === "dissolve" ? "active" : ""} onClick={() => setClipPatch({ transitionIn: "dissolve" })}>叠化</button><button type="button" className={selectedClip.transitionIn === "wipe" ? "active" : ""} onClick={() => setClipPatch({ transitionIn: "wipe" })}>擦除</button><button type="button" className={selectedClip.transitionIn === "slide" ? "active" : ""} onClick={() => setClipPatch({ transitionIn: "slide" })}>滑入</button></div></div>{selectedClip.transitionIn && selectedClip.transitionIn !== "cut" && selectedClip.transitionIn !== "none" && <><label className="canvas-video-editor-range-field"><span>时长</span><div><input aria-label="转场时长" type="range" min="0.05" max="2" step="0.01" value={selectedClip.transitionDuration ?? 0.24} onChange={(event) => setClipPatch({ transitionDuration: Number(event.target.value) })} /><output>{(selectedClip.transitionDuration ?? 0.24).toFixed(2)}s</output></div></label><div className="canvas-video-editor-choice"><span>方向</span><div><button type="button" className={(selectedClip.transitionDirection || "left") === "left" ? "active" : ""} onClick={() => setClipPatch({ transitionDirection: "left" })}>左</button><button type="button" className={selectedClip.transitionDirection === "right" ? "active" : ""} onClick={() => setClipPatch({ transitionDirection: "right" })}>右</button><button type="button" className={selectedClip.transitionDirection === "up" ? "active" : ""} onClick={() => setClipPatch({ transitionDirection: "up" })}>上</button><button type="button" className={selectedClip.transitionDirection === "down" ? "active" : ""} onClick={() => setClipPatch({ transitionDirection: "down" })}>下</button></div></div></>}</div>}
+              {selectedClip.track === "video" && <div className="canvas-video-editor-transform canvas-video-editor-motion-settings"><div className="canvas-video-editor-section-title"><b>运动路径</b><small>按参考镜头分析结果插值</small></div><div className="canvas-video-editor-choice"><span>类型</span><div><button type="button" className={!selectedClip.motionPath || selectedClip.motionPath === "none" ? "active" : ""} onClick={() => setClipPatch({ motionPath: "none" })}>静止</button><button type="button" className={selectedClip.motionPath === "pan-left" ? "active" : ""} onClick={() => setClipPatch({ motionPath: "pan-left" })}>左移</button><button type="button" className={selectedClip.motionPath === "pan-right" ? "active" : ""} onClick={() => setClipPatch({ motionPath: "pan-right" })}>右移</button><button type="button" className={selectedClip.motionPath === "zoom-in" ? "active" : ""} onClick={() => setClipPatch({ motionPath: "zoom-in" })}>推近</button><button type="button" className={selectedClip.motionPath === "zoom-out" ? "active" : ""} onClick={() => setClipPatch({ motionPath: "zoom-out" })}>拉远</button></div></div><div className="canvas-video-editor-choice"><span>垂直</span><div><button type="button" className={selectedClip.motionPath === "pan-up" ? "active" : ""} onClick={() => setClipPatch({ motionPath: "pan-up" })}>上移</button><button type="button" className={selectedClip.motionPath === "pan-down" ? "active" : ""} onClick={() => setClipPatch({ motionPath: "pan-down" })}>下移</button></div></div></div>}
               {selectedClip.track === "video" && <><div className="canvas-video-editor-choice"><span>速度</span><div>{([0.5, 1, 1.5, 2] as const).map((rate) => <button type="button" key={rate} className={(selectedClip.playbackRate || 1) === rate ? "active" : ""} onClick={() => setClipPatch({ playbackRate: rate })}>{rate}x</button>)}</div></div><div className="canvas-video-editor-choice"><span>显示方式</span><div><button type="button" className={(selectedClip.fit || "contain") === "contain" ? "active" : ""} onClick={() => setClipPatch({ fit: "contain" })}>适应</button><button type="button" className={selectedClip.fit === "cover" ? "active" : ""} onClick={() => setClipPatch({ fit: "cover" })}>填充</button></div></div><div className="canvas-video-editor-transform"><div className="canvas-video-editor-section-title"><b>画面变换</b><small>拖动预览或调整参数</small></div><label className="canvas-video-editor-range-field"><span>缩放</span><div><input aria-label="素材缩放" type="range" min="0.1" max="4" step="0.05" value={selectedClip.scale ?? 1} onChange={(event) => setClipPatch({ scale: Number(event.target.value) })} /><output>{Math.round((selectedClip.scale ?? 1) * 100)}%</output></div></label><label className="canvas-video-editor-range-field"><span>X 位置</span><div><input aria-label="素材 X 位置" type="range" min="-1" max="1" step="0.01" value={selectedClip.x ?? 0} onChange={(event) => setClipPatch({ x: Number(event.target.value) })} /><output>{(selectedClip.x ?? 0).toFixed(2)}</output></div></label><label className="canvas-video-editor-range-field"><span>Y 位置</span><div><input aria-label="素材 Y 位置" type="range" min="-1" max="1" step="0.01" value={selectedClip.y ?? 0} onChange={(event) => setClipPatch({ y: Number(event.target.value) })} /><output>{(selectedClip.y ?? 0).toFixed(2)}</output></div></label><label className="canvas-video-editor-range-field"><span>不透明度</span><div><input aria-label="素材不透明度" type="range" min="0" max="1" step="0.05" value={selectedClip.opacity ?? 1} onChange={(event) => setClipPatch({ opacity: Number(event.target.value) })} /><output>{Math.round((selectedClip.opacity ?? 1) * 100)}%</output></div></label><button type="button" className="canvas-video-editor-reset-transform" onClick={() => setClipPatch({ scale: 1, x: 0, y: 0, opacity: 1 })}>重置变换</button></div></>}
               <div className="canvas-video-editor-inspector-actions"><button type="button" onClick={splitSelected} disabled={!canSplitSelected} title="在播放头处分割">✂ 分割</button><button type="button" className="danger" onClick={deleteSelected} title="删除片段">删除</button></div>
             </div> : <div className="canvas-video-editor-inspector-empty"><b>未选择片段</b><small>点击时间轴中的片段查看属性，或点击空白查看项目状态。</small><div><span>项目时长</span><b>{timecodeLabel(duration, true)}</b></div><div><span>视频片段</span><b>{draft.clips.filter((clip) => clip.track === "video").length} 个</b></div></div>}
@@ -755,6 +849,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
               <button type="button" className={`canvas-video-editor-snap${snapEnabled ? " active" : ""}`} onClick={() => setSnapEnabled((value) => !value)} title="切换时间线吸附（拖动片段时）">吸附</button>
               <label className="canvas-video-editor-project-setting"><span>比例</span><SelectMenu ariaLabel="项目比例" className="canvas-video-editor-project-select" menuClassName="canvas-video-editor-project-menu" menuWidth={112} value={draft.aspect} options={ASPECT_PRESETS.map((aspect) => ({ value: aspect, label: aspect }))} onChange={(aspect) => emit({ ...draft, aspect })} /></label>
               <label className="canvas-video-editor-project-setting"><span>分辨率</span><SelectMenu ariaLabel="项目分辨率" className="canvas-video-editor-project-select" menuClassName="canvas-video-editor-project-menu" menuWidth={112} value={draft.resolution || "1080p"} options={RESOLUTION_PRESETS.map((resolution) => ({ value: resolution, label: resolution }))} onChange={(resolution) => emit({ ...draft, resolution: resolution as CanvasVideoEditorState["resolution"] })} /></label>
+              {draft.clips.some((clip) => clip.track === "reference-audio") && <label className="canvas-video-editor-project-setting canvas-video-editor-ducking-setting"><input type="checkbox" checked={draft.referenceAudioDucking === true} onChange={(event) => emit({ ...draft, referenceAudioDucking: event.target.checked })} /><span>配音压低环境音</span></label>}
               <button type="button" onClick={splitSelected} disabled={!canSplitSelected} title="在播放头处分割（S）">✂ 分割 <kbd>S</kbd></button>
               <button type="button" onClick={deleteSelected} disabled={!selectedClip} title="删除所选片段（Delete）">删除 <kbd>Del</kbd></button>
               <button type="button" className="canvas-video-editor-icon-button" onClick={() => setTimeDisplayMode((value) => value === "seconds" ? "frames" : "seconds")} aria-label={timeDisplayMode === "seconds" ? "切换为按帧显示时间码" : "切换为按秒显示时间码"} title={timeDisplayMode === "seconds" ? "按秒显示时间码" : "按帧显示时间码"}>{timeDisplayMode === "seconds" ? "s" : "▦"}</button>

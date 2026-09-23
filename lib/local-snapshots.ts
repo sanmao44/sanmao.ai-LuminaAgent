@@ -44,9 +44,12 @@ async function collectSnapshotMedia(
   const stats: SnapshotMediaStats = { videos: 0, audio: 0, images: 0, skipped: 0 };
   const seen = new Set<string>();
   const targets = [
-    { folder: 'videos' as const, pattern: SNAPSHOT_MEDIA_PATTERNS.videos, roots: getVideoStorageRoots(String(settings.videoStoragePath || '')) },
-    { folder: 'audio' as const, pattern: SNAPSHOT_MEDIA_PATTERNS.audio, roots: getAudioStorageRoots('') },
-    { folder: 'images' as const, pattern: SNAPSHOT_MEDIA_PATTERNS.images, roots: getStorageRoots(String(settings.imageStoragePath || '')) },
+    // Storage modules intentionally search legacy roots when serving old
+    // records. A snapshot is different: it must describe this installation,
+    // not every historical directory that happens to be discoverable.
+    { folder: 'videos' as const, pattern: SNAPSHOT_MEDIA_PATTERNS.videos, roots: [path.resolve(String(settings.videoStoragePath || getDefaultVideoStoragePath()))] },
+    { folder: 'audio' as const, pattern: SNAPSHOT_MEDIA_PATTERNS.audio, roots: [path.resolve(getDefaultAudioStoragePath())] },
+    { folder: 'images' as const, pattern: SNAPSHOT_MEDIA_PATTERNS.images, roots: [path.resolve(String(settings.imageStoragePath || getDefaultStoragePath()))] },
   ];
   for (const target of targets) {
     let budget = SNAPSHOT_MEDIA_BUDGETS[target.folder];

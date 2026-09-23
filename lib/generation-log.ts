@@ -44,8 +44,23 @@ export type GenerationLog = {
   errorCode?: string;
   task?: string;
   llmCallCount?: number;
+  /** Real provider-reported usage when the upstream response exposes it. */
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
   responseChars?: number;
   webSearchStatus?: string;
+  /** Browser-only execution counters; page content and tool arguments are excluded. */
+  browserToolCallCount?: number;
+  browserToolSuccessCount?: number;
+  browserToolFailureCount?: number;
+  browserToolDurationMs?: number;
+  browserToolResultChars?: number;
+  browserSnapshotCount?: number;
+  browserSnapshotChars?: number;
+  browserSnapshotTruncationCount?: number;
+  browserSnapshotStateChanges?: number;
+  browserSnapshotUnchangedCount?: number;
   projectId?: string;
   chatId?: string;
   canvasId?: string;

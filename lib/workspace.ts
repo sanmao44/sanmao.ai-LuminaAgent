@@ -165,7 +165,7 @@ async function requestWorkspace(method: 'GET' | 'PUT', workspace?: WorkspaceSnap
   } finally { window.clearTimeout(timeoutId); }
 }
 
-async function restoreWorkspace(snapshot: WorkspaceSnapshot) {
+export async function restoreWorkspaceSnapshot(snapshot: WorkspaceSnapshot) {
   await withWorkspaceRestoreSuppressedAsync(async () => {
     if (!restoreCanvasWorkspace(snapshot.canvas)) throw new Error('恢复画布失败');
     await replaceGalleryItems(snapshot.gallery);
@@ -179,6 +179,16 @@ async function restoreWorkspace(snapshot: WorkspaceSnapshot) {
       if (!(WORKSPACE_PREFERENCE_KEYS as readonly string[]).includes(key) || typeof value !== 'string') continue;
       try { window.localStorage.setItem(key, value); } catch {}
     }
+    // A restored snapshot is the new baseline. Without resetting this
+    // metadata, a stale pre-restore browser cache can win the next bootstrap
+    // comparison and overwrite the freshly restored server workspace.
+    writeMeta({
+      clientId: clientId(),
+      localUpdatedAt: snapshot.updatedAt,
+      serverUpdatedAt: snapshot.updatedAt,
+      pending: false,
+      contentSignature: workspaceContentSignature(snapshot),
+    });
   });
 }
 
@@ -223,7 +233,7 @@ async function bootstrapWorkspaceInternal() {
       const pending = { ...local, updatedAt: currentMeta.localUpdatedAt };
       await saveWorkspace(pending, { ...currentMeta, localUpdatedAt: pending.updatedAt, pending: true });
     } else if (remote) {
-      await restoreWorkspace(remote);
+      await restoreWorkspaceSnapshot(remote);
       writeMeta({ clientId: local.clientId, localUpdatedAt: remote.updatedAt, serverUpdatedAt: remote.updatedAt, pending: false, contentSignature: workspaceContentSignature(remote) });
     } else if (workspaceHasData(local)) {
       const migrated = { ...local, updatedAt: Math.max(Date.now(), currentMeta.localUpdatedAt) };
@@ -265,7 +275,7 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
       if (remote && localDirty && localUpdatedAt > remote.updatedAt) {
         await saveWorkspace({ ...local, updatedAt: localUpdatedAt }, { ...meta, localUpdatedAt, pending: true });
       } else if (remote && remote.updatedAt > meta.serverUpdatedAt) {
-        await restoreWorkspace(remote);
+        await restoreWorkspaceSnapshot(remote);
         writeMeta({ clientId: local.clientId, localUpdatedAt: remote.updatedAt, serverUpdatedAt: remote.updatedAt, pending: false, contentSignature: workspaceContentSignature(remote) });
       } else if (workspaceHasData(local)) {
         if (!meta.serverUpdatedAt || localDirty) {

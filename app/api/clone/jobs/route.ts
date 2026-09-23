@@ -7,6 +7,7 @@ import type { CloneAsset, CloneReference } from '@/lib/clone/types';
 import { getRuntimeImageGenerationModel, getRuntimeVideoModel, getRuntimeVisionModel } from '@/lib/store';
 import { resolveSpeechRuntime } from '@/lib/clone/speech';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
+import { getVideoModelLimits } from '@/lib/video-model-limits';
 
 export const runtime = 'nodejs';
 export const maxDuration = 3600;
@@ -76,13 +77,11 @@ export async function POST(request: Request) {
       hasImageModel: Boolean(imageRuntime),
       hasVideoModel: Boolean(videoRuntime),
       hasReferenceImages: Boolean(videoRuntime?.model.capabilities.includes('video-reference')),
+      hasReferenceVideo: Boolean(videoRuntime && getVideoModelLimits(videoRuntime.model, videoRuntime.provider).maxReferenceVideos > 0),
       hasFirstFrame: Boolean(videoRuntime?.model.capabilities.includes('video-first-frame')),
       hasReferenceAudio: Boolean(videoRuntime?.model.capabilities.includes('video-audio')),
       offlineSpeech: offlineSpeechSupported(),
     });
-    if (!imageRuntime) {
-      return Response.json({ error: '没有可用的生图模型：请先在「模型库」启用一个生图模型，再回来一键出片。' }, { status: 400 });
-    }
     const requestedSpeech = typeof body.speechModel === 'string' ? body.speechModel.trim() : '';
     if (requestedSpeech && requestedSpeech !== 'auto' && !speechRuntime) {
       return Response.json({ error: '指定的配音模型不可用：请在「模型库」把它归类为「配音」并启用，或改用自动选择。' }, { status: 400 });
@@ -95,7 +94,7 @@ export async function POST(request: Request) {
       warnings,
       models: {
         chat: chatRuntime?.model.displayName || '',
-        image: imageRuntime.model.displayName,
+        image: imageRuntime?.model.displayName || '',
         video: videoRuntime?.model.displayName,
         // 走离线兜底时没有模型名，用标签顶上，用户在任务详情里能看出这次是本地合成的。
         speech: speechRuntime?.model.displayName || (capabilities.offlineSpeech ? OFFLINE_SPEECH_LABEL : undefined),

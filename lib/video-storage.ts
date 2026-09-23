@@ -92,6 +92,25 @@ export async function persistGeneratedVideos(videos: GeneratedVideo[], configure
   };
 }
 
+/** 保存本地渲染器产出的完整视频，供克隆成片和其它本地合成流程复用。 */
+export async function persistVideoBuffer(buffer: Buffer, contentType = 'video/mp4', configuredPath?: string) {
+  if (!Buffer.isBuffer(buffer) || buffer.byteLength <= 0) throw new Error('视频合成没有产生有效文件');
+  if (buffer.byteLength > MAX_VIDEO_BYTES) throw new Error('合成视频超过 1 GiB，无法保存');
+  const root = path.resolve(configuredPath?.trim() || configuredRoot());
+  await mkdir(root, { recursive: true });
+  const ext = extensionFromContentType(contentType);
+  const name = `${Date.now()}-${randomUUID()}.${ext}`;
+  const file = path.join(root, name);
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, buffer, { flag: 'wx' });
+    await rename(temporary, file);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
+  return { url: `/api/storage/video?name=${encodeURIComponent(name)}`, path: root, name, bytes: buffer.byteLength, contentType: contentType.split(';', 1)[0].trim() || 'video/mp4' };
+}
+
 export function getLegacyVideoStoragePath() {
   return path.resolve(path.join(process.cwd(), '..', 'video_generation_records'));
 }

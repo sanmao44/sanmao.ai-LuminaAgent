@@ -64,6 +64,21 @@ test('places added captions after an occupied caption range', () => {
   assert.equal(editor.clipsAtTime(state, 3).filter((clip) => clip.track === 'caption').length, 1);
 });
 
+test('ducks reference ambience only while an audible A1 voice clip is active', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 5,
+    referenceAudioDucking: true,
+    mutedTracks: [],
+    clips: [
+      { id: 'voice', track: 'audio', type: 'audio', name: 'A1', start: 1, duration: 2, sourceOffset: 0, volume: 1 },
+      { id: 'ambience', track: 'reference-audio', type: 'audio', name: 'A2', start: 0, duration: 5, sourceOffset: 0, volume: 0.35 },
+    ],
+  });
+  assert.equal(editor.videoEditorAudioGain(state, state.clips[1], 0), 0.35);
+  assert.equal(editor.videoEditorAudioGain(state, state.clips[1], 1.5), 0.35 * 0.22);
+  assert.equal(editor.videoEditorAudioGain(state, state.clips[1], 3.5), 0.35);
+});
+
 test('guards split and trim boundaries and supports track reorder', () => {
   const state = editor.createVideoEditorState([
     { nodeId: 'a', kind: 'video', durationSeconds: 8 },
@@ -233,7 +248,11 @@ test('editor exports the complete timeline and presents a large desktop workbenc
   assert.match(exportSource, /renderCanvasVideoEditor/);
   assert.match(exportSource, /canvas\.captureStream/);
   assert.match(exportSource, /MediaStreamAudioDestinationNode/);
+  assert.match(exportSource, /hasIndependentAudio/);
+  assert.match(exportSource, /videoEditorAudioGain/);
+  assert.match(exportSource, /hasIndependentAudio && item\.clip\.track === "video"/);
   assert.match(exportSource, /drawCaption/);
+  assert.match(exportSource, /graphicsStyle/);
   assert.match(componentSource, /renderCanvasVideoEditor\(draft, renderSources\)/);
   assert.match(componentSource, /视频编辑成片/);
   assert.match(componentSource, /source: editorNode\.id/);
@@ -243,6 +262,57 @@ test('editor exports the complete timeline and presents a large desktop workbenc
   assert.match(workbenchSource, /setInPoint/);
   assert.match(workbenchSource, /handleTimelineWheel/);
   assert.match(canvasCssSource, /canvas-video-editor-workbench\{width:min\(1540px/);
+  assert.match(workbenchSource, /activeAudioClips\.length > 0/);
+  assert.match(workbenchSource, /入场转场/);
+  assert.match(workbenchSource, /运动路径/);
+  assert.match(exportSource, /transitionProgress/);
+  assert.match(exportSource, /videoEditorMotionTransform/);
+});
+
+test('video split/delete ripple linked audio and captions with source offsets intact', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 8,
+    fps: 30,
+    aspect: '16:9',
+    mutedTracks: [],
+    disabledTracks: [],
+    clips: [
+      { id: 'video', shotIndex: 4, track: 'video', type: 'video', name: 'V1', start: 0, duration: 8, sourceOffset: 0 },
+      { id: 'voice', shotIndex: 4, track: 'audio', type: 'audio', name: 'A1', start: 0, duration: 8, sourceOffset: 1 },
+      { id: 'caption', shotIndex: 4, track: 'caption', type: 'caption', name: 'T1', start: 2, duration: 4, sourceOffset: 0, text: '字幕' },
+    ],
+  });
+  const split = editor.splitVideoEditorClip(state, 'video', 3);
+  assert.equal(split.clips.filter((clip) => clip.track === 'video').length, 2);
+  assert.equal(split.clips.filter((clip) => clip.track === 'audio').length, 2);
+  assert.equal(split.clips.filter((clip) => clip.track === 'caption').length, 2);
+  assert.equal(split.clips.find((clip) => clip.track === 'audio' && clip.start === 3).sourceOffset, 4);
+
+  const deleted = editor.removeVideoEditorClip(split, 'video');
+  assert.equal(deleted.clips.find((clip) => clip.track === 'video' && clip.start === 0).duration, 5);
+  assert.equal(deleted.clips.some((clip) => clip.track === 'video' && clip.start === 3), false);
+  assert.equal(deleted.clips.find((clip) => clip.track === 'audio' && clip.start === 0).duration, 5);
+  assert.equal(deleted.clips.some((clip) => clip.track === 'caption' && clip.start >= 3), false);
+  assert.equal(deleted.projectDuration, 5);
+});
+
+test('normalizes reference card text boxes without allowing overflow', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 2,
+    clips: [{ id: 'card', track: 'graphics', type: 'caption', name: 'card', start: 0, duration: 2, sourceOffset: 0, text: 'Title', textBox: { x: 0.9, y: 0.8, width: 0.6, height: 0.5 } }],
+  });
+  assert.deepEqual(state.clips[0].textBox, { x: 0.9, y: 0.8, width: 0.1, height: 0.2 });
+});
+
+test('normalizes recovered composition regions without allowing overflow', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 2,
+    clips: [{ id: 'layout', track: 'video', type: 'image', name: 'layout', start: 0, duration: 2, sourceOffset: 0, layout: {
+      mode: 'card',
+      primary: { x: 0.9, y: 0.8, width: 0.6, height: 0.5, radius: 0.8 },
+    } }],
+  });
+  assert.deepEqual(state.clips[0].layout?.primary, { x: 0.9, y: 0.8, width: 0.1, height: 0.2, radius: 0.5 });
 });
 
 test('workbench keeps timeline gestures local and exposes professional timeline controls', () => {

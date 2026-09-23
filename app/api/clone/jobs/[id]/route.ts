@@ -1,7 +1,10 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { cleanupCloneJobDirectory, runCloneJob } from '@/lib/clone/pipeline';
+import { cleanupCloneJobDirectory, renderBlueprintVariant, rerenderCloneJob, runCloneJob } from '@/lib/clone/pipeline';
+import { buildBlueprintVariantPlans, normalizeCloneOptions } from '@/lib/clone/plan';
 import { findCloneJob, removeCloneJob, updateCloneJob } from '@/lib/clone/store';
-import type { CloneShot } from '@/lib/clone/types';
+import type { CloneBlueprintVariantOverride, CloneBlueprintVariantSpec, CloneShot } from '@/lib/clone/types';
+import { normalizeVideoEditorState } from '@/lib/canvas/video-editor';
+import type { CanvasVideoEditorState } from '@/lib/canvas/types';
 
 function normalizeShotStrategy(
   requested: CloneShot['strategy'] | undefined,
@@ -38,6 +41,104 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const action = body && typeof body === 'object' ? String((body as { action?: unknown }).action || '') : '';
   const job = await findCloneJob(id);
   if (!job) return Response.json({ error: '任务不存在。' }, { status: 404 });
+  if (action === 'rerender') {
+    try {
+      const rawShots = body && typeof body === 'object' ? (body as { shots?: unknown }).shots : undefined;
+      const shots = rawShots === undefined ? undefined : Array.isArray(rawShots) && rawShots.length === job.shots.length && rawShots.every((item) => item && typeof item === 'object')
+        ? rawShots.map((item, index) => ({ ...job.shots[index], ...(item as Partial<CloneShot>) }))
+        : null;
+      if (shots === null) return Response.json({ error: '重出镜头参数无效' }, { status: 400 });
+      const rawTimeline = body && typeof body === 'object' ? (body as { timeline?: unknown }).timeline : undefined;
+      const timeline = rawTimeline && typeof rawTimeline === 'object'
+        ? normalizeVideoEditorState(rawTimeline as CanvasVideoEditorState)
+        : undefined;
+      const updated = await rerenderCloneJob(id, shots, timeline);
+      return Response.json({ ok: true, job: updated }, { status: 202 });
+    } catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : '重新合成失败' }, { status: 400 });
+    }
+  }
+  if (action === 'variant-plan') {
+    if (!job.blueprint) return Response.json({ error: '这条任务还没有可复用的 Blueprint' }, { status: 400 });
+    const rawSpecs = body && typeof body === 'object' ? (body as { variants?: unknown }).variants : undefined;
+    if (!Array.isArray(rawSpecs) || !rawSpecs.length || rawSpecs.length > 12) {
+      return Response.json({ error: '请提供 1 到 12 个变体方案' }, { status: 400 });
+    }
+    const specs: CloneBlueprintVariantSpec[] = rawSpecs.flatMap((value, index) => {
+      if (!value || typeof value !== 'object') return [];
+      const source = value as Record<string, unknown>;
+      const overrides = Array.isArray(source.overrides)
+        ? source.overrides.filter((item) => item && typeof item === 'object').slice(0, 64).map((item): CloneBlueprintVariantOverride => {
+          const raw = item as Record<string, unknown>;
+          return {
+            ...(typeof raw.componentId === 'string' ? { componentId: raw.componentId.trim().slice(0, 80) } : {}),
+            ...(Array.isArray(raw.shotIndexes) ? { shotIndexes: raw.shotIndexes.filter((index): index is number => Number.isInteger(index)).slice(0, 64) } : {}),
+            ...(Array.isArray(raw.assetIds) ? { assetIds: raw.assetIds.filter((assetId): assetId is string => typeof assetId === 'string').map((assetId) => assetId.trim()).filter(Boolean).slice(0, 16) } : {}),
+            ...(typeof raw.text === 'string' ? { text: raw.text.slice(0, 2000) } : {}),
+            ...(typeof raw.graphicsText === 'string' ? { graphicsText: raw.graphicsText.slice(0, 2000) } : {}),
+            ...(typeof raw.visual === 'string' ? { visual: raw.visual.slice(0, 2000) } : {}),
+            ...(typeof raw.line === 'string' ? { line: raw.line.slice(0, 2000) } : {}),
+            ...(typeof raw.prompt === 'string' ? { prompt: raw.prompt.slice(0, 2000) } : {}),
+            ...(raw.layout && typeof raw.layout === 'object' ? { layout: raw.layout as CloneBlueprintVariantOverride['layout'] } : {}),
+            ...(typeof raw.motionPath === 'string' ? { motionPath: raw.motionPath as CloneBlueprintVariantOverride['motionPath'] } : {}),
+            ...(typeof raw.graphicsStyle === 'string' ? { graphicsStyle: raw.graphicsStyle.slice(0, 180) } : {}),
+            ...(typeof raw.preserveReferenceFrame === 'boolean' ? { preserveReferenceFrame: raw.preserveReferenceFrame } : {}),
+            ...(typeof raw.allowReferenceOverlays === 'boolean' ? { allowReferenceOverlays: raw.allowReferenceOverlays } : {}),
+            ...(typeof raw.regenerate === 'boolean' ? { regenerate: raw.regenerate } : {}),
+          };
+        })
+        : [];
+      return [{
+        id: String(source.id || `variant-${index + 1}`).trim().slice(0, 80),
+        name: String(source.name || `变体 ${index + 1}`).trim().slice(0, 120),
+        ...(source.description ? { description: String(source.description).trim().slice(0, 400) } : {}),
+        overrides,
+      }];
+    });
+    if (!specs.length) return Response.json({ error: '没有有效的变体方案' }, { status: 400 });
+    const plans = buildBlueprintVariantPlans(job.blueprint, specs, normalizeCloneOptions(job.options), job.referenceAnalysis?.transcriptData);
+    const updated = await updateCloneJob(id, {
+      blueprint: { ...job.blueprint, variants: specs, updatedAt: new Date().toISOString() },
+    });
+    return Response.json({ ok: true, plans, variants: specs, job: updated });
+  }
+  if (action === 'variant-render') {
+    if (!job.blueprint) return Response.json({ error: '这条任务还没有可复用的 Blueprint' }, { status: 400 });
+    const rawVariant = body && typeof body === 'object' ? (body as { variant?: unknown }).variant : undefined;
+    if (!rawVariant || typeof rawVariant !== 'object') return Response.json({ error: '缺少变体方案' }, { status: 400 });
+    try {
+      const source = rawVariant as Record<string, unknown>;
+      const rawOverrides = Array.isArray(source.overrides) ? source.overrides : [];
+      const variant: CloneBlueprintVariantSpec = {
+        id: String(source.id || `variant-${Date.now()}`).trim().slice(0, 80),
+        name: String(source.name || '本地变体').trim().slice(0, 120),
+        ...(source.description ? { description: String(source.description).trim().slice(0, 400) } : {}),
+        overrides: rawOverrides.filter((item) => item && typeof item === 'object').slice(0, 64).map((item) => {
+          const raw = item as Record<string, unknown>;
+          return {
+            ...(typeof raw.componentId === 'string' ? { componentId: raw.componentId.trim().slice(0, 80) } : {}),
+            ...(Array.isArray(raw.shotIndexes) ? { shotIndexes: raw.shotIndexes.filter((index): index is number => Number.isInteger(index)).slice(0, 64) } : {}),
+            ...(Array.isArray(raw.assetIds) ? { assetIds: raw.assetIds.filter((assetId): assetId is string => typeof assetId === 'string').map((assetId) => assetId.trim()).filter(Boolean).slice(0, 16) } : {}),
+            ...(typeof raw.text === 'string' ? { text: raw.text.slice(0, 2000) } : {}),
+            ...(typeof raw.graphicsText === 'string' ? { graphicsText: raw.graphicsText.slice(0, 2000) } : {}),
+            ...(typeof raw.visual === 'string' ? { visual: raw.visual.slice(0, 2000) } : {}),
+            ...(typeof raw.line === 'string' ? { line: raw.line.slice(0, 2000) } : {}),
+            ...(typeof raw.prompt === 'string' ? { prompt: raw.prompt.slice(0, 2000) } : {}),
+            ...(raw.layout && typeof raw.layout === 'object' ? { layout: raw.layout as CloneBlueprintVariantOverride['layout'] } : {}),
+            ...(typeof raw.motionPath === 'string' ? { motionPath: raw.motionPath as CloneBlueprintVariantOverride['motionPath'] } : {}),
+            ...(typeof raw.graphicsStyle === 'string' ? { graphicsStyle: raw.graphicsStyle.slice(0, 180) } : {}),
+            ...(typeof raw.preserveReferenceFrame === 'boolean' ? { preserveReferenceFrame: raw.preserveReferenceFrame } : {}),
+            ...(typeof raw.allowReferenceOverlays === 'boolean' ? { allowReferenceOverlays: raw.allowReferenceOverlays } : {}),
+            ...(typeof raw.regenerate === 'boolean' ? { regenerate: raw.regenerate } : {}),
+          };
+        }),
+      };
+      const rendered = await renderBlueprintVariant(id, variant);
+      return Response.json({ ok: true, ...rendered });
+    } catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : '变体合成失败' }, { status: 400 });
+    }
+  }
   if (action === 'applied') {
     return Response.json({ ok: true, job: await updateCloneJob(id, { appliedAt: job.appliedAt || new Date().toISOString() }) });
   }
@@ -60,7 +161,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         const strategy = normalizeShotStrategy(requestedStrategy, job, assetIds || []);
         if (requestedStrategy && requestedStrategy !== strategy) strategyWarnings.push(`镜头 ${index + 1} 的「${requestedStrategy}」不兼容当前视频模型或素材，已改为「${strategy}」。`);
         const speechMode = source.speechMode === 'talking' || source.speechMode === 'silent' || source.speechMode === 'narration' ? source.speechMode : original.speechMode;
-        return { ...original, assetIds, strategy, speechMode, preserveIdentity: Boolean(source.preserveIdentity ?? original.preserveIdentity), preserveProduct: Boolean(source.preserveProduct ?? original.preserveProduct) };
+        return {
+          ...original,
+          assetIds,
+          strategy,
+          speechMode,
+          preserveIdentity: Boolean(source.preserveIdentity ?? original.preserveIdentity),
+          preserveProduct: Boolean(source.preserveProduct ?? original.preserveProduct),
+          preserveReferenceFrame: Boolean(source.preserveReferenceFrame ?? original.preserveReferenceFrame),
+        };
       });
       if (strategyWarnings.length) await updateCloneJob(id, { warnings: [...new Set([...job.warnings, ...strategyWarnings])] });
     }

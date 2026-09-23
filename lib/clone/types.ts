@@ -1,11 +1,10 @@
 /**
  * 「一键克隆出片」的数据结构（一期窄管线）。
  *
- * 一期边界：不贴脸、不换脸、不做数字人；参考视频只用来拆解结构与节奏，
- * 画面全部用平台已有的生图 / 图生视频重新生成；声音用用户已配的 TTS，
- * 没有可用 TTS 时自动降级为「无声成片 + 字幕」。
+ * 当前边界：不贴脸、不换脸、不做数字人；主体镜头优先用参考帧/参考视频参与重建，
+ * 卡片、分栏和转场优先保留原片动态；声音用用户已配的 TTS，没有可用 TTS 时降级为本地语音或字幕。
  */
-import type { CanvasVideoEditorClip, CanvasVideoEditorState } from '../canvas/types';
+import type { CanvasVideoEditorClip, CanvasVideoEditorState, CanvasVideoEditorMotionPath, CanvasVideoEditorLayout, CanvasVideoEditorWord } from '../canvas/types';
 
 export type CloneStage =
   | 'queued'
@@ -23,6 +22,93 @@ export type CloneStage =
 export type CloneShotStatus = 'pending' | 'voicing' | 'imaging' | 'rendering' | 'done' | 'failed';
 export type CloneShotSpeechMode = 'narration' | 'talking' | 'silent';
 
+export type CloneShotReferenceRole = 'performance' | 'broll' | 'graphic' | 'transition' | 'product' | 'other';
+
+export type CloneOcrBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type CloneOcrObservation = {
+  text: string;
+  bounds?: CloneOcrBounds;
+  confidence?: number;
+  source: 'tesseract' | 'transformers' | 'vision';
+};
+
+export type CloneReferenceOcrFrame = {
+  time: number;
+  observations: CloneOcrObservation[];
+};
+
+export type CloneShotAnalysis = {
+  camera?: string;
+  composition?: string;
+  motion?: string;
+  visualStyle?: string;
+  graphics?: string;
+  /** OCR/vision 提取到的画卡、标题或贴纸文字。 */
+  graphicsText?: string;
+  /** 画卡在画面中的位置，例如 top、center、bottom 或更具体的描述。 */
+  graphicsPosition?: string;
+  /** 画卡的视觉样式，例如纯色卡、描边字、品牌贴纸。 */
+  graphicsStyle?: string;
+  graphicsBounds?: CloneOcrBounds;
+  /** 可直接交给时间轴渲染器的显式构图层，避免 composition 只停留在文字提示。 */
+  layout?: CanvasVideoEditorLayout;
+  audio?: string;
+  transition?: string;
+  /** 结构化转场类型；transition 保留为兼容旧任务的文字描述。 */
+  transitionType?: 'cut' | 'fade' | 'dissolve' | 'wipe' | 'slide' | 'none';
+  transitionDuration?: number;
+  /** 连续运动的可执行描述，后续可映射为关键帧或镜头曲线。 */
+  motionPath?: string;
+  role?: CloneShotReferenceRole;
+};
+
+export type CloneTranscriptWord = {
+  start: number;
+  end: number;
+  text: string;
+};
+
+export type CloneTranscriptSegment = {
+  start: number;
+  end: number;
+  text: string;
+  words?: CloneTranscriptWord[];
+};
+
+/** Locally recovered speech from the reference video's original audio track. */
+export type CloneTranscript = {
+  text: string;
+  segments: CloneTranscriptSegment[];
+  words: CloneTranscriptWord[];
+  model: string;
+  language?: string;
+};
+
+export type CloneReferenceAnalysis = {
+  version: 1;
+  duration: number;
+  sampleTimes: number[];
+  /** Locally detected hard cuts used to guide vision analysis and fallback planning. */
+  sceneChangeTimes?: number[];
+  method: 'multimodal-frames' | 'fallback';
+  transcript?: string;
+  transcriptData?: CloneTranscript;
+  /** 可选的本地 OCR 结果；视觉模型字段仍作为没有 OCR 引擎时的兜底。 */
+  ocr?: CloneReferenceOcrFrame[];
+  shots: Array<{
+    index: number;
+    start: number;
+    end: number;
+    analysis?: CloneShotAnalysis;
+  }>;
+};
+
 /** 一个镜头：参考视频里的一个时间段，对应一句新文案和一份重新生成的素材。 */
 export type CloneShot = {
   index: number;
@@ -35,6 +121,10 @@ export type CloneShot = {
   line: string;
   /** 重新生成画面用的提示词。 */
   prompt: string;
+  /** A structural gap emitted when the vision model skipped part of the reference timeline. */
+  referenceGap?: boolean;
+  /** 原片对应镜头的结构化拆解，用于生成提示词和后续多轨编辑。 */
+  analysis?: CloneShotAnalysis;
   /** 当前镜头实际使用的素材；缺少该字段的历史任务才继承全局素材。 */
   assetIds?: string[];
   strategy?: 'reference' | 'keyframe' | 'text' | 'static';
@@ -45,6 +135,14 @@ export type CloneShot = {
   status: CloneShotStatus;
   imageUrl?: string;
   videoUrl?: string;
+  /** 原片该镜头最接近中点的代表帧，供静态图/首帧降级使用。 */
+  referenceFrameUrl?: string;
+  /** 图形/卡片镜头优先保留原片代表帧，避免重新生成时把字卡和版式改掉。 */
+  preserveReferenceFrame?: boolean;
+  /** Allow a Blueprint variant to add an intentional overlay on a preserved reference shot. */
+  allowReferenceOverlays?: boolean;
+  /** 临时生成的原片对应镜头片段；只作为视频模型输入，不作为最终交付节点。 */
+  referenceVideoUrl?: string;
   audioUrl?: string;
   /** 这一句配音的实际时长（秒）；没有 TTS 时为空，改用字数估算。 */
   audioSeconds?: number;
@@ -57,6 +155,10 @@ export type CloneOptions = {
   maxSeconds: number;
   aspect: '9:16' | '16:9' | '1:1';
   voice: string;
+  /** 默认保留参考视频的镜头节奏；旁白过长时只向后延展，不压缩原片镜头。 */
+  preserveReferenceTiming: boolean;
+  /** 默认把参考视频的环境音/音乐作为底轨，与新配音混音。 */
+  preserveReferenceAudio: boolean;
 };
 
 export type CloneCapabilities = {
@@ -65,6 +167,8 @@ export type CloneCapabilities = {
   image: boolean;
   video: boolean;
   referenceImages: boolean;
+  /** 视频模型是否能接收参考视频；启用后会优先传入原片对应时间片段。 */
+  referenceVideo?: boolean;
   firstFrame: boolean;
   referenceAudio: boolean;
   /** 没有在线 TTS 模型时，是否改用系统自带语音合成（Windows / macOS 的「本机离线配音」）。 */
@@ -105,16 +209,133 @@ export type CloneBlueprint = {
   sourceVideo: CloneReference;
   assets: CloneAsset[];
   shots: CloneShot[];
+  /** Reusable visual grammar recovered from repeated shot structures. */
+  components?: CloneBlueprintComponent[];
+  /** Optional named local variants; the base Blueprint remains unchanged. */
+  variants?: CloneBlueprintVariantSpec[];
   createdAt: string;
   updatedAt: string;
 };
 
+export type CloneBlueprintComponentSource = 'preserve-reference' | 'generate-media';
+
+/** A reusable visual component template; shot indexes are its instances. */
+export type CloneBlueprintComponent = {
+  id: string;
+  role: CloneShotReferenceRole;
+  label: string;
+  source: CloneBlueprintComponentSource;
+  shotIndexes: number[];
+  layout?: CanvasVideoEditorLayout;
+  motionPath?: CanvasVideoEditorMotionPath;
+  graphicsStyle?: string;
+  transitionType?: CloneShotAnalysis['transitionType'];
+};
+
+/**
+ * A non-destructive override for one reusable Blueprint component. Text and
+ * layout changes stay local; changing a visual prompt or source assets is
+ * reported by the variant planner so only the affected shots need new media.
+ */
+export type CloneBlueprintVariantOverride = {
+  componentId?: string;
+  shotIndexes?: number[];
+  assetIds?: string[];
+  text?: string;
+  graphicsText?: string;
+  visual?: string;
+  line?: string;
+  prompt?: string;
+  layout?: CanvasVideoEditorLayout;
+  motionPath?: CanvasVideoEditorMotionPath;
+  graphicsStyle?: string;
+  preserveReferenceFrame?: boolean;
+  /** Explicitly allow a caption/card overlay while the reference video remains intact. */
+  allowReferenceOverlays?: boolean;
+  regenerate?: boolean;
+};
+
+/** A named, reusable local variant of one reference-derived Blueprint. */
+export type CloneBlueprintVariantSpec = {
+  id: string;
+  name: string;
+  description?: string;
+  overrides: CloneBlueprintVariantOverride[];
+  finalVideoUrl?: string;
+  finalVideoMime?: string;
+  renderedAt?: string;
+};
+
+/** The deterministic result of expanding a Blueprint variant. */
+export type CloneBlueprintVariantPlan = {
+  id: string;
+  name: string;
+  description?: string;
+  shots: CloneShot[];
+  timeline: CloneTimeline;
+  generationShotIndexes: number[];
+  voiceShotIndexes: number[];
+  reusedShotIndexes: number[];
+};
+
 /** 成片时间轴：直接落进画布的视频编辑节点。 */
+export type CloneTimelineTrackKind = 'video' | 'reference-audio' | 'voice' | 'caption' | 'graphics';
+
+export type CloneTimelineTrackClip = {
+  id: string;
+  componentId?: string;
+  role?: CloneShotReferenceRole;
+  shotIndex: number;
+  start: number;
+  duration: number;
+  source?: 'reference-video' | 'generated-media';
+  mediaKind?: 'image' | 'video' | 'audio';
+  url?: string;
+  sourceOffset?: number;
+  text?: string;
+  /** Word-level timing relative to this semantic clip's start. */
+  words?: CanvasVideoEditorWord[];
+  graphicsStyle?: string;
+  textBox?: { x: number; y: number; width: number; height: number };
+  transitionIn?: CanvasVideoEditorClip['transitionIn'];
+  transitionDuration?: number;
+  transitionDirection?: CanvasVideoEditorClip['transitionDirection'];
+  motionPath?: CanvasVideoEditorMotionPath;
+  layout?: CanvasVideoEditorLayout;
+  volume?: number;
+  playbackRate?: CanvasVideoEditorClip['playbackRate'];
+  fit?: CanvasVideoEditorClip['fit'];
+  enabled?: boolean;
+};
+
+/**
+ * Persisted semantic tracks behind the flattened canvas clips.  The canvas
+ * still receives one final MP4, while this plan keeps the source relationship
+ * available for re-editing and deterministic re-assembly.
+ */
+export type CloneTimelineTrack = {
+  id: string;
+  kind: CloneTimelineTrackKind;
+  label: string;
+  clips: CloneTimelineTrackClip[];
+};
+
 export type CloneTimeline = {
   duration: number;
   fps: number;
   aspect: string;
   clips: CanvasVideoEditorClip[];
+  /** Latest editor-authored timeline sent back for deterministic server re-assembly. */
+  editorState?: CanvasVideoEditorState;
+  /** Optional for jobs created before semantic tracks were persisted. */
+  tracks?: CloneTimelineTrack[];
+  /** Reusable component templates referenced by flattened editor clips. */
+  components?: CloneBlueprintComponent[];
+  /** 服务端完成多轨合成后的单个最终视频地址。镜头 clips 只是可编辑内部计划。 */
+  finalVideoUrl?: string;
+  finalVideoMime?: string;
+  /** Canvas clone projects duck A2 reference ambience under A1 voice. */
+  referenceAudioDucking?: boolean;
 };
 
 export type CloneJob = {
@@ -129,6 +350,7 @@ export type CloneJob = {
   reference: CloneReference;
   assets: CloneAsset[];
   planConfirmed?: boolean;
+  referenceAnalysis?: CloneReferenceAnalysis;
   blueprint?: CloneBlueprint;
   options: CloneOptions;
   capabilities: CloneCapabilities;
