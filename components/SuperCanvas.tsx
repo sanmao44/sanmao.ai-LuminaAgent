@@ -14872,7 +14872,7 @@ export default function SuperCanvas() {
         connectSource(referenceAudioSource, referenceAudioSource?.data.kind === "audio" ? "audio" : "video");
       }
       for (const clip of job.timeline.clips) {
-        const match = /^clone-(video|audio|caption|graphics)-(\d+)$/.exec(clip.id);
+        const match = /^clone-(video|audio|caption|graphics)-(\d+)(?:-\d+)?$/.exec(clip.id);
         if (!match) continue;
         const track = match[1];
         const index = Number(match[2]);
@@ -14880,7 +14880,7 @@ export default function SuperCanvas() {
         if (track !== "caption" && track !== "graphics" && !sourceNodeId) continue;
         clips.push({
           ...clip,
-          id: `${editorDraft.id}-${track}-${index}`,
+          id: `${editorDraft.id}-${clip.id}`,
           ...(sourceNodeId ? { sourceNodeId } : {}),
         });
       }
