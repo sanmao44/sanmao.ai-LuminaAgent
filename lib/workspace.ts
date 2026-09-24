@@ -240,6 +240,7 @@ async function bootstrapWorkspaceInternal() {
     localUpdatedAt: 0,
     serverUpdatedAt: 0,
     pending: false,
+    revision: 0,
   };
   try {
     const server = await requestWorkspace('GET');

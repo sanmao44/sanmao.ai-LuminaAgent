@@ -33,12 +33,12 @@ test('data profiles preserve development defaults and support explicit modes', a
   }
 });
 
-test('initial manifest records existing component versions without moving data', () => {
+test('initial manifest starts unknown components at legacy versions', () => {
   const value = manifest.initialDataManifest('development', '2026-09-23T00:00:00.000Z');
   assert.equal(value.activeGeneration, 'legacy');
-  assert.equal(value.components.workspace, 1);
-  assert.equal(value.components.indexedDb, 4);
-  assert.equal(value.components.canvas, 'sanmao-canvas-3');
+  assert.equal(value.components.workspace, 0);
+  assert.equal(value.components.indexedDb, 0);
+  assert.equal(value.components.canvas, 'legacy');
   assert.equal(manifest.validateDataManifest(value).format, 'sanmao-local-data');
 });
 

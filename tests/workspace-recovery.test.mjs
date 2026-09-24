@@ -39,6 +39,17 @@ test('client restore marks the restored snapshot as the new sync baseline', () =
   assert.match(workspace, /contentSignature: workspaceContentSignature\(snapshot\)/);
 });
 
+test('workspace CAS exposes a conflict state without changing the snapshot shape', () => {
+  const workspace = fs.readFileSync(path.join(root, 'lib/workspace.ts'), 'utf8');
+  const routeSource = fs.readFileSync(path.join(root, 'app/api/workspace/route.ts'), 'utf8');
+  const css = fs.readFileSync(path.join(root, 'app/canvas.css'), 'utf8');
+  assert.match(workspace, /WorkspaceSyncStatus = .*conflict/);
+  assert.match(workspace, /expectedRevision/);
+  assert.match(routeSource, /WORKSPACE_CONFLICT/);
+  assert.match(routeSource, /contentHash/);
+  assert.match(css, /workspace-sync-state\.conflict/);
+});
+
 test('sweep removes only stale workspace temporaries', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'sanmao-workspace-temps-'));
   try {

@@ -1,4 +1,4 @@
-import { ensureDataManifest, writeDataManifest, type DataManifest, CURRENT_DATA_COMPONENT_VERSIONS } from './data-manifest';
+import { detectDataComponentVersions, ensureDataManifest, writeDataManifest, type DataComponentVersions, type DataManifest, CURRENT_DATA_COMPONENT_VERSIONS } from './data-manifest';
 import { resolveDataProfile } from './data-paths';
 import { recoverPendingMigrations, runMigrations } from './migrations/framework';
 import { LOCAL_DATA_MIGRATIONS } from './migrations/registry';
@@ -24,9 +24,15 @@ export async function ensureDataFoundation() {
     });
   manifest = providerRecovery.manifest;
 
-  const runRootMigration = async (root: string, component: string, file: string) => runMigrations({
+  const runRootMigration = async (root: string, component: keyof typeof CURRENT_DATA_COMPONENT_VERSIONS, file: string) => {
+    const detected = await detectDataComponentVersions({ dataDir: root, providerConfigDir: root });
+    const rootManifest = {
+      ...manifest,
+      components: { ...manifest.components, [component]: (detected as DataComponentVersions)[component] },
+    };
+    return runMigrations({
     dataDir: root,
-    manifest,
+    manifest: rootManifest,
     target: { [component]: CURRENT_DATA_COMPONENT_VERSIONS[component] },
     steps: LOCAL_DATA_MIGRATIONS.filter((step) => step.component === component),
     commit: async ({ dataDir, stagingDir }) => {
@@ -37,7 +43,8 @@ export async function ensureDataFoundation() {
       await copyFile(source, target);
     },
     writeManifest: async (next: DataManifest) => { manifest = await writeDataManifest(profile, next); },
-  });
+    });
+  };
 
   const workspaceMigration = await runRootMigration(profile.dataDir, 'workspace', 'workspace.json');
   manifest = workspaceMigration.manifest;

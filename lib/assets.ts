@@ -15,6 +15,9 @@ export type AssetRecord = {
   id: string;
   kind: 'image' | 'video' | 'audio';
   url: string;
+  storageKey?: string;
+  sha256?: string;
+  size?: number;
   name: string;
   source: AssetSource;
   createdAt: number;
@@ -44,6 +47,17 @@ type VideoTaskAssetSource = {
 
 export function assetKey(kind: AssetRecord['kind'], url: string) {
   return `${kind}:${String(url || '').trim()}`;
+}
+
+function logicalStorageKey(kind: AssetRecord['kind'], url: string) {
+  try {
+    const parsed = new URL(url, 'http://sanmao.local');
+    const name = parsed.searchParams.get('name')?.trim();
+    const directory = kind === 'image' ? 'images' : kind === 'video' ? 'videos' : 'audio';
+    return name && parsed.pathname.includes('/api/storage/') ? `${directory}/${name}` : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function stableHash(value: string) {
@@ -85,6 +99,9 @@ function indexAsset(item: AssetIndexItem): AssetRecord | null {
     indexId: item.id,
     kind: item.kind,
     url: item.url,
+    storageKey: item.storageKey,
+    sha256: item.sha256,
+    size: item.size,
     name: item.name || (item.kind === 'video' ? '视频素材' : item.kind === 'audio' ? '音频素材' : '图片素材'),
     source: item.source,
     createdAt: item.createdAt,
@@ -166,6 +183,9 @@ export async function registerCanvasAsset(input: Omit<AssetRecord, 'favorite' | 
     id: input.indexId || input.id || `asset_${stableHash(`${input.kind}:${input.url}:${Date.now()}`)}`,
     kind: input.kind,
     url: input.url,
+    storageKey: input.storageKey || logicalStorageKey(input.kind, input.url),
+    sha256: input.sha256,
+    size: input.size,
     name: input.name,
     source: input.source === 'canvas-output' ? 'canvas-output' : 'canvas-upload',
     createdAt: input.createdAt || Date.now(),

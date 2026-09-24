@@ -16,6 +16,7 @@ async function loadTypeScript(sourcePath) {
 }
 
 const migrations = await loadTypeScript('../lib/migrations/framework.ts');
+const registry = await loadTypeScript('../lib/migrations/registry.ts');
 
 function baseManifest() {
   return {
@@ -156,6 +157,59 @@ test('startup recovery supports journals from before rollbackPath was persisted'
     assert.deepEqual(result.rolledBack, ['mig-legacy']);
     assert.equal(recovered.components.workspace, 1);
     assert.equal(JSON.parse(await readFile(path.join(dataDir, 'workspace.json'), 'utf8')).old, true);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('provider state migrates through every registered schema step', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-provider-migration-'));
+  try {
+    await writeFile(path.join(dataDir, 'state.json'), JSON.stringify({
+      providers: [{ id: 'legacy' }],
+      models: [],
+    }));
+    let saved = baseManifest();
+    saved = { ...saved, components: { providerConfig: 0 } };
+    const result = await migrations.runMigrations({
+      dataDir,
+      manifest: saved,
+      target: { providerConfig: 3 },
+      steps: registry.LOCAL_DATA_MIGRATIONS,
+      commit: async ({ dataDir: root, stagingDir }) => { await copyFile(path.join(stagingDir, 'state.json'), path.join(root, 'state.json')); },
+      writeManifest: async (value) => { saved = value; },
+    });
+    assert.equal(result.migrated, true);
+    assert.equal(saved.components.providerConfig, 3);
+    const state = JSON.parse(await readFile(path.join(dataDir, 'state.json'), 'utf8'));
+    assert.equal(state.schemaVersion, 3);
+    assert.deepEqual(state.providers, [{ id: 'legacy' }]);
+    assert.deepEqual(state.upscaleConnections, []);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('migration failure restores a metadata file while leaving large media in place', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-provider-migration-failure-'));
+  try {
+    const original = Buffer.from(JSON.stringify({ schemaVersion: 1, providers: [] }));
+    await writeFile(path.join(dataDir, 'state.json'), original);
+    const media = Buffer.alloc(1024 * 1024, 7);
+    await writeFile(path.join(dataDir, 'media.bin'), media);
+    await assert.rejects(() => migrations.runMigrations({
+      dataDir,
+      manifest: { ...baseManifest(), components: { providerConfig: 1 } },
+      target: { providerConfig: 2 },
+      steps: [{ id: 'provider-fails', component: 'providerConfig', from: 1, to: 2, run: async (context) => {
+        await context.writeJson('state.json', { schemaVersion: 2, broken: true });
+        throw new Error('provider migration failure');
+      } }],
+      commit: async () => {},
+      writeManifest: async () => {},
+    }), /provider migration failure/);
+    assert.deepEqual(await readFile(path.join(dataDir, 'state.json')), original);
+    assert.deepEqual(await readFile(path.join(dataDir, 'media.bin')), media);
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }

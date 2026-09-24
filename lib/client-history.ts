@@ -114,6 +114,10 @@ export type AssetIndexItem = {
   id: string;
   kind: 'image' | 'video' | 'audio';
   url: string;
+  /** Stable logical location; old records may only have url. */
+  storageKey?: string;
+  sha256?: string;
+  size?: number;
   name: string;
   source: 'canvas-upload' | 'canvas-output' | 'metadata';
   createdAt: number;

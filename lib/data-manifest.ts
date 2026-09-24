@@ -45,7 +45,7 @@ export function dataManifestPath(dataDir: string) {
 export function initialDataManifest(
   profileMode: DataProfileMode,
   now = new Date().toISOString(),
-  components: DataComponentVersions = CURRENT_DATA_COMPONENT_VERSIONS,
+  components: DataComponentVersions = EMPTY_DATA_COMPONENT_VERSIONS,
 ): DataManifest {
   return {
     format: DATA_MANIFEST_FORMAT,

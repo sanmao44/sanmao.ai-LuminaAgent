@@ -1412,7 +1412,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-tools-context-menu .canvas-menu-arrow{font-size:16px}
 @media(max-width:420px){.canvas-tools-context-menu{width:calc(100vw - 16px);padding:6px}.canvas-tools-context-menu .canvas-menu-title{padding-bottom:6px}.canvas-tools-context-menu .canvas-menu-item{min-height:37px}}
 
-.canvas-workspace-sync-state{display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--muted);font-size:8px;white-space:nowrap}.canvas-workspace-sync-state i{width:6px;height:6px;border-radius:50%;background:var(--success)}.canvas-workspace-sync-state.syncing i{background:var(--warning);box-shadow:0 0 0 3px color-mix(in srgb,var(--warning) 12%,transparent)}.canvas-workspace-sync-state.offline i,.canvas-workspace-sync-state.error i{background:var(--danger)}
+.canvas-workspace-sync-state{display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--muted);font-size:8px;white-space:nowrap}.canvas-workspace-sync-state i{width:6px;height:6px;border-radius:50%;background:var(--success)}.canvas-workspace-sync-state.syncing i{background:var(--warning);box-shadow:0 0 0 3px color-mix(in srgb,var(--warning) 12%,transparent)}.canvas-workspace-sync-state.offline i,.canvas-workspace-sync-state.error i{background:var(--danger)}.canvas-workspace-sync-state.conflict i{background:var(--warning);box-shadow:0 0 0 3px color-mix(in srgb,var(--warning) 14%,transparent)}
 
 /* Node editor v6: keep the composer visually grouped with its references and
    settings, while letting the prompt textarea grow from its measured content.

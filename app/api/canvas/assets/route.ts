@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { getPublicState } from '@/lib/store';
@@ -54,7 +54,16 @@ export async function POST(request: Request) {
     await mkdir(root, { recursive: true });
     const filename = `canvas-${Date.now()}-${randomUUID()}${extension(name, mime)}`;
     await writeFile(path.join(root, filename), body, { flag: 'wx' });
-    return Response.json({ id: randomUUID(), kind, name: name || filename, url: kind === 'video' ? `/api/storage/video?name=${encodeURIComponent(filename)}` : kind === 'audio' ? `/api/storage/audio?name=${encodeURIComponent(filename)}` : `/api/storage/file?name=${encodeURIComponent(filename)}`, mime, size: body.byteLength });
+    return Response.json({
+      id: randomUUID(),
+      kind,
+      name: name || filename,
+      storageKey: `${kind === 'image' ? 'images' : kind === 'video' ? 'videos' : 'audio'}/${filename}`,
+      sha256: createHash('sha256').update(body).digest('hex'),
+      url: kind === 'video' ? `/api/storage/video?name=${encodeURIComponent(filename)}` : kind === 'audio' ? `/api/storage/audio?name=${encodeURIComponent(filename)}` : `/api/storage/file?name=${encodeURIComponent(filename)}`,
+      mime,
+      size: body.byteLength,
+    });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     return Response.json({ error: error instanceof Error ? error.message : '素材上传失败' }, { status: 400 });

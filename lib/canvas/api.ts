@@ -16,6 +16,8 @@ export type CanvasAsset = {
   kind: "image" | "video" | "audio";
   name: string;
   url: string;
+  storageKey?: string;
+  sha256?: string;
   mime: string;
   size: number;
   optimized?: boolean;
