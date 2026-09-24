@@ -121,10 +121,25 @@ export type CloneBeatCue = {
   strength: number;
 };
 
+export type CloneReferenceEvidenceReason =
+  | 'overview'
+  | 'scene-before'
+  | 'scene-after'
+  | 'beat'
+  | 'speech-boundary';
+
+/** One locally selected frame and the signals that made it worth inspecting. */
+export type CloneReferenceEvidenceSample = {
+  time: number;
+  reasons: CloneReferenceEvidenceReason[];
+};
+
 export type CloneReferenceAnalysis = {
   version: 1;
   duration: number;
   sampleTimes: number[];
+  /** The local evidence map used to choose the frames sent to visual analysis. */
+  evidence?: CloneReferenceEvidenceSample[];
   /** Locally detected hard cuts used to guide vision analysis and fallback planning. */
   sceneChangeTimes?: number[];
   method: 'multimodal-frames' | 'fallback';

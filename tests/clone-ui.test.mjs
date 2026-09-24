@@ -187,6 +187,10 @@ test("Blueprint 变体提供计划与本地完整 MP4 合成入口", () => {
 
 test("管线包含抽帧、拆解、配音、生图、生视频五步与三条降级链", () => {
   assert.match(pipeline, /extractFrameFiles\(/);
+  assert.match(pipeline, /referenceEvidenceSampleTimes\(duration, scene\.times, beatResult\.beats, referenceTranscript\)/);
+  assert.match(pipeline, /evidenceForFrameTimes\(extracted\.times, evidence\)/);
+  assert.match(pipeline, /evidence:\s*frames\.evidence/);
+  assert.match(pipeline, /取证原因来自本地分析/);
   // 参考视频必须和 /api/storage/video 用同一套解析（回退历史目录），否则旧素材会解析成不存在的路径。
   assert.match(pipeline, /resolveStoredVideoFileWithFallback\(state\.settings\.videoStoragePath \|\| '', name\)/);
   assert.match(pipeline, /if \(!file \|\| !existsSync\(file\)\) throw new Error\('参考素材已不在本地存储里/);

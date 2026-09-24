@@ -29,12 +29,12 @@ import { askText, chatText, parseJsonBlock } from './chat';
 import { detectAudioBeats, detectSceneChanges, extractFrameFiles, extractReferenceAudioTrack, extractSpeechAudio, extractVideoSegment, prepareImageFrame, probeMediaSeconds, runFfmpegCapture } from './media';
 import { transcribeLocalAudio, transcribeReferenceAudio } from './asr';
 import { localOcrAvailable, mergeOcrText, ocrImageFile, ocrPosition } from './ocr';
-import { alignShotsWithLines, buildBlueprintComponents, buildBlueprintVariantPlan, buildTimeline, clampShotSeconds, cloneShotDirection, cloneStageProgress, isCloneJobStale, normalizeShots, referenceFrameSampleTimes, round3, shouldPreserveReferenceFrameAnalysis, shotsFromSceneChanges, snapShotBoundariesToSceneChanges, splitLines, type NormalizedShot } from './plan';
+import { alignShotsWithLines, buildBlueprintComponents, buildBlueprintVariantPlan, buildTimeline, clampShotSeconds, cloneShotDirection, cloneStageProgress, isCloneJobStale, normalizeShots, referenceEvidenceSampleTimes, round3, shouldPreserveReferenceFrameAnalysis, shotsFromSceneChanges, snapShotBoundariesToSceneChanges, splitLines, type NormalizedShot } from './plan';
 import { offlineSpeechSupported, synthesizeOfflineSpeech } from './offline-speech';
 import { audioExtension, resolveSpeechRuntime, synthesizeSpeech } from './speech';
 import { assembleCloneVideo } from './assemble';
 import { findCloneJob, listCloneJobs, touchCloneJob, updateCloneJob } from './store';
-import type { CloneAsset, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneJob, CloneOcrObservation, CloneReferenceAnalysis, CloneReferenceOcrFrame, CloneShot, CloneShotAnalysis, CloneShotSpeechMode, CloneTimeline, CloneTranscript, CloneVisualBible } from './types';
+import type { CloneAsset, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneJob, CloneOcrObservation, CloneReferenceAnalysis, CloneReferenceEvidenceSample, CloneReferenceOcrFrame, CloneShot, CloneShotAnalysis, CloneShotSpeechMode, CloneTimeline, CloneTranscript, CloneVisualBible } from './types';
 import { normalizeVideoEditorState } from '../canvas/video-editor';
 import type { CanvasVideoEditorState } from '../canvas/types';
 
@@ -322,9 +322,15 @@ async function frameDataUrls(files: string[]) {
   return urls;
 }
 
+function evidenceForFrameTimes(times: readonly number[] | undefined, evidence: readonly CloneReferenceEvidenceSample[]) {
+  if (!times?.length || !evidence.length) return undefined;
+  const byTime = new Map(evidence.map((sample) => [round3(sample.time), sample]));
+  return times.map((time) => byTime.get(round3(time))).filter((sample): sample is CloneReferenceEvidenceSample => Boolean(sample));
+}
+
 function buildReferenceAnalysis(
   duration: number,
-  frames: { files: string[]; times?: number[] },
+  frames: { files: string[]; times?: number[]; evidence?: CloneReferenceEvidenceSample[] },
   shots: readonly Pick<CloneShot, 'index' | 'start' | 'end' | 'analysis'>[],
   method: CloneReferenceAnalysis['method'],
   sceneChangeTimes: number[] = [],
@@ -337,6 +343,7 @@ function buildReferenceAnalysis(
     version: 1,
     duration: round3(duration),
     sampleTimes: (frames.times || []).map(round3),
+    ...(frames.evidence?.length ? { evidence: frames.evidence } : {}),
     ...(sceneChangeTimes.length ? { sceneChangeTimes: sceneChangeTimes.map(round3) } : {}),
     method,
     ...(transcript?.text ? { transcript: transcript.text, transcriptData: transcript } : {}),
@@ -557,7 +564,7 @@ async function attachReferenceFrames(shots: CloneShot[], frames: { files: string
 }
 
 /** 视觉拆解：没有视觉模型或拆解失败时退回等间隔切分，并把降级原因写进 warning。 */
-async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; error: string; times?: number[]; sceneChangeTimes?: number[] }, job: CloneJob, durationSeconds: number): Promise<{ shots: NormalizedShot[]; warning?: string }> {
+async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; error: string; times?: number[]; evidence?: CloneReferenceEvidenceSample[]; sceneChangeTimes?: number[] }, job: CloneJob, durationSeconds: number): Promise<{ shots: NormalizedShot[]; warning?: string }> {
   const equalShots = () => job.reference.kind === 'image'
     ? [{ start: 0, end: round3(durationSeconds), visual: '', prompt: '' }]
     : frames.sceneChangeTimes?.length
@@ -572,13 +579,18 @@ async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; err
     const reason = frames.error || (frames.files.length ? '抽出来的帧读不出来' : '没有抽到帧');
     return { shots: equalShots(), warning: `参考素材拆解不了（${reason}）：跳过画面拆解，按镜头数平均分配时长。` };
   }
-  const frameGuide = frames.files.map((_, index) => `${index + 1}. t=${round3(frames.times?.[index] || 0)}s`).join('\n');
+  const frameGuide = frames.files.map((_, index) => {
+    const evidence = frames.evidence?.[index];
+    const reasons = evidence?.reasons?.length ? `；取证原因=${evidence.reasons.join('/')}` : '';
+    return `${index + 1}. t=${round3(frames.times?.[index] || 0)}s${reasons}`;
+  }).join('\n');
   const sceneGuide = frames.sceneChangeTimes?.length
     ? `本地 FFmpeg 检测到的硬切候选时间点：${frames.sceneChangeTimes.map(round3).join('、')} 秒。镜头边界优先贴近这些时间点。`
     : '本地没有检测到明确硬切，仍请根据抽帧和画面变化判断镜头边界。';
   const instruction = [
     `这是参考素材按时间顺序抽取的画面；若只有一张参考图，它代表一个稳定场景，不要虚构镜头切点。时长为 ${round3(durationSeconds)} 秒。`,
-    `抽帧时间标签如下：\n${frameGuide}`,
+    `抽帧时间标签如下（每一帧后面的取证原因来自本地分析，不是模型猜测）：\n${frameGuide}`,
+    '请把相邻取证帧之间的变化当作连续证据：识别画面元素的进入、持续、替换和退出；同一榜单、标题、产品卡或界面若跨镜头持续，不要机械地当成互不相关的元素。若无法确定精确时间，请把事件范围限制在相邻取证帧之间，并降低描述确定性。',
     sceneGuide,
     '如果字卡、B-roll、贴纸、reveal 或动效只在镜头的一段时间出现，请在 analysis.events 中记录相对镜头的 start/end（秒）和 kind=graphics|broll|effect；不要把它错误地扩展到整个镜头。尽量同时填写 anchorText（该事件对应的原片口播词/语义短语）或 anchorStartWord、anchorEndWord（镜头内从 0 开始、end 不含的词序号），这样改写文案或重新配音后可以自动跟随语义重新定位。graphics 事件可填写 text、style、position，B-roll 事件可填写 prompt 或 url。',
     '如果画面包含标题、Logo、价格、按钮或字幕，请优先逐字抄录，不要只写“有文字”；能判断位置和样式时一并写入 graphicsPosition、graphicsStyle、graphicsBounds（归一化 x/y/width/height，左上角为 0,0）。',
@@ -1030,7 +1042,16 @@ async function executeCloneJob(id: string) {
         ? await prepareImageFrame(referenceSource, path.join(frameDirectory, 'reference-image.jpg'))
           .then((file) => ({ files: [file], times: [0], error: '' }))
           .catch((error) => ({ files: [], times: [], error: error instanceof Error ? error.message : '参考图读取失败' }))
-        : await extractFrameFiles(referenceFile, referenceFrameSampleTimes(duration, scene.times), frameDirectory);
+        : await (async () => {
+          const evidence = referenceEvidenceSampleTimes(
+            duration,
+            scene.times,
+            executionJob.referenceAnalysis?.beats || [],
+            referenceTranscript,
+          );
+          const extracted = await extractFrameFiles(referenceFile, evidence.map((sample) => sample.time), frameDirectory);
+          return { ...extracted, evidence: evidenceForFrameTimes(extracted.times, evidence) };
+        })();
       visualBibleFrames = await frameDataUrls(frames.files);
       const analyzedFrames = { ...frames, sceneChangeTimes: scene.times };
       if (scene.error) await appendWarnings(id, [`本地镜头切点检测未完成：${scene.error}；将继续使用抽帧和视觉模型分析。`]);
@@ -1329,7 +1350,11 @@ export async function analyzeCloneJob(id: string) {
     ? await prepareImageFrame(referenceSource, path.join(frameDirectory, 'reference-image.jpg'))
       .then((file) => ({ files: [file], times: [0], error: '' }))
       .catch((error) => ({ files: [], times: [], error: error instanceof Error ? error.message : '参考图读取失败' }))
-    : await extractFrameFiles(referenceSource, referenceFrameSampleTimes(duration, scene.times), frameDirectory);
+    : await (async () => {
+      const evidence = referenceEvidenceSampleTimes(duration, scene.times, beatResult.beats, referenceTranscript);
+      const extracted = await extractFrameFiles(referenceSource, evidence.map((sample) => sample.time), frameDirectory);
+      return { ...extracted, evidence: evidenceForFrameTimes(extracted.times, evidence) };
+    })();
   const analyzedFrames = { ...frames, sceneChangeTimes: scene.times };
   if (scene.error) await appendWarnings(id, [`本地镜头切点检测未完成：${scene.error}；将继续使用抽帧和视觉模型分析。`]);
   const ocr = await analyzeReferenceOcr(frames);

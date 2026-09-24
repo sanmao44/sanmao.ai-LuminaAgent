@@ -3,7 +3,7 @@
  * 成片时间轴生成、降级判断。这里不碰网络与磁盘，方便直接单测。
  */
 import type { CanvasVideoEditorClip, CanvasVideoEditorLayout, CanvasVideoEditorLayoutMode } from '../canvas/types';
-import type { CloneBeatCue, CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneTranscriptWord, CloneVisualBible, CloneVisualEvent } from './types';
+import type { CloneBeatCue, CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneReferenceEvidenceReason, CloneReferenceEvidenceSample, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneTranscriptWord, CloneVisualBible, CloneVisualEvent } from './types';
 import type { CanvasVideoEditorWord } from '../canvas/types';
 
 /** 中文口播估算速度：字/秒。没有 TTS 时用它按字数估时长。 */
@@ -171,6 +171,136 @@ export function referenceFrameSampleTimes(durationSeconds: number, sceneChangeTi
   const limit = Math.max(1, Math.round(finite(maxFrames, CLONE_MAX_FRAMES)));
   if (sorted.length <= limit) return sorted;
   return Array.from({ length: limit }, (_, index) => sorted[Math.round(index * (sorted.length - 1) / Math.max(1, limit - 1))]);
+}
+
+const EVIDENCE_REASON_ORDER: CloneReferenceEvidenceReason[] = [
+  'scene-before',
+  'scene-after',
+  'beat',
+  'speech-boundary',
+  'overview',
+];
+
+function evidenceReasonPriority(reason: CloneReferenceEvidenceReason) {
+  switch (reason) {
+    case 'scene-before':
+    case 'scene-after':
+      return 100;
+    case 'beat':
+      return 80;
+    case 'speech-boundary':
+      return 70;
+    case 'overview':
+    default:
+      return 10;
+  }
+}
+
+function transcriptBoundaryTimes(transcript?: CloneTranscript | null) {
+  if (!transcript) return [] as number[];
+  const boundaries: number[] = [];
+  for (const segment of transcript.segments || []) {
+    boundaries.push(segment.start, segment.end);
+  }
+  // Word gaps are useful evidence boundaries even when Whisper grouped several
+  // words into one long segment. Avoid sampling every word in ordinary speech.
+  for (let index = 1; index < transcript.words.length; index += 1) {
+    const previous = transcript.words[index - 1];
+    const current = transcript.words[index];
+    if (current.start - previous.end > 0.35) boundaries.push(current.start);
+  }
+  return boundaries;
+}
+
+function pickEvenly<T>(items: readonly T[], count: number) {
+  if (count <= 0 || !items.length) return [] as T[];
+  if (items.length <= count) return [...items];
+  if (count === 1) return [items[Math.floor((items.length - 1) / 2)]];
+  return Array.from({ length: count }, (_, index) => items[Math.round(index * (items.length - 1) / (count - 1))]);
+}
+
+/**
+ * Select a bounded, explainable evidence set for reference-video analysis.
+ *
+ * The old sampler is intentionally left untouched for persisted/legacy callers.
+ * This sampler gives fast cuts, rhythm changes and speech boundaries priority,
+ * then fills the remaining budget with temporal overview frames. The returned
+ * reasons are persisted alongside the analysis so a plan can be audited or
+ * re-analyzed without guessing why a frame was selected.
+ */
+export function referenceEvidenceSampleTimes(
+  durationSeconds: number,
+  sceneChangeTimes: number[] = [],
+  beats: readonly CloneBeatCue[] = [],
+  transcript?: CloneTranscript | null,
+  maxFrames = CLONE_MAX_FRAMES,
+): CloneReferenceEvidenceSample[] {
+  const duration = Math.max(CLONE_MIN_SHOT_SECONDS, finite(durationSeconds, 0));
+  const limit = Math.max(1, Math.round(finite(maxFrames, CLONE_MAX_FRAMES)));
+  const epsilon = Math.min(0.02, duration / 4);
+  const candidates = new Map<number, { time: number; reasons: Set<CloneReferenceEvidenceReason>; priority: number }>();
+  const add = (value: unknown, reason: CloneReferenceEvidenceReason, priority = evidenceReasonPriority(reason)) => {
+    const time = round3(clamp(finite(value, -1), epsilon, duration - epsilon));
+    if (!(time > 0 && time < duration)) return;
+    const existing = candidates.get(time);
+    if (existing) {
+      existing.reasons.add(reason);
+      existing.priority = Math.max(existing.priority, priority);
+      return;
+    }
+    candidates.set(time, { time, reasons: new Set([reason]), priority });
+  };
+
+  for (const time of frameSampleTimes(duration, CLONE_FRAME_INTERVAL_SECONDS, limit)) add(time, 'overview');
+
+  const changes = normalizedSceneChanges(duration, sceneChangeTimes);
+  const points = [0, ...changes, duration];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    add((points[index] + points[index + 1]) / 2, 'overview', 30);
+  }
+  for (const time of changes) {
+    add(time - 0.12, 'scene-before');
+    add(time + 0.12, 'scene-after');
+  }
+
+  for (const beat of beats) {
+    const time = finite(beat?.time, -1);
+    if (time < 0 || time > duration) continue;
+    add(time - 0.08, 'beat');
+    add(time + 0.08, 'beat');
+  }
+  for (const time of transcriptBoundaryTimes(transcript)) add(time, 'speech-boundary');
+
+  if (!candidates.size) add(duration / 2, 'overview');
+  const all = [...candidates.values()].sort((left, right) => left.time - right.time);
+  const anchors = all.filter((candidate) => [...candidate.reasons].some((reason) => reason !== 'overview'));
+  const selected = anchors.length > limit
+    ? pickEvenly([...anchors].sort((left, right) => {
+      if (right.priority !== left.priority) return right.priority - left.priority;
+      return left.time - right.time;
+    }), limit)
+    : [...anchors];
+
+  const remaining = all.filter((candidate) => !selected.includes(candidate));
+  while (selected.length < limit && remaining.length) {
+    const next = remaining.reduce<{ candidate: typeof remaining[number]; score: number } | null>((best, candidate) => {
+      const distance = selected.length
+        ? Math.min(...selected.map((item) => Math.abs(item.time - candidate.time)))
+        : candidate.time;
+      const score = distance + candidate.priority / 10_000;
+      return !best || score > best.score ? { candidate, score } : best;
+    }, null);
+    if (!next) break;
+    selected.push(next.candidate);
+    remaining.splice(remaining.indexOf(next.candidate), 1);
+  }
+
+  return selected
+    .sort((left, right) => left.time - right.time)
+    .map((candidate) => ({
+      time: candidate.time,
+      reasons: EVIDENCE_REASON_ORDER.filter((reason) => candidate.reasons.has(reason)),
+    }));
 }
 
 /** Convert local cut timestamps into a deterministic fallback shot plan. */

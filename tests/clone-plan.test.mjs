@@ -54,6 +54,43 @@ test('参考视频切点会优先进入抽帧，并能生成稳定的镜头边�
   assert.deepEqual(snapped.map((shot) => [shot.start, shot.end]), [[0, 1], [1, 3]]);
 });
 
+test('adaptive reference evidence covers cuts, beats, speech boundaries, and reasons', () => {
+  const evidence = plan.referenceEvidenceSampleTimes(12, [3, 8], [
+    { time: 5, strength: 0.9 },
+  ], {
+    text: 'one two three',
+    model: 'test',
+    words: [
+      { start: 1, end: 1.5, text: 'one' },
+      { start: 2, end: 2.5, text: 'two' },
+      { start: 6, end: 6.5, text: 'three' },
+    ],
+    segments: [
+      { start: 1, end: 2.5, text: 'one two' },
+      { start: 6, end: 6.5, text: 'three' },
+    ],
+  }, 32);
+  assert.ok(evidence.length > 0);
+  assert.ok(evidence.every((sample) => sample.time > 0 && sample.time < 12));
+  assert.ok(evidence.some((sample) => sample.reasons.includes('scene-before') && sample.time === 2.88));
+  assert.ok(evidence.some((sample) => sample.reasons.includes('scene-after') && sample.time === 3.12));
+  assert.ok(evidence.some((sample) => sample.reasons.includes('beat')));
+  assert.ok(evidence.some((sample) => sample.reasons.includes('speech-boundary')));
+  assert.deepEqual(evidence.map((sample) => sample.time), [...evidence].sort((a, b) => a.time - b.time).map((sample) => sample.time));
+});
+
+test('adaptive reference evidence obeys the frame limit and deduplicates timestamps', () => {
+  const evidence = plan.referenceEvidenceSampleTimes(10, [1, 2, 3, 4, 5, 6, 7, 8, 9], Array.from({ length: 20 }, (_, index) => ({ time: index / 2, strength: 1 })), {
+    text: 'speech',
+    model: 'test',
+    words: Array.from({ length: 20 }, (_, index) => ({ start: index * 0.45, end: index * 0.45 + 0.2, text: String(index) })),
+    segments: [],
+  }, 8);
+  assert.equal(evidence.length, 8);
+  assert.equal(new Set(evidence.map((sample) => sample.time)).size, evidence.length);
+  assert.ok(evidence.every((sample) => sample.reasons.length > 0));
+});
+
 test('拆解结果归一化：别名字段、排序、越界裁剪与兜底', () => {
   const shots = plan.normalizeShots({
     shots: [
