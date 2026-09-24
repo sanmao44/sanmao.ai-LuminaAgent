@@ -187,6 +187,8 @@ test("管线包含抽帧、拆解、配音、生图、生视频五步与三条�
   assert.match(pipeline, /const nextReferenceAnalysis = referenceAnalysis/);
   assert.match(pipeline, /const nextBlueprint = blueprint/);
   assert.match(pipeline, /return parts\.length \? `；\$\{parts\.join\('；'\)\}` : ''/);
+  assert.match(pipeline, /transcribeLocalAudio\(extracted, seconds \|\| Math\.max\(1, shot\.end - shot\.start\)\)/);
+  assert.match(pipeline, /audioWords: voice\.words/);
   assert.match(pipeline, /createVideoGeneration\(\{ modelId: runtime\.model\.id, input, source: 'canvas' \}\)/);
   assert.match(pipeline, /没有视觉模型/);
   assert.match(pipeline, /const IMAGE_CONCURRENCY = 2;/);

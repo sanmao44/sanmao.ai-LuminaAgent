@@ -616,7 +616,7 @@ function captionTokens(value: string) {
  */
 export function captionWordsForShot(
   textValue: string,
-  shot: Pick<CloneShot, 'start' | 'end'>,
+  shot: Pick<CloneShot, 'start' | 'end' | 'audioWords'>,
   duration: number,
   transcript?: CloneTranscript | null,
 ): CanvasVideoEditorWord[] {
@@ -624,19 +624,36 @@ export function captionWordsForShot(
   if (!tokens.length || duration <= 0) return [];
   const sourceStart = finite(shot.start, 0);
   const sourceEnd = Math.max(sourceStart, finite(shot.end, sourceStart));
-  const recovered = (transcript?.words || [])
-    .filter((word) => word.end > sourceStart && word.start < sourceEnd && word.text.trim())
-    .map((word) => ({
-      start: clamp(word.start, sourceStart, sourceEnd),
-      end: clamp(Math.max(word.end, word.start), sourceStart, sourceEnd),
-      weight: Math.max(1, captionTokens(word.text).length),
-    }))
+  const alignedWords = shot.audioWords?.length ? shot.audioWords : undefined;
+  const relativeAlignment = Boolean(alignedWords?.length);
+  const recovered = (alignedWords
+    ? alignedWords
+      .filter((word) => word.end > 0 && word.start < duration && word.text.trim())
+      .map((word) => ({
+        start: clamp(word.start, 0, duration),
+        end: clamp(Math.max(word.end, word.start), 0, duration),
+        weight: Math.max(1, captionTokens(word.text).length),
+      }))
+    : (transcript?.words || [])
+      .filter((word) => word.end > sourceStart && word.start < sourceEnd && word.text.trim())
+      .map((word) => ({
+        start: clamp(word.start, sourceStart, sourceEnd),
+        end: clamp(Math.max(word.end, word.start), sourceStart, sourceEnd),
+        weight: Math.max(1, captionTokens(word.text).length),
+      })))
     .filter((word) => word.end > word.start);
+  if (relativeAlignment && recovered.length === tokens.length) {
+    return tokens.map((token, index) => ({
+      start: round3(clamp(recovered[index].start, 0, Math.max(0, duration - 0.01))),
+      end: round3(clamp(Math.max(recovered[index].start + 0.01, recovered[index].end), recovered[index].start + 0.01, duration)),
+      text: token,
+    }));
+  }
   const referenceDuration = Math.max(0.01, sourceEnd - sourceStart);
-  const activeStart = recovered.length ? Math.min(...recovered.map((word) => word.start)) : sourceStart;
-  const activeEnd = recovered.length ? Math.max(...recovered.map((word) => word.end)) : sourceEnd;
-  const outputStart = recovered.length ? clamp(((activeStart - sourceStart) / referenceDuration) * duration, 0, duration) : 0;
-  const outputEnd = recovered.length ? clamp(((activeEnd - sourceStart) / referenceDuration) * duration, outputStart, duration) : duration;
+  const activeStart = recovered.length ? Math.min(...recovered.map((word) => word.start)) : (relativeAlignment ? 0 : sourceStart);
+  const activeEnd = recovered.length ? Math.max(...recovered.map((word) => word.end)) : (relativeAlignment ? duration : sourceEnd);
+  const outputStart = relativeAlignment ? clamp(activeStart, 0, duration) : recovered.length ? clamp(((activeStart - sourceStart) / referenceDuration) * duration, 0, duration) : 0;
+  const outputEnd = relativeAlignment ? clamp(activeEnd, outputStart, duration) : recovered.length ? clamp(((activeEnd - sourceStart) / referenceDuration) * duration, outputStart, duration) : duration;
   const activeDuration = Math.max(0.01, outputEnd - outputStart);
   const totalWeight = recovered.reduce((sum, word) => sum + word.weight, 0);
   const mapFraction = (fraction: number) => {
@@ -647,7 +664,9 @@ export function captionWordsForShot(
       if (fraction <= next || word === recovered.at(-1)) {
         const local = (fraction - cursor) / Math.max(0.0001, next - cursor);
         const sourceTime = word.start + (word.end - word.start) * clamp(local, 0, 1);
-        return outputStart + ((sourceTime - activeStart) / Math.max(0.01, activeEnd - activeStart)) * activeDuration;
+        return relativeAlignment
+          ? sourceTime
+          : outputStart + ((sourceTime - activeStart) / Math.max(0.01, activeEnd - activeStart)) * activeDuration;
       }
       cursor = next;
     }

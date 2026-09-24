@@ -26,8 +26,8 @@ import { getVideoModelLimits } from '../video-model-limits';
 import { requiresPublicMediaRelay } from '../video-platform';
 import { createVideoGeneration, refreshVideoTask } from '../video-task-service';
 import { askText, chatText, parseJsonBlock } from './chat';
-import { detectSceneChanges, extractFrameFiles, extractReferenceAudioTrack, extractVideoSegment, probeMediaSeconds } from './media';
-import { transcribeReferenceAudio } from './asr';
+import { detectSceneChanges, extractFrameFiles, extractReferenceAudioTrack, extractSpeechAudio, extractVideoSegment, probeMediaSeconds } from './media';
+import { transcribeLocalAudio, transcribeReferenceAudio } from './asr';
 import { localOcrAvailable, mergeOcrText, ocrImageFile, ocrPosition } from './ocr';
 import { alignShotsWithLines, buildBlueprintComponents, buildBlueprintVariantPlan, buildTimeline, clampShotSeconds, cloneShotDirection, cloneStageProgress, isCloneJobStale, normalizeShots, referenceFrameSampleTimes, round3, shouldPreserveReferenceFrameAnalysis, shotsFromSceneChanges, snapShotBoundariesToSceneChanges, splitLines, type NormalizedShot } from './plan';
 import { offlineSpeechSupported, synthesizeOfflineSpeech } from './offline-speech';
@@ -616,8 +616,16 @@ async function voiceShot(runtime: SpeechRuntime | null, job: CloneJob, shot: Clo
   const probeFile = path.join(directory, `voice-${index}.${audioExtension(audio.contentType)}`);
   await writeFile(probeFile, audio.buffer);
   const seconds = await probeMediaSeconds(probeFile).catch(() => null);
+  let words: CloneTranscript['words'] = [];
+  try {
+    const alignmentFile = path.join(directory, `voice-${index}-alignment.wav`);
+    const extracted = await extractSpeechAudio(probeFile, alignmentFile);
+    if (extracted) words = (await transcribeLocalAudio(extracted, seconds || Math.max(1, shot.end - shot.start))).words;
+  } catch {
+    // Captions fall back to deterministic token timing when local ASR is unavailable.
+  }
   const stored = await persistAudioBuffer(audio.buffer, audio.contentType);
-  return { url: stored.url, seconds: seconds && seconds > 0 ? round3(seconds) : undefined, voice: audio.voice };
+  return { url: stored.url, seconds: seconds && seconds > 0 ? round3(seconds) : undefined, words, voice: audio.voice };
 }
 
 async function generateShotImage(
@@ -733,7 +741,7 @@ async function renderVariantVoice(job: CloneJob, shots: CloneShot[], indexes: re
     const shot = next[index];
     if (!shot?.line?.trim()) continue;
     const result = await voiceShot(runtime, job, shot, index);
-    next[index] = { ...shot, audioUrl: result.url, audioSeconds: result.seconds, status: 'done', error: undefined };
+    next[index] = { ...shot, audioUrl: result.url, audioSeconds: result.seconds, ...(result.words.length ? { audioWords: result.words } : { audioWords: undefined }), status: 'done', error: undefined };
   }
   return next;
 }
@@ -1025,7 +1033,7 @@ async function executeCloneJob(id: string) {
         if (!shot.line || shot.audioUrl) continue;
         try {
           const voice = await voiceShot(speechRuntime, executionJob, shot, index);
-          shots = replaceShot(shots, index, { audioUrl: voice.url, audioSeconds: voice.seconds });
+          shots = replaceShot(shots, index, { audioUrl: voice.url, audioSeconds: voice.seconds, ...(voice.words.length ? { audioWords: voice.words } : { audioWords: undefined }) });
           // 用户填的可能是别的平台的音色名（如 OpenAI 的 nova）：离线合成会拿系统中文音色顶上，要说清楚。
           const requestedVoice = String(started.options.voice || '').trim();
           if (voice.voice && requestedVoice && voice.voice !== requestedVoice) {

@@ -161,6 +161,8 @@ export type CloneShot = {
   audioUrl?: string;
   /** 这一句配音的实际时长（秒）；没有 TTS 时为空，改用字数估算。 */
   audioSeconds?: number;
+  /** Local word alignment for the generated voice clip, relative to this shot. */
+  audioWords?: CloneTranscriptWord[];
   error?: string;
 };
 

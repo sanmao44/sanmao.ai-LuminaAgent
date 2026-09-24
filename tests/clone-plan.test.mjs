@@ -399,6 +399,28 @@ test('visual bible enters every generated shot direction', () => {
   assert.match(direction, /no extra watermark/u);
 });
 
+test('generated voice word alignment takes precedence over reference transcript timing', () => {
+  const words = plan.captionWordsForShot('one two three', {
+    start: 10,
+    end: 13,
+    audioWords: [
+      { start: 0.1, end: 0.35, text: 'one' },
+      { start: 0.7, end: 1.05, text: 'two' },
+      { start: 1.4, end: 1.8, text: 'three' },
+    ],
+  }, 2, {
+    text: 'old words',
+    segments: [],
+    words: [{ start: 10, end: 12.9, text: 'old words' }],
+    model: 'reference',
+  });
+  assert.deepEqual(words.map((word) => [word.text, word.start, word.end]), [
+    ['one ', 0.1, 0.35],
+    ['two ', 0.7, 1.05],
+    ['three', 1.4, 1.8],
+  ]);
+});
+
 test('structured graphics bounds enter the editable card geometry', () => {
   const timeline = plan.buildTimeline([
     cloneShot(0, { line: 'narration', analysis: { graphicsText: 'screen title', graphicsBounds: { x: 0.12, y: 0.08, width: 0.64, height: 0.11 } } }),
