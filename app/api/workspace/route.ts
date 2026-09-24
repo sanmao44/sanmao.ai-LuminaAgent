@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isTrustedAppRequest } from '@/lib/auth';
@@ -15,10 +16,30 @@ const workspacePath = path.join(dataDir, 'workspace.json');
 const maxWorkspaceBytes = 80 * 1024 * 1024;
 const workspaceTempSweepIntervalMs = 60 * 1000;
 let lastWorkspaceTempSweepAt = 0;
+let workspaceMutationChain: Promise<unknown> = Promise.resolve();
+
+type StoredWorkspaceSnapshot = WorkspaceSnapshot & { revision?: number };
+
+function revisionOf(workspace: StoredWorkspaceSnapshot | null) {
+  const value = Number(workspace?.revision || 0);
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function contentHashOf(workspace: StoredWorkspaceSnapshot | null) {
+  if (!workspace) return null;
+  const { revision: _revision, ...content } = workspace;
+  return createHash('sha256').update(JSON.stringify(content)).digest('hex');
+}
+
+function runWorkspaceMutation<T>(operation: () => Promise<T>) {
+  const result = workspaceMutationChain.then(operation, operation);
+  workspaceMutationChain = result.then(() => undefined, () => undefined);
+  return result;
+}
 
 function parseWorkspace(raw: string) {
   if (!raw.trim()) return null;
-  return validateWorkspaceShape(JSON.parse(raw)) as unknown as WorkspaceSnapshot;
+    return validateWorkspaceShape(JSON.parse(raw)) as unknown as StoredWorkspaceSnapshot;
 }
 
 async function recoverWorkspace() {
@@ -94,7 +115,13 @@ export async function GET(request: Request) {
   void ensureMediaLibrary();
   try {
     const workspace = await readWorkspace();
-    return Response.json({ ok: true, workspace, updatedAt: workspace?.updatedAt || null }, { headers: { 'Cache-Control': 'no-store' } });
+    return Response.json({
+      ok: true,
+      workspace,
+      updatedAt: workspace?.updatedAt || null,
+      revision: revisionOf(workspace),
+      contentHash: contentHashOf(workspace),
+    }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '读取工作区失败' }, { status: 500 });
   }
@@ -107,17 +134,28 @@ export async function PUT(request: Request) {
     const contentLength = Number(request.headers.get('content-length') || 0);
     if (contentLength > maxWorkspaceBytes + 4096) throw new Error('工作区数据超过 80MB');
     const body = await request.json();
-    const workspace = validateWorkspaceShape(body?.workspace) as unknown as WorkspaceSnapshot;
-    const previous = await readWorkspace();
+    const expectedRevision = Number.isInteger(Number(body?.expectedRevision))
+      ? Math.max(0, Number(body.expectedRevision))
+      : 0;
+    const result = await runWorkspaceMutation(async () => {
+      const workspace = validateWorkspaceShape(body?.workspace) as unknown as StoredWorkspaceSnapshot;
+      const previous = await readWorkspace();
+      const currentRevision = revisionOf(previous);
+      if (expectedRevision !== currentRevision) {
+        return Response.json({ ok: false, code: 'WORKSPACE_CONFLICT', error: '工作区已被其他窗口更新，请刷新后再保存', revision: currentRevision, updatedAt: previous?.updatedAt || null, contentHash: contentHashOf(previous) }, { status: 409, headers: { 'Cache-Control': 'no-store' } });
+      }
     workspace.updatedAt = Math.max(
       Date.now(),
       Number(workspace.updatedAt),
       Number(previous?.updatedAt || 0) + 1,
     );
-    const content = `${JSON.stringify(workspace, null, 2)}\n`;
+      workspace.revision = currentRevision + 1;
+      const content = `${JSON.stringify(workspace, null, 2)}\n`;
     if (Buffer.byteLength(content, 'utf8') > maxWorkspaceBytes) throw new Error('工作区数据超过 80MB');
-    await writeAtomic(content);
-    return Response.json({ ok: true, updatedAt: workspace.updatedAt }, { headers: { 'Cache-Control': 'no-store' } });
+      await writeAtomic(content);
+      return Response.json({ ok: true, updatedAt: workspace.updatedAt, revision: workspace.revision, contentHash: contentHashOf(workspace) }, { headers: { 'Cache-Control': 'no-store' } });
+    });
+    return result;
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '保存工作区失败' }, { status: 400 });
   }

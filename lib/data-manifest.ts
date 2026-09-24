@@ -28,7 +28,15 @@ export type DataManifest = {
   updatedAt: string;
 };
 
-const LEGACY_COMPONENT_VERSIONS = CURRENT_DATA_COMPONENT_VERSIONS;
+const EMPTY_DATA_COMPONENT_VERSIONS: DataComponentVersions = {
+  workspace: 0,
+  indexedDb: 0,
+  canvas: 'legacy',
+  providerConfig: 0,
+  mediaRoots: 0,
+  backupArchive: 0,
+  autoSnapshot: 0,
+};
 
 export function dataManifestPath(dataDir: string) {
   return path.join(dataDir, DATA_MANIFEST_FILE);
@@ -37,7 +45,7 @@ export function dataManifestPath(dataDir: string) {
 export function initialDataManifest(
   profileMode: DataProfileMode,
   now = new Date().toISOString(),
-  components: DataComponentVersions = LEGACY_COMPONENT_VERSIONS,
+  components: DataComponentVersions = EMPTY_DATA_COMPONENT_VERSIONS,
 ): DataManifest {
   return {
     format: DATA_MANIFEST_FORMAT,
@@ -65,15 +73,19 @@ async function readOptionalJson(file: string): Promise<Record<string, unknown> |
  * until the browser sends a workspace snapshot through /api/workspace.
  */
 export async function detectDataComponentVersions(profile: Pick<DataProfile, 'dataDir' | 'providerConfigDir'>) {
-  const defaults = { ...LEGACY_COMPONENT_VERSIONS };
+  const defaults = { ...EMPTY_DATA_COMPONENT_VERSIONS };
   const workspace = await readOptionalJson(path.join(profile.dataDir, 'workspace.json'));
   const provider = await readOptionalJson(path.join(profile.providerConfigDir, 'state.json'));
   const mediaRoots = await readOptionalJson(path.join(profile.dataDir, 'media-roots.json'));
   return {
     ...defaults,
-    ...(typeof workspace?.schemaVersion === 'number' ? { workspace: workspace.schemaVersion } : {}),
-    ...(typeof provider?.schemaVersion === 'number' ? { providerConfig: provider.schemaVersion } : {}),
-    ...(typeof mediaRoots?.version === 'number' ? { mediaRoots: mediaRoots.version } : {}),
+    ...(workspace ? { workspace: typeof workspace.schemaVersion === 'number' ? workspace.schemaVersion : 0 } : { workspace: CURRENT_DATA_COMPONENT_VERSIONS.workspace }),
+    ...(provider ? { providerConfig: typeof provider.schemaVersion === 'number' ? provider.schemaVersion : 0 } : { providerConfig: CURRENT_DATA_COMPONENT_VERSIONS.providerConfig }),
+    ...(mediaRoots ? { mediaRoots: typeof mediaRoots.version === 'number' ? mediaRoots.version : 0 } : { mediaRoots: CURRENT_DATA_COMPONENT_VERSIONS.mediaRoots }),
+    indexedDb: CURRENT_DATA_COMPONENT_VERSIONS.indexedDb,
+    canvas: CURRENT_DATA_COMPONENT_VERSIONS.canvas,
+    backupArchive: CURRENT_DATA_COMPONENT_VERSIONS.backupArchive,
+    autoSnapshot: CURRENT_DATA_COMPONENT_VERSIONS.autoSnapshot,
   } satisfies DataComponentVersions;
 }
 

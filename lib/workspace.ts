@@ -57,13 +57,15 @@ export const WORKSPACE_PREFERENCE_KEYS = [
   'sanmao.canvas.minimap.collapsed.v2',
 ] as const;
 
-export type WorkspaceSyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error';
+export type WorkspaceSyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error' | 'conflict';
 
 type WorkspaceMeta = {
   clientId: string;
   localUpdatedAt: number;
   serverUpdatedAt: number;
   pending: boolean;
+  revision?: number;
+  contentHash?: string;
   contentSignature?: string;
 };
 
@@ -74,7 +76,13 @@ type WorkspaceSyncOptions = {
 type WorkspaceServerResponse = {
   workspace?: WorkspaceSnapshot | null;
   updatedAt?: number | null;
+  revision?: number;
+  contentHash?: string | null;
 };
+
+class WorkspaceConflictError extends Error {
+  readonly code = 'WORKSPACE_CONFLICT';
+}
 
 let syncOwner: symbol | null = null;
 let bootstrapPromise: Promise<{ offline: boolean }> | null = null;
@@ -93,6 +101,8 @@ function readMeta(): WorkspaceMeta | null {
       localUpdatedAt: Number(value.localUpdatedAt) || 0,
       serverUpdatedAt: Number(value.serverUpdatedAt) || 0,
       pending: Boolean(value.pending),
+      revision: Number.isInteger(Number(value.revision)) ? Math.max(0, Number(value.revision)) : 0,
+      contentHash: typeof value.contentHash === 'string' ? value.contentHash : undefined,
       contentSignature: typeof value.contentSignature === 'string' ? value.contentSignature : undefined,
     };
   } catch { return null; }
@@ -145,11 +155,12 @@ export async function collectWorkspaceSnapshot(updatedAt = Date.now()): Promise<
   };
 }
 
-async function requestWorkspace(method: 'GET' | 'PUT', workspace?: WorkspaceSnapshot, keepalive = false) {
+async function requestWorkspace(method: 'GET' | 'PUT', workspace?: WorkspaceSnapshot, keepalive = false, expectedRevision?: number) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 5000);
   try {
-    const body = workspace ? JSON.stringify({ workspace }) : undefined;
+    const payload = workspace && expectedRevision !== undefined ? { workspace, expectedRevision } : workspace ? { workspace } : undefined;
+    const body = payload ? JSON.stringify(payload) : undefined;
     if (body && new TextEncoder().encode(body).byteLength > MAX_WORKSPACE_BYTES) throw new Error('工作区数据超过 80MB，暂时无法同步');
     const response = await fetch('/api/workspace', {
       method,
@@ -159,7 +170,8 @@ async function requestWorkspace(method: 'GET' | 'PUT', workspace?: WorkspaceSnap
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
       body,
     });
-    const data = await response.json().catch(() => ({})) as WorkspaceServerResponse & { error?: string };
+    const data = await response.json().catch(() => ({})) as WorkspaceServerResponse & { error?: string; code?: string };
+    if (!response.ok && (data.code === 'WORKSPACE_CONFLICT' || response.status === 409)) throw new WorkspaceConflictError(data.error || '工作区已被其他窗口更新，请刷新后再保存');
     if (!response.ok) throw new Error(data.error || '读取工作区失败');
     return data;
   } finally { window.clearTimeout(timeoutId); }
@@ -193,13 +205,16 @@ export async function restoreWorkspaceSnapshot(snapshot: WorkspaceSnapshot) {
 }
 
 async function saveWorkspace(snapshot: WorkspaceSnapshot, meta: WorkspaceMeta) {
-  const data = await requestWorkspace('PUT', snapshot);
+  const data = await requestWorkspace('PUT', snapshot, false, meta.revision ?? 0);
   const serverUpdatedAt = Number(data.updatedAt || snapshot.updatedAt);
+  const revision = Number(data.revision ?? (meta.revision ?? 0) + 1);
   const current = readMeta() || meta;
   writeMeta({
     ...current,
     clientId: snapshot.clientId,
     serverUpdatedAt,
+    revision,
+    contentHash: data.contentHash || undefined,
     pending: current.localUpdatedAt > snapshot.updatedAt,
     contentSignature: workspaceContentSignature(snapshot),
   });
@@ -229,17 +244,18 @@ async function bootstrapWorkspaceInternal() {
   try {
     const server = await requestWorkspace('GET');
     const remote = server.workspace ? validateWorkspaceShape(server.workspace) as unknown as WorkspaceSnapshot : null;
+    const remoteRevision = Number(server.revision ?? 0);
     if (remote && currentMeta.pending && currentMeta.localUpdatedAt > remote.updatedAt) {
       const pending = { ...local, updatedAt: currentMeta.localUpdatedAt };
-      await saveWorkspace(pending, { ...currentMeta, localUpdatedAt: pending.updatedAt, pending: true });
+      await saveWorkspace(pending, { ...currentMeta, revision: remoteRevision, localUpdatedAt: pending.updatedAt, pending: true });
     } else if (remote) {
       await restoreWorkspaceSnapshot(remote);
-      writeMeta({ clientId: local.clientId, localUpdatedAt: remote.updatedAt, serverUpdatedAt: remote.updatedAt, pending: false, contentSignature: workspaceContentSignature(remote) });
+      writeMeta({ clientId: local.clientId, localUpdatedAt: remote.updatedAt, serverUpdatedAt: remote.updatedAt, revision: remoteRevision, contentHash: server.contentHash || undefined, pending: false, contentSignature: workspaceContentSignature(remote) });
     } else if (workspaceHasData(local)) {
       const migrated = { ...local, updatedAt: Math.max(Date.now(), currentMeta.localUpdatedAt) };
       await saveWorkspace(migrated, { ...currentMeta, localUpdatedAt: migrated.updatedAt, pending: true });
     } else {
-      writeMeta({ ...currentMeta, clientId: local.clientId, pending: false });
+      writeMeta({ ...currentMeta, clientId: local.clientId, revision: remoteRevision, pending: false });
     }
     return { offline: false };
   } catch {
@@ -267,25 +283,30 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
       const meta = readMeta() || { clientId: local.clientId, localUpdatedAt: 0, serverUpdatedAt: 0, pending: false };
       const data = await requestWorkspace('GET');
       const remote = data.workspace ? validateWorkspaceShape(data.workspace) as unknown as WorkspaceSnapshot : null;
+      const remoteRevision = Number(data.revision ?? 0);
       const localSignature = workspaceContentSignature(local);
       const signatureChanged = Boolean(meta.contentSignature) && meta.contentSignature !== localSignature;
       const localDirty = meta.pending || signatureChanged;
       const localUpdatedAt = localDirty ? Math.max(meta.localUpdatedAt, signatureChanged ? Date.now() : 0) : 0;
       if (signatureChanged && !meta.pending) writeMeta({ ...meta, localUpdatedAt, pending: true });
       if (remote && localDirty && localUpdatedAt > remote.updatedAt) {
-        await saveWorkspace({ ...local, updatedAt: localUpdatedAt }, { ...meta, localUpdatedAt, pending: true });
+        await saveWorkspace({ ...local, updatedAt: localUpdatedAt }, { ...meta, revision: remoteRevision, localUpdatedAt, pending: true });
       } else if (remote && remote.updatedAt > meta.serverUpdatedAt) {
         await restoreWorkspaceSnapshot(remote);
-        writeMeta({ clientId: local.clientId, localUpdatedAt: remote.updatedAt, serverUpdatedAt: remote.updatedAt, pending: false, contentSignature: workspaceContentSignature(remote) });
+        writeMeta({ clientId: local.clientId, localUpdatedAt: remote.updatedAt, serverUpdatedAt: remote.updatedAt, revision: remoteRevision, contentHash: data.contentHash || undefined, pending: false, contentSignature: workspaceContentSignature(remote) });
       } else if (workspaceHasData(local)) {
         if (!meta.serverUpdatedAt || localDirty) {
           const next = { ...local, updatedAt: Math.max(localUpdatedAt, Date.now()) };
           await saveWorkspace(next, { ...meta, localUpdatedAt: next.updatedAt, pending: true });
         }
       }
-      if (!readMeta()?.contentSignature && remote) writeMeta({ ...meta, serverUpdatedAt: remote.updatedAt, contentSignature: workspaceContentSignature(remote) });
+      if (!readMeta()?.contentSignature && remote) writeMeta({ ...meta, serverUpdatedAt: remote.updatedAt, revision: remoteRevision, contentHash: data.contentHash || undefined, contentSignature: workspaceContentSignature(remote) });
       setStatus('synced');
-    } catch {
+    } catch (error) {
+      if (error instanceof WorkspaceConflictError) {
+        setStatus('conflict');
+        return;
+      }
       setStatus('offline');
       retryTimer = window.setTimeout(() => void reconcile(), SYNC_INTERVAL_MS);
     } finally { syncing = false; }
@@ -300,14 +321,14 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
     try {
       const local = await collectWorkspaceSnapshot(before?.localUpdatedAt || Date.now());
       const meta = readMeta() || { clientId: local.clientId, localUpdatedAt: local.updatedAt, serverUpdatedAt: 0, pending: true };
-      await requestWorkspace('PUT', local, keepalive);
+      const data = await requestWorkspace('PUT', local, keepalive, meta.revision ?? 0);
       const current = readMeta() || meta;
-      writeMeta({ ...current, clientId: local.clientId, serverUpdatedAt: local.updatedAt, pending: current.localUpdatedAt > local.updatedAt, contentSignature: workspaceContentSignature(local) });
+      writeMeta({ ...current, clientId: local.clientId, serverUpdatedAt: local.updatedAt, revision: Number(data.revision ?? (meta.revision ?? 0) + 1), contentHash: data.contentHash || undefined, pending: current.localUpdatedAt > local.updatedAt, contentSignature: workspaceContentSignature(local) });
       setStatus(current.localUpdatedAt > local.updatedAt ? 'offline' : 'synced');
-    } catch {
+    } catch (error) {
       const current = readMeta();
       if (current) writeMeta({ ...current, pending: true });
-      setStatus('error');
+      setStatus(error instanceof WorkspaceConflictError ? 'conflict' : 'error');
     } finally { syncing = false; }
   };
 

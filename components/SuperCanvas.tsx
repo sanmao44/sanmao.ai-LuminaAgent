@@ -15109,7 +15109,7 @@ export default function SuperCanvas() {
           </span>
           <span className={`canvas-workspace-sync-state ${workspaceSyncStatus}`} title="同台电脑跨浏览器工作区同步状态">
             <i />
-            {workspaceSyncStatus === "syncing" ? "同步中…" : workspaceSyncStatus === "offline" ? "离线待同步" : workspaceSyncStatus === "error" ? "同步失败" : workspaceSyncStatus === "synced" ? "已同步" : "准备同步"}
+            {workspaceSyncStatus === "syncing" ? "同步中…" : workspaceSyncStatus === "offline" ? "离线待同步" : workspaceSyncStatus === "conflict" ? "存在冲突，请刷新" : workspaceSyncStatus === "error" ? "同步失败" : workspaceSyncStatus === "synced" ? "已同步" : "准备同步"}
           </span>
         </div>
         <button
