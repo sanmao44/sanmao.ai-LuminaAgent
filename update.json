@@ -1,17 +1,21 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.56",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.56",
+  "latestVersion": "0.7.57",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.57",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.56/SANMAO.AI-0.7.56.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.57/SANMAO.AI-0.7.57.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.56/SANMAO.AI-0.7.56.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.56/SANMAO.AI-0.7.56.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.56/SANMAO.AI-0.7.56.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.57/SANMAO.AI-0.7.57.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.57/SANMAO.AI-0.7.57.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.57/SANMAO.AI-0.7.57.zip"
   ],
   "sha256": "b8520d75f8e57daa0d38e36d5f82ea9b98ba46284d7306e1889bb75cf5a5f20f",
-  "publishedAt": "2026-09-23T00:00:00Z",
+  "publishedAt": "2026-09-24T00:00:00Z",
   "notes": [
+    "新增跨镜头视觉系统：榜单、标题栏、产品卡、界面和 Logo 可保持同一身份，并记录 enter/active/update/exit 生命周期。",
+    "参考视频分析继续使用连续取证帧、硬切、节拍和语音边界，不再只依赖文字描述重建画面。",
+    "视觉系统编译进可编辑时间轴和最终单个 MP4；支持字卡、图片和视频媒体叠加，并兼容 Seedance 与其他视频模型。",
+    "Blueprint 及本地变体会复用视觉系统和状态，重配音、改文案后仍能按语义时间重新定位。",
     "任务日志排版重做：来源与结果改成整行记录，卡片不再出现大片空白、内容出框或被裁切；元信息标签可自动换行，失败原因最多两行显示。",
     "从任务日志点“结果：…”查看大图，关闭预览后会回到任务日志面板，和“打开结果”行为一致。",
     "画布项目支持版本管理：保存后可在项目面板一键恢复历史版本，也能删除不需要的版本（删除前二次确认）。",
