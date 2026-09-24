@@ -176,7 +176,7 @@ export async function transcribeLocalAudio(file: string, durationSeconds: number
 
 export async function transcribeReferenceAudio(input: string, output: string, durationSeconds: number) {
   const extracted = await extractSpeechAudio(input, output);
-  if (!extracted) return { transcript: null, error: '参考视频没有可用音轨或音轨转换失败' };
+  if (!extracted) return { transcript: null, error: '参考素材没有可用音轨或音轨转换失败' };
   try {
     const transcript = await transcribeLocalAudio(extracted, durationSeconds);
     return { transcript: transcript.text ? transcript : null, error: '' };

@@ -284,6 +284,64 @@ test('visual events stay inside the shot and compile into independent timed trac
   assert.deepEqual(broll.map((clip) => [clip.eventId, clip.start, clip.duration, clip.text]), [['broll', 3.5, 1.5, 'product close-up']]);
 });
 
+test('effect events compile into an editable effect track without becoming video shots', () => {
+  const shots = plan.normalizeShots({ shots: [{
+    start: 0,
+    end: 2,
+    visual: 'effect cue',
+    analysis: { events: [{ id: 'flash', kind: 'effect', start: 0.25, end: 0.5, effect: 'flash' }] },
+  }] }, { durationSeconds: 2, maxShots: 2 });
+  const timeline = plan.buildTimeline(shots.map((shot, index) => ({ ...shot, index, line: '', status: 'pending' })), plan.normalizeCloneOptions({}));
+  assert.equal(timeline.clips.filter((clip) => clip.track === 'video').length, 1);
+  assert.deepEqual(timeline.tracks.find((track) => track.kind === 'effect')?.clips.map((clip) => [clip.effect, clip.start, clip.duration]), [['flash', 0.25, 0.25]]);
+});
+
+test('semantic visual events follow rewritten voice word timing', () => {
+  const events = [{
+    id: 'card',
+    kind: 'graphics',
+    start: 0.4,
+    end: 1.1,
+    anchorText: 'show product',
+    text: 'PRODUCT',
+  }];
+  const projected = plan.projectVisualEventTimings(events, {
+    start: 10,
+    end: 14,
+    audioWords: [
+      { start: 0.1, end: 0.3, text: 'introduce' },
+      { start: 0.5, end: 0.8, text: 'show' },
+      { start: 0.9, end: 1.2, text: 'product' },
+      { start: 1.6, end: 1.9, text: 'today' },
+    ],
+  }, 2, {
+    text: 'show product today',
+    segments: [],
+    words: [
+      { start: 10.1, end: 10.4, text: 'show' },
+      { start: 10.5, end: 10.8, text: 'product' },
+    ],
+    model: 'reference',
+  });
+  assert.deepEqual(projected.map((event) => [event.start, event.end]), [[0.5, 1.2]]);
+});
+
+test('explicit semantic word indexes remain available when anchor text was rewritten', () => {
+  const projected = plan.projectVisualEventTimings([
+    { id: 'card', kind: 'graphics', start: 0, end: 1, anchorStartWord: 1, anchorEndWord: 3, text: 'CARD' },
+  ], {
+    start: 0,
+    end: 3,
+    audioWords: [
+      { start: 0.2, end: 0.4, text: 'new' },
+      { start: 0.7, end: 1.0, text: 'copy' },
+      { start: 1.2, end: 1.5, text: 'here' },
+      { start: 1.8, end: 2.0, text: 'now' },
+    ],
+  }, 2);
+  assert.deepEqual(projected.map((event) => [event.start, event.end]), [[0.7, 2]]);
+});
+
 test('repeated visual structures become reusable Blueprint components and clip instances', () => {
   const shots = [
     cloneShot(0, { line: '甲', preserveReferenceFrame: true, analysis: { role: 'graphic', layout: { mode: 'card', primary: { x: 0.06, y: 0.06, width: 0.88, height: 0.88 } } } }),

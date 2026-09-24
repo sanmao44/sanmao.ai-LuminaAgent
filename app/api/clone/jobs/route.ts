@@ -4,7 +4,7 @@ import { decideCapabilities, normalizeCloneOptions } from '@/lib/clone/plan';
 import { analyzeCloneJob, reapStaleCloneJobs } from '@/lib/clone/pipeline';
 import { cloneJobSummary, createCloneJob, listCloneJobs } from '@/lib/clone/store';
 import type { CloneAsset, CloneReference } from '@/lib/clone/types';
-import { getRuntimeImageGenerationModel, getRuntimeVideoModel, getRuntimeVisionModel } from '@/lib/store';
+import { getRuntimeCloneVideoModel, getRuntimeImageGenerationModel, getRuntimeVisionModel } from '@/lib/store';
 import { resolveSpeechRuntime } from '@/lib/clone/speech';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { getVideoModelLimits } from '@/lib/video-model-limits';
@@ -21,12 +21,14 @@ function readModelId(value: unknown) {
 function readReference(raw: unknown): CloneReference {
   const source = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const url = String(source.url || '').trim();
-  if (!url) throw new Error('请先选择一条参考视频。');
+  const kind = source.kind === 'image' ? 'image' : 'video';
+  if (!url) throw new Error('请先选择一条参考图或参考视频。');
   return {
     ...(source.nodeId ? { nodeId: String(source.nodeId) } : {}),
-    name: String(source.name || '参考视频').slice(0, 80),
+    name: String(source.name || (kind === 'image' ? '参考图' : '参考视频')).slice(0, 80),
     url,
-    seconds: Math.max(0, Number(source.seconds) || 0),
+    seconds: Math.max(0, Number(source.seconds) || (kind === 'image' ? 5 : 0)),
+    kind,
   };
 }
 
@@ -39,10 +41,9 @@ function readAssets(raw: unknown): CloneAsset[] {
     const source = item as Record<string, unknown>;
     const url = String(source.url || '').trim();
     const rawRole = typeof source.role === 'string' ? source.role.trim() : '';
-    if (!rawRole) throw new Error('每个参考素材都必须先设定角色（人物、产品、品牌等）');
-    const role = rawRole as CloneAsset['role'];
     const kind = String(source.kind || 'image') as CloneAsset['kind'];
-    if (!url || !roles.has(role) || !kinds.has(kind)) return [];
+    if (!url || !kinds.has(kind)) return [];
+    const role = (roles.has(rawRole as CloneAsset['role']) ? rawRole : kind === 'audio' ? 'voice' : 'broll') as CloneAsset['role'];
     return [{ ...(source.nodeId ? { nodeId: String(source.nodeId) } : {}), name: String(source.name || '参考素材').slice(0, 80), url, kind, role }];
   }).slice(0, 16);
 }
@@ -68,7 +69,7 @@ export async function POST(request: Request) {
       // 拆解要真的看图：没显式选模型时优先带 vision 的对话模型，否则画面拆解会无谓降级。
       getRuntimeVisionModel(body.chatModel || null),
       getRuntimeImageGenerationModel(body.imageModel || null),
-      getRuntimeVideoModel(body.videoModel || null),
+      getRuntimeCloneVideoModel(body.videoModel || null),
       resolveSpeechRuntime(body.speechModel || null),
     ]);
     const { capabilities, warnings } = decideCapabilities({
@@ -82,6 +83,11 @@ export async function POST(request: Request) {
       hasReferenceAudio: Boolean(videoRuntime?.model.capabilities.includes('video-audio')),
       offlineSpeech: offlineSpeechSupported(),
     });
+    const requestedVideo = typeof body.videoModel === 'string' ? body.videoModel.trim() : '';
+    const modelWarnings = [...warnings];
+    if ((!requestedVideo || requestedVideo === 'auto') && videoRuntime && !/seedance/iu.test(`${videoRuntime.model.id} ${videoRuntime.model.rawId} ${videoRuntime.model.displayName}`)) {
+      modelWarnings.push(`克隆自动策略未找到可用的 Seedance，已使用兼容视频模型「${videoRuntime.model.displayName}」；也可以在高级设置中手动选择其他模型。`);
+    }
     const requestedSpeech = typeof body.speechModel === 'string' ? body.speechModel.trim() : '';
     if (requestedSpeech && requestedSpeech !== 'auto' && !speechRuntime) {
       return Response.json({ error: '指定的配音模型不可用：请在「模型库」把它归类为「配音」并启用，或改用自动选择。' }, { status: 400 });
@@ -91,7 +97,7 @@ export async function POST(request: Request) {
       assets,
       options,
       capabilities,
-      warnings,
+      warnings: modelWarnings,
       models: {
         chat: chatRuntime?.model.displayName || '',
         image: imageRuntime?.model.displayName || '',
@@ -106,11 +112,12 @@ export async function POST(request: Request) {
         video: readModelId(body.videoModel),
         speech: readModelId(body.speechModel),
       },
+      autoConfirmPlan: body.autoConfirmPlan !== false,
       idempotencyKey: typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim().slice(0, 80) : undefined,
     });
     // 后台跑，立刻把任务交给前端轮询；与生成任务的持久化后台写法一致。
     void analyzeCloneJob(created.task.id).catch(() => undefined);
-    return Response.json({ ok: true, job: created.task, capabilities, warnings }, { status: created.created ? 202 : 200 });
+    return Response.json({ ok: true, job: created.task, capabilities, warnings: modelWarnings }, { status: created.created ? 202 : 200 });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     return Response.json({ error: error instanceof Error ? error.message : '创建克隆任务失败。' }, { status: 400 });

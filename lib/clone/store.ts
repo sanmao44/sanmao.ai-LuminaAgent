@@ -25,6 +25,7 @@ export type CreateCloneJobInput = {
   warnings: string[];
   idempotencyKey?: string;
   planConfirmed?: boolean;
+  autoConfirmPlan?: boolean;
 };
 
 export async function createCloneJob(input: CreateCloneJobInput) {
@@ -39,6 +40,7 @@ export async function createCloneJob(input: CreateCloneJobInput) {
     reference: input.reference,
     assets: input.assets || [],
     planConfirmed: Boolean(input.planConfirmed),
+    autoConfirmPlan: input.autoConfirmPlan !== false,
     options: input.options,
     capabilities: input.capabilities,
     models: input.models,

@@ -3,7 +3,7 @@
  * 成片时间轴生成、降级判断。这里不碰网络与磁盘，方便直接单测。
  */
 import type { CanvasVideoEditorClip, CanvasVideoEditorLayout, CanvasVideoEditorLayoutMode } from '../canvas/types';
-import type { CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneVisualBible, CloneVisualEvent } from './types';
+import type { CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneTranscriptWord, CloneVisualBible, CloneVisualEvent } from './types';
 import type { CanvasVideoEditorWord } from '../canvas/types';
 
 /** 中文口播估算速度：字/秒。没有 TTS 时用它按字数估时长。 */
@@ -402,14 +402,28 @@ function readShotAnalysis(raw: Record<string, unknown>): CloneShotAnalysis | und
       const kind = String(event.kind || event.type || '').trim().toLowerCase();
       if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || !['graphics', 'broll', 'effect'].includes(kind)) return [];
       const shortText = (candidate: unknown, max = 500) => String(candidate ?? '').replace(/\r\n?/gu, '\n').trim().slice(0, max);
+      const readWordIndex = (...keys: string[]) => {
+        for (const key of keys) {
+          const value = Number(event[key]);
+          if (Number.isInteger(value) && value >= 0) return value;
+        }
+        return undefined;
+      };
+      const anchorText = shortText(event.anchorText ?? event.anchor_text ?? event.anchor ?? event.semanticAnchor, 240);
+      const anchorStartWord = readWordIndex('anchorStartWord', 'anchor_start_word', 'startWord', 'start_word');
+      const anchorEndWord = readWordIndex('anchorEndWord', 'anchor_end_word', 'endWord', 'end_word');
       return [{
         ...(shortText(event.id, 100) ? { id: shortText(event.id, 100) } : { id: `event-${index + 1}` }),
         kind: kind as CloneVisualEvent['kind'],
         start: round3(Math.max(0, start)),
         end: round3(Math.max(0, end)),
+        ...(anchorText ? { anchorText } : {}),
+        ...(anchorStartWord !== undefined ? { anchorStartWord } : {}),
+        ...(anchorEndWord !== undefined ? { anchorEndWord } : {}),
         ...(shortText(event.text ?? event.graphicsText) ? { text: shortText(event.text ?? event.graphicsText) } : {}),
         ...(shortText(event.prompt) ? { prompt: shortText(event.prompt, 800) } : {}),
         ...(shortText(event.style ?? event.graphicsStyle) ? { style: shortText(event.style ?? event.graphicsStyle, 180) } : {}),
+        ...(shortText(event.effect ?? event.effectType ?? event.effect_type) ? { effect: shortText(event.effect ?? event.effectType ?? event.effect_type, 180) } : {}),
         ...(shortText(event.position ?? event.graphicsPosition) ? { position: shortText(event.position ?? event.graphicsPosition, 120) } : {}),
         ...(shortText(event.mediaKind) === 'image' || shortText(event.mediaKind) === 'video' ? { mediaKind: shortText(event.mediaKind) as CloneVisualEvent['mediaKind'] } : {}),
         ...(shortText(event.source) === 'reference-video' || shortText(event.source) === 'generated-media' ? { source: shortText(event.source) as CloneVisualEvent['source'] } : {}),
@@ -460,19 +474,97 @@ export function normalizeVisualEvents(events: unknown, durationSeconds: number):
     const styleValue = String(event.style ?? event.graphicsStyle ?? '').trim().slice(0, 180);
     const positionValue = String(event.position ?? event.graphicsPosition ?? '').trim().slice(0, 120);
     const sourceValue = String(event.source ?? '').trim();
+    const anchorText = String(event.anchorText ?? event.anchor_text ?? event.anchor ?? event.semanticAnchor ?? '').replace(/\r\n?/gu, ' ').trim().slice(0, 240);
+    const readWordIndex = (...keys: string[]) => {
+      for (const key of keys) {
+        const value = Number(event[key]);
+        if (Number.isInteger(value) && value >= 0) return value;
+      }
+      return undefined;
+    };
+    const anchorStartWord = readWordIndex('anchorStartWord', 'anchor_start_word', 'startWord', 'start_word');
+    const anchorEndWord = readWordIndex('anchorEndWord', 'anchor_end_word', 'endWord', 'end_word');
     return [{
       id: String(event.id || `event-${index + 1}`).trim().slice(0, 100),
       kind: kind as CloneVisualEvent['kind'],
       start: safeStart,
       end: safeEnd,
+      ...(anchorText ? { anchorText } : {}),
+      ...(anchorStartWord !== undefined ? { anchorStartWord } : {}),
+      ...(anchorEndWord !== undefined ? { anchorEndWord } : {}),
       ...(textValue ? { text: textValue } : {}),
       ...(promptValue ? { prompt: promptValue } : {}),
       ...(styleValue ? { style: styleValue } : {}),
+      ...(String(event.effect ?? event.effectType ?? event.effect_type ?? '').trim() ? { effect: String(event.effect ?? event.effectType ?? event.effect_type).trim().slice(0, 180) } : {}),
       ...(positionValue ? { position: positionValue } : {}),
       ...(event.mediaKind === 'image' || event.mediaKind === 'video' ? { mediaKind: event.mediaKind } : {}),
       ...(sourceValue === 'reference-video' || sourceValue === 'generated-media' ? { source: sourceValue as CloneVisualEvent['source'] } : {}),
       ...(String(event.url || '').trim() ? { url: String(event.url).trim().slice(0, 1000) } : {}),
     }];
+  });
+}
+
+function normalizeAnchorText(value: string) {
+  return value.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+function findAnchorWordRange(words: CloneTranscriptWord[], anchorText?: string) {
+  const target = normalizeAnchorText(anchorText || '');
+  if (!target || !words.length) return undefined;
+  for (let start = 0; start < words.length; start += 1) {
+    let joined = '';
+    for (let end = start; end < words.length; end += 1) {
+      joined += normalizeAnchorText(words[end].text);
+      if (joined === target) return { start, end: end + 1 };
+      if (joined.length >= target.length) break;
+    }
+  }
+  return undefined;
+}
+
+function findTargetWordRange(words: CloneTranscriptWord[], anchorText?: string) {
+  return findAnchorWordRange(words, anchorText);
+}
+
+function referenceWordsForShot(transcript: CloneTranscript | null | undefined, shot: Pick<CloneShot, 'start' | 'end'>) {
+  const start = finite(shot.start, 0);
+  const end = Math.max(start, finite(shot.end, start));
+  return (transcript?.words || [])
+    .filter((word) => word.end > start && word.start < end && word.text.trim())
+    .map((word) => ({
+      start: clamp(word.start - start, 0, Math.max(0, end - start)),
+      end: clamp(Math.max(word.end - start, word.start - start + 0.01), 0, Math.max(0, end - start)),
+      text: word.text,
+    }))
+    .filter((word) => word.end > word.start);
+}
+
+/** Re-project a semantic event onto the current voice word timing when a shot is rewritten. */
+export function projectVisualEventTimings(
+  events: CloneVisualEvent[],
+  shot: Pick<CloneShot, 'start' | 'end' | 'audioWords'>,
+  duration: number,
+  transcript?: CloneTranscript | null,
+) {
+  const safeDuration = Math.max(0.05, finite(duration, 0));
+  const sourceWords = referenceWordsForShot(transcript, shot);
+  const targetWords = shot.audioWords?.length
+    ? shot.audioWords.filter((word) => word.end > word.start && word.text.trim())
+    : sourceWords;
+  return events.map((event) => {
+    const explicitStart = Number.isInteger(event.anchorStartWord) && (event.anchorStartWord ?? -1) >= 0 ? event.anchorStartWord : undefined;
+    const explicitEnd = Number.isInteger(event.anchorEndWord) && (event.anchorEndWord ?? -1) > (explicitStart ?? -1) ? event.anchorEndWord : undefined;
+    const sourceRange = explicitStart !== undefined
+      ? { start: explicitStart, end: explicitEnd ?? explicitStart + 1 }
+      : findAnchorWordRange(sourceWords, event.anchorText);
+    if (!sourceRange || !targetWords.length) return event;
+    const targetRange = findTargetWordRange(targetWords, event.anchorText);
+    const sourceCount = Math.max(sourceWords.length, sourceRange.end, 1);
+    const targetStart = targetRange?.start ?? Math.min(targetWords.length - 1, Math.max(0, Math.floor((sourceRange.start / sourceCount) * targetWords.length)));
+    const targetEnd = targetRange?.end ?? Math.min(targetWords.length, Math.max(targetStart + 1, Math.ceil((sourceRange.end / sourceCount) * targetWords.length)));
+    const start = clamp(targetWords[targetStart].start, 0, Math.max(0, safeDuration - 0.05));
+    const end = clamp(Math.max(targetWords[targetEnd - 1].end, start + 0.05), start + 0.05, safeDuration);
+    return { ...event, start: round3(start), end: round3(end) };
   });
 }
 
@@ -1038,7 +1130,12 @@ export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcr
         words,
       });
     }
-    const visualEvents = normalizeVisualEvents(shot.analysis?.events, duration);
+    const visualEvents = projectVisualEventTimings(
+      normalizeVisualEvents(shot.analysis?.events, duration),
+      shot,
+      duration,
+      transcript,
+    );
     const graphicsEvents = visualEvents.filter((event) => event.kind === 'graphics' && event.text?.trim());
     const graphicsItems = graphicsEvents.length
       ? graphicsEvents
@@ -1085,6 +1182,9 @@ export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcr
       graphicsTrack.clips.push({
         id: graphicsClipId,
         eventId,
+        ...(event.anchorText ? { anchorText: event.anchorText } : {}),
+        ...(event.anchorStartWord !== undefined ? { anchorStartWord: event.anchorStartWord } : {}),
+        ...(event.anchorEndWord !== undefined ? { anchorEndWord: event.anchorEndWord } : {}),
         shotIndex: index,
         ...(component ? { componentId: component.id, role: component.role } : {}),
         start: eventStart,
@@ -1102,13 +1202,18 @@ export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcr
       track.clips.push({
         id: `clone-${event.kind}-${index}-${eventIndex}`,
         eventId: event.id || `event-${eventIndex + 1}`,
+        ...(event.anchorText ? { anchorText: event.anchorText } : {}),
+        ...(event.anchorStartWord !== undefined ? { anchorStartWord: event.anchorStartWord } : {}),
+        ...(event.anchorEndWord !== undefined ? { anchorEndWord: event.anchorEndWord } : {}),
         shotIndex: index,
         ...(component ? { componentId: component.id, role: component.role } : {}),
         start: round3(start + event.start),
         duration: round3(event.end - event.start),
         source: event.source || 'generated-media',
+        ...(event.source === 'reference-video' ? { sourceOffset: round3(shot.start + event.start) } : {}),
         ...(event.url ? { url: event.url } : {}),
         ...(event.prompt ? { text: event.prompt } : {}),
+        ...(event.effect ? { effect: event.effect } : {}),
       });
     });
   });
@@ -1237,7 +1342,7 @@ export function describeCloneStage(stage: CloneStage) {
   if (stage === 'planned') return '镜头计划已生成，等待确认';
   switch (stage) {
     case 'queued': return '已排队';
-    case 'analyzing': return '正在拆解参考视频';
+    case 'analyzing': return '正在分析参考素材';
     case 'scripting': return '正在重写文案';
     case 'voicing': return '正在生成配音';
     case 'imaging': return '正在生成画面';

@@ -65,6 +65,16 @@ test('places added captions after an occupied caption range', () => {
   assert.equal(editor.clipsAtTime(state, 3).filter((clip) => clip.track === 'caption').length, 1);
 });
 
+test('preserves source-less effect clips during connected-input reconciliation', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 2,
+    clips: [{ id: 'flash', track: 'effect', type: 'effect', name: 'flash', effect: 'flash', start: 0.2, duration: 0.3, sourceOffset: 0 }],
+  });
+  const synced = editor.syncVideoEditorInputs(state, []);
+  assert.equal(synced.clips[0].track, 'effect');
+  assert.equal(synced.clips[0].effect, 'flash');
+});
+
 test('ducks reference ambience only while an audible A1 voice clip is active', () => {
   const state = editor.normalizeVideoEditorState({
     projectDuration: 5,
@@ -268,6 +278,8 @@ test('editor exports the complete timeline and presents a large desktop workbenc
   assert.match(workbenchSource, /运动路径/);
   assert.match(exportSource, /transitionProgress/);
   assert.match(exportSource, /videoEditorMotionTransform/);
+  assert.match(exportSource, /drawEffectOverlays/);
+  assert.match(exportSource, /clip\.track === "effect"/);
 });
 
 test('video split/delete ripple linked audio and captions with source offsets intact', () => {

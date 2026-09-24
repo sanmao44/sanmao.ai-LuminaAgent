@@ -18,7 +18,7 @@ import { resolveLocalDataDir } from '../data-paths';
 import { getDefaultAudioStoragePath, persistAudioBuffer } from '../audio-storage';
 import { persistGeneratedImages, persistImageBuffer, resolveStoredFileWithFallback } from '../image-storage';
 import { chatCompletion, editImage, generateImage, imageDownloadAuth, type ChatContentPart, type ChatMessage } from '../providers';
-import { getPublicState, getRuntimeImageGenerationModel, getRuntimeVideoModel, getRuntimeVisionModel } from '../store';
+import { getPublicState, getRuntimeCloneVideoModel, getRuntimeImageGenerationModel, getRuntimeVisionModel } from '../store';
 import type { VideoGenerationInput } from '../types';
 import { getPublicMediaTransportStatusLive } from '../signed-media';
 import { persistVideoBuffer, resolveStoredVideoFileWithFallback } from '../video-storage';
@@ -26,7 +26,7 @@ import { getVideoModelLimits } from '../video-model-limits';
 import { requiresPublicMediaRelay } from '../video-platform';
 import { createVideoGeneration, refreshVideoTask } from '../video-task-service';
 import { askText, chatText, parseJsonBlock } from './chat';
-import { detectSceneChanges, extractFrameFiles, extractReferenceAudioTrack, extractSpeechAudio, extractVideoSegment, probeMediaSeconds } from './media';
+import { detectSceneChanges, extractFrameFiles, extractReferenceAudioTrack, extractSpeechAudio, extractVideoSegment, prepareImageFrame, probeMediaSeconds, runFfmpegCapture } from './media';
 import { transcribeLocalAudio, transcribeReferenceAudio } from './asr';
 import { localOcrAvailable, mergeOcrText, ocrImageFile, ocrPosition } from './ocr';
 import { alignShotsWithLines, buildBlueprintComponents, buildBlueprintVariantPlan, buildTimeline, clampShotSeconds, cloneShotDirection, cloneStageProgress, isCloneJobStale, normalizeShots, referenceFrameSampleTimes, round3, shouldPreserveReferenceFrameAnalysis, shotsFromSceneChanges, snapShotBoundariesToSceneChanges, splitLines, type NormalizedShot } from './plan';
@@ -56,7 +56,7 @@ const SCRIPT_SYSTEM = '你是短视频编剧。只输出 JSON，不要输出解�
 
 type ChatRuntime = Awaited<ReturnType<typeof getRuntimeVisionModel>>;
 type ImageRuntime = Awaited<ReturnType<typeof getRuntimeImageGenerationModel>>;
-type VideoRuntime = Awaited<ReturnType<typeof getRuntimeVideoModel>>;
+type VideoRuntime = Awaited<ReturnType<typeof getRuntimeCloneVideoModel>>;
 type SpeechRuntime = NonNullable<Awaited<ReturnType<typeof resolveSpeechRuntime>>>;
 
 function capabilitiesForExecution(
@@ -194,8 +194,8 @@ async function finishCancelled(id: string) {
   return job;
 }
 
-/** 把画布里的参考视频落到本地文件：ffmpeg 只认路径。 */
-async function materializeReference(job: CloneJob) {
+/** 把画布里的参考素材落到本地文件；视频合成仍需要一个可读的本地路径。 */
+async function materializeReferenceSource(job: CloneJob) {
   const directory = cloneJobDirectory(job.id);
   await mkdir(directory, { recursive: true });
   const url = String(job.reference.url || '');
@@ -206,27 +206,65 @@ async function materializeReference(job: CloneJob) {
     // 用严格路径的话，换过运行目录或旧版本存的素材会解析成一个不存在的文件，
     // 最后只报一句「没抽到画面」，用户根本不知道是怎么回事。
     const file = resolveStoredVideoFileWithFallback(state.settings.videoStoragePath || '', name);
-    if (!file || !existsSync(file)) throw new Error('参考视频已不在本地存储里，请重新导入后再试。');
+    if (!file || !existsSync(file)) throw new Error('参考素材已不在本地存储里，请重新导入后再试。');
     return file;
   }
   if (url.startsWith('/api/storage/file')) {
     const name = new URL(url, 'http://localhost').searchParams.get('name') || '';
     const file = resolveStoredFileWithFallback(state.settings.imageStoragePath || '', name);
-    if (!file) throw new Error('参考视频已不在本地存储里，请重新导入后再试。');
+    if (!file || !existsSync(file)) throw new Error('参考素材已不在本地存储里，请重新导入后再试。');
+    return file;
+  }
+  if (url.startsWith('data:image/')) {
+    const match = url.match(/^data:(image\/[^;]+);base64,(.+)$/iu);
+    if (!match) throw new Error('参考图片数据格式无效，请重新导入后再试。');
+    const extension = match[1].split('/')[1]?.replace(/[^a-z0-9]/giu, '') || 'png';
+    const file = path.join(directory, `reference-image.${extension}`);
+    if (!existsSync(file)) await writeFile(file, Buffer.from(match[2], 'base64'));
     return file;
   }
   if (/^https?:\/\//i.test(url)) {
     const response = await fetch(url, { cache: 'no-store' });
-    if (!response.ok) throw new Error(`下载参考视频失败：HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`下载参考素材失败：HTTP ${response.status}`);
     const buffer = Buffer.from(await response.arrayBuffer());
-    if (!buffer.byteLength) throw new Error('下载到的参考视频是空文件。');
-    if (buffer.byteLength > MAX_REFERENCE_BYTES) throw new Error('参考视频超过 512MB，请先裁剪后再用。');
-    const extension = path.extname(new URL(url).pathname) || '.mp4';
-    const file = path.join(directory, `reference${extension}`);
-    await writeFile(file, buffer);
+    if (!buffer.byteLength) throw new Error('下载到的参考素材是空文件。');
+    if (buffer.byteLength > MAX_REFERENCE_BYTES) throw new Error('参考素材超过 512MB，请先裁剪后再用。');
+    const fallbackExtension = job.reference.kind === 'image' ? '.png' : '.mp4';
+    const extension = path.extname(new URL(url).pathname) || fallbackExtension;
+    const file = path.join(directory, `reference-source${extension}`);
+    if (!existsSync(file)) await writeFile(file, buffer);
     return file;
   }
-  throw new Error('参考视频必须是画布中已导入的视频素材。');
+  throw new Error('参考素材必须是画布中已导入的图片或视频素材。');
+}
+
+/** 参考图分析不应伪装成参考视频；只有最终合成需要把它变成静态 MP4。 */
+async function materializeReference(job: CloneJob) {
+  const directory = cloneJobDirectory(job.id);
+  const source = await materializeReferenceSource(job);
+  return finalizeReferenceFile(job, source, directory);
+}
+
+/**
+ * Still-image references need a temporal local source for the analysis and
+ * assembly pipeline. The original image remains available to the generator
+ * through cloneImageReferences.
+ */
+async function finalizeReferenceFile(job: CloneJob, file: string, directory: string) {
+  if (job.reference.kind !== 'image') return file;
+  const output = path.join(directory, 'reference-image.mp4');
+  if (existsSync(output)) return output;
+  const seconds = Math.max(1, Math.min(job.options.maxSeconds, Number(job.reference.seconds) || 5));
+  const result = await runFfmpegCapture([
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-loop', '1', '-i', file,
+    '-t', seconds.toFixed(3),
+    '-vf', 'format=yuv420p',
+    '-r', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart', output,
+  ], 120_000);
+  if (result.code !== 0 || !existsSync(output)) throw new Error('参考图片无法准备本地合成素材，请检查图片格式后重试');
+  return output;
 }
 
 /**
@@ -362,7 +400,7 @@ async function analyzeVisualBible(runtime: ChatRuntime | null, images: string[],
       messages: [
         { role: 'system', content: ANALYZE_SYSTEM },
         { role: 'user', content: [
-          { type: 'text', text: `请从这组按时间顺序抽取的参考视频帧中建立一份跨镜头视觉圣经。它不是分镜描述，而是供后续逐镜生成复用的身份、产品、品牌、色彩、光线、摄影语法与连续性约束。用户主题：${job.options.brief || '保持参考视频结构并本地化内容'}。只输出 JSON：{"visualBible":{"subjectIdentity":"","productIdentity":"","brandLanguage":"","visualStyle":"","palette":"","lighting":"","cameraGrammar":"","continuityRules":"","negativeConstraints":""}}。看不清的字段留空，不要猜测具体人名、品牌名或文字。` },
+          { type: 'text', text: `请从这组按时间顺序抽取的参考素材画面中建立一份跨镜头视觉圣经。它不是分镜描述，而是供后续逐镜生成复用的身份、产品、品牌、色彩、光线、摄影语法与连续性约束。用户主题：${job.options.brief || '保持参考素材结构并本地化内容'}。只输出 JSON：{"visualBible":{"subjectIdentity":"","productIdentity":"","brandLanguage":"","visualStyle":"","palette":"","lighting":"","cameraGrammar":"","continuityRules":"","negativeConstraints":""}}。看不清的字段留空，不要猜测具体人名、品牌名或文字。` },
           ...images.slice(0, 12).map((url) => ({ type: 'image_url' as const, image_url: { url } })),
         ] },
       ],
@@ -518,7 +556,9 @@ async function attachReferenceFrames(shots: CloneShot[], frames: { files: string
 
 /** 视觉拆解：没有视觉模型或拆解失败时退回等间隔切分，并把降级原因写进 warning。 */
 async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; error: string; times?: number[]; sceneChangeTimes?: number[] }, job: CloneJob, durationSeconds: number): Promise<{ shots: NormalizedShot[]; warning?: string }> {
-  const equalShots = () => frames.sceneChangeTimes?.length
+  const equalShots = () => job.reference.kind === 'image'
+    ? [{ start: 0, end: round3(durationSeconds), visual: '', prompt: '' }]
+    : frames.sceneChangeTimes?.length
     ? shotsFromSceneChanges(durationSeconds, frames.sceneChangeTimes, job.options.maxShots)
     : normalizeShots(null, { durationSeconds, maxShots: job.options.maxShots });
   // 创建任务时已经就「没有视觉模型」给过全局提示，这里不再重复。
@@ -528,21 +568,21 @@ async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; err
   if (!images.length) {
     // 把真实原因带出去（ffmpeg 报错 / 读不出帧），不然用户只看到「没拆解」，无从下手。
     const reason = frames.error || (frames.files.length ? '抽出来的帧读不出来' : '没有抽到帧');
-    return { shots: equalShots(), warning: `参考视频拆解不了（${reason}）：跳过画面拆解，按镜头数平均分配时长。` };
+    return { shots: equalShots(), warning: `参考素材拆解不了（${reason}）：跳过画面拆解，按镜头数平均分配时长。` };
   }
   const frameGuide = frames.files.map((_, index) => `${index + 1}. t=${round3(frames.times?.[index] || 0)}s`).join('\n');
   const sceneGuide = frames.sceneChangeTimes?.length
     ? `本地 FFmpeg 检测到的硬切候选时间点：${frames.sceneChangeTimes.map(round3).join('、')} 秒。镜头边界优先贴近这些时间点。`
     : '本地没有检测到明确硬切，仍请根据抽帧和画面变化判断镜头边界。';
   const instruction = [
-    `这是一条 ${round3(durationSeconds)} 秒参考视频按时间顺序抽取的画面。`,
+    `这是参考素材按时间顺序抽取的画面；若只有一张参考图，它代表一个稳定场景，不要虚构镜头切点。时长为 ${round3(durationSeconds)} 秒。`,
     `抽帧时间标签如下：\n${frameGuide}`,
     sceneGuide,
-    '如果字卡、B-roll、贴纸、reveal 或动效只在镜头的一段时间出现，请在 analysis.events 中记录相对镜头的 start/end（秒）和 kind=graphics|broll|effect；不要把它错误地扩展到整个镜头。graphics 事件可填写 text、style、position，B-roll 事件可填写 prompt 或 url。',
+    '如果字卡、B-roll、贴纸、reveal 或动效只在镜头的一段时间出现，请在 analysis.events 中记录相对镜头的 start/end（秒）和 kind=graphics|broll|effect；不要把它错误地扩展到整个镜头。尽量同时填写 anchorText（该事件对应的原片口播词/语义短语）或 anchorStartWord、anchorEndWord（镜头内从 0 开始、end 不含的词序号），这样改写文案或重新配音后可以自动跟随语义重新定位。graphics 事件可填写 text、style、position，B-roll 事件可填写 prompt 或 url。',
     '如果画面包含标题、Logo、价格、按钮或字幕，请优先逐字抄录，不要只写“有文字”；能判断位置和样式时一并写入 graphicsPosition、graphicsStyle、graphicsBounds（归一化 x/y/width/height，左上角为 0,0）。',
     `请把它拆成不超过 ${job.options.maxShots} 个镜头，每个镜头给出：起止秒数（0 到 ${round3(durationSeconds)}，不能重叠）、画面内容描述、用于重新生成同类画面的中文提示词，以及结构化参考分析。`,
     'analysis 尽量包含 camera、composition、motion、motionPath、visualStyle、graphics、graphicsText（尽量逐字抄录画面文字）、graphicsPosition、graphicsStyle、graphicsBounds、layout、audio、transition、transitionType、transitionDuration、role；layout 只有在画面确实存在明确分栏、画中画或卡片容器时才填写，mode 只能是 full|split-horizontal|split-vertical|picture-in-picture|card，并用归一化 primary/secondary 区域描述主体位置；transitionType 只能是 cut|fade|dissolve|wipe|slide|none，role 只能是 performance|broll|graphic|transition|product|other。',
-    '只输出 JSON：{"shots":[{"start":0,"end":3,"visual":"画面描述","prompt":"提示词","analysis":{"camera":"...","composition":"...","motion":"...","motionPath":"...","visualStyle":"...","graphics":"...","graphicsText":"...","graphicsPosition":"bottom-center","graphicsStyle":"...","graphicsBounds":{"x":0.1,"y":0.1,"width":0.8,"height":0.12},"layout":{"mode":"card","backgroundColor":"#101014","surfaceColor":"#26262d","padding":0.06,"radius":0.06,"primary":{"x":0.06,"y":0.06,"width":0.88,"height":0.88,"radius":0.06}},"audio":"...","transition":"...","transitionType":"cut","transitionDuration":0,"role":"performance"}}]}',
+    '只输出 JSON：{"shots":[{"start":0,"end":3,"visual":"画面描述","prompt":"提示词","analysis":{"camera":"...","composition":"...","motion":"...","motionPath":"...","visualStyle":"...","graphics":"...","graphicsText":"...","graphicsPosition":"bottom-center","graphicsStyle":"...","graphicsBounds":{"x":0.1,"y":0.1,"width":0.8,"height":0.12},"events":[{"kind":"graphics","start":0.4,"end":1.6,"anchorText":"对应的原片词语","anchorStartWord":2,"anchorEndWord":4,"text":"逐字字卡","style":"card"}],"layout":{"mode":"card","backgroundColor":"#101014","surfaceColor":"#26262d","padding":0.06,"radius":0.06,"primary":{"x":0.06,"y":0.06,"width":0.88,"height":0.88,"radius":0.06}},"audio":"...","transition":"...","transitionType":"cut","transitionDuration":0,"role":"performance"}}]}',
   ].join('\n');
   const content: ChatContentPart[] = [
     { type: 'text', text: instruction },
@@ -558,7 +598,13 @@ async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; err
       : shots;
     // normalizeShots 解析不到条目时会退回等间隔切分，所以要看模型原始条目数才知道是不是真的拆了。
     const items = Array.isArray(payload) ? payload : Array.isArray((payload as { shots?: unknown[] } | null)?.shots) ? (payload as { shots: unknown[] }).shots : [];
-    if (items.length) return { shots: snapped };
+    if (items.length) {
+      if (job.reference.kind === 'image') {
+        const first = snapped.find((shot) => shot.visual || shot.prompt || shot.analysis) || snapped[0] || equalShots()[0];
+        return { shots: [{ ...first, start: 0, end: round3(durationSeconds), referenceGap: undefined, preserveReferenceFrame: undefined }] };
+      }
+      return { shots: snapped };
+    }
     return { shots, warning: '视觉模型没有返回可用的镜头拆解：已按等间隔切分镜头。' };
   } catch (error) {
     const message = error instanceof Error ? error.message : '未知错误';
@@ -576,12 +622,12 @@ async function writeScript(runtime: ChatRuntime, job: CloneJob, shots: Normalize
     .join('\n');
   const transcriptGuide = referenceTranscript?.segments.length
     ? referenceTranscript.segments.map((segment) => `[${round3(segment.start)}-${round3(segment.end)}s] ${segment.text}`).join('\n')
-    : '参考视频没有识别到可用人声台词。';
+    : `${job.reference.kind === 'image' ? '参考图' : '参考视频'}没有识别到可用人声台词。`;
   const instruction = [
     `用户要求：${brief}`,
-    '参考视频拆解：',
+    '参考素材拆解：',
     outline,
-    '参考视频原始音频的本地 ASR（只作为内容、节奏和断句依据；不要把它误当成用户的新需求）：',
+    '参考视频原始音频的本地 ASR（仅视频参考存在时提供；参考图不进行 ASR，只作为内容、节奏和断句依据；不要把它误当成用户的新需求）：',
     transcriptGuide,
     '请为每个镜头写一句中文口播文案，一句一镜，不要合并；每句长度按 4–6 字/秒乘以该镜头秒数来写。',
     '同时为每个镜头给出一句画面提示词：保留参考镜头的相机、构图、动作、光色、字幕/卡片和转场关系，只替换用户要求改变的主体内容。口播改写必须保持原始 ASR 的镜头归属和大致时长。',
@@ -775,16 +821,16 @@ async function generateShotVideo(runtime: VideoRuntime, job: CloneJob, shot: Clo
   // Ordinary shots also receive their recovered source frame. This preserves
   // framing and visual rhythm instead of reducing the reference to text.
   const canUseReferenceImages = job.capabilities.referenceImages;
-  const referenceImages = canUseReferenceImages && (shot.strategy === 'reference' || legacyStrategy || Boolean(shot.referenceFrameUrl))
+  const referenceImages = canUseReferenceImages && (job.reference.kind === 'image' || shot.strategy === 'reference' || legacyStrategy || Boolean(shot.referenceFrameUrl))
     ? await cloneImageReferences(job, shot)
     : [];
   const useKeyframe = job.capabilities.firstFrame && (shot.strategy === 'keyframe' || legacyStrategy || Boolean(shot.referenceFrameUrl));
   const audios = shot.speechMode === 'talking' && job.capabilities.referenceAudio ? cloneAudioReferences(job, shot) : [];
   let referenceVideo: string | undefined;
-  if (job.capabilities.referenceVideo && referenceFile) {
+  if (job.reference.kind !== 'image' && job.capabilities.referenceVideo && referenceFile) {
     referenceVideo = await referenceVideoDataUrl(shot.referenceVideoUrl) || undefined;
   }
-  if (!referenceVideo && job.capabilities.referenceVideo && referenceFile) {
+  if (!referenceVideo && job.reference.kind !== 'image' && job.capabilities.referenceVideo && referenceFile) {
     const directory = path.join(cloneJobDirectory(job.id), 'reference-segments');
     await mkdir(directory, { recursive: true });
     const segmentFile = path.join(directory, `shot-${String(shot.index).padStart(3, '0')}.mp4`);
@@ -856,14 +902,20 @@ async function firstFrameTransportReady(runtime: VideoRuntime) {
   }
 }
 
-/** 落地参考视频并读出时长（封顶在用户设置的 maxSeconds）。 */
-async function resolveReference(job: CloneJob): Promise<[string, number]> {
-  const referenceFile = await materializeReference(job);
-  const probed = await probeMediaSeconds(referenceFile);
-  const duration = round3(Math.min(probed || job.reference.seconds || 15, job.options.maxSeconds));
-  if (!duration) throw new Error('参考视频时长读取失败，请换一条视频再试。');
+/** 落地参考素材并读出分析时长；参考图使用用户设置的单场景时长。 */
+async function resolveReferenceSource(job: CloneJob): Promise<[string, number]> {
+  const sourceFile = await materializeReferenceSource(job);
+  const probed = job.reference.kind === 'image' ? 0 : await probeMediaSeconds(sourceFile);
+  const duration = round3(Math.min(probed || (job.reference.kind === 'image' ? job.reference.seconds || 5 : 15), job.options.maxSeconds));
+  if (!duration) throw new Error(`${job.reference.kind === 'image' ? '参考图' : '参考视频'}时长读取失败，请重新导入后再试。`);
   await patchJob(job.id, { reference: { ...job.reference, seconds: duration } });
-  return [referenceFile, duration];
+  return [sourceFile, duration];
+}
+
+/** Final assembly needs a video path; analysis should continue to use the original image path. */
+async function resolveReference(job: CloneJob): Promise<[string, number]> {
+  const [sourceFile, duration] = await resolveReferenceSource(job);
+  return [job.reference.kind === 'image' ? await finalizeReferenceFile(job, sourceFile, cloneJobDirectory(job.id)) : sourceFile, duration];
 }
 /** 跑一条克隆任务。可重复调用：已完成/已取消直接返回；已生成的镜头与配音会跳过（中断可续跑）。 */
 /**
@@ -907,13 +959,13 @@ async function executeCloneJob(id: string) {
   if (started.stage === 'done' || started.stage === 'cancelled') return started;
   if (started.stage === 'planned' && !started.planConfirmed) return started;
   try {
-    await patchJob(id, { stage: 'analyzing', progress: cloneStageProgress('analyzing'), message: '正在拆解参考视频', error: undefined });
+    await patchJob(id, { stage: 'analyzing', progress: cloneStageProgress('analyzing'), message: started.reference.kind === 'image' ? '正在分析参考图' : '正在拆解参考视频', error: undefined });
     // 高级设置里选的模型要真的生效：优先按 job.modelIds 精确取，取不到再退回自动选择。
     const [chatPick, imagePick, videoPick, speechPick] = await Promise.all([
       // 拆解要真的看图：没显式选模型时优先带 vision 的对话模型。
       resolveSelectedModel(started.modelIds?.chat, '对话 / 拆解模型', (id) => getRuntimeVisionModel(id)),
       resolveSelectedModel(started.modelIds?.image, '生图模型', (id) => getRuntimeImageGenerationModel(id)),
-      resolveSelectedModel(started.modelIds?.video, '图生视频模型', (id) => getRuntimeVideoModel(id)),
+      resolveSelectedModel(started.modelIds?.video, '图生视频模型', (id) => getRuntimeCloneVideoModel(id)),
       resolveSelectedModel(started.modelIds?.speech, '配音模型', (id) => resolveSpeechRuntime(id)),
     ]);
     const chatRuntime = chatPick.value;
@@ -942,15 +994,20 @@ async function executeCloneJob(id: string) {
     }
     if (runtimeWarnings.length) await appendWarnings(id, runtimeWarnings);
 
-    const [referenceFile, duration] = await resolveReference(started);
-    const transcriptResult = started.referenceAnalysis?.transcriptData
+    const [referenceSource, duration] = await resolveReferenceSource(started);
+    const referenceFile = started.reference.kind === 'image'
+      ? await finalizeReferenceFile(started, referenceSource, cloneJobDirectory(id))
+      : referenceSource;
+    const transcriptResult = started.reference.kind === 'image'
+      ? { transcript: null, error: '' }
+      : started.referenceAnalysis?.transcriptData
       ? { transcript: started.referenceAnalysis.transcriptData, error: '' }
       : await loadReferenceTranscript(id, referenceFile, duration).catch((error) => ({
         transcript: null,
         error: error instanceof Error ? error.message : '本地 ASR 失败',
       }));
     const referenceTranscript = transcriptResult.transcript;
-    if (transcriptResult.error) await appendWarnings(id, [`参考视频本地 ASR 未完成：${transcriptResult.error}；将继续使用画面拆解和原始环境音。`]);
+    if (transcriptResult.error) await appendWarnings(id, [`参考素材本地 ASR 未完成：${transcriptResult.error}；将继续使用画面拆解和原始环境音。`]);
     // A confirmed Blueprint is authoritative even when it contains
     // reference-only gap shots without narration. Checking every `line`
     // treated those intentional structural intervals as an incomplete plan,
@@ -963,8 +1020,15 @@ async function executeCloneJob(id: string) {
       shots = started.shots;
       await patchJob(id, { shots, message: `沿用已有的 ${shots.length} 个镜头` });
     } else {
-      const scene = await detectSceneChanges(referenceFile, { durationSeconds: duration, maxChanges: Math.max(1, started.options.maxShots * 3) }).catch((error) => ({ times: [], error: error instanceof Error ? error.message : '本地切点检测失败' }));
-      const frames = await extractFrameFiles(referenceFile, referenceFrameSampleTimes(duration, scene.times), path.join(cloneJobDirectory(id), 'frames'));
+      const scene = started.reference.kind === 'image'
+        ? { times: [], error: '' }
+        : await detectSceneChanges(referenceFile, { durationSeconds: duration, maxChanges: Math.max(1, started.options.maxShots * 3) }).catch((error) => ({ times: [], error: error instanceof Error ? error.message : '本地切点检测失败' }));
+      const frameDirectory = path.join(cloneJobDirectory(id), 'frames');
+      const frames = started.reference.kind === 'image'
+        ? await prepareImageFrame(referenceSource, path.join(frameDirectory, 'reference-image.jpg'))
+          .then((file) => ({ files: [file], times: [0], error: '' }))
+          .catch((error) => ({ files: [], times: [], error: error instanceof Error ? error.message : '参考图读取失败' }))
+        : await extractFrameFiles(referenceFile, referenceFrameSampleTimes(duration, scene.times), frameDirectory);
       visualBibleFrames = await frameDataUrls(frames.files);
       const analyzedFrames = { ...frames, sceneChangeTimes: scene.times };
       if (scene.error) await appendWarnings(id, [`本地镜头切点检测未完成：${scene.error}；将继续使用抽帧和视觉模型分析。`]);
@@ -1232,25 +1296,34 @@ export async function analyzeCloneJob(id: string) {
     const job = await findCloneJob(id);
     if (!job) throw new Error('任务不存在');
     if (job.planConfirmed || job.stage === 'done') return job;
-    await patchJob(id, { stage: 'analyzing', progress: cloneStageProgress('analyzing'), message: '正在分析参考视频' });
+    await patchJob(id, { stage: 'analyzing', progress: cloneStageProgress('analyzing'), message: job.reference.kind === 'image' ? '正在分析参考图' : '正在分析参考视频' });
     const chatPick = await resolveSelectedModel(job.modelIds?.chat, '对话 / 拆解模型', (modelId) => getRuntimeVisionModel(modelId));
-    const [referenceFile, duration] = await resolveReference(job);
+    const [referenceSource, duration] = await resolveReferenceSource(job);
     const analysisCapabilities = {
       ...job.capabilities,
       vision: Boolean(chatPick.value?.model.capabilities.includes('vision')),
     };
     const analysisJob: CloneJob = { ...job, capabilities: analysisCapabilities };
     await patchJob(id, { capabilities: analysisCapabilities });
-  const transcriptResult = job.referenceAnalysis?.transcriptData
+  const transcriptResult = job.reference.kind === 'image'
+    ? { transcript: null, error: '' }
+    : job.referenceAnalysis?.transcriptData
     ? { transcript: job.referenceAnalysis.transcriptData, error: '' }
-    : await loadReferenceTranscript(id, referenceFile, duration).catch((error) => ({
+    : await loadReferenceTranscript(id, referenceSource, duration).catch((error) => ({
       transcript: null,
       error: error instanceof Error ? error.message : '本地 ASR 失败',
     }));
   const referenceTranscript = transcriptResult.transcript;
-  if (transcriptResult.error) await appendWarnings(id, [`参考视频本地 ASR 未完成：${transcriptResult.error}；计划阶段仍会保留原始音频。`]);
-  const scene = await detectSceneChanges(referenceFile, { durationSeconds: duration, maxChanges: Math.max(1, job.options.maxShots * 3) }).catch((error) => ({ times: [], error: error instanceof Error ? error.message : '本地切点检测失败' }));
-  const frames = await extractFrameFiles(referenceFile, referenceFrameSampleTimes(duration, scene.times), path.join(cloneJobDirectory(id), 'frames'));
+  if (transcriptResult.error) await appendWarnings(id, [`参考素材本地 ASR 未完成：${transcriptResult.error}；计划阶段仍会保留原始音频。`]);
+  const scene = job.reference.kind === 'image'
+    ? { times: [], error: '' }
+    : await detectSceneChanges(referenceSource, { durationSeconds: duration, maxChanges: Math.max(1, job.options.maxShots * 3) }).catch((error) => ({ times: [], error: error instanceof Error ? error.message : '本地切点检测失败' }));
+  const frameDirectory = path.join(cloneJobDirectory(id), 'frames');
+  const frames = job.reference.kind === 'image'
+    ? await prepareImageFrame(referenceSource, path.join(frameDirectory, 'reference-image.jpg'))
+      .then((file) => ({ files: [file], times: [0], error: '' }))
+      .catch((error) => ({ files: [], times: [], error: error instanceof Error ? error.message : '参考图读取失败' }))
+    : await extractFrameFiles(referenceSource, referenceFrameSampleTimes(duration, scene.times), frameDirectory);
   const analyzedFrames = { ...frames, sceneChangeTimes: scene.times };
   if (scene.error) await appendWarnings(id, [`本地镜头切点检测未完成：${scene.error}；将继续使用抽帧和视觉模型分析。`]);
   const ocr = await analyzeReferenceOcr(frames);
@@ -1284,13 +1357,23 @@ export async function analyzeCloneJob(id: string) {
     ocr,
     visualBible,
   );
-    return await patchJob(id, {
+    const plannedJob = await patchJob(id, {
       stage: 'planned', progress: cloneStageProgress('planned'), message: `已生成 ${planned.length} 个镜头计划，等待确认`, shots: planned, planConfirmed: false,
       referenceAnalysis,
       blueprint: { version: 1, sourceVideo: job.reference, assets: job.assets || [], shots: plannedWithFrames, visualBible, components: buildBlueprintComponents(plannedWithFrames), createdAt: job.blueprint?.createdAt || now, updatedAt: now },
     });
+    if (!job.autoConfirmPlan) return plannedJob;
+    const confirmedJob = await patchJob(id, {
+      planConfirmed: true,
+      stage: 'queued',
+      progress: 0,
+      message: '已自动确认镜头计划，等待生成',
+      error: undefined,
+    });
+    void runCloneJob(id).catch(() => undefined);
+    return confirmedJob;
   } catch (error) {
-    const message = error instanceof Error ? error.message : '参考视频分析失败';
+    const message = error instanceof Error ? error.message : '参考素材分析失败';
     return await patchJob(id, { stage: 'failed', progress: 0, message, error: message, finishedAt: new Date().toISOString() });
   } finally {
     clearInterval(heartbeat);
@@ -1347,7 +1430,7 @@ export async function renderBlueprintVariant(id: string, spec: CloneBlueprintVar
   const needsVariantMedia = plan.generationShotIndexes.length || plan.voiceShotIndexes.length;
   const [imagePick, videoPick, speechPick] = await Promise.all([
     resolveSelectedModel(job.modelIds?.image, '生图模型', (modelId) => getRuntimeImageGenerationModel(modelId)),
-    resolveSelectedModel(job.modelIds?.video, '图生视频模型', (modelId) => getRuntimeVideoModel(modelId)),
+    resolveSelectedModel(job.modelIds?.video, '图生视频模型', (modelId) => getRuntimeCloneVideoModel(modelId)),
     resolveSelectedModel(job.modelIds?.speech, '配音模型', (modelId) => resolveSpeechRuntime(modelId)),
   ]);
   const variantCapabilities = capabilitiesForExecution(null, imagePick.value, videoPick.value, speechPick.value);
@@ -1421,7 +1504,7 @@ async function runCloneReassembly(id: string) {
     const referenceFile = await materializeReference(job);
     const probed = await probeMediaSeconds(referenceFile);
     const duration = round3(Math.min(probed || job.reference.seconds || 15, job.options.maxSeconds));
-    if (!duration) throw new Error('参考视频时长读取失败，请重新导入后再试');
+    if (!duration) throw new Error('参考素材时长读取失败，请重新导入后再试');
     const current = await updateCloneJob(id, {
       stage: 'assembling',
       progress: cloneStageProgress('assembling'),
@@ -1540,7 +1623,11 @@ async function planShotDependencies(runtime: ChatRuntime, job: CloneJob, shots: 
 async function cloneImageReferences(job: CloneJob, shot?: CloneShot) {
   const state = await getPublicState();
   const refs: string[] = [];
-  if (shot?.referenceFrameUrl) refs.push(await cloneImageReference(job, shot.referenceFrameUrl));
+  if (job.reference.kind === 'image') refs.push(await cloneImageReference(job, job.reference.url));
+  if (shot?.referenceFrameUrl) {
+    const frame = await cloneImageReference(job, shot.referenceFrameUrl);
+    if (!refs.includes(frame)) refs.push(frame);
+  }
   const selected = shot?.assetIds ? new Set(shot.assetIds) : null;
   for (const asset of (job.assets || []).filter((item) => item.kind === 'image' && (!selected || selected.has(item.nodeId || item.url))).slice(0, 8)) {
     const value = asset.url;

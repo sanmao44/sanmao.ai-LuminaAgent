@@ -14,13 +14,15 @@ const match_types = await readFile(new URL("../lib/types.ts", import.meta.url), 
 const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
 const storeLib = await readFile(new URL("../lib/store.ts", import.meta.url), "utf8");
 const cloneTypes = await readFile(new URL("../lib/clone/types.ts", import.meta.url), "utf8");
+const modelPicker = await readFile(new URL("../components/ModelPicker.tsx", import.meta.url), "utf8");
+const workbench = await readFile(new URL("../components/VideoEditorWorkbench.tsx", import.meta.url), "utf8");
 
 test("克隆弹窗是合法 TSX，并且具备三步式傻瓜操作", () => {
   const source = ts.createSourceFile("CanvasCloneDialog.tsx", dialog, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   assert.deepEqual(source.parseDiagnostics ?? [], []);
   assert.match(dialog, /role="dialog"/);
   assert.match(dialog, /aria-label="一键克隆出片"/);
-  assert.match(dialog, /选参考视频/);
+  assert.match(dialog, /选参考图或视频/);
   assert.match(dialog, /一句话要求/);
   assert.match(dialog, /想做成什么片子/);
   assert.match(dialog, /预计最多 \{maxShots\} 次生图/);
@@ -82,6 +84,13 @@ test("克隆结果落成镜头素材 + 带时间轴的视频编辑节点", () =>
   assert.match(canvas, /nodes: \[\.\.\.value\.nodes, \.\.\.\(finalNode \? \[finalNode\] : \[\]\), \.\.\.created, editorNode\]/);
 });
 
+test("effect events stay editable without requiring a source node", () => {
+  assert.match(canvas, /track: "effect"/);
+  assert.match(workbench, /id: "effect", label: "动效"/);
+  assert.match(workbench, /selectedClip\.track === "effect"/);
+  assert.match(workbench, /activeEffects/);
+});
+
 test("克隆接口创建任务、后台跑管线并暴露进度与取消", () => {
   assert.match(route, /export async function GET\(request: Request\)/);
   assert.match(route, /export async function POST\(request: Request\)/);
@@ -94,6 +103,23 @@ test("克隆接口创建任务、后台跑管线并暴露进度与取消", () =>
   assert.match(jobRoute, /findCloneJob\(id\)/);
   assert.match(cancelRoute, /cancelRequested: true/);
   assert.match(store, /createTaskStore<CloneJob>\(\{ fileName: 'clone-jobs\.json', maxList: 200 \}\)/);
+  assert.match(route, /参考图或参考视频/);
+});
+
+test("克隆自动模型策略主要使用 Seedance，但显式选择其他模型仍保留", () => {
+  assert.match(storeLib, /export async function getRuntimeCloneVideoModel/);
+  assert.match(storeLib, /const isSeedance = \/seedance\/iu\.test\(name\)/);
+  assert.match(storeLib, /if \(id && id !== 'auto'\)/);
+  assert.match(modelPicker, /automaticMode\?: 'default' \| 'clone'/);
+  assert.match(modelPicker, /克隆主要使用 Seedance/);
+  assert.match(dialog, /automaticMode="clone"/);
+  assert.match(dialog, /克隆主要使用 Seedance；其他模型可手动选择，能力不匹配时自动回退/);
+});
+
+test("编辑器预览会叠加同一时刻的多个 B-roll，而不是只显示最后一个", () => {
+  assert.match(workbench, /const activeBrollClips = activeClips\.filter\(\(clip\) => clip\.track === "broll"\)/);
+  assert.match(workbench, /activeBrollClips\.map\(\(clip\) =>/);
+  assert.match(workbench, /brollVideoRefs = useRef\(new Map<string, HTMLVideoElement>\(\)\)/);
 });
 
 test("镜头计划只保存需要的素材，并按本地视频模型能力选择执行策略", () => {
@@ -157,10 +183,14 @@ test("管线包含抽帧、拆解、配音、生图、生视频五步与三条�
   assert.match(pipeline, /extractFrameFiles\(/);
   // 参考视频必须和 /api/storage/video 用同一套解析（回退历史目录），否则旧素材会解析成不存在的路径。
   assert.match(pipeline, /resolveStoredVideoFileWithFallback\(state\.settings\.videoStoragePath \|\| '', name\)/);
-  assert.match(pipeline, /if \(!file \|\| !existsSync\(file\)\) throw new Error\('参考视频已不在本地存储里/);
+  assert.match(pipeline, /if \(!file \|\| !existsSync\(file\)\) throw new Error\('参考素材已不在本地存储里/);
   // 抽帧失败要把 ffmpeg 的真实报错带进降级提示，否则「没拆出画面」无从排查。
   assert.match(pipeline, /const reason = frames\.error \|\| \(frames\.files\.length \? '抽出来的帧读不出来' : '没有抽到帧'\)/);
-  assert.match(pipeline, /参考视频拆解不了（/);
+  assert.match(pipeline, /参考素材拆解不了（/);
+  assert.match(pipeline, /prepareImageFrame\(/);
+  assert.match(pipeline, /job\.reference\.kind === 'image'[\s\S]{0,120}transcript: null/);
+  assert.match(pipeline, /job\.reference\.kind === 'image'[\s\S]{0,180}times: \[\], error: ''/);
+  assert.match(pipeline, /job\.reference\.kind === 'image'\n\s*\? \[\{ start: 0, end: round3\(durationSeconds\)/);
   assert.match(pipeline, /probeMediaSeconds\(/);
   assert.match(pipeline, /synthesizeSpeech\(runtime, \{ text: shot\.line, voice: job\.options\.voice \}\)/);
   // 在线 TTS 不可用时用系统自带语音合成，不把「调用不了」留给用户。
@@ -302,10 +332,10 @@ test("拆解轨道自动优先带视觉的模型，不再被默认纯文本模�
   assert.match(dialog, /models=\{models\} capability="vision" value=\{selectedModels\.chat\}/);
 });
 
-test("参考视频可以在弹窗里直接导入，成片落盘后清掉任务临时目录", () => {
+test("参考素材可以在弹窗里直接导入，成片落盘后清掉任务临时目录", () => {
   assert.match(dialog, /onImportReference\?: \(\) => void;/);
-  assert.match(dialog, /＋ 导入参考视频/);
-  assert.match(dialog, /＋ 导入新的参考视频/);
+  assert.match(dialog, /＋ 导入参考素材/);
+  assert.match(dialog, /＋ 导入新的参考素材/);
   assert.match(canvas, /onImportReference=\{\(\) => openFilePicker\(screenToWorld/);
   // 参考视频副本 / 抽帧 / 配音探测文件在成片落盘后没有保留价值，不清就会一直堆着。
   assert.match(pipeline, /export async function cleanupCloneJobDirectory\(id: string\)/);

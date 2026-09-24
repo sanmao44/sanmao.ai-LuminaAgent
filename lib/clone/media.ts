@@ -128,6 +128,24 @@ export async function extractFrameFiles(input: string, times: number[], outDir: 
 }
 
 /**
+ * Prepare one analysis frame from a still-image reference without turning the
+ * reference itself into a video. The final assembler may create a static MP4,
+ * but vision analysis must keep the image's single-scene semantics.
+ */
+export async function prepareImageFrame(input: string, output: string) {
+  const result = await runFfmpegCapture([
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-i', input,
+    '-frames:v', '1',
+    '-vf', 'scale=min(720\\,iw):-2',
+    '-q:v', '4',
+    output,
+  ], 60_000);
+  if (result.code !== 0) throw new Error(`参考图读取失败：${result.stderr.replace(/\\s+/g, ' ').trim().slice(0, 240)}`);
+  return output;
+}
+
+/**
  * Export the exact reference-video window used by one generated shot.
  * Keeping this as a real video (rather than only a text description) lets
  * providers that support video references preserve movement, cadence and

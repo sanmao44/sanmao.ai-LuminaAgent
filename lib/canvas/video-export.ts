@@ -212,6 +212,37 @@ function transitionProgress(clip: CanvasVideoEditorClip, time: number) {
   return clamp((time - clip.start) / duration, 0, 1);
 }
 
+function effectFlags(value: string | undefined) {
+  const effect = String(value || "").toLocaleLowerCase();
+  return {
+    flash: /flash|strobe|white|闪白|白闪|闪烁|闪光/iu.test(effect),
+    dark: /black|dark|fade.?to.?black|变暗|黑场|暗场/iu.test(effect),
+    grayscale: /gray|greyscale|grayscale|black.?and.?white|黑白|灰度/iu.test(effect),
+    blur: /blur|soft|模糊|柔焦/iu.test(effect),
+    vignette: /vignette|暗角/iu.test(effect),
+  };
+}
+
+function drawEffectOverlays(context: CanvasRenderingContext2D, flags: ReturnType<typeof effectFlags>, width: number, height: number) {
+  context.save();
+  if (flags.dark) {
+    context.fillStyle = "rgba(0,0,0,.45)";
+    context.fillRect(0, 0, width, height);
+  }
+  if (flags.flash) {
+    context.fillStyle = "rgba(255,255,255,.72)";
+    context.fillRect(0, 0, width, height);
+  }
+  if (flags.vignette) {
+    const gradient = context.createRadialGradient(width / 2, height / 2, Math.min(width, height) * .18, width / 2, height / 2, Math.max(width, height) * .72);
+    gradient.addColorStop(0, "rgba(0,0,0,0)");
+    gradient.addColorStop(1, "rgba(0,0,0,.68)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, width, height);
+  }
+  context.restore();
+}
+
 function drawCaption(
   context: CanvasRenderingContext2D,
   clip: CanvasVideoEditorClip,
@@ -299,7 +330,7 @@ export async function renderCanvasVideoEditor(
 
   const sourceMap = new Map(sources.map((source) => [source.nodeId, source]));
   const items = (await Promise.all(state.clips
-    .filter((clip) => !state.disabledTracks?.includes(clip.track) && clip.sourceNodeId && sourceMap.has(clip.sourceNodeId))
+    .filter((clip) => clip.enabled !== false && !state.disabledTracks?.includes(clip.track) && clip.sourceNodeId && sourceMap.has(clip.sourceNodeId))
     .map(async (clip) => loadRenderItem(clip, sourceMap.get(clip.sourceNodeId as string) as CanvasVideoEditorRenderSource))))
     .filter((item): item is RenderItem => Boolean(item));
   const mediaItems = items.filter((item): item is RenderItem & { element: HTMLMediaElement } => item.element instanceof HTMLMediaElement);
@@ -376,7 +407,18 @@ export async function renderCanvasVideoEditor(
     const currentItem = currentClip ? items.find((item) => item.clip.id === currentClip.id) : undefined;
     const previousClip = currentClip ? videoClips[videoClips.indexOf(currentClip) - 1] : undefined;
     const previousItem = previousClip ? items.find((item) => item.clip.id === previousClip.id) : undefined;
+    const activeEffects = state.clips
+      .filter((clip) => clip.track === "effect" && clip.enabled !== false && !state.disabledTracks?.includes("effect") && clipIsActive(clip, time))
+      .map((clip) => effectFlags(clip.effect || clip.name));
+    const effectState = activeEffects.reduce((result, flags) => ({
+      flash: result.flash || flags.flash,
+      dark: result.dark || flags.dark,
+      grayscale: result.grayscale || flags.grayscale,
+      blur: result.blur || flags.blur,
+      vignette: result.vignette || flags.vignette,
+    }), { flash: false, dark: false, grayscale: false, blur: false, vignette: false });
     drawLayoutBackdrop(context, currentClip?.layout, width, height);
+    context.filter = [effectState.grayscale ? "grayscale(1)" : "", effectState.blur ? "blur(5px)" : ""].filter(Boolean).join(" ") || "none";
     const transition = currentClip?.transitionIn;
     const progress = currentClip ? transitionProgress(currentClip, time) : 1;
     if (currentItem && previousItem && transition && transition !== "cut" && transition !== "none" && progress < 1) {
@@ -394,6 +436,15 @@ export async function renderCanvasVideoEditor(
     } else if (currentItem && currentClip) {
       drawVisualLayers(context, currentItem, width, height, { motion: videoEditorMotionTransform(currentClip, time) });
     }
+    state.clips
+      .filter((clip) => clip.track === "broll" && clip.enabled !== false && !state.disabledTracks?.includes("broll") && clipIsActive(clip, time))
+      .sort((a, b) => a.start - b.start)
+      .forEach((clip) => {
+        const item = items.find((candidate) => candidate.clip.id === clip.id);
+        if (item) drawVisualLayers(context, item, width, height, { motion: videoEditorMotionTransform(clip, time) });
+      });
+    context.filter = "none";
+    drawEffectOverlays(context, effectState, width, height);
     state.clips
       .filter((clip) => (clip.track === "caption" || clip.track === "graphics") && !state.disabledTracks?.includes(clip.track) && clipIsActive(clip, time))
       .forEach((clip) => drawCaption(context, clip, width, height, time));

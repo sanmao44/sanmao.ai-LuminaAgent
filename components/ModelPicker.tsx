@@ -22,6 +22,9 @@ type ModelPickerProps = {
   className?: string;
   portalZIndex?: number;
   dialogPortalZIndex?: number;
+  /** Some workflows have a capability-aware automatic policy without changing the global default model. */
+  automaticMode?: 'default' | 'clone';
+  automaticHint?: string;
 };
 
 const capabilityLabels: Partial<Record<ModelCapability, string>> = {
@@ -46,7 +49,24 @@ export function uniqueModels(models: Array<RegistryModel | null | undefined>) {
   return [...new Map(models.filter((model): model is RegistryModel => Boolean(model)).map((model) => [model.id, model])).values()];
 }
 
-export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '', portalZIndex = CANVAS_Z_INDEX.portalPopover, dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog }: ModelPickerProps) {
+function selectCloneAutomaticModel(models: RegistryModel[]) {
+  const candidates = models.filter((model) => model.capabilities.includes('video-generate'));
+  const score = (model: RegistryModel) => {
+    const name = `${model.id} ${model.rawId} ${model.displayName}`;
+    const isSeedance = /seedance/iu.test(name);
+    const hasReference = model.capabilities.includes('video-reference');
+    const hasFirstFrame = model.capabilities.includes('video-first-frame');
+    // Keep this aligned with the server policy: Seedance is the main clone
+    // candidate, but a model that cannot carry references should lose to a
+    // compatible alternative. This is not the global video default.
+    return (hasReference ? 600 : 0)
+      + (isSeedance ? 400 : 0)
+      + (hasFirstFrame ? 10 : 0);
+  };
+  return [...candidates].sort((left, right) => score(right) - score(left))[0];
+}
+
+export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '', portalZIndex = CANVAS_Z_INDEX.portalPopover, dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog, automaticMode = 'default', automaticHint }: ModelPickerProps) {
   const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
   const [quickOpen, setQuickOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -62,9 +82,17 @@ export default function ModelPicker({ models, value, onChange, capability, defau
 
   useBodyScrollLock(quickOpen || dialogOpen);
 
-  const availableModels = useMemo(() => models.filter((model) => model.enabled && model.published && (model.capabilities.includes(capability) || (capability.startsWith('video-') && model.kind === 'video'))), [models, capability]);
+  const availableModels = useMemo(() => models.filter((model) => {
+    if (!model.enabled || !model.published) return false;
+    // A clone job can only execute video-generation models. Do not let a
+    // video-edit/extend model appear selectable and then silently fall back.
+    if (capability === 'video-generate') return model.capabilities.includes('video-generate');
+    return model.capabilities.includes(capability) || (capability.startsWith('video-') && model.kind === 'video');
+  }), [models, capability]);
   const selected = value !== 'auto' ? availableModels.find((model) => model.id === value) : null;
-  const autoModel = selectAutomaticModel(availableModels, defaultProviderId, defaultModelId);
+  const autoModel = automaticMode === 'clone' && capability === 'video-generate'
+    ? selectCloneAutomaticModel(availableModels)
+    : selectAutomaticModel(availableModels, defaultProviderId, defaultModelId);
   const recentModels = useMemo(() => uniqueModels(recent.map((id) => availableModels.find((model) => model.id === id))), [availableModels, recent]);
   const favoriteModels = useMemo(() => uniqueModels(favorites.map((id) => availableModels.find((model) => model.id === id))), [availableModels, favorites]);
   const recommendedModels = useMemo(() => uniqueModels([autoModel, ...availableModels.filter((model) => model.id !== autoModel?.id).slice(0, MODEL_PICKER_QUICK_LIMIT)]), [availableModels, autoModel]);
@@ -182,12 +210,16 @@ export default function ModelPicker({ models, value, onChange, capability, defau
 
   function renderAutoChoice() {
     return <button type="button" className={`model-picker-auto ${value === 'auto' ? 'selected' : ''}`} onClick={() => choose('auto')}>
-      <span><strong>自动选择</strong><small>{defaultProviderName ? `默认厂商：${defaultProviderName}` : '使用默认厂商，失败时自动回退'}{autoModel ? ` · 当前推荐 ${autoModel.displayName}` : ''}</small></span>
+      <span><strong>{automaticMode === 'clone' ? '自动选择（克隆策略）' : '自动选择'}</strong><small>{automaticHint || (defaultProviderName ? `默认厂商：${defaultProviderName}` : '使用默认厂商，失败时自动回退')}{autoModel ? ` · 当前推荐 ${autoModel.displayName}` : ''}</small></span>
       {value === 'auto' && <b className="model-picker-check">✓</b>}
     </button>;
   }
 
-  const triggerLabel = selected ? `手动 · ${selected.providerName} · ${selected.displayName}` : autoModel ? `自动 · ${defaultProviderName || '默认厂商'} · ${autoModel.displayName}` : placeholder;
+  const triggerLabel = selected
+    ? `手动 · ${selected.providerName} · ${selected.displayName}`
+    : autoModel
+      ? `自动 · ${automaticMode === 'clone' ? '克隆主要使用 Seedance' : defaultProviderName || '默认厂商'} · ${autoModel.displayName}`
+      : placeholder;
   const quickShowsAll = availableModels.length <= 8;
   const quickModels = quickShowsAll ? availableModels.filter((model) => model.id !== autoModel?.id) : [];
 

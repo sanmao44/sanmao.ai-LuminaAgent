@@ -720,6 +720,50 @@ export async function getRuntimeVideoModel(id: string | null | undefined) {
 }
 
 /**
+ * Clone-specific automatic video selection. An explicit model always wins.
+ * Without one, use Seedance as the main clone family when it can participate
+ * in a reference-based workflow, then fall back to the best compatible video
+ * model. This policy is scoped to cloning and does not change the global
+ * video-studio default.
+ * This does not change the global video-studio default.
+ */
+export async function getRuntimeCloneVideoModel(id: string | null | undefined) {
+  if (id && id !== 'auto') {
+    const runtime = await getRuntimeVideoModel(id);
+    return runtime?.model.capabilities.includes('video-generate') ? runtime : null;
+  }
+  const state = await readState();
+  const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
+  const compatible = models.filter((item) => {
+    const provider = state.providers.find((candidate) => candidate.id === item.providerId);
+    return isProviderModelLibraryEnabled(provider)
+      && item.kind === 'video'
+      && item.enabled
+      && item.published
+      && item.capabilities.includes('video-generate');
+  });
+  const configuredDefaultId = state.settings.defaultVideoModelId;
+  const score = (item: typeof compatible[number]) => {
+    const name = `${item.id} ${item.rawId} ${item.displayName}`;
+    const isSeedance = /seedance/iu.test(name);
+    const supportsReference = item.capabilities.includes('video-reference');
+    // Reference support is the hard requirement for Hypit-style cloning.
+    // Seedance remains the preferred family, but a reference-capable model
+    // must beat a Seedance model that can only do text-to-video.
+    return (supportsReference ? 600 : 0)
+      + (isSeedance ? 400 : 0)
+      + (item.capabilities.includes('video-first-frame') ? 10 : 0)
+      + (item.id === configuredDefaultId ? 25 : 0)
+      + (item.providerId === state.settings.defaultProviderId ? 5 : 0);
+  };
+  const model = [...compatible].sort((left, right) => score(right) - score(left))[0];
+  if (!model) return null;
+  const provider = state.providers.find((item) => item.id === model.providerId);
+  if (!provider) return null;
+  return { model, provider: { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
+}
+
+/**
  * 「克隆出片」的拆解轨道专用：自动选择时优先挑带 vision 的对话模型。
  * getRuntimeModel(id, 'chat') 的自动顺序只看默认服务商 / 默认 Agent 模型，而默认 Agent 模型
  * 常常是纯文本模型，会让画面拆解白白降级成等间隔切分（用户库里明明有带视觉的模型）。

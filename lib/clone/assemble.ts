@@ -42,6 +42,17 @@ type EventVisual = {
   sourceOffset: number;
 };
 
+type RenderEffect = {
+  start: number;
+  end: number;
+  effect: string;
+};
+
+type BrollEvent = Pick<CloneTimelineTrackClip, 'start' | 'duration' | 'url' | 'mediaKind' | 'source' | 'sourceOffset' | 'enabled'> & {
+  id?: string;
+  sourceClipId?: string;
+};
+
 type ResolvedSources = {
   visual: string | null;
   visualIsVideo: boolean;
@@ -64,11 +75,11 @@ type ResolvedSources = {
 };
 type TextBox = { x: number; y: number; width: number; height: number };
 
-function timelineTrack(input: AssemblyInput, kind: 'video' | 'reference-audio' | 'voice' | 'caption' | 'graphics') {
+function timelineTrack(input: AssemblyInput, kind: 'video' | 'reference-audio' | 'voice' | 'caption' | 'graphics' | 'effect') {
   return input.timeline.tracks?.find((track) => track.kind === kind) || null;
 }
 
-function editorTrackFor(kind: 'video' | 'reference-audio' | 'voice' | 'caption' | 'graphics'): CanvasVideoEditorTrack {
+function editorTrackFor(kind: 'video' | 'reference-audio' | 'voice' | 'caption' | 'graphics' | 'effect'): CanvasVideoEditorTrack {
   return kind === 'voice' ? 'audio' : kind;
 }
 
@@ -88,7 +99,7 @@ function shotIndexForClip(clip: Pick<CanvasVideoEditorClip, 'shotIndex' | 'sourc
   return match ? Number(match[1]) : fallback;
 }
 
-function editorClipForShot(input: AssemblyInput, kind: 'video' | 'reference-audio' | 'voice' | 'caption' | 'graphics', shotIndex: number) {
+function editorClipForShot(input: AssemblyInput, kind: 'video' | 'reference-audio' | 'voice' | 'caption' | 'graphics' | 'effect', shotIndex: number) {
   if (!input.timeline.editorState || !editorTrackEnabled(input, editorTrackFor(kind))) return null;
   const track = editorTrackFor(kind);
   return input.timeline.editorState.clips
@@ -146,6 +157,46 @@ function graphicsClipsForSegment(input: AssemblyInput, shotIndex: number, start:
   return input.timeline.clips
     .filter((clip) => clip.track === 'graphics' && shotIndexForClip(clip, -1) === shotIndex && clip.start < end && clip.start + clip.duration > start)
     .sort((a, b) => a.start - b.start);
+}
+
+function effectClipsForSegment(input: AssemblyInput, shotIndex: number, start: number, duration: number): RenderEffect[] {
+  const end = start + duration;
+  const clips = input.timeline.editorState
+    ? input.timeline.editorState.clips
+      .filter((clip) => clip.track === 'effect' && clip.enabled !== false && clip.start < end && clip.start + clip.duration > start)
+    : input.timeline.tracks?.find((track) => track.kind === 'effect')?.clips
+      .filter((clip) => clip.shotIndex === shotIndex && clip.enabled !== false && clip.start < end && clip.start + clip.duration > start) || [];
+  return clips.flatMap((clip) => {
+    const effect = String(('effect' in clip ? clip.effect : undefined) || clip.text || '').trim();
+    if (!effect) return [];
+    const clipStart = Number(clip.start) || 0;
+    const clipEnd = clipStart + Math.max(0, Number(clip.duration) || 0);
+    const localStart = Math.max(0, clipStart - start);
+    const localEnd = Math.min(duration, clipEnd - start);
+    return localEnd > localStart ? [{ start: localStart, end: localEnd, effect }] : [];
+  });
+}
+
+function effectFilterParts(effects: RenderEffect[]) {
+  const filters: string[] = [];
+  const unsupported: string[] = [];
+  effects.forEach((item) => {
+    const value = item.effect.toLocaleLowerCase();
+    const enable = `enable='between(t\\,${item.start.toFixed(3)}\\,${item.end.toFixed(3)})'`;
+    if (/flash|strobe|white|闪白|白闪|闪烁|闪光/iu.test(value)) filters.push(`eq=brightness=0.65:contrast=1.1:${enable}`);
+    else if (/black|dark|fade.?to.?black|变暗|黑场|暗场/iu.test(value)) filters.push(`eq=brightness=-0.45:${enable}`);
+    else if (/gray|greyscale|grayscale|black.?and.?white|黑白|灰度/iu.test(value)) filters.push(`hue=s=0:${enable}`);
+    else if (/blur|soft|模糊|柔焦/iu.test(value)) filters.push(`gblur=sigma=8:${enable}`);
+    else if (/vignette|暗角/iu.test(value)) filters.push(`vignette=PI/4:${enable}`);
+    else if (/noise|grain|film|噪点|颗粒/iu.test(value)) filters.push(`noise=alls=18:allf=t+u:${enable}`);
+    else if (/sharpen|锐化/iu.test(value)) filters.push(`unsharp=5:5:1.0:5:5:0:${enable}`);
+    else unsupported.push(item.effect);
+  });
+  return { filters, unsupported };
+}
+
+function effectHasLocalRenderer(effect: string) {
+  return /flash|strobe|white|闪白|白闪|闪烁|闪光|black|dark|fade.?to.?black|变暗|黑场|暗场|gray|greyscale|grayscale|black.?and.?white|黑白|灰度|blur|soft|模糊|柔焦|vignette|暗角|noise|grain|film|噪点|颗粒|sharpen|锐化/iu.test(effect);
 }
 
 function timelineTrackClip(input: AssemblyInput, kind: 'reference-audio' | 'voice' | 'caption' | 'graphics', shotIndex: number) {
@@ -492,23 +543,48 @@ async function resolveSource(url: string | undefined, kind: 'image' | 'video' | 
 }
 
 async function resolveEventVisuals(input: AssemblyInput, shot: CloneShot, shotIndex: number, segmentStart: number, duration: number, workingDirectory: string) {
-  const semanticEvents = input.timeline.tracks?.find((track) => track.kind === 'broll')?.clips
+  const semanticTrack = input.timeline.tracks?.find((track) => track.kind === 'broll');
+  const semanticEvents = semanticTrack?.clips
     .filter((clip) => clip.shotIndex === shotIndex && clip.duration > 0)
-    .map((clip) => ({
-      kind: 'broll' as const,
-      start: Math.max(0, clip.start - segmentStart),
-      end: Math.max(0, clip.start + clip.duration - segmentStart),
-      ...(clip.url ? { url: clip.url } : {}),
-      ...(clip.mediaKind === 'image' || clip.mediaKind === 'video' ? { mediaKind: clip.mediaKind } : {}),
-      source: clip.source,
-    })) || [];
-  const events = semanticEvents.length
-    ? semanticEvents
-    : shot.analysis?.events?.filter((event) => event.kind === 'broll' && event.end > event.start) || [];
+    .map((clip) => ({ ...clip })) || [];
+  const editedEvents: BrollEvent[] = input.timeline.editorState
+    ? input.timeline.editorState.clips
+      .filter((clip) => clip.track === 'broll' && clip.enabled !== false && clip.start < segmentStart + duration && clip.start + clip.duration > segmentStart)
+      .map((clip) => {
+        const sourceClipId = clip.sourceClipId;
+        const base = semanticTrack?.clips.find((item) => item.id === sourceClipId)
+          || semanticTrack?.clips.find((item) => item.shotIndex === (clip.shotIndex ?? shotIndex) && item.start < clip.start + clip.duration && item.start + item.duration > clip.start);
+        return {
+          id: sourceClipId || clip.id,
+          sourceClipId,
+          start: clip.start,
+          duration: clip.duration,
+          sourceOffset: clip.sourceOffset ?? base?.sourceOffset,
+          url: base?.url,
+          mediaKind: base?.mediaKind,
+          source: base?.source || (base?.url ? 'generated-media' : 'reference-video'),
+          enabled: clip.enabled,
+        };
+      })
+    : [];
+  const sourceEvents: BrollEvent[] = input.timeline.editorState ? editedEvents : semanticEvents;
+  const eventList = sourceEvents.length ? sourceEvents : (input.timeline.editorState ? [] : (shot.analysis?.events?.filter((event) => event.kind === 'broll' && event.end > event.start) || []).map((event) => ({
+    id: event.id,
+    start: segmentStart + event.start,
+    duration: event.end - event.start,
+    sourceOffset: shot.start + event.start,
+    url: event.url,
+    mediaKind: event.mediaKind,
+    source: event.source || 'reference-video',
+  })));
+  const events = sourceEvents.length
+    ? sourceEvents
+    : eventList;
   const result: EventVisual[] = [];
   for (const [eventIndex, event] of events.entries()) {
-    const start = Math.max(0, Math.min(duration, event.start));
-    const end = Math.max(start, Math.min(duration, event.end));
+    const eventEnd = event.start + event.duration;
+    const start = Math.max(0, Math.min(duration, event.start - segmentStart));
+    const end = Math.max(start, Math.min(duration, eventEnd - segmentStart));
     if (end <= start) continue;
     if (event.url) {
       const inferredKind = event.mediaKind || (/^data:image\//iu.test(event.url) || /\.(?:png|jpe?g|webp|gif)(?:[?#]|$)/iu.test(event.url) ? 'image' : 'video');
@@ -519,7 +595,8 @@ async function resolveEventVisuals(input: AssemblyInput, shot: CloneShot, shotIn
     if (input.referenceFile && event.source !== 'generated-media') {
       const output = path.join(workingDirectory, `broll-reference-${String(shotIndex).padStart(3, '0')}-${String(eventIndex).padStart(3, '0')}.mp4`);
       try {
-        await extractVideoSegment(input.referenceFile, shot.start + event.start, shot.start + event.end, output);
+        const sourceStart = Number.isFinite(Number(event.sourceOffset)) ? Number(event.sourceOffset) : shot.start + Math.max(0, event.start - segmentStart);
+        await extractVideoSegment(input.referenceFile, sourceStart, sourceStart + (eventEnd - event.start), output);
         result.push({ file: output, isVideo: true, start, end, sourceOffset: 0 });
       } catch {
         // Event metadata remains in the persisted timeline even if this optional visual cannot be materialized.
@@ -687,6 +764,7 @@ async function renderSegment(
   font: string | null,
   overlays: RenderOverlay[] = [],
   eventVisuals: EventVisual[] = [],
+  effects: RenderEffect[] = [],
 ) {
   const fps = Math.max(1, input.timeline.fps || 30);
   const output = path.join(input.workingDirectory, `segment-${String(index).padStart(3, '0')}.mp4`);
@@ -830,16 +908,34 @@ async function renderSegment(
     eventFilterParts.push(`${eventBase}${eventLabel}overlay=0:0:enable='between(t\\,${event.start.toFixed(3)}\\,${event.end.toFixed(3)})':eof_action=pass${nextBase}`);
     eventBase = nextBase;
   });
-  const compositePrefix = eventFilterParts.length ? `${eventFilterParts.join(';')};${eventBase}` : '[shot]';
+  // Keep the final output label out of the graph as a standalone pad. A bare
+  // `[event-base-*]` between semicolons is parsed by FFmpeg as an empty filter
+  // when no effect follows the event overlay.
+  const compositeGraph = eventFilterParts.length ? eventFilterParts.join(';') : '';
+  const compositeLabel = eventFilterParts.length ? eventBase : '[shot]';
+  const effectConfig = effectFilterParts(effects);
+  const applyEffects = (graph: string, inputLabel: string) => effectConfig.filters.length
+    ? `${graph}${graph ? ';' : ''}${inputLabel}${effectConfig.filters.join(',')}[effected]`
+    : graph;
   const videoFilter = region || secondaryRegion
     ? (() => {
       const laid = `${secondaryRegion ? '[0:v]split=2[primaryInput][secondaryInput];' : ''}${renderVisual(secondaryRegion ? 'primaryInput' : '0:v', 'shot', region, hasMotion)}${secondaryRegion ? `;${renderVisual('secondaryInput', 'secondaryShot', secondaryRegion, false)}` : ''};color=c=${safeFilterColor(layout?.backgroundColor, '#000')}:s=${dimensions.width}x${dimensions.height}:r=${fps}:d=${duration.toFixed(3)}[base];[base][shot]overlay=${region?.x || 0}:${region?.y || 0}:shortest=1[laid]${secondaryRegion ? `;[laid][secondaryShot]overlay=${secondaryRegion.x}:${secondaryRegion.y}:shortest=1[laid2]` : ''}`;
-      const composited = eventFilterParts.length
-        ? `${eventFilterParts.map((part) => part.replace('[shot]', secondaryRegion ? '[laid2]' : '[laid]')).join(';')};${eventBase}`
-        : secondaryRegion ? '[laid2]' : '[laid]';
-      return `${laid};${composited}format=yuv420p${textFilters}[vout]`;
+      const baseLabel = secondaryRegion ? '[laid2]' : '[laid]';
+      const eventGraph = eventFilterParts.length
+        ? eventFilterParts.map((part) => part.replace('[shot]', baseLabel)).join(';')
+        : '';
+      const eventLabel = eventFilterParts.length ? eventBase : baseLabel;
+      const laidGraph = eventGraph ? `${laid};${eventGraph}` : laid;
+      const filtered = applyEffects(laidGraph, eventLabel);
+      const finalLabel = effectConfig.filters.length ? '[effected]' : eventLabel;
+      return `${filtered};${finalLabel}format=yuv420p${textFilters}[vout]`;
     })()
-    : `${renderVisual('0:v', 'shot', null, hasMotion)};${compositePrefix}format=yuv420p${textFilters}[vout]`;
+    : (() => {
+      const base = `${renderVisual('0:v', 'shot', null, hasMotion)}${compositeGraph ? `;${compositeGraph}` : ''}`;
+      const filtered = applyEffects(base, compositeLabel);
+      const finalLabel = effectConfig.filters.length ? '[effected]' : compositeLabel;
+      return `${filtered};${finalLabel}format=yuv420p${textFilters}[vout]`;
+    })();
   const audioFilter = sources.audio && sources.ambient
     ? sources.duckAmbient
       ? `[${voiceIndex}:a]volume=${sources.audioVolume.toFixed(3)},aresample=48000${audioTempoFilters(sources.audioRate)}[voice];[${voiceIndex}:a]volume=${sources.audioVolume.toFixed(3)},aresample=48000${audioTempoFilters(sources.audioRate)}[voice_sidechain];[${ambientIndex}:a]volume=${sources.ambientVolume.toFixed(3)},aresample=48000${audioTempoFilters(sources.ambientRate)}[amb];[amb][voice_sidechain]sidechaincompress=threshold=0.035:ratio=8:attack=15:release=280:makeup=1[ducked_amb];[voice][ducked_amb]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[aout]`
@@ -1043,12 +1139,20 @@ export async function assembleCloneVideo(input: AssemblyInput) {
           }];
         });
       const eventVisuals = await resolveEventVisuals(input, shot, index, videoClip.start, duration, input.workingDirectory);
+      // Effects are full-frame timing cues. They remain valid even when the
+      // shot preserves the reference motion and does not accept text/B-roll
+      // overlays, so the original visual grammar is not silently lost.
+      const effects = effectClipsForSegment(input, item.shotIndex, videoClip.start, duration);
+      effects.filter((effect) => !effectHasLocalRenderer(effect.effect)).forEach((effect) => {
+        const warning = `第${index + 1}个镜头的动效“${effect.effect}”暂无本地编译器，已保留时间轴事件但未叠加该效果`;
+        if (!warnings.includes(warning)) warnings.push(warning);
+      });
       const renderLayout = input.timeline.editorState
         ? videoClip.layout || component?.layout || (shot.preserveReferenceFrame ? undefined : shot.analysis?.layout)
         : sources.visualIsVideo && shot.preserveReferenceFrame ? undefined : videoClip.layout || component?.layout || shot.analysis?.layout;
       const renderMotionPath = videoClip.motionPath || component?.motionPath;
       segments.push({
-        file: await renderSegment(shot, renderIndex, duration, caption, captionWords, graphics, effectiveGraphicsStyle, effectiveGraphicsBox || shot.analysis?.graphicsBounds, captionOptions, graphicsOptions, renderLayout, renderMotionPath, sources, input, dimensions, font, eventOverlays, eventVisuals),
+        file: await renderSegment(shot, renderIndex, duration, caption, captionWords, graphics, effectiveGraphicsStyle, effectiveGraphicsBox || shot.analysis?.graphicsBounds, captionOptions, graphicsOptions, renderLayout, renderMotionPath, sources, input, dimensions, font, eventOverlays, eventVisuals, effects),
         duration,
         shot,
         transitionIn: videoClip.transitionIn,

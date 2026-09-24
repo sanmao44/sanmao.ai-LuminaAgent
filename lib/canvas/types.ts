@@ -28,8 +28,8 @@ export type CanvasVideoClipState = {
   y?: number;
   opacity?: number;
 };
-export type CanvasVideoEditorTrack = 'video' | 'audio' | 'reference-audio' | 'caption' | 'graphics';
-export type CanvasVideoEditorClipType = 'image' | 'video' | 'audio' | 'caption';
+export type CanvasVideoEditorTrack = 'video' | 'audio' | 'reference-audio' | 'caption' | 'graphics' | 'broll' | 'effect';
+export type CanvasVideoEditorClipType = 'image' | 'video' | 'audio' | 'caption' | 'effect';
 export type CanvasVideoEditorTransition = 'cut' | 'fade' | 'dissolve' | 'wipe' | 'slide' | 'none';
 export type CanvasVideoEditorMotionPath = 'none' | 'pan-left' | 'pan-right' | 'pan-up' | 'pan-down' | 'zoom-in' | 'zoom-out';
 /** Normalized text box recovered from a reference frame (top-left origin). */
@@ -99,8 +99,12 @@ export type CanvasVideoEditorClip = {
   captionBackgroundOpacity?: number;
   /** Semantic role for text overlays; graphics are kept separate from narration captions. */
   textRole?: 'caption' | 'graphics';
+  /** Whether this clip participates in preview/export. Omitted means enabled. */
+  enabled?: boolean;
   /** Original visual-card style hint retained for a later renderer/editor pass. */
   graphicsStyle?: string;
+  /** Deterministic local effect name recovered from a reference timeline. */
+  effect?: string;
   /** Position label retained when a graphics event is edited in the canvas. */
   position?: string;
   /** Normalized visual-card text box, kept separate from the manual x/y nudge. */

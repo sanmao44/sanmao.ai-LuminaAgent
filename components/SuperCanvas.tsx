@@ -14726,12 +14726,13 @@ export default function SuperCanvas() {
   const cloneReferences = useMemo<CanvasCloneReferenceOption[]>(
     () =>
       document.nodes
-        .filter((node) => node.type === "media" && node.data.kind === "video" && Boolean(node.data.url))
+        .filter((node) => node.type === "media" && (node.data.kind === "video" || node.data.kind === "image") && Boolean(node.data.url))
         .map((node) => ({
           nodeId: node.id,
-          name: String(node.data.name || "参考视频"),
+          name: String(node.data.name || (node.data.kind === "image" ? "参考图" : "参考视频")),
           url: String(node.data.url),
           seconds: Number(node.data.durationMs || node.data.sourceDurationMs || 0) / 1000,
+          kind: node.data.kind === "image" ? "image" as const : "video" as const,
         })),
     [document.nodes],
   );
@@ -14757,7 +14758,7 @@ export default function SuperCanvas() {
   const preselectedCloneReferenceId = useMemo(() => {
     const selectedVideos = [...selectedIds].filter((id) => {
       const node = nodeById(document, id);
-      return Boolean(node && node.type === "media" && node.data.kind === "video" && node.data.url);
+       return Boolean(node && node.type === "media" && (node.data.kind === "video" || node.data.kind === "image") && node.data.url);
     });
     return selectedVideos.length === 1 ? selectedVideos[0] : null;
   }, [document, selectedIds]);
@@ -14872,7 +14873,7 @@ export default function SuperCanvas() {
         connectSource(referenceAudioSource, referenceAudioSource?.data.kind === "audio" ? "audio" : "video");
       }
       for (const clip of job.timeline.clips) {
-        const match = /^clone-(video|audio|caption|graphics)-(\d+)(?:-\d+)?$/.exec(clip.id);
+        const match = /^clone-(video|audio|caption|graphics)-(\d+)$/.exec(clip.id);
         if (!match) continue;
         const track = match[1];
         const index = Number(match[2]);
@@ -14899,6 +14900,69 @@ export default function SuperCanvas() {
             volume: clip.volume ?? 0.35,
             sourceNodeId: referenceAudioSource.id,
           });
+        });
+      }
+      const brollTrack = job.timeline.tracks?.find((track) => track.kind === "broll");
+      const brollSourceNodes = new Map<string, CanvasNode>();
+      for (const [eventIndex, clip] of (brollTrack?.clips || []).entries()) {
+        const sourceUrl = String(clip.url || "");
+        let sourceNode: CanvasNode | undefined;
+        if (sourceUrl) {
+          const kind = clip.mediaKind === "image" ? "image" : "video";
+          const key = `${kind}:${sourceUrl}`;
+          sourceNode = brollSourceNodes.get(key);
+          if (!sourceNode) {
+            sourceNode = createMedia(
+              kind,
+              sourceUrl,
+              `B-roll ${eventIndex + 1}`,
+              { x: originX + 560, y: originY + 360 + eventIndex * 180 },
+              { role: "克隆 B-roll 素材", status: "completed", statusLabel: "B-roll 素材", autoFit: true, ...(kind === "video" ? { videoInputModeAuto: false } : {}) },
+            );
+            brollSourceNodes.set(key, sourceNode);
+            created.push(sourceNode);
+          }
+        } else if (clip.source !== "generated-media") {
+          sourceNode = referenceSourceNode;
+        }
+        if (!sourceNode) continue;
+        clips.push({
+          id: `${editorDraft.id}-${clip.id}`,
+          sourceClipId: clip.id,
+          shotIndex: clip.shotIndex,
+          ...(clip.componentId ? { componentId: clip.componentId } : {}),
+          ...(clip.role ? { role: clip.role } : {}),
+          track: "broll",
+          type: clip.mediaKind === "image" ? "image" : "video",
+          name: clip.text || `B-roll ${eventIndex + 1}`,
+          start: clip.start,
+          duration: clip.duration,
+          sourceOffset: clip.sourceOffset || 0,
+          sourceNodeId: sourceNode.id,
+          fit: "cover",
+          volume: 0,
+          enabled: clip.enabled !== false,
+        });
+        connectSource(sourceNode, sourceNode.data.kind === "image" ? "reference-image" : "video");
+      }
+      const effectTrack = job.timeline.tracks?.find((track) => track.kind === "effect");
+      for (const [effectIndex, clip] of (effectTrack?.clips || []).entries()) {
+        const effect = String(clip.effect || clip.text || "").trim();
+        if (!effect) continue;
+        clips.push({
+          id: `${editorDraft.id}-${clip.id || `effect-${effectIndex}`}`,
+          sourceClipId: clip.id,
+          shotIndex: clip.shotIndex,
+          ...(clip.componentId ? { componentId: clip.componentId } : {}),
+          ...(clip.role ? { role: clip.role } : {}),
+          track: "effect",
+          type: "effect",
+          name: effect,
+          start: clip.start,
+          duration: clip.duration,
+          sourceOffset: clip.sourceOffset || 0,
+          effect,
+          enabled: clip.enabled !== false,
         });
       }
       const editorNode: CanvasNode = {

@@ -31,9 +31,15 @@ export type CloneVisualEvent = {
   /** Seconds relative to the containing shot, not the whole project. */
   start: number;
   end: number;
+  /** Optional source-speech anchor used to re-project the event after rewriting/voicing. */
+  anchorText?: string;
+  /** Optional zero-based source word range, end-exclusive, within the shot transcript. */
+  anchorStartWord?: number;
+  anchorEndWord?: number;
   text?: string;
   prompt?: string;
   style?: string;
+  effect?: string;
   position?: string;
   mediaKind?: 'image' | 'video';
   source?: 'reference-video' | 'generated-media';
@@ -71,6 +77,7 @@ export type CloneShotAnalysis = {
   graphicsPosition?: string;
   /** 画卡的视觉样式，例如纯色卡、描边字、品牌贴纸。 */
   graphicsStyle?: string;
+  effect?: string;
   graphicsBounds?: CloneOcrBounds;
   /** 可直接交给时间轴渲染器的显式构图层，避免 composition 只停留在文字提示。 */
   layout?: CanvasVideoEditorLayout;
@@ -215,6 +222,7 @@ export type CloneReference = {
   name: string;
   url: string;
   seconds: number;
+  kind?: 'image' | 'video';
 };
 
 /** 用户提供给克隆管线的身份/产品/品牌素材；sourceVideo 与这些素材职责不同。 */
@@ -321,6 +329,9 @@ export type CloneTimelineTrackKind = 'video' | 'reference-audio' | 'voice' | 'ca
 export type CloneTimelineTrackClip = {
   id: string;
   eventId?: string;
+  anchorText?: string;
+  anchorStartWord?: number;
+  anchorEndWord?: number;
   componentId?: string;
   role?: CloneShotReferenceRole;
   shotIndex: number;
@@ -333,6 +344,8 @@ export type CloneTimelineTrackClip = {
   text?: string;
   /** Word-level timing relative to this semantic clip's start. */
   words?: CanvasVideoEditorWord[];
+  /** Local effect cue for the editable effect track. */
+  effect?: string;
   graphicsStyle?: string;
   position?: string;
   textBox?: { x: number; y: number; width: number; height: number };
@@ -391,6 +404,8 @@ export type CloneJob = {
   reference: CloneReference;
   assets: CloneAsset[];
   planConfirmed?: boolean;
+  /** One-click mode confirms the generated plan on the server. */
+  autoConfirmPlan?: boolean;
   referenceAnalysis?: CloneReferenceAnalysis;
   blueprint?: CloneBlueprint;
   options: CloneOptions;

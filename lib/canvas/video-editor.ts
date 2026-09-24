@@ -21,7 +21,7 @@ export const VIDEO_EDITOR_DEFAULT_FPS = 30;
 export const VIDEO_EDITOR_DEFAULT_ASPECT = "16:9";
 export const VIDEO_EDITOR_DEFAULT_RESOLUTION = "1080p" as const;
 
-const TRACK_ORDER: CanvasVideoEditorTrack[] = ["video", "audio", "reference-audio", "caption", "graphics"];
+const TRACK_ORDER: CanvasVideoEditorTrack[] = ["video", "audio", "reference-audio", "caption", "graphics", "broll", "effect"];
 const MIN_CLIP_DURATION = 0.05;
 
 function finite(value: unknown, fallback: number) {
@@ -77,7 +77,7 @@ function normalizeLayout(value: unknown): CanvasVideoEditorLayout | undefined {
 }
 
 function normalizeTrack(value: unknown): CanvasVideoEditorTrack {
-  return value === "audio" || value === "reference-audio" || value === "caption" || value === "graphics" ? value : "video";
+  return value === "audio" || value === "reference-audio" || value === "caption" || value === "graphics" || value === "broll" || value === "effect" ? value : "video";
 }
 
 function clipPlaybackRate(clip: Pick<CanvasVideoEditorClip, "playbackRate">) {
@@ -89,7 +89,7 @@ function clipPlaybackRate(clip: Pick<CanvasVideoEditorClip, "playbackRate">) {
 function normalizeClipType(value: unknown, track: CanvasVideoEditorTrack): CanvasVideoEditorClipType {
   if (value === "video" || value === "audio" || value === "caption") return value;
   if (value === "image") return "image";
-  return track === "audio" || track === "reference-audio" ? "audio" : track === "caption" || track === "graphics" ? "caption" : "video";
+  return track === "audio" || track === "reference-audio" ? "audio" : track === "caption" || track === "graphics" ? "caption" : track === "broll" ? "video" : track === "effect" ? "effect" : "video";
 }
 
 function normalizeClip(value: unknown, index: number): CanvasVideoEditorClip | null {
@@ -129,7 +129,9 @@ function normalizeClip(value: unknown, index: number): CanvasVideoEditorClip | n
     if (words.length) clip.words = words;
   }
   if (raw.textRole === "caption" || raw.textRole === "graphics") clip.textRole = raw.textRole;
+  if (typeof raw.enabled === "boolean") clip.enabled = raw.enabled;
   if (typeof raw.graphicsStyle === "string" && raw.graphicsStyle.trim()) clip.graphicsStyle = raw.graphicsStyle.trim().slice(0, 180);
+  if (typeof raw.effect === "string" && raw.effect.trim()) clip.effect = raw.effect.trim().slice(0, 180);
   if (typeof raw.position === "string" && raw.position.trim()) clip.position = raw.position.trim().slice(0, 120);
   const layout = normalizeLayout(raw.layout);
   if (layout) clip.layout = layout;
@@ -271,7 +273,7 @@ export function syncVideoEditorInputs(
   );
   const inputIds = new Set(validInputs.map((input) => input.nodeId));
   const retained = current.clips.filter((clip) =>
-    clip.track === "caption" || (clip.sourceNodeId && inputIds.has(clip.sourceNodeId)),
+    clip.track === "caption" || clip.track === "graphics" || clip.track === "effect" || (clip.sourceNodeId && inputIds.has(clip.sourceNodeId)),
   );
   const retainedBySource = new Map(
     retained.filter((clip) => clip.sourceNodeId).map((clip) => [clip.sourceNodeId!, clip]),
@@ -300,7 +302,7 @@ export function clipEnd(clip: Pick<CanvasVideoEditorClip, "start" | "duration">)
 export function clipsAtTime(state: CanvasVideoEditorState, time: number) {
   const point = Math.max(0, time);
   return state.clips.filter((clip) =>
-    !state.disabledTracks?.includes(clip.track) && point >= clip.start && point < clipEnd(clip),
+    clip.enabled !== false && !state.disabledTracks?.includes(clip.track) && point >= clip.start && point < clipEnd(clip),
   );
 }
 

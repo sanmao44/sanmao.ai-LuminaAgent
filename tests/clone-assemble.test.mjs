@@ -374,6 +374,59 @@ test('assembleCloneVideo materializes a timed B-roll event inside the single fin
   }
 });
 
+test('assembleCloneVideo renders semantic effect events into the final MP4', async (t) => {
+  if (!ffmpegPath || !existsSync(ffmpegPath)) return t.skip('ffmpeg-static is unavailable');
+  const root = await mkdtemp(path.join(repoRoot, 'tests', '.clone-assemble-effect-'));
+  const moduleRoot = path.join(root, 'modules');
+  const mediaRoot = path.join(root, 'media');
+  const outputRoot = path.join(root, 'output');
+  await fsMkdir(mediaRoot);
+  await fsMkdir(outputRoot);
+  const oldVideoRoot = process.env.SANMAO_VIDEO_STORAGE_PATH;
+  process.env.SANMAO_VIDEO_STORAGE_PATH = outputRoot;
+  try {
+    const media = await createMedia(ffmpegPath, mediaRoot);
+    const assembleUrl = await materializeModuleGraph(assembleSourcePath, moduleRoot);
+    const { assembleCloneVideo } = await import(assembleUrl);
+    const workingDirectory = path.join(root, 'working');
+    const timeline = {
+      duration: 1,
+      fps: 24,
+      aspect: '16:9',
+      clips: [{ id: 'clone-video-0', track: 'video', type: 'video', start: 0, duration: 1 }],
+      tracks: [
+        { id: 'clone-track-video', kind: 'video', label: 'video', clips: [{ id: 'clone-video-0', shotIndex: 0, start: 0, duration: 1, source: 'reference-video', mediaKind: 'video', sourceOffset: 0 }] },
+        { id: 'clone-track-effect', kind: 'effect', label: 'effect', clips: [{ id: 'effect-0', shotIndex: 0, start: 0.2, duration: 0.2, effect: 'grayscale' }] },
+      ],
+    };
+    const job = {
+      id: 'assemble-effect-test',
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      stage: 'assembling', progress: 0, message: '',
+      reference: { name: 'reference-effect.mp4', url: '', seconds: 1 }, assets: [],
+      options: { brief: 'test', maxShots: 1, maxSeconds: 2, aspect: '16:9', voice: '', preserveReferenceTiming: true, preserveReferenceAudio: false },
+      capabilities: { vision: false, speech: false, image: false, video: false, referenceImages: false, firstFrame: false, referenceAudio: false, offlineSpeech: false },
+      warnings: [], models: { chat: '' },
+      shots: [{ index: 0, start: 0, end: 1, visual: 'reference', line: '', prompt: '', status: 'done', preserveReferenceFrame: true }],
+      timeline,
+    };
+    const result = await assembleCloneVideo({ job, timeline, referenceFile: media.reference, workingDirectory });
+    const outputName = decodeURIComponent(new URL(`http://localhost${result.url}`).searchParams.get('name'));
+    const outputFile = path.join(outputRoot, outputName);
+    const before = await runBytes(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-ss', '0.1', '-i', outputFile, '-frames:v', '1', '-vf', 'scale=1:1,format=rgb24', '-f', 'rawvideo', '-']);
+    const effected = await runBytes(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-ss', '0.3', '-i', outputFile, '-frames:v', '1', '-vf', 'scale=1:1,format=rgb24', '-f', 'rawvideo', '-']);
+    assert.equal(before.code, 0, before.stderr);
+    assert.equal(effected.code, 0, effected.stderr);
+    assert.ok(before.stdout[0] > before.stdout[2] * 1.5, 'before the effect the reference shot remains red');
+    assert.ok(Math.abs(effected.stdout[0] - effected.stdout[1]) < 12 && Math.abs(effected.stdout[1] - effected.stdout[2]) < 12, 'grayscale effect should neutralize the RGB channels');
+  } finally {
+    if (oldVideoRoot === undefined) delete process.env.SANMAO_VIDEO_STORAGE_PATH;
+    else process.env.SANMAO_VIDEO_STORAGE_PATH = oldVideoRoot;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('reference ambience follows the source clock after an earlier shot is extended', async (t) => {
   if (!ffmpegPath || !existsSync(ffmpegPath)) return t.skip('ffmpeg-static is unavailable');
   const root = await mkdtemp(path.join(repoRoot, 'tests', '.clone-assemble-audio-clock-'));
