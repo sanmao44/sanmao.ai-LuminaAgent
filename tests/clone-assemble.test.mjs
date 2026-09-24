@@ -469,7 +469,7 @@ test('assemble source keeps graphics captions off reference-preserved shots', as
   assert.match(source, /eq=brightness=0\.65:contrast=1\.1/u, 'beat flash should be rendered as a local brightness effect');
   assert.match(source, /shot\.preserveReferenceFrame && !shot\.allowReferenceOverlays \|\| \(semanticCaption && 'enabled' in semanticCaption && semanticCaption\.enabled === false\)/u);
   assert.match(source, /semanticCaption\?\.text \|\| captionClip\?\.text \|\| ''/u);
-  assert.match(source, /shot\.preserveReferenceFrame && !shot\.allowReferenceOverlays \|\| \(semanticGraphics && 'enabled' in semanticGraphics && semanticGraphics\.enabled === false\)/u);
+  assert.match(source, /shot\.preserveReferenceFrame && !shot\.allowReferenceOverlays && !hasGeneratedVisualSystemOverlay/u);
   assert.match(source, /input\.job\.options\.preserveReferenceAudio !== false/u);
   assert.match(source, /extractReferenceAudio\(input\.referenceFile/u);
   assert.match(source, /clone-reference-audio-global/u);

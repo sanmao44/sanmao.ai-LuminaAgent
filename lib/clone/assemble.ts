@@ -545,16 +545,22 @@ async function resolveSource(url: string | undefined, kind: 'image' | 'video' | 
 
 async function resolveEventVisuals(input: AssemblyInput, shot: CloneShot, shotIndex: number, segmentStart: number, duration: number, workingDirectory: string) {
   const semanticTrack = input.timeline.tracks?.find((track) => track.kind === 'broll');
+  const semanticGraphicsTrack = input.timeline.tracks?.find((track) => track.kind === 'graphics');
   const semanticEvents = semanticTrack?.clips
     .filter((clip) => clip.shotIndex === shotIndex && clip.duration > 0)
     .map((clip) => ({ ...clip })) || [];
+  const semanticGraphics = semanticGraphicsTrack?.clips
+    .filter((clip) => clip.shotIndex === shotIndex && clip.duration > 0 && clip.url)
+    .map((clip) => ({ ...clip })) || [];
   const editedEvents: BrollEvent[] = input.timeline.editorState
     ? input.timeline.editorState.clips
-      .filter((clip) => clip.track === 'broll' && clip.enabled !== false && clip.start < segmentStart + duration && clip.start + clip.duration > segmentStart)
+      .filter((clip) => (clip.track === 'broll' || clip.track === 'graphics') && clip.url && clip.enabled !== false && clip.start < segmentStart + duration && clip.start + clip.duration > segmentStart)
       .map((clip) => {
         const sourceClipId = clip.sourceClipId;
         const base = semanticTrack?.clips.find((item) => item.id === sourceClipId)
-          || semanticTrack?.clips.find((item) => item.shotIndex === (clip.shotIndex ?? shotIndex) && item.start < clip.start + clip.duration && item.start + item.duration > clip.start);
+          || semanticGraphicsTrack?.clips.find((item) => item.id === sourceClipId)
+          || semanticTrack?.clips.find((item) => item.shotIndex === (clip.shotIndex ?? shotIndex) && item.start < clip.start + clip.duration && item.start + item.duration > clip.start)
+          || semanticGraphicsTrack?.clips.find((item) => item.shotIndex === (clip.shotIndex ?? shotIndex) && item.start < clip.start + clip.duration && item.start + item.duration > clip.start);
         return {
           id: sourceClipId || clip.id,
           sourceClipId,
@@ -568,7 +574,7 @@ async function resolveEventVisuals(input: AssemblyInput, shot: CloneShot, shotIn
         };
       })
     : [];
-  const sourceEvents: BrollEvent[] = input.timeline.editorState ? editedEvents : semanticEvents;
+  const sourceEvents: BrollEvent[] = input.timeline.editorState ? editedEvents : [...semanticEvents, ...semanticGraphics];
   const eventList = sourceEvents.length ? sourceEvents : (input.timeline.editorState ? [] : (shot.analysis?.events?.filter((event) => event.kind === 'broll' && event.end > event.start) || []).map((event) => ({
     id: event.id,
     start: segmentStart + event.start,
@@ -1065,6 +1071,9 @@ export async function assembleCloneVideo(input: AssemblyInput) {
             ? timelineTrackClip(input, 'graphics', item.shotIndex)
             : null;
       const eventGraphics = graphicsClipsForSegment(input, item.shotIndex, videoClip.start, duration);
+      const hasGeneratedVisualSystemOverlay = eventGraphics.some((clip) =>
+        clip.visualSystemId && clip.source === 'generated-media' && (clip.text?.trim() || clip.url),
+      );
       const caption = shot.preserveReferenceFrame && !shot.allowReferenceOverlays || (semanticCaption && 'enabled' in semanticCaption && semanticCaption.enabled === false)
         ? ''
         : input.timeline.editorState
@@ -1075,7 +1084,8 @@ export async function assembleCloneVideo(input: AssemblyInput) {
         : input.timeline.editorState
           ? semanticCaption?.words
           : semanticCaption?.words || captionClip?.words;
-      const graphics = shot.preserveReferenceFrame && !shot.allowReferenceOverlays || (semanticGraphics && 'enabled' in semanticGraphics && semanticGraphics.enabled === false)
+      const graphics = ((shot.preserveReferenceFrame && !shot.allowReferenceOverlays && !hasGeneratedVisualSystemOverlay)
+        || (semanticGraphics && 'enabled' in semanticGraphics && semanticGraphics.enabled === false))
         ? ''
         : eventGraphics.some((clip) => Boolean(clip.text?.trim()))
           ? ''
@@ -1113,7 +1123,7 @@ export async function assembleCloneVideo(input: AssemblyInput) {
           ...(optionalClipNumber(graphicsSource, 'y') !== undefined ? { y: optionalClipNumber(graphicsSource, 'y') } : {}),
         }
         : undefined;
-      const eventOverlays: RenderOverlay[] = shot.preserveReferenceFrame && !shot.allowReferenceOverlays
+      const eventOverlays: RenderOverlay[] = shot.preserveReferenceFrame && !shot.allowReferenceOverlays && !hasGeneratedVisualSystemOverlay
         ? []
         : eventGraphics.flatMap((clip) => {
           if (!clip.text?.trim() || ('enabled' in clip && clip.enabled === false)) return [];

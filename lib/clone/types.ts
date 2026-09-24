@@ -46,6 +46,48 @@ export type CloneVisualEvent = {
   url?: string;
 };
 
+export type CloneVisualSystemKind =
+  | 'title'
+  | 'scoreboard'
+  | 'product-card'
+  | 'interface'
+  | 'logo'
+  | 'caption-bar'
+  | 'other';
+
+export type CloneVisualSystemStateStatus = 'enter' | 'active' | 'update' | 'exit';
+
+/** One state in a persistent visual system, expressed on the reference clock. */
+export type CloneVisualSystemState = {
+  start: number;
+  end: number;
+  status?: CloneVisualSystemStateStatus;
+  anchorText?: string;
+  anchorStartWord?: number;
+  anchorEndWord?: number;
+  text?: string;
+  prompt?: string;
+  style?: string;
+  position?: string;
+  textBox?: CloneOcrBounds;
+  layout?: CanvasVideoEditorLayout;
+  source?: 'reference-video' | 'generated-media';
+  mediaKind?: 'image' | 'video';
+  url?: string;
+};
+
+/** A cross-shot visual system such as a scoreboard, title bar, or product card. */
+export type CloneVisualSystem = {
+  id: string;
+  kind: CloneVisualSystemKind;
+  label: string;
+  start: number;
+  end: number;
+  persistent?: boolean;
+  source?: 'reference-video' | 'generated-media';
+  states: CloneVisualSystemState[];
+};
+
 export type CloneOcrBounds = {
   x: number;
   y: number;
@@ -151,6 +193,8 @@ export type CloneReferenceAnalysis = {
   ocr?: CloneReferenceOcrFrame[];
   /** Global visual grammar recovered once for the whole reference video. */
   visualBible?: CloneVisualBible;
+  /** Cross-shot visual systems and their enter/update/exit lifecycle. */
+  visualSystems?: CloneVisualSystem[];
   shots: Array<{
     index: number;
     start: number;
@@ -281,6 +325,8 @@ export type CloneBlueprint = {
   beats?: CloneBeatCue[];
   /** Reusable visual grammar recovered from repeated shot structures. */
   components?: CloneBlueprintComponent[];
+  /** Cross-shot systems retained for local variants and re-assembly. */
+  visualSystems?: CloneVisualSystem[];
   /** Optional named local variants; the base Blueprint remains unchanged. */
   variants?: CloneBlueprintVariantSpec[];
   createdAt: string;
@@ -358,6 +404,8 @@ export type CloneTimelineTrackClip = {
   anchorStartWord?: number;
   anchorEndWord?: number;
   componentId?: string;
+  visualSystemId?: string;
+  visualSystemState?: CloneVisualSystemStateStatus;
   role?: CloneShotReferenceRole;
   shotIndex: number;
   start: number;
@@ -410,6 +458,8 @@ export type CloneTimeline = {
   tracks?: CloneTimelineTrack[];
   /** Reusable component templates referenced by flattened editor clips. */
   components?: CloneBlueprintComponent[];
+  /** Cross-shot visual systems compiled into semantic overlay clips. */
+  visualSystems?: CloneVisualSystem[];
   /** 服务端完成多轨合成后的单个最终视频地址。镜头 clips 只是可编辑内部计划。 */
   finalVideoUrl?: string;
   finalVideoMime?: string;

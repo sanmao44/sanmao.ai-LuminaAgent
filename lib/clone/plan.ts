@@ -3,7 +3,7 @@
  * 成片时间轴生成、降级判断。这里不碰网络与磁盘，方便直接单测。
  */
 import type { CanvasVideoEditorClip, CanvasVideoEditorLayout, CanvasVideoEditorLayoutMode } from '../canvas/types';
-import type { CloneBeatCue, CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneReferenceEvidenceReason, CloneReferenceEvidenceSample, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneTranscriptWord, CloneVisualBible, CloneVisualEvent } from './types';
+import type { CloneBeatCue, CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneReferenceEvidenceReason, CloneReferenceEvidenceSample, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneTranscriptWord, CloneVisualBible, CloneVisualEvent, CloneVisualSystem, CloneVisualSystemState, CloneVisualSystemStateStatus } from './types';
 import type { CanvasVideoEditorWord } from '../canvas/types';
 
 /** 中文口播估算速度：字/秒。没有 TTS 时用它按字数估时长。 */
@@ -634,6 +634,151 @@ export function normalizeVisualEvents(events: unknown, durationSeconds: number):
   });
 }
 
+const VISUAL_SYSTEM_KINDS = new Set<CloneVisualSystem['kind']>([
+  'title', 'scoreboard', 'product-card', 'interface', 'logo', 'caption-bar', 'other',
+]);
+const VISUAL_SYSTEM_STATUSES = new Set<CloneVisualSystemStateStatus>(['enter', 'active', 'update', 'exit']);
+
+function visualSystemKind(value: unknown): CloneVisualSystem['kind'] {
+  const normalized = String(value ?? '').trim().toLocaleLowerCase();
+  if (normalized === 'score' || normalized === 'scoreboard' || normalized === 'ranking' || normalized === '榜单' || normalized === '比分') return 'scoreboard';
+  if (normalized === 'product' || normalized === 'product-card' || normalized === '商品卡' || normalized === '产品卡') return 'product-card';
+  if (normalized === 'ui' || normalized === 'interface' || normalized === '界面') return 'interface';
+  if (normalized === 'logo' || normalized === '标志' || normalized === '品牌') return 'logo';
+  if (normalized === 'caption' || normalized === 'caption-bar' || normalized === '字幕条') return 'caption-bar';
+  if (normalized === 'title' || normalized === 'headline' || normalized === '标题') return 'title';
+  return VISUAL_SYSTEM_KINDS.has(normalized as CloneVisualSystem['kind']) ? normalized as CloneVisualSystem['kind'] : 'other';
+}
+
+function normalizeVisualSystemBounds(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const number = (key: string) => Number(source[key]);
+  const x = number('x');
+  const y = number('y');
+  const width = number('width');
+  const height = number('height');
+  if (![x, y, width, height].every(Number.isFinite)) return undefined;
+  return {
+    x: round3(clamp(x, 0, 1)),
+    y: round3(clamp(y, 0, 1)),
+    width: round3(clamp(width, 0.01, 1)),
+    height: round3(clamp(height, 0.01, 1)),
+  };
+}
+
+function normalizeVisualSystemState(value: unknown, fallbackStart: number, fallbackEnd: number, index: number): CloneVisualSystemState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const number = (...keys: string[]) => keys.map((key) => Number(source[key])).find(Number.isFinite);
+  const start = number('start', 'startSeconds', 'start_seconds', 'from') ?? fallbackStart;
+  const end = number('end', 'endSeconds', 'end_seconds', 'to') ?? fallbackEnd;
+  if (!(end > start)) return null;
+  const clean = (candidate: unknown, max = 800) => String(candidate ?? '').replace(/\r\n?/gu, '\n').trim().slice(0, max);
+  const statusValue = clean(source.status || source.lifecycle || source.phase, 24).toLocaleLowerCase();
+  const status = VISUAL_SYSTEM_STATUSES.has(statusValue as CloneVisualSystemStateStatus)
+    ? statusValue as CloneVisualSystemStateStatus
+    : index === 0 ? 'enter' : undefined;
+  const anchorText = clean(source.anchorText ?? source.anchor_text ?? source.anchor ?? source.semanticAnchor, 240);
+  const text = clean(source.text ?? source.graphicsText ?? source.graphics_text, 500);
+  const style = clean(source.style ?? source.graphicsStyle ?? source.graphics_style, 180);
+  const position = clean(source.position ?? source.graphicsPosition ?? source.graphics_position, 120);
+  const prompt = clean(source.prompt, 800);
+  const sourceValue = clean(source.source, 40);
+  const mediaKind = clean(source.mediaKind ?? source.media_kind, 20);
+  const wordIndex = (...keys: string[]) => {
+    const result = keys.map((key) => Number(source[key])).find((candidate) => Number.isInteger(candidate) && candidate >= 0);
+    return result;
+  };
+  const state: CloneVisualSystemState = {
+    start: round3(Math.max(0, start)),
+    end: round3(Math.max(start, end)),
+    ...(status ? { status } : {}),
+    ...(anchorText ? { anchorText } : {}),
+    ...(wordIndex('anchorStartWord', 'anchor_start_word') !== undefined ? { anchorStartWord: wordIndex('anchorStartWord', 'anchor_start_word') } : {}),
+    ...(wordIndex('anchorEndWord', 'anchor_end_word') !== undefined ? { anchorEndWord: wordIndex('anchorEndWord', 'anchor_end_word') } : {}),
+    ...(text ? { text } : {}),
+    ...(prompt ? { prompt } : {}),
+    ...(style ? { style } : {}),
+    ...(position ? { position } : {}),
+    ...(normalizeVisualSystemBounds(source.textBox ?? source.text_box ?? source.graphicsBounds ?? source.graphics_bounds) ? { textBox: normalizeVisualSystemBounds(source.textBox ?? source.text_box ?? source.graphicsBounds ?? source.graphics_bounds) } : {}),
+    ...(source.layout && typeof source.layout === 'object' ? { layout: source.layout as CloneVisualSystemState['layout'] } : {}),
+    ...(sourceValue === 'reference-video' || sourceValue === 'generated-media' ? { source: sourceValue } : {}),
+    ...(mediaKind === 'image' || mediaKind === 'video' ? { mediaKind: mediaKind as CloneVisualSystemState['mediaKind'] } : {}),
+    ...(clean(source.url, 1000) ? { url: clean(source.url, 1000) } : {}),
+  };
+  return state;
+}
+
+/** Normalize model-authored cross-shot visual systems into bounded timeline data. */
+export function normalizeVisualSystems(raw: unknown, durationSeconds: number): CloneVisualSystem[] {
+  const duration = Math.max(CLONE_MIN_SHOT_SECONDS, finite(durationSeconds, 0));
+  const usedIds = new Set<string>();
+  const source = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).visualSystems)
+      ? (raw as Record<string, unknown>).visualSystems as unknown[]
+      : raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).visual_systems)
+        ? (raw as Record<string, unknown>).visual_systems as unknown[]
+        : [];
+  return source.flatMap((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const value = item as Record<string, unknown>;
+    const clean = (candidate: unknown, max = 240) => String(candidate ?? '').replace(/\r\n?/gu, ' ').trim().slice(0, max);
+    const statesRaw = Array.isArray(value.states)
+      ? value.states
+      : Array.isArray(value.lifecycle)
+        ? value.lifecycle
+        : Array.isArray(value.events)
+          ? value.events
+          : [];
+    const systemStart = Number(value.start ?? value.startSeconds ?? value.from);
+    const systemEnd = Number(value.end ?? value.endSeconds ?? value.to);
+    const fallbackStart = Number.isFinite(systemStart) ? clamp(systemStart, 0, duration) : 0;
+    const fallbackEnd = Number.isFinite(systemEnd) ? clamp(systemEnd, fallbackStart + 0.05, duration) : duration;
+    const states = statesRaw
+      .map((state, stateIndex) => {
+        const normalized = normalizeVisualSystemState(state, fallbackStart, fallbackEnd, stateIndex);
+        return normalized ? { state: normalized, stateIndex } : null;
+      })
+      .filter((item): item is { state: CloneVisualSystemState; stateIndex: number } => Boolean(item))
+      .map(({ state, stateIndex }) => ({
+        state: {
+          ...state,
+          start: round3(clamp(state.start, 0, duration)),
+          end: round3(clamp(state.end, state.start + 0.05, duration)),
+        },
+        stateIndex,
+      }))
+      .filter(({ state }) => state.end > state.start)
+      .sort((left, right) => left.state.start - right.state.start
+        || (left.state.status === 'enter' ? 0 : left.state.status === 'active' ? 1 : left.state.status === 'update' ? 2 : 3)
+          - (right.state.status === 'enter' ? 0 : right.state.status === 'active' ? 1 : right.state.status === 'update' ? 2 : 3)
+        || left.stateIndex - right.stateIndex)
+      .map(({ state }) => state);
+    if (!states.length) return [];
+    const start = Math.min(...states.map((state) => state.start));
+    const end = Math.max(...states.map((state) => state.end));
+    const baseId = clean(value.id || value.key || `visual-system-${index + 1}`, 100) || `visual-system-${index + 1}`;
+    let id = baseId;
+    let suffix = 2;
+    while (usedIds.has(id)) id = `${baseId}-${suffix++}`;
+    usedIds.add(id);
+    const label = clean(value.label || value.name || value.description || id, 180) || id;
+    const sourceValue = clean(value.source, 40);
+    return [{
+      id,
+      kind: visualSystemKind(value.kind || value.type || value.role),
+      label,
+      start: round3(start),
+      end: round3(end),
+      ...(value.persistent !== false ? { persistent: true } : {}),
+      ...(sourceValue === 'reference-video' || sourceValue === 'generated-media' ? { source: sourceValue } : {}),
+      states,
+    }];
+  });
+}
+
 function normalizeAnchorText(value: string) {
   return value.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
 }
@@ -696,6 +841,37 @@ export function projectVisualEventTimings(
     const end = clamp(Math.max(targetWords[targetEnd - 1].end, start + 0.05), start + 0.05, safeDuration);
     return { ...event, start: round3(start), end: round3(end) };
   });
+}
+
+/** Project cross-shot system states onto one output shot while preserving lifecycle metadata. */
+export function projectVisualSystemStates(
+  systems: readonly CloneVisualSystem[],
+  shot: Pick<CloneShot, 'start' | 'end' | 'audioWords'>,
+  duration: number,
+  transcript?: CloneTranscript | null,
+) {
+  const sourceStart = finite(shot.start, 0);
+  const sourceEnd = Math.max(sourceStart + 0.05, finite(shot.end, sourceStart + 0.05));
+  const sourceDuration = sourceEnd - sourceStart;
+  const safeDuration = Math.max(0.05, finite(duration, sourceDuration));
+  return systems.flatMap((system) => system.states.flatMap((state, stateIndex) => {
+    const overlapStart = Math.max(sourceStart, state.start);
+    const overlapEnd = Math.min(sourceEnd, state.end);
+    if (!(overlapEnd > overlapStart)) return [];
+    const start = round3(clamp(((overlapStart - sourceStart) / sourceDuration) * safeDuration, 0, Math.max(0, safeDuration - 0.05)));
+    const end = round3(clamp(Math.max(start + 0.05, ((overlapEnd - sourceStart) / sourceDuration) * safeDuration), start + 0.05, safeDuration));
+    const event = {
+      id: `${system.id}-${stateIndex}`,
+      kind: 'graphics' as const,
+      start,
+      end,
+      ...(state.anchorText ? { anchorText: state.anchorText } : {}),
+      ...(state.anchorStartWord !== undefined ? { anchorStartWord: state.anchorStartWord } : {}),
+      ...(state.anchorEndWord !== undefined ? { anchorEndWord: state.anchorEndWord } : {}),
+    };
+    const projected = projectVisualEventTimings([event], shot, safeDuration, transcript)[0];
+    return [{ system, state, stateIndex, start: projected?.start ?? start, end: projected?.end ?? end }];
+  }));
 }
 
 function readShotItem(item: unknown) {
@@ -1131,7 +1307,7 @@ export function buildBlueprintVariantPlan(
     if (!shot.preserveReferenceFrame && !shot.videoUrl && !shot.imageUrl) generation.add(index);
     if (shot.line && !shot.audioUrl) voice.add(index);
   });
-  const timeline = buildTimeline(shots, options, transcript, blueprint.beats);
+  const timeline = buildTimeline(shots, options, transcript, blueprint.beats, blueprint.visualSystems);
   return {
     id: variantText(spec.id, `variant-${Date.now()}`).slice(0, 80),
     name: variantText(spec.name, '本地变体').slice(0, 120),
@@ -1154,7 +1330,7 @@ export function buildBlueprintVariantPlans(
   return specs.map((spec) => buildBlueprintVariantPlan(blueprint, spec, options, transcript));
 }
 
-export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcript?: CloneTranscript | null, beats?: readonly CloneBeatCue[]): CloneTimeline {
+export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcript?: CloneTranscript | null, beats?: readonly CloneBeatCue[], visualSystems: readonly CloneVisualSystem[] = []): CloneTimeline {
   const durations = shotDurations(shots, options);
   const components = buildBlueprintComponents(shots);
   const componentForShot = new Map<number, CloneBlueprintComponent>();
@@ -1266,6 +1442,56 @@ export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcr
       duration,
       transcript,
     );
+    projectVisualSystemStates(visualSystems, shot, duration, transcript)
+      .filter(({ state }) => Boolean(state.text?.trim() || state.url || state.prompt?.trim()))
+      .forEach(({ system, state, stateIndex, start: localStart, end: localEnd }) => {
+        const text = state.text?.trim() || (state.url ? '' : system.label);
+        const graphicsClipId = `clone-system-${system.id}-${index}-${stateIndex}`;
+        const eventStart = round3(start + localStart);
+        const eventDuration = round3(localEnd - localStart);
+        if (text) {
+          clips.push({
+            id: graphicsClipId,
+            sourceClipId: graphicsClipId,
+            shotIndex: index,
+            track: 'graphics',
+            type: 'caption',
+            name: `${system.label} ${index + 1}`,
+            start: eventStart,
+            duration: eventDuration,
+            sourceOffset: 0,
+            text,
+            textRole: 'graphics',
+            graphicsStyle: state.style,
+            ...(state.textBox ? { textBox: state.textBox } : state.position ? captionTransformForPosition(state.position) : {}),
+            fontSize: CLONE_CAPTION_FONT_SIZE + 6,
+            captionBackgroundOpacity: 0,
+            visualSystemId: system.id,
+            ...(state.status ? { visualSystemState: state.status } : {}),
+            ...(state.url ? { url: state.url } : {}),
+            ...(state.mediaKind ? { mediaKind: state.mediaKind } : {}),
+            ...(state.source || system.source ? { source: state.source || system.source } : {}),
+          });
+        }
+        graphicsTrack.clips.push({
+          id: graphicsClipId,
+          eventId: graphicsClipId,
+          visualSystemId: system.id,
+          ...(state.status ? { visualSystemState: state.status } : {}),
+          shotIndex: index,
+          ...(component ? { componentId: component.id, role: component.role } : {}),
+          start: eventStart,
+          duration: eventDuration,
+          source: state.source || system.source || 'generated-media',
+          ...(state.mediaKind ? { mediaKind: state.mediaKind } : {}),
+          ...(text ? { text } : {}),
+          ...(state.url ? { url: state.url } : {}),
+          ...(state.prompt ? { text: state.prompt } : {}),
+          ...(state.style ? { graphicsStyle: state.style } : {}),
+          ...(state.position ? { position: state.position } : {}),
+          ...(state.textBox ? { textBox: state.textBox } : {}),
+        });
+      });
     const graphicsEvents = visualEvents.filter((event) => event.kind === 'graphics' && event.text?.trim());
     const graphicsItems = graphicsEvents.length
       ? graphicsEvents
@@ -1388,6 +1614,7 @@ export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcr
     aspect: options.aspect,
       clips,
     components,
+    ...(visualSystems.length ? { visualSystems: [...visualSystems] } : {}),
     referenceAudioDucking: true,
     tracks: [videoTrack, referenceAudioTrack, voiceTrack, captionTrack, graphicsTrack, brollTrack, effectTrack].filter((track) => track.clips.length),
   };

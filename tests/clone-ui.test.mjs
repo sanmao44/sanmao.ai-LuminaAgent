@@ -187,6 +187,9 @@ test("Blueprint 变体提供计划与本地完整 MP4 合成入口", () => {
 
 test("管线包含抽帧、拆解、配音、生图、生视频五步与三条降级链", () => {
   assert.match(pipeline, /extractFrameFiles\(/);
+  assert.match(pipeline, /normalizeVisualSystems\(/);
+  assert.match(pipeline, /visualSystems: analysis\.visualSystems/);
+  assert.match(pipeline, /buildTimeline\(shots, started\.options, referenceTranscript, started\.referenceAnalysis\?\.beats, visualSystems\)/);
   assert.match(pipeline, /referenceEvidenceSampleTimes\(duration, scene\.times, beatResult\.beats, referenceTranscript\)/);
   assert.match(pipeline, /evidenceForFrameTimes\(extracted\.times, evidence\)/);
   assert.match(pipeline, /evidence:\s*frames\.evidence/);

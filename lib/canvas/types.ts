@@ -83,6 +83,12 @@ export type CanvasVideoEditorClip = {
   /** Semantic clone role (performance, B-roll, graphic, transition, ...). */
   role?: string;
   sourceNodeId?: string;
+  /** Semantic media retained when a clone graphics clip is copied into editorState. */
+  url?: string;
+  mediaKind?: 'image' | 'video';
+  source?: 'reference-video' | 'generated-media';
+  visualSystemId?: string;
+  visualSystemState?: 'enter' | 'active' | 'update' | 'exit';
   track: CanvasVideoEditorTrack;
   type: CanvasVideoEditorClipType;
   name: string;

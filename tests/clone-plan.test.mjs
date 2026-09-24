@@ -321,6 +321,37 @@ test('visual events stay inside the shot and compile into independent timed trac
   assert.deepEqual(broll.map((clip) => [clip.eventId, clip.start, clip.duration, clip.text]), [['broll', 3.5, 1.5, 'product close-up']]);
 });
 
+test('cross-shot visual systems preserve lifecycle state across the timeline', () => {
+  const systems = plan.normalizeVisualSystems({ visualSystems: [{
+    id: 'scoreboard',
+    kind: 'scoreboard',
+    label: '排行榜',
+    persistent: true,
+    states: [
+      { start: 0.5, end: 1.5, status: 'enter', text: '1 甲', style: 'card', position: 'top-right' },
+      { start: 1.5, end: 3.5, status: 'update', text: '1 乙', style: 'card', position: 'top-right' },
+    ],
+  }] }, 4);
+  assert.equal(systems.length, 1);
+  assert.equal(systems[0].persistent, true);
+  assert.deepEqual(systems[0].states.map((state) => [state.status, state.start, state.end, state.text]), [
+    ['enter', 0.5, 1.5, '1 甲'],
+    ['update', 1.5, 3.5, '1 乙'],
+  ]);
+  const shots = [
+    cloneShot(0, { start: 0, end: 2, preserveReferenceFrame: false, imageUrl: '/one.png' }),
+    cloneShot(1, { start: 2, end: 4, preserveReferenceFrame: false, imageUrl: '/two.png' }),
+  ];
+  const timeline = plan.buildTimeline(shots, plan.normalizeCloneOptions({}), undefined, undefined, systems);
+  assert.deepEqual(timeline.visualSystems?.map((system) => system.id), ['scoreboard']);
+  const clips = timeline.tracks.find((track) => track.kind === 'graphics')?.clips.filter((clip) => clip.visualSystemId === 'scoreboard') || [];
+  assert.deepEqual(clips.map((clip) => [clip.visualSystemState, clip.shotIndex, clip.text]), [
+    ['enter', 0, '1 甲'],
+    ['update', 0, '1 乙'],
+    ['update', 1, '1 乙'],
+  ]);
+});
+
 test('effect events compile into an editable effect track without becoming video shots', () => {
   const shots = plan.normalizeShots({ shots: [{
     start: 0,

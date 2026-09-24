@@ -29,12 +29,12 @@ import { askText, chatText, parseJsonBlock } from './chat';
 import { detectAudioBeats, detectSceneChanges, extractFrameFiles, extractReferenceAudioTrack, extractSpeechAudio, extractVideoSegment, prepareImageFrame, probeMediaSeconds, runFfmpegCapture } from './media';
 import { transcribeLocalAudio, transcribeReferenceAudio } from './asr';
 import { localOcrAvailable, mergeOcrText, ocrImageFile, ocrPosition } from './ocr';
-import { alignShotsWithLines, buildBlueprintComponents, buildBlueprintVariantPlan, buildTimeline, clampShotSeconds, cloneShotDirection, cloneStageProgress, isCloneJobStale, normalizeShots, referenceEvidenceSampleTimes, round3, shouldPreserveReferenceFrameAnalysis, shotsFromSceneChanges, snapShotBoundariesToSceneChanges, splitLines, type NormalizedShot } from './plan';
+import { alignShotsWithLines, buildBlueprintComponents, buildBlueprintVariantPlan, buildTimeline, clampShotSeconds, cloneShotDirection, cloneStageProgress, isCloneJobStale, normalizeShots, normalizeVisualSystems, referenceEvidenceSampleTimes, round3, shouldPreserveReferenceFrameAnalysis, shotsFromSceneChanges, snapShotBoundariesToSceneChanges, splitLines, type NormalizedShot } from './plan';
 import { offlineSpeechSupported, synthesizeOfflineSpeech } from './offline-speech';
 import { audioExtension, resolveSpeechRuntime, synthesizeSpeech } from './speech';
 import { assembleCloneVideo } from './assemble';
 import { findCloneJob, listCloneJobs, touchCloneJob, updateCloneJob } from './store';
-import type { CloneAsset, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneJob, CloneOcrObservation, CloneReferenceAnalysis, CloneReferenceEvidenceSample, CloneReferenceOcrFrame, CloneShot, CloneShotAnalysis, CloneShotSpeechMode, CloneTimeline, CloneTranscript, CloneVisualBible } from './types';
+import type { CloneAsset, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneJob, CloneOcrObservation, CloneReferenceAnalysis, CloneReferenceEvidenceSample, CloneReferenceOcrFrame, CloneShot, CloneShotAnalysis, CloneShotSpeechMode, CloneTimeline, CloneTranscript, CloneVisualBible, CloneVisualSystem } from './types';
 import { normalizeVideoEditorState } from '../canvas/video-editor';
 import type { CanvasVideoEditorState } from '../canvas/types';
 
@@ -338,6 +338,7 @@ function buildReferenceAnalysis(
   ocr?: CloneReferenceOcrFrame[],
   visualBible?: CloneVisualBible,
   beats: CloneReferenceAnalysis['beats'] = [],
+  visualSystems: CloneVisualSystem[] = [],
 ): CloneReferenceAnalysis {
   return {
     version: 1,
@@ -350,6 +351,7 @@ function buildReferenceAnalysis(
     ...(beats.length ? { beats } : {}),
     ...(ocr?.length ? { ocr } : {}),
     ...(visualBible && Object.keys(visualBible).length ? { visualBible } : {}),
+    ...(visualSystems.length ? { visualSystems } : {}),
     shots: shots.map((shot, index) => ({
       index: Number.isInteger(shot.index) ? shot.index : index,
       start: round3(shot.start),
@@ -564,7 +566,7 @@ async function attachReferenceFrames(shots: CloneShot[], frames: { files: string
 }
 
 /** 视觉拆解：没有视觉模型或拆解失败时退回等间隔切分，并把降级原因写进 warning。 */
-async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; error: string; times?: number[]; evidence?: CloneReferenceEvidenceSample[]; sceneChangeTimes?: number[] }, job: CloneJob, durationSeconds: number): Promise<{ shots: NormalizedShot[]; warning?: string }> {
+async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; error: string; times?: number[]; evidence?: CloneReferenceEvidenceSample[]; sceneChangeTimes?: number[] }, job: CloneJob, durationSeconds: number): Promise<{ shots: NormalizedShot[]; visualSystems?: CloneVisualSystem[]; warning?: string }> {
   const equalShots = () => job.reference.kind === 'image'
     ? [{ start: 0, end: round3(durationSeconds), visual: '', prompt: '' }]
     : frames.sceneChangeTimes?.length
@@ -592,11 +594,12 @@ async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; err
     `抽帧时间标签如下（每一帧后面的取证原因来自本地分析，不是模型猜测）：\n${frameGuide}`,
     '请把相邻取证帧之间的变化当作连续证据：识别画面元素的进入、持续、替换和退出；同一榜单、标题、产品卡或界面若跨镜头持续，不要机械地当成互不相关的元素。若无法确定精确时间，请把事件范围限制在相邻取证帧之间，并降低描述确定性。',
     sceneGuide,
+    '请检查是否存在跨多个镜头持续的视觉系统（如榜单/比分、标题栏、产品卡、界面区域、标志）。不要把它们拆成互不相关的镜头事件；请放在根层 visualSystems 中，并用 states 记录 enter/active/update/exit。每个系统包含起止时间、类型、文字、位置、样式和状态变化；不确定时使用相邻取证帧范围，不要编造固定时长。',
     '如果字卡、B-roll、贴纸、reveal 或动效只在镜头的一段时间出现，请在 analysis.events 中记录相对镜头的 start/end（秒）和 kind=graphics|broll|effect；不要把它错误地扩展到整个镜头。尽量同时填写 anchorText（该事件对应的原片口播词/语义短语）或 anchorStartWord、anchorEndWord（镜头内从 0 开始、end 不含的词序号），这样改写文案或重新配音后可以自动跟随语义重新定位。graphics 事件可填写 text、style、position，B-roll 事件可填写 prompt 或 url。',
     '如果画面包含标题、Logo、价格、按钮或字幕，请优先逐字抄录，不要只写“有文字”；能判断位置和样式时一并写入 graphicsPosition、graphicsStyle、graphicsBounds（归一化 x/y/width/height，左上角为 0,0）。',
     `请把它拆成不超过 ${job.options.maxShots} 个镜头，每个镜头给出：起止秒数（0 到 ${round3(durationSeconds)}，不能重叠）、画面内容描述、用于重新生成同类画面的中文提示词，以及结构化参考分析。`,
     'analysis 尽量包含 camera、composition、motion、motionPath、visualStyle、graphics、graphicsText（尽量逐字抄录画面文字）、graphicsPosition、graphicsStyle、graphicsBounds、layout、audio、transition、transitionType、transitionDuration、role；layout 只有在画面确实存在明确分栏、画中画或卡片容器时才填写，mode 只能是 full|split-horizontal|split-vertical|picture-in-picture|card，并用归一化 primary/secondary 区域描述主体位置；transitionType 只能是 cut|fade|dissolve|wipe|slide|none，role 只能是 performance|broll|graphic|transition|product|other。',
-    '只输出 JSON：{"shots":[{"start":0,"end":3,"visual":"画面描述","prompt":"提示词","analysis":{"camera":"...","composition":"...","motion":"...","motionPath":"...","visualStyle":"...","graphics":"...","graphicsText":"...","graphicsPosition":"bottom-center","graphicsStyle":"...","graphicsBounds":{"x":0.1,"y":0.1,"width":0.8,"height":0.12},"events":[{"kind":"graphics","start":0.4,"end":1.6,"anchorText":"对应的原片词语","anchorStartWord":2,"anchorEndWord":4,"text":"逐字字卡","style":"card"}],"layout":{"mode":"card","backgroundColor":"#101014","surfaceColor":"#26262d","padding":0.06,"radius":0.06,"primary":{"x":0.06,"y":0.06,"width":0.88,"height":0.88,"radius":0.06}},"audio":"...","transition":"...","transitionType":"cut","transitionDuration":0,"role":"performance"}}]}',
+    '只输出 JSON：{"visualSystems":[{"id":"scoreboard","kind":"scoreboard","label":"榜单","start":0,"end":8,"persistent":true,"states":[{"start":0,"end":3,"status":"enter","text":"榜单内容","position":"top-right","style":"card"},{"start":3,"end":8,"status":"update","text":"更新后的榜单内容"}]}],"shots":[{"start":0,"end":3,"visual":"画面描述","prompt":"提示词","analysis":{"camera":"...","composition":"...","motion":"...","motionPath":"...","visualStyle":"...","graphics":"...","graphicsText":"...","graphicsPosition":"bottom-center","graphicsStyle":"...","graphicsBounds":{"x":0.1,"y":0.1,"width":0.8,"height":0.12},"events":[{"kind":"graphics","start":0.4,"end":1.6,"anchorText":"对应的原片词语","anchorStartWord":2,"anchorEndWord":4,"text":"逐字字卡","style":"card"}],"layout":{"mode":"card","backgroundColor":"#101014","surfaceColor":"#26262d","padding":0.06,"radius":0.06,"primary":{"x":0.06,"y":0.06,"width":0.88,"height":0.88,"radius":0.06}},"audio":"...","transition":"...","transitionType":"cut","transitionDuration":0,"role":"performance"}}]}',
   ].join('\n');
   const content: ChatContentPart[] = [
     { type: 'text', text: instruction },
@@ -617,7 +620,12 @@ async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; err
         const first = snapped.find((shot) => shot.visual || shot.prompt || shot.analysis) || snapped[0] || equalShots()[0];
         return { shots: [{ ...first, start: 0, end: round3(durationSeconds), referenceGap: undefined, preserveReferenceFrame: undefined }] };
       }
-      return { shots: snapped };
+      const visualSystems = normalizeVisualSystems(
+        (payload as { visualSystems?: unknown; visual_systems?: unknown } | null)?.visualSystems
+          ?? (payload as { visualSystems?: unknown; visual_systems?: unknown } | null)?.visual_systems,
+        durationSeconds,
+      );
+      return { shots: snapped, ...(visualSystems.length ? { visualSystems } : {}) };
     }
     return { shots, warning: '视觉模型没有返回可用的镜头拆解：已按等间隔切分镜头。' };
   } catch (error) {
@@ -1029,6 +1037,7 @@ async function executeCloneJob(id: string) {
     // cut structure after the user had already confirmed it.
     const resumed = Boolean(started.planConfirmed && started.shots.length);
     let shots: CloneShot[];
+    let visualSystems: CloneVisualSystem[] = executionJob.referenceAnalysis?.visualSystems || executionJob.blueprint?.visualSystems || [];
     let visualBibleFrames: string[] = [];
     if (resumed) {
       shots = started.shots;
@@ -1058,6 +1067,7 @@ async function executeCloneJob(id: string) {
       if (await isCancelled(id)) return await finishCancelled(id);
       const analysis = await analyzeShots(chatRuntime, analyzedFrames, executionJob, duration);
       const normalized = analysis.shots;
+      visualSystems = analysis.visualSystems || [];
       // 拆解降级要立刻落库：后面如果文案阶段直接失败，这条提示不能被吞掉。
       if (analysis.warning) await appendWarnings(id, [analysis.warning]);
       await patchJob(id, { stage: 'scripting', progress: cloneStageProgress('scripting'), message: '正在重写文案' });
@@ -1254,7 +1264,7 @@ async function executeCloneJob(id: string) {
 
     if (await isCancelled(id)) return await finishCancelled(id);
     await patchJob(id, { stage: 'assembling', progress: cloneStageProgress('assembling'), message: '正在合成时间轴' });
-    const generatedTimeline = buildTimeline(shots, started.options, referenceTranscript, started.referenceAnalysis?.beats);
+    const generatedTimeline = buildTimeline(shots, started.options, referenceTranscript, started.referenceAnalysis?.beats, visualSystems);
     const draftTimeline = started.timeline.editorState
       ? timelineWithEditorState(generatedTimeline, normalizeVideoEditorState(started.timeline.editorState))
       : generatedTimeline;
@@ -1388,11 +1398,12 @@ export async function analyzeCloneJob(id: string) {
     ocr,
     visualBible,
     beatResult.beats,
+    analysis.visualSystems || [],
   );
     const plannedJob = await patchJob(id, {
       stage: 'planned', progress: cloneStageProgress('planned'), message: `已生成 ${planned.length} 个镜头计划，等待确认`, shots: planned, planConfirmed: false,
       referenceAnalysis,
-      blueprint: { version: 1, sourceVideo: job.reference, assets: job.assets || [], shots: plannedWithFrames, visualBible, ...(beatResult.beats.length ? { beats: beatResult.beats } : {}), components: buildBlueprintComponents(plannedWithFrames), createdAt: job.blueprint?.createdAt || now, updatedAt: now },
+      blueprint: { version: 1, sourceVideo: job.reference, assets: job.assets || [], shots: plannedWithFrames, visualBible, ...(beatResult.beats.length ? { beats: beatResult.beats } : {}), ...(analysis.visualSystems?.length ? { visualSystems: analysis.visualSystems } : {}), components: buildBlueprintComponents(plannedWithFrames), createdAt: job.blueprint?.createdAt || now, updatedAt: now },
     });
     if (!job.autoConfirmPlan) return plannedJob;
     const confirmedJob = await patchJob(id, {
@@ -1485,7 +1496,7 @@ export async function renderBlueprintVariant(id: string, spec: CloneBlueprintVar
       videoPick.value,
     );
     const renderedShots = await renderVariantVoice(variantJob, withMedia, plan.voiceShotIndexes, speechPick.value);
-    const renderedTimeline = buildTimeline(renderedShots, job.options, job.referenceAnalysis?.transcriptData, job.referenceAnalysis?.beats);
+    const renderedTimeline = buildTimeline(renderedShots, job.options, job.referenceAnalysis?.transcriptData, job.referenceAnalysis?.beats, job.referenceAnalysis?.visualSystems || job.blueprint?.visualSystems || []);
     const timeline = await materializeReferenceAudioTrack(referenceFile, renderedTimeline, cloneJobDirectory(id));
     const assembled = await assembleCloneVideo({
       job: { ...variantJob, shots: renderedShots, timeline },
