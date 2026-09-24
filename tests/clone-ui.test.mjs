@@ -167,7 +167,10 @@ test("completed jobs can reuse Blueprint for a local re-assembly", () => {
 test("Blueprint 变体提供计划与本地完整 MP4 合成入口", () => {
   assert.match(jobRoute, /action === 'variant-plan'/u);
   assert.match(jobRoute, /action === 'variant-render'/u);
+  assert.match(jobRoute, /action === 'variant-render-batch'/u);
+  assert.match(jobRoute, /renderBlueprintVariants\(id, variants\)/u);
   assert.match(pipeline, /export async function renderBlueprintVariant\(/u);
+  assert.match(pipeline, /export async function renderBlueprintVariants\(/u);
   assert.match(pipeline, /generationShotIndexes\.length \|\| plan\.voiceShotIndexes\.length/u);
   assert.match(pipeline, /renderVariantMedia\(/u);
   assert.match(pipeline, /renderVariantVoice\(/u);
@@ -175,6 +178,9 @@ test("Blueprint 变体提供计划与本地完整 MP4 合成入口", () => {
   assert.match(dialog, /Blueprint 组件变体/u);
   assert.match(dialog, /action: "variant-plan"/u);
   assert.match(dialog, /action: "variant-render"/u);
+  assert.match(dialog, /action: "variant-render-batch"/u);
+  assert.match(dialog, /variantBatchText/u);
+  assert.match(dialog, /variantSpecs\.find\(\(item\) => item\.id === plan\.id\)/u);
   assert.match(dialog, /合成完整 MP4/u);
   assert.match(styles, /\.clone-variant-panel\{/u);
 });

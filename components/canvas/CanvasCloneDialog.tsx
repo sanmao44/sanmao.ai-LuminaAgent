@@ -157,10 +157,12 @@ export default function CanvasCloneDialog({
   const [variantComponentId, setVariantComponentId] = useState("");
   const [variantName, setVariantName] = useState("");
   const [variantLine, setVariantLine] = useState("");
+  const [variantBatchText, setVariantBatchText] = useState("");
   const [variantGraphicsText, setVariantGraphicsText] = useState("");
   const [variantPrompt, setVariantPrompt] = useState("");
   const [variantPlanning, setVariantPlanning] = useState(false);
   const [variantPlans, setVariantPlans] = useState<CloneBlueprintVariantPlan[]>([]);
+  const [variantSpecs, setVariantSpecs] = useState<CloneBlueprintVariantSpec[]>([]);
   const [variantSpec, setVariantSpec] = useState<CloneBlueprintVariantSpec | null>(null);
   const [variantRendering, setVariantRendering] = useState(false);
 
@@ -492,6 +494,8 @@ export default function CanvasCloneDialog({
       setError("当前 Blueprint 还没有可复用的视觉组件");
       return;
     }
+    const batchLines = variantBatchText.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+    const requestedLines = (batchLines.length ? batchLines : [variantLine.trim()]).slice(0, 12);
     const override: Record<string, unknown> = { componentId };
     if (variantLine.trim()) override.line = variantLine.trim();
     if (variantGraphicsText.trim()) override.graphicsText = variantGraphicsText.trim();
@@ -499,35 +503,30 @@ export default function CanvasCloneDialog({
       override.prompt = variantPrompt.trim();
       override.regenerate = true;
     }
-    if (Object.keys(override).length === 1) {
+    if (Object.keys(override).length === 1 && !requestedLines.some(Boolean)) {
       setError("至少填写一项变体修改");
       return;
     }
     setVariantPlanning(true);
     setError("");
-    const variantId = `variant-${Date.now()}`;
-    const nextVariantName = variantName.trim() || "本地变体";
+    const specs = requestedLines.map((line, index) => ({
+      id: `variant-${Date.now()}-${index + 1}`,
+      name: requestedLines.length > 1 ? `${variantName.trim() || "鏈湴鍙樹綋"} ${index + 1}` : (variantName.trim() || "鏈湴鍙樹綋"),
+      overrides: [{ ...override, ...(line ? { line } : {}) } as CloneBlueprintVariantSpec["overrides"][number]],
+    } satisfies CloneBlueprintVariantSpec));
     try {
       const response = await fetch(`/api/clone/jobs/${job.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "variant-plan",
-          variants: [{
-            id: variantId,
-            name: nextVariantName,
-            overrides: [override],
-          }],
+          variants: specs,
         }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data?.error || "变体计划生成失败");
-      const nextSpec: CloneBlueprintVariantSpec = {
-        id: variantId,
-        name: nextVariantName,
-        overrides: [override as CloneBlueprintVariantSpec["overrides"][number]],
-      };
-      setVariantSpec(nextSpec);
+      setVariantSpecs(specs);
+      setVariantSpec(specs[0] || null);
       setVariantPlans(Array.isArray(data?.plans) ? data.plans as CloneBlueprintVariantPlan[] : []);
       if (data?.job) setJob(data.job as CloneJob);
       notify("变体计划已生成，可检查需要重新生成的镜头", "ok");
@@ -539,14 +538,15 @@ export default function CanvasCloneDialog({
   }
 
   async function renderVariant(plan: CloneBlueprintVariantPlan) {
-    if (!job || !variantSpec || variantRendering) return;
+    const spec = variantSpecs.find((item) => item.id === plan.id) || variantSpec;
+    if (!job || !spec || variantRendering) return;
     setVariantRendering(true);
     setError("");
     try {
       const response = await fetch(`/api/clone/jobs/${job.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "variant-render", variant: variantSpec }),
+        body: JSON.stringify({ action: "variant-render", variant: spec }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data?.error || "变体合成失败");
@@ -556,6 +556,28 @@ export default function CanvasCloneDialog({
       notify("本地变体已合成一个完整 MP4", "ok");
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "变体合成失败");
+    } finally {
+      setVariantRendering(false);
+    }
+  }
+
+  async function renderAllVariants() {
+    if (!job || variantSpecs.length < 2 || variantRendering) return;
+    setVariantRendering(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/clone/jobs/${job.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "variant-render-batch", variants: variantSpecs }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "鍙樹綋鎵归噺鍚堟垚澶辫触");
+      if (data?.job) setJob(data.job as CloneJob);
+      if (Array.isArray(data?.plans)) setVariantPlans(data.plans as CloneBlueprintVariantPlan[]);
+      notify(`宸插畬鎴愭壒閲忓悎鎴愶細${Array.isArray(data?.plans) ? data.plans.length : variantSpecs.length}涓畬鏁碩P4`, "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "鍙樹綋鎵归噺鍚堟垚澶辫触");
     } finally {
       setVariantRendering(false);
     }
@@ -728,7 +750,8 @@ export default function CanvasCloneDialog({
                   <div><b>Blueprint 组件变体</b><small>复用原片结构；只把真正变化的镜头标记为重新生成</small></div>
                   <em>{job.blueprint.components.length} 个组件</em>
                 </div>
-                <div className="clone-variant-fields">
+                 <div className="clone-variant-fields">
+                   <label className="clone-field clone-variant-wide"><span>批量变体口播（每行一个，最多 12 个）</span><textarea value={variantBatchText} onChange={(event) => setVariantBatchText(event.target.value)} placeholder="例如：第一版文案\n第二版文案\n第三版文案" /></label>
                   <label className="clone-field"><span>变体名称</span><input value={variantName} onChange={(event) => setVariantName(event.target.value)} placeholder="例如：蓝色 CTA 版" /></label>
                   <label className="clone-field"><span>作用组件</span><SelectMenu value={variantComponentId || blueprintComponents[0]?.id || ""} ariaLabel="选择 Blueprint 组件" portalZIndex={CANVAS_Z_INDEX.modalPopover} options={blueprintComponents.map((component) => ({ value: component.id, label: `${component.label} · ${component.shotIndexes.length} 个镜头` }))} onChange={setVariantComponentId} /></label>
                   <label className="clone-field"><span>新的口播/字幕（会提示补配音）</span><textarea value={variantLine} onChange={(event) => setVariantLine(event.target.value)} placeholder="留空表示不改旁白" /></label>
@@ -736,6 +759,7 @@ export default function CanvasCloneDialog({
                   <label className="clone-field clone-variant-wide"><span>新的画面提示词（会标记重新生成）</span><textarea value={variantPrompt} onChange={(event) => setVariantPrompt(event.target.value)} placeholder="留空表示复用已有画面" /></label>
                 </div>
                   <div className="clone-variant-actions"><small>计划阶段不会重复分析参考素材，也不会自动消耗生成额度。</small><button type="button" className="clone-button ghost" onClick={planBlueprintVariant} disabled={variantPlanning}>{variantPlanning ? "整理计划中…" : "生成变体计划"}</button></div>
+                {variantSpecs.length > 1 ? <button type="button" className="clone-button primary" onClick={() => void renderAllVariants()} disabled={variantRendering}>{variantRendering ? "批量合成中…" : `一键合成全部 ${variantSpecs.length} 个`}</button> : null}
                 {variantPlans.map((plan) => (
                   <article className="clone-variant-result" key={plan.id}>
                     <div><b>{plan.name}</b><small>{plan.reusedShotIndexes.length} 个镜头复用 · {plan.generationShotIndexes.length} 个镜头需重生成 · {plan.voiceShotIndexes.length} 个镜头需补配音</small></div>

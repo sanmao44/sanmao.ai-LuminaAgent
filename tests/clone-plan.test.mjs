@@ -386,6 +386,35 @@ test('Blueprint variants override component instances while reusing unaffected m
   assert.equal(variant.timeline.components.length, 2);
 });
 
+test('rewritten variant voice invalidates stale audio and word alignment before reflow', () => {
+  const shot = cloneShot(0, {
+    line: 'old copy',
+    audioUrl: '/old.wav',
+    audioSeconds: 1.4,
+    audioWords: [{ start: 0.1, end: 1.2, text: 'old copy' }],
+    videoUrl: '/host.mp4',
+    analysis: { role: 'performance' },
+  });
+  const blueprint = {
+    version: 1,
+    sourceVideo: { name: 'ref.mp4', url: '/ref.mp4', seconds: 2 },
+    assets: [],
+    shots: [shot],
+    components: plan.buildBlueprintComponents([shot]),
+    createdAt: 'now',
+    updatedAt: 'now',
+  };
+  const variant = plan.buildBlueprintVariantPlan(blueprint, {
+    id: 'rewritten',
+    name: 'rewritten',
+    overrides: [{ componentId: blueprint.components[0].id, line: 'new copy with a different rhythm' }],
+  }, plan.normalizeCloneOptions({}));
+  assert.equal(variant.shots[0].audioUrl, undefined);
+  assert.equal(variant.shots[0].audioSeconds, undefined);
+  assert.equal(variant.shots[0].audioWords, undefined);
+  assert.equal(variant.voiceShotIndexes[0], 0);
+});
+
 test('Blueprint variants mark only changed visual components for regeneration', () => {
   const shots = [
     cloneShot(0, { visual: 'product', prompt: 'old product', imageUrl: '/old.png', preserveReferenceFrame: true, analysis: { role: 'product' } }),

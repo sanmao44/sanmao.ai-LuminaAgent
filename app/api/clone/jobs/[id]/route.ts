@@ -1,10 +1,41 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { cleanupCloneJobDirectory, renderBlueprintVariant, rerenderCloneJob, runCloneJob } from '@/lib/clone/pipeline';
+import { cleanupCloneJobDirectory, renderBlueprintVariant, renderBlueprintVariants, rerenderCloneJob, runCloneJob } from '@/lib/clone/pipeline';
 import { buildBlueprintVariantPlans, normalizeCloneOptions } from '@/lib/clone/plan';
 import { findCloneJob, removeCloneJob, updateCloneJob } from '@/lib/clone/store';
 import type { CloneBlueprintVariantOverride, CloneBlueprintVariantSpec, CloneShot } from '@/lib/clone/types';
 import { normalizeVideoEditorState } from '@/lib/canvas/video-editor';
 import type { CanvasVideoEditorState } from '@/lib/canvas/types';
+
+function normalizeVariantSpec(value: unknown, fallbackId: string, fallbackName: string): CloneBlueprintVariantSpec | null {
+  if (!value || typeof value !== 'object') return null;
+  const source = value as Record<string, unknown>;
+  const rawOverrides = Array.isArray(source.overrides) ? source.overrides : [];
+  const overrides = rawOverrides.filter((item) => item && typeof item === 'object').slice(0, 64).map((item): CloneBlueprintVariantOverride => {
+    const raw = item as Record<string, unknown>;
+    return {
+      ...(typeof raw.componentId === 'string' ? { componentId: raw.componentId.trim().slice(0, 80) } : {}),
+      ...(Array.isArray(raw.shotIndexes) ? { shotIndexes: raw.shotIndexes.filter((index): index is number => Number.isInteger(index)).slice(0, 64) } : {}),
+      ...(Array.isArray(raw.assetIds) ? { assetIds: raw.assetIds.filter((assetId): assetId is string => typeof assetId === 'string').map((assetId) => assetId.trim()).filter(Boolean).slice(0, 16) } : {}),
+      ...(typeof raw.text === 'string' ? { text: raw.text.slice(0, 2000) } : {}),
+      ...(typeof raw.graphicsText === 'string' ? { graphicsText: raw.graphicsText.slice(0, 2000) } : {}),
+      ...(typeof raw.visual === 'string' ? { visual: raw.visual.slice(0, 2000) } : {}),
+      ...(typeof raw.line === 'string' ? { line: raw.line.slice(0, 2000) } : {}),
+      ...(typeof raw.prompt === 'string' ? { prompt: raw.prompt.slice(0, 2000) } : {}),
+      ...(raw.layout && typeof raw.layout === 'object' ? { layout: raw.layout as CloneBlueprintVariantOverride['layout'] } : {}),
+      ...(typeof raw.motionPath === 'string' ? { motionPath: raw.motionPath as CloneBlueprintVariantOverride['motionPath'] } : {}),
+      ...(typeof raw.graphicsStyle === 'string' ? { graphicsStyle: raw.graphicsStyle.slice(0, 180) } : {}),
+      ...(typeof raw.preserveReferenceFrame === 'boolean' ? { preserveReferenceFrame: raw.preserveReferenceFrame } : {}),
+      ...(typeof raw.allowReferenceOverlays === 'boolean' ? { allowReferenceOverlays: raw.allowReferenceOverlays } : {}),
+      ...(typeof raw.regenerate === 'boolean' ? { regenerate: raw.regenerate } : {}),
+    };
+  });
+  return {
+    id: String(source.id || fallbackId).trim().slice(0, 80),
+    name: String(source.name || fallbackName).trim().slice(0, 120),
+    ...(source.description ? { description: String(source.description).trim().slice(0, 400) } : {}),
+    overrides,
+  };
+}
 
 function normalizeShotStrategy(
   requested: CloneShot['strategy'] | undefined,
@@ -101,6 +132,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       blueprint: { ...job.blueprint, variants: specs, updatedAt: new Date().toISOString() },
     });
     return Response.json({ ok: true, plans, variants: specs, job: updated });
+  }
+  if (action === 'variant-render-batch') {
+    if (!job.blueprint) return Response.json({ error: 'Blueprint missing' }, { status: 400 });
+    const rawVariants = body && typeof body === 'object' ? (body as { variants?: unknown }).variants : undefined;
+    if (!Array.isArray(rawVariants) || !rawVariants.length || rawVariants.length > 12) {
+      return Response.json({ error: 'Provide 1 to 12 variants' }, { status: 400 });
+    }
+    const variants = rawVariants.flatMap((value, index) => {
+      const spec = normalizeVariantSpec(value, `variant-${Date.now()}-${index + 1}`, `Variant ${index + 1}`);
+      return spec ? [spec] : [];
+    });
+    if (!variants.length) return Response.json({ error: 'No valid variants' }, { status: 400 });
+    try {
+      const rendered = await renderBlueprintVariants(id, variants);
+      return Response.json({ ok: true, results: rendered, plans: rendered.map((item) => item.plan), job: rendered.at(-1)?.job || job });
+    } catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : 'Batch variant rendering failed' }, { status: 400 });
+    }
   }
   if (action === 'variant-render') {
     if (!job.blueprint) return Response.json({ error: '这条任务还没有可复用的 Blueprint' }, { status: 400 });

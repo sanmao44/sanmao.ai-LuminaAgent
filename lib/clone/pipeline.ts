@@ -1495,6 +1495,22 @@ export async function renderBlueprintVariant(id: string, spec: CloneBlueprintVar
   }
 }
 
+/**
+ * Render a batch of local Blueprint variants sequentially.
+ *
+ * Each variant owns its temporary media directory and is persisted as soon as
+ * it completes. Sequential execution prevents two variants from deleting or
+ * reusing the same reference-materialization directory while still sharing
+ * the analyzed Blueprint and every unchanged shot media asset.
+ */
+export async function renderBlueprintVariants(id: string, specs: CloneBlueprintVariantSpec[]) {
+  const results: Array<Awaited<ReturnType<typeof renderBlueprintVariant>>> = [];
+  for (const spec of specs.slice(0, 12)) {
+    results.push(await renderBlueprintVariant(id, spec));
+  }
+  return results;
+}
+
 async function runCloneReassembly(id: string) {
   if (runningJobs.has(id)) return await findCloneJob(id);
   runningJobs.add(id);

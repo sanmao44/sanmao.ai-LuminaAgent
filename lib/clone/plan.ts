@@ -974,8 +974,8 @@ export function buildBlueprintVariantPlan(
         ...(lineValue !== undefined ? { line: lineValue } : {}),
         ...(override.prompt !== undefined ? { prompt: variantText(override.prompt) } : {}),
         ...(override.assetIds !== undefined ? { assetIds: [...new Set(override.assetIds.filter((value): value is string => typeof value === 'string' && Boolean(value.trim())).map((value) => value.trim()))] } : {}),
-        ...(lineValue !== undefined && lineValue !== current.line && !lineValue
-          ? { audioUrl: undefined, audioSeconds: undefined }
+        ...(lineValue !== undefined && lineValue !== current.line
+          ? { audioUrl: undefined, audioSeconds: undefined, audioWords: undefined }
           : {}),
         analysis: {
           ...currentAnalysis,
