@@ -102,6 +102,22 @@ test('structured graphics and transition fields survive shot normalization', () 
   assert.equal(shots[0].analysis.motionPath, 'left to right');
 });
 
+test('legacy full-shot graphics remain when a separate event has no text', () => {
+  const timeline = plan.buildTimeline([
+    cloneShot(0, {
+      start: 0,
+      end: 2,
+      line: 'narration',
+      analysis: {
+        graphicsText: 'legacy title',
+        events: [{ kind: 'broll', start: 0.4, end: 1.2, prompt: 'product insert' }],
+      },
+    }),
+  ], plan.normalizeCloneOptions({}));
+  assert.equal(timeline.clips.find((clip) => clip.track === 'graphics')?.text, 'legacy title');
+  assert.equal(timeline.tracks.find((track) => track.kind === 'broll')?.clips[0]?.text, 'product insert');
+});
+
 test('视觉系统镜头保留原片动态，普通小字卡仍允许替换主体', () => {
   assert.equal(plan.shouldPreserveReferenceFrameAnalysis({ role: 'graphic' }), true);
   assert.equal(plan.shouldPreserveReferenceFrameAnalysis({ layout: { mode: 'picture-in-picture' } }), true);
@@ -236,6 +252,36 @@ test('structured graphics text enters its own semantic and canvas graphics track
   assert.equal(timeline.clips.find((clip) => clip.track === 'graphics')?.graphicsStyle, 'card');
   assert.equal(timeline.tracks.find((track) => track.kind === 'graphics')?.clips[0]?.text, 'screen title');
   assert.equal(timeline.tracks.find((track) => track.kind === 'graphics')?.clips[0]?.graphicsStyle, 'card');
+});
+
+test('visual events stay inside the shot and compile into independent timed tracks', () => {
+  const shots = plan.normalizeShots({ shots: [{
+    start: 2,
+    end: 5,
+    visual: 'host with timed card',
+    analysis: {
+      events: [
+        { id: 'title', kind: 'graphics', start: 0.4, end: 1.6, text: 'title', style: 'card' },
+        { id: 'broll', kind: 'broll', start: 1.5, end: 9, prompt: 'product close-up' },
+        { id: 'invalid', kind: 'graphics', start: 2, end: 2.01, text: 'too short' },
+      ],
+    },
+  }] }, { durationSeconds: 5, maxShots: 4 });
+  const semanticShot = shots.find((shot) => shot.analysis?.events);
+  assert.ok(semanticShot);
+  assert.deepEqual(semanticShot.analysis.events.map((event) => [event.id, event.start, event.end]), [
+    ['title', 0.4, 1.6],
+    ['broll', 1.5, 3],
+    ['invalid', 2, 2.05],
+  ]);
+  const timeline = plan.buildTimeline(shots.map((shot, index) => ({ ...shot, index, line: '', status: 'pending' })), plan.normalizeCloneOptions({}));
+  const graphics = timeline.tracks.find((track) => track.kind === 'graphics')?.clips || [];
+  assert.deepEqual(graphics.map((clip) => [clip.eventId, clip.start, clip.duration, clip.text]), [
+    ['title', 2.4, 1.2, 'title'],
+    ['invalid', 4, 0.05, 'too short'],
+  ]);
+  const broll = timeline.tracks.find((track) => track.kind === 'broll')?.clips || [];
+  assert.deepEqual(broll.map((clip) => [clip.eventId, clip.start, clip.duration, clip.text]), [['broll', 3.5, 1.5, 'product close-up']]);
 });
 
 test('repeated visual structures become reusable Blueprint components and clip instances', () => {

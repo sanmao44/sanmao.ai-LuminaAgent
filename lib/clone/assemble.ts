@@ -7,7 +7,7 @@ import { resolveStoredFileWithFallback } from '../image-storage';
 import { resolveStoredVideoFileWithFallback } from '../video-storage';
 import { resolveStoredAudioFileWithFallback } from '../audio-storage';
 import { persistVideoBuffer } from '../video-storage';
-import type { CloneJob, CloneOptions, CloneShot, CloneTimeline } from './types';
+import type { CloneJob, CloneOptions, CloneShot, CloneTimeline, CloneTimelineTrackClip } from './types';
 import type { CanvasVideoEditorClip, CanvasVideoEditorLayout, CanvasVideoEditorTrack, CanvasVideoEditorTransition, CanvasVideoEditorWord } from '../canvas/types';
 import { videoEditorTextBox } from '../canvas/video-editor';
 import { fitCanvasText } from '../canvas/text-layout';
@@ -22,6 +22,24 @@ type AssemblyInput = {
   audioStoragePath?: string;
   referenceFile?: string;
   onProgress?: (progress: number) => Promise<void> | void;
+};
+
+type RenderOverlay = {
+  text: string;
+  start: number;
+  end: number;
+  style?: string;
+  position?: string;
+  bounds?: TextBox;
+  options?: TextRenderOptions;
+};
+
+type EventVisual = {
+  file: string;
+  isVideo: boolean;
+  start: number;
+  end: number;
+  sourceOffset: number;
 };
 
 type ResolvedSources = {
@@ -113,6 +131,21 @@ function editorOverlayForSegment(
     .filter((clip) => clip.track === track && clip.start < start + duration && clip.start + clip.duration > start)
     .sort((a, b) => a.start - b.start)
     .at(-1) || null;
+}
+
+function graphicsClipsForSegment(input: AssemblyInput, shotIndex: number, start: number, duration: number) {
+  const end = start + duration;
+  if (input.timeline.editorState) {
+    if (!editorTrackEnabled(input, 'graphics')) return [] as Array<CanvasVideoEditorClip | CloneTimelineTrackClip>;
+    return input.timeline.editorState.clips
+      .filter((clip) => clip.track === 'graphics' && clip.start < end && clip.start + clip.duration > start)
+      .sort((a, b) => a.start - b.start);
+  }
+  const semantic = timelineTrack(input, 'graphics')?.clips.filter((clip) => clip.shotIndex === shotIndex && clip.start < end && clip.start + clip.duration > start) || [];
+  if (semantic.length) return semantic;
+  return input.timeline.clips
+    .filter((clip) => clip.track === 'graphics' && shotIndexForClip(clip, -1) === shotIndex && clip.start < end && clip.start + clip.duration > start)
+    .sort((a, b) => a.start - b.start);
 }
 
 function timelineTrackClip(input: AssemblyInput, kind: 'reference-audio' | 'voice' | 'caption' | 'graphics', shotIndex: number) {
@@ -415,7 +448,7 @@ async function runFfmpeg(args: string[], timeoutMs = 15 * 60_000) {
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { stderr = `${stderr}${chunk}`.slice(-16_000); });
     child.once('error', (error: NodeJS.ErrnoException) => finish(new Error(`无法启动 FFmpeg：${error.code || error.message}；已检查：${checked.join('、')}`)));
-    child.once('close', (code) => finish(code === 0 ? undefined : new Error(`视频合成失败${stderr.trim() ? `：${stderr.trim().split(/\r?\n/).at(-1)}` : ''}`)));
+    child.once('close', (code) => finish(code === 0 ? undefined : new Error(`视频合成失败${stderr.trim() ? `：${stderr.trim()}` : ''}`)));
   });
 }
 
@@ -456,6 +489,44 @@ async function resolveSource(url: string | undefined, kind: 'image' | 'video' | 
   if (!/^https?:\/\//iu.test(value)) return null;
   const file = path.join(input.workingDirectory, `source-${index}-${kind}${safeExtension(value, kind === 'audio' ? '.wav' : kind === 'image' ? '.jpg' : '.mp4')}`);
   return writeDownloadedSource(value, file);
+}
+
+async function resolveEventVisuals(input: AssemblyInput, shot: CloneShot, shotIndex: number, segmentStart: number, duration: number, workingDirectory: string) {
+  const semanticEvents = input.timeline.tracks?.find((track) => track.kind === 'broll')?.clips
+    .filter((clip) => clip.shotIndex === shotIndex && clip.duration > 0)
+    .map((clip) => ({
+      kind: 'broll' as const,
+      start: Math.max(0, clip.start - segmentStart),
+      end: Math.max(0, clip.start + clip.duration - segmentStart),
+      ...(clip.url ? { url: clip.url } : {}),
+      ...(clip.mediaKind === 'image' || clip.mediaKind === 'video' ? { mediaKind: clip.mediaKind } : {}),
+      source: clip.source,
+    })) || [];
+  const events = semanticEvents.length
+    ? semanticEvents
+    : shot.analysis?.events?.filter((event) => event.kind === 'broll' && event.end > event.start) || [];
+  const result: EventVisual[] = [];
+  for (const [eventIndex, event] of events.entries()) {
+    const start = Math.max(0, Math.min(duration, event.start));
+    const end = Math.max(start, Math.min(duration, event.end));
+    if (end <= start) continue;
+    if (event.url) {
+      const inferredKind = event.mediaKind || (/^data:image\//iu.test(event.url) || /\.(?:png|jpe?g|webp|gif)(?:[?#]|$)/iu.test(event.url) ? 'image' : 'video');
+      const file = await resolveSource(event.url, inferredKind, input, shotIndex * 100 + eventIndex);
+      if (file) result.push({ file, isVideo: event.mediaKind !== 'image', start, end, sourceOffset: 0 });
+      continue;
+    }
+    if (input.referenceFile && event.source !== 'generated-media') {
+      const output = path.join(workingDirectory, `broll-reference-${String(shotIndex).padStart(3, '0')}-${String(eventIndex).padStart(3, '0')}.mp4`);
+      try {
+        await extractVideoSegment(input.referenceFile, shot.start + event.start, shot.start + event.end, output);
+        result.push({ file: output, isVideo: true, start, end, sourceOffset: 0 });
+      } catch {
+        // Event metadata remains in the persisted timeline even if this optional visual cannot be materialized.
+      }
+    }
+  }
+  return result;
 }
 
 async function resolveShotSources(shot: CloneShot, index: number, input: AssemblyInput, preferredVideoClip?: CanvasVideoEditorClip): Promise<ResolvedSources> {
@@ -614,6 +685,8 @@ async function renderSegment(
   input: AssemblyInput,
   dimensions: { width: number; height: number },
   font: string | null,
+  overlays: RenderOverlay[] = [],
+  eventVisuals: EventVisual[] = [],
 ) {
   const fps = Math.max(1, input.timeline.fps || 30);
   const output = path.join(input.workingDirectory, `segment-${String(index).padStart(3, '0')}.mp4`);
@@ -706,21 +779,67 @@ async function renderSegment(
           : captionPlacement(shot.analysis?.graphicsPosition).y,
         fontsize: graphicsLayout?.fontSize || graphicsOptions?.fontSize || 60,
       };
-    textFilterParts.push(`drawtext=fontfile='${escapeFilterPath(font as string)}':textfile='${escapeFilterPath(graphicsFile)}':fontcolor=white:fontsize=${placement.fontsize}:line_spacing=${Math.round(placement.fontsize * 0.35)}:${graphicsDrawTextOptions(graphicsStyle, graphicsOptions?.backgroundOpacity, placement.fontsize)}:x=${placement.x}:y=${placement.y}`);
+    const enable = overlays.length ? `:enable='${overlays.map((item) => `between(t\\,${item.start.toFixed(3)}\\,${item.end.toFixed(3)})`).join('+')}'` : '';
+    textFilterParts.push(`drawtext=fontfile='${escapeFilterPath(font as string)}':textfile='${escapeFilterPath(graphicsFile)}':fontcolor=white:fontsize=${placement.fontsize}:line_spacing=${Math.round(placement.fontsize * 0.35)}:${graphicsDrawTextOptions(graphicsStyle, graphicsOptions?.backgroundOpacity, placement.fontsize)}:x=${placement.x}:y=${placement.y}${enable}`);
+  }
+  if (font) {
+    for (const [overlayIndex, overlay] of overlays.entries()) {
+      const overlayFile = path.join(input.workingDirectory, `event-graphics-${String(index).padStart(3, '0')}-${String(overlayIndex).padStart(3, '0')}.txt`);
+      const overlayLayout = textLayoutForFfmpeg(overlay.text, { fontSize: overlay.options?.fontSize || 48, textBox: overlay.bounds, ...overlay.options }, dimensions);
+      await writeFile(overlayFile, textFileContent(overlayLayout.lines || [overlay.text]), { encoding: 'utf8', flag: 'wx' });
+      const overlayPlacement = overlayLayout.textBox
+        ? {
+          x: `(${((overlayLayout.textBox.x + overlayLayout.textBox.width / 2) * dimensions.width).toFixed(1)}-text_w/2)`,
+          y: `(${((overlayLayout.textBox.y + overlayLayout.textBox.height / 2) * dimensions.height).toFixed(1)}-text_h/2)`,
+        }
+        : {
+          x: overlay.options?.x !== undefined
+            ? `(w-text_w)/2+${(overlay.options.x * dimensions.width / 2).toFixed(1)}`
+            : captionPlacement(overlay.position).x,
+          y: overlay.options?.y !== undefined
+            ? `(h*0.83-text_h/2)-${(overlay.options.y * dimensions.height * 0.45).toFixed(1)}`
+            : captionPlacement(overlay.position).y,
+        };
+      textFilterParts.push(`drawtext=fontfile='${escapeFilterPath(font)}':textfile='${escapeFilterPath(overlayFile)}':fontcolor=white:fontsize=${overlayLayout.fontSize}:line_spacing=${Math.round(overlayLayout.fontSize * 0.35)}:${graphicsDrawTextOptions(overlay.style, overlay.options?.backgroundOpacity, overlayLayout.fontSize)}:x=${overlayPlacement.x}:y=${overlayPlacement.y}:enable='between(t\\,${overlay.start.toFixed(3)}\\,${overlay.end.toFixed(3)})'`);
+    }
   }
   const visualInput = sources.visual
     ? (sources.visualIsVideo ? ['-ss', sources.visualOffset.toFixed(3), '-i', sources.visual] : ['-loop', '1', '-framerate', String(fps), '-i', sources.visual])
     : ['-f', 'lavfi', '-i', `color=c=black:s=${dimensions.width}x${dimensions.height}:r=${fps}`];
+  const eventInputs = eventVisuals.flatMap((event) => event.isVideo
+    ? ['-ss', event.sourceOffset.toFixed(3), '-i', event.file]
+    : ['-loop', '1', '-framerate', String(fps), '-i', event.file]);
   const audioInputs: string[] = [];
   if (sources.audio) audioInputs.push('-ss', sources.audioOffset.toFixed(3), '-i', sources.audio);
   if (sources.ambient) audioInputs.push('-i', sources.ambient);
   if (!sources.audio && !sources.ambient) audioInputs.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000');
-  const voiceIndex = sources.audio ? 1 : -1;
-  const ambientIndex = sources.ambient ? (sources.audio ? 2 : 1) : -1;
+  const eventInputStart = 1;
+  const audioInputStart = eventInputStart + eventVisuals.length;
+  const voiceIndex = sources.audio ? audioInputStart : -1;
+  const ambientIndex = sources.ambient ? (audioInputStart + (sources.audio ? 1 : 0)) : -1;
+  const silentAudioIndex = audioInputStart;
   const textFilters = textFilterParts.length ? `,${textFilterParts.join(',')}` : '';
+  const eventFilterParts: string[] = [];
+  let eventBase = '[shot]';
+  eventVisuals.forEach((event, eventIndex) => {
+    const eventInputIndex = eventInputStart + eventIndex;
+    const eventDuration = Math.max(0.05, event.end - event.start);
+    const eventLabel = `[event-${eventIndex}]`;
+    eventFilterParts.push(`[${eventInputIndex}:v]scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=increase,crop=${dimensions.width}:${dimensions.height},setsar=1,fps=${fps},trim=duration=${eventDuration.toFixed(3)},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=${Math.max(0, duration - eventDuration).toFixed(3)}${eventLabel}`);
+    const nextBase = `[event-base-${eventIndex}]`;
+    eventFilterParts.push(`${eventBase}${eventLabel}overlay=0:0:enable='between(t\\,${event.start.toFixed(3)}\\,${event.end.toFixed(3)})':eof_action=pass${nextBase}`);
+    eventBase = nextBase;
+  });
+  const compositePrefix = eventFilterParts.length ? `${eventFilterParts.join(';')};${eventBase}` : '[shot]';
   const videoFilter = region || secondaryRegion
-    ? `${secondaryRegion ? '[0:v]split=2[primaryInput][secondaryInput];' : ''}${renderVisual(secondaryRegion ? 'primaryInput' : '0:v', 'shot', region, hasMotion)}${secondaryRegion ? `;${renderVisual('secondaryInput', 'secondaryShot', secondaryRegion, false)}` : ''};color=c=${safeFilterColor(layout?.backgroundColor, '#000')}:s=${dimensions.width}x${dimensions.height}:r=${fps}:d=${duration.toFixed(3)}[base];[base][shot]overlay=${region?.x || 0}:${region?.y || 0}:shortest=1[laid]${secondaryRegion ? `;[laid][secondaryShot]overlay=${secondaryRegion.x}:${secondaryRegion.y}:shortest=1[laid2];[laid2]` : ';[laid]'}format=yuv420p${textFilters}[vout]`
-    : `${renderVisual('0:v', 'shot', null, hasMotion)};[shot]format=yuv420p${textFilters}[vout]`;
+    ? (() => {
+      const laid = `${secondaryRegion ? '[0:v]split=2[primaryInput][secondaryInput];' : ''}${renderVisual(secondaryRegion ? 'primaryInput' : '0:v', 'shot', region, hasMotion)}${secondaryRegion ? `;${renderVisual('secondaryInput', 'secondaryShot', secondaryRegion, false)}` : ''};color=c=${safeFilterColor(layout?.backgroundColor, '#000')}:s=${dimensions.width}x${dimensions.height}:r=${fps}:d=${duration.toFixed(3)}[base];[base][shot]overlay=${region?.x || 0}:${region?.y || 0}:shortest=1[laid]${secondaryRegion ? `;[laid][secondaryShot]overlay=${secondaryRegion.x}:${secondaryRegion.y}:shortest=1[laid2]` : ''}`;
+      const composited = eventFilterParts.length
+        ? `${eventFilterParts.map((part) => part.replace('[shot]', secondaryRegion ? '[laid2]' : '[laid]')).join(';')};${eventBase}`
+        : secondaryRegion ? '[laid2]' : '[laid]';
+      return `${laid};${composited}format=yuv420p${textFilters}[vout]`;
+    })()
+    : `${renderVisual('0:v', 'shot', null, hasMotion)};${compositePrefix}format=yuv420p${textFilters}[vout]`;
   const audioFilter = sources.audio && sources.ambient
     ? sources.duckAmbient
       ? `[${voiceIndex}:a]volume=${sources.audioVolume.toFixed(3)},aresample=48000${audioTempoFilters(sources.audioRate)}[voice];[${voiceIndex}:a]volume=${sources.audioVolume.toFixed(3)},aresample=48000${audioTempoFilters(sources.audioRate)}[voice_sidechain];[${ambientIndex}:a]volume=${sources.ambientVolume.toFixed(3)},aresample=48000${audioTempoFilters(sources.ambientRate)}[amb];[amb][voice_sidechain]sidechaincompress=threshold=0.035:ratio=8:attack=15:release=280:makeup=1[ducked_amb];[voice][ducked_amb]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[aout]`
@@ -729,10 +848,11 @@ async function renderSegment(
       ? `[${voiceIndex}:a]volume=${sources.audioVolume.toFixed(3)},aresample=48000${audioTempoFilters(sources.audioRate)}[aout]`
       : sources.ambient
         ? `[${ambientIndex}:a]volume=${sources.ambientVolume.toFixed(3)},aresample=48000${audioTempoFilters(sources.ambientRate)}[aout]`
-        : `[1:a]anull[aout]`;
+        : `[${silentAudioIndex}:a]anull[aout]`;
   await runFfmpeg([
     '-hide_banner', '-loglevel', 'error', '-y',
     ...visualInput,
+    ...eventInputs,
     ...audioInputs,
     '-filter_complex', `${videoFilter};${audioFilter}`,
     '-map', '[vout]', '-map', '[aout]',
@@ -844,9 +964,10 @@ export async function assembleCloneVideo(input: AssemblyInput) {
           : null;
       const semanticGraphics = input.timeline.editorState
         ? editorOverlayForSegment(input, 'graphics', videoClip.start, duration)
-        : timelineTrack(input, 'graphics')
-          ? timelineTrackClip(input, 'graphics', item.shotIndex)
-          : null;
+          : timelineTrack(input, 'graphics')
+            ? timelineTrackClip(input, 'graphics', item.shotIndex)
+            : null;
+      const eventGraphics = graphicsClipsForSegment(input, item.shotIndex, videoClip.start, duration);
       const caption = shot.preserveReferenceFrame && !shot.allowReferenceOverlays || (semanticCaption && 'enabled' in semanticCaption && semanticCaption.enabled === false)
         ? ''
         : input.timeline.editorState
@@ -859,7 +980,9 @@ export async function assembleCloneVideo(input: AssemblyInput) {
           : semanticCaption?.words || captionClip?.words;
       const graphics = shot.preserveReferenceFrame && !shot.allowReferenceOverlays || (semanticGraphics && 'enabled' in semanticGraphics && semanticGraphics.enabled === false)
         ? ''
-        : semanticGraphics?.text || '';
+        : eventGraphics.some((clip) => Boolean(clip.text?.trim()))
+          ? ''
+          : semanticGraphics?.text || '';
       const numericClipOption = (clip: unknown, key: string, fallback: number) => {
         if (!clip || typeof clip !== 'object') return fallback;
         const value = (clip as Record<string, unknown>)[key];
@@ -893,12 +1016,39 @@ export async function assembleCloneVideo(input: AssemblyInput) {
           ...(optionalClipNumber(graphicsSource, 'y') !== undefined ? { y: optionalClipNumber(graphicsSource, 'y') } : {}),
         }
         : undefined;
+      const eventOverlays: RenderOverlay[] = shot.preserveReferenceFrame && !shot.allowReferenceOverlays
+        ? []
+        : eventGraphics.flatMap((clip) => {
+          if (!clip.text?.trim() || ('enabled' in clip && clip.enabled === false)) return [];
+          const clipStart = Number(clip.start) || 0;
+          const clipEnd = clipStart + Math.max(0, Number(clip.duration) || 0);
+          const localStart = Math.max(0, clipStart - videoClip.start);
+          const localEnd = Math.min(duration, clipEnd - videoClip.start);
+          if (localEnd <= localStart) return [];
+          const textBox = 'textBox' in clip ? videoEditorTextBox(clip) : undefined;
+          const style = 'graphicsStyle' in clip ? clip.graphicsStyle : undefined;
+          return [{
+            text: clip.text.trim(),
+            start: localStart,
+            end: localEnd,
+            ...(style ? { style } : {}),
+            ...('position' in clip && typeof clip.position === 'string' && clip.position ? { position: clip.position } : {}),
+            ...(textBox ? { bounds: textBox } : {}),
+            options: {
+              fontSize: numericClipOption(clip, 'fontSize', 48),
+              backgroundOpacity: optionalClipNumber(clip, 'captionBackgroundOpacity') ?? (/card|box|solid|label|tag|banner|卡片|色块|标签|底板/iu.test(String(style || '')) ? 0.72 : 0),
+              ...(optionalClipNumber(clip, 'x') !== undefined ? { x: optionalClipNumber(clip, 'x') } : {}),
+              ...(optionalClipNumber(clip, 'y') !== undefined ? { y: optionalClipNumber(clip, 'y') } : {}),
+            },
+          }];
+        });
+      const eventVisuals = await resolveEventVisuals(input, shot, index, videoClip.start, duration, input.workingDirectory);
       const renderLayout = input.timeline.editorState
         ? videoClip.layout || component?.layout || (shot.preserveReferenceFrame ? undefined : shot.analysis?.layout)
         : sources.visualIsVideo && shot.preserveReferenceFrame ? undefined : videoClip.layout || component?.layout || shot.analysis?.layout;
       const renderMotionPath = videoClip.motionPath || component?.motionPath;
       segments.push({
-        file: await renderSegment(shot, renderIndex, duration, caption, captionWords, graphics, effectiveGraphicsStyle, effectiveGraphicsBox || shot.analysis?.graphicsBounds, captionOptions, graphicsOptions, renderLayout, renderMotionPath, sources, input, dimensions, font),
+        file: await renderSegment(shot, renderIndex, duration, caption, captionWords, graphics, effectiveGraphicsStyle, effectiveGraphicsBox || shot.analysis?.graphicsBounds, captionOptions, graphicsOptions, renderLayout, renderMotionPath, sources, input, dimensions, font, eventOverlays, eventVisuals),
         duration,
         shot,
         transitionIn: videoClip.transitionIn,

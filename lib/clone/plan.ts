@@ -3,7 +3,7 @@
  * 成片时间轴生成、降级判断。这里不碰网络与磁盘，方便直接单测。
  */
 import type { CanvasVideoEditorClip, CanvasVideoEditorLayout, CanvasVideoEditorLayoutMode } from '../canvas/types';
-import type { CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneVisualBible } from './types';
+import type { CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneVisualBible, CloneVisualEvent } from './types';
 import type { CanvasVideoEditorWord } from '../canvas/types';
 
 /** 中文口播估算速度：字/秒。没有 TTS 时用它按字数估时长。 */
@@ -392,6 +392,33 @@ function readShotAnalysis(raw: Record<string, unknown>): CloneShotAnalysis | und
     : undefined;
   const layout = readLayout(source.layout || source.compositionLayout || source.composition_layout)
     || inferLayoutFromComposition(read('composition', 'framing', 'layout'));
+  const readVisualEvents = (value: unknown): CloneVisualEvent[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const events = value.flatMap((item, index) => {
+      if (!item || typeof item !== 'object') return [];
+      const event = item as Record<string, unknown>;
+      const start = Number(event.start ?? event.startSeconds ?? event.start_seconds ?? event.from);
+      const end = Number(event.end ?? event.endSeconds ?? event.end_seconds ?? event.to);
+      const kind = String(event.kind || event.type || '').trim().toLowerCase();
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || !['graphics', 'broll', 'effect'].includes(kind)) return [];
+      const shortText = (candidate: unknown, max = 500) => String(candidate ?? '').replace(/\r\n?/gu, '\n').trim().slice(0, max);
+      return [{
+        ...(shortText(event.id, 100) ? { id: shortText(event.id, 100) } : { id: `event-${index + 1}` }),
+        kind: kind as CloneVisualEvent['kind'],
+        start: round3(Math.max(0, start)),
+        end: round3(Math.max(0, end)),
+        ...(shortText(event.text ?? event.graphicsText) ? { text: shortText(event.text ?? event.graphicsText) } : {}),
+        ...(shortText(event.prompt) ? { prompt: shortText(event.prompt, 800) } : {}),
+        ...(shortText(event.style ?? event.graphicsStyle) ? { style: shortText(event.style ?? event.graphicsStyle, 180) } : {}),
+        ...(shortText(event.position ?? event.graphicsPosition) ? { position: shortText(event.position ?? event.graphicsPosition, 120) } : {}),
+        ...(shortText(event.mediaKind) === 'image' || shortText(event.mediaKind) === 'video' ? { mediaKind: shortText(event.mediaKind) as CloneVisualEvent['mediaKind'] } : {}),
+        ...(shortText(event.source) === 'reference-video' || shortText(event.source) === 'generated-media' ? { source: shortText(event.source) as CloneVisualEvent['source'] } : {}),
+        ...(shortText(event.url) ? { url: shortText(event.url, 1000) } : {}),
+      }];
+    });
+    return events.length ? events : undefined;
+  };
+  const visualEvents = readVisualEvents(source.events || source.visualEvents || source.visual_events);
   const analysis: CloneShotAnalysis = {
     ...(read('camera', 'cameraLanguage', 'camera_language') ? { camera: read('camera', 'cameraLanguage', 'camera_language') } : {}),
     ...(read('composition', 'framing', 'layout') ? { composition: read('composition', 'framing', 'layout') } : {}),
@@ -409,8 +436,44 @@ function readShotAnalysis(raw: Record<string, unknown>): CloneShotAnalysis | und
     ...(readNumber('transitionDuration', 'transition_duration', 'transitionSeconds', 'transition_seconds') !== undefined ? { transitionDuration: readNumber('transitionDuration', 'transition_duration', 'transitionSeconds', 'transition_seconds') } : {}),
     ...(read('motionPath', 'motion_path', 'movementPath', 'movement_path') ? { motionPath: read('motionPath', 'motion_path', 'movementPath', 'movement_path') } : {}),
     ...(SHOT_ROLES.has(role) ? { role: role as CloneShotAnalysis['role'] } : {}),
+    ...(visualEvents ? { events: visualEvents } : {}),
   };
   return Object.keys(analysis).length ? analysis : undefined;
+}
+
+/** Keep model/OCR event windows inside the containing shot for safe rendering. */
+export function normalizeVisualEvents(events: unknown, durationSeconds: number): CloneVisualEvent[] {
+  if (!Array.isArray(events)) return [];
+  const duration = Math.max(0.05, finite(durationSeconds, 0));
+  return events.flatMap((item, index) => {
+    if (!item || typeof item !== 'object') return [];
+    const event = item as Record<string, unknown>;
+    const kind = String(event.kind || event.type || '').trim().toLowerCase();
+    const start = Number(event.start ?? event.startSeconds ?? event.from);
+    const end = Number(event.end ?? event.endSeconds ?? event.to);
+    if (!['graphics', 'broll', 'effect'].includes(kind) || !Number.isFinite(start) || !Number.isFinite(end)) return [];
+    const safeStart = round3(clamp(start, 0, Math.max(0, duration - 0.05)));
+    const safeEnd = round3(clamp(end, safeStart + 0.05, duration));
+    if (safeEnd <= safeStart) return [];
+    const textValue = String(event.text ?? event.graphicsText ?? '').replace(/\r\n?/gu, '\n').trim().slice(0, 500);
+    const promptValue = String(event.prompt ?? '').replace(/\r\n?/gu, '\n').trim().slice(0, 800);
+    const styleValue = String(event.style ?? event.graphicsStyle ?? '').trim().slice(0, 180);
+    const positionValue = String(event.position ?? event.graphicsPosition ?? '').trim().slice(0, 120);
+    const sourceValue = String(event.source ?? '').trim();
+    return [{
+      id: String(event.id || `event-${index + 1}`).trim().slice(0, 100),
+      kind: kind as CloneVisualEvent['kind'],
+      start: safeStart,
+      end: safeEnd,
+      ...(textValue ? { text: textValue } : {}),
+      ...(promptValue ? { prompt: promptValue } : {}),
+      ...(styleValue ? { style: styleValue } : {}),
+      ...(positionValue ? { position: positionValue } : {}),
+      ...(event.mediaKind === 'image' || event.mediaKind === 'video' ? { mediaKind: event.mediaKind } : {}),
+      ...(sourceValue === 'reference-video' || sourceValue === 'generated-media' ? { source: sourceValue as CloneVisualEvent['source'] } : {}),
+      ...(String(event.url || '').trim() ? { url: String(event.url).trim().slice(0, 1000) } : {}),
+    }];
+  });
 }
 
 function readShotItem(item: unknown) {
@@ -474,7 +537,13 @@ export function normalizeShots(raw: unknown, options: { durationSeconds: number;
         else start = 0;
       }
       if (shots.length >= maxShots) break;
-      shots.push({ start: round3(start), end: round3(end), visual: item.visual, prompt: item.prompt, ...(item.analysis ? { analysis: item.analysis } : {}) });
+      const analysis = item.analysis
+        ? {
+          ...item.analysis,
+          ...(item.analysis.events ? { events: normalizeVisualEvents(item.analysis.events, end - start) } : {}),
+        }
+        : undefined;
+      shots.push({ start: round3(start), end: round3(end), visual: item.visual, prompt: item.prompt, ...(analysis ? { analysis } : {}) });
       cursor = end;
     }
     if (shots.length) {
@@ -490,7 +559,12 @@ export function normalizeShots(raw: unknown, options: { durationSeconds: number;
       ...slot,
       visual: parsed[index]?.visual || '',
        prompt: parsed[index]?.prompt || '',
-       ...(parsed[index]?.analysis ? { analysis: parsed[index].analysis } : {}),
+       ...(parsed[index]?.analysis ? {
+         analysis: {
+           ...parsed[index].analysis,
+           ...(parsed[index].analysis.events ? { events: normalizeVisualEvents(parsed[index].analysis.events, slot.end - slot.start) } : {}),
+         },
+       } : {}),
     }));
   }
   return shots;
@@ -869,6 +943,8 @@ export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcr
   const voiceTrack: CloneTimelineTrack = { id: 'clone-track-voice', kind: 'voice', label: '新配音', clips: [] };
   const captionTrack: CloneTimelineTrack = { id: 'clone-track-caption', kind: 'caption', label: '新字幕', clips: [] };
   const graphicsTrack: CloneTimelineTrack = { id: 'clone-track-graphics', kind: 'graphics', label: '画面字卡', clips: [] };
+  const brollTrack: CloneTimelineTrack = { id: 'clone-track-broll', kind: 'broll', label: 'B-roll 事件', clips: [] };
+  const effectTrack: CloneTimelineTrack = { id: 'clone-track-effect', kind: 'effect', label: '动效事件', clips: [] };
   let cursor = 0;
   shots.forEach((shot, index) => {
     const duration = durations[index];
@@ -962,40 +1038,79 @@ export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcr
         words,
       });
     }
-    const graphicsText = shot.analysis?.graphicsText?.trim();
-    if (graphicsText) {
-      const graphicsClipId = `clone-graphics-${index}`;
+    const visualEvents = normalizeVisualEvents(shot.analysis?.events, duration);
+    const graphicsEvents = visualEvents.filter((event) => event.kind === 'graphics' && event.text?.trim());
+    const graphicsItems = graphicsEvents.length
+      ? graphicsEvents
+      : shot.analysis?.graphicsText?.trim()
+        ? [{
+          id: `shot-${index}`,
+          kind: 'graphics' as const,
+          start: 0,
+          end: duration,
+          text: shot.analysis.graphicsText.trim(),
+          style: shot.analysis.graphicsStyle,
+          position: shot.analysis.graphicsPosition,
+          source: 'generated-media' as const,
+        }]
+        : [];
+    graphicsItems.forEach((event, eventIndex) => {
+      const graphicsText = event.text?.trim();
+      if (!graphicsText) return;
+      const eventStart = round3(start + event.start);
+      const eventDuration = round3(event.end - event.start);
+      const eventId = event.id || `event-${eventIndex + 1}`;
+      const graphicsClipId = graphicsEvents.length ? `clone-graphics-${index}-${eventIndex}` : `clone-graphics-${index}`;
+      const eventPosition = event.position || shot.analysis?.graphicsPosition;
+      const eventStyle = event.style || shot.analysis?.graphicsStyle;
       clips.push({
         id: graphicsClipId,
         sourceClipId: graphicsClipId,
         shotIndex: index,
         track: 'graphics',
         type: 'caption',
-        name: `画面字卡 ${index + 1}`,
-        start,
-        duration,
+        name: `画面字卡 ${index + 1}.${eventIndex + 1}`,
+        start: eventStart,
+        duration: eventDuration,
         sourceOffset: 0,
         text: graphicsText,
         textRole: 'graphics',
-        graphicsStyle: shot.analysis?.graphicsStyle,
+        graphicsStyle: eventStyle,
         ...(shot.analysis?.graphicsBounds
           ? { textBox: shot.analysis.graphicsBounds }
-          : captionTransformForPosition(shot.analysis?.graphicsPosition)),
+          : captionTransformForPosition(eventPosition)),
         fontSize: CLONE_CAPTION_FONT_SIZE + 6,
         captionBackgroundOpacity: 0,
       });
       graphicsTrack.clips.push({
         id: graphicsClipId,
+        eventId,
         shotIndex: index,
         ...(component ? { componentId: component.id, role: component.role } : {}),
-        start,
-        duration,
-        source: 'generated-media',
+        start: eventStart,
+        duration: eventDuration,
+        source: event.source || (event.kind === 'broll' ? 'reference-video' : 'generated-media'),
+        ...(event.mediaKind ? { mediaKind: event.mediaKind } : {}),
         text: graphicsText,
-        graphicsStyle: shot.analysis?.graphicsStyle,
+        graphicsStyle: eventStyle,
+        ...(eventPosition ? { position: eventPosition } : {}),
         ...(shot.analysis?.graphicsBounds ? { textBox: shot.analysis.graphicsBounds } : {}),
       });
-    }
+    });
+    visualEvents.filter((event) => event.kind === 'broll' || event.kind === 'effect').forEach((event, eventIndex) => {
+      const track = event.kind === 'broll' ? brollTrack : effectTrack;
+      track.clips.push({
+        id: `clone-${event.kind}-${index}-${eventIndex}`,
+        eventId: event.id || `event-${eventIndex + 1}`,
+        shotIndex: index,
+        ...(component ? { componentId: component.id, role: component.role } : {}),
+        start: round3(start + event.start),
+        duration: round3(event.end - event.start),
+        source: event.source || 'generated-media',
+        ...(event.url ? { url: event.url } : {}),
+        ...(event.prompt ? { text: event.prompt } : {}),
+      });
+    });
   });
   // Keep the source ambience as one global A2 clip. The editor and final
   // mixer can then take any authored time window from the same continuous
@@ -1020,7 +1135,7 @@ export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcr
       clips,
     components,
     referenceAudioDucking: true,
-    tracks: [videoTrack, referenceAudioTrack, voiceTrack, captionTrack, graphicsTrack].filter((track) => track.clips.length),
+    tracks: [videoTrack, referenceAudioTrack, voiceTrack, captionTrack, graphicsTrack, brollTrack, effectTrack].filter((track) => track.clips.length),
   };
 }
 

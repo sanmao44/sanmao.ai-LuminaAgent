@@ -538,6 +538,7 @@ async function analyzeShots(runtime: ChatRuntime, frames: { files: string[]; err
     `这是一条 ${round3(durationSeconds)} 秒参考视频按时间顺序抽取的画面。`,
     `抽帧时间标签如下：\n${frameGuide}`,
     sceneGuide,
+    '如果字卡、B-roll、贴纸、reveal 或动效只在镜头的一段时间出现，请在 analysis.events 中记录相对镜头的 start/end（秒）和 kind=graphics|broll|effect；不要把它错误地扩展到整个镜头。graphics 事件可填写 text、style、position，B-roll 事件可填写 prompt 或 url。',
     '如果画面包含标题、Logo、价格、按钮或字幕，请优先逐字抄录，不要只写“有文字”；能判断位置和样式时一并写入 graphicsPosition、graphicsStyle、graphicsBounds（归一化 x/y/width/height，左上角为 0,0）。',
     `请把它拆成不超过 ${job.options.maxShots} 个镜头，每个镜头给出：起止秒数（0 到 ${round3(durationSeconds)}，不能重叠）、画面内容描述、用于重新生成同类画面的中文提示词，以及结构化参考分析。`,
     'analysis 尽量包含 camera、composition、motion、motionPath、visualStyle、graphics、graphicsText（尽量逐字抄录画面文字）、graphicsPosition、graphicsStyle、graphicsBounds、layout、audio、transition、transitionType、transitionDuration、role；layout 只有在画面确实存在明确分栏、画中画或卡片容器时才填写，mode 只能是 full|split-horizontal|split-vertical|picture-in-picture|card，并用归一化 primary/secondary 区域描述主体位置；transitionType 只能是 cut|fade|dissolve|wipe|slide|none，role 只能是 performance|broll|graphic|transition|product|other。',

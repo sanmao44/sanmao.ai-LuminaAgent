@@ -24,6 +24,22 @@ export type CloneShotSpeechMode = 'narration' | 'talking' | 'silent';
 
 export type CloneShotReferenceRole = 'performance' | 'broll' | 'graphic' | 'transition' | 'product' | 'other';
 
+/** A semantic, shot-local event recovered from the reference timeline. */
+export type CloneVisualEvent = {
+  id?: string;
+  kind: 'graphics' | 'broll' | 'effect';
+  /** Seconds relative to the containing shot, not the whole project. */
+  start: number;
+  end: number;
+  text?: string;
+  prompt?: string;
+  style?: string;
+  position?: string;
+  mediaKind?: 'image' | 'video';
+  source?: 'reference-video' | 'generated-media';
+  url?: string;
+};
+
 export type CloneOcrBounds = {
   x: number;
   y: number;
@@ -66,6 +82,8 @@ export type CloneShotAnalysis = {
   /** 连续运动的可执行描述，后续可映射为关键帧或镜头曲线。 */
   motionPath?: string;
   role?: CloneShotReferenceRole;
+  /** Word/event-oriented visual timing, kept separate from the shot boundary. */
+  events?: CloneVisualEvent[];
 };
 
 export type CloneTranscriptWord = {
@@ -298,10 +316,11 @@ export type CloneBlueprintVariantPlan = {
 };
 
 /** 成片时间轴：直接落进画布的视频编辑节点。 */
-export type CloneTimelineTrackKind = 'video' | 'reference-audio' | 'voice' | 'caption' | 'graphics';
+export type CloneTimelineTrackKind = 'video' | 'reference-audio' | 'voice' | 'caption' | 'graphics' | 'broll' | 'effect';
 
 export type CloneTimelineTrackClip = {
   id: string;
+  eventId?: string;
   componentId?: string;
   role?: CloneShotReferenceRole;
   shotIndex: number;
@@ -315,7 +334,10 @@ export type CloneTimelineTrackClip = {
   /** Word-level timing relative to this semantic clip's start. */
   words?: CanvasVideoEditorWord[];
   graphicsStyle?: string;
+  position?: string;
   textBox?: { x: number; y: number; width: number; height: number };
+  x?: number;
+  y?: number;
   transitionIn?: CanvasVideoEditorClip['transitionIn'];
   transitionDuration?: number;
   transitionDirection?: CanvasVideoEditorClip['transitionDirection'];

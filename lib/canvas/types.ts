@@ -101,6 +101,8 @@ export type CanvasVideoEditorClip = {
   textRole?: 'caption' | 'graphics';
   /** Original visual-card style hint retained for a later renderer/editor pass. */
   graphicsStyle?: string;
+  /** Position label retained when a graphics event is edited in the canvas. */
+  position?: string;
   /** Normalized visual-card text box, kept separate from the manual x/y nudge. */
   textBox?: CanvasVideoEditorTextBox;
   /** Explicit composition recovered from the reference shot. */

@@ -130,6 +130,7 @@ function normalizeClip(value: unknown, index: number): CanvasVideoEditorClip | n
   }
   if (raw.textRole === "caption" || raw.textRole === "graphics") clip.textRole = raw.textRole;
   if (typeof raw.graphicsStyle === "string" && raw.graphicsStyle.trim()) clip.graphicsStyle = raw.graphicsStyle.trim().slice(0, 180);
+  if (typeof raw.position === "string" && raw.position.trim()) clip.position = raw.position.trim().slice(0, 120);
   const layout = normalizeLayout(raw.layout);
   if (layout) clip.layout = layout;
   if (raw.textBox && typeof raw.textBox === "object") {
