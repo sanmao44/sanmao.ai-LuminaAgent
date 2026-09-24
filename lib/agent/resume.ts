@@ -28,6 +28,7 @@ import { resolveLocalDataDir } from '@/lib/data-paths';
 import { stripToolCallMarkup } from '@/lib/skills';
 import { verifyFilesystemMove } from '@/lib/agent/filesystem-result';
 import { toolOutcomeText } from '@/lib/agent/tool-outcome';
+import { browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
 
 /** 续跑的整体上限：比一轮 MCP 预算再多一点拿来整理回答。 */
 export const RESUME_TIMEOUT_MS = MCP_TURN_TIME_BUDGET_MS + 30_000;
@@ -114,6 +115,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
   const usedMcpTools: AgentResumeMcpToolUse[] = [];
   let budget = MCP_TURN_TIME_BUDGET_MS;
   let callCount = 0;
+  let browserMutationExecuted = false;
 
   for (const pending of record.pending) {
     const policy = resolveToolPolicy(pending.name, record.gating, mcpTools);
@@ -121,6 +123,10 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     const server = meta ? servers.get(meta.serverId) : undefined;
     if (!policy.allowed || !meta || !server) {
       executed.push(toolFailure(pending, '这一步已经不能执行了：服务被移除、停用，或者写入权限被改过。请重新发起。'));
+      continue;
+    }
+    if (server.catalogId === 'playwright' && isBrowserMutationTool(browserToolName(meta.toolName)) && browserMutationExecuted) {
+      executed.push(toolFailure(pending, '上一项浏览器动作可能已经改变页面，这一轮不会盲执行后续动作。请重新获取 browser_snapshot 后再继续。'));
       continue;
     }
     // 等待期间用户可能刚把这个工具设成「直接拒绝」：续跑同样不能执行它。
@@ -145,6 +151,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       auditResumeCall(meta, pending.risk, { allowed: false, decision: 'guard', ok: false, durationMs: 0, summary: guard.error });
       continue;
     }
+    if (server.catalogId === 'playwright' && isBrowserMutationTool(browserToolName(meta.toolName))) browserMutationExecuted = true;
     try {
       const result = await callMcpTool(server, meta.toolName, args, {
         signal: input.signal,

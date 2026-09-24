@@ -61,6 +61,7 @@ import { isMcpRuntimeAction, runMcpRuntimeAction } from '@/lib/mcp/runtime-admin
 import { TOOL_LOOP_MCP_REPEAT_LIMIT, mcpCallSignature, runToolLoop, trackMcpRepeat, type McpRepeatTracker, type ToolLoopTraceStep } from '@/lib/agent/tool-loop';
 import { AGENT_INLINE_TEXT_MAX_CHARS, boundAgentContext, modelInputCharBudget } from '@/lib/agent/context-budget';
 import { createBrowserMetricsCollector } from '@/lib/agent/browser-metrics';
+import { browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
 import { hasInlineToolCallMarkup, parseInlineToolCalls } from '@/lib/agent/inline-tool-calls';
 import { agentToolProgress, beginAgentRun, finishAgentRun, reportAgentProgress, type AgentProgressStage } from '@/lib/agent/progress';
 import { appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, normalizeMcpApprovalPolicy, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
@@ -886,7 +887,7 @@ export async function POST(request: Request) {
           : requestController.signal;
         try {
           llmCallCount += 1;
-          const response = await chatCompletion(candidate.provider, candidate.model.rawId, {
+          const response = await trackedChatCompletion(candidate.provider, candidate.model.rawId, {
             messages: llmMessages,
             tool_choice: 'none',
           }, attemptSignal);
@@ -1487,6 +1488,7 @@ const auditMcpCall = (
     // 同一个调用原地打转的检测表：同 server + 工具 + 参数连续拿到同样的结果就该停了。
     const mcpRepeatTracker: McpRepeatTracker = new Map();
     let stalledMcpReason = '';
+    const browserMutationBatches = new WeakSet<object>();
     type ToolCallRun = { results: ChatMessage[]; deferred?: true; stalled?: true };
 
     const browserContinuationPrompt = (recovery: boolean) => {
@@ -1643,6 +1645,10 @@ const auditMcpCall = (
           results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: 'MCP 服务已被移除或停用，请刷新后重试，不要凭已有信息假装调用成功。' }) });
           return { results };
         }
+        if (server.catalogId === 'playwright' && isBrowserMutationTool(browserToolName(meta.toolName)) && browserMutationBatches.has(stepCalls)) {
+          results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: '上一项浏览器动作可能已经改变页面，本轮不再盲执行后续动作。请先调用 browser_snapshot，根据最新页面状态重新定位元素后继续。' }) });
+          return { results };
+        }
         // 外部服务的耗时不可控：一轮里给总次数和总时长都设上限，否则一个卡住的服务
         // 能把整轮对话挂到用户以为死机的程度。
         if (mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) {
@@ -1655,6 +1661,7 @@ const auditMcpCall = (
         }
         mcpToolCallCount += 1;
         const mcpStartedAt = Date.now();
+        if (server.catalogId === 'playwright' && isBrowserMutationTool(browserToolName(meta.toolName))) browserMutationBatches.add(stepCalls);
         try {
           const localImage = server.catalogId === 'filesystem' && isLocalImageRead(meta.toolName, args)
             ? await importLocalImage(String(args.path), { roots: mcpFilesystemRoots, dataDir: localDataDir }, (bytes) => persistImageBuffer(bytes, 'image/png', state.settings.imageStoragePath))
@@ -1677,7 +1684,8 @@ const auditMcpCall = (
           usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
           if (server.catalogId === 'playwright') {
             browserUses.push({ name: meta.toolName, ok: !result.isError, args, result: result.text });
-            browserMetrics.record(meta.toolName, !result.isError, result.text, Date.now() - mcpStartedAt);
+            if (!result.isError) result.text = browserMetrics.record(meta.toolName, true, result.text, Date.now() - mcpStartedAt);
+            else browserMetrics.record(meta.toolName, false, result.text, Date.now() - mcpStartedAt);
           }
           // 调用结果回写到连接器状态：面板上的「需要重新连接」不必等用户手动重连才发现。
           if (result.isError) noteRemoteCatalogCallFailure(server, result.text, { onlyAuth: true });

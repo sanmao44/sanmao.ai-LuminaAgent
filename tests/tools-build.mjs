@@ -8,6 +8,7 @@ const MODULES = [
   'lib/data-paths',
   'lib/agent/context-budget',
   'lib/agent/browser-metrics',
+  'lib/agent/browser-freshness',
   'lib/agent/tool-loop',
   'lib/agent/progress',
   'lib/agent-client',
@@ -146,6 +147,10 @@ export async function buildContextBudgetModule() {
 
 export async function buildBrowserMetricsModule() {
   return load('lib/agent/browser-metrics.mjs');
+}
+
+export async function buildBrowserFreshnessModule() {
+  return load('lib/agent/browser-freshness.mjs');
 }
 
 /** 长任务进度账本：落盘、TTL 与淘汰规则都要跑真实实现。 */

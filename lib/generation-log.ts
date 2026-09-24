@@ -57,9 +57,11 @@ export type GenerationLog = {
   browserToolFailureCount?: number;
   browserToolDurationMs?: number;
   browserToolResultChars?: number;
+  browserToolContextChars?: number;
   browserSnapshotCount?: number;
   browserSnapshotChars?: number;
   browserSnapshotTruncationCount?: number;
+  browserSnapshotDuplicateCount?: number;
   browserSnapshotStateChanges?: number;
   browserSnapshotUnchangedCount?: number;
   projectId?: string;
