@@ -3,7 +3,7 @@
  * 成片时间轴生成、降级判断。这里不碰网络与磁盘，方便直接单测。
  */
 import type { CanvasVideoEditorClip, CanvasVideoEditorLayout, CanvasVideoEditorLayoutMode } from '../canvas/types';
-import type { CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript } from './types';
+import type { CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneVisualBible } from './types';
 import type { CanvasVideoEditorWord } from '../canvas/types';
 
 /** 中文口播估算速度：字/秒。没有 TTS 时用它按字数估时长。 */
@@ -243,8 +243,25 @@ export type NormalizedShot = {
  * it structured prevents image/video providers from seeing a bare prose prompt
  * and silently dropping the recovered camera, layout, motion, or style.
  */
-export function cloneShotDirection(shot: Pick<CloneShot, 'visual' | 'line' | 'prompt' | 'analysis'>, brief = '') {
+export function cloneShotDirection(
+  shot: Pick<CloneShot, 'visual' | 'line' | 'prompt' | 'analysis'>,
+  brief = '',
+  visualBible?: CloneVisualBible,
+) {
   const analysis = shot.analysis;
+  const bibleParts = visualBible
+    ? [
+      visualBible.subjectIdentity ? `全片主体身份与外观统一：${visualBible.subjectIdentity}` : '',
+      visualBible.productIdentity ? `全片产品/包装统一：${visualBible.productIdentity}` : '',
+      visualBible.brandLanguage ? `品牌语言统一：${visualBible.brandLanguage}` : '',
+      visualBible.visualStyle ? `全片视觉风格统一：${visualBible.visualStyle}` : '',
+      visualBible.palette ? `全片色彩/材质统一：${visualBible.palette}` : '',
+      visualBible.lighting ? `全片光线统一：${visualBible.lighting}` : '',
+      visualBible.cameraGrammar ? `全片摄影语法统一：${visualBible.cameraGrammar}` : '',
+      visualBible.continuityRules ? `跨镜头连续性规则：${visualBible.continuityRules}` : '',
+      visualBible.negativeConstraints ? `全片禁止项：${visualBible.negativeConstraints}` : '',
+    ].filter(Boolean)
+    : [];
   const parts = [
     shot.prompt || shot.visual || shot.line,
     shot.visual && shot.prompt && shot.visual !== shot.prompt ? `参考画面内容：${shot.visual}` : '',
@@ -255,6 +272,7 @@ export function cloneShotDirection(shot: Pick<CloneShot, 'visual' | 'line' | 'pr
     analysis?.layout ? `空间布局：${analysis.layout.mode}${analysis.layout.primary ? `，主区域 ${JSON.stringify(analysis.layout.primary)}` : ''}${analysis.layout.secondary ? `，辅区域 ${JSON.stringify(analysis.layout.secondary)}` : ''}` : '',
     analysis?.graphicsText ? `画面已有字卡由后期结构化叠加，生成画面不要臆造文字：${analysis.graphicsText}` : '',
     analysis?.graphicsStyle ? `字卡样式参考：${analysis.graphicsStyle}` : '',
+    ...bibleParts,
     brief ? `本次主题：${brief}` : '',
     '保持参考镜头的景别、主体相对位置、画面留白、运动方向和切换节奏；只替换明确要求变化的主体，不新增水印或无关文字。',
   ].filter(Boolean);

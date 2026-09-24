@@ -101,12 +101,27 @@ export type CloneReferenceAnalysis = {
   transcriptData?: CloneTranscript;
   /** 可选的本地 OCR 结果；视觉模型字段仍作为没有 OCR 引擎时的兜底。 */
   ocr?: CloneReferenceOcrFrame[];
+  /** Global visual grammar recovered once for the whole reference video. */
+  visualBible?: CloneVisualBible;
   shots: Array<{
     index: number;
     start: number;
     end: number;
     analysis?: CloneShotAnalysis;
   }>;
+};
+
+/** Stable identity/style constraints shared by generated shots in one clone. */
+export type CloneVisualBible = {
+  subjectIdentity?: string;
+  productIdentity?: string;
+  brandLanguage?: string;
+  visualStyle?: string;
+  palette?: string;
+  lighting?: string;
+  cameraGrammar?: string;
+  continuityRules?: string;
+  negativeConstraints?: string;
 };
 
 /** 一个镜头：参考视频里的一个时间段，对应一句新文案和一份重新生成的素材。 */
@@ -209,6 +224,8 @@ export type CloneBlueprint = {
   sourceVideo: CloneReference;
   assets: CloneAsset[];
   shots: CloneShot[];
+  /** Shared visual constraints reused by local variants and rerenders. */
+  visualBible?: CloneVisualBible;
   /** Reusable visual grammar recovered from repeated shot structures. */
   components?: CloneBlueprintComponent[];
   /** Optional named local variants; the base Blueprint remains unchanged. */

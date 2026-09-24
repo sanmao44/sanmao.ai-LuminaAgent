@@ -34,7 +34,7 @@ import { offlineSpeechSupported, synthesizeOfflineSpeech } from './offline-speec
 import { audioExtension, resolveSpeechRuntime, synthesizeSpeech } from './speech';
 import { assembleCloneVideo } from './assemble';
 import { findCloneJob, listCloneJobs, touchCloneJob, updateCloneJob } from './store';
-import type { CloneAsset, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneJob, CloneOcrObservation, CloneReferenceAnalysis, CloneReferenceOcrFrame, CloneShot, CloneShotAnalysis, CloneShotSpeechMode, CloneTimeline, CloneTranscript } from './types';
+import type { CloneAsset, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneJob, CloneOcrObservation, CloneReferenceAnalysis, CloneReferenceOcrFrame, CloneShot, CloneShotAnalysis, CloneShotSpeechMode, CloneTimeline, CloneTranscript, CloneVisualBible } from './types';
 import { normalizeVideoEditorState } from '../canvas/video-editor';
 import type { CanvasVideoEditorState } from '../canvas/types';
 
@@ -292,6 +292,7 @@ function buildReferenceAnalysis(
   sceneChangeTimes: number[] = [],
   transcript?: CloneTranscript | null,
   ocr?: CloneReferenceOcrFrame[],
+  visualBible?: CloneVisualBible,
 ): CloneReferenceAnalysis {
   return {
     version: 1,
@@ -301,6 +302,7 @@ function buildReferenceAnalysis(
     method,
     ...(transcript?.text ? { transcript: transcript.text, transcriptData: transcript } : {}),
     ...(ocr?.length ? { ocr } : {}),
+    ...(visualBible && Object.keys(visualBible).length ? { visualBible } : {}),
     shots: shots.map((shot, index) => ({
       index: Number.isInteger(shot.index) ? shot.index : index,
       start: round3(shot.start),
@@ -308,6 +310,69 @@ function buildReferenceAnalysis(
       ...(shot.analysis ? { analysis: shot.analysis } : {}),
     })),
   };
+}
+
+function visualBiblePrompt(visualBible?: CloneVisualBible) {
+  if (!visualBible) return '';
+  const parts = [
+    visualBible.subjectIdentity ? `全片主体身份与外观统一：${visualBible.subjectIdentity}` : '',
+    visualBible.productIdentity ? `全片产品/包装统一：${visualBible.productIdentity}` : '',
+    visualBible.brandLanguage ? `品牌语言统一：${visualBible.brandLanguage}` : '',
+    visualBible.visualStyle ? `全片视觉风格统一：${visualBible.visualStyle}` : '',
+    visualBible.palette ? `全片色彩/材质统一：${visualBible.palette}` : '',
+    visualBible.lighting ? `全片光线统一：${visualBible.lighting}` : '',
+    visualBible.cameraGrammar ? `全片摄影语法统一：${visualBible.cameraGrammar}` : '',
+    visualBible.continuityRules ? `跨镜头连续性规则：${visualBible.continuityRules}` : '',
+    visualBible.negativeConstraints ? `全片禁止项：${visualBible.negativeConstraints}` : '',
+  ].filter(Boolean);
+  return parts.length ? `；${parts.join('；')}` : '';
+}
+
+const VISUAL_BIBLE_KEYS = [
+  'subjectIdentity', 'productIdentity', 'brandLanguage', 'visualStyle', 'palette',
+  'lighting', 'cameraGrammar', 'continuityRules', 'negativeConstraints',
+] as const;
+
+function normalizeVisualBible(value: unknown): CloneVisualBible | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const bible = Object.fromEntries(VISUAL_BIBLE_KEYS
+    .map((key) => [key, typeof source[key] === 'string' ? source[key].replace(/\s+/gu, ' ').trim().slice(0, 360) : ''])
+    .filter(([, item]) => Boolean(item))) as CloneVisualBible;
+  return Object.keys(bible).length ? bible : undefined;
+}
+
+/** Fill the global grammar from structured shot analysis when the model omits it. */
+function deriveVisualBible(shots: readonly Pick<CloneShot, 'analysis'>[], existing?: CloneVisualBible) {
+  const values = (key: keyof CloneShotAnalysis) => [...new Set(shots.map((shot) => shot.analysis?.[key]).filter((value): value is string => typeof value === 'string' && Boolean(value.trim())))].slice(0, 3).join('；');
+  return normalizeVisualBible({
+    ...existing,
+    visualStyle: existing?.visualStyle || values('visualStyle'),
+    cameraGrammar: existing?.cameraGrammar || values('camera'),
+    continuityRules: existing?.continuityRules || '保持同一主体/产品身份、服装材质、画面色彩与镜头运动逻辑；只替换明确要求改变的内容。',
+    negativeConstraints: existing?.negativeConstraints || '不要改变主体身份、产品包装结构、品牌标记位置；不要生成额外字幕、水印或无关人物。',
+  });
+}
+
+async function analyzeVisualBible(runtime: ChatRuntime | null, images: string[], shots: readonly Pick<CloneShot, 'analysis'>[], job: CloneJob) {
+  const fallback = deriveVisualBible(shots);
+  if (!runtime || !images.length) return fallback;
+  try {
+    const response = await chatCompletion(runtime.provider, runtime.model.rawId, {
+      messages: [
+        { role: 'system', content: ANALYZE_SYSTEM },
+        { role: 'user', content: [
+          { type: 'text', text: `请从这组按时间顺序抽取的参考视频帧中建立一份跨镜头视觉圣经。它不是分镜描述，而是供后续逐镜生成复用的身份、产品、品牌、色彩、光线、摄影语法与连续性约束。用户主题：${job.options.brief || '保持参考视频结构并本地化内容'}。只输出 JSON：{"visualBible":{"subjectIdentity":"","productIdentity":"","brandLanguage":"","visualStyle":"","palette":"","lighting":"","cameraGrammar":"","continuityRules":"","negativeConstraints":""}}。看不清的字段留空，不要猜测具体人名、品牌名或文字。` },
+          ...images.slice(0, 12).map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+        ] },
+      ],
+    });
+    const payload = parseJsonBlock(chatText(response));
+    const parsed = payload && typeof payload === 'object' && 'visualBible' in payload ? (payload as { visualBible?: unknown }).visualBible : payload;
+    return deriveVisualBible(shots, normalizeVisualBible(parsed) || fallback);
+  } catch {
+    return fallback;
+  }
 }
 
 async function analyzeReferenceOcr(frames: { files: string[]; times?: number[] }) {
@@ -569,7 +634,7 @@ async function generateShotImage(
   // fail clearly, never report success while silently reusing the old frame.
   if (shot.referenceFrameUrl && !runtime.model.capabilities.includes('edit') && !options.forceRegenerate) return shot.referenceFrameUrl;
   const state = await getPublicState();
-  const prompt = `${cloneShotDirection(shot, job.options.brief)}；画面真实自然，不要出现文字水印`;
+  const prompt = `${cloneShotDirection(shot, job.options.brief)}${visualBiblePrompt(job.blueprint?.visualBible || job.referenceAnalysis?.visualBible)}；画面真实自然，不要出现文字水印`;
   const canEdit = runtime.model.capabilities.includes('edit');
   const references = canEdit && shot.referenceFrameUrl
     ? await cloneImageReferences(job, shot)
@@ -722,7 +787,7 @@ async function generateShotVideo(runtime: VideoRuntime, job: CloneJob, shot: Clo
   }
   const referenceVideos = referenceVideo ? [referenceVideo] : [];
   const input: VideoGenerationInput = {
-    prompt: `${cloneShotDirection(shot, job.options.brief)}；自然运动，不要额外添加文字水印`,
+    prompt: `${cloneShotDirection(shot, job.options.brief)}${visualBiblePrompt(job.blueprint?.visualBible || job.referenceAnalysis?.visualBible)}；自然运动，不要额外添加文字水印`,
     operation: 'generate',
     seconds,
     aspectRatio: job.options.aspect,
@@ -847,7 +912,7 @@ async function executeCloneJob(id: string) {
     const videoRuntime = videoPick.value;
     const speechRuntime = speechPick.value;
     const executionCapabilities = capabilitiesForExecution(chatRuntime, imageRuntime, videoRuntime, speechRuntime);
-    const executionJob: CloneJob = { ...started, capabilities: executionCapabilities };
+    let executionJob: CloneJob = { ...started, capabilities: executionCapabilities };
     await patchJob(id, { capabilities: executionCapabilities });
     const needsNewImages = started.shots.some((shot) =>
       !shot.imageUrl
@@ -884,12 +949,14 @@ async function executeCloneJob(id: string) {
     // cut structure after the user had already confirmed it.
     const resumed = Boolean(started.planConfirmed && started.shots.length);
     let shots: CloneShot[];
+    let visualBibleFrames: string[] = [];
     if (resumed) {
       shots = started.shots;
       await patchJob(id, { shots, message: `沿用已有的 ${shots.length} 个镜头` });
     } else {
       const scene = await detectSceneChanges(referenceFile, { durationSeconds: duration, maxChanges: Math.max(1, started.options.maxShots * 3) }).catch((error) => ({ times: [], error: error instanceof Error ? error.message : '本地切点检测失败' }));
       const frames = await extractFrameFiles(referenceFile, referenceFrameSampleTimes(duration, scene.times), path.join(cloneJobDirectory(id), 'frames'));
+      visualBibleFrames = await frameDataUrls(frames.files);
       const analyzedFrames = { ...frames, sceneChangeTimes: scene.times };
       if (scene.error) await appendWarnings(id, [`本地镜头切点检测未完成：${scene.error}；将继续使用抽帧和视觉模型分析。`]);
       if (await isCancelled(id)) return await finishCancelled(id);
@@ -916,6 +983,38 @@ async function executeCloneJob(id: string) {
       shots = alignShotsWithLines(merged, scriptLines, { preserveShotStructure: true });
       await patchJob(id, { shots, message: `已拆出 ${shots.length} 个镜头` });
       if (scriptWarnings.length) await appendWarnings(id, scriptWarnings);
+    }
+
+    // Confirmed jobs normally arrive here with a persisted visual bible from
+    // analyzeCloneJob. Older/directly-created jobs may not have one; recover a
+    // deterministic fallback (or a multimodal bible when frames are present)
+    // before any image/video provider sees the shot prompts.
+    const existingVisualBible = executionJob.blueprint?.visualBible || executionJob.referenceAnalysis?.visualBible;
+    if (!existingVisualBible) {
+      const visualBible = await analyzeVisualBible(chatRuntime, visualBibleFrames, shots, executionJob);
+      if (visualBible) {
+        const current = await findCloneJob(id);
+        const referenceAnalysis = current?.referenceAnalysis || executionJob.referenceAnalysis;
+        const now = new Date().toISOString();
+        const blueprint = current?.blueprint || executionJob.blueprint;
+        const nextReferenceAnalysis = referenceAnalysis
+          ? { ...referenceAnalysis, visualBible }
+          : buildReferenceAnalysis(duration, { files: [], times: [] }, shots, 'fallback', [], referenceTranscript, undefined, visualBible);
+        const nextBlueprint = blueprint
+          ? { ...blueprint, visualBible, shots, updatedAt: now }
+          : {
+            version: 1 as const,
+            sourceVideo: executionJob.reference,
+            assets: executionJob.assets || [],
+            shots,
+            visualBible,
+            components: buildBlueprintComponents(shots),
+            createdAt: now,
+            updatedAt: now,
+          };
+        await patchJob(id, { referenceAnalysis: nextReferenceAnalysis, blueprint: nextBlueprint });
+        executionJob = { ...executionJob, referenceAnalysis: nextReferenceAnalysis, blueprint: nextBlueprint };
+      }
     }
 
     if (voiceMode !== 'none') {
@@ -1165,6 +1264,7 @@ export async function analyzeCloneJob(id: string) {
   const plannedWithFrames = await attachReferenceFrames(planned, frames);
   planned = plannedWithFrames;
   const now = new Date().toISOString();
+  const visualBible = await analyzeVisualBible(chatPick.value, await frameDataUrls(frames.files), plannedWithFrames, job);
   const referenceAnalysis = buildReferenceAnalysis(
     duration,
     analyzedFrames,
@@ -1173,11 +1273,12 @@ export async function analyzeCloneJob(id: string) {
     scene.times,
     referenceTranscript,
     ocr,
+    visualBible,
   );
     return await patchJob(id, {
       stage: 'planned', progress: cloneStageProgress('planned'), message: `已生成 ${planned.length} 个镜头计划，等待确认`, shots: planned, planConfirmed: false,
       referenceAnalysis,
-      blueprint: { version: 1, sourceVideo: job.reference, assets: job.assets || [], shots: plannedWithFrames, components: buildBlueprintComponents(plannedWithFrames), createdAt: job.blueprint?.createdAt || now, updatedAt: now },
+      blueprint: { version: 1, sourceVideo: job.reference, assets: job.assets || [], shots: plannedWithFrames, visualBible, components: buildBlueprintComponents(plannedWithFrames), createdAt: job.blueprint?.createdAt || now, updatedAt: now },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : '参考视频分析失败';

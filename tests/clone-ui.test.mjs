@@ -181,6 +181,12 @@ test("管线包含抽帧、拆解、配音、生图、生视频五步与三条�
   assert.match(pipeline, /response\.headers\.get\('content-length'\)/);
   assert.match(pipeline, /shots = alignShotsWithLines\(merged, scriptLines, \{ preserveShotStructure: true \}\)/);
   assert.match(pipeline, /const resumed = Boolean\(started\.planConfirmed && started\.shots\.length\)/);
+  assert.match(pipeline, /const visualBible = await analyzeVisualBible\(chatPick\.value, await frameDataUrls\(frames\.files\), plannedWithFrames, job\)/);
+  assert.match(pipeline, /referenceAnalysis,[\s\S]*blueprint: \{ version: 1, sourceVideo: job\.reference, assets: job\.assets \|\| \[\], shots: plannedWithFrames, visualBible/);
+  assert.match(pipeline, /const existingVisualBible = executionJob\.blueprint\?\.visualBible \|\| executionJob\.referenceAnalysis\?\.visualBible/);
+  assert.match(pipeline, /const nextReferenceAnalysis = referenceAnalysis/);
+  assert.match(pipeline, /const nextBlueprint = blueprint/);
+  assert.match(pipeline, /return parts\.length \? `；\$\{parts\.join\('；'\)\}` : ''/);
   assert.match(pipeline, /createVideoGeneration\(\{ modelId: runtime\.model\.id, input, source: 'canvas' \}\)/);
   assert.match(pipeline, /没有视觉模型/);
   assert.match(pipeline, /const IMAGE_CONCURRENCY = 2;/);

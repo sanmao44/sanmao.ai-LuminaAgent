@@ -379,6 +379,26 @@ test('鏡頭方向會把參考結構編譯成統一的生成提示', () => {
   assert.match(direction, /保持参考镜头/u);
 });
 
+test('visual bible enters every generated shot direction', () => {
+  const direction = plan.cloneShotDirection({
+    visual: 'product close-up',
+    line: 'show the product',
+    prompt: 'natural product demo',
+    analysis: {},
+  }, '', {
+    subjectIdentity: 'same presenter and wardrobe',
+    productIdentity: 'same package shape and logo placement',
+    palette: 'warm cream and muted green',
+    continuityRules: 'keep the same visual identity across cuts',
+    negativeConstraints: 'no extra watermark',
+  });
+  assert.match(direction, /same presenter and wardrobe/u);
+  assert.match(direction, /same package shape/u);
+  assert.match(direction, /warm cream/u);
+  assert.match(direction, /same visual identity/u);
+  assert.match(direction, /no extra watermark/u);
+});
+
 test('structured graphics bounds enter the editable card geometry', () => {
   const timeline = plan.buildTimeline([
     cloneShot(0, { line: 'narration', analysis: { graphicsText: 'screen title', graphicsBounds: { x: 0.12, y: 0.08, width: 0.64, height: 0.11 } } }),
