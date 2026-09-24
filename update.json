@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.57/SANMAO.AI-0.7.57.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.57/SANMAO.AI-0.7.57.zip"
   ],
-  "sha256": "b8520d75f8e57daa0d38e36d5f82ea9b98ba46284d7306e1889bb75cf5a5f20f",
+  "sha256": "3cc3498a703ab56eb9b7e13677d0f613f0885e6d7f3b11ed28c7352ab2231b0e",
   "publishedAt": "2026-09-24T00:00:00Z",
   "notes": [
     "新增跨镜头视觉系统：榜单、标题栏、产品卡、界面和 Logo 可保持同一身份，并记录 enter/active/update/exit 生命周期。",
