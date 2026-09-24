@@ -115,6 +115,12 @@ export type CloneTranscript = {
   language?: string;
 };
 
+/** Local, model-free rhythm cues recovered from the reference audio. */
+export type CloneBeatCue = {
+  time: number;
+  strength: number;
+};
+
 export type CloneReferenceAnalysis = {
   version: 1;
   duration: number;
@@ -124,6 +130,8 @@ export type CloneReferenceAnalysis = {
   method: 'multimodal-frames' | 'fallback';
   transcript?: string;
   transcriptData?: CloneTranscript;
+  /** Energy peaks used to keep local transitions/effects aligned to the source rhythm. */
+  beats?: CloneBeatCue[];
   /** 可选的本地 OCR 结果；视觉模型字段仍作为没有 OCR 引擎时的兜底。 */
   ocr?: CloneReferenceOcrFrame[];
   /** Global visual grammar recovered once for the whole reference video. */
@@ -254,6 +262,8 @@ export type CloneBlueprint = {
   shots: CloneShot[];
   /** Shared visual constraints reused by local variants and rerenders. */
   visualBible?: CloneVisualBible;
+  /** Reusable rhythm cues recovered from the source audio. */
+  beats?: CloneBeatCue[];
   /** Reusable visual grammar recovered from repeated shot structures. */
   components?: CloneBlueprintComponent[];
   /** Optional named local variants; the base Blueprint remains unchanged. */

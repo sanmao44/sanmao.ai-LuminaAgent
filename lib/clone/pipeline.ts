@@ -26,7 +26,7 @@ import { getVideoModelLimits } from '../video-model-limits';
 import { requiresPublicMediaRelay } from '../video-platform';
 import { createVideoGeneration, refreshVideoTask } from '../video-task-service';
 import { askText, chatText, parseJsonBlock } from './chat';
-import { detectSceneChanges, extractFrameFiles, extractReferenceAudioTrack, extractSpeechAudio, extractVideoSegment, prepareImageFrame, probeMediaSeconds, runFfmpegCapture } from './media';
+import { detectAudioBeats, detectSceneChanges, extractFrameFiles, extractReferenceAudioTrack, extractSpeechAudio, extractVideoSegment, prepareImageFrame, probeMediaSeconds, runFfmpegCapture } from './media';
 import { transcribeLocalAudio, transcribeReferenceAudio } from './asr';
 import { localOcrAvailable, mergeOcrText, ocrImageFile, ocrPosition } from './ocr';
 import { alignShotsWithLines, buildBlueprintComponents, buildBlueprintVariantPlan, buildTimeline, clampShotSeconds, cloneShotDirection, cloneStageProgress, isCloneJobStale, normalizeShots, referenceFrameSampleTimes, round3, shouldPreserveReferenceFrameAnalysis, shotsFromSceneChanges, snapShotBoundariesToSceneChanges, splitLines, type NormalizedShot } from './plan';
@@ -331,6 +331,7 @@ function buildReferenceAnalysis(
   transcript?: CloneTranscript | null,
   ocr?: CloneReferenceOcrFrame[],
   visualBible?: CloneVisualBible,
+  beats: CloneReferenceAnalysis['beats'] = [],
 ): CloneReferenceAnalysis {
   return {
     version: 1,
@@ -339,6 +340,7 @@ function buildReferenceAnalysis(
     ...(sceneChangeTimes.length ? { sceneChangeTimes: sceneChangeTimes.map(round3) } : {}),
     method,
     ...(transcript?.text ? { transcript: transcript.text, transcriptData: transcript } : {}),
+    ...(beats.length ? { beats } : {}),
     ...(ocr?.length ? { ocr } : {}),
     ...(visualBible && Object.keys(visualBible).length ? { visualBible } : {}),
     shots: shots.map((shot, index) => ({
@@ -1231,7 +1233,7 @@ async function executeCloneJob(id: string) {
 
     if (await isCancelled(id)) return await finishCancelled(id);
     await patchJob(id, { stage: 'assembling', progress: cloneStageProgress('assembling'), message: '正在合成时间轴' });
-    const generatedTimeline = buildTimeline(shots, started.options, referenceTranscript);
+    const generatedTimeline = buildTimeline(shots, started.options, referenceTranscript, started.referenceAnalysis?.beats);
     const draftTimeline = started.timeline.editorState
       ? timelineWithEditorState(generatedTimeline, normalizeVideoEditorState(started.timeline.editorState))
       : generatedTimeline;
@@ -1318,6 +1320,10 @@ export async function analyzeCloneJob(id: string) {
   const scene = job.reference.kind === 'image'
     ? { times: [], error: '' }
     : await detectSceneChanges(referenceSource, { durationSeconds: duration, maxChanges: Math.max(1, job.options.maxShots * 3) }).catch((error) => ({ times: [], error: error instanceof Error ? error.message : '本地切点检测失败' }));
+  const beatResult = job.reference.kind === 'image'
+    ? { beats: [], error: '' }
+    : await detectAudioBeats(referenceSource, duration).catch((error) => ({ beats: [], error: error instanceof Error ? error.message : 'local audio beat detection failed' }));
+  if (beatResult.error) await appendWarnings(id, [`Local audio beat detection failed: ${beatResult.error}; beat sync was skipped.`]);
   const frameDirectory = path.join(cloneJobDirectory(id), 'frames');
   const frames = job.reference.kind === 'image'
     ? await prepareImageFrame(referenceSource, path.join(frameDirectory, 'reference-image.jpg'))
@@ -1356,11 +1362,12 @@ export async function analyzeCloneJob(id: string) {
     referenceTranscript,
     ocr,
     visualBible,
+    beatResult.beats,
   );
     const plannedJob = await patchJob(id, {
       stage: 'planned', progress: cloneStageProgress('planned'), message: `已生成 ${planned.length} 个镜头计划，等待确认`, shots: planned, planConfirmed: false,
       referenceAnalysis,
-      blueprint: { version: 1, sourceVideo: job.reference, assets: job.assets || [], shots: plannedWithFrames, visualBible, components: buildBlueprintComponents(plannedWithFrames), createdAt: job.blueprint?.createdAt || now, updatedAt: now },
+      blueprint: { version: 1, sourceVideo: job.reference, assets: job.assets || [], shots: plannedWithFrames, visualBible, ...(beatResult.beats.length ? { beats: beatResult.beats } : {}), components: buildBlueprintComponents(plannedWithFrames), createdAt: job.blueprint?.createdAt || now, updatedAt: now },
     });
     if (!job.autoConfirmPlan) return plannedJob;
     const confirmedJob = await patchJob(id, {
@@ -1453,7 +1460,7 @@ export async function renderBlueprintVariant(id: string, spec: CloneBlueprintVar
       videoPick.value,
     );
     const renderedShots = await renderVariantVoice(variantJob, withMedia, plan.voiceShotIndexes, speechPick.value);
-    const renderedTimeline = buildTimeline(renderedShots, job.options, job.referenceAnalysis?.transcriptData);
+    const renderedTimeline = buildTimeline(renderedShots, job.options, job.referenceAnalysis?.transcriptData, job.referenceAnalysis?.beats);
     const timeline = await materializeReferenceAudioTrack(referenceFile, renderedTimeline, cloneJobDirectory(id));
     const assembled = await assembleCloneVideo({
       job: { ...variantJob, shots: renderedShots, timeline },

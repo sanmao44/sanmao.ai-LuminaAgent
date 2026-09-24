@@ -183,8 +183,9 @@ function effectFilterParts(effects: RenderEffect[]) {
   effects.forEach((item) => {
     const value = item.effect.toLocaleLowerCase();
     const enable = `enable='between(t\\,${item.start.toFixed(3)}\\,${item.end.toFixed(3)})'`;
-    if (/flash|strobe|white|闪白|白闪|闪烁|闪光/iu.test(value)) filters.push(`eq=brightness=0.65:contrast=1.1:${enable}`);
-    else if (/black|dark|fade.?to.?black|变暗|黑场|暗场/iu.test(value)) filters.push(`eq=brightness=-0.45:${enable}`);
+    if (/^beat\s+flash(?:\s|$)/iu.test(value) || /flash|strobe|white|闪白|白闪|闪烁|闪光/iu.test(value)) {
+      filters.push(`eq=brightness=0.65:contrast=1.1:${enable}`);
+    } else if (/black|dark|fade.?to.?black|变暗|黑场|暗场/iu.test(value)) filters.push(`eq=brightness=-0.45:${enable}`);
     else if (/gray|greyscale|grayscale|black.?and.?white|黑白|灰度/iu.test(value)) filters.push(`hue=s=0:${enable}`);
     else if (/blur|soft|模糊|柔焦/iu.test(value)) filters.push(`gblur=sigma=8:${enable}`);
     else if (/vignette|暗角/iu.test(value)) filters.push(`vignette=PI/4:${enable}`);

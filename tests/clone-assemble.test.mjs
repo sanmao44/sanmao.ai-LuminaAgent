@@ -465,6 +465,8 @@ test('reference ambience follows the source clock after an earlier shot is exten
 
 test('assemble source keeps graphics captions off reference-preserved shots', async () => {
   const source = await readFile(assembleSourcePath, 'utf8');
+  assert.match(source, /beat\\s\+flash/u, 'beat cues should enter the final FFmpeg effect filter');
+  assert.match(source, /eq=brightness=0\.65:contrast=1\.1/u, 'beat flash should be rendered as a local brightness effect');
   assert.match(source, /shot\.preserveReferenceFrame && !shot\.allowReferenceOverlays \|\| \(semanticCaption && 'enabled' in semanticCaption && semanticCaption\.enabled === false\)/u);
   assert.match(source, /semanticCaption\?\.text \|\| captionClip\?\.text \|\| ''/u);
   assert.match(source, /shot\.preserveReferenceFrame && !shot\.allowReferenceOverlays \|\| \(semanticGraphics && 'enabled' in semanticGraphics && semanticGraphics\.enabled === false\)/u);

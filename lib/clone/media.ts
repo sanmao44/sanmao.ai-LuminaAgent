@@ -7,6 +7,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveFfmpeg } from '../video-trim-service';
 import { parseFfmpegDuration, parseSceneChangeTimes } from './plan';
+import { parseAudioBeatMetadata } from './rhythm';
 
 const STREAM_TIMEOUT_MS = 120_000;
 
@@ -95,6 +96,23 @@ export async function extractReferenceAudioTrack(input: string, output: string) 
     '-movflags', '+faststart', output,
   ], 180_000);
   return result.code === 0 ? output : null;
+}
+
+/**
+ * Recover coarse beat cues without a music model. FFmpeg's `astats` gives us
+ * short-window RMS values; local maxima above the adaptive noise floor are
+ * sufficient for timing flashes, cuts and small impact effects. The result is
+ * intentionally conservative and bounded so ordinary speech does not create
+ * hundreds of false beats.
+ */
+export async function detectAudioBeats(input: string, durationSeconds = 0) {
+  const result = await runFfmpegCapture([
+    '-hide_banner', '-nostats', '-loglevel', 'info', '-i', input,
+    '-vn', '-af', 'aresample=8000,asetnsamples=n=800:p=0,astats=metadata=1:reset=1,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level',
+    '-f', 'null', '-',
+  ], Math.max(60_000, Math.round(Math.max(1, Number(durationSeconds) || 15) * 5_000)));
+  if (result.code !== 0) return { beats: [], error: result.stderr.replace(/\s+/gu, ' ').trim().slice(0, 240) };
+  return { beats: parseAudioBeatMetadata(result.stderr, durationSeconds), error: '' };
 }
 
 /**

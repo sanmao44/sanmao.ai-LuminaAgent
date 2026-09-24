@@ -296,6 +296,30 @@ test('effect events compile into an editable effect track without becoming video
   assert.deepEqual(timeline.tracks.find((track) => track.kind === 'effect')?.clips.map((clip) => [clip.effect, clip.start, clip.duration]), [['flash', 0.25, 0.25]]);
 });
 
+test('reference beats compile into an editable effect track without adding video shots', () => {
+  const shots = [
+    cloneShot(0, { start: 0, end: 2, videoUrl: '/first.mp4' }),
+    cloneShot(1, { start: 2, end: 4, videoUrl: '/second.mp4' }),
+  ];
+  const timeline = plan.buildTimeline(shots, plan.normalizeCloneOptions({}), undefined, [
+    { time: 0.5, strength: 0.8 },
+    { time: 2.5, strength: 0.6 },
+  ]);
+  assert.equal(timeline.clips.filter((clip) => clip.track === 'video').length, 2);
+  assert.deepEqual(timeline.tracks.find((track) => track.kind === 'effect')?.clips.map((clip) => [clip.effect, clip.start, clip.duration]), [
+    ['beat flash 0.8', 0.5, 0.12],
+    ['beat flash 0.6', 2.5, 0.12],
+  ]);
+});
+
+test('reference beat timing maps from source shots to rewritten output durations', () => {
+  const timeline = plan.buildTimeline([
+    cloneShot(0, { start: 0, end: 4, line: 'rewritten', audioSeconds: 2 }),
+  ], plan.normalizeCloneOptions({ preserveReferenceTiming: false }), undefined, [{ time: 3, strength: 1 }]);
+  const beat = timeline.tracks.find((track) => track.kind === 'effect')?.clips[0];
+  assert.deepEqual([beat?.start, beat?.duration], [1.5, 0.12]);
+});
+
 test('semantic visual events follow rewritten voice word timing', () => {
   const events = [{
     id: 'card',

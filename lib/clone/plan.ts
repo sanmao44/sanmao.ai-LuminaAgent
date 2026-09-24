@@ -3,7 +3,7 @@
  * 成片时间轴生成、降级判断。这里不碰网络与磁盘，方便直接单测。
  */
 import type { CanvasVideoEditorClip, CanvasVideoEditorLayout, CanvasVideoEditorLayoutMode } from '../canvas/types';
-import type { CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneTranscriptWord, CloneVisualBible, CloneVisualEvent } from './types';
+import type { CloneBeatCue, CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneTranscriptWord, CloneVisualBible, CloneVisualEvent } from './types';
 import type { CanvasVideoEditorWord } from '../canvas/types';
 
 /** 中文口播估算速度：字/秒。没有 TTS 时用它按字数估时长。 */
@@ -1001,7 +1001,7 @@ export function buildBlueprintVariantPlan(
     if (!shot.preserveReferenceFrame && !shot.videoUrl && !shot.imageUrl) generation.add(index);
     if (shot.line && !shot.audioUrl) voice.add(index);
   });
-  const timeline = buildTimeline(shots, options, transcript);
+  const timeline = buildTimeline(shots, options, transcript, blueprint.beats);
   return {
     id: variantText(spec.id, `variant-${Date.now()}`).slice(0, 80),
     name: variantText(spec.name, '本地变体').slice(0, 120),
@@ -1024,7 +1024,7 @@ export function buildBlueprintVariantPlans(
   return specs.map((spec) => buildBlueprintVariantPlan(blueprint, spec, options, transcript));
 }
 
-export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcript?: CloneTranscript | null): CloneTimeline {
+export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcript?: CloneTranscript | null, beats?: readonly CloneBeatCue[]): CloneTimeline {
   const durations = shotDurations(shots, options);
   const components = buildBlueprintComponents(shots);
   const componentForShot = new Map<number, CloneBlueprintComponent>();
@@ -1214,6 +1214,25 @@ export function buildTimeline(shots: CloneShot[], options: CloneOptions, transcr
         ...(event.url ? { url: event.url } : {}),
         ...(event.prompt ? { text: event.prompt } : {}),
         ...(event.effect ? { effect: event.effect } : {}),
+      });
+    });
+    // Keep rhythm cues editable instead of baking them into shot boundaries.
+    // A beat is projected from the source shot clock to the output shot clock
+    // so rewritten narration or an extended generated shot does not lose it.
+    (beats || []).filter((beat) => beat.time >= shot.start && beat.time < shot.end).slice(0, 48).forEach((beat, beatIndex) => {
+      const sourceDuration = Math.max(0.05, shot.end - shot.start);
+      const localTime = clamp(((beat.time - shot.start) / sourceDuration) * duration, 0, Math.max(0, duration - 0.05));
+      const beatDuration = Math.min(0.12, Math.max(0.05, duration - localTime));
+      const effectClipId = `clone-beat-${index}-${beatIndex}`;
+      effectTrack.clips.push({
+        id: effectClipId,
+        eventId: effectClipId,
+        shotIndex: index,
+        ...(component ? { componentId: component.id, role: component.role } : {}),
+        start: round3(start + localTime),
+        duration: round3(beatDuration),
+        source: 'generated-media',
+        effect: `beat flash ${round3(beat.strength)}`,
       });
     });
   });
