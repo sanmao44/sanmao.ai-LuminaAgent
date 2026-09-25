@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.57",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.57",
+  "latestVersion": "0.7.58",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.58",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.57/SANMAO.AI-0.7.57.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.58/SANMAO.AI-0.7.58.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.57/SANMAO.AI-0.7.57.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.57/SANMAO.AI-0.7.57.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.57/SANMAO.AI-0.7.57.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.58/SANMAO.AI-0.7.58.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.58/SANMAO.AI-0.7.58.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.58/SANMAO.AI-0.7.58.zip"
   ],
   "sha256": "3cc3498a703ab56eb9b7e13677d0f613f0885e6d7f3b11ed28c7352ab2231b0e",
-  "publishedAt": "2026-09-24T00:00:00Z",
+  "publishedAt": "2026-09-25T00:00:00Z",
   "notes": [
+    "优化 Agent 路由与执行资源门控，减少不必要的工具规划并提升连续任务稳定性。",
+    "稳固本地数据持久化与迁移边界，降低工作区恢复和版本升级时的数据风险。",
+    "新增助手能力手动接入引导，让 MCP 与其他服务接入步骤更清晰、可控。",
     "新增跨镜头视觉系统：榜单、标题栏、产品卡、界面和 Logo 可保持同一身份，并记录 enter/active/update/exit 生命周期。",
     "参考视频分析继续使用连续取证帧、硬切、节拍和语音边界，不再只依赖文字描述重建画面。",
     "视觉系统编译进可编辑时间轴和最终单个 MP4；支持字卡、图片和视频媒体叠加，并兼容 Seedance 与其他视频模型。",
