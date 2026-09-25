@@ -47,5 +47,6 @@ test('DSML image calls are recovered before the image fallback and creative turn
   assert.ok(source.includes('const inlineToolCalls = rawToolCalls.length ? [] : parseInlineToolCalls(messageContent, callableTools);'));
   assert.ok(source.indexOf('const inlineToolCalls = rawToolCalls.length ? [] : parseInlineToolCalls(messageContent, callableTools);') < source.indexOf('if (imageGenerationRequest && !toolCalls.some'));
   assert.ok(source.includes('const creativeToolIsolation = imageGenerationRequest && !browserAutomationRequest && !filesystemRequest && !mcpAdminRequest;'));
-  assert.ok(source.includes('const selectedMcpServers = creativeToolIsolation\n      ? []'));
+  assert.ok(source.includes('const selectedMcpServers = mcpAllowedThisTurn && !toolSelectionIsolated'));
+  assert.ok(source.includes('const mcpRuntime = mcpAllowedThisTurn && !isCanvasNodeExecution'));
 });

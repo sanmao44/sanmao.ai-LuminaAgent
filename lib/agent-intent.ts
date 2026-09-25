@@ -42,6 +42,12 @@ const textActionPattern = /(?:写|撰写|改写|重写|润色|扩写|缩写|概�
 const promptOnlyPattern = /(?:提示词|prompt)/i;
 const separateCopyPattern = /(?:另外|再|同时|并且|并|以及|配套|附上|额外).{0,36}(?:给我|提供|写|输出|来).{0,20}(?:文案|标题|配文|广告语|宣传语|脚本|文字)/i;
 const embeddedTextPattern = /(?:图上|图片上|海报上|封面上|画面中|带(?:上|有)|加入|写着|写上).{0,28}(?:文字|标题|文案|字样|slogan|口号)/i;
+// “去掉画面中的文字”是图片编辑动作；不能因为出现“文字”就路由成文字交付。
+const imageTextRemovalPattern = /(?:去掉|删除|移除|擦除).{0,12}(?:画面|图片|海报|图像).{0,8}(?:文字|字样|标题)/i;
+// 视觉名词后面如果紧跟“文案/标题/描述”等文字交付，用户要的是文字，
+// 不是把这些名词重新生成成图片。中间不跨句，避免误伤“做一张海报，再给三条文案”。
+const visualTextArtifactPattern = /(?:图片|图像|海报|封面|插画|插图|漫画|头像|壁纸|宣传图|广告图|主视觉|配图|信息图|概念图|效果图|视觉稿|banner|poster|cover)[^，。！？!?；;]{0,12}(?:文案|标题|描述|说明|提示词|prompt|配文|方案)/i;
+const writeForVisualPattern = /(?:给|为|帮).{0,10}(?:图片|图像|海报|封面|插画|宣传图|广告图)[^，。！？!?；;]{0,12}(?:写|生成|优化|提供|输出|整理).{0,12}(?:文案|标题|描述|说明|提示词|prompt|配文)/i;
 const questionOrAnalysisPattern = /(?:为什么|怎么做|如何做|教程|步骤|方法|技巧|解释|分析|比较|建议|了解|是什么|是否|能不能|可以吗|吗[？?]?$|[？?]$)/i;
 const imageMetadataQuestionPattern = /(?:这张|这幅|该图|这张图|这幅图|图片|图像|结果|刚才|上一张).{0,36}(?:用什么|哪个|哪种|什么模型|模型名称|模型型号|服务商|供应商|参数|尺寸|比例|来源|生成记录|生成时间|生成信息)/i;
 const vagueCreativePattern = /(?:帮我|给我|请|我要|我想要|麻烦|来|做|搞|弄|生成|制作|创建|设计).{0,16}(?:宣传|推广|营销|广告|活动|新品|内容|方案|套|东西)(?:吧|呢|呀|啊)?$/i;
@@ -88,16 +94,18 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
     return result('OTHER', '用户在询问已有图片的生成元数据，只需文字回答，不应再次生成图片。', 'high', ['图片元数据']);
   }
   const asksForPrompt = promptOnlyPattern.test(text) && /(?:写|生成|优化|改写|润色|反推|提取|翻译|解释|给我|输出|提供|整理|怎么|如何|只要|仅需)/i.test(text);
-  const asksForText = textActionPattern.test(text) || ((textArtifactPattern.test(text) || documentDeliverablePattern.test(text)) && !imageActionPattern.test(text));
-  const asksForImage = (imageActionPattern.test(text) || /(?:做|生成|制作|创建|设计|来).{0,12}(?:一张|一幅|一个|个|张|幅|海报|封面|宣传图|图片|插画)/i.test(text)) && (imageTargetPattern.test(text) || /(?:出图|生图)/i.test(text));
+  const asksForVisualText = visualTextArtifactPattern.test(text) || writeForVisualPattern.test(text);
+  const asksForText = !imageTextRemovalPattern.test(text) && (textActionPattern.test(text) || asksForVisualText || ((textArtifactPattern.test(text) || documentDeliverablePattern.test(text)) && !imageActionPattern.test(text)));
+  const asksForImage = !asksForVisualText && (imageActionPattern.test(text) || /(?:做|生成|制作|创建|设计|来).{0,12}(?:一张|一幅|一个|个|张|幅|海报|封面|宣传图|图片|插画)/i.test(text)) && (imageTargetPattern.test(text) || /(?:出图|生图)/i.test(text));
   // 口语里经常省略“一”（例如“画只猫”“画条鱼”）。这类请求虽然没有
   // “图片 / 海报”等目标名词，仍然是在明确索要视觉产物。
-  const asksForImageWithoutTarget = /(?:画(?:个|一?只|一个|一张|一幅|一?条|一?头|一?匹|一?朵|一?辆|一?艘|一?座|一?棵|一?位)|画出|出图|生图|生成一张|生成一个|做一张|来一张).{1,80}/i.test(text) && !documentDeliverablePattern.test(text) && (!textArtifactPattern.test(text) || embeddedTextPattern.test(text));
+  const asksForImageWithoutTarget = !asksForVisualText && /(?:画(?:个|一?只|一个|一张|一幅|一?条|一?头|一?匹|一?朵|一?辆|一?艘|一?座|一?棵|一?位)|画出|出图|生图|生成一张|生成一个|做一张|来一张).{1,80}/i.test(text) && !documentDeliverablePattern.test(text) && (!textArtifactPattern.test(text) || embeddedTextPattern.test(text));
   const asksHowToCreateImage = /(?:怎么|如何|教我|教程|步骤|方法|技巧).{0,24}(?:画|绘制|生成图片|做图)/i.test(text);
   const asksForSeparateCopy = separateCopyPattern.test(text) || /(?:图片|海报|封面|宣传图).{0,30}(?:另外|再|同时|并且|以及).{0,30}(?:文案|标题|配文)/i.test(text);
   const textInsideImage = embeddedTextPattern.test(text) && (asksForImage || asksForImageWithoutTarget);
   const asksToEditReference = hasReferences
     && imageEditPattern.test(text)
+    && !asksForText
     && !questionOrAnalysisPattern.test(text)
     && !/(?:描述|分析|解释|总结|提取|识别|比较|建议)/i.test(text);
 

@@ -84,6 +84,19 @@ test('keeps stable explanations, creative work and code out of smart search', ()
   }
 });
 
+test('respects an explicit request to stay offline', () => {
+  for (const input of [
+    '不要联网，直接回答什么是 MCP',
+    '先不要搜索，帮我解释这段代码',
+    '不用上网，给我写一段产品文案',
+    '关闭联网查询，告诉我你的判断',
+  ]) {
+    const decision = web.shouldUseAgentWebSearch('auto', input);
+    assert.equal(decision.shouldSearch, false, input);
+  }
+  assert.equal(web.shouldUseAgentWebSearch('always', '不要联网，直接回答').shouldSearch, false);
+});
+
 test('treats local device resources as ordinary chat instead of a location lookup', () => {
   for (const input of ['帮我列出本地笔记', '本机的资料放在哪', '我的笔记都存在本地']) {
     const decision = web.shouldUseAgentWebSearch('auto', input);
@@ -126,6 +139,11 @@ test('识别浏览器连续操作请求，并排除普通联网搜索', () => {
   assert.equal(web.likelyBrowserAutomationRequest('打开 bilibili'), true);
   assert.equal(web.shouldUseAgentWebSearch('always', '打开 bilibili').shouldSearch, false);
   assert.equal(web.likelyBrowserAutomationRequest('搜索 OpenAI 最新 API 版本'), false);
+  assert.equal(web.likelyBrowserAutomationRequest('搜索 GitHub 最新资料'), false);
+  assert.equal(web.likelyBrowserAutomationRequest('在 GitHub 页面搜索 issue 并点击第一个结果'), true);
+  assert.equal(web.likelyBrowserAutomationRequest('搜索浏览器自动化的最新资料'), false);
+  assert.equal(web.likelyBrowserAutomationRequest('在浏览器里搜索 OpenAI 最新 API 版本'), true);
+  assert.equal(web.likelyBrowserAutomationRequest('打开网页看看这个页面'), true);
 });
 
 test('识别本地文件和项目操作请求', () => {

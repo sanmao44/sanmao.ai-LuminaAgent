@@ -42,6 +42,9 @@ test('routes prompt and copy requests to text without being fooled by visual nou
   assert.equal(intent.classifyAgentDeliverable('帮我写一个小红书封面标题').deliverable, 'TEXT');
   assert.equal(intent.classifyAgentDeliverable('帮我优化这个生图提示词，不要出图').deliverable, 'TEXT');
   assert.equal(intent.classifyAgentDeliverable('给我 3 个视觉方向').deliverable, 'TEXT');
+  assert.equal(intent.classifyAgentDeliverable('生成海报文案').deliverable, 'TEXT');
+  assert.equal(intent.classifyAgentDeliverable('请描述这张图片').deliverable, 'TEXT');
+  assert.equal(intent.classifyAgentDeliverable('优化这段文字', { hasReferences: true }).deliverable, 'TEXT');
 });
 
 test('keeps image description requests as text when a reference image is attached', () => {
