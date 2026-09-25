@@ -61,3 +61,26 @@ test('manifest detection adopts native versions already on disk', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('manifest rejects unknown profile modes instead of silently accepting corrupted metadata', () => {
+  assert.throws(() => manifest.validateDataManifest({
+    format: 'sanmao-local-data',
+    manifestVersion: 1,
+    profileMode: 'future-mode',
+    components: {},
+    activeGeneration: 'legacy',
+    updatedAt: '2026-09-23T00:00:00.000Z',
+  }), /manifest/);
+});
+
+test('manifest rejects known components from a newer application', () => {
+  const value = manifest.initialDataManifest('development');
+  assert.throws(() => manifest.assertSupportedDataManifest({
+    ...value,
+    components: { ...value.components, indexedDb: 99 },
+  }), /高于当前程序支持的版本/);
+  assert.throws(() => manifest.assertSupportedDataManifest({
+    ...value,
+    components: { ...value.components, canvas: 'sanmao-canvas-99' },
+  }), /高于当前程序支持的版本/);
+});

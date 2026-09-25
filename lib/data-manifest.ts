@@ -97,7 +97,7 @@ export function validateDataManifest(value: unknown): DataManifest {
   if (!isRecord(value)
     || value.format !== DATA_MANIFEST_FORMAT
     || value.manifestVersion !== DATA_MANIFEST_VERSION
-    || typeof value.profileMode !== 'string'
+    || !['development', 'portable', 'installed', 'custom'].includes(String(value.profileMode))
     || !isRecord(value.components)
     || typeof value.activeGeneration !== 'string'
     || typeof value.updatedAt !== 'string') {
@@ -117,6 +117,24 @@ export function validateDataManifest(value: unknown): DataManifest {
     ...(typeof value.lastMigrationId === 'string' ? { lastMigrationId: value.lastMigrationId } : {}),
     updatedAt: value.updatedAt,
   };
+}
+
+/** Rejects manifests produced by a newer application before any write occurs. */
+export function assertSupportedDataManifest(manifest: DataManifest) {
+  for (const [component, version] of Object.entries(manifest.components)) {
+    const supported = CURRENT_DATA_COMPONENT_VERSIONS[component];
+    if (typeof supported === 'number' && typeof version === 'number' && version > supported) {
+      throw new Error(`${component} 数据版本 ${version} 高于当前程序支持的版本 ${supported}，请先升级程序`);
+    }
+    if (component === 'canvas' && typeof version === 'string' && typeof supported === 'string') {
+      const currentNumber = Number(supported.match(/(\d+)$/)?.[1] || 0);
+      const versionNumber = Number(version.match(/(\d+)$/)?.[1] || 0);
+      if (versionNumber > currentNumber) {
+        throw new Error(`canvas 数据版本 ${version} 高于当前程序支持的版本 ${supported}，请先升级程序`);
+      }
+    }
+  }
+  return manifest;
 }
 
 async function writeJsonAtomic(file: string, value: unknown) {
@@ -148,7 +166,7 @@ export async function writeDataManifest(profile: Pick<DataProfile, 'dataDir'>, m
 
 export async function ensureDataManifest(profile: Pick<DataProfile, 'dataDir' | 'mode' | 'providerConfigDir'>, now = new Date().toISOString()) {
   const existing = await readDataManifest(profile.dataDir);
-  if (existing) return existing;
+  if (existing) return assertSupportedDataManifest(existing);
   const components = await detectDataComponentVersions(profile);
   return writeDataManifest(profile, initialDataManifest(profile.mode, now, components));
 }

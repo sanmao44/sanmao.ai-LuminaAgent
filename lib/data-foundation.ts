@@ -1,14 +1,17 @@
-import { detectDataComponentVersions, ensureDataManifest, writeDataManifest, type DataComponentVersions, type DataManifest, CURRENT_DATA_COMPONENT_VERSIONS } from './data-manifest';
+import { assertSupportedDataManifest, detectDataComponentVersions, ensureDataManifest, writeDataManifest, type DataComponentVersions, type DataManifest, CURRENT_DATA_COMPONENT_VERSIONS } from './data-manifest';
 import { resolveDataProfile } from './data-paths';
 import { recoverPendingMigrations, runMigrations } from './migrations/framework';
 import { LOCAL_DATA_MIGRATIONS } from './migrations/registry';
 import { copyFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
+let foundationPromise: Promise<Awaited<ReturnType<typeof initializeDataFoundation>>> | null = null;
+
 /** Initializes only durable-data metadata; it does not move or rewrite user media. */
-export async function ensureDataFoundation() {
+async function initializeDataFoundation() {
   const profile = resolveDataProfile();
   let manifest = await ensureDataManifest(profile);
+  assertSupportedDataManifest(manifest);
   const recovery = await recoverPendingMigrations({
     dataDir: profile.dataDir,
     manifest,
@@ -51,4 +54,14 @@ export async function ensureDataFoundation() {
   const providerMigration = await runRootMigration(profile.providerConfigDir, 'providerConfig', 'state.json');
   manifest = providerMigration.manifest;
   return { profile, manifest, recovery: { ...recovery, provider: providerRecovery }, migration: { workspace: workspaceMigration, provider: providerMigration } };
+}
+
+/** Serialize startup recovery and metadata migrations across concurrent probes. */
+export async function ensureDataFoundation() {
+  if (!foundationPromise) foundationPromise = initializeDataFoundation();
+  try {
+    return await foundationPromise;
+  } finally {
+    foundationPromise = null;
+  }
 }

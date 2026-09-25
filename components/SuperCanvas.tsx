@@ -224,7 +224,8 @@ import {
   type AssetCollection,
   type GalleryLocalEditMask,
 } from "@/lib/client-history";
-import { bootstrapWorkspace, startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
+import { startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
+import { workspaceRepository } from "@/lib/repositories/workspace-repository";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
 import OneTakeDurationPicker from "@/components/OneTakeDurationPicker";
 import ModelPicker from "@/components/ModelPicker";
@@ -3837,7 +3838,7 @@ export default function SuperCanvas() {
     let cancelled = false;
     let stopWorkspaceSync = () => {};
     const start = async () => {
-      await bootstrapWorkspace();
+      await workspaceRepository.bootstrap();
       if (cancelled) return;
       const storage = ensureCanvasStorage();
       const initial = loadCanvasDocument(storage.activeId);

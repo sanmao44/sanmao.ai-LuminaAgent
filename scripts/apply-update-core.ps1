@@ -13,6 +13,28 @@ $ErrorActionPreference = 'Stop'
 $launcherCommonPath = Join-Path $TargetPath 'scripts\launcher-common.ps1'
 if (Test-Path -LiteralPath $launcherCommonPath) { . $launcherCommonPath }
 $dataDir = if (Get-Command Resolve-SanmaoDataDir -ErrorAction SilentlyContinue) { Resolve-SanmaoDataDir -Root $TargetPath } else { Join-Path $TargetPath '.data' }
+$providerConfigDir = if (Get-Command Resolve-SanmaoProviderConfigDir -ErrorAction SilentlyContinue) { Resolve-SanmaoProviderConfigDir -Root $TargetPath } else { $dataDir }
+$targetRoot = [System.IO.Path]::GetFullPath($TargetPath).TrimEnd('\', '/')
+
+function Get-ProtectedProgramEntry([string]$Path) {
+  $candidate = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+  if ($candidate.Equals($targetRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "用户数据目录不能与程序目录相同：$candidate"
+  }
+  $targetPrefix = $targetRoot + [System.IO.Path]::DirectorySeparatorChar
+  $candidatePrefix = $candidate + [System.IO.Path]::DirectorySeparatorChar
+  if ($targetRoot.StartsWith($candidatePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "用户数据目录不能包含程序目录：$candidate"
+  }
+  if (-not $candidate.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { return '' }
+  return $candidate.Substring($targetPrefix.Length).Split([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)[0]
+}
+
+$protectedProgramEntries = @('.data', 'data', 'node_modules', '.git', '.agents')
+foreach ($candidate in @($dataDir, $providerConfigDir)) {
+  $entry = Get-ProtectedProgramEntry $candidate
+  if ($entry -and $protectedProgramEntries -notcontains $entry) { $protectedProgramEntries += $entry }
+}
 $stagingPath = Split-Path -Parent $ArchivePath
 $extractPath = Join-Path $stagingPath ("extract-" + [guid]::NewGuid().ToString('N'))
 $lockPath = Join-Path $stagingPath 'update.lock'
@@ -98,7 +120,7 @@ function Backup-CurrentProgram {
   $script:programBackupComplete = $false
   try {
     Get-ChildItem -LiteralPath $TargetPath -Force |
-      Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -ne '.agents' -and $_.Name -notlike '.env*' } |
+      Where-Object { $protectedProgramEntries -notcontains $_.Name -and $_.Name -notlike '.env*' } |
       ForEach-Object { Move-Item -LiteralPath $_.FullName -Destination $backupPath -Force }
     $script:programBackupComplete = $true
   } catch {
@@ -112,7 +134,7 @@ function Restore-PreviousProgram {
   if (-not $script:programBackedUp -or -not (Test-Path -LiteralPath $backupPath)) { return $false }
   if ($script:programBackupComplete) {
     Get-ChildItem -LiteralPath $TargetPath -Force |
-      Where-Object { $_.Name -ne '.data' -and $_.Name -ne 'data' -and $_.Name -ne 'node_modules' -and $_.Name -ne '.git' -and $_.Name -ne '.agents' -and $_.Name -notlike '.env*' } |
+      Where-Object { $protectedProgramEntries -notcontains $_.Name -and $_.Name -notlike '.env*' } |
       Remove-Item -Recurse -Force
   }
   Get-ChildItem -LiteralPath $backupPath -Force | ForEach-Object {
@@ -219,7 +241,7 @@ try {
   Backup-CurrentProgram
 
   Get-ChildItem -LiteralPath $packageRoot -Force |
-    Where-Object { $_.Name -ne '.agents' } |
+    Where-Object { $protectedProgramEntries -notcontains $_.Name } |
     ForEach-Object {
     $destination = Join-Path $TargetPath $_.Name
     # Copying a file onto the process' executing script aborts PowerShell.

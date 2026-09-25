@@ -62,11 +62,14 @@ test('update archives remain the single source of installed updater code', async
   assert.doesNotMatch(windowsUpdaterCore, /local-update-runtime\.ts/);
   assert.doesNotMatch(windowsUpdaterCore, /Copy-Item\s+-LiteralPath\s+\$PSCommandPath/);
   assert.match(windowsUpdaterCore, /function Backup-CurrentProgram/);
+  assert.match(windowsUpdaterCore, /Resolve-SanmaoProviderConfigDir/);
+  assert.match(windowsUpdaterCore, /protectedProgramEntries/);
+  assert.match(windowsUpdaterCore, /用户数据目录不能与程序目录相同/);
   assert.match(windowsUpdaterCore, /function Restore-PreviousProgram/);
   assert.match(windowsUpdaterCore, /Move-Item -LiteralPath \$_.FullName -Destination \$backupPath -Force/);
   assert.match(windowsUpdaterCore, /programBackupComplete/);
   assert.match(windowsUpdaterCore, /if \(\$destination -eq \$PSCommandPath\) \{ return \}/);
-  assert.match(windowsUpdaterCore, /Where-Object \{ \$_.Name -ne '\.agents' \}/);
+  assert.match(windowsUpdaterCore, /Where-Object \{ \$protectedProgramEntries -notcontains \$_.Name/);
   assert.match(windowsUpdaterCore, /RedirectStandardOutput \$launcherStdoutPath/);
   assert.match(windowsUpdaterCore, /RedirectStandardError \$launcherStderrPath/);
   assert.match(windowsUpdaterCore, /-ArgumentList \$launcherArguments/);
@@ -74,6 +77,8 @@ test('update archives remain the single source of installed updater code', async
   assert.match(windowsUpdaterCore, /AddSeconds\(600\)/);
   assert.match(windowsUpdaterCore, /Write-UpdateProgress 'starting'/);
   assert.match(unixUpdater, /! -name \.agents/);
+  assert.match(unixUpdater, /resolve_provider_config_dir/);
+  assert.match(unixUpdater, /DATA_TOP_LEVEL/);
   assert.doesNotMatch(localUpdate, /setUpdateProgress\(jobId, \{ stage: 'completed', message: '更新程序已启动/);
   assert.match(windowsUpdater, /apply-update-core\.ps1/);
   assert.match(windowsUpdaterBootstrap, /apply-update-core\.ps1/);

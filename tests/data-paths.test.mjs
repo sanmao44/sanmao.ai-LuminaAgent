@@ -66,3 +66,26 @@ test('normal checkouts and non-git directories keep local provider config', asyn
     await rm(fixture, { recursive: true, force: true });
   }
 });
+
+test('data profiles keep worktree data isolated while honoring provider overrides', async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), 'sanmao-data-paths-'));
+  try {
+    const primaryRoot = path.join(fixture, 'primary');
+    const worktreeRoot = path.join(fixture, 'worktree');
+    const worktreeGitDir = path.join(primaryRoot, '.git', 'worktrees', 'feature');
+    await mkdir(path.join(primaryRoot, '.git'), { recursive: true });
+    await mkdir(worktreeGitDir, { recursive: true });
+    await mkdir(worktreeRoot, { recursive: true });
+    await writeFile(path.join(worktreeRoot, '.git'), `gitdir: ${worktreeGitDir}\n`);
+    await writeFile(path.join(worktreeGitDir, 'commondir'), '../..\n');
+
+    const profile = paths.resolveDataProfile(worktreeRoot, {});
+    assert.equal(profile.dataDir, path.join(worktreeRoot, '.data'));
+    assert.equal(profile.providerConfigDir, path.join(primaryRoot, '.data'));
+
+    const overridden = paths.resolveDataProfile(worktreeRoot, { SANMAO_PROVIDER_CONFIG_DIR: 'shared-provider' });
+    assert.equal(overridden.providerConfigDir, path.join(worktreeRoot, 'shared-provider'));
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});

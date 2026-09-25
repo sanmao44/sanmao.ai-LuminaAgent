@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { copyFile, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { copyFile, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { DataComponentVersions, DataManifest } from '../data-manifest';
 
@@ -69,7 +69,7 @@ type MigrationCommitMarker = {
   committedAt: string;
 };
 
-type RollbackEntry = { relativePath: string; existed: boolean };
+type RollbackEntry = { relativePath: string; existed: boolean; sourceSha256?: string; rollbackSha256?: string };
 
 function sameVersion(left: MigrationVersion | undefined, right: MigrationVersion | undefined) {
   return String(left ?? '') === String(right ?? '');
@@ -97,19 +97,64 @@ async function writeJournal(file: string, journal: MigrationJournal) {
   await writeJsonAtomic(file, journal);
 }
 
+function sha256(value: Buffer) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+async function acquireMigrationLock(dataDir: string) {
+  const lockDir = path.join(dataDir, 'migrations');
+  const lockPath = path.join(lockDir, '.lock');
+  await mkdir(lockDir, { recursive: true });
+  const token = randomBytes(12).toString('hex');
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const handle = await open(lockPath, 'wx');
+      await handle.writeFile(`${JSON.stringify({ format: 'sanmao-migration-lock', pid: process.pid, token, createdAt: new Date().toISOString() })}\n`, 'utf8');
+      await handle.close();
+      return async () => {
+        try {
+          const current = JSON.parse(await readFile(lockPath, 'utf8')) as { token?: string };
+          if (current.token === token) await unlink(lockPath);
+        } catch {}
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST' || attempt > 0) {
+        throw new Error('本地数据正在被另一个迁移任务使用，请稍后重试');
+      }
+      let stale = false;
+      try {
+        const current = JSON.parse(await readFile(lockPath, 'utf8')) as { pid?: number; createdAt?: string };
+        const age = current.createdAt ? Date.now() - Date.parse(current.createdAt) : 0;
+        let alive = false;
+        if (Number.isInteger(current.pid) && Number(current.pid) > 0) {
+          try { process.kill(Number(current.pid), 0); alive = true; } catch {}
+        }
+        stale = age > 10 * 60 * 1000 && !alive;
+      } catch { stale = true; }
+      if (!stale) throw new Error('本地数据正在被另一个迁移任务使用，请稍后重试');
+      await unlink(lockPath).catch(() => undefined);
+    }
+  }
+  throw new Error('无法获取本地数据迁移锁');
+}
+
 async function readJournal(file: string) {
   const value = JSON.parse(await readFile(file, 'utf8')) as Partial<MigrationJournal>;
   const root = path.dirname(file);
+  const rootPath = path.resolve(root);
+  const validateJournalPath = (candidate: unknown, fallback: string) => {
+    const resolved = path.resolve(typeof candidate === 'string' && candidate.trim() ? candidate : fallback);
+    if (resolved !== rootPath && !resolved.startsWith(`${rootPath}${path.sep}`)) {
+      throw new Error('迁移 journal 路径超出迁移目录');
+    }
+    return resolved;
+  };
   // Journals written by the first implementation did not persist rollbackPath.
   // Keep those migrations recoverable after an application update.
   return {
     ...value,
-    rollbackPath: typeof value.rollbackPath === 'string' && value.rollbackPath.trim()
-      ? value.rollbackPath
-      : path.join(root, 'rollback'),
-    stagingPath: typeof value.stagingPath === 'string' && value.stagingPath.trim()
-      ? value.stagingPath
-      : path.join(root, 'staging'),
+    rollbackPath: validateJournalPath(value.rollbackPath, path.join(root, 'rollback')),
+    stagingPath: validateJournalPath(value.stagingPath, path.join(root, 'staging')),
   } as MigrationJournal;
 }
 
@@ -131,13 +176,24 @@ async function prepareRollback(dataDir: string, stagingDir: string, rollbackDir:
     const livePath = safeRelativePath(dataDir, relativePath);
     const rollbackPath = safeRelativePath(rollbackDir, relativePath);
     const existed = await stat(livePath).then((value) => value.isFile()).catch(() => false);
+    const stagedData = await readFile(safeRelativePath(stagingDir, relativePath));
+    const entry: RollbackEntry = { relativePath, existed, sourceSha256: sha256(stagedData) };
     if (existed) {
       await mkdir(path.dirname(rollbackPath), { recursive: true });
       await copyFile(livePath, rollbackPath);
+      entry.rollbackSha256 = sha256(await readFile(rollbackPath));
     }
-    entries.push({ relativePath, existed });
+    entries.push(entry);
   }
   await writeJsonAtomic(path.join(rollbackDir, 'index.json'), entries);
+}
+
+async function verifyCommittedMetadata(dataDir: string, stagingDir: string) {
+  for (const relativePath of await listFiles(stagingDir)) {
+    const staged = await readFile(safeRelativePath(stagingDir, relativePath));
+    const live = await readFile(safeRelativePath(dataDir, relativePath));
+    if (sha256(staged) !== sha256(live)) throw new Error(`迁移提交校验失败：${relativePath}`);
+  }
 }
 
 async function restoreRollback(dataDir: string, rollbackDir: string) {
@@ -159,6 +215,9 @@ function planSteps(current: DataComponentVersions, target: DataComponentVersions
   for (const [component, targetVersion] of Object.entries(target)) {
     let version = current[component];
     if (sameVersion(version, targetVersion)) continue;
+    if (typeof version === 'number' && typeof targetVersion === 'number' && version > targetVersion) {
+      throw new Error(`${component} 数据版本 ${version} 高于当前程序支持的版本 ${targetVersion}，请先升级程序`);
+    }
     for (let guard = 0; !sameVersion(version, targetVersion) && guard < steps.length + 1; guard += 1) {
       const step = steps.find((candidate) => candidate.component === component && sameVersion(candidate.from, version));
       if (!step) throw new Error(`缺少 ${component} ${String(version)} → ${String(targetVersion)} 的迁移步骤`);
@@ -175,13 +234,13 @@ export async function runMigrations(options: MigrationOptions): Promise<Migratio
   const plan = planSteps(options.manifest.components, options.target, options.steps);
   if (!plan.length) return { migrated: false, manifest: options.manifest };
 
+  const releaseLock = await acquireMigrationLock(options.dataDir);
   const migrationId = `mig-${now().replace(/[^0-9A-Za-z]/g, '')}-${randomUUID().slice(0, 8)}`;
   const migrationRoot = path.join(options.dataDir, 'migrations', migrationId);
   const stagingDir = path.join(migrationRoot, 'staging');
   const rollbackDir = path.join(migrationRoot, 'rollback');
   const journalPath = path.join(migrationRoot, 'journal.json');
   const commitPath = path.join(migrationRoot, 'commit.json');
-  await mkdir(stagingDir, { recursive: true });
   let journal: MigrationJournal = {
     format: 'sanmao-migration-journal',
     version: 1,
@@ -195,9 +254,10 @@ export async function runMigrations(options: MigrationOptions): Promise<Migratio
     createdAt: now(),
     updatedAt: now(),
   };
-  await writeJournal(journalPath, journal);
 
   try {
+    await mkdir(stagingDir, { recursive: true });
+    await writeJournal(journalPath, journal);
     journal = { ...journal, status: 'running', updatedAt: now() };
     await writeJournal(journalPath, journal);
     for (const step of plan) {
@@ -232,6 +292,7 @@ export async function runMigrations(options: MigrationOptions): Promise<Migratio
     const preparedMarker: MigrationCommitMarker = { format: 'sanmao-migration-commit', version: 1, migrationId, target: options.target, phase: 'prepared', committedAt: now() };
     await writeJsonAtomic(commitPath, preparedMarker);
     await options.commit({ dataDir: options.dataDir, stagingDir, migrationId, target: options.target });
+    await verifyCommittedMetadata(options.dataDir, stagingDir);
     await writeJsonAtomic(commitPath, { ...preparedMarker, phase: 'applied', committedAt: now() });
     const nextManifest: DataManifest = {
       ...options.manifest,
@@ -255,6 +316,8 @@ export async function runMigrations(options: MigrationOptions): Promise<Migratio
     }
     await writeJournal(journalPath, journal).catch(() => undefined);
     throw error;
+  } finally {
+    await releaseLock();
   }
 }
 
@@ -273,7 +336,10 @@ export async function recoverPendingMigrations(options: {
       const root = path.join(migrationsDir, entry.name);
       const journalPath = path.join(root, 'journal.json');
       try { return { root, journalPath, journal: await readJournal(journalPath), mtime: (await stat(journalPath)).mtimeMs }; }
-      catch { return null; }
+      catch (error) {
+        if (error instanceof Error && error.message === '迁移 journal 路径超出迁移目录') throw error;
+        return null;
+      }
     }));
   const ordered = candidates.filter((value): value is NonNullable<typeof value> => Boolean(value)).sort((left, right) => right.mtime - left.mtime);
   let manifest = options.manifest;

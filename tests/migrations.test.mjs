@@ -214,3 +214,61 @@ test('migration failure restores a metadata file while leaving large media in pl
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test('future metadata versions are read-only and rejected before staging', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-future-migration-'));
+  try {
+    const original = { ...baseManifest(), components: { workspace: 9 } };
+    await assert.rejects(() => migrations.runMigrations({
+      dataDir,
+      manifest: original,
+      target: { workspace: 2 },
+      steps: [],
+      commit: async () => { throw new Error('must not commit'); },
+      writeManifest: async () => { throw new Error('must not write'); },
+    }), /高于当前程序支持的版本/);
+    assert.equal((await readdir(dataDir)).length, 0);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('commit verification rolls metadata back when a commit writes the wrong bytes', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-commit-verification-'));
+  try {
+    const original = baseManifest();
+    await writeFile(path.join(dataDir, 'workspace.json'), '{"old":true}\n');
+    await assert.rejects(() => migrations.runMigrations({
+      dataDir,
+      manifest: original,
+      target: { workspace: 2 },
+      steps: [{ id: 'workspace-1-to-2', component: 'workspace', from: 1, to: 2, run: async (context) => {
+        await context.writeJson('workspace.json', { migrated: true });
+      }}],
+      commit: async ({ dataDir: root }) => { await writeFile(path.join(root, 'workspace.json'), '{"wrong":true}\n'); },
+      writeManifest: async () => {},
+    }), /迁移提交校验失败/);
+    assert.equal(await readFile(path.join(dataDir, 'workspace.json'), 'utf8'), '{"old":true}\n');
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('invalid journal paths are rejected during startup recovery', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-migration-journal-path-'));
+  try {
+    const root = path.join(dataDir, 'migrations', 'mig-malicious');
+    await mkdir(root, { recursive: true });
+    await writeFile(path.join(root, 'journal.json'), JSON.stringify({
+      format: 'sanmao-migration-journal', version: 1, migrationId: 'mig-malicious', status: 'verified',
+      source: { workspace: 1 }, target: { workspace: 2 },
+      stagingPath: path.join(root, 'staging'), rollbackPath: path.join(dataDir, '..', 'outside'),
+      completedSteps: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    }));
+    await assert.rejects(() => migrations.recoverPendingMigrations({
+      dataDir, manifest: baseManifest(), writeManifest: async () => {},
+    }), /迁移 journal 路径超出迁移目录/);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

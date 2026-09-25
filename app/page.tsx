@@ -45,7 +45,8 @@ import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
-import { bootstrapWorkspace, collectWorkspaceSnapshot, restoreWorkspaceSnapshot, startWorkspaceSync } from '@/lib/workspace';
+import { startWorkspaceSync } from '@/lib/workspace';
+import { workspaceRepository } from '@/lib/repositories/workspace-repository';
 import { readWorkspaceContext } from '@/lib/workspace-context';
 import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
@@ -5965,7 +5966,7 @@ export default function Page() {
         let cancelled = false;
         let stopWorkspaceSync = ()=>{};
         const start = async ()=>{
-            await bootstrapWorkspace();
+            await workspaceRepository.bootstrap();
             if (cancelled) return;
             initializeNavNoticeState();
             try {
@@ -7099,7 +7100,7 @@ export default function Page() {
                 if (value !== null) preferences[key] = value;
             }
             const client = {
-                workspace: await collectWorkspaceSnapshot(),
+                workspace: await workspaceRepository.collect(),
                 gallery: await normalizeGalleryForBackup(await listGallery()),
                 chatSessions: await listChatSessions(),
                 preferences
@@ -7137,7 +7138,7 @@ export default function Page() {
         await replaceGalleryItems(client.gallery);
         await replaceChatSessions(client.chatSessions);
         if (client.workspace) {
-            await restoreWorkspaceSnapshot(client.workspace);
+            await workspaceRepository.restore(client.workspace);
         }
         const preferenceKeys = [
             'sanmao-theme',

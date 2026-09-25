@@ -33,6 +33,39 @@ sanmao_data_dir() {
   printf '%s/.data' "$ROOT"
 }
 
+# Keep provider configuration resolution available to the updater as well as
+# the launcher. The macOS launcher may override this function when it needs to
+# inspect the Git common directory, but update scripts must use the same
+# contract before replacing program files.
+resolve_provider_config_dir() {
+  ROOT=$1
+  CONFIG_DIR="${SANMAO_PROVIDER_CONFIG_DIR:-${SANMAO_DATA_DIR:-}}"
+  if [ -n "$CONFIG_DIR" ]; then
+    case "$CONFIG_DIR" in
+      /*) printf '%s' "$CONFIG_DIR" ;;
+      *) printf '%s/%s' "$ROOT" "$CONFIG_DIR" ;;
+    esac
+    return 0
+  fi
+  case "${SANMAO_PORTABLE:-}:${SANMAO_DATA_MODE:-}:${SANMAO_INSTALL_MODE:-}:${SANMAO_INSTALLED:-}" in
+    1::*|true::*|TRUE::*|yes::*|YES::*|on::*|*:portable:*:*|*:*:installed:*|*:*:*:1|*:*:*:true|*:*:*:TRUE|*:*:*:yes|*:*:*:YES|*:*:*:on|*:*:*:ON)
+      sanmao_data_dir "$ROOT"
+      return 0 ;;
+  esac
+  COMMON_DIR=`git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null || true`
+  if [ -n "$COMMON_DIR" ]; then
+    case "$COMMON_DIR" in
+      /*) ;;
+      *) COMMON_DIR="$ROOT/$COMMON_DIR" ;;
+    esac
+    COMMON_DIR=`CDPATH= cd -- "$COMMON_DIR" 2>/dev/null && pwd || true`
+    case "$COMMON_DIR" in
+      */.git) printf '%s/.data' "${COMMON_DIR%/.git}"; return 0 ;;
+    esac
+  fi
+  printf '%s/.data' "$ROOT"
+}
+
 sanmao_init() {
   SANMAO_ROOT_DIR="$1"
   SANMAO_PORT_START="$2"

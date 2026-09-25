@@ -9,8 +9,39 @@ RESTART_PORT=${7:-0}
 PROGRESS_PATH=${8:-}
 OPERATION_TOKEN=${9:-}
 STAGING_PATH=$(CDPATH= cd -- "$(dirname "$ARCHIVE_PATH")" && pwd)
+TARGET_PATH=$(CDPATH= cd -- "$TARGET_PATH" && pwd)
 . "$TARGET_PATH/scripts/launcher-common.sh"
 DATA_DIR=$(sanmao_data_dir "$TARGET_PATH")
+PROVIDER_CONFIG_DIR=$(resolve_provider_config_dir "$TARGET_PATH" 2>/dev/null || printf '%s' "$DATA_DIR")
+
+protected_program_entry() {
+  node - "$TARGET_PATH" "$1" <<'NODE'
+const path = require('path');
+const root = path.resolve(process.argv[2]);
+const candidate = path.resolve(process.argv[3]);
+const relative = path.relative(root, candidate);
+const rootToCandidate = path.relative(root, candidate);
+const candidateToRoot = path.relative(candidate, root);
+const candidateContainsRoot = candidateToRoot !== '..'
+  && !candidateToRoot.startsWith('..' + path.sep)
+  && !path.isAbsolute(candidateToRoot);
+if (!rootToCandidate || candidateContainsRoot) {
+  console.log('OVERLAP'); process.exit(0);
+}
+if (rootToCandidate.startsWith('..' + path.sep) || path.isAbsolute(rootToCandidate)) {
+  console.log('OUTSIDE'); process.exit(0);
+}
+console.log('TOP:' + relative.split(path.sep)[0]);
+NODE
+}
+
+DATA_RELATION=$(protected_program_entry "$DATA_DIR")
+PROVIDER_RELATION=$(protected_program_entry "$PROVIDER_CONFIG_DIR")
+case "$DATA_RELATION:$PROVIDER_RELATION" in
+  *OVERLAP*) printf '%s\n' '用户数据目录不能与程序目录重叠，已取消更新。' >&2; exit 1 ;;
+esac
+DATA_TOP_LEVEL=${DATA_RELATION#TOP:}
+PROVIDER_TOP_LEVEL=${PROVIDER_RELATION#TOP:}
 EXTRACT_PATH="$STAGING_PATH/extract-$$"
 LOCK_PATH="$STAGING_PATH/update.lock"
 DRAIN_PATH="$DATA_DIR/runtime-draining.json"
@@ -99,7 +130,7 @@ rollback_update() {
   fi
   if [ "$BACKUP_COMPLETE" -eq 1 ]; then
     find "$TARGET_PATH" -mindepth 1 -maxdepth 1 \
-      ! -name .data ! -name data ! -name node_modules ! -name .git ! -name .agents ! -name '.env*' \
+      ! -name .data ! -name data ! -name node_modules ! -name .git ! -name .agents ! -name "$DATA_TOP_LEVEL" ! -name "$PROVIDER_TOP_LEVEL" ! -name '.env*' \
       -exec rm -rf {} +
   fi
   find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -exec mv {} "$TARGET_PATH"/ \;
@@ -159,14 +190,14 @@ fi
 mkdir -p "$BACKUP_DIR"
 BACKUP_CREATED=1
 if ! find "$TARGET_PATH" -mindepth 1 -maxdepth 1 \
-  ! -name .data ! -name data ! -name node_modules ! -name .git ! -name .agents ! -name '.env*' \
+  ! -name .data ! -name data ! -name node_modules ! -name .git ! -name .agents ! -name "$DATA_TOP_LEVEL" ! -name "$PROVIDER_TOP_LEVEL" ! -name '.env*' \
   -exec mv {} "$BACKUP_DIR"/ \;
 then
   rollback_update || true
   exit 1
 fi
 BACKUP_COMPLETE=1
-if ! find "$PACKAGE_ROOT" -mindepth 1 -maxdepth 1 ! -name .agents -exec cp -R {} "$TARGET_PATH"/ \;; then
+if ! find "$PACKAGE_ROOT" -mindepth 1 -maxdepth 1 ! -name .agents ! -name "$DATA_TOP_LEVEL" ! -name "$PROVIDER_TOP_LEVEL" -exec cp -R {} "$TARGET_PATH"/ \;; then
   rollback_update || true
   exit 1
 fi
