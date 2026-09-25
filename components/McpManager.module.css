@@ -140,6 +140,37 @@
 .viewIntro strong { font-size: 13px; }
 .viewIntro span { color: var(--text-2); font-size: 11.5px; line-height: 1.5; }
 
+.startCard { display: grid; gap: 12px; padding: 14px 15px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line)); border-radius: 14px; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 9%, var(--panel-2)), color-mix(in srgb, var(--panel-2) 82%, transparent)); }
+.startCardHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.startCardHead > div { display: grid; gap: 3px; min-width: 0; }
+.startCardHead strong { font-size: 14px; }
+.startCardBadge { flex: none; padding: 3px 9px; border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line)); border-radius: 999px; color: var(--accent-text); background: var(--accent-soft); font-size: 11px; white-space: nowrap; }
+.startSteps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; counter-reset: start-step; }
+.startSteps li { display: grid; gap: 2px; min-width: 0; padding: 9px 10px 9px 32px; position: relative; border: 1px solid color-mix(in srgb, var(--line) 80%, transparent); border-radius: 11px; background: color-mix(in srgb, var(--panel) 56%, transparent); }
+.startSteps li::before { counter-increment: start-step; content: counter(start-step); position: absolute; left: 10px; top: 10px; width: 17px; height: 17px; display: grid; place-items: center; border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-size: 10px; font-weight: 800; }
+.startSteps b { font-size: 11.5px; }
+.startSteps span { color: var(--muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.startCardActions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 2px; }
+.startCardActions .primary { flex: none; }
+
+.installGuide { display: grid; gap: 10px; padding: 13px 14px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius: 13px; background: color-mix(in srgb, var(--accent) 5%, var(--panel-2)); }
+.installGuideHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.installGuideHead > div { display: grid; gap: 3px; min-width: 0; }
+.installGuideHead strong { font-size: 13px; }
+.installGuide .steps { gap: 6px; }
+.installGuideNote { margin: 0; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--warning) 32%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--warning) 8%, transparent); color: var(--text-2); font-size: 11.5px; line-height: 1.55; }
+.installGuideNote strong { color: var(--text); }
+.exampleDetails { display: grid; gap: 7px; padding-top: 2px; }
+.exampleDetails summary { width: max-content; color: var(--accent-text); cursor: pointer; font-size: 11.5px; }
+.exampleDetails summary:hover { color: var(--accent); }
+.exampleRow { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.exampleRow .commandExample { flex: 1 1 auto; }
+.exampleRow .miniButton { flex: none; }
+.commandExample { display: block; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-3); color: var(--text-2); font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+.troubleshootingList { display: grid; gap: 5px; margin: 0; padding: 0 0 0 18px; color: var(--text-2); font-size: 11.5px; line-height: 1.55; }
+.troubleshootingList li { padding-left: 2px; overflow-wrap: anywhere; }
+.troubleshootingList b { color: var(--text); }
+
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; justify-content: space-between; padding: 13px 15px; border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--panel-2) 62%, transparent); transition: border-color .15s ease, background .15s ease; }
 .row:hover { border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); background: color-mix(in srgb, var(--panel-2) 82%, transparent); }
 .rowMain { flex: 1 1 320px; display: grid; gap: 4px; min-width: 0; }
@@ -285,6 +316,12 @@
   .connectorActions .primary { flex: 1 1 auto; }
   .catalogDetailsGrid { grid-template-columns: 1fr; }
   .row { padding: 11px 12px; }
+  .startSteps { grid-template-columns: 1fr; }
+  .startCardHead { display: grid; }
+  .startCardBadge { width: max-content; }
+  .installGuideHead { display: grid; }
+  .exampleRow { align-items: flex-start; flex-wrap: wrap; }
+  .exampleRow .commandExample { flex-basis: 100%; }
   .footer { align-items: stretch; }
   .footer .primary { width: 100%; }
 }

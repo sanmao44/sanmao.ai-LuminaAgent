@@ -247,8 +247,8 @@ function browserDisplayName(runtime: RuntimeView | null | undefined, bridge?: Br
  */
 const APPROVAL_POLICIES = [
   { id: 'always', label: '每次确认', summary: '非只读的 MCP 调用都要你点一次「允许」。' },
-  { id: 'trusted', label: '标准信任', summary: '导航、切标签、截图这类不改动外部数据的动作不问；提交、付款、删除这类不可逆操作仍然会问。' },
-  { id: 'full', label: '完全访问', summary: '所有 MCP 调用直接执行，不再询问——包括提交、付款、删除。' },
+  { id: 'trusted', label: '必要时确认', summary: '查看网页、读取文件这类操作直接进行；修改、提交、删除等操作仍会先问你。' },
+  { id: 'full', label: '不再询问', summary: '助手直接执行已启用的操作，包括修改、提交和删除。只建议对完全信任的服务使用。' },
 ] as const;
 
 const EMPTY_DRAFT: Draft = { paste: '', name: '', url: '', headers: '', allowWrite: false };
@@ -349,6 +349,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   const [formOpen, setFormOpen] = useState<boolean | null>(null);
   const [activeView, setActiveView] = useState<McpView>('connectors');
   const [catalogDetails, setCatalogDetails] = useState<Record<string, boolean>>({});
+  const [copiedExample, setCopiedExample] = useState('');
   /** 当前审批档位：存在设置里（/api/settings），面板只负责切换。 */
   const [approvalPolicy, setApprovalPolicy] = useState('trusted');
   /** 「完全访问」要点两次：第一下只是把按钮变成待确认状态。 */
@@ -467,6 +468,21 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
       setNotice(`${parsed.note}；确认无误后点「添加并自检」。`);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '识别失败');
+    }
+  }
+
+  async function copyExample(value: string, label: string) {
+    if (!navigator.clipboard?.writeText) {
+      setNotice('当前窗口不支持一键复制，请选中文本后复制。');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedExample(label);
+      setNotice(`已复制${label}，现在可以粘贴到 PowerShell 或下方输入框。`);
+      window.setTimeout(() => setCopiedExample((current) => current === label ? '' : current), 2200);
+    } catch {
+      setNotice('复制没有成功，请选中文本后复制。');
     }
   }
 
@@ -959,29 +975,30 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         <header className={styles.header}>
           <div className={styles.titleBlock}>
             <div className={styles.titleRow}>
-              <h2 id="mcp-manager-title"><i aria-hidden="true">M</i>MCP 服务</h2>
-              <button type="button" className={styles.help} aria-label="MCP 说明" title="MCP 说明" aria-expanded={helpOpen} aria-controls="mcp-manager-help" onClick={() => setHelpOpen((value) => !value)}>?</button>
+              <h2 id="mcp-manager-title"><i aria-hidden="true">M</i>助手能力</h2>
+              <button type="button" className={styles.help} aria-label="什么是助手能力" title="什么是助手能力" aria-expanded={helpOpen} aria-controls="mcp-manager-help" onClick={() => setHelpOpen((value) => !value)}>?</button>
             </div>
             {helpOpen && <div id="mcp-manager-help" className={styles.helpPanel} role="region" aria-label="MCP 说明">
               <div className={styles.helpPanelHead}>
-                <strong>MCP 是什么</strong>
-                <button type="button" className={styles.helpClose} aria-label="收起 MCP 说明" title="收起" onClick={() => setHelpOpen(false)}>✕</button>
+                <strong>让助手多会几件事</strong>
+                <button type="button" className={styles.helpClose} aria-label="收起说明" title="收起" onClick={() => setHelpOpen(false)}>✕</button>
               </div>
               <div className={styles.helpGrid}>
-              <p className={styles.hint}>MCP（Model Context Protocol）让你把外部服务接进助手：连接后，助手会看到该服务公布的远程工具并在需要时调用，就像内置的联网或出图能力一样。</p>
+              <p className={styles.hint}>这里的每一项都是一种能力。打开后，助手会在需要时使用它；不需要安装软件或理解技术配置。</p>
               <p className={styles.hint}><strong>让助手自己接：</strong>直接在对话里说「帮我接入 xxx，地址是 https://…」，助手会调用管理工具完成添加、自检和开关；删除服务和打开写入权限需要你明确同意。内置连接器只能由你在面板里操作：助手改不了它们的地址和权限，也断不开。</p>
-              <p className={styles.hint}><strong>官方连接器：</strong>浏览器控制、本地文件、GitHub、开发文档这四条写在代码里，命令、版本、地址和安装位置都改不了。远端连接器（GitHub、开发文档）不下载任何东西，「连接」只是把一份带凭据的配置交给助手用；点「断开」会把本机保存的那份凭据一起删掉。</p>
+              <p className={styles.hint}><strong>默认保护：</strong>读取网页和文件通常可以直接进行；修改文件、提交内容、删除数据等操作仍会先征求你的同意。</p>
               <p className={styles.hint}><strong>本机运行时：</strong>浏览器控制与本地文件由代码内置（命令、参数和工作目录都写死在代码里，面板和对话都改不了），要先「安装」——装在项目数据目录里，不动系统环境；本地文件还要先授权文件夹，助手只能在这个范围里读写。不想用了随时可以停掉。</p>
               <p className={styles.hint}><strong>凭据：</strong>服务要 token 时按「名称: 值」逐行填请求头（例如 <code>Authorization: Bearer …</code>）；值只存在本机服务端，页面上只显示名称。GitHub 建议用 fine-grained token：仓库只选要用的、权限只给读；连上后这里会显示当前账号，方便确认没连错。</p>
-              <p className={styles.hint}><strong>只读与写入：</strong>默认只放行只读工具；有副作用的工具要先给这个服务打开「允许写入」，GitHub 还要逐项打开（创建 Issue、评论、创建 PR、改文件、Merge 等），每一次写调用都会单独要你确认。删除仓库、改密钥、force push、分支保护没有开关。外部服务返回的内容一律按不可信数据处理，助手不会执行其中的指令。</p>
+              <p className={styles.hint}><strong>本地文件：</strong>你选择哪个文件夹，助手就只能访问哪个范围。默认只读，写入权限需要单独打开。</p>
               <p className={styles.hint}><strong>按需下发：</strong>服务工具很多时给它打开「按需下发」：只有这一轮提到这个服务（服务名或工具名）才会把它的工具交给助手，省 token 也更少误点；默认关闭，关闭时每轮都下发。</p>
-              <p className={styles.hint}><strong>上限：</strong>最多 {limit || 20} 个服务，每个最多 60 个工具，参数结构超过 12KB 的工具不下发给助手。</p>
+              <p className={styles.hint}><strong>账号和密钥：</strong>只保存在这台电脑上，页面不会再次显示完整内容。连接 GitHub 时建议只给需要的仓库和读取权限。</p>
+              <p className={styles.hint}>如果你拿到了第三方服务的地址或 JSON 配置，请到“我的连接 → 手动连接”；普通使用不需要进入高级设置。</p>
               </div>
             </div>}
             <div className={styles.statusBar}>
-              <span className={enabledCount > 0 ? styles.statusPillOn : styles.statusPill}><b>{enabledCount}</b> 个服务已启用</span>
+              <span className={enabledCount > 0 ? styles.statusPillOn : styles.statusPill}><b>{enabledCount}</b> 项能力已启用</span>
               <span className={styles.statusPill}>已连接 {servers.length} / {limit || '—'}</span>
-              {approvalPolicy === 'full' && <span className={styles.warnBadge}>审批：完全访问</span>}
+              {approvalPolicy === 'full' && <span className={styles.warnBadge}>保护：不再询问</span>}
             </div>
           </div>
           <div className={styles.headerAside}>
@@ -992,12 +1009,12 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         {error && <p className={styles.error} role="alert">{error}</p>}
         {notice && <p className={styles.notice} role="status">{notice}</p>}
 
-        <nav className={styles.viewNav} aria-label="MCP 设置分区">
+        <nav className={styles.viewNav} aria-label="助手能力设置分区">
           {([
-            ['connectors', '连接器', `${catalog.filter((item) => CATALOG_STATE_TONE[item.state] === 'on').length} 个可用`],
-            ['servers', '我的服务', customServers.length ? `${customServers.length} 个已添加` : '还没有服务'],
-            ['security', '安全', approvalPolicy === 'full' ? '完全访问' : '默认保护'],
-            ['advanced', '高级', '运行时详情'],
+            ['connectors', '开始使用', `${catalog.filter((item) => CATALOG_STATE_TONE[item.state] === 'on').length} 项已就绪`],
+            ['servers', '我的连接', customServers.length ? `${customServers.length} 个已添加` : '还没有手动连接'],
+            ['security', '安全保护', approvalPolicy === 'full' ? '不再询问' : '默认保护'],
+            ['advanced', '高级设置', '技术配置'],
           ] as const).map(([view, label, summary]) => (
             <button
               key={view}
@@ -1012,14 +1029,32 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
           ))}
         </nav>
         <div className={styles.viewIntro}>
-          <strong>{activeView === 'connectors' ? '先从这里开始' : activeView === 'servers' ? '管理你自己添加的服务' : activeView === 'security' ? '控制助手什么时候需要询问你' : '不常用的运行与记录设置'}</strong>
-          <span>{activeView === 'connectors' ? '连接浏览器、本地文件、GitHub 等能力。' : activeView === 'servers' ? '服务默认保持只读，工具列表和高级配置按需展开。' : activeView === 'security' ? '默认保护你的数据，只有明确授权后才会执行修改操作。' : '这里保留安装状态、运行目录和运行日志。'}</span>
+          <strong>{activeView === 'connectors' ? '选择你想让助手帮你做的事' : activeView === 'servers' ? '管理你手动连接的服务' : activeView === 'security' ? '决定哪些操作需要先问你' : '给熟悉配置的用户使用'}</strong>
+          <span>{activeView === 'connectors' ? '点“开启”即可；如果你已有第三方服务地址，请到“我的连接”手动接入。' : activeView === 'servers' ? '已有服务地址或 JSON 配置时来这里；不确定时保持只读即可。' : activeView === 'security' ? '默认会保护你的文件和外部账号，建议保留“必要时确认”。' : '普通用户不需要进入这里；常用能力都在“开始使用”里。'}</span>
         </div>
 
         <div className={styles.panel}>
+          {activeView === 'connectors' && <section className={styles.startCard} aria-label="使用步骤">
+            <div className={styles.startCardHead}>
+              <div>
+                <strong>三步就能开始</strong>
+                <p className={styles.hint}>选择能力 → 按提示完成设置 → 回到对话里直接说需求。</p>
+              </div>
+              <span className={styles.startCardBadge}>无需懂 MCP</span>
+            </div>
+            <ol className={styles.startSteps}>
+              <li><b>选能力</b><span>例如“本地文件”或“浏览网页”。</span></li>
+              <li><b>完成一次设置</b><span>只在需要时选择文件夹或登录账号。</span></li>
+              <li><b>直接说需求</b><span>例如“帮我分析这个文件夹”。</span></li>
+            </ol>
+            <div className={styles.startCardActions}>
+              <button type="button" className={styles.primary} disabled={busy} onClick={jumpToAddForm}>已有服务？手动接入</button>
+              <span className={styles.hint}>只有安装命令？先按服务商说明在终端启动，再回来粘贴地址。</span>
+            </div>
+          </section>}
           <PanelSection
             id="mcp-section-approval"
-            title="审批档位"
+            title="操作确认方式"
             hidden={activeView !== 'security'}
             open={!collapsed.approval}
             onToggle={() => toggleSection('approval')}
@@ -1027,7 +1062,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
               ? <span className={styles.warnBadge}>不再询问</span>
               : <span className={styles.badgeMuted}>{APPROVAL_POLICIES.find((item) => item.id === approvalPolicy)?.label || approvalPolicy}</span>}
           >
-            <p className={styles.hint}>只影响 MCP 服务的外部调用（浏览器、GitHub、本地文件等）；内置工具（生成文件、技能）另有各自的开关。</p>
+            <p className={styles.hint}>只影响这里连接的浏览器、文件夹、GitHub 等外部能力；生成图片、文件等内置功能不受影响。</p>
             <div className={styles.segments}>
               {APPROVAL_POLICIES.map((item) => <button
                 key={item.id}
@@ -1044,14 +1079,14 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
 
           <PanelSection
             id="mcp-section-servers"
-            title="已连接的服务"
+            title="手动连接的服务"
             hidden={activeView !== 'servers'}
             open={!collapsed.servers}
             onToggle={() => toggleSection('servers')}
             summary={customServers.length ? `${customServers.length} 个` : '还没有'}
-            aside={<button type="button" className={styles.addService} disabled={busy} onClick={jumpToAddForm}>＋ 添加服务</button>}
+            aside={<button type="button" className={styles.addService} disabled={busy} onClick={jumpToAddForm}>＋ 手动连接</button>}
           >
-          {!customServers.length && <p className={styles.empty}>还没有自定义 MCP 服务。可以在下面粘贴配置或直接填地址；官方连接器请到“连接器”页启用。</p>}
+          {!customServers.length && <p className={styles.empty}>还没有手动连接的服务。普通用户请回到“开始使用”选择能力；只有拿到第三方服务地址或配置时，才需要在这里添加。</p>}
           {customServers.map((server) => {
             const probe = probes[server.id];
             // 自检出来的工具列表可能有几十条：摊在面板里能把整页撑满，所以要能收回去。
@@ -1108,14 +1143,14 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
 
         <PanelSection
           id="mcp-section-catalog"
-          title="官方连接器"
+          title="可用能力"
           hidden={activeView !== 'connectors'}
           open={!collapsed.catalog}
           onToggle={() => toggleSection('catalog')}
-          summary={`${catalog.filter((item) => CATALOG_STATE_TONE[item.state] === 'on').length} / ${catalog.length} 个已连接`}
+          summary={`${catalog.filter((item) => CATALOG_STATE_TONE[item.state] === 'on').length} / ${catalog.length} 项已启用`}
           aside={<button type="button" disabled={busy} onClick={() => void refreshRuntimes()}>{busy ? '处理中…' : '刷新状态'}</button>}
         >
-          <p className={styles.hint}>这些连接器来自内置清单：命令、参数和安装位置都写在代码里，面板和对话都改不了。远端连接器不下载任何东西，「连接」只是把一份带凭据的配置交给助手用；凭据只存在本机，页面上只看得到名字。</p>
+          <p className={styles.hint}>按你要完成的事情选择能力。每项都会说明它能做什么、会访问什么；默认尽量保持只读，详细设置可以稍后再看。</p>
           {!catalog.length && <p className={styles.hint}>正在读取连接器状态…</p>}
           {catalog.map((item) => {
             const runtime = runtimes.find((entry) => entry.id === item.id);
@@ -1125,31 +1160,27 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
             // 这一行自己的动作在跑时只锁这一行：全局面板照常可用，关闭按钮永远点得动。
             const rowPending = pending?.id === item.id ? pending.action : '';
             const rowBusy = busy || Boolean(rowPending);
-            return <article key={item.id} className={styles.row}>
+            return <article key={item.id} className={`${styles.row} ${styles.connectorCard}`}>
               <div className={styles.rowMain}>
                 <div className={styles.rowTitle}>
                   <strong>{item.name}</strong>
                   <span className={tone === 'on' ? styles.badgeOn : tone === 'warn' ? styles.warnBadge : styles.badgeMuted}>{CATALOG_STATE_LABELS[item.state] || item.state}</span>
                   {item.defaultReadOnly && (item.allowWrite ? <span className={styles.warnBadge}>允许写入</span> : <span className={styles.badge}>只读</span>)}
-                  <span className={styles.badgeMuted}>{item.publisher}</span>
-                  <span className={styles.badgeMuted}>{remote ? '远端' : '本机'}</span>
-                  {item.version && <span className={styles.badgeMuted}>{item.version}</span>}
+                  <span className={styles.badgeMuted}>官方提供</span>
                 </div>
                 <p className={styles.description}>{item.summary}</p>
-                {item.examples.length > 0 && <p className={styles.hint}>可以直接说：{item.examples.join(' · ')}</p>}
+                {item.examples.length > 0 && <p className={styles.hint}>可以这样说：{item.examples.slice(0, 2).join(' · ')}</p>}
                 <div className={styles.facts}>
-                  <span className={styles.fact}>权限 <b>{item.permissions.map((permission) => PERMISSION_LABELS[permission] || permission).join('、') || '—'}</b></span>
-                  <span className={styles.fact}>能力 <b>{item.capabilities.join('、')}</b></span>
-                  {item.allowedTools ? <span className={styles.fact}>放行 <b>{item.allowedTools}</b> 个工具</span> : null}
+                  <span className={styles.fact}>会访问 <b>{item.permissions.map((permission) => PERMISSION_LABELS[permission] || permission).join('、') || '必要的内容'}</b></span>
+                  <span className={styles.fact}>可以帮你 <b>{item.capabilities.join('、')}</b></span>
                 </div>
-                {item.examples.length > 0 && <p className={styles.hint}>可以直接说：{item.examples.slice(0, 2).join(' · ')}</p>}
                 <button
                   type="button"
                   className={styles.detailToggle}
                   aria-expanded={Boolean(catalogDetails[item.id])}
                   onClick={() => setCatalogDetails((current) => ({ ...current, [item.id]: !current[item.id] }))}
                 >
-                  {catalogDetails[item.id] ? '收起设置' : '设置与权限'}
+                  {catalogDetails[item.id] ? '收起更多设置' : '更多设置与权限'}
                 </button>
                 {catalogDetails[item.id] && <div className={styles.catalogDetails}>
                 {remote && item.account && <p className={styles.meta}>账号：@{item.account}（连接时确认过一次，换成别的凭据要重新连接）</p>}
@@ -1305,10 +1336,10 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                 {!remote && (runtime?.installing
                   ? <button type="button" disabled={rowBusy} onClick={() => void runRuntime('cancel', runtime)}>取消安装</button>
                   : <>
-                    {!runtime?.installed && <button type="button" className={styles.primary} disabled={rowBusy || !runtime} onClick={() => runtime && void runRuntime('install', runtime)}>安装</button>}
-                    {runtime?.installed && !runtime.running && <button type="button" className={styles.primary} disabled={rowBusy || item.state === 'unavailable'} onClick={() => void runCatalog('start', item, runtime)}>{rowPending === 'start' ? '启动中…' : '启动'}</button>}
-                    {runtime?.running && <button type="button" disabled={rowBusy} onClick={() => void runCatalog('stop', item, runtime)}>{rowPending === 'stop' ? '停止中…' : '停止'}</button>}
-                    {runtime?.running && runtime.argsStale && <button type="button" className={styles.primary} disabled={rowBusy} onClick={() => void restartRuntime(item)}>{rowPending === 'restart' ? '重启中…' : '重启运行时'}</button>}
+                    {!runtime?.installed && <button type="button" className={styles.primary} disabled={rowBusy || !runtime} onClick={() => runtime && void runRuntime('install', runtime)}>安装能力</button>}
+                    {runtime?.installed && !runtime.running && <button type="button" className={styles.primary} disabled={rowBusy || item.state === 'unavailable'} onClick={() => void runCatalog('start', item, runtime)}>{rowPending === 'start' ? '开启中…' : '开启'}</button>}
+                    {runtime?.running && <button type="button" disabled={rowBusy} onClick={() => void runCatalog('stop', item, runtime)}>{rowPending === 'stop' ? '停用中…' : '停用'}</button>}
+                    {runtime?.running && runtime.argsStale && <button type="button" className={styles.primary} disabled={rowBusy} onClick={() => void restartRuntime(item)}>{rowPending === 'restart' ? '重新应用中…' : '重新应用设置'}</button>}
                   </>)}
                 {remote && (item.connecting
                   ? <button type="button" disabled>连接中…</button>
@@ -1316,7 +1347,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                     <button type="button" className={styles.primary} disabled={rowBusy} onClick={() => void runCatalog('connect', item)}>{rowPending === 'connect' ? '连接中…' : item.state === 'connected' ? '重新连接' : '连接'}</button>
                     {item.state === 'connected' && <button type="button" disabled={rowBusy} onClick={() => void runCatalog('disconnect', item)}>断开</button>}
                   </>)}
-                {item.defaultReadOnly && <label className={styles.check}><input type="checkbox" checked={item.allowWrite} disabled={rowBusy} onChange={() => void toggleCatalogWrite(item)} />允许写入</label>}
+                {item.defaultReadOnly && <label className={styles.check}><input type="checkbox" checked={item.allowWrite} disabled={rowBusy} onChange={() => void toggleCatalogWrite(item)} />允许修改内容</label>}
               </div>
             </article>;
           })}
@@ -1324,7 +1355,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
 
         <PanelSection
           id="mcp-section-runtime"
-          title="本地工具运行时详情"
+          title="运行与安装详情"
           hidden={activeView !== 'advanced'}
           open={!collapsed.runtime || installingRuntime}
           onToggle={() => toggleSection('runtime')}
@@ -1394,18 +1425,53 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
             <h3 className={styles.sectionTitle}>
               <button type="button" className={styles.sectionToggle} aria-expanded={showForm} aria-controls="mcp-add-body" disabled={busy} onClick={() => setFormOpen(!showForm)}>
                 <span className={styles.sectionIcon} aria-hidden="true" />
-                <span>添加 MCP 服务</span>
-                {!showForm && <span className={styles.sectionSummary}>接入新服务时展开这里</span>}
+                <span>手动连接其他服务</span>
+                {!showForm && <span className={styles.sectionSummary}>熟悉服务地址或配置时使用</span>}
                 <span className={styles.sectionChevron} aria-hidden="true">{showForm ? '−' : '+'}</span>
               </button>
             </h3>
           </div>
           {showForm && <div id="mcp-add-body" className={styles.sectionBody}>
-          <label htmlFor="mcp-paste">快速接入：粘贴配置或地址（可选）</label>
+          <div className={styles.installGuide}>
+            <div className={styles.installGuideHead}>
+              <div>
+                <strong>自己安装第三方服务</strong>
+                <p className={styles.hint}>你负责按服务商说明安装和启动；SANMAO.AI 负责连接、自检和权限保护。</p>
+              </div>
+              <span className={styles.startCardBadge}>适合有安装说明的服务</span>
+            </div>
+            <ol className={styles.steps}>
+              <li>先按服务商说明安装并启动，优先选择 <b>HTTP / Streamable HTTP / SSE</b> 方式。</li>
+              <li>把服务地址复制到下面，常见格式是 <code>https://example.com/mcp</code> 或 <code>http://127.0.0.1:8000/mcp</code>。</li>
+              <li>如果服务商同时给了 Token 或 JSON 配置，也一起粘贴；识别后确认内容，再点击“添加并自检”。</li>
+            </ol>
+            <p className={styles.installGuideNote}><strong>为什么不直接执行安装命令？</strong> 任意 npm、npx、uvx 或脚本都可能改动你的电脑，所以这里不会替你执行未知命令。你在 PowerShell/终端按官方说明启动后，只需要把地址交给这里即可。</p>
+            <details className={styles.exampleDetails}>
+              <summary>以 Windows-MCP 为例</summary>
+              <p className={styles.hint}>在 PowerShell 按它的官方说明启动 HTTP 服务，然后把本机地址粘贴到下方：</p>
+              <div className={styles.exampleRow}>
+                <code className={styles.commandExample}>uvx windows-mcp serve --transport streamable-http --host 127.0.0.1 --port 8000</code>
+                <button type="button" className={styles.miniButton} onClick={() => void copyExample('uvx windows-mcp serve --transport streamable-http --host 127.0.0.1 --port 8000', '启动命令')}>{copiedExample === '启动命令' ? '已复制' : '复制命令'}</button>
+              </div>
+              <div className={styles.exampleRow}>
+                <code className={styles.commandExample}>http://127.0.0.1:8000/mcp</code>
+                <button type="button" className={styles.miniButton} onClick={() => void copyExample('http://127.0.0.1:8000/mcp', '服务地址')}>{copiedExample === '服务地址' ? '已复制' : '复制地址'}</button>
+              </div>
+            </details>
+            <details className={styles.exampleDetails}>
+              <summary>连接失败时先检查这三件事</summary>
+              <ul className={styles.troubleshootingList}>
+                <li><b>连接被拒绝：</b>先确认终端窗口还开着，地址里的端口和服务商说明一致。</li>
+                <li><b>401 / 403：</b>重新核对 Token、请求头名称和服务商授予的权限。</li>
+                <li><b>协议不支持：</b>确认服务启动的是 HTTP、Streamable HTTP 或 SSE，而不是仅供本机命令使用的 stdio 模式。</li>
+              </ul>
+            </details>
+          </div>
+          <label htmlFor="mcp-paste">粘贴服务地址或配置（可选）</label>
           <textarea id="mcp-paste" value={draft.paste} disabled={busy} spellCheck={false} placeholder={'{"mcpServers":{"notion":{"url":"https://mcp.notion.com/mcp","headers":{"Authorization":"Bearer …"}}}}\n或直接粘贴 https://example.com/mcp'} onChange={(event) => setDraft((current) => ({ ...current, paste: event.target.value }))} />
           <div className={styles.inline}>
             <button type="button" disabled={busy || !draft.paste.trim()} onClick={importConfig}>识别并填入</button>
-            <span className={styles.hint}>支持 mcpServers 配置、单个服务对象或纯地址，会填好名称、地址和请求头。</span>
+            <span className={styles.hint}>可以粘贴服务商提供的 JSON 配置，或直接粘贴以 https:// 开头的地址。</span>
           </div>
           <div className={styles.fieldGrid}>
             <div className={styles.field}>
@@ -1420,7 +1486,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
           <label htmlFor="mcp-headers">请求头（可选，每行一条 <code>名称: 值</code>，例如 <code>Authorization: Bearer …</code>）</label>
           <textarea id="mcp-headers" value={draft.headers} disabled={busy} spellCheck={false} onChange={(event) => setDraft((current) => ({ ...current, headers: event.target.value }))} />
           <div className={styles.formFooter}>
-            <label className={styles.check}><input type="checkbox" checked={draft.allowWrite} disabled={busy} onChange={() => setDraft((current) => ({ ...current, allowWrite: !current.allowWrite }))} />添加后立即允许写入（有副作用的工具会被放行）</label>
+            <label className={styles.check}><input type="checkbox" checked={draft.allowWrite} disabled={busy} onChange={() => setDraft((current) => ({ ...current, allowWrite: !current.allowWrite }))} />允许这个服务修改内容（建议先不勾选）</label>
             <button type="button" className={styles.primary} disabled={busy || !draft.url.trim()} onClick={() => void addServer()}>{busy ? '处理中…' : '添加并自检'}</button>
           </div>
           </div>}
@@ -1429,7 +1495,7 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
         </div>
 
         <footer className={styles.footer}>
-          <span className={styles.count}>新增或改动的服务在下一轮对话生效；连不上只会跳过这个服务，不影响其他对话。</span>
+          <span className={styles.count}>连接成功后，助手会在下一轮对话里使用这项能力；连接失败不会影响其他对话。</span>
           <button type="button" className={styles.primary} disabled={busy} onClick={() => setOpen(false)}>完成</button>
         </footer>
       </dialog>}

@@ -57,12 +57,12 @@ test('授权文件夹有常用位置可选，不用用户自己拼绝对路径',
   assert.match(toolsRoute, /suggestFilesystemRoots\(\{ excluded: roots \}\)/);
   assert.doesNotMatch(toolsRoute, /data\?\.rootSuggestions/);
 });
-test('帮助说明跟上连接器：官方清单、凭据、逐项写权限都说清楚', () => {
-  assert.match(panel, /官方连接器：<\/strong>浏览器控制、本地文件、GitHub、开发文档/);
-  assert.match(panel, /点「断开」会把本机保存的那份凭据一起删掉/);
-  assert.match(panel, /GitHub 建议用 fine-grained token/);
-  assert.match(panel, /GitHub 还要逐项打开（创建 Issue、评论、创建 PR、改文件、Merge 等）/);
-  assert.match(panel, /助手改不了它们的地址和权限，也断不开/);
+test('帮助说明用普通用户能理解的语言说明能力与保护范围', () => {
+  assert.match(panel, /这里的每一项都是一种能力/);
+  assert.match(panel, /默认保护/);
+  assert.match(panel, /本地文件/);
+  assert.match(panel, /账号和密钥/);
+  assert.match(panel, /我的连接 → 手动连接/);
 });
 test('面板把能力组和写权限分项摆出来，并且逐项提交', () => {
   assert.match(panel, /能力组：关掉的组不会交给助手/);
@@ -72,10 +72,10 @@ test('面板把能力组和写权限分项摆出来，并且逐项提交', () =>
   assert.match(panel, /没有开关，Catalog 里不会执行/);
   assert.match(panel, /item\.auth\.note/);
 });
-test('面板给出安装/启动/停止/取消，并说明空闲回收与浏览器来源', () => {
-  assert.match(panel, /本地工具运行时/);
-  // 动作按钮在跑的时候会换成「启动中…」这类说法，两种写法都算这个动作在。
-  for (const label of ['安装', '启动', '停止', '取消安装']) {
+test('面板给出能力安装/开启/停用/取消，并说明空闲回收与浏览器来源', () => {
+  assert.match(panel, /运行与安装详情/);
+  // 普通用户看到的是能力动作，取消安装仍保留为明确的中断动作。
+  for (const label of ['安装能力', '开启', '停用', '取消安装']) {
     assert.ok(panel.includes(`>${label}</button>`) || panel.includes(`: '${label}'}`), `missing ${label}`);
   }
   assert.ok(panel.includes("'刷新状态'"));
