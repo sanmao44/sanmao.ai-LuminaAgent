@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.58/SANMAO.AI-0.7.58.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.58/SANMAO.AI-0.7.58.zip"
   ],
-  "sha256": "3cc3498a703ab56eb9b7e13677d0f613f0885e6d7f3b11ed28c7352ab2231b0e",
+  "sha256": "4506a39c47890f5b7936daf28d05e0d35bac1f11bfc7bbca530e04f9209d8fa5",
   "publishedAt": "2026-09-25T00:00:00Z",
   "notes": [
     "优化 Agent 路由与执行资源门控，减少不必要的工具规划并提升连续任务稳定性。",
