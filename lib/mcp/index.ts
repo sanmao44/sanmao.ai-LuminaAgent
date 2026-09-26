@@ -222,6 +222,8 @@ export {
 export type { BrowserArtifactFile, ImportBrowserArtifactsOptions } from './browser-downloads';
 export { MCP_ADMIN_ACTIONS, runMcpManageAction } from './admin';
 export { MCP_RUNTIME_ACTIONS, isMcpRuntimeAction, runMcpRuntimeAction } from './runtime-admin';
+export { installGithubMcpFromRepo } from './repo-installer';
+export type { GithubMcpInstallResult } from './repo-installer';
 export type { McpRuntimeAction, McpRuntimeOutcome } from './runtime-admin';
 export type { McpAdminAction, McpManageOptions, McpManageOutcome } from './admin';
 export type { McpRemoteTool, McpServerConfig, McpToolMeta } from './types';

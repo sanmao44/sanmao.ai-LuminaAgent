@@ -16,9 +16,10 @@ import {
 } from './store';
 import { findCatalogEntry } from './catalog';
 import { clearMcpToolCache, isMcpToolSchemaTooLarge } from './tools';
+import { installGithubMcpFromRepo } from './repo-installer';
 import type { McpRemoteTool, McpServerConfig } from './types';
 
-export const MCP_ADMIN_ACTIONS = ['list', 'probe', 'add', 'update', 'remove'] as const;
+export const MCP_ADMIN_ACTIONS = ['list', 'probe', 'add', 'update', 'remove', 'install_from_repo'] as const;
 export type McpAdminAction = (typeof MCP_ADMIN_ACTIONS)[number];
 
 /** 打开写入权限、删除服务必须能在用户原话里找到依据。 */
@@ -33,6 +34,7 @@ export type McpManageOptions = {
   /** 配置目录，测试用；线上走 resolveLocalDataDir()。 */
   dataDir?: string;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 };
 
 /** readOnly 只用于界面上的审计标签：管理动作本身不算外部数据调用。 */
@@ -116,6 +118,32 @@ export async function runMcpManageAction(args: unknown, options: McpManageOption
     };
   }
 
+  if (action === 'install_from_repo') {
+    if (listMcpServers({ dataDir }).length >= MCP_MAX_SERVERS) throw new Error(`最多添加 ${MCP_MAX_SERVERS} 个 MCP 服务`);
+    const repo = String(input.repo || input.url || '').trim();
+    const requested = parseGithubRepoFromInstruction(instruction);
+    const repoIdentity = repo.replace(/^https?:\/\/(?:www\.)?github\.com\//i, '').replace(/\.git(?:\/.*)?$/, '').replace(/\/.*$/, '').toLowerCase();
+    const requestedIdentity = requested.replace(/^https?:\/\/(?:www\.)?github\.com\//i, '').replace(/\.git$/, '').toLowerCase();
+    if (!repo || !requested || repoIdentity !== requestedIdentity) {
+      throw new Error('请把 GitHub 仓库地址直接发给我，我只会安装你这次消息里提供的仓库。');
+    }
+    const installed = await installGithubMcpFromRepo(repo, { dataDir, signal: options.signal });
+    clearMcpToolCache(installed.server.id);
+    resetMcpSessions(installed.server.url);
+    const probed = await probeMcpServer(installed.server, { retry: true, timeouts: { init: PROBE_TIMEOUT_MS, list: PROBE_TIMEOUT_MS } });
+    return {
+      readOnly: false,
+      result: {
+        ok: true,
+        action,
+        server: redactMcpServer(installed.server),
+        toolCount: probed.tools.length,
+        readOnlyCount: probed.readOnly,
+        note: `已安装并接入「${installed.server.name}」，默认只读；工具会在下一轮对话可用。`,
+      },
+    };
+  }
+
   if (action === 'add') {
     if (listMcpServers({ dataDir }).length >= MCP_MAX_SERVERS) throw new Error(`最多添加 ${MCP_MAX_SERVERS} 个 MCP 服务`);
     // 内置连接器（GitHub / Context7）的配置只能由面板的连接流程写：那个 id 被这个工具占掉的话，
@@ -179,4 +207,9 @@ export async function runMcpManageAction(args: unknown, options: McpManageOption
     readOnly: false,
     result: { ok: true, action: 'remove', id: server.id, removed, note: removed ? '服务已从本机配置里移除。' : '服务已经不存在。' },
   };
+}
+
+function parseGithubRepoFromInstruction(value: string) {
+  const match = value.match(/https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?/i);
+  return match?.[0] || '';
 }

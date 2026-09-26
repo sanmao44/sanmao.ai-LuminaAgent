@@ -432,14 +432,15 @@ test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生
   assert.match(manager, /disabled=\{busy \|\| Boolean\(tool\.oversized\)\}/);
   assert.match(manager, /import \{ deriveMcpServerName, headersToText, parseMcpConfigText \} from '@\/lib\/mcp\/config-import';/, '面板复用配置识别模块');
   assert.match(manager, /识别并填入/);
-  assert.match(manager, /让助手自己接/, '帮助说明要写清助手能代劳');
-  assert.match(manager, /我的连接 → 手动连接/, '手动接入路径必须和实际入口一致');
-  assert.match(manager, /已有服务？手动接入/, '入口要告诉普通用户什么时候使用');
-  assert.match(manager, /async function copyExample/);
-  assert.match(manager, /连接被拒绝/);
-  // 帮助说明改成普通用户能理解的能力入口，运行时细节仍放在高级设置里。
+  assert.match(manager, /把 GitHub 地址发给助手/);
+  assert.match(manager, /助手会自动下载、安装、接入并自检/);
+  assert.match(manager, /已有地址？手动连接/);
+  assert.doesNotMatch(manager, /自己安装第三方服务/);
+  assert.doesNotMatch(manager, /Windows-MCP/);
+  assert.doesNotMatch(manager, /async function copyExample/);
+  // 运行时状态仍保留，面板不再承担第三方服务的安装教程。
   assert.match(manager, /运行与安装详情/);
-  assert.match(manager, /命令、参数和工作目录都写死在代码里/);
+  assert.doesNotMatch(manager, /命令、参数和工作目录都写死在代码里/);
   assert.match(manager, /全部放行/);
   assert.match(manager, /只放行只读/);
   assert.match(manager, /styles\.toolDescription/);

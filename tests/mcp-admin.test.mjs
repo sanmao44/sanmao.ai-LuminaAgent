@@ -114,10 +114,21 @@ test('动作名不合法或服务不存在时抛出可读错误', async () => {
 
 test('被拒绝的调用与管理动作都会记进审计标签，动作名用中文', async () => {
   const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
-  assert.match(route, /const MCP_MANAGE_LABELS: Record<string, string> = \{ list: '列出服务', probe: '连接自检', add: '添加服务', update: '修改配置', remove: '删除服务', runtime_status: '查看本地运行时', runtime_start: '启动本地运行时', runtime_stop: '关闭本地运行时' \};/);
+  assert.match(route, /const MCP_MANAGE_LABELS: Record<string, string> = \{ list: '列出服务', probe: '连接自检', add: '添加服务', update: '修改配置', remove: '删除服务', install_from_repo: '安装 GitHub MCP', runtime_status: '查看本地运行时', runtime_start: '启动本地运行时', runtime_stop: '关闭本地运行时' \};/);
   assert.match(route, /usedMcpTools\.push\(\{ server: '本机配置', name: actionLabel/);
   assert.match(route, /const deniedMcp = policy\.tool\?\.mcp;/);
   assert.match(route, /usedMcpTools\.push\(\{ server: deniedMcp\.serverName, name: deniedMcp\.toolName, readOnly: deniedMcp\.readOnly, ok: false \}\);/);
+});
+
+test('GitHub MCP 安装只接受用户原话里的同一个仓库地址', async () => {
+  const dataDir = tempDir();
+  await assert.rejects(
+    () => mcp.runMcpManageAction(
+      { action: 'install_from_repo', repo: 'https://github.com/evil/repo' },
+      { dataDir, instruction: '帮我安装 https://github.com/owner/repo' },
+    ),
+    /只会安装你这次消息里提供的仓库/,
+  );
 });
 
 test('管理工具能把某个服务改成按需下发，也能改回来', async () => {

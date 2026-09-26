@@ -57,12 +57,12 @@ test('授权文件夹有常用位置可选，不用用户自己拼绝对路径',
   assert.match(toolsRoute, /suggestFilesystemRoots\(\{ excluded: roots \}\)/);
   assert.doesNotMatch(toolsRoute, /data\?\.rootSuggestions/);
 });
-test('帮助说明用普通用户能理解的语言说明能力与保护范围', () => {
-  assert.match(panel, /这里的每一项都是一种能力/);
-  assert.match(panel, /默认保护/);
-  assert.match(panel, /本地文件/);
-  assert.match(panel, /账号和密钥/);
-  assert.match(panel, /我的连接 → 手动连接/);
+test('帮助说明只保留 GitHub 仓库入口与手动连接入口', () => {
+  assert.match(panel, /把 GitHub 地址发给助手/);
+  assert.match(panel, /助手会自动下载、安装、接入并自检/);
+  assert.match(panel, /已有地址？手动连接/);
+  assert.doesNotMatch(panel, /自己安装第三方服务/);
+  assert.doesNotMatch(panel, /Windows-MCP/);
 });
 test('面板把能力组和写权限分项摆出来，并且逐项提交', () => {
   assert.match(panel, /能力组：关掉的组不会交给助手/);
@@ -202,6 +202,6 @@ test('受控条目的工具白名单挡住任意代码执行', () => {
 });
 test('面板能给单个服务打开「按需下发」，并说清它的作用', () => {
   assert.match(panel, /updateServer\(server, \{ lazy: !server\.lazy \}\)/);
-  assert.match(panel, /只有这一轮提到这个服务（服务名或工具名）才会把它的工具交给助手/);
+  assert.match(panel, /只有这一轮提到它时才会把它的工具交给助手/);
   assert.match(panel, /\{server\.lazy && <span className=\{styles\.badgeMuted\}>按需下发<\/span>\}/);
 });

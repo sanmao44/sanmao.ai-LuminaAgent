@@ -349,7 +349,6 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
   const [formOpen, setFormOpen] = useState<boolean | null>(null);
   const [activeView, setActiveView] = useState<McpView>('connectors');
   const [catalogDetails, setCatalogDetails] = useState<Record<string, boolean>>({});
-  const [copiedExample, setCopiedExample] = useState('');
   /** 当前审批档位：存在设置里（/api/settings），面板只负责切换。 */
   const [approvalPolicy, setApprovalPolicy] = useState('trusted');
   /** 「完全访问」要点两次：第一下只是把按钮变成待确认状态。 */
@@ -468,21 +467,6 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
       setNotice(`${parsed.note}；确认无误后点「添加并自检」。`);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '识别失败');
-    }
-  }
-
-  async function copyExample(value: string, label: string) {
-    if (!navigator.clipboard?.writeText) {
-      setNotice('当前窗口不支持一键复制，请选中文本后复制。');
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopiedExample(label);
-      setNotice(`已复制${label}，现在可以粘贴到 PowerShell 或下方输入框。`);
-      window.setTimeout(() => setCopiedExample((current) => current === label ? '' : current), 2200);
-    } catch {
-      setNotice('复制没有成功，请选中文本后复制。');
     }
   }
 
@@ -980,19 +964,13 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
             </div>
             {helpOpen && <div id="mcp-manager-help" className={styles.helpPanel} role="region" aria-label="MCP 说明">
               <div className={styles.helpPanelHead}>
-                <strong>让助手多会几件事</strong>
+                <strong>把 GitHub 地址发给助手</strong>
                 <button type="button" className={styles.helpClose} aria-label="收起说明" title="收起" onClick={() => setHelpOpen(false)}>✕</button>
               </div>
               <div className={styles.helpGrid}>
-              <p className={styles.hint}>这里的每一项都是一种能力。打开后，助手会在需要时使用它；不需要安装软件或理解技术配置。</p>
-              <p className={styles.hint}><strong>让助手自己接：</strong>直接在对话里说「帮我接入 xxx，地址是 https://…」，助手会调用管理工具完成添加、自检和开关；删除服务和打开写入权限需要你明确同意。内置连接器只能由你在面板里操作：助手改不了它们的地址和权限，也断不开。</p>
-              <p className={styles.hint}><strong>默认保护：</strong>读取网页和文件通常可以直接进行；修改文件、提交内容、删除数据等操作仍会先征求你的同意。</p>
-              <p className={styles.hint}><strong>本机运行时：</strong>浏览器控制与本地文件由代码内置（命令、参数和工作目录都写死在代码里，面板和对话都改不了），要先「安装」——装在项目数据目录里，不动系统环境；本地文件还要先授权文件夹，助手只能在这个范围里读写。不想用了随时可以停掉。</p>
-              <p className={styles.hint}><strong>凭据：</strong>服务要 token 时按「名称: 值」逐行填请求头（例如 <code>Authorization: Bearer …</code>）；值只存在本机服务端，页面上只显示名称。GitHub 建议用 fine-grained token：仓库只选要用的、权限只给读；连上后这里会显示当前账号，方便确认没连错。</p>
-              <p className={styles.hint}><strong>本地文件：</strong>你选择哪个文件夹，助手就只能访问哪个范围。默认只读，写入权限需要单独打开。</p>
-              <p className={styles.hint}><strong>按需下发：</strong>服务工具很多时给它打开「按需下发」：只有这一轮提到这个服务（服务名或工具名）才会把它的工具交给助手，省 token 也更少误点；默认关闭，关闭时每轮都下发。</p>
-              <p className={styles.hint}><strong>账号和密钥：</strong>只保存在这台电脑上，页面不会再次显示完整内容。连接 GitHub 时建议只给需要的仓库和读取权限。</p>
-              <p className={styles.hint}>如果你拿到了第三方服务的地址或 JSON 配置，请到“我的连接 → 手动连接”；普通使用不需要进入高级设置。</p>
+              <p className={styles.hint}>把 MCP 项目的 GitHub 仓库地址直接发到对话里，例如：<code>帮我安装 https://github.com/owner/repo</code>。</p>
+              <p className={styles.hint}>助手会自动下载、安装、接入并自检；新接入的服务默认只读。</p>
+              <p className={styles.hint}>已有 HTTP 服务地址时，再到“我的连接”手动连接。</p>
               </div>
             </div>}
             <div className={styles.statusBar}>
@@ -1037,19 +1015,14 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
           {activeView === 'connectors' && <section className={styles.startCard} aria-label="使用步骤">
             <div className={styles.startCardHead}>
               <div>
-                <strong>三步就能开始</strong>
-                <p className={styles.hint}>选择能力 → 按提示完成设置 → 回到对话里直接说需求。</p>
+                <strong>把仓库地址发给助手</strong>
+                <p className={styles.hint}>助手会自动安装、接入并自检。</p>
               </div>
-              <span className={styles.startCardBadge}>无需懂 MCP</span>
+              <span className={styles.startCardBadge}>无需手动安装</span>
             </div>
-            <ol className={styles.startSteps}>
-              <li><b>选能力</b><span>例如“本地文件”或“浏览网页”。</span></li>
-              <li><b>完成一次设置</b><span>只在需要时选择文件夹或登录账号。</span></li>
-              <li><b>直接说需求</b><span>例如“帮我分析这个文件夹”。</span></li>
-            </ol>
             <div className={styles.startCardActions}>
-              <button type="button" className={styles.primary} disabled={busy} onClick={jumpToAddForm}>已有服务？手动接入</button>
-              <span className={styles.hint}>只有安装命令？先按服务商说明在终端启动，再回来粘贴地址。</span>
+              <button type="button" className={styles.primary} disabled={busy} onClick={() => setHelpOpen(true)}>查看示例</button>
+              <button type="button" className={styles.secondary} disabled={busy} onClick={jumpToAddForm}>已有地址？手动连接</button>
             </div>
           </section>}
           <PanelSection
@@ -1432,41 +1405,6 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
             </h3>
           </div>
           {showForm && <div id="mcp-add-body" className={styles.sectionBody}>
-          <div className={styles.installGuide}>
-            <div className={styles.installGuideHead}>
-              <div>
-                <strong>自己安装第三方服务</strong>
-                <p className={styles.hint}>你负责按服务商说明安装和启动；SANMAO.AI 负责连接、自检和权限保护。</p>
-              </div>
-              <span className={styles.startCardBadge}>适合有安装说明的服务</span>
-            </div>
-            <ol className={styles.steps}>
-              <li>先按服务商说明安装并启动，优先选择 <b>HTTP / Streamable HTTP / SSE</b> 方式。</li>
-              <li>把服务地址复制到下面，常见格式是 <code>https://example.com/mcp</code> 或 <code>http://127.0.0.1:8000/mcp</code>。</li>
-              <li>如果服务商同时给了 Token 或 JSON 配置，也一起粘贴；识别后确认内容，再点击“添加并自检”。</li>
-            </ol>
-            <p className={styles.installGuideNote}><strong>为什么不直接执行安装命令？</strong> 任意 npm、npx、uvx 或脚本都可能改动你的电脑，所以这里不会替你执行未知命令。你在 PowerShell/终端按官方说明启动后，只需要把地址交给这里即可。</p>
-            <details className={styles.exampleDetails}>
-              <summary>以 Windows-MCP 为例</summary>
-              <p className={styles.hint}>在 PowerShell 按它的官方说明启动 HTTP 服务，然后把本机地址粘贴到下方：</p>
-              <div className={styles.exampleRow}>
-                <code className={styles.commandExample}>uvx windows-mcp serve --transport streamable-http --host 127.0.0.1 --port 8000</code>
-                <button type="button" className={styles.miniButton} onClick={() => void copyExample('uvx windows-mcp serve --transport streamable-http --host 127.0.0.1 --port 8000', '启动命令')}>{copiedExample === '启动命令' ? '已复制' : '复制命令'}</button>
-              </div>
-              <div className={styles.exampleRow}>
-                <code className={styles.commandExample}>http://127.0.0.1:8000/mcp</code>
-                <button type="button" className={styles.miniButton} onClick={() => void copyExample('http://127.0.0.1:8000/mcp', '服务地址')}>{copiedExample === '服务地址' ? '已复制' : '复制地址'}</button>
-              </div>
-            </details>
-            <details className={styles.exampleDetails}>
-              <summary>连接失败时先检查这三件事</summary>
-              <ul className={styles.troubleshootingList}>
-                <li><b>连接被拒绝：</b>先确认终端窗口还开着，地址里的端口和服务商说明一致。</li>
-                <li><b>401 / 403：</b>重新核对 Token、请求头名称和服务商授予的权限。</li>
-                <li><b>协议不支持：</b>确认服务启动的是 HTTP、Streamable HTTP 或 SSE，而不是仅供本机命令使用的 stdio 模式。</li>
-              </ul>
-            </details>
-          </div>
           <label htmlFor="mcp-paste">粘贴服务地址或配置（可选）</label>
           <textarea id="mcp-paste" value={draft.paste} disabled={busy} spellCheck={false} placeholder={'{"mcpServers":{"notion":{"url":"https://mcp.notion.com/mcp","headers":{"Authorization":"Bearer …"}}}}\n或直接粘贴 https://example.com/mcp'} onChange={(event) => setDraft((current) => ({ ...current, paste: event.target.value }))} />
           <div className={styles.inline}>

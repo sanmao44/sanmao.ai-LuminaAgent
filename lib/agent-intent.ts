@@ -1,4 +1,5 @@
 export type AgentDeliverable = 'IMAGE' | 'TEXT' | 'BOTH' | 'CLARIFY' | 'OTHER';
+export type AgentRequestMode = 'execute' | 'ask' | 'discuss' | 'follow_up' | 'unknown';
 
 export type AgentIntentMessage = {
   role?: 'user' | 'assistant' | string;
@@ -14,6 +15,7 @@ export type AgentIntentContext = {
 
 export type AgentIntentDecision = {
   deliverable: AgentDeliverable;
+  mode: AgentRequestMode;
   label: string;
   summary: string;
   reason: string;
@@ -53,6 +55,41 @@ const imageMetadataQuestionPattern = /(?:这张|这幅|该图|这张图|这幅�
 const vagueCreativePattern = /(?:帮我|给我|请|我要|我想要|麻烦|来|做|搞|弄|生成|制作|创建|设计).{0,16}(?:宣传|推广|营销|广告|活动|新品|内容|方案|套|东西)(?:吧|呢|呀|啊)?$/i;
 const vagueFollowUpPattern = /^(?:继续|再来一个|再来一版|再来几版|这个再|这张再|按刚才|按照刚才|基于这个|基于这张|把它|它再|再短一点|再详细一点|更高级一点|更年轻一点|更简洁一点|优化一下|改一下|换一下|调整一下)/i;
 
+// 先判断用户的“请求模式”，再判断交付物。这里识别的是句子的言语行为
+// （询问、讨论、执行、承接上一轮），而不是把某个功能词直接映射到工具。
+// 这层是图片、文件、联网、MCP 和 Skill 路由共用的安全闸门。
+const capabilityQuestionPattern = /^(?:你)?(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)[？?]$/i;
+const taskLeadPattern = /^(?:请(?!问)|麻烦(?!问)|帮我|给我|替我|为我|我想(?:要|让你)|我(?:要|需要)(?!了解|知道|确认|咨询|问|弄清楚)|需要你|直接|开始|继续|再来|按照刚才|基于这个|把它|将其)/i;
+const taskVerbPattern = /(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|生图|出图)/i;
+const questionShapePattern = /^(?:为什么|怎么(?:做|办)|如何|什么是|是什么|能否|能不能|是否|可以吗|支持吗|请问|告诉我|解释一下|分析一下|比较一下|建议一下|你觉得).*[？?]?$|[？?]$/i;
+
+/**
+ * Infer the user's speech act before selecting a deliverable or tool.
+ * A feature noun is never sufficient to authorize execution by itself.
+ */
+export function inferAgentRequestMode(input: string): AgentRequestMode {
+  const text = clean(input);
+  if (!text) return 'unknown';
+  if (vagueFollowUpPattern.test(text) && text.length <= 32) return 'follow_up';
+
+  const capabilityQuestion = capabilityQuestionPattern.test(text);
+  const genericQuestion = questionShapePattern.test(text)
+    || /^(?:请问|麻烦问一下|我想(?:了解|知道|确认)|我要(?:了解|知道|确认)|我需要(?:了解|知道|确认)|帮我(?:了解|确认|弄清楚)).*[？?]?$/.test(text);
+  const explicitTask = taskLeadPattern.test(text)
+    || (taskVerbPattern.test(text) && !/^(?:为什么|怎么|如何|什么是|是什么|是否|能否|能不能|可以吗|支持吗|请问)/i.test(text));
+  // A capability-leading question that merely contains an action verb is
+  // still a question. A concrete imperative followed by “可以吗？” is the
+  // opposite: it is an execution request asking for confirmation.
+  // “你能帮我打开网页吗？” must not become a browser command. An imperative
+  // lead such as “请帮我打开网页，可以吗？” is the explicit exception.
+  if (capabilityQuestion) return 'ask';
+  if (genericQuestion && !explicitTask && !taskLeadPattern.test(text)) return 'ask';
+
+  if (explicitTask) return 'execute';
+  if (/(?:分析|比较|评估|讨论|解释|说明|原因|方案|思路|建议)/i.test(text)) return 'discuss';
+  return 'unknown';
+}
+
 function clean(value: unknown) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
@@ -61,7 +98,7 @@ function latestMessageWithImages(messages: AgentIntentMessage[]) {
   return [...messages].reverse().find((message) => message?.role === 'assistant' && Array.isArray(message.images) && message.images.length);
 }
 
-function result(deliverable: AgentDeliverable, reason: string, confidence: AgentIntentDecision['confidence'], signals: string[]): AgentIntentDecision {
+function result(deliverable: AgentDeliverable, reason: string, confidence: AgentIntentDecision['confidence'], signals: string[], mode: AgentRequestMode = 'execute'): AgentIntentDecision {
   const metadata: Record<AgentDeliverable, { label: string; summary: string }> = {
     IMAGE: { label: imageLabel, summary: '我会优先准备图片生成或图片编辑能力。' },
     TEXT: { label: textLabel, summary: '我会先给你可复制、可继续修改的文字内容。' },
@@ -69,7 +106,7 @@ function result(deliverable: AgentDeliverable, reason: string, confidence: Agent
     CLARIFY: { label: clarifyLabel, summary: '这句话有两种合理方向，先确认交付形式可以少走一步。' },
     OTHER: { label: otherLabel, summary: '我会先按问答、分析或其他任务处理，不擅自调用生图。' },
   };
-  return { deliverable, ...metadata[deliverable], reason, confidence, signals };
+  return { deliverable, mode, ...metadata[deliverable], reason, confidence, signals };
 }
 
 /**
@@ -77,15 +114,34 @@ function result(deliverable: AgentDeliverable, reason: string, confidence: Agent
  * single visual keyword. This is intentionally small and explainable so the
  * UI can show the decision and the server can use the same contract.
  */
-export function classifyAgentDeliverable(input: string, context: AgentIntentContext = {}): AgentIntentDecision {
+function classifyAgentDeliverableCore(input: string, context: AgentIntentContext = {}): AgentIntentDecision {
   const text = clean(input);
   const messages = Array.isArray(context.messages) ? context.messages : [];
   const hasReferences = Boolean(context.hasReferences);
   const hasFiles = Boolean(context.hasFiles);
+  const requestMode = inferAgentRequestMode(text);
   if (!text && (hasReferences || hasFiles)) {
     return result('OTHER', hasReferences ? '检测到参考图，默认先分析内容；你可以补充“修改”或“反推提示词”。' : '检测到文件，默认先读取并处理文件内容。', 'medium', [hasReferences ? '参考图' : '文件']);
   }
   if (!text) return result('OTHER', '还没有足够的文字目标。', 'low', []);
+
+  // This gate must precede image/document heuristics. Questions about a
+  // capability or a plan are conversational turns even when they contain the
+  // exact name of a generative feature.
+  if (requestMode === 'ask' || requestMode === 'discuss') {
+    return result(
+      'OTHER',
+      requestMode === 'ask' ? '用户在询问能力或事实，先文字回答，不执行工具。' : '用户在讨论、分析或评估方案，先文字回答，不执行交付工具。',
+      'high',
+      [requestMode === 'ask' ? '询问模式' : '讨论模式'],
+      requestMode,
+    );
+  }
+
+  // 描述图片/画面是文字交付；不要被通用的“解释/分析”规则吞成普通问答。
+  if (/(?:描述|描写).{0,20}(?:画面|图片|图像|这张图|这幅图|参考图)/i.test(text)) {
+    return result('TEXT', '用户要的是对图片内容的文字描述。', 'high', ['图片描述'], requestMode);
+  }
 
   if (/(?:不要|别|不需要|暂不|先不)(?:再)?(?:出图|生图|画图|生成图片|生成图像)/.test(text)) {
     return result('TEXT', '用户明确要求本轮不生成图片。', 'high', ['禁止生图']);
@@ -150,6 +206,26 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
 }
 
 /**
+ * Public intent contract. The deliverable rules remain explainable and
+ * local, while the request mode is normalized once at the boundary so every
+ * caller receives the same execution/ask/discuss decision.
+ */
+export function classifyAgentDeliverable(input: string, context: AgentIntentContext = {}): AgentIntentDecision {
+  const decision = classifyAgentDeliverableCore(input, context);
+  const mode = inferAgentRequestMode(input);
+  // A high-confidence local deliverable classification is enough to preserve
+  // a direct creative/document command whose wording does not start with a
+  // typical imperative (for example “画一只猫” or “做一份周报”). It never
+  // upgrades OTHER, and questions/discussions have already returned above.
+  const effectiveMode = mode === 'unknown'
+    && decision.confidence === 'high'
+    && decision.deliverable !== 'OTHER'
+    ? 'execute'
+    : mode;
+  return effectiveMode === decision.mode ? decision : { ...decision, mode: effectiveMode };
+}
+
+/**
  * 画布等调用方会把系统上下文（节点摘要、提示词等）拼在用户消息末尾，这些内容不是
  * 用户指令：一旦参与意图判断，"画布 / 图片 / 渲染"等词会把普通提问误判成生图请求。
  * 调用方可以把用户原话单独传进来，这里只做取值和兜底。
@@ -171,7 +247,10 @@ export function parseSemanticIntent(content: unknown): AgentIntentDecision | nul
     const parsed = JSON.parse(content.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')) as Record<string, unknown>;
     if (!['IMAGE', 'TEXT', 'BOTH', 'CLARIFY', 'OTHER'].includes(String(parsed.deliverable))) return null;
     if (parsed.confidence !== 'high') return null;
-    return result(parsed.deliverable as AgentDeliverable, String(parsed.reason || '结合当前对话理解用户要求。').slice(0, 240), 'high', ['上下文语义判断']);
+    const mode = ['execute', 'ask', 'discuss', 'follow_up', 'unknown'].includes(String(parsed.mode))
+      ? String(parsed.mode) as AgentRequestMode
+      : (parsed.deliverable === 'OTHER' || parsed.deliverable === 'CLARIFY' ? 'unknown' : 'execute');
+    return result(parsed.deliverable as AgentDeliverable, String(parsed.reason || '结合当前对话理解用户要求。').slice(0, 240), 'high', ['上下文语义判断'], mode);
   } catch { return null; }
 }
 

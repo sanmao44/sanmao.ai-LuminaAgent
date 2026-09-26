@@ -19,6 +19,8 @@ test('only offers the MCP manager when the turn is about MCP services', () => {
     assert.equal(web.likelyMcpManagementRequest(input), false, input);
   }
   assert.equal(web.likelyMcpManagementRequest(''), false);
+  assert.equal(web.likelyMcpManagementRequest('帮我安装 https://github.com/owner/repo'), true);
+  assert.equal(web.likelyMcpManagementRequest('https://github.com/owner/repo'), true);
 });
 
 test('本地运行时的问法也会放出 MCP 管理工具，但普通提问不会', () => {

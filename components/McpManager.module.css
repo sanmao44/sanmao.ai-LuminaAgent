@@ -152,24 +152,9 @@
 .startSteps span { color: var(--muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
 .startCardActions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 2px; }
 .startCardActions .primary { flex: none; }
-
-.installGuide { display: grid; gap: 10px; padding: 13px 14px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius: 13px; background: color-mix(in srgb, var(--accent) 5%, var(--panel-2)); }
-.installGuideHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.installGuideHead > div { display: grid; gap: 3px; min-width: 0; }
-.installGuideHead strong { font-size: 13px; }
-.installGuide .steps { gap: 6px; }
-.installGuideNote { margin: 0; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--warning) 32%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--warning) 8%, transparent); color: var(--text-2); font-size: 11.5px; line-height: 1.55; }
-.installGuideNote strong { color: var(--text); }
-.exampleDetails { display: grid; gap: 7px; padding-top: 2px; }
-.exampleDetails summary { width: max-content; color: var(--accent-text); cursor: pointer; font-size: 11.5px; }
-.exampleDetails summary:hover { color: var(--accent); }
-.exampleRow { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.exampleRow .commandExample { flex: 1 1 auto; }
-.exampleRow .miniButton { flex: none; }
-.commandExample { display: block; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-3); color: var(--text-2); font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
-.troubleshootingList { display: grid; gap: 5px; margin: 0; padding: 0 0 0 18px; color: var(--text-2); font-size: 11.5px; line-height: 1.55; }
-.troubleshootingList li { padding-left: 2px; overflow-wrap: anywhere; }
-.troubleshootingList b { color: var(--text); }
+.startCardActions .secondary { flex: none; }
+.secondary { color: var(--text-2) !important; background: transparent !important; }
+.secondary:hover:not(:disabled) { color: var(--accent-text) !important; border-color: var(--accent) !important; background: var(--accent-soft) !important; }
 
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; justify-content: space-between; padding: 13px 15px; border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--panel-2) 62%, transparent); transition: border-color .15s ease, background .15s ease; }
 .row:hover { border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); background: color-mix(in srgb, var(--panel-2) 82%, transparent); }
@@ -316,12 +301,8 @@
   .connectorActions .primary { flex: 1 1 auto; }
   .catalogDetailsGrid { grid-template-columns: 1fr; }
   .row { padding: 11px 12px; }
-  .startSteps { grid-template-columns: 1fr; }
   .startCardHead { display: grid; }
   .startCardBadge { width: max-content; }
-  .installGuideHead { display: grid; }
-  .exampleRow { align-items: flex-start; flex-wrap: wrap; }
-  .exampleRow .commandExample { flex-basis: 100%; }
   .footer { align-items: stretch; }
   .footer .primary { width: 100%; }
 }

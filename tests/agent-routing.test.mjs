@@ -95,6 +95,19 @@ test('gates MCP, skills and native web by the bounded route plan', () => {
   assert.equal(skill.tools.useSkills, true);
 });
 
+test('does not activate any executable route for capability questions', () => {
+  for (const input of ['可以生图吗？', '能生成 PPT 吗？', '支持联网搜索吗？', 'MCP 能做什么？']) {
+    const decision = routing.classifyAgentRequest(input, {}, { webMode: 'always' });
+    assert.equal(decision.route, 'chat', input);
+    assert.equal(decision.needsTools, false, input);
+    assert.equal(decision.tools.useMcp, false, input);
+    assert.equal(decision.tools.useNativeWeb, false, input);
+    assert.equal(decision.tools.useNativeArtifact, false, input);
+  }
+  assert.equal(routing.classifyAgentRequest('帮我生成一张猫的图片，可以吗？').route, 'image');
+  assert.equal(routing.classifyAgentRequest('请做一个产品介绍 PPT').route, 'ppt');
+});
+
 test('does not force semantic review when a route is unambiguous', () => {
   const decision = routing.classifyAgentRequest('生成一个 PPT 介绍方案');
   assert.equal(routing.routeNeedsSemanticReview(decision), false);

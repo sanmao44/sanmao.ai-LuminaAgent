@@ -1,4 +1,4 @@
-import { classifyAgentDeliverable, type AgentDeliverable, type AgentIntentContext, type AgentIntentDecision, type AgentIntentMessage } from '@/lib/agent-intent';
+import { classifyAgentDeliverable, inferAgentRequestMode, type AgentDeliverable, type AgentIntentContext, type AgentIntentDecision, type AgentIntentMessage } from '@/lib/agent-intent';
 import { likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFileGenerationRequest, likelyFilesystemRequest, likelyMcpManagementRequest, shouldUseAgentWebSearch, type AgentWebDecision, type AgentWebMode } from '@/lib/agent-web';
 
 export type AgentArtifactKind = 'none' | 'word' | 'excel' | 'ppt' | 'archive' | 'file';
@@ -78,9 +78,11 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // builds this bounded route plan. Reuse that result to avoid running the
   // same regex classifier twice on every request.
   const intent = options.intent || classifyAgentDeliverable(text, context);
+  const requestMode = intent.mode || inferAgentRequestMode(text);
+  const executable = requestMode === 'execute' || requestMode === 'follow_up';
   const artifactKind = artifactKindFor(text);
-  const browserAutomation = likelyBrowserAutomationRequest(text);
-  const filesystem = likelyFilesystemRequest(text, options.previousAssistant || '');
+  const browserAutomation = executable && likelyBrowserAutomationRequest(text);
+  const filesystem = executable && likelyFilesystemRequest(text, options.previousAssistant || '');
   const contextInfo = contextDecision(text, messages);
   // `context.messages` is the prior conversation for callers from the Agent
   // route, so do not drop its newest item a second time. That item is often
@@ -89,7 +91,35 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
     role: (message.role === 'assistant' || message.role === 'user' ? message.role : undefined) as 'assistant' | 'user' | undefined,
     content: message.content,
   }));
-  const web = shouldUseAgentWebSearch(options.webMode || 'auto', text, webContext);
+  const web = executable
+    ? shouldUseAgentWebSearch(options.webMode || 'auto', text, webContext)
+    : { shouldSearch: false, reason: 'ordinary-chat' as const, query: text };
+  // Non-execution modes never enter an executable candidate route. This is a
+  // shared side-effect gate for capability questions, discussions and unclear
+  // turns; feature words alone cannot activate image/file/web/MCP/Skill work.
+  if (!executable) {
+    return {
+      intent,
+      route: 'chat',
+      artifactKind: 'none',
+      contextNeed: contextInfo.need,
+      contextReason: contextInfo.reason,
+      browserAutomation: false,
+      filesystem: false,
+      web,
+      needsTools: false,
+      tools: {
+        useMcp: false,
+        useBrowserMcp: false,
+        useFilesystemMcp: false,
+        useSkills: false,
+        useNativeWeb: false,
+        useNativeArtifact: false,
+        reason: '当前是询问、讨论或未确认的请求模式，先正常回复。',
+      },
+      candidates: [candidate('chat', 60, '询问、讨论或待确认请求')],
+    };
+  }
   const candidates: AgentRouteCandidate[] = [];
   if (browserAutomation) candidates.push(candidate('browser', 112, '页面操作动作'));
   if (filesystem) candidates.push(candidate('filesystem', 110, '本地文件或项目操作'));
@@ -144,6 +174,10 @@ export function routeNeedsSemanticReview(decision: AgentRequestDecision) {
   const top = decision.candidates[0];
   const next = decision.candidates[1];
   if (!top || decision.route === 'clarify') return true;
+  // A short contextual acknowledgement (for example “好的”) has no local
+  // deliverable signal. Let the already configured cloud model resolve it
+  // once against the bounded recent context instead of guessing a tool route.
+  if (decision.intent.mode === 'unknown' && decision.intent.deliverable === 'OTHER' && decision.contextNeed === 'required') return true;
   return Boolean(next && top.score - next.score < 8 && !['browser', 'filesystem'].includes(top.route));
 }
 

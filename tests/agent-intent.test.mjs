@@ -20,6 +20,24 @@ test('routes explicit visual requests to an image deliverable', () => {
   assert.notEqual(intent.classifyAgentDeliverable('怎么画只猫').deliverable, 'IMAGE');
 });
 
+test('uses request mode as a cross-feature safety gate', () => {
+  for (const input of [
+    '可以生图吗？',
+    '能生成 PPT 吗？',
+    '你能帮我打开网页吗？',
+    '支持联网搜索吗？',
+    'MCP 能做什么？',
+  ]) {
+    const decision = intent.classifyAgentDeliverable(input);
+    assert.equal(decision.mode, 'ask', input);
+    assert.equal(decision.deliverable, 'OTHER', input);
+  }
+
+  assert.equal(intent.inferAgentRequestMode('帮我生成一张猫的图片，可以吗？'), 'execute');
+  assert.equal(intent.inferAgentRequestMode('请做一个产品介绍 PPT'), 'execute');
+  assert.equal(intent.inferAgentRequestMode('请分析一下这个方案'), 'execute');
+});
+
 test('real conversation scene commands generate images while commentary remains text', () => {
   const messages = [
     { role: 'assistant', content: '对牛弹琴', images: [{ id: 'image' }] },
@@ -36,6 +54,8 @@ test('real conversation scene commands generate images while commentary remains 
   assert.equal(intent.parseSemanticIntent('{"deliverable":"IMAGE","confidence":"low"}'), null);
   assert.equal(intent.parseSemanticIntent('{"deliverable":"DELETE","confidence":"high"}'), null);
   assert.equal(intent.parseSemanticIntent('{"deliverable":"IMAGE","confidence":"high"}')?.deliverable, 'IMAGE');
+  assert.equal(intent.parseSemanticIntent('{"mode":"ask","deliverable":"IMAGE","confidence":"high"}')?.mode, 'ask');
+  assert.equal(intent.parseSemanticIntent('{"mode":"ask","deliverable":"IMAGE","confidence":"high"}')?.deliverable, 'IMAGE');
 });
 
 test('routes prompt and copy requests to text without being fooled by visual nouns', () => {

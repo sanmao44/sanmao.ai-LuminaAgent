@@ -6,6 +6,7 @@ import ts from 'typescript';
 
 const MODULES = [
   'lib/data-paths',
+  'lib/skills',
   'lib/agent/context-budget',
   'lib/agent/browser-metrics',
   'lib/agent/browser-freshness',
@@ -49,6 +50,7 @@ const MODULES = [
   'lib/mcp/tools',
   'lib/mcp/audit',
   'lib/mcp/admin',
+  'lib/mcp/repo-installer',
   'lib/mcp/runtime-admin',
   'lib/mcp/index',
 ];
