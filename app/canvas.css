@@ -4905,7 +4905,7 @@ html[data-theme="dark"] .canvas-node[data-node-kind="angle"]{--node-color:#a78bf
     position:relative;
   }
   .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-preset-wrap{
-    position:static;
+    position:relative!important;
   }
   .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-preset-wrap>.canvas-node-editor-dock-popover{
     left:0;
@@ -4916,3 +4916,31 @@ html[data-theme="dark"] .canvas-node[data-node-kind="angle"]{--node-color:#a78bf
   }
 }
 .canvas-project-versions-empty{padding:4px 2px}
+
+/* Keep the preset menu in the editor's local layout context. The trigger is
+   part of the dock row, so the menu must resolve from that trigger rather
+   than from the full canvas or the viewport. */
+@media(min-width:721px){
+  .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-preset-wrap>.canvas-node-editor-dock-popover.is-presets{
+    position:absolute;
+    z-index:var(--canvas-z-modal-popover);
+    left:0;
+    right:auto;
+    top:auto!important;
+    bottom:calc(100% + 8px)!important;
+    box-sizing:border-box;
+    width:min(620px,calc(100vw - 48px));
+    max-width:min(620px,calc(100vw - 48px));
+    max-height:min(390px,calc(100dvh - 56px));
+    overflow:hidden;
+    transform:none;
+  }
+  .canvas-node-editor-popover.is-image-dock:has(.canvas-node-editor-dock-popover.is-presets)>.canvas-node-editor-surface,
+  .canvas-node-editor-popover.is-image-dock:has(.canvas-node-editor-dock-popover.is-presets) .canvas-node-editor-body,
+  .canvas-node-editor-popover.is-image-dock:has(.canvas-node-editor-dock-popover.is-presets) .canvas-node-editor-dock-chips{
+    overflow:visible;
+  }
+  .canvas-node-editor-popover.is-image-dock:has(.canvas-node-editor-dock-popover.is-presets) .canvas-preset-columns{
+    height:min(320px,calc(100dvh - 220px));
+  }
+}
