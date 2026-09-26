@@ -1,17 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.59",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.59",
+  "latestVersion": "0.7.60",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.60",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.59/SANMAO.AI-0.7.59.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.60/SANMAO.AI-0.7.60.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.59/SANMAO.AI-0.7.59.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.59/SANMAO.AI-0.7.59.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.59/SANMAO.AI-0.7.59.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.60/SANMAO.AI-0.7.60.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.60/SANMAO.AI-0.7.60.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.60/SANMAO.AI-0.7.60.zip"
   ],
   "sha256": "234f83600e817200473a1010b074249225444b3697822f977186ec321f5ce3d1",
   "publishedAt": "2026-09-26T00:00:00Z",
   "notes": [
+    "修复用户直接发送 GitHub 仓库地址时未自动安装的问题；裸仓库地址现在会直接交给 Agent 安装。",
+    "修复安装交接上下文被筛选丢失的问题，用户按提示发送仓库地址后会继续执行安装。",
     "修复 GitHub MCP 安装上下文丢失：用户先发仓库地址、稍后只说安装时也会自动执行。",
     "优化 MCP 仓库接入与安装交接，减少返回教程而没有真正安装的问题。",
     "新增 Tabbit 原生浏览器控制、超时处理与完全访问审批支持。",
