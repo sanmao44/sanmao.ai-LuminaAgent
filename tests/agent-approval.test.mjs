@@ -241,6 +241,22 @@ test('标准信任档不放过不可逆操作：提交、删除、付款仍然�
   assert.equal(click('结算页', { element: '立即购买' }).required, true);
 });
 
+test('Tabbit 网页代码：完全访问免确认，其余档位仍保护非只读调用', () => {
+  const definition = {
+    ...mcpTool('browser', 'read', 'Tabbit Browser'),
+    id: 'mcp:tabbit:browser',
+    tags: ['tabbit', 'mcp'],
+  };
+  const assess = (policy, args = { action: 'nodejs', readOnly: false }) => approval.assessToolApproval({ definition, args, policy });
+
+  assert.equal(assess('trusted').required, true, '默认标准信任档不能自动执行会改变页面状态的代码');
+  assert.equal(assess('always').required, true, '始终确认档不能自动执行会改变页面状态的代码');
+  assert.deepEqual(assess('full'), { required: false, risk: 'external_side_effect', reason: '' }, '完全访问应与其他 MCP 工具一致，直接放行');
+  for (const policy of ['trusted', 'always', 'full']) {
+    assert.equal(assess(policy, { action: 'nodejs', readOnly: true }).required, false, `${policy} 档的只读脚本不需要确认`);
+  }
+});
+
 test('标准信任档不放过非浏览器的写工具、dangerous 与页面内执行代码', () => {
   const assess = (definition) => approval.assessToolApproval({ definition, args: {}, policy: 'trusted' });
   assert.equal(assess(mcpTool('create_issue', 'external_side_effect')).required, true, '非浏览器的写工具照旧要问');

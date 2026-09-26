@@ -378,6 +378,9 @@ export function assessToolApproval(input: {
     const args = input.args && typeof input.args === 'object' && !Array.isArray(input.args) ? input.args as Record<string, unknown> : {};
     const action = String(args.action || '').trim();
     if (action === 'nodejs' && args.readOnly !== true) {
+      if (normalizeMcpApprovalPolicy(input.policy) === 'full') {
+        return { required: false, risk: 'external_side_effect', reason: '' };
+      }
       return { required: true, risk: 'external_side_effect', reason: '这一步会在 Tabbit 浏览器页面中执行可能改变网页状态的代码', unbypassable: true };
     }
     return { required: false, risk: 'read', reason: '' };
