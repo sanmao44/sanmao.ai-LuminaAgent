@@ -26,7 +26,7 @@ import { normalizeReferenceRecords } from '@/lib/reference-images';
 import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
-import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
+import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, extractGithubRepositoryUrl, isChatDirectionHeading, isGithubMcpInstallFollowUp, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-intent';
 import { conversationImage, conversationMessageText } from '@/lib/agent-context';
 import { pollAgentProgress, requestAgent } from '@/lib/agent-client';
@@ -9384,8 +9384,12 @@ export default function Page() {
             ? normalizeOneTakeDuration(durationSeconds)
             : undefined;
         const followUp = overrideRefs ? null : agentFollowUp;
-        const requestContent = content || '请分析我上传的文件和参考图';
-        const requestIntent = classifyAgentDeliverable(requestContent, {
+            const requestContent = content || '请分析我上传的文件和参考图';
+            const githubInstallRepo = isGithubMcpInstallFollowUp(requestContent)
+                ? [...currentSessionMessages].reverse().find((message)=>message.role === 'user' && extractGithubRepositoryUrl(message.content))
+                : null;
+            const githubInstallWireHint = githubInstallRepo ? extractGithubRepositoryUrl(githubInstallRepo.content) : '';
+            const requestIntent = classifyAgentDeliverable(requestContent, {
             messages: currentSessionMessages,
             hasReferences: refs.length > 0,
             hasFiles: files.length > 0
@@ -9476,9 +9480,17 @@ export default function Page() {
             const memory = await prepareAgentMemory(sessionId, nextMessages, activeAgentModelId, requestController.signal);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const selectedContextMessages = selectRelevantConversationMessages(nextMessages, requestContent);
-            const payloadMessages = selectedContextMessages.map((m)=>({
+            const githubInstallContextMessage = isGithubMcpInstallFollowUp(requestContent)
+                ? [...nextMessages].slice(0, -1).reverse().find((message)=>message.role === 'user' && extractGithubRepositoryUrl(message.content))
+                : null;
+            const contextWithGithubInstall = githubInstallContextMessage && !selectedContextMessages.some((message)=>message.id === githubInstallContextMessage.id)
+                ? [...selectedContextMessages, githubInstallContextMessage].sort((left, right)=>nextMessages.indexOf(left) - nextMessages.indexOf(right))
+                : selectedContextMessages;
+            const payloadMessages = contextWithGithubInstall.map((m)=>({
                     role: m.role,
-                    content: m.id === latestUserId ? followUpRequestContent(m.content, m.followUp) : conversationMessageText(m),
+                    content: m.id === latestUserId
+                        ? `${followUpRequestContent(m.content, m.followUp)}${githubInstallWireHint ? `\n[本轮安装目标仓库：${githubInstallWireHint}]` : ''}`
+                        : conversationMessageText(m),
                     references: m.id === latestUserId ? referencesForRequest : [],
                     files: m.id === latestUserId ? (m.files || []).map((file)=>({
                             name: file.name,

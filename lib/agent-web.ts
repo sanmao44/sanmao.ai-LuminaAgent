@@ -212,6 +212,7 @@ const mcpManagementPattern = new RegExp(`mcp|model\\s+context\\s+protocol|(?:${M
 const githubMcpInstallPattern = /(?:安装|接入|连接|添加|导入|装上|装好|帮我).{0,80}(?:github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|GitHub\s*(?:仓库|repo))|(?:github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|GitHub\s*(?:仓库|repo)).{0,80}(?:安装|接入|连接|添加|导入|装上|装好|帮我)|^\s*https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\s*$/i;
 const githubRepositoryUrlPattern = /https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?/i;
 const githubMcpInstallVerbPattern = /(?:帮我\s*)?(?:安装|接入|连接|添加|导入|装上|装好)(?:一下|这个|该|此)?/i;
+const githubMcpShortInstallPattern = /^(?:帮我\s*)?(?:安装|接入|连接|添加|导入|装上|装好)(?:一下|这个|该|此)?[。.!！?？]?$/i;
 const githubMcpInstallHandoffPattern = /(?:github|仓库|repo).{0,120}(?:安装|接入|连接|添加|导入|装上|装好).{0,120}(?:地址|链接|url|发给我|发我|贴给我|提供给我|发过来)|(?:安装|接入|连接|添加|导入|装上|装好).{0,120}(?:github|仓库|repo).{0,120}(?:地址|链接|url|发给我|发我|贴给我|提供给我|发过来)/i;
 // 本地工具运行时（受控条目）单独认：「浏览器控制组件装了吗 / 启动浏览器运行时」也要下发管理工具，
 // 否则助手明明能查状态、能启停，却看不到入口。
@@ -398,18 +399,28 @@ export function likelyMcpManagementRequest(input: string) {
  * 刚发过仓库地址，那么用户下一条只发送地址/“安装”也是同一个安装请求；普通
  * 聊天里分享 GitHub 链接不能触发安装。
  */
-export function extractGithubMcpInstallRequest(input: string, previousAssistantText = '', previousUserText = '') {
+export function extractGithubMcpInstallRequest(input: string, previousAssistantText = '', previousUserText = '', previousContextText = '') {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   const url = text.match(githubRepositoryUrlPattern)?.[0] || '';
   const previousUser = String(previousUserText || '').replace(/\s+/g, ' ').trim();
   const previousUserUrl = previousUser.match(githubRepositoryUrlPattern)?.[0] || '';
-  const shortInstall = /^(?:帮我\s*)?(?:安装|接入|连接|添加|导入|装上|装好)(?:一下|这个|该|此)?[。.!！?？]?$/i.test(text);
-  if (!url && !(shortInstall && previousUserUrl && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(previousUser))) return null;
+  const previousUserIsOnlyUrl = Boolean(previousUserUrl) && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(previousUser);
+  const previousContextUrl = String(previousContextText || '').replace(/\s+/g, ' ').trim().match(githubRepositoryUrlPattern)?.[0] || '';
+  const shortInstall = githubMcpShortInstallPattern.test(text);
+  if (!url && !(shortInstall && (previousUserIsOnlyUrl || previousContextUrl))) return null;
   const isExplicitInstallRequest = githubMcpInstallVerbPattern.test(text);
   const isInstallHandoff = /^\s*https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\s*$/i.test(text)
     && githubMcpInstallHandoffPattern.test(String(previousAssistantText || '').replace(/\s+/g, ' ').trim());
-  const isPreviousUserHandoff = shortInstall && previousUserUrl && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(previousUser);
+  const isPreviousUserHandoff = shortInstall && (previousUserIsOnlyUrl || previousContextUrl);
   if (!isExplicitInstallRequest && !isInstallHandoff && !isPreviousUserHandoff) return null;
   if (/(?:怎么|如何|教程|步骤|方法).{0,24}(?:安装|接入|连接|添加|导入)/i.test(text) && !/(?:直接|帮我|请).{0,12}(?:安装|接入|连接|添加|导入)/i.test(text)) return null;
-  return url || previousUserUrl;
+  return url || (previousUserIsOnlyUrl ? previousUserUrl : '') || previousContextUrl;
+}
+
+export function extractGithubRepositoryUrl(input: unknown) {
+  return String(input || '').match(githubRepositoryUrlPattern)?.[0] || '';
+}
+
+export function isGithubMcpInstallFollowUp(input: unknown) {
+  return githubMcpShortInstallPattern.test(String(input || '').replace(/\s+/g, ' ').trim());
 }

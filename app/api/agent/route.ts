@@ -603,8 +603,9 @@ export async function POST(request: Request) {
     });
     const previousAssistantForRouting = [...messages].reverse().find((message) => message.role === 'assistant')?.content || '';
     const previousUserForGithubInstall = [...messages].slice(0, -1).reverse().find((message) => message.role === 'user')?.content || '';
+    const previousContextForGithubInstall = messages.slice(0, -1).map((message) => message.content).join('\n');
     const directGithubMcpRepo = !isCanvasNodeExecution
-      ? extractGithubMcpInstallRequest(latestInstruction, previousAssistantForRouting, previousUserForGithubInstall)
+      ? extractGithubMcpInstallRequest(latestInstruction, previousAssistantForRouting, previousUserForGithubInstall, previousContextForGithubInstall)
       : null;
     // A client-supplied deliverable is a UI hint, not execution authority.
     // The server-side request mode is the single side-effect gate shared by
