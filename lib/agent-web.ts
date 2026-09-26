@@ -417,6 +417,19 @@ export function extractGithubMcpInstallRequest(input: string, previousAssistantT
   return url || (previousUserIsOnlyUrl ? previousUserUrl : '') || previousContextUrl;
 }
 
+/**
+ * 当前消息只发送仓库地址时，判断它是不是在承接助手刚才的安装交接。
+ *
+ * 页面会先筛选历史消息再发给服务端；如果不把这条助手交接消息保留下来，
+ * 服务端看到的就只是一个普通 GitHub 链接，无法确认用户是在授权安装。
+ */
+export function isGithubMcpInstallHandoff(input: string, previousAssistantText = '') {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  const url = text.match(githubRepositoryUrlPattern)?.[0] || '';
+  if (!url || !/^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(text)) return false;
+  return githubMcpInstallHandoffPattern.test(String(previousAssistantText || '').replace(/\s+/g, ' ').trim());
+}
+
 export function extractGithubRepositoryUrl(input: unknown) {
   return String(input || '').match(githubRepositoryUrlPattern)?.[0] || '';
 }

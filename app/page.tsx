@@ -26,7 +26,7 @@ import { normalizeReferenceRecords } from '@/lib/reference-images';
 import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
-import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, extractGithubRepositoryUrl, isChatDirectionHeading, isGithubMcpInstallFollowUp, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
+import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, extractGithubRepositoryUrl, isChatDirectionHeading, isGithubMcpInstallFollowUp, isGithubMcpInstallHandoff, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-intent';
 import { conversationImage, conversationMessageText } from '@/lib/agent-context';
 import { pollAgentProgress, requestAgent } from '@/lib/agent-client';
@@ -9385,6 +9385,8 @@ export default function Page() {
             : undefined;
         const followUp = overrideRefs ? null : agentFollowUp;
             const requestContent = content || '请分析我上传的文件和参考图';
+            const previousGithubInstallAssistant = [...currentSessionMessages].reverse().find((message)=>message.role === 'assistant')?.content || '';
+            const githubInstallHandoff = isGithubMcpInstallHandoff(requestContent, previousGithubInstallAssistant);
             const githubInstallRepo = isGithubMcpInstallFollowUp(requestContent)
                 ? [...currentSessionMessages].reverse().find((message)=>message.role === 'user' && extractGithubRepositoryUrl(message.content))
                 : null;
@@ -9483,8 +9485,15 @@ export default function Page() {
             const githubInstallContextMessage = isGithubMcpInstallFollowUp(requestContent)
                 ? [...nextMessages].slice(0, -1).reverse().find((message)=>message.role === 'user' && extractGithubRepositoryUrl(message.content))
                 : null;
-            const contextWithGithubInstall = githubInstallContextMessage && !selectedContextMessages.some((message)=>message.id === githubInstallContextMessage.id)
-                ? [...selectedContextMessages, githubInstallContextMessage].sort((left, right)=>nextMessages.indexOf(left) - nextMessages.indexOf(right))
+            const githubInstallHandoffMessage = githubInstallHandoff
+                ? [...nextMessages].slice(0, -1).reverse().find((message)=>message.role === 'assistant' && isGithubMcpInstallHandoff(requestContent, message.content))
+                : null;
+            const githubInstallContextMessages = [githubInstallContextMessage, githubInstallHandoffMessage]
+                .filter((message, index, items): message is (typeof githubInstallContextMessage) => Boolean(message) && items.findIndex((candidate)=>candidate?.id === message.id) === index);
+            const contextWithGithubInstall = githubInstallContextMessages.length
+                ? [...selectedContextMessages, ...githubInstallContextMessages]
+                    .filter((message, index, items)=>items.findIndex((candidate)=>candidate.id === message.id) === index)
+                    .sort((left, right)=>nextMessages.indexOf(left) - nextMessages.indexOf(right))
                 : selectedContextMessages;
             const payloadMessages = contextWithGithubInstall.map((m)=>({
                     role: m.role,
