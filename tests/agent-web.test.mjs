@@ -23,6 +23,7 @@ test('only offers the MCP manager when the turn is about MCP services', () => {
   assert.equal(web.likelyMcpManagementRequest('https://github.com/owner/repo\n\n帮我安装'), true);
   assert.equal(web.likelyMcpManagementRequest('https://github.com/owner/repo'), true);
   assert.equal(web.extractGithubMcpInstallRequest('https://github.com/owner/repo\n\n帮我安装'), 'https://github.com/owner/repo');
+  assert.equal(web.extractGithubMcpInstallRequest('https://github.com/owner/repo'), 'https://github.com/owner/repo');
   assert.equal(web.extractGithubMcpInstallRequest('怎么安装 https://github.com/owner/repo'), null);
   assert.equal(web.extractGithubMcpInstallRequest(
     'https://github.com/owner/repo',
@@ -31,7 +32,7 @@ test('only offers the MCP manager when the turn is about MCP services', () => {
   assert.equal(web.extractGithubMcpInstallRequest(
     'https://github.com/owner/repo',
     '这是一个 GitHub 仓库的介绍，地址在这里。',
-  ), null);
+  ), 'https://github.com/owner/repo');
   assert.equal(web.extractGithubMcpInstallRequest(
     '安装',
     '这是一个 GitHub 项目的介绍。',

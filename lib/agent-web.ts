@@ -406,7 +406,10 @@ export function extractGithubMcpInstallRequest(input: string, previousAssistantT
   const previousUserUrl = previousUser.match(githubRepositoryUrlPattern)?.[0] || '';
   const previousUserIsOnlyUrl = Boolean(previousUserUrl) && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(previousUser);
   const previousContextUrl = String(previousContextText || '').replace(/\s+/g, ' ').trim().match(githubRepositoryUrlPattern)?.[0] || '';
+  const isBareRepositoryUrl = Boolean(url)
+    && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(text);
   const shortInstall = githubMcpShortInstallPattern.test(text);
+  if (isBareRepositoryUrl) return url;
   if (!url && !(shortInstall && (previousUserIsOnlyUrl || previousContextUrl))) return null;
   const isExplicitInstallRequest = githubMcpInstallVerbPattern.test(text);
   const isInstallHandoff = /^\s*https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\s*$/i.test(text)
