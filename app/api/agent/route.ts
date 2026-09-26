@@ -601,17 +601,22 @@ export async function POST(request: Request) {
       hasReferences: latestRefs.length > 0,
       hasFiles: Boolean(latest?.files?.length),
     });
+    const previousAssistantForRouting = [...messages].reverse().find((message) => message.role === 'assistant')?.content || '';
+    const directGithubMcpRepo = !isCanvasNodeExecution
+      ? extractGithubMcpInstallRequest(latestInstruction, previousAssistantForRouting)
+      : null;
     // A client-supplied deliverable is a UI hint, not execution authority.
     // The server-side request mode is the single side-effect gate shared by
     // image, file, web, MCP and Skill paths.
-    let requestModeAllowsExecution = intentDecision.mode === 'execute' || intentDecision.mode === 'follow_up';
+    let requestModeAllowsExecution = intentDecision.mode === 'execute'
+      || intentDecision.mode === 'follow_up'
+      || Boolean(directGithubMcpRepo);
     // Compatibility contract for the canvas dock: web intent is decided from
     // the user's latest instruction, never from injected canvas context. The
     // shared router below performs this decision once; keep the historical
     // call shape documented without issuing a second web-search evaluation.
     // shouldUseAgentWebSearch(webMode, latestInstruction, messages.slice(0, -1))
     const webMode = isCanvasNodeExecution ? 'off' : resolveAgentWebMode(body.webMode, body.webSearch);
-    const previousAssistantForRouting = [...messages].reverse().find((message) => message.role === 'assistant')?.content || '';
     const requestRoute = classifyAgentRequest(latestInstruction, {
       messages: messages.slice(0, -1),
       hasReferences: latestRefs.length > 0,
@@ -730,9 +735,6 @@ export async function POST(request: Request) {
       // Tracked equivalent: chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, ...)
       return chatCompletionStream(...args);
     };
-    const directGithubMcpRepo = requestModeAllowsExecution && !isCanvasNodeExecution
-      ? extractGithubMcpInstallRequest(latestInstruction)
-      : null;
     if (directGithubMcpRepo) {
       reportProgress({ stage: 'tool', message: '正在安装并连接 MCP 仓库…' });
       const mcpTools = [{ server: '本机配置', name: '安装 GitHub MCP', readOnly: false, ok: true }];

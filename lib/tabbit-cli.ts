@@ -54,7 +54,8 @@ const SAFE_TOKEN = /^[A-Za-z0-9_-]{1,96}$/;
 const GROUP_ID = /^[A-Fa-f0-9]{16,96}$/;
 const MAX_CODE_CHARS = 240_000;
 const MAX_OUTPUT_CHARS = 120_000;
-const DEFAULT_TIMEOUT_MS = 60_000;
+const MIN_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT_MS = MIN_TIMEOUT_MS;
 const MAX_TIMEOUT_MS = 180_000;
 
 function token(value: unknown, label: string, pattern = SAFE_TOKEN) {
@@ -95,7 +96,12 @@ function cliArgs(input: TabbitBrowserArgs): { action: TabbitAction; args: string
   const args: string[] = [action];
   if (task) args.push('--task', task);
   let stdin: string | undefined;
-  let timeoutMs = integer(input.timeoutMs, 'timeoutMs', 1_000, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
+  // Tabbit's nodejs executor rejects values below 60 seconds. Normalize a
+  // shorter model-provided value instead of sending an invalid CLI argument.
+  let timeoutMs = Math.max(
+    MIN_TIMEOUT_MS,
+    integer(input.timeoutMs, 'timeoutMs', 1_000, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
+  );
 
   if (action === 'diagnose') return { action, args, timeoutMs };
   if (action === 'tabs') {

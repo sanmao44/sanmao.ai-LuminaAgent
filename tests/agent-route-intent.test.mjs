@@ -186,6 +186,21 @@ test('GitHub 地址后直接说“帮我安装”会执行安装，不会返回�
   assert.equal(agent.calls.length, 0, '明确仓库安装不需要先问模型');
 });
 
+test('助手索要仓库地址后，用户只发 GitHub 地址也会直接安装', async () => {
+  const agent = harness();
+  const data = await agent.post([
+    { role: 'assistant', content: '安装失败：请把 GitHub 仓库地址直接发给我，我只会安装你这次消息里提供的仓库。' },
+    { role: 'user', content: 'https://github.com/CursorTouch/Windows-MCP' },
+  ]);
+  assert.match(data.message, /Windows-MCP.*已安装并接入/);
+  assert.equal(agent.manageCalls.length, 1);
+  assert.deepEqual(agent.manageCalls[0][0], {
+    action: 'install_from_repo',
+    repo: 'https://github.com/CursorTouch/Windows-MCP',
+  });
+  assert.equal(agent.calls.length, 0, '安装交接不需要再次询问模型');
+});
+
 test('a configured image model mentioned in a status report never triggers generation', async () => {
   const agent = harness({ reply: (payload) => {
     if (String(payload.messages?.[0]?.content || '').includes('只判断当前用户')) {

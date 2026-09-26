@@ -17,7 +17,7 @@ export const tabbitBrowserTool = defineTool({
       requestId: { type: 'string', description: 'nodejs/receipt 使用的幂等请求 ID。' },
       code: { type: 'string', description: 'nodejs 的 Browser-owned Playwright JavaScript，使用 page/context/pages()/tabbit helper，必须返回有界 JSON。' },
       readOnly: { type: 'boolean', description: '仅当脚本绝不会导航、聚焦、输入、点击或改变浏览器/网页状态时为 true。' },
-      timeoutMs: { type: 'integer', minimum: 1000, maximum: 180000 },
+      timeoutMs: { type: 'integer', minimum: 60000, maximum: 180000 },
       state: { type: 'string', enum: ['available', 'owned', 'claimed'] },
       limit: { type: 'integer', minimum: 1, maximum: 50 },
       tabId: { type: 'integer', minimum: 1 },

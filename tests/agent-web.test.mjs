@@ -24,6 +24,14 @@ test('only offers the MCP manager when the turn is about MCP services', () => {
   assert.equal(web.likelyMcpManagementRequest('https://github.com/owner/repo'), true);
   assert.equal(web.extractGithubMcpInstallRequest('https://github.com/owner/repo\n\n帮我安装'), 'https://github.com/owner/repo');
   assert.equal(web.extractGithubMcpInstallRequest('怎么安装 https://github.com/owner/repo'), null);
+  assert.equal(web.extractGithubMcpInstallRequest(
+    'https://github.com/owner/repo',
+    '安装失败：请把 GitHub 仓库地址直接发给我，我只会安装你这次消息里提供的仓库。',
+  ), 'https://github.com/owner/repo');
+  assert.equal(web.extractGithubMcpInstallRequest(
+    'https://github.com/owner/repo',
+    '这是一个 GitHub 仓库的介绍，地址在这里。',
+  ), null);
 });
 
 test('本地运行时的问法也会放出 MCP 管理工具，但普通提问不会', () => {
