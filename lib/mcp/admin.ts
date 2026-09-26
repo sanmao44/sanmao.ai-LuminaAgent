@@ -31,6 +31,11 @@ const TOOL_DESCRIPTION_CHARS = 200;
 export type McpManageOptions = {
   /** 用户这一轮的原话，用来校验危险动作的授权。 */
   instruction?: string;
+  /**
+   * 服务端已经从用户本轮原话中提取并确认的 GitHub 仓库地址。
+   * 只由 Agent 路由传入，不能由模型工具参数提供。
+   */
+  authorizedGithubRepo?: string;
   /** 配置目录，测试用；线上走 resolveLocalDataDir()。 */
   dataDir?: string;
   fetchImpl?: typeof fetch;
@@ -121,7 +126,7 @@ export async function runMcpManageAction(args: unknown, options: McpManageOption
   if (action === 'install_from_repo') {
     if (listMcpServers({ dataDir }).length >= MCP_MAX_SERVERS) throw new Error(`最多添加 ${MCP_MAX_SERVERS} 个 MCP 服务`);
     const repo = String(input.repo || input.url || '').trim();
-    const requested = parseGithubRepoFromInstruction(instruction);
+    const requested = String(options.authorizedGithubRepo || '').trim() || parseGithubRepoFromInstruction(instruction);
     const repoIdentity = repo.replace(/^https?:\/\/(?:www\.)?github\.com\//i, '').replace(/\.git(?:\/.*)?$/, '').replace(/\/.*$/, '').toLowerCase();
     const requestedIdentity = requested.replace(/^https?:\/\/(?:www\.)?github\.com\//i, '').replace(/\.git$/, '').toLowerCase();
     if (!repo || !requested || repoIdentity !== requestedIdentity) {

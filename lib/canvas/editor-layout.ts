@@ -26,6 +26,7 @@ export type CanvasGroupToolbarPlacement = CanvasOverlayPosition & {
 
 export type CanvasOverlayFit = CanvasOverlayPosition & {
   maxHeight: number;
+  placement: "bottom" | "top";
 };
 
 /**
@@ -137,14 +138,50 @@ export function fitCanvasNodeEditorBelow(
 ): CanvasOverlayFit {
   const position = placeCanvasNodeEditor(anchor, stage, overlay, gap);
   const rightmostLeft = Math.max(margin, stage.width - overlay.width - margin);
+  const left = Math.min(Math.max(position.left, margin), rightmostLeft);
+  const belowFits = position.top + overlay.height <= stage.height - margin;
+  const aboveTop = anchor.top - overlay.height - gap;
+  const aboveFits = aboveTop >= margin;
+
+  if (belowFits) {
+    return {
+      left,
+      top: position.top,
+      maxHeight: overlay.height,
+      placement: "bottom",
+    };
+  }
+
+  if (aboveFits) {
+    return {
+      left,
+      top: aboveTop,
+      maxHeight: overlay.height,
+      placement: "top",
+    };
+  }
+
+  const belowSpace = Math.max(0, stage.height - position.top - margin);
+  const aboveSpace = Math.max(0, anchor.top - gap - margin);
+  if (belowSpace >= aboveSpace) {
+    return {
+      left,
+      top: position.top,
+      maxHeight: Math.min(overlay.height, belowSpace),
+      placement: "bottom",
+    };
+  }
+
+  const top = margin;
 
   return {
-    left: Math.min(Math.max(position.left, margin), rightmostLeft),
-    top: position.top,
+    left,
+    top,
     maxHeight: Math.max(
       0,
-      Math.min(overlay.height, stage.height - position.top - margin),
+      Math.min(overlay.height, stage.height - top - margin),
     ),
+    placement: "bottom",
   };
 }
 

@@ -183,6 +183,16 @@ test('GitHub 地址后直接说“帮我安装”会执行安装，不会返回�
     action: 'install_from_repo',
     repo: 'https://github.com/CursorTouch/Windows-MCP',
   });
+  assert.equal(agent.manageCalls[0][1].authorizedGithubRepo, 'https://github.com/CursorTouch/Windows-MCP');
+  assert.equal(agent.calls.length, 0, '明确仓库安装不需要先问模型');
+});
+
+test('GitHub 地址后紧跟“安装”也会执行安装', async () => {
+  const agent = harness();
+  const data = await agent.post([{ role: 'user', content: 'https://github.com/CursorTouch/Windows-MCP安装' }]);
+  assert.match(data.message, /Windows-MCP.*已安装并接入/);
+  assert.equal(agent.manageCalls.length, 1);
+  assert.equal(agent.manageCalls[0][1].authorizedGithubRepo, 'https://github.com/CursorTouch/Windows-MCP');
   assert.equal(agent.calls.length, 0, '明确仓库安装不需要先问模型');
 });
 
@@ -195,6 +205,7 @@ test('用户只发 GitHub 仓库地址也会直接安装', async () => {
     action: 'install_from_repo',
     repo: 'https://github.com/CursorTouch/Windows-MCP',
   });
+  assert.equal(agent.manageCalls[0][1].authorizedGithubRepo, 'https://github.com/CursorTouch/Windows-MCP');
   assert.equal(agent.calls.length, 0, '仓库地址本身就是安装指令，不需要先问模型');
 });
 

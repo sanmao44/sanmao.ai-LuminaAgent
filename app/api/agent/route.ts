@@ -743,7 +743,11 @@ export async function POST(request: Request) {
       try {
         const outcome = await runMcpManageAction(
           { action: 'install_from_repo', repo: directGithubMcpRepo },
-          { instruction: latestInstruction, signal: requestController.signal },
+          {
+            instruction: latestInstruction,
+            authorizedGithubRepo: directGithubMcpRepo,
+            signal: requestController.signal,
+          },
         );
         const server = outcome.result.server as { name?: string } | undefined;
         const message = `已完成：${server?.name || directGithubMcpRepo} 已安装并接入，下一轮对话即可使用。`;

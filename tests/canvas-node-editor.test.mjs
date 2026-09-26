@@ -743,10 +743,11 @@ test("dock local edit control keeps the remove action inside the same chip", () 
 test("regular editor stays below its node in the stacked main-composer layout", () => {
   assert.match(component, /fitCanvasNodeEditorBelow\(/);
   assert.match(component, /const fittedPosition = fitCanvasNodeEditorBelow\(\s*anchor,/);
+  assert.match(component, /width: promptExpanded \? undefined : position\.width/);
   assert.doesNotMatch(component, /layoutAnchor/);
-  assert.match(component, /data-placement="bottom"/);
+  assert.match(component, /data-placement=\{position\.placement\}/);
   assert.match(component, /const position = stackedEditor\s*\? \{ \.\.\.fittedPosition, maxHeight: popoverHeight \}/);
-  assert.match(component, /maxHeight: promptExpanded \|\| stackedEditor \|\| isDockNode \? undefined : position\.maxHeight/);
+  assert.match(component, /maxHeight: promptExpanded \? undefined : position\.maxHeight/);
   assert.doesNotMatch(component, /needsFullPanelLift/);
   assert.doesNotMatch(component, /useTopPlacement/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\)\[data-density\]\{[^}]*width:min\(920px,calc\(100vw - 64px\)\)!important/);
@@ -760,6 +761,8 @@ test("regular editor stays below its node in the stacked main-composer layout", 
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock:not\(.is-prompt-expanded\)\[data-density\]\{\s*width:min\(940px,calc\(100vw - 64px\)\)!important;/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock:not\(.is-prompt-expanded\)\[data-density\]\{[^}]*max-height:none!important/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock:not\(.is-prompt-expanded\) \.canvas-node-editor-dock-tool\.params\{\s*flex:0 1 360px;/);
+  assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\)\[data-density\]\{\s*width:min\(var\(--canvas-editor-width,720px\),calc\(100vw - 48px\)\)!important/);
+  assert.match(styles, /\.canvas-node-editor-dock-preset-wrap>\.canvas-node-editor-dock-popover\{[\s\S]*left:0;[\s\S]*width:min\(620px,100%\)/);
 });
 
 test("multi-select layout toolbar exposes alignment and distribution icons only for ordinary nodes", () => {

@@ -19387,7 +19387,13 @@ function CanvasNodeEditorPopover({
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState({ left: 18, top: 86, maxHeight: 580 });
+  const [position, setPosition] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    maxHeight: number;
+    placement: "bottom" | "top";
+  }>({ left: 18, top: 86, width: 720, maxHeight: 580, placement: "bottom" });
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [promptOptimizing, setPromptOptimizing] = useState(false);
@@ -19756,7 +19762,23 @@ function CanvasNodeEditorPopover({
     const nextCompact = stageWidth < 960 || zoom < 0.58;
     const microEditor = zoom < 0.35;
     if (nextCompact !== isCompact) setIsCompact(nextCompact);
-    const popoverWidth = popoverRef.current?.offsetWidth || (microEditor ? 360 : nextCompact ? 510 : 640);
+    // The editor is mounted directly under the stage (outside the transformed
+    // world layer). Keep its screen-space width deliberately modest, then cap
+    // it against the visible desktop stage so it cannot become a canvas-wide
+    // banner.
+    const preferredPopoverWidth = audioNode
+      ? 620
+      : microEditor
+        ? 560
+        : nextCompact
+          ? 640
+          : 720;
+    const stageWidthForEditor = canvasVisibleStageWidth(stage);
+    const stageMargin = 12;
+    const popoverWidth = Math.min(
+      preferredPopoverWidth,
+      Math.max(1, stageWidthForEditor - stageMargin * 2),
+    );
     // Use the density's preferred height instead of the currently rendered
     // height. A previously constrained panel can then grow again after the
     // node is panned upward or the viewport becomes taller.
@@ -19807,17 +19829,13 @@ function CanvasNodeEditorPopover({
           width: size.w * zoom,
           height: size.h * zoom,
         };
-    // Use the node's real screen-space anchor for every editor mode. The
-    // panel may clamp to the stage margins when it is wider than the node,
-    // but it must not be recentered independently from the node.
-    /* 参数面板同理：贴到面板左边，别让 Agent 面板压住正在调的那几个参数。 */
     const fittedPosition = fitCanvasNodeEditorBelow(
-        anchor,
-        { width: canvasVisibleStageWidth(stage), height: stageHeight },
-        { width: popoverWidth, height: popoverHeight },
-        14,
-        12,
-      );
+      anchor,
+      { width: stageWidthForEditor, height: stageHeight },
+      { width: popoverWidth, height: popoverHeight },
+      14,
+      stageMargin,
+    );
     // Keep the compact composer attached below its node. Its own text areas
     // handle long content, so the complete panel may continue below the stage
     // instead of being lifted or turned into a scroll drawer.
@@ -19827,9 +19845,11 @@ function CanvasNodeEditorPopover({
     setPosition((current) =>
       current.left === position.left &&
       current.top === position.top &&
-      current.maxHeight === position.maxHeight
+      current.width === popoverWidth &&
+      current.maxHeight === position.maxHeight &&
+      current.placement === position.placement
         ? current
-        : position,
+        : { ...position, width: popoverWidth },
     );
   }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, isDockNode, isImageNode, node.x, node.y, promptExpanded, size.h, size.w, stackedEditor, stageRef]);
 
@@ -19864,7 +19884,7 @@ function CanvasNodeEditorPopover({
     <div
       ref={popoverRef}
        className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
-      data-placement="bottom"
+      data-placement={position.placement}
       data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
       data-prompt-expanded={promptExpanded ? "true" : "false"}
@@ -19873,8 +19893,9 @@ function CanvasNodeEditorPopover({
       style={{
         left: position.left,
         top: position.top,
-        maxHeight: promptExpanded || stackedEditor || isDockNode ? undefined : position.maxHeight,
-      }}
+        width: promptExpanded ? undefined : position.width,
+        maxHeight: promptExpanded ? undefined : position.maxHeight,
+      } as CSSProperties}
       onPointerDown={(event) => {
         const target = event.target as Node;
         if (imageDockPanel === "params" && !imageDockParamsRef.current?.contains(target)) {

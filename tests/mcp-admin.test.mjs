@@ -131,6 +131,21 @@ test('GitHub MCP 安装只接受用户原话里的同一个仓库地址', async 
   );
 });
 
+test('已由服务端确认的 GitHub 地址可用于直接安装，但仍校验仓库一致性', async () => {
+  const dataDir = tempDir();
+  await assert.rejects(
+    () => mcp.runMcpManageAction(
+      { action: 'install_from_repo', repo: 'https://github.com/evil/repo' },
+      {
+        dataDir,
+        instruction: '安装',
+        authorizedGithubRepo: 'https://github.com/owner/repo',
+      },
+    ),
+    /只会安装你这次消息里提供的仓库/,
+  );
+});
+
 test('管理工具能把某个服务改成按需下发，也能改回来', async () => {
   const dir = tempDir();
   try {

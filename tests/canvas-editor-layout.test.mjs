@@ -85,7 +85,7 @@ test("keeps a group toolbar within the horizontal stage margins", () => {
   );
 });
 
-test("fits a tall editor below its node without moving it across the anchor", () => {
+test("keeps a tall editor bounded below its node when neither side fits fully", () => {
   const anchor = { left: 300, top: 180, width: 380, height: 260 };
   const stage = { width: 1280, height: 720 };
   const editor = layout.fitCanvasNodeEditorBelow(
@@ -94,8 +94,18 @@ test("fits a tall editor below its node without moving it across the anchor", ()
     { width: 640, height: 580 },
   );
 
-  assert.deepEqual(editor, { left: 170, top: 454, maxHeight: 254 });
+  assert.deepEqual(editor, { left: 170, top: 454, maxHeight: 254, placement: "bottom" });
   assert.equal(editor.top, anchor.top + anchor.height + 14);
+});
+
+test("flips the editor above the node when the upper viewport has room", () => {
+  const editor = layout.fitCanvasNodeEditorBelow(
+    { left: 300, top: 650, width: 220, height: 90 },
+    { width: 900, height: 900 },
+    { width: 520, height: 360 },
+  );
+
+  assert.deepEqual(editor, { left: 150, top: 276, maxHeight: 360, placement: "top" });
 });
 
 test("keeps a below-node editor inside the horizontal viewport margins", () => {
@@ -105,7 +115,7 @@ test("keeps a below-node editor inside the horizontal viewport margins", () => {
     { width: 640, height: 300 },
   );
 
-  assert.deepEqual(editor, { left: 12, top: 254, maxHeight: 300 });
+  assert.deepEqual(editor, { left: 12, top: 254, maxHeight: 300, placement: "bottom" });
 });
 
 test("places a context menu below and to the right when there is room", () => {
