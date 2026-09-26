@@ -59,9 +59,36 @@ const vagueFollowUpPattern = /^(?:继续|再来一个|再来一版|再来几版|
 // （询问、讨论、执行、承接上一轮），而不是把某个功能词直接映射到工具。
 // 这层是图片、文件、联网、MCP 和 Skill 路由共用的安全闸门。
 const capabilityQuestionPattern = /^(?:你)?(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)[？?]$/i;
-const taskLeadPattern = /^(?:请(?!问)|麻烦(?!问)|帮我|给我|替我|为我|我想(?:要|让你)|我(?:要|需要)(?!了解|知道|确认|咨询|问|弄清楚)|需要你|直接|开始|继续|再来|按照刚才|基于这个|把它|将其)/i;
-const taskVerbPattern = /(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|生图|出图)/i;
+const taskLeadPattern = /^(?:请(?!问)|麻烦(?!问)|帮我|给我|给我们|替我|为我|我想(?:要|让你|生成|制作|创建|写|改写|润色|总结|翻译|分析|描述|搜索|打开|执行)|我(?:要|需要)(?!了解|知道|确认|咨询|问|弄清楚)|需要你|直接|开始|继续|再来|按照刚才|基于这个|把它|将其)/i;
+const taskVerbPattern = /(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|安装|接入|连接|导入|生图|出图)/i;
 const questionShapePattern = /^(?:为什么|怎么(?:做|办)|如何|什么是|是什么|能否|能不能|是否|可以吗|支持吗|请问|告诉我|解释一下|分析一下|比较一下|建议一下|你觉得).*[？?]?$|[？?]$/i;
+
+/**
+ * A capability word is not an execution frame. The frame has to be visible in
+ * the sentence: an imperative/request lead, a direct action lead, a
+ * context-to-action construction (“基于这张图生成…”), or an explicit
+ * delegation (“创意交给你”). This is intentionally structural: a sentence
+ * such as “我的默认生图模型已经设置” contains the capability noun but has
+ * no request frame, so it cannot authorize a side effect.
+ */
+const directTaskLeadPattern = /^(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|优化|改|换|去掉|安装|接入|连接|导入|生图|出图|做|出(?:个|一张|张)?|来(?:个|一张|张)?|画)(?=\s|[一二三四五六七八九十百千万\d个只条张幅份位篇猫狗鱼鸟图画字构背景文字\u4e00-\u9fff])/i;
+const contextualTaskPattern = /^(?:根据|按照|基于|用|按|把|将).{0,80}(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|生图|出图|改成|换成)/i;
+const delegatedTaskPattern = /^我(?:只(?:说|提供|给你|告诉你)|仅(?:说|提供|给你|告诉你)).{0,32}(?:目标|要求|想法|描述).{0,32}(?:交给你|由你|你来)/i;
+const declarativeStatePattern = /^(?:(?:我|我的|当前|默认|系统|助手|模型|他|她|它|刚才|上一轮|这次)[^！？?!]{0,96}(?:已经|已|正在|尚未|还没|没有|没|并未|并没有|不需要|不该|误|错误地|居然|竟然|自动|擅自|设置|配置|启用|接入|连接|开启|关闭|完成|失败|报错|生效|调用了|使用了|生成了|生图了|出图了)[^！？?!]{0,96})$/i;
+const unwantedActionReportPattern = /^(?:我(?:没有|没|并未|并没有)[^！？?!]{0,40}(?:生图|出图|生成图片|图片需求)|(?:他|她|它|系统|助手|模型|刚才|上一轮)[^！？?!]{0,60}(?:误|错误地|居然|竟然|自动|擅自|给我|替我|帮我)[^！？?!]{0,80}(?:生图|出图|生成图片|调用|执行))/i;
+
+function hasExplicitExecutionFrame(text: string) {
+  if (declarativeStatePattern.test(text) || unwantedActionReportPattern.test(text)) return false;
+  return taskLeadPattern.test(text)
+    || directTaskLeadPattern.test(text)
+    || contextualTaskPattern.test(text)
+    || delegatedTaskPattern.test(text)
+    || taskVerbPattern.test(text);
+}
+
+function isNonExecutableStatement(text: string) {
+  return declarativeStatePattern.test(text) || unwantedActionReportPattern.test(text);
+}
 
 /**
  * Infer the user's speech act before selecting a deliverable or tool.
@@ -75,8 +102,7 @@ export function inferAgentRequestMode(input: string): AgentRequestMode {
   const capabilityQuestion = capabilityQuestionPattern.test(text);
   const genericQuestion = questionShapePattern.test(text)
     || /^(?:请问|麻烦问一下|我想(?:了解|知道|确认)|我要(?:了解|知道|确认)|我需要(?:了解|知道|确认)|帮我(?:了解|确认|弄清楚)).*[？?]?$/.test(text);
-  const explicitTask = taskLeadPattern.test(text)
-    || (taskVerbPattern.test(text) && !/^(?:为什么|怎么|如何|什么是|是什么|是否|能否|能不能|可以吗|支持吗|请问)/i.test(text));
+  const explicitTask = hasExplicitExecutionFrame(text);
   // A capability-leading question that merely contains an action verb is
   // still a question. A concrete imperative followed by “可以吗？” is the
   // opposite: it is an execution request asking for confirmation.
@@ -124,6 +150,10 @@ function classifyAgentDeliverableCore(input: string, context: AgentIntentContext
     return result('OTHER', hasReferences ? '检测到参考图，默认先分析内容；你可以补充“修改”或“反推提示词”。' : '检测到文件，默认先读取并处理文件内容。', 'medium', [hasReferences ? '参考图' : '文件']);
   }
   if (!text) return result('OTHER', '还没有足够的文字目标。', 'low', []);
+
+  if (requestMode === 'unknown' && isNonExecutableStatement(text)) {
+    return result('OTHER', '用户正在陈述配置、已发生的动作或异常反馈，不把其中提到的能力当成本轮执行指令。', 'high', ['陈述/反馈'], requestMode);
+  }
 
   // This gate must precede image/document heuristics. Questions about a
   // capability or a plan are conversational turns even when they contain the

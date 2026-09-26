@@ -108,6 +108,16 @@ test('does not activate any executable route for capability questions', () => {
   assert.equal(routing.classifyAgentRequest('请做一个产品介绍 PPT').route, 'ppt');
 });
 
+test('does not reopen a high-confidence status report for semantic execution', () => {
+  const decision = routing.classifyAgentRequest('我的默认生图模型已经设置', {
+    messages: [{ role: 'assistant', content: '请告诉我你想要什么。' }],
+  });
+  assert.equal(decision.route, 'chat');
+  assert.equal(decision.intent.confidence, 'high');
+  assert.equal(decision.intent.mode, 'unknown');
+  assert.equal(routing.routeNeedsSemanticReview(decision), false);
+});
+
 test('does not force semantic review when a route is unambiguous', () => {
   const decision = routing.classifyAgentRequest('生成一个 PPT 介绍方案');
   assert.equal(routing.routeNeedsSemanticReview(decision), false);

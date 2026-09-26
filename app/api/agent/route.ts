@@ -44,7 +44,7 @@ import { isValidOneTakeDuration, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURA
 import { isTrustedAppRequest } from '@/lib/auth';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { referenceRecordsForLog } from '@/lib/reference-images';
-import { isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFilesystemRequest, likelyFileGenerationRequest, likelyMcpManagementRequest, resolveAgentWebMode, type AgentWebDecision } from '@/lib/agent-web';
+import { extractGithubMcpInstallRequest, isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFilesystemRequest, likelyFileGenerationRequest, likelyMcpManagementRequest, resolveAgentWebMode, type AgentWebDecision } from '@/lib/agent-web';
 import { isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor } from '@/lib/tools';
 import { resolveToolPolicy } from '@/lib/tools/policy';
 import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, callMcpTool } from '@/lib/mcp/client';
@@ -727,6 +727,32 @@ export async function POST(request: Request) {
       // Tracked equivalent: chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, ...)
       return chatCompletionStream(...args);
     };
+    const directGithubMcpRepo = requestModeAllowsExecution && !isCanvasNodeExecution
+      ? extractGithubMcpInstallRequest(latestInstruction)
+      : null;
+    if (directGithubMcpRepo) {
+      reportProgress({ stage: 'tool', message: '正在安装并连接 MCP 仓库…' });
+      const mcpTools = [{ server: '本机配置', name: '安装 GitHub MCP', readOnly: false, ok: true }];
+      try {
+        const outcome = await runMcpManageAction(
+          { action: 'install_from_repo', repo: directGithubMcpRepo },
+          { instruction: latestInstruction, signal: requestController.signal },
+        );
+        const server = outcome.result.server as { name?: string } | undefined;
+        const message = `已完成：${server?.name || directGithubMcpRepo} 已安装并接入，下一轮对话即可使用。`;
+        await settleLlmLog?.({ status: 'success', responseChars: message.length });
+        return wantsStream
+          ? streamResult(null, { fallback: message, images: [], files: [], generations: [], model: agentRuntime.model.displayName, mcpTools, statuses: [{ type: 'status', stage: 'answering', message: 'MCP 已安装并接入' }] })
+          : Response.json({ ok: true, message, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, mcpTools });
+      } catch (error) {
+        if (requestController.signal.aborted) throw requestController.signal.reason || error;
+        const message = `安装失败：${error instanceof Error ? error.message : '无法安装这个 MCP 仓库'}`;
+        await settleLlmLog?.({ status: 'error', responseChars: message.length, error: message });
+        return wantsStream
+          ? streamResult(null, { fallback: message, images: [], files: [], generations: [], model: agentRuntime.model.displayName, mcpTools: [{ ...mcpTools[0], ok: false }], statuses: [{ type: 'status', stage: 'answering', message: 'MCP 安装失败' }] })
+          : Response.json({ ok: true, message, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, mcpTools: [{ ...mcpTools[0], ok: false }] });
+      }
+    }
     const trackedNativeWebSearch = (...args: Parameters<typeof runNativeWebSearch>) => {
       llmCallCount += 1;
       // Keep the requestController.signal on the native search call:

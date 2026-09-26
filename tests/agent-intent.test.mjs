@@ -38,6 +38,23 @@ test('uses request mode as a cross-feature safety gate', () => {
   assert.equal(intent.inferAgentRequestMode('请分析一下这个方案'), 'execute');
 });
 
+test('does not execute a capability mentioned inside status or complaint text', () => {
+  for (const input of [
+    '我的默认生图模型已经设置',
+    '默认生图模型已配置完成',
+    '我没有生图需求，但他给我生图了',
+    '刚才系统误给我出图了',
+  ]) {
+    const decision = intent.classifyAgentDeliverable(input);
+    assert.equal(decision.mode, 'unknown', input);
+    assert.equal(decision.deliverable, 'OTHER', input);
+  }
+
+  // A real command with the same capability word remains executable.
+  assert.equal(intent.classifyAgentDeliverable('请帮我生成一张猫的图片').deliverable, 'IMAGE');
+  assert.equal(intent.classifyAgentDeliverable('我想生成一张猫的图片').deliverable, 'IMAGE');
+});
+
 test('real conversation scene commands generate images while commentary remains text', () => {
   const messages = [
     { role: 'assistant', content: '对牛弹琴', images: [{ id: 'image' }] },

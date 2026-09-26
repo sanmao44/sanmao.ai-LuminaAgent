@@ -209,7 +209,9 @@ const searchOptOutPattern = /(?:不要|别|无需|不用|不需要|禁止|关闭
 const MCP_MANAGE_VERB = '(?:接入|接个|连上|连接|添加|新增|删除|移除|删掉|断开|停用|启用|自检|查看|列出|配置|检测)';
 const MCP_MANAGE_NOUN = '(?:外部服务|远程服务|工具服务|服务|server)';
 const mcpManagementPattern = new RegExp(`mcp|model\\s+context\\s+protocol|(?:${MCP_MANAGE_VERB}[^，。！？]{0,10}${MCP_MANAGE_NOUN})|(?:${MCP_MANAGE_NOUN}[^，。！？]{0,8}${MCP_MANAGE_VERB})`, 'i');
-const githubMcpInstallPattern = /(?:安装|接入|连接|添加|导入|装上|装好|把).{0,48}(?:github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|GitHub\s*(?:仓库|repo))|^\s*https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\s*$/i;
+const githubMcpInstallPattern = /(?:安装|接入|连接|添加|导入|装上|装好|帮我).{0,80}(?:github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|GitHub\s*(?:仓库|repo))|(?:github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|GitHub\s*(?:仓库|repo)).{0,80}(?:安装|接入|连接|添加|导入|装上|装好|帮我)|^\s*https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\s*$/i;
+const githubRepositoryUrlPattern = /https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?/i;
+const githubMcpInstallVerbPattern = /(?:帮我\s*)?(?:安装|接入|连接|添加|导入|装上|装好)(?:一下|这个|该|此)?/i;
 // 本地工具运行时（受控条目）单独认：「浏览器控制组件装了吗 / 启动浏览器运行时」也要下发管理工具，
 // 否则助手明明能查状态、能启停，却看不到入口。
 const mcpRuntimePattern = /(?:浏览器|browser|playwright|chromium)[^，。！？]{0,12}(?:运行时|组件|控制|工具|服务)|(?:运行时|浏览器控制)[^，。！？]{0,10}(?:状态|没反应|用不了|不能用|安装|启动|开启|停止|关闭)/i;
@@ -386,4 +388,13 @@ export function likelyMcpManagementRequest(input: string) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
   return mcpManagementPattern.test(text) || mcpRuntimePattern.test(text) || githubMcpInstallPattern.test(text);
+}
+
+/** 识别明确的“GitHub 地址 + 帮我安装”请求，供路由直接执行，避免被回答成教程。 */
+export function extractGithubMcpInstallRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  const url = text.match(githubRepositoryUrlPattern)?.[0] || '';
+  if (!url || !githubMcpInstallVerbPattern.test(text)) return null;
+  if (/(?:怎么|如何|教程|步骤|方法).{0,24}(?:安装|接入|连接|添加|导入)/i.test(text) && !/(?:直接|帮我|请).{0,12}(?:安装|接入|连接|添加|导入)/i.test(text)) return null;
+  return url;
 }

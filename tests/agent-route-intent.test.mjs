@@ -14,6 +14,7 @@ const realSkills = requireTs('./skills');
 
 function harness(options = {}) {
   const calls = [];
+  const manageCalls = [];
   const images = [];
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: [], kind: 'chat' };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: ['generate'], providerId: 'test' };
@@ -53,7 +54,12 @@ function harness(options = {}) {
     '@/lib/mcp/browser-downloads': {},
     '@/lib/mcp/catalog-remote': {},
     '@/lib/mcp/filesystem-roots': { listFilesystemRoots: () => [], listFilesystemWriteRoots: () => [] },
-    '@/lib/mcp/admin': {},
+    '@/lib/mcp/admin': {
+      runMcpManageAction: async (...args) => {
+        manageCalls.push(args);
+        return { result: { server: { name: 'Windows-MCP' } } };
+      },
+    },
     '@/lib/mcp/runtime-admin': {},
     '@/lib/agent/approval': { toolApprovalPolicy: () => 'ask', assessToolApproval: () => ({ required: false, blocked: false }) },
     '@/lib/skills': { ...realSkills, buildAgentSkillContext: () => ({ settings: { enabled: false }, skills: [], indexSection: '', toolHint: '' }) },
@@ -65,7 +71,7 @@ function harness(options = {}) {
   const module = { exports: {} };
   new Function('require', 'module', 'exports', compiled)((id) => mocks[id] || requireTs(id === '@/lib/tools' ? '@/lib/tools/index' : id), module, module.exports);
   return {
-    calls, images,
+    calls, manageCalls, images,
     async post(messages, extra = {}) {
       const response = await module.exports.POST(new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -166,6 +172,47 @@ test('asking about an image does not grant permission to generate another one', 
   assert.equal(data.images.length, 0);
   assert.equal(agent.images.length, 0);
   assert.ok(agent.calls.every((payload) => !(payload.tools || []).some((tool) => tool.function.name === 'image_generate')));
+});
+
+test('GitHub 地址后直接说“帮我安装”会执行安装，不会返回安装教程', async () => {
+  const agent = harness();
+  const data = await agent.post([{ role: 'user', content: 'https://github.com/CursorTouch/Windows-MCP\n\n帮我安装' }]);
+  assert.match(data.message, /Windows-MCP.*已安装并接入/);
+  assert.equal(agent.manageCalls.length, 1);
+  assert.deepEqual(agent.manageCalls[0][0], {
+    action: 'install_from_repo',
+    repo: 'https://github.com/CursorTouch/Windows-MCP',
+  });
+  assert.equal(agent.calls.length, 0, '明确仓库安装不需要先问模型');
+});
+
+test('a configured image model mentioned in a status report never triggers generation', async () => {
+  const agent = harness({ reply: (payload) => {
+    if (String(payload.messages?.[0]?.content || '').includes('只判断当前用户')) {
+      return { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"错误升级"}' };
+    }
+    return { content: '已了解，你的默认生图模型已经设置。' };
+  } });
+  const data = await agent.post([
+    { role: 'assistant', content: '请告诉我你想要什么。' },
+    { role: 'user', content: '我的默认生图模型已经设置' },
+  ]);
+  assert.equal(data.images.length, 0);
+  assert.equal(agent.images.length, 0);
+  assert.equal(agent.calls.filter((payload) => String(payload.messages?.[0]?.content || '').includes('只判断当前用户')).length, 0);
+});
+
+test('server ignores a stale client IMAGE deliverable when the new instruction is not a command', async () => {
+  const agent = harness({ reply: () => ({ content: '已了解当前配置。' }) });
+  const data = await agent.post([
+    { role: 'assistant', content: '上一轮图片已完成。' },
+    { role: 'user', content: '我的默认生图模型已经设置' },
+  ], {
+    deliverable: 'IMAGE',
+    intentReason: '上一轮图片任务',
+  });
+  assert.equal(data.images.length, 0);
+  assert.equal(agent.images.length, 0);
 });
 
 test('colloquial image requests retain the discussed scene and override the old ratio', async () => {

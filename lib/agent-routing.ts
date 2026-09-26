@@ -174,6 +174,11 @@ export function routeNeedsSemanticReview(decision: AgentRequestDecision) {
   const top = decision.candidates[0];
   const next = decision.candidates[1];
   if (!top || decision.route === 'clarify') return true;
+  // A high-confidence non-executable decision is terminal. Reopening a
+  // status report, complaint, or capability question to the semantic model
+  // lets a feature noun (for example “生图”) regain tool permission and
+  // recreates the very side effect this router just prevented.
+  if (decision.intent.confidence === 'high' && !['execute', 'follow_up'].includes(decision.intent.mode)) return false;
   // A short contextual acknowledgement (for example “好的”) has no local
   // deliverable signal. Let the already configured cloud model resolve it
   // once against the bounded recent context instead of guessing a tool route.
