@@ -32,6 +32,16 @@ test('only offers the MCP manager when the turn is about MCP services', () => {
     'https://github.com/owner/repo',
     '这是一个 GitHub 仓库的介绍，地址在这里。',
   ), null);
+  assert.equal(web.extractGithubMcpInstallRequest(
+    '安装',
+    '这是一个 GitHub 项目的介绍。',
+    'https://github.com/owner/repo',
+  ), 'https://github.com/owner/repo');
+  assert.equal(web.extractGithubMcpInstallRequest(
+    '安装',
+    '这是一个 GitHub 项目的介绍。',
+    '我也喜欢这个项目：https://github.com/owner/repo',
+  ), null);
 });
 
 test('本地运行时的问法也会放出 MCP 管理工具，但普通提问不会', () => {

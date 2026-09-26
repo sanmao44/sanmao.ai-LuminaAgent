@@ -394,17 +394,22 @@ export function likelyMcpManagementRequest(input: string) {
 /**
  * 识别明确的“GitHub 地址 + 帮我安装”请求，供路由直接执行，避免被回答成教程。
  *
- * 如果上一条助手消息明确要求用户把 GitHub 仓库地址发来，那么用户下一条
- * 只发送地址也是同一个安装请求；普通聊天里分享 GitHub 链接不能触发安装。
+ * 如果上一条助手消息明确要求用户把 GitHub 仓库地址发来，或者上一条用户消息
+ * 刚发过仓库地址，那么用户下一条只发送地址/“安装”也是同一个安装请求；普通
+ * 聊天里分享 GitHub 链接不能触发安装。
  */
-export function extractGithubMcpInstallRequest(input: string, previousAssistantText = '') {
+export function extractGithubMcpInstallRequest(input: string, previousAssistantText = '', previousUserText = '') {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   const url = text.match(githubRepositoryUrlPattern)?.[0] || '';
-  if (!url) return null;
+  const previousUser = String(previousUserText || '').replace(/\s+/g, ' ').trim();
+  const previousUserUrl = previousUser.match(githubRepositoryUrlPattern)?.[0] || '';
+  const shortInstall = /^(?:帮我\s*)?(?:安装|接入|连接|添加|导入|装上|装好)(?:一下|这个|该|此)?[。.!！?？]?$/i.test(text);
+  if (!url && !(shortInstall && previousUserUrl && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(previousUser))) return null;
   const isExplicitInstallRequest = githubMcpInstallVerbPattern.test(text);
   const isInstallHandoff = /^\s*https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\s*$/i.test(text)
     && githubMcpInstallHandoffPattern.test(String(previousAssistantText || '').replace(/\s+/g, ' ').trim());
-  if (!isExplicitInstallRequest && !isInstallHandoff) return null;
+  const isPreviousUserHandoff = shortInstall && previousUserUrl && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(previousUser);
+  if (!isExplicitInstallRequest && !isInstallHandoff && !isPreviousUserHandoff) return null;
   if (/(?:怎么|如何|教程|步骤|方法).{0,24}(?:安装|接入|连接|添加|导入)/i.test(text) && !/(?:直接|帮我|请).{0,12}(?:安装|接入|连接|添加|导入)/i.test(text)) return null;
-  return url;
+  return url || previousUserUrl;
 }
