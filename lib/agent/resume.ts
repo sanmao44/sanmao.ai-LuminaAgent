@@ -29,6 +29,8 @@ import { stripToolCallMarkup } from '@/lib/skills';
 import { verifyFilesystemMove } from '@/lib/agent/filesystem-result';
 import { toolOutcomeText } from '@/lib/agent/tool-outcome';
 import { browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
+import { isTabbitCliAvailable, runTabbitBrowserAction } from '@/lib/tabbit-cli';
+import { tabbitBrowserTool } from '@/lib/tools';
 
 /** 续跑的整体上限：比一轮 MCP 预算再多一点拿来整理回答。 */
 export const RESUME_TIMEOUT_MS = MCP_TURN_TIME_BUDGET_MS + 30_000;
@@ -105,7 +107,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
   // 等待期间用户可能改过 MCP 配置（地址、凭据、允许写入），所以这里重新读一次，按现在的配置判断。
   const mcpRuntime = await loadMcpToolRuntime({ signal: input.signal }).catch(() => ({ servers: [], tools: [] as const }));
   const servers = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
-  const mcpTools = mcpRuntime.tools;
+  const mcpTools = isTabbitCliAvailable() ? [...mcpRuntime.tools, tabbitBrowserTool] : mcpRuntime.tools;
 
   // 续跑同样要过一遍路径策略：用户点了「允许」只代表他同意这一次操作，
   // 不代表授权目录在这中间被改过——所以按现在的授权清单重新判。
@@ -121,8 +123,37 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     const policy = resolveToolPolicy(pending.name, record.gating, mcpTools);
     const meta = policy.tool?.mcp;
     const server = meta ? servers.get(meta.serverId) : undefined;
-    if (!policy.allowed || !meta || !server) {
+    if (policy.allowed && meta?.serverId === 'tabbit' && !server) {
+      // Tabbit is a local virtual backend and intentionally has no MCP server entry.
+    } else if (!policy.allowed || !meta || !server) {
       executed.push(toolFailure(pending, '这一步已经不能执行了：服务被移除、停用，或者写入权限被改过。请重新发起。'));
+      continue;
+    }
+    if (meta.serverId === 'tabbit') {
+      if (callCount >= MCP_TOOL_MAX_CALLS_PER_TURN || budget <= 0) {
+        executed.push(toolFailure(pending, 'Tabbit 浏览器调用已达到本轮上限，这一步没有执行。'));
+        continue;
+      }
+      callCount += 1;
+      const startedAt = Date.now();
+      const args = pending.args && typeof pending.args === 'object' && !Array.isArray(pending.args) ? pending.args as Record<string, unknown> : {};
+      try {
+        const result = await runTabbitBrowserAction(args, { signal: input.signal });
+        budget -= Date.now() - startedAt;
+        usedMcpTools.push({ server: 'Tabbit Browser', name: String(args.action || 'browser'), readOnly: args.readOnly === true, ok: result.ok });
+        auditResumeCall({ serverId: 'tabbit', serverName: 'Tabbit Browser', toolName: 'browser', readOnly: args.readOnly === true }, pending.risk, { allowed: true, decision: 'approval', ok: result.ok, durationMs: Date.now() - startedAt, summary: result.response ?? result.error });
+        executed.push({ role: 'tool', tool_call_id: pending.callId, content: JSON.stringify({ ok: result.ok, source: 'Tabbit Browser（原生 CLI / Browser-owned Playwright）', untrusted: true, content: result.response ?? result, ...(result.error ? { error: result.error } : {}) }) });
+      } catch (error) {
+        budget -= Date.now() - startedAt;
+        const reason = error instanceof Error ? error.message : 'Tabbit 浏览器调用失败';
+        usedMcpTools.push({ server: 'Tabbit Browser', name: String(args.action || 'browser'), readOnly: args.readOnly === true, ok: false });
+        auditResumeCall({ serverId: 'tabbit', serverName: 'Tabbit Browser', toolName: 'browser', readOnly: args.readOnly === true }, pending.risk, { allowed: true, decision: 'approval', ok: false, durationMs: Date.now() - startedAt, summary: reason });
+        executed.push(toolFailure(pending, reason));
+      }
+      continue;
+    }
+    if (!server) {
+      executed.push(toolFailure(pending, 'MCP 服务不可用'));
       continue;
     }
     if (server.catalogId === 'playwright' && isBrowserMutationTool(browserToolName(meta.toolName)) && browserMutationExecuted) {
@@ -186,7 +217,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       budget -= Date.now() - startedAt;
       usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false });
       const reason = error instanceof Error ? error.message : 'MCP 调用失败';
-      noteRemoteCatalogCallFailure(server, reason);
+      if (server) noteRemoteCatalogCallFailure(server, reason);
       auditResumeCall(meta, pending.risk, { allowed: true, decision: 'approval', ok: false, durationMs: Date.now() - startedAt, summary: reason });
       executed.push({
         role: 'tool',
@@ -209,14 +240,16 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
 
   // 用户点过「允许」之后，下一步常常是「再看看结果」：这一步不该逼他再补一句需求。
   // 所以续跑把只读的外部工具继续借给模型，让它把刚执行完的那一步读完、再写回答。
-  const continuationTools = selectToolsForTurn({
+  const selectedContinuationTools = selectToolsForTurn({
     context: record.gating,
     availableTools: mcpTools,
     userText: lastUserInstruction(record.messages),
     groupKeywords: lazyMcpGroupKeywords(mcpRuntime.servers, mcpTools),
-  })
-    .filter((tool) => tool.mcp?.readOnly === true && !tool.mcp.blocked)
-    .map(toModelToolSchema);
+  });
+  const continuationTools = [
+    ...selectedContinuationTools.filter((tool) => tool.mcp?.readOnly === true && !tool.mcp.blocked),
+    ...selectedContinuationTools.filter((tool) => tool.mcp?.serverId === 'tabbit' && !tool.mcp.blocked),
+  ].map(toModelToolSchema);
 
   const runContinuationCall = async (call: { id?: string; function?: { name?: string; arguments?: string } }): Promise<ChatMessage> => {
     const callId = String(call?.id || '');
@@ -224,6 +257,12 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     const meta = policy.tool?.mcp;
     const server = meta ? servers.get(meta.serverId) : undefined;
     if (!policy.allowed || !meta || !server || !meta.readOnly || meta.blocked) {
+      if (policy.allowed && meta?.serverId === 'tabbit' && !server && !meta.blocked) {
+        // Tabbit is a local virtual backend and intentionally has no MCP server entry.
+      } else {
+        return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ ok: false, error: '续跑只允许继续调用只读工具；需要写入请重新发起，让用户再确认一次。' }) };
+      }
+    } else if (!meta.readOnly || meta.blocked) {
       return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ ok: false, error: '这一步没有执行：续跑只允许继续调用只读工具；需要写入请重新发起，让用户再确认一次。' }) };
     }
     if (callCount >= MCP_TOOL_MAX_CALLS_PER_TURN || budget <= 0) {
@@ -235,9 +274,21 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     try {
       args = JSON.parse(call?.function?.arguments || '{}');
     } catch {}
-    const guard = guardMcpServerCall(server, meta.toolName, args, guardOptions);
-    if (!guard.ok) return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ ok: false, error: guard.error }) };
     try {
+      if (meta.serverId === 'tabbit') {
+        if (args && typeof args === 'object' && !Array.isArray(args) && (args as Record<string, unknown>).readOnly !== true) {
+          return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ ok: false, error: '确认后的续读阶段只允许 Tabbit 的 readOnly=true 调用。' }) };
+        }
+        const result = await runTabbitBrowserAction(args as Record<string, unknown>, { signal: input.signal });
+        budget -= Date.now() - startedAt;
+        usedMcpTools.push({ server: 'Tabbit Browser', name: String((args as Record<string, unknown>)?.action || 'browser'), readOnly: true, ok: result.ok });
+        return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ ok: result.ok, source: 'Tabbit Browser（原生 CLI / Browser-owned Playwright）', untrusted: true, content: result.response ?? result, ...(result.error ? { error: result.error } : {}) }) };
+      }
+      if (!server) {
+        return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ ok: false, error: 'MCP 服务不可用' }) };
+      }
+      const guard = guardMcpServerCall(server, meta.toolName, args, guardOptions);
+      if (!guard.ok) return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ ok: false, error: guard.error }) };
       const result = await callMcpTool(server, meta.toolName, args && typeof args === 'object' ? (args as Record<string, unknown>) : {}, {
         signal: input.signal,
         // 只读工具失败可以安全重放。
@@ -263,7 +314,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       budget -= Date.now() - startedAt;
       usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: true, ok: false });
       const reason = error instanceof Error ? error.message : 'MCP 调用失败';
-      noteRemoteCatalogCallFailure(server, reason);
+      if (server) noteRemoteCatalogCallFailure(server, reason);
       return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ ok: false, error: reason }) };
     }
   };

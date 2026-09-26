@@ -20,6 +20,7 @@ const MODULES = [
   'lib/tools/file',
   'lib/tools/image',
   'lib/tools/skills',
+  'lib/tools/tabbit',
   'lib/tools/web',
   'lib/tools/executor',
   'lib/tools/selector',
@@ -53,6 +54,7 @@ const MODULES = [
   'lib/mcp/repo-installer',
   'lib/mcp/runtime-admin',
   'lib/mcp/index',
+  'lib/tabbit-cli',
 ];
 
 const BUILD_ROOT = path.join(process.cwd(), '.data', 'tools-test-build');

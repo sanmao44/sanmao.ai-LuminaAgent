@@ -162,5 +162,6 @@ export function agentToolProgress(kind: unknown, name: unknown): AgentProgressPa
   if (kind === "mcp") return { stage: "mcp", message: `正在调用外部工具 ${mcpProgressToolLabel(name)}…` };
   if (kind === "mcp-manage") return { stage: "mcp", message: "正在处理本机 MCP 配置…" };
   if (kind === "image") return { stage: "image", message: "正在生成图片…" };
+  if (kind === "tabbit") return { stage: "mcp", message: "正在调用 Tabbit 浏览器…" };
   return null;
 }

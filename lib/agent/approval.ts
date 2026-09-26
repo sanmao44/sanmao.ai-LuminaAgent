@@ -354,7 +354,7 @@ export function appendPageContext(current: string, toolName: string, text: strin
  * v1 只管 MCP 工具：内置工具（生成文件、写技能）的副作用都在本机，且已有各自的门控。
  */
 export function assessToolApproval(input: {
-  definition: Pick<ToolDefinition, 'id' | 'name' | 'risk' | 'source'> | null;
+  definition: Pick<ToolDefinition, 'id' | 'name' | 'risk' | 'source' | 'tags'> | null;
   args: unknown;
   /** 最近看到的页面内容（浏览器动作按内容判风险）。 */
   pageText?: string;
@@ -374,6 +374,14 @@ export function assessToolApproval(input: {
   const definition = input.definition;
   if (!definition || definition.source !== 'mcp') return { required: false, risk: definition?.risk || 'read', reason: '' };
   const risk = definition.risk;
+  if (definition.tags?.includes('tabbit')) {
+    const args = input.args && typeof input.args === 'object' && !Array.isArray(input.args) ? input.args as Record<string, unknown> : {};
+    const action = String(args.action || '').trim();
+    if (action === 'nodejs' && args.readOnly !== true) {
+      return { required: true, risk: 'external_side_effect', reason: '这一步会在 Tabbit 浏览器页面中执行可能改变网页状态的代码', unbypassable: true };
+    }
+    return { required: false, risk: 'read', reason: '' };
+  }
   const remembered = normalizeToolApprovalPolicy(input.toolPolicy);
   if (remembered === 'block') {
     return { blocked: true, required: false, risk, reason: '你已经把这一步设成「直接拒绝」，它不会再被调用。' };

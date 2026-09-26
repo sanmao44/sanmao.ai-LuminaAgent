@@ -136,3 +136,14 @@ export const BROWSER_TOOL_GUIDE = [
   '13. 快照附带 SANMAO 当前页面可编辑控件时，优先从中选与目标相符的编辑器，把完整 target 原样交给 browser_type。shadowHost 表明控件在 Shadow DOM 内，document.querySelector/getElementById 找不到它不代表不存在；不要反复使用只查询 document 的脚本。',
   '14. 搜索词必须与用户原话逐字一致。优先在搜索框输入原文；使用搜索 URL 后必须检查页面搜索词，不能手写错误的百分号编码。发现搜索词不同应先更正，再选择结果及执行点赞评论。',
 ].join('\n');
+
+/** Instructions for the native Tabbit backend. It intentionally does not
+ * mention the Playwright Extension MCP tool names. */
+export const TABBIT_BROWSER_TOOL_GUIDE = [
+  'Tabbit 浏览器操作约定：本轮使用 tabbit_browser，不使用 Playwright Extension。',
+  '1. 先用 tabs 或 diagnose 发现当前页面；浏览器任务选一个简短稳定的 task 名称，并在后续所有调用中复用它。',
+  '2. 用 nodejs 在 Tabbit 自有 Browser-owned Playwright 运行时执行 JavaScript。每次脚本都要 return 有界、JSON 可序列化的结果；不要返回 Page、Locator、DOM、JSHandle 或无限文本。',
+  '3. 只读脚本才设置 readOnly=true；导航、点击、输入、聚焦、滚动、选择和其他会改变页面状态的操作必须设置 readOnly=false。',
+  '4. 先观察再操作；导航或页面变化后重新获取页面状态。需要输入时使用原生 Playwright locator/action，不要调用网站私有 API。',
+  '5. 登录、验证码、付款、发布、删除和其他不可逆动作在最后确认前停止；工具没有返回成功证据时不要声称完成。',
+].join('\n');
