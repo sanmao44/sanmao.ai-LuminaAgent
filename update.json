@@ -1,17 +1,21 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.58",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.58",
+  "latestVersion": "0.7.59",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.59",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.58/SANMAO.AI-0.7.58.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.59/SANMAO.AI-0.7.59.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.58/SANMAO.AI-0.7.58.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.58/SANMAO.AI-0.7.58.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.58/SANMAO.AI-0.7.58.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.59/SANMAO.AI-0.7.59.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.59/SANMAO.AI-0.7.59.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.59/SANMAO.AI-0.7.59.zip"
   ],
   "sha256": "4506a39c47890f5b7936daf28d05e0d35bac1f11bfc7bbca530e04f9209d8fa5",
-  "publishedAt": "2026-09-25T00:00:00Z",
+  "publishedAt": "2026-09-26T00:00:00Z",
   "notes": [
+    "修复 GitHub MCP 安装上下文丢失：用户先发仓库地址、稍后只说安装时也会自动执行。",
+    "优化 MCP 仓库接入与安装交接，减少返回教程而没有真正安装的问题。",
+    "新增 Tabbit 原生浏览器控制、超时处理与完全访问审批支持。",
+    "修复 Agent 意图误触发生图，提升连续任务与工具路由稳定性。",
     "优化 Agent 路由与执行资源门控，减少不必要的工具规划并提升连续任务稳定性。",
     "稳固本地数据持久化与迁移边界，降低工作区恢复和版本升级时的数据风险。",
     "新增助手能力手动接入引导，让 MCP 与其他服务接入步骤更清晰、可控。",
