@@ -406,6 +406,21 @@ export function modelEndpointCandidates(provider: RuntimeProvider): ModelEndpoin
   return candidates.filter((candidate, index, all) => all.findIndex((item) => item.url === candidate.url) === index);
 }
 
+/**
+ * A missing edit route is different from an unsupported image model. Some
+ * OpenAI-compatible gateways expose image generation but do not implement
+ * /images/edits at all; callers may choose a safe generation-only fallback
+ * for that explicit case.
+ */
+export function isProviderEndpointNotFound(error: unknown) {
+  const failure = error as { providerFailureKind?: string; providerStatus?: number; status?: number; message?: string } | null;
+  const status = Number(failure?.providerStatus || failure?.status);
+  const message = String(failure?.message || '').toLowerCase();
+  if (status !== 404 || failure?.providerFailureKind !== 'http') return false;
+  if (/model\s+(?:not found|does not exist)|unknown model|模型不存在|未找到模型/.test(message)) return false;
+  return /404\s+page\s+not\s+found|endpoint|route|path|接口|路径/.test(message);
+}
+
 async function fetchModelResponse(url: string, init: RequestInit, timeout = 20000) {
   try {
     const response = await fetch(url, { ...init, cache: 'no-store', signal: combineSignals(init.signal || undefined, timeout) });
@@ -883,7 +898,28 @@ function taskIdFrom(data: any) {
 }
 
 function taskStatusFrom(data: any) {
-  return String(data?.status || data?.state || data?.data?.status || data?.data?.state || data?.task?.status || data?.data?.task?.status || '').toLowerCase();
+  return String(data?.status || data?.state || data?.task_status || data?.data?.status || data?.data?.state || data?.data?.task_status || data?.task?.status || data?.data?.task?.status || '').toLowerCase();
+}
+
+function isModelScopeProvider(provider: Pick<RuntimeProvider, 'platform'>) {
+  return provider.platform === 'modelscope';
+}
+
+function modelScopeTaskEndpoint(provider: RuntimeProvider, taskId: string) {
+  const taskPath = `/v1/tasks/${encodeURIComponent(taskId)}`;
+  return videoProviderEndpoint(provider, taskPath, taskPath);
+}
+
+function modelScopeImageHeaders(provider: Pick<RuntimeProvider, 'platform'>): Record<string, string> {
+  return isModelScopeProvider(provider)
+    ? { 'X-ModelScope-Async-Mode': 'true' }
+    : {};
+}
+
+function modelScopeTaskHeaders(provider: Pick<RuntimeProvider, 'platform'>): Record<string, string> {
+  return isModelScopeProvider(provider)
+    ? { 'X-ModelScope-Task-Type': 'image_generation' }
+    : {};
 }
 
 function taskStatusEndpoint(provider: RuntimeProvider, taskId: string, initial: any) {
@@ -897,6 +933,7 @@ function taskStatusEndpoint(provider: RuntimeProvider, taskId: string, initial: 
     return providerEndpoint(provider, path, path);
   }
   if (provider.platform === '65535') return providerEndpoint(provider, `/v1/tasks/${encodeURIComponent(taskId)}`, `/v1/tasks/${encodeURIComponent(taskId)}`);
+  if (isModelScopeProvider(provider)) return modelScopeTaskEndpoint(provider, taskId);
   return '';
 }
 
@@ -914,7 +951,7 @@ async function waitForImageTask(provider: RuntimeProvider, initial: any, signal?
       const timer = setTimeout(resolve, 1800);
       signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
     });
-    const data = await fetchJson(statusUrl, { method: 'GET', headers: authHeaders(provider) }, 30000, signal);
+    const data = await fetchJson(statusUrl, { method: 'GET', headers: { ...authHeaders(provider), ...modelScopeTaskHeaders(provider) } }, 30000, signal);
     const images = extractImages(data);
     if (images.length) return normalizeImages(data);
     const status = taskStatusFrom(data);
@@ -991,7 +1028,7 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
   if (provider.type === 'google-gemini') body.response_format = 'b64_json';
   const endpoint = providerEndpoint(provider, provider.imageGenerationPath, '/images/generations');
   const request = (payload: Record<string, unknown>) => fetchJson(endpoint, {
-    method: 'POST', headers: { ...authHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    method: 'POST', headers: { ...authHeaders(provider), ...modelScopeImageHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }, IMAGE_REQUEST_TIMEOUT, signal);
   if (isApimartProvider(provider)) {
     const batches = await Promise.all(Array.from({ length: count }, async () => waitForApimartTask(provider, await request({ ...body, n: 1 }), signal)));
@@ -1095,9 +1132,12 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
   // 新版 Images API 支持 JSON image_url/data URL；优先使用，兼容远程 URL 和多图。
   try {
     const data = await fetchJson(providerEndpoint(provider, provider.imageEditPath, '/images/edits'), {
-      method: 'POST', headers: { ...authHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody),
+      method: 'POST', headers: { ...authHeaders(provider), ...modelScopeImageHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody),
     }, IMAGE_REQUEST_TIMEOUT, signal);
     if (isApimartProvider(provider)) return waitForApimartTask(provider, data, signal);
+    const images = extractImages(data);
+    if (images.length) return normalizeImages(data);
+    if (taskIdFrom(data)) return waitForImageTask(provider, data, signal);
     return normalizeImages(data);
   } catch (jsonError) {
     if (signal?.aborted) throw signal.reason || jsonError;
@@ -1125,14 +1165,34 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
         form.append('mask', blob, 'mask.png');
       }
       const response = await fetch(providerEndpoint(provider, provider.imageEditPath, '/images/edits'), {
-        method: 'POST', headers: authHeaders(provider), body: form, cache: 'no-store', signal: combineSignals(signal, IMAGE_REQUEST_TIMEOUT),
+        method: 'POST', headers: { ...authHeaders(provider), ...modelScopeImageHeaders(provider) }, body: form, cache: 'no-store', signal: combineSignals(signal, IMAGE_REQUEST_TIMEOUT),
       });
       const data = await parseResponse(response);
+      const images = extractImages(data);
+      if (!images.length && taskIdFrom(data)) return waitForImageTask(provider, data, signal);
       return normalizeImages(data);
     } catch (multipartError) {
       const a = jsonError instanceof Error ? jsonError.message : 'JSON 编辑接口失败';
       const b = multipartError instanceof Error ? multipartError.message : '表单编辑接口失败';
-      throw new Error(`图片修改接口调用失败。JSON：${a}；兼容表单：${b}`);
+      const status = Number(
+        (jsonError as ProviderFailure | null)?.providerStatus
+        || (jsonError as ProviderFailure | null)?.status
+        || (multipartError as ProviderFailure | null)?.providerStatus
+        || (multipartError as ProviderFailure | null)?.status
+        || 0,
+      );
+      const error = new Error(`图片修改接口调用失败。JSON：${a}；兼容表单：${b}`);
+      if (status) {
+        decorateProviderFailure(error, {
+          providerResponse: true,
+          providerFailureKind: 'http',
+          status,
+          providerStatus: status,
+          providerUrl: (jsonError as ProviderFailure | null)?.providerUrl || (multipartError as ProviderFailure | null)?.providerUrl,
+          providerMethod: 'POST',
+        });
+      }
+      throw error;
     }
   }
 }

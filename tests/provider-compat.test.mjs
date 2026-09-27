@@ -307,6 +307,66 @@ test('does not retry image requests after ambiguous upstream failures', () => {
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422 }), true);
 });
 
+test('polls ModelScope image tasks and normalizes output_images', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith('/images/edits')) {
+      return new Response(JSON.stringify({ task_id: 'modelscope-task-1', task_status: 'PENDING' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({
+      task_id: 'modelscope-task-1',
+      task_status: 'SUCCEED',
+      output_images: ['https://cdn.example.test/modelscope-result.png'],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const images = await providers.editImage({
+      type: 'openai-compatible',
+      platform: 'modelscope',
+      baseUrl: 'https://api-inference.modelscope.cn/v1',
+      apiKey: 'test-key',
+    }, 'Qwen/Qwen-Image-Edit', {
+      prompt: 'camera edit',
+      references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
+      count: 1,
+    });
+    assert.deepEqual(images, [{ url: 'https://cdn.example.test/modelscope-result.png' }]);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].url, 'https://api-inference.modelscope.cn/v1/images/edits');
+    assert.equal(calls[0].init.headers['X-ModelScope-Async-Mode'], 'true');
+    assert.equal(calls[1].url, 'https://api-inference.modelscope.cn/v1/tasks/modelscope-task-1');
+    assert.equal(calls[1].init.headers['X-ModelScope-Task-Type'], 'image_generation');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('distinguishes a missing image-edit route from a missing model', () => {
+  assert.equal(providers.isProviderEndpointNotFound({
+    providerFailureKind: 'http',
+    providerStatus: 404,
+    message: '服务商接口返回 HTTP 404：404 page not found',
+  }), true);
+  assert.equal(providers.isProviderEndpointNotFound({
+    providerFailureKind: 'http',
+    providerStatus: 404,
+    message: 'model not found',
+  }), false);
+  assert.equal(providers.isProviderEndpointNotFound({
+    providerFailureKind: 'http',
+    providerStatus: 422,
+    message: 'endpoint validation failed',
+  }), false);
+});
+
 test('omits legacy input_fidelity for GPT Image 2 while preserving it for other edit models', () => {
   const provider = {
     type: 'openai-compatible',
