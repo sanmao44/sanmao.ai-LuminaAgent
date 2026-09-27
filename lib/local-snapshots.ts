@@ -18,6 +18,9 @@ const workspacePath = path.join(dataDir, 'workspace.json');
 const keyPath = path.join(providerConfigDir, 'master.key');
 const SNAPSHOT_FORMAT = 'sanmao-ai-auto-snapshot';
 const KEEP_SNAPSHOTS = 7;
+/** 快照失败后的退避时长：心跳每 2 秒触发一次，不能失败一次就重试一次。 */
+const SNAPSHOT_RETRY_BACKOFF_MS = 30 * 60 * 1000;
+let snapshotRetryAfter = 0;
 /**
  * 快照会先把媒体读进内存再加密，视频动辄数百 MB，必须限流：
  * 视频/音频按类别限额（历史上丢的正是视频），超过预算的部分只记跳过数量；
@@ -152,7 +155,20 @@ export async function ensureLocalSnapshot() {
   const snapshots = await listLocalSnapshots();
   const latest = snapshots[0];
   if (latest && Date.now() - new Date(latest.createdAt).getTime() < 24 * 60 * 60 * 1000) return latest;
-  return createLocalSnapshot('scheduled');
+  if (Date.now() < snapshotRetryAfter) return latest ?? null;
+  try {
+    const created = await createLocalSnapshot('scheduled');
+    snapshotRetryAfter = 0;
+    return created;
+  } catch (error) {
+    // 心跳每 2 秒就会走到这里。失败后必须退避，否则每个心跳都要重新打包几 GB
+    // 素材，把 CPU、内存和事件循环全部吃满，静态资源（服务商 logo 等）随之超时，
+    // 界面看起来就是"所有 logo 都不见了"。同时不要把异常抛回心跳，避免前端
+    // 认为会话失效而停止上报。
+    snapshotRetryAfter = Date.now() + SNAPSHOT_RETRY_BACKOFF_MS;
+    console.error('[Snapshot] 自动快照失败，将稍后重试：', error);
+    return latest ?? null;
+  }
 }
 
 export async function listLocalSnapshots() {
