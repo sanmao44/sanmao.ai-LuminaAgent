@@ -130,6 +130,7 @@ const HISTORY_PAGE_SIZE_OPTIONS = [
 ];
 const DEFAULT_HISTORY_PAGE_SIZE = 12;
 const HISTORY_PAGE_SIZE_STORAGE_KEY = 'sanmao-history-page-size';
+const PROVIDER_SETUP_DISMISSED_STORAGE_KEY = 'sanmao-provider-setup-dismissed';
 const pageSizeOptions = HISTORY_PAGE_SIZE_OPTIONS.map((value)=>({
         value: String(value),
         label: `每页 ${value} 项`
@@ -5296,6 +5297,7 @@ export default function Page() {
     const [providerBusy, setProviderBusy] = useState(false);
     const [providerTestBusy, setProviderTestBusy] = useState(false);
     const [providerTestResult, setProviderTestResult] = useState('');
+    const [providerSetupDismissed, setProviderSetupDismissed] = useState(false);
     const providerTestResultRef = useRef(null);
     useEffect(()=>{
         if (!providerTestResult) return;
@@ -5307,6 +5309,10 @@ export default function Page() {
         });
         return ()=>window.cancelAnimationFrame(frame);
     }, [providerTestResult]);
+    useEffect(()=>{
+        if (!providerSetupDismissed) return;
+        localStorage.setItem(PROVIDER_SETUP_DISMISSED_STORAGE_KEY, '1');
+    }, [providerSetupDismissed]);
     const [jimengLogin, setJimengLogin] = useState({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' });
     const [syncingId, setSyncingId] = useState(null);
     const [providerForm, setProviderForm] = useState(emptyProviderForm);
@@ -5314,6 +5320,7 @@ export default function Page() {
     const [manualModelForm, setManualModelForm] = useState({ rawId: '', displayName: '', kind: 'auto' });
     const [manualModelBusy, setManualModelBusy] = useState(false);
     const selectedProviderPreset = getProviderPreset(providerForm.platform);
+    const providerModalOpen = providerEditor || !state.providers.length && !providerSetupDismissed;
     const manageableProviders = useMemo(()=>state.providers.filter((provider)=>provider.platform !== 'jimeng-cli' && provider.videoTransport !== 'jimeng-cli'), [
         state.providers
     ]);
@@ -5583,17 +5590,15 @@ export default function Page() {
         return subscribeToThemeChanges(setTheme);
     }, []);
     useEffect(()=>{
-        if (!providerEditor || !state.providers.length) return;
+        if (!providerModalOpen) return;
         const closeOnEscape = (event)=>{
             if (event.key !== 'Escape') return;
-            setProviderEditor(false);
-            setProviderEditId(null);
+            closeProviderEditor();
         };
         window.addEventListener('keydown', closeOnEscape);
         return ()=>window.removeEventListener('keydown', closeOnEscape);
     }, [
-        providerEditor,
-        state.providers.length
+        providerModalOpen
     ]);
     useEffect(()=>{
         if (!manualModelProvider) return;
@@ -5603,7 +5608,7 @@ export default function Page() {
         window.addEventListener('keydown', closeOnEscape);
         return ()=>window.removeEventListener('keydown', closeOnEscape);
     }, [manualModelProvider]);
-    useBodyScrollLock(Boolean(supportOpen || confirmState || manualModelProvider || messageReferencePreview || chatFilePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor || section === 'providers' && (!adminRequired || isAdmin) && (providerEditor || !state.providers.length)));
+    useBodyScrollLock(Boolean(supportOpen || confirmState || manualModelProvider || messageReferencePreview || chatFilePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor || section === 'providers' && (!adminRequired || isAdmin) && providerModalOpen));
     const activeProviderModels = useMemo(()=>filterModelsByActiveProviders(state.models, state.providers), [
         state.models,
         state.providers
@@ -5979,6 +5984,7 @@ export default function Page() {
                 setSectionState(savedSection);
             }
             setSuccessSoundEnabled(localStorage.getItem('sanmao-success-sound') === '1');
+            setProviderSetupDismissed(localStorage.getItem(PROVIDER_SETUP_DISMISSED_STORAGE_KEY) === '1');
             const savedWebMode = localStorage.getItem('sanmao-agent-web-mode');
             const savedWebSearch = localStorage.getItem('sanmao-agent-web-search');
             if (savedWebMode === 'auto' || savedWebMode === 'always' || savedWebMode === 'off') setAgentWebMode(savedWebMode);
@@ -7103,7 +7109,8 @@ export default function Page() {
                 HISTORY_PAGE_SIZE_STORAGE_KEY,
                 'sanmao-generate-settings',
                 'sanmao-generate-tasks',
-                'sanmao-image-presets-v1'
+                'sanmao-image-presets-v1',
+                PROVIDER_SETUP_DISMISSED_STORAGE_KEY
             ];
             const preferences = {};
             for (const key of preferenceKeys){
@@ -7157,7 +7164,8 @@ export default function Page() {
             HISTORY_PAGE_SIZE_STORAGE_KEY,
             'sanmao-generate-settings',
             'sanmao-generate-tasks',
-            'sanmao-image-presets-v1'
+            'sanmao-image-presets-v1',
+            PROVIDER_SETUP_DISMISSED_STORAGE_KEY
         ];
         for (const key of preferenceKeys) localStorage.removeItem(key);
         for (const [key, value] of Object.entries(client.preferences || {})) if (preferenceKeys.includes(key) && typeof value === 'string') localStorage.setItem(key, value);
@@ -7676,6 +7684,11 @@ export default function Page() {
         }).catch(()=>undefined);
         await refreshAdmin();
         notify('已退出管理模式');
+    }
+    function closeProviderEditor() {
+        setProviderEditor(false);
+        setProviderEditId(null);
+        if (!state.providers.length) setProviderSetupDismissed(true);
     }
     function openAddProvider() {
         setProviderEditId(null);
@@ -15133,13 +15146,10 @@ export default function Page() {
                                         onStateChanged: setState,
                                         onNotify: notify
                                     }),
-                                    (providerEditor || !state.providers.length) && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
+                                    providerModalOpen && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
                                         className: "provider-editor-backdrop",
                                         onMouseDown: (event)=>{
-                                            if (event.target === event.currentTarget && state.providers.length > 0) {
-                                                setProviderEditor(false);
-                                                setProviderEditId(null);
-                                            }
+                                            if (event.target === event.currentTarget) closeProviderEditor();
                                         },
                                         children: /*#__PURE__*/ _jsxs("form", {
                                         role: "dialog",
@@ -15166,13 +15176,10 @@ export default function Page() {
                                                             })
                                                         ]
                                                     }),
-                                                    state.providers.length > 0 && /*#__PURE__*/ _jsx("button", {
+                                                    /*#__PURE__*/ _jsx("button", {
                                                         type: "button",
                                                         className: "icon-button",
-                                                        onClick: ()=>{
-                                                            setProviderEditor(false);
-                                                            setProviderEditId(null);
-                                                        },
+                                                        onClick: closeProviderEditor,
                                                         children: /*#__PURE__*/ _jsx(Icon, {
                                                             name: "close",
                                                             size: 16
@@ -15641,6 +15648,26 @@ export default function Page() {
                                                     })
                                                 ]
                                             }, provider.id))
+                                    }) : !manageableProviders.length ? /*#__PURE__*/ _jsxs("div", {
+                                        className: "provider-search-empty surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "plus",
+                                                size: 22
+                                            }),
+                                            /*#__PURE__*/ _jsx("strong", {
+                                                children: "还没有添加接口服务商"
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "添加并测试连接后，即可读取它提供的模型。"
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "ghost-button",
+                                                onClick: openAddProvider,
+                                                children: "添加接口服务"
+                                            })
+                                        ]
                                     }) : /*#__PURE__*/ _jsxs("div", {
                                         className: "provider-search-empty surface",
                                         children: [
