@@ -23,7 +23,7 @@ export type ToolPermissions =
 export type ToolSource = 'native' | 'mcp' | 'plugin';
 
 /** 能力标签：供 Agent 侧做行为分支，不参与下发判断。 */
-export type ToolTag = 'artifact' | 'archive' | 'image' | 'file' | 'web' | 'skill' | 'mcp' | 'mcp-admin' | 'canvas';
+export type ToolTag = 'artifact' | 'archive' | 'image' | 'file' | 'web' | 'skill' | 'tabbit' | 'mcp' | 'mcp-admin' | 'canvas';
 
 /**
  * 工具风险等级，口径按任务书 §9：

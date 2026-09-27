@@ -50,3 +50,29 @@ test("抽帧的 ffmpeg -vf 参数能在真实 ffmpeg 上跑通", async (t) => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("真实 ffmpeg 能检测参考视频的硬切时间点", async (t) => {
+  if (!ffmpegPath || !existsSync(ffmpegPath)) return t.skip("ffmpeg-static 不可用");
+  const dir = await mkdtemp(path.join(tmpdir(), "clone-scene-"));
+  try {
+    const clip = path.join(dir, "cuts.mp4");
+    const generated = await run([
+      ffmpegPath, "-hide_banner", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "color=c=red:s=320x180:r=24:d=1",
+      "-f", "lavfi", "-i", "color=c=blue:s=320x180:r=24:d=1",
+      "-f", "lavfi", "-i", "color=c=green:s=320x180:r=24:d=1",
+      "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]", "-map", "[v]",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", clip,
+    ]);
+    assert.equal(generated.code, 0, generated.stderr);
+    const detected = await run([
+      ffmpegPath, "-hide_banner", "-loglevel", "info", "-i", clip, "-an",
+      "-vf", "select=gt(scene\\,0.30),showinfo", "-f", "null", "-",
+    ]);
+    assert.equal(detected.code, 0, detected.stderr);
+    assert.match(detected.stderr, /pts_time:1(?:\.0+)?/u);
+    assert.match(detected.stderr, /pts_time:2(?:\.0+)?/u);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

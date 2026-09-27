@@ -1,8 +1,9 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { getStorageRoots } from './image-storage';
+import { resolveLocalDataDir } from './data-paths';
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+const dataDir = resolveLocalDataDir();
 
 async function folderBytes(root: string, imageOnly = false): Promise<{ files: number; bytes: number; latestMs: number }> {
   let files = 0;

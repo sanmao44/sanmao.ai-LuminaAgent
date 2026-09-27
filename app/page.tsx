@@ -26,7 +26,7 @@ import { normalizeReferenceRecords } from '@/lib/reference-images';
 import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
-import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, isChatDirectionHeading, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
+import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, extractGithubRepositoryUrl, isChatDirectionHeading, isGithubMcpInstallFollowUp, isGithubMcpInstallHandoff, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-intent';
 import { conversationImage, conversationMessageText } from '@/lib/agent-context';
 import { pollAgentProgress, requestAgent } from '@/lib/agent-client';
@@ -45,7 +45,8 @@ import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
-import { bootstrapWorkspace, startWorkspaceSync } from '@/lib/workspace';
+import { startWorkspaceSync } from '@/lib/workspace';
+import { workspaceRepository } from '@/lib/repositories/workspace-repository';
 import { readWorkspaceContext } from '@/lib/workspace-context';
 import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
@@ -2771,7 +2772,8 @@ function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSo
                         className: "image-meta",
                         children: [
                             /*#__PURE__*/ _jsx("span", {
-                                children: item.modelName || '图片模型'
+                                title: item.providerName ? `${item.modelName || '图片模型'} · ${item.providerName}` : item.modelName || '图片模型',
+                                children: item.providerName ? `${item.modelName || '图片模型'} · ${item.providerName}` : item.modelName || '图片模型'
                             }),
                             /*#__PURE__*/ _jsx("span", {
                                 children: item.outputSize || item.aspectRatio || '自动'
@@ -5151,8 +5153,8 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
     });
 }
 export default function Page() {
-    const [welcomeVisible, setWelcomeVisible] = useState(true);
-    const [welcomeReady, setWelcomeReady] = useState(false);
+    // 'boot'：还不知道本次安装是否看过开屏；'welcome'：首次进入展示开屏；'workspace'：直接进工作区。
+    const [welcomeStage, setWelcomeStage] = useState('boot');
     const [section, setSectionState] = useState('agent');
     const [managementNavOpen, setManagementNavOpen] = useState(false);
     const sectionRef = useRef('agent');
@@ -5193,13 +5195,39 @@ export default function Page() {
     const toastTimerRef = useRef(null);
     const [confirmState, setConfirmState] = useState(null);
     useEffect(()=>{
-        try {
-            setWelcomeVisible(localStorage.getItem(WELCOME_SEEN_STORAGE_KEY) !== '1');
-        } catch {
-            setWelcomeVisible(true);
-        }
-        setWelcomeReady(true);
+        let active = true;
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(()=>controller.abort(), 2500);
+        void (async ()=>{
+            let seen = false;
+            try {
+                seen = localStorage.getItem(WELCOME_SEEN_STORAGE_KEY) === '1';
+            } catch  {}
+            try {
+                // 以「本次安装」的服务端标记为准：新用户换浏览器、重新解压一份包都能看到开屏。
+                const res = await fetch('/api/onboarding', {
+                    cache: 'no-store',
+                    signal: controller.signal
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (typeof data?.seen === 'boolean') seen = data.seen;
+                }
+            } catch  {}
+            window.clearTimeout(timeoutId);
+            if (active) setWelcomeStage(seen ? 'workspace' : 'welcome');
+        })();
+        return ()=>{
+            active = false;
+            window.clearTimeout(timeoutId);
+            controller.abort();
+        };
     }, []);
+    function enterWelcome() {
+        setWelcomeStage('workspace');
+        // 记到本次安装，之后换浏览器也不会重复开屏；写入失败时仍以本机标记兜底。
+        void fetch('/api/onboarding', { method: 'POST' }).catch(()=>undefined);
+    }
     // Keep the feedback global so every send/generate entry point gets the same
     // lightweight celebration without touching its existing submit handler.
     useEffect(()=>{
@@ -5273,7 +5301,7 @@ export default function Page() {
         const frame = window.requestAnimationFrame(()=>{
             const result = providerTestResultRef.current;
             if (!result) return;
-            const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches && document.documentElement.dataset.motion !== 'on';
             result.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center', inline: 'nearest' });
         });
         return ()=>window.cancelAnimationFrame(frame);
@@ -5327,6 +5355,7 @@ export default function Page() {
     const [selectedShareGroups, setSelectedShareGroups] = useState(new Set());
     const [agentFiles, setAgentFiles] = useState([]);
     const [agentModelId, setAgentModelId] = useState('auto');
+    const [agentImageModelId, setAgentImageModelId] = useState('auto');
     const [agentWebMode, setAgentWebMode] = useState('auto');
     const [agentWebModeMenuOpen, setAgentWebModeMenuOpen] = useState(false);
     const [webSearchApiProvider, setWebSearchApiProvider] = useState('baidu-qianfan');
@@ -5618,6 +5647,7 @@ export default function Page() {
     }
     const generateUpscaleMode = generateWorkflow === 'upscale';
     const activeAgentModelId = agentModelId !== 'auto' && availableChatModels.some((model)=>model.id === agentModelId) ? agentModelId : 'auto';
+    const activeAgentImageModelId = agentImageModelId !== 'auto' && availableGenerationModels.some((model)=>model.id === agentImageModelId) ? agentImageModelId : 'auto';
     const activeAgentChatModel = activeAgentModelId === 'auto' ? agentModel : availableChatModels.find((model)=>model.id === activeAgentModelId);
     const matchingModels = useMemo(()=>activeProviderModels.filter((model)=>(modelProviderFilter === 'all' || model.providerId === modelProviderFilter) && (!modelSearch.trim() || `${model.displayName} ${model.rawId}`.toLowerCase().includes(modelSearch.trim().toLowerCase()))), [
         activeProviderModels,
@@ -5854,6 +5884,9 @@ export default function Page() {
         agentFiles.length
     ]);
     const activeAgentIntent = liveAgentIntent;
+    const agentImageModelSelectionVisible = Boolean(agentInput.trim()
+        && (activeAgentIntent.deliverable === 'IMAGE' || activeAgentIntent.deliverable === 'BOTH')
+        && availableGenerationModels.length);
     const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
     const videoTotalPages = Math.max(1, Math.ceil(videoTotal / pageSize));
     const visibleVideoPage = Math.min(videoPage, videoTotalPages);
@@ -5939,7 +5972,7 @@ export default function Page() {
         let cancelled = false;
         let stopWorkspaceSync = ()=>{};
         const start = async ()=>{
-            await bootstrapWorkspace();
+            await workspaceRepository.bootstrap();
             if (cancelled) return;
             initializeNavNoticeState();
             try {
@@ -7053,7 +7086,7 @@ export default function Page() {
         } catch (error) { notify(error instanceof Error ? error.message : '预览清理失败'); }
         finally { setCleanupBusy(false); }
     }
-    async function exportLocalBackup() {
+    async function exportLocalBackup(backupMode = 'content') {
         setBackupBusy(true);
         try {
             const backupPassword = window.prompt('请输入备份密码（至少 12 个字符；不会保存）：');
@@ -7073,6 +7106,7 @@ export default function Page() {
                 if (value !== null) preferences[key] = value;
             }
             const client = {
+                workspace: await workspaceRepository.collect(),
                 gallery: await normalizeGalleryForBackup(await listGallery()),
                 chatSessions: await listChatSessions(),
                 preferences
@@ -7082,7 +7116,7 @@ export default function Page() {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ client, backupPassword })
+                body: JSON.stringify({ client, backupPassword, backupMode })
             });
             if (!res.ok) {
                 const data = await res.json().catch(()=>({}));
@@ -7109,6 +7143,9 @@ export default function Page() {
         if (!client || !Array.isArray(client.gallery) || !Array.isArray(client.chatSessions)) throw new Error('备份缺少浏览器历史数据');
         await replaceGalleryItems(client.gallery);
         await replaceChatSessions(client.chatSessions);
+        if (client.workspace) {
+            await workspaceRepository.restore(client.workspace);
+        }
         const preferenceKeys = [
             'sanmao-theme',
             'sanmao-success-sound',
@@ -7143,7 +7180,7 @@ export default function Page() {
                             const data = await res.json();
                             if (!res.ok) throw new Error(data.error || '恢复完整备份失败');
                             await restoreClientBackup(data.client);
-                            notify(`${data.externalMasterKey ? '恢复完成，但原备份依赖 SANMAO_MASTER_KEY；请在当前环境配置相同主密钥。' : `完整备份恢复完成：${data.restoredImages || 0} 个图片文件、${data.restoredSkills || 0} 个技能`}，正在重新加载`);
+                            notify(`${data.includesSecrets ? (data.externalMasterKey ? '完整备份恢复完成，但原备份依赖 SANMAO_MASTER_KEY；请在当前环境配置相同主密钥。' : '完整加密备份恢复完成') : '内容备份恢复完成（API Key 未包含，已保留当前设备密钥）'}：${data.restoredImages || 0} 个图片文件、${data.restoredSkills || 0} 个技能，正在重新加载`);
                             window.setTimeout(()=>window.location.reload(), 700);
                         } catch (error) {
                             notify(error instanceof Error ? error.message : '恢复完整备份失败');
@@ -8702,7 +8739,10 @@ export default function Page() {
         setAngleResultToast(null);
     }
     async function prepareAgentMemory(sessionId, context, model, signal) {
-        const memory = await prepareConversationMemory(context, chatMemoryRef.current.get(sessionId), async (summary, transcript)=>{
+        const previous = chatMemoryRef.current.get(sessionId);
+        let memory;
+        try {
+            memory = await prepareConversationMemory(context, previous, async (summary, transcript)=>{
             const response = await fetch('/api/agent/memory', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -8712,9 +8752,14 @@ export default function Page() {
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || '整理对话记忆失败，请重试');
             return result.summary;
-        }, signal);
+            }, signal);
+        } catch (error) {
+            if (signal.aborted) throw error;
+            const safePrevious = validConversationMemory(previous, context.filter((message)=>!message.pending));
+            console.warn('[Agent] 对话摘要失败，降级为近期消息上下文', error);
+            return safePrevious?.summary || '';
+        }
         signal.throwIfAborted();
-        const previous = chatMemoryRef.current.get(sessionId);
         chatMemoryRef.current.set(sessionId, memory);
         try {
             await persistAgentSession(sessionId, pendingChatMessagesRef.current.get(sessionId) || context);
@@ -9075,14 +9120,6 @@ export default function Page() {
             void persistAgentSession(sessionId, nextMessages).catch(()=>notify('切换版本后保存失败'));
         }
     }
-    function retryAgentImage(message) {
-        const image = message.images?.[0];
-        if (!image) return;
-        if (!availableGenerationModels.length) return notify('还没有可用图片模型，请先到模型库启用生图模型');
-        reuseItem(image);
-        setSection('generate');
-        notify('已打开新的图片生成窗口，并带入原提示词和参数');
-    }
     async function continueAgentFromImage(message, direction) {
         const image = latestAssistantImage([
             message
@@ -9108,8 +9145,7 @@ export default function Page() {
         setSection('agent');
         await sendAgent(direction);
     }
-    async function retryAgentMessage(message) {
-        if (message.images?.length) return retryAgentImage(message);
+    async function retryAgentMessage(message, imageModelId = 'auto') {
         if (message.retrying) return;
         pauseChatAutoFollow();
         const sessionId = activeChatIdRef.current;
@@ -9205,6 +9241,7 @@ export default function Page() {
                     persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
+                    ...(message.images?.length ? { imageModelId } : {}),
                     ...(message.task === 'one_take_video_prompt' && message.durationSeconds !== undefined ? { task: message.task, durationSeconds: message.durationSeconds } : {}),
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
@@ -9345,14 +9382,21 @@ export default function Page() {
             ? normalizeOneTakeDuration(durationSeconds)
             : undefined;
         const followUp = overrideRefs ? null : agentFollowUp;
-        const requestContent = content || '请分析我上传的文件和参考图';
-        const requestIntent = classifyAgentDeliverable(requestContent, {
+            const requestContent = content || '请分析我上传的文件和参考图';
+            const previousGithubInstallAssistant = [...currentSessionMessages].reverse().find((message)=>message.role === 'assistant')?.content || '';
+            const githubInstallHandoff = isGithubMcpInstallHandoff(requestContent, previousGithubInstallAssistant);
+            const githubInstallRepo = isGithubMcpInstallFollowUp(requestContent)
+                ? [...currentSessionMessages].reverse().find((message)=>message.role === 'user' && extractGithubRepositoryUrl(message.content))
+                : null;
+            const githubInstallWireHint = githubInstallRepo ? extractGithubRepositoryUrl(githubInstallRepo.content) : '';
+            const requestIntent = classifyAgentDeliverable(requestContent, {
             messages: currentSessionMessages,
             hasReferences: refs.length > 0,
             hasFiles: files.length > 0
         });
         const selectedDeliverable = deliverableOverride || requestIntent.deliverable;
         const likelyImageRequest = !task && (selectedDeliverable === 'IMAGE' || selectedDeliverable === 'BOTH');
+        const imageModelIdForRequest = likelyImageRequest ? activeAgentImageModelId : 'auto';
         const user = {
             id: uid('msg'),
             role: 'user',
@@ -9394,6 +9438,7 @@ export default function Page() {
         setAgentInputBeforeOptimization(null);
         setAgentRefs([]);
         setAgentFiles([]);
+        setAgentImageModelId('auto');
         setAgentFollowUp(null);
         setChatBusy(sessionId, true);
         const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
@@ -9437,9 +9482,24 @@ export default function Page() {
             const memory = await prepareAgentMemory(sessionId, nextMessages, activeAgentModelId, requestController.signal);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const selectedContextMessages = selectRelevantConversationMessages(nextMessages, requestContent);
-            const payloadMessages = selectedContextMessages.map((m)=>({
+            const githubInstallContextMessage = isGithubMcpInstallFollowUp(requestContent)
+                ? [...nextMessages].slice(0, -1).reverse().find((message)=>message.role === 'user' && extractGithubRepositoryUrl(message.content))
+                : null;
+            const githubInstallHandoffMessage = githubInstallHandoff
+                ? [...nextMessages].slice(0, -1).reverse().find((message)=>message.role === 'assistant' && isGithubMcpInstallHandoff(requestContent, message.content))
+                : null;
+            const githubInstallContextMessages = [githubInstallContextMessage, githubInstallHandoffMessage]
+                .filter((message, index, items): message is (typeof githubInstallContextMessage) => Boolean(message) && items.findIndex((candidate)=>candidate?.id === message.id) === index);
+            const contextWithGithubInstall = githubInstallContextMessages.length
+                ? [...selectedContextMessages, ...githubInstallContextMessages]
+                    .filter((message, index, items)=>items.findIndex((candidate)=>candidate.id === message.id) === index)
+                    .sort((left, right)=>nextMessages.indexOf(left) - nextMessages.indexOf(right))
+                : selectedContextMessages;
+            const payloadMessages = contextWithGithubInstall.map((m)=>({
                     role: m.role,
-                    content: m.id === latestUserId ? followUpRequestContent(m.content, m.followUp) : conversationMessageText(m),
+                    content: m.id === latestUserId
+                        ? `${followUpRequestContent(m.content, m.followUp)}${githubInstallWireHint ? `\n[本轮安装目标仓库：${githubInstallWireHint}]` : ''}`
+                        : conversationMessageText(m),
                     references: m.id === latestUserId ? referencesForRequest : [],
                     files: m.id === latestUserId ? (m.files || []).map((file)=>({
                             name: file.name,
@@ -9471,6 +9531,7 @@ export default function Page() {
                     persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
+                    imageModelId: imageModelIdForRequest,
                     task,
                     ...(oneTakeDuration !== undefined ? { durationSeconds: oneTakeDuration } : {}),
                     webMode: agentWebMode,
@@ -10678,10 +10739,23 @@ export default function Page() {
         }, model.id);
     }
     const imageModeActive = section === 'generate' || section === 'angle';
-    if (!welcomeReady || welcomeVisible) {
+    if (welcomeStage === 'boot') {
+        return /*#__PURE__*/ _jsxs("div", {
+            className: "welcome-boot",
+            children: [
+                /*#__PURE__*/ _jsx("span", {
+                    className: "loader"
+                }),
+                /*#__PURE__*/ _jsx("p", {
+                    children: "正在读取本地配置…"
+                })
+            ]
+        });
+    }
+    if (welcomeStage === 'welcome') {
         return /*#__PURE__*/ _jsx(WelcomeExperience, {
             theme,
-            onEnter: ()=>setWelcomeVisible(false)
+            onEnter: ()=>enterWelcome()
         });
     }
     return /*#__PURE__*/ _jsxs("main", {
@@ -11574,6 +11648,19 @@ export default function Page() {
                                                                                         message.retrying ? '重新生成中…' : message.images?.length ? '重新生成图片' : '重新生成文本'
                                                                                     ]
                                                                                 }),
+                                                                                message.images?.length && availableGenerationModels.length && /*#__PURE__*/ _jsx(ModelPicker, {
+                                                                                    models: availableGenerationModels,
+                                                                                    value: "auto",
+                                                                                    capability: "generate",
+                                                                                    defaultProviderId: state.settings.defaultProviderId,
+                                                                                    defaultProviderName: defaultProvider?.name,
+                                                                                    defaultModelId: state.settings.defaultImageModelId,
+                                                                                    automaticHint: "仅重试本轮，不改变默认模型",
+                                                                                    triggerPrefix: "换模型",
+                                                                                    disabled: message.retrying || activeAgentBusy || agentMessageSelectionActive,
+                                                                                    onChange: (modelId)=>void retryAgentMessage(message, modelId),
+                                                                                    className: "message-image-model-picker"
+                                                                                }),
                                                                                 message.retrying && message.activity?.message ? /*#__PURE__*/ _jsx("span", {
                                                                                     className: "message-retry-activity",
                                                                                     children: message.activity.message
@@ -11999,17 +12086,29 @@ export default function Page() {
                                                                         })
                                                                     ]
                                                                 }),
-                                                                /*#__PURE__*/ _jsx(ModelPicker, {
-                                                                    models: availableChatModels,
-                                                                    value: activeAgentModelId,
-                                                                    capability: "chat",
-                                                                    defaultProviderId: state.settings.defaultProviderId,
-                                                                    defaultProviderName: defaultProvider?.name,
-                                                                    defaultModelId: state.settings.agentModelId,
-                                                                    onChange: setAgentModelId,
-                                                                    className: "model-dropdown compact"
-                                                                }),
-                                                                /*#__PURE__*/ _jsxs("div", {
+                                                                 /*#__PURE__*/ _jsx(ModelPicker, {
+                                                                     models: availableChatModels,
+                                                                     value: activeAgentModelId,
+                                                                     capability: "chat",
+                                                                     defaultProviderId: state.settings.defaultProviderId,
+                                                                     defaultProviderName: defaultProvider?.name,
+                                                                     defaultModelId: state.settings.agentModelId,
+                                                                     onChange: setAgentModelId,
+                                                                     className: "model-dropdown compact"
+                                                                 }),
+                                                                 agentImageModelSelectionVisible && /*#__PURE__*/ _jsx(ModelPicker, {
+                                                                     models: availableGenerationModels,
+                                                                     value: activeAgentImageModelId,
+                                                                     capability: "generate",
+                                                                     defaultProviderId: state.settings.defaultProviderId,
+                                                                     defaultProviderName: defaultProvider?.name,
+                                                                     defaultModelId: state.settings.defaultImageModelId,
+                                                                     automaticHint: "仅作用于本轮生图，不改变默认模型",
+                                                                     triggerPrefix: "生图",
+                                                                     onChange: setAgentImageModelId,
+                                                                     className: "model-dropdown compact agent-image-model-dropdown"
+                                                                 }),
+                                                                 /*#__PURE__*/ _jsxs("div", {
                                                                     className: "agent-web-toggle-wrap",
                                                                     children: [
                                                                         /*#__PURE__*/ _jsxs("button", {
@@ -14851,8 +14950,17 @@ export default function Page() {
                                                                 type: "button",
                                                                 className: "primary-small",
                                                                 disabled: backupBusy,
-                                                                onClick: ()=>void exportLocalBackup(),
-                                                                children: backupBusy ? '处理中…' : '导出本地备份'
+                                                                onClick: ()=>void exportLocalBackup('content'),
+                                                                children: backupBusy ? '处理中…' : '导出内容备份'
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "ghost-button",
+                                                                disabled: backupBusy,
+                                                                onClick: ()=>{
+                                                                    if (window.confirm('完整加密备份会包含可迁移的 API Key 主密钥。请确认你会安全保存备份文件和密码。')) void exportLocalBackup('complete');
+                                                                },
+                                                                children: '导出完整加密备份'
                                                             }),
                                                             /*#__PURE__*/ _jsx("button", {
                                                                 type: "button",
@@ -14899,7 +15007,7 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("small", {
                                                         className: "settings-backup-warning",
-                                                         children: "备份文件包含 API Key 恢复所需信息、图片和技能文件；即使已加密，也请勿上传 GitHub 或发送给他人。"
+                                                         children: "内容备份不包含 API Key；完整加密备份会在明确确认后包含可迁移密钥。两种备份都使用独立密码加密，请妥善保存备份文件和密码。"
                                                     })
                                                 ]
                                             }),

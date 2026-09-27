@@ -241,7 +241,7 @@ test('没有授权目录时 Filesystem 不进工具表，授权后带上目录�
 test('授权目录变化后，read/resume/tools 三处都要走同一套路径策略', () => {
   assert.match(agentRoute, /const guard = guardMcpCall\(mcpGuardMeta, args\);/);
   assert.match(agentRoute, /sensitiveHint: mcpGuardApproval/);
-  assert.match(agentRoute, /const mcpFilesystemRoots = listFilesystemRoots\(\);/);
+  assert.match(agentRoute, /const mcpFilesystemRoots = mcpAllowedThisTurn \? listFilesystemRoots\(\) : \[\];/);
   assert.match(resume, /const guardOptions = \{ roots: listFilesystemRoots\(\), writeRoots: listFilesystemWriteRoots\(\), dataDir: resolveLocalDataDir\(\) \};/);
   assert.equal((resume.match(/guardMcpServerCall\(server, meta\.toolName, args, guardOptions\)/g) || []).length, 2);
   assert.match(toolsRoute, /if \(action === 'roots-add'\) addFilesystemRoot\(data\?\.path, \{ write: data\?\.write === true \}\);/);

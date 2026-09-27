@@ -25,6 +25,7 @@ export type CreateCloneJobInput = {
   warnings: string[];
   idempotencyKey?: string;
   planConfirmed?: boolean;
+  autoConfirmPlan?: boolean;
 };
 
 export async function createCloneJob(input: CreateCloneJobInput) {
@@ -39,13 +40,14 @@ export async function createCloneJob(input: CreateCloneJobInput) {
     reference: input.reference,
     assets: input.assets || [],
     planConfirmed: Boolean(input.planConfirmed),
+    autoConfirmPlan: input.autoConfirmPlan !== false,
     options: input.options,
     capabilities: input.capabilities,
     models: input.models,
     ...(input.modelIds ? { modelIds: input.modelIds } : {}),
     warnings: [...input.warnings],
     shots: [],
-    timeline: { duration: 0, fps: 30, aspect: input.options.aspect, clips: [] },
+    timeline: { duration: 0, fps: 30, aspect: input.options.aspect, clips: [], tracks: [] },
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   };
   return store.mutate((tasks) => {

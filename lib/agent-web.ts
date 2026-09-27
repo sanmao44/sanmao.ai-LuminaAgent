@@ -24,10 +24,22 @@ export type AgentWebDecision = {
 export function likelyBrowserAutomationRequest(input: string) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
-  const browserTarget = /(?:浏览器|网页|网站|页面|bilibili|哔哩哔哩|抖音|淘宝|京东|youtube|google|github|打开\s*(?:https?:\/\/|www\.)?\S+)/i.test(text);
+  // “搜索浏览器自动化”是在搜索一个主题，不是让浏览器执行动作。
+  // 只有明确的浏览器环境、网址/站点，或页面级操作证据才进入自动化路径。
+  const browserContext = /(?:在|用|通过|从)(?:浏览器|网页|网站|页面)(?:里|中|上)?|(?:浏览器|网页|网站|页面)(?:里|中|上)|当前(?:网页|页面)|这个(?:网页|页面|网站)/i.test(text);
+  const namedSite = /(?:https?:\/\/|www\.)\S+|bilibili|哔哩哔哩|抖音|淘宝|京东|youtube|google|github|知乎|微博|小红书|instagram|facebook|amazon|reddit|linkedin|notion/i.test(text);
+  const genericNavigation = /(?:打开|访问|进入)\s*(?:浏览器|网页|网站|页面)/i.test(text);
   const browserAction = /(?:打开|访问|进入|搜索|查找|点击|点赞|点踩|收藏|关注|评论|回复|填写|登录|提交|播放|下载|滚动|切换|选中|发帖|购买)/i.test(text);
   const chainedAction = /(?:然后|接着|之后|再|并且|并|并在|最后|给第|第一个|第一条|第一个视频)/i.test(text);
-  return browserTarget && browserAction && (chainedAction || /(?:搜索|点击|点赞|评论|回复|填写|提交)/i.test(text) || /(?:打开|访问|进入)\s*(?:https?:\/\/|www\.)?\S+/i.test(text));
+  const pageMutation = /(?:点击|点赞|点踩|收藏|关注|评论|回复|填写|登录|提交|播放|下载|滚动|切换|选中|发帖|购买)/i.test(text);
+  // A bare "search GitHub/latest information" is an information request,
+  // not a command to operate a browser. Require page context, a mutation, a
+  // chained action, or explicit site navigation before routing to Playwright.
+  // This prevents a well-known site name from turning ordinary web search
+  // into an expensive browser/MCP turn.
+  return genericNavigation
+    || (namedSite && browserAction && (chainedAction || pageMutation || /(?:打开|访问|进入)/i.test(text)))
+    || (browserContext && browserAction && (chainedAction || pageMutation || /(?:搜索|查找|打开|访问|进入)/i.test(text)));
 }
 
 /** 识别本地文件/项目操作请求，供 MCP 工具预算排序使用。 */
@@ -191,10 +203,17 @@ const contextFollowUpPattern = /(?:^|[\s，。！？])(?:(?:他|她|它|其|这�
 const creativeOrArtifactPattern = /(?:生图|画图|绘图|改图|修图|海报|插画|提示词|prompt|代码|编程|typescript|javascript|python|脚本|文件|附件|总结|概括|改写|润色|翻译|摘要|整理成|数学题|公式|推导|证明|教程|步骤|怎么做|如何制作|设计方案)/i;
 const conversationalPattern = /^(?:你好|嗨|哈喽|谢谢|感谢|晚安|早上好|你好吗|你是谁|你叫什么|能帮我吗|可以吗|在吗|有人吗)[。.!！?？]*$/i;
 const stableConceptPattern = /^(?:请问)?(?:什么是|何为|请解释|解释一下|如何理解).{0,80}(?:概念|原理|定义|理论|算法|语法|函数|定理|物理|化学|数学|生物|编程|代码|机制|方法|光合作用|相对论|递归|向量|概率)[。.!！?？]*$/i;
+const generalConceptPattern = /^(?:请问)?(?:什么是|何为|请解释|解释一下|如何理解)\s*[^。！？?？]{1,96}[。.!！?？]*$/i;
+const searchOptOutPattern = /(?:不要|别|无需|不用|不需要|禁止|关闭|关掉|不想|先不).{0,12}(?:联网|上网|搜索|查询|查找|检索|浏览|联网搜索)|(?:联网|上网|搜索|查询|查找|检索|浏览|联网搜索).{0,12}(?:不要|别|无需|不用|不需要|禁止|关闭|关掉)/i;
 // MCP 服务管理的动词/名词分开写：要同时认「接入某个服务」和「把某个服务删掉」两种语序。
 const MCP_MANAGE_VERB = '(?:接入|接个|连上|连接|添加|新增|删除|移除|删掉|断开|停用|启用|自检|查看|列出|配置|检测)';
 const MCP_MANAGE_NOUN = '(?:外部服务|远程服务|工具服务|服务|server)';
 const mcpManagementPattern = new RegExp(`mcp|model\\s+context\\s+protocol|(?:${MCP_MANAGE_VERB}[^，。！？]{0,10}${MCP_MANAGE_NOUN})|(?:${MCP_MANAGE_NOUN}[^，。！？]{0,8}${MCP_MANAGE_VERB})`, 'i');
+const githubMcpInstallPattern = /(?:安装|接入|连接|添加|导入|装上|装好|帮我).{0,80}(?:github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|GitHub\s*(?:仓库|repo))|(?:github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|GitHub\s*(?:仓库|repo)).{0,80}(?:安装|接入|连接|添加|导入|装上|装好|帮我)|^\s*https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\s*$/i;
+const githubRepositoryUrlPattern = /https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?/i;
+const githubMcpInstallVerbPattern = /(?:帮我\s*)?(?:安装|接入|连接|添加|导入|装上|装好)(?:一下|这个|该|此)?/i;
+const githubMcpShortInstallPattern = /^(?:帮我\s*)?(?:安装|接入|连接|添加|导入|装上|装好)(?:一下|这个|该|此)?[。.!！?？]?$/i;
+const githubMcpInstallHandoffPattern = /(?:github|仓库|repo).{0,120}(?:安装|接入|连接|添加|导入|装上|装好).{0,120}(?:地址|链接|url|发给我|发我|贴给我|提供给我|发过来)|(?:安装|接入|连接|添加|导入|装上|装好).{0,120}(?:github|仓库|repo).{0,120}(?:地址|链接|url|发给我|发我|贴给我|提供给我|发过来)/i;
 // 本地工具运行时（受控条目）单独认：「浏览器控制组件装了吗 / 启动浏览器运行时」也要下发管理工具，
 // 否则助手明明能查状态、能启停，却看不到入口。
 const mcpRuntimePattern = /(?:浏览器|browser|playwright|chromium)[^，。！？]{0,12}(?:运行时|组件|控制|工具|服务)|(?:运行时|浏览器控制)[^，。！？]{0,10}(?:状态|没反应|用不了|不能用|安装|启动|开启|停止|关闭)/i;
@@ -237,6 +256,10 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string, conte
   const text = normalizeWebText(input);
   const query = buildAgentWebQuery(text, context);
   if (mode === 'off') return { shouldSearch: false, reason: 'off', query };
+  // An explicit user opt-out wins over the automatic and "always" modes. It
+  // is safer to answer from the configured model than to silently browse when
+  // the user explicitly said not to connect or search.
+  if (searchOptOutPattern.test(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
   // “搜索某网站并继续点击/评论”是浏览器页面操作，不应被普通联网搜索抢先消费。
   if (likelyBrowserAutomationRequest(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
   if (mode === 'always') return { shouldSearch: Boolean(query), reason: 'always', query };
@@ -245,7 +268,9 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string, conte
   const explicit = explicitSearchPattern.test(text);
   if (explicit) return { shouldSearch: true, reason: 'explicit-search', query };
   if (creativeOrArtifactPattern.test(text) || conversationalPattern.test(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
-  if (stableConceptPattern.test(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
+  if (stableConceptPattern.test(text) || (generalConceptPattern.test(text) && !/(?:最新|当前|现在|来源|核验|是真的吗|是否存在|官网|文档地址|版本)/i.test(text))) {
+    return { shouldSearch: false, reason: 'ordinary-chat', query };
+  }
 
   const question = questionPattern.test(text);
   const verification = verificationPattern.test(text);
@@ -364,5 +389,54 @@ export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
 export function likelyMcpManagementRequest(input: string) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
-  return mcpManagementPattern.test(text) || mcpRuntimePattern.test(text);
+  return mcpManagementPattern.test(text) || mcpRuntimePattern.test(text) || githubMcpInstallPattern.test(text);
+}
+
+/**
+ * 识别明确的“GitHub 地址 + 帮我安装”请求，供路由直接执行，避免被回答成教程。
+ *
+ * 如果上一条助手消息明确要求用户把 GitHub 仓库地址发来，或者上一条用户消息
+ * 刚发过仓库地址，那么用户下一条只发送地址/“安装”也是同一个安装请求；普通
+ * 聊天里分享 GitHub 链接不能触发安装。
+ */
+export function extractGithubMcpInstallRequest(input: string, previousAssistantText = '', previousUserText = '', previousContextText = '') {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  const url = text.match(githubRepositoryUrlPattern)?.[0] || '';
+  const previousUser = String(previousUserText || '').replace(/\s+/g, ' ').trim();
+  const previousUserUrl = previousUser.match(githubRepositoryUrlPattern)?.[0] || '';
+  const previousUserIsOnlyUrl = Boolean(previousUserUrl) && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(previousUser);
+  const previousContextUrl = String(previousContextText || '').replace(/\s+/g, ' ').trim().match(githubRepositoryUrlPattern)?.[0] || '';
+  const isBareRepositoryUrl = Boolean(url)
+    && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(text);
+  const shortInstall = githubMcpShortInstallPattern.test(text);
+  if (isBareRepositoryUrl) return url;
+  if (!url && !(shortInstall && (previousUserIsOnlyUrl || previousContextUrl))) return null;
+  const isExplicitInstallRequest = githubMcpInstallVerbPattern.test(text);
+  const isInstallHandoff = /^\s*https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\s*$/i.test(text)
+    && githubMcpInstallHandoffPattern.test(String(previousAssistantText || '').replace(/\s+/g, ' ').trim());
+  const isPreviousUserHandoff = shortInstall && (previousUserIsOnlyUrl || previousContextUrl);
+  if (!isExplicitInstallRequest && !isInstallHandoff && !isPreviousUserHandoff) return null;
+  if (/(?:怎么|如何|教程|步骤|方法).{0,24}(?:安装|接入|连接|添加|导入)/i.test(text) && !/(?:直接|帮我|请).{0,12}(?:安装|接入|连接|添加|导入)/i.test(text)) return null;
+  return url || (previousUserIsOnlyUrl ? previousUserUrl : '') || previousContextUrl;
+}
+
+/**
+ * 当前消息只发送仓库地址时，判断它是不是在承接助手刚才的安装交接。
+ *
+ * 页面会先筛选历史消息再发给服务端；如果不把这条助手交接消息保留下来，
+ * 服务端看到的就只是一个普通 GitHub 链接，无法确认用户是在授权安装。
+ */
+export function isGithubMcpInstallHandoff(input: string, previousAssistantText = '') {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  const url = text.match(githubRepositoryUrlPattern)?.[0] || '';
+  if (!url || !/^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(text)) return false;
+  return githubMcpInstallHandoffPattern.test(String(previousAssistantText || '').replace(/\s+/g, ' ').trim());
+}
+
+export function extractGithubRepositoryUrl(input: unknown) {
+  return String(input || '').match(githubRepositoryUrlPattern)?.[0] || '';
+}
+
+export function isGithubMcpInstallFollowUp(input: unknown) {
+  return githubMcpShortInstallPattern.test(String(input || '').replace(/\s+/g, ' ').trim());
 }

@@ -3,7 +3,7 @@
 # This file is sourced by the existing launchers; it never creates another UI entry.
 
 free_relay_state_root() {
-  printf '%s' "$1/.data/free-relay"
+  printf '%s/free-relay' "$(sanmao_data_dir "$1")"
 }
 
 free_relay_pid_is_cloudflared() {
@@ -71,7 +71,7 @@ free_relay_log() {
   ROOT_TO_USE=$1
   LEVEL=$2
   MESSAGE=$3
-  LOG_PATH="$ROOT_TO_USE/.data/logs/launcher.log"
+  LOG_PATH="$(sanmao_data_dir "$ROOT_TO_USE")/logs/launcher.log"
   mkdir -p "$(dirname "$LOG_PATH")" 2>/dev/null || true
   printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$LEVEL" "$MESSAGE" >> "$LOG_PATH" 2>/dev/null || true
 }
@@ -115,7 +115,7 @@ free_relay_watch() {
 free_relay_download() {
   ROOT_TO_USE=$1
   STATE_ROOT=$(free_relay_state_root "$ROOT_TO_USE")
-  BIN_ROOT="$ROOT_TO_USE/.data/bin"
+  BIN_ROOT="$(sanmao_data_dir "$ROOT_TO_USE")/bin"
   LOCAL_BINARY="$BIN_ROOT/cloudflared"
   if [ -x "$LOCAL_BINARY" ]; then printf '%s' "$LOCAL_BINARY"; return 0; fi
   if command -v cloudflared >/dev/null 2>&1; then command -v cloudflared; return 0; fi

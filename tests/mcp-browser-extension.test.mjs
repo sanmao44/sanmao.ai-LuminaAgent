@@ -96,7 +96,8 @@ test('接日常浏览器：浏览器路径进启动参数，扩展连接码只�
     assert.equal(config.args[config.args.indexOf('--executable-path') + 1], exe, '接日常浏览器要明确指定接哪一个浏览器');
     assert.ok(!config.args.includes('--browser'), '--extension 会忽略 --browser，传了只会让人以为还能选浏览器');
     assert.equal(config.env, undefined, '没配连接码就不该给环境变量');
-    const bridge = mcp.catalogBrowserBridge(entry, { dataDir });
+    // 跑测试的这台机器不一定是 Windows：显式给平台，结论才和面板在 Windows 上看到的一致。
+    const bridge = mcp.catalogBrowserBridge(entry, { dataDir, platform: 'win32' });
     assert.equal(bridge.source, 'override');
     assert.equal(bridge.browserName, 'FakeBrowser');
     assert.equal(bridge.extensionInstalled, true);

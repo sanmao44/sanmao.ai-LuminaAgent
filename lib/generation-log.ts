@@ -4,6 +4,7 @@ import path from 'node:path';
 import { resolveStoredFileWithFallback } from './image-storage';
 import type { MediaKind, ReferenceImageRecord } from './types';
 import type { GenerationSource } from './generation-source';
+import { resolveLocalDataDir } from './data-paths';
 
 export type GenerationLog = {
   id: string;
@@ -44,8 +45,25 @@ export type GenerationLog = {
   errorCode?: string;
   task?: string;
   llmCallCount?: number;
+  /** Real provider-reported usage when the upstream response exposes it. */
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
   responseChars?: number;
   webSearchStatus?: string;
+  /** Browser-only execution counters; page content and tool arguments are excluded. */
+  browserToolCallCount?: number;
+  browserToolSuccessCount?: number;
+  browserToolFailureCount?: number;
+  browserToolDurationMs?: number;
+  browserToolResultChars?: number;
+  browserToolContextChars?: number;
+  browserSnapshotCount?: number;
+  browserSnapshotChars?: number;
+  browserSnapshotTruncationCount?: number;
+  browserSnapshotDuplicateCount?: number;
+  browserSnapshotStateChanges?: number;
+  browserSnapshotUnchangedCount?: number;
   projectId?: string;
   chatId?: string;
   canvasId?: string;
@@ -53,7 +71,7 @@ export type GenerationLog = {
   taskId?: string;
 };
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+const dataDir = resolveLocalDataDir();
 const logPath = path.join(dataDir, 'generation-logs.jsonl');
 const trashDir = path.join(dataDir, 'trash', 'images');
 const LOG_ROTATION_BYTES = 10 * 1024 * 1024;

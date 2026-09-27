@@ -12,6 +12,7 @@ import { canvasPatchTool } from './canvas';
 export * from './registry';
 export * from './executor';
 export * from './selector';
+export { tabbitBrowserTool } from './tabbit';
 
 /** 顺序即下发顺序，与原 route.ts 里的工具数组保持一致。 */
 export const TOOL_REGISTRY: readonly ToolDefinition[] = [

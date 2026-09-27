@@ -5,8 +5,9 @@ import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { GeneratedImage } from './types';
 import { knownMediaRoots, mediaDirectory } from './media-paths';
+import { resolveLocalDataDir } from './data-paths';
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+const dataDir = resolveLocalDataDir();
 const legacyStoragePath = path.join(process.cwd(), '..', 'image_generation_records');
 const MAX_STORED_IMAGE_BYTES = 100 * 1024 * 1024;
 
@@ -48,7 +49,7 @@ export function getStorageRoots(configuredPath?: string) {
   return roots;
 }
 
-function imageMimeFromBytes(bytes: Uint8Array) {
+export function imageMimeFromBytes(bytes: Uint8Array) {
   if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
   if (bytes.length >= 12 && String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP') return 'image/webp';

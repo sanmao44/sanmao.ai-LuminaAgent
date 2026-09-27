@@ -19,6 +19,44 @@ test('only offers the MCP manager when the turn is about MCP services', () => {
     assert.equal(web.likelyMcpManagementRequest(input), false, input);
   }
   assert.equal(web.likelyMcpManagementRequest(''), false);
+  assert.equal(web.likelyMcpManagementRequest('帮我安装 https://github.com/owner/repo'), true);
+  assert.equal(web.likelyMcpManagementRequest('https://github.com/owner/repo\n\n帮我安装'), true);
+  assert.equal(web.likelyMcpManagementRequest('https://github.com/owner/repo'), true);
+  assert.equal(web.extractGithubMcpInstallRequest('https://github.com/owner/repo\n\n帮我安装'), 'https://github.com/owner/repo');
+  assert.equal(web.extractGithubMcpInstallRequest('https://github.com/owner/repo'), 'https://github.com/owner/repo');
+  assert.equal(web.extractGithubMcpInstallRequest('怎么安装 https://github.com/owner/repo'), null);
+  assert.equal(web.extractGithubMcpInstallRequest(
+    'https://github.com/owner/repo',
+    '安装失败：请把 GitHub 仓库地址直接发给我，我只会安装你这次消息里提供的仓库。',
+  ), 'https://github.com/owner/repo');
+  assert.equal(web.extractGithubMcpInstallRequest(
+    'https://github.com/owner/repo',
+    '这是一个 GitHub 仓库的介绍，地址在这里。',
+  ), 'https://github.com/owner/repo');
+  assert.equal(web.extractGithubMcpInstallRequest(
+    '安装',
+    '这是一个 GitHub 项目的介绍。',
+    'https://github.com/owner/repo',
+  ), 'https://github.com/owner/repo');
+  assert.equal(web.extractGithubMcpInstallRequest(
+    '安装',
+    '这是一个 GitHub 项目的介绍。',
+    '我也喜欢这个项目：https://github.com/owner/repo',
+  ), null);
+  assert.equal(web.extractGithubMcpInstallRequest(
+    '安装',
+    '这是一个 GitHub 项目的介绍。',
+    '',
+    '用户之前发过 https://github.com/owner/repo，助手随后介绍了项目。',
+  ), 'https://github.com/owner/repo');
+  assert.equal(web.isGithubMcpInstallHandoff(
+    'https://github.com/owner/repo',
+    '安装失败：请把 GitHub 仓库地址直接发给我，我只会安装你这次消息里提供的仓库。',
+  ), true);
+  assert.equal(web.isGithubMcpInstallHandoff(
+    'https://github.com/owner/repo',
+    '这是一个 GitHub 仓库的介绍，地址在这里。',
+  ), false);
 });
 
 test('本地运行时的问法也会放出 MCP 管理工具，但普通提问不会', () => {
@@ -84,6 +122,19 @@ test('keeps stable explanations, creative work and code out of smart search', ()
   }
 });
 
+test('respects an explicit request to stay offline', () => {
+  for (const input of [
+    '不要联网，直接回答什么是 MCP',
+    '先不要搜索，帮我解释这段代码',
+    '不用上网，给我写一段产品文案',
+    '关闭联网查询，告诉我你的判断',
+  ]) {
+    const decision = web.shouldUseAgentWebSearch('auto', input);
+    assert.equal(decision.shouldSearch, false, input);
+  }
+  assert.equal(web.shouldUseAgentWebSearch('always', '不要联网，直接回答').shouldSearch, false);
+});
+
 test('treats local device resources as ordinary chat instead of a location lookup', () => {
   for (const input of ['帮我列出本地笔记', '本机的资料放在哪', '我的笔记都存在本地']) {
     const decision = web.shouldUseAgentWebSearch('auto', input);
@@ -126,6 +177,11 @@ test('识别浏览器连续操作请求，并排除普通联网搜索', () => {
   assert.equal(web.likelyBrowserAutomationRequest('打开 bilibili'), true);
   assert.equal(web.shouldUseAgentWebSearch('always', '打开 bilibili').shouldSearch, false);
   assert.equal(web.likelyBrowserAutomationRequest('搜索 OpenAI 最新 API 版本'), false);
+  assert.equal(web.likelyBrowserAutomationRequest('搜索 GitHub 最新资料'), false);
+  assert.equal(web.likelyBrowserAutomationRequest('在 GitHub 页面搜索 issue 并点击第一个结果'), true);
+  assert.equal(web.likelyBrowserAutomationRequest('搜索浏览器自动化的最新资料'), false);
+  assert.equal(web.likelyBrowserAutomationRequest('在浏览器里搜索 OpenAI 最新 API 版本'), true);
+  assert.equal(web.likelyBrowserAutomationRequest('打开网页看看这个页面'), true);
 });
 
 test('识别本地文件和项目操作请求', () => {

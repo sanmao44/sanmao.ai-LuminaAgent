@@ -1,17 +1,30 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.54",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.54",
+  "latestVersion": "0.7.62",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.62",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.54/SANMAO.AI-0.7.54.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.62/SANMAO.AI-0.7.62.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.54/SANMAO.AI-0.7.54.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.54/SANMAO.AI-0.7.54.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.54/SANMAO.AI-0.7.54.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.62/SANMAO.AI-0.7.62.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.62/SANMAO.AI-0.7.62.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.62/SANMAO.AI-0.7.62.zip"
   ],
-  "sha256": "4cab1e8e526c51a376c7e5fb6077fd3ec94c422ed38799da0a0b6aaf9300255d",
-  "publishedAt": "2026-09-21T16:53:31Z",
+  "sha256": "e559e37a569c597d021d3f6a801071da9f66837cb4c4bb2db08ee11fb9ddc1fd",
+  "publishedAt": "2026-09-27T04:03:06Z",
   "notes": [
+    "修复用户直接发送 GitHub 仓库地址时未自动安装的问题；裸仓库地址现在会直接交给 Agent 安装。",
+    "修复安装交接上下文被筛选丢失的问题，用户按提示发送仓库地址后会继续执行安装。",
+    "修复 GitHub MCP 安装上下文丢失：用户先发仓库地址、稍后只说安装时也会自动执行。",
+    "优化 MCP 仓库接入与安装交接，减少返回教程而没有真正安装的问题。",
+    "新增 Tabbit 原生浏览器控制、超时处理与完全访问审批支持。",
+    "修复 Agent 意图误触发生图，提升连续任务与工具路由稳定性。",
+    "优化 Agent 路由与执行资源门控，减少不必要的工具规划并提升连续任务稳定性。",
+    "稳固本地数据持久化与迁移边界，降低工作区恢复和版本升级时的数据风险。",
+    "新增助手能力手动接入引导，让 MCP 与其他服务接入步骤更清晰、可控。",
+    "新增跨镜头视觉系统：榜单、标题栏、产品卡、界面和 Logo 可保持同一身份，并记录 enter/active/update/exit 生命周期。",
+    "参考视频分析继续使用连续取证帧、硬切、节拍和语音边界，不再只依赖文字描述重建画面。",
+    "视觉系统编译进可编辑时间轴和最终单个 MP4；支持字卡、图片和视频媒体叠加，并兼容 Seedance 与其他视频模型。",
+    "Blueprint 及本地变体会复用视觉系统和状态，重配音、改文案后仍能按语义时间重新定位。",
     "任务日志排版重做：来源与结果改成整行记录，卡片不再出现大片空白、内容出框或被裁切；元信息标签可自动换行，失败原因最多两行显示。",
     "从任务日志点“结果：…”查看大图，关闭预览后会回到任务日志面板，和“打开结果”行为一致。",
     "画布项目支持版本管理：保存后可在项目面板一键恢复历史版本，也能删除不需要的版本（删除前二次确认）。",
@@ -28,6 +41,9 @@
     "MCP 面板拆分为连接器、我的服务、安全与高级设置，浏览和管理更清晰。",
     "新增 apikl.ai API 快连，并作为推荐服务商提供。",
     "修复超级画布读取服务商临时图片地址失败的问题，自动归档可用的远端图片。",
-    "超级画布的“当前图片作参考”开关按节点记忆，减少重复设置。"
+    "超级画布的“当前图片作参考”开关按节点记忆，减少重复设置。",
+    "默认开启动态效果：不再受系统“减少动态效果”策略影响，画布流光、节点进度与欢迎页动画都会正常播放（此前会被整体停掉，看起来像卡住）。",
+    "移除右下角“检测到系统已减少动态效果”的提示条。",
+    "修复全新安装时开屏欢迎页偶尔一闪而过的问题。"
   ]
 }

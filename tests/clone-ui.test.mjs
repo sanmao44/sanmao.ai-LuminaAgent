@@ -14,18 +14,22 @@ const match_types = await readFile(new URL("../lib/types.ts", import.meta.url), 
 const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
 const storeLib = await readFile(new URL("../lib/store.ts", import.meta.url), "utf8");
 const cloneTypes = await readFile(new URL("../lib/clone/types.ts", import.meta.url), "utf8");
+const modelPicker = await readFile(new URL("../components/ModelPicker.tsx", import.meta.url), "utf8");
+const workbench = await readFile(new URL("../components/VideoEditorWorkbench.tsx", import.meta.url), "utf8");
 
 test("克隆弹窗是合法 TSX，并且具备三步式傻瓜操作", () => {
   const source = ts.createSourceFile("CanvasCloneDialog.tsx", dialog, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   assert.deepEqual(source.parseDiagnostics ?? [], []);
   assert.match(dialog, /role="dialog"/);
   assert.match(dialog, /aria-label="一键克隆出片"/);
-  assert.match(dialog, /选参考视频/);
+  assert.match(dialog, /选参考图或视频/);
   assert.match(dialog, /一句话要求/);
   assert.match(dialog, /想做成什么片子/);
   assert.match(dialog, /预计最多 \{maxShots\} 次生图/);
   assert.match(dialog, /超出默认成本闸门/);
   assert.match(dialog, /capability="speech"/);
+  assert.doesNotMatch(dialog, /<select\b/);
+  assert.equal((dialog.match(/<SelectMenu\b/g) || []).length, 4, "克隆弹窗的下拉框统一使用 SelectMenu");
   // 一个在线配音模型都没配时，弹窗要提示服务端有没有「本机离线配音」兜底。
   assert.match(dialog, /fetch\("\/api\/health", \{ cache: "no-store" \}\)/);
   assert.match(dialog, /本机离线配音，免费，音色偏机械/);
@@ -51,7 +55,7 @@ test("弹窗按真实任务状态轮询并可取消、可放入画布", () => {
   assert.match(dialog, /fetch\(`\/api\/clone\/jobs\/\$\{job\.id\}\/cancel`, \{ method: "POST" \}\)/);
   assert.match(dialog, /TERMINAL_STAGES: CloneJob\["stage"\]\[\] = \["done", "failed", "cancelled"\]/);
   assert.match(dialog, /onApply\(job\)/);
-  assert.match(dialog, /job\.stage === "done" && readyShots > 0/);
+  assert.match(dialog, /job\.stage === "done" && \(readyShots > 0 \|\| hasFinalVideo\)/);
 });
 
 test("克隆出片只从「创建节点」菜单进入，顶栏和节点「更多」都不放", () => {
@@ -72,10 +76,19 @@ test("克隆结果落成镜头素材 + 带时间轴的视频编辑节点", () =>
   assert.match(canvas, /const applyCloneJob = useCallback\(/);
   assert.match(canvas, /createVideoEditorNode\(\{ x: originX \+ 1180, y: originY \}\)/);
   assert.match(canvas, /syncCanvasVideoEditorReferences\(next\)/);
-  assert.match(canvas, /role: isVideo \? "video" : "reference-image"/);
-  assert.match(canvas, /const match = \/\^clone-\(video\|audio\|caption\)-\(\\d\+\)\$\/\.exec\(clip\.id\)/);
+  assert.match(canvas, /connectSource\(node, isVideo \? "video" : "reference-image"\)/);
+  assert.match(canvas, /const match = \/\^clone-\(video\|audio\|caption\|graphics\)-\(\\d\+\)\$\/\.exec\(clip\.id\)/);
   assert.match(canvas, /videoEditor: normalizeVideoEditorState\(\{/);
   assert.match(canvas, /clip\.track === "video"\)\.length} 个镜头/);
+  assert.match(canvas, /const finalNode = job\.timeline\.finalVideoUrl/);
+  assert.match(canvas, /nodes: \[\.\.\.value\.nodes, \.\.\.\(finalNode \? \[finalNode\] : \[\]\), \.\.\.created, editorNode\]/);
+});
+
+test("effect events stay editable without requiring a source node", () => {
+  assert.match(canvas, /track: "effect"/);
+  assert.match(workbench, /id: "effect", label: "动效"/);
+  assert.match(workbench, /selectedClip\.track === "effect"/);
+  assert.match(workbench, /activeEffects/);
 });
 
 test("克隆接口创建任务、后台跑管线并暴露进度与取消", () => {
@@ -86,10 +99,27 @@ test("克隆接口创建任务、后台跑管线并暴露进度与取消", () =>
   assert.match(route, /指定的配音模型不可用/);
   assert.match(route, /offlineSpeech: offlineSpeechSupported\(\)/);
   assert.match(route, /capabilities\.offlineSpeech \? OFFLINE_SPEECH_LABEL : undefined/);
-  assert.match(route, /没有可用的生图模型/);
+  assert.match(route, /hasImageModel: Boolean\(imageRuntime\)/);
   assert.match(jobRoute, /findCloneJob\(id\)/);
   assert.match(cancelRoute, /cancelRequested: true/);
   assert.match(store, /createTaskStore<CloneJob>\(\{ fileName: 'clone-jobs\.json', maxList: 200 \}\)/);
+  assert.match(route, /参考图或参考视频/);
+});
+
+test("克隆自动模型策略主要使用 Seedance，但显式选择其他模型仍保留", () => {
+  assert.match(storeLib, /export async function getRuntimeCloneVideoModel/);
+  assert.match(storeLib, /const isSeedance = \/seedance\/iu\.test\(name\)/);
+  assert.match(storeLib, /if \(id && id !== 'auto'\)/);
+  assert.match(modelPicker, /automaticMode\?: 'default' \| 'clone'/);
+  assert.match(modelPicker, /克隆主要使用 Seedance/);
+  assert.match(dialog, /automaticMode="clone"/);
+  assert.match(dialog, /克隆主要使用 Seedance；其他模型可手动选择，能力不匹配时自动回退/);
+});
+
+test("编辑器预览会叠加同一时刻的多个 B-roll，而不是只显示最后一个", () => {
+  assert.match(workbench, /const activeBrollClips = activeClips\.filter\(\(clip\) => clip\.track === "broll"\)/);
+  assert.match(workbench, /activeBrollClips\.map\(\(clip\) =>/);
+  assert.match(workbench, /brollVideoRefs = useRef\(new Map<string, HTMLVideoElement>\(\)\)/);
 });
 
 test("镜头计划只保存需要的素材，并按本地视频模型能力选择执行策略", () => {
@@ -98,12 +128,15 @@ test("镜头计划只保存需要的素材，并按本地视频模型能力选�
   assert.match(route, /hasReferenceAudio: Boolean\(videoRuntime\?\.model\.capabilities\.includes\('video-audio'\)\)/);
   assert.match(pipeline, /不确定时宁可留空，不要把所有素材分配给每个镜头/);
   assert.match(pipeline, /function fallbackShotAssets\(job: CloneJob, shot: CloneShot\)/);
+  assert.match(pipeline, /if \(!assetIds\.length\) return job\.capabilities\.video \? 'text' as const : 'static' as const/);
   assert.match(pipeline, /if \(job\.capabilities\.referenceImages\) return 'reference'/);
   assert.match(pipeline, /if \(job\.capabilities\.firstFrame\) return 'keyframe'/);
   assert.match(pipeline, /shot\.strategy === 'reference' \|\| legacyStrategy/);
   assert.match(pipeline, /shot\.strategy === 'keyframe' \|\| legacyStrategy/);
   assert.match(pipeline, /shot\.speechMode === 'talking' && job\.capabilities\.referenceAudio/);
-  assert.match(pipeline, /shot\.strategy === 'reference' \|\| shot\.strategy === 'text'/);
+  assert.match(pipeline, /shot\.strategy === 'reference' \|\| legacyStrategy \|\| Boolean\(shot\.referenceFrameUrl\)/);
+  assert.match(pipeline, /shot\.referenceFrameUrl\n\s*\? await cloneImageReferences\(job, shot\)/);
+  assert.match(pipeline, /shot\.strategy === 'text' && !shot\.referenceFrameUrl/);
   assert.match(jobRoute, /normalizeShotStrategy\(/);
   assert.match(jobRoute, /validAssetIds\.has\(item\)/);
 });
@@ -114,17 +147,63 @@ test("分析结果和用户确认会保存可复用 Blueprint，旧任务保持�
   assert.match(pipeline, /blueprint: \{ version: 1, sourceVideo: job\.reference, assets: job\.assets \|\| \[\], shots: planned/);
   assert.match(jobRoute, /blueprint: latest\.blueprint \? \{ \.\.\.latest\.blueprint, shots, updatedAt: new Date\(\)\.toISOString\(\) \} : undefined/);
   assert.match(pipeline, /const legacyStrategy = !shot\.strategy;/);
-  assert.match(pipeline, /started\.capabilities\.firstFrame !== false/);
+  assert.match(pipeline, /executionCapabilities\.firstFrame !== false/);
+  assert.match(jobRoute, /preserveReferenceFrame: Boolean\(source\.preserveReferenceFrame \?\? original\.preserveReferenceFrame\)/);
+  assert.match(dialog, /className="clone-plan-preserve"/);
+});
+
+test("completed jobs can reuse Blueprint for a local re-assembly", () => {
+  assert.match(pipeline, /export async function rerenderCloneJob\(/u);
+  assert.match(pipeline, /const needsNewImages = started\.shots\.some/u);
+  assert.match(pipeline, /async function runCloneReassembly\(id: string\)/u);
+  assert.match(pipeline, /assembleCloneVideo\(/u);
+  assert.match(pipeline, /void runCloneReassembly\(id\)\.catch/u);
+  assert.doesNotMatch(pipeline, /rerenderCloneJob[\s\S]{0,120}void runCloneJob\(id\)\.catch/u);
+  assert.match(jobRoute, /action === 'rerender'/u);
+  assert.match(jobRoute, /const rawTimeline = body[\s\S]*normalizeVideoEditorState/u);
+  assert.match(jobRoute, /rerenderCloneJob\(id, shots, timeline\)/u);
+});
+
+test("Blueprint 变体提供计划与本地完整 MP4 合成入口", () => {
+  assert.match(jobRoute, /action === 'variant-plan'/u);
+  assert.match(jobRoute, /action === 'variant-render'/u);
+  assert.match(jobRoute, /action === 'variant-render-batch'/u);
+  assert.match(jobRoute, /renderBlueprintVariants\(id, variants\)/u);
+  assert.match(pipeline, /export async function renderBlueprintVariant\(/u);
+  assert.match(pipeline, /export async function renderBlueprintVariants\(/u);
+  assert.match(pipeline, /generationShotIndexes\.length \|\| plan\.voiceShotIndexes\.length/u);
+  assert.match(pipeline, /renderVariantMedia\(/u);
+  assert.match(pipeline, /renderVariantVoice\(/u);
+  assert.match(pipeline, /补生成/u);
+  assert.match(dialog, /Blueprint 组件变体/u);
+  assert.match(dialog, /action: "variant-plan"/u);
+  assert.match(dialog, /action: "variant-render"/u);
+  assert.match(dialog, /action: "variant-render-batch"/u);
+  assert.match(dialog, /variantBatchText/u);
+  assert.match(dialog, /variantSpecs\.find\(\(item\) => item\.id === plan\.id\)/u);
+  assert.match(dialog, /合成完整 MP4/u);
+  assert.match(styles, /\.clone-variant-panel\{/u);
 });
 
 test("管线包含抽帧、拆解、配音、生图、生视频五步与三条降级链", () => {
   assert.match(pipeline, /extractFrameFiles\(/);
+  assert.match(pipeline, /normalizeVisualSystems\(/);
+  assert.match(pipeline, /visualSystems: analysis\.visualSystems/);
+  assert.match(pipeline, /buildTimeline\(shots, started\.options, referenceTranscript, started\.referenceAnalysis\?\.beats, visualSystems\)/);
+  assert.match(pipeline, /referenceEvidenceSampleTimes\(duration, scene\.times, beatResult\.beats, referenceTranscript\)/);
+  assert.match(pipeline, /evidenceForFrameTimes\(extracted\.times, evidence\)/);
+  assert.match(pipeline, /evidence:\s*frames\.evidence/);
+  assert.match(pipeline, /取证原因来自本地分析/);
   // 参考视频必须和 /api/storage/video 用同一套解析（回退历史目录），否则旧素材会解析成不存在的路径。
   assert.match(pipeline, /resolveStoredVideoFileWithFallback\(state\.settings\.videoStoragePath \|\| '', name\)/);
-  assert.match(pipeline, /if \(!file \|\| !existsSync\(file\)\) throw new Error\('参考视频已不在本地存储里/);
+  assert.match(pipeline, /if \(!file \|\| !existsSync\(file\)\) throw new Error\('参考素材已不在本地存储里/);
   // 抽帧失败要把 ffmpeg 的真实报错带进降级提示，否则「没拆出画面」无从排查。
   assert.match(pipeline, /const reason = frames\.error \|\| \(frames\.files\.length \? '抽出来的帧读不出来' : '没有抽到帧'\)/);
-  assert.match(pipeline, /参考视频拆解不了（/);
+  assert.match(pipeline, /参考素材拆解不了（/);
+  assert.match(pipeline, /prepareImageFrame\(/);
+  assert.match(pipeline, /job\.reference\.kind === 'image'[\s\S]{0,120}transcript: null/);
+  assert.match(pipeline, /job\.reference\.kind === 'image'[\s\S]{0,180}times: \[\], error: ''/);
+  assert.match(pipeline, /job\.reference\.kind === 'image'\n\s*\? \[\{ start: 0, end: round3\(durationSeconds\)/);
   assert.match(pipeline, /probeMediaSeconds\(/);
   assert.match(pipeline, /synthesizeSpeech\(runtime, \{ text: shot\.line, voice: job\.options\.voice \}\)/);
   // 在线 TTS 不可用时用系统自带语音合成，不把「调用不了」留给用户。
@@ -134,7 +213,25 @@ test("管线包含抽帧、拆解、配音、生图、生视频五步与三条�
   // 配音落盘必须按服务商真实返回的容器（Gitee 会忽略 response_format 直接回 wav）。
   assert.match(pipeline, /persistAudioBuffer\(audio\.buffer, audio\.contentType\)/);
   assert.match(pipeline, /audioExtension\(audio\.contentType\)/);
-  assert.match(pipeline, /generateShotImage\(imageRuntime, started, shot\)/);
+  assert.match(pipeline, /generateShotImage\(imageRuntime, executionJob, shot\)/);
+  assert.match(pipeline, /cloneShotDirection\(shot, job\.options\.brief\)/);
+  assert.match(pipeline, /prompt: `\$\{cloneShotDirection\(shot, job\.options\.brief\)\}/);
+  assert.match(pipeline, /referenceVideos = referenceVideo \? \[referenceVideo\] : \[\]/);
+  assert.match(pipeline, /async function ensureReferenceVideoUrl\(job: CloneJob, shot: CloneShot, referenceFile: string\)/);
+  assert.match(pipeline, /referenceVideoUrl: stored\.url/);
+  assert.match(pipeline, /referenceVideo = await referenceVideoDataUrl\(shot\.referenceVideoUrl\) \|\| undefined/);
+  assert.match(pipeline, /Backfill reusable source windows for older Blueprints/);
+  assert.match(pipeline, /response\.headers\.get\('content-length'\)/);
+  assert.match(pipeline, /shots = alignShotsWithLines\(merged, scriptLines, \{ preserveShotStructure: true \}\)/);
+  assert.match(pipeline, /const resumed = Boolean\(started\.planConfirmed && started\.shots\.length\)/);
+  assert.match(pipeline, /const visualBible = await analyzeVisualBible\(chatPick\.value, await frameDataUrls\(frames\.files\), plannedWithFrames, job\)/);
+  assert.match(pipeline, /referenceAnalysis,[\s\S]*blueprint: \{ version: 1, sourceVideo: job\.reference, assets: job\.assets \|\| \[\], shots: plannedWithFrames, visualBible/);
+  assert.match(pipeline, /const existingVisualBible = executionJob\.blueprint\?\.visualBible \|\| executionJob\.referenceAnalysis\?\.visualBible/);
+  assert.match(pipeline, /const nextReferenceAnalysis = referenceAnalysis/);
+  assert.match(pipeline, /const nextBlueprint = blueprint/);
+  assert.match(pipeline, /return parts\.length \? `；\$\{parts\.join\('；'\)\}` : ''/);
+  assert.match(pipeline, /transcribeLocalAudio\(extracted, seconds \|\| Math\.max\(1, shot\.end - shot\.start\)\)/);
+  assert.match(pipeline, /audioWords: voice\.words/);
   assert.match(pipeline, /createVideoGeneration\(\{ modelId: runtime\.model\.id, input, source: 'canvas' \}\)/);
   assert.match(pipeline, /没有视觉模型/);
   assert.match(pipeline, /const IMAGE_CONCURRENCY = 2;/);
@@ -143,10 +240,14 @@ test("管线包含抽帧、拆解、配音、生图、生视频五步与三条�
   assert.match(pipeline, /const VIDEO_CONCURRENCY = 1;/);
   assert.match(pipeline, /const VIDEO_RETRY_WAITS_MS = \[30_000, 60_000\];/);
   assert.match(pipeline, /isTransientVideoError\(failure\)/);
-  assert.match(pipeline, /clampShotSeconds\(Math\.round\(shot\.audioSeconds \|\| 4\), getVideoModelLimits\(runtime\.model, runtime\.provider\)\)/);
+  assert.match(pipeline, /clampShotSeconds\(Math\.round\(requestedSeconds\), getVideoModelLimits\(runtime\.model, runtime\.provider\)\)/);
   assert.match(pipeline, /firstFrameTransportReady\(videoRuntime\)/);
-  assert.match(pipeline, /useFirstFrame && shot\.imageUrl \? \{ firstFrame: shot\.imageUrl \}/);
+  assert.match(pipeline, /useKeyframe && useFirstFrame && \(shot\.imageUrl \|\| shot\.referenceFrameUrl\)/);
+  assert.match(pipeline, /firstFrame: shot\.imageUrl \|\| shot\.referenceFrameUrl/);
   assert.match(pipeline, /退回静态图/);
+  assert.match(pipeline, /普通镜头已保留参考帧静态出片/);
+  assert.match(pipeline, /const canCarryReferenceFrame = useFirstFrame \|\| executionCapabilities\.referenceVideo \|\| executionCapabilities\.referenceImages/);
+  assert.match(pipeline, /fallbackShotToReferenceFrame/);
 });
 
 test("模型库把 TTS 归类为配音模型并给出配音能力", () => {
@@ -185,9 +286,22 @@ test("克隆弹窗样式跟随画布主题并且窄屏可用", () => {
   // 弹窗里的模型选择器必须抬到 .clone-backdrop 之上：默认 300 会被 560 的遮罩压住，点开什么都看不到。
   assert.match(dialog, /import \{ CANVAS_Z_INDEX \} from "@\/lib\/canvas\/layers"/);
   const pickers = dialog.match(/portalZIndex=\{CANVAS_Z_INDEX\.modalPopover\}/g) || [];
-  assert.equal(pickers.length, 4, "四枚模型选择器都要显式给 z-index");
+  assert.equal(pickers.length, 8, "四枚模型选择器和四枚克隆下拉都要显式给 z-index");
   assert.match(dialog, /dialogPortalZIndex=\{CANVAS_Z_INDEX\.modalPopover\}/);
   assert.match(styles, /@media\(max-width:720px\)\{\.clone-dialog/);
+  assert.match(styles, /\.clone-asset-row \.select-menu-trigger/);
+  assert.match(styles, /\.clone-plan-controls \.select-menu-trigger/);
+  assert.match(styles, /\.clone-plan-body\{flex:1;min-height:0\}/);
+  assert.match(styles, /\.clone-plan-actions\{position:sticky;bottom:0;/);
+  assert.doesNotMatch(styles, /\.clone-plan-actions\{position:sticky;bottom:-/);
+});
+
+test("新任务完成后优先提供单个最终成片，而不是要求镜头必须存在", () => {
+  assert.match(dialog, /const hasFinalVideo = Boolean\(job\?\.timeline\.finalVideoUrl\)/);
+  assert.match(dialog, /job\.stage === "done" && \(readyShots > 0 \|\| hasFinalVideo\)/);
+  assert.match(canvas, /完整 MP4 是直接交付物；下面继续建立一个可编辑的多轨工程/);
+  assert.match(canvas, /const finalNode = job\.timeline\.finalVideoUrl/);
+  assert.match(canvas, /完整成片与可编辑工程/);
 });
 
 test("关掉弹窗不等于任务丢了：重开接回任务、失败可续跑、成片只放一次", () => {
@@ -231,10 +345,10 @@ test("拆解轨道自动优先带视觉的模型，不再被默认纯文本模�
   assert.match(dialog, /models=\{models\} capability="vision" value=\{selectedModels\.chat\}/);
 });
 
-test("参考视频可以在弹窗里直接导入，成片落盘后清掉任务临时目录", () => {
+test("参考素材可以在弹窗里直接导入，成片落盘后清掉任务临时目录", () => {
   assert.match(dialog, /onImportReference\?: \(\) => void;/);
-  assert.match(dialog, /＋ 导入参考视频/);
-  assert.match(dialog, /＋ 导入新的参考视频/);
+  assert.match(dialog, /＋ 导入参考素材/);
+  assert.match(dialog, /＋ 导入新的参考素材/);
   assert.match(canvas, /onImportReference=\{\(\) => openFilePicker\(screenToWorld/);
   // 参考视频副本 / 抽帧 / 配音探测文件在成片落盘后没有保留价值，不清就会一直堆着。
   assert.match(pipeline, /export async function cleanupCloneJobDirectory\(id: string\)/);

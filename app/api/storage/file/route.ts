@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolveStoredFileWithFallback } from '@/lib/image-storage';
+import { imageMimeFromBytes, resolveStoredFileWithFallback } from '@/lib/image-storage';
 import { ensureMediaLibrary } from '@/lib/media-library';
 import { getPublicState } from '@/lib/store';
 import { isTrustedAppRequest } from '@/lib/auth';
@@ -17,7 +17,10 @@ export async function GET(request: Request) {
   if (!file) return new Response('Invalid file path', { status: 400 });
   try {
     const data = await readFile(file);
-    const type = file.endsWith('.jpg') ? 'image/jpeg' : file.endsWith('.webp') ? 'image/webp' : file.endsWith('.gif') ? 'image/gif' : file.endsWith('.bmp') ? 'image/bmp' : 'image/png';
+    // 按字节判断真实类型：损坏的残留文件（例如只剩几十字节）不是图片，
+    // 直接按“素材已丢失”返回，避免画布反复重试并误报成服务重启。
+    const type = imageMimeFromBytes(data);
+    if (!type) return new Response('Not a valid image', { status: 404 });
     return new Response(data, { headers: { 'Content-Type': type, 'Cache-Control': 'public, max-age=31536000, immutable' } });
   } catch { return new Response('Not found', { status: 404 }); }
 }

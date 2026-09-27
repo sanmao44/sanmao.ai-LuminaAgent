@@ -9,9 +9,11 @@
 # 与 restart.ps1 的区别是不搬移 .next、不强制重新构建，切模式通常几秒到一分钟即可。
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$lockPath = Join-Path $root '.data\update-staging\update.lock'
-$statusPath = Join-Path $root '.data\runtime-restart\status.json'
-$drainPath = Join-Path $root '.data\runtime-draining.json'
+. (Join-Path $PSScriptRoot 'launcher-common.ps1')
+$dataDir = Resolve-SanmaoDataDir -Root $root
+$lockPath = Join-Path $dataDir 'update-staging\update.lock'
+$statusPath = Join-Path $dataDir 'runtime-restart\status.json'
+$drainPath = Join-Path $dataDir 'runtime-draining.json'
 $script:claimed = $false
 
 function Write-RestartStatus([string]$State, [string]$Error = '') {

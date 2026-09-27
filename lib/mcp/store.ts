@@ -120,16 +120,33 @@ export function normalizeMcpServerInput(raw: unknown, options: { existingId?: st
   const headers = normalizeHeaders(input.headers);
   const enabledTools = normalizeEnabledTools(input.enabledTools);
   const catalogId = catalogIdOf(input.catalogId, options);
+  const managedRepo = input.managedRepo && typeof input.managedRepo === 'object' && !Array.isArray(input.managedRepo)
+    ? input.managedRepo as Record<string, unknown>
+    : null;
+  const managedStdio = Boolean(managedRepo);
+  const transport = managedStdio && input.transport === 'stdio' ? 'stdio' as const : undefined;
+  const command = managedStdio && typeof input.command === 'string' && path.isAbsolute(input.command) ? input.command : undefined;
+  const args = managedStdio && Array.isArray(input.args) && input.args.every((item) => typeof item === 'string') ? input.args.map(String) : undefined;
+  const cwd = managedStdio && typeof input.cwd === 'string' && path.isAbsolute(input.cwd) ? input.cwd : undefined;
+  if (managedStdio && (!transport || !command || !args || !cwd || !existsSync(command))) throw new Error('本地 MCP 配置不完整');
+  if (managedStdio && cwd && !existsSync(cwd)) throw new Error('本地 MCP 项目目录不存在');
   return {
     id,
     name,
-    url: normalizeMcpServerUrl(input.url),
+    url: transport === 'stdio' ? `stdio://${id}` : normalizeMcpServerUrl(input.url),
     enabled: input.enabled === undefined ? true : Boolean(input.enabled),
     allowWrite: Boolean(input.allowWrite),
     ...(headers ? { headers } : {}),
     ...(enabledTools ? { enabledTools } : {}),
     ...(input.lazy === true ? { lazy: true } : {}),
     ...(catalogId ? { catalogId } : {}),
+    ...(transport ? { transport, command, args, cwd } : {}),
+    ...(managedStdio ? { managedRepo: {
+      owner: String(managedRepo?.owner || '').slice(0, 100),
+      repo: String(managedRepo?.repo || '').slice(0, 100),
+      ref: String(managedRepo?.ref || '').slice(0, 200),
+      url: String(managedRepo?.url || '').slice(0, 500),
+    } } : {}),
   };
 }
 
@@ -147,6 +164,7 @@ export function redactMcpServer(config: McpServerConfig) {
     lazy: config.lazy === true,
     /** 官方连接器 id：面板用它把条目和普通服务区分开（不是凭据，可以外传）。 */
     catalogId: config.catalogId || '',
+    managedRepo: config.managedRepo ? { owner: config.managedRepo.owner, repo: config.managedRepo.repo } : undefined,
   };
 }
 

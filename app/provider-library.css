@@ -182,8 +182,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .provider-editor-backdrop,
-  .provider-editor-backdrop > .provider-modal-form {
+  html:not([data-motion="on"]) .provider-editor-backdrop,
+  html:not([data-motion="on"]) .provider-editor-backdrop > .provider-modal-form {
     animation: none;
   }
 }

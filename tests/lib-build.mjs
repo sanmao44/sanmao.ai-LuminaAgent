@@ -20,7 +20,11 @@ process.on('exit', () => {
 export async function buildLibModules(modules, entry) {
   const outDir = path.join(PROCESS_ROOT, `${Date.now()}-${Math.round(Math.random() * 1e6)}`);
   try {
-    for (const target of modules) {
+    // data-paths is a shared dependency of stores that resolve their durable
+    // data directory at module load time. Keep it in the isolated build even
+    // when a test only names the store entry point.
+    const targets = [...new Set(['lib/data-paths', ...modules])];
+    for (const target of targets) {
       const compiled = ts.transpileModule(await readFile(path.join(process.cwd(), `${target}.ts`), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
         fileName: `${target}.ts`,

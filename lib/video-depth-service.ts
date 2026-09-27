@@ -5,8 +5,9 @@ import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import ffmpegPath from "ffmpeg-static";
 import { unzipSync } from "fflate";
+import { resolveLocalDataDir } from './data-paths';
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), ".data");
+const dataDir = resolveLocalDataDir();
 const MAX_INPUT_BYTES = 512 * 1024 * 1024;
 const MIN_FRAME_RATE = 1;
 const MAX_FRAME_RATE = 60;

@@ -361,8 +361,8 @@ test('route.ts 在执行前过统一权限点，并把 MCP 结果当成不可信
   const route = await read('app/api/agent/route.ts');
   assert.match(route, /const gatingContext = \{/);
   assert.match(route, /const priorityServerIds = \[\s*\.\.\.\(browserAutomationRequest \? \['playwright'\] : \[\]\),\s*\.\.\.\(filesystemRequest \? \['filesystem'\] : \[\]\),\s*\];/s);
-  assert.match(route, /const selectedMcpServers = creativeToolIsolation\s+\? \[\]\s+: mcpServersForTurn\(listMcpServers\(\), mcpTurnText, priorityServerIds\);/);
-  assert.match(route, /const mcpRuntime = await loadMcpToolRuntime\(\{\s*signal: requestController\.signal,\s*servers: selectedMcpServers,\s*\.\.\.\(priorityServerIds\.length \? \{ priorityServerIds \} : \{\}\),\s*\}\)\.catch\(\(\) => \(\{ servers: \[\], tools: \[\] \}\)\);/s);
+  assert.match(route, /const selectedMcpServers = mcpAllowedThisTurn && !toolSelectionIsolated\s+\? mcpServersForTurn\(listMcpServers\(\), mcpTurnText, priorityServerIds\)\s+: \[\];/s);
+  assert.match(route, /const mcpRuntime = mcpAllowedThisTurn && !isCanvasNodeExecution\s+\? await loadMcpToolRuntime\(\{/s);
   assert.match(route, /const mcpServerById = new Map\(mcpRuntime\.servers\.map/);
   assert.match(route, /const lazyGroupKeywords = lazyMcpGroupKeywords\(mcpRuntime\.servers, mcpTools\);/, '按需下发的分组关键词由服务配置决定');
   assert.match(route, /const callableTools = toolSchemasFor\(gatingContext, mcpTools, toolSelectionText, lazyGroupKeywords\);/);
@@ -432,10 +432,15 @@ test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生
   assert.match(manager, /disabled=\{busy \|\| Boolean\(tool\.oversized\)\}/);
   assert.match(manager, /import \{ deriveMcpServerName, headersToText, parseMcpConfigText \} from '@\/lib\/mcp\/config-import';/, '面板复用配置识别模块');
   assert.match(manager, /识别并填入/);
-  assert.match(manager, /让助手自己接/, '帮助说明要写清助手能代劳');
-  // 帮助说明改成「本机运行时来自代码内置目录」：现在有受控的本地浏览器运行时，不能再写「接不了」。
-  assert.match(manager, /本地工具运行时/);
-  assert.match(manager, /命令、参数和工作目录都写死在代码里/);
+  assert.match(manager, /把 GitHub 地址发给助手/);
+  assert.match(manager, /助手会自动下载、安装、接入并自检/);
+  assert.match(manager, /已有地址？手动连接/);
+  assert.doesNotMatch(manager, /自己安装第三方服务/);
+  assert.doesNotMatch(manager, /Windows-MCP/);
+  assert.doesNotMatch(manager, /async function copyExample/);
+  // 运行时状态仍保留，面板不再承担第三方服务的安装教程。
+  assert.match(manager, /运行与安装详情/);
+  assert.doesNotMatch(manager, /命令、参数和工作目录都写死在代码里/);
   assert.match(manager, /全部放行/);
   assert.match(manager, /只放行只读/);
   assert.match(manager, /styles\.toolDescription/);

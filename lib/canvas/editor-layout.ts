@@ -137,7 +137,6 @@ export function fitCanvasNodeEditorBelow(
 ): CanvasOverlayFit {
   const position = placeCanvasNodeEditor(anchor, stage, overlay, gap);
   const rightmostLeft = Math.max(margin, stage.width - overlay.width - margin);
-
   return {
     left: Math.min(Math.max(position.left, margin), rightmostLeft),
     top: position.top,

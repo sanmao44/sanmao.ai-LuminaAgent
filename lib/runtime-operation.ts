@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { resolveLocalDataDir } from './data-paths';
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+const dataDir = resolveLocalDataDir();
 const requestDir = path.join(dataDir, 'runtime-requests');
 const drainPath = path.join(dataDir, 'runtime-draining.json');
 const operationLockPath = path.join(dataDir, 'update-staging', 'update.lock');

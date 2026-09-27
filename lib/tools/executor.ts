@@ -8,7 +8,7 @@
  */
 import type { ToolDefinition, ToolTag } from './registry';
 
-export type ToolExecutionKind = 'web' | 'file' | 'artifact' | 'image' | 'skill' | 'mcp' | 'mcp-manage' | 'canvas';
+export type ToolExecutionKind = 'web' | 'file' | 'artifact' | 'image' | 'skill' | 'tabbit' | 'mcp' | 'mcp-manage' | 'canvas';
 
 /** 一个工具只归入第一类命中的标签；archive_generate 带 artifact + archive，复用 artifact 分支。 */
 const KIND_BY_TAG: ReadonlyArray<readonly [ToolTag, ToolExecutionKind]> = [
@@ -17,6 +17,7 @@ const KIND_BY_TAG: ReadonlyArray<readonly [ToolTag, ToolExecutionKind]> = [
   ['artifact', 'artifact'],
   ['image', 'image'],
   ['skill', 'skill'],
+  ['tabbit', 'tabbit'],
   ['mcp', 'mcp'],
   ['mcp-admin', 'mcp-manage'],
   ['canvas', 'canvas'],
@@ -24,6 +25,7 @@ const KIND_BY_TAG: ReadonlyArray<readonly [ToolTag, ToolExecutionKind]> = [
 
 /** 来源比标签更准：MCP 这类运行时工具永远归入自己的分支。 */
 export function kindForTool(definition: Pick<ToolDefinition, 'tags' | 'source'>): ToolExecutionKind | null {
+  if (definition.tags.includes('tabbit')) return 'tabbit';
   if (definition.source === 'mcp') return 'mcp';
   for (const [tag, kind] of KIND_BY_TAG) {
     if (definition.tags.includes(tag)) return kind;

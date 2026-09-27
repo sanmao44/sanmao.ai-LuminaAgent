@@ -6,6 +6,10 @@ import ts from 'typescript';
 
 const MODULES = [
   'lib/data-paths',
+  'lib/skills',
+  'lib/agent/context-budget',
+  'lib/agent/browser-metrics',
+  'lib/agent/browser-freshness',
   'lib/agent/tool-loop',
   'lib/agent/progress',
   'lib/agent-client',
@@ -16,6 +20,7 @@ const MODULES = [
   'lib/tools/file',
   'lib/tools/image',
   'lib/tools/skills',
+  'lib/tools/tabbit',
   'lib/tools/web',
   'lib/tools/executor',
   'lib/tools/selector',
@@ -46,8 +51,10 @@ const MODULES = [
   'lib/mcp/tools',
   'lib/mcp/audit',
   'lib/mcp/admin',
+  'lib/mcp/repo-installer',
   'lib/mcp/runtime-admin',
   'lib/mcp/index',
+  'lib/tabbit-cli',
 ];
 
 const BUILD_ROOT = path.join(process.cwd(), '.data', 'tools-test-build');
@@ -136,6 +143,18 @@ export async function importTwiceByPath(entry) {
 /** 通用工具循环：纯逻辑、无依赖，单独跑真实实现。 */
 export async function buildToolLoopModule() {
   return load('lib/agent/tool-loop.mjs');
+}
+
+export async function buildContextBudgetModule() {
+  return load('lib/agent/context-budget.mjs');
+}
+
+export async function buildBrowserMetricsModule() {
+  return load('lib/agent/browser-metrics.mjs');
+}
+
+export async function buildBrowserFreshnessModule() {
+  return load('lib/agent/browser-freshness.mjs');
 }
 
 /** 长任务进度账本：落盘、TTL 与淘汰规则都要跑真实实现。 */

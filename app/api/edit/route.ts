@@ -13,9 +13,12 @@ export const runtime = 'nodejs';
 export const maxDuration = 1800;
 
 function isSafeImageModelFallbackError(error: unknown) {
-  const failure = error as { providerFailureKind?: string; providerStatus?: number; status?: number } | null;
+  const failure = error as { providerFailureKind?: string; providerStatus?: number; status?: number; message?: string } | null;
+  const status = Number(failure?.providerStatus || failure?.status);
+  const message = String(failure?.message || '').toLowerCase();
+  const explicitCompatibility = /unsupported|not supported|model not found|unknown model|configured account|does not support|不支持|未找到模型|模型不存在|账号未配置/.test(message);
   return failure?.providerFailureKind === 'http'
-    && [400, 415, 422].includes(Number(failure.providerStatus || failure.status));
+    && ([400, 415, 422].includes(status) || (status === 404 && explicitCompatibility));
 }
 
 async function runImageModelCandidates<T extends { model: { id: string } }, R>(
@@ -107,9 +110,9 @@ export async function POST(request: Request) {
     logId = await startGenerationLog({ mode: 'edit', source: 'workspace', prompt: generationPrompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: input.aspectRatio, resolution: input.resolution, outputSize: input.width && input.height ? `${input.width}×${input.height}` : undefined, count: input.count, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
     const providerImages = await runImageModelCandidates(
       runtime,
-      requestedModelId === 'auto'
-        ? async () => getRuntimeImageModelCandidates('auto', 'edit')
-        : async () => [],
+      // Do not retry ordinary failures. A configured alternative is considered
+      // only after an explicit “model unsupported/not found” rejection.
+      async () => getRuntimeImageModelCandidates('auto', 'edit'),
       async (candidate) => {
         runtime = candidate;
         runtimeProviderId = candidate.provider.id;

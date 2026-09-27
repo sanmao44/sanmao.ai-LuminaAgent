@@ -8,6 +8,9 @@ import type { CanvasPatch } from "./canvas/patch";
 
 export const AGENT_CONTEXT_MESSAGE_LIMIT = 12;
 
+/** Controls which surface is allowed to execute Agent tools. */
+export type AgentExecutionMode = "canvas-node" | "agent-dock";
+
 export type AgentClientFile = {
   name: string;
   mimeType?: string;
@@ -31,10 +34,14 @@ export type AgentRequestPayload = {
   memory?: string;
   persona?: string;
   source?: "agent" | "canvas";
+  /** Canvas Agent nodes are text-only; the right-side dock is the executor. */
+  executionMode?: AgentExecutionMode;
   messages: AgentClientMessage[];
   referenceImages?: Array<Record<string, unknown>>;
   references?: CreativeReference[];
   model?: string;
+  /** Single-turn image model override; does not change the global default. */
+  imageModelId?: string;
   task?: string;
   durationSeconds?: number;
   webMode?: "off" | "auto" | "always";

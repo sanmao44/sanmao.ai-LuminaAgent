@@ -10,6 +10,7 @@
  * - 模型这一轮不再要工具就立刻结束，把它的文本原样交给调用方（不猜、不补）。
  * - 装不下这一轮的工具调用时直接停，不执行半截——宁可少答一轮，也不要留下没有结果的 tool_calls。
  */
+import { boundAgentContext, boundToolResult } from './context-budget';
 
 /** 默认最多补几轮（不含已经跑过的主轮）。 */
 export const TOOL_LOOP_DEFAULT_MAX_STEPS = 4;
@@ -102,6 +103,8 @@ export type RunToolLoopOptions = {
   deadlineMs?: number;
   now?: () => number;
   signal?: AbortSignal;
+  /** Maximum approximate input characters retained across continuation rounds. */
+  contextMaxChars?: number;
 };
 
 function callName(call: ToolLoopCall) {
@@ -174,10 +177,17 @@ export async function runToolLoop(options: RunToolLoopOptions): Promise<ToolLoop
       break;
     }
     const ordered = options.orderCalls ? options.orderCalls(calls) : calls;
-    const results = await options.runCalls(ordered, { step });
+    const results = (await options.runCalls(ordered, { step })).map((result) => ({
+      ...result,
+      ...(typeof result.content === 'string' ? { content: boundToolResult(result.content) } : {}),
+    }));
     const reasoning = typeof reply?.reasoning_content === 'string' && reply.reasoning_content ? { reasoning_content: reply.reasoning_content } : {};
     // 思维链模型要求把带 tool_calls 的助手消息原样带回，丢了 reasoning_content 会被服务商 400 拒绝。
     options.messages.push({ role: 'assistant', content: reply?.content ?? null, tool_calls: calls, ...reasoning }, ...results);
+    if (options.contextMaxChars) {
+      const bounded = boundAgentContext(options.messages as any, options.contextMaxChars);
+      options.messages.splice(0, options.messages.length, ...bounded);
+    }
     toolCallCount += calls.length;
     const elapsedMs = now() - startedAt;
     const continueLoop = options.shouldContinue ? options.shouldContinue({ step: step + 1, toolCallCount, elapsedMs }) : true;

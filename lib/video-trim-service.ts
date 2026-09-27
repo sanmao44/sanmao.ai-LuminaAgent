@@ -4,8 +4,9 @@ import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
+import { resolveLocalDataDir } from './data-paths';
 
-const dataDir = process.env.SANMAO_DATA_DIR || path.join(process.cwd(), '.data');
+const dataDir = resolveLocalDataDir();
 const MAX_INPUT_BYTES = 512 * 1024 * 1024;
 const MAX_DURATION_SECONDS = 24 * 60 * 60;
 const OUTPUT_FPS = 30;

@@ -6,6 +6,7 @@ import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import {
   requestAgent,
+  type AgentExecutionMode,
   type AgentResponse,
   type AgentStreamEvent,
 } from "../agent-client";
@@ -15,6 +16,8 @@ export type CanvasAsset = {
   kind: "image" | "video" | "audio";
   name: string;
   url: string;
+  storageKey?: string;
+  sha256?: string;
   mime: string;
   size: number;
   optimized?: boolean;
@@ -528,6 +531,9 @@ export async function generateCanvasImage(input: {
   maskUrl?: string;
   moveGuideUrl?: string;
   references?: Array<{ url: string; name?: string }>;
+  /** Allow a single-source continuation to fall back to ordinary generation
+   * when the provider has no image-edit endpoint. */
+  fallbackToGenerationOnEdit404?: boolean;
 }) {
   const mask = input.maskUrl ? await asDataUrl(input.maskUrl) : undefined;
   const moveGuide = input.moveGuideUrl ? await asDataUrl(input.moveGuideUrl) : undefined;
@@ -544,6 +550,8 @@ export async function generateCanvasImage(input: {
   );
   return request<{
     images: Array<{ url: string; revisedPrompt?: string }>;
+    mode?: "reference" | "generate" | "generate-fallback";
+    warning?: string;
     model?: { id?: string; name?: string; provider?: string };
   }>("/api/generate", {
     method: "POST",
@@ -572,6 +580,7 @@ export async function generateCanvasImage(input: {
       ...(input.angleGuide !== undefined ? { angleGuide: input.angleGuide } : {}),
       ...(mask ? { mask } : {}),
       ...(moveGuide ? { moveGuide } : {}),
+      ...(input.fallbackToGenerationOnEdit404 ? { fallbackToGenerationOnEdit404: true } : {}),
       references,
       referenceImages: (input.references || [])
         .slice(0, 16)
@@ -777,6 +786,7 @@ export async function generateCanvasAgent(
     messages: Array<{ role: "user" | "assistant"; content: string }>;
     model?: string;
     webMode?: "off" | "auto" | "always";
+    executionMode?: AgentExecutionMode;
     references?: Array<Pick<CreativeReference, "id" | "kind" | "name" | "url" | "text" | "mimeType" | "nodeId">>;
     task?: CanvasAgentTask;
     durationSeconds?: number;
@@ -815,6 +825,7 @@ export async function generateCanvasAgent(
     return await requestAgent(
       {
         source: "canvas",
+        ...(input.executionMode ? { executionMode: input.executionMode } : {}),
         messages,
         model: input.model || "auto",
         ...(input.task ? { task: input.task } : {}),

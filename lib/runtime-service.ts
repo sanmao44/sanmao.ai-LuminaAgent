@@ -3,11 +3,13 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import packageInfo from '../package.json';
 import { getRuntimeDrainStatus } from './runtime-operation';
+import { resolveLocalDataDir } from './data-paths';
 
 const root = process.cwd();
 const buildIdPath = path.join(root, '.next', 'BUILD_ID');
 const builtFingerprintPath = path.join(root, '.next', '.sanmao-source-fingerprint');
-const restartStatusPath = path.join(root, '.data', 'runtime-restart', 'status.json');
+const dataDir = resolveLocalDataDir(root);
+const restartStatusPath = path.join(dataDir, 'runtime-restart', 'status.json');
 
 const trackedDirectories = ['app', 'components', 'lib', 'public'];
 const trackedFiles = ['next.config.ts', 'next.config.js', 'tsconfig.json', 'package.json', 'package-lock.json'];
@@ -97,7 +99,7 @@ export async function getRuntimeStatus() {
 }
 
 export function runtimeOperationLockPath() {
-  return path.join(root, '.data', 'update-staging', 'update.lock');
+  return path.join(dataDir, 'update-staging', 'update.lock');
 }
 
 export function runtimeRestartStatusPath() {

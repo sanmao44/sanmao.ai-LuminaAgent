@@ -1,6 +1,9 @@
 ﻿function Get-SanmaoFreeRelayStateRoot {
   param([Parameter(Mandatory = $true)][string]$Root)
-  return (Join-Path $Root '.data\free-relay')
+  $launcherCommonPath = Join-Path (Split-Path -Parent $PSCommandPath) 'launcher-common.ps1'
+  if (Test-Path -LiteralPath $launcherCommonPath) { . $launcherCommonPath }
+  $dataDir = if (Get-Command Resolve-SanmaoDataDir -ErrorAction SilentlyContinue) { Resolve-SanmaoDataDir -Root $Root } else { Join-Path $Root '.data' }
+  return (Join-Path $dataDir 'free-relay')
 }
 
 function Stop-SanmaoFreeRelayTunnel {
@@ -89,7 +92,7 @@ function Test-SanmaoFreeRelayReachable {
 function Get-SanmaoCloudflaredExecutable {
   param([Parameter(Mandatory = $true)][string]$Root)
 
-  $binaryRoot = Join-Path $Root '.data\bin'
+  $binaryRoot = Join-Path (Split-Path -Parent (Get-SanmaoFreeRelayStateRoot -Root $Root)) 'bin'
   $localPath = Join-Path $binaryRoot 'cloudflared.exe'
   if (Test-Path -LiteralPath $localPath) { return $localPath }
   $installed = Get-Command cloudflared.exe -ErrorAction SilentlyContinue

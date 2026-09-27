@@ -11,6 +11,7 @@ import {
   operationLockMatches,
   removeOwnedRuntimeOperationLock,
 } from '@/lib/runtime-operation';
+import { resolveLocalDataDir } from '@/lib/data-paths';
 
 const MAX_UPDATE_BYTES = 150 * 1024 * 1024;
 const MAX_PACKAGE_SOURCES = 6;
@@ -49,7 +50,7 @@ type LocalUpdateOptions = {
 };
 
 const progressJobs = new Map<string, UpdateProgress>();
-const progressFilePath = join(process.cwd(), '.data', 'update-staging', 'update-progress.json');
+const progressFilePath = join(resolveLocalDataDir(), 'update-staging', 'update-progress.json');
 let progressWriteQueue: Promise<void> = Promise.resolve();
 
 function nowIso() {
@@ -472,7 +473,7 @@ export async function runLocalUpdate(status: UpdateStatus, options: LocalUpdateO
   const root = process.cwd();
   const scriptsDir = join(root, 'scripts');
   const updaterSource = join(scriptsDir, updaterScriptName());
-  const stagingDir = join(root, '.data', 'update-staging');
+  const stagingDir = join(resolveLocalDataDir(root), 'update-staging');
   let archivePath = '';
   let updaterPath = '';
   let metadataPath = '';

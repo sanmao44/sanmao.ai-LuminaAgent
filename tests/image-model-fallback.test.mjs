@@ -16,7 +16,7 @@ const compiled = ts.transpileModule(`${helperSource}\nreturn { runImageModelCand
 const { runImageModelCandidates, isSafeImageModelFallbackError } = new Function(compiled)();
 
 const runtime = (id) => ({ model: { id } });
-const providerRejection = (status) => Object.assign(new Error(`HTTP ${status}`), { providerFailureKind: 'http', providerStatus: status });
+const providerRejection = (status, message = `HTTP ${status}`) => Object.assign(new Error(message), { providerFailureKind: 'http', providerStatus: status });
 
 test('switches automatic image models only after an explicit compatibility rejection', async () => {
   const calls = [];
@@ -55,4 +55,6 @@ test('recognizes only safe compatibility statuses for fallback', () => {
   assert.equal(isSafeImageModelFallbackError(providerRejection(415)), true);
   assert.equal(isSafeImageModelFallbackError(providerRejection(422)), true);
   assert.equal(isSafeImageModelFallbackError(providerRejection(500)), false);
+  assert.equal(isSafeImageModelFallbackError(providerRejection(404, 'Model "gpt-image-2.5-exact" is not supported by any configured account')), true);
+  assert.equal(isSafeImageModelFallbackError(providerRejection(404, 'HTTP 404')), false);
 });

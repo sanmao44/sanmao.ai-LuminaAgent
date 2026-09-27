@@ -5,7 +5,6 @@ import './agent-upgrades.css';
 import './desktop-readability.css';
 import './canvas.css';
 import './canvas-compose.css';
-import './motion.css';
 import './runtime-service.css';
 import './shadow-tuning.css';
 import './cursor.css';
@@ -32,7 +31,7 @@ const themeBootScript = `
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
     var motion = localStorage.getItem('sanmao-motion-preference');
-    if (motion === 'on' || motion === 'off') document.documentElement.dataset.motion = motion;
+    document.documentElement.dataset.motion = motion === 'off' ? 'off' : 'on';
     var meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', theme === 'dark' ? '#0f1117' : '#f5f6f8');
   } catch (e) {

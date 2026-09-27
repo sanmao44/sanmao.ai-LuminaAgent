@@ -224,7 +224,8 @@ import {
   type AssetCollection,
   type GalleryLocalEditMask,
 } from "@/lib/client-history";
-import { bootstrapWorkspace, startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
+import { startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
+import { workspaceRepository } from "@/lib/repositories/workspace-repository";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
 import OneTakeDurationPicker from "@/components/OneTakeDurationPicker";
 import ModelPicker from "@/components/ModelPicker";
@@ -363,6 +364,32 @@ type CanvasReferencePicker = {
 type Point = { x: number; y: number };
 const CANVAS_VIDEO_MAX_WAIT_MS = 30 * 60 * 1000;
 const CANVAS_CONNECTION_CANCEL_SHOW_DELAY_MS = 140;
+
+function waitMs(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function rerenderCloneTimeline(jobId: string, timeline: CanvasVideoEditorState) {
+  const response = await fetch(`/api/clone/jobs/${jobId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "rerender", timeline }),
+  });
+  const body = await response.json().catch(() => ({})) as { job?: CloneJob; error?: string };
+  if (!response.ok || !body.job) throw new Error(body.error || "克隆时间轴提交失败");
+  let job = body.job;
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (Date.now() < deadline) {
+    if (job.stage === "done" && job.timeline.finalVideoUrl) return job;
+    if (job.stage === "failed" || job.stage === "cancelled") throw new Error(job.error || job.message || "克隆时间轴合成失败");
+    await waitMs(1500);
+    const statusResponse = await fetch(`/api/clone/jobs/${jobId}`, { cache: "no-store" });
+    const statusBody = await statusResponse.json().catch(() => ({})) as { job?: CloneJob; error?: string };
+    if (!statusResponse.ok || !statusBody.job) throw new Error(statusBody.error || "无法读取克隆合成进度");
+    job = statusBody.job;
+  }
+  throw new Error("克隆时间轴合成等待超时，请稍后在克隆任务中查看");
+}
 
 function canvasEdgeMidpoint(document: CanvasDocument, edge: CanvasEdge): Point {
   const endpoints = canvasEdgeEndpoints(document, edge);
@@ -3811,7 +3838,7 @@ export default function SuperCanvas() {
     let cancelled = false;
     let stopWorkspaceSync = () => {};
     const start = async () => {
-      await bootstrapWorkspace();
+      await workspaceRepository.bootstrap();
       if (cancelled) return;
       const storage = ensureCanvasStorage();
       const initial = loadCanvasDocument(storage.activeId);
@@ -8173,6 +8200,7 @@ export default function SuperCanvas() {
     if (skippedReferenceCount)
       notify(`图片参考最多 ${CANVAS_MAX_REFERENCES} 张，已跳过 ${skippedReferenceCount} 张多余参考。`, "error");
 
+    let actualUsesCurrentImageAsReference = useCurrentImageAsReference;
     const createOutput = (
       url: string,
       name: string,
@@ -8194,15 +8222,15 @@ export default function SuperCanvas() {
         params: clone(params),
         ...(presetId ? { presetId } : {}),
         ...(presetName ? { presetName } : {}),
-        operation: useCurrentImageAsReference ? "edit" : "generate",
-        referenceIds: [...resolvedReferenceIds],
+        operation: actualUsesCurrentImageAsReference ? "edit" : "generate",
+        referenceIds: [...(actualUsesCurrentImageAsReference ? resolvedReferenceIds : resolvedReferenceIds.filter((id) => id !== source.id))],
         parentNodeId: source.id,
         reuseSourceNodeId: source.id,
         taskId,
         createdAt,
         ...(durationMs !== undefined ? { durationMs } : {}),
       },
-      referenceOrder: [...resolvedReferenceIds],
+      referenceOrder: [...(actualUsesCurrentImageAsReference ? resolvedReferenceIds : resolvedReferenceIds.filter((id) => id !== source.id))],
     });
 
     const pending = createOutput("", "图片生成中", outputPosition, "running");
@@ -8265,9 +8293,14 @@ export default function SuperCanvas() {
             : undefined,
         ...(params.mask ? { maskUrl: params.mask.url } : {}),
         ...(params.mask?.sourceUrl ? { moveGuideUrl: params.mask.sourceUrl } : {}),
+        ...(useCurrentImageAsReference && apiReferences.length === 1 && !params.mask
+          ? { fallbackToGenerationOnEdit404: true }
+          : {}),
         references: apiReferences,
       });
       if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
+      actualUsesCurrentImageAsReference = useCurrentImageAsReference && result.mode !== "generate-fallback";
+      if (result.warning) notify(result.warning);
       const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
 
       const outputs: CanvasNode[] = [];
@@ -12181,6 +12214,64 @@ export default function SuperCanvas() {
     const videoParams = { ...videoParamsForCanvasNode(preferredSource, runtime), aspect: draft.aspect, resolution: draft.resolution || "1080p" };
     const createdAt = Date.now();
     return (async () => {
+      if (editorNode.data.jobId) {
+        try {
+          const renderedJob = await rerenderCloneTimeline(String(editorNode.data.jobId), draft);
+          const finalUrl = renderedJob.timeline.finalVideoUrl;
+          if (!finalUrl) throw new Error("服务端没有返回最终成片");
+          const clip: CanvasVideoClipState = {
+            version: 1,
+            sourceNodeId: editorNode.id,
+            startTime: 0,
+            endTime: renderedJob.timeline.duration,
+            volume: 1,
+            muted: false,
+            playbackRate: 1,
+            fit: "contain",
+          };
+          const draftNode = createMedia(
+            "video",
+            finalUrl,
+            `${sourceName} · 成片`,
+            { x: editorNode.x + nodeSize(editorNode).w + 90, y: editorNode.y },
+            {
+              role: "视频编辑成片",
+              status: "completed",
+              statusLabel: "服务端重合成成片",
+              mimeType: renderedJob.timeline.finalVideoMime || "video/mp4",
+              durationMs: Math.round(renderedJob.timeline.duration * 1000),
+              sourceDurationMs: Math.round(renderedJob.timeline.duration * 1000),
+              autoFit: true,
+              videoInputModeAuto: false,
+              videoClip: clip,
+              params: clone(videoParams),
+              generation: {
+                kind: "video",
+                prompt: "克隆时间轴重合成",
+                params: clone(videoParams),
+                operation: "edit",
+                referenceIds: [editorNode.id, ...sourceIds],
+                parentNodeId: editorNode.id,
+                createdAt,
+              },
+            },
+          );
+          const positioned = { ...draftNode, ...openNodePosition({ x: draftNode.x, y: draftNode.y }, draftNode) };
+          commit((value) => ({
+            ...value,
+            nodes: [...value.nodes, positioned],
+            edges: [...value.edges, { id: uid("edge"), source: editorNode.id, target: positioned.id, sourcePort: "right", targetPort: "left", kind: "lineage" }],
+          }));
+          setSelectedIds(new Set([positioned.id]));
+          setSelectedGroupId(null);
+          setVideoEditorNodeId(null);
+          notify("已按编辑后的克隆时间轴重新合成最终 MP4");
+          addLog(`克隆时间轴重合成完成：${sourceName}`);
+        } catch (error) {
+          notify(error instanceof Error ? error.message : "克隆时间轴重合成失败，请重试", "error");
+        }
+        return;
+      }
       let rendered: Awaited<ReturnType<typeof renderCanvasVideoEditor>>;
       try {
         rendered = await renderCanvasVideoEditor(draft, renderSources);
@@ -14642,12 +14733,13 @@ export default function SuperCanvas() {
   const cloneReferences = useMemo<CanvasCloneReferenceOption[]>(
     () =>
       document.nodes
-        .filter((node) => node.type === "media" && node.data.kind === "video" && Boolean(node.data.url))
+        .filter((node) => node.type === "media" && (node.data.kind === "video" || node.data.kind === "image") && Boolean(node.data.url))
         .map((node) => ({
           nodeId: node.id,
-          name: String(node.data.name || "参考视频"),
+          name: String(node.data.name || (node.data.kind === "image" ? "参考图" : "参考视频")),
           url: String(node.data.url),
           seconds: Number(node.data.durationMs || node.data.sourceDurationMs || 0) / 1000,
+          kind: node.data.kind === "image" ? "image" as const : "video" as const,
         })),
     [document.nodes],
   );
@@ -14673,27 +14765,64 @@ export default function SuperCanvas() {
   const preselectedCloneReferenceId = useMemo(() => {
     const selectedVideos = [...selectedIds].filter((id) => {
       const node = nodeById(document, id);
-      return Boolean(node && node.type === "media" && node.data.kind === "video" && node.data.url);
+       return Boolean(node && node.type === "media" && (node.data.kind === "video" || node.data.kind === "image") && node.data.url);
     });
     return selectedVideos.length === 1 ? selectedVideos[0] : null;
   }, [document, selectedIds]);
 
-  /** 把克隆结果落到画布：镜头素材 + 一个带完整时间轴的视频编辑节点。 */
+  /** 把克隆结果落到画布：完整成片交付物 + 可继续编辑的多轨工程。 */
   const applyCloneJob = useCallback(
     (job: CloneJob) => {
       const referenceNode = job.reference.nodeId ? nodeById(docRef.current, job.reference.nodeId) : undefined;
       const center = screenToWorld(stageSize.width / 2, stageSize.height / 2);
       const originX = referenceNode ? referenceNode.x + nodeSize(referenceNode).w + 120 : center.x;
       const originY = referenceNode ? referenceNode.y : center.y;
+      // 完整 MP4 是直接交付物；下面继续建立一个可编辑的多轨工程，
+      // 不把内部镜头误呈现为多个独立成片。
+      const finalNode = job.timeline.finalVideoUrl
+        ? createMedia(
+            "video",
+            job.timeline.finalVideoUrl,
+            `克隆成片 · ${(job.options.brief || job.reference.name || "未命名").slice(0, 24)}`,
+            { x: originX, y: originY },
+            {
+              role: "克隆最终成片",
+              status: "completed",
+              statusLabel: "克隆最终成片",
+              mimeType: job.timeline.finalVideoMime || "video/mp4",
+              durationMs: Math.round(job.timeline.duration * 1000),
+              sourceDurationMs: Math.round(job.timeline.duration * 1000),
+              autoFit: true,
+              videoInputModeAuto: false,
+            },
+          )
+        : null;
       const created: CanvasNode[] = [];
       const primaryIds = new Map<number, string>();
       const audioIds = new Map<number, string>();
       const edges: { source: string; role: CanvasInputRole; order: number }[] = [];
+      const connectedSourceIds = new Set<string>();
       let order = 0;
+      const connectSource = (source: CanvasNode | undefined, role: CanvasInputRole) => {
+        if (!source || connectedSourceIds.has(source.id)) return;
+        connectedSourceIds.add(source.id);
+        edges.push({ source: source.id, role, order: order++ });
+      };
+      // 导入任务可能没有 nodeId；仍保留参考视频，让图形卡片和 A2 原声可继续编辑。
+      const referenceSourceNode = referenceNode || (job.reference.url
+        ? createMedia(
+            "video",
+            job.reference.url,
+            `参考视频 · ${job.reference.name}`,
+            { x: originX - 420, y: originY },
+            { role: "克隆参考视频", status: "completed", statusLabel: "克隆参考视频", videoInputModeAuto: false },
+          )
+        : undefined);
+      if (referenceSourceNode && referenceSourceNode !== referenceNode) created.push(referenceSourceNode);
       for (const shot of job.shots) {
         const videoUrl = String(shot.videoUrl || "");
         const imageUrl = String(shot.imageUrl || "");
-        if (videoUrl || imageUrl) {
+        if ((videoUrl || imageUrl) && !shot.preserveReferenceFrame) {
           const isVideo = Boolean(videoUrl);
           const node = createMedia(
             isVideo ? "video" : "image",
@@ -14710,7 +14839,11 @@ export default function SuperCanvas() {
           );
           created.push(node);
           primaryIds.set(shot.index, node.id);
-          edges.push({ source: node.id, role: isVideo ? "video" : "reference-image", order: order++ });
+          connectSource(node, isVideo ? "video" : "reference-image");
+        } else if (shot.preserveReferenceFrame && referenceSourceNode) {
+          // 图形/转场镜头保留原片的完整动态片段，而非只使用代表帧。
+          primaryIds.set(shot.index, referenceSourceNode.id);
+          connectSource(referenceSourceNode, "video");
         }
         if (shot.audioUrl) {
           const audioNode = createMedia(
@@ -14722,28 +14855,128 @@ export default function SuperCanvas() {
           );
           created.push(audioNode);
           audioIds.set(shot.index, audioNode.id);
-          edges.push({ source: audioNode.id, role: "audio", order: order++ });
+          connectSource(audioNode, "audio");
         }
       }
       const editorDraft = createVideoEditorNode({ x: originX + 1180, y: originY });
       const clips: CanvasVideoEditorClip[] = [];
+      const referenceAudioTrack = job.timeline.tracks?.find((track) => track.kind === "reference-audio");
+      let referenceAudioSource: CanvasNode | undefined;
+      if (referenceAudioTrack?.clips.length) {
+        const firstAudio = referenceAudioTrack.clips.find((clip) => clip.url);
+        if (firstAudio?.url) {
+          referenceAudioSource = createMedia(
+            "audio",
+            firstAudio.url,
+            "参考环境音 / 音乐",
+            { x: originX + 560, y: originY - 220 },
+            { role: "克隆参考环境音", status: "completed", statusLabel: "克隆参考环境音" },
+          );
+          created.push(referenceAudioSource);
+        } else {
+          // 旧任务可能没有物化 A2 文件，直接从参考视频音轨取样。
+          referenceAudioSource = referenceSourceNode;
+        }
+        connectSource(referenceAudioSource, referenceAudioSource?.data.kind === "audio" ? "audio" : "video");
+      }
       for (const clip of job.timeline.clips) {
-        const match = /^clone-(video|audio|caption)-(\d+)$/.exec(clip.id);
+        const match = /^clone-(video|audio|caption|graphics)-(\d+)$/.exec(clip.id);
         if (!match) continue;
         const track = match[1];
         const index = Number(match[2]);
         const sourceNodeId = track === "audio" ? audioIds.get(index) : track === "video" ? primaryIds.get(index) : undefined;
-        if (track !== "caption" && !sourceNodeId) continue;
+        if (track !== "caption" && track !== "graphics" && !sourceNodeId) continue;
         clips.push({
           ...clip,
-          id: `${editorDraft.id}-${track}-${index}`,
+          id: `${editorDraft.id}-${clip.id}`,
           ...(sourceNodeId ? { sourceNodeId } : {}),
+        });
+      }
+      if (referenceAudioTrack?.clips.length && referenceAudioSource) {
+          referenceAudioTrack.clips.forEach((clip) => {
+          clips.push({
+            id: `${editorDraft.id}-reference-audio-${clip.shotIndex}`,
+            sourceClipId: clip.id,
+            shotIndex: clip.shotIndex,
+            track: "reference-audio",
+            type: "audio",
+            name: "参考环境音 / 音乐",
+            start: clip.start,
+            duration: clip.duration,
+            sourceOffset: clip.sourceOffset || 0,
+            volume: clip.volume ?? 0.35,
+            sourceNodeId: referenceAudioSource.id,
+          });
+        });
+      }
+      const brollTrack = job.timeline.tracks?.find((track) => track.kind === "broll");
+      const brollSourceNodes = new Map<string, CanvasNode>();
+      for (const [eventIndex, clip] of (brollTrack?.clips || []).entries()) {
+        const sourceUrl = String(clip.url || "");
+        let sourceNode: CanvasNode | undefined;
+        if (sourceUrl) {
+          const kind = clip.mediaKind === "image" ? "image" : "video";
+          const key = `${kind}:${sourceUrl}`;
+          sourceNode = brollSourceNodes.get(key);
+          if (!sourceNode) {
+            sourceNode = createMedia(
+              kind,
+              sourceUrl,
+              `B-roll ${eventIndex + 1}`,
+              { x: originX + 560, y: originY + 360 + eventIndex * 180 },
+              { role: "克隆 B-roll 素材", status: "completed", statusLabel: "B-roll 素材", autoFit: true, ...(kind === "video" ? { videoInputModeAuto: false } : {}) },
+            );
+            brollSourceNodes.set(key, sourceNode);
+            created.push(sourceNode);
+          }
+        } else if (clip.source !== "generated-media") {
+          sourceNode = referenceSourceNode;
+        }
+        if (!sourceNode) continue;
+        clips.push({
+          id: `${editorDraft.id}-${clip.id}`,
+          sourceClipId: clip.id,
+          shotIndex: clip.shotIndex,
+          ...(clip.componentId ? { componentId: clip.componentId } : {}),
+          ...(clip.role ? { role: clip.role } : {}),
+          track: "broll",
+          type: clip.mediaKind === "image" ? "image" : "video",
+          name: clip.text || `B-roll ${eventIndex + 1}`,
+          start: clip.start,
+          duration: clip.duration,
+          sourceOffset: clip.sourceOffset || 0,
+          sourceNodeId: sourceNode.id,
+          fit: "cover",
+          volume: 0,
+          enabled: clip.enabled !== false,
+        });
+        connectSource(sourceNode, sourceNode.data.kind === "image" ? "reference-image" : "video");
+      }
+      const effectTrack = job.timeline.tracks?.find((track) => track.kind === "effect");
+      for (const [effectIndex, clip] of (effectTrack?.clips || []).entries()) {
+        const effect = String(clip.effect || clip.text || "").trim();
+        if (!effect) continue;
+        clips.push({
+          id: `${editorDraft.id}-${clip.id || `effect-${effectIndex}`}`,
+          sourceClipId: clip.id,
+          shotIndex: clip.shotIndex,
+          ...(clip.componentId ? { componentId: clip.componentId } : {}),
+          ...(clip.role ? { role: clip.role } : {}),
+          track: "effect",
+          type: "effect",
+          name: effect,
+          start: clip.start,
+          duration: clip.duration,
+          sourceOffset: clip.sourceOffset || 0,
+          effect,
+          enabled: clip.enabled !== false,
         });
       }
       const editorNode: CanvasNode = {
         ...editorDraft,
         data: {
           ...editorDraft.data,
+          jobId: job.id,
           // 用户的一句话要求可以很长，节点标题只留开头，免得在画布上撑成一整行。
           name: `克隆成片 · ${(job.options.brief || job.reference.name || "未命名").slice(0, 24)}`,
           status: "idle",
@@ -14756,12 +14989,14 @@ export default function SuperCanvas() {
             resolution: "1080p",
             clips,
             mutedTracks: [],
+            referenceAudioDucking: true,
             disabledTracks: [],
           }),
         },
       };
       commit((value) => {
-        let next: CanvasDocument = { ...value, nodes: [...value.nodes, ...created, editorNode] };
+        let next: CanvasDocument = { ...value, nodes: [...value.nodes, ...(finalNode ? [finalNode] : []), ...created, editorNode] };
+        if (finalNode && referenceNode) next = addEdge(next, referenceNode.id, finalNode.id, "right", "left", "lineage", "video", 0);
         for (const edge of edges) {
           next = addEdge(next, edge.source, editorNode.id, "right", "left", "reference", edge.role, edge.order);
         }
@@ -14770,7 +15005,12 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([editorNode.id]));
       setSelectedGroupId(null);
       setContextMenu(null);
-      notify(`已放入 ${clips.filter((clip) => clip.track === "video").length} 个镜头与成片节点`, "ok");
+      notify(
+        finalNode
+          ? `已放入完整成片与可编辑工程 · ${Math.round(job.timeline.duration)} 秒`
+          : `已放入 ${clips.filter((clip) => clip.track === "video").length} 个镜头与可编辑工程`,
+        "ok",
+      );
     },
     [commit, notify, screenToWorld, stageSize.height, stageSize.width],
   );
@@ -14940,7 +15180,7 @@ export default function SuperCanvas() {
           </span>
           <span className={`canvas-workspace-sync-state ${workspaceSyncStatus}`} title="同台电脑跨浏览器工作区同步状态">
             <i />
-            {workspaceSyncStatus === "syncing" ? "同步中…" : workspaceSyncStatus === "offline" ? "离线待同步" : workspaceSyncStatus === "error" ? "同步失败" : workspaceSyncStatus === "synced" ? "已同步" : "准备同步"}
+            {workspaceSyncStatus === "syncing" ? "同步中…" : workspaceSyncStatus === "offline" ? "离线待同步" : workspaceSyncStatus === "conflict" ? "存在冲突，请刷新" : workspaceSyncStatus === "error" ? "同步失败" : workspaceSyncStatus === "synced" ? "已同步" : "准备同步"}
           </span>
         </div>
         <button
@@ -19578,12 +19818,12 @@ function CanvasNodeEditorPopover({
     // but it must not be recentered independently from the node.
     /* 参数面板同理：贴到面板左边，别让 Agent 面板压住正在调的那几个参数。 */
     const fittedPosition = fitCanvasNodeEditorBelow(
-        anchor,
-        { width: canvasVisibleStageWidth(stage), height: stageHeight },
-        { width: popoverWidth, height: popoverHeight },
-        14,
-        12,
-      );
+      anchor,
+      { width: canvasVisibleStageWidth(stage), height: stageHeight },
+      { width: popoverWidth, height: popoverHeight },
+      14,
+      12,
+    );
     // Keep the compact composer attached below its node. Its own text areas
     // handle long content, so the complete panel may continue below the stage
     // instead of being lifted or turned into a scroll drawer.

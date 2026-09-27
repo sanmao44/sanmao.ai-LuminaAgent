@@ -55,3 +55,15 @@ test('MCP details sit below the composer footer, outside the send controls', () 
   assert.ok(footerElement, 'Composer footer must remain present');
   assert.ok(footerElement.end < dock.pos, 'MCP details must follow the footer');
 });
+
+test('GitHub MCP 安装追问会把最近仓库地址带进本轮请求', () => {
+  assert.match(content, /isGithubMcpInstallFollowUp\(requestContent\)/);
+  assert.match(content, /extractGithubRepositoryUrl\(githubInstallRepo\.content\)/);
+  assert.match(content, /本轮安装目标仓库/);
+});
+
+test('助手索要仓库地址后，用户只发地址时会保留助手交接消息', () => {
+  assert.match(content, /isGithubMcpInstallHandoff\(requestContent, previousGithubInstallAssistant\)/);
+  assert.match(content, /githubInstallHandoffMessage/);
+  assert.match(content, /isGithubMcpInstallHandoff\(requestContent, message\.content\)/);
+});

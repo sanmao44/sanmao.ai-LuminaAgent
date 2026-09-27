@@ -6,10 +6,12 @@ param(
 
 $ErrorActionPreference = 'SilentlyContinue'
 . (Join-Path (Split-Path -Parent $PSCommandPath) 'free-relay-common.ps1')
+. (Join-Path (Split-Path -Parent $PSCommandPath) 'launcher-common.ps1')
 
 function Write-SanmaoFreeRelayWatchLog([string]$Message, [string]$Level = 'INFO') {
   try {
-    $logPath = Join-Path $Root '.data\logs\launcher.log'
+    $dataDir = Resolve-SanmaoDataDir -Root $Root
+    $logPath = Join-Path $dataDir 'logs\launcher.log'
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $logPath) | Out-Null
     Add-Content -LiteralPath $logPath -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')] [$Level] $Message" -Encoding UTF8
   } catch {}

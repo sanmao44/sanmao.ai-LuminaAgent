@@ -15,7 +15,7 @@ export const imageGenerateTool = defineTool({
       prompt: { type: 'string' },
       aspectRatio: { type: 'string', enum: ['自动', '1:1', '4:5', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9'] },
       count: { type: 'integer', minimum: 1, maximum: 8 },
-      modelId: { type: 'string' },
+      modelId: { type: 'string', description: 'Use the exact modelId from the available image model list only when the user explicitly requests a model; omit it for automatic selection.' },
     }, required: ['prompt'],
   },
 });
@@ -34,7 +34,7 @@ export const imageEditTool = defineTool({
       prompt: { type: 'string' },
       aspectRatio: { type: 'string', enum: ['自动', '1:1', '4:5', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9'] },
       count: { type: 'integer', minimum: 1, maximum: 8 },
-      modelId: { type: 'string' },
+      modelId: { type: 'string', description: 'Use the exact modelId from the available image model list only when the user explicitly requests a model; omit it for automatic selection.' },
     }, required: ['prompt'],
   },
 });
