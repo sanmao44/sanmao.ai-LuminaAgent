@@ -132,13 +132,13 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   if (!candidates.length) candidates.push(candidate('chat', 60, '普通对话或问答'));
   candidates.sort((a, b) => b.score - a.score);
   const route = candidates[0].route;
-  const needsTools = ['image', 'both', 'word', 'excel', 'ppt', 'archive', 'file', 'browser', 'filesystem'].includes(route);
   // A site name alone is not enough to load a connector: "搜索 GitHub 最新
   // 资料" belongs to the normal web path. MCP is reserved for explicit
   // connector/service actions or local/browser execution.
   const explicitExternalAction = externalServiceActionPattern.test(text)
     && /(?:mcp|连接|接入|调用|同步|提交|发送|创建|更新|删除)/i.test(text);
   const useMcp = browserAutomation || filesystem || likelyMcpManagementRequest(text) || explicitExternalAction;
+  const needsTools = useMcp || ['image', 'both', 'word', 'excel', 'ppt', 'archive', 'file', 'browser', 'filesystem'].includes(route);
   const useBrowserMcp = browserAutomation;
   const useFilesystemMcp = filesystem;
   const useSkills = !browserAutomation && !filesystem && !intent.deliverable.toString().match(/^(IMAGE|BOTH)$/) && skillNeedPattern.test(text) && !/^(?:什么是|解释|介绍|为什么|如何理解)/i.test(text);
@@ -152,6 +152,11 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
 }
 
 /** Keep enough recent context for continuity while dropping stale turns. */
+export function needsMcpCapabilityDiscovery(mode: string, instruction: string, isolated: boolean) {
+  return !isolated && ['execute', 'follow_up', 'unknown'].includes(mode)
+    && !/^(?:怎么|如何|怎样|为什么|解释|介绍|说明|教我|告诉我)/.test(instruction.trim());
+}
+
 export function selectAgentContextMessages<T extends AgentIntentMessage>(messages: T[], need: AgentContextNeed) {
   if (need === 'required') return messages.slice(-10);
   if (need === 'recent') return messages.slice(-4);

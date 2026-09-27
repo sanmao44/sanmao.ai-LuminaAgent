@@ -33,7 +33,7 @@
 .message-label .message-mcp-detail{position:relative;display:inline-flex;align-items:center;max-width:100%;flex:0 1 auto;min-width:0}
 .message-label .message-mcp-detail{padding:0;border:0;background:transparent;color:inherit;cursor:pointer}
 .message-label .message-mcp-detail:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
-.message-label .message-mcp-detail .message-mcp-badge{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.message-label .message-mcp-detail .message-mcp-badge{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left;line-height:1.5}
 /* 一轮里调用多次外部工具时，MCP 徽标会很长。flex 项默认不肯收缩到内容以下，
    结果把左边那行说明压成了一字一行的竖排（实测截图就是这个）。所以：整行允许换行、
    说明永远保持一整行，徽标自己按剩余宽度省略号截断。 */

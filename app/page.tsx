@@ -11475,7 +11475,7 @@ export default function Page() {
                                                                         message.role === 'assistant' && !message.pending && message.mcpTools?.length && /*#__PURE__*/ _jsx("button", {
                                                                             type: "button",
                                                                             className: "message-mcp-detail",
-                                                                            title: "在输入框下方查看这一轮用到的外部工具",
+                                                                            title: "查看本轮 MCP 服务、工具及执行结果",
                                                                             "aria-expanded": activeMcpMessageId === message.id,
                                                                             onClick: (event)=>{
                                                                                 event.stopPropagation();
@@ -11483,7 +11483,7 @@ export default function Page() {
                                                                             },
                                                                             children: /*#__PURE__*/ _jsx("small", {
                                                                                 className: "message-mcp-badge",
-                                                                                children: `MCP：${message.mcpTools.map((tool)=>`${tool.server} · ${tool.name}${tool.ok ? '' : '（失败）'}`).join('、')}`
+                                                                                children: `MCP：${message.mcpTools.map((tool)=>`${tool.server} · ${tool.name}（${tool.ok ? '成功' : '失败'}）`).join('、')}`
                                                                             })
                                                                         }),
                                                                          message.role === 'assistant' && !message.pending && message.deliverable && /*#__PURE__*/ _jsx("small", {

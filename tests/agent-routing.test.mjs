@@ -23,6 +23,17 @@ const routingModule = { exports: {} };
 new Function('require', 'module', 'exports', routingCompiled)((id) => id === '@/lib/agent-intent' ? modules.intent.exports : modules.web.exports, routingModule, routingModule.exports);
 const routing = routingModule.exports;
 
+test('capability discovery is not limited to a list of application names', () => {
+  for (const input of ['打开设备管理器', '打开辅助功能', '帮我启动陌生应用', '把音量调低', '查询仓库库存', '读取剪贴板']) {
+    const decision = routing.classifyAgentRequest(input);
+    assert.equal(routing.needsMcpCapabilityDiscovery(decision.intent.mode, input, false), true, input);
+    assert.equal(routing.needsMcpCapabilityDiscovery(decision.intent.mode, input, true), false, input);
+  }
+  for (const input of ['怎么打开网络设置？', '你能打开辅助功能吗？', '解释 Windows 系统设置']) {
+    assert.equal(routing.needsMcpCapabilityDiscovery(routing.classifyAgentRequest(input).intent.mode, input, false), false, input);
+  }
+});
+
 test('chooses bounded artifact routes before generic text or visual nouns', () => {
   assert.equal(routing.classifyAgentRequest('做一份项目周报').route, 'word');
   assert.equal(routing.classifyAgentRequest('生成一个销售数据 Excel 表格').route, 'excel');

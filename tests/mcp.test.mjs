@@ -360,7 +360,7 @@ test('MCP 工具随本轮一起下发给模型，并能被路由识别出来', (
 test('route.ts 在执行前过统一权限点，并把 MCP 结果当成不可信输入', async () => {
   const route = await read('app/api/agent/route.ts');
   assert.match(route, /const gatingContext = \{/);
-  assert.match(route, /const priorityServerIds = \[\s*\.\.\.\(browserAutomationRequest \? \['playwright'\] : \[\]\),\s*\.\.\.\(filesystemRequest \? \['filesystem'\] : \[\]\),\s*\];/s);
+  assert.match(route, /const priorityServerIds = \[\s*\.\.\.\(browserAutomationRequest \? \['playwright'\] : \[\]\),\s*\.\.\.\(filesystemRequest \? \['filesystem'\] : \[\]\),\s*\.\.\.discoveredMcpIds,\s*\];/s);
   assert.match(route, /const selectedMcpServers = mcpAllowedThisTurn && !toolSelectionIsolated\s+\? mcpServersForTurn\(listMcpServers\(\), mcpTurnText, priorityServerIds\)\s+: \[\];/s);
   assert.match(route, /const mcpRuntime = mcpAllowedThisTurn && !isCanvasNodeExecution\s+\? await loadMcpToolRuntime\(\{/s);
   assert.match(route, /const mcpServerById = new Map\(mcpRuntime\.servers\.map/);
@@ -455,7 +455,7 @@ test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生
   assert.match(globals, /\.message\.assistant \.message-label \.message-mcp-badge\{/);
   assert.match(page, /className: "message-mcp-detail"/);
   assert.match(page, /className: "message-mcp-detail-panel"/);
-  assert.match(page, /title: "在输入框下方查看这一轮用到的外部工具"/);
+  assert.match(page, /title: "查看本轮 MCP 服务、工具及执行结果"/);
   assert.match(page, /activeMcpMessageId === message\.id/);
   assert.match(page, /className: "agent-mcp-detail-dock"/);
   assert.match(page, /children: tool\.readOnly \? '只读' : '写入'/);
