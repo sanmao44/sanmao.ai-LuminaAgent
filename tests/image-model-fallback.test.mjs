@@ -28,7 +28,7 @@ test('switches automatic image models only after an explicit compatibility rejec
     return [first, second];
   }, async (candidate) => {
     calls.push(candidate.model.id);
-    if (candidate.model.id === 'default-image') throw providerRejection(422);
+    if (candidate.model.id === 'default-image') throw providerRejection(422, 'The selected model is not supported for image generation');
     return candidate.model.id;
   });
   assert.equal(result, 'fallback-image');
@@ -51,10 +51,11 @@ test('does not switch after transport or ambiguous server failures', async () =>
 });
 
 test('recognizes only safe compatibility statuses for fallback', () => {
-  assert.equal(isSafeImageModelFallbackError(providerRejection(400)), true);
-  assert.equal(isSafeImageModelFallbackError(providerRejection(415)), true);
-  assert.equal(isSafeImageModelFallbackError(providerRejection(422)), true);
+  assert.equal(isSafeImageModelFallbackError(providerRejection(400)), false);
+  assert.equal(isSafeImageModelFallbackError(providerRejection(415)), false);
+  assert.equal(isSafeImageModelFallbackError(providerRejection(422)), false);
   assert.equal(isSafeImageModelFallbackError(providerRejection(500)), false);
+  assert.equal(isSafeImageModelFallbackError(providerRejection(422, 'The selected model is not supported for image generation')), true);
   assert.equal(isSafeImageModelFallbackError(providerRejection(404, 'Model "gpt-image-2.5-exact" is not supported by any configured account')), true);
   assert.equal(isSafeImageModelFallbackError(providerRejection(404, 'HTTP 404')), false);
 });

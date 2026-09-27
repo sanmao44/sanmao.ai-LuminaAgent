@@ -1010,10 +1010,11 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
   throw new Error('图片超分任务等待超时，请稍后到服务商控制台查看任务状态');
 }
 
-export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' }, signal?: AbortSignal): Promise<GeneratedImage[]> {
-  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, [], signal);
+export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque'; references?: string[] }, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  const references = (input.references || []).filter((reference) => typeof reference === 'string' && reference.trim()).map(normalizeReference).slice(0, 16);
+  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
-  if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, [], signal);
+  if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
   const body: Record<string, unknown> = {
     model: rawModelId,
     prompt: input.prompt,
@@ -1026,6 +1027,11 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
   if (input.outputFormat) body.output_format = input.outputFormat;
   if (input.background) body.background = input.background;
   if (provider.type === 'google-gemini') body.response_format = 'b64_json';
+  if (references.length) {
+    if (isModelScopeProvider(provider)) body.image_url = references.length === 1 ? references[0] : references;
+    else if (is65535Provider(provider) || isApimartProvider(provider)) body.image_urls = references;
+    else body.images = references.map((image_url) => ({ image_url }));
+  }
   const endpoint = providerEndpoint(provider, provider.imageGenerationPath, '/images/generations');
   const request = (payload: Record<string, unknown>) => fetchJson(endpoint, {
     method: 'POST', headers: { ...authHeaders(provider), ...modelScopeImageHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -1128,6 +1134,28 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
   const size = mapImageRequestSize(provider, rawModelId, input.aspectRatio || '自动', input.width, input.height);
   const sendInputFidelity = input.fidelity && shouldSendInputFidelity(provider, rawModelId);
   const jsonBody = buildImageEditRequestBody(provider, rawModelId, input, references, count, size);
+
+  // ModelScope's Qwen-Image-Edit is exposed as an asynchronous image
+  // generation task, not through the OpenAI-compatible /images/edits route.
+  // Keep the reference image in image_url for this provider and reuse the
+  // existing task polling/normalization path.
+  if (isModelScopeProvider(provider)) {
+    const data = await fetchJson(providerEndpoint(provider, provider.imageGenerationPath, '/images/generations'), {
+      method: 'POST',
+      headers: { ...authHeaders(provider), ...modelScopeImageHeaders(provider), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: rawModelId,
+        prompt: input.prompt,
+        image_url: references.length === 1 ? references[0] : references,
+        ...(size !== 'auto' ? { size } : {}),
+        ...(count > 1 ? { n: count } : {}),
+      }),
+    }, IMAGE_REQUEST_TIMEOUT, signal);
+    const images = extractImages(data);
+    if (images.length) return normalizeImages(data);
+    if (taskIdFrom(data)) return waitForImageTask(provider, data, signal);
+    return normalizeImages(data);
+  }
 
   // 新版 Images API 支持 JSON image_url/data URL；优先使用，兼容远程 URL 和多图。
   try {

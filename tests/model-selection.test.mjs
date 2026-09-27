@@ -24,8 +24,8 @@ test('auto selection keeps the configured model inside the default provider', ()
   assert.equal(selection.selectAutomaticModel(models, 'images', 'lite')?.id, 'lite');
 });
 
-test('auto selection honors the default provider before a model from another provider', () => {
-  assert.equal(selection.selectAutomaticModel(models, 'images', 'fallback')?.id, 'full');
+test('auto selection honors the configured default model before its provider preference', () => {
+  assert.equal(selection.selectAutomaticModel(models, 'images', 'fallback')?.id, 'fallback');
 });
 
 test('auto selection falls back to the configured model without a default provider', () => {

@@ -8835,35 +8835,6 @@ export default function SuperCanvas() {
         }));
       }
       const inputId = inputNode.id;
-      let streamedText = "";
-      let renderedStreamedText = "";
-      let streamFrame: number | null = null;
-      const flushStreamedText = () => {
-        streamFrame = null;
-        if (!streamedText || streamedText === renderedStreamedText) return;
-        renderedStreamedText = streamedText;
-        updateDoc((value) => ({
-          ...value,
-          nodes: value.nodes.map((node) =>
-            node.id === inputId
-              ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    text: streamedText,
-                    agentResponse: streamedText,
-                    status: "running" as const,
-                    statusLabel: "Agent 正在生成回复…",
-                  },
-                }
-              : node,
-          ),
-        }));
-      };
-      const scheduleStreamFlush = () => {
-        if (streamFrame !== null) return;
-        streamFrame = window.requestAnimationFrame(flushStreamedText);
-      };
       try {
         const generationStartedAt = Date.now();
         let finalEventReceived = false;
@@ -8899,8 +8870,8 @@ export default function SuperCanvas() {
             }));
           }
           if (event.type === "delta" && event.text) {
-            streamedText += String(event.text);
-            scheduleStreamFlush();
+            // Streaming text stays in the Agent dock. Keep the canvas node
+            // compact until the final response is ready.
           }
           if (event.type === "final") {
             finalEventReceived = true;
@@ -8908,8 +8879,6 @@ export default function SuperCanvas() {
           }
         });
         const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
-        if (streamFrame !== null) window.cancelAnimationFrame(streamFrame);
-        flushStreamedText();
         const parent = nodeById(docRef.current, inputId) || inputNode;
         const responseText = String(finalEventReceived ? finalEventText : response.message || "").trim();
         if (!responseText) throw new Error("Agent 没有返回有效结果，请重试。");
@@ -9040,7 +9009,6 @@ export default function SuperCanvas() {
         }));
         notify(message, "error");
       } finally {
-        if (streamFrame !== null) window.cancelAnimationFrame(streamFrame);
         generationKeysRef.current.delete(activeKey);
         setGenerationKeys(new Set(generationKeysRef.current));
       }

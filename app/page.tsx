@@ -5355,7 +5355,6 @@ export default function Page() {
     const [selectedShareGroups, setSelectedShareGroups] = useState(new Set());
     const [agentFiles, setAgentFiles] = useState([]);
     const [agentModelId, setAgentModelId] = useState('auto');
-    const [agentImageModelId, setAgentImageModelId] = useState('auto');
     const [agentWebMode, setAgentWebMode] = useState('auto');
     const [agentWebModeMenuOpen, setAgentWebModeMenuOpen] = useState(false);
     const [webSearchApiProvider, setWebSearchApiProvider] = useState('baidu-qianfan');
@@ -5647,7 +5646,6 @@ export default function Page() {
     }
     const generateUpscaleMode = generateWorkflow === 'upscale';
     const activeAgentModelId = agentModelId !== 'auto' && availableChatModels.some((model)=>model.id === agentModelId) ? agentModelId : 'auto';
-    const activeAgentImageModelId = agentImageModelId !== 'auto' && availableGenerationModels.some((model)=>model.id === agentImageModelId) ? agentImageModelId : 'auto';
     const activeAgentChatModel = activeAgentModelId === 'auto' ? agentModel : availableChatModels.find((model)=>model.id === activeAgentModelId);
     const matchingModels = useMemo(()=>activeProviderModels.filter((model)=>(modelProviderFilter === 'all' || model.providerId === modelProviderFilter) && (!modelSearch.trim() || `${model.displayName} ${model.rawId}`.toLowerCase().includes(modelSearch.trim().toLowerCase()))), [
         activeProviderModels,
@@ -5884,9 +5882,6 @@ export default function Page() {
         agentFiles.length
     ]);
     const activeAgentIntent = liveAgentIntent;
-    const agentImageModelSelectionVisible = Boolean(agentInput.trim()
-        && (activeAgentIntent.deliverable === 'IMAGE' || activeAgentIntent.deliverable === 'BOTH')
-        && availableGenerationModels.length);
     const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
     const videoTotalPages = Math.max(1, Math.ceil(videoTotal / pageSize));
     const visibleVideoPage = Math.min(videoPage, videoTotalPages);
@@ -9145,7 +9140,7 @@ export default function Page() {
         setSection('agent');
         await sendAgent(direction);
     }
-    async function retryAgentMessage(message, imageModelId = 'auto') {
+    async function retryAgentMessage(message) {
         if (message.retrying) return;
         pauseChatAutoFollow();
         const sessionId = activeChatIdRef.current;
@@ -9241,7 +9236,6 @@ export default function Page() {
                     persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
-                    ...(message.images?.length ? { imageModelId } : {}),
                     ...(message.task === 'one_take_video_prompt' && message.durationSeconds !== undefined ? { task: message.task, durationSeconds: message.durationSeconds } : {}),
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
@@ -9396,7 +9390,6 @@ export default function Page() {
         });
         const selectedDeliverable = deliverableOverride || requestIntent.deliverable;
         const likelyImageRequest = !task && (selectedDeliverable === 'IMAGE' || selectedDeliverable === 'BOTH');
-        const imageModelIdForRequest = likelyImageRequest ? activeAgentImageModelId : 'auto';
         const user = {
             id: uid('msg'),
             role: 'user',
@@ -9531,7 +9524,6 @@ export default function Page() {
                     persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
-                    imageModelId: imageModelIdForRequest,
                     task,
                     ...(oneTakeDuration !== undefined ? { durationSeconds: oneTakeDuration } : {}),
                     webMode: agentWebMode,
@@ -11651,19 +11643,6 @@ export default function Page() {
                                                                                         message.retrying ? '重新生成中…' : message.images?.length ? '重新生成图片' : '重新生成文本'
                                                                                     ]
                                                                                 }),
-                                                                                message.images?.length && availableGenerationModels.length && /*#__PURE__*/ _jsx(ModelPicker, {
-                                                                                    models: availableGenerationModels,
-                                                                                    value: "auto",
-                                                                                    capability: "generate",
-                                                                                    defaultProviderId: state.settings.defaultProviderId,
-                                                                                    defaultProviderName: defaultProvider?.name,
-                                                                                    defaultModelId: state.settings.defaultImageModelId,
-                                                                                    automaticHint: "仅重试本轮，不改变默认模型",
-                                                                                    triggerPrefix: "换模型",
-                                                                                    disabled: message.retrying || activeAgentBusy || agentMessageSelectionActive,
-                                                                                    onChange: (modelId)=>void retryAgentMessage(message, modelId),
-                                                                                    className: "message-image-model-picker"
-                                                                                }),
                                                                                 message.retrying && message.activity?.message ? /*#__PURE__*/ _jsx("span", {
                                                                                     className: "message-retry-activity",
                                                                                     children: message.activity.message
@@ -12098,18 +12077,6 @@ export default function Page() {
                                                                      defaultModelId: state.settings.agentModelId,
                                                                      onChange: setAgentModelId,
                                                                      className: "model-dropdown compact"
-                                                                 }),
-                                                                 agentImageModelSelectionVisible && /*#__PURE__*/ _jsx(ModelPicker, {
-                                                                     models: availableGenerationModels,
-                                                                     value: activeAgentImageModelId,
-                                                                     capability: "generate",
-                                                                     defaultProviderId: state.settings.defaultProviderId,
-                                                                     defaultProviderName: defaultProvider?.name,
-                                                                     defaultModelId: state.settings.defaultImageModelId,
-                                                                     automaticHint: "仅作用于本轮生图，不改变默认模型",
-                                                                     triggerPrefix: "生图",
-                                                                     onChange: setAgentImageModelId,
-                                                                     className: "model-dropdown compact agent-image-model-dropdown"
                                                                  }),
                                                                  /*#__PURE__*/ _jsxs("div", {
                                                                     className: "agent-web-toggle-wrap",

@@ -40,8 +40,6 @@ export type AgentRequestPayload = {
   referenceImages?: Array<Record<string, unknown>>;
   references?: CreativeReference[];
   model?: string;
-  /** Single-turn image model override; does not change the global default. */
-  imageModelId?: string;
   task?: string;
   durationSeconds?: number;
   webMode?: "off" | "auto" | "always";

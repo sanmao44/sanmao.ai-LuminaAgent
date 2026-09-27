@@ -16,6 +16,7 @@ function harness(options = {}) {
   const calls = [];
   const manageCalls = [];
   const images = [];
+  const imageRuntimeRequests = [];
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: [], kind: 'chat' };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
@@ -35,7 +36,7 @@ function harness(options = {}) {
     },
     '@/lib/store': {
       getRuntimeModel: async (_id, kind) => kind === 'image' ? { provider, model: imageModel } : runtime,
-      getRuntimeImageGenerationModel: async () => ({ provider, model: imageModel }),
+      getRuntimeImageGenerationModel: async (id) => { imageRuntimeRequests.push({ capability: 'generate', id }); return { provider, model: imageModel }; },
       getRuntimeImageModelForCapability: async (_id, capability) => capability === 'edit' ? { provider, model: { ...imageModel, capabilities: ['edit'] } } : { provider, model: imageModel },
       getRuntimeImageModelCandidates: async () => [{ provider, model: imageModel }],
       getPublicState: async () => ({ settings: {}, models: [imageModel], providers: [provider] }),
@@ -74,7 +75,7 @@ function harness(options = {}) {
   const module = { exports: {} };
   new Function('require', 'module', 'exports', compiled)((id) => mocks[id] || requireTs(id === '@/lib/tools' ? '@/lib/tools/index' : id), module, module.exports);
   return {
-    calls, manageCalls, images,
+    calls, manageCalls, images, imageRuntimeRequests,
     async post(messages, extra = {}) {
       const response = await module.exports.POST(new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -136,10 +137,31 @@ test('bare image command uses this chat subject, ratio and actual reference desp
   const agent = harness();
   const data = await agent.post([...history, { role: 'user', content: '出图', references: [{ id: 'ref', kind: 'image', name: '当前对话图片', url: 'data:image/png;base64,dGVzdA==' }] }]);
   assert.equal(agent.images.length, 1);
-  assert.equal(agent.images[0].mode, 'edit');
+  assert.equal(agent.images[0].mode, 'generate');
+  assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
   assert.match(agent.images[0].prompt, /鲁迅/);
   assert.equal(agent.images[0].aspectRatio, '9:16');
   assert.equal(data.images.length, 1);
+});
+
+test('batch generation with a reference uses generate mode and shares the reference', async () => {
+  const agent = harness({ reply: (payload) => payload.tools
+    ? { content: '<tool_call>{"name":"image_edit","arguments":{"prompt":"模型错误的编辑调用"}}</tool_call>' }
+    : { content: '套图已完成。' } });
+  const data = await agent.post([
+    { role: 'user', content: '商品详情图提示词：\n1. 正面白底展示，产品居中\n2. 侧面场景展示，突出材质', references: [
+      { id: 'product', kind: 'image', name: '商品参考图', url: 'data:image/png;base64,dGVzdA==' },
+      { id: 'prompts', kind: 'text', name: 'Agent 文本提示词', text: '1. 正面白底展示，产品居中\n2. 侧面场景展示，突出材质' },
+    ] },
+    { role: 'user', content: '套图', references: [
+      { id: 'product', kind: 'image', name: '商品参考图', url: 'data:image/png;base64,dGVzdA==' },
+      { id: 'prompts', kind: 'text', name: 'Agent 文本提示词', text: '1. 正面白底展示，产品居中\n2. 侧面场景展示，突出材质' },
+    ] },
+  ]);
+  assert.equal(agent.images.length, 2);
+  assert.ok(agent.images.every((image) => image.mode === 'generate'));
+  assert.ok(agent.images.every((image) => image.references?.[0] === 'data:image/png;base64,dGVzdA=='));
+  assert.equal(data.images.length, 2);
 });
 
 test('valid inline tool calls are executed once with their original prompt', async () => {
@@ -149,6 +171,26 @@ test('valid inline tool calls are executed once with their original prompt', asy
   assert.equal(agent.images[0].prompt, '鲁迅在书房评论寓意图');
   assert.equal(data.images.length, 1);
   assert.doesNotMatch(data.message, /tool_call/);
+});
+
+test('language model cannot override the system default image model through tool arguments', async () => {
+  const agent = harness({ reply: (payload) => payload.tools
+    ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"系统默认模型测试","modelId":"language-model-picked"}}</tool_call>' }
+    : { content: '图片已完成。' } });
+  const data = await agent.post([{ role: 'user', content: '生成一张系统默认模型测试图' }]);
+  assert.equal(agent.images.length, 1);
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.images[0].prompt, '系统默认模型测试');
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'auto' }]);
+});
+
+test('legacy client image model overrides are ignored by Agent generation', async () => {
+  const agent = harness({ reply: (payload) => payload.tools
+    ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"客户端旧参数测试","modelId":"stale-client-model"}}</tool_call>' }
+    : { content: '图片已完成。' } });
+  const data = await agent.post([{ role: 'user', content: '生成一张客户端旧参数测试图' }], { imageModelId: 'stale-client-model' });
+  assert.equal(data.images.length, 1);
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'auto' }]);
 });
 
 test('承接上一轮编号生图方案时直接批量执行，不只回复生成计划', async () => {

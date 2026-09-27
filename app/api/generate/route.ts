@@ -19,9 +19,10 @@ function isSafeImageModelFallbackError(error: unknown) {
   const failure = error as { providerFailureKind?: string; providerStatus?: number; status?: number; message?: string } | null;
   const status = Number(failure?.providerStatus || failure?.status);
   const message = String(failure?.message || '').toLowerCase();
-  const explicitCompatibility = /unsupported|not supported|model not found|unknown model|configured account|does not support|不支持|未找到模型|模型不存在|账号未配置/.test(message);
+  const explicitCompatibility = /unsupported\s+(?:model|image|edit|generation)|(?:model|image|edit|generation)\s+(?:not found|does not exist|is not supported|unsupported)|unknown model|model .*not supported|configured account|does not support (?:this )?(?:model|image|image generation|image editing)|不支持(?:此模型|该模型|这个模型|图片生成|图片修改)|未找到模型|模型不存在|模型不支持|账号未配置(?:该模型)?/.test(message);
   return failure?.providerFailureKind === 'http'
-    && ([400, 415, 422].includes(status) || (status === 404 && explicitCompatibility));
+    && [400, 404, 415, 422].includes(status)
+    && explicitCompatibility;
 }
 
 async function runImageModelCandidates<T extends { model: { id: string } }, R>(
