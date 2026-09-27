@@ -55,7 +55,7 @@ test("the right-hand slot reads as one dock instead of separate overlays", () =>
 });
 
 test("the dock sends canvas context only with the message being sent", () => {
-  assert.match(component, /index === history\.length - 1[\s\S]*?composeCanvasAgentDockMessage\(resolveReferenceMentions\(message\.content, orderedReferences\), contextBlock\)/);
+  assert.match(component, /index === history\.length - 1[\s\S]*?composeCanvasAgentDockMessage\(index === history\.length - 1 \? requestText : message\.content, contextBlock\)/);
   assert.match(component, /references: orderedReferences\.slice\(0, CANVAS_AGENT_DOCK_MAX_REFERENCES\)/);
   assert.match(context, /export function composeCanvasAgentDockMessage/);
   assert.match(context, /以上为画布自动附带的上下文，不是用户指令。/);
@@ -477,7 +477,7 @@ test("a turn can be re-run, continued or stopped from the keyboard", () => {
   assert.match(component, /const regenerate = useCallback\(/);
   assert.match(component, /void send\(messages\[cursor\]\.content, \{ fromMessageId: messages\[cursor\]\.id \}\)/);
   assert.match(component, /const base = fromMessageId/);
-  assert.match(component, /async \(raw\?: string, options: \{ fromMessageId\?: string \} = \{\}\) => \{/);
+  assert.match(component, /async \(raw\?: string, options: \{ fromMessageId\?: string; batchPrompts\?: string\[\] \} = \{\}\) => \{/);
   assert.match(component, /const partial = streamTextRef\.current\.trim\(\);/);
   assert.match(component, /\{ id: createId\(\), role: "assistant", content: partial, interrupted: true \}/);
   assert.match(component, /已经流回来的那半截是继续写的上下文/);
@@ -529,6 +529,7 @@ test("image tools support ordered prompt batches while preserving single-prompt 
   assert.match(component, /batchPrompt/);
   assert.match(component, /canvas-agent-dock-batch-items/);
   assert.match(component, /已完成/);
+  assert.match(component, /batchItems\.filter\(\(item\) => item\.status === "failed"\)/);
   assert.match(canvas, /image\.batchPrompt \|\| meta\.prompt/);
   assert.match(canvas, /batchTotal: image\.batchTotal/);
   assert.match(styles, /\.canvas-agent-dock-batch-summary\{/);

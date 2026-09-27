@@ -318,7 +318,7 @@ function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; h
   };
 }
 
-type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string; modelId?: string; modelName?: string; providerName?: string }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }>; mcpTools?: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }>; toolTrace?: ToolLoopTraceStep[]; canvasPatch?: CanvasPatch; finalize?: (text: string) => Promise<string> | string; approval?: { id: string; expiresAt: number; message: string; calls: Array<Record<string, unknown>> }; streamBufferChars?: number; };
+type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string; modelId?: string; modelName?: string; providerName?: string; batchId?: string; batchIndex?: number; batchTotal?: number; batchPrompt?: string; batchStatus?: 'succeeded' | 'failed'; batchError?: string }>; batchItems?: Array<{ batchId: string; index: number; total: number; prompt: string; status: 'succeeded' | 'failed'; error?: string; imageCount?: number }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: string; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }>; mcpTools?: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }>; toolTrace?: ToolLoopTraceStep[]; canvasPatch?: CanvasPatch; finalize?: (text: string) => Promise<string> | string; approval?: { id: string; expiresAt: number; message: string; calls: Array<Record<string, unknown>> }; streamBufferChars?: number; };
 
 type AgentUsage = { promptTokens?: number; completionTokens?: number; totalTokens?: number };
 type AgentStreamSettlement = { status: 'success' | 'error'; responseChars: number; error?: string } & AgentUsage;
@@ -432,7 +432,7 @@ function streamAgentResult(upstream: Response | null | (() => Promise<Response |
           : '当前模型未能完成这次请求，没有可交付的结果。请重试或切换支持工具调用的对话模型。');
         if (finalText.startsWith(text.slice(0, emitted)) && finalText.length > emitted) send(controller, { type: 'delta', text: finalText.slice(emitted) });
         if (metadata.approval) send(controller, { type: 'approval_required', approvalId: metadata.approval.id, runId: metadata.approval.id, summary: metadata.approval.message, approval: metadata.approval });
-        send(controller, { type: 'final', message: finalText, images: metadata.images, files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), ...(metadata.canvasPatch ? { canvasPatch: metadata.canvasPatch } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null, skills: metadata.skills || [], mcpTools: metadata.mcpTools || [], toolTrace: metadata.toolTrace || [], ...(metadata.approval ? { approval: metadata.approval, needsApproval: true } : {}) });
+        send(controller, { type: 'final', message: finalText, images: metadata.images, ...(metadata.batchItems ? { batchItems: metadata.batchItems } : {}), files: metadata.files, generations: metadata.generations, model: metadata.model, deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), ...(metadata.canvasPatch ? { canvasPatch: metadata.canvasPatch } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null, skills: metadata.skills || [], mcpTools: metadata.mcpTools || [], toolTrace: metadata.toolTrace || [], ...(metadata.approval ? { approval: metadata.approval, needsApproval: true } : {}) });
         settlement = (!unexecutedCall && cleanedFinal) || metadata.images.length || metadata.files.length
           ? { status: 'success', responseChars: finalText.length, ...streamUsage }
           : { status: 'error', responseChars: finalText.length, error: finalText, ...streamUsage };
@@ -1608,6 +1608,7 @@ const auditMcpCall = (
     }
 
     const generated: Array<{ url: string; revisedPrompt?: string; modelId?: string; modelName?: string; providerName?: string; localFileName?: string }> = [];
+    const batchItems: Array<{ batchId: string; index: number; total: number; prompt: string; status: 'succeeded' | 'failed'; error?: string; imageCount?: number }> = [];
     let canvasPatch: CanvasPatch | undefined;
     const generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }> = [];
     const generatedFiles: GeneratedFile[] = [];
@@ -2140,19 +2141,20 @@ const auditMcpCall = (
       }
       let selectedImageRuntime = imageRuntime;
       try {
-        const initialImageRuntime = imageRuntime;
         const imageReferences = latestRefs.filter((reference) => reference.kind === 'image' && reference.url).map((reference) => reference.url!);
         if (mode === 'edit' && !imageReferences.length) throw new Error('请先提供图片参考');
         const images: Array<any> = [];
         const batchId = requestedPrompts.length > 1 ? `agent-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : undefined;
+        const initialRuntime = imageRuntime;
         const runPrompt = async (itemPrompt: string, promptIndex: number) => {
+          let itemRuntime = initialRuntime;
           const itemImages = await runImageModelCandidates(
-            initialImageRuntime,
+            initialRuntime,
             async () => explicitlyRequestedImageModel
               ? []
               : getRuntimeImageModelCandidates('auto', mode === 'generate' ? 'generate' : undefined),
             async (candidate) => {
-              imageRuntime = candidate;
+              itemRuntime = candidate;
               return mode === 'edit'
                 ? editImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences, fidelity: 'high' }, requestController.signal)
                 : generateImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count }, requestController.signal);
@@ -2160,6 +2162,7 @@ const auditMcpCall = (
           );
           return itemImages.map((image: any) => ({
             ...image,
+            itemRuntime,
             ...(batchId ? { batchId, batchIndex: promptIndex, batchTotal: prompts.length, batchPrompt: itemPrompt } : {}),
           }));
         };
@@ -2170,14 +2173,33 @@ const auditMcpCall = (
             const promptIndex = nextPromptIndex;
             nextPromptIndex += 1;
             if (promptIndex >= prompts.length) return;
-            resultsByPrompt[promptIndex] = await runPrompt(prompts[promptIndex], promptIndex);
+            try {
+              resultsByPrompt[promptIndex] = await runPrompt(prompts[promptIndex], promptIndex);
+              batchItems.push({
+                batchId: batchId || `agent-single-${Date.now()}`,
+                index: promptIndex,
+                total: prompts.length,
+                prompt: prompts[promptIndex],
+                status: 'succeeded',
+                imageCount: resultsByPrompt[promptIndex].length,
+              });
+            } catch (error) {
+              resultsByPrompt[promptIndex] = [];
+              batchItems.push({
+                batchId: batchId || `agent-single-${Date.now()}`,
+                index: promptIndex,
+                total: prompts.length,
+                prompt: prompts[promptIndex],
+                status: 'failed',
+                error: error instanceof Error ? error.message : '图片生成失败',
+              });
+            }
           }
         };
         await Promise.all(Array.from({ length: Math.min(2, prompts.length) }, () => worker()));
         images.push(...resultsByPrompt.flat());
-        if (!imageRuntime) throw new Error('图片模型已不可用');
-        selectedImageRuntime = imageRuntime;
         if (!images.length) throw new Error('图片服务没有返回图片，本轮未生成成功');
+        selectedImageRuntime = images.find((image) => image.itemRuntime)?.itemRuntime || initialRuntime;
         if (requestController.signal.aborted) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
         const providerFinishedAt = Date.now();
         const stored = await persistGenerationResult({
@@ -2189,18 +2211,22 @@ const auditMcpCall = (
           log: { mode, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: selectedImageRuntime.provider.name, count, references: mode === 'edit' && referenceRecords.length ? referenceRecords : undefined, ...taskContext },
         });
         if (!stored.images.length) throw new Error('图片结果未能保存，本轮没有可交付的图片');
-        generated.push(...stored.images.map((image, index) => ({
+        generated.push(...stored.images.map((image, index) => {
+          const itemRuntime = images[index]?.itemRuntime || selectedImageRuntime;
+          return {
           ...image,
-          modelId: selectedImageRuntime.model.id,
-          modelName: selectedImageRuntime.model.displayName,
-          providerName: selectedImageRuntime.provider.name,
+          modelId: itemRuntime.model.id,
+          modelName: itemRuntime.model.displayName,
+          providerName: itemRuntime.provider.name,
           ...(batchId ? {
             batchId,
             batchIndex: images[index]?.batchIndex,
             batchTotal: prompts.length,
             batchPrompt: images[index]?.batchPrompt || prompt,
+            batchStatus: 'succeeded',
           } : {}),
-        })));
+          };
+        }));
         generations.push({ prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: selectedImageRuntime.provider.name, mode });
         // 把本地引用回给模型：它是后面把这些图放进 Word / PPT 的唯一合法 ref。
         const storedRefs = stored.images.map((image) => String(image?.url || '')).filter(Boolean);
@@ -2210,6 +2236,7 @@ const auditMcpCall = (
           content: JSON.stringify({
             ok: true,
             count: images.length,
+            ...(batchItems.length ? { batchItems: batchItems.filter((item) => !batchId || item.batchId === batchId).sort((a, b) => a.index - b.index) } : {}),
             model: selectedImageRuntime.model.displayName,
             mode,
             ...(storedRefs.length
@@ -2224,7 +2251,7 @@ const auditMcpCall = (
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
         const message = error instanceof Error ? error.message : '图片工具失败';
         await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: selectedImageRuntime.provider.name, count, durationMs: Date.now() - startedAt, error: message, ...taskContext }).catch(() => undefined);
-        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: message }) });
+        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: message, ...(batchItems.length ? { batchItems } : {}) }) });
       }
       return { results };
     };
@@ -2614,26 +2641,33 @@ const auditMcpCall = (
       : mcpToolCallCount > 0
         ? usedMcpTools.every((tool) => tool.ok) ? '工具调用已返回，尚需确认任务结果。' : '部分工具调用失败，尚未确认任务完成。'
       : '工具调用失败，请检查已启用的模型或服务商接口。';
-    if (generated.length && preparedCaption) finalText = await preparedCaption;
+    if (batchItems.length) {
+      const succeededItems = batchItems.filter((item) => item.status === 'succeeded').length;
+      const failedItems = batchItems.filter((item) => item.status === 'failed');
+      finalText = failedItems.length
+        ? `批量生图完成 ${succeededItems} 项，失败 ${failedItems.length} 项。失败项：${failedItems.map((item) => `${item.index + 1}（${item.error || '生成失败'}）`).join('、')}。可在面板中只重试失败项。`
+        : `批量生图已完成 ${succeededItems} 项。`;
+    }
+    if (generated.length && preparedCaption && !batchItems.some((item) => item.status === 'failed')) finalText = await preparedCaption;
     const verifiedFailure = toolOutcomeText('', toolOutcomes);
     if (verifiedFailure) {
       await settleLlmLog?.({ status: 'error', responseChars: verifiedFailure.length, error: verifiedFailure });
-      if (wantsStream) return streamResult(null, { fallback: verifiedFailure, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, mcpTools: usedMcpTools, toolTrace });
-      return Response.json({ ok: true, message: verifiedFailure, images: generated, files: generatedFiles, generations, deliverable: requestedDeliverable, mcpTools: usedMcpTools, toolTrace });
+      if (wantsStream) return streamResult(null, { fallback: verifiedFailure, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, mcpTools: usedMcpTools, toolTrace });
+      return Response.json({ ok: true, message: verifiedFailure, images: generated, batchItems, files: generatedFiles, generations, deliverable: requestedDeliverable, mcpTools: usedMcpTools, toolTrace });
     }
     if (wantsStream) {
-      if (followupText || artifactFollowupText || mcpFollowupText) return streamResult(null, { fallback: followupText || artifactFollowupText || mcpFollowupText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
+      if (followupText || artifactFollowupText || mcpFollowupText) return streamResult(null, { fallback: followupText || artifactFollowupText || mcpFollowupText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
       try {
-        if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
+        if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
         const secondStream = await trackedChatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
-        return streamResult(secondStream, { images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
+        return streamResult(secondStream, { images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
         // 这一轮以前是静默降级，用户只会看到“已完成联网检索”这类占位答案，也查不到原因。
         // 记下真实错误，并把它一起返回给用户。
         llmFailure = error instanceof Error ? error.message : String(error);
         console.error('[Agent] 工具轮之后的流式回答失败：', llmFailure);
-        return streamResult(null, { fallback: `${finalText}（整理回答失败：${llmFailure.slice(0, 200)}）`, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
+        return streamResult(null, { fallback: `${finalText}（整理回答失败：${llmFailure.slice(0, 200)}）`, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       }
     }
     if (followupText || artifactFollowupText || mcpFollowupText) finalText = followupText || artifactFollowupText || mcpFollowupText;
@@ -2651,7 +2685,7 @@ const auditMcpCall = (
       await settleLlmLog?.({ status: 'error', responseChars: 0, error: llmFailure });
     }
     llmResponseChars = String(finalText || '').length;
-    return Response.json({ ok: true, message: finalText, images: generated, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, ...(canvasPatch ? { canvasPatch } : {}), toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace });
+    return Response.json({ ok: true, message: finalText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, ...(canvasPatch ? { canvasPatch } : {}), toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace });
   } catch (error) {
     llmFailure = error instanceof Error ? error.message : '智能助手请求失败。';
     if (!streamOwnsRuntimeRequest) await settleLlmLog?.({ status: 'error', responseChars: llmResponseChars, error: llmFailure });

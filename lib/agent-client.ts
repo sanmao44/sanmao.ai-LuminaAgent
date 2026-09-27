@@ -81,6 +81,8 @@ export type AgentGeneratedImage = {
   batchIndex?: number;
   batchTotal?: number;
   batchPrompt?: string;
+  batchStatus?: "succeeded" | "failed";
+  batchError?: string;
 };
 
 /** 这一轮真正落到外部 MCP 服务上的调用，用于给用户看"助手用了哪个外部工具"。 */
@@ -125,6 +127,15 @@ export type AgentResponse = {
   model?: string;
   deliverable?: AgentDeliverable;
   images?: AgentGeneratedImage[];
+  batchItems?: Array<{
+    batchId: string;
+    index: number;
+    total: number;
+    prompt: string;
+    status: "succeeded" | "failed";
+    error?: string;
+    imageCount?: number;
+  }>;
   files?: AgentGeneratedFile[];
   generations?: Array<Record<string, unknown>>;
   webSearch?: Record<string, unknown> | null;
