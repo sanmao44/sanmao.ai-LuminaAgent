@@ -36,6 +36,8 @@ function harness(options = {}) {
     '@/lib/store': {
       getRuntimeModel: async (_id, kind) => kind === 'image' ? { provider, model: imageModel } : runtime,
       getRuntimeImageGenerationModel: async () => ({ provider, model: imageModel }),
+      getRuntimeImageModelForCapability: async (_id, capability) => capability === 'edit' ? { provider, model: { ...imageModel, capabilities: ['edit'] } } : { provider, model: imageModel },
+      getRuntimeImageModelCandidates: async () => [{ provider, model: imageModel }],
       getPublicState: async () => ({ settings: {}, models: [imageModel], providers: [provider] }),
     },
     '@/lib/auth': { isTrustedAppRequest: () => true },

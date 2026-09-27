@@ -1,5 +1,5 @@
 import { chatCompletion, chatCompletionStream, editImage, generateImage, imageDownloadAuth, type ChatContentPart, type ChatMessage } from '@/lib/providers';
-import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeModel } from '@/lib/store';
+import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, getRuntimeModel } from '@/lib/store';
 import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { getProviderPreset } from '@/lib/provider-presets';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
@@ -829,24 +829,28 @@ export async function POST(request: Request) {
     ].join('\n');
     const identityQuestion = isModelIdentityQuestion(latestInstruction);
     const imageGenerationRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH');
+    const requestedImageCapability = latestReferenceImageCount ? 'edit' : 'generate';
+    const imageModelState = imageGenerationRequest ? await ensurePublicState() : null;
     const imageModels = imageGenerationRequest
-      ? filterModelsByActiveProviders((await ensurePublicState()).models, (await ensurePublicState()).providers)
-        .filter((m) => (m.kind === 'image' || m.capabilities.includes('generate') || m.capabilities.includes('edit'))
-          && m.enabled && m.published && (m.capabilities.includes('generate') || m.capabilities.includes('edit')))
+      ? filterModelsByActiveProviders(imageModelState!.models, imageModelState!.providers)
+        .filter((m) => m.kind === 'image'
+          && m.enabled
+          && m.published
+          && m.capabilities.includes(requestedImageCapability))
       : [];
     const requestedAgentImageModelId = typeof body.imageModelId === 'string' && body.imageModelId.trim()
       ? body.imageModelId.trim()
       : 'auto';
     if (imageGenerationRequest && requestedAgentImageModelId !== 'auto'
       && !imageModels.some((model) => model.id === requestedAgentImageModelId
-        && (model.capabilities.includes('generate') || model.capabilities.includes('edit')))) {
+        && model.capabilities.includes(requestedImageCapability))) {
       const error = '本轮选择的生图模型不可用，请重新选择或改用自动选择。';
       await settleLlmLog?.({ status: 'error', responseChars: error.length, error });
       return Response.json({ error }, { status: 400 });
     }
     const imageModelText = imageModels.length
       ? imageModels.map((m) => `- ${m.displayName}（modelId=${m.id}，服务=${m.providerName}）`).join('\n')
-      : '- 当前没有可用生图模型';
+      : `- 当前没有可用${requestedImageCapability === 'edit' ? '改图' : '生图'}模型（需要已启用、已发布且声明 ${requestedImageCapability} 能力的图片模型）`;
     if (imageGenerationRequest && !latestReferenceImageCount
       && /(?:这张图|这幅图|原图|参考图|第[一二三四五六七八九十\d]+张|这几张|这些图)/.test(latestInstruction)
       && !/(?:不参考|不用|不要用).{0,8}(?:原图|上.{0,2}图|参考图)/.test(latestInstruction)) {
@@ -2128,15 +2132,18 @@ const auditMcpCall = (
       }
       let imageRuntime = call.function.name === 'image_generate'
         ? await getRuntimeImageGenerationModel(requestedImageModelId)
-        : await getRuntimeModel(requestedImageModelId, 'image');
+        : await getRuntimeImageModelForCapability(requestedImageModelId, 'edit');
       if (explicitlyRequestedImageModel && (!imageRuntime || imageRuntime.model.id !== requestedImageModelId)) {
         const error = '本轮选择的生图模型当前不可用，请重新选择或改用自动选择。';
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error }) });
         return { results };
       }
       if (!imageRuntime) {
+        const diagnosis = mode === 'edit'
+          ? '没有可用的改图模型：请在模型库启用并发布至少一个支持 edit 的图片模型；文生图模型不能代替改图模型。'
+          : '没有可用的生图模型：请在模型库启用并发布至少一个支持 generate 的图片模型；对话模型不能代替生图模型。';
         await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, count, durationMs: Date.now() - startedAt, error: '没有可用的图片模型', ...taskContext }).catch(() => undefined);
-        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: '没有可用图片模型' }) });
+        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: diagnosis, diagnosis }) });
         return { results };
       }
       let selectedImageRuntime = imageRuntime;
@@ -2152,7 +2159,7 @@ const auditMcpCall = (
             initialRuntime,
             async () => explicitlyRequestedImageModel
               ? []
-              : getRuntimeImageModelCandidates('auto', mode === 'generate' ? 'generate' : undefined),
+              : getRuntimeImageModelCandidates('auto', mode === 'generate' ? 'generate' : 'edit'),
             async (candidate) => {
               itemRuntime = candidate;
               return mode === 'edit'

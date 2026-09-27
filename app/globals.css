@@ -2373,6 +2373,8 @@ html[data-theme="dark"] .super-canvas-entry-badge{
 .message-list{padding-top:34px}
 .message{gap:14px;margin-bottom:32px}
 .message-avatar{flex:none}
+.message.assistant .message-avatar{overflow:hidden}
+.message.assistant .message-avatar img{width:22px;height:22px;display:block;object-fit:cover;border-radius:7px}
 .message.user .message-avatar{background:var(--message-user-bg);border-color:var(--message-user-border);color:var(--message-user-label)}
 .message.user .message-body{width:fit-content;max-width:min(86%,760px);background:var(--message-user-bg);border-color:var(--message-user-border);box-shadow:0 5px 16px color-mix(in srgb,var(--accent) 5%,transparent)}
 .message.assistant .message-body{padding:16px 18px 15px;background:var(--message-assistant-bg);border-color:var(--message-assistant-border);box-shadow:0 7px 20px color-mix(in srgb,var(--success) 5%,transparent)}

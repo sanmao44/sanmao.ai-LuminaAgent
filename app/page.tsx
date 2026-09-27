@@ -11416,7 +11416,10 @@ export default function Page() {
                                                     children: [
                                                         /*#__PURE__*/ _jsx("div", {
                                                             className: "message-avatar",
-                                                            children: message.role === 'user' ? '你' : 'S'
+                                                            children: message.role === 'user' ? '你' : /*#__PURE__*/ _jsx("img", {
+                                                                src: "/brand-mark-welcome.png",
+                                                                alt: "SANMAO.AI"
+                                                            })
                                                         }),
                                                         /*#__PURE__*/ _jsxs("div", {
                                                             className: `message-body ${agentMessageSelectionActive ? 'selecting' : ''}`,
