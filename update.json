@@ -1,17 +1,22 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.62",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.62",
+  "latestVersion": "0.7.63",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.63",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.62/SANMAO.AI-0.7.62.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.63/SANMAO.AI-0.7.63.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.62/SANMAO.AI-0.7.62.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.62/SANMAO.AI-0.7.62.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.62/SANMAO.AI-0.7.62.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.63/SANMAO.AI-0.7.63.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.63/SANMAO.AI-0.7.63.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.63/SANMAO.AI-0.7.63.zip"
   ],
   "sha256": "e559e37a569c597d021d3f6a801071da9f66837cb4c4bb2db08ee11fb9ddc1fd",
-  "publishedAt": "2026-09-27T04:03:06Z",
+  "publishedAt": "2026-09-27T15:32:14Z",
   "notes": [
+    "修复 ModelScope 图片编辑异步任务解析，支持任务轮询和生成结果读取。",
+    "完善超级画布 Agent 批量生图、失败项重试和图片结果交付。",
+    "优化 Agent 图片模型路由、降级处理及诊断信息。",
+    "MCP 执行按已发现的服务能力路由。",
+    "优化启动恢复和工作区元信息同步。",
     "修复用户直接发送 GitHub 仓库地址时未自动安装的问题；裸仓库地址现在会直接交给 Agent 安装。",
     "修复安装交接上下文被筛选丢失的问题，用户按提示发送仓库地址后会继续执行安装。",
     "修复 GitHub MCP 安装上下文丢失：用户先发仓库地址、稍后只说安装时也会自动执行。",
