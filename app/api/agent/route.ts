@@ -830,8 +830,19 @@ export async function POST(request: Request) {
     const imageGenerationRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH');
     const imageModels = imageGenerationRequest
       ? filterModelsByActiveProviders((await ensurePublicState()).models, (await ensurePublicState()).providers)
-        .filter((m) => m.kind === 'image' && m.enabled && m.published && m.capabilities.includes('generate'))
+        .filter((m) => (m.kind === 'image' || m.capabilities.includes('generate') || m.capabilities.includes('edit'))
+          && m.enabled && m.published && (m.capabilities.includes('generate') || m.capabilities.includes('edit')))
       : [];
+    const requestedAgentImageModelId = typeof body.imageModelId === 'string' && body.imageModelId.trim()
+      ? body.imageModelId.trim()
+      : 'auto';
+    if (imageGenerationRequest && requestedAgentImageModelId !== 'auto'
+      && !imageModels.some((model) => model.id === requestedAgentImageModelId
+        && (model.capabilities.includes('generate') || model.capabilities.includes('edit')))) {
+      const error = '本轮选择的生图模型不可用，请重新选择或改用自动选择。';
+      await settleLlmLog?.({ status: 'error', responseChars: error.length, error });
+      return Response.json({ error }, { status: 400 });
+    }
     const imageModelText = imageModels.length
       ? imageModels.map((m) => `- ${m.displayName}（modelId=${m.id}，服务=${m.providerName}）`).join('\n')
       : '- 当前没有可用生图模型';
@@ -2060,10 +2071,25 @@ const auditMcpCall = (
           return '本版已按你确认的创作方向生成。下一版可以继续调整构图、光线或风格细节。';
         });
       }
-      const requestedImageModelId = String(args.modelId || 'auto');
+      // A tool-level modelId wins over the single-turn client override. If
+      // neither side selected a model, the runtime keeps its normal policy.
+      const requestedImageModelId = String(args.modelId || requestedAgentImageModelId || 'auto').trim() || 'auto';
+      const requiredImageCapability = mode === 'edit' ? 'edit' : 'generate';
+      const explicitlyRequestedImageModel = requestedImageModelId !== 'auto';
+      if (explicitlyRequestedImageModel && !imageModels.some((model) => model.id === requestedImageModelId
+        && model.capabilities.includes(requiredImageCapability))) {
+        const error = '本轮选择的生图模型不支持当前任务，请重新选择或改用自动选择。';
+        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error }) });
+        return { results };
+      }
       let imageRuntime = call.function.name === 'image_generate'
         ? await getRuntimeImageGenerationModel(requestedImageModelId)
         : await getRuntimeModel(requestedImageModelId, 'image');
+      if (explicitlyRequestedImageModel && (!imageRuntime || imageRuntime.model.id !== requestedImageModelId)) {
+        const error = '本轮选择的生图模型当前不可用，请重新选择或改用自动选择。';
+        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error }) });
+        return { results };
+      }
       if (!imageRuntime) {
         await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, count, durationMs: Date.now() - startedAt, error: '没有可用的图片模型', ...taskContext }).catch(() => undefined);
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: '没有可用图片模型' }) });
@@ -2078,7 +2104,9 @@ const auditMcpCall = (
           // A manually selected model is still allowed to fall back only after
           // the provider explicitly says that model is unsupported. This fixes
           // stale model IDs without retrying transport/timeout/5xx failures.
-          async () => getRuntimeImageModelCandidates('auto', mode === 'generate' ? 'generate' : undefined),
+          async () => explicitlyRequestedImageModel
+            ? []
+            : getRuntimeImageModelCandidates('auto', mode === 'generate' ? 'generate' : undefined),
           async (candidate) => {
             imageRuntime = candidate;
             return mode === 'edit'

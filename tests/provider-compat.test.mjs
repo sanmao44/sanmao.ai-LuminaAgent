@@ -307,6 +307,24 @@ test('does not retry image requests after ambiguous upstream failures', () => {
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422 }), true);
 });
 
+test('distinguishes a missing image-edit route from a missing model', () => {
+  assert.equal(providers.isProviderEndpointNotFound({
+    providerFailureKind: 'http',
+    providerStatus: 404,
+    message: '服务商接口返回 HTTP 404：404 page not found',
+  }), true);
+  assert.equal(providers.isProviderEndpointNotFound({
+    providerFailureKind: 'http',
+    providerStatus: 404,
+    message: 'model not found',
+  }), false);
+  assert.equal(providers.isProviderEndpointNotFound({
+    providerFailureKind: 'http',
+    providerStatus: 422,
+    message: 'endpoint validation failed',
+  }), false);
+});
+
 test('omits legacy input_fidelity for GPT Image 2 while preserving it for other edit models', () => {
   const provider = {
     type: 'openai-compatible',

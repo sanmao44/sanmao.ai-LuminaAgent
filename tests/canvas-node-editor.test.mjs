@@ -247,6 +247,8 @@ test("video variant generators reuse the compact image-variant dock", () => {
   assert.doesNotMatch(editor.slice(dockVariantStart, dockVariantInput), /canvas-node-variant-editor-head/);
   assert.doesNotMatch(editor, /imageDockPanel === "variant" && createPortal/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap\{/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock:has\(\.canvas-node-editor-dock-drawer\)\{\s*z-index:var\(--canvas-z-expanded-editor\)/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock:has\(\.canvas-node-editor-dock-drawer\) \.canvas-node-editor-dock-chips\{\s*overflow:visible!important/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap>\.canvas-node-editor-dock-popover\.canvas-node-editor-dock-drawer\.is-variant\{[\s\S]*position:absolute[\s\S]*left:0[\s\S]*bottom:calc\(100% \+ 8px\)/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-wrap>\.canvas-node-editor-dock-popover\.canvas-node-editor-dock-drawer\.is-variant\{[\s\S]*width:min\(540px,calc\(100vw - 32px\)\)/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock[\s\S]*\.canvas-variant-list\{[\s\S]*max-height:min\(240px,calc\(100vh - 188px\)\)[\s\S]*overflow-y:auto/);
@@ -341,7 +343,7 @@ test("image continuation uses the ordinary image API and keeps lineage on image 
 
   assert.match(continuation, /generateCanvasImage\(/);
   assert.match(continuation, /addReference\(\s*source\.id/);
-  assert.match(continuation, /referenceIds: \[\.\.\.resolvedReferenceIds\]/);
+  assert.match(continuation, /referenceIds: \[\.\.\.\(actualUsesCurrentImageAsReference \? resolvedReferenceIds/);
   assert.match(continuation, /parentNodeId: source\.id/);
   assert.match(continuation, /reuseSourceNodeId: source\.id/);
   assert.match(continuation, /kind: "lineage"/);
@@ -349,6 +351,7 @@ test("image continuation uses the ordinary image API and keeps lineage on image 
   assert.match(continuation, /result\.images\.forEach/);
   assert.match(continuation, /status: "failed"/);
   assert.match(continuation, /referenceEdges\.map/);
+  assert.match(continuation, /fallbackToGenerationOnEdit404: true/);
   assert.doesNotMatch(continuation, /sourceGeneratorId/);
   assert.doesNotMatch(continuation, /variantBatchId|variantIndex/);
   assert.doesNotMatch(continuation, /createGenerator\(/);
@@ -388,8 +391,8 @@ test("current-image reference choice reaches repeat generation without changing 
   assert.match(continuation, /options\?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference">/);
   assert.match(continuation, /const useCurrentImageAsReference = options\?\.useCurrentImageAsReference !== false/);
   assert.match(continuation, /if \(useCurrentImageAsReference\) \{[\s\S]*?addReference\([\s\S]*?source\.id/);
-  assert.match(continuation, /operation: useCurrentImageAsReference \? "edit" : "generate"/);
-  assert.match(continuation, /referenceIds: \[\.\.\.resolvedReferenceIds\]/);
+  assert.match(continuation, /operation: actualUsesCurrentImageAsReference \? "edit" : "generate"/);
+  assert.match(continuation, /referenceIds: \[\.\.\.\(actualUsesCurrentImageAsReference \? resolvedReferenceIds/);
   assert.match(continuation, /parentNodeId: source\.id/);
   assert.match(continuation, /reuseSourceNodeId: source\.id/);
 });
@@ -405,7 +408,7 @@ test("disabling the current image keeps explicit references and omits the mask f
   assert.match(continuation, /addReference\(existing\.id, url, name\)/);
   assert.match(continuation, /\.\.\.\(params\.mask \? \{ maskUrl: params\.mask\.url \} : \{\}\)/);
   assert.match(continuation, /if \(params\.mask\) \{[\s\S]*updateCanvasMaskState\(value, source\.id/);
-  assert.match(continuation, /referenceOrder: \[\.\.\.resolvedReferenceIds\]/);
+  assert.match(continuation, /referenceOrder: \[\.\.\.\(actualUsesCurrentImageAsReference \? resolvedReferenceIds/);
 });
 
 test("text references can supply the prompt for repeat image and video generation", () => {

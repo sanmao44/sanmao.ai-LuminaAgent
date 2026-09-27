@@ -18,15 +18,20 @@ function load(source, dependencies = {}) {
 }
 const angle = load(angleSource);
 
-function harness() {
+function harness(options = {}) {
   const calls = { edits: [], generations: [], logs: [], releases: 0, modelLookups: [] };
   const runtime = { provider: { id: 'test-provider', name: 'Test' }, model: { id: 'test-edit', rawId: 'gpt-image-2', displayName: 'Test Edit' } };
   const route = load(routeSource, {
     '@/lib/angle-control': angle,
     '@/lib/providers': {
-      editImage: async (_provider, _model, input) => { calls.edits.push(input); return []; },
-      generateImage: async (_provider, _model, input) => { calls.generations.push(input); return []; },
+      editImage: async (_provider, _model, input) => {
+        calls.edits.push(input);
+        if (options.editError) throw options.editError;
+        return options.editImages || [];
+      },
+      generateImage: async (_provider, _model, input) => { calls.generations.push(input); return options.generationImages || []; },
       imageDownloadAuth: () => undefined,
+      isProviderEndpointNotFound: error => error?.providerFailureKind === 'http' && error?.providerStatus === 404,
     },
     '@/lib/store': {
       getRuntimeImageModelForCapability: async id => { calls.modelLookups.push(id); return id === 'missing' ? null : runtime; },
@@ -152,4 +157,23 @@ test('legacy camera and ordinary generation keep their existing paths', async ()
   assert.equal((await ordinary.post({ prompt: 'A landscape' })).status, 200);
   assert.equal(ordinary.calls.generations.length, 1);
   assert.equal(ordinary.calls.edits.length, 0);
+});
+
+test('canvas single-source continuation falls back to generation when the edit route is missing', async () => {
+  const api = harness({
+    editError: Object.assign(new Error('服务商接口返回 HTTP 404：404 page not found'), { providerFailureKind: 'http', providerStatus: 404 }),
+    generationImages: [{ url: '/generated-without-edit.png' }],
+  });
+  const response = await api.post({
+    source: 'canvas',
+    prompt: '换成清晨光线',
+    references: [reference],
+    fallbackToGenerationOnEdit404: true,
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(api.calls.edits.length, 1);
+  assert.equal(api.calls.generations.length, 1);
+  assert.equal(body.mode, 'generate-fallback');
+  assert.match(body.warning, /普通生图/);
 });

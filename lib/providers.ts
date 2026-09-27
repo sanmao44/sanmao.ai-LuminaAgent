@@ -406,6 +406,21 @@ export function modelEndpointCandidates(provider: RuntimeProvider): ModelEndpoin
   return candidates.filter((candidate, index, all) => all.findIndex((item) => item.url === candidate.url) === index);
 }
 
+/**
+ * A missing edit route is different from an unsupported image model. Some
+ * OpenAI-compatible gateways expose image generation but do not implement
+ * /images/edits at all; callers may choose a safe generation-only fallback
+ * for that explicit case.
+ */
+export function isProviderEndpointNotFound(error: unknown) {
+  const failure = error as { providerFailureKind?: string; providerStatus?: number; status?: number; message?: string } | null;
+  const status = Number(failure?.providerStatus || failure?.status);
+  const message = String(failure?.message || '').toLowerCase();
+  if (status !== 404 || failure?.providerFailureKind !== 'http') return false;
+  if (/model\s+(?:not found|does not exist)|unknown model|模型不存在|未找到模型/.test(message)) return false;
+  return /404\s+page\s+not\s+found|endpoint|route|path|接口|路径/.test(message);
+}
+
 async function fetchModelResponse(url: string, init: RequestInit, timeout = 20000) {
   try {
     const response = await fetch(url, { ...init, cache: 'no-store', signal: combineSignals(init.signal || undefined, timeout) });
@@ -1132,7 +1147,25 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
     } catch (multipartError) {
       const a = jsonError instanceof Error ? jsonError.message : 'JSON 编辑接口失败';
       const b = multipartError instanceof Error ? multipartError.message : '表单编辑接口失败';
-      throw new Error(`图片修改接口调用失败。JSON：${a}；兼容表单：${b}`);
+      const status = Number(
+        (jsonError as ProviderFailure | null)?.providerStatus
+        || (jsonError as ProviderFailure | null)?.status
+        || (multipartError as ProviderFailure | null)?.providerStatus
+        || (multipartError as ProviderFailure | null)?.status
+        || 0,
+      );
+      const error = new Error(`图片修改接口调用失败。JSON：${a}；兼容表单：${b}`);
+      if (status) {
+        decorateProviderFailure(error, {
+          providerResponse: true,
+          providerFailureKind: 'http',
+          status,
+          providerStatus: status,
+          providerUrl: (jsonError as ProviderFailure | null)?.providerUrl || (multipartError as ProviderFailure | null)?.providerUrl,
+          providerMethod: 'POST',
+        });
+      }
+      throw error;
     }
   }
 }

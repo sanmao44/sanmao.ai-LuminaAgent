@@ -1,4 +1,4 @@
-import { editImage, generateImage, imageDownloadAuth, imageMimeFromBytes, ProviderImageFormatError } from '@/lib/providers';
+import { editImage, generateImage, imageDownloadAuth, imageMimeFromBytes, isProviderEndpointNotFound, ProviderImageFormatError } from '@/lib/providers';
 import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
@@ -204,6 +204,15 @@ export async function POST(request: Request) {
     if (mask && !references.length) return Response.json({ error: '使用局部编辑前请先添加一张参考图。' }, { status: 400 });
     if (rawMoveGuide && !moveGuide) return Response.json({ error: '移动引导图必须是图片数据。' }, { status: 400 });
     if (moveGuide && (!mask || !references.length)) return Response.json({ error: '移动引导图需要同时提交原图和局部编辑范围。' }, { status: 400 });
+    // Canvas continuation is intentionally allowed to degrade to a fresh
+    // generation when the selected gateway has no edit route at all. Keep
+    // this opt-in and narrow: masks or multiple references must still fail
+    // instead of silently dropping edit semantics.
+    const allowGenerationFallbackOnEdit404 = body.source === 'canvas'
+      && body.fallbackToGenerationOnEdit404 === true
+      && references.length === 1
+      && !mask
+      && !moveGuide;
     const providerReferences = moveGuide ? [moveGuide, ...references.slice(1)] : references;
     const outputFormat = ['png', 'jpeg', 'webp'].includes(String(body.outputFormat || '').toLowerCase()) ? String(body.outputFormat).toLowerCase() as 'png' | 'jpeg' | 'webp' : 'png';
     const responseFormat = ['url', 'b64_json'].includes(String(body.responseFormat || '').toLowerCase()) ? String(body.responseFormat).toLowerCase() as 'url' | 'b64_json' : undefined;
@@ -227,6 +236,7 @@ export async function POST(request: Request) {
     modeForLog = references.length ? 'edit' : 'generate';
     logId = await startGenerationLog({ mode: modeForLog, source: sourceForLog, prompt: generationPrompt, presetId, presetName, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
     const storagePath = (await getPublicState()).settings.imageStoragePath;
+    let usedGenerationFallback = false;
     const providerImages = await runImageModelCandidates(
       runtime,
       // Explicit selections remain authoritative unless the provider returns
@@ -235,9 +245,14 @@ export async function POST(request: Request) {
       async (candidate) => {
         runtime = candidate;
         runtimeProviderId = candidate.provider.id;
-        return references.length
-          ? editImage(candidate.provider, candidate.model.rawId, { ...input, references: providerReferences, mask, fidelity: camera?.viewpoint ? 'high' : camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal)
-          : generateImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
+        if (!references.length) return generateImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
+        try {
+          return await editImage(candidate.provider, candidate.model.rawId, { ...input, references: providerReferences, mask, fidelity: camera?.viewpoint ? 'high' : camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal);
+        } catch (error) {
+          if (!allowGenerationFallbackOnEdit404 || !isProviderEndpointNotFound(error)) throw error;
+          usedGenerationFallback = true;
+          return generateImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
+        }
       },
     );
     const maskSafeImages = mask
@@ -254,7 +269,7 @@ export async function POST(request: Request) {
     const providerFinishedAt = Date.now();
     const generatedImages = normalizedImages;
     const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId, downloadAuth: imageDownloadAuth(runtime.provider) });
-    return Response.json({ ok: true, images: stored.images, mode: references.length ? 'reference' : 'generate', model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name }, camera: cameraPayload, storagePath: stored.path });
+    return Response.json({ ok: true, images: stored.images, mode: usedGenerationFallback ? 'generate-fallback' : references.length ? 'reference' : 'generate', ...(usedGenerationFallback ? { warning: '当前服务商不支持图片修改接口，已按普通生图生成新图。' } : {}), model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name }, camera: cameraPayload, storagePath: stored.path });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) {
       return Response.json({ error: error.message, retryable: true }, { status: 409 });

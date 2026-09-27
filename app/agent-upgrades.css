@@ -55,3 +55,5 @@
 .message-mcp-detail-list li.is-failed .message-mcp-detail-state{border-color:color-mix(in srgb,var(--danger) 40%,var(--line));background:var(--danger-soft);color:var(--danger)}
 .message-mcp-detail-note{color:var(--muted);font-size:8px;font-weight:650;line-height:1.5}
 @media(max-width:780px){.agent-mcp-detail-dock{margin-top:8px;padding-top:8px}.message-mcp-detail-panel{padding:9px}.message-mcp-detail-list{max-height:180px}}
+.message-image-model-picker{flex:0 1 220px;min-width:170px}.message-image-model-picker .model-picker-trigger{height:30px;border-color:var(--message-tool-border,var(--line));background:var(--message-meta-bg,var(--panel));color:var(--message-tool,var(--muted));font-size:9px}.message-image-model-picker .model-picker-trigger:hover,.message-image-model-picker .model-picker-trigger.open{border-color:var(--accent);background:var(--message-meta-bg,var(--panel-2));color:var(--text)}
+@media(max-width:560px){.message-image-model-picker{flex-basis:100%;min-width:0}.message-image-model-picker .model-picker-trigger{width:100%}}

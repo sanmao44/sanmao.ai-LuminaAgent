@@ -8200,6 +8200,7 @@ export default function SuperCanvas() {
     if (skippedReferenceCount)
       notify(`图片参考最多 ${CANVAS_MAX_REFERENCES} 张，已跳过 ${skippedReferenceCount} 张多余参考。`, "error");
 
+    let actualUsesCurrentImageAsReference = useCurrentImageAsReference;
     const createOutput = (
       url: string,
       name: string,
@@ -8221,15 +8222,15 @@ export default function SuperCanvas() {
         params: clone(params),
         ...(presetId ? { presetId } : {}),
         ...(presetName ? { presetName } : {}),
-        operation: useCurrentImageAsReference ? "edit" : "generate",
-        referenceIds: [...resolvedReferenceIds],
+        operation: actualUsesCurrentImageAsReference ? "edit" : "generate",
+        referenceIds: [...(actualUsesCurrentImageAsReference ? resolvedReferenceIds : resolvedReferenceIds.filter((id) => id !== source.id))],
         parentNodeId: source.id,
         reuseSourceNodeId: source.id,
         taskId,
         createdAt,
         ...(durationMs !== undefined ? { durationMs } : {}),
       },
-      referenceOrder: [...resolvedReferenceIds],
+      referenceOrder: [...(actualUsesCurrentImageAsReference ? resolvedReferenceIds : resolvedReferenceIds.filter((id) => id !== source.id))],
     });
 
     const pending = createOutput("", "图片生成中", outputPosition, "running");
@@ -8292,9 +8293,14 @@ export default function SuperCanvas() {
             : undefined,
         ...(params.mask ? { maskUrl: params.mask.url } : {}),
         ...(params.mask?.sourceUrl ? { moveGuideUrl: params.mask.sourceUrl } : {}),
+        ...(useCurrentImageAsReference && apiReferences.length === 1 && !params.mask
+          ? { fallbackToGenerationOnEdit404: true }
+          : {}),
         references: apiReferences,
       });
       if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
+      actualUsesCurrentImageAsReference = useCurrentImageAsReference && result.mode !== "generate-fallback";
+      if (result.warning) notify(result.warning);
       const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
 
       const outputs: CanvasNode[] = [];

@@ -25,6 +25,9 @@ type ModelPickerProps = {
   /** Some workflows have a capability-aware automatic policy without changing the global default model. */
   automaticMode?: 'default' | 'clone';
   automaticHint?: string;
+  /** Optional context label for compact, task-specific pickers. */
+  triggerPrefix?: string;
+  disabled?: boolean;
 };
 
 const capabilityLabels: Partial<Record<ModelCapability, string>> = {
@@ -66,7 +69,7 @@ function selectCloneAutomaticModel(models: RegistryModel[]) {
   return [...candidates].sort((left, right) => score(right) - score(left))[0];
 }
 
-export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '', portalZIndex = CANVAS_Z_INDEX.portalPopover, dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog, automaticMode = 'default', automaticHint }: ModelPickerProps) {
+export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '', portalZIndex = CANVAS_Z_INDEX.portalPopover, dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog, automaticMode = 'default', automaticHint, triggerPrefix, disabled = false }: ModelPickerProps) {
   const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
   const [quickOpen, setQuickOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -216,9 +219,9 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   }
 
   const triggerLabel = selected
-    ? `手动 · ${selected.providerName} · ${selected.displayName}`
+    ? `${triggerPrefix || '手动'} · ${selected.providerName} · ${selected.displayName}`
     : autoModel
-      ? `自动 · ${automaticMode === 'clone' ? '克隆主要使用 Seedance' : defaultProviderName || '默认厂商'} · ${autoModel.displayName}`
+      ? `${triggerPrefix || '自动'} · ${automaticMode === 'clone' ? '克隆主要使用 Seedance' : defaultProviderName || '默认厂商'} · ${autoModel.displayName}`
       : placeholder;
   const quickShowsAll = availableModels.length <= 8;
   const quickModels = quickShowsAll ? availableModels.filter((model) => model.id !== autoModel?.id) : [];
@@ -284,8 +287,8 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   ) : null;
 
   return <div className={`model-picker ${className}`} ref={rootRef}>
-    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} data-tooltip={triggerLabel}>
-      <span className="model-picker-trigger-copy"><b>{value === 'auto' ? '自动' : '手动'}</b><span>{triggerLabel.replace(/^(自动|手动) · /, '')}</span></span><i aria-hidden="true"/>
+    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} data-tooltip={triggerLabel} disabled={disabled}>
+      <span className="model-picker-trigger-copy"><b>{triggerPrefix || (value === 'auto' ? '自动' : '手动')}</b><span>{triggerLabel.replace(/^(自动|手动|生图|换模型) · /, '')}</span></span><i aria-hidden="true"/>
     </button>
     {quickPanel}
     {fullDialog}

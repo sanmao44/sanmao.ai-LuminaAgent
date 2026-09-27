@@ -531,6 +531,9 @@ export async function generateCanvasImage(input: {
   maskUrl?: string;
   moveGuideUrl?: string;
   references?: Array<{ url: string; name?: string }>;
+  /** Allow a single-source continuation to fall back to ordinary generation
+   * when the provider has no image-edit endpoint. */
+  fallbackToGenerationOnEdit404?: boolean;
 }) {
   const mask = input.maskUrl ? await asDataUrl(input.maskUrl) : undefined;
   const moveGuide = input.moveGuideUrl ? await asDataUrl(input.moveGuideUrl) : undefined;
@@ -547,6 +550,8 @@ export async function generateCanvasImage(input: {
   );
   return request<{
     images: Array<{ url: string; revisedPrompt?: string }>;
+    mode?: "reference" | "generate" | "generate-fallback";
+    warning?: string;
     model?: { id?: string; name?: string; provider?: string };
   }>("/api/generate", {
     method: "POST",
@@ -575,6 +580,7 @@ export async function generateCanvasImage(input: {
       ...(input.angleGuide !== undefined ? { angleGuide: input.angleGuide } : {}),
       ...(mask ? { mask } : {}),
       ...(moveGuide ? { moveGuide } : {}),
+      ...(input.fallbackToGenerationOnEdit404 ? { fallbackToGenerationOnEdit404: true } : {}),
       references,
       referenceImages: (input.references || [])
         .slice(0, 16)
