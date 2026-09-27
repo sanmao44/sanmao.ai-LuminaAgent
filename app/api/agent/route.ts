@@ -75,7 +75,7 @@ import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, ty
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { agentInstructionText, classifyAgentDeliverable, needsSemanticIntent, parseSemanticIntent, type AgentDeliverable } from '@/lib/agent-intent';
-import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
+import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, isInstantAgentGreeting, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
 import { discoverMcpForRequest } from '@/lib/mcp/discovery';
 import { contextualImagePrompt, isBareImageExecution } from '@/lib/agent-context';
 import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
@@ -650,6 +650,22 @@ export async function POST(request: Request) {
       hasReferences: latestRefs.length > 0,
       hasFiles: Boolean(latest?.files?.length),
     }, { webMode: isCanvasNodeExecution ? 'off' : webMode, previousAssistant: previousAssistantForRouting, intent: intentDecision });
+    // Pure greetings have no task, reference, file, search, or execution
+    // intent. Answer locally instead of paying for the full Agent/model path.
+    if (!body.task && !isCanvasNodeExecution && !latestRefs.length && !latest?.files?.length && isInstantAgentGreeting(latestInstruction)) {
+      return Response.json({
+        ok: true,
+        message: '你好！有什么我可以帮你的吗？',
+        images: [],
+        files: [],
+        generations: [],
+        model: agentRuntime.model.displayName,
+        deliverable: 'OTHER',
+        toolSupport: false,
+        webSearch: null,
+        webSearchDecision: { mode: webMode, status: 'not-needed', reason: 'instant-greeting', query: latestInstruction },
+      });
+    }
     const latestMessage = messages[messages.length - 1]!;
     const modelContextMessages: ClientMessage[] = [
       ...selectAgentContextMessages(messages.slice(0, -1), requestRoute.contextNeed),

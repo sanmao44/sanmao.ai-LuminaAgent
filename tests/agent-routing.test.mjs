@@ -173,3 +173,12 @@ test('does not force semantic review when a route is unambiguous', () => {
   assert.equal(routing.routeNeedsSemanticReview(decision), false);
   assert.deepEqual(routing.selectAgentContextMessages([{ role: 'user', content: 'old' }], 'none'), []);
 });
+
+test('answers pure greetings without entering the model/tool pipeline', () => {
+  for (const input of ['你好', '您好！', 'hello', '在吗？']) {
+    assert.equal(routing.isInstantAgentGreeting(input), true, input);
+  }
+  for (const input of ['你好，帮我生图', '你好，打开网页', '好的，继续刚才的任务', '能生图吗？']) {
+    assert.equal(routing.isInstantAgentGreeting(input), false, input);
+  }
+});

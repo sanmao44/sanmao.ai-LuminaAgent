@@ -47,6 +47,7 @@ import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { startWorkspaceSync } from '@/lib/workspace';
 import { workspaceRepository } from '@/lib/repositories/workspace-repository';
+import { requestAdminSession } from '@/lib/admin-session';
 import { readWorkspaceContext } from '@/lib/workspace-context';
 import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
@@ -5967,8 +5968,6 @@ export default function Page() {
         let cancelled = false;
         let stopWorkspaceSync = ()=>{};
         const start = async ()=>{
-            await workspaceRepository.bootstrap();
-            if (cancelled) return;
             initializeNavNoticeState();
             try {
             const savedSection = localStorage.getItem(LAST_SECTION_STORAGE_KEY);
@@ -6048,7 +6047,18 @@ export default function Page() {
             void refreshVideoTasks();
             void refreshStorageMaintenance();
             void loadLocalDirectory();
-            stopWorkspaceSync = startWorkspaceSync();
+            // Local preferences and IndexedDB are available immediately. The
+            // server workspace is reconciled after the shell is interactive.
+            void workspaceRepository.bootstrap()
+                .then(() => {
+                    if (cancelled) return;
+                    void refreshGallery();
+                    void refreshChatSessions();
+                })
+                .catch(() => undefined)
+                .finally(() => {
+                    if (!cancelled) stopWorkspaceSync = startWorkspaceSync();
+                });
         };
         void start();
         return ()=>{
@@ -7425,6 +7435,19 @@ export default function Page() {
     }
     function normalizeChatSession(session) {
         const messages = normalizeAssistantImageSources(session.messages).map((message)=>{
+            // Pending messages are transient UI state. If one was persisted by
+            // an older build or restored from a workspace after a crash, there
+            // is no live request left to finish it. Keep the partial text but
+            // convert it to an explicit interrupted message so the composer is
+            // usable again and the history cannot spin forever.
+            if (message.pending) {
+                const { pending: _pending, activity: _activity, pendingSince: _pendingSince, ...rest } = message;
+                return {
+                    ...rest,
+                    content: String(rest.content || '').trim() || '本轮回答在页面刷新或重启后中断。',
+                    interrupted: true
+                };
+            }
             if (message.role !== 'assistant' || !message.versions?.length) return message;
             const versions = normalizeAssistantImageSources(message.versions.map((version)=>({
                     role: 'assistant',
@@ -7447,9 +7470,16 @@ export default function Page() {
     }
     async function refreshChatSessions() {
         try {
-            const sessions = (await listChatSessions()).map(normalizeChatSession);
+            const rawSessions = await listChatSessions();
+            const sessions = rawSessions.map(normalizeChatSession);
             chatMemoryRef.current = new Map(sessions.map((session)=>[session.id, validConversationMemory(session.memory, session.messages)]));
             setChatSessions(sessions);
+            // Persist the one-time migration so a stale pending marker cannot
+            // return after the next reload or workspace reconciliation.
+            await Promise.all(rawSessions.map((rawSession, index) => {
+                const hadPending = rawSession.messages.some((message) => Boolean((message as unknown as { pending?: boolean }).pending));
+                return hadPending ? saveChatSession(sessions[index]) : Promise.resolve();
+            }));
             if (sessions.length) {
                 activeChatIdRef.current = sessions[0].id;
                 agentPersonaRef.current = sessions[0].persona || '';
@@ -7463,12 +7493,9 @@ export default function Page() {
     }
     async function refreshAdmin() {
         try {
-            const res = await fetch('/api/admin/session', {
-                cache: 'no-store'
-            });
-            const data = await res.json();
-            setAdminRequired(Boolean(data.required));
-            setIsAdmin(Boolean(data.authenticated));
+            const session = await requestAdminSession();
+            setAdminRequired(session.required);
+            setIsAdmin(session.authenticated);
         } catch  {}
     }
     async function refreshState() {

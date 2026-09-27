@@ -50,6 +50,12 @@ const selfContainedPattern = /(?:只根据这句话|只看本句|不要结合上
 const skillNeedPattern = /(?:技能|skill|工作流|流程|规范|指南|模板|调试|排查|报错|bug|修复|部署|发布|重构|测试|代码库)/i;
 const externalServiceActionPattern = /(?:mcp|model context protocol|接入|连接|调用|同步|提交|发送|发到|创建|更新|删除|读取|查看|列出|搜索|查询).{0,24}(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器|api)|(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器).{0,24}(?:接入|连接|调用|同步|提交|发送|创建|更新|删除|读取|查看|列出|搜索|查询)/i;
 const capabilityQuestionPattern = /^(?:(?:你)?(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)|.+(?:能做什么|可以做什么|支持什么|有哪些能力|有什么能力))[？?。!！]*$/i;
+const instantGreetingPattern = /^(?:你好|您好|嗨|哈喽|hello|hi|hey|早上好|早安|中午好|下午好|晚上好|晚安|在吗|在不在)[!！。,.，、？?\s]*$/i;
+
+/** Pure social greetings should not pay the latency of the model/tool pipeline. */
+export function isInstantAgentGreeting(input: string) {
+  return instantGreetingPattern.test(String(input || '').replace(/\s+/g, ' ').trim());
+}
 
 function artifactKindFor(text: string) {
   if (!creationVerbPattern.test(text)) return 'none' as const;

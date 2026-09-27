@@ -1,5 +1,6 @@
 import AdminAccessGate from '@/components/AdminAccessGate';
 import SuperCanvas from '@/components/SuperCanvas';
+import { adminProtectionEnabled } from '@/lib/auth';
 
 /**
  * 超级画布独立页面。
@@ -8,7 +9,7 @@ import SuperCanvas from '@/components/SuperCanvas';
  */
 export default function CanvasPage() {
   return (
-    <AdminAccessGate>
+    <AdminAccessGate initialRequired={adminProtectionEnabled()}>
       <SuperCanvas />
     </AdminAccessGate>
   );

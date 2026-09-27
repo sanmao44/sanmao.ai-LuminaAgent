@@ -19,6 +19,7 @@ import {
   type RefObject,
   type ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 import {
   addEdge,
   alignCanvasNodes,
@@ -2898,6 +2899,7 @@ const MemoizedCanvasEdgeVisual = memo(
 );
 
 export default function SuperCanvas() {
+  const router = useRouter();
   const stageRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -3838,21 +3840,40 @@ export default function SuperCanvas() {
     let cancelled = false;
     let stopWorkspaceSync = () => {};
     const start = async () => {
-      await workspaceRepository.bootstrap();
-      if (cancelled) return;
-      const storage = ensureCanvasStorage();
-      const initial = loadCanvasDocument(storage.activeId);
-      const recovered = recoverInterruptedCanvasDocument(initial);
-      const initialDocument = syncCanvasVideoEditorReferences(recovered.document);
-      docRef.current = initialDocument;
-      setDocument(initialDocument);
-      setProjects(storage.projects);
-      setActiveProjectId(storage.activeId);
+      const restoreLocalCanvas = (showRecoveryNotice = false) => {
+        const storage = ensureCanvasStorage();
+        const initial = loadCanvasDocument(storage.activeId);
+        const recovered = recoverInterruptedCanvasDocument(initial);
+        const initialDocument = syncCanvasVideoEditorReferences(recovered.document);
+        docRef.current = initialDocument;
+        setDocument(initialDocument);
+        setProjects(storage.projects);
+        setActiveProjectId(storage.activeId);
+        if (showRecoveryNotice && storage.migrated) notify("已将 NOVA 画布项目迁移到 SANMAO.AI");
+        if (showRecoveryNotice && recovered.recoveredCount)
+          notify(`已恢复 ${recovered.recoveredCount} 个中断任务，可重新生成`);
+      };
+
+      // Render the local canvas first. Remote workspace reconciliation is
+      // intentionally detached from the route transition.
       setReady(true);
-      if (storage.migrated) notify("已将 NOVA 画布项目迁移到 SANMAO.AI");
-      if (recovered.recoveredCount)
-        notify(`已恢复 ${recovered.recoveredCount} 个中断任务，可重新生成`);
-      stopWorkspaceSync = startWorkspaceSync({ onStatus: setWorkspaceSyncStatus });
+      window.setTimeout(() => {
+        if (cancelled) return;
+        restoreLocalCanvas(true);
+        if (cancelled) return;
+        void workspaceRepository.bootstrap()
+          .then(() => {
+            if (cancelled) return;
+            restoreLocalCanvas(false);
+            stopWorkspaceSync = startWorkspaceSync({
+              onStatus: setWorkspaceSyncStatus,
+              onRestored: () => restoreLocalCanvas(false),
+            });
+          })
+          .catch(() => {
+            if (!cancelled) stopWorkspaceSync = startWorkspaceSync({ onStatus: setWorkspaceSyncStatus });
+          });
+      }, 0);
       void loadCanvasRuntime()
         .then((value) => {
           if (cancelled) return;
@@ -15054,7 +15075,7 @@ export default function SuperCanvas() {
             type="button"
             className="canvas-soft-button canvas-home-button"
             aria-label="返回主界面"
-            onClick={() => window.location.assign("/")}
+            onClick={() => router.push("/")}
           >
             <span className="canvas-home-icon" aria-hidden="true">
               <svg viewBox="0 0 18 18" focusable="false">

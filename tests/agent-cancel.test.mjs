@@ -88,3 +88,9 @@ test('a running reply shows motion and a live clock so a long wait never looks f
   assert.ok(styles.includes('.message-pending>.mini-loader{'));
   assert.ok(styles.includes('.message-pending-clock{'));
 });
+
+test('restored pending messages are converted to interrupted history', () => {
+  assert.match(page, /if \(message\.pending\) \{/);
+  assert.match(page, /页面刷新或重启后中断/);
+  assert.match(page, /const \{ pending: _pending, activity: _activity, pendingSince: _pendingSince, \.\.\.rest \} = message/);
+});
