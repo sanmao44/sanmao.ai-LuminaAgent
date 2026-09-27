@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.64/SANMAO.AI-0.7.64.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.64/SANMAO.AI-0.7.64.zip"
   ],
-  "sha256": "bfb6443119cd33d0ecca612423b7342f3ba32121b3595483c6e9d7b15a9eb843",
+  "sha256": "b003890f678544b859f4f849c99849d16e1622743faf26465dd36e60cf0f7579",
   "publishedAt": "2026-09-27T17:43:33Z",
   "notes": [
     "修复主对话发送消息后不发请求、一直停在待回复的问题（残留的图片模型重置调用会直接抛错，影响所有模型）。",
