@@ -5,18 +5,26 @@ export const imageGenerateTool = defineTool({
   // 调的是外部付费生成接口，不只是本机写文件。
   risk: 'external_side_effect',
   name: 'image_generate',
-  description: '用户明确要求生成一张全新的图片时调用。',
+  description: '用户明确要求生成全新图片时调用。单张使用 prompt；一套详情图/多张不同画面使用 prompts 数组，数组每项生成一张并保持顺序。',
   permissions: ['network', 'fs:write'],
   tags: ['image'],
   source: 'native',
   gating: TOOL_GATE.image,
   schema: {
     type: 'object', properties: {
-      prompt: { type: 'string' },
+      prompt: { type: 'string', description: '单张图片提示词；使用 prompts 时可省略。' },
+      prompts: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 20,
+        items: { type: 'string', minLength: 1 },
+        description: '多张不同图片的完整提示词列表。每项独立生成一张，公共参考图会自动共享。',
+      },
       aspectRatio: { type: 'string', enum: ['自动', '1:1', '4:5', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9'] },
       count: { type: 'integer', minimum: 1, maximum: 8 },
       modelId: { type: 'string', description: 'Use the exact modelId from the available image model list only when the user explicitly requests a model; omit it for automatic selection.' },
-    }, required: ['prompt'],
+    },
+    anyOf: [{ required: ['prompt'] }, { required: ['prompts'] }],
   },
 });
 
@@ -31,10 +39,18 @@ export const imageEditTool = defineTool({
   gating: TOOL_GATE.image,
   schema: {
     type: 'object', properties: {
-      prompt: { type: 'string' },
+      prompt: { type: 'string', description: '单张编辑提示词；使用 prompts 时可省略。' },
+      prompts: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 20,
+        items: { type: 'string', minLength: 1 },
+        description: '多张不同图片的编辑提示词列表。每项共享当前参考图。',
+      },
       aspectRatio: { type: 'string', enum: ['自动', '1:1', '4:5', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9'] },
       count: { type: 'integer', minimum: 1, maximum: 8 },
       modelId: { type: 'string', description: 'Use the exact modelId from the available image model list only when the user explicitly requests a model; omit it for automatic selection.' },
-    }, required: ['prompt'],
+    },
+    anyOf: [{ required: ['prompt'] }, { required: ['prompts'] }],
   },
 });

@@ -433,6 +433,10 @@ function readSession(): CanvasAgentDockSession | null {
                   ...(image.modelId ? { modelId: String(image.modelId) } : {}),
                   ...(image.modelName ? { modelName: String(image.modelName) } : {}),
                   ...(image.providerName ? { providerName: String(image.providerName) } : {}),
+                  ...(image.batchId ? { batchId: String(image.batchId) } : {}),
+                  ...(Number.isFinite(Number(image.batchIndex)) ? { batchIndex: Number(image.batchIndex) } : {}),
+                  ...(Number.isFinite(Number(image.batchTotal)) ? { batchTotal: Number(image.batchTotal) } : {}),
+                  ...(image.batchPrompt ? { batchPrompt: String(image.batchPrompt) } : {}),
                 })) }
               : {}),
             ...(Array.isArray(message.skills) && message.skills.length
@@ -965,6 +969,10 @@ export default function CanvasAgentDock({
               ...(image.modelId ? { modelId: String(image.modelId) } : {}),
               ...(image.modelName ? { modelName: String(image.modelName) } : {}),
               ...(image.providerName ? { providerName: String(image.providerName) } : {}),
+              ...(image.batchId ? { batchId: String(image.batchId) } : {}),
+              ...(Number.isFinite(Number(image.batchIndex)) ? { batchIndex: Number(image.batchIndex) } : {}),
+              ...(Number.isFinite(Number(image.batchTotal)) ? { batchTotal: Number(image.batchTotal) } : {}),
+              ...(image.batchPrompt ? { batchPrompt: String(image.batchPrompt) } : {}),
             }))
           : [];
         const plan = buildCanvasAgentDockPlan(text, {
@@ -1567,6 +1575,32 @@ export default function CanvasAgentDock({
             ) : null}
             {message.approvalResult ? <div className="message-approval-result">{message.approvalResult}</div> : null}
             {message.images?.length ? (
+              message.images.some((image) => image.batchId) ? (
+                <div className="canvas-agent-dock-batch-summary">
+                  <div className="canvas-agent-dock-batch-head">
+                    <strong>
+                      批量生成 · {message.images.find((image) => image.batchTotal)?.batchTotal || message.images.length} 项
+                    </strong>
+                    <span>{message.images.length} 项已返回</span>
+                  </div>
+                  <div className="canvas-agent-dock-batch-items">
+                    {message.images
+                      .slice()
+                      .sort((left, right) => (left.batchIndex ?? 0) - (right.batchIndex ?? 0))
+                      .map((image, itemIndex) => (
+                        <div className="canvas-agent-dock-batch-item" key={`${message.id}-batch-${image.batchId}-${image.batchIndex ?? itemIndex}`}>
+                          <b>{(image.batchIndex ?? itemIndex) + 1}</b>
+                          <span title={image.batchPrompt || undefined}>
+                            {image.batchPrompt || "已生成图片"}
+                          </span>
+                          <em>已完成</em>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              ) : null
+            ) : null}
+            {message.images?.length ? (
               <div className="canvas-agent-dock-media">
                 {message.images.map((image, index) => (
                   <button
@@ -1584,13 +1618,24 @@ export default function CanvasAgentDock({
                           modelId: image.modelId || "",
                           modelName: image.modelName || "",
                           providerName: image.providerName || "",
+                          batchId: image.batchId || "",
+                          batchIndex: image.batchIndex ?? index,
+                          batchTotal: image.batchTotal || message.images?.length || 0,
+                          batchPrompt: image.batchPrompt || "",
                         }),
                       );
                     }}
                     onClick={() => onPreviewImages(message.images || [], index)}
-                    title="点开看大图：同一轮返回的其它图可以直接对比；也可以把这张图拖到画布上，落在你松开的位置"
+                    title={image.batchPrompt
+                      ? `第 ${(image.batchIndex ?? index) + 1} 项：${image.batchPrompt}`
+                      : "点开看大图；也可以把这张图拖到画布上"}
                   >
                     <img src={image.url} alt={image.revisedPrompt || "Agent 图片"} />
+                    {image.batchId ? (
+                      <span className="canvas-agent-dock-media-index">
+                        {(image.batchIndex ?? index) + 1}
+                      </span>
+                    ) : null}
                   </button>
                 ))}
               </div>

@@ -279,6 +279,11 @@ export type CanvasGenerationMeta = {
   /** The completed media node whose prompt/parameters were copied for a new branch. */
   reuseSourceNodeId?: string;
   taskId?: string;
+  /** Agent multi-prompt batch identity and stable placement metadata. */
+  batchId?: string;
+  batchIndex?: number;
+  batchTotal?: number;
+  batchPrompt?: string;
   variantBatchId?: string;
   variantIndex?: number;
   variantInstruction?: string;

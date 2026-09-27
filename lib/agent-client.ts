@@ -77,6 +77,10 @@ export type AgentGeneratedImage = {
   modelId?: string;
   modelName?: string;
   providerName?: string;
+  batchId?: string;
+  batchIndex?: number;
+  batchTotal?: number;
+  batchPrompt?: string;
 };
 
 /** 这一轮真正落到外部 MCP 服务上的调用，用于给用户看"助手用了哪个外部工具"。 */

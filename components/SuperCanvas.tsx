@@ -10196,7 +10196,11 @@ export default function SuperCanvas() {
             ...(image.providerName ? { providerName: image.providerName } : {}),
             generation: {
               kind: "image",
-              prompt: meta.prompt,
+              prompt: image.batchPrompt || meta.prompt,
+              ...(image.batchId ? { batchId: image.batchId } : {}),
+              ...(image.batchIndex !== undefined ? { batchIndex: image.batchIndex } : {}),
+              ...(image.batchTotal !== undefined ? { batchTotal: image.batchTotal } : {}),
+              ...(image.batchPrompt ? { batchPrompt: image.batchPrompt } : {}),
               params: clone({ ...imageSettings, ...(image.modelId ? { model: image.modelId } : {}) }),
               ...(image.modelId ? { modelId: image.modelId } : {}),
               ...(image.modelName ? { modelName: image.modelName } : {}),
@@ -10452,13 +10456,21 @@ export default function SuperCanvas() {
             x: origin.x + anchorWidth + 90 + (index % 2) * 350,
             y: origin.y + Math.floor(index / 2) * 280,
           };
-          const draft = createMedia("image", image.url, `Agent 图片 ${index + 1}`, desired, {
+          const batchIndex = image.batchIndex ?? index;
+          const batchName = image.batchPrompt
+            ? image.batchPrompt.replace(/\s+/g, " ").trim().slice(0, 24)
+            : `Agent 图片 ${index + 1}`;
+          const draft = createMedia("image", image.url, image.batchId ? `${batchIndex + 1}. ${batchName}` : batchName, desired, {
             role: "Agent 生成结果",
             ...(image.modelName ? { model: image.modelName } : {}),
             ...(image.providerName ? { providerName: image.providerName } : {}),
             generation: {
               kind: "image",
-              prompt: plan.sourcePrompt || "Agent 批量生成",
+              prompt: image.batchPrompt || plan.sourcePrompt || "Agent 批量生成",
+              ...(image.batchId ? { batchId: image.batchId } : {}),
+              ...(image.batchIndex !== undefined ? { batchIndex: image.batchIndex } : {}),
+              ...(image.batchTotal !== undefined ? { batchTotal: image.batchTotal } : {}),
+              ...(image.batchPrompt ? { batchPrompt: image.batchPrompt } : {}),
               params: clone({ ...imageSettings, ...(image.modelId ? { model: image.modelId } : {}) }),
               ...(image.modelId ? { modelId: image.modelId } : {}),
               ...(image.modelName ? { modelName: image.modelName } : {}),

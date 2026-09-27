@@ -515,9 +515,23 @@ test("the dock keeps reporting a run and previews its images", () => {
   assert.doesNotMatch(component, /MediaViewer/);
   assert.match(canvas, /onPreviewImages=\{\(images, index\) => setAgentDockPreview\(\{ images, index \}\)\}/);
   assert.match(canvas, /const \[agentDockPreview, setAgentDockPreview\] = useState<\{/);
-  assert.match(styles, /\.canvas-agent-dock-media-item\{display:block;width:100%;/);
+  assert.match(styles, /\.canvas-agent-dock-media-item\{position:relative;display:block;width:100%;/);
   // 生成中按回车不再无声无息。
   assert.ok(component.includes('if (busy) notify("Agent 正在生成，按 Esc 可以停止当前回答");'));
+});
+
+test("image tools support ordered prompt batches while preserving single-prompt compatibility", () => {
+  assert.match(route, /Array\.isArray\(args\.prompts\)/);
+  assert.match(route, /slice\(0, 20\)/);
+  assert.match(route, /Math\.min\(2, prompts\.length\)/);
+  assert.match(route, /resultsByPrompt\.flat\(\)/);
+  assert.match(route, /batchIndex: promptIndex/);
+  assert.match(component, /batchPrompt/);
+  assert.match(component, /canvas-agent-dock-batch-items/);
+  assert.match(component, /已完成/);
+  assert.match(canvas, /image\.batchPrompt \|\| meta\.prompt/);
+  assert.match(canvas, /batchTotal: image\.batchTotal/);
+  assert.match(styles, /\.canvas-agent-dock-batch-summary\{/);
 });
 
 test("replies render as markdown and a long run streams in one frame", () => {
