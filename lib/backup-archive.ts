@@ -3,6 +3,9 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 
 export type BackupArchiveEntry = { name: string; data: Buffer };
 
+/** 单次 hash/cipher update 的入参超过 INT_MAX 会抛 ERR_OUT_OF_RANGE，必须分块。 */
+const HASH_CHUNK_BYTES = 32 * 1024 * 1024;
+
 function writeText(target: Buffer, offset: number, length: number, value: string) {
   target.write(value.slice(0, length), offset, length, 'utf8');
 }
@@ -50,7 +53,11 @@ function padded(data: Buffer) {
 }
 
 export function sha256(data: Buffer) {
-  return createHash('sha256').update(data).digest('hex');
+  const hash = createHash('sha256');
+  for (let offset = 0; offset < data.length; offset += HASH_CHUNK_BYTES) {
+    hash.update(data.subarray(offset, offset + HASH_CHUNK_BYTES));
+  }
+  return hash.digest('hex');
 }
 
 export function createBackupArchive(entries: BackupArchiveEntry[]) {
@@ -79,7 +86,9 @@ export function extractBackupArchive(archive: Buffer) {
     if (!name || !Number.isSafeInteger(size) || size < 0 || name.startsWith('/') || name.split('/').includes('..')) throw new Error('备份归档内容无效');
     offset += 512;
     if (offset + size > tar.length) throw new Error('备份归档内容不完整');
-    entries.push({ name, data: Buffer.from(tar.subarray(offset, offset + size)) });
+    // 直接返回 tar 上的视图。归档可能超过 2GB，再整卷拷一份会让恢复峰值翻倍；
+    // 调用方只读取、不修改条目内容，视图与切片等价。
+    entries.push({ name, data: tar.subarray(offset, offset + size) });
     offset += Math.ceil(size / 512) * 512;
   }
   return entries;

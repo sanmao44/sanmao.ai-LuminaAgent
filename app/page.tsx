@@ -9471,7 +9471,6 @@ export default function Page() {
         setAgentInputBeforeOptimization(null);
         setAgentRefs([]);
         setAgentFiles([]);
-        setAgentImageModelId('auto');
         setAgentFollowUp(null);
         setChatBusy(sessionId, true);
         const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);

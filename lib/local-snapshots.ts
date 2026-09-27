@@ -1,8 +1,7 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
-import { createBackupArchive, extractBackupArchive, type BackupArchiveEntry } from './backup-archive';
+import { createBackupArchive, extractBackupArchive, sha256, type BackupArchiveEntry } from './backup-archive';
 import { decryptBackupPayload, encryptBackupPayload } from './backup-crypto';
 import { getDefaultStoragePath, getStorageRoots } from './image-storage';
 import { getDefaultAudioStoragePath, getAudioStorageRoots } from './audio-storage';
@@ -76,7 +75,6 @@ async function collectSnapshotMedia(
 }
 let snapshotInFlight: Promise<{ path: string; createdAt: string; bytes: number; imageCount: number; reason: string }> | null = null;
 
-function hash(data: Buffer) { return createHash('sha256').update(data).digest('hex'); }
 function jsonBuffer(value: unknown) { return Buffer.from(JSON.stringify(value, null, 2), 'utf8'); }
 
 async function listFiles(root: string): Promise<string[]> {
@@ -124,7 +122,7 @@ async function createLocalSnapshotInternal(reason: string) {
     reason,
     createdAt: new Date().toISOString(),
     media,
-    files: entries.map((entry) => ({ name: entry.name, bytes: entry.data.byteLength, sha256: hash(entry.data) })),
+    files: entries.map((entry) => ({ name: entry.name, bytes: entry.data.byteLength, sha256: sha256(entry.data) })),
   };
   const archive = createBackupArchive([{ name: 'manifest.json', data: jsonBuffer(manifest) }, ...entries]);
   const encrypted = encryptBackupPayload(archive, await snapshotPassword());
@@ -195,7 +193,7 @@ function validateEntries(entries: BackupArchiveEntry[]) {
   for (const entry of entries) {
     if (entry.name === 'manifest.json') continue;
     const expectedEntry = expected.get(entry.name);
-    if (!expectedEntry || expectedEntry.bytes !== entry.data.byteLength || expectedEntry.sha256 !== hash(entry.data)) throw new Error(`快照校验失败：${entry.name}`);
+    if (!expectedEntry || expectedEntry.bytes !== entry.data.byteLength || expectedEntry.sha256 !== sha256(entry.data)) throw new Error(`快照校验失败：${entry.name}`);
   }
   if (expected.size !== entries.length - 1) throw new Error('快照缺少文件');
   const state = JSON.parse(stateEntry.data.toString('utf8')) as { providers?: unknown; models?: unknown; settings?: Record<string, unknown> };

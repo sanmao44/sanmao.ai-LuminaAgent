@@ -29,12 +29,21 @@ function deriveKey(password: string, salt: Buffer) {
   return scryptSync(password, salt, 32, { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
 }
 
-function updateChunks(stream: Cipher | Decipher, data: Buffer) {
-  const parts: Buffer[] = [];
+/**
+ * GCM 是流式模式，密文与明文长度完全相等，因此可以一次分配结果缓冲区再边算
+ * 边拷。备份动辄 2GB 以上，这样能省掉一整份拷贝（加密、解密各少 1 份）。
+ */
+function cipherUpdate(stream: Cipher | Decipher, data: Buffer) {
+  const output = Buffer.allocUnsafe(data.length);
+  let written = 0;
   for (let offset = 0; offset < data.length; offset += CIPHER_CHUNK_BYTES) {
-    parts.push(stream.update(data.subarray(offset, offset + CIPHER_CHUNK_BYTES)));
+    const part = stream.update(data.subarray(offset, offset + CIPHER_CHUNK_BYTES));
+    part.copy(output, written);
+    written += part.length;
   }
-  return parts;
+  const tail = stream.final();
+  if (written !== output.length || tail.length !== 0) throw new Error('备份加密输出长度异常');
+  return output;
 }
 
 export function encryptBackupPayload(payload: Buffer, password: string) {
@@ -42,7 +51,7 @@ export function encryptBackupPayload(payload: Buffer, password: string) {
   const salt = randomBytes(16);
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', deriveKey(password, salt), iv);
-  const encrypted = Buffer.concat([...updateChunks(cipher, payload), cipher.final()]);
+  const encrypted = cipherUpdate(cipher, payload);
   const envelope: Envelope = {
     format: MAGIC,
     version: VERSION,
@@ -75,7 +84,7 @@ export function decryptBackupPayload(payload: Buffer, password: string) {
   try {
     const decipher = createDecipheriv('aes-256-gcm', deriveKey(password, Buffer.from(envelope.salt, 'base64url')), Buffer.from(envelope.iv, 'base64url'));
     decipher.setAuthTag(Buffer.from(envelope.tag, 'base64url'));
-    return Buffer.concat([...updateChunks(decipher, payload.subarray(newline + 1)), decipher.final()]);
+    return cipherUpdate(decipher, payload.subarray(newline + 1));
   } catch {
     throw new Error('备份密码错误或备份文件已被篡改');
   }
