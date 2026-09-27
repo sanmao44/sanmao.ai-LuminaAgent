@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.63/SANMAO.AI-0.7.63.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.63/SANMAO.AI-0.7.63.zip"
   ],
-  "sha256": "e559e37a569c597d021d3f6a801071da9f66837cb4c4bb2db08ee11fb9ddc1fd",
+  "sha256": "bfb6443119cd33d0ecca612423b7342f3ba32121b3595483c6e9d7b15a9eb843",
   "publishedAt": "2026-09-27T15:32:14Z",
   "notes": [
     "修复 ModelScope 图片编辑异步任务解析，支持任务轮询和生成结果读取。",
