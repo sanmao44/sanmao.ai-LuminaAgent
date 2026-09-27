@@ -8925,14 +8925,14 @@ export default function SuperCanvas() {
         const expectedDeliverable = request?.agentTask === "one_take_video_prompt"
           ? "TEXT"
           : intentDecision.deliverable;
-        const responseDeliverable = response.deliverable || expectedDeliverable;
         const localAllowsImages = expectedDeliverable === "IMAGE" || expectedDeliverable === "BOTH";
-        const serverAllowsImages = responseDeliverable === "IMAGE" || responseDeliverable === "BOTH";
-        const acceptedImages = localAllowsImages && serverAllowsImages
-          ? response.images || []
+        // 图片由服务端实际工具结果证明，不能被模型返回的 deliverable 文案丢弃。
+        // 仍保留本地任务类型限制，避免文字任务意外把图片接入画布。
+        const acceptedImages = localAllowsImages
+          ? (response.images || []).filter((image) => Boolean(String(image.url || "").trim()))
           : [];
-        if (response.images?.length && !acceptedImages.length)
-          addLog(`Agent 返回了 ${response.images.length} 张非预期图片，已按文字交付规则忽略`);
+        if (response.images?.length && !acceptedImages.length && localAllowsImages)
+          addLog("Agent 返回了图片结果，但图片地址为空，未加入画布");
         const imageNodes = acceptedImages.map((image, index) =>
           createMedia(
             "image",

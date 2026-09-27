@@ -975,8 +975,9 @@ export default function CanvasAgentDock({
           },
         );
         const content = String(response.message || "").trim() || "（Agent 没有返回文本内容）";
-        const images = canvasAgentDockAcceptsImages(response.deliverable)
-          ? (response.images || []).map((image) => ({
+        // 图片是服务端工具执行后的事实结果，不能再被对话模型返回的
+        // deliverable 文案覆盖；部分模型会在工具成功后仍把交付物标成 TEXT。
+        const images = (response.images || []).map((image) => ({
               url: String(image.url || ""),
               ...(image.revisedPrompt ? { revisedPrompt: String(image.revisedPrompt) } : {}),
               ...(image.modelId ? { modelId: String(image.modelId) } : {}),
@@ -987,7 +988,7 @@ export default function CanvasAgentDock({
               ...(Number.isFinite(Number(image.batchTotal)) ? { batchTotal: Number(image.batchTotal) } : {}),
               ...(image.batchPrompt ? { batchPrompt: String(image.batchPrompt) } : {}),
             }))
-          : [];
+          .filter((image) => Boolean(image.url));
         const plan = buildCanvasAgentDockPlan(text, {
           imageCount: images.length,
           targetNodeIds: orderedSelectedNodeIds,

@@ -23,6 +23,19 @@ const routingModule = { exports: {} };
 new Function('require', 'module', 'exports', routingCompiled)((id) => id === '@/lib/agent-intent' ? modules.intent.exports : modules.web.exports, routingModule, routingModule.exports);
 const routing = routingModule.exports;
 
+test('discovery resolution preserves policy while activating selected desktop tools', () => {
+  for (const input of ['打开个性化', '打开网络设置', '打开设备管理器']) {
+    const plan = routing.classifyAgentRequest(input);
+    assert.equal(routing.resolveAgentToolPlan(plan, ['windows-test']).useMcp, true, input);
+    assert.equal(routing.resolveAgentToolPlan(plan, []).useMcp, false, input);
+    assert.equal(plan.tools.useMcp, false, 'resolution must not mutate the original plan');
+  }
+  for (const input of ['推送今日AI新闻', '今天有什么新闻？', '怎么打开网络设置？', '你能打开辅助功能吗？']) {
+    const plan = routing.classifyAgentRequest(input);
+    assert.equal(routing.resolveAgentToolPlan(plan, ['windows-test']).useMcp, false, input);
+  }
+});
+
 test('capability discovery is not limited to a list of application names', () => {
   for (const input of ['打开设备管理器', '打开辅助功能', '帮我启动陌生应用', '把音量调低', '查询仓库库存', '读取剪贴板']) {
     const decision = routing.classifyAgentRequest(input);

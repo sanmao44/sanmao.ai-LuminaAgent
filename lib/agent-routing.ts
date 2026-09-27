@@ -180,6 +180,12 @@ export function needsMcpCapabilityDiscovery(mode: string, instruction: string, i
     && !/^(?:怎么|如何|怎样|为什么|解释|介绍|说明|教我|告诉我)/.test(instruction.trim());
 }
 
+/** Resolve discovery without widening the request's execution policy. */
+export function resolveAgentToolPlan(decision: AgentRequestDecision, serverIds: readonly string[]): AgentToolPlan {
+  const useMcp = decision.policy.allowMcp && (decision.tools.useMcp || serverIds.length > 0);
+  return { ...decision.tools, useMcp };
+}
+
 export function selectAgentContextMessages<T extends AgentIntentMessage>(messages: T[], need: AgentContextNeed) {
   if (need === 'required') return messages.slice(-10);
   if (need === 'recent') return messages.slice(-4);

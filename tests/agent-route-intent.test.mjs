@@ -48,8 +48,9 @@ function harness(options = {}) {
     '@/lib/reference-images': { referenceRecordsForLog: () => [] },
     '@/lib/web-search': { planSearch: () => ({ intent: { entities: [] }, queries: [] }) },
     '@/lib/native-web-search': { nativeSearchIsEnabled: () => false },
-    '@/lib/mcp/store': { listMcpServers: () => [] },
-    '@/lib/mcp/tools': { mcpServersForTurn: () => [], loadMcpToolRuntime: async () => ({ servers: [], tools: [] }), lazyMcpGroupKeywords: () => ({}) },
+    '@/lib/mcp/store': { listMcpServers: () => options.mcpServers || [] },
+    '@/lib/mcp/discovery': { discoverMcpForRequest: async () => ({ serverIds: (options.mcpServers || []).map((server) => server.id), unavailable: [] }) },
+    '@/lib/mcp/tools': { mcpServersForTurn: (servers) => servers, loadMcpToolRuntime: async () => ({ servers: options.mcpServers || [], tools: options.mcpTools || [] }), lazyMcpGroupKeywords: () => ({}) },
     '@/lib/mcp/client': {},
     '@/lib/mcp/audit': {},
     '@/lib/mcp/filesystem-policy': {},
@@ -85,6 +86,24 @@ function harness(options = {}) {
     },
   };
 }
+
+test('discovered desktop tools reach the model instead of the compact no-tools prompt', async () => {
+  for (const content of ['打开个性化', '打开网络设置', '打开设备管理器']) {
+    const agent = harness({
+      mcpServers: [{ id: 'windows-test', name: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true }],
+      mcpTools: [{
+        id: 'mcp:windows-test:App', name: 'windows-test__App', source: 'mcp',
+        description: 'Open an application', schema: { type: 'object', properties: {} },
+        tags: ['mcp'], risk: 'dangerous', permissions: ['process'], gating: () => true,
+        mcp: { serverId: 'windows-test', serverName: 'windows-mcp', toolName: 'App', readOnly: false },
+      }],
+      reply: () => ({ content: '测试仅检查工具下发，不执行系统操作。' }),
+    });
+    await agent.post([{ role: 'user', content }]);
+    assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'windows-test__App')), content);
+    assert.ok(agent.calls.every((call) => !call.messages[0].content.includes('当前请求不需要联网、图片、文件、浏览器、MCP')), content);
+  }
+});
 
 test('smart variant planning uses the isolated JSON-only route without tools', async () => {
   const agent = harness({ reply: () => ({ content: '{"categories":[],"variants":[]}' }) });

@@ -74,7 +74,7 @@ import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, ty
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { agentInstructionText, classifyAgentDeliverable, needsSemanticIntent, parseSemanticIntent, type AgentDeliverable } from '@/lib/agent-intent';
-import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, needsMcpCapabilityDiscovery, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
+import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
 import { discoverMcpForRequest } from '@/lib/mcp/discovery';
 import { contextualImagePrompt, isBareImageExecution } from '@/lib/agent-context';
 import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
@@ -1005,14 +1005,12 @@ export async function POST(request: Request) {
           },
         });
         discoveredMcpIds = discovery.serverIds;
-        if (discoveredMcpIds.length) {
-          // Discovery selects services within the plan; it cannot grant execution.
-        }
         if (discovery.unavailable.length) {
           requestRoute.tools.reason += `。以下服务未能发现工具：${discovery.unavailable.join('、')}`;
         }
       }
     }
+    const resolvedToolPlan = resolveAgentToolPlan(requestRoute, discoveredMcpIds);
     const compactPlainTurn = canUseCompactPlainTurn({
       isCanvasSource,
       isCanvasNodeExecution,
@@ -1029,7 +1027,7 @@ export async function POST(request: Request) {
       fileGenerationRequest,
       artifactGenerationRequest,
       canvasPatchRequest,
-      tools: requestRoute.tools,
+      tools: resolvedToolPlan,
     });
     let system = appendPersonaToSystem(buildSystem(initialWebInstructions, ''), body.persona);
     if (compactPlainTurn) {
@@ -1290,7 +1288,7 @@ export async function POST(request: Request) {
       canvas: canvasPatchRequest,
     };
     const mcpAllowedThisTurn = requestModeAllowsExecution && requestRoute.policy.allowMcp
-      && (requestRoute.tools.useMcp || discoveredMcpIds.length > 0 || mcpAdminRequest);
+      && (resolvedToolPlan.useMcp || mcpAdminRequest);
     const mcpExecutionRequest = requestModeAllowsExecution && mcpAllowedThisTurn;
     const needsExecutionResources = isCinematicDirectorTask
       || imageGenerationRequest

@@ -288,15 +288,15 @@ test("Agent generation keeps the node model when image references are present", 
   assert.match(component, /model: effectiveSettings\.model/);
 });
 
-test("Agent nodes share deliverable routing, throttle streaming paint, and reject unexpected images", () => {
+test("Agent nodes share deliverable routing, throttle streaming paint, and trust concrete image results", () => {
   assert.match(component, /classifyAgentDeliverable\(prompt/);
   assert.match(component, /deliverable: request\?\.agentTask === "one_take_video_prompt" \? "TEXT" : intentDecision\.deliverable/);
   assert.match(component, /intentReason: request\?\.agentTask === "one_take_video_prompt"/);
   assert.match(component, /window\.requestAnimationFrame\(flushStreamedText\)/);
   assert.match(component, /const expectedDeliverable = request\?\.agentTask === "one_take_video_prompt"/);
   assert.match(component, /const localAllowsImages = expectedDeliverable === "IMAGE" \|\| expectedDeliverable === "BOTH"/);
-  assert.match(component, /const serverAllowsImages = responseDeliverable === "IMAGE" \|\| responseDeliverable === "BOTH"/);
-  assert.match(component, /非预期图片，已按文字交付规则忽略/);
+  assert.match(component, /const acceptedImages = localAllowsImages/);
+  assert.match(component, /图片由服务端实际工具结果证明/);
 });
 
 test("Agent editor exposes one-take only for two completed connected images", () => {
