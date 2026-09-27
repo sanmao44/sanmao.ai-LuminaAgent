@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.62/SANMAO.AI-0.7.62.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.62/SANMAO.AI-0.7.62.zip"
   ],
-  "sha256": "dbc0100e2c6c0425e4a062de1e42c70f69d764e0be1faa9194f66d87527db00d",
+  "sha256": "e559e37a569c597d021d3f6a801071da9f66837cb4c4bb2db08ee11fb9ddc1fd",
   "publishedAt": "2026-09-27T04:03:06Z",
   "notes": [
     "修复用户直接发送 GitHub 仓库地址时未自动安装的问题；裸仓库地址现在会直接交给 Agent 安装。",
