@@ -132,6 +132,21 @@ test('valid inline tool calls are executed once with their original prompt', asy
   assert.doesNotMatch(data.message, /tool_call/);
 });
 
+test('承接上一轮编号生图方案时直接批量执行，不只回复生成计划', async () => {
+  const agent = harness({ reply: () => ({ content: '开始生成图' }) });
+  const data = await agent.post([
+    { role: 'assistant', content: '我会一次批量生成 3 张：\n\n1. 高性能电动 SUV 在城市夜景中行驶，商业广告摄影\n2. SUV 前脸细节特写，冷光勾勒车身线条\n3. SUV 内部座舱展示，科技感与舒适氛围' },
+    { role: 'user', content: '开始生成图' },
+  ]);
+  assert.equal(agent.images.length, 3);
+  assert.deepEqual(agent.images.map((image) => image.prompt), [
+    '高性能电动 SUV 在城市夜景中行驶，商业广告摄影',
+    'SUV 前脸细节特写，冷光勾勒车身线条',
+    'SUV 内部座舱展示，科技感与舒适氛围',
+  ]);
+  assert.equal(data.images.length, 3);
+});
+
 test('empty provider output never returns a successful-looking image caption', async () => {
   const agent = harness({ emptyImages: true });
   const data = await agent.post([{ role: 'user', content: '画一张书房图' }]);

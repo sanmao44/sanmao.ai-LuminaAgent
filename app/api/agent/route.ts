@@ -307,10 +307,25 @@ function parseTextualImageArguments(content: unknown, fallbackPrompt: string) {
   return { prompt: fallbackPrompt };
 }
 
-function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; hasReferences: boolean }) {
+function extractBatchPrompts(content: unknown) {
+  const text = typeof content === 'string' ? content : '';
+  const prompts = text.split(/\r?\n/)
+    .map((line) => line.match(/^\s*(?:\d+[\.\、\)]|[一二三四五六七八九十]+[、.])\s*(.+?)\s*$/)?.[1] || '')
+    .map((prompt) => prompt.replace(/\s+/g, ' ').trim())
+    .filter((prompt) => prompt.length >= 8)
+    .slice(0, 20);
+  return prompts.length >= 2 ? prompts : [];
+}
+
+function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; hasReferences: boolean; batchContent?: unknown }) {
   const args = parseTextualImageArguments(input.content, input.prompt);
+  const prompts = extractBatchPrompts(input.batchContent);
   const name = input.hasReferences ? 'image_edit' : 'image_generate';
   if (!args.aspectRatio) args.aspectRatio = input.prompt.match(/\b(?:1:1|2:3|3:2|3:4|4:3|9:16|16:9|21:9)\b/g)?.at(-1);
+  if (prompts.length) {
+    const { prompt: _prompt, count: _count, ...batchArgs } = args;
+    Object.assign(args, batchArgs, { prompts });
+  }
   return {
     id: 'sanmao-local-image-fallback',
     type: 'function',
@@ -593,6 +608,9 @@ export async function POST(request: Request) {
     // 画布等调用方会把系统上下文拼在用户消息末尾（"画布 / 图片 / 渲染"这些词都在里面）。
     // 意图判断一律只看用户原话，避免把普通提问判成生图请求。
     const latestInstruction = agentInstructionText(body.intentText, latest?.content || '');
+    const previousImagePlan = [...messages.slice(0, -1)].reverse().find((message) => message.role === 'assistant'
+      && /(?:^|\n)\s*1[\.、\)]/.test(message.content)
+      && extractBatchPrompts(message.content).length >= 2);
     const supportsVideoInput = agentRuntime.model.capabilities.includes('video-input');
     if (latestRefs.some((reference) => reference.kind === 'video') && !supportsVideoInput) {
       return Response.json({ error: '当前对话模型没有明确声明 video-input 能力，已阻止发送视频引用；请切换支持视频输入的模型。' }, { status: 400 });
@@ -613,6 +631,7 @@ export async function POST(request: Request) {
     // image, file, web, MCP and Skill paths.
     let requestModeAllowsExecution = intentDecision.mode === 'execute'
       || intentDecision.mode === 'follow_up'
+      || Boolean(previousImagePlan && isBareImageExecution(latestInstruction))
       || Boolean(directGithubMcpRepo);
     // Compatibility contract for the canvas dock: web intent is decided from
     // the user's latest instruction, never from injected canvas context. The
@@ -641,6 +660,9 @@ export async function POST(request: Request) {
     let requestedDeliverable = requestModeAllowsExecution && hasExplicitDeliverable
       ? body.deliverable as AgentDeliverable
       : requestRoute.intent.deliverable;
+    if (previousImagePlan && isBareImageExecution(latestInstruction) && requestModeAllowsExecution) {
+      requestedDeliverable = 'IMAGE';
+    }
     let requestedIntentReason = hasExplicitDeliverable && typeof body.intentReason === 'string' && body.intentReason.trim()
       ? body.intentReason.trim().slice(0, 320)
       : requestRoute.intent.reason;
@@ -798,6 +820,11 @@ export async function POST(request: Request) {
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
       }
     }
+    if (previousImagePlan && isBareImageExecution(latestInstruction)) {
+      requestModeAllowsExecution = true;
+      requestedDeliverable = 'IMAGE';
+      requestedIntentReason = '承接上一轮已确认的编号生图方案，直接执行批量生成。';
+    }
     const fallbackImagePrompt = contextualImagePrompt(latestInstruction, selectAgentContextMessages(messages.slice(0, -1), requestRoute.contextNeed).map((message) => ({ role: message.role, content: message.content })));
     const reversePromptInstructions = [
       '你是一名专业的「图片反向提示词专家」。',
@@ -828,7 +855,8 @@ export async function POST(request: Request) {
       '[原文]',
     ].join('\n');
     const identityQuestion = isModelIdentityQuestion(latestInstruction);
-    const imageGenerationRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH');
+    const imageGenerationRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion
+      && (requestedDeliverable === 'IMAGE' || requestedDeliverable === 'BOTH' || Boolean(previousImagePlan && isBareImageExecution(latestInstruction)));
     const requestedImageCapability = latestReferenceImageCount ? 'edit' : 'generate';
     const imageModelState = imageGenerationRequest ? await ensurePublicState() : null;
     const imageModels = imageGenerationRequest
@@ -863,6 +891,7 @@ export async function POST(request: Request) {
     const previousImageRequest = [...messages.slice(0, -1)].reverse().find((message) => message.role === 'user');
     const previousImageIntent = previousImageRequest ? classifyAgentDeliverable(previousImageRequest.content) : null;
     const hasVisualTask = previousImageIntent?.deliverable === 'IMAGE' || previousImageIntent?.deliverable === 'BOTH'
+      || Boolean(previousImagePlan)
       || /(?:这张图|参考图|本条实际图片产物|海报|插画|画面|构图)/.test(messages.slice(-3, -1).map((message) => message.content).join('\n'));
     if (imageGenerationRequest && isBareImageExecution(latestInstruction) && !hasVisualTask && !latestReferenceImageCount) {
       requestedDeliverable = 'CLARIFY';
@@ -957,7 +986,8 @@ export async function POST(request: Request) {
     if (needsMcpCapabilityDiscovery(intentDecision.mode, latestInstruction,
       isCanvasSource || Boolean(body.task) || imageGenerationRequest || identityQuestion
       || isTextPolishTask || isPromptOptimizationTask || isReversePromptTask
-      || isOneTakeVideoPromptTask || isCinematicDirectorTask || isSmartVariantPlanningTask)) {
+      || isOneTakeVideoPromptTask || isCinematicDirectorTask || isSmartVariantPlanningTask)
+      && requestRoute.policy.discoverMcp) {
       const discoveryServers = listMcpServers().filter((server) => server.enabled);
       if (discoveryServers.length) {
         reportProgress({ stage: 'tool', message: '正在匹配已接入的 MCP 能力…' });
@@ -976,9 +1006,7 @@ export async function POST(request: Request) {
         });
         discoveredMcpIds = discovery.serverIds;
         if (discoveredMcpIds.length) {
-          requestModeAllowsExecution = true;
-          requestRoute.tools.useMcp = true;
-          requestRoute.needsTools = true;
+          // Discovery selects services within the plan; it cannot grant execution.
         }
         if (discovery.unavailable.length) {
           requestRoute.tools.reason += `。以下服务未能发现工具：${discovery.unavailable.join('、')}`;
@@ -1261,7 +1289,8 @@ export async function POST(request: Request) {
       mcpAdmin: mcpAdminRequest,
       canvas: canvasPatchRequest,
     };
-    const mcpAllowedThisTurn = requestModeAllowsExecution && (requestRoute.tools.useMcp || mcpAdminRequest);
+    const mcpAllowedThisTurn = requestModeAllowsExecution && requestRoute.policy.allowMcp
+      && (requestRoute.tools.useMcp || discoveredMcpIds.length > 0 || mcpAdminRequest);
     const mcpExecutionRequest = requestModeAllowsExecution && mcpAllowedThisTurn;
     const needsExecutionResources = isCinematicDirectorTask
       || imageGenerationRequest
@@ -1533,7 +1562,12 @@ const auditMcpCall = (
       toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
     }
     if (imageGenerationRequest && !toolCalls.some((call: any) => call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit')) {
-      toolCalls = [...toolCalls, makeFallbackImageToolCall({ prompt: fallbackImagePrompt, content: message?.content, hasReferences: latestReferenceImageCount > 0 })];
+      toolCalls = [...toolCalls, makeFallbackImageToolCall({
+        prompt: fallbackImagePrompt,
+        content: message?.content,
+        hasReferences: latestReferenceImageCount > 0,
+        batchContent: previousImagePlan?.content,
+      })];
     }
     // 模型偶尔把工具调用写成文本标记（例如 DSML、“<archive_generate …”），这一轮其实
     // 没有真的生成文件，直接返回只会让用户看到“已完成/已生成”的空话和一个残缺的“<”。

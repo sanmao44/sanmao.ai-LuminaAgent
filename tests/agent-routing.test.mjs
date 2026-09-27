@@ -106,6 +106,32 @@ test('gates MCP, skills and native web by the bounded route plan', () => {
   assert.equal(skill.tools.useSkills, true);
 });
 
+test('routes current-information questions to native web without MCP', () => {
+  for (const input of ['今天 AI 界有什么新闻？', '推送今日 AI 界新闻', '推送今日娱乐圈新闻']) {
+    const decision = routing.classifyAgentRequest(input, {}, { webMode: 'auto' });
+    assert.equal(decision.route, 'web', input);
+    assert.equal(decision.tools.useNativeWeb, true, input);
+    assert.equal(decision.tools.useMcp, false, input);
+    assert.equal(decision.tools.useBrowserMcp, false, input);
+    assert.deepEqual(decision.policy, { lane: 'search', discoverMcp: false, allowMcp: false });
+    assert.equal(routing.routeNeedsSemanticReview(decision), false);
+  }
+});
+
+test('search policy respects offline settings and never promotes unknown requests to MCP', () => {
+  for (const input of ['今天 AI 界有什么新闻？', '推送今日娱乐圈新闻']) {
+    const decision = routing.classifyAgentRequest(input, {}, { webMode: 'off' });
+    assert.equal(decision.web.shouldSearch, false);
+    assert.equal(decision.policy.allowMcp, false);
+    assert.equal(decision.policy.discoverMcp, false);
+  }
+  const offline = routing.classifyAgentRequest('不要联网，解释今天这段新闻', {}, { webMode: 'always' });
+  assert.equal(offline.web.shouldSearch, false);
+  const action = routing.classifyAgentRequest('在浏览器里搜索商品并点击第一个结果');
+  assert.equal(action.policy.lane, 'action');
+  assert.equal(action.policy.allowMcp, true);
+});
+
 test('does not activate any executable route for capability questions', () => {
   for (const input of ['可以生图吗？', '能生成 PPT 吗？', '支持联网搜索吗？', 'MCP 能做什么？']) {
     const decision = routing.classifyAgentRequest(input, {}, { webMode: 'always' });

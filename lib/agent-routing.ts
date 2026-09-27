@@ -21,6 +21,11 @@ export type AgentRouteCandidate = {
 };
 
 export type AgentRequestDecision = {
+  policy: {
+    lane: 'answer' | 'search' | 'action';
+    discoverMcp: boolean;
+    allowMcp: boolean;
+  };
   intent: AgentIntentDecision;
   route: AgentRequestRoute;
   artifactKind: AgentArtifactKind;
@@ -44,6 +49,7 @@ const contextReferencePattern = /(?:刚才|上一条|上面|之前|此前|继续
 const selfContainedPattern = /(?:只根据这句话|只看本句|不要结合上下文|无需上下文|独立回答|不参考历史|不用参考之前)/i;
 const skillNeedPattern = /(?:技能|skill|工作流|流程|规范|指南|模板|调试|排查|报错|bug|修复|部署|发布|重构|测试|代码库)/i;
 const externalServiceActionPattern = /(?:mcp|model context protocol|接入|连接|调用|同步|提交|发送|发到|创建|更新|删除|读取|查看|列出|搜索|查询).{0,24}(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器|api)|(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器).{0,24}(?:接入|连接|调用|同步|提交|发送|创建|更新|删除|读取|查看|列出|搜索|查询)/i;
+const capabilityQuestionPattern = /^(?:(?:你)?(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)|.+(?:能做什么|可以做什么|支持什么|有哪些能力|有什么能力))[？?。!！]*$/i;
 
 function artifactKindFor(text: string) {
   if (!creationVerbPattern.test(text)) return 'none' as const;
@@ -91,14 +97,32 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
     role: (message.role === 'assistant' || message.role === 'user' ? message.role : undefined) as 'assistant' | 'user' | undefined,
     content: message.content,
   }));
-  const web = executable
-    ? shouldUseAgentWebSearch(options.webMode || 'auto', text, webContext)
-    : { shouldSearch: false, reason: 'ordinary-chat' as const, query: text };
+  // Web search is a read-only route. It must be evaluated before the
+  // execute/ask distinction so questions such as "今天有什么新闻？" can
+  // search without becoming an MCP operation.
+  const capabilityQuestion = capabilityQuestionPattern.test(text);
+  const web = capabilityQuestion
+    ? { shouldSearch: false, reason: 'ordinary-chat' as const, query: text }
+    : shouldUseAgentWebSearch(options.webMode || 'auto', text, webContext);
+  const explicitExternalAction = executable && externalServiceActionPattern.test(text)
+    && /(?:mcp|连接|接入|调用|同步|提交|发送|创建|更新|删除)/i.test(text);
+  const connectorAction = executable && (browserAutomation || filesystem || likelyMcpManagementRequest(text) || explicitExternalAction);
+  if (web.shouldSearch && !connectorAction && artifactKind === 'none' && !['IMAGE', 'BOTH'].includes(intent.deliverable)) {
+    return {
+      policy: { lane: 'search', discoverMcp: false, allowMcp: false },
+      intent, route: 'web', artifactKind: 'none',
+      contextNeed: contextInfo.need, contextReason: contextInfo.reason,
+      browserAutomation: false, filesystem: false, web, needsTools: true,
+      tools: { useMcp: false, useBrowserMcp: false, useFilesystemMcp: false, useSkills: false, useNativeWeb: true, useNativeArtifact: false, reason: 'Read-only external information request.' },
+      candidates: [candidate('web', 120, web.reason)],
+    };
+  }
   // Non-execution modes never enter an executable candidate route. This is a
   // shared side-effect gate for capability questions, discussions and unclear
   // turns; feature words alone cannot activate image/file/web/MCP/Skill work.
-  if (!executable) {
+  if (!executable && !web.shouldSearch) {
     return {
+      policy: { lane: 'answer', discoverMcp: false, allowMcp: false },
       intent,
       route: 'chat',
       artifactKind: 'none',
@@ -127,7 +151,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   if (intent.deliverable === 'IMAGE') candidates.push(candidate('image', intent.confidence === 'high' ? 106 : 76, ...intent.signals));
   if (intent.deliverable === 'BOTH') candidates.push(candidate('both', intent.confidence === 'high' ? 106 : 76, ...intent.signals));
   if (intent.deliverable === 'TEXT') candidates.push(candidate('text', intent.confidence === 'high' ? 104 : 72, ...intent.signals));
-  if (web.shouldSearch) candidates.push(candidate('web', 102, web.reason));
+  if (web.shouldSearch && !browserAutomation && !filesystem) candidates.push(candidate('web', 102, web.reason));
   if (intent.deliverable === 'CLARIFY') candidates.push(candidate('clarify', 80, '交付形式不明确'));
   if (!candidates.length) candidates.push(candidate('chat', 60, '普通对话或问答'));
   candidates.sort((a, b) => b.score - a.score);
@@ -135,20 +159,19 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // A site name alone is not enough to load a connector: "搜索 GitHub 最新
   // 资料" belongs to the normal web path. MCP is reserved for explicit
   // connector/service actions or local/browser execution.
-  const explicitExternalAction = externalServiceActionPattern.test(text)
-    && /(?:mcp|连接|接入|调用|同步|提交|发送|创建|更新|删除)/i.test(text);
-  const useMcp = browserAutomation || filesystem || likelyMcpManagementRequest(text) || explicitExternalAction;
+  const useMcp = connectorAction;
   const needsTools = useMcp || ['image', 'both', 'word', 'excel', 'ppt', 'archive', 'file', 'browser', 'filesystem'].includes(route);
   const useBrowserMcp = browserAutomation;
   const useFilesystemMcp = filesystem;
   const useSkills = !browserAutomation && !filesystem && !intent.deliverable.toString().match(/^(IMAGE|BOTH)$/) && skillNeedPattern.test(text) && !/^(?:什么是|解释|介绍|为什么|如何理解)/i.test(text);
-  const useNativeWeb = web.shouldSearch && !browserAutomation && !filesystem;
+  const useNativeWeb = web.shouldSearch && !browserAutomation && !filesystem && route === 'web';
   const useNativeArtifact = artifactRouteIsGenerated(route) || likelyFileGenerationRequest(text) || likelyArtifactGenerationRequest(text);
   const reason = useMcp ? '检测到外部服务或本地执行动作，优先使用受控 MCP。'
     : useSkills ? '检测到流程/模板/规范需求，先按需检索技能。'
       : useNativeWeb ? '检测到需要外部事实，先联网再回答。'
         : useNativeArtifact ? '检测到明确文件交付，调用对应内置工具。' : '普通回答不加载额外工具。';
-  return { intent, route, artifactKind, contextNeed: contextInfo.need, contextReason: contextInfo.reason, browserAutomation, filesystem, web, needsTools, tools: { useMcp, useBrowserMcp, useFilesystemMcp, useSkills, useNativeWeb, useNativeArtifact, reason }, candidates };
+  const discoverMcp = executable && (useMcp || (route === 'chat' && intent.confidence !== 'high'));
+  return { policy: { lane: 'action', discoverMcp, allowMcp: useMcp || discoverMcp }, intent, route, artifactKind, contextNeed: contextInfo.need, contextReason: contextInfo.reason, browserAutomation, filesystem, web, needsTools, tools: { useMcp, useBrowserMcp, useFilesystemMcp, useSkills, useNativeWeb, useNativeArtifact, reason }, candidates };
 }
 
 /** Keep enough recent context for continuity while dropping stale turns. */
@@ -176,6 +199,7 @@ export function routeDeliverable(route: AgentRequestRoute, intent: AgentDelivera
 }
 
 export function routeNeedsSemanticReview(decision: AgentRequestDecision) {
+  if (decision.policy.lane === 'search') return false;
   const top = decision.candidates[0];
   const next = decision.candidates[1];
   if (!top || decision.route === 'clarify') return true;
@@ -239,6 +263,7 @@ export function canUseCompactPlainTurn(input: CompactPlainTurnInput) {
 export function routeToolSummary(decision: AgentRequestDecision) {
   return {
     route: decision.route,
+    policy: decision.policy,
     artifactKind: decision.artifactKind,
     contextNeed: decision.contextNeed,
     shouldSearch: decision.web.shouldSearch,
