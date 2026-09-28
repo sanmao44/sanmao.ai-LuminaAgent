@@ -85,6 +85,9 @@ test('smart mode searches changing facts and explicit source checks only', () =>
   for (const input of ['写一段国风海报提示词', '解释这段 TypeScript', '给我总结这段内容', '你好']) {
     assert.equal(web.shouldUseAgentWebSearch('auto', input).shouldSearch, false, input);
   }
+  for (const input of ['你可以干啥？', '你能干什么', '你会什么？']) {
+    assert.equal(web.shouldUseAgentWebSearch('auto', input).shouldSearch, false, input);
+  }
   assert.equal(web.shouldUseAgentWebSearch('always', '你好').shouldSearch, true);
   assert.equal(web.shouldUseAgentWebSearch('off', '今天有什么新闻').shouldSearch, false);
 });

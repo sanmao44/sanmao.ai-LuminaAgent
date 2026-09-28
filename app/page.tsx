@@ -9364,7 +9364,10 @@ export default function Page() {
                         ...(message.task === 'one_take_video_prompt' ? { task: message.task, durationSeconds: data.durationSeconds || message.durationSeconds } : {})
                     } : version);
                 const completedItem = applyMessageVersion({ ...item, activity: undefined }, versions, versions.findIndex((version)=>version.id === retryVersionId));
-                return { ...completedItem, pendingSince: undefined };
+                // A successful retry replaces the failed turn. Do not carry
+                // the old error badge into the newly completed version.
+                const { agentError: _agentError, agentErrorModelId: _agentErrorModelId, ...cleanItem } = completedItem;
+                return { ...cleanItem, pendingSince: undefined };
             });
             if (!isCurrentRequest()) return;
             pendingChatMessagesRef.current.delete(sessionId);

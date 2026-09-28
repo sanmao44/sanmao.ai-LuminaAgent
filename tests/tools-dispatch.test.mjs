@@ -131,7 +131,7 @@ test('浏览器使用说明要求失败后核对状态并继续，而不是提�
 
 test('浏览器自动化请求不会走普通联网搜索或文本直出', () => {
   assert.match(route, /likelyBrowserAutomationRequest/);
-  assert.match(route, /const needsWebSearch = webDecision\.shouldSearch && !browserAutomationRequest/);
+  assert.match(route, /const needsWebSearch = webPolicy === 'require' && webDecision\.shouldSearch && !browserAutomationRequest/);
   assert.match(route, /const directStream =[^;]*!browserAutomationRequest/);
 });
 

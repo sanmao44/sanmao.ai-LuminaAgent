@@ -100,6 +100,14 @@ test('普通问答绕过语义规划和 MCP 能力发现', async () => {
   assert.ok(agent.calls.every((call) => !String(call.messages?.[0]?.content || '').includes('只判断当前用户')));
 });
 
+test('纯问候仍调用当前选择的模型，不返回固定本地文案', async () => {
+  const agent = harness({ reply: () => ({ content: '这是当前模型的专属问候。' }) });
+  const data = await agent.post([{ role: 'user', content: '你好' }]);
+  assert.equal(agent.calls.length, 1);
+  assert.equal(data.message, '这是当前模型的专属问候。');
+  assert.notEqual(data.message, '你好！有什么我可以帮你的吗？');
+});
+
 test('discovered desktop tools reach the model instead of the compact no-tools prompt', async () => {
   for (const content of ['打开个性化', '打开网络设置', '打开设备管理器']) {
     const agent = harness({

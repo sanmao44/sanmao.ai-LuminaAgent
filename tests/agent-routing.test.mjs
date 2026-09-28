@@ -126,7 +126,7 @@ test('routes current-information questions to native web without MCP', () => {
     assert.equal(decision.tools.useNativeWeb, true, input);
     assert.equal(decision.tools.useMcp, false, input);
     assert.equal(decision.tools.useBrowserMcp, false, input);
-    assert.deepEqual(decision.policy, { lane: 'search', discoverMcp: false, allowMcp: false });
+    assert.deepEqual(decision.policy, { lane: 'search', web: 'require', discoverMcp: false, allowMcp: false });
     assert.equal(routing.routeNeedsSemanticReview(decision), false);
   }
 });
@@ -146,13 +146,14 @@ test('search policy respects offline settings and never promotes unknown request
 });
 
 test('does not activate any executable route for capability questions', () => {
-  for (const input of ['可以生图吗？', '能生成 PPT 吗？', '支持联网搜索吗？', 'MCP 能做什么？']) {
+  for (const input of ['可以生图吗？', '能生成 PPT 吗？', '支持联网搜索吗？', 'MCP 能做什么？', '你可以干啥？', '你能做什么？', '你会什么？']) {
     const decision = routing.classifyAgentRequest(input, {}, { webMode: 'always' });
     assert.equal(decision.route, 'chat', input);
     assert.equal(decision.needsTools, false, input);
     assert.equal(decision.tools.useMcp, false, input);
     assert.equal(decision.tools.useNativeWeb, false, input);
     assert.equal(decision.tools.useNativeArtifact, false, input);
+    assert.equal(decision.policy.web, 'forbid', input);
   }
   assert.equal(routing.classifyAgentRequest('帮我生成一张猫的图片，可以吗？').route, 'image');
   assert.equal(routing.classifyAgentRequest('请做一个产品介绍 PPT').route, 'ppt');
@@ -174,11 +175,19 @@ test('does not force semantic review when a route is unambiguous', () => {
   assert.deepEqual(routing.selectAgentContextMessages([{ role: 'user', content: 'old' }], 'none'), []);
 });
 
-test('answers pure greetings without entering the model/tool pipeline', () => {
+test('keeps pure greetings on the ordinary chat route', () => {
   for (const input of ['你好', '您好！', 'hello', '在吗？']) {
-    assert.equal(routing.isInstantAgentGreeting(input), true, input);
+    const decision = routing.classifyAgentRequest(input);
+    assert.equal(decision.route, 'chat', input);
+    assert.equal(decision.needsTools, false, input);
   }
-  for (const input of ['你好，帮我生图', '你好，打开网页', '好的，继续刚才的任务', '能生图吗？']) {
-    assert.equal(routing.isInstantAgentGreeting(input), false, input);
+});
+
+test('keeps colloquial capability questions out of search in every web mode', () => {
+  for (const input of ['你可以干啥？', '你能干什么', '你会什么？', '你都能帮我做啥？']) {
+    const decision = routing.classifyAgentRequest(input, {}, { webMode: 'always' });
+    assert.equal(decision.route, 'chat', input);
+    assert.equal(decision.web.shouldSearch, false, input);
+    assert.equal(decision.policy.web, 'forbid', input);
   }
 });

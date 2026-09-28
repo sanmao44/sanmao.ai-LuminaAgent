@@ -76,7 +76,7 @@ import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, ty
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { agentInstructionText, classifyAgentDeliverable, needsSemanticIntent, parseSemanticIntent, type AgentDeliverable } from '@/lib/agent-intent';
-import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, isInstantAgentGreeting, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
+import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
 import { discoverMcpForRequest } from '@/lib/mcp/discovery';
 import { contextualImagePrompt, isBareImageExecution } from '@/lib/agent-context';
 import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
@@ -129,6 +129,29 @@ const AGENT_MODEL_CALL_TIMEOUT_MS = 60_000;
 // failure from slow thinking. Bound that idle gap without cutting off a
 // provider that is still producing a response.
 const AGENT_STREAM_IDLE_TIMEOUT_MS = 30_000;
+// Search is a pre-answer dependency. It must not inherit the provider's long
+// request timeout, otherwise a stalled search blocks the whole chat surface.
+const AGENT_WEB_SEARCH_TOTAL_TIMEOUT_MS = 30_000;
+const AGENT_NATIVE_SEARCH_TIMEOUT_MS = 20_000;
+const AGENT_EXTERNAL_SEARCH_TIMEOUT_MS = 18_000;
+
+async function withAgentOperationDeadline<T>(signal: AbortSignal, timeoutMs: number, label: string, operation: (callSignal: AbortSignal) => Promise<T>) {
+  const controller = new AbortController();
+  const timeoutError = Object.assign(new Error(`${label}在 ${Math.round(timeoutMs / 1000)} 秒内没有返回结果`), { name: 'TimeoutError', providerFailureKind: 'timeout' as const });
+  const abortFromParent = () => controller.abort(signal.reason || new Error('AGENT_CANCELLED'));
+  const timer = setTimeout(() => controller.abort(timeoutError), timeoutMs);
+  if (signal.aborted) abortFromParent();
+  else signal.addEventListener('abort', abortFromParent, { once: true });
+  try {
+    return await operation(controller.signal);
+  } catch (error) {
+    if (controller.signal.aborted && controller.signal.reason === timeoutError) throw timeoutError;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', abortFromParent);
+  }
+}
 
 function isAgentRequestCancelled(error: unknown) {
   const value = error as { name?: string; message?: string } | null;
@@ -804,6 +827,7 @@ export async function POST(request: Request) {
       || intentDecision.mode === 'follow_up'
       || Boolean(previousImagePlan && isBareImageExecution(latestInstruction))
       || Boolean(directGithubMcpRepo);
+    const routingStartedAt = Date.now();
     // Compatibility contract for the canvas dock: web intent is decided from
     // the user's latest instruction, never from injected canvas context. The
     // shared router below performs this decision once; keep the historical
@@ -815,22 +839,7 @@ export async function POST(request: Request) {
       hasReferences: latestRefs.length > 0,
       hasFiles: Boolean(latest?.files?.length),
     }, { webMode: isCanvasNodeExecution ? 'off' : webMode, previousAssistant: previousAssistantForRouting, intent: intentDecision });
-    // Pure greetings have no task, reference, file, search, or execution
-    // intent. Answer locally instead of paying for the full Agent/model path.
-    if (!body.task && !isCanvasNodeExecution && !latestRefs.length && !latest?.files?.length && isInstantAgentGreeting(latestInstruction)) {
-      return Response.json({
-        ok: true,
-        message: '你好！有什么我可以帮你的吗？',
-        images: [],
-        files: [],
-        generations: [],
-        model: agentRuntime.model.displayName,
-        deliverable: 'OTHER',
-        toolSupport: false,
-        webSearch: null,
-        webSearchDecision: { mode: webMode, status: 'not-needed', reason: 'instant-greeting', query: latestInstruction },
-      });
-    }
+    const routerMs = Date.now() - routingStartedAt;
     const latestMessage = messages[messages.length - 1]!;
     const modelContextMessages: ClientMessage[] = [
       ...selectAgentContextMessages(messages.slice(0, -1), requestRoute.contextNeed),
@@ -877,6 +886,7 @@ export async function POST(request: Request) {
       else if (Number.isFinite(prompt) && Number.isFinite(completion)) llmTotalTokens += prompt + completion;
     };
     let llmWebSearchStatus = 'not-needed';
+    let webSearchMs = 0;
     let llmLogSettled = false;
     settleLlmLog = async (result: AgentStreamSettlement) => {
       if (llmLogSettled) return;
@@ -904,6 +914,9 @@ export async function POST(request: Request) {
         ...(llmTotalTokens ? { totalTokens: llmTotalTokens } : {}),
         responseChars: result.responseChars,
         webSearchStatus: llmWebSearchStatus,
+        routeLane: requestRoute.policy.lane,
+        routerMs,
+        ...(webSearchMs ? { searchMs: webSearchMs } : {}),
         ...(browserMetrics.hasActivity() ? browserLog : {}),
         ...(body.task ? { task: String(body.task).slice(0, 100) } : {}),
         ...(result.error ? { error: result.error } : {}),
@@ -1168,7 +1181,11 @@ export async function POST(request: Request) {
     const webDecision: AgentWebDecision = searchExcludedTask
       ? { ...rawWebDecision, shouldSearch: false, reason: 'ordinary-chat' }
       : rawWebDecision;
-    const needsWebSearch = webDecision.shouldSearch && !browserAutomationRequest;
+    // This is the single search authorization. A boolean suggestion from the
+    // legacy detector is not enough to start a provider request; only the
+    // route policy may authorize a search turn.
+    const webPolicy = searchExcludedTask ? 'forbid' : requestRoute.policy.web;
+    const needsWebSearch = webPolicy === 'require' && webDecision.shouldSearch && !browserAutomationRequest;
     let webSearchData: SearchResponse | null = null;
     let nativeSearchData: NativeSearchResult | null = null;
     let webSearchError = '';
@@ -1446,30 +1463,50 @@ export async function POST(request: Request) {
       throw new Error(`导演模型未返回可执行方案。已尝试 ${directorCandidates.length} 个视觉模型${directorErrors.length ? `：${directorErrors.join('；')}` : ''}`);
     }
 
-    if (needsWebSearch && nativeWebSearch) {
+    const webSearchStartedAt = needsWebSearch ? Date.now() : 0;
+    const remainingWebSearchMs = () => Math.max(0, AGENT_WEB_SEARCH_TOTAL_TIMEOUT_MS - (Date.now() - webSearchStartedAt));
+    if (needsWebSearch && nativeWebSearch && remainingWebSearchMs() > 0) {
+      const searchStartedAt = Date.now();
       try {
         llmWebSearchStatus = 'searched';
-        const nativeResult = await trackedNativeWebSearch(agentRuntime.provider, agentRuntime.model, llmMessages, plannedNativeQuery, requestController.signal);
+        const nativeResult = await withAgentOperationDeadline(
+          requestController.signal,
+          Math.min(AGENT_NATIVE_SEARCH_TIMEOUT_MS, remainingWebSearchMs()),
+          '模型原生联网搜索',
+          (searchSignal) => trackedNativeWebSearch(agentRuntime.provider, agentRuntime.model, llmMessages, plannedNativeQuery, searchSignal),
+        );
+        webSearchMs += Date.now() - searchStartedAt;
         if (nativeResult && (nativeResult.resultCount > 0 || nativeResult.text?.trim() || nativeResult.citations.length)) nativeSearchData = nativeResult;
         else {
           nativeSearchError = '模型原生联网搜索未返回可核验内容';
           llmWebSearchStatus = 'failed';
         }
       } catch (error) {
+        webSearchMs += Date.now() - searchStartedAt;
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
         nativeSearchError = error instanceof Error ? error.message : '模型原生搜索失败';
         llmWebSearchStatus = 'failed';
       }
     }
-    if (needsWebSearch && !nativeSearchData) {
+    if (needsWebSearch && !nativeSearchData && remainingWebSearchMs() > 0) {
+      const searchStartedAt = Date.now();
       llmWebSearchStatus = 'searched';
       reportProgress({ stage: 'web_search', message: '正在联网搜索…' });
-      try { webSearchData = await searchWeb(query, requestController.signal); }
+      try {
+        webSearchData = await withAgentOperationDeadline(
+          requestController.signal,
+          Math.min(AGENT_EXTERNAL_SEARCH_TIMEOUT_MS, remainingWebSearchMs()),
+          '外部搜索',
+          (searchSignal) => searchWeb(query, searchSignal),
+        );
+      }
       catch (error) {
+        webSearchMs += Date.now() - searchStartedAt;
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
         webSearchError = error instanceof Error ? error.message : '联网搜索失败';
         llmWebSearchStatus = 'failed';
       }
+      if (webSearchData) webSearchMs += Date.now() - searchStartedAt;
       if (webSearchData && webSearchData.status !== 'SEARCH_SUCCESS') llmWebSearchStatus = 'failed';
       if (webSearchData && webSearchData.status !== 'SEARCH_SUCCESS') {
         webSearchError = webSearchData.status === 'SEARCH_API_ERROR'

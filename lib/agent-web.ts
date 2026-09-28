@@ -205,6 +205,7 @@ const conversationalPattern = /^(?:你好|嗨|哈喽|谢谢|感谢|晚安|早上
 const stableConceptPattern = /^(?:请问)?(?:什么是|何为|请解释|解释一下|如何理解).{0,80}(?:概念|原理|定义|理论|算法|语法|函数|定理|物理|化学|数学|生物|编程|代码|机制|方法|光合作用|相对论|递归|向量|概率)[。.!！?？]*$/i;
 const generalConceptPattern = /^(?:请问)?(?:什么是|何为|请解释|解释一下|如何理解)\s*[^。！？?？]{1,96}[。.!！?？]*$/i;
 const searchOptOutPattern = /(?:不要|别|无需|不用|不需要|禁止|关闭|关掉|不想|先不).{0,12}(?:联网|上网|搜索|查询|查找|检索|浏览|联网搜索)|(?:联网|上网|搜索|查询|查找|检索|浏览|联网搜索).{0,12}(?:不要|别|无需|不用|不需要|禁止|关闭|关掉)/i;
+const capabilityQuestionPattern = /^(?:(?:你|您)?\s*(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)|.*(?:能做什么|可以做什么|支持什么|有哪些能力|有什么能力|干啥|干什么|做啥|做什么|干哪些|做哪些|会什么|懂什么|能提供什么|能帮我做什么|能帮我干什么))(?:[？?。!！]*)$/i;
 // MCP 服务管理的动词/名词分开写：要同时认「接入某个服务」和「把某个服务删掉」两种语序。
 const MCP_MANAGE_VERB = '(?:接入|接个|连上|连接|添加|新增|删除|移除|删掉|断开|停用|启用|自检|查看|列出|配置|检测)';
 const MCP_MANAGE_NOUN = '(?:外部服务|远程服务|工具服务|服务|server)';
@@ -260,6 +261,10 @@ export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string, conte
   // is safer to answer from the configured model than to silently browse when
   // the user explicitly said not to connect or search.
   if (searchOptOutPattern.test(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
+  // A capability question asks what the assistant can do; it is not a request
+  // for current external facts. This gate also wins in "always" mode because
+  // searching here only adds latency and produces irrelevant sources.
+  if (capabilityQuestionPattern.test(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
   // “搜索某网站并继续点击/评论”是浏览器页面操作，不应被普通联网搜索抢先消费。
   if (likelyBrowserAutomationRequest(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
   if (mode === 'always') return { shouldSearch: Boolean(query), reason: 'always', query };

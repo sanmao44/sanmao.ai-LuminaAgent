@@ -97,7 +97,7 @@ test("one-click cinematic keeps its footer inside a constrained dialog", () => {
 
 test("cinematic director retries a short, tool-free visual-model path", () => {
   const start = agentRoute.indexOf("if (isCinematicDirectorTask) {");
-  const end = agentRoute.indexOf("if (needsWebSearch && nativeWebSearch)", start);
+  const end = agentRoute.indexOf("if (needsWebSearch && nativeWebSearch && remainingWebSearchMs() > 0)", start);
   assert.ok(start >= 0 && end > start);
   const source = agentRoute.slice(start, end);
   assert.match(source, /directorAttemptTimeoutMs = 45_000/);

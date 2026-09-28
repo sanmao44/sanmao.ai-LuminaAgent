@@ -51,6 +51,10 @@ export type GenerationLog = {
   totalTokens?: number;
   responseChars?: number;
   webSearchStatus?: string;
+  /** Agent routing timing, kept separate from provider duration for diagnosis. */
+  routeLane?: 'answer' | 'search' | 'action';
+  routerMs?: number;
+  searchMs?: number;
   /** Browser-only execution counters; page content and tool arguments are excluded. */
   browserToolCallCount?: number;
   browserToolSuccessCount?: number;

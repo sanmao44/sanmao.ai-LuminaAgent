@@ -59,10 +59,19 @@ const vagueFollowUpPattern = /^(?:继续|再来一个|再来一版|再来几版|
 // 先判断用户的“请求模式”，再判断交付物。这里识别的是句子的言语行为
 // （询问、讨论、执行、承接上一轮），而不是把某个功能词直接映射到工具。
 // 这层是图片、文件、联网、MCP 和 Skill 路由共用的安全闸门。
-const capabilityQuestionPattern = /^(?:你)?(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)[？?]$/i;
+const capabilityQuestionPattern = /^(?:(?:你|您)?\s*(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)|.*(?:能做什么|可以做什么|支持什么|有哪些能力|有什么能力|干啥|干什么|做啥|做什么|干哪些|做哪些|会什么|懂什么|能提供什么|能帮我做什么|能帮我干什么))(?:[？?。!！]*)$/i;
 const taskLeadPattern = /^(?:请(?!问)|麻烦(?!问)|帮我|给我|给我们|替我|为我|我想(?:要|让你|生成|制作|创建|写|改写|润色|总结|翻译|分析|描述|搜索|打开|执行)|我(?:要|需要)(?!了解|知道|确认|咨询|问|弄清楚)|需要你|直接|开始|继续|再来|按照刚才|基于这个|把它|将其)/i;
 const taskVerbPattern = /(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|安装|接入|连接|导入|生图|出图)/i;
 const questionShapePattern = /^(?:为什么|怎么(?:做|办)|如何|什么是|是什么|能否|能不能|是否|可以吗|支持吗|请问|告诉我|解释一下|分析一下|比较一下|建议一下|你觉得).*[？?]?$|[？?]$/i;
+
+/**
+ * Capability questions are a speech act, not an execution request. Keep the
+ * colloquial forms here so every downstream router shares the same decision
+ * instead of growing separate keyword lists.
+ */
+export function isCapabilityQuestion(input: string) {
+  return capabilityQuestionPattern.test(clean(input));
+}
 
 /**
  * A capability word is not an execution frame. The frame has to be visible in
@@ -100,7 +109,7 @@ export function inferAgentRequestMode(input: string): AgentRequestMode {
   if (!text) return 'unknown';
   if (vagueFollowUpPattern.test(text) && text.length <= 32) return 'follow_up';
 
-  const capabilityQuestion = capabilityQuestionPattern.test(text);
+  const capabilityQuestion = isCapabilityQuestion(text);
   const genericQuestion = questionShapePattern.test(text)
     || /^(?:请问|麻烦问一下|我想(?:了解|知道|确认)|我要(?:了解|知道|确认)|我需要(?:了解|知道|确认)|帮我(?:了解|确认|弄清楚)).*[？?]?$/.test(text);
   const explicitTask = hasExplicitExecutionFrame(text);

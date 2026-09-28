@@ -1,8 +1,9 @@
-import { classifyAgentDeliverable, inferAgentRequestMode, type AgentDeliverable, type AgentIntentContext, type AgentIntentDecision, type AgentIntentMessage } from '@/lib/agent-intent';
+import { classifyAgentDeliverable, inferAgentRequestMode, isCapabilityQuestion, type AgentDeliverable, type AgentIntentContext, type AgentIntentDecision, type AgentIntentMessage } from '@/lib/agent-intent';
 import { likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFileGenerationRequest, likelyFilesystemRequest, likelyMcpManagementRequest, shouldUseAgentWebSearch, type AgentWebDecision, type AgentWebMode } from '@/lib/agent-web';
 
 export type AgentArtifactKind = 'none' | 'word' | 'excel' | 'ppt' | 'archive' | 'file';
 export type AgentContextNeed = 'none' | 'recent' | 'required';
+export type AgentWebPolicy = 'forbid' | 'allow' | 'require';
 export type AgentRequestRoute = 'chat' | 'text' | 'image' | 'both' | 'word' | 'excel' | 'ppt' | 'archive' | 'file' | 'browser' | 'filesystem' | 'web' | 'clarify';
 export type AgentToolPlan = {
   useMcp: boolean;
@@ -23,6 +24,7 @@ export type AgentRouteCandidate = {
 export type AgentRequestDecision = {
   policy: {
     lane: 'answer' | 'search' | 'action';
+    web: AgentWebPolicy;
     discoverMcp: boolean;
     allowMcp: boolean;
   };
@@ -49,14 +51,6 @@ const contextReferencePattern = /(?:刚才|上一条|上面|之前|此前|继续
 const selfContainedPattern = /(?:只根据这句话|只看本句|不要结合上下文|无需上下文|独立回答|不参考历史|不用参考之前)/i;
 const skillNeedPattern = /(?:技能|skill|工作流|流程|规范|指南|模板|调试|排查|报错|bug|修复|部署|发布|重构|测试|代码库)/i;
 const externalServiceActionPattern = /(?:mcp|model context protocol|接入|连接|调用|同步|提交|发送|发到|创建|更新|删除|读取|查看|列出|搜索|查询).{0,24}(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器|api)|(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器).{0,24}(?:接入|连接|调用|同步|提交|发送|创建|更新|删除|读取|查看|列出|搜索|查询)/i;
-const capabilityQuestionPattern = /^(?:(?:你)?(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)|.+(?:能做什么|可以做什么|支持什么|有哪些能力|有什么能力))[？?。!！]*$/i;
-const instantGreetingPattern = /^(?:你好|您好|嗨|哈喽|hello|hi|hey|早上好|早安|中午好|下午好|晚上好|晚安|在吗|在不在)[!！。,.，、？?\s]*$/i;
-
-/** Pure social greetings should not pay the latency of the model/tool pipeline. */
-export function isInstantAgentGreeting(input: string) {
-  return instantGreetingPattern.test(String(input || '').replace(/\s+/g, ' ').trim());
-}
-
 function artifactKindFor(text: string) {
   if (!creationVerbPattern.test(text)) return 'none' as const;
   if (archivePattern.test(text)) return 'archive' as const;
@@ -106,7 +100,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // Web search is a read-only route. It must be evaluated before the
   // execute/ask distinction so questions such as "今天有什么新闻？" can
   // search without becoming an MCP operation.
-  const capabilityQuestion = capabilityQuestionPattern.test(text);
+  const capabilityQuestion = isCapabilityQuestion(text);
   const web = capabilityQuestion
     ? { shouldSearch: false, reason: 'ordinary-chat' as const, query: text }
     : shouldUseAgentWebSearch(options.webMode || 'auto', text, webContext);
@@ -115,7 +109,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   const connectorAction = executable && (browserAutomation || filesystem || likelyMcpManagementRequest(text) || explicitExternalAction);
   if (web.shouldSearch && !connectorAction && artifactKind === 'none' && !['IMAGE', 'BOTH'].includes(intent.deliverable)) {
     return {
-      policy: { lane: 'search', discoverMcp: false, allowMcp: false },
+      policy: { lane: 'search', web: 'require', discoverMcp: false, allowMcp: false },
       intent, route: 'web', artifactKind: 'none',
       contextNeed: contextInfo.need, contextReason: contextInfo.reason,
       browserAutomation: false, filesystem: false, web, needsTools: true,
@@ -128,7 +122,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // turns; feature words alone cannot activate image/file/web/MCP/Skill work.
   if (!executable && !web.shouldSearch) {
     return {
-      policy: { lane: 'answer', discoverMcp: false, allowMcp: false },
+      policy: { lane: 'answer', web: 'forbid', discoverMcp: false, allowMcp: false },
       intent,
       route: 'chat',
       artifactKind: 'none',
@@ -179,7 +173,8 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // Capability discovery is an execution resource. Do not probe every enabled
   // connector for an otherwise ordinary or ambiguous conversation turn.
   const discoverMcp = executable && (useMcp || (route === 'chat' && intent.mode === 'execute'));
-  return { policy: { lane: 'action', discoverMcp, allowMcp: useMcp || discoverMcp }, intent, route, artifactKind, contextNeed: contextInfo.need, contextReason: contextInfo.reason, browserAutomation, filesystem, web, needsTools, tools: { useMcp, useBrowserMcp, useFilesystemMcp, useSkills, useNativeWeb, useNativeArtifact, reason }, candidates };
+  const webPolicy: AgentWebPolicy = useNativeWeb ? 'require' : 'forbid';
+  return { policy: { lane: 'action', web: webPolicy, discoverMcp, allowMcp: useMcp || discoverMcp }, intent, route, artifactKind, contextNeed: contextInfo.need, contextReason: contextInfo.reason, browserAutomation, filesystem, web, needsTools, tools: { useMcp, useBrowserMcp, useFilesystemMcp, useSkills, useNativeWeb, useNativeArtifact, reason }, candidates };
 }
 
 /** Keep enough recent context for continuity while dropping stale turns. */

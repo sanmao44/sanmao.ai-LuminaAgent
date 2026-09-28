@@ -54,6 +54,16 @@ test('manual model calls have a bounded wait and streams have an idle watchdog',
   assert.ok(source.includes('模型流式响应在'));
 });
 
+test('native search fallback shares one total web-search deadline', () => {
+  assert.ok(source.includes('const AGENT_WEB_SEARCH_TOTAL_TIMEOUT_MS = 30_000;'));
+  assert.ok(source.includes('const webSearchStartedAt = needsWebSearch ? Date.now() : 0;'));
+  assert.ok(source.includes('const remainingWebSearchMs = () => Math.max(0, AGENT_WEB_SEARCH_TOTAL_TIMEOUT_MS - (Date.now() - webSearchStartedAt));'));
+  assert.ok(source.includes("if (needsWebSearch && nativeWebSearch && remainingWebSearchMs() > 0) {"));
+  assert.ok(source.includes("if (needsWebSearch && !nativeSearchData && remainingWebSearchMs() > 0) {"));
+  assert.ok(source.includes('Math.min(AGENT_NATIVE_SEARCH_TIMEOUT_MS, remainingWebSearchMs())'));
+  assert.ok(source.includes('Math.min(AGENT_EXTERNAL_SEARCH_TIMEOUT_MS, remainingWebSearchMs())'));
+});
+
 test('tool rounds for skills, images and files stay buffered', () => {
   assert.ok(source.includes("const searchedStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData && !filesystemRequest && !callableTools.length && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;"));
   assert.ok(source.includes("if (wantsStream && !skillContext.skills.length && !isTextPolishTask && !identityQuestion) {"));
