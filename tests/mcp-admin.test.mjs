@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { zipSync } from 'fflate';
 import { buildMcpModule, buildToolPolicyModule, buildToolsModule } from './tools-build.mjs';
 
 const mcp = await buildMcpModule();
@@ -176,6 +177,40 @@ test('用户原话里的仓库地址能过授权校验，直接进入下载安�
   } finally {
     globalThis.fetch = originalFetch;
     rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+/** codeload 的包就是多一层「仓库-分支」目录，这里按真实形状造归档。 */
+function githubStyleArchive(prefix, files) {
+  const entries = {};
+  for (const [name, content] of Object.entries(files)) entries[`${prefix}/${name}`] = Buffer.from(content);
+  return zipSync(entries);
+}
+
+test('仓库安装：归档的顶层目录不会被算成工作目录，装完能启动自检', async () => {
+  const dataDir = tempDir();
+  const originalFetch = globalThis.fetch;
+  const fixture = await readFile(new URL('./fixtures/mcp-stdio-server.mjs', import.meta.url), 'utf8');
+  const archive = githubStyleArchive('demo-mcp-main', {
+    'package.json': JSON.stringify({ name: 'demo-mcp', version: '1.0.0', bin: { 'demo-mcp': 'index.js' } }),
+    'index.js': fixture,
+  });
+  globalThis.fetch = async () => new Response(archive, { status: 200, headers: { 'content-type': 'application/zip' } });
+  try {
+    const installed = await mcp.installGithubMcpFromRepo('https://github.com/demo/demo-mcp', { dataDir });
+    assert.equal(installed.server.cwd, installed.projectRoot, '启动工作目录必须是归档解出来的项目目录');
+    assert.equal(existsSync(path.join(installed.projectRoot, 'package.json')), true);
+    assert.equal(existsSync(path.join(installed.projectRoot, 'index.js')), true);
+    assert.equal(existsSync(path.join(installed.projectRoot, 'demo-mcp-main')), false, '不该多出一层归档目录');
+    const probed = await mcp.probeMcpServer(installed.server, { retry: true });
+    assert.ok(probed.tools.length > 0, '装完要能真的把服务拉起来并列出工具');
+    mcp.closeStdioServer(installed.server.id);
+  } finally {
+    globalThis.fetch = originalFetch;
+    // Windows 上刚被 kill 的子进程和 npm 目录会短暂占住句柄，删除要重试。
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try { rmSync(dataDir, { recursive: true, force: true }); break; } catch { await new Promise((resolve) => setTimeout(resolve, 150)); }
+    }
   }
 });
 
