@@ -37,6 +37,23 @@ test('the stream can post-process the accumulated answer before the final event'
   assert.ok(source.includes("? streamResult(null, { fallback: nativeMessage"));
 });
 
+test('automatic failover deadline also covers a streaming response that stalls before its first chunk', () => {
+  assert.ok(source.includes('const result = await operation(controller.signal);'));
+  assert.ok(source.includes('if (result instanceof Response && result.body) {'));
+  assert.ok(source.includes('firstChunk = await readWithTimeout(reader, callTimeoutMs, timeoutError);'));
+  assert.ok(source.includes('return new Response(body, {'));
+  assert.ok(source.includes('AGENT_AUTO_FAILOVER_TIMEOUT_MS'));
+});
+
+test('manual model calls have a bounded wait and streams have an idle watchdog', () => {
+  assert.ok(source.includes('const AGENT_MODEL_CALL_TIMEOUT_MS = 60_000;'));
+  assert.ok(source.includes('const AGENT_STREAM_IDLE_TIMEOUT_MS = 30_000;'));
+  assert.ok(source.includes('const callTimeoutMs = timeoutMs || AGENT_MODEL_CALL_TIMEOUT_MS;'));
+  assert.ok(source.includes('readWithTimeout(reader, callTimeoutMs, timeoutError)'));
+  assert.ok(source.includes('AGENT_STREAM_IDLE_TIMEOUT_MS'));
+  assert.ok(source.includes('模型流式响应在'));
+});
+
 test('tool rounds for skills, images and files stay buffered', () => {
   assert.ok(source.includes("const searchedStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData && !filesystemRequest && !callableTools.length && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;"));
   assert.ok(source.includes("if (wantsStream && !skillContext.skills.length && !isTextPolishTask && !identityQuestion) {"));

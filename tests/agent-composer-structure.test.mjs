@@ -56,6 +56,14 @@ test('MCP details sit below the composer footer, outside the send controls', () 
   assert.ok(footerElement.end < dock.pos, 'MCP details must follow the footer');
 });
 
+test('Agent composer不重复渲染运行状态卡', () => {
+  assert.doesNotMatch(content, /function AgentRunStatus\(/);
+  assert.doesNotMatch(content, /className: `agent-run-status/);
+  assert.doesNotMatch(content, /activeAgentRunMessage\?\.activity/);
+  assert.doesNotMatch(content, /activeAgentRunMessage\?\.pendingSince/);
+  assert.match(content, /event\.type === 'status'\) updateRetryActivity/);
+});
+
 test('GitHub MCP 安装追问会把最近仓库地址带进本轮请求', () => {
   assert.match(content, /isGithubMcpInstallFollowUp\(requestContent\)/);
   assert.match(content, /extractGithubRepositoryUrl\(githubInstallRepo\.content\)/);

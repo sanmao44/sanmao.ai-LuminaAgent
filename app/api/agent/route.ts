@@ -122,6 +122,13 @@ async function safeDiscoverMcpForRequest(options: Parameters<typeof discoverMcpF
 }
 
 const AGENT_AUTO_FAILOVER_TIMEOUT_MS = 40_000;
+// A manually selected model must still fail visibly instead of holding the
+// composer in a pending state for the provider's 180s transport timeout.
+const AGENT_MODEL_CALL_TIMEOUT_MS = 60_000;
+// Once headers and the first chunk arrived, a silent upstream is a different
+// failure from slow thinking. Bound that idle gap without cutting off a
+// provider that is still producing a response.
+const AGENT_STREAM_IDLE_TIMEOUT_MS = 30_000;
 
 function isAgentRequestCancelled(error: unknown) {
   const value = error as { name?: string; message?: string } | null;
@@ -129,21 +136,113 @@ function isAgentRequestCancelled(error: unknown) {
 }
 
 async function withAgentCallDeadline<T>(signal: AbortSignal, timeoutMs: number, operation: (callSignal: AbortSignal) => Promise<T>) {
-  if (!timeoutMs) return operation(signal);
+  const callTimeoutMs = timeoutMs || AGENT_MODEL_CALL_TIMEOUT_MS;
   const controller = new AbortController();
-  const timeoutError = Object.assign(new Error('模型等待首个响应超时'), { name: 'TimeoutError', providerFailureKind: 'timeout' as const });
+  const timeoutError = Object.assign(new Error(`模型在 ${Math.round(callTimeoutMs / 1000)} 秒内没有返回响应`), { name: 'TimeoutError', providerFailureKind: 'timeout' as const });
   const abortFromParent = () => controller.abort(signal.reason || new Error('AGENT_CANCELLED'));
-  const timer = setTimeout(() => controller.abort(timeoutError), timeoutMs);
+  const timer = setTimeout(() => controller.abort(timeoutError), callTimeoutMs);
+  let ownsResponseBody = false;
+  const readWithTimeout = async (reader: ReadableStreamDefaultReader<Uint8Array>, waitMs: number, error: Error) => {
+    let waitTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race<ReadableStreamReadResult<Uint8Array>>([
+        reader.read(),
+        new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
+          waitTimer = setTimeout(() => {
+            // Rejecting the race alone would leave the provider's reader
+            // pending in the background. Abort it as well so the transport
+            // and the stream wrapper share the same failure boundary.
+            if (!controller.signal.aborted) controller.abort(error);
+            reject(error);
+          }, waitMs);
+        }),
+      ]);
+    } finally {
+      if (waitTimer) clearTimeout(waitTimer);
+    }
+  };
   if (signal.aborted) abortFromParent();
   else signal.addEventListener('abort', abortFromParent, { once: true });
   try {
-    return await operation(controller.signal);
+    const result = await operation(controller.signal);
+    // Fetch resolves as soon as the upstream headers arrive. For a streaming
+    // model that is not enough: a stalled body would otherwise bypass the
+    // automatic failover deadline and keep the Agent waiting for minutes.
+    if (result instanceof Response && result.body) {
+      const reader = result.body.getReader();
+      const abortReader = () => void reader.cancel(controller.signal.reason).catch(() => undefined);
+      controller.signal.addEventListener('abort', abortReader, { once: true });
+      const cleanupReader = () => {
+        controller.signal.removeEventListener('abort', abortReader);
+        try { reader.releaseLock(); } catch {}
+      };
+      let firstChunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        firstChunk = await readWithTimeout(reader, callTimeoutMs, timeoutError);
+        if (controller.signal.aborted) throw controller.signal.reason || new Error('AGENT_CANCELLED');
+        if (firstChunk.done) {
+          cleanupReader();
+          return new Response(null, {
+            status: result.status,
+            statusText: result.statusText,
+            headers: new Headers(result.headers),
+          }) as T;
+        }
+      } catch (error) {
+        await reader.cancel(error).catch(() => undefined);
+        cleanupReader();
+        throw error;
+      }
+      ownsResponseBody = true;
+      clearTimeout(timer);
+      const cleanupBody = () => {
+        cleanupReader();
+        signal.removeEventListener('abort', abortFromParent);
+      };
+      let firstChunkPending = true;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(streamController) {
+          try {
+            if (firstChunkPending) {
+              firstChunkPending = false;
+              if (firstChunk.value) streamController.enqueue(firstChunk.value);
+              else streamController.close();
+              return;
+            }
+            const next = await readWithTimeout(
+              reader,
+              AGENT_STREAM_IDLE_TIMEOUT_MS,
+              Object.assign(new Error(`模型流式响应在 ${Math.round(AGENT_STREAM_IDLE_TIMEOUT_MS / 1000)} 秒内没有新内容`), { name: 'TimeoutError', providerFailureKind: 'timeout' as const }),
+            );
+            if (next.done) {
+              cleanupBody();
+              streamController.close();
+            } else if (next.value) streamController.enqueue(next.value);
+          } catch (error) {
+            await reader.cancel(error).catch(() => undefined);
+            cleanupBody();
+            streamController.error(error);
+          }
+        },
+        cancel(reason) {
+          void reader.cancel(reason).catch(() => undefined).finally(cleanupBody);
+        },
+      });
+      return new Response(body, {
+        status: result.status,
+        statusText: result.statusText,
+        headers: new Headers(result.headers),
+      }) as T;
+    }
+    return result;
   } catch (error) {
     if (controller.signal.aborted && controller.signal.reason === timeoutError) throw timeoutError;
     throw error;
   } finally {
-    clearTimeout(timer);
-    signal.removeEventListener('abort', abortFromParent);
+    if (!ownsResponseBody) {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abortFromParent);
+    }
   }
 }
 
@@ -846,7 +945,7 @@ export async function POST(request: Request) {
         const startedAt = Date.now();
         llmCallCount += 1;
         try {
-          const result = await withAgentCallDeadline(signal, canFailover ? AGENT_AUTO_FAILOVER_TIMEOUT_MS : 0, (callSignal) => operation(runtime, callSignal));
+          const result = await withAgentCallDeadline(signal, canFailover ? AGENT_AUTO_FAILOVER_TIMEOUT_MS : AGENT_MODEL_CALL_TIMEOUT_MS, (callSignal) => operation(runtime, callSignal));
           noteAgentModelSuccess(runtime, Date.now() - startedAt);
           return result;
         } catch (error) {

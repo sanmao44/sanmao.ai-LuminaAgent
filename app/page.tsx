@@ -9220,7 +9220,11 @@ export default function Page() {
             retryVersion
         ];
         const workingVersionIndex = workingVersions.length - 1;
-        const workingMessages = messages.map((item)=>item.id === message.id ? applyMessageVersion(item, workingVersions, workingVersionIndex, true) : item);
+        const retryStartedAt = Date.now();
+        const workingMessages = messages.map((item)=>item.id === message.id ? {
+            ...applyMessageVersion(item, workingVersions, workingVersionIndex, true),
+            pendingSince: retryStartedAt
+        } : item);
         const requestId = uid('agent-request');
         const requestController = new AbortController();
         const agentRequest = { requestId, controller: requestController, pendingId: message.id, retryVersionId, kind: 'retry', partialText: '', stopped: false };
@@ -9294,6 +9298,13 @@ export default function Page() {
                 }, {
                 signal: requestController.signal,
                 onEvent: (event)=>{
+                    if (event.type === 'status') updateRetryActivity({
+                        stage: event.stage || 'answering',
+                        message: event.message || '正在处理…',
+                        model: event.model,
+                        mode: event.mode,
+                        count: event.count
+                    });
                     if (event.type === 'delta') {
                         streamedText += String(event.text || '');
                         agentRequest.partialText = streamedText;
@@ -9352,7 +9363,8 @@ export default function Page() {
                         deliverable: data.deliverable || 'TEXT',
                         ...(message.task === 'one_take_video_prompt' ? { task: message.task, durationSeconds: data.durationSeconds || message.durationSeconds } : {})
                     } : version);
-                return applyMessageVersion({ ...item, activity: undefined }, versions, versions.findIndex((version)=>version.id === retryVersionId));
+                const completedItem = applyMessageVersion({ ...item, activity: undefined }, versions, versions.findIndex((version)=>version.id === retryVersionId));
+                return { ...completedItem, pendingSince: undefined };
             });
             if (!isCurrentRequest()) return;
             pendingChatMessagesRef.current.delete(sessionId);
@@ -11366,6 +11378,7 @@ export default function Page() {
                                 className: "top-actions",
                                 children: [
                                     /*#__PURE__*/ _jsxs(Link, {
+                                        key: "canvas",
                                         href: "/canvas",
                                         className: "super-canvas-entry",
                                         "aria-label": "超级画布",
@@ -11388,6 +11401,7 @@ export default function Page() {
                                         ]
                                     }),
                                     /*#__PURE__*/ _jsxs("button", {
+                                        key: "theme",
                                         className: "theme-toggle",
                                         "aria-label": theme === 'light' ? '切换深色主题' : '切换浅色主题',
                                         onClick: toggleTheme,
