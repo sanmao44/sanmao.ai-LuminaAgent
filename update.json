@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.64",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.64",
+  "latestVersion": "0.7.65",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.65",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.64/SANMAO.AI-0.7.64.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.65/SANMAO.AI-0.7.65.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.64/SANMAO.AI-0.7.64.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.64/SANMAO.AI-0.7.64.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.64/SANMAO.AI-0.7.64.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.65/SANMAO.AI-0.7.65.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.65/SANMAO.AI-0.7.65.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.65/SANMAO.AI-0.7.65.zip"
   ],
-  "sha256": "b003890f678544b859f4f849c99849d16e1622743faf26465dd36e60cf0f7579",
-  "publishedAt": "2026-09-27T17:43:33Z",
+  "sha256": "7fccb035f1fd3ca34d3bc3198d16271bc32300b76ba83398f61d4c3083d7fd8e",
+  "publishedAt": "2026-09-28T12:48:13Z",
   "notes": [
+    "优化 Agent 联网路由：普通对话、问候和能力询问默认不触发搜索，明确需要实时信息时才启用搜索。",
+    "为搜索与模型请求增加超时、取消和总时限控制，减少后台长时间加载和无响应。",
+    "完善 Agent 模型失败转移、重试状态清理与路由耗时诊断，提升主界面连续对话稳定性。",
     "修复主对话发送消息后不发请求、一直停在待回复的问题（残留的图片模型重置调用会直接抛错，影响所有模型）。",
     "修复素材超过 2GB 后自动快照失败、把 CPU 和内存打满、导致界面服务商图标集体消失的问题。",
     "自动快照失败后改为退避重试，不再反复占用资源拖慢应用。",
