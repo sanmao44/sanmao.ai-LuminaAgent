@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.65/SANMAO.AI-0.7.65.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.65/SANMAO.AI-0.7.65.zip"
   ],
-  "sha256": "7fccb035f1fd3ca34d3bc3198d16271bc32300b76ba83398f61d4c3083d7fd8e",
+  "sha256": "827ecd8d5942bed7f4fdd5719b96d052b1a5287b5ee3ea3f69930d7bfe2526db",
   "publishedAt": "2026-09-28T12:48:13Z",
   "notes": [
     "优化 Agent 联网路由：普通对话、问候和能力询问默认不触发搜索，明确需要实时信息时才启用搜索。",
