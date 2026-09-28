@@ -1,5 +1,5 @@
-import { unlink } from 'node:fs/promises';
 import { isTrustedAppRequest } from '@/lib/auth';
+import { moveMediaToTrash } from '@/lib/generation-log';
 import { findVideoTask, removeVideoTask } from '@/lib/video-task-store';
 import { cancelVideoTask, refreshVideoTask, retryVideoTask, saveVideoTaskLocally } from '@/lib/video-task-service';
 
@@ -52,7 +52,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   const task = await removeVideoTask(id);
   if (!task) return Response.json({ error: '视频任务不存在' }, { status: 404 });
   await Promise.all([...new Set(task.localVideoPaths || [])].map(async (file) => {
-    try { await unlink(file); } catch { /* The task record can still be removed when its file is already gone. */ }
+    try { await moveMediaToTrash(file, 'videos'); } catch { /* The task record can still be removed when its file is already gone. */ }
   }));
   return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
 }

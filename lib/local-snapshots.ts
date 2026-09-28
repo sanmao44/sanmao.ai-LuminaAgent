@@ -212,7 +212,7 @@ async function createLocalSnapshotInternal(reason: string) {
     media,
     files: entries.map((entry) => ({ name: entry.name, bytes: entry.data.byteLength, sha256: sha256(entry.data) })),
   };
-  const archive = createBackupArchive([{ name: 'manifest.json', data: jsonBuffer(manifest) }, ...entries]);
+  const archive = await createBackupArchive([{ name: 'manifest.json', data: jsonBuffer(manifest) }, ...entries]);
   const encrypted = encryptBackupPayload(archive, await snapshotPassword());
   const file = path.join(snapshotDir, snapshotName());
   await writeFile(file, encrypted, { flag: 'wx', flush: true });

@@ -500,12 +500,21 @@ test("a turn can be re-run, continued or stopped from the keyboard", () => {
 test("the dock keeps reporting a run and previews its images", () => {
   // 收起面板不等于停：rail 和工具栏都要显示「生成中」。
   assert.match(component, /canvas-agent-dock-rail\$\{busy \? " is-busy" : ""\}/);
-  assert.match(component, /<em>\{busy \? "生成中" : status\.failed \? `\$\{status\.failed\} 个失败` : unreadReply \? "有新回答" : "Agent"\}<\/em>/);
+  // 收起后的悬浮入口不再重复写「Agent」：球自己就是标识，有动静才展开成带字的胶囊。
+  assert.match(component, /<AgentOrb state=\{dockOrbState\} size=\{30\} label="" \/>/);
+  assert.match(component, /!busy && !status\.failed && !unreadReply \? " is-quiet" : ""/);
+  assert.match(component, /busy \|\| status\.failed \|\| unreadReply \? <em>\{busy \? "生成中" : status\.failed \? `\$\{status\.failed\} 个失败` : "有新回答"\}<\/em> : null/);
   assert.match(component, /onBusyChange\?\.\(busy\);/);
   assert.match(canvas, /onBusyChange=\{setAgentDockBusy\}/);
   assert.match(canvas, /const \[agentDockBusy, setAgentDockBusy\] = useState\(false\)/);
   assert.match(canvas, /canvas-agent-button \$\{agentDockOpen \? "active" : ""\}\$\{agentDockBusy \? " is-busy" : ""\}/);
-  assert.match(styles, /\.canvas-agent-dock-rail\.is-busy span,\.canvas-agent-button\.is-busy i\{animation:canvas-pulse/);
+  assert.match(styles, /\.canvas-agent-button\.is-busy i\{animation:canvas-pulse/);
+  // 收起后的入口改用光球报忙：旧的字形脉冲规则不能顺手扫到球体内部的 span。
+  assert.doesNotMatch(styles, /\.canvas-agent-dock-rail\.is-busy span/);
+  // 画布上几条「任意后代 span」的规则要收紧到直接子元素，否则会把球体内部压成方块。
+  assert.match(styles, /\.canvas-selection-toolbar>span\{width:1px/);
+  assert.match(styles, /\.canvas-node \.canvas-node-kicker>span,/);
+  assert.match(styles, /\.canvas-node\.status-running \.canvas-node-kicker>span,/);
   // 停止留下的半截要能撑过刷新，否则「继续」和「（已停止）」都会丢。
   assert.ok(component.includes("...(message.interrupted ? { interrupted: true } : {}),"));
   // Agent 返回的图点开用画布同一套预览器（挂在画布层，和节点预览是同一个），面板不自己再造一个。

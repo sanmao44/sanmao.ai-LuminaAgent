@@ -9,6 +9,7 @@ import SkillIcon from "@/components/SkillIcon";
 import AgentSkillMenu from "@/components/AgentSkillMenu";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 import AgentMarkdown from "@/components/AgentMarkdown";
+import AgentOrb, { busyOrbState } from "@/components/AgentOrb";
 import type { ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import { invalidReferenceMentionNumbers, replaceNaturalReferenceLabels } from "@/lib/creative-references";
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
@@ -1319,11 +1320,14 @@ export default function CanvasAgentDock({
     [clearSelection, selection],
   );
 
+  /* 光球状态跟面板走：忙且已吐字＝回答中，忙＝思考中，失败节点＝错误色。 */
+  const dockOrbState = busyOrbState(busy, Boolean(streamText), status.failed > 0);
+
   if (!open)
     return (
       <button
         type="button"
-        className={`canvas-agent-dock-rail${busy ? " is-busy" : ""}${!busy && status.failed ? " is-failed" : ""}${!busy && !status.failed && unreadReply ? " is-unread" : ""}`}
+        className={`canvas-agent-dock-rail${busy ? " is-busy" : ""}${!busy && status.failed ? " is-failed" : ""}${!busy && !status.failed && unreadReply ? " is-unread" : ""}${!busy && !status.failed && !unreadReply ? " is-quiet" : ""}`}
         onClick={() => onToggle(true)}
         title={
           busy
@@ -1344,8 +1348,8 @@ export default function CanvasAgentDock({
                 : "展开 Agent 助手"
         }
       >
-        <span aria-hidden="true">✦</span>
-        <em>{busy ? "生成中" : status.failed ? `${status.failed} 个失败` : unreadReply ? "有新回答" : "Agent"}</em>
+        <AgentOrb state={dockOrbState} size={30} label="" />
+        {busy || status.failed || unreadReply ? <em>{busy ? "生成中" : status.failed ? `${status.failed} 个失败` : "有新回答"}</em> : null}
         {status.running + status.queued > 0 && <b>{status.running + status.queued}</b>}
       </button>
     );
@@ -1354,7 +1358,7 @@ export default function CanvasAgentDock({
     <aside className="canvas-agent-dock" aria-label="画布 Agent 助手">
       <header className="canvas-agent-dock-head">
         <div className="canvas-agent-dock-title">
-          <span aria-hidden="true">✦</span>
+          <AgentOrb state={dockOrbState} size={30} label="" />
           <div>
             <b>Agent 助手</b>
             <small>
@@ -1524,7 +1528,8 @@ export default function CanvasAgentDock({
           >
             {message.role === "assistant" ? (
               <div className="canvas-agent-dock-role">
-                <b>✦ Agent</b>
+                <AgentOrb state={message.error ? "error" : "idle"} size={14} label="" />
+                <b>Agent</b>
                 {message.model ? <small>{message.model}</small> : null}
               </div>
             ) : null}

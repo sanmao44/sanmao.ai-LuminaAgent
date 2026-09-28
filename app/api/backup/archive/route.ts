@@ -210,7 +210,7 @@ async function exportArchive(client: unknown, mode: BackupMode) {
     externalMasterKey: Boolean(process.env.SANMAO_MASTER_KEY?.trim()),
     files: entries.map((entry) => ({ name: entry.name, bytes: entry.data.byteLength, sha256: sha256(entry.data) })),
   };
-  const archive = createBackupArchive([{ name: 'manifest.json', data: jsonBuffer(manifest) }, ...entries]);
+  const archive = await createBackupArchive([{ name: 'manifest.json', data: jsonBuffer(manifest) }, ...entries]);
   return { archive, manifest };
 }
 
