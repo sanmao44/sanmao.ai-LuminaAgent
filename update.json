@@ -1,17 +1,23 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.65",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.65",
+  "latestVersion": "0.7.66",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.66",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.65/SANMAO.AI-0.7.65.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.66/SANMAO.AI-0.7.66.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.65/SANMAO.AI-0.7.65.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.65/SANMAO.AI-0.7.65.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.65/SANMAO.AI-0.7.65.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.66/SANMAO.AI-0.7.66.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.66/SANMAO.AI-0.7.66.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.66/SANMAO.AI-0.7.66.zip"
   ],
   "sha256": "827ecd8d5942bed7f4fdd5719b96d052b1a5287b5ee3ea3f69930d7bfe2526db",
-  "publishedAt": "2026-09-28T13:04:20Z",
+  "publishedAt": "2026-09-28T15:37:25Z",
   "notes": [
+    "智能助手全面接入 Siri 风格光球：待机、连接、聆听、思考、播报、错误六种状态动效，可跟随麦克风音量与生成进度跳动，亮/暗主题都有兜底。",
+    "全站 ✦ Agent 图标换成光球：欢迎页、消息头像、输入区状态、画布顶栏、右键菜单、节点角标、多选工具条与助手面板统一为同一视觉。",
+    "删除视频和音频改为移入回收站并保留 7 天，误删可以找回，不再直接删掉。",
+    "备份归档改用异步 gzip 流式压缩，2GB 级快照不再冻结整个服务，导出更快。",
+    "修复 GitHub MCP 仓库安装：归档顶层目录并兼容旧版 uv，安装地址校验不再误判。",
+    "生图等待卡片全程保留扫光动效直到出图完成；画布框选范围框改为圆角流动虚线，尺寸标签改为胶囊样式。",
     "优化 Agent 联网路由：普通对话、问候和能力询问默认不触发搜索，明确需要实时信息时才启用搜索。",
     "为搜索与模型请求增加超时、取消和总时限控制，减少后台长时间加载和无响应。",
     "完善 Agent 模型失败转移、重试状态清理与路由耗时诊断，提升主界面连续对话稳定性。",
