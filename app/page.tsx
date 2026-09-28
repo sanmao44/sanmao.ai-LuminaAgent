@@ -47,6 +47,7 @@ import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { startWorkspaceSync } from '@/lib/workspace';
 import { workspaceRepository } from '@/lib/repositories/workspace-repository';
+import { requestAdminSession } from '@/lib/admin-session';
 import { readWorkspaceContext } from '@/lib/workspace-context';
 import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
@@ -88,6 +89,7 @@ function compareContainSize(image, viewport) {
 const emptyState = {
     providers: [],
     models: [],
+    agentHealth: [],
     upscaleConnections: [],
     upscaleModels: [],
     settings: {
@@ -129,6 +131,7 @@ const HISTORY_PAGE_SIZE_OPTIONS = [
 ];
 const DEFAULT_HISTORY_PAGE_SIZE = 12;
 const HISTORY_PAGE_SIZE_STORAGE_KEY = 'sanmao-history-page-size';
+const PROVIDER_SETUP_DISMISSED_STORAGE_KEY = 'sanmao-provider-setup-dismissed';
 const pageSizeOptions = HISTORY_PAGE_SIZE_OPTIONS.map((value)=>({
         value: String(value),
         label: `每页 ${value} 项`
@@ -5295,6 +5298,7 @@ export default function Page() {
     const [providerBusy, setProviderBusy] = useState(false);
     const [providerTestBusy, setProviderTestBusy] = useState(false);
     const [providerTestResult, setProviderTestResult] = useState('');
+    const [providerSetupDismissed, setProviderSetupDismissed] = useState(false);
     const providerTestResultRef = useRef(null);
     useEffect(()=>{
         if (!providerTestResult) return;
@@ -5306,6 +5310,10 @@ export default function Page() {
         });
         return ()=>window.cancelAnimationFrame(frame);
     }, [providerTestResult]);
+    useEffect(()=>{
+        if (!providerSetupDismissed) return;
+        localStorage.setItem(PROVIDER_SETUP_DISMISSED_STORAGE_KEY, '1');
+    }, [providerSetupDismissed]);
     const [jimengLogin, setJimengLogin] = useState({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' });
     const [syncingId, setSyncingId] = useState(null);
     const [providerForm, setProviderForm] = useState(emptyProviderForm);
@@ -5313,6 +5321,7 @@ export default function Page() {
     const [manualModelForm, setManualModelForm] = useState({ rawId: '', displayName: '', kind: 'auto' });
     const [manualModelBusy, setManualModelBusy] = useState(false);
     const selectedProviderPreset = getProviderPreset(providerForm.platform);
+    const providerModalOpen = providerEditor || !state.providers.length && !providerSetupDismissed;
     const manageableProviders = useMemo(()=>state.providers.filter((provider)=>provider.platform !== 'jimeng-cli' && provider.videoTransport !== 'jimeng-cli'), [
         state.providers
     ]);
@@ -5355,7 +5364,6 @@ export default function Page() {
     const [selectedShareGroups, setSelectedShareGroups] = useState(new Set());
     const [agentFiles, setAgentFiles] = useState([]);
     const [agentModelId, setAgentModelId] = useState('auto');
-    const [agentImageModelId, setAgentImageModelId] = useState('auto');
     const [agentWebMode, setAgentWebMode] = useState('auto');
     const [agentWebModeMenuOpen, setAgentWebModeMenuOpen] = useState(false);
     const [webSearchApiProvider, setWebSearchApiProvider] = useState('baidu-qianfan');
@@ -5583,17 +5591,15 @@ export default function Page() {
         return subscribeToThemeChanges(setTheme);
     }, []);
     useEffect(()=>{
-        if (!providerEditor || !state.providers.length) return;
+        if (!providerModalOpen) return;
         const closeOnEscape = (event)=>{
             if (event.key !== 'Escape') return;
-            setProviderEditor(false);
-            setProviderEditId(null);
+            closeProviderEditor();
         };
         window.addEventListener('keydown', closeOnEscape);
         return ()=>window.removeEventListener('keydown', closeOnEscape);
     }, [
-        providerEditor,
-        state.providers.length
+        providerModalOpen
     ]);
     useEffect(()=>{
         if (!manualModelProvider) return;
@@ -5603,7 +5609,7 @@ export default function Page() {
         window.addEventListener('keydown', closeOnEscape);
         return ()=>window.removeEventListener('keydown', closeOnEscape);
     }, [manualModelProvider]);
-    useBodyScrollLock(Boolean(supportOpen || confirmState || manualModelProvider || messageReferencePreview || chatFilePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor || section === 'providers' && (!adminRequired || isAdmin) && (providerEditor || !state.providers.length)));
+    useBodyScrollLock(Boolean(supportOpen || confirmState || manualModelProvider || messageReferencePreview || chatFilePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor || section === 'providers' && (!adminRequired || isAdmin) && providerModalOpen));
     const activeProviderModels = useMemo(()=>filterModelsByActiveProviders(state.models, state.providers), [
         state.models,
         state.providers
@@ -5647,7 +5653,6 @@ export default function Page() {
     }
     const generateUpscaleMode = generateWorkflow === 'upscale';
     const activeAgentModelId = agentModelId !== 'auto' && availableChatModels.some((model)=>model.id === agentModelId) ? agentModelId : 'auto';
-    const activeAgentImageModelId = agentImageModelId !== 'auto' && availableGenerationModels.some((model)=>model.id === agentImageModelId) ? agentImageModelId : 'auto';
     const activeAgentChatModel = activeAgentModelId === 'auto' ? agentModel : availableChatModels.find((model)=>model.id === activeAgentModelId);
     const matchingModels = useMemo(()=>activeProviderModels.filter((model)=>(modelProviderFilter === 'all' || model.providerId === modelProviderFilter) && (!modelSearch.trim() || `${model.displayName} ${model.rawId}`.toLowerCase().includes(modelSearch.trim().toLowerCase()))), [
         activeProviderModels,
@@ -5884,9 +5889,6 @@ export default function Page() {
         agentFiles.length
     ]);
     const activeAgentIntent = liveAgentIntent;
-    const agentImageModelSelectionVisible = Boolean(agentInput.trim()
-        && (activeAgentIntent.deliverable === 'IMAGE' || activeAgentIntent.deliverable === 'BOTH')
-        && availableGenerationModels.length);
     const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
     const videoTotalPages = Math.max(1, Math.ceil(videoTotal / pageSize));
     const visibleVideoPage = Math.min(videoPage, videoTotalPages);
@@ -5972,8 +5974,6 @@ export default function Page() {
         let cancelled = false;
         let stopWorkspaceSync = ()=>{};
         const start = async ()=>{
-            await workspaceRepository.bootstrap();
-            if (cancelled) return;
             initializeNavNoticeState();
             try {
             const savedSection = localStorage.getItem(LAST_SECTION_STORAGE_KEY);
@@ -5985,6 +5985,7 @@ export default function Page() {
                 setSectionState(savedSection);
             }
             setSuccessSoundEnabled(localStorage.getItem('sanmao-success-sound') === '1');
+            setProviderSetupDismissed(localStorage.getItem(PROVIDER_SETUP_DISMISSED_STORAGE_KEY) === '1');
             const savedWebMode = localStorage.getItem('sanmao-agent-web-mode');
             const savedWebSearch = localStorage.getItem('sanmao-agent-web-search');
             if (savedWebMode === 'auto' || savedWebMode === 'always' || savedWebMode === 'off') setAgentWebMode(savedWebMode);
@@ -6053,7 +6054,18 @@ export default function Page() {
             void refreshVideoTasks();
             void refreshStorageMaintenance();
             void loadLocalDirectory();
-            stopWorkspaceSync = startWorkspaceSync();
+            // Local preferences and IndexedDB are available immediately. The
+            // server workspace is reconciled after the shell is interactive.
+            void workspaceRepository.bootstrap()
+                .then(() => {
+                    if (cancelled) return;
+                    void refreshGallery();
+                    void refreshChatSessions();
+                })
+                .catch(() => undefined)
+                .finally(() => {
+                    if (!cancelled) stopWorkspaceSync = startWorkspaceSync();
+                });
         };
         void start();
         return ()=>{
@@ -7098,7 +7110,8 @@ export default function Page() {
                 HISTORY_PAGE_SIZE_STORAGE_KEY,
                 'sanmao-generate-settings',
                 'sanmao-generate-tasks',
-                'sanmao-image-presets-v1'
+                'sanmao-image-presets-v1',
+                PROVIDER_SETUP_DISMISSED_STORAGE_KEY
             ];
             const preferences = {};
             for (const key of preferenceKeys){
@@ -7152,7 +7165,8 @@ export default function Page() {
             HISTORY_PAGE_SIZE_STORAGE_KEY,
             'sanmao-generate-settings',
             'sanmao-generate-tasks',
-            'sanmao-image-presets-v1'
+            'sanmao-image-presets-v1',
+            PROVIDER_SETUP_DISMISSED_STORAGE_KEY
         ];
         for (const key of preferenceKeys) localStorage.removeItem(key);
         for (const [key, value] of Object.entries(client.preferences || {})) if (preferenceKeys.includes(key) && typeof value === 'string') localStorage.setItem(key, value);
@@ -7430,6 +7444,19 @@ export default function Page() {
     }
     function normalizeChatSession(session) {
         const messages = normalizeAssistantImageSources(session.messages).map((message)=>{
+            // Pending messages are transient UI state. If one was persisted by
+            // an older build or restored from a workspace after a crash, there
+            // is no live request left to finish it. Keep the partial text but
+            // convert it to an explicit interrupted message so the composer is
+            // usable again and the history cannot spin forever.
+            if (message.pending) {
+                const { pending: _pending, activity: _activity, pendingSince: _pendingSince, ...rest } = message;
+                return {
+                    ...rest,
+                    content: String(rest.content || '').trim() || '本轮回答在页面刷新或重启后中断。',
+                    interrupted: true
+                };
+            }
             if (message.role !== 'assistant' || !message.versions?.length) return message;
             const versions = normalizeAssistantImageSources(message.versions.map((version)=>({
                     role: 'assistant',
@@ -7452,9 +7479,16 @@ export default function Page() {
     }
     async function refreshChatSessions() {
         try {
-            const sessions = (await listChatSessions()).map(normalizeChatSession);
+            const rawSessions = await listChatSessions();
+            const sessions = rawSessions.map(normalizeChatSession);
             chatMemoryRef.current = new Map(sessions.map((session)=>[session.id, validConversationMemory(session.memory, session.messages)]));
             setChatSessions(sessions);
+            // Persist the one-time migration so a stale pending marker cannot
+            // return after the next reload or workspace reconciliation.
+            await Promise.all(rawSessions.map((rawSession, index) => {
+                const hadPending = rawSession.messages.some((message) => Boolean((message as unknown as { pending?: boolean }).pending));
+                return hadPending ? saveChatSession(sessions[index]) : Promise.resolve();
+            }));
             if (sessions.length) {
                 activeChatIdRef.current = sessions[0].id;
                 agentPersonaRef.current = sessions[0].persona || '';
@@ -7468,12 +7502,9 @@ export default function Page() {
     }
     async function refreshAdmin() {
         try {
-            const res = await fetch('/api/admin/session', {
-                cache: 'no-store'
-            });
-            const data = await res.json();
-            setAdminRequired(Boolean(data.required));
-            setIsAdmin(Boolean(data.authenticated));
+            const session = await requestAdminSession();
+            setAdminRequired(session.required);
+            setIsAdmin(session.authenticated);
         } catch  {}
     }
     async function refreshState() {
@@ -7505,6 +7536,14 @@ export default function Page() {
             window.clearTimeout(timeoutId);
             setLoadingState(false);
         }
+    }
+    async function refreshAgentModelHealth() {
+        try {
+            const response = await fetch('/api/agent/health', { cache: 'no-store' });
+            if (!response.ok) return;
+            const data = await response.json();
+            if (Array.isArray(data.agentHealth)) setState((current)=>({ ...current, agentHealth: data.agentHealth }));
+        } catch {}
     }
     async function applyReturnedState(res) {
         const contentType = res.headers.get('content-type') || '';
@@ -7654,6 +7693,11 @@ export default function Page() {
         }).catch(()=>undefined);
         await refreshAdmin();
         notify('已退出管理模式');
+    }
+    function closeProviderEditor() {
+        setProviderEditor(false);
+        setProviderEditId(null);
+        if (!state.providers.length) setProviderSetupDismissed(true);
     }
     function openAddProvider() {
         setProviderEditId(null);
@@ -9145,7 +9189,7 @@ export default function Page() {
         setSection('agent');
         await sendAgent(direction);
     }
-    async function retryAgentMessage(message, imageModelId = 'auto') {
+    async function retryAgentMessage(message, modelOverride = activeAgentModelId) {
         if (message.retrying) return;
         pauseChatAutoFollow();
         const sessionId = activeChatIdRef.current;
@@ -9195,11 +9239,11 @@ export default function Page() {
             const retryHistory = contextMessages.slice(0, contextMessages.indexOf(latestUserMessage));
             const retryImage = !referenceSource?.references?.length ? conversationImage(latestUserMessage?.content || '', retryHistory) : null;
             const retryReferences = retryImage ? [await galleryItemToReference(retryImage)] : referenceSource?.references || [];
-            const referencesForRequest = await prepareCreativeReferencesForAgent(retryReferences);
-            if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const referenceRecords = await persistReferenceImages(retryReferences);
-            if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const memory = await prepareAgentMemory(sessionId, contextMessages, activeAgentModelId, requestController.signal);
+            const [referencesForRequest, referenceRecords, memory] = await Promise.all([
+                prepareCreativeReferencesForAgent(retryReferences),
+                persistReferenceImages(retryReferences),
+                prepareAgentMemory(sessionId, contextMessages, modelOverride, requestController.signal),
+            ]);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const selectedContextMessages = selectRelevantConversationMessages(contextMessages, latestUserMessage?.content || '', 8, 3, 11);
             const payloadMessages = selectedContextMessages.slice(-11).map((item)=>({
@@ -9240,8 +9284,7 @@ export default function Page() {
                     memory,
                     persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
-                    model: activeAgentModelId,
-                    ...(message.images?.length ? { imageModelId } : {}),
+                    model: modelOverride,
                     ...(message.task === 'one_take_video_prompt' && message.durationSeconds !== undefined ? { task: message.task, durationSeconds: message.durationSeconds } : {}),
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
@@ -9270,6 +9313,7 @@ export default function Page() {
             });
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             void refreshGenerationLogs();
+            void refreshAgentModelHealth();
             let images = [];
             if (Array.isArray(data.images) && data.images.length) {
                 const generation = Array.isArray(data.generations) ? data.generations[0] : null;
@@ -9338,6 +9382,7 @@ export default function Page() {
             if (activeChatIdRef.current === sessionId) setMessages(restoredMessages);
             notify(error instanceof Error ? error.message : '重新生成失败');
             void refreshGenerationLogs();
+            void refreshAgentModelHealth();
         } finally{
             stopRetryProgress();
             if (isCurrentRequest()) {
@@ -9396,7 +9441,6 @@ export default function Page() {
         });
         const selectedDeliverable = deliverableOverride || requestIntent.deliverable;
         const likelyImageRequest = !task && (selectedDeliverable === 'IMAGE' || selectedDeliverable === 'BOTH');
-        const imageModelIdForRequest = likelyImageRequest ? activeAgentImageModelId : 'auto';
         const user = {
             id: uid('msg'),
             role: 'user',
@@ -9409,10 +9453,10 @@ export default function Page() {
         const pending = {
             id: pendingId,
             role: 'assistant',
-            content: likelyImageRequest ? '正在构思画面…' : '正在判断是否需要联网…',
+            content: likelyImageRequest ? '正在构思画面…' : '正在准备回答…',
             pending: true,
             pendingSince: Date.now(),
-            activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' }
+            activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'answering', message: '正在准备回答…' }
         };
         const requestId = uid('agent-request');
         const requestController = new AbortController();
@@ -9438,11 +9482,10 @@ export default function Page() {
         setAgentInputBeforeOptimization(null);
         setAgentRefs([]);
         setAgentFiles([]);
-        setAgentImageModelId('auto');
         setAgentFollowUp(null);
         setChatBusy(sessionId, true);
         const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
-        await persistAgentSession(sessionId, nextMessages).catch(()=>undefined);
+        void persistAgentSession(sessionId, nextMessages).catch(()=>undefined);
         if (requestController.signal.aborted || !isCurrentRequest()) return;
         let stopAgentProgress = ()=>{};
         try {
@@ -9474,12 +9517,12 @@ export default function Page() {
             ].reverse().find((message)=>message.role === 'user');
             const latestUserId = latestUserMessage?.id;
             const referenceSource = latestUserMessage;
-            const referencesForRequest = await prepareCreativeReferencesForAgent(referenceSource?.references || []);
-            if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const referenceRecords = await persistReferenceImages(referenceSource?.references || []);
-            if (requestController.signal.aborted || !isCurrentRequest()) return;
-            updatePendingActivity({ stage: 'memory', message: '正在整理当前对话上下文…' });
-            const memory = await prepareAgentMemory(sessionId, nextMessages, activeAgentModelId, requestController.signal);
+            updatePendingActivity({ stage: 'preparing', message: '正在准备引用和对话上下文…' });
+            const [referencesForRequest, referenceRecords, memory] = await Promise.all([
+                prepareCreativeReferencesForAgent(referenceSource?.references || []),
+                persistReferenceImages(referenceSource?.references || []),
+                prepareAgentMemory(sessionId, nextMessages, activeAgentModelId, requestController.signal),
+            ]);
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const selectedContextMessages = selectRelevantConversationMessages(nextMessages, requestContent);
             const githubInstallContextMessage = isGithubMcpInstallFollowUp(requestContent)
@@ -9509,7 +9552,7 @@ export default function Page() {
                             size: file.size
                         })) : historyArtifactFiles(m)
                 }));
-            updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'web_search', message: '正在判断是否需要联网…' });
+            updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'answering', message: '正在准备回答…' });
             let streamedText = '';
             /*
              * 长任务进度：主管线在工具轮里写快照（app/api/agent/progress），这里按 runId 轮询。
@@ -9531,7 +9574,6 @@ export default function Page() {
                     persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
-                    imageModelId: imageModelIdForRequest,
                     task,
                     ...(oneTakeDuration !== undefined ? { durationSeconds: oneTakeDuration } : {}),
                     webMode: agentWebMode,
@@ -9558,8 +9600,9 @@ export default function Page() {
             });
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             void refreshGenerationLogs();
+            void refreshAgentModelHealth();
             const submittedChatModel = activeAgentModelId !== 'auto' ? availableChatModels.find((model)=>model.id === activeAgentModelId) : undefined;
-            const actualChatModelId = submittedChatModel?.id || (Array.isArray(data.generations) ? data.generations[0]?.modelId : undefined);
+            const actualChatModelId = submittedChatModel?.id || data.modelId || (Array.isArray(data.generations) ? data.generations[0]?.modelId : undefined);
             const actualChatModel = actualChatModelId ? state.models.find((model)=>model.id === actualChatModelId) : undefined;
             const usedChatModel = submittedChatModel || actualChatModel || (activeAgentModelId === 'auto' ? activeAgentChatModel : undefined);
             recordModelCall({
@@ -9607,6 +9650,7 @@ export default function Page() {
                     webSearchDecision: data.webSearchDecision || undefined,
                     skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
                     mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined,
+                    fallbackFrom: data.fallbackFrom || undefined,
                     approval: data.approval || undefined,
                     deliverable: data.deliverable || selectedDeliverable,
                     ...(task === 'one_take_video_prompt' ? { task, durationSeconds: data.durationSeconds || oneTakeDuration } : {})
@@ -9636,13 +9680,16 @@ export default function Page() {
                 {
                     id: pendingId,
                     role: 'assistant',
-                    content: `请求失败：${error instanceof Error ? error.message : '未知错误'}`
+                    content: `请求失败：${error instanceof Error ? error.message : '未知错误'}`,
+                    agentError: true,
+                    agentErrorModelId: activeAgentModelId
                 }
             ];
             pendingChatMessagesRef.current.delete(sessionId);
             if (activeChatIdRef.current === sessionId) setMessages(failed);
             await persistAgentSession(sessionId, failed).catch(()=>undefined);
             void refreshGenerationLogs();
+            void refreshAgentModelHealth();
         } finally{
             stopAgentProgress();
             if (isCurrentRequest()) {
@@ -11416,7 +11463,10 @@ export default function Page() {
                                                     children: [
                                                         /*#__PURE__*/ _jsx("div", {
                                                             className: "message-avatar",
-                                                            children: message.role === 'user' ? '你' : 'S'
+                                                            children: message.role === 'user' ? '你' : /*#__PURE__*/ _jsx("img", {
+                                                                src: "/brand-mark-welcome.png",
+                                                                alt: "SANMAO.AI"
+                                                            })
                                                         }),
                                                         /*#__PURE__*/ _jsxs("div", {
                                                             className: `message-body ${agentMessageSelectionActive ? 'selecting' : ''}`,
@@ -11468,6 +11518,10 @@ export default function Page() {
                                                                                  message.webSearchDecision?.status === 'failed' ? ' · 未获得可靠来源' : message.webSearch?.resultCount ? ` · ${message.webSearch.resultCount} 条来源` : ''
                                                                              ]
                                                                          }),
+                                                                        message.role === 'assistant' && !message.pending && message.fallbackFrom && /*#__PURE__*/ _jsx("small", {
+                                                                            className: "message-model-fallback-badge",
+                                                                            children: `模型异常，已切换：${message.fallbackFrom}`
+                                                                        }),
                                                                         message.role === 'assistant' && !message.pending && message.skills?.length && /*#__PURE__*/ _jsx("small", {
                                                                             className: "message-skill-badge",
                                                                             children: `技能：${message.skills.map((skill)=>skill.name).join('、')}`
@@ -11475,7 +11529,7 @@ export default function Page() {
                                                                         message.role === 'assistant' && !message.pending && message.mcpTools?.length && /*#__PURE__*/ _jsx("button", {
                                                                             type: "button",
                                                                             className: "message-mcp-detail",
-                                                                            title: "在输入框下方查看这一轮用到的外部工具",
+                                                                            title: "查看本轮 MCP 服务、工具及执行结果",
                                                                             "aria-expanded": activeMcpMessageId === message.id,
                                                                             onClick: (event)=>{
                                                                                 event.stopPropagation();
@@ -11483,7 +11537,7 @@ export default function Page() {
                                                                             },
                                                                             children: /*#__PURE__*/ _jsx("small", {
                                                                                 className: "message-mcp-badge",
-                                                                                children: `MCP：${message.mcpTools.map((tool)=>`${tool.server} · ${tool.name}${tool.ok ? '' : '（失败）'}`).join('、')}`
+                                                                                children: `MCP：${message.mcpTools.map((tool)=>`${tool.server} · ${tool.name}（${tool.ok ? '成功' : '失败'}）`).join('、')}`
                                                                             })
                                                                         }),
                                                                          message.role === 'assistant' && !message.pending && message.deliverable && /*#__PURE__*/ _jsx("small", {
@@ -11571,7 +11625,31 @@ export default function Page() {
                                                                 }) : null,
                                                                 message.pending && /^(?:image_|caption)/.test(message.activity?.stage || '') ? /*#__PURE__*/ _jsx(AgentImageLoadingCard, {
                                                                     activity: message.activity
-                                                                }) : message.role === 'assistant' && !message.pending ? /*#__PURE__*/ _jsx(AssistantMarkdown, {
+                                                                }) : message.role === 'assistant' && !message.pending ? message.agentError ? /*#__PURE__*/ _jsxs("div", {
+                                                                    className: "message-agent-error",
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("p", { children: message.content }),
+                                                                        /*#__PURE__*/ _jsx("small", { children: "模型没有返回可用回复，可以切换自动模式重试。" }),
+                                                                        /*#__PURE__*/ _jsxs("div", {
+                                                                            className: "message-agent-error-actions",
+                                                                            children: [
+                                                                                /*#__PURE__*/ _jsx("button", {
+                                                                                    type: "button",
+                                                                                    onClick: ()=>{
+                                                                                        setAgentModelId('auto');
+                                                                                        void retryAgentMessage(message, 'auto');
+                                                                                    },
+                                                                                    children: "切换自动并重试"
+                                                                                }),
+                                                                                /*#__PURE__*/ _jsx("button", {
+                                                                                    type: "button",
+                                                                                    onClick: ()=>void retryAgentMessage(message),
+                                                                                    children: "重试当前模型"
+                                                                                })
+                                                                            ]
+                                                                        })
+                                                                    ]
+                                                                }) : /*#__PURE__*/ _jsx(AssistantMarkdown, {
                                                                     content: message.content,
                                                                     onNotify: notify,
                                                                     directionPicker: message.images?.length ? {
@@ -11647,19 +11725,6 @@ export default function Page() {
                                                                                         }),
                                                                                         message.retrying ? '重新生成中…' : message.images?.length ? '重新生成图片' : '重新生成文本'
                                                                                     ]
-                                                                                }),
-                                                                                message.images?.length && availableGenerationModels.length && /*#__PURE__*/ _jsx(ModelPicker, {
-                                                                                    models: availableGenerationModels,
-                                                                                    value: "auto",
-                                                                                    capability: "generate",
-                                                                                    defaultProviderId: state.settings.defaultProviderId,
-                                                                                    defaultProviderName: defaultProvider?.name,
-                                                                                    defaultModelId: state.settings.defaultImageModelId,
-                                                                                    automaticHint: "仅重试本轮，不改变默认模型",
-                                                                                    triggerPrefix: "换模型",
-                                                                                    disabled: message.retrying || activeAgentBusy || agentMessageSelectionActive,
-                                                                                    onChange: (modelId)=>void retryAgentMessage(message, modelId),
-                                                                                    className: "message-image-model-picker"
                                                                                 }),
                                                                                 message.retrying && message.activity?.message ? /*#__PURE__*/ _jsx("span", {
                                                                                     className: "message-retry-activity",
@@ -12090,23 +12155,12 @@ export default function Page() {
                                                                      models: availableChatModels,
                                                                      value: activeAgentModelId,
                                                                      capability: "chat",
+                                                                     health: state.agentHealth || [],
                                                                      defaultProviderId: state.settings.defaultProviderId,
                                                                      defaultProviderName: defaultProvider?.name,
                                                                      defaultModelId: state.settings.agentModelId,
                                                                      onChange: setAgentModelId,
                                                                      className: "model-dropdown compact"
-                                                                 }),
-                                                                 agentImageModelSelectionVisible && /*#__PURE__*/ _jsx(ModelPicker, {
-                                                                     models: availableGenerationModels,
-                                                                     value: activeAgentImageModelId,
-                                                                     capability: "generate",
-                                                                     defaultProviderId: state.settings.defaultProviderId,
-                                                                     defaultProviderName: defaultProvider?.name,
-                                                                     defaultModelId: state.settings.defaultImageModelId,
-                                                                     automaticHint: "仅作用于本轮生图，不改变默认模型",
-                                                                     triggerPrefix: "生图",
-                                                                     onChange: setAgentImageModelId,
-                                                                     className: "model-dropdown compact agent-image-model-dropdown"
                                                                  }),
                                                                  /*#__PURE__*/ _jsxs("div", {
                                                                     className: "agent-web-toggle-wrap",
@@ -15136,13 +15190,10 @@ export default function Page() {
                                         onStateChanged: setState,
                                         onNotify: notify
                                     }),
-                                    (providerEditor || !state.providers.length) && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
+                                    providerModalOpen && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
                                         className: "provider-editor-backdrop",
                                         onMouseDown: (event)=>{
-                                            if (event.target === event.currentTarget && state.providers.length > 0) {
-                                                setProviderEditor(false);
-                                                setProviderEditId(null);
-                                            }
+                                            if (event.target === event.currentTarget) closeProviderEditor();
                                         },
                                         children: /*#__PURE__*/ _jsxs("form", {
                                         role: "dialog",
@@ -15169,13 +15220,10 @@ export default function Page() {
                                                             })
                                                         ]
                                                     }),
-                                                    state.providers.length > 0 && /*#__PURE__*/ _jsx("button", {
+                                                    /*#__PURE__*/ _jsx("button", {
                                                         type: "button",
                                                         className: "icon-button",
-                                                        onClick: ()=>{
-                                                            setProviderEditor(false);
-                                                            setProviderEditId(null);
-                                                        },
+                                                        onClick: closeProviderEditor,
                                                         children: /*#__PURE__*/ _jsx(Icon, {
                                                             name: "close",
                                                             size: 16
@@ -15644,6 +15692,26 @@ export default function Page() {
                                                     })
                                                 ]
                                             }, provider.id))
+                                    }) : !manageableProviders.length ? /*#__PURE__*/ _jsxs("div", {
+                                        className: "provider-search-empty surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "plus",
+                                                size: 22
+                                            }),
+                                            /*#__PURE__*/ _jsx("strong", {
+                                                children: "还没有添加接口服务商"
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "添加并测试连接后，即可读取它提供的模型。"
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "ghost-button",
+                                                onClick: openAddProvider,
+                                                children: "添加接口服务"
+                                            })
+                                        ]
                                     }) : /*#__PURE__*/ _jsxs("div", {
                                         className: "provider-search-empty surface",
                                         children: [

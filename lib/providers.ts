@@ -145,6 +145,22 @@ type ProviderFailure = Error & {
   providerPossiblyAccepted?: boolean;
 };
 
+/** Convert provider failures into a short message the Agent panel can act on. */
+export function describeProviderFailure(error: unknown) {
+  const failure = error as ProviderFailure | null;
+  const status = Number(failure?.providerStatus || failure?.status || 0);
+  if (failure?.providerFailureKind === 'timeout') {
+    return '当前模型服务响应超时。请稍后重试，或切换到其他对话模型。';
+  }
+  if (failure?.providerFailureKind === 'transport') {
+    return '当前模型服务暂时无法连接。请检查网络或切换到其他对话模型。';
+  }
+  if (failure?.providerFailureKind === 'http' && status >= 500) {
+    return `当前模型服务暂时不可用（HTTP ${status}）。请稍后重试，或切换到其他对话模型。`;
+  }
+  return failure?.message || '模型服务请求失败，请稍后重试或切换其他对话模型。';
+}
+
 function attachProviderResponseMeta(value: any, meta: ProviderResponseMeta) {
   if (!value || (typeof value !== 'object' && typeof value !== 'function')) return value;
   try { Object.defineProperty(value, providerResponseMeta, { value: meta, enumerable: false }); } catch { /* best effort */ }
@@ -898,7 +914,28 @@ function taskIdFrom(data: any) {
 }
 
 function taskStatusFrom(data: any) {
-  return String(data?.status || data?.state || data?.data?.status || data?.data?.state || data?.task?.status || data?.data?.task?.status || '').toLowerCase();
+  return String(data?.status || data?.state || data?.task_status || data?.data?.status || data?.data?.state || data?.data?.task_status || data?.task?.status || data?.data?.task?.status || '').toLowerCase();
+}
+
+function isModelScopeProvider(provider: Pick<RuntimeProvider, 'platform'>) {
+  return provider.platform === 'modelscope';
+}
+
+function modelScopeTaskEndpoint(provider: RuntimeProvider, taskId: string) {
+  const taskPath = `/v1/tasks/${encodeURIComponent(taskId)}`;
+  return videoProviderEndpoint(provider, taskPath, taskPath);
+}
+
+function modelScopeImageHeaders(provider: Pick<RuntimeProvider, 'platform'>): Record<string, string> {
+  return isModelScopeProvider(provider)
+    ? { 'X-ModelScope-Async-Mode': 'true' }
+    : {};
+}
+
+function modelScopeTaskHeaders(provider: Pick<RuntimeProvider, 'platform'>): Record<string, string> {
+  return isModelScopeProvider(provider)
+    ? { 'X-ModelScope-Task-Type': 'image_generation' }
+    : {};
 }
 
 function taskStatusEndpoint(provider: RuntimeProvider, taskId: string, initial: any) {
@@ -912,6 +949,7 @@ function taskStatusEndpoint(provider: RuntimeProvider, taskId: string, initial: 
     return providerEndpoint(provider, path, path);
   }
   if (provider.platform === '65535') return providerEndpoint(provider, `/v1/tasks/${encodeURIComponent(taskId)}`, `/v1/tasks/${encodeURIComponent(taskId)}`);
+  if (isModelScopeProvider(provider)) return modelScopeTaskEndpoint(provider, taskId);
   return '';
 }
 
@@ -929,7 +967,7 @@ async function waitForImageTask(provider: RuntimeProvider, initial: any, signal?
       const timer = setTimeout(resolve, 1800);
       signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
     });
-    const data = await fetchJson(statusUrl, { method: 'GET', headers: authHeaders(provider) }, 30000, signal);
+    const data = await fetchJson(statusUrl, { method: 'GET', headers: { ...authHeaders(provider), ...modelScopeTaskHeaders(provider) } }, 30000, signal);
     const images = extractImages(data);
     if (images.length) return normalizeImages(data);
     const status = taskStatusFrom(data);
@@ -988,10 +1026,11 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
   throw new Error('图片超分任务等待超时，请稍后到服务商控制台查看任务状态');
 }
 
-export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' }, signal?: AbortSignal): Promise<GeneratedImage[]> {
-  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, [], signal);
+export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque'; references?: string[] }, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  const references = (input.references || []).filter((reference) => typeof reference === 'string' && reference.trim()).map(normalizeReference).slice(0, 16);
+  if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
-  if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, [], signal);
+  if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
   const body: Record<string, unknown> = {
     model: rawModelId,
     prompt: input.prompt,
@@ -1004,9 +1043,14 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
   if (input.outputFormat) body.output_format = input.outputFormat;
   if (input.background) body.background = input.background;
   if (provider.type === 'google-gemini') body.response_format = 'b64_json';
+  if (references.length) {
+    if (isModelScopeProvider(provider)) body.image_url = references.length === 1 ? references[0] : references;
+    else if (is65535Provider(provider) || isApimartProvider(provider)) body.image_urls = references;
+    else body.images = references.map((image_url) => ({ image_url }));
+  }
   const endpoint = providerEndpoint(provider, provider.imageGenerationPath, '/images/generations');
   const request = (payload: Record<string, unknown>) => fetchJson(endpoint, {
-    method: 'POST', headers: { ...authHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    method: 'POST', headers: { ...authHeaders(provider), ...modelScopeImageHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }, IMAGE_REQUEST_TIMEOUT, signal);
   if (isApimartProvider(provider)) {
     const batches = await Promise.all(Array.from({ length: count }, async () => waitForApimartTask(provider, await request({ ...body, n: 1 }), signal)));
@@ -1107,12 +1151,37 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
   const sendInputFidelity = input.fidelity && shouldSendInputFidelity(provider, rawModelId);
   const jsonBody = buildImageEditRequestBody(provider, rawModelId, input, references, count, size);
 
+  // ModelScope's Qwen-Image-Edit is exposed as an asynchronous image
+  // generation task, not through the OpenAI-compatible /images/edits route.
+  // Keep the reference image in image_url for this provider and reuse the
+  // existing task polling/normalization path.
+  if (isModelScopeProvider(provider)) {
+    const data = await fetchJson(providerEndpoint(provider, provider.imageGenerationPath, '/images/generations'), {
+      method: 'POST',
+      headers: { ...authHeaders(provider), ...modelScopeImageHeaders(provider), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: rawModelId,
+        prompt: input.prompt,
+        image_url: references.length === 1 ? references[0] : references,
+        ...(size !== 'auto' ? { size } : {}),
+        ...(count > 1 ? { n: count } : {}),
+      }),
+    }, IMAGE_REQUEST_TIMEOUT, signal);
+    const images = extractImages(data);
+    if (images.length) return normalizeImages(data);
+    if (taskIdFrom(data)) return waitForImageTask(provider, data, signal);
+    return normalizeImages(data);
+  }
+
   // 新版 Images API 支持 JSON image_url/data URL；优先使用，兼容远程 URL 和多图。
   try {
     const data = await fetchJson(providerEndpoint(provider, provider.imageEditPath, '/images/edits'), {
-      method: 'POST', headers: { ...authHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody),
+      method: 'POST', headers: { ...authHeaders(provider), ...modelScopeImageHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody),
     }, IMAGE_REQUEST_TIMEOUT, signal);
     if (isApimartProvider(provider)) return waitForApimartTask(provider, data, signal);
+    const images = extractImages(data);
+    if (images.length) return normalizeImages(data);
+    if (taskIdFrom(data)) return waitForImageTask(provider, data, signal);
     return normalizeImages(data);
   } catch (jsonError) {
     if (signal?.aborted) throw signal.reason || jsonError;
@@ -1140,9 +1209,11 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
         form.append('mask', blob, 'mask.png');
       }
       const response = await fetch(providerEndpoint(provider, provider.imageEditPath, '/images/edits'), {
-        method: 'POST', headers: authHeaders(provider), body: form, cache: 'no-store', signal: combineSignals(signal, IMAGE_REQUEST_TIMEOUT),
+        method: 'POST', headers: { ...authHeaders(provider), ...modelScopeImageHeaders(provider) }, body: form, cache: 'no-store', signal: combineSignals(signal, IMAGE_REQUEST_TIMEOUT),
       });
       const data = await parseResponse(response);
+      const images = extractImages(data);
+      if (!images.length && taskIdFrom(data)) return waitForImageTask(provider, data, signal);
       return normalizeImages(data);
     } catch (multipartError) {
       const a = jsonError instanceof Error ? jsonError.message : 'JSON 编辑接口失败';
@@ -1368,6 +1439,33 @@ export async function responsesCompletion(provider: RuntimeProvider, rawModelId:
   }
 }
 
+async function fetchStreamingResponse(url: string, init: RequestInit, timeout: number, signal?: AbortSignal) {
+  // Keep the same cancellation contract as the direct stream path:
+  // signal: combineSignals(signal, 180000)
+  const method = String(init.method || 'GET').toUpperCase();
+  try {
+    const response = await fetch(url, {
+      ...init,
+      cache: 'no-store',
+      signal: combineSignals(signal || init.signal || undefined, timeout),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let data: any = {};
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+      throw providerResponseError(response.status, data, text, requestIdFrom(data, text, response.headers));
+    }
+    return response;
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason || error;
+    if (error instanceof Error && (error as ProviderFailure).providerResponse) throw error;
+    if (error instanceof Error && (error.name === 'TimeoutError' || /timed out/i.test(error.message))) {
+      throw providerTimeoutFailure(url, timeout, method);
+    }
+    throw connectionFailure(url, error, method);
+  }
+}
+
 export async function chatCompletionStream(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, signal?: AbortSignal) {
   if (isAgnesProvider(provider) && agnesTextProtocol(provider) !== 'chat-completions') {
     const data = await chatCompletion(provider, rawModelId, payload, signal);
@@ -1377,12 +1475,9 @@ export async function chatCompletionStream(provider: RuntimeProvider, rawModelId
   }
   if (isAgnesProvider(provider)) {
     const request = await agnesChatRequest(provider, rawModelId, payload, { stream: true });
-    return fetch(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' }, body: JSON.stringify(request.body), cache: 'no-store', signal: combineSignals(signal, 180000) }).then(async (response) => {
-      if (!response.ok) throw new Error(`Agnes 流式接口返回 HTTP ${response.status}`);
-      return response;
-    });
+    return fetchStreamingResponse(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' }, body: JSON.stringify(request.body) }, 180000, signal);
   }
-  const response = await fetch(providerEndpoint(provider, provider.chatPath, '/chat/completions'), {
+  return fetchStreamingResponse(providerEndpoint(provider, provider.chatPath, '/chat/completions'), {
     method: 'POST',
     headers: { ...authHeaders(provider), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' },
     body: JSON.stringify({
@@ -1391,15 +1486,5 @@ export async function chatCompletionStream(provider: RuntimeProvider, rawModelId
       stream: true,
       ...(payload.tools?.length ? { tools: payload.tools, tool_choice: payload.tool_choice || 'auto' } : {}),
     }),
-    cache: 'no-store',
-    signal: combineSignals(signal, 180000),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    let data: any = {};
-    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-    const detail = data?.error?.message || data?.error || data?.message || text || `HTTP ${response.status}`;
-    throw new Error(typeof detail === 'string' ? detail.slice(0, 900) : JSON.stringify(detail).slice(0, 900));
-  }
-  return response;
+  }, 180000, signal);
 }

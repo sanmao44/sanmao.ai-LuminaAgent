@@ -1,4 +1,5 @@
 import type { McpApprovalPolicy } from '@/lib/agent/approval';
+import type { AgentModelHealthRecord } from '@/lib/agent/model-health';
 
 export type ProviderType = 'openai-compatible' | 'google-gemini';
 export type ProviderPlatform = 'custom' | '65535' | 'apikl' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli' | 'agnes' | 'gitee';
@@ -180,6 +181,7 @@ export type AppSettings = {
 export type PublicState = {
   providers: ProviderConnection[];
   models: RegistryModel[];
+  agentHealth?: AgentModelHealthRecord[];
   settings: AppSettings;
   upscaleConnections: UpscaleConnection[];
   upscaleModels: UpscaleModel[];

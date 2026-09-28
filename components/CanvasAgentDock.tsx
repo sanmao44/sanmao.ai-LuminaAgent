@@ -53,6 +53,15 @@ export type CanvasAgentDockMessage = {
   content: string;
   model?: string;
   images?: AgentGeneratedImage[];
+  batchItems?: Array<{
+    batchId: string;
+    index: number;
+    total: number;
+    prompt: string;
+    status: "succeeded" | "failed";
+    error?: string;
+    imageCount?: number;
+  }>;
   skills?: Array<{ id: string; name: string }>;
   error?: string;
   /** 失败时存一份用户原话：重试直接用这句，@ 编号按当时的选区再解析一次。 */
@@ -433,8 +442,13 @@ function readSession(): CanvasAgentDockSession | null {
                   ...(image.modelId ? { modelId: String(image.modelId) } : {}),
                   ...(image.modelName ? { modelName: String(image.modelName) } : {}),
                   ...(image.providerName ? { providerName: String(image.providerName) } : {}),
+                  ...(image.batchId ? { batchId: String(image.batchId) } : {}),
+                  ...(Number.isFinite(Number(image.batchIndex)) ? { batchIndex: Number(image.batchIndex) } : {}),
+                  ...(Number.isFinite(Number(image.batchTotal)) ? { batchTotal: Number(image.batchTotal) } : {}),
+                  ...(image.batchPrompt ? { batchPrompt: String(image.batchPrompt) } : {}),
                 })) }
               : {}),
+            ...(Array.isArray(message.batchItems) && message.batchItems.length ? { batchItems: message.batchItems } : {}),
             ...(Array.isArray(message.skills) && message.skills.length
               ? { skills: message.skills.map((skill) => ({ id: String(skill.id || ""), name: String(skill.name || "") })) }
               : {}),
@@ -798,7 +812,7 @@ export default function CanvasAgentDock({
   }, []);
 
   const send = useCallback(
-    async (raw?: string, options: { fromMessageId?: string } = {}) => {
+    async (raw?: string, options: { fromMessageId?: string; batchPrompts?: string[] } = {}) => {
       const text = String(raw ?? input).trim();
       if (!text) {
         notify("先输入要问 Agent 的内容。", "error");
@@ -817,6 +831,9 @@ export default function CanvasAgentDock({
       stickToBottomRef.current = true;
       // 输入框里显示 @1，模型收到的应该是它指向的那张图，否则编号对不上。
       const mentionText = resolveReferenceMentions(text, orderedReferences);
+      const requestText = options.batchPrompts?.length
+        ? `${mentionText}\n\n请只生成以下失败项，每项生成一张，不要重新生成其他项目：\n${options.batchPrompts.map((prompt, index) => `${index + 1}. ${prompt}`).join("\n")}`
+        : mentionText;
       const mentionedNodeIds = nodeIdsForReferenceMentions(text, orderedReferences);
       /* 重新问某一轮（重跑或改过之后再问）时先把它之后的内容丢掉，否则会留下两份回答。 */
       const fromMessageId = options.fromMessageId ?? editingMessageId ?? undefined;
@@ -927,7 +944,7 @@ export default function CanvasAgentDock({
         role: message.role,
         content:
           index === history.length - 1
-            ? composeCanvasAgentDockMessage(resolveReferenceMentions(message.content, orderedReferences), contextBlock)
+            ? composeCanvasAgentDockMessage(index === history.length - 1 ? requestText : message.content, contextBlock)
             : message.content,
       }));
       try {
@@ -958,15 +975,20 @@ export default function CanvasAgentDock({
           },
         );
         const content = String(response.message || "").trim() || "（Agent 没有返回文本内容）";
-        const images = canvasAgentDockAcceptsImages(response.deliverable)
-          ? (response.images || []).map((image) => ({
+        // 图片是服务端工具执行后的事实结果，不能再被对话模型返回的
+        // deliverable 文案覆盖；部分模型会在工具成功后仍把交付物标成 TEXT。
+        const images = (response.images || []).map((image) => ({
               url: String(image.url || ""),
               ...(image.revisedPrompt ? { revisedPrompt: String(image.revisedPrompt) } : {}),
               ...(image.modelId ? { modelId: String(image.modelId) } : {}),
               ...(image.modelName ? { modelName: String(image.modelName) } : {}),
               ...(image.providerName ? { providerName: String(image.providerName) } : {}),
+              ...(image.batchId ? { batchId: String(image.batchId) } : {}),
+              ...(Number.isFinite(Number(image.batchIndex)) ? { batchIndex: Number(image.batchIndex) } : {}),
+              ...(Number.isFinite(Number(image.batchTotal)) ? { batchTotal: Number(image.batchTotal) } : {}),
+              ...(image.batchPrompt ? { batchPrompt: String(image.batchPrompt) } : {}),
             }))
-          : [];
+          .filter((image) => Boolean(image.url));
         const plan = buildCanvasAgentDockPlan(text, {
           imageCount: images.length,
           targetNodeIds: orderedSelectedNodeIds,
@@ -998,6 +1020,7 @@ export default function CanvasAgentDock({
             content,
             model: response.model,
             ...(images.length ? { images } : {}),
+            ...(Array.isArray(response.batchItems) && response.batchItems.length ? { batchItems: response.batchItems } : {}),
             ...(response.skills?.length
               ? { skills: response.skills.map((skill) => ({ id: String(skill.id || ""), name: String(skill.name || "") })) }
               : {}),
@@ -1067,6 +1090,15 @@ export default function CanvasAgentDock({
     },
     [autoApply, busy, canvasDocument, closeSkillMenu, context, contextBlock, editingMessageId, input, messages, model, notify, onApplyCanvasPatch, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, selectedTotal, webMode],
   );
+
+  const retryFailedBatchItems = useCallback((message: CanvasAgentDockMessage) => {
+    const failed = (message.batchItems || []).filter((item) => item.status === "failed" && item.prompt.trim());
+    if (!failed.length || busy) return;
+    void send("重试批量生图失败项", {
+      fromMessageId: message.id,
+      batchPrompts: failed.map((item) => item.prompt),
+    });
+  }, [busy, send]);
 
   const applyMessagePlan = useCallback((message: CanvasAgentDockMessage) => {
     if (!message.plan || message.plan.applied || message.plan.dismissed) return;
@@ -1567,6 +1599,41 @@ export default function CanvasAgentDock({
             ) : null}
             {message.approvalResult ? <div className="message-approval-result">{message.approvalResult}</div> : null}
             {message.images?.length ? (
+              message.images.some((image) => image.batchId) || message.batchItems?.length ? (
+                <div className="canvas-agent-dock-batch-summary">
+                  <div className="canvas-agent-dock-batch-head">
+                    <strong>
+                      批量生成 · {message.batchItems?.[0]?.total || message.images.find((image) => image.batchTotal)?.batchTotal || message.images.length} 项
+                    </strong>
+                    <span>
+                      {message.batchItems
+                        ? `${message.batchItems.filter((item) => item.status === "succeeded").length} 成功 · ${message.batchItems.filter((item) => item.status === "failed").length} 失败`
+                        : `${message.images.length} 项已返回`}
+                    </span>
+                  </div>
+                  <div className="canvas-agent-dock-batch-items">
+                    {(message.batchItems?.length
+                      ? message.batchItems.slice().sort((left, right) => left.index - right.index).map((item) => (
+                        <div className="canvas-agent-dock-batch-item" key={`${message.id}-batch-${item.batchId}-${item.index}`}>
+                          <b>{item.index + 1}</b>
+                          <span title={item.error || item.prompt}>{item.prompt}</span>
+                          <em className={item.status === "failed" ? "is-failed" : ""}>
+                            {item.status === "failed" ? "失败" : "已完成"}
+                          </em>
+                        </div>
+                      ))
+                      : message.images.slice().sort((left, right) => (left.batchIndex ?? 0) - (right.batchIndex ?? 0)).map((image, itemIndex) => (
+                        <div className="canvas-agent-dock-batch-item" key={`${message.id}-batch-${image.batchId}-${image.batchIndex ?? itemIndex}`}>
+                          <b>{(image.batchIndex ?? itemIndex) + 1}</b>
+                          <span title={image.batchPrompt || undefined}>{image.batchPrompt || "已生成图片"}</span>
+                          <em>已完成</em>
+                        </div>
+                      )))}
+                  </div>
+                </div>
+              ) : null
+            ) : null}
+            {message.images?.length ? (
               <div className="canvas-agent-dock-media">
                 {message.images.map((image, index) => (
                   <button
@@ -1584,13 +1651,24 @@ export default function CanvasAgentDock({
                           modelId: image.modelId || "",
                           modelName: image.modelName || "",
                           providerName: image.providerName || "",
+                          batchId: image.batchId || "",
+                          batchIndex: image.batchIndex ?? index,
+                          batchTotal: image.batchTotal || message.images?.length || 0,
+                          batchPrompt: image.batchPrompt || "",
                         }),
                       );
                     }}
                     onClick={() => onPreviewImages(message.images || [], index)}
-                    title="点开看大图：同一轮返回的其它图可以直接对比；也可以把这张图拖到画布上，落在你松开的位置"
+                    title={image.batchPrompt
+                      ? `第 ${(image.batchIndex ?? index) + 1} 项：${image.batchPrompt}`
+                      : "点开看大图；也可以把这张图拖到画布上"}
                   >
                     <img src={image.url} alt={image.revisedPrompt || "Agent 图片"} />
+                    {image.batchId ? (
+                      <span className="canvas-agent-dock-media-index">
+                        {(image.batchIndex ?? index) + 1}
+                      </span>
+                    ) : null}
                   </button>
                 ))}
               </div>
@@ -1687,6 +1765,16 @@ export default function CanvasAgentDock({
                     加入画布
                   </button>
                 )
+              ) : null}
+              {message.batchItems?.some((item) => item.status === "failed") ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => retryFailedBatchItems(message)}
+                  title="只重新生成失败项，不重复生成已成功的图片"
+                >
+                  重试失败项
+                </button>
               ) : null}
             </div>
           </div>

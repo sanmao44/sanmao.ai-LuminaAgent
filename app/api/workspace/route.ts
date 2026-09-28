@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { ensureMediaLibrary } from '@/lib/media-library';
@@ -13,6 +13,7 @@ export const runtime = 'nodejs';
 
 const dataDir = resolveLocalDataDir();
 const workspacePath = path.join(dataDir, 'workspace.json');
+const workspaceMetaPath = path.join(dataDir, 'workspace-meta.json');
 const maxWorkspaceBytes = 80 * 1024 * 1024;
 const workspaceTempSweepIntervalMs = 60 * 1000;
 let lastWorkspaceTempSweepAt = 0;
@@ -79,6 +80,39 @@ async function readWorkspace() {
   }
 }
 
+async function readWorkspaceMetadata() {
+  try {
+    const raw = await readFile(workspaceMetaPath, 'utf8');
+    const value = JSON.parse(raw) as { updatedAt?: unknown; revision?: unknown };
+    return {
+      updatedAt: Number(value.updatedAt) || 0,
+      revision: Number(value.revision) || 0,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+  }
+
+  // Older workspaces do not have the sidecar yet. Read only the beginning of
+  // the pretty-printed snapshot, where updatedAt is written, instead of
+  // parsing the entire multi-megabyte history file on every metadata poll.
+  try {
+    const handle = await open(workspacePath, 'r');
+    const buffer = Buffer.alloc(4096);
+    const result = await handle.read(buffer, 0, buffer.length, 0);
+    await handle.close();
+    const raw = buffer.subarray(0, result.bytesRead).toString('utf8');
+    const updatedAt = raw.match(/"updatedAt"\s*:\s*(\d+)/)?.[1];
+    if (!updatedAt) return null;
+    return {
+      updatedAt: Number(updatedAt) || 0,
+      revision: 0,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 async function writeAtomic(content: string) {
   await mkdir(dataDir, { recursive: true });
   const temporary = `${workspacePath}.${Date.now()}.${process.pid}.tmp`;
@@ -86,6 +120,14 @@ async function writeAtomic(content: string) {
     await writeFile(temporary, content, { encoding: 'utf8', flush: true });
     parseWorkspace(await readFile(temporary, 'utf8'));
     await renameWorkspaceSnapshot(temporary);
+    const updatedAt = content.match(/"updatedAt"\s*:\s*(\d+)/)?.[1];
+    const revision = content.match(/"revision"\s*:\s*(\d+)/)?.[1];
+    if (updatedAt) {
+      await writeFile(workspaceMetaPath, JSON.stringify({
+        updatedAt: Number(updatedAt) || 0,
+        revision: Number(revision) || 0,
+      }), { encoding: 'utf8', flush: true }).catch(() => undefined);
+    }
   } catch (error) {
     await unlink(temporary).catch(() => undefined);
     throw error;
@@ -110,6 +152,19 @@ async function renameWorkspaceSnapshot(temporary: string) {
 
 export async function GET(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录后访问工作区。' }, { status: 401 });
+  if (new URL(request.url).searchParams.get('meta') === '1') {
+    try {
+      const metadata = await readWorkspaceMetadata();
+      return Response.json({
+        ok: true,
+        workspace: null,
+        updatedAt: metadata?.updatedAt || null,
+        revision: metadata?.revision || 0,
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    } catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : '读取工作区元数据失败' }, { status: 500 });
+    }
+  }
   // 客户端启动时会读工作区：借这个时机把历史目录里的素材并入固定媒体库。
   try {
     await ensureDataFoundation();

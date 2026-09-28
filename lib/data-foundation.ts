@@ -61,7 +61,8 @@ export async function ensureDataFoundation() {
   if (!foundationPromise) foundationPromise = initializeDataFoundation();
   try {
     return await foundationPromise;
-  } finally {
+  } catch (error) {
     foundationPromise = null;
+    throw error;
   }
 }

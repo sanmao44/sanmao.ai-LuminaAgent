@@ -56,8 +56,9 @@ test('server cancellation reaches model, search, image, stream, and subprocess t
   assert.ok(route.includes("request.signal.addEventListener('abort', abortFromClient"));
   assert.ok(route.includes('runNativeWebSearch(agentRuntime.provider, agentRuntime.model, llmMessages, plannedNativeQuery, requestController.signal)'));
   assert.ok(route.includes('searchWeb(query, requestController.signal)'));
-  assert.ok(route.includes('chatCompletion(agentRuntime.provider, agentRuntime.model.rawId'));
-  assert.ok(route.includes('chatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId'));
+  assert.ok(route.includes('chatCompletion(runtime.provider, runtime.model.rawId, payload, callSignal)'));
+  assert.ok(route.includes('chatCompletionStream(runtime.provider, runtime.model.rawId, payload, callSignal)'));
+  assert.ok(route.includes('chatCompletion(selectedRuntime.provider, selectedRuntime.model.rawId, payload, callSignal)'));
   assert.ok(route.includes('generateImage(candidate.provider, candidate.model.rawId'));
   assert.ok(route.includes('editImage(candidate.provider, candidate.model.rawId'));
   assert.ok(route.includes('status: cancelled ? 499 : 502'));
@@ -87,4 +88,10 @@ test('a running reply shows motion and a live clock so a long wait never looks f
   assert.ok(styles.includes('.message-pending{display:flex'));
   assert.ok(styles.includes('.message-pending>.mini-loader{'));
   assert.ok(styles.includes('.message-pending-clock{'));
+});
+
+test('restored pending messages are converted to interrupted history', () => {
+  assert.match(page, /if \(message\.pending\) \{/);
+  assert.match(page, /页面刷新或重启后中断/);
+  assert.match(page, /const \{ pending: _pending, activity: _activity, pendingSince: _pendingSince, \.\.\.rest \} = message/);
 });

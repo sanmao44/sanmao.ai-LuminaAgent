@@ -23,6 +23,30 @@ const routingModule = { exports: {} };
 new Function('require', 'module', 'exports', routingCompiled)((id) => id === '@/lib/agent-intent' ? modules.intent.exports : modules.web.exports, routingModule, routingModule.exports);
 const routing = routingModule.exports;
 
+test('discovery resolution preserves policy while activating selected desktop tools', () => {
+  for (const input of ['打开个性化', '打开网络设置', '打开设备管理器']) {
+    const plan = routing.classifyAgentRequest(input);
+    assert.equal(routing.resolveAgentToolPlan(plan, ['windows-test']).useMcp, true, input);
+    assert.equal(routing.resolveAgentToolPlan(plan, []).useMcp, false, input);
+    assert.equal(plan.tools.useMcp, false, 'resolution must not mutate the original plan');
+  }
+  for (const input of ['推送今日AI新闻', '今天有什么新闻？', '怎么打开网络设置？', '你能打开辅助功能吗？']) {
+    const plan = routing.classifyAgentRequest(input);
+    assert.equal(routing.resolveAgentToolPlan(plan, ['windows-test']).useMcp, false, input);
+  }
+});
+
+test('capability discovery is not limited to a list of application names', () => {
+  for (const input of ['打开设备管理器', '打开辅助功能', '帮我启动陌生应用', '把音量调低', '查询仓库库存', '读取剪贴板']) {
+    const decision = routing.classifyAgentRequest(input);
+    assert.equal(routing.needsMcpCapabilityDiscovery(decision.intent.mode, input, false), true, input);
+    assert.equal(routing.needsMcpCapabilityDiscovery(decision.intent.mode, input, true), false, input);
+  }
+  for (const input of ['怎么打开网络设置？', '你能打开辅助功能吗？', '解释 Windows 系统设置']) {
+    assert.equal(routing.needsMcpCapabilityDiscovery(routing.classifyAgentRequest(input).intent.mode, input, false), false, input);
+  }
+});
+
 test('chooses bounded artifact routes before generic text or visual nouns', () => {
   assert.equal(routing.classifyAgentRequest('做一份项目周报').route, 'word');
   assert.equal(routing.classifyAgentRequest('生成一个销售数据 Excel 表格').route, 'excel');
@@ -95,6 +119,32 @@ test('gates MCP, skills and native web by the bounded route plan', () => {
   assert.equal(skill.tools.useSkills, true);
 });
 
+test('routes current-information questions to native web without MCP', () => {
+  for (const input of ['今天 AI 界有什么新闻？', '推送今日 AI 界新闻', '推送今日娱乐圈新闻']) {
+    const decision = routing.classifyAgentRequest(input, {}, { webMode: 'auto' });
+    assert.equal(decision.route, 'web', input);
+    assert.equal(decision.tools.useNativeWeb, true, input);
+    assert.equal(decision.tools.useMcp, false, input);
+    assert.equal(decision.tools.useBrowserMcp, false, input);
+    assert.deepEqual(decision.policy, { lane: 'search', discoverMcp: false, allowMcp: false });
+    assert.equal(routing.routeNeedsSemanticReview(decision), false);
+  }
+});
+
+test('search policy respects offline settings and never promotes unknown requests to MCP', () => {
+  for (const input of ['今天 AI 界有什么新闻？', '推送今日娱乐圈新闻']) {
+    const decision = routing.classifyAgentRequest(input, {}, { webMode: 'off' });
+    assert.equal(decision.web.shouldSearch, false);
+    assert.equal(decision.policy.allowMcp, false);
+    assert.equal(decision.policy.discoverMcp, false);
+  }
+  const offline = routing.classifyAgentRequest('不要联网，解释今天这段新闻', {}, { webMode: 'always' });
+  assert.equal(offline.web.shouldSearch, false);
+  const action = routing.classifyAgentRequest('在浏览器里搜索商品并点击第一个结果');
+  assert.equal(action.policy.lane, 'action');
+  assert.equal(action.policy.allowMcp, true);
+});
+
 test('does not activate any executable route for capability questions', () => {
   for (const input of ['可以生图吗？', '能生成 PPT 吗？', '支持联网搜索吗？', 'MCP 能做什么？']) {
     const decision = routing.classifyAgentRequest(input, {}, { webMode: 'always' });
@@ -122,4 +172,13 @@ test('does not force semantic review when a route is unambiguous', () => {
   const decision = routing.classifyAgentRequest('生成一个 PPT 介绍方案');
   assert.equal(routing.routeNeedsSemanticReview(decision), false);
   assert.deepEqual(routing.selectAgentContextMessages([{ role: 'user', content: 'old' }], 'none'), []);
+});
+
+test('answers pure greetings without entering the model/tool pipeline', () => {
+  for (const input of ['你好', '您好！', 'hello', '在吗？']) {
+    assert.equal(routing.isInstantAgentGreeting(input), true, input);
+  }
+  for (const input of ['你好，帮我生图', '你好，打开网页', '好的，继续刚才的任务', '能生图吗？']) {
+    assert.equal(routing.isInstantAgentGreeting(input), false, input);
+  }
 });

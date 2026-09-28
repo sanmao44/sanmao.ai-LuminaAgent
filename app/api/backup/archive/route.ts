@@ -19,7 +19,13 @@ const providerConfigDir = resolveProviderConfigDir();
 const statePath = path.join(providerConfigDir, 'state.json');
 const keyPath = path.join(providerConfigDir, 'master.key');
 const maxClientBytes = 80 * 1024 * 1024;
-const maxArchiveBytes = 2 * 1024 * 1024 * 1024;
+/**
+ * 恢复时整个归档要进内存：一次解密、一次解压，峰值约为归档体积的 3 倍。
+ * 上限按 4GiB 设定——素材是逐日增长的，2GiB 会让"导出成功却恢复不了"变成
+ * 静默陷阱（实测素材打包后已到 2.07GiB）。再大就必须把恢复改成流式。
+ */
+const maxArchiveBytes = 4 * 1024 * 1024 * 1024;
+const maxArchiveLabel = `${maxArchiveBytes / (1024 * 1024 * 1024)}GB`;
 const workspacePath = path.join(dataDir, 'workspace.json');
 const DURABLE_DATA_FILES = ['video-tasks.json', 'upscale-tasks.json', 'clone-jobs.json'] as const;
 
@@ -364,12 +370,12 @@ export async function PUT(request: Request) {
     releaseRuntimeRequest = await beginRuntimeRequest('backup-restore');
     const backupPassword = request.headers.get('x-sanmao-backup-password') || '';
     const contentLength = Number(request.headers.get('content-length') || 0);
-    if (contentLength > maxArchiveBytes) throw new Error('备份归档超过 2GB，无法恢复');
+    if (contentLength > maxArchiveBytes) throw new Error(`备份归档超过 ${maxArchiveLabel}，无法恢复`);
     const uploaded = Buffer.from(await request.arrayBuffer());
-    if (uploaded.byteLength > maxArchiveBytes) throw new Error('备份归档超过 2GB，无法恢复');
+    if (uploaded.byteLength > maxArchiveBytes) throw new Error(`备份归档超过 ${maxArchiveLabel}，无法恢复`);
     const encrypted = isEncryptedBackup(uploaded);
     const archive = encrypted ? decryptBackupPayload(uploaded, backupPassword) : uploaded;
-    if (archive.byteLength > maxArchiveBytes) throw new Error('备份归档超过 2GB，无法恢复');
+    if (archive.byteLength > maxArchiveBytes) throw new Error(`备份归档超过 ${maxArchiveLabel}，无法恢复`);
     await createLocalSnapshot('before-restore');
     const result = await restoreArchive(archive);
     return Response.json({ ok: true, legacyUnencrypted: !encrypted, ...result });

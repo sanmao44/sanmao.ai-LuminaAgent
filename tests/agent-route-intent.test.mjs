@@ -14,8 +14,10 @@ const realSkills = requireTs('./skills');
 
 function harness(options = {}) {
   const calls = [];
+  const discoveryCalls = [];
   const manageCalls = [];
   const images = [];
+  const imageRuntimeRequests = [];
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: [], kind: 'chat' };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
@@ -35,7 +37,9 @@ function harness(options = {}) {
     },
     '@/lib/store': {
       getRuntimeModel: async (_id, kind) => kind === 'image' ? { provider, model: imageModel } : runtime,
-      getRuntimeImageGenerationModel: async () => ({ provider, model: imageModel }),
+      getRuntimeImageGenerationModel: async (id) => { imageRuntimeRequests.push({ capability: 'generate', id }); return { provider, model: imageModel }; },
+      getRuntimeImageModelForCapability: async (_id, capability) => capability === 'edit' ? { provider, model: { ...imageModel, capabilities: ['edit'] } } : { provider, model: imageModel },
+      getRuntimeImageModelCandidates: async () => [{ provider, model: imageModel }],
       getPublicState: async () => ({ settings: {}, models: [imageModel], providers: [provider] }),
     },
     '@/lib/auth': { isTrustedAppRequest: () => true },
@@ -46,8 +50,9 @@ function harness(options = {}) {
     '@/lib/reference-images': { referenceRecordsForLog: () => [] },
     '@/lib/web-search': { planSearch: () => ({ intent: { entities: [] }, queries: [] }) },
     '@/lib/native-web-search': { nativeSearchIsEnabled: () => false },
-    '@/lib/mcp/store': { listMcpServers: () => [] },
-    '@/lib/mcp/tools': { mcpServersForTurn: () => [], loadMcpToolRuntime: async () => ({ servers: [], tools: [] }), lazyMcpGroupKeywords: () => ({}) },
+    '@/lib/mcp/store': { listMcpServers: () => options.mcpServers || [] },
+    '@/lib/mcp/discovery': { discoverMcpForRequest: async () => { discoveryCalls.push(true); return { serverIds: (options.mcpServers || []).map((server) => server.id), unavailable: [] }; } },
+    '@/lib/mcp/tools': { mcpServersForTurn: (servers) => servers, loadMcpToolRuntime: async () => ({ servers: options.mcpServers || [], tools: options.mcpTools || [] }), lazyMcpGroupKeywords: () => ({}) },
     '@/lib/mcp/client': {},
     '@/lib/mcp/audit': {},
     '@/lib/mcp/filesystem-policy': {},
@@ -71,7 +76,7 @@ function harness(options = {}) {
   const module = { exports: {} };
   new Function('require', 'module', 'exports', compiled)((id) => mocks[id] || requireTs(id === '@/lib/tools' ? '@/lib/tools/index' : id), module, module.exports);
   return {
-    calls, manageCalls, images,
+    calls, discoveryCalls, manageCalls, images, imageRuntimeRequests,
     async post(messages, extra = {}) {
       const response = await module.exports.POST(new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -83,6 +88,35 @@ function harness(options = {}) {
     },
   };
 }
+
+test('普通问答绕过语义规划和 MCP 能力发现', async () => {
+  const agent = harness({
+    mcpServers: [{ id: 'windows-test', name: 'windows-mcp', enabled: true, allowWrite: true }],
+  });
+  const data = await agent.post([{ role: 'user', content: '你可以做什么？' }]);
+  assert.equal(agent.discoveryCalls.length, 0);
+  assert.equal(agent.calls.length, 1);
+  assert.equal(data.message, '已经完成。');
+  assert.ok(agent.calls.every((call) => !String(call.messages?.[0]?.content || '').includes('只判断当前用户')));
+});
+
+test('discovered desktop tools reach the model instead of the compact no-tools prompt', async () => {
+  for (const content of ['打开个性化', '打开网络设置', '打开设备管理器']) {
+    const agent = harness({
+      mcpServers: [{ id: 'windows-test', name: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true }],
+      mcpTools: [{
+        id: 'mcp:windows-test:App', name: 'windows-test__App', source: 'mcp',
+        description: 'Open an application', schema: { type: 'object', properties: {} },
+        tags: ['mcp'], risk: 'dangerous', permissions: ['process'], gating: () => true,
+        mcp: { serverId: 'windows-test', serverName: 'windows-mcp', toolName: 'App', readOnly: false },
+      }],
+      reply: () => ({ content: '测试仅检查工具下发，不执行系统操作。' }),
+    });
+    await agent.post([{ role: 'user', content }]);
+    assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'windows-test__App')), content);
+    assert.ok(agent.calls.every((call) => !call.messages[0].content.includes('当前请求不需要联网、图片、文件、浏览器、MCP')), content);
+  }
+});
 
 test('smart variant planning uses the isolated JSON-only route without tools', async () => {
   const agent = harness({ reply: () => ({ content: '{"categories":[],"variants":[]}' }) });
@@ -115,10 +149,31 @@ test('bare image command uses this chat subject, ratio and actual reference desp
   const agent = harness();
   const data = await agent.post([...history, { role: 'user', content: '出图', references: [{ id: 'ref', kind: 'image', name: '当前对话图片', url: 'data:image/png;base64,dGVzdA==' }] }]);
   assert.equal(agent.images.length, 1);
-  assert.equal(agent.images[0].mode, 'edit');
+  assert.equal(agent.images[0].mode, 'generate');
+  assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
   assert.match(agent.images[0].prompt, /鲁迅/);
   assert.equal(agent.images[0].aspectRatio, '9:16');
   assert.equal(data.images.length, 1);
+});
+
+test('batch generation with a reference uses generate mode and shares the reference', async () => {
+  const agent = harness({ reply: (payload) => payload.tools
+    ? { content: '<tool_call>{"name":"image_edit","arguments":{"prompt":"模型错误的编辑调用"}}</tool_call>' }
+    : { content: '套图已完成。' } });
+  const data = await agent.post([
+    { role: 'user', content: '商品详情图提示词：\n1. 正面白底展示，产品居中\n2. 侧面场景展示，突出材质', references: [
+      { id: 'product', kind: 'image', name: '商品参考图', url: 'data:image/png;base64,dGVzdA==' },
+      { id: 'prompts', kind: 'text', name: 'Agent 文本提示词', text: '1. 正面白底展示，产品居中\n2. 侧面场景展示，突出材质' },
+    ] },
+    { role: 'user', content: '套图', references: [
+      { id: 'product', kind: 'image', name: '商品参考图', url: 'data:image/png;base64,dGVzdA==' },
+      { id: 'prompts', kind: 'text', name: 'Agent 文本提示词', text: '1. 正面白底展示，产品居中\n2. 侧面场景展示，突出材质' },
+    ] },
+  ]);
+  assert.equal(agent.images.length, 2);
+  assert.ok(agent.images.every((image) => image.mode === 'generate'));
+  assert.ok(agent.images.every((image) => image.references?.[0] === 'data:image/png;base64,dGVzdA=='));
+  assert.equal(data.images.length, 2);
 });
 
 test('valid inline tool calls are executed once with their original prompt', async () => {
@@ -128,6 +183,41 @@ test('valid inline tool calls are executed once with their original prompt', asy
   assert.equal(agent.images[0].prompt, '鲁迅在书房评论寓意图');
   assert.equal(data.images.length, 1);
   assert.doesNotMatch(data.message, /tool_call/);
+});
+
+test('language model cannot override the system default image model through tool arguments', async () => {
+  const agent = harness({ reply: (payload) => payload.tools
+    ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"系统默认模型测试","modelId":"language-model-picked"}}</tool_call>' }
+    : { content: '图片已完成。' } });
+  const data = await agent.post([{ role: 'user', content: '生成一张系统默认模型测试图' }]);
+  assert.equal(agent.images.length, 1);
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.images[0].prompt, '系统默认模型测试');
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'auto' }]);
+});
+
+test('legacy client image model overrides are ignored by Agent generation', async () => {
+  const agent = harness({ reply: (payload) => payload.tools
+    ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"客户端旧参数测试","modelId":"stale-client-model"}}</tool_call>' }
+    : { content: '图片已完成。' } });
+  const data = await agent.post([{ role: 'user', content: '生成一张客户端旧参数测试图' }], { imageModelId: 'stale-client-model' });
+  assert.equal(data.images.length, 1);
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'auto' }]);
+});
+
+test('承接上一轮编号生图方案时直接批量执行，不只回复生成计划', async () => {
+  const agent = harness({ reply: () => ({ content: '开始生成图' }) });
+  const data = await agent.post([
+    { role: 'assistant', content: '我会一次批量生成 3 张：\n\n1. 高性能电动 SUV 在城市夜景中行驶，商业广告摄影\n2. SUV 前脸细节特写，冷光勾勒车身线条\n3. SUV 内部座舱展示，科技感与舒适氛围' },
+    { role: 'user', content: '开始生成图' },
+  ]);
+  assert.equal(agent.images.length, 3);
+  assert.deepEqual(agent.images.map((image) => image.prompt), [
+    '高性能电动 SUV 在城市夜景中行驶，商业广告摄影',
+    'SUV 前脸细节特写，冷光勾勒车身线条',
+    'SUV 内部座舱展示，科技感与舒适氛围',
+  ]);
+  assert.equal(data.images.length, 3);
 });
 
 test('empty provider output never returns a successful-looking image caption', async () => {

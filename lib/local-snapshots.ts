@@ -1,8 +1,7 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
-import { createBackupArchive, extractBackupArchive, type BackupArchiveEntry } from './backup-archive';
+import { createBackupArchive, extractBackupArchive, sha256, type BackupArchiveEntry } from './backup-archive';
 import { decryptBackupPayload, encryptBackupPayload } from './backup-crypto';
 import { getDefaultStoragePath, getStorageRoots } from './image-storage';
 import { getDefaultAudioStoragePath, getAudioStorageRoots } from './audio-storage';
@@ -18,6 +17,9 @@ const workspacePath = path.join(dataDir, 'workspace.json');
 const keyPath = path.join(providerConfigDir, 'master.key');
 const SNAPSHOT_FORMAT = 'sanmao-ai-auto-snapshot';
 const KEEP_SNAPSHOTS = 7;
+/** 快照失败后的退避时长：心跳每 2 秒触发一次，不能失败一次就重试一次。 */
+const SNAPSHOT_RETRY_BACKOFF_MS = 30 * 60 * 1000;
+let snapshotRetryAfter = 0;
 /**
  * 快照会先把媒体读进内存再加密，视频动辄数百 MB，必须限流：
  * 视频/音频按类别限额（历史上丢的正是视频），超过预算的部分只记跳过数量；
@@ -73,7 +75,6 @@ async function collectSnapshotMedia(
 }
 let snapshotInFlight: Promise<{ path: string; createdAt: string; bytes: number; imageCount: number; reason: string }> | null = null;
 
-function hash(data: Buffer) { return createHash('sha256').update(data).digest('hex'); }
 function jsonBuffer(value: unknown) { return Buffer.from(JSON.stringify(value, null, 2), 'utf8'); }
 
 async function listFiles(root: string): Promise<string[]> {
@@ -121,7 +122,7 @@ async function createLocalSnapshotInternal(reason: string) {
     reason,
     createdAt: new Date().toISOString(),
     media,
-    files: entries.map((entry) => ({ name: entry.name, bytes: entry.data.byteLength, sha256: hash(entry.data) })),
+    files: entries.map((entry) => ({ name: entry.name, bytes: entry.data.byteLength, sha256: sha256(entry.data) })),
   };
   const archive = createBackupArchive([{ name: 'manifest.json', data: jsonBuffer(manifest) }, ...entries]);
   const encrypted = encryptBackupPayload(archive, await snapshotPassword());
@@ -152,7 +153,20 @@ export async function ensureLocalSnapshot() {
   const snapshots = await listLocalSnapshots();
   const latest = snapshots[0];
   if (latest && Date.now() - new Date(latest.createdAt).getTime() < 24 * 60 * 60 * 1000) return latest;
-  return createLocalSnapshot('scheduled');
+  if (Date.now() < snapshotRetryAfter) return latest ?? null;
+  try {
+    const created = await createLocalSnapshot('scheduled');
+    snapshotRetryAfter = 0;
+    return created;
+  } catch (error) {
+    // 心跳每 2 秒就会走到这里。失败后必须退避，否则每个心跳都要重新打包几 GB
+    // 素材，把 CPU、内存和事件循环全部吃满，静态资源（服务商 logo 等）随之超时，
+    // 界面看起来就是"所有 logo 都不见了"。同时不要把异常抛回心跳，避免前端
+    // 认为会话失效而停止上报。
+    snapshotRetryAfter = Date.now() + SNAPSHOT_RETRY_BACKOFF_MS;
+    console.error('[Snapshot] 自动快照失败，将稍后重试：', error);
+    return latest ?? null;
+  }
 }
 
 export async function listLocalSnapshots() {
@@ -179,7 +193,7 @@ function validateEntries(entries: BackupArchiveEntry[]) {
   for (const entry of entries) {
     if (entry.name === 'manifest.json') continue;
     const expectedEntry = expected.get(entry.name);
-    if (!expectedEntry || expectedEntry.bytes !== entry.data.byteLength || expectedEntry.sha256 !== hash(entry.data)) throw new Error(`快照校验失败：${entry.name}`);
+    if (!expectedEntry || expectedEntry.bytes !== entry.data.byteLength || expectedEntry.sha256 !== sha256(entry.data)) throw new Error(`快照校验失败：${entry.name}`);
   }
   if (expected.size !== entries.length - 1) throw new Error('快照缺少文件');
   const state = JSON.parse(stateEntry.data.toString('utf8')) as { providers?: unknown; models?: unknown; settings?: Record<string, unknown> };

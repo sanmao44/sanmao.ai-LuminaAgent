@@ -19,6 +19,7 @@ import {
   type RefObject,
   type ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 import {
   addEdge,
   alignCanvasNodes,
@@ -2898,6 +2899,7 @@ const MemoizedCanvasEdgeVisual = memo(
 );
 
 export default function SuperCanvas() {
+  const router = useRouter();
   const stageRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -3838,21 +3840,40 @@ export default function SuperCanvas() {
     let cancelled = false;
     let stopWorkspaceSync = () => {};
     const start = async () => {
-      await workspaceRepository.bootstrap();
-      if (cancelled) return;
-      const storage = ensureCanvasStorage();
-      const initial = loadCanvasDocument(storage.activeId);
-      const recovered = recoverInterruptedCanvasDocument(initial);
-      const initialDocument = syncCanvasVideoEditorReferences(recovered.document);
-      docRef.current = initialDocument;
-      setDocument(initialDocument);
-      setProjects(storage.projects);
-      setActiveProjectId(storage.activeId);
+      const restoreLocalCanvas = (showRecoveryNotice = false) => {
+        const storage = ensureCanvasStorage();
+        const initial = loadCanvasDocument(storage.activeId);
+        const recovered = recoverInterruptedCanvasDocument(initial);
+        const initialDocument = syncCanvasVideoEditorReferences(recovered.document);
+        docRef.current = initialDocument;
+        setDocument(initialDocument);
+        setProjects(storage.projects);
+        setActiveProjectId(storage.activeId);
+        if (showRecoveryNotice && storage.migrated) notify("已将 NOVA 画布项目迁移到 SANMAO.AI");
+        if (showRecoveryNotice && recovered.recoveredCount)
+          notify(`已恢复 ${recovered.recoveredCount} 个中断任务，可重新生成`);
+      };
+
+      // Render the local canvas first. Remote workspace reconciliation is
+      // intentionally detached from the route transition.
       setReady(true);
-      if (storage.migrated) notify("已将 NOVA 画布项目迁移到 SANMAO.AI");
-      if (recovered.recoveredCount)
-        notify(`已恢复 ${recovered.recoveredCount} 个中断任务，可重新生成`);
-      stopWorkspaceSync = startWorkspaceSync({ onStatus: setWorkspaceSyncStatus });
+      window.setTimeout(() => {
+        if (cancelled) return;
+        restoreLocalCanvas(true);
+        if (cancelled) return;
+        void workspaceRepository.bootstrap()
+          .then(() => {
+            if (cancelled) return;
+            restoreLocalCanvas(false);
+            stopWorkspaceSync = startWorkspaceSync({
+              onStatus: setWorkspaceSyncStatus,
+              onRestored: () => restoreLocalCanvas(false),
+            });
+          })
+          .catch(() => {
+            if (!cancelled) stopWorkspaceSync = startWorkspaceSync({ onStatus: setWorkspaceSyncStatus });
+          });
+      }, 0);
       void loadCanvasRuntime()
         .then((value) => {
           if (cancelled) return;
@@ -8835,35 +8856,6 @@ export default function SuperCanvas() {
         }));
       }
       const inputId = inputNode.id;
-      let streamedText = "";
-      let renderedStreamedText = "";
-      let streamFrame: number | null = null;
-      const flushStreamedText = () => {
-        streamFrame = null;
-        if (!streamedText || streamedText === renderedStreamedText) return;
-        renderedStreamedText = streamedText;
-        updateDoc((value) => ({
-          ...value,
-          nodes: value.nodes.map((node) =>
-            node.id === inputId
-              ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    text: streamedText,
-                    agentResponse: streamedText,
-                    status: "running" as const,
-                    statusLabel: "Agent 正在生成回复…",
-                  },
-                }
-              : node,
-          ),
-        }));
-      };
-      const scheduleStreamFlush = () => {
-        if (streamFrame !== null) return;
-        streamFrame = window.requestAnimationFrame(flushStreamedText);
-      };
       try {
         const generationStartedAt = Date.now();
         let finalEventReceived = false;
@@ -8899,8 +8891,8 @@ export default function SuperCanvas() {
             }));
           }
           if (event.type === "delta" && event.text) {
-            streamedText += String(event.text);
-            scheduleStreamFlush();
+            // Streaming text stays in the Agent dock. Keep the canvas node
+            // compact until the final response is ready.
           }
           if (event.type === "final") {
             finalEventReceived = true;
@@ -8908,8 +8900,6 @@ export default function SuperCanvas() {
           }
         });
         const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
-        if (streamFrame !== null) window.cancelAnimationFrame(streamFrame);
-        flushStreamedText();
         const parent = nodeById(docRef.current, inputId) || inputNode;
         const responseText = String(finalEventReceived ? finalEventText : response.message || "").trim();
         if (!responseText) throw new Error("Agent 没有返回有效结果，请重试。");
@@ -8925,14 +8915,14 @@ export default function SuperCanvas() {
         const expectedDeliverable = request?.agentTask === "one_take_video_prompt"
           ? "TEXT"
           : intentDecision.deliverable;
-        const responseDeliverable = response.deliverable || expectedDeliverable;
         const localAllowsImages = expectedDeliverable === "IMAGE" || expectedDeliverable === "BOTH";
-        const serverAllowsImages = responseDeliverable === "IMAGE" || responseDeliverable === "BOTH";
-        const acceptedImages = localAllowsImages && serverAllowsImages
-          ? response.images || []
+        // 图片由服务端实际工具结果证明，不能被模型返回的 deliverable 文案丢弃。
+        // 仍保留本地任务类型限制，避免文字任务意外把图片接入画布。
+        const acceptedImages = localAllowsImages
+          ? (response.images || []).filter((image) => Boolean(String(image.url || "").trim()))
           : [];
-        if (response.images?.length && !acceptedImages.length)
-          addLog(`Agent 返回了 ${response.images.length} 张非预期图片，已按文字交付规则忽略`);
+        if (response.images?.length && !acceptedImages.length && localAllowsImages)
+          addLog("Agent 返回了图片结果，但图片地址为空，未加入画布");
         const imageNodes = acceptedImages.map((image, index) =>
           createMedia(
             "image",
@@ -9040,7 +9030,6 @@ export default function SuperCanvas() {
         }));
         notify(message, "error");
       } finally {
-        if (streamFrame !== null) window.cancelAnimationFrame(streamFrame);
         generationKeysRef.current.delete(activeKey);
         setGenerationKeys(new Set(generationKeysRef.current));
       }
@@ -10196,7 +10185,11 @@ export default function SuperCanvas() {
             ...(image.providerName ? { providerName: image.providerName } : {}),
             generation: {
               kind: "image",
-              prompt: meta.prompt,
+              prompt: image.batchPrompt || meta.prompt,
+              ...(image.batchId ? { batchId: image.batchId } : {}),
+              ...(image.batchIndex !== undefined ? { batchIndex: image.batchIndex } : {}),
+              ...(image.batchTotal !== undefined ? { batchTotal: image.batchTotal } : {}),
+              ...(image.batchPrompt ? { batchPrompt: image.batchPrompt } : {}),
               params: clone({ ...imageSettings, ...(image.modelId ? { model: image.modelId } : {}) }),
               ...(image.modelId ? { modelId: image.modelId } : {}),
               ...(image.modelName ? { modelName: image.modelName } : {}),
@@ -10452,13 +10445,21 @@ export default function SuperCanvas() {
             x: origin.x + anchorWidth + 90 + (index % 2) * 350,
             y: origin.y + Math.floor(index / 2) * 280,
           };
-          const draft = createMedia("image", image.url, `Agent 图片 ${index + 1}`, desired, {
+          const batchIndex = image.batchIndex ?? index;
+          const batchName = image.batchPrompt
+            ? image.batchPrompt.replace(/\s+/g, " ").trim().slice(0, 24)
+            : `Agent 图片 ${index + 1}`;
+          const draft = createMedia("image", image.url, image.batchId ? `${batchIndex + 1}. ${batchName}` : batchName, desired, {
             role: "Agent 生成结果",
             ...(image.modelName ? { model: image.modelName } : {}),
             ...(image.providerName ? { providerName: image.providerName } : {}),
             generation: {
               kind: "image",
-              prompt: plan.sourcePrompt || "Agent 批量生成",
+              prompt: image.batchPrompt || plan.sourcePrompt || "Agent 批量生成",
+              ...(image.batchId ? { batchId: image.batchId } : {}),
+              ...(image.batchIndex !== undefined ? { batchIndex: image.batchIndex } : {}),
+              ...(image.batchTotal !== undefined ? { batchTotal: image.batchTotal } : {}),
+              ...(image.batchPrompt ? { batchPrompt: image.batchPrompt } : {}),
               params: clone({ ...imageSettings, ...(image.modelId ? { model: image.modelId } : {}) }),
               ...(image.modelId ? { modelId: image.modelId } : {}),
               ...(image.modelName ? { modelName: image.modelName } : {}),
@@ -15074,7 +15075,7 @@ export default function SuperCanvas() {
             type="button"
             className="canvas-soft-button canvas-home-button"
             aria-label="返回主界面"
-            onClick={() => window.location.assign("/")}
+            onClick={() => router.push("/")}
           >
             <span className="canvas-home-icon" aria-hidden="true">
               <svg viewBox="0 0 18 18" focusable="false">

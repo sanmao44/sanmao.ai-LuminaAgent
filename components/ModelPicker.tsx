@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { CSSProperties } from 'react';
 import type { ModelCapability, RegistryModel } from '@/lib/types';
+import type { AgentModelHealthRecord } from '@/lib/agent/model-health';
 import { getFavoriteModelIds, getRecentModelIds, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { MODEL_PICKER_QUICK_LIMIT, modelPickerMatches, takeUniqueModelSlice } from '@/lib/model-picker';
@@ -27,6 +28,7 @@ type ModelPickerProps = {
   automaticHint?: string;
   /** Optional context label for compact, task-specific pickers. */
   triggerPrefix?: string;
+  health?: AgentModelHealthRecord[];
   disabled?: boolean;
 };
 
@@ -69,7 +71,7 @@ function selectCloneAutomaticModel(models: RegistryModel[]) {
   return [...candidates].sort((left, right) => score(right) - score(left))[0];
 }
 
-export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '', portalZIndex = CANVAS_Z_INDEX.portalPopover, dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog, automaticMode = 'default', automaticHint, triggerPrefix, disabled = false }: ModelPickerProps) {
+export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '', portalZIndex = CANVAS_Z_INDEX.portalPopover, dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog, automaticMode = 'default', automaticHint, triggerPrefix, health = [], disabled = false }: ModelPickerProps) {
   const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
   const [quickOpen, setQuickOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -92,6 +94,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
     if (capability === 'video-generate') return model.capabilities.includes('video-generate');
     return model.capabilities.includes(capability) || (capability.startsWith('video-') && model.kind === 'video');
   }), [models, capability]);
+  const healthByModel = useMemo(() => new Map(health.map((item) => [item.modelId, item])), [health]);
   const selected = value !== 'auto' ? availableModels.find((model) => model.id === value) : null;
   const autoModel = automaticMode === 'clone' && capability === 'video-generate'
     ? selectCloneAutomaticModel(availableModels)
@@ -202,9 +205,17 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   function renderModel(model: RegistryModel) {
     const isFavorite = favorites.includes(model.id);
     const isSelected = model.id === value;
+    const modelHealth = healthByModel.get(model.id);
+    const healthLabel = modelHealth?.state === 'cooldown'
+      ? '暂时跳过'
+      : modelHealth?.consecutiveFailures
+        ? `${modelHealth.consecutiveFailures} 次失败`
+        : modelHealth?.lastLatencyMs
+          ? `${Math.round(modelHealth.lastLatencyMs / 100) / 10}s`
+          : '';
     return <div className={`model-picker-option ${isSelected ? 'selected' : ''}`} key={model.id}>
       <button type="button" className="model-picker-option-main" onClick={() => choose(model.id)} role="option" aria-selected={isSelected}>
-        <span className="model-picker-option-copy"><strong>{model.displayName}</strong><small>{model.providerName} · {model.rawId}</small><span className="model-picker-capabilities">{model.capabilities.filter((item) => capabilityLabels[item]).slice(0, 4).map((item) => <em className={capabilityClasses[item] || ''} key={item}>{capabilityLabels[item]}</em>)}</span></span>
+        <span className="model-picker-option-copy"><strong>{model.displayName}</strong><small>{model.providerName} · {model.rawId}</small><span className="model-picker-capabilities">{model.capabilities.filter((item) => capabilityLabels[item]).slice(0, 4).map((item) => <em className={capabilityClasses[item] || ''} key={item}>{capabilityLabels[item]}</em>)}{healthLabel && <em className={`model-picker-health ${modelHealth?.state || ''}`}>{healthLabel}</em>}</span></span>
         {isSelected && <b className="model-picker-check">✓</b>}
       </button>
       <button type="button" className={`model-picker-favorite ${isFavorite ? 'active' : ''}`} aria-label={isFavorite ? `取消收藏 ${model.displayName}` : `收藏 ${model.displayName}`} onClick={() => toggleFavorite(model.id)}>★</button>
@@ -212,8 +223,14 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   }
 
   function renderAutoChoice() {
+    const autoHealth = autoModel ? healthByModel.get(autoModel.id) : undefined;
+    const autoHealthHint = autoHealth?.state === 'cooldown'
+      ? '当前推荐暂时不可用，自动模式会跳过并尝试其他模型'
+      : autoHealth?.consecutiveFailures
+        ? `最近 ${autoHealth.consecutiveFailures} 次失败，自动模式会优先尝试其他模型`
+        : '';
     return <button type="button" className={`model-picker-auto ${value === 'auto' ? 'selected' : ''}`} onClick={() => choose('auto')}>
-      <span><strong>{automaticMode === 'clone' ? '自动选择（克隆策略）' : '自动选择'}</strong><small>{automaticHint || (defaultProviderName ? `默认厂商：${defaultProviderName}` : '使用默认厂商，失败时自动回退')}{autoModel ? ` · 当前推荐 ${autoModel.displayName}` : ''}</small></span>
+      <span><strong>{automaticMode === 'clone' ? '自动选择（克隆策略）' : '自动选择'}</strong><small>{autoHealthHint || automaticHint || (defaultProviderName ? `默认厂商：${defaultProviderName}` : '使用默认厂商，失败时自动回退')}{autoModel ? ` · 当前推荐 ${autoModel.displayName}` : ''}</small></span>
       {value === 'auto' && <b className="model-picker-check">✓</b>}
     </button>;
   }

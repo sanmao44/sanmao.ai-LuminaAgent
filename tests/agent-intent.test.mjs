@@ -20,6 +20,12 @@ test('routes explicit visual requests to an image deliverable', () => {
   assert.notEqual(intent.classifyAgentDeliverable('怎么画只猫').deliverable, 'IMAGE');
 });
 
+test('routes batch image commands to image delivery', () => {
+  for (const input of ['套图', '详情图', '批量生图', '生成一套商品详情图']) {
+    assert.equal(intent.classifyAgentDeliverable(input).deliverable, 'IMAGE', input);
+  }
+});
+
 test('uses request mode as a cross-feature safety gate', () => {
   for (const input of [
     '可以生图吗？',

@@ -20,6 +20,9 @@
 .agent-approval-calls em{font-style:normal;font-size:8px;font-weight:850;color:var(--warning)}.agent-approval-calls small{flex-basis:100%;font-size:8px;line-height:1.45;color:var(--muted);word-break:break-all}
 .agent-approval-actions{display:flex;gap:7px}.agent-approval-actions button{height:30px;padding:0 12px;border-radius:9px;font-size:9px;font-weight:850;border:1px solid var(--line);background:var(--panel);color:var(--text-2)}
 .agent-approval-actions button:disabled{opacity:.6}.agent-approval-actions .approve{border-color:color-mix(in srgb,var(--warning) 55%,var(--line));background:color-mix(in srgb,var(--warning) 14%,var(--panel));color:var(--warning)}
+.model-picker-health{border:1px solid color-mix(in srgb,var(--warning) 35%,transparent)!important;background:var(--warning-soft,var(--panel-2))!important;color:var(--warning)!important}.model-picker-health.cooldown{border-color:color-mix(in srgb,var(--danger) 35%,transparent)!important;background:var(--danger-soft)!important;color:var(--danger)!important}
+.message-agent-error{display:grid;gap:7px;padding:12px 13px;border:1px solid color-mix(in srgb,var(--danger) 30%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--danger) 6%,var(--panel))}.message-agent-error p{margin:0;color:var(--danger);font-size:12px;line-height:1.6;overflow-wrap:anywhere}.message-agent-error small{color:var(--text-2);font-size:9px;line-height:1.5}.message-agent-error-actions{display:flex;gap:7px;flex-wrap:wrap}.message-agent-error-actions button{min-height:30px;padding:0 10px;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line));border-radius:8px;background:var(--accent-soft);color:var(--accent-text);font-size:9px;font-weight:850}.message-agent-error-actions button:hover{border-color:var(--accent);background:var(--accent-soft-2)}.message-agent-error-actions button+button{border-color:var(--line);background:var(--panel-2);color:var(--text-2)}
+.message-model-fallback-badge{color:var(--warning)!important}
 .agent-approval-actions .approve:hover:not(:disabled),.agent-approval-actions .approve:focus-visible{border-color:var(--warning);background:color-mix(in srgb,var(--warning) 22%,var(--panel));outline:none}
 .agent-approval-actions .reject:hover:not(:disabled),.agent-approval-actions .reject:focus-visible{border-color:var(--danger);background:var(--danger-soft);color:var(--danger);outline:none}
 .agent-approval-note{margin:0;font-size:8px;line-height:1.45;color:var(--muted)}.agent-approval-error{margin:0;font-size:8px;line-height:1.45;color:var(--danger)}
@@ -33,7 +36,7 @@
 .message-label .message-mcp-detail{position:relative;display:inline-flex;align-items:center;max-width:100%;flex:0 1 auto;min-width:0}
 .message-label .message-mcp-detail{padding:0;border:0;background:transparent;color:inherit;cursor:pointer}
 .message-label .message-mcp-detail:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
-.message-label .message-mcp-detail .message-mcp-badge{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.message-label .message-mcp-detail .message-mcp-badge{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left;line-height:1.5}
 /* 一轮里调用多次外部工具时，MCP 徽标会很长。flex 项默认不肯收缩到内容以下，
    结果把左边那行说明压成了一字一行的竖排（实测截图就是这个）。所以：整行允许换行、
    说明永远保持一整行，徽标自己按剩余宽度省略号截断。 */
@@ -55,5 +58,3 @@
 .message-mcp-detail-list li.is-failed .message-mcp-detail-state{border-color:color-mix(in srgb,var(--danger) 40%,var(--line));background:var(--danger-soft);color:var(--danger)}
 .message-mcp-detail-note{color:var(--muted);font-size:8px;font-weight:650;line-height:1.5}
 @media(max-width:780px){.agent-mcp-detail-dock{margin-top:8px;padding-top:8px}.message-mcp-detail-panel{padding:9px}.message-mcp-detail-list{max-height:180px}}
-.message-image-model-picker{flex:0 1 220px;min-width:170px}.message-image-model-picker .model-picker-trigger{height:30px;border-color:var(--message-tool-border,var(--line));background:var(--message-meta-bg,var(--panel));color:var(--message-tool,var(--muted));font-size:9px}.message-image-model-picker .model-picker-trigger:hover,.message-image-model-picker .model-picker-trigger.open{border-color:var(--accent);background:var(--message-meta-bg,var(--panel-2));color:var(--text)}
-@media(max-width:560px){.message-image-model-picker{flex-basis:100%;min-width:0}.message-image-model-picker .model-picker-trigger{width:100%}}

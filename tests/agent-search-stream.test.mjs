@@ -8,7 +8,7 @@ const source = route.replace(/\r\n/g, '\n');
 
 test('a web-search answer streams instead of landing as one frame', () => {
   assert.ok(source.includes("const searchedStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData"));
-  assert.ok(source.includes('if (directStream || searchedStream) {'));
+  assert.ok(source.includes('if ((directStream || searchedStream) && !mcpExecutionRequest) {'));
   assert.ok(source.includes('...(finalize ? { finalize } : {})'));
   assert.ok(source.includes('const finalize = searchedStream ? rewriteSearchRefusal : undefined;'));
 });

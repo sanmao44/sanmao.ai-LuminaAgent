@@ -9,7 +9,7 @@ export type ConversationContextMessage = {
 };
 
 const imagePointer = /(?:这|那|上|刚才|之前|前面).{0,5}(?:张图|幅图|张图片|张照片|图片|图像|画面|海报)|(?:原图|参考图)/;
-const shortExecution = /^(?:请|直接|马上|现在|帮我)?(?:出图|生图|生成吧|开始生成|按这个生成|按刚才的生成|继续|再来一版|改一下)[吧啊！!。.\s]*$/;
+const shortExecution = /^(?:请|直接|马上|现在|帮我)?(?:出图|生图|套图|详情图|批量生图|批量出图|生成吧|开始生成(?:图|图片)?|按这个生成|按刚才的生成|继续|再来一版|改一下)[吧啊！!。.\s]*$/;
 
 /** Only the supplied conversation is searched; no gallery or workspace fallback. */
 export function conversationImage(input: string, messages: readonly ConversationContextMessage[]) {

@@ -34,6 +34,7 @@ const otherLabel = '通用对话';
 // is attached: the requested deliverable is text, not a new image.
 // 「画布 / 画板 / 画框」同理是名词：画布上下文里到处是"画布"，不能当成"画"这个动作。
 const imageActionPattern = /(?:画(?!面|布|板|框|纸|册|廊)|绘制|描绘|涂鸦|出图|生图|生成图片|生成图像|制作海报|做海报|做封面图|做宣传图|生成海报|生成封面|生成插画|生成效果图|改图|修图|重绘|换背景|扩图|抠图|配图|配(?:一|两|几|\d+)?张|渲染|可视化|视觉化|image|picture|poster|illustration|render|visualize)/i;
+const imageBatchPattern = /(?:套图|详情图|商品详情(?:页)?图|批量生图|批量出图|一套图|一组图|系列图|多张图|多张图片|组图|batch)/i;
 const imageTargetPattern = /(?:图片|图像|画面|海报|封面图|封面|插画|插图|漫画|头像|壁纸|表情包|图标|logo|banner|配图|信息图|概念图|效果图|宣传图|广告图|主视觉|场景图|吉祥物|IP形象|设计稿|设计图|mascot|image|picture|poster|cover|illustration|avatar|wallpaper|icon)/i;
 const imageEditPattern = /(?:修改|调整|改一下|改成|换成|替换|重绘|重制|修图|换背景|去掉|加上|增加|减少|保持主体|延续|继续|再来|更高级|更年轻|更简洁|优化构图|强化光线|调整色彩)/i;
 const textArtifactPattern = /(?:文案|标题|正文|文章|脚本|口播|广告语|宣传语|配文|简介|描述|提示词|prompt|代码|程序|报告|方案|清单|表格|摘要|总结|翻译|邮件|回复|文字|方向|创意|灵感|思路|markdown|json|csv|html|css)/i;
@@ -182,10 +183,10 @@ function classifyAgentDeliverableCore(input: string, context: AgentIntentContext
   const asksForPrompt = promptOnlyPattern.test(text) && /(?:写|生成|优化|改写|润色|反推|提取|翻译|解释|给我|输出|提供|整理|怎么|如何|只要|仅需)/i.test(text);
   const asksForVisualText = visualTextArtifactPattern.test(text) || writeForVisualPattern.test(text);
   const asksForText = !imageTextRemovalPattern.test(text) && (textActionPattern.test(text) || asksForVisualText || ((textArtifactPattern.test(text) || documentDeliverablePattern.test(text)) && !imageActionPattern.test(text)));
-  const asksForImage = !asksForVisualText && (imageActionPattern.test(text) || /(?:做|生成|制作|创建|设计|来).{0,12}(?:一张|一幅|一个|个|张|幅|海报|封面|宣传图|图片|插画)/i.test(text)) && (imageTargetPattern.test(text) || /(?:出图|生图)/i.test(text));
+  const asksForImage = !asksForVisualText && (imageActionPattern.test(text) || imageBatchPattern.test(text) || /(?:做|生成|制作|创建|设计|来).{0,12}(?:一张|一幅|一个|个|张|幅|海报|封面|宣传图|图片|插画)/i.test(text)) && (imageTargetPattern.test(text) || imageBatchPattern.test(text) || /(?:出图|生图)/i.test(text));
   // 口语里经常省略“一”（例如“画只猫”“画条鱼”）。这类请求虽然没有
   // “图片 / 海报”等目标名词，仍然是在明确索要视觉产物。
-  const asksForImageWithoutTarget = !asksForVisualText && /(?:画(?:个|一?只|一个|一张|一幅|一?条|一?头|一?匹|一?朵|一?辆|一?艘|一?座|一?棵|一?位)|画出|出图|生图|生成一张|生成一个|做一张|来一张).{1,80}/i.test(text) && !documentDeliverablePattern.test(text) && (!textArtifactPattern.test(text) || embeddedTextPattern.test(text));
+  const asksForImageWithoutTarget = !asksForVisualText && (/(?:画(?:个|一?只|一个|一张|一幅|一?条|一?头|一?匹|一?朵|一?辆|一?艘|一?座|一?棵|一?位)|画出|出图|生图|生成一张|生成一个|做一张|来一张).{1,80}/i.test(text) || imageBatchPattern.test(text)) && !documentDeliverablePattern.test(text) && (!textArtifactPattern.test(text) || embeddedTextPattern.test(text));
   const asksHowToCreateImage = /(?:怎么|如何|教我|教程|步骤|方法|技巧).{0,24}(?:画|绘制|生成图片|做图)/i.test(text);
   const asksForSeparateCopy = separateCopyPattern.test(text) || /(?:图片|海报|封面|宣传图).{0,30}(?:另外|再|同时|并且|以及).{0,30}(?:文案|标题|配文)/i.test(text);
   const textInsideImage = embeddedTextPattern.test(text) && (asksForImage || asksForImageWithoutTarget);
@@ -197,6 +198,9 @@ function classifyAgentDeliverableCore(input: string, context: AgentIntentContext
 
   if (asksForPrompt && !asksForSeparateCopy && !/(?:然后|之后|再|同时|并且).{0,24}(?:出图|生图|生成图片|画图)/i.test(text)) {
     return result('TEXT', '你要的是可复制的提示词，图片只是提示词描述的对象。', 'high', ['提示词交付']);
+  }
+  if (imageBatchPattern.test(text) && !asksForVisualText && !asksHowToCreateImage) {
+    return result('IMAGE', '用户要求批量生成一套图片，参考图只作为公共视觉参考，不改变生图任务类型。', 'high', ['批量生图']);
   }
   if (/^(?:请|直接|现在|帮我|给我)?(?:出|生成)(?:个|一张|张)?(?:图片|图像|图)(?:看下|看看)?(?:[，,\s]*(?:1:1|2:3|3:2|3:4|4:3|9:16|16:9|21:9))?[吧啊！!。.\s]*$/.test(text)) {
     return result('IMAGE', '用户用口语明确要求实际出图。', 'high', ['口语生图指令']);

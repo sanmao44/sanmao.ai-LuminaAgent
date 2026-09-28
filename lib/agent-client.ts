@@ -40,8 +40,6 @@ export type AgentRequestPayload = {
   referenceImages?: Array<Record<string, unknown>>;
   references?: CreativeReference[];
   model?: string;
-  /** Single-turn image model override; does not change the global default. */
-  imageModelId?: string;
   task?: string;
   durationSeconds?: number;
   webMode?: "off" | "auto" | "always";
@@ -77,6 +75,12 @@ export type AgentGeneratedImage = {
   modelId?: string;
   modelName?: string;
   providerName?: string;
+  batchId?: string;
+  batchIndex?: number;
+  batchTotal?: number;
+  batchPrompt?: string;
+  batchStatus?: "succeeded" | "failed";
+  batchError?: string;
 };
 
 /** 这一轮真正落到外部 MCP 服务上的调用，用于给用户看"助手用了哪个外部工具"。 */
@@ -119,8 +123,20 @@ export type AgentResponse = {
   ok?: boolean;
   message: string;
   model?: string;
+  modelId?: string;
+  providerName?: string;
+  fallbackFrom?: string;
   deliverable?: AgentDeliverable;
   images?: AgentGeneratedImage[];
+  batchItems?: Array<{
+    batchId: string;
+    index: number;
+    total: number;
+    prompt: string;
+    status: "succeeded" | "failed";
+    error?: string;
+    imageCount?: number;
+  }>;
   files?: AgentGeneratedFile[];
   generations?: Array<Record<string, unknown>>;
   webSearch?: Record<string, unknown> | null;

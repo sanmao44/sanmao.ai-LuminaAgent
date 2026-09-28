@@ -307,6 +307,51 @@ test('does not retry image requests after ambiguous upstream failures', () => {
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422 }), true);
 });
 
+test('polls ModelScope image tasks and normalizes output_images', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith('/images/generations')) {
+      return new Response(JSON.stringify({ task_id: 'modelscope-task-1', task_status: 'PENDING' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({
+      task_id: 'modelscope-task-1',
+      task_status: 'SUCCEED',
+      output_images: ['https://cdn.example.test/modelscope-result.png'],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const images = await providers.editImage({
+      type: 'openai-compatible',
+      platform: 'modelscope',
+      baseUrl: 'https://api-inference.modelscope.cn/v1',
+      apiKey: 'test-key',
+    }, 'Qwen/Qwen-Image-Edit', {
+      prompt: 'camera edit',
+      references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
+      count: 1,
+    });
+    assert.deepEqual(images, [{ url: 'https://cdn.example.test/modelscope-result.png' }]);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].url, 'https://api-inference.modelscope.cn/v1/images/generations');
+    assert.equal(calls[0].init.headers['X-ModelScope-Async-Mode'], 'true');
+    const requestBody = JSON.parse(calls[0].init.body);
+    assert.equal(requestBody.model, 'Qwen/Qwen-Image-Edit');
+    assert.equal(requestBody.image_url, 'data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA');
+    assert.equal(calls[1].url, 'https://api-inference.modelscope.cn/v1/tasks/modelscope-task-1');
+    assert.equal(calls[1].init.headers['X-ModelScope-Task-Type'], 'image_generation');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('distinguishes a missing image-edit route from a missing model', () => {
   assert.equal(providers.isProviderEndpointNotFound({
     providerFailureKind: 'http',
@@ -389,6 +434,35 @@ test('sends a manually registered image model raw ID to the real generation requ
     assert.equal(images.length, 1);
     assert.equal(JSON.parse(calls[0].init.body).model, 'gpt-image-2-4K');
     assert.match(calls[0].url, /\/images\/generations$/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('passes shared reference images through the generation request', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ data: [{ b64_json: 'iVBORw0KGgoAAAAAAAAAAAAA' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    await providers.generateImage({
+      type: 'openai-compatible',
+      platform: 'custom',
+      baseUrl: 'https://images.example.test/v1',
+      apiKey: 'test-key',
+    }, 'gpt-image-2', {
+      prompt: '商品详情图',
+      count: 1,
+      aspectRatio: '1:1',
+      references: ['data:image/png;base64,REF'],
+    });
+    const body = JSON.parse(calls[0].init.body);
+    assert.deepEqual(body.images, [{ image_url: 'data:image/png;base64,REF' }]);
   } finally {
     globalThis.fetch = previousFetch;
   }

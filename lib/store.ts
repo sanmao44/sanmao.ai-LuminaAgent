@@ -683,6 +683,16 @@ export async function enableProviderModels(providerId: string) {
 }
 
 export async function getRuntimeModel(id: string | null | undefined, kind: ModelKind) {
+  const candidates = await getRuntimeModelCandidates(id, kind);
+  return candidates[0] || null;
+}
+
+/**
+ * Return the configured model first, followed by every compatible runtime.
+ * Automatic Agent routing uses this ordered list to fail over before the UI
+ * gets stuck on a provider that is returning errors or timing out.
+ */
+export async function getRuntimeModelCandidates(id: string | null | undefined, kind: ModelKind) {
   const state = await readState();
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
   const explicitId = id && id !== 'auto' ? id : null;
@@ -698,10 +708,14 @@ export async function getRuntimeModel(id: string | null | undefined, kind: Model
       || compatible.find((m) => m.id === configuredDefaultId)
       || compatible[0];
   }
-  if (!model || !model.enabled || !model.published || model.kind !== kind) return null;
-  const provider = state.providers.find((p) => p.id === model!.providerId);
-  if (!provider) return null;
-  return { model, provider: { ...provider, responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'), apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
+  if (!model || !model.enabled || !model.published || model.kind !== kind) return [];
+  const ordered = explicitId ? [model] : [model, ...compatible.filter((candidate) => candidate.id !== model!.id)];
+  const runtimes = await Promise.all(ordered.map(async (candidate) => {
+    const provider = state.providers.find((item) => item.id === candidate.providerId);
+    if (!provider) return null;
+    return { model: candidate, provider: { ...provider, responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'), apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
+  }));
+  return runtimes.filter((runtime): runtime is NonNullable<typeof runtime> => Boolean(runtime));
 }
 
 export async function getRuntimeVideoModel(id: string | null | undefined) {

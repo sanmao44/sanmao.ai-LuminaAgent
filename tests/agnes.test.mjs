@@ -158,6 +158,23 @@ test('supports Agnes Chat Completions, Responses and Messages protocols', async 
   assert.equal(requests[2].init.headers.Authorization, undefined);
 });
 
+test('streaming provider failures keep status metadata and expose an actionable message', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'upstream unavailable' } }), {
+    status: 503,
+    headers: { 'content-type': 'application/json', 'x-request-id': 'agnes-stream-503' },
+  });
+  await assert.rejects(() => providers.chatCompletionStream(
+    agnesProvider({ textProtocol: 'chat-completions' }),
+    'agnes-2.5-flash',
+    { messages: [{ role: 'user', content: 'hello' }] },
+  ), (error) => {
+    assert.equal(error.providerStatus, 503);
+    assert.equal(error.providerRequestId, 'agnes-stream-503');
+    assert.match(providers.describeProviderFailure(error), /切换到其他对话模型/);
+    return true;
+  });
+});
+
 test('builds Agnes image 2.0 and 2.1 payloads using documented fields', () => {
   const v20 = providers.buildAgnesImagePayload('agnes-image-2.0-flash', {
     prompt: 'product', width: 1001, height: 777, count: 2, outputFormat: 'jpeg', responseFormat: 'b64_json',

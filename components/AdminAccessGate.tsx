@@ -2,26 +2,16 @@
 
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useState } from "react";
-
-type AdminSession = {
-  required?: boolean;
-  authenticated?: boolean;
-};
+import { readCachedAdminSession, requestAdminSession } from "@/lib/admin-session";
 
 type AdminAccessGateProps = {
   children: ReactNode;
+  initialRequired?: boolean;
 };
 
-async function readAdminSession() {
-  const response = await fetch("/api/admin/session", { cache: "no-store" });
-  const data = (await response.json().catch(() => ({}))) as AdminSession;
-  if (!response.ok) throw new Error("访问权限检查失败");
-  return data;
-}
-
-export default function AdminAccessGate({ children }: AdminAccessGateProps) {
-  const [loading, setLoading] = useState(true);
-  const [required, setRequired] = useState(false);
+export default function AdminAccessGate({ children, initialRequired = true }: AdminAccessGateProps) {
+  const [loading, setLoading] = useState(initialRequired);
+  const [required, setRequired] = useState(initialRequired);
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -30,21 +20,27 @@ export default function AdminAccessGate({ children }: AdminAccessGateProps) {
 
   const refresh = async () => {
     setSessionError("");
-    const session = await readAdminSession();
-    setRequired(Boolean(session.required));
-    setAuthenticated(Boolean(session.authenticated));
+    const session = await requestAdminSession();
+    setRequired(session.required);
+    setAuthenticated(session.authenticated);
   };
 
   useEffect(() => {
     let active = true;
-    void readAdminSession()
+    const cached = readCachedAdminSession();
+    if (cached) {
+      setRequired(cached.required);
+      setAuthenticated(cached.authenticated);
+      setLoading(false);
+    }
+    void requestAdminSession()
       .then((session) => {
         if (!active) return;
-        setRequired(Boolean(session.required));
-        setAuthenticated(Boolean(session.authenticated));
+        setRequired(session.required);
+        setAuthenticated(session.authenticated);
       })
       .catch((reason: unknown) => {
-        if (active) setSessionError(reason instanceof Error ? reason.message : "访问权限检查失败");
+        if (active && initialRequired) setSessionError(reason instanceof Error ? reason.message : "访问权限检查失败");
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -52,7 +48,7 @@ export default function AdminAccessGate({ children }: AdminAccessGateProps) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [initialRequired]);
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -98,10 +94,10 @@ export default function AdminAccessGate({ children }: AdminAccessGateProps) {
           <button type="button" onClick={() => {
             setLoading(true);
             setSessionError("");
-            void readAdminSession()
+            void requestAdminSession()
               .then((session) => {
-                setRequired(Boolean(session.required));
-                setAuthenticated(Boolean(session.authenticated));
+                setRequired(session.required);
+                setAuthenticated(session.authenticated);
               })
               .catch((reason: unknown) => setSessionError(reason instanceof Error ? reason.message : "访问权限检查失败"))
               .finally(() => setLoading(false));
