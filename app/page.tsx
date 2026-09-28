@@ -14950,7 +14950,7 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("p", {
                                                         className: "settings-card-note",
-                                                         children: "完整备份包含接口配置、加密密钥、日志、图库索引、助手对话、界面参数、服务端图片文件和已安装技能，并使用独立密码加密。密码不会保存，请务必妥善保管。"
+                                                         children: "完整备份包含接口配置、加密密钥、日志、图库索引、助手对话、界面参数、服务端图片/视频/音频、任务队列、MCP 配置和已安装技能，并使用独立密码加密；自动快照覆盖同样的配置与素材，但不含已安装技能和附件。密码不会保存，请务必妥善保管。"
                                                     }),
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "settings-backup-summary",
@@ -14994,6 +14994,22 @@ export default function Page() {
                                                              }),
                                                              /*#__PURE__*/ _jsxs("span", {
                                                                  children: [
+                                                                     "视频 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(storageUsage?.videos?.bytes)
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "音频 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(storageUsage?.audio?.bytes)
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
                                                                      "日志 ",
                                                                      /*#__PURE__*/ _jsx("b", {
                                                                          children: formatStorageBytes(storageUsage?.logs?.bytes)
@@ -15009,10 +15025,19 @@ export default function Page() {
                                                                      " 份"
                                                                  ]
                                                              }),
-                                                             /*#__PURE__*/ _jsx("span", {
-                                                                 children: localSnapshots[0] ? `最近快照 ${new Date(localSnapshots[0].createdAt).toLocaleString()} · ${formatStorageBytes(localSnapshots[0].bytes)}` : '尚无自动快照'
-                                                             })
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "快照占用 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(localSnapshots.reduce((sum, item)=>sum + Number(item.bytes || 0), 0))
+                                                                     })
+                                                                 ]
+                                                             }),
                                                          ]
+                                                     }),
+                                                     /*#__PURE__*/ _jsx("small", {
+                                                         className: "settings-backup-latest",
+                                                         children: localSnapshots[0] ? `最近快照 ${new Date(localSnapshots[0].createdAt).toLocaleString()} · ${formatStorageBytes(localSnapshots[0].bytes)}` : '尚无自动快照'
                                                      }),
                                                      /*#__PURE__*/ _jsxs("div", {
                                                          className: "settings-backup-actions",

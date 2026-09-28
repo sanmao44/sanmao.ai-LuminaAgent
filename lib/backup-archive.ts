@@ -93,3 +93,18 @@ export function extractBackupArchive(archive: Buffer) {
   }
   return entries;
 }
+
+/**
+ * 完整备份的导出与恢复都是整卷进内存，恢复端还有硬上限。导出时必须边收集边
+ * 结算，超限立刻停下——否则只会生成一个"导出成功、恢复失败"的静默陷阱。
+ */
+export function createArchiveBudget(limitBytes: number, label: string) {
+  let total = 0;
+  return {
+    add(bytes: number, name: string) {
+      total += Math.max(0, bytes);
+      if (total > limitBytes) throw new Error(`备份体积超过恢复上限 ${label}（已到 ${name}），请先清理素材或分批导出`);
+    },
+    used: () => total,
+  };
+}

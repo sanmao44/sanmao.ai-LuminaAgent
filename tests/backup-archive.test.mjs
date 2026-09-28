@@ -40,3 +40,15 @@ test('拒绝路径穿越但允许文件名中出现连续点', () => {
   assert.equal(archive.extractBackupArchive(created)[0].name, 'images/v1..2.png');
   assert.throws(() => archive.createBackupArchive([{ name: 'images/../secret.png', data: Buffer.alloc(1) }]), /备份文件名无效/);
 });
+
+test('导出预算在超限的那一刻就停下，并给出恢复上限', () => {
+  const budget = archive.createArchiveBudget(1024, '4GB');
+  budget.add(600, 'images/a.png');
+  // 负数不能把已占用抹掉
+  budget.add(-9999, 'ignored');
+  assert.equal(budget.used(), 600);
+  budget.add(424, 'videos/b.mp4');
+  assert.equal(budget.used(), 1024);
+  assert.throws(() => budget.add(1, 'videos/c.mp4'), /备份体积超过恢复上限 4GB（已到 videos\/c\.mp4）/);
+  assert.equal(budget.used(), 1025);
+});

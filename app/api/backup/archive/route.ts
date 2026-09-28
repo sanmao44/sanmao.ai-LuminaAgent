@@ -1,12 +1,12 @@
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isAdminRequest } from '@/lib/auth';
-import { createBackupArchive, extractBackupArchive, sha256, type BackupArchiveEntry } from '@/lib/backup-archive';
+import { createArchiveBudget, createBackupArchive, extractBackupArchive, sha256, type BackupArchiveEntry } from '@/lib/backup-archive';
 import { decryptBackupPayload, encryptBackupPayload, isEncryptedBackup, validateBackupPassword } from '@/lib/backup-crypto';
 import { getDefaultStoragePath } from '@/lib/image-storage';
 import { getDefaultAudioStoragePath } from '@/lib/audio-storage';
 import { getDefaultVideoStoragePath } from '@/lib/video-storage';
-import { createLocalSnapshot } from '@/lib/local-snapshots';
+import { createLocalSnapshot, SNAPSHOT_DURABLE_FILES } from '@/lib/local-snapshots';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { listInstalledSkillDirs, listSkillFilesForBackup, resolveSkillArchivePath, resolveSkillsDir, shouldSkipSkillPath } from '@/lib/skills';
 import { resolveLocalDataDir, resolveProviderConfigDir } from '@/lib/data-paths';
@@ -27,7 +27,6 @@ const maxClientBytes = 80 * 1024 * 1024;
 const maxArchiveBytes = 4 * 1024 * 1024 * 1024;
 const maxArchiveLabel = `${maxArchiveBytes / (1024 * 1024 * 1024)}GB`;
 const workspacePath = path.join(dataDir, 'workspace.json');
-const DURABLE_DATA_FILES = ['video-tasks.json', 'upscale-tasks.json', 'clone-jobs.json'] as const;
 
 async function readOptional(file: string) {
   try { return await readFile(file); } catch { return Buffer.alloc(0); }
@@ -97,11 +96,14 @@ function fileNameFromPath(file: string) {
   return file.replace(/\\/g, '/').replace(/^\/+/, '').split('/').filter((part) => part && part !== '.' && part !== '..').join('/');
 }
 
-async function appendDirectory(entries: BackupArchiveEntry[], root: string, prefix: string) {
+async function appendDirectory(entries: BackupArchiveEntry[], root: string, prefix: string, budget: ReturnType<typeof createArchiveBudget>) {
   const resolvedRoot = path.resolve(root);
   for (const file of await listFiles(resolvedRoot)) {
     const relative = fileNameFromPath(path.relative(resolvedRoot, file));
-    if (relative) entries.push({ name: `${prefix}/${relative}`, data: await readFile(file) });
+    if (!relative) continue;
+    const name = `${prefix}/${relative}`;
+    budget.add((await stat(file).catch(() => ({ size: 0 }))).size, name);
+    entries.push({ name, data: await readFile(file) });
   }
 }
 
@@ -114,11 +116,15 @@ function isMediaFile(file: string, kind: 'images' | 'videos' | 'audio') {
   return patterns[kind].test(file);
 }
 
-async function appendMediaDirectory(entries: BackupArchiveEntry[], root: string, folder: 'images' | 'videos' | 'audio') {
+async function appendMediaDirectory(entries: BackupArchiveEntry[], root: string, folder: 'images' | 'videos' | 'audio', budget: ReturnType<typeof createArchiveBudget>) {
   const resolvedRoot = path.resolve(root);
   for (const file of await listFiles(resolvedRoot)) {
     const relative = fileNameFromPath(path.relative(resolvedRoot, file));
-    if (relative && isMediaFile(relative, folder)) entries.push({ name: `${folder}/${relative}`, data: await readFile(file) });
+    if (!relative || !isMediaFile(relative, folder)) continue;
+    const name = `${folder}/${relative}`;
+    // 先按体积结算再读盘，避免超限时白读一遍素材。
+    budget.add((await stat(file).catch(() => ({ size: 0 }))).size, name);
+    entries.push({ name, data: await readFile(file) });
   }
 }
 
@@ -126,36 +132,47 @@ type BackupMode = 'content' | 'complete';
 
 async function exportArchive(client: unknown, mode: BackupMode) {
   const includeSecrets = mode === 'complete';
+  const budget = createArchiveBudget(maxArchiveBytes, maxArchiveLabel);
   const stateRaw = await readOptional(statePath);
   const rawState = stateRaw.length ? validateState(stateRaw) : { schemaVersion: 2, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } };
   const state = includeSecrets ? rawState : stripStateSecrets(rawState);
   const configuredImagePath = String(state.settings?.imageStoragePath || '');
   const configuredVideoPath = String((state.settings as Record<string, unknown>)?.videoStoragePath || '');
+  const stateEntry = jsonBuffer(state);
+  const clientEntry = jsonBuffer(client || {});
+  budget.add(stateEntry.byteLength, 'server/state.json');
+  budget.add(clientEntry.byteLength, 'client/client.json');
   const entries: BackupArchiveEntry[] = [
-    { name: 'server/state.json', data: jsonBuffer(state) },
-    { name: 'client/client.json', data: jsonBuffer(client || {}) },
+    { name: 'server/state.json', data: stateEntry },
+    { name: 'client/client.json', data: clientEntry },
   ];
   const workspace = await readOptional(workspacePath);
-  if (workspace.length) entries.push({ name: 'server/workspace.json', data: workspace });
+  if (workspace.length) { budget.add(workspace.byteLength, 'server/workspace.json'); entries.push({ name: 'server/workspace.json', data: workspace }); }
   const masterKey = await readOptional(keyPath);
   if (includeSecrets && masterKey.length) entries.push({ name: 'server/master.key', data: masterKey });
 
   const logFilesOnDisk = (await readdir(dataDir).catch(() => [])).filter((name) => /^generation-logs(?:-\d+)?\.jsonl$/.test(name));
-  for (const name of logFilesOnDisk) entries.push({ name: `server/logs/${name}`, data: await readOptional(path.join(dataDir, name)) });
+  for (const name of logFilesOnDisk) {
+    const data = await readOptional(path.join(dataDir, name));
+    budget.add(data.byteLength, `server/logs/${name}`);
+    entries.push({ name: `server/logs/${name}`, data });
+  }
 
   // Serving can search migration roots, but a portable backup only includes
   // the active roots. Otherwise an old checkout can silently enlarge the
   // backup and restore unrelated files.
-  await appendMediaDirectory(entries, configuredImagePath || getDefaultStoragePath(), 'images');
-  await appendMediaDirectory(entries, configuredVideoPath || getDefaultVideoStoragePath(), 'videos');
-  await appendMediaDirectory(entries, getDefaultAudioStoragePath(), 'audio');
-  for (const name of DURABLE_DATA_FILES) {
+  await appendMediaDirectory(entries, configuredImagePath || getDefaultStoragePath(), 'images', budget);
+  await appendMediaDirectory(entries, configuredVideoPath || getDefaultVideoStoragePath(), 'videos', budget);
+  await appendMediaDirectory(entries, getDefaultAudioStoragePath(), 'audio', budget);
+  for (const name of SNAPSHOT_DURABLE_FILES) {
     const data = await readOptional(path.join(dataDir, name));
-    if (data.length) entries.push({ name: `server/tasks/${name}`, data });
+    if (!data.length) continue;
+    budget.add(data.byteLength, `server/tasks/${name}`);
+    entries.push({ name: `server/tasks/${name}`, data });
   }
   const mcpConfig = await readOptional(path.join(dataDir, 'mcp', 'servers.json'));
-  if (mcpConfig.length) entries.push({ name: 'server/mcp/servers.json', data: mcpConfig });
-  await appendDirectory(entries, path.join(dataDir, 'artifacts'), 'artifacts');
+  if (mcpConfig.length) { budget.add(mcpConfig.byteLength, 'server/mcp/servers.json'); entries.push({ name: 'server/mcp/servers.json', data: mcpConfig }); }
+  await appendDirectory(entries, path.join(dataDir, 'artifacts'), 'artifacts', budget);
 
   const skillsRoot = resolveSkillsDir();
   let skillCount = 0;
@@ -166,6 +183,7 @@ async function exportArchive(client: unknown, mode: BackupMode) {
     for (const file of listSkillFilesForBackup(skill.dir)) {
       const name = `skills/${skill.id}/${file.path}`;
       if (Buffer.byteLength(name, 'utf8') > 256) { skillOmittedFiles += 1; continue; }
+      budget.add((await stat(file.file).catch(() => ({ size: 0 }))).size, name);
       entries.push({ name, data: await readFile(file.file) });
       included += 1;
     }
@@ -310,7 +328,7 @@ async function restoreArchive(archive: Buffer) {
 
   for (const entry of entries.filter((value) => value.name.startsWith('server/tasks/'))) {
     const name = path.basename(entry.name);
-    if (!(DURABLE_DATA_FILES as readonly string[]).includes(name)) continue;
+    if (!(SNAPSHOT_DURABLE_FILES as readonly string[]).includes(name)) continue;
     await writeAtomic(path.join(dataDir, name), entry.data);
   }
   const restoredMcp = byName.get('server/mcp/servers.json');

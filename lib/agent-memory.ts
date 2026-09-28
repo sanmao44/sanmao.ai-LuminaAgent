@@ -173,7 +173,8 @@ function relevantMemoryText(summary: string, query: string) {
   let result = '';
   for (const chunk of ordered) {
     const next = result ? `${result}\n\n${chunk.text}` : chunk.text;
-    if (next.length > MEMORY_CONTEXT_MAX_CHARS) break;
+    // 单个块放不下不代表后面的块也放不下；跳过它继续填，别浪费剩余的 1800 字预算。
+    if (next.length > MEMORY_CONTEXT_MAX_CHARS) continue;
     result = next;
   }
   return result || normalized.slice(0, MEMORY_CONTEXT_MAX_CHARS);

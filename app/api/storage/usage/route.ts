@@ -10,7 +10,7 @@ export async function GET(request: Request) {
   try {
     await purgeExpiredImageTrash();
     const state = await getPublicState();
-    return Response.json({ usage: await getStorageUsage(state.settings.imageStoragePath || '') }, { headers: { 'Cache-Control': 'no-store' } });
+    return Response.json({ usage: await getStorageUsage(state.settings.imageStoragePath || '', state.settings.videoStoragePath || '') }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '读取存储统计失败' }, { status: 500 });
   }
