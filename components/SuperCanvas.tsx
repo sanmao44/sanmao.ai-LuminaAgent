@@ -15018,6 +15018,11 @@ export default function SuperCanvas() {
     [commit, notify, screenToWorld, stageSize.height, stageSize.width],
   );
 
+  const marqueeWidth = marquee ? Math.abs(marquee.w) : 0;
+  const marqueeHeight = marquee ? Math.abs(marquee.h) : 0;
+  const marqueeChipVisible = marqueeWidth >= 132 && marqueeHeight >= 40;
+  const marqueeCountVisible = marqueeWidth >= 178;
+
   if (!ready)
     return (
       <section className="canvas-workspace canvas-loading">
@@ -16161,10 +16166,35 @@ export default function SuperCanvas() {
               height: Math.abs(marquee.h),
             }}
           >
-            <b>
-              {Math.round(Math.abs(marquee.w))} ×{" "}
-              {Math.round(Math.abs(marquee.h))} px
-            </b>
+            <svg className="canvas-marquee-outline" aria-hidden="true">
+              <rect
+                className="canvas-marquee-rail"
+                x="0"
+                y="0"
+                width="100%"
+                height="100%"
+                rx="15"
+                ry="15"
+              />
+              <rect
+                className="canvas-marquee-flow-stroke"
+                x="0"
+                y="0"
+                width="100%"
+                height="100%"
+                rx="15"
+                ry="15"
+              />
+            </svg>
+            {marqueeChipVisible && (
+              <span className="canvas-marquee-chip">
+                <i aria-hidden="true" />
+                <b>
+                  {Math.round(marqueeWidth)} × {Math.round(marqueeHeight)} px
+                </b>
+                {marqueeCountVisible && <small>已选 {selectedIds.size} 个</small>}
+              </span>
+            )}
           </div>
         )}
         {selectedGroupId &&
