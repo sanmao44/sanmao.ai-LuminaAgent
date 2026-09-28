@@ -146,6 +146,39 @@ test('已由服务端确认的 GitHub 地址可用于直接安装，但仍校验
   );
 });
 
+test('仓库身份按 owner/repo 归一化，完整地址不会被判成没给地址', () => {
+  const identity = mcp.githubRepoIdentity;
+  const repo = 'https://github.com/CursorTouch/Windows-MCP';
+  assert.equal(identity(repo), 'cursortouch/windows-mcp');
+  assert.equal(identity(repo), identity('cursortouch/windows-mcp'));
+  assert.equal(identity(repo), identity('github.com/CursorTouch/Windows-MCP'));
+  assert.equal(identity(repo), identity('https://github.com/CursorTouch/Windows-MCP.git'));
+  assert.equal(identity(repo), identity('https://github.com/CursorTouch/Windows-MCP/tree/main'));
+  assert.notEqual(identity(repo), identity('https://github.com/CursorTouch/Windows-MCP-other'));
+  assert.equal(identity('Windows-MCP'), '', '拿不到 owner/repo 时不给过');
+});
+
+test('用户原话里的仓库地址能过授权校验，直接进入下载安装', async () => {
+  const dataDir = tempDir();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('offline-test'); };
+  try {
+    await assert.rejects(
+      () => mcp.runMcpManageAction(
+        { action: 'install_from_repo', repo: 'https://github.com/CursorTouch/Windows-MCP' },
+        { dataDir, instruction: 'https://github.com/CursorTouch/Windows-MCP\n安装' },
+      ),
+      (error) => {
+        assert.doesNotMatch(String(error?.message || ''), /只会安装你这次消息里提供的仓库/);
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('管理工具能把某个服务改成按需下发，也能改回来', async () => {
   const dir = tempDir();
   try {

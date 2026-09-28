@@ -220,7 +220,7 @@ export {
   resolveBrowserDownloadDir,
 } from './browser-downloads';
 export type { BrowserArtifactFile, ImportBrowserArtifactsOptions } from './browser-downloads';
-export { MCP_ADMIN_ACTIONS, runMcpManageAction } from './admin';
+export { MCP_ADMIN_ACTIONS, githubRepoIdentity, runMcpManageAction } from './admin';
 export { MCP_RUNTIME_ACTIONS, isMcpRuntimeAction, runMcpRuntimeAction } from './runtime-admin';
 export { installGithubMcpFromRepo } from './repo-installer';
 export type { GithubMcpInstallResult } from './repo-installer';

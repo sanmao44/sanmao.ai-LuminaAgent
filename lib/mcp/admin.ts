@@ -127,9 +127,9 @@ export async function runMcpManageAction(args: unknown, options: McpManageOption
     if (listMcpServers({ dataDir }).length >= MCP_MAX_SERVERS) throw new Error(`最多添加 ${MCP_MAX_SERVERS} 个 MCP 服务`);
     const repo = String(input.repo || input.url || '').trim();
     const requested = String(options.authorizedGithubRepo || '').trim() || parseGithubRepoFromInstruction(instruction);
-    const repoIdentity = repo.replace(/^https?:\/\/(?:www\.)?github\.com\//i, '').replace(/\.git(?:\/.*)?$/, '').replace(/\/.*$/, '').toLowerCase();
-    const requestedIdentity = requested.replace(/^https?:\/\/(?:www\.)?github\.com\//i, '').replace(/\.git$/, '').toLowerCase();
-    if (!repo || !requested || repoIdentity !== requestedIdentity) {
+    const repoIdentity = githubRepoIdentity(repo);
+    const requestedIdentity = githubRepoIdentity(requested);
+    if (!repoIdentity || !requestedIdentity || repoIdentity !== requestedIdentity) {
       throw new Error('请把 GitHub 仓库地址直接发给我，我只会安装你这次消息里提供的仓库。');
     }
     const installed = await installGithubMcpFromRepo(repo, { dataDir, signal: options.signal });
@@ -217,4 +217,21 @@ export async function runMcpManageAction(args: unknown, options: McpManageOption
 function parseGithubRepoFromInstruction(value: string) {
   const match = value.match(/https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?/i);
   return match?.[0] || '';
+}
+
+/**
+ * 归一化成 owner/repo 再比较：协议、www、.git 后缀、tree/blob 子路径和大小写都不参与。
+ *
+ * 之前这里只保留了 owner，模型传回的完整地址永远和用户原话对不上，等于把合法安装
+ * 判成「没给地址」。校验的目的只是确认装的是用户这一轮提到的那个仓库，不是缩放到 owner。
+ */
+export function githubRepoIdentity(value: unknown) {
+  const parts = String(value ?? '')
+    .trim()
+    .replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\//i, '')
+    .replace(/\.git(?:\/.*)?$/i, '')
+    .split('/')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length >= 2 ? `${parts[0]}/${parts[1]}`.toLowerCase() : '';
 }
