@@ -108,6 +108,8 @@ import {
   type PresentationInput,
   type SpreadsheetInput,
 } from '@/lib/artifacts';
+import { AgentRuntime } from '@/lib/agent/runtime';
+import type { AgentMessage, ModelDescriptor } from '@/lib/agent/runtime';
 
 async function safeDiscoverMcpForRequest(options: Parameters<typeof discoverMcpForRequest>[0]) {
   try {
@@ -1357,20 +1359,85 @@ export async function POST(request: Request) {
       );
     }
     if (canUseEarlyPlainTurn && !wantsStream) {
-      const response = await trackedChatCompletion(
-        agentRuntime.provider,
-        agentRuntime.model.rawId,
-        { messages: llmMessages },
-        requestController.signal,
-      );
-      const message = stripToolCallMarkup(chatContentText(response?.choices?.[0]?.message?.content)).trim();
+      const plainMessages = llmMessages.every((item) => typeof item.content === 'string')
+        ? llmMessages as Array<ChatMessage & { content: string }>
+        : null;
+      if (!plainMessages) {
+        const response = await trackedChatCompletion(
+          agentRuntime.provider,
+          agentRuntime.model.rawId,
+          { messages: llmMessages },
+          requestController.signal,
+        );
+        const message = stripToolCallMarkup(chatContentText(response?.choices?.[0]?.message?.content)).trim();
+        llmResponseChars = message.length;
+        return Response.json({
+          ok: true,
+          message,
+          images: [],
+          files: [],
+          model: extractUpstreamModel(response) || agentRuntime.model.displayName,
+          modelId: agentRuntime.model.id,
+          providerName: agentRuntime.provider.name,
+          ...(modelFallbackFrom ? { fallbackFrom: modelFallbackFrom } : {}),
+          deliverable: requestedDeliverable,
+          toolSupport: false,
+          webSearch: null,
+          webSearchDecision: {
+            mode: effectiveWebMode,
+            status: effectiveWebMode === 'off' ? 'disabled' : 'not-needed',
+            reason: webDecision.reason,
+            query: webDecision.query || undefined,
+          },
+        });
+      }
+      const model: ModelDescriptor = {
+        id: agentRuntime.model.id,
+        displayName: agentRuntime.model.displayName,
+        capabilities: {
+          text: agentRuntime.model.kind === 'chat',
+          reasoning: false,
+          toolUse: false,
+          structuredOutput: false,
+        },
+      };
+      const runtime = new AgentRuntime({
+        model: {
+          descriptor: model,
+          provider: { invoke: async () => ({ content: '' }) },
+          invoke: async (input) => {
+            const response = await trackedChatCompletion(
+              agentRuntime.provider,
+              agentRuntime.model.rawId,
+              { messages: input.messages.map((item): ChatMessage => ({ role: item.role, content: item.content })) },
+              input.signal || requestController.signal,
+            );
+            return {
+              content: chatContentText(response?.choices?.[0]?.message?.content),
+              modelId: extractUpstreamModel(response) || undefined,
+            };
+          },
+        },
+        context: { build: (input) => input.messages },
+        policy: { decide: () => ({ allowed: true }) },
+      });
+      const result = await runtime.run({
+        runId: agentRunId || `request-${Date.now()}`,
+        model,
+        messages: plainMessages.map((item): AgentMessage => ({
+          role: item.role === 'system' || item.role === 'assistant' ? item.role : 'user',
+          content: item.content,
+        })),
+        signal: requestController.signal,
+      });
+      const message = stripToolCallMarkup(result.output).trim();
       llmResponseChars = message.length;
       return Response.json({
         ok: true,
         message,
         images: [],
         files: [],
-        model: extractUpstreamModel(response) || agentRuntime.model.displayName,
+        model: result.modelId || agentRuntime.model.displayName,
         modelId: agentRuntime.model.id,
         providerName: agentRuntime.provider.name,
         ...(modelFallbackFrom ? { fallbackFrom: modelFallbackFrom } : {}),

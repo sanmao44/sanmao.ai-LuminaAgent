@@ -4978,3 +4978,7 @@ html[data-theme="dark"] .canvas-node[data-node-kind="angle"]{--node-color:#a78bf
     height:min(320px,calc(100dvh - 220px));
   }
 }
+
+/* Task log search: keep focus on the field without the browser default hard rectangle. */
+.canvas-workspace .canvas-log-search:focus-within{border-color:color-mix(in srgb,var(--accent) 52%,var(--line));background:color-mix(in srgb,var(--panel-3) 72%,var(--panel-2));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 13%,transparent),0 3px 10px color-mix(in srgb,var(--shadow-color,#111827) 12%,transparent);transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease}
+.canvas-workspace .canvas-log-search input:focus-visible{outline:0;outline-offset:0;box-shadow:none}
