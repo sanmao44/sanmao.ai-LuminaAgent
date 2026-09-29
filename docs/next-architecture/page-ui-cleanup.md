@@ -66,6 +66,9 @@ composer. The active follow-up value and clear action remain page-owned.
 `AgentIntentClarifyCard` now owns the compact delivery-choice prompt for
 ambiguous Agent requests. Intent classification and dispatch remain page-owned.
 
+`AgentOrbStatus` now owns the live status affordance beside the Agent send
+controls. Busy and error phase calculation remains page-owned.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section

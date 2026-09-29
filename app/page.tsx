@@ -69,6 +69,7 @@ import AgentWelcome from '@/components/AgentWelcome';
 import AgentMessageSelectionBar from '@/components/AgentMessageSelectionBar';
 import AgentFollowUpCard from '@/components/AgentFollowUpCard';
 import AgentIntentClarifyCard from '@/components/AgentIntentClarifyCard';
+import AgentOrbStatus from '@/components/AgentOrbStatus';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11855,21 +11856,10 @@ export default function Page() {
                                                                 })
                                                             ]
                                                         }),
-                                                        (activeAgentBusy || agentOrbStatus.phase === 'error') && /*#__PURE__*/ _jsxs("div", {
-                                                            className: `agent-orb-status ${agentOrbStatus.phase === 'error' ? 'agent-orb-status-error' : ''}`,
-                                                            role: "status",
-                                                            "aria-live": "polite",
-                                                            title: agentOrbStatus.detail,
-                                                            children: [
-                                                                /*#__PURE__*/ _jsx(AgentOrb, {
-                                                                    state: agentOrbStatus.phase,
-                                                                    size: 22,
-                                                                    label: ""
-                                                                }),
-                                                                /*#__PURE__*/ _jsx("span", {
-                                                                    children: agentOrbStatus.title
-                                                                })
-                                                            ]
+                                                        (activeAgentBusy || agentOrbStatus.phase === 'error') && /*#__PURE__*/ _jsx(AgentOrbStatus, {
+                                                            phase: agentOrbStatus.phase,
+                                                            title: agentOrbStatus.title,
+                                                            detail: agentOrbStatus.detail
                                                         }),
                                                         /*#__PURE__*/ _jsx("button", {
                                                                     type: "button",
