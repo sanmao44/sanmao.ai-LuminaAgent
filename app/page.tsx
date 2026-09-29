@@ -62,6 +62,7 @@ import WelcomeExperience, { WELCOME_SEEN_STORAGE_KEY } from '@/components/Welcom
 import WorkspaceShell from '@/components/WorkspaceShell';
 import MainColumn from '@/components/MainColumn';
 import WorkspaceTopbar from '@/components/WorkspaceTopbar';
+import SidebarFooterActions from '@/components/SidebarFooterActions';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11174,77 +11175,21 @@ export default function Page() {
                     /*#__PURE__*/ _jsx("div", {
                         className: "sidebar-fill"
                     }),
-                    sidebarOpen && /*#__PURE__*/ _jsxs(_Fragment, {
-                        children: [
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "sidebar-footer-actions",
-                                children: [
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "sidebar-model-status",
-                                        onClick: ()=>{
-                                            setManagementNavOpen(true);
-                                            setSection('models');
-                                            closeSidebarOnMobile();
-                                        },
-                                        title: `${availableImageModels.length} 图片 · ${availableChatModels.length} 对话 · ${availableVideoModels.length} 视频`,
-                                        children: [
-                                            /*#__PURE__*/ _jsx("span", {
-                                                className: `status-dot ${availableChatModels.length || availableImageModels.length || availableVideoModels.length ? 'online' : ''}`
-                                            }),
-                                            /*#__PURE__*/ _jsxs("span", {
-                                                children: [
-                                                    availableImageModels.length + availableChatModels.length + availableVideoModels.length,
-                                                    " 个模型"
-                                                ]
-                                            }),
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "chevron",
-                                                size: 13
-                                            })
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        className: "sidebar-support-button",
-                                        type: "button",
-                                        onClick: ()=>{
-                                            setSupportTab('community');
-                                            setSupportOpen(true);
-                                        },
-                                        title: "交流与支持",
-                                        "aria-label": "打开交流与支持",
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "support",
-                                                size: 15
-                                            }),
-                                            /*#__PURE__*/ _jsx("span", {
-                                                children: "支持"
-                                            })
-                                        ]
-                                    })
-                                ]
-                            })
-                        ]
-                    }),
-                    /*#__PURE__*/ _jsxs("button", {
-                        className: "support-rail-button",
-                        type: "button",
-                        onClick: ()=>{
+                    /*#__PURE__*/ _jsx(SidebarFooterActions, {
+                        sidebarOpen: sidebarOpen,
+                        imageModelCount: availableImageModels.length,
+                        chatModelCount: availableChatModels.length,
+                        videoModelCount: availableVideoModels.length,
+                        Icon: Icon,
+                        onOpenModels: ()=>{
+                            setManagementNavOpen(true);
+                            setSection('models');
+                            closeSidebarOnMobile();
+                        },
+                        onOpenSupport: ()=>{
                             setSupportTab('community');
                             setSupportOpen(true);
-                        },
-                        "aria-label": "交流与支持",
-                        "data-tooltip": "交流与支持",
-                        children: [
-                            /*#__PURE__*/ _jsx("span", {
-                                className: "support-rail-icon",
-                                children: "✦"
-                            }),
-                            /*#__PURE__*/ _jsx("span", {
-                                children: "交流与支持"
-                            })
-                        ]
+                        }
                     })
                 ]
             }),
