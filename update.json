@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.66/SANMAO.AI-0.7.66.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.66/SANMAO.AI-0.7.66.zip"
   ],
-  "sha256": "827ecd8d5942bed7f4fdd5719b96d052b1a5287b5ee3ea3f69930d7bfe2526db",
+  "sha256": "8202ac919a226040bd26e79f9e1f1ff6892acd58c0ec2bfb9ca28bee950dc8ea",
   "publishedAt": "2026-09-28T15:37:25Z",
   "notes": [
     "智能助手全面接入 Siri 风格光球：待机、连接、聆听、思考、播报、错误六种状态动效，可跟随麦克风音量与生成进度跳动，亮/暗主题都有兜底。",
