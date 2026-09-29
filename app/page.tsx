@@ -63,6 +63,7 @@ import WorkspaceShell from '@/components/WorkspaceShell';
 import MainColumn from '@/components/MainColumn';
 import WorkspaceTopbar from '@/components/WorkspaceTopbar';
 import SidebarFooterActions from '@/components/SidebarFooterActions';
+import SidebarChatHistory from '@/components/SidebarChatHistory';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -10975,182 +10976,40 @@ export default function Page() {
                             })
                         ]
                     }),
-                    sidebarOpen && section === 'agent' && /*#__PURE__*/ _jsxs(_Fragment, {
-                        children: [
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "chat-history-head",
-                                children: [
-                                    /*#__PURE__*/ _jsx("span", {
-                                        children: "助手历史"
-                                    }),
-                                    /*#__PURE__*/ _jsxs("div", {
-                                        children: [
-                                            personaChatCount > 0 && /*#__PURE__*/ _jsx("button", {
-                                                type: "button",
-                                                className: `chat-history-persona-filter ${chatPersonaOnly ? 'active' : ''}`,
-                                                onClick: ()=>setChatPersonaOnly((prev)=>!prev),
-                                                title: chatPersonaOnly ? '显示全部历史对话' : `只看带角色设定的对话（${personaChatCount} 段）`,
-                                                "aria-pressed": chatPersonaOnly ? 'true' : 'false',
-                                                children: `角色 ${personaChatCount}`
-                                            }),
-                                            /*#__PURE__*/ _jsx("b", {
-                                                children: chatSessions.length || ''
-                                            }),
-                                            chatSessions.length > 0 && /*#__PURE__*/ _jsx("button", {
-                                                type: "button",
-                                                className: `chat-history-batch ${chatSelectionMode ? 'active' : ''}`,
-                                                onClick: toggleChatSelectionMode,
-                                                title: chatSelectionMode ? '退出批量管理' : '管理历史对话',
-                                                "aria-label": chatSelectionMode ? '退出批量管理' : '管理历史对话',
-                                                children: chatSelectionMode ? '完成' : '···'
-                                            })
-                                        ]
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "chat-history-search",
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "search",
-                                        size: 14
-                                    }),
-                                    /*#__PURE__*/ _jsx("input", {
-                                        value: chatHistorySearch,
-                                        onChange: (e)=>setChatHistorySearch(e.target.value),
-                                        placeholder: "快速查找历史对话"
-                                    }),
-                                    chatHistorySearch && /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>setChatHistorySearch(''),
-                                        children: "清空"
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsx("div", {
-                                className: "chat-history-list",
-                                children: filteredChatSessions.length ? filteredChatSessions.map((session, index)=>{
-                                    const busy = busyChatIds.includes(session.id);
-                                    const renaming = renamingChatId === session.id;
-                                    const historyGroup = chatHistoryGroupLabel(session.updatedAt);
-                                    const previousHistoryGroup = index > 0 ? chatHistoryGroupLabel(filteredChatSessions[index - 1].updatedAt) : '';
-                                    const personaLabel = personaBadgeLabel(session.persona);
-                                    return /*#__PURE__*/ _jsxs(_Fragment, {
-                                        children: [
-                                            historyGroup !== previousHistoryGroup && /*#__PURE__*/ _jsx("div", {
-                                                className: "chat-history-group",
-                                                children: historyGroup
-                                            }),
-                                            /*#__PURE__*/ _jsxs("div", {
-                                                className: `chat-history-item ${activeChatId === session.id ? 'active' : ''} ${chatSelectionMode ? 'selecting' : ''} ${renaming ? 'renaming' : ''}`,
-                                                children: [
-                                                    renaming ? /*#__PURE__*/ _jsx("input", {
-                                                        className: "chat-history-rename",
-                                                        value: renamingChatTitle,
-                                                        maxLength: 48,
-                                                        autoFocus: true,
-                                                        onFocus: (event)=>event.currentTarget.select(),
-                                                        onChange: (event)=>setRenamingChatTitle(event.target.value),
-                                                        onBlur: ()=>void commitChatRename(session),
-                                                        onKeyDown: (event)=>{
-                                                            if (event.key === 'Enter') {
-                                                                event.preventDefault();
-                                                                event.stopPropagation();
-                                                                void commitChatRename(session);
-                                                            } else if (event.key === 'Escape') {
-                                                                event.preventDefault();
-                                                                event.stopPropagation();
-                                                                cancelChatRename();
-                                                            }
-                                                        }
-                                                    }) : /*#__PURE__*/ _jsxs("button", {
-                                                        className: "chat-history-open",
-                                                        title: personaLabel ? `角色设定：${personaLabel}（单击打开，双击重命名）` : "单击打开，双击重命名",
-                                                        onClick: ()=>chatSelectionMode ? toggleChatSessionSelection(session.id) : (openChatSession(session), closeSidebarOnMobile()),
-                                                        onDoubleClick: (event)=>{
-                                                            event.preventDefault();
-                                                            beginChatRename(session);
-                                                        },
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("span", {
-                                                                children: session.title
-                                                            }),
-                                                            /*#__PURE__*/ _jsxs("small", {
-                                                                className: busy ? 'busy' : '',
-                                                                children: [
-                                                                personaLabel && /*#__PURE__*/ _jsx("em", {
-                                                                    className: "chat-history-persona-tag",
-                                                                    children: "角色"
-                                                                }),
-                                                                busy ? '正在回答…' : formatTime(session.updatedAt)
-                                                                ]
-                                                            })
-                                                        ]
-                                                    }),
-                                                    chatSelectionMode && /*#__PURE__*/ _jsxs("label", {
-                                                        className: "chat-history-check",
-                                                        title: busy ? '正在回答，暂不能删除' : '选择这段对话',
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("input", {
-                                                                type: "checkbox",
-                                                                checked: selectedChatSessions.has(session.id),
-                                                                disabled: busy,
-                                                                onChange: ()=>toggleChatSessionSelection(session.id)
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("span", {})
-                                                        ]
-                                                    }),
-                                                    !chatSelectionMode && !renaming && /*#__PURE__*/ _jsx("button", {
-                                                        className: "chat-history-delete",
-                                                        title: busy ? '正在回答，暂不能删除' : '删除这段对话',
-                                                        disabled: busy,
-                                                        onClick: ()=>askDeleteChatSession(session),
-                                                        children: /*#__PURE__*/ _jsx(Icon, {
-                                                            name: "trash",
-                                                            size: 13
-                                                        })
-                                                    })
-                                                ]
-                                            })
-                                        ]
-                                    }, session.id);
-                                }) : /*#__PURE__*/ _jsx("div", {
-                                    className: "chat-history-empty",
-                                    children: chatSessions.length ? chatPersonaOnly ? '没有找到带角色设定的对话' : '没有找到匹配的历史对话' : '对话会自动保存在这里'
-                                })
-                            })
-                        ]
-                    }),
-                    sidebarOpen && section === 'agent' && chatSelectionMode && /*#__PURE__*/ _jsxs("div", {
-                        className: "chat-history-selection-bar",
-                        children: [
-                            /*#__PURE__*/ _jsx("button", {
-                                type: "button",
-                                className: "chat-history-select-all",
-                                onClick: toggleAllChatSessionSelection,
-                                children: allChatSessionsSelected ? '取消全选' : '全选'
-                            }),
-                            /*#__PURE__*/ _jsxs("span", {
-                                children: [
-                                    "已选 ",
-                                    selectedChatSessions.size,
-                                    " 段"
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                className: "chat-history-selection-delete",
-                                disabled: !selectedChatSessions.size,
-                                onClick: ()=>void deleteSelectedChatSessions(),
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "trash",
-                                        size: 13
-                                    }),
-                                    "删除所选"
-                                ]
-                            })
-                        ]
+                    /*#__PURE__*/ _jsx(SidebarChatHistory, {
+                        visible: sidebarOpen && section === 'agent',
+                        sessions: chatSessions,
+                        filteredSessions: filteredChatSessions,
+                        personaChatCount: personaChatCount,
+                        personaOnly: chatPersonaOnly,
+                        search: chatHistorySearch,
+                        selectionMode: chatSelectionMode,
+                        selectedIds: selectedChatSessions,
+                        allSelected: allChatSessionsSelected,
+                        activeChatId: activeChatId,
+                        busyChatIds: busyChatIds,
+                        renamingChatId: renamingChatId,
+                        renamingChatTitle: renamingChatTitle,
+                        Icon: Icon,
+                        formatTime: formatTime,
+                        historyGroupLabel: chatHistoryGroupLabel,
+                        personaBadgeLabel: personaBadgeLabel,
+                        onTogglePersonaFilter: ()=>setChatPersonaOnly((prev)=>!prev),
+                        onSearchChange: (event)=>setChatHistorySearch(event.target.value),
+                        onClearSearch: ()=>setChatHistorySearch(''),
+                        onToggleSelectionMode: toggleChatSelectionMode,
+                        onOpenSession: (session)=>{
+                            openChatSession(session);
+                            closeSidebarOnMobile();
+                        },
+                        onBeginRename: beginChatRename,
+                        onRenameTitleChange: (event)=>setRenamingChatTitle(event.target.value),
+                        onCommitRename: commitChatRename,
+                        onCancelRename: cancelChatRename,
+                        onToggleSessionSelection: toggleChatSessionSelection,
+                        onDeleteSession: askDeleteChatSession,
+                        onToggleAll: toggleAllChatSessionSelection,
+                        onDeleteSelected: deleteSelectedChatSessions
                     }),
                     /*#__PURE__*/ _jsx(SidebarNavigation, {
                         section: section,

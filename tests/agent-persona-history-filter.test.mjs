@@ -18,13 +18,14 @@ test('persona badge label summarises the conversation persona for history badges
 
 test('history sidebar filters and searches conversations that carry a persona', async () => {
   const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  const history = await readFile(new URL('../components/SidebarChatHistory.tsx', import.meta.url), 'utf8');
   assert.ok(page.includes("const [chatPersonaOnly, setChatPersonaOnly] = useState(false);"));
   assert.match(page, /const personaChatCount = useMemo\(\(\)=>chatSessions\.filter\(\(session\)=>normalizeConversationPersona\(session\.persona\)\)\.length/);
   assert.match(page, /if \(chatPersonaOnly && !persona\) return false;/);
   assert.match(page, /return `\$\{session\.title\} \$\{persona\} \$\{session\.messages\.map/);
   assert.match(page, /chatHistorySearch,[\s\S]{0,40}chatPersonaOnly/);
-  assert.ok(page.includes("className: `chat-history-persona-filter ${chatPersonaOnly ? 'active' : ''}`"));
-  assert.ok(page.includes('const personaLabel = personaBadgeLabel(session.persona);'));
-  assert.ok(page.includes('className: "chat-history-persona-tag",'));
-  assert.ok(page.includes('没有找到带角色设定的对话'));
+  assert.ok(history.includes("className={`chat-history-persona-filter ${personaOnly ? 'active' : ''}`}"));
+  assert.ok(history.includes('const personaLabel = personaBadgeLabel(session.persona);'));
+  assert.ok(history.includes('className="chat-history-persona-tag"'));
+  assert.ok(history.includes('没有找到带角色设定的对话'));
 });

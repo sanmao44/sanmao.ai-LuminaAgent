@@ -45,6 +45,10 @@ actions remain outside this boundary.
 `SidebarFooterActions` now owns the responsive model status and support entry
 points. Model counts and support actions are passed in from the page root.
 
+`SidebarChatHistory` now owns the assistant history presentation, including
+search, persona filtering, rename controls and selection controls. Session
+state and repository operations remain page-owned and arrive through callbacks.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section
