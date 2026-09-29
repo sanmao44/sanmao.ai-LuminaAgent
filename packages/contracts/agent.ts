@@ -5,6 +5,10 @@
  * provider SDKs, MCP and persistence adapters stay outside this package.
  */
 
+import type { ModelCapabilities, ModelDescriptor, ModelMessage, ModelProvider, ModelRequest, ModelResponse, ModelRuntime } from './model';
+
+export type { ModelCapabilities, ModelDescriptor, ModelMessage, ModelProvider, ModelRequest, ModelResponse, ModelRuntime } from './model';
+
 export type AgentRunId = string;
 
 export type AgentRunState =
@@ -14,12 +18,8 @@ export type AgentRunState =
   | 'failed'
   | 'cancelled';
 
-export type AgentMessageRole = 'system' | 'user' | 'assistant';
-
-export type AgentMessage = {
-  role: AgentMessageRole;
-  content: string;
-};
+export type AgentMessageRole = ModelMessage['role'];
+export type AgentMessage = ModelMessage;
 
 export type AgentEvent =
   | { type: 'AgentRunStarted'; runId: AgentRunId; at: number }
@@ -27,41 +27,6 @@ export type AgentEvent =
   | { type: 'ModelInvocationCompleted'; runId: AgentRunId; at: number; outputChars: number }
   | { type: 'AgentRunCompleted'; runId: AgentRunId; at: number }
   | { type: 'AgentRunFailed'; runId: AgentRunId; at: number; error: string };
-
-export type ModelCapabilities = {
-  text: boolean;
-  reasoning: boolean;
-  toolUse: boolean;
-  structuredOutput: boolean;
-};
-
-export type ModelDescriptor = {
-  id: string;
-  displayName: string;
-  capabilities: ModelCapabilities;
-};
-
-export type ModelRequest = {
-  runId: AgentRunId;
-  messages: readonly AgentMessage[];
-  model: ModelDescriptor;
-  signal?: AbortSignal;
-};
-
-export type ModelResponse = {
-  content: string;
-  modelId?: string;
-};
-
-export interface ModelProvider {
-  invoke(request: ModelRequest): Promise<ModelResponse>;
-}
-
-export interface ModelRuntime {
-  descriptor: ModelDescriptor;
-  provider: ModelProvider;
-  invoke(request: Omit<ModelRequest, 'model'>): Promise<ModelResponse>;
-}
 
 export type AgentRequest = {
   runId: AgentRunId;

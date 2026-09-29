@@ -110,6 +110,7 @@ import {
 } from '@/lib/artifacts';
 import { AgentRuntime } from '@/lib/agent/runtime';
 import type { AgentMessage, ModelDescriptor } from '@/lib/agent/runtime';
+import { createLegacyChatModelRuntime } from '@/lib/provider-runtime/chat';
 
 async function safeDiscoverMcpForRequest(options: Parameters<typeof discoverMcpForRequest>[0]) {
   try {
@@ -1402,22 +1403,15 @@ export async function POST(request: Request) {
         },
       };
       const runtime = new AgentRuntime({
-        model: {
+        model: createLegacyChatModelRuntime({
           descriptor: model,
-          provider: { invoke: async () => ({ content: '' }) },
-          invoke: async (input) => {
-            const response = await trackedChatCompletion(
-              agentRuntime.provider,
-              agentRuntime.model.rawId,
-              { messages: input.messages.map((item): ChatMessage => ({ role: item.role, content: item.content })) },
-              input.signal || requestController.signal,
-            );
-            return {
-              content: chatContentText(response?.choices?.[0]?.message?.content),
-              modelId: extractUpstreamModel(response) || undefined,
-            };
-          },
-        },
+          invoke: (messages, signal) => trackedChatCompletion(
+            agentRuntime.provider,
+            agentRuntime.model.rawId,
+            { messages: messages.map((item): ChatMessage => ({ role: item.role, content: item.content })) },
+            signal || requestController.signal,
+          ),
+        }),
         context: { build: (input) => input.messages },
         policy: { decide: () => ({ allowed: true }) },
       });
