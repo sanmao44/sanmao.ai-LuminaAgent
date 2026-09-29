@@ -78,6 +78,9 @@ hint. The page still owns the preference persistence and search behavior.
 `AgentQuickActions` now owns the composer shortcut buttons and one-take picker
 presentation. Reference, prompt and skill actions remain page-owned callbacks.
 
+`AgentSendButton` now owns the send/stop button presentation. Validation,
+request dispatch and cancellation remain page-owned.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section

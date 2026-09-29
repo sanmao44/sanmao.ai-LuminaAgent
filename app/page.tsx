@@ -73,6 +73,7 @@ import AgentOrbStatus from '@/components/AgentOrbStatus';
 import AgentMcpDetailDock from '@/components/AgentMcpDetailDock';
 import AgentWebModeControl from '@/components/AgentWebModeControl';
 import AgentQuickActions from '@/components/AgentQuickActions';
+import AgentSendButton from '@/components/AgentSendButton';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11775,17 +11776,13 @@ export default function Page() {
                                                             title: agentOrbStatus.title,
                                                             detail: agentOrbStatus.detail
                                                         }),
-                                                        /*#__PURE__*/ _jsx("button", {
-                                                                    type: "button",
-                                                                    className: `send-button ${activeAgentBusy ? 'stop-button' : ''}`,
+                                                        /*#__PURE__*/ _jsx(AgentSendButton, {
+                                                                    busy: activeAgentBusy,
                                                                     disabled: activeAgentBusy ? false : !agentInput.trim() && !agentFiles.length && !agentRefs.length || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
-                                                                    onClick: ()=>activeAgentBusy ? void stopAgent() : void sendAgent(),
                                                                     title: activeAgentBusy ? '停止当前回答' : agentMessageSelectionMode ? '请先完成或取消删除选择' : shareSelectionMode ? '请先完成或取消分享选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : '发送',
-                                                                    "aria-label": activeAgentBusy ? '停止当前回答' : '发送',
-                                                                    children: /*#__PURE__*/ _jsx(Icon, {
-                                                                        name: activeAgentBusy ? "stop" : "send",
-                                                                        size: 18
-                                                                    })
+                                                                    Icon: Icon,
+                                                                    onSend: ()=>void sendAgent(),
+                                                                    onStop: ()=>void stopAgent()
                                                         })
                                                     ]
                                                 }),
