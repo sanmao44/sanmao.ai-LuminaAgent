@@ -231,7 +231,7 @@ test("三个入口都按 runId 轮询，收尾都会停", () => {
   // 主对话：轮询把手必须在 try 之前声明——写在 try 里、却从 finally 里调用会直接 ReferenceError，
   // 而 app/page.tsx 顶上带着 @ts-nocheck，类型检查兜不住这一层，只能在这里钉住。
   assert.match(page, /const progressRunId = uid\('run'\);/);
-  assert.match(page, /let stopAgentProgress = \(\)=>\{\};\n\s+try \{/);
+  assert.match(page, /let stopAgentProgress = \(\)=>\{\};\r?\n\s+try \{/);
   assert.match(page, /stopAgentProgress = pollAgentProgress\(progressRunId, \{/);
   assert.match(page, /isSettled: \(\)=>Boolean\(streamedText\)/);
   assert.match(page, /runId: progressRunId/);
@@ -239,11 +239,11 @@ test("三个入口都按 runId 轮询，收尾都会停", () => {
 
   // 重新生成：挂在被重试的消息上，操作栏里显示
   assert.match(page, /const retryRunId = uid\('run'\);/);
-  assert.match(page, /let stopRetryProgress = \(\)=>\{\};\n\s+try \{/);
+  assert.match(page, /let stopRetryProgress = \(\)=>\{\};\r?\n\s+try \{/);
   assert.match(page, /stopRetryProgress = pollAgentProgress\(retryRunId, \{/);
   assert.match(page, /runId: retryRunId/);
   assert.match(page, /\} finally\{\r?\n            stopRetryProgress\(\);/);
-  assert.match(page, /message\.retrying && message\.activity\?\.message \? \/\*#__PURE__\*\/ _jsx\("span", \{\r?\n\s+className: "message-retry-activity",/);
+  assert.match(page, /message\.retrying && !showAgentImageLoadingCard\(message\) && message\.activity\?\.message \? \/\*#__PURE__\*\/ _jsx\("span", \{\r?\n\s+className: "message-retry-activity",/);
   assert.match(page, /applyMessageVersion\(\{ \.\.\.item, activity: undefined \}/);
   assert.match(styles, /\.message-tools \.message-retry-activity\{[^}]*color:var\(--accent-text\)/);
 

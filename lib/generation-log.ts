@@ -77,7 +77,10 @@ export type GenerationLog = {
 
 const dataDir = resolveLocalDataDir();
 const logPath = path.join(dataDir, 'generation-logs.jsonl');
-const trashDir = path.join(dataDir, 'trash', 'images');
+/** 图片、视频、音频共用一套回收站，各自一个子目录。 */
+const TRASH_KINDS = ['images', 'videos', 'audio'] as const;
+type MediaTrashKind = (typeof TRASH_KINDS)[number];
+function trashDirFor(kind: MediaTrashKind) { return path.join(dataDir, 'trash', kind); }
 const LOG_ROTATION_BYTES = 10 * 1024 * 1024;
 const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 // The API routes allow long-running provider calls, but a task cannot remain
@@ -172,19 +175,24 @@ function storedFileFromUrl(url: string, storagePath?: string) {
   }
 }
 
-export async function purgeExpiredImageTrash() {
-  try {
-    for (const entry of await readdir(trashDir, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      const file = path.join(trashDir, entry.name);
-      if (Date.now() - (await stat(file)).mtimeMs > TRASH_RETENTION_MS) await rm(file, { force: true });
-    }
-  } catch {}
+export async function purgeExpiredMediaTrash() {
+  for (const kind of TRASH_KINDS) {
+    const dir = trashDirFor(kind);
+    try {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        const file = path.join(dir, entry.name);
+        if (Date.now() - (await stat(file)).mtimeMs > TRASH_RETENTION_MS) await rm(file, { force: true });
+      }
+    } catch { /* 该类别还没有回收站目录时跳过。 */ }
+  }
 }
 
-async function moveToTrash(file: string) {
-  await mkdir(trashDir, { recursive: true });
-  const target = path.join(trashDir, `${Date.now()}-${randomUUID()}-${path.basename(file)}`);
+/** 删除素材时先进回收站（默认保留 7 天）；视频/音频此前是直接删除，删了找不回。 */
+export async function moveMediaToTrash(file: string, kind: MediaTrashKind = 'images') {
+  const dir = trashDirFor(kind);
+  await mkdir(dir, { recursive: true });
+  const target = path.join(dir, `${Date.now()}-${randomUUID()}-${path.basename(file)}`);
   try { await rename(file, target); } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== 'EXDEV') throw error;
     await copyFile(file, target);
@@ -207,7 +215,7 @@ export async function cleanupGenerationLogs(options: { before?: Date; deleteImag
     }
     for (const file of files) {
       if (options.dryRun) { deletedImages += 1; continue; }
-      try { await moveToTrash(file); deletedImages += 1; } catch {}
+      try { await moveMediaToTrash(file, 'images'); deletedImages += 1; } catch {}
     }
   }
 
@@ -216,6 +224,6 @@ export async function cleanupGenerationLogs(options: { before?: Date; deleteImag
   await mkdir(dataDir, { recursive: true });
   for (const file of await logFiles()) if (file !== logPath) await rm(file, { force: true });
   await writeFile(logPath, keptLogs.length ? `${keptLogs.map((log) => JSON.stringify(log)).join('\n')}\n` : '', 'utf8');
-  await purgeExpiredImageTrash();
+  await purgeExpiredMediaTrash();
   return { removedLogs: removedLogs.length, deletedImages, dryRun: false };
 }

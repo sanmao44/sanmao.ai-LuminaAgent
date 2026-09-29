@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { createGzip, gunzipSync } from 'node:zlib';
 
 export type BackupArchiveEntry = { name: string; data: Buffer };
 
@@ -47,9 +47,21 @@ function tarHeader(name: string, size: number) {
   return header;
 }
 
-function padded(data: Buffer) {
-  const padding = (512 - (data.length % 512)) % 512;
-  return padding ? Buffer.concat([data, Buffer.alloc(padding)]) : data;
+/**
+ * 同步 gzip 会占满事件循环：实测 2GB 快照让整个服务冻结 42 秒，期间所有接口和
+ * 媒体流一起停摆。这里把 tar 片段直接写进异步 gzip 流（压缩在 libuv 线程池里跑），
+ * 既不再冻结服务，也省掉了“先拼完整 tar 再压缩”的那一整份拷贝。
+ */
+function gzipChunks(chunks: Buffer[]) {
+  return new Promise<Buffer>((resolve, reject) => {
+    const gzip = createGzip({ level: 6, chunkSize: 1024 * 1024 });
+    const parts: Buffer[] = [];
+    gzip.on('data', (chunk: Buffer) => parts.push(chunk));
+    gzip.on('error', reject);
+    gzip.on('end', () => resolve(parts.length === 1 ? parts[0] : Buffer.concat(parts)));
+    for (const chunk of chunks) gzip.write(chunk);
+    gzip.end();
+  });
 }
 
 export function sha256(data: Buffer) {
@@ -60,15 +72,19 @@ export function sha256(data: Buffer) {
   return hash.digest('hex');
 }
 
-export function createBackupArchive(entries: BackupArchiveEntry[]) {
+export async function createBackupArchive(entries: BackupArchiveEntry[]) {
   const chunks: Buffer[] = [];
   for (const entry of entries) {
     const name = entry.name.replace(/\\/g, '/').replace(/^\/+/, '');
     if (!name || name.split('/').includes('..')) throw new Error('备份文件名无效');
-    chunks.push(tarHeader(name, entry.data.length), padded(entry.data));
+    // 逐段入列：不再为每个条目复制一份带填充的数据（2GB 素材曾因此多占 2GB 内存）。
+    chunks.push(tarHeader(name, entry.data.length));
+    if (entry.data.length) chunks.push(entry.data);
+    const padding = (512 - (entry.data.length % 512)) % 512;
+    if (padding) chunks.push(Buffer.alloc(padding));
   }
   chunks.push(Buffer.alloc(1024));
-  return gzipSync(Buffer.concat(chunks), { level: 6 });
+  return gzipChunks(chunks);
 }
 
 export function extractBackupArchive(archive: Buffer) {
@@ -92,4 +108,19 @@ export function extractBackupArchive(archive: Buffer) {
     offset += Math.ceil(size / 512) * 512;
   }
   return entries;
+}
+
+/**
+ * 完整备份的导出与恢复都是整卷进内存，恢复端还有硬上限。导出时必须边收集边
+ * 结算，超限立刻停下——否则只会生成一个"导出成功、恢复失败"的静默陷阱。
+ */
+export function createArchiveBudget(limitBytes: number, label: string) {
+  let total = 0;
+  return {
+    add(bytes: number, name: string) {
+      total += Math.max(0, bytes);
+      if (total > limitBytes) throw new Error(`备份体积超过恢复上限 ${label}（已到 ${name}），请先清理素材或分批导出`);
+    },
+    used: () => total,
+  };
 }

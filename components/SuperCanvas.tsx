@@ -182,6 +182,7 @@ import {
   runReversePrompt,
 } from "@/lib/creation/agent";
 import { type AgentGeneratedImage } from "@/lib/agent-client";
+import AgentOrb, { busyOrbState, type AgentOrbState } from "@/components/AgentOrb";
 import CanvasAgentDock, {
   CANVAS_AGENT_DOCK_OPEN_KEY,
 } from "@/components/CanvasAgentDock";
@@ -14617,7 +14618,7 @@ export default function SuperCanvas() {
         actions: [
           {
             id: "ask-agent",
-            icon: "✦",
+            icon: "agent",
             label: "问 Agent",
             title: "打开 Agent 助手并聚焦输入框，选中的节点会自动作为上下文",
             onClick: () => {
@@ -14696,7 +14697,8 @@ export default function SuperCanvas() {
         title="打开 Agent 助手，用这些选中节点作为上下文"
         onClick={askAgentAboutSelection}
       >
-        ✦ 问 Agent
+        <AgentOrb state={busyOrbState(agentDockBusy)} size={13} label="" />
+        问 Agent
       </button>
       <button type="button" onClick={makeGroup}>
         ⌘ 成组
@@ -15016,6 +15018,11 @@ export default function SuperCanvas() {
     [commit, notify, screenToWorld, stageSize.height, stageSize.width],
   );
 
+  const marqueeWidth = marquee ? Math.abs(marquee.w) : 0;
+  const marqueeHeight = marquee ? Math.abs(marquee.h) : 0;
+  const marqueeChipVisible = marqueeWidth >= 132 && marqueeHeight >= 40;
+  const marqueeCountVisible = marqueeWidth >= 178;
+
   if (!ready)
     return (
       <section className="canvas-workspace canvas-loading">
@@ -15159,7 +15166,8 @@ export default function SuperCanvas() {
             title={agentDockBusy ? "Agent 正在生成，点开面板查看或停止" : "Agent 助手：右侧面板，可读取选中节点并生成到画布（Ctrl/Cmd + K）"}
             onClick={() => applyAgentDockOpen(!agentDockOpen)}
           >
-            ✦ Agent
+            <AgentOrb state={busyOrbState(agentDockBusy)} size={16} label="" />
+            Agent
             {agentDockBusy ? <i aria-hidden="true" /> : null}
           </button>
           </>}
@@ -16158,10 +16166,35 @@ export default function SuperCanvas() {
               height: Math.abs(marquee.h),
             }}
           >
-            <b>
-              {Math.round(Math.abs(marquee.w))} ×{" "}
-              {Math.round(Math.abs(marquee.h))} px
-            </b>
+            <svg className="canvas-marquee-outline" aria-hidden="true">
+              <rect
+                className="canvas-marquee-rail"
+                x="0"
+                y="0"
+                width="100%"
+                height="100%"
+                rx="15"
+                ry="15"
+              />
+              <rect
+                className="canvas-marquee-flow-stroke"
+                x="0"
+                y="0"
+                width="100%"
+                height="100%"
+                rx="15"
+                ry="15"
+              />
+            </svg>
+            {marqueeChipVisible && (
+              <span className="canvas-marquee-chip">
+                <i aria-hidden="true" />
+                <b>
+                  {Math.round(marqueeWidth)} × {Math.round(marqueeHeight)} px
+                </b>
+                {marqueeCountVisible && <small>已选 {selectedIds.size} 个</small>}
+              </span>
+            )}
           </div>
         )}
         {selectedGroupId &&
@@ -16305,7 +16338,8 @@ export default function SuperCanvas() {
                   setMode("text");
                 }}
               >
-                ✦ Agent
+                <AgentOrb state={busyOrbState(agentDockBusy)} size={13} label="" />
+                Agent
               </button>
             </div>
             <div className="canvas-deck-context">
@@ -16734,7 +16768,7 @@ export default function SuperCanvas() {
                 className="canvas-menu-item canvas-menu-item-agent"
                 onClick={() => addNode("text", contextMenu.world)}
               >
-                <span className="canvas-menu-icon" aria-hidden="true">✦</span>
+                <span className="canvas-menu-icon" aria-hidden="true"><AgentOrb state="idle" size={18} label="" /></span>
                 <span className="canvas-menu-copy">
                   <b>Agent 节点</b>
                   <small>文本驱动智能工作流</small>
@@ -16797,7 +16831,7 @@ export default function SuperCanvas() {
                   askAgentAboutCanvas();
                 }}
               >
-                <span className="canvas-menu-icon" aria-hidden="true">✦</span>
+                <span className="canvas-menu-icon" aria-hidden="true"><AgentOrb state="idle" size={18} label="" /></span>
                 <span className="canvas-menu-copy">
                   <b>问 Agent</b>
                 </span>
@@ -18722,6 +18756,13 @@ type CanvasContextMenuGroup = {
   actions: CanvasQuickAction[];
 };
 
+/** Agent 文本节点的光球状态：排队与生成中＝思考中，失败＝错误色，其余＝空闲。 */
+function canvasPromptOrbState(status: string | undefined): AgentOrbState {
+  if (status === "failed") return "error";
+  if (status === "queued" || status === "running") return "thinking";
+  return "idle";
+}
+
 function CanvasActionIcon({ name }: { name: string }) {
   const svg = (children: ReactNode) => (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -18754,7 +18795,7 @@ function CanvasActionIcon({ name }: { name: string }) {
     case "image":
       return svg(<><path d="m12 4 1.7 4.3L18 10l-4.3 1.7L12 16l-1.7-4.3L6 10l4.3-1.7L12 4Z" /><path d="m18.5 15 .7 1.8L21 17.5l-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8Z" /></>);
     case "agent":
-      return svg(<><path d="M4.5 6.5h15v9h-15z" /><path d="M8.5 19.5 11 15.5" /><path d="m12.2 8 1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1 1-2.5Z" /></>);
+      return <AgentOrb state="idle" size={15} label="" />;
     case "preview":
       return svg(<><path d="M8 5H5v3M16 5h3v3M5 16v3h3M19 16v3h-3" /><path d="m9 9 6 6M15 9l-6 6" opacity=".5" /></>);
     case "reverse-prompt":
@@ -18996,7 +19037,9 @@ function CanvasQuickToolbar({
         onWheel={(event) => event.stopPropagation()}
       >
         <span className="canvas-node-quick-title">
-          <i aria-hidden="true">{target.kind === "group" ? "⌘" : target.node.type === "upscale" ? "↗" : target.node.type === "prompt" ? "✦" : target.node.type === "generator" ? "⌁" : target.node.data.kind === "video" ? "▶" : "▣"}</i>
+          <i aria-hidden="true">{target.kind === "node" && target.node.type === "prompt"
+            ? <AgentOrb state={canvasPromptOrbState(target.node.data.status)} size={15} label="" />
+            : target.kind === "group" ? "⌘" : target.node.type === "upscale" ? "↗" : target.node.type === "generator" ? "⌁" : target.node.data.kind === "video" ? "▶" : "▣"}</i>
           <span className="canvas-node-quick-title-copy">
             <b>{target.kind === "node" ? nodeLabel(target.node) : target.group.name}</b>
             {target.kind === "group" && <small>{target.group.nodeIds.length} 个对象</small>}
@@ -19280,7 +19323,7 @@ function CanvasNodeContextMenu({
                   action.onClick();
                 }}
               >
-                <span className="canvas-menu-icon" aria-hidden="true">{action.icon}</span>
+                <span className="canvas-menu-icon" aria-hidden="true"><CanvasActionIcon name={action.icon} /></span>
                 <span className="canvas-menu-copy"><b>{action.label}</b></span>
                 <span className="canvas-menu-arrow" aria-hidden="true">›</span>
               </button>
@@ -21061,7 +21104,7 @@ function CanvasNodeCard({
       {node.type === "prompt" && (
         <div className="canvas-prompt-card">
           <div className="canvas-node-kicker">
-            <span>✦</span>
+            <span><AgentOrb state={canvasPromptOrbState(data.status)} size={16} label="" /></span>
             <b>{String(data.role || "Agent 节点")}</b>
           </div>
           {pending && (

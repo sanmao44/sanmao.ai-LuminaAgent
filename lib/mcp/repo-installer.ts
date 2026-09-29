@@ -95,12 +95,42 @@ function parsePythonProject(data: Uint8Array) {
   return { projectName, pythonEntry };
 }
 
+function uvVersionOf(value: unknown) {
+  return String(value || '').match(/\d+\.\d+\.\d+/)?.[0] || '';
+}
+
+function versionAtLeast(version: string, minimum: string) {
+  const parts = version.split('.').map(Number);
+  const floor = minimum.split('.').map(Number);
+  for (let index = 0; index < Math.max(parts.length, floor.length); index += 1) {
+    const value = parts[index] || 0;
+    const required = floor[index] || 0;
+    if (value !== required) return value > required;
+  }
+  return true;
+}
+
+/**
+ * 系统自带的 uv 只在版本不旧于应用内置版本时才用。
+ *
+ * 旧版 uv 在 Windows 上写启动 trampoline 的 PE 资源会被安全软件拦成「拒绝访问」，
+ * 直接装不上 Python MCP（实测 0.12.3 必失败、内置的 0.12.19 正常）；版本不够就回退到
+ * ensureUvPath() 自己下载的固定版本。
+ */
 function resolveUvPath() {
   const command = process.platform === 'win32' ? 'where.exe' : 'which';
   const result = spawnSync(command, ['uv'], { shell: false, windowsHide: true, encoding: 'utf8' });
   if (result.status !== 0) return null;
-  const first = String(result.stdout || '').split(/\r?\n/).map((item) => item.trim()).find(Boolean) || '';
-  return first && path.isAbsolute(first) && existsSync(first) ? first : null;
+  const candidates = String(result.stdout || '')
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter((item) => item && path.isAbsolute(item) && existsSync(item));
+  if (process.platform !== 'win32') return candidates[0] || null;
+  return candidates.find((candidate) => {
+    const probe = spawnSync(candidate, ['--version'], { shell: false, windowsHide: true, encoding: 'utf8' });
+    const version = probe.status === 0 ? uvVersionOf(probe.stdout) : '';
+    return Boolean(version) && versionAtLeast(version, UV_VERSION);
+  }) || null;
 }
 
 async function ensureUvPath(dataDir: string, signal?: AbortSignal) {
@@ -114,7 +144,8 @@ async function ensureUvPath(dataDir: string, signal?: AbortSignal) {
     maxBytes: UV_ARCHIVE_MAX_BYTES,
     accept: 'application/zip, application/octet-stream;q=0.9, */*;q=0.5',
     signal,
-    timeoutMs: 120_000,
+    // 固定版本包有 17MB，慢线路要留足时间，否则第一次安装会被判成超时。
+    timeoutMs: 300_000,
   });
   const digest = createHash('sha256').update(archive.data).digest('hex');
   if (digest !== UV_ARCHIVE_SHA256) throw new Error('uv 下载包校验失败，已停止安装');
@@ -140,7 +171,21 @@ function repoId(target: GithubSkillTarget, used: Set<string>) {
   return normalizeMcpServerId(`${base}-${Date.now() % 10000}`);
 }
 
-function extractArchive(data: Uint8Array) {
+/**
+ * codeload 的 zip 永远多一层「仓库名-分支」目录。剥掉它，packageRoot 才是仓库内的路径；
+ * 否则安装目录会算到一个从未创建的路径上，npm/uv 以它作为工作目录启动就是 ENOENT。
+ */
+function archiveRootPrefix(paths: string[]) {
+  const first = paths[0]?.split('/')[0] || '';
+  if (!first) return '';
+  return paths.every((item) => item.includes('/') && item.split('/')[0] === first) ? `${first}/` : '';
+}
+
+function stripArchiveRoot(relative: string, prefix: string) {
+  return prefix && relative.startsWith(prefix) ? relative.slice(prefix.length) : relative;
+}
+
+export function extractMcpRepoArchive(data: Uint8Array) {
   const files: ArchiveFile[] = [];
   let total = 0;
   const nodeCandidates: Array<{ path: string; data: Uint8Array; depth: number }> = [];
@@ -153,8 +198,10 @@ function extractArchive(data: Uint8Array) {
       return true;
     },
   });
-  for (const [rawPath, bytes] of Object.entries(unzipped)) {
-    const relative = safeArchivePath(rawPath);
+  const entries = Object.entries(unzipped);
+  const rootPrefix = archiveRootPrefix(entries.map(([name]) => safeArchivePath(name)).filter(Boolean));
+  for (const [rawPath, bytes] of entries) {
+    const relative = stripArchiveRoot(safeArchivePath(rawPath), rootPrefix);
     if (!relative || !bytes) continue;
     total += bytes.byteLength;
     files.push({ path: relative, data: bytes });
@@ -198,7 +245,8 @@ async function downloadGithubArchive(target: GithubSkillTarget, signal?: AbortSi
   let lastError: unknown = null;
   for (const url of githubArchiveUrls(target)) {
     try {
-      return await fetchSkillBytes(url, { maxBytes: REPO_ARCHIVE_MAX_BYTES, accept: 'application/zip, application/octet-stream;q=0.9, */*;q=0.5', signal, timeoutMs: 60_000 });
+      // 慢线路下 1.7MB 的仓库包实测要 40 秒以上，60 秒会把正常安装判成超时。
+      return await fetchSkillBytes(url, { maxBytes: REPO_ARCHIVE_MAX_BYTES, accept: 'application/zip, application/octet-stream;q=0.9, */*;q=0.5', signal, timeoutMs: 180_000 });
     } catch (error) {
       lastError = error;
       if (!(error instanceof Error) || !error.message.includes('HTTP 404')) break;
@@ -240,12 +288,17 @@ function runNpmInstall(projectRoot: string) {
   });
 }
 
-function runUvSync(uvPath: string, projectRoot: string) {
+function runUvSync(uvPath: string, projectRoot: string, dataDir: string) {
+  // 有些安全软件会拦下系统 %TEMP% 里对新 exe 的 PE 资源改写，uv 写 trampoline 时会报
+  // 「拒绝访问」直接装不上；给 uv 一个应用自己管理的临时目录，安装才稳定。
+  const tempDir = path.join(dataDir, 'mcp', 'tmp');
+  mkdirSync(tempDir, { recursive: true });
   return new Promise<void>((resolve, reject) => {
     const child = spawn(uvPath, ['--directory', projectRoot, 'sync', '--no-dev'], {
       shell: false,
       windowsHide: true,
       cwd: projectRoot,
+      env: { ...process.env, TEMP: tempDir, TMP: tempDir, TMPDIR: tempDir },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let log = '';
@@ -266,7 +319,7 @@ export async function installGithubMcpFromRepo(value: unknown, options: { dataDi
   const target = parseGithubSkillTarget(value);
   if (!target) throw new Error('请提供 GitHub 仓库地址，例如 https://github.com/owner/repo');
   const archive = await downloadGithubArchive(target, options.signal);
-  const extracted = extractArchive(archive.data);
+  const extracted = extractMcpRepoArchive(archive.data);
   const dataDir = options.dataDir || resolveLocalDataDir();
   const used = new Set(listMcpServers({ dataDir }).map((server) => server.id));
   const id = repoId(target, used);
@@ -275,8 +328,9 @@ export async function installGithubMcpFromRepo(value: unknown, options: { dataDi
   if (!isInside(installRoot, projectRoot)) throw new Error('仓库项目目录不安全');
   let pythonUvPath = '';
   if (extracted.kind === 'python') pythonUvPath = await ensureUvPath(dataDir, options.signal);
-  mkdirSync(installRoot, { recursive: true });
-  writeArchiveFiles(installRoot, extracted.files);
+  // 归档文件已按 packageRoot 裁掉前缀落盘，projectRoot 才是它们真正所在的工作目录。
+  mkdirSync(projectRoot, { recursive: true });
+  writeArchiveFiles(projectRoot, extracted.files);
   let command = '';
   let args: string[] = [];
   let entry = '';
@@ -291,7 +345,7 @@ export async function installGithubMcpFromRepo(value: unknown, options: { dataDi
     entry = entryPath;
     name = typeof extracted.packageJson?.name === 'string' && extracted.packageJson.name.trim() ? extracted.packageJson.name.trim().slice(0, 60) : name;
   } else {
-    await runUvSync(pythonUvPath, projectRoot);
+    await runUvSync(pythonUvPath, projectRoot, dataDir);
     command = pythonUvPath;
     args = ['--directory', projectRoot, 'run', extracted.pythonEntry || 'mcp', 'serve'];
     entry = extracted.pythonEntry || 'mcp';

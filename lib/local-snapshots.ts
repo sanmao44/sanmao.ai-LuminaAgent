@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { createBackupArchive, extractBackupArchive, sha256, type BackupArchiveEntry } from './backup-archive';
@@ -21,6 +22,15 @@ const KEEP_SNAPSHOTS = 7;
 const SNAPSHOT_RETRY_BACKOFF_MS = 30 * 60 * 1000;
 let snapshotRetryAfter = 0;
 /**
+ * 每份快照都是媒体库的全量副本（本机实测约 2.1GB），只按份数保留会让占用随
+ * 素材线性膨胀。除份数外再按总字节收敛，写盘前还要留出安全余量。
+ */
+const SNAPSHOT_TOTAL_MAX_BYTES = Number(process.env.SANMAO_SNAPSHOT_TOTAL_MAX_BYTES || 8 * 1024 * 1024 * 1024);
+const SNAPSHOT_MIN_FREE_BYTES = Number(process.env.SANMAO_SNAPSHOT_MIN_FREE_BYTES || 1536 * 1024 * 1024);
+const SNAPSHOT_SIGNATURE_PATH = path.join(snapshotDir, 'content-signature.json');
+/** 任务队列与 MCP 配置体积很小，恢复后缺了会丢状态，快照里一并带上。 */
+export const SNAPSHOT_DURABLE_FILES = ['video-tasks.json', 'upscale-tasks.json', 'clone-jobs.json'] as const;
+/**
  * 快照会先把媒体读进内存再加密，视频动辄数百 MB，必须限流：
  * 视频/音频按类别限额（历史上丢的正是视频），超过预算的部分只记跳过数量；
  * 图片沿用原来的无上限行为，不因新增视频而少备份图片。
@@ -39,12 +49,19 @@ const SNAPSHOT_MEDIA_BUDGETS = {
 
 type SnapshotMediaStats = { videos: number; audio: number; images: number; skipped: number };
 
-async function collectSnapshotMedia(
-  entries: BackupArchiveEntry[],
-  settings: { imageStoragePath?: string; videoStoragePath?: string },
-): Promise<SnapshotMediaStats> {
-  const stats: SnapshotMediaStats = { videos: 0, audio: 0, images: 0, skipped: 0 };
+type SnapshotMediaPlanItem = { name: string; file: string; size: number; kind: keyof SnapshotMediaStats };
+type SnapshotMediaPlan = { items: SnapshotMediaPlanItem[]; bytes: number; skipped: number; signature: string[] };
+
+/**
+ * 只 stat 不读取：这样能在读进内存前算出体积、生成内容签名，也能在预算不足时
+ * 优先保留最新素材（旧实现按目录顺序遍历，超预算会先丢后面的文件）。
+ */
+async function planSnapshotMedia(settings: { imageStoragePath?: string; videoStoragePath?: string }): Promise<SnapshotMediaPlan> {
+  const items: SnapshotMediaPlanItem[] = [];
+  const signature: string[] = [];
   const seen = new Set<string>();
+  let bytes = 0;
+  let skipped = 0;
   const targets = [
     // Storage modules intentionally search legacy roots when serving old
     // records. A snapshot is different: it must describe this installation,
@@ -55,25 +72,43 @@ async function collectSnapshotMedia(
   ];
   for (const target of targets) {
     let budget = SNAPSHOT_MEDIA_BUDGETS[target.folder];
+    const candidates: Array<{ relative: string; file: string; size: number; mtimeMs: number }> = [];
     for (const root of target.roots) {
       for (const file of await listFiles(root)) {
         const relative = path.relative(root, file).replace(/\\/g, '/');
         if (!relative || seen.has(relative) || !target.pattern.test(relative)) continue;
         seen.add(relative);
-        let size = 0;
-        try { size = (await stat(file)).size; } catch { continue; }
-        if (size <= 0 || size > MAX_SNAPSHOT_MEDIA_FILE_BYTES || size > budget) { stats.skipped += 1; continue; }
-        try {
-          entries.push({ name: `${target.folder}/${relative}`, data: await readFile(file) });
-          budget -= size;
-          stats[target.folder] += 1;
-        } catch { stats.skipped += 1; }
+        const info = await stat(file).catch(() => null);
+        if (!info || !info.isFile() || info.size <= 0 || info.size > MAX_SNAPSHOT_MEDIA_FILE_BYTES) { skipped += 1; continue; }
+        candidates.push({ relative, file, size: info.size, mtimeMs: info.mtimeMs });
       }
     }
+    candidates.sort((left, right) => right.mtimeMs - left.mtimeMs || left.relative.localeCompare(right.relative));
+    for (const candidate of candidates) {
+      if (candidate.size > budget) { skipped += 1; continue; }
+      budget -= candidate.size;
+      const name = `${target.folder}/${candidate.relative}`;
+      items.push({ name, file: candidate.file, size: candidate.size, kind: target.folder });
+      signature.push(`${name}:${candidate.size}:${Math.round(candidate.mtimeMs)}`);
+      bytes += candidate.size;
+    }
   }
-  return stats;
+  return { items, bytes, skipped, signature };
 }
-let snapshotInFlight: Promise<{ path: string; createdAt: string; bytes: number; imageCount: number; reason: string }> | null = null;
+
+type LocalSnapshotResult = {
+  path: string;
+  createdAt: string;
+  bytes: number;
+  imageCount: number;
+  videoCount: number;
+  audioCount: number;
+  skippedMediaCount: number;
+  reason: string;
+  /** 素材与上次快照完全一致时跳过重复打包。 */
+  skipped?: boolean;
+};
+let snapshotInFlight: Promise<LocalSnapshotResult> | null = null;
 
 function jsonBuffer(value: unknown) { return Buffer.from(JSON.stringify(value, null, 2), 'utf8'); }
 
@@ -104,32 +139,85 @@ function snapshotName() { return `snapshot-${new Date().toISOString().replace(/[
 
 async function createLocalSnapshotInternal(reason: string) {
   await mkdir(snapshotDir, { recursive: true });
-  const entries: BackupArchiveEntry[] = [];
-  const state = await readFile(statePath).catch(() => Buffer.from(JSON.stringify({ schemaVersion: 2, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } }, null, 2)));
-  entries.push({ name: 'server/state.json', data: state });
+  const state = await readFile(statePath).catch(() => jsonBuffer({ schemaVersion: 2, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } }));
   const workspace = await readFile(workspacePath).catch(() => Buffer.alloc(0));
-  if (workspace.length) entries.push({ name: 'server/workspace.json', data: workspace });
-  const key = await readFile(keyPath).catch(() => Buffer.alloc(0));
-  if (key.length) entries.push({ name: 'server/master.key', data: key });
-  for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) {
-    entries.push({ name: `server/logs/${name}`, data: await readFile(path.join(dataDir, name)) });
+  const durable = new Map<string, Buffer>();
+  for (const name of SNAPSHOT_DURABLE_FILES) {
+    const data = await readFile(path.join(dataDir, name)).catch(() => Buffer.alloc(0));
+    if (data.length) durable.set(name, data);
+  }
+  const mcpConfig = await readFile(path.join(dataDir, 'mcp', 'servers.json')).catch(() => Buffer.alloc(0));
+  const logFiles = (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value));
+  const logBytes = new Map<string, number>();
+  for (const name of logFiles) {
+    const info = await stat(path.join(dataDir, name)).catch(() => null);
+    if (info) logBytes.set(name, info.size);
   }
   const stateObject = JSON.parse(state.toString('utf8')) as { settings?: { imageStoragePath?: string; videoStoragePath?: string } };
-  const media = await collectSnapshotMedia(entries, stateObject.settings || {});
+  const mediaPlan = await planSnapshotMedia(stateObject.settings || {});
+
+  const signature = createHash('sha256')
+    .update(sha256(state))
+    .update(sha256(workspace))
+    .update(sha256(mcpConfig))
+    .update([...durable].map(([name, data]) => `${name}:${sha256(data)}`).join('|'))
+    .update([...logBytes].map(([name, size]) => `${name}:${size}`).join('|'))
+    .update(mediaPlan.signature.join('|'))
+    .digest('hex');
+
+  // 素材没变时再打包一份完全相同的副本，只会多占约 2GB 磁盘和一遍 CPU。
+  if (reason === 'scheduled') {
+    const previous = await readSnapshotSignature();
+    if (previous && previous.signature === signature) {
+      const existing = (await listLocalSnapshots()).find((item) => item.name === previous.snapshot);
+      if (existing) return { ...existing, ...mediaPlanCounts(mediaPlan), skippedMediaCount: mediaPlan.skipped, reason, skipped: true };
+    }
+  }
+
+  const plannedBytes = state.byteLength + workspace.byteLength + mcpConfig.byteLength
+    + [...durable.values()].reduce((sum, data) => sum + data.byteLength, 0)
+    + [...logBytes.values()].reduce((sum, size) => sum + size, 0)
+    + mediaPlan.bytes;
+  if (!await reserveSnapshotSpace(plannedBytes)) {
+    throw new Error(`磁盘剩余空间不足，已跳过本次快照（约需 ${(plannedBytes / (1024 * 1024)).toFixed(0)}MB）`);
+  }
+
+  const entries: BackupArchiveEntry[] = [{ name: 'server/state.json', data: state }];
+  if (workspace.length) entries.push({ name: 'server/workspace.json', data: workspace });
+  if (mcpConfig.length) entries.push({ name: 'server/mcp/servers.json', data: mcpConfig });
+  for (const [name, data] of durable) entries.push({ name: `server/tasks/${name}`, data });
+  for (const name of logFiles) {
+    const data = await readFile(path.join(dataDir, name)).catch(() => null);
+    if (data) entries.push({ name: `server/logs/${name}`, data });
+  }
+  const key = await readFile(keyPath).catch(() => Buffer.alloc(0));
+  if (key.length) entries.push({ name: 'server/master.key', data: key });
+
+  const media: SnapshotMediaStats = { videos: 0, audio: 0, images: 0, skipped: mediaPlan.skipped };
+  for (const item of mediaPlan.items) {
+    try {
+      entries.push({ name: item.name, data: await readFile(item.file) });
+      media[item.kind] += 1;
+    } catch {
+      media.skipped += 1;
+    }
+  }
+
   const manifest = {
     format: SNAPSHOT_FORMAT,
     version: 1,
     reason,
     createdAt: new Date().toISOString(),
+    signature,
     media,
     files: entries.map((entry) => ({ name: entry.name, bytes: entry.data.byteLength, sha256: sha256(entry.data) })),
   };
-  const archive = createBackupArchive([{ name: 'manifest.json', data: jsonBuffer(manifest) }, ...entries]);
+  const archive = await createBackupArchive([{ name: 'manifest.json', data: jsonBuffer(manifest) }, ...entries]);
   const encrypted = encryptBackupPayload(archive, await snapshotPassword());
   const file = path.join(snapshotDir, snapshotName());
   await writeFile(file, encrypted, { flag: 'wx', flush: true });
-  const snapshots = await listLocalSnapshots();
-  for (const old of snapshots.slice(KEEP_SNAPSHOTS)) await rm(old.path, { force: true });
+  await pruneLocalSnapshots();
+  await writeSnapshotSignature(signature, path.basename(file));
   return {
     path: file,
     createdAt: manifest.createdAt,
@@ -139,7 +227,64 @@ async function createLocalSnapshotInternal(reason: string) {
     audioCount: media.audio,
     skippedMediaCount: media.skipped,
     reason,
+    skipped: false,
   };
+}
+
+function mediaPlanCounts(plan: SnapshotMediaPlan) {
+  return {
+    imageCount: plan.items.filter((item) => item.kind === 'images').length,
+    videoCount: plan.items.filter((item) => item.kind === 'videos').length,
+    audioCount: plan.items.filter((item) => item.kind === 'audio').length,
+  };
+}
+
+async function snapshotFreeBytes() {
+  try {
+    const info = await statfs(snapshotDir);
+    return Number(info.bavail) * Number(info.bsize);
+  } catch { return null; }
+}
+
+/** 空间不足时先淘汰旧快照（永远保留最新一份），仍然不够才放弃本次写入。 */
+async function reserveSnapshotSpace(requiredBytes: number) {
+  const needed = requiredBytes + SNAPSHOT_MIN_FREE_BYTES;
+  let available = await snapshotFreeBytes();
+  if (available === null || available >= needed) return true;
+  for (const old of (await listLocalSnapshots()).slice(1)) {
+    await rm(old.path, { force: true }).catch(() => undefined);
+    available += old.bytes;
+    if (available >= needed) return true;
+  }
+  return available >= needed;
+}
+
+/** 份数与总字节双重收敛；最新一份永远保留，避免磁盘把最新状态也清掉。 */
+async function pruneLocalSnapshots() {
+  let kept = 0;
+  let keptBytes = 0;
+  for (const snapshot of await listLocalSnapshots()) {
+    if (kept > 0 && (kept >= KEEP_SNAPSHOTS || keptBytes + snapshot.bytes > SNAPSHOT_TOTAL_MAX_BYTES)) {
+      await rm(snapshot.path, { force: true }).catch(() => undefined);
+      continue;
+    }
+    kept += 1;
+    keptBytes += snapshot.bytes;
+  }
+}
+
+async function readSnapshotSignature() {
+  try {
+    const value = JSON.parse(await readFile(SNAPSHOT_SIGNATURE_PATH, 'utf8')) as { signature?: unknown; snapshot?: unknown };
+    if (typeof value.signature === 'string' && value.signature && typeof value.snapshot === 'string' && value.snapshot) {
+      return { signature: value.signature, snapshot: value.snapshot };
+    }
+  } catch {}
+  return null;
+}
+
+async function writeSnapshotSignature(signature: string, snapshot: string) {
+  await writeFile(SNAPSHOT_SIGNATURE_PATH, `${JSON.stringify({ signature, snapshot, updatedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8').catch(() => undefined);
 }
 
 export async function createLocalSnapshot(reason = 'scheduled') {
@@ -213,6 +358,18 @@ export async function restoreLocalSnapshot(snapshotPath: string, configuredStora
   const restoredLogs = entries.filter((entry) => entry.name.startsWith('server/logs/') && entry.name.endsWith('.jsonl'));
   for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) await rm(path.join(dataDir, name), { force: true });
   for (const entry of restoredLogs) await writeFile(path.join(dataDir, path.basename(entry.name)), entry.data);
+  let restoredTasks = 0;
+  for (const name of SNAPSHOT_DURABLE_FILES) {
+    const entry = byName.get(`server/tasks/${name}`);
+    if (!entry) continue;
+    await writeFile(path.join(dataDir, name), entry.data, { flush: true });
+    restoredTasks += 1;
+  }
+  const mcpConfig = byName.get('server/mcp/servers.json');
+  if (mcpConfig) {
+    await mkdir(path.join(dataDir, 'mcp'), { recursive: true });
+    await writeFile(path.join(dataDir, 'mcp', 'servers.json'), mcpConfig.data, { flush: true });
+  }
   const masterKey = byName.get('server/master.key');
   if (masterKey && !process.env.SANMAO_MASTER_KEY?.trim()) await writeFile(keyPath, masterKey.data, { flush: true });
   const workspace = byName.get('server/workspace.json');
@@ -225,7 +382,7 @@ export async function restoreLocalSnapshot(snapshotPath: string, configuredStora
   const restoredAudio = await restoreSnapshotMedia(entries, 'audio', audioRoot, SNAPSHOT_MEDIA_PATTERNS.audio);
   await rename(`${statePath}.snapshot.tmp`, statePath);
   if (workspace) await rename(`${workspacePath}.snapshot.tmp`, workspacePath);
-  return { restoredImages, restoredVideos, restoredAudio, restoredWorkspace: Boolean(workspace), state };
+  return { restoredImages, restoredVideos, restoredAudio, restoredTasks, restoredMcpConfig: Boolean(mcpConfig), restoredWorkspace: Boolean(workspace), state };
 }
 
 /** 把快照里的某一类媒体写回目标目录，路径一律限制在目标目录内。 */

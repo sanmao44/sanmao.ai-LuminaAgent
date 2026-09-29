@@ -915,6 +915,7 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 .settings-backup-summary b{color:var(--text);font-size:13px}
 .settings-backup-actions{display:flex;gap:7px;flex-wrap:wrap}.settings-backup-actions button{flex:1 1 150px}
 .settings-backup-warning{color:#d99b28;font-size:8px;line-height:1.5}
+.settings-backup-latest{display:block;margin-top:2px;color:var(--muted);font-size:8px;line-height:1.5}
 .settings-danger{border-color:color-mix(in srgb,var(--danger) 24%,var(--line))}
 .settings-danger .settings-card-head{color:var(--danger)}
 .logs-page .storage-settings{display:none!important}

@@ -38,6 +38,7 @@ import SkillIcon from '@/components/SkillIcon';
 import McpManager from '@/components/McpManager';
 import McpIcon from '@/components/McpIcon';
 import AgentSkillMenu from '@/components/AgentSkillMenu';
+import AgentOrb from '@/components/AgentOrb';
 import SkillInlineText from '@/components/SkillInlineText';
 import { filterSkills, skillMessageValue, skillSlashQuery } from '@/lib/skill-picker';
 import { normalizeConversationPersona, personaBadgeLabel } from '@/lib/agent-persona';
@@ -5002,8 +5003,11 @@ function AssistantCodeBlock({ language, code, onNotify }) {
 }
 function AgentImageLoadingCard({ activity }) {
     const stage = activity?.stage || 'image_planning';
-    const message = activity?.message || (stage === 'image_generating' ? '正在生成图片…' : '正在构思画面…');
+    const imageGenerating = stage === 'image' || stage === 'image_generating';
+    const message = stage === 'caption' ? '图片已生成，正在整理创作建议…' : imageGenerating ? '正在生成图片…' : '正在构思画面…';
     const details = [activity?.model, activity?.mode === 'edit' ? '编辑模式' : activity?.mode === 'generate' ? '生成模式' : '', activity?.count ? `${activity.count} 张` : ''].filter(Boolean).join(' · ');
+    /* 第一行固定走生图语义（构思 / 生成 / 整理建议），服务端当前阶段文案退到第二行小字。 */
+    const note = details || (activity?.message && activity.message !== message ? activity.message : stage === 'caption' ? '马上展示图片与创作建议' : '正在处理本次创作请求');
     return /*#__PURE__*/ _jsxs("div", {
         className: "agent-image-loading-card",
         role: "status",
@@ -5014,7 +5018,7 @@ function AgentImageLoadingCard({ activity }) {
                 className: "agent-image-loading-copy",
                 children: [
                     /*#__PURE__*/ _jsx("strong", { children: message }),
-                    /*#__PURE__*/ _jsx("small", { children: details || (stage === 'caption' ? '马上展示图片与创作建议' : '正在处理本次创作请求') })
+                    /*#__PURE__*/ _jsx("small", { children: note })
                 ]
             }),
             /*#__PURE__*/ _jsxs("div", {
@@ -5024,6 +5028,51 @@ function AgentImageLoadingCard({ activity }) {
             })
         ]
     });
+}
+/**
+ * 生图等待卡片：从发起请求一直显示到出图，中途的阶段进度不再把它换掉。
+ * 正文开始流式输出（activity 被清空或 imageFlow 被撤销）时立刻让位给正文。
+ */
+function showAgentImageLoadingCard(message) {
+    if (!message || (!message.pending && !message.retrying)) return false;
+    const activity = message.activity || {};
+    if (activity.imageFlow === true) return true;
+    return /^(?:image|caption)/.test(String(activity.stage || ''));
+}
+/*
+ * 流式 token 不需要逐个触发 React 重渲染。保留最新文本，按一个短窗口
+ * 合并提交，既能保持实时感，也能避免 Markdown 解析、布局和滚动互相打架。
+ */
+function createStreamUpdateScheduler(apply, delay = 32) {
+    let timer = 0;
+    let pending = null;
+    const flush = ()=>{
+        if (timer) {
+            window.clearTimeout(timer);
+            timer = 0;
+        }
+        if (pending === null) return;
+        const next = pending;
+        pending = null;
+        apply(next);
+    };
+    const schedule = (value)=>{
+        pending = value;
+        if (timer) return;
+        timer = window.setTimeout(()=>{
+            timer = 0;
+            if (pending === null) return;
+            const next = pending;
+            pending = null;
+            apply(next);
+        }, delay);
+    };
+    const cancel = ()=>{
+        if (timer) window.clearTimeout(timer);
+        timer = 0;
+        pending = null;
+    };
+    return { schedule, flush, cancel };
 }
 function AgentDirectionPicker({ directions, disabled, onSelect }) {
     if (!directions.length) return null;
@@ -5411,7 +5460,7 @@ export default function Page() {
     const agentSkillMenuFromSlashRef = useRef(false);
     const chatAutoFollowRef = useRef(false);
     const chatScrollAfterCommitRef = useRef(false);
-    const chatScrollFramesRef = useRef({ first: 0, second: 0 });
+    const chatScrollFrameRef = useRef(0);
     const [conversationNavHoverId, setConversationNavHoverId] = useState(null);
     const [conversationNavActiveId, setConversationNavActiveId] = useState(null);
     const conversationNavigatorRef = useRef(null);
@@ -5878,6 +5927,55 @@ export default function Page() {
     const allChatSessionsSelected = selectableChatSessionIds.length > 0 && selectableChatSessionIds.every((id)=>selectedChatSessions.has(id));
     const activeAgentBusy = activeChatId ? busyChatIds.includes(activeChatId) : false;
     const agentMessageSelectionActive = agentMessageSelectionMode || shareSelectionMode;
+    /* 助手光球相位：欢迎页主视觉、输入区状态条、消息头像共用同一份判断。 */
+    const agentOrbStatus = useMemo(()=>{
+        if (promptOptimizing) return {
+            phase: 'thinking',
+            title: '正在润色提示词',
+            detail: '润色完成后即可发送。'
+        };
+        if (activeAgentBusy) {
+            const pendingMessage = messages.find((message)=>message.pending && message.role === 'assistant');
+            if (!pendingMessage) return {
+                phase: 'connecting',
+                title: '正在连接模型',
+                detail: '正在准备引用和对话上下文…'
+            };
+            const activity = pendingMessage.activity || {};
+            if (pendingMessage.content && pendingMessage.content !== activity.message) return {
+                phase: 'speaking',
+                title: '正在回答',
+                detail: '内容正在实时输出，可随时停止。'
+            };
+            if (activity.stage === 'preparing') return {
+                phase: 'connecting',
+                title: '正在准备上下文',
+                detail: activity.message || '正在准备引用和对话上下文…'
+            };
+            const imageGenerating = activity.stage === 'image' || activity.stage === 'image_generating';
+            const imaging = activity.imageFlow === true || imageGenerating || activity.stage === 'image_planning';
+            return {
+                phase: 'thinking',
+                title: imageGenerating ? '正在生成图片' : imaging ? '正在构思画面' : '正在思考',
+                detail: activity.message || '模型正在组织答案…'
+            };
+        }
+        const lastMessage = messages[messages.length - 1];
+        if (lastMessage && lastMessage.role === 'assistant' && lastMessage.agentError) return {
+            phase: 'error',
+            title: '上一轮没有成功',
+            detail: '可以重新发送，或在下方换一个模型重试。'
+        };
+        return {
+            phase: 'idle',
+            title: '',
+            detail: ''
+        };
+    }, [
+        activeAgentBusy,
+        messages,
+        promptOptimizing
+    ]);
     const liveAgentIntent = useMemo(()=>classifyAgentDeliverable(agentInput, {
         messages,
         hasReferences: agentRefs.length > 0,
@@ -6240,7 +6338,8 @@ export default function Page() {
         const updateChatScrollState = ()=>{
             const nearBottom = isChatNearBottom();
             const pendingScroll = chatScrollAfterCommitRef.current;
-            setChatNearBottom(nearBottom || pendingScroll);
+            const nextNearBottom = nearBottom || pendingScroll;
+            setChatNearBottom((current)=>current === nextNearBottom ? current : nextNearBottom);
             if (!nearBottom && !pendingScroll) chatAutoFollowRef.current = false;
         };
         updateChatScrollState();
@@ -6643,37 +6742,25 @@ export default function Page() {
         return false;
     }
     function cancelScheduledChatScroll() {
-        const frames = chatScrollFramesRef.current;
-        if (frames.first) window.cancelAnimationFrame(frames.first);
-        if (frames.second) window.cancelAnimationFrame(frames.second);
-        chatScrollFramesRef.current = { first: 0, second: 0 };
+        if (chatScrollFrameRef.current) window.cancelAnimationFrame(chatScrollFrameRef.current);
+        chatScrollFrameRef.current = 0;
     }
     function scheduleChatScrollToEnd() {
-        const frames = chatScrollFramesRef.current;
-        if (frames.first || frames.second) return;
-        frames.first = window.requestAnimationFrame(()=>{
-            frames.first = 0;
-            frames.second = window.requestAnimationFrame(()=>{
-                frames.second = 0;
-                if ((!chatAutoFollowRef.current && !chatScrollAfterCommitRef.current) || sectionRef.current !== 'agent') return;
-                chatAutoFollowRef.current = true;
-                chatScrollAfterCommitRef.current = false;
-                chatEndRef.current?.scrollIntoView({
-                    behavior: 'auto',
-                    block: 'end'
-                });
-                window.requestAnimationFrame(()=>{
-                    const lastMessage = lastChatMessageElement();
-                    if (lastMessage) {
-                        const overlap = lastMessage.getBoundingClientRect().bottom - (chatComposerTop() - 20);
-                        if (overlap > 0) window.scrollBy({
-                            top: overlap,
-                            behavior: 'auto'
-                        });
-                    }
-                    setChatNearBottom(isChatNearBottom());
-                });
+        if (chatScrollFrameRef.current) return;
+        chatScrollFrameRef.current = window.requestAnimationFrame(()=>{
+            chatScrollFrameRef.current = 0;
+            if ((!chatAutoFollowRef.current && !chatScrollAfterCommitRef.current) || sectionRef.current !== 'agent') return;
+            const lastMessage = lastChatMessageElement();
+            if (!lastMessage) return;
+            const overlap = lastMessage.getBoundingClientRect().bottom - (chatComposerTop() - 20);
+            if (overlap > 0) window.scrollBy({
+                top: overlap,
+                behavior: 'auto'
             });
+            chatAutoFollowRef.current = true;
+            chatScrollAfterCommitRef.current = false;
+            const nextNearBottom = isChatNearBottom();
+            setChatNearBottom((current)=>current === nextNearBottom ? current : nextNearBottom);
         });
     }
     function followChatToEnd() {
@@ -6690,6 +6777,8 @@ export default function Page() {
     }
     function pauseChatAutoFollow() {
         chatAutoFollowRef.current = false;
+        chatScrollAfterCommitRef.current = false;
+        setChatNearBottom(false);
     }
     function messageViewportTop(id) {
         return document.getElementById(`message-${id}`)?.getBoundingClientRect().top ?? null;
@@ -6970,7 +7059,7 @@ export default function Page() {
         }
         setConfirmState({
             title: task.status === 'failed' ? '删除这条失败任务？' : '删除这段视频？',
-            text: '删除后会从本机创作记录中移除，并清理已保存的视频文件，此操作不可恢复。',
+            text: '删除后会从本机创作记录中移除，已保存的视频文件会移入回收站并保留 7 天。',
             danger: true,
             confirmText: '确认删除',
             action: async ()=>{ await deleteVideoTask(task); }
@@ -9221,9 +9310,11 @@ export default function Page() {
         ];
         const workingVersionIndex = workingVersions.length - 1;
         const retryStartedAt = Date.now();
+        const retryImageFlow = message.deliverable === 'IMAGE' || message.deliverable === 'BOTH';
         const workingMessages = messages.map((item)=>item.id === message.id ? {
             ...applyMessageVersion(item, workingVersions, workingVersionIndex, true),
-            pendingSince: retryStartedAt
+            pendingSince: retryStartedAt,
+            ...(retryImageFlow ? { activity: { stage: 'image_planning', message: '正在构思画面…', imageFlow: true } } : {})
         } : item);
         const requestId = uid('agent-request');
         const requestController = new AbortController();
@@ -9235,6 +9326,7 @@ export default function Page() {
         const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
         let stopRetryProgress = ()=>{};
         try {
+            var streamUpdateScheduler = null;
             const latestUserMessage = [
                 ...contextMessages
             ].reverse().find((item)=>item.role === 'user');
@@ -9267,13 +9359,33 @@ export default function Page() {
             const retryRunId = uid('run');
             const updateRetryActivity = (activity)=>{
                 if (!isCurrentRequest()) return;
+                if (agentRequest.partialText) return;
+                streamUpdateScheduler?.flush();
                 const current = pendingChatMessagesRef.current.get(sessionId) || workingMessages;
                 const updated = current.map((item)=>item.id === message.id ? {
                         ...item,
-                        activity
+                        activity: activity ? { ...activity, ...(retryImageFlow && !agentRequest.partialText ? { imageFlow: true } : {}) } : activity
                     } : item);
                 pendingChatMessagesRef.current.set(sessionId, updated);
                 if (activeChatIdRef.current === sessionId) setMessages(updated);
+            };
+            streamUpdateScheduler = createStreamUpdateScheduler((nextContent)=>{
+                if (!isCurrentRequest()) return;
+                const current = pendingChatMessagesRef.current.get(sessionId) || workingMessages;
+                const updated = current.map((item)=>{
+                    if (item.id !== message.id) return item;
+                    const versions = messageVersionsFor(item).map((version)=>version.id === retryVersionId ? { ...version, content: nextContent } : version);
+                    return {
+                        ...applyMessageVersion(item, versions, workingVersionIndex, true),
+                        ...(item.activity ? { activity: { ...item.activity, imageFlow: false } } : {})
+                    };
+                });
+                pendingChatMessagesRef.current.set(sessionId, updated);
+                if (activeChatIdRef.current === sessionId) setMessages(updated);
+            });
+            const updateRetryContent = (nextContent)=>{
+                agentRequest.partialText = nextContent;
+                streamUpdateScheduler.schedule(nextContent);
             };
             stopRetryProgress = pollAgentProgress(retryRunId, {
                 signal: requestController.signal,
@@ -9307,21 +9419,13 @@ export default function Page() {
                     });
                     if (event.type === 'delta') {
                         streamedText += String(event.text || '');
-                        agentRequest.partialText = streamedText;
-                        if (isCurrentRequest()) {
-                            const current = pendingChatMessagesRef.current.get(sessionId) || workingMessages;
-                            const updated = current.map((item)=>{
-                                if (item.id !== message.id) return item;
-                                const versions = messageVersionsFor(item).map((version)=>version.id === retryVersionId ? { ...version, content: streamedText } : version);
-                                return applyMessageVersion(item, versions, workingVersionIndex, true);
-                            });
-                            pendingChatMessagesRef.current.set(sessionId, updated);
-                            if (activeChatIdRef.current === sessionId) setMessages(updated);
-                        }
+                        /* 正文开始输出就让位：扫光卡片只负责“还没出图”的等待。 */
+                        updateRetryContent(streamedText);
                     }
                     if (event.type === 'error') throw new Error(event.message || '助手流式响应失败');
                 }
             });
+            streamUpdateScheduler.flush();
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             void refreshGenerationLogs();
             void refreshAgentModelHealth();
@@ -9400,6 +9504,7 @@ export default function Page() {
             void refreshAgentModelHealth();
         } finally{
             stopRetryProgress();
+            streamUpdateScheduler?.cancel();
             if (isCurrentRequest()) {
                 agentRequestsRef.current.delete(sessionId);
                 setChatBusy(sessionId, false);
@@ -9471,7 +9576,7 @@ export default function Page() {
             content: likelyImageRequest ? '正在构思画面…' : '正在准备回答…',
             pending: true,
             pendingSince: Date.now(),
-            activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'answering', message: '正在准备回答…' }
+            activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…', imageFlow: true } : { stage: 'answering', message: '正在准备回答…' }
         };
         const requestId = uid('agent-request');
         const requestController = new AbortController();
@@ -9504,6 +9609,7 @@ export default function Page() {
         if (requestController.signal.aborted || !isCurrentRequest()) return;
         let stopAgentProgress = ()=>{};
         try {
+            var streamUpdateScheduler = null;
             const updatePendingMessage = (patch)=>{
                 if (!isCurrentRequest()) return;
                 const current = pendingChatMessagesRef.current.get(sessionId) || [
@@ -9517,14 +9623,20 @@ export default function Page() {
                 pendingChatMessagesRef.current.set(sessionId, updated);
                 if (activeChatIdRef.current === sessionId) setMessages(updated);
             };
+            streamUpdateScheduler = createStreamUpdateScheduler((nextContent)=>{
+                updatePendingMessage({ content: nextContent, activity: undefined });
+            });
             const updatePendingContent = (nextContent)=>{
                 agentRequest.partialText = nextContent;
-                updatePendingMessage({ content: nextContent });
+                /* 正文开始流式输出 → 不再属于“等出图”，扫光卡片立刻让位。 */
+                streamUpdateScheduler.schedule(nextContent);
             };
             const updatePendingActivity = (activity)=>{
+                if (agentRequest.partialText) return;
+                streamUpdateScheduler.flush();
                 updatePendingMessage({
                     content: activity?.message,
-                    activity
+                    activity: activity ? { ...activity, ...(likelyImageRequest && !agentRequest.partialText ? { imageFlow: true } : {}) } : activity
                 });
             };
             const latestUserMessage = [
@@ -9613,6 +9725,7 @@ export default function Page() {
                     if (event.type === 'error') throw new Error(event.message || '助手流式响应失败');
                 }
             });
+            streamUpdateScheduler.flush();
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             void refreshGenerationLogs();
             void refreshAgentModelHealth();
@@ -9707,6 +9820,7 @@ export default function Page() {
             void refreshAgentModelHealth();
         } finally{
             stopAgentProgress();
+            streamUpdateScheduler?.cancel();
             if (isCurrentRequest()) {
                 agentRequestsRef.current.delete(sessionId);
                 setChatBusy(sessionId, false);
@@ -11448,12 +11562,10 @@ export default function Page() {
                                     !messages.length ? /*#__PURE__*/ _jsxs("div", {
                                         className: "agent-welcome",
                                         children: [
-                                            /*#__PURE__*/ _jsx("div", {
-                                                className: "hero-orb",
-                                                children: /*#__PURE__*/ _jsx(Icon, {
-                                                    name: "agent",
-                                                    size: 28
-                                                })
+                                            /*#__PURE__*/ _jsx(AgentOrb, {
+                                                state: agentOrbStatus.phase,
+                                                label: "",
+                                                className: "agent-welcome-orb"
                                             }),
                                             /*#__PURE__*/ _jsx("h1", {
                                                 children: "把想法交给 SANMAO.AI"
@@ -11479,8 +11591,13 @@ export default function Page() {
                                                     className: `message ${message.role} ${message.interrupted ? 'interrupted' : ''} ${conversationNavActiveId === message.id ? 'conversation-nav-highlight' : ''} ${agentMessageSelectionActive ? 'selecting' : ''} ${shareSelectionMode && selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id) ? 'share-selected' : ''}`,
                                                     children: [
                                                         /*#__PURE__*/ _jsx("div", {
-                                                            className: "message-avatar",
-                                                            children: message.role === 'user' ? '你' : /*#__PURE__*/ _jsx("img", {
+                                                            className: `message-avatar ${message.role === 'assistant' && message.pending ? 'message-avatar-orb' : ''}`,
+                                                            children: message.role === 'user' ? '你' : message.pending ? /*#__PURE__*/ _jsx(AgentOrb, {
+                                                                state: agentOrbStatus.phase,
+                                                                size: 26,
+                                                                speed: 1.15,
+                                                                label: ""
+                                                            }) : /*#__PURE__*/ _jsx("img", {
                                                                 src: "/brand-mark-welcome.png",
                                                                 alt: "SANMAO.AI"
                                                             })
@@ -11640,7 +11757,7 @@ export default function Page() {
                                                                                 ])
                                                                         }, item.id))
                                                                 }) : null,
-                                                                message.pending && /^(?:image_|caption)/.test(message.activity?.stage || '') ? /*#__PURE__*/ _jsx(AgentImageLoadingCard, {
+                                                                showAgentImageLoadingCard(message) ? /*#__PURE__*/ _jsx(AgentImageLoadingCard, {
                                                                     activity: message.activity
                                                                 }) : message.role === 'assistant' && !message.pending ? message.agentError ? /*#__PURE__*/ _jsxs("div", {
                                                                     className: "message-agent-error",
@@ -11743,7 +11860,7 @@ export default function Page() {
                                                                                         message.retrying ? '重新生成中…' : message.images?.length ? '重新生成图片' : '重新生成文本'
                                                                                     ]
                                                                                 }),
-                                                                                message.retrying && message.activity?.message ? /*#__PURE__*/ _jsx("span", {
+                                                                                message.retrying && !showAgentImageLoadingCard(message) && message.activity?.message ? /*#__PURE__*/ _jsx("span", {
                                                                                     className: "message-retry-activity",
                                                                                     children: message.activity.message
                                                                                 }) : null,
@@ -12303,6 +12420,22 @@ export default function Page() {
                                                                             ]
                                                                         })
                                                                     ]
+                                                                })
+                                                            ]
+                                                        }),
+                                                        (activeAgentBusy || agentOrbStatus.phase === 'error') && /*#__PURE__*/ _jsxs("div", {
+                                                            className: `agent-orb-status ${agentOrbStatus.phase === 'error' ? 'agent-orb-status-error' : ''}`,
+                                                            role: "status",
+                                                            "aria-live": "polite",
+                                                            title: agentOrbStatus.detail,
+                                                            children: [
+                                                                /*#__PURE__*/ _jsx(AgentOrb, {
+                                                                    state: agentOrbStatus.phase,
+                                                                    size: 22,
+                                                                    label: ""
+                                                                }),
+                                                                /*#__PURE__*/ _jsx("span", {
+                                                                    children: agentOrbStatus.title
                                                                 })
                                                             ]
                                                         }),
@@ -14950,7 +15083,7 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("p", {
                                                         className: "settings-card-note",
-                                                         children: "完整备份包含接口配置、加密密钥、日志、图库索引、助手对话、界面参数、服务端图片文件和已安装技能，并使用独立密码加密。密码不会保存，请务必妥善保管。"
+                                                         children: "完整备份包含接口配置、加密密钥、日志、图库索引、助手对话、界面参数、服务端图片/视频/音频、任务队列、MCP 配置和已安装技能，并使用独立密码加密；自动快照覆盖同样的配置与素材，但不含已安装技能和附件。密码不会保存，请务必妥善保管。"
                                                     }),
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "settings-backup-summary",
@@ -14994,6 +15127,22 @@ export default function Page() {
                                                              }),
                                                              /*#__PURE__*/ _jsxs("span", {
                                                                  children: [
+                                                                     "视频 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(storageUsage?.videos?.bytes)
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "音频 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(storageUsage?.audio?.bytes)
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
                                                                      "日志 ",
                                                                      /*#__PURE__*/ _jsx("b", {
                                                                          children: formatStorageBytes(storageUsage?.logs?.bytes)
@@ -15009,10 +15158,19 @@ export default function Page() {
                                                                      " 份"
                                                                  ]
                                                              }),
-                                                             /*#__PURE__*/ _jsx("span", {
-                                                                 children: localSnapshots[0] ? `最近快照 ${new Date(localSnapshots[0].createdAt).toLocaleString()} · ${formatStorageBytes(localSnapshots[0].bytes)}` : '尚无自动快照'
-                                                             })
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "快照占用 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(localSnapshots.reduce((sum, item)=>sum + Number(item.bytes || 0), 0))
+                                                                     })
+                                                                 ]
+                                                             }),
                                                          ]
+                                                     }),
+                                                     /*#__PURE__*/ _jsx("small", {
+                                                         className: "settings-backup-latest",
+                                                         children: localSnapshots[0] ? `最近快照 ${new Date(localSnapshots[0].createdAt).toLocaleString()} · ${formatStorageBytes(localSnapshots[0].bytes)}` : '尚无自动快照'
                                                      }),
                                                      /*#__PURE__*/ _jsxs("div", {
                                                          className: "settings-backup-actions",

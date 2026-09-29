@@ -121,3 +121,11 @@ test('memory is background user content and cannot enlarge the bounded context',
   assert.equal(context.role, 'user');
   assert.equal(JSON.parse(context.content.split('\n')[1]).conversationSummary.length, memory.MEMORY_CONTEXT_MAX_CHARS);
 });
+
+test('放不下的摘要块不会挡住后面能放下的块', () => {
+  const oversized = '甲'.repeat(memory.MEMORY_CONTEXT_MAX_CHARS + 500);
+  const tail = '尾部事实 42';
+  const [context] = memory.memoryContextMessage(`${oversized}\n\n${tail}`, '');
+  const injected = JSON.parse(context.content.split('\n')[1]).conversationSummary;
+  assert.equal(injected, tail);
+});

@@ -61,3 +61,21 @@ test('媒体文件丢失后可以按快照恢复回来', async () => {
     assert.deepEqual(await readFile(path.join(mediaRoot, folder, name)), data);
   }
 });
+
+test('任务队列与 MCP 配置一并进快照，并能随快照恢复', async () => {
+  const videoTasks = [{ id: 'video-1', status: 'running' }];
+  const mcpConfig = { version: 1, servers: [{ id: 'server-1' }] };
+  await writeFile(path.join(dataDir, 'video-tasks.json'), JSON.stringify(videoTasks));
+  await mkdir(path.join(dataDir, 'mcp'), { recursive: true });
+  await writeFile(path.join(dataDir, 'mcp', 'servers.json'), JSON.stringify(mcpConfig));
+
+  const snapshot = await snapshots.createLocalSnapshot('tasks');
+  await rm(path.join(dataDir, 'video-tasks.json'), { force: true });
+  await rm(path.join(dataDir, 'mcp'), { recursive: true, force: true });
+
+  const restored = await snapshots.restoreLocalSnapshot(snapshot.path, '');
+  assert.equal(restored.restoredTasks, 1);
+  assert.equal(restored.restoredMcpConfig, true);
+  assert.deepEqual(JSON.parse(await readFile(path.join(dataDir, 'video-tasks.json'), 'utf8')), videoTasks);
+  assert.deepEqual(JSON.parse(await readFile(path.join(dataDir, 'mcp', 'servers.json'), 'utf8')), mcpConfig);
+});
