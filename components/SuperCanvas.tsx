@@ -80,6 +80,7 @@ import {
   type CanvasDistribution,
 } from "@/lib/canvas/model";
 import { applyCanvasPatch, validateCanvasPatch, type CanvasPatch } from "@/lib/canvas/patch";
+import { CanvasCore } from "@/packages/canvas-core/runtime";
 import {
   CANVAS_Z_INDEX,
   canvasGroupPaintZIndex,
@@ -2916,6 +2917,7 @@ export default function SuperCanvas() {
   const canvasPointerDownRef = useRef<{ pointerId: number; interactive: boolean } | null>(null);
   const canvasClipboardRef = useRef<CanvasClipboardPayload | null>(null);
   const docRef = useRef<CanvasDocument>(normalizeDocument(null));
+  const canvasCoreRef = useRef(new CanvasCore<CanvasDocument>(docRef.current));
   const saveTimerRef = useRef<number | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
   const pendingZoomCameraRef = useRef<CanvasCamera | null>(null);
@@ -3576,9 +3578,16 @@ export default function SuperCanvas() {
   const commit = useCallback(
     (updater: (value: CanvasDocument) => CanvasDocument) => {
       const previous = snapshot(docRef.current);
+      canvasCoreRef.current.sync(docRef.current);
+      const result = canvasCoreRef.current.apply({
+        id: `legacy-${Date.now().toString(36)}`,
+        label: "canvas.commit",
+        apply: updater,
+      });
+      if (!result.changed) return;
       setUndoStack((items) => [...items, previous].slice(-60));
       setRedoStack([]);
-      updateDoc(updater);
+      updateDoc(() => result.document);
     },
     [updateDoc],
   );
@@ -10576,7 +10585,20 @@ export default function SuperCanvas() {
   const applyAgentCanvasPatch = useCallback((patch: CanvasPatch): CanvasAgentDockPlanResult => {
     const validation = validateCanvasPatch(docRef.current, patch);
     if (!validation.ok) return { ids: [], error: validation.error };
-    commit(() => applyCanvasPatch(docRef.current, patch));
+    const previous = snapshot(docRef.current);
+    canvasCoreRef.current.sync(docRef.current);
+    const result = canvasCoreRef.current.apply({
+      id: patch.runId || `agent-patch-${Date.now().toString(36)}`,
+      label: "agent.canvas.patch",
+      operations: [{
+        id: patch.runId || "agent.canvas.patch",
+        label: "apply patch",
+        apply: (document) => applyCanvasPatch(document, patch),
+      }],
+    });
+    if (result.changed) setUndoStack((items) => [...items, previous].slice(-60));
+    setRedoStack([]);
+    updateDoc(() => result.document);
     const addedIds = patch.operations
       .filter((operation): operation is Extract<CanvasPatch["operations"][number], { op: "add_node" }> => operation.op === "add_node")
       .map((operation) => operation.node.id);
@@ -10587,7 +10609,7 @@ export default function SuperCanvas() {
     }
     notify(`已应用 ${patch.operations.length} 个画布操作，可直接撤销`, "ok");
     return { ids: addedIds };
-  }, [commit, fitView, notify]);
+  }, [fitView, notify, updateDoc]);
 
   const applyAgentDockText = useCallback(
     (text: string, meta: { prompt: string }) => {
