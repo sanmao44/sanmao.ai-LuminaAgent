@@ -59,6 +59,7 @@ import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DU
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from '@/lib/theme';
 import AgentApprovalCard from '@/components/AgentApprovalCard';
 import WelcomeExperience, { WELCOME_SEEN_STORAGE_KEY } from '@/components/WelcomeExperience';
+import WorkspaceShell from '@/components/WorkspaceShell';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -10935,8 +10936,9 @@ export default function Page() {
             onEnter: ()=>enterWelcome()
         });
     }
-    return /*#__PURE__*/ _jsxs("main", {
-        className: `app-shell ${section === 'angle' ? 'angle-app-shell' : ''} ${section === 'video' ? 'video-app-shell' : ''} ${sidebarOpen ? 'sidebar-is-open' : ''}`,
+    return /*#__PURE__*/ _jsxs(WorkspaceShell, {
+        section: section,
+        sidebarOpen: sidebarOpen,
         children: [
             /*#__PURE__*/ _jsx(UpdateNotice, {}),
             /*#__PURE__*/ _jsxs("aside", {

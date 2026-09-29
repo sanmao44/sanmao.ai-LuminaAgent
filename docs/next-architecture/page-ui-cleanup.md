@@ -1,0 +1,33 @@
+# Page / UI Cleanup Assessment
+
+## Current state
+
+`app/page.tsx` still owns navigation state, workspace data loading, feature
+state and almost every section renderer. Its root shell also defines the
+shared `<main>` class contract inline, which makes composition changes depend
+on the page implementation.
+
+## Scope
+
+This slice extracts `WorkspaceShell`, a React composition boundary for the
+existing root shell. It preserves the current `app-shell`, angle, video and
+sidebar-open class behavior and passes all existing page children through
+unchanged.
+
+## Non-goals
+
+Agent, history, provider, model and canvas sections remain in `page.tsx`.
+Their state, data loading, event handlers and rendered behavior are not moved
+until each section has a smaller behavior-tested boundary.
+
+## Real path
+
+`Page` now renders its existing root content through `WorkspaceShell`. The
+component has no storage, provider or feature dependencies; it only owns the
+shared shell element and its stable class mapping.
+
+## Remaining legacy responsibility
+
+`app/page.tsx` remains the legacy composition root. The sidebar, top bar,
+section renderers and feature state are still inline and are candidates for
+later vertical slices.
