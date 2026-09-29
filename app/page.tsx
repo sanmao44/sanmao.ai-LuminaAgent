@@ -66,6 +66,7 @@ import SidebarFooterActions from '@/components/SidebarFooterActions';
 import SidebarChatHistory from '@/components/SidebarChatHistory';
 import AgentContextDock from '@/components/AgentContextDock';
 import AgentWelcome from '@/components/AgentWelcome';
+import AgentMessageSelectionBar from '@/components/AgentMessageSelectionBar';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11559,41 +11560,11 @@ export default function Page() {
                                         children: /*#__PURE__*/ _jsxs("div", {
                                             className: "agent-composer",
                                             children: [
-                                                agentMessageSelectionMode && /*#__PURE__*/ _jsxs("div", {
-                                                    className: "agent-message-selection-bar",
-                                                    children: [
-                                                        /*#__PURE__*/ _jsxs("span", {
-                                                            children: [
-                                                                "已选择 ",
-                                                                /*#__PURE__*/ _jsx("b", {
-                                                                    children: selectedAgentMessages.size
-                                                                }),
-                                                                " 条对话内容"
-                                                            ]
-                                                        }),
-                                                        /*#__PURE__*/ _jsxs("div", {
-                                                            children: [
-                                                                /*#__PURE__*/ _jsx("button", {
-                                                                    type: "button",
-                                                                    onClick: resetMessageSelection,
-                                                                    children: "取消"
-                                                                }),
-                                                                /*#__PURE__*/ _jsxs("button", {
-                                                                    type: "button",
-                                                                    className: "danger",
-                                                                    disabled: !selectedAgentMessages.size,
-                                                                    onClick: ()=>void deleteSelectedAgentMessages(),
-                                                                    children: [
-                                                                        /*#__PURE__*/ _jsx(Icon, {
-                                                                            name: "trash",
-                                                                            size: 14
-                                                                        }),
-                                                                        "删除所选"
-                                                                    ]
-                                                                })
-                                                            ]
-                                                        })
-                                                    ]
+                                                agentMessageSelectionMode && /*#__PURE__*/ _jsx(AgentMessageSelectionBar, {
+                                                    selectedCount: selectedAgentMessages.size,
+                                                    Icon: Icon,
+                                                    onCancel: resetMessageSelection,
+                                                    onDeleteSelected: ()=>void deleteSelectedAgentMessages()
                                                 }),
                                                 agentRefs.length > 0 && /*#__PURE__*/ _jsx(ReferenceStrip, {
                                                     refs: agentRefs,

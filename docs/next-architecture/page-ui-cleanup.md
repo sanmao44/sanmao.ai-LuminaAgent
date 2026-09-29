@@ -57,6 +57,9 @@ page, while persistence and share orchestration remain outside the component.
 buttons. The page still owns the input state and receives selected examples
 through a callback.
 
+`AgentMessageSelectionBar` now owns the message batch-selection toolbar. The
+page supplies the selected count and mutation callbacks.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section
