@@ -61,6 +61,7 @@ import AgentApprovalCard from '@/components/AgentApprovalCard';
 import WelcomeExperience, { WELCOME_SEEN_STORAGE_KEY } from '@/components/WelcomeExperience';
 import WorkspaceShell from '@/components/WorkspaceShell';
 import MainColumn from '@/components/MainColumn';
+import WorkspaceTopbar from '@/components/WorkspaceTopbar';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -11377,170 +11378,23 @@ export default function Page() {
             }),
             /*#__PURE__*/ _jsxs(MainColumn, {
                 children: [
-                    /*#__PURE__*/ _jsxs("header", {
-                        className: "topbar",
-                        children: [
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "topbar-left",
-                                children: [
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        className: "mobile-sidebar-toggle",
-                                        "aria-label": "打开导航",
-                                        "aria-expanded": sidebarOpen,
-                                        onClick: ()=>setSidebarOpen(true),
-                                        children: /*#__PURE__*/ _jsx(Icon, {
-                                            name: "menu",
-                                            size: 18
-                                        })
-                                    }),
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "topbar-brand",
-                                        onClick: ()=>setSection('agent'),
-                                        children: [
-                                            /*#__PURE__*/ _jsx("span", {
-                                                className: "topbar-brand-mark",
-                                                children: /*#__PURE__*/ _jsx("img", {
-                                                    src: "/brand-mark.png",
-                                                    alt: ""
-                                                })
-                                            }),
-                                            /*#__PURE__*/ _jsx("strong", {
-                                                children: "SANMAO.AI"
-                                            })
-                                        ]
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("nav", {
-                                className: "top-mode-nav",
-                                "aria-label": "创作类型",
-                                children: [
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: imageModeActive ? 'active' : '',
-                                        "aria-pressed": imageModeActive,
-                                        onClick: ()=>{
-                                            setSection('generate');
-                                            closeSidebarOnMobile();
-                                        },
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "image",
-                                                size: 15
-                                            }),
-                                            /*#__PURE__*/ _jsx("span", {
-                                                children: "图片"
-                                            })
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: section === 'video' ? 'active' : '',
-                                        "aria-label": "视频工作台",
-                                        "aria-pressed": section === 'video',
-                                        onClick: ()=>{
-                                            setSection('video');
-                                            closeSidebarOnMobile();
-                                        },
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "video",
-                                                size: 15
-                                            }),
-                                            /*#__PURE__*/ _jsx("span", {
-                                                children: "视频"
-                                            }),
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "coming-soon-mode",
-                                        "aria-label": "音频，即将上线",
-                                        disabled: true,
-                                        title: "音频工作台即将上线",
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "audio",
-                                                size: 15
-                                            }),
-                                            /*#__PURE__*/ _jsx("span", {
-                                                children: "音频"
-                                            }),
-                                            /*#__PURE__*/ _jsx("small", {
-                                                className: "mode-status",
-                                                children: "即将上线"
-                                            })
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: section === 'agent' ? 'active' : '',
-                                        "aria-pressed": section === 'agent',
-                                        onClick: ()=>{
-                                            setSection('agent');
-                                            closeSidebarOnMobile();
-                                        },
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "agent",
-                                                size: 15
-                                            }),
-                                            /*#__PURE__*/ _jsx("span", {
-                                                children: "Agent"
-                                            })
-                                        ]
-                                    }),
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsx("div", {
-                                className: "top-actions",
-                                children: [
-                                    /*#__PURE__*/ _jsxs(Link, {
-                                        key: "canvas",
-                                        href: "/canvas",
-                                        className: "super-canvas-entry",
-                                        "aria-label": "超级画布",
-                                        "data-tooltip": "超级画布 · 无限画布",
-                                        onClick: ()=>{
-                                            closeSidebarOnMobile();
-                                        },
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "canvas",
-                                                size: 16
-                                            }),
-                                            /*#__PURE__*/ _jsx("span", {
-                                                children: "超级画布"
-                                            }),
-                                            /*#__PURE__*/ _jsx("small", {
-                                                className: "super-canvas-entry-badge",
-                                                children: "NEW"
-                                            })
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        key: "theme",
-                                        className: "theme-toggle",
-                                        "aria-label": theme === 'light' ? '切换深色主题' : '切换浅色主题',
-                                        onClick: toggleTheme,
-                                        children: [
-                                            theme === 'light' ? /*#__PURE__*/ _jsx(Icon, {
-                                                name: "moon",
-                                                size: 16
-                                            }) : /*#__PURE__*/ _jsx(Icon, {
-                                                name: "sun",
-                                                size: 16
-                                            }),
-                                            /*#__PURE__*/ _jsx("span", {
-                                                children: theme === 'light' ? '深色' : '浅色'
-                                            })
-                                        ]
-                                    }, "theme-toggle")
-                                ]
-                            })
-                        ]
+                    /*#__PURE__*/ _jsx(WorkspaceTopbar, {
+                        section: section,
+                        sidebarOpen: sidebarOpen,
+                        theme: theme,
+                        Icon: Icon,
+                        onOpenSidebar: ()=>setSidebarOpen(true),
+                        onGoAgent: ()=>setSection('agent'),
+                        onGoGenerate: ()=>{
+                            setSection('generate');
+                            closeSidebarOnMobile();
+                        },
+                        onGoVideo: ()=>{
+                            setSection('video');
+                            closeSidebarOnMobile();
+                        },
+                        onToggleTheme: toggleTheme,
+                        onCanvasClick: closeSidebarOnMobile
                     }),
                     loadingState ? /*#__PURE__*/ _jsxs("div", {
                         className: "page-loading",

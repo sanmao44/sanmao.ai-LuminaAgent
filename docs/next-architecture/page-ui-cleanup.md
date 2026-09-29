@@ -30,8 +30,12 @@ The main content column is also represented by `MainColumn`, which preserves
 the existing `main-column` layout class while keeping the page's feature
 sections as children.
 
+`WorkspaceTopbar` now owns the shared brand, mode navigation, Canvas entry and
+theme toggle markup. It receives navigation and theme callbacks as props, so
+it does not depend on feature state, storage or provider modules.
+
 ## Remaining legacy responsibility
 
-`app/page.tsx` remains the legacy composition root. The sidebar, top bar,
-section renderers and feature state are still inline and are candidates for
-later vertical slices.
+`app/page.tsx` remains the legacy composition root. The sidebar, section
+renderers and feature state are still inline and are candidates for later
+vertical slices.
