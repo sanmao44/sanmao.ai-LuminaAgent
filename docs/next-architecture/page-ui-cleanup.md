@@ -60,6 +60,9 @@ through a callback.
 `AgentMessageSelectionBar` now owns the message batch-selection toolbar. The
 page supplies the selected count and mutation callbacks.
 
+`AgentFollowUpCard` now owns the quoted-message preview shown above the Agent
+composer. The active follow-up value and clear action remain page-owned.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section

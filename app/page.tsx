@@ -67,6 +67,7 @@ import SidebarChatHistory from '@/components/SidebarChatHistory';
 import AgentContextDock from '@/components/AgentContextDock';
 import AgentWelcome from '@/components/AgentWelcome';
 import AgentMessageSelectionBar from '@/components/AgentMessageSelectionBar';
+import AgentFollowUpCard from '@/components/AgentFollowUpCard';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11592,41 +11593,11 @@ export default function Page() {
                                                         setAgentRefs((old)=>old.filter((reference)=>reference.id !== file.id));
                                                     }
                                                 }),
-                                                agentFollowUp && /*#__PURE__*/ _jsxs("div", {
-                                                    className: "agent-followup-card",
-                                                    children: [
-                                                        /*#__PURE__*/ _jsx("span", {
-                                                            className: "agent-followup-mark",
-                                                            children: /*#__PURE__*/ _jsx(Icon, {
-                                                                name: "agent",
-                                                                size: 14
-                                                            })
-                                                        }),
-                                                        /*#__PURE__*/ _jsxs("div", {
-                                                            children: [
-                                                                /*#__PURE__*/ _jsxs("small", {
-                                                                    children: [
-                                                                        "正在追问 ",
-                                                                        agentFollowUp.role === 'assistant' ? '助手回复' : '你的消息'
-                                                                    ]
-                                                                }),
-                                                                /*#__PURE__*/ _jsx("strong", {
-                                                                    title: agentFollowUp.content,
-                                                                    children: agentFollowUp.content.replace(/\s+/g, ' ').trim()
-                                                                })
-                                                            ]
-                                                        }),
-                                                        /*#__PURE__*/ _jsx("button", {
-                                                            type: "button",
-                                                            title: "取消引用",
-                                                            "aria-label": "取消引用",
-                                                            onClick: ()=>setAgentFollowUp(null),
-                                                            children: /*#__PURE__*/ _jsx(Icon, {
-                                                                name: "close",
-                                                                size: 15
-                                                            })
-                                                        })
-                                                    ]
+                                                agentFollowUp && /*#__PURE__*/ _jsx(AgentFollowUpCard, {
+                                                    role: agentFollowUp.role,
+                                                    content: agentFollowUp.content,
+                                                    Icon: Icon,
+                                                    onClear: ()=>setAgentFollowUp(null)
                                                 }),
                                                 activeAgentIntent.deliverable === 'CLARIFY' && agentInput.trim() && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsxs("div", {
                                                     className: "agent-intent-card clarify-only",
