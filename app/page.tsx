@@ -71,6 +71,7 @@ import AgentFollowUpCard from '@/components/AgentFollowUpCard';
 import AgentIntentClarifyCard from '@/components/AgentIntentClarifyCard';
 import AgentOrbStatus from '@/components/AgentOrbStatus';
 import AgentMcpDetailDock from '@/components/AgentMcpDetailDock';
+import AgentWebModeControl from '@/components/AgentWebModeControl';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11730,56 +11731,17 @@ export default function Page() {
                                                                      onChange: setAgentModelId,
                                                                      className: "model-dropdown compact"
                                                                  }),
-                                                                 /*#__PURE__*/ _jsxs("div", {
-                                                                    className: "agent-web-toggle-wrap",
-                                                                    children: [
-                                                                        /*#__PURE__*/ _jsxs("button", {
-                                                                            type: "button",
-                                                                            className: `agent-web-mode-trigger ${agentWebMode}`,
-                                                                            onClick: ()=>setAgentWebModeMenuOpen((open)=>!open),
-                                                                            "aria-describedby": "agent-web-toggle-tip",
-                                                                            "aria-label": "联网模式",
-                                                                            "aria-expanded": agentWebModeMenuOpen,
-                                                                            children: [
-                                                                                /*#__PURE__*/ _jsx(Icon, { name: "globe", size: 14 }),
-                                                                                /*#__PURE__*/ _jsx("span", { children: `联网：${agentWebMode === 'auto' ? '智能' : agentWebMode === 'always' ? '始终' : '关闭'}` }),
-                                                                                /*#__PURE__*/ _jsx(Icon, { name: "down", size: 13 })
-                                                                            ]
-                                                                        }),
-                                                                        agentWebModeMenuOpen && /*#__PURE__*/ _jsx("div", {
-                                                                            className: "agent-web-mode-menu",
-                                                                            role: "menu",
-                                                                            children: [
-                                                                                 ['auto', '智能联网', nativeWebSearchModelActive ? '需要最新事实时优先使用模型原生搜索，失败回退外部 API' : '仅在需要最新或外部事实时使用外部搜索 API'],
-                                                                                 ['always', '始终联网', nativeWebSearchModelActive ? '每轮优先使用模型原生搜索，失败回退外部 API' : '每轮使用外部搜索 API，回复可能较慢'],
-                                                                                ['off', '关闭联网', '最快的纯模型回复']
-                                                                            ].map(([mode, label, description])=>/*#__PURE__*/ _jsxs("button", {
-                                                                                type: "button",
-                                                                                role: "menuitemradio",
-                                                                                "aria-checked": agentWebMode === mode,
-                                                                                className: agentWebMode === mode ? 'active' : '',
-                                                                                onClick: ()=>{
-                                                                                    setAgentWebModePreference(mode);
-                                                                                    setAgentWebModeMenuOpen(false);
-                                                                                },
-                                                                                children: [
-                                                                                    /*#__PURE__*/ _jsx("strong", { children: label }),
-                                                                                    /*#__PURE__*/ _jsx("small", { children: description })
-                                                                                ]
-                                                                            }, mode))
-                                                                        }),
-                                                                         !agentWebModeMenuOpen && /*#__PURE__*/ _jsx("span", {
-                                                                             id: "agent-web-toggle-tip",
-                                                                             className: "agent-web-tooltip",
-                                                                             role: "tooltip",
-                                                                             children: `${agentWebMode === 'auto' ? '仅在需要最新或外部事实时搜索，普通创作会立即回复。' : agentWebMode === 'always' ? '每轮都会联网检索，回复可能较慢。' : '不会联网，适合最快的纯模型回复。'} ${nativeWebSearchHint}`
-                                                                         }),
-                                                                         /*#__PURE__*/ _jsx("span", {
-                                                                             className: `agent-native-search-hint ${nativeWebSearchModelActive ? 'active' : ''}`,
-                                                                             title: nativeWebSearchHint,
-                                                                             children: nativeWebSearchModelActive ? '模型自带搜索 · 优先使用' : '外部搜索 API'
-                                                                         })
-                                                                     ]
+                                                                 /*#__PURE__*/ _jsx(AgentWebModeControl, {
+                                                                    mode: agentWebMode,
+                                                                    menuOpen: agentWebModeMenuOpen,
+                                                                    nativeSearchActive: nativeWebSearchModelActive,
+                                                                    nativeSearchHint: nativeWebSearchHint,
+                                                                    Icon: Icon,
+                                                                    onToggleMenu: ()=>setAgentWebModeMenuOpen((open)=>!open),
+                                                                    onChange: (mode)=>{
+                                                                        setAgentWebModePreference(mode);
+                                                                        setAgentWebModeMenuOpen(false);
+                                                                    }
                                                                 }),
                                                                 /*#__PURE__*/ _jsxs("button", {
                                                                     type: "button",

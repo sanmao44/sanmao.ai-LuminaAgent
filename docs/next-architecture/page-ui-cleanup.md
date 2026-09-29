@@ -72,6 +72,9 @@ controls. Busy and error phase calculation remains page-owned.
 `AgentMcpDetailDock` now owns the MCP execution summary rendered below the
 composer footer. The selected message and close action remain page-owned.
 
+`AgentWebModeControl` now owns the Agent联网 mode trigger, menu and capability
+hint. The page still owns the preference persistence and search behavior.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section
