@@ -6,6 +6,8 @@ import ts from 'typescript';
 
 const MODULES = [
   'lib/data-paths',
+  'packages/task-runtime/runtime',
+  'packages/contracts/task',
   'lib/skills',
   'lib/agent/context-budget',
   'lib/agent/browser-metrics',
@@ -73,6 +75,12 @@ function rewriteSpecifiers(code, outFile, outDir) {
   return code.replace(/(from\s+|import\s+)(["'])([^"']+)(["'])/g, (match, keyword, open, specifier, close) => {
     if (specifier.startsWith('@/lib/')) {
       const target = path.join(outDir, 'lib', `${specifier.slice('@/lib/'.length)}.mjs`);
+      let relative = path.relative(path.dirname(outFile), target).split(path.sep).join('/');
+      if (!relative.startsWith('.')) relative = `./${relative}`;
+      return `${keyword}${open}${relative}${close}`;
+    }
+    if (specifier.startsWith('@/packages/')) {
+      const target = path.join(outDir, 'packages', `${specifier.slice('@/packages/'.length)}.mjs`);
       let relative = path.relative(path.dirname(outFile), target).split(path.sep).join('/');
       if (!relative.startsWith('.')) relative = `./${relative}`;
       return `${keyword}${open}${relative}${close}`;

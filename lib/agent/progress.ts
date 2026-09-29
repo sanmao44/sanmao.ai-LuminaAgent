@@ -9,6 +9,7 @@
  * - 任何一次读写失败都只是没有进度，绝不能让这一轮对话失败。
  */
 import { createTaskStore } from '@/lib/task-store';
+import { TaskRuntime } from '@/packages/task-runtime/runtime';
 
 export type AgentProgressStage = "thinking" | "web_search" | "tool" | "artifact" | "skill" | "mcp" | "image" | "answering";
 
@@ -36,6 +37,12 @@ type AgentProgressRecord = {
   updatedAt: number;
   done: boolean;
 };
+
+type AgentProgressStatus = AgentProgressStage | 'done';
+
+/** Compatibility adapter: progress snapshots expose legacy fields, while
+ * lifecycle decisions use the shared Task Runtime vocabulary. */
+const agentProgressRuntime = new TaskRuntime<AgentProgressStatus>((status) => status === 'done' ? 'succeeded' : 'running');
 
 const RUN_ID_PATTERN = /^[A-Za-z0-9_-]{6,64}$/;
 const PROGRESS_TTL_MS = 10 * 60 * 1000;
@@ -106,7 +113,7 @@ export async function reportAgentProgress(runId: unknown, patch: AgentProgressPa
   if (!id) return false;
   return safeCall(() => store.mutate((records) => {
     const record = records.find((item) => item.id === id);
-    if (!record || record.done) return false;
+    if (!record || !agentProgressRuntime.isActive(record.done ? 'done' : record.stage)) return false;
     record.stage = patch.stage;
     record.message = patch.message;
     if (typeof patch.toolCalls === "number" && Number.isFinite(patch.toolCalls)) record.toolCalls = Math.max(0, Math.trunc(patch.toolCalls));

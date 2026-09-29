@@ -14,6 +14,10 @@ use `TaskRuntime`. Legacy video statuses (`done`) and upscale statuses
 (`processing`) are translated by small adapters; API response shapes and task
 files remain unchanged.
 
+Agent Progress now uses the same runtime policy to decide whether a snapshot
+can still receive progress updates. Its legacy `done` field and snapshot
+shape remain unchanged.
+
 ## Non-goals
 
 This slice does not move provider polling, retry creation, progress storage,
