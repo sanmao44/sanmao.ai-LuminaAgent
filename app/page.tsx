@@ -10,7 +10,7 @@ import RuntimeServiceControl from '@/components/RuntimeServiceControl';
 import { getProviderPreset, providerPresets } from '@/lib/provider-presets';
 import { agnesBillingLabel } from '@/lib/agnes';
 import AgnesConnectionGuide from '@/components/AgnesConnectionGuide';
-import { listChatSessions, listGallery, loadImageDirectoryHandle, patchGalleryItem, removeChatSession, removeGalleryItems, replaceChatSessions, replaceGalleryItems, saveChatSession, saveGalleryItems, saveImageDirectoryHandle } from '@/lib/client-history';
+import { listGallery, loadImageDirectoryHandle, patchGalleryItem, removeGalleryItems, replaceGalleryItems, saveGalleryItems, saveImageDirectoryHandle } from '@/lib/client-history';
 import Link from 'next/link';
 import LocalEditEditor from '@/components/MaskEditor';
 import VideoStudio from '@/components/VideoStudio';
@@ -48,6 +48,7 @@ import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { startWorkspaceSync } from '@/lib/workspace';
 import { workspaceRepository } from '@/lib/repositories/workspace-repository';
+import { conversationRepository } from '@/lib/repositories/conversation-repository';
 import { requestAdminSession } from '@/lib/admin-session';
 import { readWorkspaceContext } from '@/lib/workspace-context';
 import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
@@ -7210,7 +7211,7 @@ export default function Page() {
             const client = {
                 workspace: await workspaceRepository.collect(),
                 gallery: await normalizeGalleryForBackup(await listGallery()),
-                chatSessions: await listChatSessions(),
+                chatSessions: [...await conversationRepository.list()],
                 preferences
             };
             const res = await fetch('/api/backup/archive', {
@@ -7244,7 +7245,7 @@ export default function Page() {
     async function restoreClientBackup(client) {
         if (!client || !Array.isArray(client.gallery) || !Array.isArray(client.chatSessions)) throw new Error('备份缺少浏览器历史数据');
         await replaceGalleryItems(client.gallery);
-        await replaceChatSessions(client.chatSessions);
+        await conversationRepository.replaceAll(client.chatSessions);
         if (client.workspace) {
             await workspaceRepository.restore(client.workspace);
         }
@@ -7568,7 +7569,7 @@ export default function Page() {
     }
     async function refreshChatSessions() {
         try {
-            const rawSessions = await listChatSessions();
+            const rawSessions = await conversationRepository.list();
             const sessions = rawSessions.map(normalizeChatSession);
             chatMemoryRef.current = new Map(sessions.map((session)=>[session.id, validConversationMemory(session.memory, session.messages)]));
             setChatSessions(sessions);
@@ -7576,7 +7577,7 @@ export default function Page() {
             // return after the next reload or workspace reconciliation.
             await Promise.all(rawSessions.map((rawSession, index) => {
                 const hadPending = rawSession.messages.some((message) => Boolean((message as unknown as { pending?: boolean }).pending));
-                return hadPending ? saveChatSession(sessions[index]) : Promise.resolve();
+                return hadPending ? conversationRepository.save(sessions[index]) : Promise.resolve();
             }));
             if (sessions.length) {
                 activeChatIdRef.current = sessions[0].id;
@@ -8929,7 +8930,7 @@ export default function Page() {
         const current = chatSessions.find((session)=>session.id === sessionId);
         if (!current) throw new Error('当前对话不存在');
         const next = { ...current, persona: normalized, updatedAt: Date.now() };
-        await saveChatSession(next);
+        await conversationRepository.save(next);
         setChatSessions((old)=>old.map((session)=>session.id === sessionId ? next : session));
         notify(next.persona ? '角色设定已保存' : '角色设定已清空');
     }
@@ -8951,7 +8952,7 @@ export default function Page() {
         };
         const previous = chatSaveQueuesRef.current.get(id) || Promise.resolve();
         const operation = previous.catch(()=>undefined).then(async ()=>{
-            await saveChatSession(session);
+            await conversationRepository.save(session);
             setChatSessions((old)=>[
                     session,
                     ...old.filter((item)=>item.id !== id)
@@ -9106,7 +9107,7 @@ export default function Page() {
         };
         setChatSessions((old)=>old.map((item)=>item.id === session.id ? renamed : item));
         try {
-            await saveChatSession(renamed);
+            await conversationRepository.save(renamed);
             notify('对话已重命名');
         } catch (error) {
             setChatSessions((old)=>old.map((item)=>item.id === session.id ? latest : item));
@@ -9118,7 +9119,7 @@ export default function Page() {
         if (!selectedIds.size) return;
         await Promise.all([
             ...selectedIds
-        ].map((id)=>removeChatSession(id)));
+        ].map((id)=>conversationRepository.remove(id)));
         const remaining = chatSessions.filter((item)=>!selectedIds.has(item.id));
         setChatSessions(remaining);
         for (const id of selectedIds)pendingChatMessagesRef.current.delete(id);
@@ -9223,7 +9224,7 @@ export default function Page() {
             pendingChatMessagesRef.current.set(sessionId, nextMessages);
             if (nextMessages.length) await persistAgentSession(sessionId, nextMessages);
             else {
-                await removeChatSession(sessionId);
+                await conversationRepository.remove(sessionId);
                 pendingChatMessagesRef.current.delete(sessionId);
                 setChatSessions((old)=>old.filter((item)=>item.id !== sessionId));
                 if (activeChatIdRef.current === sessionId) {
