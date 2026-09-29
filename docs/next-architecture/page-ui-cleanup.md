@@ -75,6 +75,9 @@ composer footer. The selected message and close action remain page-owned.
 `AgentWebModeControl` now owns the Agent联网 mode trigger, menu and capability
 hint. The page still owns the preference persistence and search behavior.
 
+`AgentQuickActions` now owns the composer shortcut buttons and one-take picker
+presentation. Reference, prompt and skill actions remain page-owned callbacks.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section

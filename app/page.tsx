@@ -72,6 +72,7 @@ import AgentIntentClarifyCard from '@/components/AgentIntentClarifyCard';
 import AgentOrbStatus from '@/components/AgentOrbStatus';
 import AgentMcpDetailDock from '@/components/AgentMcpDetailDock';
 import AgentWebModeControl from '@/components/AgentWebModeControl';
+import AgentQuickActions from '@/components/AgentQuickActions';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11743,79 +11744,29 @@ export default function Page() {
                                                                         setAgentWebModeMenuOpen(false);
                                                                     }
                                                                 }),
-                                                                /*#__PURE__*/ _jsxs("button", {
-                                                                    type: "button",
-                                                                    className: `agent-quick-button agent-skill-button ${agentSkillMenuOpen ? 'active' : ''}`,
-                                                                    disabled: activeAgentBusy,
-                                                                    onClick: ()=>agentSkillMenuOpen ? closeAgentSkillMenu() : openAgentSkillMenu(''),
-                                                                    title: "选择技能：把某个技能指定给本轮任务",
-                                                                    "aria-label": "选择技能",
-                                                                    children: [
-                                                                        /*#__PURE__*/ _jsx(SkillIcon, { size: 14 }),
-                                                                        /*#__PURE__*/ _jsx("span", { children: "技能" })
-                                                                    ]
-                                                                }),
-                                                                (agentRefs.length > 0 || agentInput.trim()) && /*#__PURE__*/ _jsxs("div", {
-                                                                    className: "agent-quick-actions",
-                                                                    children: [
-                                                                        agentRefs.length > 0 && /*#__PURE__*/ _jsxs("div", {
-                                                                            className: "one-take-duration-control",
-                                                                            children: [
-                                                                                /*#__PURE__*/ _jsxs("button", {
-                                                                                    type: "button",
-                                                                                    className: `agent-quick-button ${agentRefs.length > 1 ? 'one-take' : 'reverse'}`,
-                                                                                    disabled: activeAgentBusy || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
-                                                                                    onClick: ()=>agentRefs.length > 1 ? setOneTakeDurationOpen(true) : void reversePromptFromReferences(),
-                                                                                    "data-tooltip": agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能生成' : agentRefs.length > 1 ? '设置时长并生成一镜到底视频 Prompt' : '根据已上传参考图反推提示词并自动提交',
-                                                                                    "aria-label": agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能生成' : agentRefs.length > 1 ? '设置时长并生成一镜到底视频 Prompt' : '根据已上传参考图反推提示词并自动提交',
-                                                                                    children: [
-                                                                                        /*#__PURE__*/ _jsx(Icon, {
-                                                                                            name: agentRefs.length > 1 ? "video" : "image",
-                                                                                            size: 14
-                                                                                        }),
-                                                                                        agentRefs.length > 1 ? "一镜到底" : "反推提示词"
-                                                                                    ]
-                                                                                }),
-                                                                                agentRefs.length > 1 && /*#__PURE__*/ _jsx(OneTakeDurationPicker, {
-                                                                                    open: oneTakeDurationOpen,
-                                                                                    busy: activeAgentBusy,
-                                                                                    onConfirm: (duration)=>{
-                                                                                        setOneTakeDurationOpen(false);
-                                                                                        void reversePromptFromReferences(duration);
-                                                                                    },
-                                                                                    onCancel: ()=>setOneTakeDurationOpen(false)
-                                                                                })
-                                                                            ]
-                                                                        }),
-                                                                        agentInputBeforeOptimization !== null && /*#__PURE__*/ _jsxs("button", {
-                                                                            type: "button",
-                                                                            className: "agent-quick-button prompt-undo",
-                                                                            disabled: promptOptimizing || activeAgentBusy || agentMessageSelectionActive,
-                                                                            onClick: undoAgentPromptOptimization,
-                                                                            "data-tooltip": "撤回本次 AI 润色，恢复润色前的原文",
-                                                                            "aria-label": "撤回本次 AI 润色",
-                                                                            children: [
-                                                                                /*#__PURE__*/ _jsx("span", {
-                                                                                    children: "撤回润色"
-                                                                                })
-                                                                            ]
-                                                                        }),
-                                                                        agentInput.trim() && /*#__PURE__*/ _jsxs("button", {
-                                                                            type: "button",
-                                                                            className: "agent-quick-button optimize",
-                                                                            disabled: promptOptimizing || activeAgentBusy || agentMessageSelectionActive,
-                                                                            onClick: ()=>void optimizeAgentPrompt(),
-                                                                            "data-tooltip": "简单润色输入框中的文案，不会自动发送",
-                                                                            "aria-label": "简单润色输入框中的文案，不会自动发送",
-                                                                            children: [
-                                                                                /*#__PURE__*/ _jsx(Icon, {
-                                                                                    name: "agent",
-                                                                                    size: 14
-                                                                                }),
-                                                                                promptOptimizing ? 'AI 润色中…' : 'AI 润色'
-                                                                            ]
-                                                                        })
-                                                                    ]
+                                                                /*#__PURE__*/ _jsx(AgentQuickActions, {
+                                                                    hasReferences: agentRefs.length > 0,
+                                                                    referenceCount: agentRefs.length,
+                                                                    referencesPending: agentRefs.some((ref)=>ref.pending),
+                                                                    hasInput: Boolean(agentInput.trim()),
+                                                                    promptCanUndo: agentInputBeforeOptimization !== null,
+                                                                    busy: activeAgentBusy,
+                                                                    selectionActive: agentMessageSelectionActive,
+                                                                    promptOptimizing: promptOptimizing,
+                                                                    skillMenuOpen: agentSkillMenuOpen,
+                                                                    oneTakeDurationOpen: oneTakeDurationOpen,
+                                                                    Icon: Icon,
+                                                                    SkillIcon: SkillIcon,
+                                                                    onToggleSkillMenu: ()=>agentSkillMenuOpen ? closeAgentSkillMenu() : openAgentSkillMenu(''),
+                                                                    onReversePrompt: ()=>void reversePromptFromReferences(),
+                                                                    onOpenOneTake: ()=>setOneTakeDurationOpen(true),
+                                                                    onConfirmOneTake: (duration)=>{
+                                                                        setOneTakeDurationOpen(false);
+                                                                        void reversePromptFromReferences(duration);
+                                                                    },
+                                                                    onCancelOneTake: ()=>setOneTakeDurationOpen(false),
+                                                                    onUndoPrompt: undoAgentPromptOptimization,
+                                                                    onOptimizePrompt: ()=>void optimizeAgentPrompt()
                                                                 })
                                                             ]
                                                         }),

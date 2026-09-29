@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
+const quickActions = await readFile(new URL('../components/AgentQuickActions.tsx', import.meta.url), 'utf8');
 const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
 const videoStudio = await readFile(new URL('../components/VideoStudio.tsx', import.meta.url), 'utf8');
 const superCanvas = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
@@ -25,7 +26,7 @@ test('successful Agent polishing can be undone until the input changes', () => {
   assert.ok(page.includes('setAgentInputBeforeOptimization(original);'));
   assert.ok(page.includes('function undoAgentPromptOptimization()'));
   assert.ok(page.includes('setAgentInput(agentInputBeforeOptimization);'));
-  assert.ok(page.includes('className: "agent-quick-button prompt-undo"'));
+  assert.ok(quickActions.includes('className="agent-quick-button prompt-undo"'));
   assert.ok(page.includes('setAgentInputBeforeOptimization(null);'));
 });
 

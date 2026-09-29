@@ -105,12 +105,13 @@ test("技能前缀能被拆成 chip 片段并原样回写", () => {
 
 test("主界面把技能入口接到了输入框工具条和斜杠菜单", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const quickActions = await readFile(new URL("../components/AgentQuickActions.tsx", import.meta.url), "utf8");
   const component = await readFile(new URL("../components/AgentSkillMenu.tsx", import.meta.url), "utf8");
   const globals = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
   assert.match(page, /const slashQuery = skillSlashQuery\(value\);/);
-  assert.match(page, /onClick: \(\)=>agentSkillMenuOpen \? closeAgentSkillMenu\(\) : openAgentSkillMenu\(''\),/);
-  assert.match(page, /className: `agent-quick-button agent-skill-button \$\{agentSkillMenuOpen \? 'active' : ''\}`/);
+  assert.match(page, /onToggleSkillMenu: \(\)=>agentSkillMenuOpen \? closeAgentSkillMenu\(\) : openAgentSkillMenu\(''\),/);
+  assert.match(quickActions, /className=\{`agent-quick-button agent-skill-button \$\{skillMenuOpen \? 'active' : ''\}`\}/);
   assert.match(page, /_jsx\(AgentSkillMenu, \{/);
   assert.match(page, /openAgentSkillMenu\(''\)/);
   assert.match(component, /className="reference-mention-menu agent-mention-menu agent-skill-menu"/);
