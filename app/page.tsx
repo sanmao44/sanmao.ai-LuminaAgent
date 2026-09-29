@@ -10947,40 +10947,14 @@ export default function Page() {
                 className: `sidebar ${sidebarOpen ? 'expanded' : ''} ${section === 'agent' ? 'agent-context' : ''}`,
                 "aria-label": "侧边导航",
                 children: [
-                    /*#__PURE__*/ _jsxs("div", {
-                        className: "sidebar-head",
-                        children: [
-                            /*#__PURE__*/ _jsx("button", {
-                                type: "button",
-                                className: "sidebar-toggle",
-                                "aria-label": sidebarOpen ? '收起侧边栏' : '展开侧边栏',
-                                "aria-expanded": sidebarOpen,
-                                onClick: ()=>setSidebarOpen((open)=>!open),
-                                children: /*#__PURE__*/ _jsx(Icon, {
-                                    name: sidebarOpen ? 'close' : 'menu',
-                                    size: 18
-                                })
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                className: "sidebar-brand",
-                                onClick: ()=>{
-                                    setSection('agent');
-                                    closeSidebarOnMobile();
-                                },
-                                children: [
-                                    /*#__PURE__*/ _jsx("span", {
-                                        className: "brand-mark",
-                                        children: /*#__PURE__*/ _jsx("img", {
-                                            src: "/brand-mark.png",
-                                            alt: ""
-                                        })
-                                    }),
-                                    /*#__PURE__*/ _jsx("span", {
-                                        children: "SANMAO.AI"
-                                    })
-                                ]
-                            })
-                        ]
+                    /*#__PURE__*/ _jsx(SidebarBrandHeader, {
+                        sidebarOpen: sidebarOpen,
+                        Icon: Icon,
+                        onToggle: ()=>setSidebarOpen((open)=>!open),
+                        onBrandClick: ()=>{
+                            setSection('agent');
+                            closeSidebarOnMobile();
+                        }
                     }),
                     section === 'agent' && /*#__PURE__*/ _jsxs("button", {
                         className: "new-chat",

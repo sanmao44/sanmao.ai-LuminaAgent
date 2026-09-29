@@ -34,6 +34,10 @@ sections as children.
 theme toggle markup. It receives navigation and theme callbacks as props, so
 it does not depend on feature state, storage or provider modules.
 
+`SidebarBrandHeader` now owns the sidebar toggle and brand entry chrome. Chat
+history, feature navigation and management controls remain page-owned because
+they still carry section-specific state and actions.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section
