@@ -16,8 +16,8 @@ const [page, route, history, providers, nativeSearch, webSearch, styles] = await
 const sendButton = await read('components/AgentSendButton.tsx');
 
 test('Agent composer switches between send and an accessible stop action', () => {
-  assert.ok(page.includes('import AgentSendButton from \'@/components/AgentSendButton\''));
-  assert.ok(sendButton.includes('className={`send-button ${busy ? \'stop-button\' : \'\'}`}'));
+  assert.ok(page.includes("import AgentSendButton from '@/components/AgentSendButton'"));
+  assert.ok(sendButton.includes("className={`send-button ${busy ? 'stop-button' : ''}`}"));
   assert.ok(sendButton.includes('onClick={busy ? onStop : onSend}'));
   assert.ok(sendButton.includes("aria-label={busy ? '停止当前回答' : '发送'}"));
   assert.ok(sendButton.includes("<Icon name={busy ? 'stop' : 'send'} size={18} />"));
