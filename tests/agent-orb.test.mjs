@@ -77,14 +77,15 @@ test("orb component stays dependency free and pauses when idle", () => {
   assert.doesNotMatch(component, /^import .* from '(?!react)/m);
 });
 
-test("assistant surfaces reuse the orb for every visible phase", () => {
+test("assistant surfaces reuse the orb for every visible phase", async () => {
   assert.match(page, /import AgentOrb from '@\/components\/AgentOrb';/);
+  const welcome = await readFile(new URL('../components/AgentWelcome.tsx', import.meta.url), 'utf8');
   assert.match(page, /const agentOrbStatus = useMemo/);
   assert.match(page, /phase: 'connecting'/);
   assert.match(page, /phase: 'thinking'/);
   assert.match(page, /phase: 'speaking'/);
   assert.match(page, /phase: 'error'/);
-  assert.match(page, /className: "agent-welcome-orb"/);
+  assert.match(welcome, /className="agent-welcome-orb"/);
   assert.match(page, /agent-orb-status \$\{agentOrbStatus\.phase === 'error' \? 'agent-orb-status-error' : ''\}/);
   assert.match(page, /message-avatar \$\{message\.role === 'assistant' && message\.pending \? 'message-avatar-orb'/);
   assert.doesNotMatch(page, /className: "hero-orb",/);

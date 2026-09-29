@@ -65,6 +65,7 @@ import WorkspaceTopbar from '@/components/WorkspaceTopbar';
 import SidebarFooterActions from '@/components/SidebarFooterActions';
 import SidebarChatHistory from '@/components/SidebarChatHistory';
 import AgentContextDock from '@/components/AgentContextDock';
+import AgentWelcome from '@/components/AgentWelcome';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11093,28 +11094,10 @@ export default function Page() {
                                     if (e.dataTransfer.files?.length) void addAgentAttachments(e.dataTransfer.files);
                                 },
                                 children: [
-                                    !messages.length ? /*#__PURE__*/ _jsxs("div", {
-                                        className: "agent-welcome",
-                                        children: [
-                                            /*#__PURE__*/ _jsx(AgentOrb, {
-                                                state: agentOrbStatus.phase,
-                                                label: "",
-                                                className: "agent-welcome-orb"
-                                            }),
-                                            /*#__PURE__*/ _jsx("h1", {
-                                                children: "把想法交给 SANMAO.AI"
-                                            }),
-                                            /*#__PURE__*/ _jsx("p", {
-                                                children: "助手负责理解需求、优化提示词、选择你已添加的模型。你可以上传参考图让模型分析，也可以直接让助手生成可下载的 Markdown、CSV、JSON、HTML 和代码文件。"
-                                            }),
-                                            /*#__PURE__*/ _jsx("div", {
-                                                className: "example-grid",
-                                                children: examples.map((example)=>/*#__PURE__*/ _jsx("button", {
-                                                        onClick: ()=>setAgentInput(example),
-                                                        children: example
-                                                    }, example))
-                                            })
-                                        ]
+                                    !messages.length ? /*#__PURE__*/ _jsx(AgentWelcome, {
+                                        orbState: agentOrbStatus.phase,
+                                        examples: examples,
+                                        onSelectExample: (example)=>setAgentInput(example)
                                     }) : /*#__PURE__*/ _jsxs(_Fragment, {
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", {

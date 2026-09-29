@@ -53,6 +53,10 @@ state and repository operations remain page-owned and arrive through callbacks.
 conversation-share controls. It receives snapshots and callbacks from the
 page, while persistence and share orchestration remain outside the component.
 
+`AgentWelcome` now owns the empty Agent conversation state and example prompt
+buttons. The page still owns the input state and receives selected examples
+through a callback.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section
