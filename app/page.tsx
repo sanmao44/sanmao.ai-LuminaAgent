@@ -60,6 +60,7 @@ import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from 
 import AgentApprovalCard from '@/components/AgentApprovalCard';
 import WelcomeExperience, { WELCOME_SEEN_STORAGE_KEY } from '@/components/WelcomeExperience';
 import WorkspaceShell from '@/components/WorkspaceShell';
+import MainColumn from '@/components/MainColumn';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -11374,8 +11375,7 @@ export default function Page() {
                     })
                 ]
             }),
-            /*#__PURE__*/ _jsxs("section", {
-                className: "main-column",
+            /*#__PURE__*/ _jsxs(MainColumn, {
                 children: [
                     /*#__PURE__*/ _jsxs("header", {
                         className: "topbar",

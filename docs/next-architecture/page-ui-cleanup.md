@@ -26,6 +26,10 @@ until each section has a smaller behavior-tested boundary.
 component has no storage, provider or feature dependencies; it only owns the
 shared shell element and its stable class mapping.
 
+The main content column is also represented by `MainColumn`, which preserves
+the existing `main-column` layout class while keeping the page's feature
+sections as children.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, top bar,
