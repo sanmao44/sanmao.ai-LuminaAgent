@@ -4,6 +4,7 @@
  */
 import type { CanvasVideoEditorClip, CanvasVideoEditorLayout, CanvasVideoEditorLayoutMode } from '../canvas/types';
 import type { CloneBeatCue, CloneBlueprint, CloneBlueprintComponent, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneCapabilities, CloneOptions, CloneReferenceEvidenceReason, CloneReferenceEvidenceSample, CloneShot, CloneShotAnalysis, CloneStage, CloneTimeline, CloneTimelineTrack, CloneTranscript, CloneTranscriptWord, CloneVisualBible, CloneVisualEvent, CloneVisualSystem, CloneVisualSystemState, CloneVisualSystemStateStatus } from './types';
+import { isCloneJobExecutionActive } from './task-runtime';
 import type { CanvasVideoEditorWord } from '../canvas/types';
 
 /** 中文口播估算速度：字/秒。没有 TTS 时用它按字数估时长。 */
@@ -1691,7 +1692,7 @@ export function parseSceneChangeTimes(stderr: unknown, durationSeconds = Number.
 export const CLONE_STALE_JOB_MS = 10 * 60 * 1000;
 
 export function isCloneJobStale(job: { stage: CloneStage; updatedAt?: string }, now = Date.now()) {
-  if (job.stage === 'done' || job.stage === 'failed' || job.stage === 'cancelled' || job.stage === 'planned') return false;
+  if (!isCloneJobExecutionActive(job.stage)) return false;
   const stamp = Date.parse(job.updatedAt || '');
   return Number.isFinite(stamp) && now - stamp > CLONE_STALE_JOB_MS;
 }

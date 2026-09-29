@@ -2,6 +2,7 @@ import { isTrustedAppRequest } from '@/lib/auth';
 import { cleanupCloneJobDirectory, renderBlueprintVariant, renderBlueprintVariants, rerenderCloneJob, runCloneJob } from '@/lib/clone/pipeline';
 import { buildBlueprintVariantPlans, normalizeCloneOptions } from '@/lib/clone/plan';
 import { findCloneJob, removeCloneJob, updateCloneJob } from '@/lib/clone/store';
+import { canResumeCloneJob, cloneTaskRuntime } from '@/lib/clone/task-runtime';
 import type { CloneBlueprintVariantOverride, CloneBlueprintVariantSpec, CloneShot } from '@/lib/clone/types';
 import { normalizeVideoEditorState } from '@/lib/canvas/video-editor';
 import type { CanvasVideoEditorState } from '@/lib/canvas/types';
@@ -228,7 +229,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return Response.json({ ok: true, job: updated }, { status: 202 });
   }
   if (action !== 'resume') return Response.json({ error: '不支持的操作。' }, { status: 400 });
-  if (job.stage === 'done' || job.stage === 'cancelled') {
+  if (!canResumeCloneJob(job.stage)) {
     return Response.json({ error: '这条任务已经结束了，请重新设置参数再开始。' }, { status: 400 });
   }
   // 续跑是后台任务，立刻把任务交回前端轮询。
@@ -246,7 +247,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   const { id } = await context.params;
   const job = await findCloneJob(id);
   if (!job) return Response.json({ ok: true, deleted: false });
-  const wasRunning = job.stage !== 'done' && job.stage !== 'failed' && job.stage !== 'cancelled';
+  const wasRunning = cloneTaskRuntime.isActive(job.stage);
   if (wasRunning) await updateCloneJob(id, { cancelRequested: true });
   const removed = await removeCloneJob(id);
   await cleanupCloneJobDirectory(id);

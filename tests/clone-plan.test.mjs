@@ -5,7 +5,10 @@ import ts from 'typescript';
 
 const sourceUrl = new URL('../lib/clone/plan.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
-const compiled = ts.transpileModule(source, {
+const compiled = ts.transpileModule(source.replace(
+  "import { isCloneJobExecutionActive } from './task-runtime';",
+  "const isCloneJobExecutionActive = (stage) => stage === 'queued' || ['analyzing', 'scripting', 'voicing', 'imaging', 'rendering', 'assembling'].includes(stage);",
+), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: sourceUrl.pathname,
 }).outputText;

@@ -21,12 +21,15 @@ async function loadTaskAdapter(fileName) {
   }).outputText;
   const compiled = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  }).outputText.replace("from '@/packages/task-runtime/runtime'", `from 'data:text/javascript;base64,${Buffer.from(runtime).toString('base64')}'`);
+  }).outputText
+    .replace("from '@/packages/task-runtime/runtime'", `from 'data:text/javascript;base64,${Buffer.from(runtime).toString('base64')}'`)
+    .replace("from '../../packages/task-runtime/runtime'", `from 'data:text/javascript;base64,${Buffer.from(runtime).toString('base64')}'`);
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
 
 const videoAdapter = await loadTaskAdapter('video-task-runtime');
 const upscaleAdapter = await loadTaskAdapter('upscale-task-runtime');
+const cloneAdapter = await loadTaskAdapter('clone/task-runtime');
 
 test('TaskRuntime normalizes legacy statuses and applies lifecycle policy', () => {
   const runtime = new TaskRuntime((status) => status === 'done' ? 'succeeded' : status);
@@ -55,4 +58,33 @@ test('video and upscale adapters preserve legacy cancel and retry decisions', ()
   assert.equal(upscaleAdapter.canRetryUpscaleTask('succeeded'), true);
   assert.equal(videoAdapter.canRetryVideoTask('running'), false);
   assert.equal(upscaleAdapter.canRetryUpscaleTask('processing'), false);
+});
+
+test('Clone adapter preserves stage, cancellation, recovery, and idempotency behavior', () => {
+  const { cloneTaskRuntime, canResumeCloneJob, reusesCloneJobIdempotencyKey, isCloneJobExecutionActive } = cloneAdapter;
+
+  assert.equal(cloneTaskRuntime.state('planned'), 'waiting');
+  assert.equal(cloneTaskRuntime.state('done'), 'succeeded');
+  for (const stage of ['analyzing', 'scripting', 'voicing', 'imaging', 'rendering', 'assembling']) {
+    assert.equal(cloneTaskRuntime.state(stage), 'running');
+    assert.equal(isCloneJobExecutionActive(stage), true);
+  }
+
+  assert.equal(cloneTaskRuntime.canCancel('queued'), true);
+  assert.equal(cloneTaskRuntime.canCancel('planned'), true);
+  assert.equal(cloneTaskRuntime.canCancel('failed'), false);
+  assert.equal(cloneTaskRuntime.canCancel('done'), false);
+  assert.equal(cloneTaskRuntime.canCancel('cancelled'), false);
+
+  for (const stage of ['queued', 'analyzing', 'planned', 'failed']) {
+    assert.equal(canResumeCloneJob(stage), true);
+    assert.equal(reusesCloneJobIdempotencyKey(stage), true);
+  }
+  for (const stage of ['done', 'cancelled']) {
+    assert.equal(canResumeCloneJob(stage), false);
+    assert.equal(reusesCloneJobIdempotencyKey(stage), false);
+    assert.equal(isCloneJobExecutionActive(stage), false);
+  }
+  assert.equal(isCloneJobExecutionActive('planned'), false);
+  assert.equal(isCloneJobExecutionActive('failed'), false);
 });

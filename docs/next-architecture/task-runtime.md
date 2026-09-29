@@ -19,8 +19,19 @@ Agent Progress now uses the same runtime policy to decide whether a snapshot
 can still receive progress updates. Its legacy `done` field and snapshot
 shape remain unchanged.
 
+Clone jobs now map their persisted stages through a Clone adapter: execution
+stages map to `running`, `planned` maps to `waiting`, and `done` maps to
+`succeeded`. Cancellation, stale-job detection, resume eligibility, and
+idempotency-key reuse use this boundary while `.data/clone-jobs.json`, API
+payloads, and the existing resume behavior remain unchanged. In particular,
+failed jobs remain resumable and keep their idempotency key; completed and
+cancelled jobs do neither.
+
 ## Non-goals
 
 This slice does not move provider polling, retry creation, progress storage,
 generation logs, or UI labels. Those responsibilities remain in the existing
 services until their behavior has a dedicated runtime contract.
+
+Clone model orchestration, provider polling, artifact persistence, and the
+Clone-specific stage vocabulary remain in the legacy pipeline and adapters.

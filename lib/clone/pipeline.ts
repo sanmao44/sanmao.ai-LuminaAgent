@@ -34,6 +34,7 @@ import { offlineSpeechSupported, synthesizeOfflineSpeech } from './offline-speec
 import { audioExtension, resolveSpeechRuntime, synthesizeSpeech } from './speech';
 import { assembleCloneVideo } from './assemble';
 import { findCloneJob, listCloneJobs, touchCloneJob, updateCloneJob } from './store';
+import { canResumeCloneJob } from './task-runtime';
 import type { CloneAsset, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneJob, CloneOcrObservation, CloneReferenceAnalysis, CloneReferenceEvidenceSample, CloneReferenceOcrFrame, CloneShot, CloneShotAnalysis, CloneShotSpeechMode, CloneTimeline, CloneTranscript, CloneVisualBible, CloneVisualSystem } from './types';
 import { normalizeVideoEditorState } from '../canvas/video-editor';
 import type { CanvasVideoEditorState } from '../canvas/types';
@@ -978,7 +979,7 @@ export async function runCloneJob(id: string) {
 async function executeCloneJob(id: string) {
   const started = await findCloneJob(id);
   if (!started) throw new Error('任务不存在。');
-  if (started.stage === 'done' || started.stage === 'cancelled') return started;
+  if (!canResumeCloneJob(started.stage)) return started;
   if (started.stage === 'planned' && !started.planConfirmed) return started;
   try {
     await patchJob(id, { stage: 'analyzing', progress: cloneStageProgress('analyzing'), message: started.reference.kind === 'image' ? '正在分析参考图' : '正在拆解参考视频', error: undefined });

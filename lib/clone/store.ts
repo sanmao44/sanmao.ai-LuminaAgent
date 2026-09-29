@@ -4,16 +4,10 @@
  */
 import { randomUUID } from 'node:crypto';
 import { createTaskStore } from '../task-store';
+import { reusesCloneJobIdempotencyKey } from './task-runtime';
 import type { CloneAsset, CloneCapabilities, CloneJob, CloneModelIds, CloneModels, CloneOptions, CloneReference, CloneStage } from './types';
 
 const store = createTaskStore<CloneJob>({ fileName: 'clone-jobs.json', maxList: 200 });
-
-/**
- * 已经结束、不该再被幂等键复用的阶段。
- * `failed` 故意不在其中：失败任务（例如服务商限流）再次提交时沿用同一任务续跑，
- * 已经生成好的镜头和配音不会重做。
- */
-const CLONE_FINISHED_STAGES: CloneStage[] = ['done', 'cancelled'];
 
 export type CreateCloneJobInput = {
   reference: CloneReference;
@@ -55,7 +49,7 @@ export async function createCloneJob(input: CreateCloneJobInput) {
     const existing = key ? tasks.find((task) => task.idempotencyKey === key) : undefined;
     // 幂等键只挡「正在跑」的重复提交：已经出片/已取消的旧任务如果继续占着键，
     // 用户换一句要求再点「开始」会静默拿回上一次的旧成片。
-    if (existing && !CLONE_FINISHED_STAGES.includes(existing.stage)) return { task: existing, created: false };
+    if (existing && reusesCloneJobIdempotencyKey(existing.stage)) return { task: existing, created: false };
     if (existing) delete existing.idempotencyKey;
     tasks.unshift(job);
     return { task: job, created: true };

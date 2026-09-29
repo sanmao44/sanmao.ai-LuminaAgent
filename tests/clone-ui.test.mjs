@@ -270,7 +270,6 @@ test("高级设置里选的模型真的生效，降级都不静默，幂等键�
   assert.match(pipeline, /shots = replaceShot\(shots, index, \{ error: message \}\)/);
   assert.match(pipeline, /mergeWarnings\(job\?\.warnings \|\| started\.warnings, voiceWarnings\)/);
   // 幂等键只挡正在跑的任务：已完成/已取消的旧任务不再占着键，避免第二次点「开始」拿回旧成片。
-  assert.match(store, /const CLONE_FINISHED_STAGES: CloneStage\[\] = \['done', 'cancelled'\];/);
   assert.match(store, /delete existing\.idempotencyKey;/);
   assert.match(store, /return store\.mutate\(\(tasks\) => \{/);
   // 弹窗的幂等键带上本次参数：同参数防连点，改了要求就是新任务。
