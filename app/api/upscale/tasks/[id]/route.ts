@@ -2,6 +2,7 @@ import { isTrustedAppRequest } from '@/lib/auth';
 import { cancelUpscaleTask, publicUpscaleTask, refreshUpscaleTask, retryUpscaleTask } from '@/lib/upscale-service';
 import { findUpscaleTask, removeUpscaleTask } from '@/lib/upscale-task-store';
 import { getUpscaleCatalogModel } from '@/lib/upscale-catalog';
+import { upscaleTaskRuntime } from '@/lib/upscale-task-runtime';
 
 export const runtime = 'nodejs';
 
@@ -39,7 +40,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   const id = (await context.params).id;
   const task = await findUpscaleTask(id);
   if (!task) return Response.json({ error: '高清任务不存在。' }, { status: 404 });
-  if (task.status === 'queued' || task.status === 'processing') return Response.json({ error: '高清任务正在处理中，先取消任务再删除。' }, { status: 409 });
+  if (upscaleTaskRuntime.isActive(task.status)) return Response.json({ error: '高清任务正在处理中，先取消任务再删除。' }, { status: 409 });
   await removeUpscaleTask(id);
   return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
 }

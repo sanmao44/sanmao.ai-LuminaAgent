@@ -83,7 +83,7 @@ test('并发轮询同一个视频任务只跑一次，避免重复下载同一�
   assert.match(service, /refreshingVideoTasks\.delete\(id\)/);
   assert.match(service, /async function refreshVideoTaskOnce\(id: string\) \{/, '真正干活的是内部实现');
   // 列表接口会并发刷新所有进行中的任务：单飞是它不重复下载的前提。
-  assert.match(route, /result\.tasks\.map\(\(task\) => task\.status === 'pending' \|\| task\.status === 'running' \? refreshVideoTask\(task\.id\) : task\)/);
+  assert.match(route, /result\.tasks\.map\(\(task\) => videoTaskRuntime\.isActive\(task\.status\) \? refreshVideoTask\(task\.id\) : task\)/);
 });
 test('wide desktop video history uses six columns for complete 12-item rows', () => {
   assert.match(styles, /@media\(min-width:1600px\)\{\.creative-video-grid\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)\}\}/);

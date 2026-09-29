@@ -62,3 +62,11 @@ dependency was added.
 
 These are intentional follow-up migrations; changing them here would widen
 the slice and risk changing existing persistence behavior.
+
+## Phase 4 handoff
+
+The first Task Runtime slice is now defined in `packages/task-runtime/`.
+Video and upscale status adapters use its shared active-state policy for
+refresh and deletion guards while preserving their legacy wire statuses.
+Provider polling and task-specific retry implementations remain in their
+existing services until behavior coverage supports moving those transitions.
