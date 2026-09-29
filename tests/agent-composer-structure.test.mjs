@@ -4,6 +4,7 @@ import test from 'node:test';
 import ts from 'typescript';
 
 const content = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
+const mcpDock = await readFile(new URL('../components/AgentMcpDetailDock.tsx', import.meta.url), 'utf8');
 const source = ts.createSourceFile('app/page.tsx', content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
 function elementProps(className) {
@@ -40,9 +41,9 @@ test('main page has balanced element calls and no syntax errors', () => {
 
 test('MCP details sit below the composer footer, outside the send controls', () => {
   const composer = elementProps('agent-composer');
-  const dock = elementProps('agent-mcp-detail-dock');
-  const dockChildren = containingChildren(dock);
-  assert.ok(dockChildren.parent === composer, 'MCP details must be a direct child of the composer');
+  assert.match(mcpDock, /className="agent-mcp-detail-dock"/);
+  assert.match(content, /activeMcpMessage && .*AgentMcpDetailDock/);
+  const dockCall = content.indexOf('activeMcpMessage && /*#__PURE__*/ _jsx(AgentMcpDetailDock');
   const footer = composer.properties.find((property) =>
     ts.isPropertyAssignment(property) && property.name.getText(source) === 'children')
     ?.initializer;
@@ -53,7 +54,7 @@ test('MCP details sit below the composer footer, outside the send controls', () 
         ts.isPropertyAssignment(property) && property.name.getText(source) === 'className'
         && ts.isStringLiteral(property.initializer) && property.initializer.text === 'composer-footer')));
   assert.ok(footerElement, 'Composer footer must remain present');
-  assert.ok(footerElement.end < dock.pos, 'MCP details must follow the footer');
+  assert.ok(footerElement.end < dockCall, 'MCP details must follow the footer');
 });
 
 test('Agent composer不重复渲染运行状态卡', () => {

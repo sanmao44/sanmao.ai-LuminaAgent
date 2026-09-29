@@ -414,6 +414,7 @@ test('浏览器面板显示扩展模式实际桥接到的浏览器，而不是 m
 
 test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生 select', async () => {
   const page = await read('app/page.tsx');
+  const detailDock = await read('components/AgentMcpDetailDock.tsx');
   const dock = await read('components/AgentContextDock.tsx');
   const manager = await read('components/McpManager.tsx');
   const globals = await read('app/globals.css');
@@ -455,12 +456,14 @@ test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生
   // 徽标只切换输入框下方的调用记录，详情列表达到上限后在内部滚动。
   assert.match(globals, /\.message\.assistant \.message-label \.message-mcp-badge\{/);
   assert.match(page, /className: "message-mcp-detail"/);
-  assert.match(page, /className: "message-mcp-detail-panel"/);
+  assert.match(detailDock, /className="message-mcp-detail-panel"/);
   assert.match(page, /title: "查看本轮 MCP 服务、工具及执行结果"/);
   assert.match(page, /activeMcpMessageId === message\.id/);
-  assert.match(page, /className: "agent-mcp-detail-dock"/);
-  assert.match(page, /children: tool\.readOnly \? '只读' : '写入'/);
-  assert.match(page, /children: tool\.ok \? '已完成' : '失败'/);
+  assert.match(page, /import AgentMcpDetailDock from '@\/components\/AgentMcpDetailDock';/);
+  assert.match(detailDock, /className="agent-mcp-detail-dock"/);
+  assert.match(detailDock, /tools\.map\(\(tool, index\)/);
+  assert.match(detailDock, /tool\.readOnly \? '只读' : '写入'/);
+  assert.match(detailDock, /tool\.ok \? '已完成' : '失败'/);
   assert.match(upgrades, /\.message-label \.message-mcp-detail\{/);
   assert.match(upgrades, /\.agent-mcp-detail-dock\{/, '调用记录要停靠在输入框下方');
   assert.match(upgrades, /\.message-mcp-detail-list\{[^}]*max-height:[^}]*overflow-y:auto/, '调用记录过多时要在面板内部滚动');

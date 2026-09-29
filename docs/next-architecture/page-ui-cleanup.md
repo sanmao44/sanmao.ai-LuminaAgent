@@ -69,6 +69,9 @@ ambiguous Agent requests. Intent classification and dispatch remain page-owned.
 `AgentOrbStatus` now owns the live status affordance beside the Agent send
 controls. Busy and error phase calculation remains page-owned.
 
+`AgentMcpDetailDock` now owns the MCP execution summary rendered below the
+composer footer. The selected message and close action remain page-owned.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section

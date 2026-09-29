@@ -70,6 +70,7 @@ import AgentMessageSelectionBar from '@/components/AgentMessageSelectionBar';
 import AgentFollowUpCard from '@/components/AgentFollowUpCard';
 import AgentIntentClarifyCard from '@/components/AgentIntentClarifyCard';
 import AgentOrbStatus from '@/components/AgentOrbStatus';
+import AgentMcpDetailDock from '@/components/AgentMcpDetailDock';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11875,61 +11876,10 @@ export default function Page() {
                                                         })
                                                     ]
                                                 }),
-                                                activeMcpMessage && /*#__PURE__*/ _jsxs("section", {
-                                                    className: "agent-mcp-detail-dock",
-                                                    "aria-label": "外部工具调用记录",
-                                                    children: [
-                                                        /*#__PURE__*/ _jsxs("div", {
-                                                            className: "message-mcp-detail-panel",
-                                                            children: [
-                                                                /*#__PURE__*/ _jsxs("div", {
-                                                                    className: "message-mcp-detail-head",
-                                                                    children: [
-                                                                        /*#__PURE__*/ _jsx("span", {
-                                                                            children: `本轮外部工具调用 ${activeMcpMessage.mcpTools.length} 次`
-                                                                        }),
-                                                                        /*#__PURE__*/ _jsx("button", {
-                                                                            type: "button",
-                                                                            className: "message-mcp-detail-close",
-                                                                            title: "关闭调用记录",
-                                                                            "aria-label": "关闭调用记录",
-                                                                            onClick: ()=>setActiveMcpMessageId(null),
-                                                                            children: /*#__PURE__*/ _jsx(Icon, {
-                                                                                name: "close",
-                                                                                size: 13
-                                                                            })
-                                                                        })
-                                                                    ]
-                                                                }),
-                                                                /*#__PURE__*/ _jsx("ul", {
-                                                                    className: "message-mcp-detail-list",
-                                                                    children: activeMcpMessage.mcpTools.map((tool, index)=>/*#__PURE__*/ _jsxs("li", {
-                                                                        className: tool.ok ? 'is-ok' : 'is-failed',
-                                                                        children: [
-                                                                            /*#__PURE__*/ _jsx("b", {
-                                                                                children: tool.server
-                                                                            }),
-                                                                            /*#__PURE__*/ _jsx("code", {
-                                                                                children: tool.name
-                                                                            }),
-                                                                            /*#__PURE__*/ _jsx("span", {
-                                                                                className: "message-mcp-detail-tag",
-                                                                                children: tool.readOnly ? '只读' : '写入'
-                                                                            }),
-                                                                            /*#__PURE__*/ _jsx("span", {
-                                                                                className: "message-mcp-detail-state",
-                                                                                children: tool.ok ? '已完成' : '失败'
-                                                                            })
-                                                                        ]
-                                                                    }, `mcp-${index}`))
-                                                                }),
-                                                                /*#__PURE__*/ _jsx("small", {
-                                                                    className: "message-mcp-detail-note",
-                                                                    children: "写入类操作要先经你确认才会执行；被拒绝的调用不计入这里。"
-                                                                })
-                                                            ]
-                                                        })
-                                                    ]
+                                                activeMcpMessage && /*#__PURE__*/ _jsx(AgentMcpDetailDock, {
+                                                    tools: activeMcpMessage.mcpTools,
+                                                    Icon: Icon,
+                                                    onClose: ()=>setActiveMcpMessageId(null)
                                                 })
                                             ]
                                         })
