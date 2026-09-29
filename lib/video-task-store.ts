@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { VideoGenerationInput } from './types';
 import type { GenerationSource } from './generation-source';
-import { createTaskStore } from './task-store';
+import { createTaskRepository } from './repositories/task-repository';
 
 export type VideoTaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
 export type VideoTask = {
@@ -41,7 +41,7 @@ export type VideoTask = {
   nodeId?: string;
 };
 
-const store = createTaskStore<VideoTask>({ fileName: 'video-tasks.json' });
+const store = createTaskRepository<VideoTask>({ fileName: 'video-tasks.json' });
 
 export async function createVideoTask(input: Omit<VideoTask, 'id' | 'createdAt' | 'pollCount' | 'videoUrls' | 'remoteVideoUrls' | 'localVideoPaths'>) {
   return store.insert({
@@ -80,6 +80,6 @@ export async function listVideoTasksPage(options: {
   });
 }
 
-export async function findVideoTaskByIdempotencyKey(key: string) { return store.findByKey(key); }
+export async function findVideoTaskByIdempotencyKey(key: string) { return store.findByIdempotencyKey(key); }
 export async function updateVideoTask(id: string, patch: Partial<VideoTask>) { return store.update(id, patch); }
 export async function removeVideoTask(id: string) { return store.remove(id); }

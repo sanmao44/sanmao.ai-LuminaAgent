@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { GenerationSource } from './generation-source';
 import type { UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
-import { createTaskStore } from './task-store';
+import { createTaskRepository } from './repositories/task-repository';
 
 export type UpscaleTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'cancelled';
 
@@ -42,7 +42,7 @@ export type UpscaleTask = {
 };
 
 // 高清任务里带原图引用，沿用原有 0600 权限，避免局域网其它账号读到路径。
-const store = createTaskStore<UpscaleTask>({ fileName: 'upscale-tasks.json', fileMode: 0o600 });
+const store = createTaskRepository<UpscaleTask>({ fileName: 'upscale-tasks.json', fileMode: 0o600 });
 
 export async function createUpscaleTask(input: Omit<UpscaleTask, 'id' | 'createdAt' | 'updatedAt' | 'pollCount'>) {
   const now = new Date().toISOString();

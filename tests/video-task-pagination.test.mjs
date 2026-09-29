@@ -8,7 +8,7 @@ import { buildLibModules } from './lib-build.mjs';
 const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-pagination-'));
 process.env.SANMAO_DATA_DIR = dataDir;
 // 任务存储在 lib/task-store.ts 里，两个模块要一起转译后才能跑真实的读—改—写。
-const { main: store } = await buildLibModules(['lib/task-store', 'lib/video-task-store'], 'video-task-store');
+const { main: store } = await buildLibModules(['lib/task-store', 'lib/repositories/task-repository', 'lib/video-task-store'], 'video-task-store');
 const styles = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
 
 function task(prompt, source, id) {

@@ -19,6 +19,7 @@ export function createTaskRepository<TTask extends TaskRecord>(options: TaskRepo
     find: store.find,
     findByIdempotencyKey: store.findByKey,
     list: store.list,
+    page: store.page,
     insert: store.insert,
     update: store.update,
     remove: store.remove,

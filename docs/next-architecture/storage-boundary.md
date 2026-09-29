@@ -44,15 +44,19 @@ behind the ports and no callers depend on the legacy modules directly.
 The client page now uses `conversationRepository` for backup, restore,
 refresh, save, rename and delete operations. The IndexedDB schema and record
 shape are unchanged. The `/api/state` route continues to use the provider
-configuration repository. No database or new runtime dependency was added.
+configuration repository. Video and upscale task CRUD and pagination now use
+the Task Repository adapter; their JSON files, idempotency behavior and
+upscale timestamp updates are unchanged. No database or new runtime
+dependency was added.
 
 ## Legacy responsibilities remaining
 
 - `client-history.ts` still owns IndexedDB transactions and workspace events.
 - `workspace.ts` still owns localStorage metadata, preference collection and
   HTTP synchronization with `/api/workspace`.
-- Task-specific services still create their stores directly; the generic task
-  adapter is available for the next Task Runtime slice.
+- Clone jobs and Agent Progress still use their specialized stores directly;
+  they require domain-specific atomic mutation semantics and remain outside
+  this slice.
 - `app/api/workspace/route.ts`, artifact storage and media storage still know
   filesystem details.
 

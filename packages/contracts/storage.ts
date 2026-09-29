@@ -36,10 +36,25 @@ export type TaskInsertResult<TTask extends TaskRecord> = {
   created: boolean;
 };
 
+export type TaskPage<TTask> = {
+  tasks: readonly TTask[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
 export interface TaskRepository<TTask extends TaskRecord = TaskRecord> {
   find(id: string): Promise<TTask | null>;
   findByIdempotencyKey(key: string): Promise<TTask | null>;
   list(limit?: number): Promise<readonly TTask[]>;
+  page(options?: {
+    page?: number;
+    pageSize?: number;
+    defaultPageSize?: number;
+    maxPageSize?: number;
+    matches?: (task: TTask) => boolean;
+  }): Promise<TaskPage<TTask>>;
   insert(task: TTask): Promise<TaskInsertResult<TTask>>;
   update(id: string, patch: Partial<TTask>): Promise<TTask | null>;
   remove(id: string): Promise<TTask | null>;

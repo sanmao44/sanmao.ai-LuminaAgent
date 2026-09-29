@@ -8,7 +8,7 @@ import { buildLibModules } from './lib-build.mjs';
 const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-task-store-'));
 process.env.SANMAO_DATA_DIR = dataDir;
 const { load } = await buildLibModules(
-  ['lib/task-store', 'lib/video-task-store', 'lib/upscale-task-store'],
+  ['lib/task-store', 'lib/repositories/task-repository', 'lib/video-task-store', 'lib/upscale-task-store'],
   'task-store',
 );
 const videoStore = await load('video-task-store');
