@@ -147,12 +147,14 @@ test('取消与重试接进了服务层和任务接口', async () => {
 
   assert.match(videoService, /export async function cancelVideoTask/);
   assert.match(videoService, /export async function retryVideoTask/);
-  assert.match(videoService, /task\.status === 'done' \|\| task\.status === 'failed' \|\| task\.status === 'cancelled'/);
+  assert.match(videoService, /videoTaskRuntime\.canCancel\(task\.status\)/);
+  assert.match(videoService, /canRetryVideoTask\(task\.status\)/);
   assert.match(videoService, /errorCode: 'CANCELLED'/);
 
   assert.match(upscaleService, /export async function cancelUpscaleTask/);
   assert.match(upscaleService, /export async function retryUpscaleTask/);
-  assert.match(upscaleService, /task\.status === 'succeeded' \|\| task\.status === 'failed' \|\| task\.status === 'cancelled'/);
+  assert.match(upscaleService, /upscaleTaskRuntime\.canCancel\(task\.status\)/);
+  assert.match(upscaleService, /canRetryUpscaleTask\(task\.status\)/);
   assert.match(upscaleService, /sourceImageId, reference, status: 'processing'/);
 
   for (const route of [videoRoute, upscaleRoute]) {

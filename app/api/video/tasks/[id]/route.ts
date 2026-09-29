@@ -46,7 +46,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   const { id } = await context.params;
   const existing = await findVideoTask(id);
   if (!existing) return Response.json({ error: '视频任务不存在' }, { status: 404 });
-  if (existing.status === 'pending' || existing.status === 'running') {
+  if (videoTaskRuntime.isActive(existing.status)) {
     return Response.json({ error: '视频正在生成，先取消任务再删除。' }, { status: 409 });
   }
 

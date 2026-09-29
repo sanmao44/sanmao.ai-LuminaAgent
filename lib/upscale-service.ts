@@ -9,6 +9,7 @@ import { ALIYUN_GENERATIVE_UPSCALE_MAX_ASPECT_RATIO, prepareAliyunUpscaleImage, 
 import { createUpscaleProvider, isUpscaleProviderError, uploadAliyunImageToOss, uploadTencentImageToCos, type UpscaleProviderError } from './upscale-providers';
 import { createUpscaleTask, findUpscaleTask, updateUpscaleTask, type UpscaleTask } from './upscale-task-store';
 import type { ReferenceImageRecord, UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
+import { canRetryUpscaleTask, upscaleTaskRuntime } from './upscale-task-runtime';
 
 const activePolls = new Set<string>();
 const TASK_TIMEOUT_MS = 20 * 60 * 1000;
@@ -151,7 +152,7 @@ export async function startCloudUpscale(input: { reference: string; sourceImageI
 
 export async function refreshUpscaleTask(id: string) {
   const task = await findUpscaleTask(id);
-  if (!task || task.status === 'succeeded' || task.status === 'failed' || task.status === 'cancelled') return task;
+  if (!task || !upscaleTaskRuntime.isActive(task.status)) return task;
   if (!task.providerTaskId) return task;
   if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
   if (Date.parse(task.createdAt) + TASK_TIMEOUT_MS < Date.now()) {
@@ -206,7 +207,7 @@ export function publicUpscaleTask(task: UpscaleTask | null) {
 export async function cancelUpscaleTask(id: string) {
   const task = await findUpscaleTask(id);
   if (!task) return null;
-  if (task.status === 'cancelled' || task.status === 'succeeded' || task.status === 'failed') return task;
+  if (!upscaleTaskRuntime.canCancel(task.status)) return task;
   const now = new Date().toISOString();
   const updated = await updateUpscaleTask(id, { status: 'cancelled', cancelledAt: now, completedAt: now, nextPollAt: undefined });
   await finishTaskLog(updated || task, { status: 'error', error: '用户已取消', errorCode: 'CANCELLED' });
@@ -217,7 +218,7 @@ export async function cancelUpscaleTask(id: string) {
 export async function retryUpscaleTask(id: string) {
   const task = await findUpscaleTask(id);
   if (!task) return null;
-  if (task.status === 'queued' || task.status === 'processing') throw new Error('高清任务还在处理中，先取消才能重试。');
+  if (!canRetryUpscaleTask(task.status)) throw new Error('高清任务还在处理中，先取消才能重试。');
   if (!task.reference) throw new Error('这条任务没有留下原图引用，无法重试，请重新发起超分。');
   const retried = await startCloudUpscale({
     reference: task.reference,

@@ -8,6 +8,7 @@ import { getVideoModelLimits, VIDEO_INPUT_SAFETY_LIMITS } from './video-model-li
 import { is65535Provider, isJimengProvider, isAgnesProvider } from './video-platform';
 import { prepareVideoInputMedia } from './video-input-media';
 import type { GenerationSource } from './generation-source';
+import { canRetryVideoTask, videoTaskRuntime } from './video-task-runtime';
 
 function cleanInput(input: VideoGenerationInput, defaultSeconds = 5): VideoGenerationInput {
   const prompt = String(input.prompt || '').trim();
@@ -316,7 +317,7 @@ export async function refreshVideoTask(id: string) {
 async function refreshVideoTaskOnce(id: string) {
   const task = await findVideoTask(id);
   if (!task) return null;
-  if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') return task;
+  if (!videoTaskRuntime.isActive(task.status)) return task;
   if (!task.providerTaskId) return task;
   if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
   const quickProvider = await getProviderWithKey(task.providerId);
@@ -354,7 +355,7 @@ async function refreshVideoTaskOnce(id: string) {
 export async function cancelVideoTask(id: string) {
   const task = await findVideoTask(id);
   if (!task) return null;
-  if (task.status === 'cancelled' || task.status === 'done' || task.status === 'failed') return task;
+  if (!videoTaskRuntime.canCancel(task.status)) return task;
   const cancelledAt = new Date().toISOString();
   const updated = await updateVideoTask(id, { status: 'cancelled', cancelledAt, completedAt: cancelledAt, nextPollAt: undefined });
   await finishGenerationLog(id, { status: 'error', durationMs: Date.now() - new Date(task.createdAt).getTime(), error: '用户已取消', errorCode: 'CANCELLED' }).catch(() => undefined);
@@ -365,7 +366,7 @@ export async function cancelVideoTask(id: string) {
 export async function retryVideoTask(id: string) {
   const task = await findVideoTask(id);
   if (!task) return null;
-  if (task.status === 'pending' || task.status === 'running') throw new Error('视频还在生成中，先取消才能重试。');
+  if (!canRetryVideoTask(task.status)) throw new Error('视频还在生成中，先取消才能重试。');
   const created = await createVideoGeneration({ modelId: task.modelId, input: task.input, source: task.source });
   if (!created || created.id === task.id) return created;
   return updateVideoTask(created.id, { retryOf: task.id });
