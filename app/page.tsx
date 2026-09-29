@@ -64,6 +64,7 @@ import MainColumn from '@/components/MainColumn';
 import WorkspaceTopbar from '@/components/WorkspaceTopbar';
 import SidebarFooterActions from '@/components/SidebarFooterActions';
 import SidebarChatHistory from '@/components/SidebarChatHistory';
+import AgentContextDock from '@/components/AgentContextDock';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -12047,92 +12048,28 @@ export default function Page() {
                                     })
                                 ]
                             }),
-                            section === 'agent' && /*#__PURE__*/ _jsx("div", {
-                                className: "agent-memory-dock",
-                                children: /*#__PURE__*/ _jsxs("div", {
-                                    className: "agent-context-tools",
-                                    children: [
-                                        activeChatId && /*#__PURE__*/ _jsx(AgentMemoryEditor, {
-                                    summary: validConversationMemory(chatMemoryRef.current.get(activeChatId), messages)?.summary || '',
-                                            disabled: activeAgentBusy,
-                                            icon: /*#__PURE__*/ _jsx(Icon, { name: 'brain', size: 16 }),
-                                            onSave: saveAgentMemory
-                                        }, `memory-${activeChatId}`),
-                                        /*#__PURE__*/ _jsx(AgentPersonaEditor, {
-                                            persona: activeChatId ? (chatSessions.find((session)=>session.id === activeChatId)?.persona || '') : agentPersonaDraft,
-                                            disabled: activeAgentBusy,
-                                            icon: /*#__PURE__*/ _jsx(Icon, { name: 'user', size: 16 }),
-                                        onSave: saveAgentPersona
-                                    }, `persona-${activeChatId}`),
-                                    /*#__PURE__*/ _jsx(SkillManager, {
-                                        disabled: activeAgentBusy,
-                                        icon: /*#__PURE__*/ _jsx(SkillIcon, { size: 16 })
-                                    }, 'skills'),
-                                    /*#__PURE__*/ _jsx(McpManager, {
-                                        disabled: activeAgentBusy,
-                                        icon: /*#__PURE__*/ _jsx(McpIcon, { size: 16 })
-                                    }, 'mcp'),
-                                    messages.length > 0 && !shareSelectionMode && /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "conversation-share-entry",
-                                        disabled: shareBusy || !selectableShareGroups.length,
-                                        onClick: beginShareSelection,
-                                        title: !selectableShareGroups.length ? '当前还没有可分享的已完成问答组' : '选择要分享的问答组',
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "share",
-                                                size: 14
-                                            }),
-                                            /*#__PURE__*/ _jsx("span", {
-                                                children: '分享'
-                                            })
-                                        ]
-                                    }, "share-entry"),
-                                        messages.length > 0 && shareSelectionMode && /*#__PURE__*/ _jsxs("div", {
-                                            className: "conversation-share-controls",
-                                            role: "toolbar",
-                                            "aria-label": "分享内容选择",
-                                            children: [
-                                                /*#__PURE__*/ _jsxs("span", {
-                                                    className: "conversation-share-count",
-                                                    children: [
-                                                        selectedShareGroups.size,
-                                                        "/",
-                                                        selectableShareGroups.length
-                                                    ]
-                                                }),
-                                                /*#__PURE__*/ _jsx("button", {
-                                                    type: "button",
-                                                    className: "conversation-share-control",
-                                                    disabled: !selectableShareGroups.length,
-                                                    onClick: toggleAllShareGroups,
-                                                    children: allShareGroupsSelected ? '取消全选' : '全选'
-                                                }),
-                                                /*#__PURE__*/ _jsx("button", {
-                                                    type: "button",
-                                                    className: "conversation-share-control",
-                                                    disabled: !selectedShareGroups.size,
-                                                    onClick: clearShareGroupSelection,
-                                                    children: '清空'
-                                                }),
-                                                /*#__PURE__*/ _jsx("button", {
-                                                    type: "button",
-                                                    className: "conversation-share-control",
-                                                    onClick: resetShareSelection,
-                                                    children: '取消'
-                                                }),
-                                                /*#__PURE__*/ _jsx("button", {
-                                                    type: "button",
-                                                    className: "conversation-share-control primary",
-                                                    disabled: shareBusy || !selectedShareMessages.length || activeAgentBusy || messages.some((message)=>message.pending),
-                                                    onClick: ()=>void shareConversation(),
-                                                    title: !selectedShareMessages.length ? '请先选择要分享的问答组' : activeAgentBusy || messages.some((message)=>message.pending) ? '请等待当前回答完成后分享' : '预览选中的对话长图',
-                                                    children: shareBusy ? '生成中…' : '预览'
-                                                })
-                                            ]
-                                        }),
-                                    ]
-                                })
+                            section === 'agent' && /*#__PURE__*/ _jsx(AgentContextDock, {
+                                activeChatId: activeChatId,
+                                activeAgentBusy: activeAgentBusy,
+                                memorySummary: validConversationMemory(chatMemoryRef.current.get(activeChatId), messages)?.summary || '',
+                                persona: activeChatId ? (chatSessions.find((session)=>session.id === activeChatId)?.persona || '') : '',
+                                agentPersonaDraft: agentPersonaDraft,
+                                hasMessages: messages.length > 0,
+                                shareSelectionMode: shareSelectionMode,
+                                shareBusy: shareBusy,
+                                selectedShareGroups: selectedShareGroups.size,
+                                selectableShareGroups: selectableShareGroups.length,
+                                allShareGroupsSelected: allShareGroupsSelected,
+                                selectedShareMessages: selectedShareMessages.length,
+                                hasPendingMessages: messages.some((message)=>message.pending),
+                                Icon: Icon,
+                                onSaveMemory: saveAgentMemory,
+                                onSavePersona: saveAgentPersona,
+                                onBeginShareSelection: beginShareSelection,
+                                onToggleAllShareGroups: toggleAllShareGroups,
+                                onClearShareGroupSelection: clearShareGroupSelection,
+                                onResetShareSelection: resetShareSelection,
+                                onShareConversation: ()=>void shareConversation()
                             }),
                             section === 'angle' && /*#__PURE__*/ _jsx(AngleConsole, {
                                 theme: theme,

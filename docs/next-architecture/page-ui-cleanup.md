@@ -49,6 +49,10 @@ points. Model counts and support actions are passed in from the page root.
 search, persona filtering, rename controls and selection controls. Session
 state and repository operations remain page-owned and arrive through callbacks.
 
+`AgentContextDock` now owns the Agent memory, persona, skill, MCP and
+conversation-share controls. It receives snapshots and callbacks from the
+page, while persistence and share orchestration remain outside the component.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section

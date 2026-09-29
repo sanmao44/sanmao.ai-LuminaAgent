@@ -414,14 +414,15 @@ test('浏览器面板显示扩展模式实际桥接到的浏览器，而不是 m
 
 test('MCP 面板接进 Agent 工具条，复用项目主视觉且不引入原生 select', async () => {
   const page = await read('app/page.tsx');
+  const dock = await read('components/AgentContextDock.tsx');
   const manager = await read('components/McpManager.tsx');
   const globals = await read('app/globals.css');
   const client = await read('lib/agent-client.ts');
   const upgrades = await read('app/agent-upgrades.css');
   assert.match(page, /import McpManager from '@\/components\/McpManager';/);
   assert.match(page, /import McpIcon from '@\/components\/McpIcon';/);
-  assert.match(page, /_jsx\(McpManager, \{/);
-  assert.match(page, /_jsx\(SkillManager, \{[\s\S]{0,220}\}, 'skills'\),[\s\S]{0,160}_jsx\(McpManager, \{/);
+  assert.match(dock, /<McpManager disabled=\{activeAgentBusy\}/);
+  assert.match(dock, /<SkillManager disabled=\{activeAgentBusy\}[\s\S]{0,160}<McpManager disabled=\{activeAgentBusy\}/);
   assert.match(manager, /useBodyScrollLock/);
   assert.match(manager, /styles\.dialog/);
   assert.doesNotMatch(manager, /<select/);
