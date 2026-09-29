@@ -68,6 +68,7 @@ import AgentContextDock from '@/components/AgentContextDock';
 import AgentWelcome from '@/components/AgentWelcome';
 import AgentMessageSelectionBar from '@/components/AgentMessageSelectionBar';
 import AgentFollowUpCard from '@/components/AgentFollowUpCard';
+import AgentIntentClarifyCard from '@/components/AgentIntentClarifyCard';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11599,37 +11600,9 @@ export default function Page() {
                                                     Icon: Icon,
                                                     onClear: ()=>setAgentFollowUp(null)
                                                 }),
-                                                activeAgentIntent.deliverable === 'CLARIFY' && agentInput.trim() && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsxs("div", {
-                                                    className: "agent-intent-card clarify-only",
-                                                    role: "status",
-                                                    "aria-live": "polite",
-                                                    children: [
-                                                        /*#__PURE__*/ _jsxs("div", {
-                                                            className: "agent-intent-copy",
-                                                            children: [
-                                                                /*#__PURE__*/ _jsxs("div", {
-                                                                    className: "agent-intent-title",
-                                                                    children: [
-                                                                        /*#__PURE__*/ _jsx("span", { className: "agent-intent-pulse", "aria-hidden": "true" }),
-                                                                        /*#__PURE__*/ _jsx("strong", { children: "请确认交付形式" })
-                                                                    ]
-                                                                }),
-                                                                /*#__PURE__*/ _jsx("p", { children: activeAgentIntent.summary }),
-                                                            ]
-                                                        }),
-                                                        /*#__PURE__*/ _jsxs("div", {
-                                                            className: "agent-intent-choices",
-                                                            children: [
-                                                                ['IMAGE', '直接出图'],
-                                                                ['TEXT', '先写文案'],
-                                                                ['BOTH', '图和文案都要']
-                                                            ].map(([value, label])=>/*#__PURE__*/ _jsx("button", {
-                                                                type: "button",
-                                                                onClick: ()=>void sendAgent(agentInput, undefined, undefined, value),
-                                                                children: label
-                                                            }, value))
-                                                        })
-                                                    ]
+                                                activeAgentIntent.deliverable === 'CLARIFY' && agentInput.trim() && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsx(AgentIntentClarifyCard, {
+                                                    summary: activeAgentIntent.summary,
+                                                    onChoose: (value)=>void sendAgent(agentInput, undefined, undefined, value)
                                                 }),
                                                 /*#__PURE__*/ _jsxs("div", {
                                                     className: "agent-textarea-wrap",

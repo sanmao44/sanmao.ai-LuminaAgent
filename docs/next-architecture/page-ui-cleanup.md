@@ -63,6 +63,9 @@ page supplies the selected count and mutation callbacks.
 `AgentFollowUpCard` now owns the quoted-message preview shown above the Agent
 composer. The active follow-up value and clear action remain page-owned.
 
+`AgentIntentClarifyCard` now owns the compact delivery-choice prompt for
+ambiguous Agent requests. Intent classification and dispatch remain page-owned.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section
