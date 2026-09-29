@@ -38,6 +38,10 @@ it does not depend on feature state, storage or provider modules.
 history, feature navigation and management controls remain page-owned because
 they still carry section-specific state and actions.
 
+`SidebarNavigation` now owns the creation and management navigation markup. It
+receives section state and navigation callbacks; chat history and footer status
+actions remain outside this boundary.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section

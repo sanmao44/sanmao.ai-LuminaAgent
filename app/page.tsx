@@ -62,6 +62,7 @@ import WelcomeExperience, { WELCOME_SEEN_STORAGE_KEY } from '@/components/Welcom
 import WorkspaceShell from '@/components/WorkspaceShell';
 import MainColumn from '@/components/MainColumn';
 import WorkspaceTopbar from '@/components/WorkspaceTopbar';
+import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -11150,128 +11151,25 @@ export default function Page() {
                             })
                         ]
                     }),
-                    /*#__PURE__*/ _jsx("div", {
-                        className: "nav-caption image-tools-caption",
-                        children: "创作"
-                    }),
-                    /*#__PURE__*/ _jsxs("nav", {
-                                className: "main-nav image-tools-nav",
-                        children: [
-                            /*#__PURE__*/ _jsxs("button", {
-                                "aria-label": "角度控制台",
-                                "data-tooltip": "角度控制台",
-                                className: section === 'angle' ? 'active' : '',
-                                onClick: ()=>{
-                                    setSection('angle');
-                                    closeSidebarOnMobile();
-                                },
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "adjust"
-                                    }),
-                                    /*#__PURE__*/ _jsx("span", {
-                                        children: "角度控制台"
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                "aria-label": historyNotice ? '创作记录，有新的作品' : logErrorNotice ? '创作记录，有失败任务' : '创作记录',
-                                "data-tooltip": historyNotice ? '创作记录 · 有新的作品' : logErrorNotice ? '创作记录 · 有失败任务' : '创作记录',
-                                className: `${section === 'history' || section === 'logs' ? 'active' : ''} history-priority`,
-                                onClick: ()=>{
-                                    markHistoryNoticeSeen();
-                                    const nextRecordTab = logErrorNotice ? 'tasks' : 'works';
-                                    setRecordTab(nextRecordTab);
-                                    setSection(nextRecordTab === 'tasks' ? 'logs' : 'history');
-                                    closeSidebarOnMobile();
-                                },
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "history"
-                                    }),
-                                    /*#__PURE__*/ _jsx("span", {
-                                        children: "创作记录"
-                                    }),
-                                    (historyNotice || logErrorNotice) && /*#__PURE__*/ _jsx("i", {
-                                        className: logErrorNotice ? "nav-notice-dot error" : "nav-notice-dot success",
-                                        "aria-hidden": "true"
-                                    })
-                                ]
-                            })
-                        ]
-                    }),
-                    /*#__PURE__*/ _jsxs("button", {
-                        type: "button",
-                        className: `nav-caption nav-section-toggle ${managementNavOpen ? 'open' : ''}`,
-                        onClick: ()=>setManagementNavOpen((open)=>!open),
-                        "aria-expanded": managementNavOpen,
-                        "aria-controls": "sidebar-management-nav",
-                        children: [
-                            /*#__PURE__*/ _jsx("span", {
-                                children: "管理与设置"
-                            }),
-                            /*#__PURE__*/ _jsx(Icon, {
-                                name: "chevron",
-                                size: 14
-                            })
-                        ]
-                    }),
-                    (!sidebarOpen || managementNavOpen) && /*#__PURE__*/ _jsxs("nav", {
-                        id: "sidebar-management-nav",
-                        className: "main-nav management-nav",
-                        children: [
-                            /*#__PURE__*/ _jsxs("button", {
-                                "aria-label": "模型库",
-                                "data-tooltip": "模型库",
-                                className: section === 'models' ? 'active' : '',
-                                onClick: ()=>{
-                                    setSection('models');
-                                    closeSidebarOnMobile();
-                                },
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "model"
-                                    }),
-                                    /*#__PURE__*/ _jsx("span", {
-                                        children: "模型库"
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                "aria-label": "接口服务商",
-                                "data-tooltip": "接口服务商",
-                                className: section === 'providers' ? 'active' : '',
-                                onClick: ()=>{
-                                    setSection('providers');
-                                    closeSidebarOnMobile();
-                                },
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "plug"
-                                    }),
-                                    /*#__PURE__*/ _jsx("span", {
-                                        children: "接口服务商"
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                "aria-label": "设置",
-                                "data-tooltip": "设置",
-                                className: section === 'settings' ? 'active' : '',
-                                onClick: ()=>{
-                                    setSection('settings');
-                                    closeSidebarOnMobile();
-                                },
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "settings"
-                                    }),
-                                    /*#__PURE__*/ _jsx("span", {
-                                        children: "设置"
-                                    })
-                                ]
-                            })
-                        ]
+                    /*#__PURE__*/ _jsx(SidebarNavigation, {
+                        section: section,
+                        sidebarOpen: sidebarOpen,
+                        managementNavOpen: managementNavOpen,
+                        historyNotice: historyNotice,
+                        logErrorNotice: logErrorNotice,
+                        Icon: Icon,
+                        onSection: (nextSection)=>{
+                            setSection(nextSection);
+                            closeSidebarOnMobile();
+                        },
+                        onRecordClick: ()=>{
+                            markHistoryNoticeSeen();
+                            const nextRecordTab = logErrorNotice ? 'tasks' : 'works';
+                            setRecordTab(nextRecordTab);
+                            setSection(nextRecordTab === 'tasks' ? 'logs' : 'history');
+                            closeSidebarOnMobile();
+                        },
+                        onToggleManagement: ()=>setManagementNavOpen((open)=>!open)
                     }),
                     /*#__PURE__*/ _jsx("div", {
                         className: "sidebar-fill"
