@@ -82,6 +82,8 @@ import AgentMessageTools from '@/components/AgentMessageTools';
 import AgentMessagePending from '@/components/AgentMessagePending';
 import AgentMessageLabel from '@/components/AgentMessageLabel';
 import AgentChatFileList from '@/components/AgentChatFileList';
+import AgentApprovalResult from '@/components/AgentApprovalResult';
+import AgentMessageImages from '@/components/AgentMessageImages';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11154,18 +11156,17 @@ export default function Page() {
                                                                     approval: message.approval,
                                                                     onResolved: (outcome)=>resolveAgentApprovalMessage(message.id, outcome)
                                                                 }),
-                                                                message.role === 'assistant' && !message.pending && message.approvalResult && /*#__PURE__*/ _jsx("div", {
-                                                                    className: "message-approval-result",
-                                                                    children: message.approvalResult
+                                                                message.role === 'assistant' && !message.pending && message.approvalResult && /*#__PURE__*/ _jsx(AgentApprovalResult, {
+                                                                    message: message.approvalResult
                                                                 }),
                                                                 message.references?.length ? /*#__PURE__*/ _jsx(AgentMessageReferences, {
                                                                     references: message.references,
                                                                     resolveUrl: creativeReferenceUrl,
                                                                     onPreview: setMessageReferencePreview
                                                                 }) : null,
-                                                                message.images?.length ? /*#__PURE__*/ _jsx("div", {
-                                                                    className: "message-images",
-                                                                    children: message.images.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
+                                                                message.images?.length ? /*#__PURE__*/ _jsx(AgentMessageImages, {
+                                                                    images: message.images,
+                                                                    renderImage: (item)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                                             item: item,
                                                                             previousItem: getGalleryParent(item),
                                                                             onPreview: ()=>openViewer(item),
@@ -11181,7 +11182,7 @@ export default function Page() {
                                                                             onDelete: ()=>askDeleteItems([
                                                                                     item.id
                                                                                 ])
-                                                                        }, item.id))
+                                                                        }, item.id)
                                                                 }) : null,
                                                                 showAgentImageLoadingCard(message) ? /*#__PURE__*/ _jsx(AgentImageLoadingCard, {
                                                                     activity: message.activity

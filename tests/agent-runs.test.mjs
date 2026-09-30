@@ -96,7 +96,7 @@ test('消息上的待确认卡片会随结果定稿，刷新后不再重复弹�
   assert.match(page, /_jsx\(AgentApprovalCard, \{/);
   assert.match(page, /async function resolveAgentApprovalMessage\(messageId, outcome\)/);
   assert.match(page, /approvalResult: String\(/);
-  assert.match(page, /message-approval-result/);
+  assert.match(page, /import AgentApprovalResult from '@\/components\/AgentApprovalResult';/);
 });
 
 test('审批记录本身带有效期与体积上限，不会长期驻留对话内容', () => {

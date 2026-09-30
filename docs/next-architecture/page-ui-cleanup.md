@@ -109,6 +109,18 @@ that container, so their conditions and interactions remain unchanged.
 File preview eligibility, formatting, download, preview, and removal callbacks
 remain page-owned and are passed through explicitly.
 
+## Closeout boundary
+
+The sixth round is now in closeout mode. Its final slices are:
+
+1. `AgentApprovalResult` for the approval outcome row (completed);
+2. `AgentMessageImages` for the Agent image result presentation boundary (final).
+
+`AgentChatFileList` already covers the Agent composer attachment presentation.
+After `AgentMessageImages`, run the full verification once and stop this round.
+Further cleanup of `app/page.tsx` belongs to a separately planned phase and is
+not required to declare this round complete.
+
 `AgentMessageReferences` now owns the message reference thumbnail strip.
 Reference resolution and preview state remain page-owned.
 
