@@ -1,18 +1,23 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.66",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.66",
+  "latestVersion": "0.7.67",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.67",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.66/SANMAO.AI-0.7.66.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.67/SANMAO.AI-0.7.67.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.66/SANMAO.AI-0.7.66.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.66/SANMAO.AI-0.7.66.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.66/SANMAO.AI-0.7.66.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.67/SANMAO.AI-0.7.67.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.67/SANMAO.AI-0.7.67.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.67/SANMAO.AI-0.7.67.zip"
   ],
-  "sha256": "8202ac919a226040bd26e79f9e1f1ff6892acd58c0ec2bfb9ca28bee950dc8ea",
-  "publishedAt": "2026-09-28T15:37:25Z",
+  "sha256": "7fccb035f1fd3ca34d3bc3198d16271bc32300b76ba83398f61d4c3083d7fd8e",
+  "publishedAt": "2026-09-30T06:11:27Z",
   "notes": [
-    "智能助手全面接入 Siri 风格光球：待机、连接、聆听、思考、播报、错误六种状态动效，可跟随麦克风音量与生成进度跳动，亮/暗主题都有兜底。",
+    "建立 Agent Runtime 垂直切片：引入 AgentRun、Context、Policy、Model Runtime 与 Tool Runtime Contract，并接入真实 Agent 路径。",
+    "建立统一 Task Runtime 生命周期，统一媒体任务、Agent 进度、取消与重试状态，减少各业务独立维护状态机。",
+    "建立 Storage Repository Boundary，逐步隔离对话、任务与媒体业务和具体文件/JSON 存储实现。",
+    "新增 provider-neutral Model Runtime Adapter 与独立 Canvas Core Runtime，核心能力逐步脱离具体 Provider 和 React 状态。",
+    "主界面完成纵向拆分：工作区、侧边栏、Agent 消息展示与输入区拆为独立组件，保持现有亮/暗主题和交互行为。",
+    "补充 Agent Runtime、Task、Storage、Model、Canvas 与主界面组件行为测试，降低后续架构迁移风险。",
     "全站 ✦ Agent 图标换成光球：欢迎页、消息头像、输入区状态、画布顶栏、右键菜单、节点角标、多选工具条与助手面板统一为同一视觉。",
     "删除视频和音频改为移入回收站并保留 7 天，误删可以找回，不再直接删掉。",
     "备份归档改用异步 gzip 流式压缩，2GB 级快照不再冻结整个服务，导出更快。",
