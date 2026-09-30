@@ -719,6 +719,12 @@ function Write-Step([string]$text) {
   Write-Host ""
   Write-Host "==> $text" -ForegroundColor Cyan
 }
+
+# The service binds to IPv4 loopback. Some Windows browsers/WebViews resolve
+# localhost to IPv6 ::1 first, which leaves the page unable to connect.
+function Get-SanmaoLocalUrl([int]$Port, [string]$Path = '') {
+  return "http://127.0.0.1:$Port$Path"
+}
 # 首次安装依赖时官方 npm 源在国内网络下常常只有几十 KB/s（首次要下载约 800 MB），
 # 用户会以为程序卡住了。这里做一次很短的探测，官方源慢就整体切到国内镜像；依赖仍由
 # package-lock.json 校验完整性。可用 SANMAO_NO_MIRROR=1 完全禁用镜像，用
@@ -982,10 +988,10 @@ if ($existing) {
     if ($existing.NetworkMode -eq 'lan') {
       Write-Host "SANMAO.AI 局域网共享已在运行（本机：http://localhost:$existingPort）" -ForegroundColor Green
       Show-SanmaoLanAccess $existingPort
-      $openUrl = "http://localhost:$existingPort/canvas"
+      $openUrl = Get-SanmaoLocalUrl -Port $existingPort -Path '/canvas'
     } else {
       Write-Host "SANMAO.AI 已在运行：http://localhost:$existingPort" -ForegroundColor Green
-      $openUrl = "http://localhost:$existingPort"
+      $openUrl = Get-SanmaoLocalUrl -Port $existingPort
     }
     Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
     Release-LauncherMutex
@@ -1358,7 +1364,7 @@ if ($freeRelayRequested) {
   }
 }
 
-$url = "http://localhost:$port"
+$url = Get-SanmaoLocalUrl -Port $port
 if ($Lan.IsPresent) {
   Write-Host "SANMAO.AI 局域网共享已启动（本机：$url）" -ForegroundColor Green
   Show-SanmaoLanAccess $port

@@ -59,6 +59,13 @@ test("Windows launcher waits for fresh production-build artifacts", () => {
   assert.match(windowsLauncher, /if \(-not \$needBuild -and -not \$SkipBuild\.IsPresent\)/);
 });
 
+test("Windows launcher opens the IPv4 loopback address used by the local service", () => {
+  assert.match(windowsLauncher, /function Get-SanmaoLocalUrl\(\[int\]\$Port, \[string\]\$Path = ''\)/);
+  assert.match(windowsLauncher, /return "http:\/\/127\.0\.0\.1:\$Port\$Path"/);
+  assert.match(windowsLauncher, /\$openUrl = Get-SanmaoLocalUrl -Port \$existingPort/);
+  assert.match(windowsLauncher, /\$url = Get-SanmaoLocalUrl -Port \$port/);
+});
+
 test("every existing launcher prepares the optional public media relay", () => {
   assert.equal(freeRelayPs.charCodeAt(0), 0xfeff, "Windows PowerShell relay helper must keep a UTF-8 BOM");
   assert.match(windowsLauncher, /FreeRelay/);
