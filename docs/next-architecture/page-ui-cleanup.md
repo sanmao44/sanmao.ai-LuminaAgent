@@ -87,6 +87,12 @@ avatar presentation. Message lifecycle state remains page-owned.
 `AgentMessageVersionSwitch` now owns the compact previous/next version control.
 Version selection and retry state remain page-owned.
 
+`AgentMessageError` now owns the failed-reply notice and retry button layout.
+Model selection and retry execution remain page-owned callbacks.
+
+`AgentMessageError` now owns the failed-reply notice and retry button layout.
+Model selection and retry execution remain page-owned callbacks.
+
 `AgentMessageVersionSwitch` now owns the compact previous/next version control.
 Version selection and retry state remain page-owned.
 

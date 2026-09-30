@@ -76,6 +76,7 @@ import AgentQuickActions from '@/components/AgentQuickActions';
 import AgentSendButton from '@/components/AgentSendButton';
 import AgentMessageAvatar from '@/components/AgentMessageAvatar';
 import AgentMessageVersionSwitch from '@/components/AgentMessageVersionSwitch';
+import AgentMessageError from '@/components/AgentMessageError';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11255,30 +11256,13 @@ export default function Page() {
                                                                 }) : null,
                                                                 showAgentImageLoadingCard(message) ? /*#__PURE__*/ _jsx(AgentImageLoadingCard, {
                                                                     activity: message.activity
-                                                                }) : message.role === 'assistant' && !message.pending ? message.agentError ? /*#__PURE__*/ _jsxs("div", {
-                                                                    className: "message-agent-error",
-                                                                    children: [
-                                                                        /*#__PURE__*/ _jsx("p", { children: message.content }),
-                                                                        /*#__PURE__*/ _jsx("small", { children: "模型没有返回可用回复，可以切换自动模式重试。" }),
-                                                                        /*#__PURE__*/ _jsxs("div", {
-                                                                            className: "message-agent-error-actions",
-                                                                            children: [
-                                                                                /*#__PURE__*/ _jsx("button", {
-                                                                                    type: "button",
-                                                                                    onClick: ()=>{
-                                                                                        setAgentModelId('auto');
-                                                                                        void retryAgentMessage(message, 'auto');
-                                                                                    },
-                                                                                    children: "切换自动并重试"
-                                                                                }),
-                                                                                /*#__PURE__*/ _jsx("button", {
-                                                                                    type: "button",
-                                                                                    onClick: ()=>void retryAgentMessage(message),
-                                                                                    children: "重试当前模型"
-                                                                                })
-                                                                            ]
-                                                                        })
-                                                                    ]
+                                                                }) : message.role === 'assistant' && !message.pending ? message.agentError ? /*#__PURE__*/ _jsx(AgentMessageError, {
+                                                                    message: message.content,
+                                                                    onRetryAutomatic: ()=>{
+                                                                        setAgentModelId('auto');
+                                                                        void retryAgentMessage(message, 'auto');
+                                                                    },
+                                                                    onRetryCurrent: ()=>void retryAgentMessage(message)
                                                                 }) : /*#__PURE__*/ _jsx(AssistantMarkdown, {
                                                                     content: message.content,
                                                                     onNotify: notify,
