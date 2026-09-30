@@ -32,7 +32,7 @@ test("重新生成生图消息同样从头显示扫光卡片", () => {
   assert.ok(page.includes("const retryImageFlow = message.deliverable === 'IMAGE' || message.deliverable === 'BOTH';"));
   assert.ok(page.includes("...(retryImageFlow ? { activity: { stage: 'image_planning', message: '正在构思画面…', imageFlow: true } } : {})"));
   assert.ok(page.includes("...(retryImageFlow && !agentRequest.partialText ? { imageFlow: true } : {})"));
-  assert.ok(page.includes("message.retrying && !showAgentImageLoadingCard(message) && message.activity?.message"));
+  assert.ok(page.includes("retryActivity: message.retrying && !showAgentImageLoadingCard(message) ? message.activity?.message : undefined"));
 });
 
 test("卡片文案按生图阶段分三态，服务端阶段文案退到第二行", () => {

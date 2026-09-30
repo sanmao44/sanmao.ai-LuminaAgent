@@ -243,7 +243,7 @@ test("三个入口都按 runId 轮询，收尾都会停", () => {
   assert.match(page, /stopRetryProgress = pollAgentProgress\(retryRunId, \{/);
   assert.match(page, /runId: retryRunId/);
   assert.match(page, /\} finally\{\r?\n            stopRetryProgress\(\);/);
-  assert.match(page, /message\.retrying && !showAgentImageLoadingCard\(message\) && message\.activity\?\.message \? \/\*#__PURE__\*\/ _jsx\("span", \{\r?\n\s+className: "message-retry-activity",/);
+  assert.match(page, /retryActivity: message\.retrying && !showAgentImageLoadingCard\(message\) \? message\.activity\?\.message : undefined/);
   assert.match(page, /applyMessageVersion\(\{ \.\.\.item, activity: undefined \}/);
   assert.match(styles, /\.message-tools \.message-retry-activity\{[^}]*color:var\(--accent-text\)/);
 

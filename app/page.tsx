@@ -78,6 +78,7 @@ import AgentMessageAvatar from '@/components/AgentMessageAvatar';
 import AgentMessageVersionSwitch from '@/components/AgentMessageVersionSwitch';
 import AgentMessageError from '@/components/AgentMessageError';
 import AgentMessageReferences from '@/components/AgentMessageReferences';
+import AgentMessageTools from '@/components/AgentMessageTools';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11284,98 +11285,20 @@ export default function Page() {
                                                                      },
                                                                      onPreview: message.role === 'assistant' ? openChatFilePreview : undefined
                                                                  }) : null,
-                                                                  !message.pending && !agentMessageSelectionActive && /*#__PURE__*/ _jsxs("div", {
-                                                                    className: `message-tools ${message.role === 'user' ? 'user-message-tools' : ''}`,
-                                                                    children: [
-                                                                        /*#__PURE__*/ _jsxs("button", {
-                                                                            type: "button",
-                                                                            title: "复制消息",
-                                                                            "aria-label": "复制消息",
-                                                                            onClick: ()=>void copyMessage(message.content),
-                                                                            children: [
-                                                                                /*#__PURE__*/ _jsx(Icon, {
-                                                                                    name: "copy",
-                                                                                    size: 14
-                                                                                }),
-                                                                                "复制"
-                                                                            ]
-                                                                        }),
-                                                                        message.role === 'assistant' && /*#__PURE__*/ _jsxs(_Fragment, {
-                                                                            children: [
-                                                                                /*#__PURE__*/ _jsxs("button", {
-                                                                                    type: "button",
-                                                                                    className: "message-followup",
-                                                                                    title: "围绕此消息追问",
-                                                                                    onClick: ()=>followUpFromMessage(message),
-                                                                                    children: [
-                                                                                        /*#__PURE__*/ _jsx(Icon, {
-                                                                                            name: "agent",
-                                                                                            size: 14
-                                                                                        }),
-                                                                                        "围绕此条追问"
-                                                                                    ]
-                                                                                }),
-                                                                                /*#__PURE__*/ _jsxs("button", {
-                                                                                    type: "button",
-                                                                                    className: "message-retry",
-                                                                                    disabled: message.retrying,
-                                                                                    title: message.images?.length ? '在新的图片生成窗口中重新生成' : '在当前对话中生成一个新版本',
-                                                                                    onClick: ()=>void retryAgentMessage(message),
-                                                                                    children: [
-                                                                                        /*#__PURE__*/ _jsx(Icon, {
-                                                                                            name: "retry",
-                                                                                            size: 14
-                                                                                        }),
-                                                                                        message.retrying ? '重新生成中…' : message.images?.length ? '重新生成图片' : '重新生成文本'
-                                                                                    ]
-                                                                                }),
-                                                                                message.retrying && !showAgentImageLoadingCard(message) && message.activity?.message ? /*#__PURE__*/ _jsx("span", {
-                                                                                    className: "message-retry-activity",
-                                                                                    children: message.activity.message
-                                                                                }) : null,
-                                                                                /*#__PURE__*/ _jsxs("button", {
-                                                                                    type: "button",
-                                                                                    onClick: ()=>pushTextToGenerate(message.content),
-                                                                                    children: [
-                                                                                        /*#__PURE__*/ _jsx(Icon, {
-                                                                                            name: "image",
-                                                                                            size: 14
-                                                                                        }),
-                                                                                        "整段推送生图"
-                                                                                    ]
-                                                                                }),
-                                                                                message.task === 'one_take_video_prompt' && message.durationSeconds && /*#__PURE__*/ _jsxs("button", {
-                                                                                    type: "button",
-                                                                                    className: "message-video-push",
-                                                                                    title: `按 ${message.durationSeconds} 秒推送到视频面板`,
-                                                                                    onClick: ()=>pushTextToVideo(message.content, true, message.durationSeconds),
-                                                                                    children: [
-                                                                                        /*#__PURE__*/ _jsx(Icon, {
-                                                                                            name: "video",
-                                                                                            size: 14
-                                                                                        }),
-                                                                                        "推送到视频"
-                                                                                    ]
-                                                                                })
-                                                                            ]
-                                                                        }),
-                                                                        /*#__PURE__*/ _jsxs("button", {
-                                                                            type: "button",
-                                                                            className: "message-delete",
-                                                                            title: "批量删除消息",
-                                                                            "aria-label": "批量删除消息",
-                                                                            onClick: beginAgentMessageSelection,
-                                                                            children: [
-                                                                                /*#__PURE__*/ _jsx(Icon, {
-                                                                                    name: "trash",
-                                                                                    size: 14
-                                                                                }),
-                                                                                /*#__PURE__*/ _jsx("span", {
-                                                                                    children: "删除"
-                                                                                })
-                                                                            ]
-                                                                        })
-                                                                    ]
+                                                                  !message.pending && !agentMessageSelectionActive && /*#__PURE__*/ _jsx(AgentMessageTools, {
+                                                                    role: message.role,
+                                                                    retrying: Boolean(message.retrying),
+                                                                    retryLabel: message.retrying ? '重新生成中…' : message.images?.length ? '重新生成图片' : '重新生成文本',
+                                                                    retryTitle: message.images?.length ? '在新的图片生成窗口中重新生成' : '在当前对话中生成一个新版本',
+                                                                    retryActivity: message.retrying && !showAgentImageLoadingCard(message) ? message.activity?.message : undefined,
+                                                                    videoPushTitle: message.task === 'one_take_video_prompt' && message.durationSeconds ? `按 ${message.durationSeconds} 秒推送到视频面板` : undefined,
+                                                                    Icon: Icon,
+                                                                    onCopy: ()=>void copyMessage(message.content),
+                                                                    onFollowUp: ()=>followUpFromMessage(message),
+                                                                    onRetry: ()=>void retryAgentMessage(message),
+                                                                    onPushImage: ()=>pushTextToGenerate(message.content),
+                                                                    onPushVideo: ()=>pushTextToVideo(message.content, true, message.durationSeconds),
+                                                                    onDelete: beginAgentMessageSelection
                                                                 })
                                                             ]
                                                         })

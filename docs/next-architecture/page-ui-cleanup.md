@@ -93,6 +93,10 @@ Model selection and retry execution remain page-owned callbacks.
 `AgentMessageReferences` now owns the message reference thumbnail strip.
 Reference resolution and preview state remain page-owned.
 
+`AgentMessageTools` now owns the copy, follow-up, retry, generation push, and
+delete affordance markup. Message visibility, retry labels and progress,
+video-task eligibility, and every operation callback remain page-owned.
+
 `AgentMessageReferences` now owns the message reference thumbnail strip.
 Reference resolution and preview state remain page-owned.
 
