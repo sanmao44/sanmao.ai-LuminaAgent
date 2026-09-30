@@ -75,6 +75,7 @@ import AgentWebModeControl from '@/components/AgentWebModeControl';
 import AgentQuickActions from '@/components/AgentQuickActions';
 import AgentSendButton from '@/components/AgentSendButton';
 import AgentMessageAvatar from '@/components/AgentMessageAvatar';
+import AgentMessageVersionSwitch from '@/components/AgentMessageVersionSwitch';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11197,37 +11198,13 @@ export default function Page() {
                                                                              className: `message-deliverable-badge ${String(message.deliverable).toLowerCase()}`,
                                                                              children: `交付：${agentDeliverableLabel(message.deliverable)}`
                                                                          }),
-                                                                        message.role === 'assistant' && !message.pending && messageVersionsFor(message).length > 1 && /*#__PURE__*/ _jsxs("div", {
-                                                                            className: "message-version-switch",
-                                                                            children: [
-                                                                                /*#__PURE__*/ _jsx("button", {
-                                                                                    type: "button",
-                                                                                    disabled: message.retrying || messageVersionIndex(message) === 0,
-                                                                                    onClick: ()=>switchAgentMessageVersion(message, messageVersionIndex(message) - 1),
-                                                                                    "aria-label": "查看上一版",
-                                                                                    children: /*#__PURE__*/ _jsx(Icon, {
-                                                                                        name: "left",
-                                                                                        size: 13
-                                                                                    })
-                                                                                }),
-                                                                                /*#__PURE__*/ _jsxs("span", {
-                                                                                    children: [
-                                                                                        messageVersionIndex(message) + 1,
-                                                                                        " / ",
-                                                                                        messageVersionsFor(message).length
-                                                                                    ]
-                                                                                }),
-                                                                                /*#__PURE__*/ _jsx("button", {
-                                                                                    type: "button",
-                                                                                    disabled: message.retrying || messageVersionIndex(message) >= messageVersionsFor(message).length - 1,
-                                                                                    onClick: ()=>switchAgentMessageVersion(message, messageVersionIndex(message) + 1),
-                                                                                    "aria-label": "查看下一版",
-                                                                                    children: /*#__PURE__*/ _jsx(Icon, {
-                                                                                        name: "right",
-                                                                                        size: 13
-                                                                                    })
-                                                                                })
-                                                                            ]
+                                                                        message.role === 'assistant' && !message.pending && messageVersionsFor(message).length > 1 && /*#__PURE__*/ _jsx(AgentMessageVersionSwitch, {
+                                                                            index: messageVersionIndex(message),
+                                                                            total: messageVersionsFor(message).length,
+                                                                            retrying: message.retrying,
+                                                                            Icon: Icon,
+                                                                            onPrevious: ()=>switchAgentMessageVersion(message, messageVersionIndex(message) - 1),
+                                                                            onNext: ()=>switchAgentMessageVersion(message, messageVersionIndex(message) + 1)
                                                                         })
                                                                     ]
                                                                 }),

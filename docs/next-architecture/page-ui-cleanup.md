@@ -84,6 +84,12 @@ request dispatch and cancellation remain page-owned.
 `AgentMessageAvatar` now owns the user, pending Agent orb and completed-brand
 avatar presentation. Message lifecycle state remains page-owned.
 
+`AgentMessageVersionSwitch` now owns the compact previous/next version control.
+Version selection and retry state remain page-owned.
+
+`AgentMessageVersionSwitch` now owns the compact previous/next version control.
+Version selection and retry state remain page-owned.
+
 `AgentMessageAvatar` now owns the user, pending Agent orb and completed-brand
 avatar presentation. Message lifecycle state remains page-owned.
 
