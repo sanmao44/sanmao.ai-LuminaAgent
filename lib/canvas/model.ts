@@ -1038,7 +1038,10 @@ export function recoverInterruptedCanvasDocument(
     const pending = status === "queued" || status === "running";
     if (!pending) return node;
 
-    if (node.type === "prompt") return interrupted(node, "上次 Agent 请求已中断，可重试");
+    if (node.type === "prompt") {
+      const taskId = String(node.data.jobId || node.data.generation?.taskId || "");
+      return taskId ? node : interrupted(node, "上次 Agent 请求已中断，可重试");
+    }
 
     if (node.type === "media") {
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "");

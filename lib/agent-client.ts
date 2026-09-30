@@ -148,6 +148,8 @@ export type AgentResponse = {
   needsApproval?: boolean;
   durationSeconds?: number;
   error?: string;
+  pending?: boolean;
+  taskId?: string;
   cancelled?: boolean;
   canvasPatch?: CanvasPatch;
   [key: string]: unknown;
@@ -363,6 +365,12 @@ export async function requestAgent(
     data = await readAgentEventStream(response, options);
   } else {
     data = (await response.json().catch(() => ({}))) as AgentResponse;
+  }
+  if (data.pending || response.status === 202) {
+    const pendingError = new Error(String(data.message || data.error || "任务仍在后台处理中，请勿重复提交")) as Error & { agentPending?: boolean; taskId?: string };
+    pendingError.agentPending = true;
+    pendingError.taskId = typeof data.taskId === "string" ? data.taskId : undefined;
+    throw pendingError;
   }
   if (!response.ok) {
     throw new Error(String(data.error || data.message || `Agent 请求失败：${response.status}`));

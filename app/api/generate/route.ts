@@ -266,7 +266,7 @@ export async function POST(request: Request) {
     const normalizedImages = camera && angleOutput
       ? await normalizeAngleOutputSize(orientationSafeImages, angleOutput.width, angleOutput.height, effectiveAngle(generationCamera(camera).roll), requestController.signal)
       : orientationSafeImages;
-    if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
+    if (requestController.signal.aborted && !normalizedImages.length) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
     const providerFinishedAt = Date.now();
     const generatedImages = normalizedImages;
     const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId, downloadAuth: imageDownloadAuth(runtime.provider) });
@@ -278,8 +278,10 @@ export async function POST(request: Request) {
     const upstreamStatus = Number((error as Error & { providerStatus?: number; status?: number }).providerStatus || (error as Error & { status?: number }).status || 0);
     if (runtimeProviderId && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(runtimeProviderId).catch(() => undefined);
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'GENERATION_CANCELLED');
-    const failure = { status: 'error' as const, mode: modeForLog, source: sourceForLog, prompt: promptForLog, presetId: presetIdForLog, presetName: presetNameForLog, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, durationMs: Date.now() - startedAt, error: cancelled ? '任务已取消，已停止等待服务商返回' : error instanceof Error ? error.message : '生图失败' };
+    const providerPossiblyAccepted = !cancelled && Boolean((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask);
+    const failure = { status: providerPossiblyAccepted ? 'pending' as const : 'error' as const, mode: modeForLog, source: sourceForLog, prompt: promptForLog, presetId: presetIdForLog, presetName: presetNameForLog, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, durationMs: Date.now() - startedAt, error: providerPossiblyAccepted ? '服务商已接收任务，正在生成，请勿重复提交。' : cancelled ? '任务已取消，已停止等待服务商返回' : error instanceof Error ? error.message : '生图失败' };
     if (logId) await finishGenerationLog(logId, failure).catch(() => undefined); else await appendGenerationLog(failure).catch(() => undefined);
+    if (providerPossiblyAccepted) return Response.json({ pending: true, taskId: logId, message: failure.error }, { status: 202 });
     return Response.json({ error: failure.error }, { status: cancelled ? 499 : 502 });
   } finally {
     await releaseRuntimeRequest();

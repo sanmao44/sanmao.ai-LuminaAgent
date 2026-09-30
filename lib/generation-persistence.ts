@@ -5,6 +5,7 @@ import type { GenerationSource } from './generation-source';
 
 type BackgroundGenerationLog = {
   mode: 'generate' | 'edit' | 'upscale' | 'agent';
+  taskKind?: 'media';
   source?: GenerationSource;
   prompt: string;
   modelId?: string;

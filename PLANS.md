@@ -1,5 +1,23 @@
 # PLANS.md — SANMAO.AI 架构演进执行计划
 
+> **当前状态（2026-09-30）**：第七轮 Architecture Convergence Audit 已完成记录。前六轮均已建立最小 Contract、Adapter 和至少一条真实调用路径，但尚未完成全域 Legacy removal；详细的真实调用链、双轨状态、绕过点和删除条件见 [`docs/next-architecture/migration-status.md`](docs/next-architecture/migration-status.md)。
+
+## 当前阶段状态
+
+| 阶段 | 状态 | 说明 |
+| --- | --- | --- |
+| Phase 1 Agent Runtime | 垂直切片完成，迁移进行中 | 紧凑非流式纯文本路径已接入；Tool、Streaming、Artifact、Browser、Filesystem 和 Route 编排仍为 Legacy。 |
+| Phase 2 Test Decoupling | 尚未完成 | 已有大量源码结构断言；需先补行为覆盖，再逐类移除。 |
+| Phase 3 Storage Boundary | 垂直切片完成，迁移进行中 | 会话、workspace、provider state、视频/超分 Task 已经使用 Repository；Clone、Progress、artifact/media 等仍直连。 |
+| Phase 4 Task Runtime | 垂直切片完成，迁移进行中 | 状态/取消/重试判断已复用 Runtime；polling、持久化和专用 wire status 仍保留。 |
+| Phase 5 Provider Runtime | 垂直切片完成，迁移进行中 | 一条文本 Agent 路径使用 ModelRuntime；routing、failover、streaming、image/video/search 仍为 Legacy。 |
+| Phase 6 Tool Runtime | 尚未开始 | 需要先建立统一 Tool Runtime boundary，再接入真实 Native/MCP 路径。 |
+| Phase 7 Canvas Core | 局部接入，未完成 | CanvasCore 已被 SuperCanvas 使用，但 React document/selection/viewport/history 仍是主要 Source of Truth。 |
+| Phase 8–9 UI cleanup | 垂直切片完成，迁移进行中 | shell、sidebar、Agent presentation 已拆出；`app/page.tsx` 仍是 composition root 和状态 owner。 |
+| Round 7 Architecture Audit | 本轮完成 | 已形成迁移矩阵；本轮不修改产品代码。 |
+
+后续执行遵循纵向切片原则：先补行为覆盖，再收敛一个边界；不因审计结论跳过 Tool Runtime 或提前删除 Legacy。
+
 ## 0. Purpose
 
 本文件定义当前架构演进的施工顺序。
@@ -23,8 +41,8 @@
 - [x] `AGENTS.md`
 - [x] `ARCHITECTURE.md`
 - [x] `PLANS.md`
-- [ ] 确认 `WORKFLOW.md` 仍为发布流程唯一事实来源
-- [ ] 建立 `docs/next-architecture/`
+- [x] 确认 `WORKFLOW.md` 仍为发布流程唯一事实来源
+- [x] 建立 `docs/next-architecture/`
 - [ ] 建立 Architecture Decision Record 目录（可选）
 
 ## 完成标准
@@ -127,15 +145,17 @@ docs/next-architecture/agent-runtime.md
 
 ## 完成标准
 
-- [ ] `docs/next-architecture/agent-runtime.md`
-- [ ] 最小 Contract
-- [ ] 最小 Runtime
-- [ ] 一条真实路径接入
-- [ ] 行为测试
-- [ ] typecheck 通过
-- [ ] 相关 tests 通过
-- [ ] 旧 Agent API 仍工作
-- [ ] 明确列出尚未迁移职责
+- [x] `docs/next-architecture/agent-runtime.md`
+- [x] 最小 Contract
+- [x] 最小 Runtime
+- [x] 一条真实路径接入
+- [x] 行为测试
+- [x] typecheck 通过
+- [x] 相关 tests 通过
+- [x] 旧 Agent API 仍工作
+- [x] 明确列出尚未迁移职责
+
+> Phase 1 的“完成”指最小纵向切片完成；它不表示 Route、Tool、Streaming 或 Provider 全面迁移。全域迁移状态见 `docs/next-architecture/migration-status.md`。
 
 ---
 
@@ -485,9 +505,11 @@ Next recommended slice
 当前优先级：
 
 ```text
-Phase 1 — Agent Runtime Vertical Slice
+Round 7 — Architecture Convergence Audit（文档已完成）
 ```
 
-给 Codex 的短指令可以直接使用：
+下一次代码施工优先级：
 
-> 阅读 `AGENTS.md`、`ARCHITECTURE.md`、`PLANS.md`、`WORKFLOW.md`。执行 `PLANS.md` 的 Phase 1。先做 Agent Runtime Architecture Assessment，不要一上来大改代码。保持现有产品行为，建立最小 Contract 和 Runtime，然后只接入一条真实执行路径。完成后运行相关测试与 `npm run check`，并按 AGENTS.md 的格式汇报。
+```text
+Phase 6 — Tool Runtime Consolidation：先定义统一 Contract，再接入一条真实 Native/MCP 路径
+```

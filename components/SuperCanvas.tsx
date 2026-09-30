@@ -1554,6 +1554,10 @@ async function waitForCanvasUpscaleTask(taskId: string) {
   throw new Error("高清处理时间较长，请稍后重试。");
 }
 
+function isGenerationPendingError(error: unknown): error is Error & { generationPending?: boolean } {
+  return Boolean(error && typeof error === "object" && (error as { generationPending?: unknown }).generationPending === true);
+}
+
 const CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR =
   "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop";
 
@@ -8431,6 +8435,12 @@ export default function SuperCanvas() {
       notify(`已生成 ${result.images.length} 张新图片，原图已保留`);
       addLog(`图片续生成完成：${result.images.length} 张`);
     } catch (error) {
+      if (isGenerationPendingError(error)) {
+        updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === pendingPositioned.id ? { ...node, data: { ...node.data, status: "running" as const, statusLabel: "服务商已接收，等待结果" } } : node) }));
+        notify("服务商已接收任务，正在生成，请勿重复提交");
+        addLog("图片任务仍在服务商处理中");
+        return;
+      }
       const message = error instanceof Error ? error.message : "图片续生成失败";
       if (params.mask) {
         updateDoc((value) =>
@@ -8866,6 +8876,13 @@ export default function SuperCanvas() {
         }));
       }
       const inputId = inputNode.id;
+      const agentRunId = uid("agent-run");
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) => node.id === inputId
+          ? { ...node, data: { ...node.data, jobId: agentRunId, generation: node.data.generation ? { ...node.data.generation, taskId: agentRunId } : node.data.generation } }
+          : node),
+      }));
       try {
         const generationStartedAt = Date.now();
         let finalEventReceived = false;
@@ -8876,6 +8893,7 @@ export default function SuperCanvas() {
           model: effectiveSettings.model,
           webMode: effectiveSettings.webMode,
           task: request?.agentTask || inferCanvasAgentTask(prompt, agentReferenceNodes.some((node) => node.data.kind === "image")),
+          runId: agentRunId,
           ...(request?.durationSeconds !== undefined ? { durationSeconds: request.durationSeconds } : {}),
           deliverable: request?.agentTask === "one_take_video_prompt" ? "TEXT" : intentDecision.deliverable,
           intentReason: request?.agentTask === "one_take_video_prompt" ? "一镜到底只需要返回可复制的视频 Prompt" : intentDecision.reason,
@@ -9020,6 +9038,28 @@ export default function SuperCanvas() {
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Agent 请求失败";
+        const pending = Boolean(error && typeof error === "object" && (error as { agentPending?: boolean }).agentPending)
+          || /Agent 请求超时|Agent 流式响应不完整|请求已中断|请求已取消|连接中断|后台处理中/i.test(message);
+        if (pending) {
+          const currentNode = nodeById(docRef.current, inputId);
+          const currentJobId = String(currentNode?.data.jobId || currentNode?.data.generation?.taskId || "");
+          if (currentNode?.data.status === "completed" || (currentJobId && currentJobId !== agentRunId)) return;
+          updateDoc((value) => ({
+            ...value,
+            nodes: value.nodes.map((node) => node.id === inputId
+              ? { ...node, data: { ...node.data, status: "running" as const, statusLabel: "任务仍在后台处理中，请勿重复提交" } }
+              : node),
+          }));
+          notify("任务仍在后台处理中，请勿重复提交");
+          addLog("Agent 任务仍在后台处理中");
+          return;
+        }
+        // A late transport/caption failure must not overwrite a newer result
+        // for this node (for example, when the provider completed the image
+        // after the original stream had already been interrupted).
+        const currentNode = nodeById(docRef.current, inputId);
+        const currentJobId = String(currentNode?.data.jobId || currentNode?.data.generation?.taskId || "");
+        if (currentNode?.data.status === "completed" || (currentJobId && currentJobId !== agentRunId)) return;
         updateDoc((value) => ({
           ...value,
           nodes: value.nodes.map((node) =>
@@ -9555,6 +9595,12 @@ export default function SuperCanvas() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "生成失败";
+      if (isGenerationPendingError(error)) {
+        updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => (node.id === sourceNode?.id || node.id === targetId || node.id === pendingImageId) ? { ...node, data: { ...node.data, status: "running" as const, statusLabel: "服务商已接收，等待结果" } } : node) }));
+        notify("服务商已接收任务，正在生成，请勿重复提交");
+        addLog("图片任务仍在服务商处理中");
+        return;
+      }
       const failedMaskOwner = sourceTarget?.type === "media" && sourceTarget.data.kind === "image"
         ? sourceTarget
         : sourceNode?.type === "media" && sourceNode.data.kind === "image"
@@ -9737,6 +9783,13 @@ export default function SuperCanvas() {
       setQuickToolbarNodeId(null);
       generationKeysRef.current.add(output.id);
       setGenerationKeys(new Set(generationKeysRef.current));
+      const directorRunId = uid("agent-run");
+      updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) => node.id === output.id
+          ? { ...node, data: { ...node.data, jobId: directorRunId, generation: node.data.generation ? { ...node.data.generation, taskId: directorRunId } : node.data.generation } }
+          : node),
+      }));
 
       const updateOutput = (patch: Partial<CanvasNodeData>, generationPatch?: Partial<NonNullable<CanvasNode["data"]["generation"]>>) => {
         updateDoc((value) => ({
@@ -9765,6 +9818,7 @@ export default function SuperCanvas() {
           }],
           model: runtime?.settings.agentModelId || "auto",
           task: "cinematic_shock_opening_director",
+          runId: directorRunId,
           deliverable: "TEXT",
           intentReason: "一键成片自动导演",
           references: [{
@@ -9785,6 +9839,7 @@ export default function SuperCanvas() {
             messages: [{ role: "user", content: `${directorInput}\n\n上一次输出无效（${reason}）。这是修复重试：只返回一个完整合法的 JSON 对象，不要 Markdown、解释或截断，并确保 videoPrompt 非空。` }],
             model: runtime?.settings.agentModelId || "auto",
             task: "cinematic_shock_opening_director",
+            runId: directorRunId,
             deliverable: "TEXT",
             intentReason: "cinematic director retry",
             references: [{ id: source.id, nodeId: source.id, kind: "image", name: sourceName, url: sourceUrl, ...(source.data.mimeType ? { mimeType: String(source.data.mimeType) } : {}) }],
@@ -9840,6 +9895,20 @@ export default function SuperCanvas() {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "一键成片失败";
+        const pending = Boolean(error && typeof error === "object" && (error as { agentPending?: boolean }).agentPending)
+          || /Agent 请求超时|Agent 流式响应不完整|请求已中断|请求已取消|连接中断|后台处理中/i.test(message);
+        if (pending) {
+          const currentOutput = nodeById(docRef.current, output.id);
+          const currentJobId = String(currentOutput?.data.jobId || currentOutput?.data.generation?.taskId || "");
+          if (currentOutput?.data.status === "completed" || (currentJobId && currentJobId !== directorRunId)) return;
+          updateOutput({ status: "running", statusLabel: "任务仍在后台处理中，请勿重复提交", processingStartedAt: Date.now() }, { taskId: directorRunId, updatedAt: Date.now() });
+          notify("任务仍在后台处理中，请勿重复提交");
+          addLog("一键成片导演任务仍在后台处理中");
+          return;
+        }
+        const currentOutput = nodeById(docRef.current, output.id);
+        const currentJobId = String(currentOutput?.data.jobId || currentOutput?.data.generation?.taskId || "");
+        if (currentOutput?.data.status === "completed" || (currentJobId && currentJobId !== directorRunId)) return;
         updateOutput({ status: "failed", statusLabel: message }, { error: message, updatedAt: Date.now() });
         notify(message, "error");
         addLog(`一键成片失败：${message}`);

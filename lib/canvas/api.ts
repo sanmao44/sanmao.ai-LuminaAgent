@@ -307,7 +307,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   } catch {
     body = null;
   }
-  if (!response.ok) {
+  if (!response.ok && response.status !== 202) {
     const message =
       body && typeof body === "object" && ("error" in body || "message" in body)
         ? String(
@@ -548,8 +548,11 @@ export async function generateCanvasImage(input: {
         return mask && index === 0 ? dataUrl : compressReferenceDataUrl(dataUrl);
       }),
   );
-  return request<{
+  const result = await request<{
     images: Array<{ url: string; revisedPrompt?: string }>;
+    pending?: boolean;
+    taskId?: string;
+    message?: string;
     mode?: "reference" | "generate" | "generate-fallback";
     warning?: string;
     model?: { id?: string; name?: string; provider?: string };
@@ -590,6 +593,25 @@ export async function generateCanvasImage(input: {
         })),
     }),
   });
+  if (!result.pending) return result;
+  const taskId = String(result.taskId || input.taskId || '').trim();
+  if (!taskId) throw new Error(result.message || '服务商已接收任务，正在生成，请勿重复提交。');
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (Date.now() < deadline) {
+    if (input.signal?.aborted) throw input.signal.reason || new Error('GENERATION_CANCELLED');
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(resolve, 2000);
+      input.signal?.addEventListener('abort', () => { window.clearTimeout(timer); reject(input.signal?.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
+    });
+    const status = await request<{ log?: { status?: string; imageUrls?: string[]; error?: string } | null }>(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`);
+    const log = status.log;
+    if (log?.status === 'success' && log.imageUrls?.length) return { ...result, pending: false, images: log.imageUrls.map((url) => ({ url })) };
+    if (log?.status === 'error') throw new Error(log.error || '生图失败');
+  }
+  const pendingError = new Error(result.message || '服务商仍在生成，任务已保留，请勿重复提交。') as Error & { generationPending?: boolean; taskId?: string };
+  pendingError.generationPending = true;
+  pendingError.taskId = taskId;
+  throw pendingError;
 }
 
 export async function generateCanvasVideo(input: {
@@ -781,6 +803,23 @@ export type CanvasAgentStreamEvent = AgentStreamEvent;
 
 export const CANVAS_AGENT_MAX_WAIT_MS = 5 * 60 * 1000;
 
+export async function getCanvasAgentGeneration(taskId: string) {
+  const response = await fetch(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`, { cache: "no-store" });
+  if (!response.ok) return null;
+  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; imageUrls?: string[]; error?: string } | null } | null;
+  return body?.log || null;
+}
+
+export async function waitForCanvasAgentGeneration(taskId: string, maxWaitMs = 30_000) {
+  const deadline = Date.now() + Math.max(0, maxWaitMs);
+  while (Date.now() < deadline) {
+    const log = await getCanvasAgentGeneration(taskId).catch(() => null);
+    if (log?.status === "success" || log?.status === "error") return log;
+    await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+  }
+  return getCanvasAgentGeneration(taskId).catch(() => null);
+}
+
 export async function generateCanvasAgent(
   input: {
     messages: Array<{ role: "user" | "assistant"; content: string }>;
@@ -799,7 +838,7 @@ export async function generateCanvasAgent(
     signal?: AbortSignal;
   },
   onEvent?: (event: CanvasAgentStreamEvent) => void,
-) {
+): Promise<AgentResponse> {
   const controller = new AbortController();
   let timedOut = false;
   const abortFromCaller = () => controller.abort(input.signal?.reason);
@@ -822,28 +861,75 @@ export async function generateCanvasAgent(
       references: index === all.length - 1 ? preparedReferences : [],
       files: [],
     }));
-    return await requestAgent(
-      {
-        source: "canvas",
-        ...(input.executionMode ? { executionMode: input.executionMode } : {}),
-        messages,
-        model: input.model || "auto",
-        ...(input.task ? { task: input.task } : {}),
-        ...(input.durationSeconds !== undefined ? { durationSeconds: input.durationSeconds } : {}),
-        webMode: input.webMode || "off",
-        webSearch: input.webMode !== "off",
-        references: preparedReferences,
-        ...(input.deliverable ? { deliverable: input.deliverable } : {}),
-        ...(input.intentReason ? { intentReason: input.intentReason } : {}),
-        ...(input.intentText ? { intentText: input.intentText } : {}),
-        ...(input.runId ? { runId: input.runId } : {}),
-        ...(input.context ? { context: input.context } : {}),
-        ...(input.canvasDocument ? { canvasDocument: input.canvasDocument } : {}),
-      },
-      { signal: controller.signal, onEvent },
-    );
+    try {
+      return await requestAgent(
+        {
+          source: "canvas",
+          ...(input.executionMode ? { executionMode: input.executionMode } : {}),
+          messages,
+          model: input.model || "auto",
+          ...(input.task ? { task: input.task } : {}),
+          ...(input.durationSeconds !== undefined ? { durationSeconds: input.durationSeconds } : {}),
+          webMode: input.webMode || "off",
+          webSearch: input.webMode !== "off",
+          references: preparedReferences,
+          ...(input.deliverable ? { deliverable: input.deliverable } : {}),
+          ...(input.intentReason ? { intentReason: input.intentReason } : {}),
+          ...(input.intentText ? { intentText: input.intentText } : {}),
+          ...(input.runId ? { runId: input.runId } : {}),
+          ...(input.context ? { context: input.context } : {}),
+          ...(input.canvasDocument ? { canvasDocument: input.canvasDocument } : {}),
+        },
+        { signal: controller.signal, onEvent },
+      );
+    } catch (error) {
+      const pendingTaskId = String((error as { agentPending?: boolean; taskId?: unknown } | null)?.agentPending ? (error as { taskId?: unknown }).taskId || input.runId || "" : "").trim();
+      const transportPending = timedOut || /Agent 流式响应不完整|连接中断|fetch failed/i.test(String((error as Error)?.message || error));
+      let recoverTaskId = pendingTaskId || (transportPending ? String(input.runId || "").trim() : "");
+      // A non-streaming 502 can arrive after the image tool has already
+      // persisted its result. Check the media log before marking the canvas
+      // node failed; text-only Agent errors keep their original behavior.
+      if (!recoverTaskId && input.runId) {
+        const currentLog = await getCanvasAgentGeneration(input.runId).catch(() => null);
+        const isMediaLog = currentLog && currentLog.mode !== "llm" && currentLog.taskKind !== "llm";
+        if (isMediaLog) {
+          if (currentLog.status === "success" && currentLog.imageUrls?.length) {
+            return {
+              ok: true,
+              message: "图片已生成。",
+              images: currentLog.imageUrls.map((url) => ({ url })),
+              taskId: input.runId,
+              pending: false,
+            };
+          }
+          if (currentLog.status === "error") throw new Error(currentLog.error || "生图失败");
+          recoverTaskId = input.runId;
+        }
+      }
+      if (!recoverTaskId) throw error;
+      const log = await waitForCanvasAgentGeneration(recoverTaskId, 30 * 60 * 1000);
+      if (log?.status === "success" && log.imageUrls?.length) {
+        return {
+          ok: true,
+          message: "图片已生成。",
+          images: log.imageUrls.map((url) => ({ url })),
+          taskId: recoverTaskId,
+          pending: false,
+        };
+      }
+      if (log?.status === "error") throw new Error(log.error || "生图失败");
+      const pending = new Error("任务仍在后台处理中，请勿重复提交") as Error & { generationPending?: boolean; taskId?: string };
+      pending.generationPending = true;
+      pending.taskId = recoverTaskId;
+      throw pending;
+    }
   } catch (error) {
-    if (timedOut) throw new Error("Agent 请求超时，请重试。");
+    if (timedOut || /Agent 流式响应不完整|连接中断|fetch failed/i.test(String((error as Error)?.message || error))) {
+      const pending = new Error("任务仍在后台处理中，请勿重复提交") as Error & { agentPending?: boolean; taskId?: string };
+      pending.agentPending = true;
+      pending.taskId = input.runId;
+      throw pending;
+    }
     throw error;
   } finally {
     clearTimeout(timeout);

@@ -143,6 +143,8 @@ type ProviderFailure = Error & {
   providerUrl?: string;
   providerMethod?: string;
   providerPossiblyAccepted?: boolean;
+  providerAcceptedTask?: boolean;
+  providerTaskId?: string;
 };
 
 /** Convert provider failures into a short message the Agent panel can act on. */
@@ -953,6 +955,17 @@ function taskStatusEndpoint(provider: RuntimeProvider, taskId: string, initial: 
   return '';
 }
 
+function acceptedProviderTaskError(error: unknown, taskId: string): Error & { providerAcceptedTask: true; providerPossiblyAccepted: true; providerTaskId: string } {
+  const failure = error instanceof Error ? error : new Error(String(error || '服务商任务查询失败'));
+  Object.assign(failure, { providerAcceptedTask: true, providerPossiblyAccepted: true, providerTaskId: taskId });
+  return failure as Error & { providerAcceptedTask: true; providerPossiblyAccepted: true; providerTaskId: string };
+}
+
+function isAcceptedProviderTask(error: unknown) {
+  const value = error as { providerAcceptedTask?: boolean; providerPossiblyAccepted?: boolean } | null;
+  return Boolean(value?.providerAcceptedTask || value?.providerPossiblyAccepted);
+}
+
 async function waitForImageTask(provider: RuntimeProvider, initial: any, signal?: AbortSignal) {
   const taskId = taskIdFrom(initial);
   if (!taskId) return normalizeImages(initial);
@@ -961,13 +974,20 @@ async function waitForImageTask(provider: RuntimeProvider, initial: any, signal?
     throw new Error(`服务商已接受图片任务 ${taskId}，但没有在响应中提供图片或任务查询地址。请让服务商返回 image_url、b64_json、status_url/result_url，或在接口配置中提供任务查询路径。`);
   }
   const deadline = Date.now() + IMAGE_REQUEST_TIMEOUT;
+  let detachedFromCaller = false;
   while (Date.now() < deadline) {
-    if (signal?.aborted) throw signal.reason || new Error('GENERATION_CANCELLED');
+    detachedFromCaller ||= Boolean(signal?.aborted);
+    const pollSignal = detachedFromCaller ? undefined : signal;
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(resolve, 1800);
-      signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
+      pollSignal?.addEventListener('abort', () => { clearTimeout(timer); reject(pollSignal.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
     });
-    const data = await fetchJson(statusUrl, { method: 'GET', headers: { ...authHeaders(provider), ...modelScopeTaskHeaders(provider) } }, 30000, signal);
+    let data: any;
+    try {
+      data = await fetchJson(statusUrl, { method: 'GET', headers: { ...authHeaders(provider), ...modelScopeTaskHeaders(provider) } }, 30000, pollSignal);
+    } catch (error) {
+      throw acceptedProviderTaskError(error, taskId);
+    }
     const images = extractImages(data);
     if (images.length) return normalizeImages(data);
     const status = taskStatusFrom(data);
@@ -975,27 +995,34 @@ async function waitForImageTask(provider: RuntimeProvider, initial: any, signal?
       throw new Error(String(data?.error?.message || data?.error_message || data?.error || data?.message || `图片任务失败：${status}`));
     }
   }
-  throw new Error(`图片任务 ${taskId} 等待超时，请稍后到服务商控制台查看任务状态`);
+  throw acceptedProviderTaskError(new Error(`图片任务 ${taskId} 等待超时，请稍后到服务商控制台查看任务状态`), taskId);
 }
 
 async function waitForApimartTask(provider: RuntimeProvider, initial: any, signal?: AbortSignal) {
   const taskId = taskIdFrom(initial);
   if (!taskId) throw new Error('APIMart 没有返回图片任务编号');
   const deadline = Date.now() + 300000;
+  let detachedFromCaller = false;
   while (Date.now() < deadline) {
-    if (signal?.aborted) throw signal.reason || new Error('GENERATION_CANCELLED');
+    detachedFromCaller ||= Boolean(signal?.aborted);
+    const pollSignal = detachedFromCaller ? undefined : signal;
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(resolve, 1800);
-      signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
+      pollSignal?.addEventListener('abort', () => { clearTimeout(timer); reject(pollSignal.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
     });
-    const response = await fetchJson(providerEndpoint(provider, `/tasks/${encodeURIComponent(taskId)}`, `/tasks/${encodeURIComponent(taskId)}`), { method: 'GET', headers: authHeaders(provider) }, 30000, signal);
+    let response: any;
+    try {
+      response = await fetchJson(providerEndpoint(provider, `/tasks/${encodeURIComponent(taskId)}`, `/tasks/${encodeURIComponent(taskId)}`), { method: 'GET', headers: authHeaders(provider) }, 30000, pollSignal);
+    } catch (error) {
+      throw acceptedProviderTaskError(error, taskId);
+    }
     const data = unwrapProviderData(provider, response);
     const images = extractImages(data);
     if (images.length) return normalizeImages(data);
     const status = taskStatusFrom(data);
     if (/(fail|error|cancel|reject)/.test(status)) throw new Error(String(data?.error?.message || data?.error_message || data?.error || data?.message || `APIMart 图片任务失败：${status}`));
   }
-  throw new Error('APIMart 图片任务等待超时，请稍后到服务商后台查看任务状态');
+  throw acceptedProviderTaskError(new Error('APIMart 图片任务等待超时，请稍后到服务商后台查看任务状态'), taskId);
 }
 
 function upscaleStatusEndpoint(provider: RuntimeProvider, taskId: string, initial?: any) {
@@ -1063,12 +1090,12 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
       if (images.length) return normalizeImages(data);
       if (taskIdFrom(data)) {
         try { return await waitForImageTask(provider, data, signal); }
-        catch (error) { Object.assign(error as object, { providerAcceptedTask: true }); throw error; }
+        catch (error) { Object.assign(error as object, { providerAcceptedTask: true, providerPossiblyAccepted: true }); throw error; }
       }
       return normalizeImages(data);
     }
     catch (error) {
-      if (signal?.aborted) throw signal.reason || error;
+      if (signal?.aborted && !isAcceptedProviderTask(error)) throw signal.reason || error;
       if ((error as Error & { providerAcceptedTask?: boolean }).providerAcceptedTask) throw error;
       if (!payload.resolution || !canRetryImageRequest(error)) throw error;
       const fallback = { ...payload };
@@ -1083,7 +1110,7 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
   let images: GeneratedImage[];
   try { images = await requestImages(body); }
   catch (error) {
-    if (signal?.aborted) throw signal.reason || error;
+    if (signal?.aborted && !isAcceptedProviderTask(error)) throw signal.reason || error;
     // Never repeat an image POST after a transport error or timeout: a gateway
     // may have accepted and charged the original job even if its response was
     // lost. Only explicit 4xx validation failures are safe to retry with n=1.
@@ -1169,7 +1196,10 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
     }, IMAGE_REQUEST_TIMEOUT, signal);
     const images = extractImages(data);
     if (images.length) return normalizeImages(data);
-    if (taskIdFrom(data)) return waitForImageTask(provider, data, signal);
+    if (taskIdFrom(data)) {
+      try { return await waitForImageTask(provider, data, signal); }
+      catch (error) { Object.assign(error as object, { providerAcceptedTask: true, providerPossiblyAccepted: true }); throw error; }
+    }
     return normalizeImages(data);
   }
 
@@ -1181,10 +1211,13 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
     if (isApimartProvider(provider)) return waitForApimartTask(provider, data, signal);
     const images = extractImages(data);
     if (images.length) return normalizeImages(data);
-    if (taskIdFrom(data)) return waitForImageTask(provider, data, signal);
+    if (taskIdFrom(data)) {
+      try { return await waitForImageTask(provider, data, signal); }
+      catch (error) { Object.assign(error as object, { providerAcceptedTask: true, providerPossiblyAccepted: true }); throw error; }
+    }
     return normalizeImages(data);
   } catch (jsonError) {
-    if (signal?.aborted) throw signal.reason || jsonError;
+    if (signal?.aborted && !isAcceptedProviderTask(jsonError)) throw signal.reason || jsonError;
     // A successful JSON response with malformed image data is not a request
     // compatibility failure. Falling back to multipart here would submit a
     // second paid job after the provider has already accepted the first one.
@@ -1213,7 +1246,10 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
       });
       const data = await parseResponse(response);
       const images = extractImages(data);
-      if (!images.length && taskIdFrom(data)) return waitForImageTask(provider, data, signal);
+      if (!images.length && taskIdFrom(data)) {
+        try { return await waitForImageTask(provider, data, signal); }
+        catch (error) { Object.assign(error as object, { providerAcceptedTask: true, providerPossiblyAccepted: true }); throw error; }
+      }
       return normalizeImages(data);
     } catch (multipartError) {
       const a = jsonError instanceof Error ? jsonError.message : 'JSON 编辑接口失败';

@@ -685,6 +685,7 @@ export async function POST(request: Request) {
   let releaseRuntimeRequest = async () => {};
   let llmResponseChars = 0;
   let llmFailure = '';
+  let preserveLlmLogPending = false;
   let settleLlmLog: ((result: AgentStreamSettlement) => Promise<void>) | null = null;
   const abortFromClient = () => requestController.abort(request.signal.reason || new Error('AGENT_CANCELLED'));
   if (request.signal.aborted) requestController.abort(request.signal.reason || new Error('AGENT_CANCELLED'));
@@ -714,13 +715,15 @@ export async function POST(request: Request) {
     const canvasDocument = body.canvasDocument && typeof body.canvasDocument === 'object'
       ? normalizeDocument(body.canvasDocument)
       : null;
-    const taskContext = workspaceContext ? {
-      projectId: workspaceContext.creativeProjectId,
-      chatId: workspaceContext.chatId,
-      canvasId: workspaceContext.canvasId,
-      ...(workspaceContext.selectedNodeIds[0] ? { nodeId: workspaceContext.selectedNodeIds[0] } : {}),
+    const taskContext = {
+      ...(workspaceContext ? {
+        projectId: workspaceContext.creativeProjectId,
+        chatId: workspaceContext.chatId,
+        canvasId: workspaceContext.canvasId,
+        ...(workspaceContext.selectedNodeIds[0] ? { nodeId: workspaceContext.selectedNodeIds[0] } : {}),
+      } : {}),
       ...(agentRunId ? { taskId: agentRunId } : {}),
-    } : {};
+    };
     const sourceForLog: GenerationSource = normalizeGenerationSource(body.source, 'agent');
     const isCanvasSource = sourceForLog === 'canvas';
     // The canvas-node surface is deliberately text-only. The right-side dock
@@ -2533,6 +2536,18 @@ const auditMcpCall = (
         return { results };
       }
       let selectedImageRuntime = imageRuntime;
+      const mediaLogId = await startGenerationLog({
+        mode,
+        taskKind: 'media',
+        source: sourceForLog,
+        prompt,
+        aspectRatio,
+        modelId: selectedImageRuntime.model.id,
+        modelName: selectedImageRuntime.model.displayName,
+        providerName: selectedImageRuntime.provider.name,
+        count,
+        ...taskContext,
+      }).catch(() => null);
       try {
         const imageReferences = latestRefs.filter((reference) => reference.kind === 'image' && reference.url).map((reference) => reference.url!);
         if (mode === 'edit' && !imageReferences.length) throw new Error('请先提供图片参考');
@@ -2577,6 +2592,8 @@ const auditMcpCall = (
                 imageCount: resultsByPrompt[promptIndex].length,
               });
             } catch (error) {
+              if ((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted
+                || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask) throw error;
               resultsByPrompt[promptIndex] = [];
               batchItems.push({
                 batchId: batchId || `agent-single-${Date.now()}`,
@@ -2589,7 +2606,18 @@ const auditMcpCall = (
             }
           }
         };
-        await Promise.all(Array.from({ length: Math.min(2, prompts.length) }, () => worker()));
+        try {
+          await Promise.all(Array.from({ length: Math.min(2, prompts.length) }, () => worker()));
+        } catch (error) {
+          if ((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted
+            || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask) {
+            const pendingTaskId = String((error as { providerTaskId?: unknown }).providerTaskId || '') || undefined;
+            const pendingPatch = { status: 'pending' as const, mode: mode as 'generate' | 'edit', taskKind: 'media' as const, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: selectedImageRuntime.provider.name, count, durationMs: Date.now() - startedAt, error: '服务商已接收任务，正在生成，请勿重复提交。', ...(pendingTaskId ? { providerTaskId: pendingTaskId } : {}), ...taskContext };
+            if (mediaLogId) await finishGenerationLog(mediaLogId, pendingPatch).catch(() => undefined);
+            else await appendGenerationLog(pendingPatch).catch(() => undefined);
+          }
+          throw error;
+        }
         images.push(...resultsByPrompt.flat());
         if (!images.length) {
           const details = batchItems
@@ -2602,7 +2630,7 @@ const auditMcpCall = (
             : '图片服务没有返回图片，本轮未生成成功');
         }
         selectedImageRuntime = images.find((image) => image.itemRuntime)?.itemRuntime || initialRuntime;
-        if (requestController.signal.aborted) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
+        if (requestController.signal.aborted && !images.length) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
         const providerFinishedAt = Date.now();
         const stored = await persistGenerationResult({
           images,
@@ -2610,7 +2638,7 @@ const auditMcpCall = (
           startedAt,
           providerFinishedAt,
           downloadAuth: imageDownloadAuth(selectedImageRuntime.provider),
-          log: { mode, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: selectedImageRuntime.provider.name, count, references: referenceRecords.length ? referenceRecords : undefined, ...taskContext },
+          ...(mediaLogId ? { logId: mediaLogId } : { log: { mode, taskKind: 'media' as const, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: selectedImageRuntime.provider.name, count, references: referenceRecords.length ? referenceRecords : undefined, ...taskContext } }),
         });
         if (!stored.images.length) throw new Error('图片结果未能保存，本轮没有可交付的图片');
         generated.push(...stored.images.map((image, index) => {
@@ -2650,10 +2678,15 @@ const auditMcpCall = (
           }),
         });
       } catch (error) {
-        if (requestController.signal.aborted) throw requestController.signal.reason || error;
-        const message = error instanceof Error ? error.message : '图片工具失败';
-        await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: selectedImageRuntime.provider.name, count, durationMs: Date.now() - startedAt, error: message, ...taskContext }).catch(() => undefined);
-        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: message, ...(batchItems.length ? { batchItems } : {}) }) });
+        const possiblyAccepted = Boolean((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask);
+        if (requestController.signal.aborted && !possiblyAccepted) {
+          if (requestController.signal.aborted) throw requestController.signal.reason || error;
+        }
+        const message = possiblyAccepted ? '服务商已接收图片任务，正在生成，请勿重复提交。' : error instanceof Error ? error.message : '图片工具失败';
+        const failurePatch = { status: possiblyAccepted ? 'pending' as const : 'error' as const, mode: mode as 'generate' | 'edit', taskKind: 'media' as const, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: selectedImageRuntime.provider.name, count, durationMs: Date.now() - startedAt, error: message, ...taskContext };
+        if (mediaLogId) await finishGenerationLog(mediaLogId, failurePatch).catch(() => undefined);
+        else await appendGenerationLog(failurePatch).catch(() => undefined);
+        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, pending: possiblyAccepted, error: message, ...(batchItems.length ? { batchItems } : {}) }) });
       }
       return { results };
     };
@@ -3023,6 +3056,15 @@ const auditMcpCall = (
 
     reportProgress({ stage: 'answering', message: '正在整理回复…' });
     if (imageGenerationRequest && !generated.length) {
+      const pendingImage = toolResults.some((result) => {
+        try { return Boolean((JSON.parse(String(result.content || '')) as { pending?: unknown }).pending); }
+        catch { return false; }
+      });
+      if (pendingImage) {
+        const message = '服务商已接收图片任务，正在生成，请勿重复提交。';
+        preserveLlmLogPending = true;
+        return Response.json({ pending: true, taskId: agentRunId, message, images: [], files: generatedFiles, generations, deliverable: requestedDeliverable }, { status: 202 });
+      }
       const errors = toolResults.flatMap((result) => {
         try {
           const value = JSON.parse(String(result.content || '')) as { ok?: boolean; error?: string };
@@ -3090,6 +3132,12 @@ const auditMcpCall = (
     return Response.json({ ok: true, message: finalText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, ...(canvasPatch ? { canvasPatch } : {}), toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace });
   } catch (error) {
     llmFailure = describeProviderFailure(error);
+    const providerPossiblyAccepted = Boolean((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask);
+    if (providerPossiblyAccepted) {
+      preserveLlmLogPending = true;
+      const message = '服务商已接收任务，正在生成，请勿重复提交。';
+      return Response.json({ pending: true, taskId: agentRunId, message }, { status: 202 });
+    }
     if (!streamOwnsRuntimeRequest) await settleLlmLog?.({ status: 'error', responseChars: llmResponseChars, error: llmFailure });
     if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'AGENT_CANCELLED');
@@ -3098,7 +3146,7 @@ const auditMcpCall = (
     /* 主管线已经交出响应：正文开始流式返回，进度轮询到此为止。 */
     await finishAgentRun(agentRunId);
     if (!streamOwnsRuntimeRequest) {
-      if (!llmFailure) await settleLlmLog?.({ status: 'success', responseChars: llmResponseChars });
+      if (!preserveLlmLogPending && !llmFailure) await settleLlmLog?.({ status: 'success', responseChars: llmResponseChars });
       await releaseRuntimeRequest();
     }
     // A streaming response may still be consuming the upstream model after

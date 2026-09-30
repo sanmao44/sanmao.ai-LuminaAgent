@@ -164,6 +164,27 @@ export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> 
   return logs.reverse().slice(0, limit);
 }
 
+/** Find the current record for a client task or provider task. */
+export async function findGenerationLog(taskId: string): Promise<GenerationLog | undefined> {
+  const normalized = String(taskId || '').trim();
+  if (!normalized) return undefined;
+  const logs = await listGenerationLogs(5000);
+  const matches = logs.filter((log) => log.id === normalized || log.taskId === normalized || log.providerTaskId === normalized);
+  // An Agent run writes one LLM log and one media log with the same taskId.
+  // If the stream is interrupted after the provider accepted the image, the
+  // LLM log may become `error` before the media log is finalized. Returning
+  // that unrelated error makes the canvas mark a task failed even though the
+  // provider result is about to arrive. Prefer the media lifecycle, then
+  // terminal results, and only fall back to the LLM record when no media log
+  // exists.
+  const mediaMatches = matches.filter((log) => log.mode !== 'llm' && log.taskKind !== 'llm');
+  const candidates = mediaMatches.length ? mediaMatches : matches;
+  return candidates.find((log) => log.status === 'success' && (log.imageUrls?.length || log.videoUrls?.length))
+    || candidates.find((log) => log.status === 'pending')
+    || candidates.find((log) => log.status === 'error')
+    || matches[0];
+}
+
 function storedFileFromUrl(url: string, storagePath?: string) {
   try {
     const parsed = new URL(url, 'http://sanmao.local');
