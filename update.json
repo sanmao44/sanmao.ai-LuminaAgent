@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.67/SANMAO.AI-0.7.67.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.67/SANMAO.AI-0.7.67.zip"
   ],
-  "sha256": "7fccb035f1fd3ca34d3bc3198d16271bc32300b76ba83398f61d4c3083d7fd8e",
+  "sha256": "e2c20bdc79529dc777410d96eb590cff651005327766176a9971546871cdedef",
   "publishedAt": "2026-09-30T06:11:27Z",
   "notes": [
     "建立 Agent Runtime 垂直切片：引入 AgentRun、Context、Policy、Model Runtime 与 Tool Runtime Contract，并接入真实 Agent 路径。",
