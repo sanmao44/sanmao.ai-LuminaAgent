@@ -77,6 +77,7 @@ import AgentSendButton from '@/components/AgentSendButton';
 import AgentMessageAvatar from '@/components/AgentMessageAvatar';
 import AgentMessageVersionSwitch from '@/components/AgentMessageVersionSwitch';
 import AgentMessageError from '@/components/AgentMessageError';
+import AgentMessageReferences from '@/components/AgentMessageReferences';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11217,22 +11218,10 @@ export default function Page() {
                                                                     className: "message-approval-result",
                                                                     children: message.approvalResult
                                                                 }),
-                                                                message.references?.length ? /*#__PURE__*/ _jsx("div", {
-                                                                    className: "message-refs",
-                                                                    children: message.references.map((ref, index)=>/*#__PURE__*/ _jsxs("button", {
-                                                                            type: "button",
-                                                                            className: "message-ref-thumb",
-                                                                            title: `点击放大查看 · ${ref.kind === 'text' ? '引用' : '参考图'} ${index + 1} · ${ref.name}`,
-                                                                            "aria-label": `放大查看${ref.kind === 'text' ? '引用' : '参考图'} ${index + 1}`,
-                                                                            onClick: ()=>setMessageReferencePreview(ref),
-                                                                            children: [
-                                                                                ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsx("span", { className: "message-ref-text", children: /*#__PURE__*/ _jsx("small", { children: ref.name }) }) : /*#__PURE__*/ _jsx("img", { src: creativeReferenceUrl(ref), alt: ref.name }),
-                                                                                /*#__PURE__*/ _jsx("span", {
-                                                                                    className: "message-ref-index",
-                                                                                    children: index + 1
-                                                                                })
-                                                                            ]
-                                                                        }, ref.id))
+                                                                message.references?.length ? /*#__PURE__*/ _jsx(AgentMessageReferences, {
+                                                                    references: message.references,
+                                                                    resolveUrl: creativeReferenceUrl,
+                                                                    onPreview: setMessageReferencePreview
                                                                 }) : null,
                                                                 message.images?.length ? /*#__PURE__*/ _jsx("div", {
                                                                     className: "message-images",

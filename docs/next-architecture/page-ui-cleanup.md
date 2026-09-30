@@ -90,6 +90,12 @@ Version selection and retry state remain page-owned.
 `AgentMessageError` now owns the failed-reply notice and retry button layout.
 Model selection and retry execution remain page-owned callbacks.
 
+`AgentMessageReferences` now owns the message reference thumbnail strip.
+Reference resolution and preview state remain page-owned.
+
+`AgentMessageReferences` now owns the message reference thumbnail strip.
+Reference resolution and preview state remain page-owned.
+
 `AgentMessageError` now owns the failed-reply notice and retry button layout.
 Model selection and retry execution remain page-owned callbacks.
 

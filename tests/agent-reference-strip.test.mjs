@@ -5,6 +5,7 @@ import test from "node:test";
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const route = await readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8");
+const messageReferences = await readFile(new URL("../components/AgentMessageReferences.tsx", import.meta.url), "utf8");
 
 test("documents and text references are labelled as 引用 instead of 参考图", () => {
   assert.match(page, /label: agentRefs\.some\(\(ref\)=>ref\.kind === 'text'\) \? "本轮引用" : "本轮参考图"/);
@@ -15,7 +16,7 @@ test("documents and text references are labelled as 引用 instead of 参考图"
 
 test("text reference thumbnails show the file name and keep the body in the preview", () => {
   assert.match(page, /className: "reference-text-thumb", children: \/\*#__PURE__\*\/ _jsx\("small", \{ children: ref\.name \}\)/);
-  assert.match(page, /className: "message-ref-text", children: \/\*#__PURE__\*\/ _jsx\("small", \{ children: ref\.name \}\)/);
+  assert.match(messageReferences, /className="message-ref-text"><small>\{reference\.name\}<\/small>/);
   assert.match(page, /children: \/\*#__PURE__\*\/ _jsx\("b", \{ children: referenceTextBadge\(reference\) \}\)/);
   assert.match(page, /referencePreviewText\(ref, 160\)/);
   assert.doesNotMatch(page, /referencePreviewText\(ref, 42\)/);
