@@ -1621,7 +1621,13 @@ export default function CanvasAgentDock({
                       ? message.batchItems.slice().sort((left, right) => left.index - right.index).map((item) => (
                         <div className="canvas-agent-dock-batch-item" key={`${message.id}-batch-${item.batchId}-${item.index}`}>
                           <b>{item.index + 1}</b>
-                          <span title={item.error || item.prompt}>{item.prompt}</span>
+                          <span
+                            className="canvas-agent-dock-batch-prompt"
+                            tabIndex={0}
+                            aria-label={item.error || item.prompt}
+                          >
+                            {item.prompt}
+                          </span>
                           <em className={item.status === "failed" ? "is-failed" : ""}>
                             {item.status === "failed" ? "失败" : "已完成"}
                           </em>
@@ -1630,7 +1636,13 @@ export default function CanvasAgentDock({
                       : message.images.slice().sort((left, right) => (left.batchIndex ?? 0) - (right.batchIndex ?? 0)).map((image, itemIndex) => (
                         <div className="canvas-agent-dock-batch-item" key={`${message.id}-batch-${image.batchId}-${image.batchIndex ?? itemIndex}`}>
                           <b>{(image.batchIndex ?? itemIndex) + 1}</b>
-                          <span title={image.batchPrompt || undefined}>{image.batchPrompt || "已生成图片"}</span>
+                          <span
+                            className="canvas-agent-dock-batch-prompt"
+                            tabIndex={image.batchPrompt ? 0 : undefined}
+                            aria-label={image.batchPrompt || "已生成图片"}
+                          >
+                            {image.batchPrompt || "已生成图片"}
+                          </span>
                           <em>已完成</em>
                         </div>
                       )))}

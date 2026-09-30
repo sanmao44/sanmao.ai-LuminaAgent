@@ -1063,6 +1063,8 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-batch-item{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:5px;min-width:0;color:var(--text-2);font-size:8px;line-height:1.3}
 .canvas-agent-dock-batch-item b{display:grid;place-items:center;width:16px;height:16px;border-radius:5px;background:var(--panel-2);color:var(--accent-text);font-size:8px}
 .canvas-agent-dock-batch-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.canvas-agent-dock-batch-item .canvas-agent-dock-batch-prompt{min-width:0;max-height:1.3em;cursor:help;outline:0;transition:background-color .14s ease,color .14s ease}
+.canvas-agent-dock-batch-item .canvas-agent-dock-batch-prompt:hover,.canvas-agent-dock-batch-item .canvas-agent-dock-batch-prompt:focus-visible{max-height:72px;overflow:auto;padding:4px 6px;border-radius:7px;background:color-mix(in srgb,var(--accent-soft) 70%,var(--panel-2));color:var(--text);white-space:normal;text-overflow:clip;overflow-wrap:anywhere;scrollbar-width:thin}
 .canvas-agent-dock-batch-item em{font-style:normal;color:var(--success)}
 .canvas-agent-dock-batch-item em.is-failed{color:var(--danger)}
 .canvas-agent-dock-message-tools{display:flex;align-items:center;justify-content:flex-end;gap:5px;flex-wrap:wrap}

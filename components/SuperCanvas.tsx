@@ -17506,6 +17506,12 @@ function CanvasAssetDrawer({
 }) {
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const extraAssetsRef = useRef(extraAssets);
+  extraAssetsRef.current = extraAssets;
+  const onNotifyRef = useRef(onNotify);
+  onNotifyRef.current = onNotify;
+  const hasLoadedAssetsRef = useRef(false);
+  const assetLoadVersionRef = useRef(0);
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<"all" | "image" | "video" | "audio">("all");
   const [source, setSource] = useState<"all" | AssetSource>("all");
@@ -17557,12 +17563,24 @@ function CanvasAssetDrawer({
   };
 
   const reload = useCallback(() => {
-    setLoading(true);
-    void listUnifiedAssets(extraAssets)
-      .then(setAssets)
-      .catch(() => onNotify("资产中心读取失败，请稍后重试。", "error"))
-      .finally(() => setLoading(false));
-  }, [extraAssets, onNotify]);
+    const loadVersion = ++assetLoadVersionRef.current;
+    if (!hasLoadedAssetsRef.current) setLoading(true);
+    void listUnifiedAssets(extraAssetsRef.current)
+      .then((nextAssets) => {
+        if (loadVersion !== assetLoadVersionRef.current) return;
+        setAssets(nextAssets);
+        hasLoadedAssetsRef.current = true;
+      })
+      .catch(() => {
+        if (loadVersion === assetLoadVersionRef.current)
+          onNotifyRef.current("资产中心读取失败，请稍后重试。", "error");
+      })
+      .finally(() => {
+        if (loadVersion !== assetLoadVersionRef.current) return;
+        hasLoadedAssetsRef.current = true;
+        setLoading(false);
+      });
+  }, []);
 
   useEffect(reload, [refresh, reload]);
 
