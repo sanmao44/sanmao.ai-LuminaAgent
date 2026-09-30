@@ -79,6 +79,7 @@ import AgentMessageVersionSwitch from '@/components/AgentMessageVersionSwitch';
 import AgentMessageError from '@/components/AgentMessageError';
 import AgentMessageReferences from '@/components/AgentMessageReferences';
 import AgentMessageTools from '@/components/AgentMessageTools';
+import AgentMessagePending from '@/components/AgentMessagePending';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11267,13 +11268,9 @@ export default function Page() {
                                                                          disabled: activeAgentBusy || agentMessageSelectionActive || message.retrying,
                                                                         onSelect: (direction)=>void continueAgentFromChat(message, direction)
                                                                     }
-                                                                }) : message.role === 'assistant' && message.pending ? /*#__PURE__*/ _jsxs("div", {
-                                                                    className: "message-pending",
-                                                                    children: [
-                                                                        /*#__PURE__*/ _jsx("span", { className: "mini-loader", "aria-hidden": "true" }),
-                                                                        /*#__PURE__*/ _jsx("p", { className: "pending", children: message.content }),
-                                                                        message.pendingSince ? /*#__PURE__*/ _jsx("span", { className: "message-pending-clock", children: `${Math.max(1, Math.round((generateClock - message.pendingSince) / 1000))}s` }) : null
-                                                                    ]
+                                                                }) : message.role === 'assistant' && message.pending ? /*#__PURE__*/ _jsx(AgentMessagePending, {
+                                                                    content: message.content,
+                                                                    elapsedSeconds: message.pendingSince ? Math.max(1, Math.round((generateClock - message.pendingSince) / 1000)) : undefined
                                                                  }) : /*#__PURE__*/ _jsx(SkillInlineText, {
                                                                     className: message.pending ? 'pending' : '',
                                                                     text: message.content

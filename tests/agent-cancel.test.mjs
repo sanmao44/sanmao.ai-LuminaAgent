@@ -81,8 +81,6 @@ test('cancelled searches do not enter provider fallback or cache a partial respo
 
 test('a running reply shows motion and a live clock so a long wait never looks frozen', () => {
   const normalized = page.replace(/\r\n/g, '\n');
-  assert.ok(normalized.includes('className: "message-pending"'));
-  assert.ok(normalized.includes('className: "message-pending-clock"'));
   assert.ok(normalized.includes('pendingSince: Date.now(),'));
   assert.ok(normalized.includes('message.pendingSince ?'));
   assert.ok(normalized.includes("if (!generateBusy && !activeAgentBusy && section !== 'logs') return;"));

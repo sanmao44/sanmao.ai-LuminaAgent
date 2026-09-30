@@ -97,6 +97,10 @@ Reference resolution and preview state remain page-owned.
 delete affordance markup. Message visibility, retry labels and progress,
 video-task eligibility, and every operation callback remain page-owned.
 
+`AgentMessagePending` now owns the pending reply row presentation, including
+its spinner and optional elapsed-time badge. The page still controls pending
+lifecycle and computes elapsed seconds.
+
 `AgentMessageReferences` now owns the message reference thumbnail strip.
 Reference resolution and preview state remain page-owned.
 
