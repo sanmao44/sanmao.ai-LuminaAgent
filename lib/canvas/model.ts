@@ -1040,12 +1040,30 @@ export function recoverInterruptedCanvasDocument(
 
     if (node.type === "prompt") {
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "");
-      return taskId ? node : interrupted(node, "上次 Agent 请求已中断，可重试");
+      return taskId
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              status: "running" as const,
+              statusLabel: "正在恢复后台任务…",
+            },
+          }
+        : interrupted(node, "上次 Agent 请求已中断，可重试");
     }
 
     if (node.type === "media") {
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "");
-      if (node.data.kind === "video" && taskId) return node;
+      if (taskId && (node.data.kind === "video" || node.data.kind === "image")) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            status: "running" as const,
+            statusLabel: "正在恢复后台任务…",
+          },
+        };
+      }
       return interrupted(node, `${node.data.kind === "video" ? "上次视频任务" : "上次图片任务"}已中断，可重试`);
     }
 

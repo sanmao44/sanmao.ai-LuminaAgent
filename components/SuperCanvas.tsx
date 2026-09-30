@@ -96,6 +96,7 @@ import type { GenerationLog } from "@/lib/generation-log";
 import {
   archiveCanvasRemoteImages,
   canvasRemoteMediaUrls,
+  getCanvasAgentGeneration,
   getCanvasVideoTask,
   generateCanvasAgent,
   generateCanvasImage,
@@ -2935,6 +2936,7 @@ export default function SuperCanvas() {
   const runUpscaleNodeRef = useRef<((node: CanvasNode) => Promise<void>) | null>(null);
   const mountedRef = useRef(true);
   const generationKeysRef = useRef<Set<string>>(new Set());
+  const recoveryTasksRef = useRef<Set<string>>(new Set());
   const angleAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const registeredAssetUrlsRef = useRef<Set<string>>(new Set());
   const spaceHeldRef = useRef(false);
@@ -3948,12 +3950,87 @@ export default function SuperCanvas() {
     addLog(`已把 ${archived.size} 张远端图片保存到本地`);
   }, [addLog, updateDoc]);
 
+  // A browser refresh or a dropped Agent stream must not turn a still-running
+  // provider task into a permanent canvas failure. Reconcile persisted task
+  // ids with the server log and let the terminal result update the node.
+  const reconcileBackgroundCanvasTasks = useCallback(async () => {
+    if (!ready || !mountedRef.current) return;
+    const candidates = docRef.current.nodes.filter((node) => {
+      if (node.type !== "prompt" && node.type !== "media") return false;
+      if (node.type === "media" && node.data.kind !== "image") return false;
+      const taskId = String(node.data.jobId || node.data.generation?.taskId || "").trim();
+      return Boolean(taskId) && !node.data.url;
+    });
+    for (const node of candidates) {
+      const taskId = String(node.data.jobId || node.data.generation?.taskId || "").trim();
+      if (!taskId || recoveryTasksRef.current.has(taskId)) continue;
+      recoveryTasksRef.current.add(taskId);
+      try {
+        const log = await getCanvasAgentGeneration(taskId);
+        if (!log) continue;
+        const urls = Array.isArray(log.imageUrls) ? log.imageUrls.map(String).filter(Boolean) : [];
+        if (log.status === "pending") {
+          updateDoc((value) => ({
+            ...value,
+            nodes: value.nodes.map((item) => item.id === node.id
+              ? { ...item, data: { ...item.data, status: "running" as const, statusLabel: "服务商仍在生成，请稍候" } }
+              : item),
+          }));
+          continue;
+        }
+        if (log.status === "error") {
+          updateDoc((value) => ({
+            ...value,
+            nodes: value.nodes.map((item) => item.id === node.id
+              ? { ...item, data: { ...item.data, status: "failed" as const, statusLabel: String(log.error || "图片生成失败") } }
+              : item),
+          }));
+          continue;
+        }
+        if (log.status !== "success") continue;
+        updateDoc((value) => {
+          const current = nodeById(value, node.id);
+          if (!current) return value;
+          if (current.type === "media") {
+            const url = urls[0];
+            if (!url) return value;
+            return {
+              ...value,
+              nodes: value.nodes.map((item) => item.id === node.id
+                ? { ...item, data: { ...item.data, url, status: "completed" as const, statusLabel: "图片已完成", processingStartedAt: undefined } }
+                : item),
+            };
+          }
+          const existingUrls = new Set(value.nodes.filter((item) => item.type === "media" && item.data.generation?.parentNodeId === node.id).map((item) => String(item.data.url || "")));
+          const imageNodes = urls.filter((url) => !existingUrls.has(url)).map((url, index) => createMedia("image", url, `Agent 图片 ${index + 1}`, { x: current.x + nodeSize(current).w + 90 + index * 350, y: current.y }, { role: "Agent 生成结果", generation: { kind: "image", prompt: String(current.data.agentPrompt || current.data.text || ""), params: current.data.generation?.params || readSharedCreationSettings("image", runtime), parentNodeId: node.id, taskId, createdAt: Date.now() } }));
+          let next = {
+            ...value,
+            nodes: value.nodes.map((item) => item.id === node.id
+              ? { ...item, data: { ...item.data, status: "completed" as const, statusLabel: "Agent 已回复", processingStartedAt: undefined } }
+              : item).concat(imageNodes),
+          };
+          imageNodes.forEach((image) => { next = addEdge(next, node.id, image.id, "right", "left", "generated"); });
+          return next;
+        });
+      } finally {
+        recoveryTasksRef.current.delete(taskId);
+      }
+    }
+  }, [addLog, ready, runtime, updateDoc]);
+
   useEffect(() => {
     if (!ready) return;
     void healRemoteNodeMedia();
     const timer = window.setInterval(() => void healRemoteNodeMedia(), 60_000);
     return () => window.clearInterval(timer);
   }, [healRemoteNodeMedia, ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    void reconcileBackgroundCanvasTasks();
+    const timer = window.setInterval(() => void reconcileBackgroundCanvasTasks(), 3_000);
+    return () => window.clearInterval(timer);
+  }, [ready, reconcileBackgroundCanvasTasks]);
 
   useEffect(() => {
     if (!ready || !runtime) return;
@@ -6993,60 +7070,13 @@ export default function SuperCanvas() {
       pollStartedAtRef.current.set(taskId, startedAt);
       const attempts = (pollAttemptsRef.current.get(taskId) || 0) + 1;
       pollAttemptsRef.current.set(taskId, attempts);
-      if (Date.now() - startedAt >= CANVAS_VIDEO_MAX_WAIT_MS) {
-        updateDoc((value) => ({
-          ...value,
-          nodes: value.nodes.map((node) => {
-            if (node.id === nodeId)
-              return {
-                ...node,
-                data: {
-                  ...node.data,
-                  status: "failed" as const,
-                  statusLabel: "视频任务查询超时，请重试",
-                },
-              };
-            const variantIndex = nodeById(value, nodeId)?.data.generation
-              ?.variantIndex;
-            const sourceGeneratorId = nodeById(value, nodeId)?.data.generation
-              ?.sourceGeneratorId;
-            if (
-              node.id === sourceGeneratorId &&
-              typeof variantIndex === "number"
-            ) {
-              const states = variantStatesFor(node).map((state, index) =>
-                index === variantIndex
-                  ? {
-                      ...state,
-                      status: "failed" as const,
-                      error: "视频任务查询超时，请重试",
-                      updatedAt: Date.now(),
-                    }
-                  : state,
-              );
-              return {
-                ...node,
-                data: {
-                  ...node.data,
-                  variantStates: states,
-                  status: variantBatchStatus(states),
-                  statusLabel: "视频变体生成失败",
-                },
-              };
-            }
-            return node;
-          }),
-        }));
-        addLog(`视频任务查询超时：${taskId}`);
-        pollAttemptsRef.current.delete(taskId);
-        pollStartedAtRef.current.delete(taskId);
-        return;
-      }
       try {
         const result = await getCanvasVideoTask(taskId);
         if (!mountedRef.current) return;
         const task = result.task;
+        const hasVideoResult = Array.isArray(task.videoUrls) && task.videoUrls.some(Boolean);
         const terminal =
+          hasVideoResult ||
           task.status === "done" ||
           task.status === "failed" ||
           task.status === "cancelled" ||
@@ -7057,7 +7087,7 @@ export default function SuperCanvas() {
           const sourceGeneratorId = targetNode?.data.generation
             ?.sourceGeneratorId;
           const nextStatus =
-            task.status === "done"
+            hasVideoResult || task.status === "done"
               ? ("completed" as const)
               : terminal
                 ? ("failed" as const)
@@ -7074,18 +7104,18 @@ export default function SuperCanvas() {
                   data: {
                     ...node.data,
                     status:
-                      task.status === "done"
+                      hasVideoResult || task.status === "done"
                         ? "completed" as const
                         : terminal
                           ? "failed" as const
                           : "running" as const,
                     progress: Number(
-                      task.progress || (task.status === "done" ? 100 : 0),
+                      task.progress || (hasVideoResult || task.status === "done" ? 100 : 0),
                     ),
                     url: task.videoUrls?.[0] || node.data.url,
                     statusLabel:
                       task.error ||
-                      (task.status === "done"
+                      (hasVideoResult || task.status === "done"
                         ? "视频已完成"
                         : terminal
                           ? "视频任务已中断"
@@ -7413,11 +7443,10 @@ export default function SuperCanvas() {
           error?: string;
         },
       ) => {
-        const terminal = ["done", "failed", "cancelled", "canceled"].includes(
-          task.status,
-        );
+        const hasVideoResult = Array.isArray(task.videoUrls) && task.videoUrls.some(Boolean);
+        const terminal = hasVideoResult || ["done", "failed", "cancelled", "canceled"].includes(task.status);
         const variantStatus =
-          task.status === "done"
+          hasVideoResult || task.status === "done"
             ? ("completed" as const)
             : terminal
               ? ("failed" as const)
@@ -7434,18 +7463,18 @@ export default function SuperCanvas() {
               data: {
                 ...node.data,
                 status:
-                  task.status === "done"
+                  hasVideoResult || task.status === "done"
                     ? ("completed" as const)
                     : terminal
                       ? ("failed" as const)
                       : ("running" as const),
                 progress: Number(
-                  task.progress || (task.status === "done" ? 100 : 0),
+                  task.progress || (hasVideoResult || task.status === "done" ? 100 : 0),
                 ),
                 url: task.videoUrls?.[0] || node.data.url,
                 statusLabel:
                   task.error ||
-                  (task.status === "done"
+                  (hasVideoResult || task.status === "done"
                     ? "视频已完成"
                     : terminal
                       ? "视频任务已中断"
@@ -7705,9 +7734,8 @@ export default function SuperCanvas() {
                       applyVideoTask(value, target.id, index, finished),
                     );
                     if (
-                      ["done", "failed", "cancelled", "canceled"].includes(
-                        finished.status,
-                      )
+                      (Array.isArray(finished.videoUrls) && finished.videoUrls.some(Boolean)) ||
+                      ["done", "failed", "cancelled", "canceled"].includes(finished.status)
                     )
                       break;
                     lastError = undefined;
@@ -7723,9 +7751,15 @@ export default function SuperCanvas() {
                   !["done", "failed", "cancelled", "canceled"].includes(
                     finished.status,
                   )
-                )
-                  throw new Error("视频任务查询超时，请稍后重试");
-                if (finished.status !== "done")
+                ) {
+                  // A local wait limit is not a provider result. Keep the
+                  // node running and let the shared poller reconcile it.
+                  void pollVideo(target.id, task.id);
+                  addLog(`视频变体仍在后台生成：${task.id}`);
+                  writeSharedCreationSettings(videoParams);
+                  continue;
+                }
+                if (finished.status !== "done" && !(Array.isArray(finished.videoUrls) && finished.videoUrls.some(Boolean)))
                   throw new Error(finished.error || "视频变体生成失败");
               } else pollAttemptsRef.current.delete(task.id);
               writeSharedCreationSettings(videoParams);

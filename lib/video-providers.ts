@@ -26,7 +26,8 @@ export class VideoProviderError extends Error {
   status?: number;
   code?: string;
   retryAfterMs?: number;
-  constructor(message: string, options: { status?: number; code?: string; retryAfterMs?: number } = {}) {
+  possiblyAccepted?: boolean;
+  constructor(message: string, options: { status?: number; code?: string; retryAfterMs?: number; possiblyAccepted?: boolean } = {}) {
     super(message);
     this.name = 'VideoProviderError';
     Object.assign(this, options);
@@ -119,8 +120,8 @@ function statusFrom(data: any): VideoProviderTask['status'] {
   };
   visit(data);
   const value = values.join(' ');
-  if (/(done|success|succeed|completed|complete|finished|ready)/.test(value) || values.includes('50')) return 'done';
   if (/(fail|error|cancel|reject|expired|aborted)/.test(value)) return 'failed';
+  if (/(done|success|succeed|completed|complete|finished|ready)/.test(value) || values.includes('50')) return 'done';
   if (/(running|processing|in_progress|generating)/.test(value)) return 'running';
   return 'pending';
 }
@@ -174,7 +175,11 @@ async function requestJson(url: string, init: RequestInit, signal?: AbortSignal)
   try {
     response = await fetch(url, { ...init, cache: 'no-store', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000) });
   } catch (error) {
-    throw new VideoProviderError(error instanceof Error ? error.message : '视频服务商连接失败');
+    throw new VideoProviderError(error instanceof Error ? error.message : '视频服务商连接失败', {
+      // A POST can reach the provider even when its response is lost. Keep the
+      // local task recoverable and let the idempotency key reconcile it later.
+      possiblyAccepted: String(init.method || 'GET').toUpperCase() === 'POST',
+    });
   }
   const contentType = response.headers.get('content-type') || '';
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -182,7 +187,14 @@ async function requestJson(url: string, init: RequestInit, signal?: AbortSignal)
     let data: any = {};
     try { data = JSON.parse(Buffer.from(bytes).toString('utf8')); } catch {}
     const retryAfter = Number(response.headers.get('retry-after') || 0);
-    throw new VideoProviderError(errorFrom(data, `视频服务商返回 HTTP ${response.status}`), { status: response.status, retryAfterMs: retryAfter > 0 ? retryAfter * 1000 : undefined });
+    throw new VideoProviderError(errorFrom(data, `视频服务商返回 HTTP ${response.status}`), {
+      status: response.status,
+      retryAfterMs: retryAfter > 0 ? retryAfter * 1000 : undefined,
+      // A gateway error after a POST does not prove that the provider rejected
+      // the task. Reconcile it through the idempotency key instead of showing
+      // a terminal failure immediately.
+      possiblyAccepted: String(init.method || 'GET').toUpperCase() === 'POST' && response.status >= 500,
+    });
   }
   if (/^video\//i.test(contentType) && bytes.byteLength <= 64 * 1024 * 1024) return { data: `data:${contentType.split(';', 1)[0]};base64,${Buffer.from(bytes).toString('base64')}` };
   const text = Buffer.from(bytes).toString('utf8');
@@ -464,8 +476,8 @@ function agnesVideoIdFrom(data: any) {
 
 function agnesStatusFrom(data: any): VideoProviderTask['status'] {
   const status = String(agnesResponseValue(data, 'status') ?? agnesResponseValue(data, 'state') ?? '').toLowerCase();
-  if (/^(completed?|complete|done|success(?:ful|ed)?|succeed(?:ed)?|finished|ready)$/i.test(status)) return 'done';
   if (/failed|error|cancel|rejected|expired|aborted/.test(status)) return 'failed';
+  if (/^(completed?|complete|done|success(?:ful|ed)?|succeed(?:ed)?|finished|ready)$/i.test(status)) return 'done';
   if (/running|processing|generating|in_progress/.test(status)) return 'running';
   return 'pending';
 }
@@ -530,9 +542,10 @@ async function submitAgnesVideo(provider: RuntimeProvider, rawModelId: string, i
   const response = await requestJsonWithRateLimitRetry(agnesGenerationUrl(provider), { method: 'POST', headers: headers(provider, idempotencyKey), body: JSON.stringify(body) }, signal, { retry429: false });
   const data = response.data;
   const videoId = agnesVideoIdFrom(data);
-  const status = agnesStatusFrom(data);
-  const videos = status === 'done' ? agnesVideosFrom(data) : [];
   const providerStatus = String(agnesResponseValue(data, 'status') || '').trim() || undefined;
+  const statusFromResponse = agnesStatusFrom(data);
+  const videos = statusFromResponse === 'failed' ? [] : agnesVideosFrom(data);
+  const status = videos.length ? 'done' : statusFromResponse;
   const progress = agnesProgressFrom(data);
   if (status === 'failed') return { providerTaskId: videoId || undefined, videoId: videoId || undefined, model: rawModelId, providerStatus, progress, status, videos, raw: data, error: agnesErrorFrom(data), errorCode: 'AGNES_VIDEO_FAILED' };
   if (!videos.length && !videoId) throw new VideoProviderError('Agnes 视频接口已响应，但没有返回 video_id、task_id 或 id。', { code: 'AGNES_VIDEO_ID_MISSING' });
@@ -542,9 +555,11 @@ async function submitAgnesVideo(provider: RuntimeProvider, rawModelId: string, i
 async function pollAgnesVideo(provider: RuntimeProvider, videoId: string, rawModelId?: string, signal?: AbortSignal): Promise<VideoProviderTask> {
   const response = await requestJson(agnesQueryUrl(provider, videoId, rawModelId), { method: 'GET', headers: headers(provider) }, signal);
   const data = response.data;
-  const status = agnesStatusFrom(data);
-  const videos = status === 'done' ? agnesVideosFrom(data) : [];
-  return { providerTaskId: videoId, videoId, model: rawModelId, providerStatus: String(agnesResponseValue(data, 'status') || '').trim() || undefined, progress: agnesProgressFrom(data), status, videos, raw: data, ...(status === 'failed' ? { error: agnesErrorFrom(data), errorCode: 'AGNES_VIDEO_FAILED' } : {}) };
+  const providerStatus = String(agnesResponseValue(data, 'status') || '').trim() || undefined;
+  const statusFromResponse = agnesStatusFrom(data);
+  const videos = statusFromResponse === 'failed' ? [] : agnesVideosFrom(data);
+  const status = videos.length ? 'done' : statusFromResponse;
+  return { providerTaskId: videoId, videoId, model: rawModelId, providerStatus, progress: agnesProgressFrom(data), status, videos, raw: data, ...(status === 'failed' ? { error: agnesErrorFrom(data), errorCode: 'AGNES_VIDEO_FAILED' } : {}) };
 }
 
 export async function submitRemoteVideo(provider: RuntimeProvider, rawModelId: string, input: VideoGenerationInput, idempotencyKey: string, signal?: AbortSignal): Promise<VideoProviderTask> {
@@ -559,9 +574,10 @@ export async function submitRemoteVideo(provider: RuntimeProvider, rawModelId: s
     : openAiPayload(rawModelId, preparedInput);
   const response = await requestJsonWithRateLimitRetry(url, { method: 'POST', headers: headers(provider, idempotencyKey), body: JSON.stringify(body) }, signal, { retry429: false });
   const data = response.data;
-  const videos = videosFrom(data);
   const providerTaskId = taskIdFrom(data);
-  const status = videos.length ? 'done' : statusFrom(data);
+  const statusFromResponse = statusFrom(data);
+  const videos = statusFromResponse === 'failed' ? [] : videosFrom(data);
+  const status = videos.length ? 'done' : statusFromResponse;
   if (status === 'failed') return { providerTaskId, status, videos, error: errorFrom(data, '视频任务失败'), raw: data };
   if (!videos.length && !providerTaskId) throw new VideoProviderError('视频接口已响应，但没有返回视频地址或任务编号');
   return { providerTaskId: providerTaskId || undefined, status: videos.length ? 'done' : status, videos, costUsd: Number(data?.cost_usd || data?.costUsd || data?.data?.cost_usd || 0) || undefined, raw: data };
@@ -581,8 +597,9 @@ export async function pollRemoteVideo(provider: RuntimeProvider, providerTaskId:
   const url = endpoint(provider, pathValue, pathValue);
   const response = await requestJson(url, { method: 'GET', headers: headers(provider) }, signal);
   const data = response.data;
-  const videos = videosFrom(data);
-  const status = videos.length ? 'done' : statusFrom(data);
+  const statusFromResponse = statusFrom(data);
+  const videos = statusFromResponse === 'failed' ? [] : videosFrom(data);
+  const status = videos.length ? 'done' : statusFromResponse;
   return { providerTaskId, status, videos, costUsd: Number(data?.cost_usd || data?.costUsd || data?.data?.cost_usd || 0) || undefined, raw: data, ...(status === 'failed' ? { error: errorFrom(data, '视频任务失败') } : {}) };
 }
 

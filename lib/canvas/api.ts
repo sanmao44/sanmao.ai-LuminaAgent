@@ -548,7 +548,7 @@ export async function generateCanvasImage(input: {
         return mask && index === 0 ? dataUrl : compressReferenceDataUrl(dataUrl);
       }),
   );
-  const result = await request<{
+  type CanvasImageResult = {
     images: Array<{ url: string; revisedPrompt?: string }>;
     pending?: boolean;
     taskId?: string;
@@ -556,11 +556,30 @@ export async function generateCanvasImage(input: {
     mode?: "reference" | "generate" | "generate-fallback";
     warning?: string;
     model?: { id?: string; name?: string; provider?: string };
-  }>("/api/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    signal: input.signal,
-    body: JSON.stringify({
+  };
+  const recoverAcceptedImageTask = async (error: unknown): Promise<CanvasImageResult | null> => {
+    const taskId = String(input.taskId || "").trim();
+    if (!taskId) return null;
+    const log = await getCanvasAgentGeneration(taskId).catch(() => null);
+    if (log?.status === "success" && log.imageUrls?.length) {
+      return { images: log.imageUrls.map((url) => ({ url })), pending: false, taskId };
+    }
+    if (log?.status === "pending") {
+      const pendingError = new Error("服务商已接收任务，正在生成，请勿重复提交。") as Error & { generationPending?: boolean; taskId?: string };
+      pendingError.generationPending = true;
+      pendingError.taskId = taskId;
+      throw pendingError;
+    }
+    if (log?.status === "error") throw new Error(log.error || (error instanceof Error ? error.message : "图片生成失败"));
+    return null;
+  };
+  let result: CanvasImageResult;
+  try {
+    result = await request<CanvasImageResult>("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: input.signal,
+      body: JSON.stringify({
       source: "canvas",
       ...(input.taskId ? { taskId: input.taskId } : {}),
       prompt: input.prompt,
@@ -591,8 +610,13 @@ export async function generateCanvasImage(input: {
           name: item.name || `参考图 ${index + 1}`,
           url: item.url,
         })),
-    }),
-  });
+      }),
+    });
+  } catch (error) {
+    const recovered = await recoverAcceptedImageTask(error);
+    if (!recovered) throw error;
+    result = recovered;
+  }
   if (!result.pending) return result;
   const taskId = String(result.taskId || input.taskId || '').trim();
   if (!taskId) throw new Error(result.message || '服务商已接收任务，正在生成，请勿重复提交。');
@@ -603,7 +627,14 @@ export async function generateCanvasImage(input: {
       const timer = window.setTimeout(resolve, 2000);
       input.signal?.addEventListener('abort', () => { window.clearTimeout(timer); reject(input.signal?.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
     });
-    const status = await request<{ log?: { status?: string; imageUrls?: string[]; error?: string } | null }>(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`);
+    let status: { log?: { status?: string; imageUrls?: string[]; error?: string } | null };
+    try {
+      status = await request<{ log?: { status?: string; imageUrls?: string[]; error?: string } | null }>(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`);
+    } catch (error) {
+      const recovered = await recoverAcceptedImageTask(error);
+      if (recovered?.images?.length) return { ...result, pending: false, images: recovered.images };
+      throw error;
+    }
     const log = status.log;
     if (log?.status === 'success' && log.imageUrls?.length) return { ...result, pending: false, images: log.imageUrls.map((url) => ({ url })) };
     if (log?.status === 'error') throw new Error(log.error || '生图失败');
