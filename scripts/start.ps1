@@ -670,7 +670,7 @@ function Remove-SanmaoStaleNextBuildLock {
   # finish. Opening it without sharing probes for a live owner; only an
   # unowned lock is safe to remove.
   $lockPath = Join-Path $root '.next\lock'
-  if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { return }
+  if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { return $true }
   $stream = $null
   try {
     $stream = [System.IO.File]::Open(
@@ -683,10 +683,28 @@ function Remove-SanmaoStaleNextBuildLock {
     $stream = $null
     Remove-Item -LiteralPath $lockPath -Force -ErrorAction Stop
     Write-SanmaoLauncherLog '已清理上次异常退出遗留的 Next.js 构建锁。' 'WARN'
+    return $true
   } catch {
     if ($stream) { try { $stream.Dispose() } catch {} }
-    Write-SanmaoLauncherLog '检测到 Next.js 构建仍在进行，保留构建锁并让其继续。' 'INFO'
+    return $false
   }
+}
+
+function Wait-SanmaoNextBuildLock([int]$TimeoutMinutes = 30) {
+  $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+  $reported = $false
+  while (-not (Remove-SanmaoStaleNextBuildLock)) {
+    if (-not $reported) {
+      Write-Host '检测到另一个网页构建仍在运行，正在等待它完成。' -ForegroundColor Yellow
+      Write-SanmaoLauncherLog '检测到另一个 Next.js 构建持有 .next/lock，等待其完成。' 'WARN'
+      $reported = $true
+    }
+    if ((Get-Date) -ge $deadline) {
+      Fail "等待另一个网页构建超过 $TimeoutMinutes 分钟。请关闭占用此项目的其他构建窗口后重试。"
+    }
+    Start-Sleep -Seconds 2
+  }
+  if ($reported) { Start-Sleep -Milliseconds 500 }
 }
 
 function Wait-SanmaoBuildArtifacts([int]$TimeoutMs = 15000) {
@@ -1213,21 +1231,24 @@ if ($SkipBuild.IsPresent) {
   if (-not (Test-SanmaoBuildArtifacts)) { Fail '回滚构建产物不完整，无法安全启动旧服务。' }
   Write-Host '回滚模式：使用上一个已验证的构建产物。' -ForegroundColor Yellow
 } elseif ($needBuild) {
+  Wait-SanmaoNextBuildLock
+  $buildSourceFingerprint = Get-SanmaoSourceFingerprint
+  $builtSourceFingerprintPath = Join-Path $root '.next\.sanmao-source-fingerprint'
+  $anotherBuildCompletedCurrentSource = $false
+  if (-not $ForceBuild.IsPresent -and $env:SANMAO_FORCE_BUILD -ne '1' -and (Test-SanmaoBuildArtifacts) -and (Test-Path -LiteralPath $builtSourceFingerprintPath -PathType Leaf)) {
+    try {
+      $builtFingerprint = (Get-Content -LiteralPath $builtSourceFingerprintPath -Raw -ErrorAction Stop).Trim().ToLowerInvariant()
+      $anotherBuildCompletedCurrentSource = $builtFingerprint -and $builtFingerprint -eq $buildSourceFingerprint
+    } catch {}
+  }
+  if ($anotherBuildCompletedCurrentSource) {
+    Write-Host '等待期间另一个启动器已构建当前代码，复用其构建产物。' -ForegroundColor Green
+  } else {
   Write-Host '需要重新构建（首次运行或代码有更新）。只需等这一次，之后启动会直接跳过构建。' -ForegroundColor Yellow
   Write-Host '使用 webpack 构建，避免 Turbopack 在中文内容中的字符边界崩溃。' -ForegroundColor Yellow
   Remove-Item -LiteralPath $serverStdoutPath, $serverStderrPath -Force -ErrorAction SilentlyContinue
-  Remove-SanmaoStaleNextBuildLock
   Clear-SanmaoBuildArtifactMarkers
-  $buildSourceFingerprint = Get-SanmaoSourceFingerprint
   & $nextCmd build --webpack
-  if ($LASTEXITCODE -ne 0 -and (Test-Path -LiteralPath (Join-Path $root '.next\lock') -PathType Leaf)) {
-    # A previous launcher may release the lock just after the preflight probe.
-    # Give that process a moment to exit, then retry once against the now-clean
-    # build directory instead of surfacing a transient lock error to users.
-    Start-Sleep -Seconds 2
-    Remove-SanmaoStaleNextBuildLock
-    & $nextCmd build --webpack
-  }
   if ($LASTEXITCODE -ne 0) {
     Fail '网页构建失败。请把本窗口中“构建失败”上方的报错截图发给我。'
   }
@@ -1236,6 +1257,7 @@ if ($SkipBuild.IsPresent) {
   }
   Set-Content -LiteralPath (Join-Path $root '.next\.sanmao-source-fingerprint') -Value $buildSourceFingerprint -Encoding ASCII
   Write-Host '构建完成。' -ForegroundColor Green
+  }
 } else {
   if (-not (Wait-SanmaoBuildArtifacts)) {
     Fail '检测到网页构建产物不完整，请再次运行启动器。'
