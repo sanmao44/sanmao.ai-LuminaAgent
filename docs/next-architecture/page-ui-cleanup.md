@@ -81,6 +81,12 @@ presentation. Reference, prompt and skill actions remain page-owned callbacks.
 `AgentSendButton` now owns the send/stop button presentation. Validation,
 request dispatch and cancellation remain page-owned.
 
+`AgentMessageAvatar` now owns the user, pending Agent orb and completed-brand
+avatar presentation. Message lifecycle state remains page-owned.
+
+`AgentMessageAvatar` now owns the user, pending Agent orb and completed-brand
+avatar presentation. Message lifecycle state remains page-owned.
+
 ## Remaining legacy responsibility
 
 `app/page.tsx` remains the legacy composition root. The sidebar, section

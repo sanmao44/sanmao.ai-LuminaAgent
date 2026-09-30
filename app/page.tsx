@@ -74,6 +74,7 @@ import AgentMcpDetailDock from '@/components/AgentMcpDetailDock';
 import AgentWebModeControl from '@/components/AgentWebModeControl';
 import AgentQuickActions from '@/components/AgentQuickActions';
 import AgentSendButton from '@/components/AgentSendButton';
+import AgentMessageAvatar from '@/components/AgentMessageAvatar';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11115,17 +11116,10 @@ export default function Page() {
                                                     id: `message-${message.id}`,
                                                     className: `message ${message.role} ${message.interrupted ? 'interrupted' : ''} ${conversationNavActiveId === message.id ? 'conversation-nav-highlight' : ''} ${agentMessageSelectionActive ? 'selecting' : ''} ${shareSelectionMode && selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id) ? 'share-selected' : ''}`,
                                                     children: [
-                                                        /*#__PURE__*/ _jsx("div", {
-                                                            className: `message-avatar ${message.role === 'assistant' && message.pending ? 'message-avatar-orb' : ''}`,
-                                                            children: message.role === 'user' ? '你' : message.pending ? /*#__PURE__*/ _jsx(AgentOrb, {
-                                                                state: agentOrbStatus.phase,
-                                                                size: 26,
-                                                                speed: 1.15,
-                                                                label: ""
-                                                            }) : /*#__PURE__*/ _jsx("img", {
-                                                                src: "/brand-mark-welcome.png",
-                                                                alt: "SANMAO.AI"
-                                                            })
+                                                        /*#__PURE__*/ _jsx(AgentMessageAvatar, {
+                                                            role: message.role,
+                                                            pending: message.pending,
+                                                            orbState: agentOrbStatus.phase
                                                         }),
                                                         /*#__PURE__*/ _jsxs("div", {
                                                             className: `message-body ${agentMessageSelectionActive ? 'selecting' : ''}`,

@@ -12,6 +12,7 @@ const component = await readFile(
 );
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const status = await readFile(new URL("../components/AgentOrbStatus.tsx", import.meta.url), "utf8");
+const avatar = await readFile(new URL("../components/AgentMessageAvatar.tsx", import.meta.url), "utf8");
 const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
 const dock = await readFile(
   new URL("../components/CanvasAgentDock.tsx", import.meta.url),
@@ -87,11 +88,14 @@ test("assistant surfaces reuse the orb for every visible phase", async () => {
   assert.match(page, /phase: 'speaking'/);
   assert.match(page, /phase: 'error'/);
   assert.match(page, /import AgentOrbStatus from '@\/components\/AgentOrbStatus';/);
+  assert.match(page, /import AgentMessageAvatar from '@\/components\/AgentMessageAvatar';/);
+  assert.match(avatar, /message-avatar-orb/);
+  assert.match(avatar, /brand-mark-welcome\.png/);
   assert.match(status, /className=\{`agent-orb-status \$\{isError \? 'agent-orb-status-error' : ''\}`\}/);
   assert.match(status, /<AgentOrb state=\{phase\} size=\{22\} label="" \/>/);
   assert.match(welcome, /className="agent-welcome-orb"/);
   assert.match(page, /\(activeAgentBusy \|\| agentOrbStatus\.phase === 'error'\) && .*AgentOrbStatus/);
-  assert.match(page, /message-avatar \$\{message\.role === 'assistant' && message\.pending \? 'message-avatar-orb'/);
+  assert.match(avatar, /message-avatar-orb/);
   assert.doesNotMatch(page, /className: "hero-orb",/);
 });
 
