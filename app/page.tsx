@@ -85,6 +85,7 @@ import AgentChatFileList from '@/components/AgentChatFileList';
 import AgentApprovalResult from '@/components/AgentApprovalResult';
 import AgentMessageImages from '@/components/AgentMessageImages';
 import SidebarNavigation from '@/components/SidebarNavigation';
+import SidebarBrandHeader from '@/components/SidebarBrandHeader';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
