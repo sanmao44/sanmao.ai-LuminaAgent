@@ -20,26 +20,70 @@ export type AgentWebDecision = {
   query: string;
 };
 
-/** 识别“在网站上连续操作”的请求，避免被普通联网搜索抢先消费。 */
-export function likelyBrowserAutomationRequest(input: string) {
+export type BrowserAutomationStep = 'navigate' | 'inspect' | 'search' | 'select' | 'sort' | 'download' | 'interact';
+
+export type BrowserAutomationIntent = {
+  shouldAutomate: boolean;
+  destination: string;
+  steps: BrowserAutomationStep[];
+  confidence: 'high' | 'medium' | 'low';
+  reason: string;
+};
+
+const BROWSER_NAVIGATION_PATTERN = /(?:打开|访问|进入|前往|去到|跳转到|登陆|登录)\s*(?:一下\s*)?([^，,。！？!?；;\n]+)/i;
+const BROWSER_CONTEXT_PATTERN = /(?:在|用|通过|从)[^，,。！？!?；;]{0,24}(?:浏览器|网页|网站|页面)(?:里|中|上)?|(?:浏览器|网页|网站|页面)(?:里|中|上)|当前(?:网页|页面)|这个(?:网页|页面|网站)/i;
+const LOCAL_DESTINATION_PATTERN = /(?:网络设置|设备管理器|个性化|辅助功能|控制面板|任务管理器|终端|命令提示符|文件夹|目录|项目|工作区|剪贴板|计算器|记事本|设置|应用|程序|窗口|菜单|系统|本地|桌面|文件|网络适配器|音量|蓝牙|wifi|wi-?fi|settings?|device manager|task manager|terminal|folder|workspace|clipboard)/i;
+const BROWSER_SEARCH_PATTERN = /(?:搜索|查找|检索|搜一下|搜索一下|find|search|look\s*up)/i;
+const BROWSER_SELECTION_PATTERN = /(?:第\s*[一二三四五六七八九十\d]+|第一条|第一个|最(?:多|少|高|低|新|旧)|最高|最低|下载量|排名|排序|哪个|哪一个|挑选|选择|most|highest|lowest|top\s*\d+)/i;
+const BROWSER_DOWNLOAD_ACTION_PATTERN = /(?:下载|保存|导出)(?!量|数|次数)|\b(?:download|save)\b/i;
+const BROWSER_DOWNLOAD_METRIC_PATTERN = /(?:最多下载|下载最多|下载量|下载数|下载次数)/i;
+const BROWSER_INTERACTION_PATTERN = /(?:点击|点赞|点踩|收藏|关注|评论|回复|填写|登录|提交|播放|滚动|切换|选中|发帖|购买|click|like|comment|fill|submit|play)/i;
+
+function browserDestinationFrom(text: string) {
+  const match = text.match(BROWSER_NAVIGATION_PATTERN);
+  const candidate = String(match?.[1] || '').replace(/^['"“”‘’\s]+|['"“”‘’\s]+$/g, '').trim();
+  if (!candidate || LOCAL_DESTINATION_PATTERN.test(candidate)) return '';
+  return candidate;
+}
+
+/** Classify the page task before read-only web search gets a chance to consume it. */
+export function classifyBrowserAutomation(input: string): BrowserAutomationIntent {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
-  if (!text) return false;
-  // “搜索浏览器自动化”是在搜索一个主题，不是让浏览器执行动作。
-  // 只有明确的浏览器环境、网址/站点，或页面级操作证据才进入自动化路径。
-  const browserContext = /(?:在|用|通过|从)(?:浏览器|网页|网站|页面)(?:里|中|上)?|(?:浏览器|网页|网站|页面)(?:里|中|上)|当前(?:网页|页面)|这个(?:网页|页面|网站)/i.test(text);
-  const namedSite = /(?:https?:\/\/|www\.)\S+|bilibili|哔哩哔哩|抖音|淘宝|京东|youtube|google|github|知乎|微博|小红书|instagram|facebook|amazon|reddit|linkedin|notion/i.test(text);
+  if (!text) return { shouldAutomate: false, destination: '', steps: [], confidence: 'low', reason: 'empty-request' };
+  const destination = browserDestinationFrom(text);
   const genericNavigation = /(?:打开|访问|进入)\s*(?:浏览器|网页|网站|页面)/i.test(text);
-  const browserAction = /(?:打开|访问|进入|搜索|查找|点击|点赞|点踩|收藏|关注|评论|回复|填写|登录|提交|播放|下载|滚动|切换|选中|发帖|购买)/i.test(text);
-  const chainedAction = /(?:然后|接着|之后|再|并且|并|并在|最后|给第|第一个|第一条|第一个视频)/i.test(text);
-  const pageMutation = /(?:点击|点赞|点踩|收藏|关注|评论|回复|填写|登录|提交|播放|下载|滚动|切换|选中|发帖|购买)/i.test(text);
-  // A bare "search GitHub/latest information" is an information request,
-  // not a command to operate a browser. Require page context, a mutation, a
-  // chained action, or explicit site navigation before routing to Playwright.
-  // This prevents a well-known site name from turning ordinary web search
-  // into an expensive browser/MCP turn.
-  return genericNavigation
-    || (namedSite && browserAction && (chainedAction || pageMutation || /(?:打开|访问|进入)/i.test(text)))
-    || (browserContext && browserAction && (chainedAction || pageMutation || /(?:搜索|查找|打开|访问|进入)/i.test(text)));
+  const browserContext = BROWSER_CONTEXT_PATTERN.test(text);
+  const hasSearch = BROWSER_SEARCH_PATTERN.test(text);
+  const hasSelection = BROWSER_SELECTION_PATTERN.test(text);
+  const hasDownloadAction = BROWSER_DOWNLOAD_ACTION_PATTERN.test(text) && !BROWSER_DOWNLOAD_METRIC_PATTERN.test(text);
+  const hasInteraction = BROWSER_INTERACTION_PATTERN.test(text);
+  const chained = /(?:然后|接着|之后|再|并且|并|最后|找到|筛选|按|给第|第一条|第一个)/i.test(text);
+  const steps: BrowserAutomationStep[] = [];
+  if (genericNavigation || destination) steps.push('navigate');
+
+  if (browserContext || hasSearch || hasSelection || hasDownloadAction || hasInteraction) steps.push('inspect');
+  if (hasSearch) steps.push('search');
+  if (hasSelection) steps.push('select');
+  if (hasSelection && /(?:排序|下载量|最多|最高|排名|按)/i.test(text)) steps.push('sort');
+  if (hasDownloadAction) steps.push('download');
+  if (hasInteraction) steps.push('interact');
+  const shouldAutomate = genericNavigation
+    || (Boolean(destination) && (hasSearch || hasSelection || hasDownloadAction || hasInteraction || chained || !browserContext))
+    || (browserContext && (hasSearch || hasSelection || hasDownloadAction || hasInteraction));
+  const confidence = genericNavigation || (destination && (hasSearch || hasSelection || hasDownloadAction || hasInteraction)) ? 'high' : shouldAutomate ? 'medium' : 'low';
+  const reason = genericNavigation
+    ? 'explicit-browser-navigation'
+    : destination
+      ? (steps.length > 1 ? 'external-destination-with-page-plan' : 'external-destination')
+      : browserContext
+        ? 'explicit-page-context'
+        : 'information-search-only';
+  return { shouldAutomate, destination, steps: [...new Set(steps)], confidence, reason };
+}
+
+/** Backward-compatible boolean gate used by the route planner. */
+export function likelyBrowserAutomationRequest(input: string) {
+  return classifyBrowserAutomation(input).shouldAutomate;
 }
 
 /** 识别本地文件/项目操作请求，供 MCP 工具预算排序使用。 */

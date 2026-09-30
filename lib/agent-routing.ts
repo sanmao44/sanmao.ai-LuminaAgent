@@ -1,5 +1,5 @@
 import { classifyAgentDeliverable, inferAgentRequestMode, isCapabilityQuestion, type AgentDeliverable, type AgentIntentContext, type AgentIntentDecision, type AgentIntentMessage } from '@/lib/agent-intent';
-import { likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFileGenerationRequest, likelyFilesystemRequest, likelyMcpManagementRequest, shouldUseAgentWebSearch, type AgentWebDecision, type AgentWebMode } from '@/lib/agent-web';
+import { classifyBrowserAutomation, likelyArtifactGenerationRequest, likelyFileGenerationRequest, likelyFilesystemRequest, likelyMcpManagementRequest, shouldUseAgentWebSearch, type AgentWebDecision, type AgentWebMode, type BrowserAutomationIntent } from '@/lib/agent-web';
 
 export type AgentArtifactKind = 'none' | 'word' | 'excel' | 'ppt' | 'archive' | 'file';
 export type AgentContextNeed = 'none' | 'recent' | 'required';
@@ -34,6 +34,7 @@ export type AgentRequestDecision = {
   contextNeed: AgentContextNeed;
   contextReason: string;
   browserAutomation: boolean;
+  browserIntent: BrowserAutomationIntent;
   filesystem: boolean;
   web: AgentWebDecision;
   needsTools: boolean;
@@ -87,7 +88,8 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   const requestMode = intent.mode || inferAgentRequestMode(text);
   const executable = requestMode === 'execute' || requestMode === 'follow_up';
   const artifactKind = artifactKindFor(text);
-  const browserAutomation = executable && likelyBrowserAutomationRequest(text);
+  const browserIntent = classifyBrowserAutomation(text);
+  const browserAutomation = executable && browserIntent.shouldAutomate;
   const filesystem = executable && likelyFilesystemRequest(text, options.previousAssistant || '');
   const contextInfo = contextDecision(text, messages);
   // `context.messages` is the prior conversation for callers from the Agent
@@ -112,7 +114,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
       policy: { lane: 'search', web: 'require', discoverMcp: false, allowMcp: false },
       intent, route: 'web', artifactKind: 'none',
       contextNeed: contextInfo.need, contextReason: contextInfo.reason,
-      browserAutomation: false, filesystem: false, web, needsTools: true,
+      browserAutomation: false, browserIntent, filesystem: false, web, needsTools: true,
       tools: { useMcp: false, useBrowserMcp: false, useFilesystemMcp: false, useSkills: false, useNativeWeb: true, useNativeArtifact: false, reason: 'Read-only external information request.' },
       candidates: [candidate('web', 120, web.reason)],
     };
@@ -129,6 +131,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
       contextNeed: contextInfo.need,
       contextReason: contextInfo.reason,
       browserAutomation: false,
+      browserIntent,
       filesystem: false,
       web,
       needsTools: false,
@@ -174,7 +177,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // connector for an otherwise ordinary or ambiguous conversation turn.
   const discoverMcp = executable && (useMcp || (route === 'chat' && intent.mode === 'execute'));
   const webPolicy: AgentWebPolicy = useNativeWeb ? 'require' : 'forbid';
-  return { policy: { lane: 'action', web: webPolicy, discoverMcp, allowMcp: useMcp || discoverMcp }, intent, route, artifactKind, contextNeed: contextInfo.need, contextReason: contextInfo.reason, browserAutomation, filesystem, web, needsTools, tools: { useMcp, useBrowserMcp, useFilesystemMcp, useSkills, useNativeWeb, useNativeArtifact, reason }, candidates };
+  return { policy: { lane: 'action', web: webPolicy, discoverMcp, allowMcp: useMcp || discoverMcp }, intent, route, artifactKind, contextNeed: contextInfo.need, contextReason: contextInfo.reason, browserAutomation, browserIntent, filesystem, web, needsTools, tools: { useMcp, useBrowserMcp, useFilesystemMcp, useSkills, useNativeWeb, useNativeArtifact, reason }, candidates };
 }
 
 /** Keep enough recent context for continuity while dropping stale turns. */
@@ -277,6 +280,7 @@ export function routeToolSummary(decision: AgentRequestDecision) {
     contextNeed: decision.contextNeed,
     shouldSearch: decision.web.shouldSearch,
     browserAutomation: decision.browserAutomation,
+    browserIntent: decision.browserIntent,
     filesystem: decision.filesystem,
     tools: decision.tools,
     candidates: decision.candidates.slice(0, 4),

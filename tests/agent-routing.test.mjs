@@ -119,6 +119,17 @@ test('gates MCP, skills and native web by the bounded route plan', () => {
   assert.equal(skill.tools.useSkills, true);
 });
 
+test('未知站点的多步搜索和排序任务进入浏览器 MCP 路由', () => {
+  const decision = routing.classifyAgentRequest('帮我打开光厂，搜索银河系，找到最多下载的哪个', {}, { webMode: 'auto' });
+  assert.equal(decision.route, 'browser');
+  assert.equal(decision.browserAutomation, true);
+  assert.equal(decision.tools.useMcp, true);
+  assert.equal(decision.tools.useBrowserMcp, true);
+  assert.equal(decision.tools.useNativeWeb, false);
+  assert.equal(decision.browserIntent.destination, '光厂');
+  assert.deepEqual(decision.browserIntent.steps, ['navigate', 'inspect', 'search', 'select', 'sort']);
+});
+
 test('routes current-information questions to native web without MCP', () => {
   for (const input of ['今天 AI 界有什么新闻？', '推送今日 AI 界新闻', '推送今日娱乐圈新闻']) {
     const decision = routing.classifyAgentRequest(input, {}, { webMode: 'auto' });
