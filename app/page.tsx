@@ -80,6 +80,7 @@ import AgentMessageError from '@/components/AgentMessageError';
 import AgentMessageReferences from '@/components/AgentMessageReferences';
 import AgentMessageTools from '@/components/AgentMessageTools';
 import AgentMessagePending from '@/components/AgentMessagePending';
+import AgentMessageLabel from '@/components/AgentMessageLabel';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -11156,7 +11157,7 @@ export default function Page() {
                                                                         /*#__PURE__*/ _jsx("span", {})
                                                                     ]
                                                                 }),
-                                                                /*#__PURE__*/ _jsxs("div", {
+                                                                /*#__PURE__*/ _jsxs(AgentMessageLabel, {
                                                                     className: "message-label",
                                                                     children: [
                                                                         /*#__PURE__*/ _jsx("span", {

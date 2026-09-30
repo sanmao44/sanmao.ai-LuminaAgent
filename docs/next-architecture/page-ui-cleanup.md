@@ -101,6 +101,10 @@ video-task eligibility, and every operation callback remain page-owned.
 its spinner and optional elapsed-time badge. The page still controls pending
 lifecycle and computes elapsed seconds.
 
+`AgentMessageLabel` now owns the shared message header container. The page
+continues to render every status badge, MCP toggle, and version switch inside
+that container, so their conditions and interactions remain unchanged.
+
 `AgentMessageReferences` now owns the message reference thumbnail strip.
 Reference resolution and preview state remain page-owned.
 
