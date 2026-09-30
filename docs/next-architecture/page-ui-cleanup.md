@@ -105,6 +105,10 @@ lifecycle and computes elapsed seconds.
 continues to render every status badge, MCP toggle, and version switch inside
 that container, so their conditions and interactions remain unchanged.
 
+`AgentChatFileList` now owns the attachment card markup and action buttons.
+File preview eligibility, formatting, download, preview, and removal callbacks
+remain page-owned and are passed through explicitly.
+
 `AgentMessageReferences` now owns the message reference thumbnail strip.
 Reference resolution and preview state remain page-owned.
 

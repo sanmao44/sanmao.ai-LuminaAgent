@@ -23,10 +23,8 @@ test("recognizes only the requested HTML preview types", () => {
 
 test("adds preview only when ChatFileList receives a preview handler", () => {
   assert.match(page, /function ChatFileList\(\{ files, onDownload, onPreview, onRemove \}\)/);
-  assert.match(page, /className: "message-file-actions"/);
-  assert.match(page, /name: "preview"/);
-  assert.match(page, /onPreview && isPreviewableChatFile\(file\)/);
-  assert.match(page, /onClick: \(\)=>onPreview\(file\)/);
+  assert.match(page, /AgentChatFileList/);
+  assert.match(page, /isPreviewable: isPreviewableChatFile/);
 
   const assistantFiles = page.slice(page.indexOf("message.files?.length ? /*#__PURE__*/ _jsx(ChatFileList"));
   assert.match(assistantFiles, /onPreview: message\.role === 'assistant' \? openChatFilePreview : undefined/);

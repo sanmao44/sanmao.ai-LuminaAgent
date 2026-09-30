@@ -81,6 +81,7 @@ import AgentMessageReferences from '@/components/AgentMessageReferences';
 import AgentMessageTools from '@/components/AgentMessageTools';
 import AgentMessagePending from '@/components/AgentMessagePending';
 import AgentMessageLabel from '@/components/AgentMessageLabel';
+import AgentChatFileList from '@/components/AgentChatFileList';
 import SidebarNavigation from '@/components/SidebarNavigation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -4522,79 +4523,15 @@ function chatFileTypeLabel(file) {
     return match ? `${match[1].toUpperCase()} · ` : '';
 }
 function ChatFileList({ files, onDownload, onPreview, onRemove }) {
-    if (!files.length) return null;
-    return /*#__PURE__*/ _jsx("div", {
-        className: "message-files",
-        children: files.map((file)=>/*#__PURE__*/ _jsxs("article", {
-                className: "message-file",
-                children: [
-                    /*#__PURE__*/ _jsx("div", {
-                        className: "message-file-icon",
-                        children: /*#__PURE__*/ _jsx(Icon, {
-                            name: "folder",
-                            size: 18
-                        })
-                    }),
-                    /*#__PURE__*/ _jsxs("div", {
-                        className: "message-file-info",
-                        children: [
-                            /*#__PURE__*/ _jsx("strong", {
-                                title: file.name,
-                                children: file.name
-                            }),
-                            /*#__PURE__*/ _jsxs("small", {
-                                children: [
-                                    chatFileTypeLabel(file),
-                                    file.mimeType.replace(/;.*$/, ''),
-                                    " \xb7 ",
-                                    formatFileSize(file.sourceSize || file.size)
-                                ]
-                            })
-                        ]
-                    }),
-                    /*#__PURE__*/ _jsxs("div", {
-                        className: "message-file-actions",
-                        children: [
-                            onPreview && isPreviewableChatFile(file) && /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                className: "message-file-preview",
-                                onClick: ()=>onPreview(file),
-                                title: "预览文件",
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "preview",
-                                        size: 14
-                                    }),
-                                    "预览"
-                                ]
-                            }),
-                            // 上传后解析成文本的附件（带 sourceSize）在会话里只存文字，原件已经不在手上，不提供下载。
-                            !file.sourceSize && /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                className: "message-file-download",
-                                onClick: ()=>onDownload(file),
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "download",
-                                        size: 14
-                                    }),
-                                    "下载"
-                                ]
-                            })
-                        ]
-                    }),
-                    onRemove && /*#__PURE__*/ _jsx("button", {
-                        type: "button",
-                        className: "message-file-remove",
-                        onClick: ()=>onRemove(file),
-                        title: "移除文件",
-                        children: /*#__PURE__*/ _jsx(Icon, {
-                            name: "close",
-                            size: 13
-                        })
-                    })
-                ]
-            }, file.id))
+    return /*#__PURE__*/ _jsx(AgentChatFileList, {
+        files,
+        Icon,
+        onDownload,
+        onPreview,
+        onRemove,
+        isPreviewable: isPreviewableChatFile,
+        fileTypeLabel: chatFileTypeLabel,
+        formatSize: formatFileSize
     });
 }
 function ChatFilePreviewDialog({ file, onClose }) {
