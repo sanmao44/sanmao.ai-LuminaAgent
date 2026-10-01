@@ -728,7 +728,7 @@ test("local edit summary only occupies editor space when a mask exists", () => {
   assert.match(component, /label: node\.data\.mask \? "查看局部编辑" : "局部编辑"/);
 });
 
-test("dock local edit control keeps the remove action inside the same chip", () => {
+test("dock local edit control keeps editing and removal actions in a clear segmented chip", () => {
   assert.match(component, /className="canvas-node-editor-dock-local-edit"/);
   assert.match(component, /className="canvas-node-editor-dock-chip canvas-node-editor-dock-chip-edit"/);
   assert.match(component, /className="canvas-node-editor-dock-chip canvas-node-editor-dock-chip-remove"/);
@@ -739,9 +739,10 @@ test("dock local edit control keeps the remove action inside the same chip", () 
   assert.ok(removeStart >= 0 && removeEnd > removeStart, "local edit remove button should be present");
   assert.doesNotMatch(component.slice(removeStart, removeEnd), /data-tooltip=/);
   assert.match(component, /event\.stopPropagation\(\);\s*onLocalEditRemove\(\)/);
-  assert.match(styles, /\.canvas-node-editor-dock-local-edit\{[^}]*position:relative[^}]*isolation:isolate[^}]*border-radius:999px/);
-  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-edit\{[^}]*padding:0 31px 0 9px/);
-  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*position:absolute[^}]*display:grid[^}]*place-items:center[^}]*border-radius:50%/);
+  assert.match(styles, /\.canvas-node-editor-dock-local-edit\{[^}]*display:inline-flex[^}]*align-items:stretch[^}]*overflow:hidden[^}]*border-radius:999px/);
+  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-edit\{[^}]*padding:0 9px[^}]*border:0[^}]*border-radius:999px 0 0 999px/);
+  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*display:grid[^}]*place-items:center[^}]*border-left:1px[^}]*border-radius:0 999px 999px 0/);
+  assert.doesNotMatch(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*position:absolute/);
 });
 
 test("regular editor stays below its node in the stacked main-composer layout", () => {
