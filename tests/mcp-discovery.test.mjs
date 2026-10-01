@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
 import { createTsRequire } from './ts-require.mjs';
 const loadTs = createTsRequire(path.resolve('lib'));
 const { discoverMcpForRequest } = loadTs('./mcp/discovery');
@@ -87,12 +86,15 @@ test('an alternate successful call stays visible without falsely declaring task 
   assert.doesNotMatch(text, /^任务尚未全部完成/);
 });
 
-test('discovery runs before the plain shortcut and selected IDs survive both lazy filters', () => {
-  const route = readFileSync(path.resolve('app/api/agent/route.ts'), 'utf8');
-  assert.ok(route.indexOf('const discovery = await discoverMcpForRequest') < route.indexOf('const compactPlainTurn'));
-  assert.match(route, /\.\.\.discoveredMcpIds/);
-  assert.match(route, /正在调用 MCP：/);
-  assert.match(route, /priorityServerIds\.join/);
-  const ui = readFileSync(path.resolve('app/page.tsx'), 'utf8');
-  assert.match(ui, /tool\.ok \? '成功' : '失败'/);
+test('发现结果只选择已发现的服务，并保留不可用服务提示', async () => {
+  const result = await discoverMcpForRequest({
+    servers,
+    load: async ({ servers: selected }) => ({
+      servers: selected,
+      tools: selected[0].id === 'custom-b' ? definitions.filter((tool) => tool.mcp.serverId === 'custom-b') : [],
+    }),
+    select: async (capabilities) => capabilities.map((capability) => capability.id),
+  });
+  assert.deepEqual(result.serverIds, ['custom-b']);
+  assert.deepEqual(result.unavailable, ['Desktop']);
 });

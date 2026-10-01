@@ -84,6 +84,11 @@ function rememberFingerprint(key: string, artifactId: string) {
   }
 }
 
+/** Only successful Playwright calls may turn files in its output directory into artifacts. */
+export function shouldImportBrowserArtifacts(catalogId: string | undefined, isError: boolean) {
+  return catalogId === 'playwright' && !isError;
+}
+
 export type ImportBrowserArtifactsOptions = {
   dataDir?: string;
   /** 这一轮开始的时间：只收这之后写下的文件。 */

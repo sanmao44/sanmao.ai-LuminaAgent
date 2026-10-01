@@ -113,12 +113,15 @@ test('动作名不合法或服务不存在时抛出可读错误', async () => {
   await assert.rejects(() => mcp.runMcpManageAction({ action: 'probe', id: 'nope' }, { dataDir }), /没有找到/);
 });
 
-test('被拒绝的调用与管理动作都会记进审计标签，动作名用中文', async () => {
-  const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
-  assert.match(route, /const MCP_MANAGE_LABELS: Record<string, string> = \{ list: '列出服务', probe: '连接自检', add: '添加服务', update: '修改配置', remove: '删除服务', install_from_repo: '安装 GitHub MCP', runtime_status: '查看本地运行时', runtime_start: '启动本地运行时', runtime_stop: '关闭本地运行时' \};/);
-  assert.match(route, /usedMcpTools\.push\(\{ server: '本机配置', name: actionLabel/);
-  assert.match(route, /const deniedMcp = policy\.tool\?\.mcp;/);
-  assert.match(route, /usedMcpTools\.push\(\{ server: deniedMcp\.serverName, name: deniedMcp\.toolName, readOnly: deniedMcp\.readOnly, ok: false \}\);/);
+test('MCP 管理动作的结果带有稳定的只读/写入语义', async () => {
+  const dataDir = tempDir();
+  const listed = await mcp.runMcpManageAction({ action: 'list' }, { dataDir, instruction: '看看 MCP 服务' });
+  assert.equal(listed.readOnly, true);
+  assert.equal(listed.result.ok, true);
+  await assert.rejects(
+    () => mcp.runMcpManageAction({ action: 'remove', id: 'missing' }, { dataDir, instruction: '看看 MCP 服务' }),
+    /没有明确要求移除|没有找到/,
+  );
 });
 
 test('GitHub MCP 安装只接受用户原话里的同一个仓库地址', async () => {

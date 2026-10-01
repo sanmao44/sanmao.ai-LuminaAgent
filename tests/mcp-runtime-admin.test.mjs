@@ -2,24 +2,20 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { buildMcpModule, buildToolsModule } from './tools-build.mjs';
 
 const mcp = await buildMcpModule();
 const tools = await buildToolsModule();
-const runtimeAdmin = await readFile(new URL('../lib/mcp/runtime-admin.ts', import.meta.url), 'utf8');
-const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
 
 const GATING = { fileGeneration: false, deliveryRequest: false, skillsEnabled: false, imageAllowed: false, mcpAdmin: false };
 const tempDir = () => mkdtempSync(path.join(os.tmpdir(), 'sanmao-runtime-'));
 
-test('本地运行时的启停不在对话里安装：运行时管理入口不碰安装', () => {
-  // 安装会跑 npm、写本机目录，任务书 §37 要求「不得自动 spawn」，只能由用户在面板点。
-  assert.doesNotMatch(runtimeAdmin, /installCatalogServer|cancelCatalogInstall/);
-  assert.match(runtimeAdmin, /import \{ catalogRuntimeStatus, startCatalogServer, stopCatalogServer \} from '\.\/catalog-runtime';/);
-  assert.match(route, /const outcome = isMcpRuntimeAction\(action\)/);
-  assert.match(route, /await runMcpRuntimeAction\(action, \{ id: args\?\.id, instruction: latestInstruction \}\)/);
+test('本地运行时管理只接受显式动作，安装不在对话动作中', async () => {
+  assert.equal(mcp.isMcpRuntimeAction('runtime_install'), false);
+  assert.equal(mcp.isMcpRuntimeAction('runtime_status'), true);
+  const dir = tempDir();
+  await assert.rejects(() => mcp.runMcpRuntimeAction('runtime_install', { dataDir: dir }), /不支持的运行时动作/);
 });
 
 test('runtime_status 是只读的，能报出本机运行时的安装与运行状态', async () => {

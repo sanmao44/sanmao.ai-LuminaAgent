@@ -1,5 +1,28 @@
 # Architecture Convergence Audit
 
+## Round 8 — Agent / Tool / MCP Test Seam
+
+本轮只处理下一轮 Tool Loop / MCP execution 迁移会直接受影响的测试耦合，不改变产品行为、API contract、streaming、Tool 或 MCP 语义，也没有开始 Tool Runtime / Agent Runtime 大迁移。
+
+### 已转换为行为覆盖
+
+- `tests/tools-registry.test.mjs`：工具注册、门控、schema、权限、能力标签到执行类别的行为。
+- `tests/tools-dispatch.test.mjs`：MCP 写入策略、取消语义、工具循环续轮、reasoning 字段、非法参数兜底。
+- `tests/mcp*.test.mjs`：MCP discovery、配置/管理、filesystem/browser download、runtime admin、协议调用与审计落盘行为。
+- 新增 `lib/tools/call-arguments.ts` 作为最小参数归一化 seam；`route.ts` 与测试构建器共用它。
+
+保留了 `tests/agent-execution.test.mjs` 等真实 TS 转译后执行测试，没有删除真实行为覆盖。
+
+### 仍会阻碍下一轮迁移的测试
+
+Agent 的 streaming、artifact、approval、image safety、cancel、canvas/UI 以及部分 route integration 测试仍读取固定文件并断言源码结构。这些测试不属于本轮 Tool/MCP 最小 seam，需在对应行为覆盖建立后逐类迁移。当前 Tool/MCP 目标测试已不再依赖 `app/api/agent/route.ts` 的源码文本，且无 skipped 的 MCP/Tool 测试。
+
+### 边界记录
+
+- Source of Truth 仍是现有 Route、`lib/tools/*`、`lib/mcp/*` 和 approval state；本轮只抽出参数解析 seam。
+- `call-arguments.ts` 是临时迁移 seam，删除条件是 Tool Runtime 接管统一参数 validation/normalization 后由 Contract 覆盖同等行为。
+- Phase 6 Tool Runtime 仍未开始；下一轮必须先定义统一 lifecycle Contract，再接入真实 Native/MCP 路径。
+
 > 审计日期：2026-09-30  
 > 范围：核对已建立的 Contract、Adapter 与 Next Core 是否进入真实调用链，并记录仍然存在的双轨状态。  
 > 本轮只更新架构记录，不改变产品行为、不新增运行时依赖、不删除 Legacy。

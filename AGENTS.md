@@ -74,7 +74,31 @@ packages/
 
 ---
 
-## 3. 依赖方向
+## 3. 迁移期新增职责门槛
+
+迁移期间，**Legacy 可以继续修改，但架构职责和 ownership 只能保持或减少**。
+
+- 已经存在并接入真实路径的 Next Core、Contract、Runtime 或 Repository 边界，新业务职责必须进入该边界。
+- Legacy 允许承载 Bug 修复、兼容逻辑和明确标注的 Migration Adapter，但不得继续获得新的领域 ownership。
+- 如果目标领域还没有合适边界，先建立最小的 Contract、Port 或 Application 边界，再接入真实路径；不要为了赶进度把新职责继续塞进 Legacy。
+- “Legacy 只减不增”约束的是架构职责和 ownership，不是禁止修改 Legacy 文件。
+
+迁移期允许双轨，但每条双轨路径都必须明确记录：
+
+1. 当前 Source of Truth；
+2. Adapter 的角色和使用方；
+3. 删除旧路径的条件。
+
+完成任务前必须自检：
+
+- 是否绕过了已有 Contract、Runtime 或 Repository；
+- 是否制造了第二个 Source of Truth；
+- Core / Domain 是否新增了 React、Next.js、Provider SDK 或其他基础设施依赖；
+- 是否复制了 Legacy 逻辑，而不是迁移 ownership。
+
+---
+
+## 4. 依赖方向
 
 目标依赖方向：
 
@@ -104,7 +128,7 @@ Provider、MCP、Database、Filesystem、HTTP 都应该作为 Adapter 存在。
 
 ---
 
-## 4. Agent 开发规则
+## 5. Agent 开发规则
 
 任何 Agent 任务都应遵循最小上下文原则。
 
@@ -126,7 +150,7 @@ Provider、MCP、Database、Filesystem、HTTP 都应该作为 Adapter 存在。
 
 ---
 
-## 5. 文件与模块约束
+## 6. 文件与模块约束
 
 ### 禁止垃圾桶模块
 
@@ -154,7 +178,7 @@ Provider、MCP、Database、Filesystem、HTTP 都应该作为 Adapter 存在。
 
 ---
 
-## 6. API 与 Contract
+## 7. API 与 Contract
 
 所有新跨模块接口优先定义于稳定 Contract 中。
 
@@ -173,7 +197,7 @@ Contract 应表达：
 
 ---
 
-## 7. Agent Runtime 规则
+## 8. Agent Runtime 规则
 
 新版 Agent 核心必须把一次 Agent 工作视为 `AgentRun`，而不是一次 HTTP 请求。
 
@@ -207,7 +231,7 @@ HTTP Route 最终只负责：
 
 ---
 
-## 8. Model Runtime 规则
+## 9. Model Runtime 规则
 
 新核心中禁止出现：
 
@@ -224,7 +248,7 @@ Provider 只实现统一 Port / Adapter。
 
 ---
 
-## 9. Tool Runtime 规则
+## 10. Tool Runtime 规则
 
 Tool 调用目标生命周期：
 
@@ -245,7 +269,7 @@ MCP 是 Adapter，不是 Agent Core 的基础类型。
 
 ---
 
-## 10. Canvas 规则
+## 11. Canvas 规则
 
 新版 Canvas Core 必须能够脱离 React 独立存在。
 
@@ -264,7 +288,7 @@ Agent 不直接改 React state，而应提交结构化 Canvas Command / Operatio
 
 ---
 
-## 11. Storage 规则
+## 12. Storage 规则
 
 业务代码不能知道数据最终存在：
 
@@ -291,7 +315,7 @@ TEMPORARY MIGRATION ADAPTER
 
 ---
 
-## 12. Task / Workflow 规则
+## 13. Task / Workflow 规则
 
 长任务统一通过 Task Runtime 表达。
 
@@ -311,7 +335,7 @@ cancelled
 
 ---
 
-## 13. 测试规则
+## 14. 测试规则
 
 禁止新增依赖源代码文本的测试，例如：
 
@@ -338,7 +362,7 @@ expect(source).toContain(...)
 
 ---
 
-## 14. 可观测性
+## 15. 可观测性
 
 新 Agent / Tool / Task 路径默认应可追踪。
 
@@ -357,7 +381,7 @@ expect(source).toContain(...)
 
 ---
 
-## 15. 修改策略
+## 16. 修改策略
 
 大型重构必须采用纵向切片。
 
@@ -386,7 +410,7 @@ expect(source).toContain(...)
 
 ---
 
-## 16. Git / 同步 / 发布铁律
+## 17. Git / 同步 / 发布铁律
 
 以下规则继承现有项目，不得擅自改变。
 
@@ -459,7 +483,7 @@ HEAD 与 `origin/main` 应一致，工作区应干净。
 
 ---
 
-## 17. Codex / Coding Agent 每次任务的标准流程
+## 18. Codex / Coding Agent 每次任务的标准流程
 
 ### Step 1 — Understand
 读取规则和相关领域，不要立刻改代码。
@@ -490,7 +514,7 @@ Recommended next phase
 
 ---
 
-## 18. 最高判断标准
+## 19. 最高判断标准
 
 一个新模块是否设计良好，不看它用了多少新技术。
 

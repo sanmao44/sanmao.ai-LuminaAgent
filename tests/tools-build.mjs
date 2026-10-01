@@ -27,6 +27,7 @@ const MODULES = [
   'lib/tools/executor',
   'lib/tools/selector',
   'lib/tools/policy',
+  'lib/tools/call-arguments',
   'lib/tools/mcp-admin',
   'lib/tools/canvas',
   'lib/tools/index',

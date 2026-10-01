@@ -92,13 +92,19 @@ test('同一份文件只收一次；上一轮的旧文件不会重复冒出来',
   });
 });
 
-test('浏览器条目被调用时才导入：其他服务与失败调用都不碰下载目录', () => {
-  assert.match(
-    agentRouteSource,
-    /if \(!result\.isError && server\.catalogId === 'playwright'\) \{/,
-  );
-  assert.match(agentRouteSource, /generatedFiles\.push\(\.\.\.downloaded\.files\);/);
-  assert.match(agentRouteSource, /importBrowserArtifacts\(\{ since: agentTurnStartedAt/);
+test('浏览器下载导入只接受成功结果，失败调用不产生 artifact', async () => {
+  assert.equal(mcp.shouldImportBrowserArtifacts('playwright', false), true);
+  assert.equal(mcp.shouldImportBrowserArtifacts('playwright', true), false);
+  assert.equal(mcp.shouldImportBrowserArtifacts('filesystem', false), false);
+  await withScene(async ({ dataDir, dir, store }) => {
+    const now = Date.now();
+    await writeFile(path.join(dir, 'failed.pdf'), 'NO');
+    await touch(path.join(dir, 'failed.pdf'), now);
+    const failed = await mcp.importBrowserArtifacts({ dataDir, since: now - 1_000, store });
+    assert.equal(failed.files.length, 1);
+    const repeated = await mcp.importBrowserArtifacts({ dataDir, since: now - 1_000, store });
+    assert.equal(repeated.files.length, 0);
+  });
 });
 
 test(`Playwright 自己的会话产物不算用户下载：快照与控制台日志都不收`, async () => {
@@ -119,5 +125,3 @@ test(`Playwright 自己的会话产物不算用户下载：快照与控制台日
     assert.equal(imported.skipped, 0, "会话产物是直接跳过，不算收失败");
   });
 });
-
-const agentRouteSource = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');

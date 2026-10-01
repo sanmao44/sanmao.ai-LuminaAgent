@@ -190,28 +190,29 @@ test('审计写不进去也不能影响调用本身', async () => {
   });
 });
 
-const agentRoute = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
-const resume = await readFile(new URL('../lib/agent/resume.ts', import.meta.url), 'utf8');
-const toolsRoute = await readFile(new URL('../app/api/tools/route.ts', import.meta.url), 'utf8');
+test('每一道 MCP 判定都会以稳定的审计记录落盘，且只保留可展示摘要', async () => {
+  await withDataDir(async (dataDir) => {
+    const at = Date.now();
+    const decisions = ['policy', 'guard', 'block', 'approval', 'rejected', 'call'];
+    for (const decision of decisions) {
+      mcp.recordMcpCall(
+        baseRecord({
+          decision,
+          allowed: decision === 'call' || decision === 'approval',
+          ok: decision === 'call',
+          durationMs: 12,
+          summary: `decision=${decision} token=sk-secret-value`,
+        }),
+        { dataDir, now: () => at },
+      );
+    }
 
-test('每一道判定和执行点都留痕：请求侧与续跑侧都要接上', () => {
-  for (const decision of ['policy', 'guard', 'block', 'call']) {
-    assert.match(agentRoute, new RegExp(`decision: '${decision}'`), `请求侧缺了 ${decision} 的痕迹`);
-  }
-  assert.ok((agentRoute.match(/auditMcpCall\(/g) || []).length >= 5, '一处定义 + 至少四个判定点');
-  assert.match(agentRoute, /let stalledMcpReason = '';/);
-  assert.match(agentRoute, /trackMcpRepeat\(mcpRepeatTracker, mcpCallSignature\(meta\.serverId, meta\.toolName, args\), result\.text\)/);
-  assert.match(agentRoute, /if \(repeats >= TOOL_LOOP_MCP_REPEAT_LIMIT\)/);
-  // 停下来那一轮必须把没执行的 tool_call_id 也补上结果，否则服务商侧会报缺少工具结果。
-  assert.match(agentRoute, /for \(const rest of stepCalls\.slice\(callIndex \+ 1\)\)/);
-  assert.match(agentRoute, /results\.push\(\{ role: 'tool', tool_call_id: rest\.id,/);
-
-  assert.match(resume, /function auditResumeCall\(/);
-  for (const decision of ['guard', 'block', 'rejected', 'approval']) {
-    assert.match(resume, new RegExp(`decision: '${decision}'`), `续跑侧缺了 ${decision} 的痕迹`);
-  }
-
-  assert.match(toolsRoute, /recentCalls: recentMcpCalls\(MCP_AUDIT_RECENT_LIMIT\)/);
-  assert.match(toolsRoute, /toolPolicies: readToolApprovalPolicies\(\)/);
-  assert.match(toolsRoute, /rootEntries,/);
+    const recent = mcp.recentMcpCalls(20, { dataDir });
+    assert.deepEqual(recent.map((entry) => entry.decision), [...decisions].reverse());
+    assert.equal(recent.every((entry) => entry.durationMs === 12), true);
+    assert.equal(recent.every((entry) => !entry.summary.includes('sk-secret-value')), true);
+    assert.equal(recent.every((entry) => Object.keys(entry).sort().join(',') === [
+      'allowed', 'at', 'decision', 'durationMs', 'ok', 'risk', 'serverId', 'serverName', 'summary', 'tool',
+    ].join(',')), true);
+  });
 });

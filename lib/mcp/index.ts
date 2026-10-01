@@ -218,6 +218,7 @@ export {
   importBrowserArtifacts,
   resetBrowserArtifactImports,
   resolveBrowserDownloadDir,
+  shouldImportBrowserArtifacts,
 } from './browser-downloads';
 export type { BrowserArtifactFile, ImportBrowserArtifactsOptions } from './browser-downloads';
 export { MCP_ADMIN_ACTIONS, githubRepoIdentity, runMcpManageAction } from './admin';

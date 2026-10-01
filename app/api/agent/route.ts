@@ -50,6 +50,7 @@ import { extractGithubMcpInstallRequest, isArtifactFollowUpRequest, isImageConti
 import { isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor } from '@/lib/tools';
 import { tabbitBrowserTool } from '@/lib/tools';
 import { resolveToolPolicy } from '@/lib/tools/policy';
+import { parseToolArguments } from '@/lib/tools/call-arguments';
 import { MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, callMcpTool } from '@/lib/mcp/client';
 import { MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime, mcpServersForTurn } from '@/lib/mcp/tools';
 import { listMcpServers } from '@/lib/mcp/store';
@@ -57,7 +58,7 @@ import { BROWSER_TOOL_GUIDE } from '@/lib/mcp/browser-guidance';
 import { TABBIT_BROWSER_TOOL_GUIDE } from '@/lib/mcp/browser-guidance';
 import { BROWSER_EXECUTION_LIMITS, browserExternalBlocker, browserTextNeedsContinuation, browserTextSubmissionGap, type BrowserToolUse } from '@/lib/mcp/browser-guidance';
 import { guardMcpServerCall } from '@/lib/mcp/filesystem-policy';
-import { importBrowserArtifacts } from '@/lib/mcp/browser-downloads';
+import { importBrowserArtifacts, shouldImportBrowserArtifacts } from '@/lib/mcp/browser-downloads';
 import { noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess } from '@/lib/mcp/catalog-remote';
 import { listFilesystemRoots } from '@/lib/mcp/filesystem-roots';
 import { listFilesystemWriteRoots } from '@/lib/mcp/filesystem-roots';
@@ -2016,7 +2017,7 @@ const auditMcpCall = (
 
     const runSkillToolCall = async (call: any): Promise<ChatMessage> => {
       let args: any = {};
-      try { args = JSON.parse(call?.function?.arguments || '{}'); } catch {}
+      args = parseToolArguments(call?.function?.arguments);
       const name = String(call?.function?.name || '');
       const fail = (error: string): ChatMessage => ({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error }) });
       if (!skillContext.settings.enabled) return fail('技能功能已关闭。');
@@ -2098,7 +2099,7 @@ const auditMcpCall = (
     // 打包。执行逻辑抽成独立函数，供首轮与后续的交付物工具轮复用。
     const runArtifactToolCall = async (call: any): Promise<ChatMessage> => {
       let args: any = {};
-      try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
+      args = parseToolArguments(call.function.arguments);
       const toolName = String(call?.function?.name || '');
       // 插图跟随应用设置的图片保存路径，用户改过目录后仍能取到刚生成的图。
       const artifactOptions = { imageRoots: getStorageRoots(executionPublicState.settings.imageStoragePath?.trim() || '') };
@@ -2199,8 +2200,7 @@ const auditMcpCall = (
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: policy.reason }) });
         return { results };
       }
-      let args: any = {};
-      try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
+      let args: any = parseToolArguments(call.function.arguments);
       // MCP 调用先过本机一侧的路径检查（Filesystem 的每个路径、浏览器的上传来源）。
       // 拒绝和「要确认」是两件事：路径不在授权范围内时不给确认入口——用户点一下也不该放行，
       // 应该先把目录授权对了再来。敏感配置（.env 这类）则是停下来问一次。
@@ -2278,7 +2278,7 @@ const auditMcpCall = (
           return { results };
         }
         let patch: unknown = {};
-        try { patch = JSON.parse(call.function.arguments || '{}'); } catch {}
+        patch = parseToolArguments(call.function.arguments);
         const validation = validateCanvasPatch(canvasDocument, patch as CanvasPatch);
         if (!validation.ok) {
           results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: validation.error, operationIndex: validation.operationIndex }) });
@@ -2435,7 +2435,7 @@ const auditMcpCall = (
           // 浏览器下载落在受控目录里：收成 artifact，聊天里才有文件卡片。二进制不进上下文，
           // 模型只知道「下载了哪些文件」，要拿内容得靠 artifactId。
           let browserFiles: string[] = [];
-          if (!result.isError && server.catalogId === 'playwright') {
+          if (shouldImportBrowserArtifacts(server.catalogId, result.isError)) {
             const downloaded = await importBrowserArtifacts({ since: agentTurnStartedAt, max: ARTIFACT_MAX_PER_TURN - generatedFiles.length }).catch(() => ({ files: [], skipped: 0 }));
             generatedFiles.push(...downloaded.files);
             browserDownloadCount += downloaded.files.length;
@@ -2755,7 +2755,7 @@ const auditMcpCall = (
           continue;
         }
         let deferredArgs: any = {};
-        try { deferredArgs = JSON.parse(call.function.arguments || '{}'); } catch {}
+        deferredArgs = parseToolArguments(call.function.arguments);
         // 等待期间用户可能改过授权目录，这里按同一套规则重算一遍再入队。
         const deferredGuard = guardMcpCall(deferredMeta, deferredArgs);
         if (!deferredGuard.ok) {

@@ -7,14 +7,15 @@
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
 | Phase 1 Agent Runtime | 垂直切片完成，迁移进行中 | 紧凑非流式纯文本路径已接入；Tool、Streaming、Artifact、Browser、Filesystem 和 Route 编排仍为 Legacy。 |
-| Phase 2 Test Decoupling | 尚未完成 | 已有大量源码结构断言；需先补行为覆盖，再逐类移除。 |
+| Phase 2 Test Decoupling | 本轮完成 Agent / Tool / MCP 最小切片，整体仍在进行 | Tool registry、policy、loop、参数归一化与 MCP client/audit 行为已覆盖；其余 Agent/UI/Route 结构断言仍按领域迁移。 |
 | Phase 3 Storage Boundary | 垂直切片完成，迁移进行中 | 会话、workspace、provider state、视频/超分 Task 已经使用 Repository；Clone、Progress、artifact/media 等仍直连。 |
 | Phase 4 Task Runtime | 垂直切片完成，迁移进行中 | 状态/取消/重试判断已复用 Runtime；polling、持久化和专用 wire status 仍保留。 |
 | Phase 5 Provider Runtime | 垂直切片完成，迁移进行中 | 一条文本 Agent 路径使用 ModelRuntime；routing、failover、streaming、image/video/search 仍为 Legacy。 |
 | Phase 6 Tool Runtime | 尚未开始 | 需要先建立统一 Tool Runtime boundary，再接入真实 Native/MCP 路径。 |
 | Phase 7 Canvas Core | 局部接入，未完成 | CanvasCore 已被 SuperCanvas 使用，但 React document/selection/viewport/history 仍是主要 Source of Truth。 |
 | Phase 8–9 UI cleanup | 垂直切片完成，迁移进行中 | shell、sidebar、Agent presentation 已拆出；`app/page.tsx` 仍是 composition root 和状态 owner。 |
-| Round 7 Architecture Audit | 本轮完成 | 已形成迁移矩阵；本轮不修改产品代码。 |
+| Round 7 Architecture Audit | 已完成 | 已形成迁移矩阵；本轮不修改产品代码。 |
+| Round 8 Agent / Tool / MCP test seam | 本轮完成 | 将 Tool/MCP 关键断言移到真实模块行为；仅保留最小参数 seam，未开始 Tool Runtime / Agent Runtime 大迁移。 |
 
 后续执行遵循纵向切片原则：先补行为覆盖，再收敛一个边界；不因审计结论跳过 Tool Runtime 或提前删除 Legacy。
 

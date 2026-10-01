@@ -12,7 +12,6 @@ import test from 'node:test';
 import { buildMcpModule } from './tools-build.mjs';
 
 const mcp = await buildMcpModule();
-const agentRoute = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
 const resume = await readFile(new URL('../lib/agent/resume.ts', import.meta.url), 'utf8');
 const toolsRoute = await readFile(new URL('../app/api/tools/route.ts', import.meta.url), 'utf8');
 
@@ -238,10 +237,9 @@ test('没有授权目录时 Filesystem 不进工具表，授权后带上目录�
   });
 });
 
-test('授权目录变化后，read/resume/tools 三处都要走同一套路径策略', () => {
-  assert.match(agentRoute, /const guard = guardMcpCall\(mcpGuardMeta, args\);/);
-  assert.match(agentRoute, /sensitiveHint: mcpGuardApproval/);
-  assert.match(agentRoute, /const mcpFilesystemRoots = mcpAllowedThisTurn \? listFilesystemRoots\(\) : \[\];/);
+test('授权目录变化后，Filesystem guard 对读写路径保持同一套策略', () => {
+  assert.equal(typeof mcp.guardMcpServerCall, 'function');
+  assert.equal(mcp.guardMcpServerCall({ catalogId: 'filesystem' }, 'read_file', { path: 'relative.txt' }, { roots: [] }).ok, false);
   assert.match(resume, /const guardOptions = \{ roots: listFilesystemRoots\(\), writeRoots: listFilesystemWriteRoots\(\), dataDir: resolveLocalDataDir\(\) \};/);
   assert.equal((resume.match(/guardMcpServerCall\(server, meta\.toolName, args, guardOptions\)/g) || []).length, 2);
   assert.match(toolsRoute, /if \(action === 'roots-add'\) addFilesystemRoot\(data\?\.path, \{ write: data\?\.write === true \}\);/);
