@@ -198,7 +198,8 @@ async function callPoll(provider: Awaited<ReturnType<typeof getProviderWithKey>>
 
 async function persistResult(task: VideoTask, result: VideoProviderTask) {
   const state = await getPublicState();
-  const stored = await persistGeneratedVideos(result.videos, state.settings.videoStoragePath);
+  const shouldNormalizeAspect = /agnes-video-2\.5/i.test(task.providerModel || '');
+  const stored = await persistGeneratedVideos(result.videos, state.settings.videoStoragePath, shouldNormalizeAspect ? { aspectRatio: task.input.aspectRatio } : undefined);
   const remoteVideoUrls = result.videos.map((video) => video.url);
   const videoUrls = stored.videos.map((video) => video.url);
   const completedAt = new Date().toISOString();
@@ -235,7 +236,8 @@ export async function saveVideoTaskLocally(id: string) {
     ? task.remoteVideoUrls
     : (task.videoUrls || []).filter((url) => /^https?:\/\//i.test(url));
   if (!remoteVideoUrls.length) throw new Error('该任务没有可保存的远程视频地址');
-  const stored = await persistGeneratedVideos(remoteVideoUrls.map((url) => ({ url })), (await getPublicState()).settings.videoStoragePath);
+  const shouldNormalizeAspect = /agnes-video-2\.5/i.test(task.providerModel || '');
+  const stored = await persistGeneratedVideos(remoteVideoUrls.map((url) => ({ url })), (await getPublicState()).settings.videoStoragePath, shouldNormalizeAspect ? { aspectRatio: task.input.aspectRatio } : undefined);
   return updateVideoTask(id, {
     ...(stored.storageError ? {
       error: stored.storageError,
@@ -267,7 +269,15 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
   if (!runtime) throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
   assertGenericInputLimits(options.input);
   const baseModelLimits = getVideoModelLimits(runtime.model, runtime.provider);
-  const input = await prepareVideoInputMedia(cleanInput(options.input, baseModelLimits.fixedSeconds || 5));
+  const cleanedInput = cleanInput(options.input, baseModelLimits.fixedSeconds || 5);
+  const input = await prepareVideoInputMedia(cleanedInput, {
+    // Agnes 2.5 gives reference media a strong composition prior.  Put the
+    // source on the requested canvas before submission so a landscape source
+    // cannot silently override an explicit portrait request.
+    aspectRatio: (isAgnesProvider(runtime.provider) || runtime.provider.videoTransport === 'agnes-videos') && /agnes-video-2\.5/i.test(runtime.model.rawId)
+      ? cleanedInput.aspectRatio
+      : undefined,
+  });
   const modelLimits = isJimengProvider(runtime.provider) ? effectiveJimengLimits(input, baseModelLimits) : baseModelLimits;
   if (!input.prompt) throw new Error('请输入视频提示词');
   if (is65535Provider(runtime.provider) || isJimengProvider(runtime.provider)) validateModelInput(input, options.input, modelLimits, isJimengProvider(runtime.provider) ? '即梦' : '65535');

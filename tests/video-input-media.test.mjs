@@ -45,3 +45,27 @@ test('leaves already-safe video images unchanged', async () => {
   assert.equal(result.changed, false);
   assert.equal(result.value, value);
 });
+
+test('frames a landscape reference on the requested portrait canvas', async () => {
+  const source = await sharp({
+    create: { width: 1400, height: 788, channels: 3, background: { r: 96, g: 120, b: 180 } },
+  }).png().toBuffer();
+  const result = await media.fitVideoReferenceToAspect(dataUrl(source), '9:16');
+  const output = await decodeDataUrl(result.value);
+  const metadata = await sharp(output).metadata();
+
+  assert.equal(result.changed, true);
+  assert.ok(metadata.width && metadata.height);
+  assert.ok(Math.abs((metadata.width / metadata.height) - (9 / 16)) < 0.01);
+});
+
+test('keeps a reference unchanged when it already matches the requested ratio', async () => {
+  const source = await sharp({
+    create: { width: 900, height: 1600, channels: 3, background: { r: 20, g: 30, b: 40 } },
+  }).png().toBuffer();
+  const value = dataUrl(source);
+  const result = await media.fitVideoReferenceToAspect(value, '9:16');
+
+  assert.equal(result.changed, false);
+  assert.equal(result.value, value);
+});

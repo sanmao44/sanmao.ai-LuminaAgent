@@ -17,6 +17,8 @@ const { main: mediaLibrary, load } = await buildLibModules(
     'lib/data-paths',
     'lib/media-paths',
     'lib/image-storage',
+    'lib/video-aspect-normalizer',
+    'lib/video-trim-service',
     'lib/video-storage',
     'lib/audio-storage',
     'lib/media-library',

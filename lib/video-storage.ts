@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { GeneratedVideo } from './types';
 import { knownMediaRoots, mediaDirectory } from './media-paths';
 import { resolveLocalDataDir } from './data-paths';
+import { normalizeVideoAspect } from './video-aspect-normalizer';
 
 const dataDir = resolveLocalDataDir();
 const MAX_VIDEO_BYTES = 1024 * 1024 * 1024;
@@ -60,7 +61,7 @@ async function loadVideo(url: string): Promise<LoadedVideo> {
   return { buffer, ext: extensionFromContentType(response.headers.get('content-type') || '') || extensionFromUrl(url) || 'mp4' };
 }
 
-export async function persistGeneratedVideos(videos: GeneratedVideo[], configuredPath?: string) {
+export async function persistGeneratedVideos(videos: GeneratedVideo[], configuredPath?: string, options: { aspectRatio?: string } = {}) {
   const root = path.resolve(configuredPath?.trim() || configuredRoot());
   await mkdir(root, { recursive: true });
   const writtenFiles: string[] = [];
@@ -69,11 +70,12 @@ export async function persistGeneratedVideos(videos: GeneratedVideo[], configure
   const saved = await Promise.all(videos.map(async (video, index): Promise<PersistedVideo | null> => {
     try {
       const loaded = await loadVideo(video.url);
-      const name = `${Date.now()}-${randomUUID()}.${loaded.ext}`;
+      const normalized = await normalizeVideoAspect(loaded.buffer, loaded.ext, options.aspectRatio);
+      const name = `${Date.now()}-${randomUUID()}.${normalized.ext}`;
       const file = path.join(root, name);
       const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
       temporaryFiles.push(temporary);
-      await writeFile(temporary, loaded.buffer, { flag: 'wx' });
+      await writeFile(temporary, normalized.buffer, { flag: 'wx' });
       await rename(temporary, file);
       writtenFiles.push(file);
       return { ...video, url: `/api/storage/video?name=${encodeURIComponent(name)}`, localPath: file };
