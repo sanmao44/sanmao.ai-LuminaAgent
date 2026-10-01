@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.67",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.67",
+  "latestVersion": "0.7.68",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.68",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.67/SANMAO.AI-0.7.67.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.68/SANMAO.AI-0.7.68.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.67/SANMAO.AI-0.7.67.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.67/SANMAO.AI-0.7.67.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.67/SANMAO.AI-0.7.67.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.68/SANMAO.AI-0.7.68.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.68/SANMAO.AI-0.7.68.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.68/SANMAO.AI-0.7.68.zip"
   ],
   "sha256": "e2c20bdc79529dc777410d96eb590cff651005327766176a9971546871cdedef",
-  "publishedAt": "2026-09-30T06:11:27Z",
+  "publishedAt": "2026-10-01T00:00:00Z",
   "notes": [
     "建立 Agent Runtime 垂直切片：引入 AgentRun、Context、Policy、Model Runtime 与 Tool Runtime Contract，并接入真实 Agent 路径。",
     "建立统一 Task Runtime 生命周期，统一媒体任务、Agent 进度、取消与重试状态，减少各业务独立维护状态机。",
