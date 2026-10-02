@@ -1,18 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.72",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.72",
+  "latestVersion": "0.7.73",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.73",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.72/SANMAO.AI-0.7.72.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.73/SANMAO.AI-0.7.73.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.72/SANMAO.AI-0.7.72.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.72/SANMAO.AI-0.7.72.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.72/SANMAO.AI-0.7.72.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.73/SANMAO.AI-0.7.73.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.73/SANMAO.AI-0.7.73.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.73/SANMAO.AI-0.7.73.zip"
   ],
   "sha256": "277ed9f281a8e226e21388323c7e9b3972f082c850e12457def2af76b4a3f98f",
-  "publishedAt": "2026-10-02T06:17:35Z",
+  "publishedAt": "2026-10-02T13:05:35Z",
   "notes": [
-    "Canvas Core authority migration：画布文档、历史与 Agent 目标编辑进一步收敛到 Core，修复画布编辑器关闭与紧凑布局。",
+    "Canvas Core authority 收敛：Document、History、Selection 保持单一 ownership，更新 Agent 目标编辑与相关行为测试。",
+    "画布图片编辑器尺寸、折叠高度、紧凑布局与粘贴处理修复。",
     "Tool Runtime Consolidation：统一 Tool policy、dispatch、execution adapter 与 Tool Loop，缩减 Agent Route 中的重复编排。",
     "美化画布局部编辑按钮：编辑与删除操作改为清晰的左右分段控件，避免删除按钮悬浮遮挡文字。",
     "建立 Agent Runtime 垂直切片：引入 AgentRun、Context、Policy、Model Runtime 与 Tool Runtime Contract，并接入真实 Agent 路径。",
