@@ -56,11 +56,42 @@ export class CanvasCore<TDocument extends CanvasCoreDocument> {
   private selected: CanvasCoreSelection = emptySelection();
   private past: TDocument[] = [];
   private future: TDocument[] = [];
+  private readonly listeners = new Set<() => void>();
   private readonly maxHistory: number;
 
   constructor(document: TDocument, options: { maxHistory?: number } = {}) {
     this.current = document;
     this.maxHistory = Math.max(1, Math.floor(options.maxHistory ?? 60));
+  }
+
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify() {
+    for (const listener of this.listeners) listener();
+  }
+
+  private reconcileSelection() {
+    const nodeIds = new Set(this.current.nodes.map((node) => node.id));
+    const groupIds = new Set(this.current.groups.map((group) => group.id));
+    const edgeIds = new Set(this.current.edges.map((edge) => edge.id));
+    const next = {
+      nodeIds: this.selected.nodeIds.filter((id) => nodeIds.has(id)),
+      ...(this.selected.groupId && groupIds.has(this.selected.groupId)
+        ? { groupId: this.selected.groupId }
+        : {}),
+      ...(this.selected.edgeId && edgeIds.has(this.selected.edgeId)
+        ? { edgeId: this.selected.edgeId }
+        : {}),
+    };
+    const changed =
+      next.nodeIds.length !== this.selected.nodeIds.length ||
+      next.groupId !== this.selected.groupId ||
+      next.edgeId !== this.selected.edgeId;
+    this.selected = next;
+    return changed;
   }
 
   document() {
@@ -82,6 +113,8 @@ export class CanvasCore<TDocument extends CanvasCoreDocument> {
   /** Synchronize with a legacy adapter update without creating a second history entry. */
   sync(document: TDocument) {
     this.current = document;
+    this.reconcileSelection();
+    this.notify();
     return this.current;
   }
 
@@ -90,6 +123,8 @@ export class CanvasCore<TDocument extends CanvasCoreDocument> {
     if (options.clearHistory) this.clearHistory();
     else if (!options.preserveHistory) this.future = [];
     this.current = document;
+    this.reconcileSelection();
+    this.notify();
     return this.current;
   }
 
@@ -97,20 +132,26 @@ export class CanvasCore<TDocument extends CanvasCoreDocument> {
   record() {
     this.pushPast(this.current);
     this.future = [];
+    this.notify();
     return this.history();
   }
 
   setSelection(selection: CanvasCoreSelection) {
+    const nodeIds = new Set(this.current.nodes.map((node) => node.id));
+    const groupIds = new Set(this.current.groups.map((group) => group.id));
+    const edgeIds = new Set(this.current.edges.map((edge) => edge.id));
     this.selected = {
-      nodeIds: [...new Set(selection.nodeIds)],
-      ...(selection.groupId ? { groupId: selection.groupId } : {}),
-      ...(selection.edgeId ? { edgeId: selection.edgeId } : {}),
+      nodeIds: [...new Set(selection.nodeIds)].filter((id) => nodeIds.has(id)),
+      ...(selection.groupId && groupIds.has(selection.groupId) ? { groupId: selection.groupId } : {}),
+      ...(selection.edgeId && edgeIds.has(selection.edgeId) ? { edgeId: selection.edgeId } : {}),
     };
+    this.notify();
     return this.selected;
   }
 
   setViewport(viewport: CanvasCoreViewport) {
     this.current = { ...this.current, camera: { ...viewport } };
+    this.notify();
     return this.current.camera;
   }
 
@@ -123,15 +164,19 @@ export class CanvasCore<TDocument extends CanvasCoreDocument> {
     this.pushPast(this.current);
     this.current = next;
     this.future = [];
+    this.reconcileSelection();
+    this.notify();
     return { document: next, changed: true };
   }
 
   undo() {
     const previous = this.past.at(-1);
     if (!previous) return null;
-    this.future = [...this.future, this.current];
+    this.future = [...this.future, this.snapshotDocument(this.current)];
     this.past = this.past.slice(0, -1);
     this.current = previous;
+    this.reconcileSelection();
+    this.notify();
     return this.current;
   }
 
@@ -141,15 +186,27 @@ export class CanvasCore<TDocument extends CanvasCoreDocument> {
     this.past = [...this.past, this.current].slice(-this.maxHistory);
     this.future = this.future.slice(0, -1);
     this.current = next;
+    this.reconcileSelection();
+    this.notify();
     return this.current;
   }
 
   clearHistory() {
     this.past = [];
     this.future = [];
+    this.notify();
   }
 
   private pushPast(document: TDocument) {
-    this.past = [...this.past, document].slice(-this.maxHistory);
+    // History entries are owned snapshots. This protects nested node data,
+    // edges, and groups if a legacy adapter mutates a document in place after
+    // the boundary was recorded.
+    this.past = [...this.past, this.snapshotDocument(document)].slice(-this.maxHistory);
+  }
+
+  private snapshotDocument(document: TDocument) {
+    return typeof structuredClone === "function"
+      ? structuredClone(document)
+      : JSON.parse(JSON.stringify(document)) as TDocument;
   }
 }

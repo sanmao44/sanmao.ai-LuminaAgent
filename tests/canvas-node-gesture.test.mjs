@@ -109,7 +109,6 @@ test("group blank areas use an independent group context menu", () => {
   assert.match(component, /ariaLabel=\{`\$\{group\.name\}对象组右键菜单`\}/);
   assert.match(component, /const group = groupForNode\(document, node\.id\);/);
   assert.match(component, /\{group && \([\s\S]*?className="canvas-node-group-remove"/);
-  assert.match(component, /groupById\((?:docRef\.current|current), id\)\?\.id \|\|[\s\S]*groupForNode\((?:docRef\.current|current), id\)\?\.id/);
   assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
 
   assert.match(component, /label: "下载"/);

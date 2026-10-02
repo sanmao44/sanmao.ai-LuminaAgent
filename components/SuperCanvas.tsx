@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type ChangeEvent as ReactChangeEvent,
   type ClipboardEvent as ReactClipboardEvent,
@@ -1803,6 +1804,7 @@ type CanvasVariantRequirementsEditorProps = {
   value: string;
   references: readonly ReferenceMentionOption[];
   onChange: (value: string) => void;
+  onPasteFiles?: (files: File[]) => void;
   ariaLabel: string;
   className?: string;
   menuClassName?: string;
@@ -1814,6 +1816,7 @@ const CanvasVariantRequirementsEditor = memo(function CanvasVariantRequirementsE
   value,
   references,
   onChange,
+  onPasteFiles,
   ariaLabel,
   className = "",
   menuClassName = "",
@@ -1886,6 +1889,18 @@ const CanvasVariantRequirementsEditor = memo(function CanvasVariantRequirementsE
   }, [commitRows, rowState.rows]);
 
   const handlePaste = useCallback((index: number, event: ReactClipboardEvent<HTMLDivElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .flatMap((item) => {
+        const file = item.getAsFile();
+        return file ? [file] : [];
+      });
+    if (files.length) {
+      event.preventDefault();
+      event.stopPropagation();
+      onPasteFiles?.(files);
+      return;
+    }
     const pastedText = event.clipboardData.getData("text/plain");
     if (!pastedText) return;
     const normalizedText = pastedText.replace(/\r\n?/g, "\n");
@@ -1898,7 +1913,7 @@ const CanvasVariantRequirementsEditor = memo(function CanvasVariantRequirementsE
     const nextRows = rowState.rows.slice();
     nextRows.splice(index, 1, ...pastedRows);
     commitRows(nextRows, index + pastedRows.length - 1);
-  }, [commitRows, references, rowState.rows]);
+  }, [commitRows, onPasteFiles, references, rowState.rows]);
 
   return (
     <div className={`canvas-variant-list-editor ${className}`.trim()}>
@@ -1922,6 +1937,7 @@ const CanvasVariantRequirementsEditor = memo(function CanvasVariantRequirementsE
                 className="canvas-variant-list-row-editor"
                 menuClassName={menuClassName}
                 menuPortal={menuPortal}
+                allowRichPaste={false}
                 placeholder={isTailRow ? "按回车新增下一条" : `输入第 ${index + 1} 条`}
                 transformPastedText={(text) => replaceNaturalReferenceLabels(text, references).value}
                 onChange={(nextValue) => updateRow(index, nextValue)}
@@ -2921,8 +2937,20 @@ export default function SuperCanvas() {
   const lastNodePressRef = useRef<{ nodeId: string; at: number } | null>(null);
   const canvasPointerDownRef = useRef<{ pointerId: number; interactive: boolean } | null>(null);
   const canvasClipboardRef = useRef<CanvasClipboardPayload | null>(null);
-  const docRef = useRef<CanvasDocument>(normalizeDocument(null));
-  const canvasCoreRef = useRef(new CanvasCore<CanvasDocument>(docRef.current));
+  const initialDocumentRef = useRef<CanvasDocument>(normalizeDocument(null));
+  const canvasCoreRef = useRef(new CanvasCore<CanvasDocument>(initialDocumentRef.current));
+  const subscribeCanvasCore = useCallback(
+    (listener: () => void) => canvasCoreRef.current.subscribe(listener),
+    [],
+  );
+  const getCanvasDocument = useCallback(
+    () => canvasCoreRef.current.document(),
+    [],
+  );
+  const getCanvasSelection = useCallback(
+    () => canvasCoreRef.current.selection(),
+    [],
+  );
   const saveTimerRef = useRef<number | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
   const pendingZoomCameraRef = useRef<CanvasCamera | null>(null);
@@ -2950,10 +2978,47 @@ export default function SuperCanvas() {
   const [projects, setProjects] = useState<CanvasProject[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("");
   const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext>(() => readWorkspaceContext());
-  const [document, setDocument] = useState<CanvasDocument>(docRef.current);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const document = useSyncExternalStore(
+    subscribeCanvasCore,
+    getCanvasDocument,
+    getCanvasDocument,
+  );
+  const canvasSelection = useSyncExternalStore(
+    subscribeCanvasCore,
+    getCanvasSelection,
+    getCanvasSelection,
+  );
+  const selectedIds = useMemo(() => new Set(canvasSelection.nodeIds), [canvasSelection.nodeIds]);
+  const selectedGroupId = canvasSelection.groupId || null;
+  const selectedEdgeId = canvasSelection.edgeId || null;
+  const setSelectedIds = useCallback(
+    (value: Set<string> | ((current: Set<string>) => Set<string>)) => {
+      const current = new Set(canvasCoreRef.current.selection().nodeIds);
+      const next = typeof value === "function" ? value(current) : value;
+      canvasCoreRef.current.setSelection({
+        ...canvasCoreRef.current.selection(),
+        nodeIds: [...next],
+      });
+    },
+    [],
+  );
+  const setSelectedGroupId = useCallback((value: string | null) => {
+    canvasCoreRef.current.setSelection({
+      ...canvasCoreRef.current.selection(),
+      groupId: value || undefined,
+    });
+  }, []);
+  const setSelectedEdgeId = useCallback(
+    (value: string | null | ((current: string | null) => string | null)) => {
+      const current = canvasCoreRef.current.selection().edgeId || null;
+      const next = typeof value === "function" ? value(current) : value;
+      canvasCoreRef.current.setSelection({
+        ...canvasCoreRef.current.selection(),
+        edgeId: next || undefined,
+      });
+    },
+    [],
+  );
   const [referencePicker, setReferencePicker] = useState<CanvasReferencePicker | null>(null);
   const [referencePickerHoverNodeId, setReferencePickerHoverNodeId] = useState<string | null>(null);
   const [referencePickerFlashNodeId, setReferencePickerFlashNodeId] = useState<string | null>(null);
@@ -3197,7 +3262,7 @@ export default function SuperCanvas() {
   );
   const openCanvasVideoClipEditor = useCallback(
     (nodeId: string) => {
-      const node = nodeById(docRef.current, nodeId);
+      const node = nodeById(canvasCoreRef.current.document(), nodeId);
       if (node?.type !== "media" || node.data.kind !== "video" || !node.data.url) {
         return;
       }
@@ -3211,7 +3276,7 @@ export default function SuperCanvas() {
   );
   const openCanvasAngleConsole = useCallback(
     (nodeId: string) => {
-      const node = nodeById(docRef.current, nodeId);
+      const node = nodeById(canvasCoreRef.current.document(), nodeId);
       if (!node || node.type !== "angle") return;
       closeCanvasOverlayConflicts();
       setSelectedIds(new Set([nodeId]));
@@ -3223,7 +3288,7 @@ export default function SuperCanvas() {
   );
   const openImageAngleConsole = useCallback(
     (nodeId: string) => {
-      const node = nodeById(docRef.current, nodeId);
+      const node = nodeById(canvasCoreRef.current.document(), nodeId);
       if (!node || !isCanvasReadyImageSource(node)) return;
       closeCanvasOverlayConflicts();
       setSelectedIds(new Set([nodeId]));
@@ -3545,8 +3610,6 @@ export default function SuperCanvas() {
       next.groups === previous.groups
     ) {
       canvasCoreRef.current.replace(next, options);
-      docRef.current = next;
-      setDocument(next);
       return;
     }
     // Dragging/resizing rewrites node positions while preserving node identity,
@@ -3560,8 +3623,6 @@ export default function SuperCanvas() {
       canvasNodesPositionOnly(previous, next)
     ) {
       canvasCoreRef.current.replace(next, options);
-      docRef.current = next;
-      setDocument(next);
       return;
     }
     const normalized = normalizeCanvasDocumentLayers(
@@ -3570,14 +3631,10 @@ export default function SuperCanvas() {
     );
     setEditorDrafts((current) => syncCanvasEditorDraftInputModes(current, normalized, runtime));
     canvasCoreRef.current.replace(normalized, options);
-    docRef.current = normalized;
-    setDocument(normalized);
   }, [runtime]);
   const replaceDoc = useCallback((next: CanvasDocument) => {
     const normalized = syncCanvasVideoEditorReferences(syncCanvasVideoReferences(normalizeDocument(next), runtime));
     canvasCoreRef.current.replace(normalized, { clearHistory: true });
-    docRef.current = normalized;
-    setDocument(normalized);
     setHistoryVersion((value) => value + 1);
   }, [runtime]);
   const focusCanvasStage = useCallback(() => {
@@ -3640,7 +3697,7 @@ export default function SuperCanvas() {
   }, []);
   const openImagePanorama = useCallback(
     (nodeId: string) => {
-      const node = nodeById(docRef.current, nodeId);
+      const node = nodeById(canvasCoreRef.current.document(), nodeId);
       if (!node || !isCanvasReadyImageSource(node)) {
         notify("请先选择一张已完成的图片。", "error");
         return;
@@ -3655,7 +3712,7 @@ export default function SuperCanvas() {
   );
   const openOneClickCinematic = useCallback(
     (nodeId: string) => {
-      const node = nodeById(docRef.current, nodeId);
+      const node = nodeById(canvasCoreRef.current.document(), nodeId);
       if (!node || !isCanvasReadyImageSource(node)) {
         notify("请先准备好一张已完成的图片。", "error");
         return;
@@ -3677,7 +3734,7 @@ export default function SuperCanvas() {
       requestedRole?: CanvasInputRole,
     ) => {
       const result = connectCanvasNodesInDocument(
-        docRef.current,
+        canvasCoreRef.current.document(),
         sourceId,
         targetId,
         sourcePort,
@@ -3712,7 +3769,7 @@ export default function SuperCanvas() {
   );
   const beginReferencePicker = useCallback(
     (targetId: string, mode: CanvasReferencePicker["mode"], role?: CanvasInputRole) => {
-      const target = nodeById(docRef.current, targetId);
+      const target = nodeById(canvasCoreRef.current.document(), targetId);
       const targetKind = target && (target.type === "media" || target.type === "generator")
         ? target.data.kind
         : undefined;
@@ -3870,8 +3927,6 @@ export default function SuperCanvas() {
         const recovered = recoverInterruptedCanvasDocument(initial);
         const initialDocument = syncCanvasVideoEditorReferences(recovered.document);
         canvasCoreRef.current.replace(initialDocument, { clearHistory: true });
-        docRef.current = initialDocument;
-        setDocument(initialDocument);
         setProjects(storage.projects);
         setActiveProjectId(storage.activeId);
         if (showRecoveryNotice && storage.migrated) notify("已将 NOVA 画布项目迁移到 SANMAO.AI");
@@ -3943,7 +3998,7 @@ export default function SuperCanvas() {
    */
   const healedRemoteMediaRef = useRef(new Set<string>());
   const healRemoteNodeMedia = useCallback(async () => {
-    const remoteUrls = canvasRemoteMediaUrls(docRef.current.nodes)
+    const remoteUrls = canvasRemoteMediaUrls(canvasCoreRef.current.document().nodes)
       .filter((url) => !healedRemoteMediaRef.current.has(url));
     if (!remoteUrls.length) return;
     remoteUrls.slice(0, 16).forEach((url) => healedRemoteMediaRef.current.add(url));
@@ -3964,7 +4019,7 @@ export default function SuperCanvas() {
   // ids with the server log and let the terminal result update the node.
   const reconcileBackgroundCanvasTasks = useCallback(async () => {
     if (!ready || !mountedRef.current) return;
-    const candidates = docRef.current.nodes.filter((node) => {
+    const candidates = canvasCoreRef.current.document().nodes.filter((node) => {
       if (node.type !== "prompt" && node.type !== "media") return false;
       if (node.type === "media" && node.data.kind !== "image") return false;
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "").trim();
@@ -4048,8 +4103,6 @@ export default function SuperCanvas() {
     if (synchronized !== currentDocument) {
       const normalized = normalizeCanvasDocumentLayers(currentDocument, synchronized);
       canvasCoreRef.current.replace(normalized);
-      docRef.current = normalized;
-      setDocument(normalized);
     }
     const pending = canvasCoreRef.current.document().nodes.filter((node) =>
       node.type === "upscale" &&
@@ -4282,7 +4335,7 @@ export default function SuperCanvas() {
     if (safeHeight < 120) return;
 
     const size = nodeSize(node);
-    const camera = docRef.current.camera;
+    const camera = canvasCoreRef.current.document().camera;
     const nextZoom = clamp(
       Math.min(
         camera.zoom,
@@ -4472,7 +4525,7 @@ export default function SuperCanvas() {
         }),
       );
     }
-    const occupied = [...docRef.current.nodes, ...extraOccupied].map((item) => {
+    const occupied = [...canvasCoreRef.current.document().nodes, ...extraOccupied].map((item) => {
       const metric = nodeSize(item);
       return { x: item.x, y: item.y, w: metric.w, h: metric.h };
     });
@@ -4491,7 +4544,7 @@ export default function SuperCanvas() {
     );
   }, []);
   const applyPanoramaView = useCallback(async (sourceNodeId: string, snapshot: PanoramaSnapshot) => {
-    const source = nodeById(docRef.current, sourceNodeId);
+    const source = nodeById(canvasCoreRef.current.document(), sourceNodeId);
     if (!source || !isCanvasReadyImageSource(source) || source.data.kind !== "image" || !source.data.url)
       throw new Error("原全景图片已不可用，请关闭后重新打开查看器。");
     if (!snapshot.dataUrl || snapshot.width < 1 || snapshot.height < 1)
@@ -4504,7 +4557,7 @@ export default function SuperCanvas() {
     );
     if (asset.kind !== "image") throw new Error("当前视角未能保存为图片素材，请重试。");
 
-    const currentSource = nodeById(docRef.current, sourceNodeId);
+    const currentSource = nodeById(canvasCoreRef.current.document(), sourceNodeId);
     if (!currentSource || !isCanvasReadyImageSource(currentSource) || currentSource.data.kind !== "image")
       throw new Error("原全景图片已被移除，未创建新的平面图片节点。");
 
@@ -4572,7 +4625,7 @@ export default function SuperCanvas() {
   }, [addLog, commit, notify, openNodePosition, runtime]);
   const selectNode = useCallback((node: CanvasNode, additive = false) => {
     setSelectedEdgeId(null);
-    const group = groupForNode(docRef.current, node.id);
+    const group = groupForNode(canvasCoreRef.current.document(), node.id);
     if (group) {
       setSelectedIds((current) => {
         if (
@@ -4747,7 +4800,7 @@ export default function SuperCanvas() {
       );
       lastNodePressRef.current = { nodeId: node.id, at: now };
       selectNode(node, event.shiftKey);
-      const group = groupForNode(docRef.current, node.id);
+      const group = groupForNode(canvasCoreRef.current.document(), node.id);
       const groupId = group?.id;
       const ids =
         event.shiftKey && group
@@ -4764,14 +4817,14 @@ export default function SuperCanvas() {
               ? [...selectedIds].filter((id) => id !== node.id)
               : [...new Set([...selectedIds, node.id])]
             : groupId && selectedGroupId === groupId
-              ? groupNodes(docRef.current, groupId).map((item) => item.id)
+              ? groupNodes(canvasCoreRef.current.document(), groupId).map((item) => item.id)
               : selectedIds.has(node.id) && selectedIds.size > 1
                 ? [...selectedIds]
                 : [node.id];
       const dragIds = groupId ? [node.id] : ids;
       const positions = Object.fromEntries(
         dragIds.map((id) => {
-          const item = nodeById(docRef.current, id);
+          const item = nodeById(canvasCoreRef.current.document(), id);
           return [id, { x: item?.x || 0, y: item?.y || 0 }];
         }),
       );
@@ -4844,7 +4897,7 @@ export default function SuperCanvas() {
       setCursorTask("dragging");
       const positions = Object.fromEntries(
         ids.map((id) => {
-          const item = nodeById(docRef.current, id);
+          const item = nodeById(canvasCoreRef.current.document(), id);
           return [id, { x: item?.x || 0, y: item?.y || 0 }];
         }),
       );
@@ -4871,14 +4924,14 @@ export default function SuperCanvas() {
       event.preventDefault();
       event.stopPropagation();
       setCursorTask("resizing");
-      const bounds = groupBounds(docRef.current, group.id);
+      const bounds = groupBounds(canvasCoreRef.current.document(), group.id);
       const origin = {
         x: bounds.x + CANVAS_GROUP_INSETS.left,
         y: bounds.y + CANVAS_GROUP_INSETS.top,
       };
       const nodes = Object.fromEntries(
         group.nodeIds.flatMap((id) => {
-          const node = nodeById(docRef.current, id);
+          const node = nodeById(canvasCoreRef.current.document(), id);
           if (!node) return [];
           const size = nodeSize(node);
           return [[id, { x: node.x, y: node.y, w: size.w, h: size.h }]];
@@ -5004,7 +5057,7 @@ export default function SuperCanvas() {
         "startX" in interaction ? event.clientX - interaction.startX : 0;
       const dy =
         "startY" in interaction ? event.clientY - interaction.startY : 0;
-      const zoom = docRef.current.camera.zoom;
+      const zoom = canvasCoreRef.current.document().camera.zoom;
       if (interaction.kind === "nodePress") {
         const distance = Math.hypot(dx, dy);
         const elapsed = Date.now() - interaction.startTime;
@@ -5046,7 +5099,7 @@ export default function SuperCanvas() {
           recordHistory();
           if (interaction.copyOnMove) {
             const copies = duplicateNodes(
-              docRef.current,
+              canvasCoreRef.current.document(),
               interaction.nodeIds,
               { x: 0, y: 0 },
               interaction.preserveInputConnections,
@@ -5059,10 +5112,10 @@ export default function SuperCanvas() {
             interaction.copyOnMove = false;
             interaction.originGroupId = undefined;
             setDoc({
-              ...docRef.current,
-              nodes: [...docRef.current.nodes, ...copies.nodes],
-              edges: [...docRef.current.edges, ...copies.edges],
-              groups: [...docRef.current.groups, ...copies.groups],
+              ...canvasCoreRef.current.document(),
+              nodes: [...canvasCoreRef.current.document().nodes, ...copies.nodes],
+              edges: [...canvasCoreRef.current.document().edges, ...copies.edges],
+              groups: [...canvasCoreRef.current.document().groups, ...copies.groups],
             });
             setSelectedIds(new Set(copies.ids));
             setDraggingNodeIds(new Set(copies.ids));
@@ -5089,7 +5142,7 @@ export default function SuperCanvas() {
           );
           const snapResult = snapEnabled
             ? snapCanvasNodePositions(
-                docRef.current.nodes.map((node) => {
+                canvasCoreRef.current.document().nodes.map((node) => {
                   const size = nodeSize(node);
                   return {
                     id: node.id,
@@ -5201,8 +5254,8 @@ export default function SuperCanvas() {
         const right = Math.max(start.x, point.x);
         const top = Math.min(start.y, point.y);
         const bottom = Math.max(start.y, point.y);
-        const camera = docRef.current.camera;
-        const ids = docRef.current.nodes
+        const camera = canvasCoreRef.current.document().camera;
+        const ids = canvasCoreRef.current.document().nodes
           .filter((node) => {
             const x = node.x * camera.zoom + camera.x;
             const y = node.y * camera.zoom + camera.y;
@@ -5254,7 +5307,7 @@ export default function SuperCanvas() {
       const interaction = interactionRef.current;
       if (!interaction || interaction.pointerId !== event.pointerId) return;
       if (interaction.kind === "nodePress") {
-        const node = nodeById(docRef.current, interaction.nodeId);
+        const node = nodeById(canvasCoreRef.current.document(), interaction.nodeId);
         if (node) {
           if (interaction.doubleClick) {
             cancelPendingNodeClick();
@@ -5331,7 +5384,7 @@ export default function SuperCanvas() {
       if (interaction.kind === "drag" && interaction.changed) {
         const point = stageToWorld(stagePoint(event.clientX, event.clientY));
         const draggedNodes = interaction.nodeIds
-          .map((id) => nodeById(docRef.current, id))
+          .map((id) => nodeById(canvasCoreRef.current.document(), id))
           .filter(Boolean) as CanvasNode[];
         if (draggedNodes.length) {
           const bounds = draggedNodes.reduce(
@@ -5361,8 +5414,8 @@ export default function SuperCanvas() {
           };
           const dropTarget = interaction.originGroupId
             ? undefined
-            : groupAtPoint(docRef.current, dropPoint);
-          const before = docRef.current;
+            : groupAtPoint(canvasCoreRef.current.document(), dropPoint);
+          const before = canvasCoreRef.current.document();
           let after = before;
           if (interaction.originGroupId) {
             const originGroup = groupById(before, interaction.originGroupId);
@@ -5528,7 +5581,7 @@ export default function SuperCanvas() {
       // on the latest effective camera (including an update waiting for the
       // next frame) instead of a stale render closure, then commit once per
       // animation frame.
-      const currentCamera = pendingZoomCameraRef.current || docRef.current.camera;
+      const currentCamera = pendingZoomCameraRef.current || canvasCoreRef.current.document().camera;
       const before = {
         x: (point.x - currentCamera.x) / currentCamera.zoom,
         y: (point.y - currentCamera.y) / currentCamera.zoom,
@@ -5615,7 +5668,7 @@ export default function SuperCanvas() {
     (ids?: string[], rightInset = canvasRightOverlayInset(stageRef.current)) => {
       const targets = ids?.length
         ? ids
-        : docRef.current.nodes.map((node) => node.id);
+        : canvasCoreRef.current.document().nodes.map((node) => node.id);
       const rect = stageRef.current?.getBoundingClientRect();
       const width = rect?.width || 1200;
       const height = rect?.height || 760;
@@ -5627,7 +5680,7 @@ export default function SuperCanvas() {
         }));
         return;
       }
-      const bounds = targets.map((id) => entityBounds(docRef.current, id));
+      const bounds = targets.map((id) => entityBounds(canvasCoreRef.current.document(), id));
       const minX = Math.min(...bounds.map((item) => item.x));
       const minY = Math.min(...bounds.map((item) => item.y));
       const maxX = Math.max(...bounds.map((item) => item.x + item.w));
@@ -5655,15 +5708,15 @@ export default function SuperCanvas() {
   const arrangeCanvasAction = useCallback((modeOverride?: CanvasArrangeMode) => {
     const selected = selectedIds.size ? [...selectedIds] : undefined;
     const activeGroup = selectedGroupId
-      ? groupById(docRef.current, selectedGroupId)
+      ? groupById(canvasCoreRef.current.document(), selectedGroupId)
       : undefined;
     const mode = activeGroup ? modeOverride || arrangeMode : undefined;
     const stageRect = stageRef.current?.getBoundingClientRect();
     const aspectRatio =
       stageRect && stageRect.height > 0 ? stageRect.width / stageRect.height : 1.6;
     const result = activeGroup
-      ? arrangeCanvasGroup(docRef.current, activeGroup.id, mode)
-      : arrangeCanvas(docRef.current, selected, undefined, { aspectRatio });
+      ? arrangeCanvasGroup(canvasCoreRef.current.document(), activeGroup.id, mode)
+      : arrangeCanvas(canvasCoreRef.current.document(), selected, undefined, { aspectRatio });
     if (result.changed) {
       recordHistory();
       setDoc(result.document);
@@ -5709,7 +5762,7 @@ export default function SuperCanvas() {
           ? [...selectedIds]
           : [];
       if (!ids.length) return;
-      const current = docRef.current;
+      const current = canvasCoreRef.current.document();
       const entityIds = [
         ...new Set(
           ids.map((id) =>
@@ -5753,7 +5806,7 @@ export default function SuperCanvas() {
       if (selectedGroupId || selectedNodes.length < 2) return;
       const option = CANVAS_ALIGNMENT_OPTIONS.find((item) => item.value === alignment);
       const result = alignCanvasNodes(
-        docRef.current,
+        canvasCoreRef.current.document(),
         [...selectedIds],
         alignment,
       );
@@ -5776,7 +5829,7 @@ export default function SuperCanvas() {
         (item) => item.value === direction,
       );
       const result = distributeCanvasNodes(
-        docRef.current,
+        canvasCoreRef.current.document(),
         [...selectedIds],
         direction,
       );
@@ -5820,14 +5873,14 @@ export default function SuperCanvas() {
         const source = selectedSingle && isCanvasReadyImageSource(selectedSingle) ? selectedSingle : undefined;
         const connected = source
           ? connectCanvasNodesInDocument(
-              { ...docRef.current, nodes: [...docRef.current.nodes, node] },
+              { ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, node] },
               source.id,
               node.id,
               "right",
               "left",
               runtime,
             )
-          : { ok: true, document: { ...docRef.current, nodes: [...docRef.current.nodes, node] } };
+          : { ok: true, document: { ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, node] } };
         if (!connected.ok) {
           notify(connected.reason || "无法创建角度控制节点。", "error");
           return;
@@ -5846,7 +5899,7 @@ export default function SuperCanvas() {
         const point = position ? seed : openNodePosition(seed, draft);
         const node = { ...draft, x: point.x, y: point.y };
         const source = selectedSingle && isCanvasReadyImageSource(selectedSingle) ? selectedSingle : undefined;
-        const connected = source ? addEdge({ ...docRef.current, nodes: [...docRef.current.nodes, node] }, source.id, node.id, "right", "left", "manual", "upscale-image") : { ...docRef.current, nodes: [...docRef.current.nodes, node] };
+        const connected = source ? addEdge({ ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, node] }, source.id, node.id, "right", "left", "manual", "upscale-image") : { ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, node] };
         commit(() => connected);
         setSelectedIds(new Set([node.id]));
         setSelectedGroupId(null);
@@ -5900,21 +5953,21 @@ export default function SuperCanvas() {
   const connectNewNode = useCallback(
     (kind: ConnectableNodeKind, picker: ConnectionNodePicker) => {
       if (
-        !nodeById(docRef.current, picker.sourceId) &&
-        !groupById(docRef.current, picker.sourceId)
+        !nodeById(canvasCoreRef.current.document(), picker.sourceId) &&
+        !groupById(canvasCoreRef.current.document(), picker.sourceId)
       ) {
         setConnectionNodePicker(null);
         return notify("源节点已不存在，请重新发起连线。", "error");
       }
-      if (kind === "upscale" && groupById(docRef.current, picker.sourceId)) {
+      if (kind === "upscale" && groupById(canvasCoreRef.current.document(), picker.sourceId)) {
         setConnectionNodePicker(null);
         return notify("对象组不能作为超分输入，请连接单张图片", "error");
       }
-      if (kind === "angle" && groupById(docRef.current, picker.sourceId)) {
+      if (kind === "angle" && groupById(canvasCoreRef.current.document(), picker.sourceId)) {
         setConnectionNodePicker(null);
         return notify("对象组不能作为角度控制输入，请连接单张图片", "error");
       }
-      const sourceNode = nodeById(docRef.current, picker.sourceId);
+      const sourceNode = nodeById(canvasCoreRef.current.document(), picker.sourceId);
       if (
         kind === "upscale" &&
         !isCanvasReadyImageSource(sourceNode)
@@ -5955,7 +6008,7 @@ export default function SuperCanvas() {
       const node = { ...draft, x: point.x, y: point.y };
       const targetPort = picker.sourcePort === "right" ? "left" : "right";
       const connected = connectCanvasNodesInDocument(
-        { ...docRef.current, nodes: [...docRef.current.nodes, node] },
+        { ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, node] },
         picker.sourceId,
         node.id,
         picker.sourcePort,
@@ -5989,7 +6042,7 @@ export default function SuperCanvas() {
     notify(`已删除 ${count} 个对象`);
   }, [clearSelection, commit, notify, selectedIds]);
   const deleteEmptyContentNodes = useCallback(() => {
-    const ids = docRef.current.nodes
+    const ids = canvasCoreRef.current.document().nodes
       .filter(isCanvasEmptyContentNode)
       .map((node) => node.id);
     if (!ids.length) {
@@ -6003,7 +6056,7 @@ export default function SuperCanvas() {
   const duplicateSelection = useCallback(() => {
     if (!selectedIds.size) return;
     const copies = duplicateNodes(
-      docRef.current,
+      canvasCoreRef.current.document(),
       [...selectedIds],
       { x: 48, y: 48 },
       true,
@@ -6028,7 +6081,7 @@ export default function SuperCanvas() {
   const makeGroup = useCallback(() => {
     if (selectedIds.size < 2)
       return notify("请先选择至少 2 个对象再成组。", "error");
-    const next = createGroup(docRef.current, [...selectedIds]);
+    const next = createGroup(canvasCoreRef.current.document(), [...selectedIds]);
     const group = next.groups.at(-1);
     commit(() => next);
     if (group) {
@@ -6042,14 +6095,14 @@ export default function SuperCanvas() {
     // 只认这个字段会让 Ctrl+Shift+G 时灵时不灵；这里按当前选中范围反推出要解散的分组。
     const groupsInSelection = new Set<string>();
     for (const nodeId of selectedIds) {
-      const group = groupForNode(docRef.current, nodeId);
+      const group = groupForNode(canvasCoreRef.current.document(), nodeId);
       if (group) groupsInSelection.add(group.id);
     }
     const id =
       [
         selectedGroupId,
         groupsInSelection.size === 1 ? [...groupsInSelection][0] : null,
-      ].find((candidate) => candidate && groupById(docRef.current, candidate)) ||
+      ].find((candidate) => candidate && groupById(canvasCoreRef.current.document(), candidate)) ||
       null;
     if (!id) {
       notify("请先选中一个对象组再解散。", "error");
@@ -6076,11 +6129,11 @@ export default function SuperCanvas() {
   }, [clearSelection, commit, notify, selectedGroupId, selectedIds]);
   const removeNodeFromGroup = useCallback(
     (nodeId: string) => {
-      const node = nodeById(docRef.current, nodeId);
-      const group = groupForNode(docRef.current, nodeId);
+      const node = nodeById(canvasCoreRef.current.document(), nodeId);
+      const group = groupForNode(canvasCoreRef.current.document(), nodeId);
       if (!node || !group) return;
-      const next = detachNodesFromGroups(docRef.current, [nodeId]);
-      if (next === docRef.current) return;
+      const next = detachNodesFromGroups(canvasCoreRef.current.document(), [nodeId]);
+      if (next === canvasCoreRef.current.document()) return;
       commit(() => next);
       setSelectedGroupId(null);
       setSelectedIds(new Set([nodeId]));
@@ -6095,7 +6148,7 @@ export default function SuperCanvas() {
         setProjectMenuOpen(false);
         return;
       }
-      saveCanvasDocument(activeProjectId, docRef.current);
+      saveCanvasDocument(activeProjectId, canvasCoreRef.current.document());
       const next = loadCanvasDocument(id);
       replaceDoc(next);
       setActiveProjectId(id);
@@ -6151,7 +6204,7 @@ export default function SuperCanvas() {
       label: `V${nextIndex}`,
       createdAt: now,
       ...(project?.versions?.at(-1)?.id ? { parentVersionId: project.versions.at(-1)!.id } : {}),
-      snapshot: snapshot(docRef.current),
+      snapshot: snapshot(canvasCoreRef.current.document()),
     });
     if (!next) return notify("当前项目还没有可保存的版本", "error");
     if (!saveCreativeProjects(next)) return notify("版本保存失败，请先导出工作流 JSON", "error");
@@ -6357,7 +6410,7 @@ export default function SuperCanvas() {
 
   const copySelection = useCallback(async () => {
     if (!selectedIds.size) return notify("请先选择要复制的节点。", "error");
-    const payload = createCanvasClipboardPayload(docRef.current, [
+    const payload = createCanvasClipboardPayload(canvasCoreRef.current.document(), [
       ...selectedIds,
     ]);
     canvasClipboardRef.current = payload;
@@ -6588,7 +6641,7 @@ export default function SuperCanvas() {
 
   const deckSource = useCallback((request?: CanvasGenerationRequest): CanvasDeckSource => {
     const activeNode = request?.nodeId
-      ? nodeById(docRef.current, request.nodeId)
+      ? nodeById(canvasCoreRef.current.document(), request.nodeId)
       : selectedSingle;
     const promptOverride =
       request?.nodeId && activeNode?.id === request.nodeId
@@ -6959,7 +7012,7 @@ export default function SuperCanvas() {
         if (
           target.data.kind === "video" &&
           settings.kind === "video" &&
-          canvasVideoTargetHasImageReference(docRef.current, target)
+          canvasVideoTargetHasImageReference(canvasCoreRef.current.document(), target)
         ) {
           updateDoc((valueDoc) => ({
             ...valueDoc,
@@ -6992,7 +7045,7 @@ export default function SuperCanvas() {
           return;
         }
         const targetKind = target.data.kind === "video" ? "video" : "image";
-        const references = incomingReferences(docRef.current, target.id)
+        const references = incomingReferences(canvasCoreRef.current.document(), target.id)
           .map(canvasReferenceDraftFromNode)
           .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
         const draft = reuseDraftFromNode(
@@ -7035,7 +7088,7 @@ export default function SuperCanvas() {
 
   const pollVideo = useCallback(
     async (nodeId: string, taskId: string) => {
-      if (!mountedRef.current || !nodeById(docRef.current, nodeId)) return;
+      if (!mountedRef.current || !nodeById(canvasCoreRef.current.document(), nodeId)) return;
       const startedAt =
         pollStartedAtRef.current.get(taskId) || Date.now();
       pollStartedAtRef.current.set(taskId, startedAt);
@@ -7186,7 +7239,7 @@ export default function SuperCanvas() {
       retryIndices?: number[],
       mode: "all" | "failed" | "pending" = retryIndices ? "failed" : "all",
     ) => {
-      const generator = nodeById(docRef.current, generatorId);
+      const generator = nodeById(canvasCoreRef.current.document(), generatorId);
       if (!generator || generator.type !== "generator") {
         notify("变体生成器已不存在，请重新选择节点。", "error");
         return;
@@ -7293,7 +7346,7 @@ export default function SuperCanvas() {
         });
         return { ...value, nodes: nextNodes };
       };
-      const incoming = incomingContext(docRef.current, generatorId);
+      const incoming = incomingContext(canvasCoreRef.current.document(), generatorId);
       const candidateNodes = (mentionCandidates.length ? mentionCandidates : incoming)
         .filter((node) => node.id !== generatorId && isCanvasMentionableNode(node));
       const candidateReferences = candidateNodes
@@ -7388,7 +7441,7 @@ export default function SuperCanvas() {
           context,
         );
       };
-      let nextResultPlacement = docRef.current.nodes.filter(
+      let nextResultPlacement = canvasCoreRef.current.document().nodes.filter(
         (node) =>
           node.type === "media" &&
           node.data.generation?.sourceGeneratorId === generatorId,
@@ -7602,7 +7655,7 @@ export default function SuperCanvas() {
               const videoInputs = resolveCanvasVideoInputs(
                 linked,
                 videoParams.inputMode,
-                canvasInputRolesForTarget(docRef.current, generatorId),
+                canvasInputRolesForTarget(canvasCoreRef.current.document(), generatorId),
                 { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos, maxAudios: videoLimits.maxAudios, supportsAudio: canvasVideoInputCapabilities(videoParams, runtime).supportsAudio },
               );
               const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits, videoParams.operation);
@@ -7792,7 +7845,7 @@ export default function SuperCanvas() {
         notify("只有已完成的图片或视频节点可以复用参数。", "error");
         return;
       }
-      const linkedReferences = incomingReferences(docRef.current, source.id)
+      const linkedReferences = incomingReferences(canvasCoreRef.current.document(), source.id)
         .map(canvasReferenceDraftFromNode)
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
       const draft = reuseDraftFromNode(
@@ -7951,7 +8004,7 @@ export default function SuperCanvas() {
 
   const addReuseReferenceNode = useCallback(
     (nodeId: string) => {
-      const node = nodeById(docRef.current, nodeId);
+      const node = nodeById(canvasCoreRef.current.document(), nodeId);
       const reference = node ? canvasReferenceDraftFromNode(node) : null;
       if (reference) addReuseReferences([reference]);
     },
@@ -8026,7 +8079,7 @@ export default function SuperCanvas() {
 
   const reverseReusePrompt = useCallback(async () => {
     if (!reuseDraft) return;
-    const source = reuseDraft.sourceNodeId ? nodeById(docRef.current, reuseDraft.sourceNodeId) : undefined;
+    const source = reuseDraft.sourceNodeId ? nodeById(canvasCoreRef.current.document(), reuseDraft.sourceNodeId) : undefined;
     const images = [
       source && source.type === "media" && source.data.url ? { url: String(source.data.url), name: String(source.data.name || "当前图片") } : null,
       ...reuseDraft.references.filter((reference) => reference.kind === "image").map((reference) => ({ url: reference.url, name: reference.name })),
@@ -8081,7 +8134,7 @@ export default function SuperCanvas() {
     })));
     const prompt = resolveCanvasImagePresetPrompt(promptWithReferences, presetId, customImagePresets);
     const source = draft.sourceNodeId
-      ? nodeById(docRef.current, draft.sourceNodeId)
+      ? nodeById(canvasCoreRef.current.document(), draft.sourceNodeId)
       : undefined;
     if (!source || source.type !== "media" || source.data.kind !== "image" || !source.data.url) {
       return notify("图片续生成需要一个已完成的图片节点。", "error");
@@ -8169,7 +8222,7 @@ export default function SuperCanvas() {
 
     for (const [index, reference] of selectedReferences.entries()) {
       const existing = reference.nodeId
-        ? nodeById(docRef.current, reference.nodeId)
+        ? nodeById(canvasCoreRef.current.document(), reference.nodeId)
         : undefined;
       if (reference.kind === "text") {
         if (existing?.type === "prompt" && String(existing.data.text || existing.data.agentResponse || "").trim()) {
@@ -8290,9 +8343,9 @@ export default function SuperCanvas() {
       ...referenceEdges.map((edge) => ({ ...edge, target: pendingPositioned.id })),
     ];
     const initialDocument: CanvasDocument = {
-      ...docRef.current,
-      nodes: [...docRef.current.nodes, ...materializedReferences, pendingPositioned],
-      edges: [...docRef.current.edges, ...inputEdges],
+      ...canvasCoreRef.current.document(),
+      nodes: [...canvasCoreRef.current.document().nodes, ...materializedReferences, pendingPositioned],
+      edges: [...canvasCoreRef.current.document().edges, ...inputEdges],
     };
     generationKeysRef.current.add(activeKey);
     setGenerationKeys(new Set(generationKeysRef.current));
@@ -8419,7 +8472,7 @@ export default function SuperCanvas() {
         return next;
       });
       const usedReferenceNodes = resolvedReferenceIds
-        .map((id) => nodeById(docRef.current, id) || materializedReferences.find((node) => node.id === id))
+        .map((id) => nodeById(canvasCoreRef.current.document(), id) || materializedReferences.find((node) => node.id === id))
         .filter((node): node is CanvasNode => Boolean(node));
       void recordCanvasImages(result.images, {
         prompt,
@@ -8497,7 +8550,7 @@ export default function SuperCanvas() {
     })));
     const activeKey = `reuse:${draft.sourceNodeId || draft.kind}`;
     if (generationKeysRef.current.has(activeKey)) return notify("这个复用任务正在生成，请稍候。", "error");
-    const source = draft.sourceNodeId ? nodeById(docRef.current, draft.sourceNodeId) : undefined;
+    const source = draft.sourceNodeId ? nodeById(canvasCoreRef.current.document(), draft.sourceNodeId) : undefined;
     const sourcePosition = source || selectedSingle;
     const outputPosition = sourcePosition
       ? { x: sourcePosition.x + nodeSize(sourcePosition).w + 90, y: sourcePosition.y }
@@ -8505,7 +8558,7 @@ export default function SuperCanvas() {
     const materializedReferences: CanvasNode[] = [];
     const resolvedReferenceIds: string[] = [];
     for (const [index, reference] of selectedReferences.entries()) {
-      const existing = reference.nodeId ? nodeById(docRef.current, reference.nodeId) : undefined;
+      const existing = reference.nodeId ? nodeById(canvasCoreRef.current.document(), reference.nodeId) : undefined;
       if (existing?.type === "media" && existing.data.url) {
         resolvedReferenceIds.push(existing.id);
         continue;
@@ -8553,7 +8606,7 @@ export default function SuperCanvas() {
     const reuseInputMode = (draft.params as VideoCreationSettings).inputMode;
     let imageInputPosition = 0;
     const initialEdges: CanvasEdge[] = referenceByIndex.map(({ id }, index) => {
-      const sourceNode = nodeById(docRef.current, id) || materializedReferences.find((node) => node.id === id);
+      const sourceNode = nodeById(canvasCoreRef.current.document(), id) || materializedReferences.find((node) => node.id === id);
       const inputRole = sourceNode && reuseInputMode
         ? inferCanvasInputRole(sourceNode, output, reuseInputMode, sourceNode.data.kind === "image" ? imageInputPosition : index)
         : sourceNode
@@ -8568,9 +8621,9 @@ export default function SuperCanvas() {
     });
     if (source) initialEdges.push({ id: uid("edge"), source: source.id, target: output.id, sourcePort: "right", targetPort: "left", kind: "lineage" });
     const initialDocument: CanvasDocument = {
-      ...docRef.current,
-      nodes: [...docRef.current.nodes, ...materializedReferences, output],
-      edges: [...docRef.current.edges, ...initialEdges],
+      ...canvasCoreRef.current.document(),
+      nodes: [...canvasCoreRef.current.document().nodes, ...materializedReferences, output],
+      edges: [...canvasCoreRef.current.document().edges, ...initialEdges],
     };
     generationKeysRef.current.add(activeKey);
     setGenerationKeys(new Set(generationKeysRef.current));
@@ -8584,7 +8637,7 @@ export default function SuperCanvas() {
       const videoLimits = getVideoModelLimits(resolvedVideoModel.model || undefined, videoProvider);
       const videoInputs = resolveCanvasVideoInputs(
         referenceByIndex
-          .map(({ id }) => nodeById(docRef.current, id) || materializedReferences.find((node) => node.id === id))
+          .map(({ id }) => nodeById(canvasCoreRef.current.document(), id) || materializedReferences.find((node) => node.id === id))
           .filter((node): node is CanvasNode => Boolean(node)),
         params.inputMode,
         new Map(initialEdges.map((edge) => [edge.source, edge.inputRole])),
@@ -8701,7 +8754,7 @@ export default function SuperCanvas() {
 
   const runGeneration = useCallback(async (request?: CanvasGenerationRequest) => {
     const requestedNode = request?.nodeId
-      ? nodeById(docRef.current, request.nodeId)
+      ? nodeById(canvasCoreRef.current.document(), request.nodeId)
       : selectedSingle;
     if (requestedNode?.type === "media" && requestedNode.data.kind === "audio") {
       notify("音频节点是独立素材输入，请将它连接到视频节点后生成。", "error");
@@ -8722,7 +8775,7 @@ export default function SuperCanvas() {
         return notify("音频节点只能作为视频参考输入，不能直接生成新分支。", "error");
       }
       const targetKind = selectedMediaTarget.data.kind === "video" ? "video" : "image";
-      const references = incomingReferences(docRef.current, selectedMediaTarget.id)
+      const references = incomingReferences(canvasCoreRef.current.document(), selectedMediaTarget.id)
         .map(canvasReferenceDraftFromNode)
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
       const draft = reuseDraftFromNode(
@@ -8773,7 +8826,7 @@ export default function SuperCanvas() {
       if (generationKeysRef.current.has(activeKey))
         return notify("这个 Agent 节点正在回复。", "error");
       const incoming = source.node
-        ? incomingContext(docRef.current, source.node.id)
+        ? incomingContext(canvasCoreRef.current.document(), source.node.id)
         : selectedNodes;
       const explicitReferenceNodes = request?.referenceNodeIds
         ? request.referenceNodeIds
@@ -8933,7 +8986,7 @@ export default function SuperCanvas() {
           }
         });
         const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
-        const parent = nodeById(docRef.current, inputId) || inputNode;
+        const parent = nodeById(canvasCoreRef.current.document(), inputId) || inputNode;
         const responseText = String(finalEventReceived ? finalEventText : response.message || "").trim();
         if (!responseText) throw new Error("Agent 没有返回有效结果，请重试。");
         const effectiveModelRecord = runtime?.models.find(
@@ -9046,7 +9099,7 @@ export default function SuperCanvas() {
         const pending = Boolean(error && typeof error === "object" && (error as { agentPending?: boolean }).agentPending)
           || /Agent 请求超时|Agent 流式响应不完整|请求已中断|请求已取消|连接中断|后台处理中/i.test(message);
         if (pending) {
-          const currentNode = nodeById(docRef.current, inputId);
+          const currentNode = nodeById(canvasCoreRef.current.document(), inputId);
           const currentJobId = String(currentNode?.data.jobId || currentNode?.data.generation?.taskId || "");
           if (currentNode?.data.status === "completed" || (currentJobId && currentJobId !== agentRunId)) return;
           updateDoc((value) => ({
@@ -9062,7 +9115,7 @@ export default function SuperCanvas() {
         // A late transport/caption failure must not overwrite a newer result
         // for this node (for example, when the provider completed the image
         // after the original stream had already been interrupted).
-        const currentNode = nodeById(docRef.current, inputId);
+        const currentNode = nodeById(canvasCoreRef.current.document(), inputId);
         const currentJobId = String(currentNode?.data.jobId || currentNode?.data.generation?.taskId || "");
         if (currentNode?.data.status === "completed" || (currentJobId && currentJobId !== agentRunId)) return;
         updateDoc((value) => ({
@@ -9092,7 +9145,7 @@ export default function SuperCanvas() {
     }
     const kind = source.kind as CanvasMediaKind;
     const ownerId = source.node?.id || sourceTarget?.id;
-    const incoming = ownerId ? incomingContext(docRef.current, ownerId) : [];
+    const incoming = ownerId ? incomingContext(canvasCoreRef.current.document(), ownerId) : [];
     const currentVideoIsSource = sourceTarget?.data.kind === "video" &&
       (source.params as VideoCreationSettings).operation !== "generate";
     const currentTargetInput = sourceTarget?.data.url &&
@@ -9176,7 +9229,7 @@ export default function SuperCanvas() {
       ? resolveCanvasVideoInputs(
           linked,
           videoParams.inputMode,
-          ownerId ? canvasInputRolesForTarget(docRef.current, ownerId) : undefined,
+          ownerId ? canvasInputRolesForTarget(canvasCoreRef.current.document(), ownerId) : undefined,
           { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos, maxAudios: videoLimits.maxAudios, supportsAudio: canvasVideoInputCapabilities(videoParams, runtime).supportsAudio },
         )
       : undefined;
@@ -9668,7 +9721,7 @@ export default function SuperCanvas() {
       settings: CinematicOpeningSettings,
       selection: OneClickCinematicVideoSelection,
     ) => {
-      const source = nodeById(docRef.current, sourceInput.id) || sourceInput;
+      const source = nodeById(canvasCoreRef.current.document(), sourceInput.id) || sourceInput;
       if (!isCanvasReadyImageSource(source)) {
         notify("参考图片已不可用，请先准备好一张已完成的图片。", "error");
         return;
@@ -9733,7 +9786,7 @@ export default function SuperCanvas() {
           agnesFrameRate: selection.agnesFrameRate || baseParams.agnesFrameRate,
         } : {}),
       };
-      const previousConcepts = docRef.current.nodes
+      const previousConcepts = canvasCoreRef.current.document().nodes
         .filter((node) => node.id !== source.id && node.data.generation?.generationType === "one_click_cinematic" && node.data.generation?.sourceImageNodeId === source.id)
         .map((node) => String(node.data.generation?.directorPlan && typeof node.data.generation.directorPlan === "object"
           ? (node.data.generation.directorPlan as { concept?: { title?: string; visualIdea?: string } }).concept?.visualIdea || (node.data.generation.directorPlan as { concept?: { title?: string } }).concept?.title || ""
@@ -9769,7 +9822,7 @@ export default function SuperCanvas() {
         referenceOrder: [source.id],
       });
       const initialDocument = addEdge(
-        { ...docRef.current, nodes: [...docRef.current.nodes, output] },
+        { ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, output] },
         source.id,
         output.id,
         "right",
@@ -9778,7 +9831,7 @@ export default function SuperCanvas() {
         inputMode === "first-frame" ? "first-frame" : "reference-image",
         0,
       );
-      if (initialDocument.nodes.length === docRef.current.nodes.length) {
+      if (initialDocument.nodes.length === canvasCoreRef.current.document().nodes.length) {
         notify("无法建立图片到视频的参考连线。", "error");
         return;
       }
@@ -9903,7 +9956,7 @@ export default function SuperCanvas() {
         const pending = Boolean(error && typeof error === "object" && (error as { agentPending?: boolean }).agentPending)
           || /Agent 请求超时|Agent 流式响应不完整|请求已中断|请求已取消|连接中断|后台处理中/i.test(message);
         if (pending) {
-          const currentOutput = nodeById(docRef.current, output.id);
+          const currentOutput = nodeById(canvasCoreRef.current.document(), output.id);
           const currentJobId = String(currentOutput?.data.jobId || currentOutput?.data.generation?.taskId || "");
           if (currentOutput?.data.status === "completed" || (currentJobId && currentJobId !== directorRunId)) return;
           updateOutput({ status: "running", statusLabel: "任务仍在后台处理中，请勿重复提交", processingStartedAt: Date.now() }, { taskId: directorRunId, updatedAt: Date.now() });
@@ -9911,7 +9964,7 @@ export default function SuperCanvas() {
           addLog("一键成片导演任务仍在后台处理中");
           return;
         }
-        const currentOutput = nodeById(docRef.current, output.id);
+        const currentOutput = nodeById(canvasCoreRef.current.document(), output.id);
         const currentJobId = String(currentOutput?.data.jobId || currentOutput?.data.generation?.taskId || "");
         if (currentOutput?.data.status === "completed" || (currentJobId && currentJobId !== directorRunId)) return;
         updateOutput({ status: "failed", statusLabel: message }, { error: message, updatedAt: Date.now() });
@@ -10002,7 +10055,7 @@ export default function SuperCanvas() {
         if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
         return;
       }
-      const connectedReferences = incomingReferences(docRef.current, node.id);
+      const connectedReferences = incomingReferences(canvasCoreRef.current.document(), node.id);
       if (
         node.type === "media" &&
         node.data.url &&
@@ -10012,7 +10065,7 @@ export default function SuperCanvas() {
         openReuseDraft(node);
         return;
       }
-      if (canvasVideoTargetHasImageReference(docRef.current, node))
+      if (canvasVideoTargetHasImageReference(canvasCoreRef.current.document(), node))
         setReuseDraft((current) => current?.sourceNodeId === node.id ? null : current);
       if (node.type === "media" && node.data.kind === "image") {
         openImageEditor(node);
@@ -10049,7 +10102,7 @@ export default function SuperCanvas() {
 
   useEffect(() => {
     if (!pendingClickNodeId) return;
-    const node = nodeById(docRef.current, pendingClickNodeId);
+    const node = nodeById(canvasCoreRef.current.document(), pendingClickNodeId);
     setPendingClickNodeId(null);
     if (node && (expandedEditorId !== node.id || node.type === "video-editor")) toggleEditor(node);
   }, [expandedEditorId, pendingClickNodeId, toggleEditor]);
@@ -10061,7 +10114,7 @@ export default function SuperCanvas() {
         ...current,
         [node.id]: { ...current[node.id], prompt: value },
       }));
-      const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, node);
+      const inPlaceVideo = canvasVideoTargetHasImageReference(canvasCoreRef.current.document(), node);
       if (reuseDraft?.sourceNodeId === node.id && !inPlaceVideo) {
         setReuseDraft((current) =>
           current?.sourceNodeId === node.id
@@ -10114,7 +10167,7 @@ export default function SuperCanvas() {
         ...current,
         [node.id]: { ...current[node.id], prompt: editorPromptFor(node), params: clone(settings) },
       }));
-      const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, node);
+      const inPlaceVideo = canvasVideoTargetHasImageReference(canvasCoreRef.current.document(), node);
       if (reuseDraft?.sourceNodeId === node.id && !inPlaceVideo) {
         setReuseDraft((current) =>
           current?.sourceNodeId === node.id
@@ -10150,7 +10203,7 @@ export default function SuperCanvas() {
 
   const focusAgentDockNodes = useCallback(
     (ids: string[]) => {
-      const targets = ids.filter((id) => Boolean(nodeById(docRef.current, id)));
+      const targets = ids.filter((id) => Boolean(nodeById(canvasCoreRef.current.document(), id)));
       if (!targets.length) {
         /* 面板里的定位入口记的是节点 id：撤销或删除之后按钮还在，点了却没反应最让人迷惑。 */
         if (ids.length) notify("这些节点已经不在画布上了", "error");
@@ -10229,7 +10282,7 @@ export default function SuperCanvas() {
       if (!incoming.length) return [];
       const runContext = meta.runContext;
       const anchor = runContext
-        ? (runContext.anchorNodeId ? nodeById(docRef.current, runContext.anchorNodeId) || null : null)
+        ? (runContext.anchorNodeId ? nodeById(canvasCoreRef.current.document(), runContext.anchorNodeId) || null : null)
         : selectedSingle || selectedNodes[0] || null;
       const origin = anchor
         ? { x: anchor.x, y: anchor.y }
@@ -10364,16 +10417,16 @@ export default function SuperCanvas() {
     ): CanvasAgentDockPlanResult => {
       const validImages = images.filter((image) => Boolean(String(image.url || "").trim()));
       const plannedTargetIds = [...new Set((plan.targetNodeIds || []).filter(Boolean))];
-      const targetIds = plannedTargetIds.filter((id) => Boolean(nodeById(docRef.current, id)));
+      const targetIds = plannedTargetIds.filter((id) => Boolean(nodeById(canvasCoreRef.current.document(), id)));
       if (plannedTargetIds.length && targetIds.length !== plannedTargetIds.length) {
         notify("画布内容已经变化，原操作计划中的节点不再完整，已取消应用", "error");
         return { ids: [], error: "画布内容已经变化，请重新选择节点并生成操作计划" };
       }
       const targetSet = new Set(targetIds);
       const anchor = targetIds.length
-        ? nodeById(docRef.current, targetIds[0])
+        ? nodeById(canvasCoreRef.current.document(), targetIds[0])
         : runContext
-          ? (runContext.anchorNodeId ? nodeById(docRef.current, runContext.anchorNodeId) || null : null)
+          ? (runContext.anchorNodeId ? nodeById(canvasCoreRef.current.document(), runContext.anchorNodeId) || null : null)
           : selectedSingle || selectedNodes[0] || null;
       const imageSettings = readSharedCreationSettings("image", runtime);
       const referenceIds = runContext
@@ -10391,7 +10444,7 @@ export default function SuperCanvas() {
             projectId: agentWorkspaceContext.creativeProjectId,
             canvasId: agentWorkspaceContext.canvasId,
           };
-      let next = docRef.current;
+      let next = canvasCoreRef.current.document();
       const created: CanvasNode[] = [];
       let duplicatedIds: string[] = [];
       let duplicatedGroupIds: string[] = [];
@@ -10690,7 +10743,7 @@ export default function SuperCanvas() {
       const content = String(text || "").trim();
       if (!content) return [];
       const anchor = meta.runContext?.anchorNodeId
-        ? nodeById(docRef.current, meta.runContext.anchorNodeId) || null
+        ? nodeById(canvasCoreRef.current.document(), meta.runContext.anchorNodeId) || null
         : selectedSingle || selectedNodes[0] || null;
       if (meta.runContext?.operation === "edit" && anchor?.type === "prompt") {
         commit((value) => ({
@@ -10784,21 +10837,21 @@ export default function SuperCanvas() {
 
   const removeNodeReference = useCallback(
     (targetId: string, sourceId: string) => {
-      const next = removeCanvasReference(docRef.current, targetId, sourceId);
-      if (next !== docRef.current) commit(() => next);
+      const next = removeCanvasReference(canvasCoreRef.current.document(), targetId, sourceId);
+      if (next !== canvasCoreRef.current.document()) commit(() => next);
     },
     [commit],
   );
 
   const addEditorReferenceFiles = useCallback(
     async (targetId: string, files: File[]) => {
-      const target = nodeById(docRef.current, targetId);
+      const target = nodeById(canvasCoreRef.current.document(), targetId);
       if (!target || !files.length) return;
       if (target.type === "media" && target.data.kind === "audio") {
         notify("音频节点请使用“添加音频”或“替换音频”，不能添加生成参考。", "error");
         return;
       }
-      const existing = incomingContext(docRef.current, targetId).filter(isCanvasMentionableNode).length;
+      const existing = incomingContext(canvasCoreRef.current.document(), targetId).filter(isCanvasMentionableNode).length;
       if (existing >= 16) return notify("参考图最多 16 张。", "error");
       const nodes: CanvasNode[] = [];
       let optimizedImageCount = 0;
@@ -10878,7 +10931,7 @@ export default function SuperCanvas() {
 
   const replaceAudioNode = useCallback(
     async (nodeId: string, file: File) => {
-      const node = nodeById(docRef.current, nodeId);
+      const node = nodeById(canvasCoreRef.current.document(), nodeId);
       if (!node || node.type !== "media" || node.data.kind !== "audio") return;
       if (!isCanvasAudioFile(file)) {
         notify("音频节点只接受音频文件。", "error");
@@ -10939,8 +10992,8 @@ export default function SuperCanvas() {
         void runUpscaleNodeRef.current?.(node);
         return;
       }
-      const currentNode = nodeById(docRef.current, node.id) || node;
-      const inPlaceVideo = canvasVideoTargetHasImageReference(docRef.current, currentNode);
+      const currentNode = nodeById(canvasCoreRef.current.document(), node.id) || node;
+      const inPlaceVideo = canvasVideoTargetHasImageReference(canvasCoreRef.current.document(), currentNode);
       if (reuseDraft?.sourceNodeId === currentNode.id && !inPlaceVideo) {
         const draft = cloneReuseDraft(reuseDraft);
         setExpandedEditorId(null);
@@ -11036,7 +11089,7 @@ export default function SuperCanvas() {
 
   const retryFailedVariants = useCallback(
     (generatorId: string) => {
-      const generator = nodeById(docRef.current, generatorId);
+      const generator = nodeById(canvasCoreRef.current.document(), generatorId);
       if (!generator || generator.type !== "generator") return;
       const failedIndices = variantStatesFor(generator)
         .map((state, index) => (state.status === "failed" ? index : -1))
@@ -11049,7 +11102,7 @@ export default function SuperCanvas() {
   const applyCanvasMask = useCallback(
     async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0, moveGuideDataUrl?: string) => {
       const node = maskNodeId
-        ? nodeById(docRef.current, maskNodeId)
+        ? nodeById(canvasCoreRef.current.document(), maskNodeId)
         : undefined;
       if (!node || node.type !== "media" || node.data.kind !== "image") {
         setMaskNodeId(null);
@@ -11061,7 +11114,7 @@ export default function SuperCanvas() {
             ? cloneReuseDraft(reuseDraft)
             : reuseDraftFromNode(
                 node,
-                incomingReferences(docRef.current, node.id)
+                incomingReferences(canvasCoreRef.current.document(), node.id)
                   .map(canvasReferenceDraftFromNode)
                   .filter(
                     (reference): reference is CanvasReferenceDraft =>
@@ -11233,8 +11286,8 @@ export default function SuperCanvas() {
     if (!source || !isCanvasReadyImageSource(source))
       return notify("请先选择一张已完成的图片", "error");
     const draft = createUpscaleNode({ x: source.x + nodeSize(source).w + 90, y: source.y });
-    const next = addEdge({ ...docRef.current, nodes: [...docRef.current.nodes, draft] }, source.id, draft.id, "right", "left", "manual", "upscale-image");
-    if (next === docRef.current) return notify("无法连接超分节点", "error");
+    const next = addEdge({ ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, draft] }, source.id, draft.id, "right", "left", "manual", "upscale-image");
+    if (next === canvasCoreRef.current.document()) return notify("无法连接超分节点", "error");
     commit(() => next);
     setSelectedIds(new Set([draft.id]));
     setSelectedGroupId(null);
@@ -11244,12 +11297,12 @@ export default function SuperCanvas() {
   }, [commit, notify, selectedSingle]);
 
   const runAngleGeneration = useCallback(async (nodeId: string, input: AngleGenerationInput) => {
-    const angleNode = nodeById(docRef.current, nodeId);
+    const angleNode = nodeById(canvasCoreRef.current.document(), nodeId);
     if (!angleNode || angleNode.type !== "angle") {
       notify("角度控制节点已不存在，请重新选择。", "error");
       return;
     }
-    const source = incomingReferences(docRef.current, nodeId).find((item) => isCanvasReadyImageSource(item));
+    const source = incomingReferences(canvasCoreRef.current.document(), nodeId).find((item) => isCanvasReadyImageSource(item));
     const sourceReference = canvasAngleReferenceFromNode(source);
     if (!source || !sourceReference) {
       notify("角度控制节点需要一张已完成的图片输入。", "error");
@@ -11454,7 +11507,7 @@ export default function SuperCanvas() {
       onError?: (message: string) => void;
     },
   ) => {
-    const source = nodeById(docRef.current, sourceNodeId);
+    const source = nodeById(canvasCoreRef.current.document(), sourceNodeId);
     const sourceReference = canvasAngleReferenceFromNode(source);
     if (!source || !isCanvasReadyImageSource(source) || !sourceReference) {
       notify("生成新视角需要一张已完成的图片。", "error");
@@ -11749,7 +11802,7 @@ export default function SuperCanvas() {
 
   const saveImageAngleAsNode = useCallback((draft: AngleConsoleDraft) => {
     if (!angleImageNodeId) return;
-    const source = nodeById(docRef.current, angleImageNodeId);
+    const source = nodeById(canvasCoreRef.current.document(), angleImageNodeId);
     const sourceReference = canvasAngleReferenceFromNode(source);
     if (!source || !isCanvasReadyImageSource(source) || !sourceReference) {
       notify("当前图片已不可用，无法保存角度控制节点。", "error");
@@ -11769,7 +11822,7 @@ export default function SuperCanvas() {
     const position = { x: source.x + nodeSize(source).w + 90, y: source.y };
     const draftNode = createAngleNode(position, angle);
     const connected = connectCanvasNodesInDocument(
-      { ...docRef.current, nodes: [...docRef.current.nodes, draftNode] },
+      { ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, draftNode] },
       source.id,
       draftNode.id,
       "right",
@@ -11800,11 +11853,11 @@ export default function SuperCanvas() {
   }, [notify]);
 
   const composeSourcesForGroup = useCallback((groupId: string) => {
-    const group = groupById(docRef.current, groupId);
+    const group = groupById(canvasCoreRef.current.document(), groupId);
     if (!group) return null;
     const memberOrder = new Map(group.nodeIds.map((id, index) => [id, index]));
     const sources = group.nodeIds
-      .map((id) => nodeById(docRef.current, id))
+      .map((id) => nodeById(canvasCoreRef.current.document(), id))
       .filter(
         (node): node is CanvasNode =>
           Boolean(
@@ -11873,7 +11926,7 @@ export default function SuperCanvas() {
     const groupNodeIds = [...group.nodeIds];
     const sourceSnapshot = new Map(sourceIds.map((id, index) => [id, sourceUrls[index]]));
     const stillMatchesGroup = () => {
-      const currentGroup = groupById(docRef.current, groupId);
+      const currentGroup = groupById(canvasCoreRef.current.document(), groupId);
       return Boolean(
         currentGroup &&
           currentGroup.nodeIds.length === groupNodeIds.length &&
@@ -11881,7 +11934,7 @@ export default function SuperCanvas() {
           sourceIds.every(
             (id) =>
               currentGroup.nodeIds.includes(id) &&
-              String(nodeById(docRef.current, id)?.data.url || "") === sourceSnapshot.get(id),
+              String(nodeById(canvasCoreRef.current.document(), id)?.data.url || "") === sourceSnapshot.get(id),
           ),
       );
     };
@@ -11901,14 +11954,14 @@ export default function SuperCanvas() {
     try {
       const rendered = await renderCanvasImageGridComposite(sourceUrls, renderOptions);
       if (!stillMatchesGroup()) throw new Error("宫格拼接期间组内内容发生了变化，请重试");
-      const groupBoundsValue = groupBounds(docRef.current, groupId);
+      const groupBoundsValue = groupBounds(canvasCoreRef.current.document(), groupId);
       const asset = await uploadCanvasAsset(
         new File([rendered.blob], `${group.name}-宫格拼接.png`, { type: "image/png" }),
       );
       if (!stillMatchesGroup()) throw new Error("宫格拼接期间组内内容发生了变化，请重试");
 
       const sourceWithImageParams = orderedSources
-        .map((source) => nodeById(docRef.current, source.id))
+        .map((source) => nodeById(canvasCoreRef.current.document(), source.id))
         .find((node) => node?.type === "media" && node.data.kind === "image");
       const sourceParams =
         sourceWithImageParams?.data.generation?.params ||
@@ -12006,7 +12059,7 @@ export default function SuperCanvas() {
 
   const saveImageOperation = useCallback(async (request: CanvasImageEditorSaveRequest) => {
     const source = imageEditorNodeId
-      ? nodeById(docRef.current, imageEditorNodeId)
+      ? nodeById(canvasCoreRef.current.document(), imageEditorNodeId)
       : undefined;
     if (!source || (source.type !== "media" && source.type !== "upscale") || source.data.kind !== "image" || !source.data.url)
       throw new Error("当前图片节点已不存在，请重新选择图片");
@@ -12035,7 +12088,7 @@ export default function SuperCanvas() {
         const asset = await uploadCanvasAsset(new File([output.blob], `${sourceName}-宫格-${assets.length + 1}.png`, { type: "image/png" }));
         assets.push({ asset, size: output.size });
       }
-      let next: CanvasDocument = { ...docRef.current };
+      let next: CanvasDocument = { ...canvasCoreRef.current.document() };
       const createdNodes: CanvasNode[] = [];
       const edges: CanvasEdge[] = [];
       for (const [index, output] of assets.entries()) {
@@ -12170,9 +12223,9 @@ export default function SuperCanvas() {
       };
       const positioned = { ...draft, ...openNodePosition({ x: draft.x, y: draft.y }, draft) };
       const next: CanvasDocument = {
-        ...docRef.current,
-        nodes: [...docRef.current.nodes, positioned],
-        edges: [...docRef.current.edges, { id: uid("edge"), source: source.id, target: positioned.id, sourcePort: "right", targetPort: "left", kind: "lineage" }],
+        ...canvasCoreRef.current.document(),
+        nodes: [...canvasCoreRef.current.document().nodes, positioned],
+        edges: [...canvasCoreRef.current.document().edges, { id: uid("edge"), source: source.id, target: positioned.id, sourcePort: "right", targetPort: "left", kind: "lineage" }],
       };
       commit(() => next);
       setSelectedIds(new Set([positioned.id]));
@@ -12184,7 +12237,7 @@ export default function SuperCanvas() {
 
   const createVideoClip = useCallback(async (draft: CanvasVideoClipState) => {
     const source = videoClipEditorNodeId
-      ? nodeById(docRef.current, videoClipEditorNodeId)
+      ? nodeById(canvasCoreRef.current.document(), videoClipEditorNodeId)
       : undefined;
     if (
       !source ||
@@ -12305,7 +12358,7 @@ export default function SuperCanvas() {
     draft: CanvasVideoEditorState,
     selectedClipId: string | null,
   ) => {
-    const editorNode = nodeById(docRef.current, editorNodeId);
+    const editorNode = nodeById(canvasCoreRef.current.document(), editorNodeId);
     if (!editorNode || editorNode.type !== "video-editor") {
       notify("当前视频编辑节点已不存在，请重新打开工作台", "error");
       return;
@@ -12314,7 +12367,7 @@ export default function SuperCanvas() {
     const selected = selectedClipId ? draft.clips.find((clip) => clip.id === selectedClipId) : undefined;
     const sourceIds = [...new Set(draft.clips.flatMap((clip) => clip.sourceNodeId ? [clip.sourceNodeId] : []))];
     const sourceNodes = sourceIds
-      .map((id) => nodeById(docRef.current, id))
+      .map((id) => nodeById(canvasCoreRef.current.document(), id))
       .filter((source): source is CanvasNode => Boolean(source && source.type === "media" && source.data.url && source.data.kind));
     const renderSources = sourceNodes.map((source) => ({
       nodeId: source.id,
@@ -12480,7 +12533,7 @@ export default function SuperCanvas() {
 
   const runUpscaleNode = useCallback(async (node: CanvasNode) => {
     if (node.type !== "upscale") return;
-    const source = canvasUpscaleSource(docRef.current, node.id);
+    const source = canvasUpscaleSource(canvasCoreRef.current.document(), node.id);
     if (!source?.data.url) return notify("请连接一张已完成的图片", "error");
     const params = (node.data.params && typeof node.data.params === "object" ? node.data.params : {}) as CanvasUpscaleParams;
     const dimensions = await loadImageDimensions(String(source.data.url)).catch(() => null);
@@ -12648,17 +12701,17 @@ export default function SuperCanvas() {
         ...defaultMediaParams(asset.kind, runtime),
       });
       const targetGroup = position
-        ? groupAtPoint(docRef.current, seed)
+        ? groupAtPoint(canvasCoreRef.current.document(), seed)
         : undefined;
       const point = targetGroup ? seed : openNodePosition(seed, draft);
       const node = { ...draft, x: point.x, y: point.y };
       const next = targetGroup
         ? moveNodesToGroup(
-            { ...docRef.current, nodes: [...docRef.current.nodes, node] },
+            { ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, node] },
             [node.id],
             targetGroup.id,
           )
-        : { ...docRef.current, nodes: [...docRef.current.nodes, node] };
+        : { ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, node] };
       commit(() => next);
       setSelectedIds(
         new Set(
@@ -12694,7 +12747,7 @@ export default function SuperCanvas() {
         notify("多选内容需要先成组，或明确选中一个目标节点。", "error");
         return;
       }
-      const existing = docRef.current.nodes.find(
+      const existing = canvasCoreRef.current.document().nodes.find(
         (node) =>
           node.type === "media" &&
           node.data.kind === asset.kind &&
@@ -12704,7 +12757,7 @@ export default function SuperCanvas() {
         notify("素材不能引用自身，请选择另一个目标节点。", "error");
         return;
       }
-      const ownerBounds = entityBounds(docRef.current, ownerId);
+      const ownerBounds = entityBounds(canvasCoreRef.current.document(), ownerId);
       const draft = existing
         ? null
         : createMedia(
@@ -12727,8 +12780,8 @@ export default function SuperCanvas() {
           : null);
       if (!sourceNode) return;
       const base = draft
-        ? { ...docRef.current, nodes: [...docRef.current.nodes, sourceNode] }
-        : docRef.current;
+        ? { ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, sourceNode] }
+        : canvasCoreRef.current.document();
       const result = connectCanvasNodesInDocument(
         base,
         sourceNode.id,
@@ -12754,7 +12807,7 @@ export default function SuperCanvas() {
 
   const locateAsset = useCallback(
     (asset: AssetRecord) => {
-      const matches = docRef.current.nodes.filter(
+      const matches = canvasCoreRef.current.document().nodes.filter(
         (node) =>
           node.type === "media" &&
           node.data.kind === asset.kind &&
@@ -12775,7 +12828,7 @@ export default function SuperCanvas() {
       notify("请先选择未分类或自定义资产集合。", "error");
       return;
     }
-    const node = nodeById(docRef.current, nodeId);
+    const node = nodeById(canvasCoreRef.current.document(), nodeId);
     if (!node || node.type !== "media" || !node.data.url) return;
     const asset = (await listUnifiedAssets(canvasAssets)).find(
       (item) => item.url === node.data.url && item.kind === node.data.kind,
@@ -13007,14 +13060,14 @@ export default function SuperCanvas() {
       const element = target instanceof Element ? target : null;
       const nodeElement = element?.closest<HTMLElement>("[data-canvas-node-id]");
       const nodeId = nodeElement?.dataset.canvasNodeId;
-      const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
+      const node = nodeId ? nodeById(canvasCoreRef.current.document(), nodeId) : undefined;
       const groupElement = element?.closest<HTMLElement>("[data-canvas-group-id]");
       const isolatedTarget = element?.closest(
         "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
       if (groupElement && !node && !isolatedTarget) {
         event.preventDefault();
-        const group = groupById(docRef.current, groupElement.dataset.canvasGroupId);
+        const group = groupById(canvasCoreRef.current.document(), groupElement.dataset.canvasGroupId);
         const point = stagePoint(event.clientX, event.clientY);
         const world = {
           x: (point.x - document.camera.x) / document.camera.zoom,
@@ -13146,8 +13199,8 @@ export default function SuperCanvas() {
   const runOneTakeForAgentNode = useCallback(
     (node: CanvasNode, durationSeconds = ONE_TAKE_DEFAULT_DURATION) => {
       if (node.type !== "prompt") return;
-      const currentNode = nodeById(docRef.current, node.id) || node;
-      const references = incomingReferences(docRef.current, currentNode.id)
+      const currentNode = nodeById(canvasCoreRef.current.document(), node.id) || node;
+      const references = incomingReferences(canvasCoreRef.current.document(), currentNode.id)
         .filter(isCanvasReadyImageSource);
       if (references.length < 2) {
         notify("一镜到底至少需要两张已完成的图片节点。", "error");
@@ -13359,7 +13412,7 @@ export default function SuperCanvas() {
       notify("分享版目前只支持已完成的图片节点。", "error");
       return;
     }
-      const references = incomingReferences(docRef.current, node.id)
+      const references = incomingReferences(canvasCoreRef.current.document(), node.id)
         .filter((reference) => reference.data.kind !== "audio")
         .map((reference) => ({
         id: reference.id,
@@ -13421,7 +13474,7 @@ export default function SuperCanvas() {
   }, [notify]);
   const focusCanvasNode = useCallback(
     (nodeId: string, openMedia = false, returnPanel: "activity" | null = null) => {
-      const node = nodeById(docRef.current, nodeId);
+      const node = nodeById(canvasCoreRef.current.document(), nodeId);
       if (!node) {
         notify("当前画布中找不到这条血缘节点", "error");
         return;
@@ -13442,7 +13495,7 @@ export default function SuperCanvas() {
         notify("LLM 任务没有对应的画布媒体节点，请在主界面的助手会话中查看。", "error");
         return;
       }
-      const node = docRef.current.nodes.find(
+      const node = canvasCoreRef.current.document().nodes.find(
         (item) =>
           (item.type === "media" && item.data.url && outputUrls.has(String(item.data.url))) ||
           (item.data.generation?.prompt === log.prompt &&
@@ -13479,7 +13532,7 @@ export default function SuperCanvas() {
         notify("音频任务请回到主界面任务日志重试。", "error");
         return;
       }
-      const node = docRef.current.nodes.find(
+      const node = canvasCoreRef.current.document().nodes.find(
         (item) =>
           item.data.generation?.prompt === log.prompt &&
           (item.data.kind || "image") === kind,
@@ -13517,7 +13570,7 @@ export default function SuperCanvas() {
       if (selectedSingle?.type === "media") {
         if (
           selectedSingle.data.kind === "image" ||
-          canvasVideoTargetHasImageReference(docRef.current, selectedSingle)
+          canvasVideoTargetHasImageReference(canvasCoreRef.current.document(), selectedSingle)
         ) updatePrompt(value);
         else openReuseDraft(selectedSingle, { prompt: value });
         setMentionState(mentionStateForValue(value, cursor));
@@ -13528,6 +13581,24 @@ export default function SuperCanvas() {
     },
     [openReuseDraft, reuseDraft, selectedSingle, updatePrompt],
   );
+  const handleDeckReferenceFiles = useCallback((files: File[]) => {
+    if (!files.length) return;
+    if (reuseDraft) void addReuseFiles(files);
+    else if (selectedSingle?.id) void addEditorReferenceFiles(selectedSingle.id, files);
+    else void handleFiles(files);
+  }, [addEditorReferenceFiles, addReuseFiles, handleFiles, reuseDraft, selectedSingle?.id]);
+  const handleDeckPromptPaste = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .flatMap((item) => {
+        const file = item.getAsFile();
+        return file ? [file] : [];
+      });
+    if (!files.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    handleDeckReferenceFiles(files);
+  }, [handleDeckReferenceFiles]);
   const applyDeckMention = useCallback(
     (value: string, cursor: number) => {
       updateDeckPrompt(value, cursor);
@@ -13547,7 +13618,7 @@ export default function SuperCanvas() {
   const reorderReference = useCallback(
     (ownerId: string, draggedId: string, targetId: string) => {
       if (draggedId === targetId) return;
-      const current = incomingReferences(docRef.current, ownerId).map(
+      const current = incomingReferences(canvasCoreRef.current.document(), ownerId).map(
         (node) => node.id,
       );
       const from = current.indexOf(draggedId);
@@ -13561,8 +13632,8 @@ export default function SuperCanvas() {
   );
   const removeComposerReference = useCallback((nodeId: string) => {
     if (referenceOwnerId) {
-      const next = removeCanvasReference(docRef.current, referenceOwnerId, nodeId);
-      if (next !== docRef.current) commit(() => next);
+      const next = removeCanvasReference(canvasCoreRef.current.document(), referenceOwnerId, nodeId);
+      if (next !== canvasCoreRef.current.document()) commit(() => next);
     }
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -13574,9 +13645,9 @@ export default function SuperCanvas() {
     const ownerId = referenceOwnerId;
     const ids = references.map((node) => node.id);
     if (ownerId) {
-      const edgeIds = referenceEdgesForCanvasTarget(docRef.current, ownerId)
+      const edgeIds = referenceEdgesForCanvasTarget(canvasCoreRef.current.document(), ownerId)
         .filter(({ edge }) =>
-          referenceNodesForCanvasEdge(docRef.current, edge).some((node) => ids.includes(node.id)),
+          referenceNodesForCanvasEdge(canvasCoreRef.current.document(), edge).some((node) => ids.includes(node.id)),
         )
         .map(({ edge }) => edge.id);
       if (edgeIds.length) commit((value) => edgeIds.reduce((next, id) => removeEdge(next, id), value));
@@ -13770,9 +13841,9 @@ export default function SuperCanvas() {
   );
   const reverseAgentNodePrompt = useCallback(async (node: CanvasNode) => {
     if (node.type !== "prompt" || reverseAgentNodeId === node.id) return;
-    const currentNode = nodeById(docRef.current, node.id) || node;
+    const currentNode = nodeById(canvasCoreRef.current.document(), node.id) || node;
     if (["queued", "running"].includes(String(currentNode.data.status || ""))) return;
-    const images = incomingReferences(docRef.current, currentNode.id)
+    const images = incomingReferences(canvasCoreRef.current.document(), currentNode.id)
       .filter(isCanvasReadyImageSource)
       .map((reference) => ({
         url: String(reference.data.url),
@@ -13834,7 +13905,7 @@ export default function SuperCanvas() {
       processingStartedAt: Date.now(),
       depthVideo: { sourceNodeId: source.id, model: "Depth Anything V2 Small", mode: "grayscale", fps: 12, startedAt: Date.now() },
     });
-    const connected = addEdge({ ...docRef.current, nodes: [...docRef.current.nodes, output] }, source.id, output.id, "right", "left", "manual", "video");
+    const connected = addEdge({ ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, output] }, source.id, output.id, "right", "left", "manual", "video");
     commit(() => connected);
     setSelectedIds(new Set([output.id]));
     setSelectedGroupId(null);
@@ -14288,7 +14359,7 @@ export default function SuperCanvas() {
     }
   }, [chatModelsAvailable, runtime?.settings.agentModelId, selectedSingle, smartVariantSources, smartVariantOpen, smartVariantLoading, updateDoc]);
   const applySmartVariant = useCallback(() => {
-    const target = nodeById(docRef.current, smartVariantSession.current?.nodeId || "");
+    const target = nodeById(canvasCoreRef.current.document(), smartVariantSession.current?.nodeId || "");
     if (target?.type !== "generator" || !smartVariantPlan?.variants.length) return;
     if (generationKeys.has(target.id) || ["running", "queued"].includes(String(target.data.status)) || target.data.variantStates?.some((item) => item.status === "running")) return;
     const value = smartVariantPlan.variants.map((item) => item.instruction.replace(/\r?\n/g, " ").trim()).filter(Boolean).join("\n");
@@ -14895,7 +14966,7 @@ export default function SuperCanvas() {
   /** 把克隆结果落到画布：完整成片交付物 + 可继续编辑的多轨工程。 */
   const applyCloneJob = useCallback(
     (job: CloneJob) => {
-      const referenceNode = job.reference.nodeId ? nodeById(docRef.current, job.reference.nodeId) : undefined;
+      const referenceNode = job.reference.nodeId ? nodeById(canvasCoreRef.current.document(), job.reference.nodeId) : undefined;
       const center = screenToWorld(stageSize.width / 2, stageSize.height / 2);
       const originX = referenceNode ? referenceNode.x + nodeSize(referenceNode).w + 120 : center.x;
       const originY = referenceNode ? referenceNode.y : center.y;
@@ -15447,7 +15518,7 @@ export default function SuperCanvas() {
           if (referencePicker) {
             const hit = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-canvas-node-id]");
             const nodeId = hit?.dataset.canvasNodeId || null;
-            const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
+            const node = nodeId ? nodeById(canvasCoreRef.current.document(), nodeId) : undefined;
             setReferencePickerHoverNodeId(
               node && node.id !== referencePicker.targetId && isCanvasReferencePickerCandidate(node)
                 ? node.id
@@ -15479,7 +15550,7 @@ export default function SuperCanvas() {
           const hit = target?.closest("[data-canvas-node-id]") ||
             pointTarget?.closest("[data-canvas-node-id]");
           const nodeId = hit?.getAttribute("data-canvas-node-id");
-          const node = nodeId ? nodeById(docRef.current, nodeId) : undefined;
+          const node = nodeId ? nodeById(canvasCoreRef.current.document(), nodeId) : undefined;
           if (node && isCanvasReferenceableNode(node)) {
             cancelPendingNodeClick();
             openCanvasMediaViewer(node.id);
@@ -15549,7 +15620,7 @@ export default function SuperCanvas() {
             setCursorTask("copying");
             setAssetDropGroupId(
               groupAtPoint(
-                docRef.current,
+                canvasCoreRef.current.document(),
                 screenToWorld(event.clientX, event.clientY),
               )?.id || null,
             );
@@ -16582,6 +16653,8 @@ export default function SuperCanvas() {
                     ariaLabel="创作提示词"
                     className="canvas-deck-prompt-editor"
                     menuClassName="canvas-mention-menu"
+                    allowRichPaste={false}
+                    onPaste={handleDeckPromptPaste}
                     onChange={updateDeckPrompt}
                     onMentionSelect={(_index, value, cursor) => applyDeckMention(value, cursor)}
                     onKeyDown={(event) => {
@@ -16661,6 +16734,7 @@ export default function SuperCanvas() {
                       }
                       references={mentionCandidates.map((node, index) => canvasMentionOption(document, node, index))}
                       menuClassName="canvas-mention-menu canvas-variant-mention-menu"
+                      onPasteFiles={handleDeckReferenceFiles}
                       onChange={updateVariantRequirements}
                       note="每条要求都会叠加到共同提示词，并按顺序生成独立结果。"
                     />
@@ -19842,6 +19916,19 @@ function CanvasNodeEditorPopover({
     onEditorPromptChange(node, value);
   }
 
+  function handleNodePromptPaste(event: ReactClipboardEvent<HTMLDivElement>) {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .flatMap((item) => {
+        const file = item.getAsFile();
+        return file ? [file] : [];
+      });
+    if (!files.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onAddReferenceFiles(node.id, files);
+  }
+
   const promptOptimizationActions = (
     <div className="canvas-node-editor-prompt-actions" aria-label="提示词操作">
       {visibleEditorPrompt.trim() && <button type="button" disabled={promptOptimizing} aria-busy={promptOptimizing} title={editorChatAvailable ? "使用 AI 优化当前提示词" : "请先在模型库启用对话模型"} onClick={() => void optimizeEditorPrompt()}><span aria-hidden="true">✦</span><span>{promptOptimizing ? "优化中…" : "AI 优化"}</span></button>}
@@ -20232,6 +20319,7 @@ function CanvasNodeEditorPopover({
                           ariaLabel={`${nodeLabel(node)}变体要求`}
                           menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
                           menuPortal
+                          onPasteFiles={(files) => onAddReferenceFiles(node.id, files)}
                           onChange={(value) => onVariantRequirementsChange(node, value)}
                         />
                       </div>
@@ -20257,6 +20345,8 @@ function CanvasNodeEditorPopover({
                 className="canvas-node-prompt-editor"
                 menuClassName="canvas-node-mention-menu"
                 menuPortal
+                allowRichPaste={false}
+                onPaste={handleNodePromptPaste}
                 onChange={handleEditorPromptChange}
                 onMentionSelect={(_candidateIndex, value) => handleEditorPromptChange(value)}
                 placeholder={promptPlaceholder}
@@ -20384,6 +20474,8 @@ function CanvasNodeEditorPopover({
                 className="canvas-node-prompt-editor"
                 menuClassName="canvas-node-mention-menu"
                 menuPortal
+                allowRichPaste={false}
+                onPaste={handleNodePromptPaste}
                 onChange={handleEditorPromptChange}
                 onMentionSelect={(_candidateIndex, value) => handleEditorPromptChange(value)}
                  placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
@@ -20454,6 +20546,7 @@ function CanvasNodeEditorPopover({
                   ariaLabel={`${nodeLabel(node)}变体要求`}
                   menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
                   menuPortal
+                  onPasteFiles={(files) => onAddReferenceFiles(node.id, files)}
                   onChange={(value) => onVariantRequirementsChange(node, value)}
               />
             </div>
@@ -20715,6 +20808,18 @@ function CanvasNodeCard({
   const agentInput = String(
     agentResponse ? data.agentPrompt || data.text || "" : data.text || "",
   );
+  const handleCardPromptPaste = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .flatMap((item) => {
+        const file = item.getAsFile();
+        return file ? [file] : [];
+      });
+    if (!files.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onAddReferenceFiles(node.id, files);
+  }, [node.id, onAddReferenceFiles]);
   const variantRequirements =
     node.type === "generator" ? variantRequirementsFor(node) : [];
   const variantStates =
@@ -21261,6 +21366,8 @@ function CanvasNodeCard({
               references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
               className="canvas-card-agent-editor"
               menuClassName="canvas-node-mention-menu"
+              allowRichPaste={false}
+              onPaste={handleCardPromptPaste}
               ariaLabel="Agent 任务"
               placeholder="输入要交给 Agent 的任务…"
               autoFocus
@@ -21529,6 +21636,7 @@ function CanvasNodeCard({
                 ariaLabel={`${nodeLabel(node)}变体要求`}
                 menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
                 menuPortal
+                onPasteFiles={(files) => onAddReferenceFiles(node.id, files)}
                 onChange={(value) => onVariantRequirementsChange(node, value)}
               />
             </div>

@@ -32,7 +32,10 @@ test('CanvasCore applies transactions and supports undo/redo without React', () 
 });
 
 test('CanvasCore keeps selection and viewport outside document operations', () => {
-  const core = new CanvasCore(document([{ id: 'a' }]));
+  const core = new CanvasCore({
+    ...document([{ id: 'a' }]),
+    groups: [{ id: 'group-1', nodeIds: ['a'] }],
+  });
   core.setSelection({ nodeIds: ['a', 'a'], groupId: 'group-1' });
   assert.deepEqual(core.selection(), { nodeIds: ['a'], groupId: 'group-1' });
   core.setViewport({ x: 20, y: 30, zoom: 1.5 });
@@ -80,4 +83,77 @@ test('CanvasCore document remains the authority when an Agent patch is validated
   assert.deepEqual(core.document().nodes.map((node) => node.id), ['agent-node']);
   assert.equal(core.history().past.length, 1);
   assert.deepEqual(core.undo()?.nodes, []);
+});
+
+test('CanvasCore notifies projections and prunes selection after document changes', () => {
+  const core = new CanvasCore({
+    ...document([{ id: 'a' }, { id: 'b' }]),
+    edges: [{ id: 'edge-1', source: 'a', target: 'b' }],
+    groups: [{ id: 'group-1', nodeIds: ['a', 'b'] }],
+  });
+  let notifications = 0;
+  const unsubscribe = core.subscribe(() => { notifications += 1; });
+  core.setSelection({ nodeIds: ['a', 'b'], groupId: 'group-1', edgeId: 'edge-1' });
+  core.apply({
+    id: 'remove-a',
+    label: 'remove node',
+    apply: (value) => ({
+      ...value,
+      nodes: value.nodes.filter((node) => node.id !== 'a'),
+      edges: [],
+      groups: [],
+    }),
+  });
+  assert.deepEqual(core.selection(), { nodeIds: ['b'] });
+  assert.equal(notifications, 2);
+  unsubscribe();
+});
+
+test('CanvasCore owns node, multi, group, edge, and cleared selection values', () => {
+  const core = new CanvasCore({
+    ...document([{ id: 'a' }, { id: 'b' }]),
+    edges: [{ id: 'edge-1', source: 'a', target: 'b' }],
+    groups: [{ id: 'group-1', nodeIds: ['a', 'b'] }],
+  });
+  core.setSelection({ nodeIds: ['a'] });
+  assert.deepEqual(core.selection(), { nodeIds: ['a'] });
+  core.setSelection({ nodeIds: ['a', 'b'] });
+  assert.deepEqual(core.selection(), { nodeIds: ['a', 'b'] });
+  core.setSelection({ nodeIds: ['a', 'b'], groupId: 'group-1' });
+  assert.deepEqual(core.selection(), { nodeIds: ['a', 'b'], groupId: 'group-1' });
+  core.setSelection({ nodeIds: [], edgeId: 'edge-1' });
+  assert.deepEqual(core.selection(), { nodeIds: [], edgeId: 'edge-1' });
+  core.setSelection({ nodeIds: [] });
+  assert.deepEqual(core.selection(), { nodeIds: [] });
+});
+
+test('CanvasCore history snapshots protect nested document data', () => {
+  const initial = {
+    ...document([{ id: 'a', data: { label: 'before' } }]),
+    edges: [{ id: 'edge-1', source: 'a', target: 'a', data: { weight: 1 } }],
+    groups: [{ id: 'group-1', nodeIds: ['a'], data: { color: 'blue' } }],
+  };
+  const core = new CanvasCore(initial);
+  core.apply({
+    id: 'mutate-nested',
+    label: 'mutate nested data',
+    apply: (value) => ({
+      ...value,
+      nodes: value.nodes.map((node) => ({ ...node, data: { ...node.data, label: 'after' } })),
+      edges: value.edges.map((edge) => ({ ...edge, data: { ...edge.data, weight: 2 } })),
+      groups: value.groups.map((group) => ({ ...group, data: { ...group.data, color: 'red' } })),
+    }),
+  });
+  const liveDocument = core.document();
+  liveDocument.nodes[0].data.label = 'mutated in place';
+  liveDocument.edges[0].data.weight = 3;
+  liveDocument.groups[0].data.color = 'green';
+  assert.equal(core.undo().nodes[0].data.label, 'before');
+  assert.equal(core.document().edges[0].data.weight, 1);
+  assert.equal(core.document().groups[0].data.color, 'blue');
+  core.document().nodes[0].data.label = 'mutated after undo';
+  const redone = core.redo();
+  assert.equal(redone.nodes[0].data.label, 'mutated in place');
+  assert.equal(redone.edges[0].data.weight, 3);
+  assert.equal(redone.groups[0].data.color, 'green');
 });

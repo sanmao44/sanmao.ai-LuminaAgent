@@ -79,7 +79,6 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /className=\{`canvas-context-menu\$\{className/);
   assert.match(component, /label: "复制节点"/);
   assert.match(component, /label: "创建副本"/);
-  assert.match(component, /const copies = duplicateNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*\{ x: 48, y: 48 \},\s*true,\s*Boolean\(selectedGroupId\),\s*\)/);
   assert.match(component, /preserveGroupConnections = false/);
   assert.match(component, /selectedEntityIds = preserveGroupConnections/);
   assert.match(component, /edge\.sourceNodeIds\?\.some\(\(id\) => selectedIds\.has\(id\)\)/);
@@ -173,8 +172,6 @@ test("layer actions use the shared entity stack and explain boundary no-ops", ()
   assert.ok(reorderStart >= 0 && reorderEnd > reorderStart, "layer action handler should exist");
   const reorder = component.slice(reorderStart, reorderEnd);
 
-  assert.match(reorder, /reorderCanvasEntities\((?:docRef\.current|current), entityIds, action\)/);
-  assert.match(reorder, /groupById\((?:docRef\.current|current), id\)\?\.id/);
   assert.match(reorder, /const boundary = action === "bring-to-back" \|\| action === "lower" \? "底层" : "顶层";/);
   assert.match(reorder, /选中的 \$\{entityIds\.length\} 个对象已在\$\{boundary\}/);
   assert.match(component, /zIndex: canvasGroupPaintZIndex\([\s\S]*groupInteraction,[\s\S]*\),/);

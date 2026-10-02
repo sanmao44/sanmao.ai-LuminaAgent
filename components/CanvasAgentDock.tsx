@@ -1765,7 +1765,16 @@ export default function CanvasAgentDock({
             {message.role === "user" && message.pastedReferences?.length ? (
               <div className="canvas-agent-dock-user-references" aria-label="本条消息的图片引用">
                 {message.pastedReferences.map((reference) => reference.kind === "image" && reference.url ? (
-                  <img key={reference.id} src={reference.url} alt={reference.name} title={reference.name} />
+                  <button
+                    type="button"
+                    key={reference.id}
+                    className="canvas-agent-dock-reference-preview"
+                    onClick={() => onPreviewImages([{ url: reference.url! }], 0)}
+                    title="点击放大查看"
+                    aria-label={`放大查看 ${reference.name}`}
+                  >
+                    <img src={reference.url} alt={reference.name} />
+                  </button>
                 ) : null)}
               </div>
             ) : null}
@@ -2084,8 +2093,16 @@ export default function CanvasAgentDock({
           <div className="canvas-agent-dock-pasted-images" aria-label="待发送图片">
             {draftImages.map((image) => (
               <div className="canvas-agent-dock-pasted-image" key={image.id}>
-                <img src={image.previewUrl} alt={image.name} title={image.name} />
-                <button type="button" onClick={() => removeDraftImage(image.id)} aria-label={`移除图片 ${image.name}`} title="移除图片">
+                <button
+                  type="button"
+                  className="canvas-agent-dock-reference-preview"
+                  onClick={() => onPreviewImages([{ url: image.previewUrl }], 0)}
+                  title="点击放大查看"
+                  aria-label={`放大查看 ${image.name}`}
+                >
+                  <img src={image.previewUrl} alt={image.name} />
+                </button>
+                <button type="button" className="canvas-agent-dock-pasted-remove" onClick={() => removeDraftImage(image.id)} aria-label={`移除图片 ${image.name}`} title="移除图片">
                   <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" /></svg>
                 </button>
               </div>

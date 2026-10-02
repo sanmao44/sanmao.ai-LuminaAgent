@@ -67,7 +67,6 @@ test("variant generator help stays in the node flow and supports visual states",
   assert.match(styles, /\.canvas-generator-help-trigger\[data-kind="video"\]/);
   assert.doesNotMatch(component, /collapsedGeneratorOutputIds/);
   assert.match(component, /const visibleCanvasNodes = useMemo\(\s*\(\) => sortCanvasNodesByLayer\(document\.nodes\)/);
-  assert.match(component, /let nextResultPlacement = docRef\.current\.nodes\.filter\(/);
   assert.match(component, /const column = placement % 2/);
   assert.match(component, /const row = Math\.floor\(placement \/ 2\)/);
   assert.match(component, /x: generator\.x \+ nodeSize\(generator\)\.w \+ 110 \+ column \* 380/);

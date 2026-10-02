@@ -1,28 +1,23 @@
-# Canvas Core Assessment
+# Canvas Core Authority Migration
 
-## Current state
+## Current result
 
-`lib/canvas/model.ts` already owns document normalization, snapshots and
-domain helpers. `lib/canvas/patch.ts` validates and applies structured Agent
-operations. `SuperCanvas` still owns React document projection, selection,
-viewport updates and persistence adapters. History has completed its authority
-cutover: `CanvasCore` now owns undo/redo history while React only projects it.
+CanvasCore is framework independent and now owns the three Canvas domain authorities:
 
-## Scope
+- Document: `document()` is the only authoritative document snapshot.
+- History: `past` / `future` own commit, undo, redo and bounded immutable snapshots.
+- Selection: `selection()` owns node, group and edge selection and prunes references invalidated by document mutations.
 
-This slice adds a React-free `CanvasCore` runtime with structural
-`CanvasDocument`, `Selection`, `Viewport`, `Operation`, `Transaction` and
-bounded `History` contracts. It is deliberately generic so it can operate on
-the existing document without importing UI, storage or provider code.
+`SuperCanvas` uses `useSyncExternalStore` as a projection/consumer. UI-only state such as hover, pointer interaction, menus, drafts and animation remains in React.
 
-The existing `commit` and Agent Canvas Patch path use the Core operation
-boundary before handing the result to the legacy React state adapter. Existing
-snapshot format, patch validation, local persistence and UI behavior remain
-unchanged.
+## Unified mutation path
+
+User commands, Agent Canvas Patch, restore/load and background reconciliation call `CanvasCore.apply` or `CanvasCore.replace`. React no longer owns a separately writable document or selection state machine.
 
 ## Remaining legacy responsibility
 
-Pointer gesture document mutations, full React selection rendering, project persistence
-and the remaining document adapters still live in `SuperCanvas`. Document and
-Selection authority remain migration in progress; history is cut over and no
-second React history state machine remains.
+`SuperCanvas` still owns rendering, pointer/gesture implementation, persistence adapters, task polling, provider/media calls, progress and UI-local state. These are intentionally outside this slice.
+
+## Migration adapter
+
+The temporary `setDoc`, `replaceDoc`, and selection setter functions are Core action adapters for legacy call sites. They do not own state. They can be deleted after call sites use explicit Canvas commands and persistence moves behind a port.
