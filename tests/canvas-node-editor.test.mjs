@@ -47,7 +47,7 @@ test("completed media cards always generate a new result branch", () => {
   assert.match(component, /if \(selectedMediaTarget\?\.data\.url\)/);
   assert.doesNotMatch(component, /selectedMediaTarget\?\.data\.url && !inPlaceVideoTarget/);
   assert.match(component, /currentVideoIsSource/);
-  assert.match(component, /canvasVideoTargetHasImageReference\(docRef\.current, target\)/);
+  assert.match(component, /canvasVideoTargetHasImageReference\(canvasCoreRef\.current\.document\(\), target\)/);
   assert.match(component, /await runReuseGeneration\(/);
   assert.match(component, /const fillsTarget = Boolean\(sourceTarget && !sourceTarget\.data\.url\)/);
   assert.match(component, /引用图片 · 生成新视频/);
@@ -70,7 +70,7 @@ test("editor generation resolves its current draft without waiting for selection
   const editorEnd = component.indexOf("const updateUpscaleParams", editorStart);
   assert.ok(editorStart >= 0 && editorEnd > editorStart, "editor generation should be present");
   const editor = component.slice(editorStart, editorEnd);
-  assert.match(editor, /const currentNode = nodeById\(docRef\.current, node\.id\)/);
+  assert.match(editor, /const currentNode = nodeById\(canvasCoreRef\.current\.document\(\), node\.id\)/);
   assert.match(editor, /const generationRequest: CanvasGenerationRequest/);
   assert.match(editor, /nodeId: currentNode\.id/);
   assert.match(editor, /const prompt = editorPromptFor\(currentNode\)/);
@@ -84,7 +84,7 @@ test("editor generation resolves its current draft without waiting for selection
   assert.ok(generationStart >= 0 && generationEnd > generationStart, "generation implementation should be present");
   const generation = component.slice(generationStart, generationEnd);
   assert.match(generation, /async \(request\?: CanvasGenerationRequest\)/);
-  assert.match(generation, /nodeById\(docRef\.current, request\.nodeId\)/);
+  assert.match(generation, /nodeById\(canvasCoreRef\.current\.document\(\), request\.nodeId\)/);
   assert.match(generation, /const source = deckSource\(request\)/);
   assert.match(generation, /const generationMode = source\.kind/);
   assert.match(generation, /const hasRequestedPrompt = typeof request\?\.userPrompt === "string" \|\| typeof request\?\.prompt === "string"/);
@@ -325,7 +325,7 @@ test("one-take Agent requests preserve connected image order and stream back as 
   const generationStart = component.indexOf("const runGeneration = useCallback");
   const generationEnd = component.indexOf("runGenerationRef.current = runGeneration", generationStart);
   const generation = component.slice(generationStart, generationEnd);
-  assert.match(component, /incomingReferences\(docRef\.current, currentNode\.id\)\s*\.filter\(isCanvasReadyImageSource\)/);
+  assert.match(component, /incomingReferences\(canvasCoreRef\.current\.document\(\), currentNode\.id\)\s*\.filter\(isCanvasReadyImageSource\)/);
   assert.match(component, /referenceNodeIds: references\.map\(\(reference\) => reference\.id\)/);
   assert.match(generation, /request\?\.referenceNodeIds/);
   assert.match(generation, /request\.referenceNodeIds\s*\.map\(\(id\) => incoming\.find\(\(node\) => node\.id === id\)\)/);
@@ -775,8 +775,8 @@ test("regular editor stays below its node in the stacked main-composer layout", 
 test("multi-select layout toolbar exposes alignment and distribution icons only for ordinary nodes", () => {
   assert.match(component, /const CANVAS_ALIGNMENT_OPTIONS/);
   assert.match(component, /const CANVAS_DISTRIBUTION_OPTIONS/);
-  assert.match(component, /alignCanvasNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*alignment,?\s*\)/);
-  assert.match(component, /distributeCanvasNodes\(\s*docRef\.current,\s*\[\.\.\.selectedIds\],\s*direction,?\s*\)/);
+  assert.match(component, /alignCanvasNodes\(\s*canvasCoreRef\.current\.document\(\),\s*\[\.\.\.selectedIds\],\s*alignment,?\s*\)/);
+  assert.match(component, /distributeCanvasNodes\(\s*canvasCoreRef\.current\.document\(\),\s*\[\.\.\.selectedIds\],\s*direction,?\s*\)/);
   assert.match(component, /selectedNodes\.length >= 2 && !selectedGroupId/);
   assert.match(component, /className="canvas-selection-layout-toolbar"/);
   assert.match(component, /className="canvas-selection-layout-group alignment"/);
@@ -808,7 +808,7 @@ test("group selection uses a toolbar attached to the group card while ordinary m
   assert.match(component, /function CanvasQuickToolbar\(/);
   assert.match(component, /data-canvas-group-id=\{group\.id\}/);
   assert.match(component, /placeCanvasGroupToolbar\(anchor, placementStage, overlay, 10\)/);
-  assert.match(component, /arrangeCanvasGroup\(docRef\.current, activeGroup\.id, mode\)/);
+  assert.match(component, /arrangeCanvasGroup\(canvasCoreRef\.current\.document\(\), activeGroup\.id, mode\)/);
   assert.doesNotMatch(component, /arrangeCanvas\(docRef\.current, selected, mode\)/);
   assert.match(component, /title="按节点父子关系整理选中对象"/);
   assert.match(component, /⌗ 整理选中\s*<\/button>/);
