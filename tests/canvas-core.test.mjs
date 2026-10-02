@@ -72,3 +72,12 @@ test('CanvasCore history is the single owner for sequential edits and boundaries
   assert.equal(core.history().future.length, 0);
   assert.deepEqual(core.undo()?.nodes.map((node) => node.id), ['a']);
 });
+
+test('CanvasCore document remains the authority when an Agent patch is validated and applied', () => {
+  const core = new CanvasCore(document());
+  const patch = { id: 'agent-node', label: 'agent patch', apply: (value) => ({ ...value, nodes: [{ id: 'agent-node' }] }) };
+  assert.equal(core.apply(patch).changed, true);
+  assert.deepEqual(core.document().nodes.map((node) => node.id), ['agent-node']);
+  assert.equal(core.history().past.length, 1);
+  assert.deepEqual(core.undo()?.nodes, []);
+});

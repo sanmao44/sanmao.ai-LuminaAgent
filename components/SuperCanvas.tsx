@@ -10674,9 +10674,8 @@ export default function SuperCanvas() {
     [agentDockReferences, commit, fitView, notify, openNodePosition, runtime, screenToWorld, selectedNodes, selectedSingle, stageSize.height, stageSize.width],
   );
   const applyAgentCanvasPatch = useCallback((patch: CanvasPatch): CanvasAgentDockPlanResult => {
-    const validation = validateCanvasPatch(docRef.current, patch);
+    const validation = validateCanvasPatch(canvasCoreRef.current.document(), patch);
     if (!validation.ok) return { ids: [], error: validation.error };
-    canvasCoreRef.current.sync(docRef.current);
     const result = canvasCoreRef.current.apply({
       id: patch.runId || `agent-patch-${Date.now().toString(36)}`,
       label: "agent.canvas.patch",
