@@ -276,6 +276,8 @@ type ReferenceMentionEditorProps = {
   menuClassName?: string;
   menuTitle?: ReactNode;
   transformPastedText?: (value: string) => string;
+  /** Return false to keep the browser from inserting non-text clipboard data into the editor. */
+  allowRichPaste?: boolean;
   readOnly?: boolean;
   /** Render the mention menu in a fixed-position portal anchored to the caret.
    * Used by canvas node editors so the menu escapes overflow clipping. */
@@ -301,6 +303,7 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
   menuClassName = "",
   menuTitle,
   transformPastedText,
+  allowRichPaste = true,
   readOnly = false,
   menuPortal = false,
 }, forwardedRef) {
@@ -487,6 +490,10 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
   const handlePaste = (event: ReactClipboardEvent<HTMLDivElement>) => {
     onPaste?.(event);
     if (event.defaultPrevented) return;
+    if (!allowRichPaste) {
+      event.preventDefault();
+      if (!event.clipboardData.getData("text/plain")) return;
+    }
     const pastedText = event.clipboardData.getData("text/plain");
     const editor = editorRef.current;
     const selection = window.getSelection();

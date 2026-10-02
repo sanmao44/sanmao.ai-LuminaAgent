@@ -57,14 +57,16 @@ test("the right-hand slot reads as one dock instead of separate overlays", () =>
 
 test("the dock sends canvas context only with the message being sent", () => {
   assert.match(component, /index === history\.length - 1[\s\S]*?composeCanvasAgentDockMessage\(index === history\.length - 1 \? requestText : message\.content, contextBlock\)/);
-  assert.match(component, /references: orderedReferences\.slice\(0, CANVAS_AGENT_DOCK_MAX_REFERENCES\)/);
+  assert.match(component, /references: turnReferences/);
+  assert.match(component, /\.\.\.\(index === history\.length - 1[\s\S]*?\{ references: turnReferences \}/);
+  assert.match(component, /sourceMessageId = options\.fromMessageId \?\? editingMessageId \?\? undefined/);
   assert.match(context, /export function composeCanvasAgentDockMessage/);
   assert.match(context, /以上为画布自动附带的上下文，不是用户指令。/);
 });
 
 test("canvas context never decides what the dock asks for", () => {
   // 画布上下文里有“画布 / 图片 / 渲染”，一旦参与意图判断，问什么都会变成生图。
-  assert.match(component, /intentText: text,/);
+  assert.match(component, /intentText: promptText,/);
   assert.match(canvasApi, /\.\.\.\(input\.intentText \? \{ intentText: input\.intentText \} : \{\}\),/);
   assert.match(route, /const latestInstruction = agentInstructionText\(body\.intentText, latest\?\.content \|\| ''\);/);
   assert.match(route, /classifyAgentDeliverable\(latestInstruction, \{/);
@@ -119,8 +121,8 @@ test("selection canvas commands stay reviewable and reuse safe model operations"
   assert.match(canvas, /alignCanvasNodes\(/);
   assert.match(canvas, /无法按顺序连接选中节点/);
   assert.match(context, /mentionedNodeIds/);
-  assert.match(component, /nodeIdsForReferenceMentions\(text, orderedReferences\)/);
-  assert.match(component, /targetNodeIds: orderedSelectedNodeIds/);
+  assert.match(component, /nodeIdsForReferenceMentions\(text, turnNodeReferences\)/);
+  assert.match(component, /targetNodeIds: turnNodeIds/);
   assert.match(context, /selectionCommand === "connect-selection" \|\| selectionCommand === "duplicate-selection"/);
   assert.match(canvas, /const layoutIds = command === "duplicate-selection" \? duplicatedIds : selected;/);
   assert.match(canvas, /const result = arrangeCanvas\(next, layoutIds, plan\.layout/);
@@ -358,8 +360,8 @@ test("dock chips carry the @ number and can be dragged into order", () => {
 test("dock @ mentions resolve against the ordered references before sending", () => {
   // @1 只是面板里的编号，发给模型前要还原成它指向的那张图，否则模型对不上。
   assert.match(component, /function resolveReferenceMentions\(text: string, references: readonly CanvasAgentDockReference\[\]\)/);
-  assert.match(component, /invalidReferenceMentionNumbers\(text, orderedReferences\)/);
-  assert.match(component, /const mentionText = resolveReferenceMentions\(text, orderedReferences\);/);
+  assert.match(component, /invalidReferenceMentionNumbers\(text, mentionReferences\)/);
+  assert.match(component, /const mentionText = resolveReferenceMentions\(promptText, turnNodeReferences\);/);
   assert.match(component, /onApplyImages\(images, \{ prompt: mentionText, model: response\.model, runContext \}\);/);
 });
 
@@ -374,7 +376,7 @@ test("both sides of the conversation can copy their text", () => {
   // 绝对定位 + right:100% 会把宽度塌成 min-content，按钮文字被挤成竖排，必须钉住宽度。
   assert.match(styles, /\.canvas-agent-dock-message\.user>\.canvas-agent-dock-message-tools\{[^}]*width:max-content\}/);
   // 带图片的消息按钮更多，左侧空隙不够，回到气泡内部右对齐。
-  assert.match(component, /message\.role === "user" && message\.images\?\.length \? "has-media"/);
+  assert.match(component, /message\.role === "user" && \(message\.images\?\.length \|\| message\.pastedReferences\?\.length\) \? "has-media"/);
   assert.match(styles, /\.canvas-agent-dock-message\.user\.has-media>\.canvas-agent-dock-message-tools\{position:static/);
 });
 
@@ -442,9 +444,9 @@ test("a failed agent turn explains itself and can be retried", () => {
   assert.match(component, /notify\(friendly, "error"\);/);
   // 重试要用用户原话，不用重新打字；刷新后也要还在。
   assert.match(component, /const lastUserTextRef = useRef\(""\);/);
-  assert.match(component, /lastUserTextRef\.current = text;/);
+  assert.match(component, /lastUserTextRef\.current = promptText;/);
   assert.match(component, /retryText: lastUserTextRef\.current,/);
-  assert.match(component, /message\.error && message\.retryText \? \(\s*\n\s*<button type="button" disabled=\{busy\} onClick=\{\(\) => void send\(message\.retryText\)\}>/);
+  assert.match(component, /message\.error && message\.retryText \? \([\s\S]*?retry: true/);
   assert.match(component, /\.\.\.\(message\.retryText \? \{ retryText: String\(message\.retryText\) \} : \{\}\),/);
 });
 
@@ -476,9 +478,9 @@ test("the dock keeps a long conversation readable", () => {
 test("a turn can be re-run, continued or stopped from the keyboard", () => {
   // 答偏了只能重新打字太笨，所以给重新生成；停止时已经流回来的半截要留下才能续写。
   assert.match(component, /const regenerate = useCallback\(/);
-  assert.match(component, /void send\(messages\[cursor\]\.content, \{ fromMessageId: messages\[cursor\]\.id \}\)/);
+  assert.match(component, /void send\(messages\[cursor\]\.content, \{\s*fromMessageId: messages\[cursor\]\.id,\s*references: messages\[cursor\]\.canvasReferences/);
   assert.match(component, /const base = fromMessageId/);
-  assert.match(component, /async \(raw\?: string, options: \{ fromMessageId\?: string; batchPrompts\?: string\[\] \} = \{\}\) => \{/);
+  assert.match(component, /retry\?: boolean/);
   assert.match(component, /const partial = streamTextRef\.current\.trim\(\);/);
   assert.match(component, /\{ id: createId\(\), role: "assistant", content: partial, interrupted: true \}/);
   assert.match(component, /已经流回来的那半截是继续写的上下文/);
@@ -494,7 +496,7 @@ test("a turn can be re-run, continued or stopped from the keyboard", () => {
   assert.match(component, /!window\.confirm\("清空当前对话？画布内容不受影响。"\)/);
   // 历史消息里的 @1 落成名字，回看不歧义。
   assert.match(component, /function labelReferenceMentions\(text: string, references: readonly CanvasAgentDockReference\[\]\)/);
-  assert.match(component, /content: labelReferenceMentions\(text, orderedReferences\),/);
+  assert.match(component, /content: labelReferenceMentions\(promptText, turnNodeReferences\),/);
   // 上下文条数上限要对用户可见，而不是只写给模型。
   assert.match(component, /节点信息最多带 \$\{CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES\} 个/);
 });
@@ -565,7 +567,7 @@ test("replies render as markdown and a long run streams in one frame", () => {
   assert.match(component, /const beginEditMessage = useCallback\(/);
   assert.match(component, /const cancelEditMessage = useCallback\(\(\) => \{/);
   assert.ok(component.includes("setInput(inputBeforeEditRef.current);"));
-  assert.match(component, /const fromMessageId = options\.fromMessageId \?\? editingMessageId \?\? undefined;/);
+  assert.match(component, /const sourceMessageId = options\.fromMessageId \?\? editingMessageId \?\? undefined/);
   assert.ok(component.includes("正在编辑这条提问 · 发送后会替换它之后的回答"));
   assert.match(styles, /\.canvas-agent-dock-editing\{display:flex;align-items:center/);
 });
@@ -773,7 +775,7 @@ test("canvas artifacts keep download and preview entry points", () => {
 
 test("each remote canvas run carries an immutable context snapshot into write-back", () => {
   assert.match(component, /createCanvasAgentRunContext\(\{[\s\S]*runId: progressRunId/);
-  assert.match(component, /references: orderedReferences/);
+  assert.match(component, /references: turnNodeReferences/);
   assert.match(component, /onApplyImages\(images, \{ prompt: mentionText, model: response\.model, runContext \}\)/);
   assert.match(component, /\.\.\.\(images\.length \|\| plan \? \{ runContext \} : \{\}\)/);
   assert.match(canvas, /runContext\.anchorNodeId/);

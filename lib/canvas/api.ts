@@ -854,7 +854,7 @@ export async function waitForCanvasAgentGeneration(taskId: string, maxWaitMs = 3
 
 export async function generateCanvasAgent(
   input: {
-    messages: Array<{ role: "user" | "assistant"; content: string }>;
+    messages: Array<{ role: "user" | "assistant"; content: string; references?: Array<Pick<CreativeReference, "id" | "kind" | "name" | "url" | "text" | "mimeType" | "nodeId">> }>;
     model?: string;
     webMode?: "off" | "auto" | "always";
     executionMode?: AgentExecutionMode;
@@ -891,7 +891,9 @@ export async function generateCanvasAgent(
     }));
     const messages = input.messages.map((message, index, all) => ({
       ...message,
-      references: index === all.length - 1 ? preparedReferences : [],
+      references: index === all.length - 1
+        ? preparedReferences
+        : (message.references || []).map((reference) => ({ ...reference })),
       files: [],
     }));
     try {

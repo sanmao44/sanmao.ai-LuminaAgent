@@ -476,6 +476,27 @@ test('canvas agent generation marks the request as canvas-originated', async () 
   });
 });
 
+test('canvas agent preserves image references on earlier user turns', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ ok: true, message: '?????' });
+  }, () => api.generateCanvasAgent({
+    messages: [
+      { role: 'user', content: '????', references: [{ id: 'paste-1', kind: 'image', name: '????', url: 'data:image/png;base64,PREPARED' }] },
+      { role: 'assistant', content: '??' },
+      { role: 'user', content: '????' },
+    ],
+    model: 'provider-a-chat-model',
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.deepEqual(payload.messages[0].references, [{
+    id: 'paste-1', kind: 'image', name: '????', url: 'data:image/png;base64,PREPARED',
+  }]);
+  assert.deepEqual(payload.messages[1].references, []);
+});
+
 test('canvas agent consumes status, delta, and final SSE events', async () => {
   const events = [
     'data: {"type":"status","stage":"answering","message":"正在生成回复…"}\n\n',

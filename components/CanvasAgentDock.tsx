@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { ClipboardEvent as ReactClipboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import AgentApprovalCard, { type AgentApprovalOutcome } from "@/components/AgentApprovalCard";
 import ModelPicker from "@/components/ModelPicker";
 import SkillManager from "@/components/SkillManager";
@@ -16,7 +16,7 @@ import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry
 import type { AgentWebMode } from "@/lib/creation/settings";
 import type { AgentApproval, AgentApprovalCall, AgentGeneratedFile, AgentMcpToolUse } from "@/lib/agent-client";
 import { pollAgentProgress } from "@/lib/agent-client";
-import { generateCanvasAgent } from "@/lib/canvas/api";
+import { generateCanvasAgent, uploadCanvasAsset } from "@/lib/canvas/api";
 import {
   CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES,
   CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE,
@@ -55,6 +55,10 @@ export type CanvasAgentDockMessage = {
   content: string;
   model?: string;
   images?: AgentGeneratedImage[];
+  /** User pasted references are stored as durable canvas URLs, never inline data URLs. */
+  references?: CanvasAgentDockReference[];
+  canvasReferences?: CanvasAgentDockReference[];
+  pastedReferences?: CanvasAgentDockReference[];
   batchItems?: Array<{
     batchId: string;
     index: number;
@@ -68,6 +72,10 @@ export type CanvasAgentDockMessage = {
   error?: string;
   /** 失败时存一份用户原话：重试直接用这句，@ 编号按当时的选区再解析一次。 */
   retryText?: string;
+  retryReferences?: CanvasAgentDockReference[];
+  retryPastedReferences?: CanvasAgentDockReference[];
+  canvasNodeIds?: string[];
+  retryCanvasNodeIds?: string[];
   /** 用户中途停止时留下的部分回答：可以在这条消息上接着写。 */
   interrupted?: boolean;
   /** 这条消息落到画布上的节点 id：存过之后按钮换成定位入口，随时回到画布上看结果。 */
@@ -129,6 +137,8 @@ type Props = {
 };
 
 const MESSAGE_LIMIT = 40;
+const MAX_DOCK_PASTED_IMAGES = 8;
+const MAX_DOCK_STORED_REFERENCES = 16;
 /* 这类回答常见几千字，默认全展开会让面板只能靠滚动翻。 */
 const MESSAGE_COLLAPSE_CHARS = 900;
 /* 距底多少像素以内算“贴在底部”，决定流式内容要不要跟着滚。 */
@@ -180,6 +190,35 @@ const WEB_MODE_ORDER: AgentWebMode[] = ["off", "auto", "always"];
 
 function createId() {
   return `dock-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+type DraftPastedImage = {
+  id: string;
+  name: string;
+  previewUrl: string;
+  file?: File;
+  url?: string;
+};
+
+function readStoredReferences(value: unknown): CanvasAgentDockReference[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry, index) => {
+    if (!entry || typeof entry !== "object") return [];
+    const reference = entry as Record<string, unknown>;
+    if (reference.kind !== "image" && reference.kind !== "video" && reference.kind !== "text") return [];
+    const url = typeof reference.url === "string" && reference.url.trim() ? reference.url : undefined;
+    const text = typeof reference.text === "string" && reference.text.trim() ? reference.text : undefined;
+    if (reference.kind === "text" ? !text : !url) return [];
+    return [{
+      id: typeof reference.id === "string" && reference.id ? reference.id : `pasted-image-${index + 1}`,
+      kind: reference.kind as CanvasAgentDockReference["kind"],
+      name: typeof reference.name === "string" && reference.name ? reference.name : `${reference.kind === "video" ? "参考视频" : reference.kind === "text" ? "文本引用" : "粘贴图片"} ${index + 1}`,
+      ...(url ? { url } : {}),
+      ...(text ? { text } : {}),
+      ...(typeof reference.nodeId === "string" ? { nodeId: reference.nodeId } : {}),
+      ...(typeof reference.mimeType === "string" ? { mimeType: reference.mimeType } : {}),
+    }];
+  }).slice(0, MAX_DOCK_STORED_REFERENCES);
 }
 
 /* 选段操作只认单条消息：跨气泡的选区没有对应的节点语义。 */
@@ -450,12 +489,36 @@ function readSession(): CanvasAgentDockSession | null {
                   ...(image.batchPrompt ? { batchPrompt: String(image.batchPrompt) } : {}),
                 })) }
               : {}),
+            ...(readStoredReferences(message.references).length
+              ? { references: readStoredReferences(message.references) }
+              : {}),
+            ...(readStoredReferences(message.canvasReferences).length
+              ? { canvasReferences: readStoredReferences(message.canvasReferences) }
+              : {}),
+            ...(readStoredReferences(message.pastedReferences).length
+              ? { pastedReferences: readStoredReferences(message.pastedReferences) }
+              : {}),
             ...(Array.isArray(message.batchItems) && message.batchItems.length ? { batchItems: message.batchItems } : {}),
             ...(Array.isArray(message.skills) && message.skills.length
               ? { skills: message.skills.map((skill) => ({ id: String(skill.id || ""), name: String(skill.name || "") })) }
               : {}),
             ...(message.error ? { error: String(message.error) } : {}),
             ...(message.retryText ? { retryText: String(message.retryText) } : {}),
+            ...(readStoredReferences(message.retryReferences).length
+              ? { retryReferences: readStoredReferences(message.retryReferences) }
+              : {}),
+            ...(readStoredReferences(message.retryPastedReferences).length
+              ? { retryPastedReferences: readStoredReferences(message.retryPastedReferences) }
+              : {}),
+            ...(Array.isArray(message.retryCanvasNodeIds) && message.retryCanvasNodeIds.length
+              ? { retryCanvasNodeIds: message.retryCanvasNodeIds.filter((id): id is string => typeof id === "string" && Boolean(id)) }
+              : {}),
+            ...(Array.isArray(message.canvasNodeIds) && message.canvasNodeIds.length
+              ? { canvasNodeIds: message.canvasNodeIds.filter((id): id is string => typeof id === "string" && Boolean(id)) }
+              : {}),
+            ...(Array.isArray(message.retryCanvasNodeIds) && message.retryCanvasNodeIds.length
+              ? { retryCanvasNodeIds: message.retryCanvasNodeIds.filter((id): id is string => typeof id === "string" && Boolean(id)) }
+              : {}),
             ...(message.interrupted ? { interrupted: true } : {}),
             ...(Array.isArray(message.imageNodeIds) && message.imageNodeIds.length
               ? { imageNodeIds: message.imageNodeIds.map((id) => String(id || "")).filter(Boolean) }
@@ -505,6 +568,9 @@ export default function CanvasAgentDock({
 }: Props) {
   const [messages, setMessages] = useState<CanvasAgentDockMessage[]>([]);
   const [input, setInput] = useState("");
+  const [draftImages, setDraftImages] = useState<DraftPastedImage[]>([]);
+  const [uploadingPastedImages, setUploadingPastedImages] = useState(false);
+  const uploadingPastedImagesRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [streamText, setStreamText] = useState("");
   /* 长任务阶段文案：主管线写快照，面板按 runId 轮询，正文开始流式返回就让位。 */
@@ -541,6 +607,8 @@ export default function CanvasAgentDock({
   const stickToBottomRef = useRef(true);
   const logRef = useRef<HTMLDivElement | null>(null);
   const mentionEditorRef = useRef<HTMLDivElement | null>(null);
+  const attachmentObjectUrlsRef = useRef<Set<string>>(new Set());
+  const inputBeforeEditImagesRef = useRef<DraftPastedImage[]>([]);
   const skillMenuFromSlashRef = useRef(false);
   /* 生成是异步的：收尾时要按「此刻面板开着没有」决定要不要点亮 rail。 */
   const openRef = useRef(open);
@@ -793,19 +861,69 @@ export default function CanvasAgentDock({
   const beginEditMessage = useCallback(
     (message: CanvasAgentDockMessage) => {
       inputBeforeEditRef.current = input;
+      inputBeforeEditImagesRef.current = draftImages;
       setEditingMessageId(message.id);
       setInput(message.content);
+      setDraftImages((message.pastedReferences || []).flatMap((reference) => reference.kind === "image" && reference.url
+        ? [{ id: reference.id, name: reference.name, url: reference.url, previewUrl: reference.url }]
+        : []));
       focusEditorEnd();
     },
-    [focusEditorEnd, input],
+    [draftImages, focusEditorEnd, input],
   );
 
   /* 取消编辑＝放弃这次改写，输入框还原成点「编辑」之前的内容。 */
   const cancelEditMessage = useCallback(() => {
     setEditingMessageId(null);
     setInput(inputBeforeEditRef.current);
+    setDraftImages(inputBeforeEditImagesRef.current);
     focusEditorEnd();
   }, [focusEditorEnd]);
+
+  const addPastedImages = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .flatMap((item) => {
+        const file = item.getAsFile();
+        if (!file) return [];
+        const extension = file.type.split("/")[1]?.replace(/[^a-z0-9.+-]/gi, "") || "png";
+        return [new File([file], file.name || `粘贴图片.${extension}`, { type: file.type, lastModified: file.lastModified })];
+      });
+    if (!files.length) return;
+    event.preventDefault();
+    if (uploadingPastedImagesRef.current) return;
+    const available = Math.max(0, MAX_DOCK_PASTED_IMAGES - draftImages.length);
+    if (!available) {
+      notify(`每条消息最多添加 ${MAX_DOCK_PASTED_IMAGES} 张图片。`, "error");
+      return;
+    }
+    const accepted = files.slice(0, available);
+    const tooLarge = accepted.find((file) => file.size > 100 * 1024 * 1024);
+    if (tooLarge) {
+      notify(`图片“${tooLarge.name}”超过 100 MB，无法附加。`, "error");
+      return;
+    }
+    const added = accepted.map((file) => {
+      const previewUrl = URL.createObjectURL(file);
+      attachmentObjectUrlsRef.current.add(previewUrl);
+      return { id: createId(), name: file.name, file, previewUrl };
+    });
+    setDraftImages((current) => [...current, ...added]);
+    if (files.length > accepted.length) notify(`已添加 ${accepted.length} 张图片；每条消息最多 ${MAX_DOCK_PASTED_IMAGES} 张。`);
+  }, [draftImages.length, notify]);
+
+  const removeDraftImage = useCallback((id: string) => {
+    setDraftImages((current) => {
+      const removed = current.find((image) => image.id === id);
+      if (removed && attachmentObjectUrlsRef.current.delete(removed.previewUrl)) URL.revokeObjectURL(removed.previewUrl);
+      return current.filter((image) => image.id !== id);
+    });
+  }, []);
+
+  useEffect(() => () => {
+    attachmentObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    attachmentObjectUrlsRef.current.clear();
+  }, []);
 
   const stop = useCallback(() => {
     abortRef.current?.abort(new DOMException("已停止", "AbortError"));
@@ -814,31 +932,79 @@ export default function CanvasAgentDock({
   }, []);
 
   const send = useCallback(
-    async (raw?: string, options: { fromMessageId?: string; batchPrompts?: string[] } = {}) => {
+    async (raw?: string, options: {
+      fromMessageId?: string;
+      batchPrompts?: string[];
+      references?: CanvasAgentDockReference[];
+      pastedReferences?: CanvasAgentDockReference[];
+      canvasNodeIds?: string[];
+      retry?: boolean;
+    } = {}) => {
       const text = String(raw ?? input).trim();
-      if (!text) {
-        notify("先输入要问 Agent 的内容。", "error");
+      const sourceMessageId = options.fromMessageId ?? editingMessageId ?? undefined;
+      const sourceMessage = sourceMessageId
+        ? messages.find((message) => message.id === sourceMessageId)
+        : undefined;
+      const hasDraftImageState = raw === undefined && (draftImages.length > 0 || editingMessageId !== null);
+      const retryPastedSnapshot = options.retry ? sourceMessage?.retryPastedReferences : undefined;
+      const pastedReferenceSnapshot = options.pastedReferences ?? (hasDraftImageState ? undefined : options.retry ? retryPastedSnapshot : sourceMessage?.pastedReferences);
+      const suppliedReferences = options.retry && sourceMessage && !options.references
+        ? sourceMessage.retryReferences || sourceMessage.canvasReferences || []
+        : options.references ?? sourceMessage?.canvasReferences
+          ?? (sourceMessage ? (sourceMessage.references || []).filter((reference) => !(sourceMessage.pastedReferences || []).some((pasted) => pasted.id === reference.id)) : []);
+      const canvasNodeIds = options.canvasNodeIds
+        ?? (options.retry ? sourceMessage?.retryCanvasNodeIds : undefined)
+        ?? sourceMessage?.canvasNodeIds
+        ?? orderedSelectedNodeIds;
+      if (!text && !draftImages.length && !(pastedReferenceSnapshot?.length) && !suppliedReferences.length) {
+        notify("先输入要问 Agent 的内容，或粘贴一张图片。", "error");
         return;
       }
-      if (busy) return;
-      const invalidMentions = invalidReferenceMentionNumbers(text, orderedReferences);
+      if (busy || uploadingPastedImagesRef.current) return;
+      const mentionReferences = options.references ?? sourceMessage?.canvasReferences ?? (sourceMessage ? suppliedReferences : orderedReferences);
+      const invalidMentions = invalidReferenceMentionNumbers(text, mentionReferences);
       if (invalidMentions.length) {
         notify(`引用编号无效：${invalidMentions.map((number) => `@${number}`).join("、")}`, "error");
         return;
       }
       closeSkillMenu();
-      lastUserTextRef.current = text;
+      const promptText = text || "请查看我粘贴的图片。";
+      let pastedReferences = pastedReferenceSnapshot || [];
+      if (hasDraftImageState) {
+        uploadingPastedImagesRef.current = true;
+        setUploadingPastedImages(true);
+        try {
+          pastedReferences = await Promise.all(draftImages.map(async (image): Promise<CanvasAgentDockReference | null> => {
+            if (image.url) return { id: image.id, kind: "image" as const, name: image.name, url: image.url };
+            if (!image.file) return null;
+            const asset = await uploadCanvasAsset(image.file);
+            return { id: image.id, kind: "image" as const, name: asset.name || image.name, url: asset.url, mimeType: asset.mime };
+          })).then((values) => values.filter((value): value is CanvasAgentDockReference => value !== null));
+        } catch (error) {
+          notify(error instanceof Error ? `图片上传失败：${error.message}` : "图片上传失败，请重试。", "error");
+          uploadingPastedImagesRef.current = false;
+          setUploadingPastedImages(false);
+          return;
+        }
+        uploadingPastedImagesRef.current = false;
+        setUploadingPastedImages(false);
+      }
+      const hasReferenceSnapshot = options.references !== undefined || sourceMessageId !== undefined;
+      const turnNodeReferences = (hasReferenceSnapshot ? suppliedReferences : orderedReferences).slice(0, Math.max(0, 16 - pastedReferences.length));
+      const turnReferences = [...turnNodeReferences, ...pastedReferences].slice(0, 16);
+      const turnNodeIds = canvasNodeIds;
+      lastUserTextRef.current = promptText;
       streamTextRef.current = "";
       /* 自己发的新消息一定要看到，所以这一次强制贴底。 */
       stickToBottomRef.current = true;
       // 输入框里显示 @1，模型收到的应该是它指向的那张图，否则编号对不上。
-      const mentionText = resolveReferenceMentions(text, orderedReferences);
+      const mentionText = resolveReferenceMentions(promptText, turnNodeReferences);
       const requestText = options.batchPrompts?.length
         ? `${mentionText}\n\n请只生成以下失败项，每项生成一张，不要重新生成其他项目：\n${options.batchPrompts.map((prompt, index) => `${index + 1}. ${prompt}`).join("\n")}`
         : mentionText;
-      const mentionedNodeIds = nodeIdsForReferenceMentions(text, orderedReferences);
+      const mentionedNodeIds = nodeIdsForReferenceMentions(text, turnNodeReferences);
       /* 重新问某一轮（重跑或改过之后再问）时先把它之后的内容丢掉，否则会留下两份回答。 */
-      const fromMessageId = options.fromMessageId ?? editingMessageId ?? undefined;
+      const fromMessageId = sourceMessageId;
       const base = fromMessageId
         ? (() => {
             const index = messages.findIndex((message) => message.id === fromMessageId);
@@ -849,18 +1015,27 @@ export default function CanvasAgentDock({
         id: createId(),
         role: "user",
         /* 存自解释的引用名：三天后回看这条消息，也不再依赖当时的 @ 编号。 */
-        content: labelReferenceMentions(text, orderedReferences),
+        content: labelReferenceMentions(promptText, turnNodeReferences),
+        ...(turnReferences.length ? { references: turnReferences } : {}),
+        ...(turnNodeReferences.length ? { canvasReferences: turnNodeReferences } : {}),
+        ...(turnNodeIds.length ? { canvasNodeIds: turnNodeIds } : {}),
+        ...(pastedReferences.length ? { pastedReferences } : {}),
       };
       const history = [...base, userMessage];
       setMessages(history);
-      setInput("");
+      if (raw === undefined) {
+        setInput("");
+        attachmentObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+        attachmentObjectUrlsRef.current.clear();
+        setDraftImages([]);
+      }
       setEditingMessageId(null);
       setProgressDetail("");
       setStreamText("");
       const previousImageMessage = [...base]
         .reverse()
         .find((message) => message.role === "assistant" && message.images?.length);
-      if (canvasAgentDockRequestsPreviousImageApply(text) && previousImageMessage?.images?.length) {
+      if (!pastedReferences.length && canvasAgentDockRequestsPreviousImageApply(text) && previousImageMessage?.images?.length) {
         if (previousImageMessage.imageNodeIds?.length) {
           onFocusNodes(previousImageMessage.imageNodeIds);
           setMessages([
@@ -892,8 +1067,8 @@ export default function CanvasAgentDock({
         }
         return;
       }
-      const localPlan = buildCanvasAgentDockPlan(text, {
-        targetNodeIds: orderedSelectedNodeIds,
+      const localPlan = pastedReferences.length ? null : buildCanvasAgentDockPlan(text, {
+        targetNodeIds: turnNodeIds,
         mentionedNodeIds,
         selectedTotal,
       });
@@ -932,8 +1107,8 @@ export default function CanvasAgentDock({
        * 单次模型调用可能很久，所以同一步骤超过 3 秒会带上秒表（见 lib/agent-client）。
        */
       const progressRunId = createId();
-      const selectedTargetReferences = orderedReferences.filter((reference) =>
-        orderedSelectedNodeIds.includes(reference.nodeId || reference.id),
+      const selectedTargetReferences = turnNodeReferences.filter((reference) =>
+        turnNodeIds.includes(reference.nodeId || reference.id),
       );
       const selectedTargetKinds = new Set(selectedTargetReferences.map((reference) => reference.kind));
       const targetKind = selectedTargetKinds.size > 1
@@ -942,11 +1117,11 @@ export default function CanvasAgentDock({
       const runContext = createCanvasAgentRunContext({
         runId: progressRunId,
         context,
-        references: orderedReferences,
+        references: turnNodeReferences,
         target: {
-          nodeIds: orderedSelectedNodeIds,
+          nodeIds: turnNodeIds,
           kind: targetKind,
-          operation: canvasAgentTargetOperation(text, targetKind),
+          operation: canvasAgentTargetOperation(promptText, targetKind),
         },
       });
       const stopAgentProgress = pollAgentProgress(progressRunId, {
@@ -960,6 +1135,9 @@ export default function CanvasAgentDock({
           index === history.length - 1
             ? composeCanvasAgentDockMessage(index === history.length - 1 ? requestText : message.content, contextBlock)
             : message.content,
+        ...(index === history.length - 1
+          ? { references: turnReferences }
+          : message.references?.length ? { references: message.references } : {}),
       }));
       try {
         const response = await generateCanvasAgent(
@@ -969,7 +1147,7 @@ export default function CanvasAgentDock({
             executionMode: "agent-dock",
             webMode,
             // 画布上下文只给模型看，意图判断必须用用户自己那句话。
-            intentText: text,
+            intentText: promptText,
             runId: progressRunId,
             context,
             canvasDocument,
@@ -978,7 +1156,7 @@ export default function CanvasAgentDock({
               kind: runContext.targetKind,
               operation: runContext.operation,
             },
-            references: orderedReferences.slice(0, CANVAS_AGENT_DOCK_MAX_REFERENCES),
+            references: [...turnReferences],
             signal: controller.signal,
           },
           (event) => {
@@ -1008,9 +1186,9 @@ export default function CanvasAgentDock({
               ...(image.batchPrompt ? { batchPrompt: String(image.batchPrompt) } : {}),
             }))
           .filter((image) => Boolean(image.url));
-        const plan = buildCanvasAgentDockPlan(text, {
+        const plan = pastedReferences.length ? null : buildCanvasAgentDockPlan(text, {
           imageCount: images.length,
-          targetNodeIds: orderedSelectedNodeIds,
+          targetNodeIds: turnNodeIds,
           mentionedNodeIds,
           selectedTotal,
         });
@@ -1092,6 +1270,9 @@ export default function CanvasAgentDock({
               content: `请求失败：${friendly}`,
               error: message,
               retryText: lastUserTextRef.current,
+              ...(turnNodeReferences.length ? { retryReferences: turnNodeReferences } : {}),
+              ...(pastedReferences.length ? { retryPastedReferences: pastedReferences } : {}),
+              ...(turnNodeIds.length ? { retryCanvasNodeIds: turnNodeIds } : {}),
             },
           ]);
           notify(friendly, "error");
@@ -1108,7 +1289,7 @@ export default function CanvasAgentDock({
         setProgressDetail("");
       }
     },
-    [autoApply, busy, canvasDocument, closeSkillMenu, context, contextBlock, editingMessageId, input, messages, model, notify, onApplyCanvasPatch, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, selectedTotal, webMode],
+    [autoApply, busy, canvasDocument, closeSkillMenu, context, contextBlock, draftImages, editingMessageId, input, messages, model, notify, onApplyCanvasPatch, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, selectedTotal, uploadingPastedImages, webMode],
   );
 
   const retryFailedBatchItems = useCallback((message: CanvasAgentDockMessage) => {
@@ -1210,7 +1391,12 @@ export default function CanvasAgentDock({
       const index = messages.findIndex((message) => message.id === assistantId);
       for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
         if (messages[cursor].role !== "user") continue;
-        void send(messages[cursor].content, { fromMessageId: messages[cursor].id });
+        void send(messages[cursor].content, {
+          fromMessageId: messages[cursor].id,
+          references: messages[cursor].canvasReferences,
+          pastedReferences: messages[cursor].pastedReferences,
+          canvasNodeIds: messages[cursor].canvasNodeIds,
+        });
         return;
       }
       notify("这一轮没有找到对应的提问，没法重新生成。", "error");
@@ -1543,7 +1729,7 @@ export default function CanvasAgentDock({
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`canvas-agent-dock-message ${message.role} ${message.error ? "is-error" : ""} ${message.interrupted ? "is-interrupted" : ""} ${message.role === "user" && message.images?.length ? "has-media" : ""}`}
+            className={`canvas-agent-dock-message ${message.role} ${message.error ? "is-error" : ""} ${message.interrupted ? "is-interrupted" : ""} ${message.role === "user" && (message.images?.length || message.pastedReferences?.length) ? "has-media" : ""}`}
           >
             {message.role === "assistant" ? (
               <div className="canvas-agent-dock-role">
@@ -1576,6 +1762,13 @@ export default function CanvasAgentDock({
             ) : (
               <p>{message.content}</p>
             )}
+            {message.role === "user" && message.pastedReferences?.length ? (
+              <div className="canvas-agent-dock-user-references" aria-label="本条消息的图片引用">
+                {message.pastedReferences.map((reference) => reference.kind === "image" && reference.url ? (
+                  <img key={reference.id} src={reference.url} alt={reference.name} title={reference.name} />
+                ) : null)}
+              </div>
+            ) : null}
             {message.files?.length ? (
               <div className="canvas-agent-dock-files">
                 {message.files.map((file, index) => (
@@ -1765,7 +1958,12 @@ export default function CanvasAgentDock({
                 </>
               ) : null}
               {message.error && message.retryText ? (
-                <button type="button" disabled={busy} onClick={() => void send(message.retryText)}>
+                <button type="button" disabled={busy} onClick={() => void send(message.retryText, {
+                  references: message.retryReferences || [],
+                  pastedReferences: message.retryPastedReferences || [],
+                  canvasNodeIds: message.retryCanvasNodeIds || [],
+                  retry: true,
+                })}>
                   重试
                 </button>
               ) : null}
@@ -1882,14 +2080,29 @@ export default function CanvasAgentDock({
           else void send();
         }}
       >
+        {draftImages.length ? (
+          <div className="canvas-agent-dock-pasted-images" aria-label="待发送图片">
+            {draftImages.map((image) => (
+              <div className="canvas-agent-dock-pasted-image" key={image.id}>
+                <img src={image.previewUrl} alt={image.name} title={image.name} />
+                <button type="button" onClick={() => removeDraftImage(image.id)} aria-label={`移除图片 ${image.name}`} title="移除图片">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" /></svg>
+                </button>
+              </div>
+            ))}
+            <small>{draftImages.length} 张图片将作为参考发送</small>
+          </div>
+        ) : null}
         <ReferenceMentionEditor
           ref={mentionEditorRef}
           value={input}
           references={mentionOptions}
           className="canvas-agent-dock-mention-editor"
+          allowRichPaste={false}
+          onPaste={addPastedImages}
           menuClassName="canvas-mention-menu canvas-agent-dock-mention-menu"
           ariaLabel="给 Agent 的消息"
-          placeholder="问这只画布的 Agent，Enter 发送 / Shift+Enter 换行；输入 @ 引用选中节点，生成中按 Esc 停止"
+          placeholder="问这只画布的 Agent，Enter 发送 / Shift+Enter 换行；可粘贴图片、输入 @ 引用节点；生成中按 Esc 停止"
           transformPastedText={(value) => replaceNaturalReferenceLabels(value, mentionOptions).value}
           onChange={(value) => {
             setInput(value);
@@ -1999,8 +2212,8 @@ export default function CanvasAgentDock({
             />
             <span>智能落画布</span>
           </label>
-          <button type="submit" className={`canvas-agent-dock-send ${busy ? "is-busy" : ""}`}>
-            {busy ? "停止" : "发送"}
+          <button type="submit" className={`canvas-agent-dock-send ${busy ? "is-busy" : ""}`} disabled={uploadingPastedImages}>
+            {busy ? "停止" : uploadingPastedImages ? "上传图片…" : "发送"}
           </button>
         </div>
         <AgentSkillMenu
