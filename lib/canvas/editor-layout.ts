@@ -28,10 +28,6 @@ export type CanvasOverlayFit = CanvasOverlayPosition & {
   maxHeight: number;
 };
 
-export type CanvasNodeEditorPlacement = CanvasOverlayPosition & {
-  placement: "top" | "bottom";
-};
-
 /**
  * Places a fixed context menu next to its pointer while keeping it inside the
  * visible viewport. The measured menu size is intentionally supplied by the
@@ -149,35 +145,6 @@ export function fitCanvasNodeEditorBelow(
       Math.min(overlay.height, stage.height - position.top - margin),
     ),
   };
-}
-
-/**
- * Places a node editor without turning the editor shell into a scroll
- * container. Prefer the normal position below the node, but move the complete
- * panel above it when the measured natural height would run past the visible
- * stage. The prompt field and any drawer may still scroll locally; the panel
- * itself remains fully laid out.
- */
-export function placeCanvasNodeEditorAdaptive(
-  anchor: CanvasOverlayAnchor,
-  stage: CanvasOverlayStage,
-  overlay: CanvasOverlaySize,
-  gap = 14,
-  margin = 12,
-): CanvasNodeEditorPlacement {
-  const position = placeCanvasNodeEditor(anchor, stage, overlay, gap);
-  const rightmostLeft = Math.max(margin, stage.width - overlay.width - margin);
-  const left = Math.min(Math.max(position.left, margin), rightmostLeft);
-  const belowTop = position.top;
-  const aboveTop = anchor.top - overlay.height - gap;
-  const fitsBelow = belowTop + overlay.height <= stage.height - margin;
-  const fitsAbove = aboveTop >= margin;
-
-  if (fitsBelow || !fitsAbove) {
-    return { left, top: Math.max(margin, belowTop), placement: "bottom" };
-  }
-
-  return { left, top: aboveTop, placement: "top" };
 }
 
 /**

@@ -166,7 +166,7 @@ import {
 import { getVideoModelLimits } from "@/lib/video-model-limits";
 import { is65535Provider } from "@/lib/video-platform";
 import {
-  placeCanvasNodeEditorAdaptive,
+  placeCanvasNodeEditorDock,
   placeCanvasGroupToolbar,
   placeCanvasContextMenu,
   placeCanvasNodeToolbar,
@@ -19648,12 +19648,7 @@ function CanvasNodeEditorPopover({
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState<{
-    left: number;
-    top: number;
-    maxHeight: number;
-    placement: "top" | "bottom";
-  }>({ left: 18, top: 86, maxHeight: 580, placement: "bottom" });
+  const [position, setPosition] = useState({ left: 18, top: 86 });
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [promptOptimizing, setPromptOptimizing] = useState(false);
@@ -20037,38 +20032,6 @@ function CanvasNodeEditorPopover({
     const microEditor = zoom < 0.35;
     if (nextCompact !== isCompact) setIsCompact(nextCompact);
     const popoverWidth = popoverRef.current?.offsetWidth || (microEditor ? 360 : nextCompact ? 510 : 640);
-    // Use the density's preferred height instead of the currently rendered
-    // height. A previously constrained panel can then grow again after the
-    // node is panned upward or the viewport becomes taller.
-    const estimatedPopoverHeight = audioNode ? 330 : isImageNode ? 340 : microEditor ? 440 : nextCompact ? 540 : 620;
-    // scrollHeight remains the full natural height even while an earlier
-    // position temporarily constrained the panel. Use it for placement so a
-    // clipped first render cannot make the editor permanently lose its lower
-    // controls.
-    const popoverHeight = (() => {
-      const popover = popoverRef.current;
-      if (!popover) return estimatedPopoverHeight;
-      if (isDockNode) {
-        // The upward params/variant drawers are absolute overlays. Measure the
-        // painted editor surface only so opening them never moves or resizes
-        // the attached dock.
-        const surface = popover.querySelector<HTMLElement>(".canvas-node-editor-surface");
-        return surface?.offsetHeight || estimatedPopoverHeight;
-      }
-      if (!audioNode) return popover.scrollHeight || estimatedPopoverHeight;
-
-      // The audio body is the only editor body that can become a native
-      // scroll container. Reading the popover's scrollHeight after it has
-      // been height-constrained therefore measures the already-clipped flex
-      // layout and feeds that smaller value back into the next layout pass.
-      // Measure the body's full content instead so the panel can grow when
-      // there is room, while still allowing the body to scroll in a short
-      // viewport.
-      const head = popover.querySelector<HTMLElement>(".canvas-node-editor-head");
-      const body = popover.querySelector<HTMLElement>(".canvas-node-editor-body");
-      const naturalHeight = (head?.offsetHeight || 0) + (body?.scrollHeight || 0) + 2;
-      return naturalHeight || estimatedPopoverHeight;
-    })();
     const stageRect = stage.getBoundingClientRect();
     const nodeElement = Array.from(
       stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
@@ -20092,24 +20055,20 @@ function CanvasNodeEditorPopover({
     // but it must not be recentered independently from the node.
     /* 参数面板同理：贴到面板左边，别让 Agent 面板压住正在调的那几个参数。 */
     const visibleStage = { width: canvasVisibleStageWidth(stage), height: stageHeight };
-    // Keep the complete editor laid out as one panel. If the measured panel
-    // cannot fit below the node, place it above the node instead of constraining
-    // the body and exposing a second, panel-level scrollbar.
-    const adaptivePosition = placeCanvasNodeEditorAdaptive(
+    // Keep the complete editor laid out below the node. The editor never jumps
+    // above its owner; only its prompt field and explicit drawers can scroll.
+    const nextPosition = placeCanvasNodeEditorDock(
       anchor,
       visibleStage,
-      { width: popoverWidth, height: popoverHeight },
+      { width: popoverWidth, height: 0 },
       14,
       12,
     );
-    const position = { ...adaptivePosition, maxHeight: popoverHeight };
     setPosition((current) =>
-      current.left === position.left &&
-      current.top === position.top &&
-      current.maxHeight === position.maxHeight &&
-      current.placement === position.placement
+      current.left === nextPosition.left &&
+      current.top === nextPosition.top
         ? current
-        : position,
+        : nextPosition,
     );
   }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, isDockNode, isImageNode, node.x, node.y, promptExpanded, size.h, size.w, stackedEditor, stageRef]);
 
@@ -20144,7 +20103,7 @@ function CanvasNodeEditorPopover({
     <div
       ref={popoverRef}
        className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
-      data-placement={position.placement}
+      data-placement="bottom"
       data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
       data-prompt-expanded={promptExpanded ? "true" : "false"}
@@ -20153,7 +20112,6 @@ function CanvasNodeEditorPopover({
       style={{
         left: position.left,
         top: position.top,
-        maxHeight: promptExpanded || stackedEditor || isDockNode ? undefined : position.maxHeight,
       }}
       onPointerDown={(event) => {
         const target = event.target as Node;

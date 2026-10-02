@@ -62,7 +62,7 @@ test("overlay positioning ignores identical geometry updates", () => {
   assert.match(toolbar, /setPosition\(\(current\) =>[\s\S]*current\.left === nextPosition\.left[\s\S]*current\.top === nextPosition\.top[\s\S]*\? current/);
 
   const editor = component.slice(editorStart);
-  assert.match(editor, /setPosition\(\(current\) =>[\s\S]*current\.left === position\.left[\s\S]*current\.top === position\.top[\s\S]*current\.maxHeight === position\.maxHeight[\s\S]*\? current/);
+  assert.match(editor, /setPosition\(\(current\) =>[\s\S]*current\.left === nextPosition\.left[\s\S]*current\.top === nextPosition\.top[\s\S]*\? current/);
 });
 
 test("editor generation resolves its current draft without waiting for selection state", () => {
@@ -506,8 +506,9 @@ test("canvas drawers appear directly and do not add heavy stacked shadows", () =
   assert.match(shadowStyles, /\.canvas-node-editor-popover\.is-video-variant \.canvas-node-editor-dock-drawer\s*\{[\s\S]*box-shadow:0 12px 28px rgba\(0,0,0,\.17\)/);
 });
 
-test("opening a dock drawer measures only the attached editor surface", () => {
-  assert.match(component, /if \(isDockNode\) \{[\s\S]*const surface = popover\.querySelector<HTMLElement>\("\.canvas-node-editor-surface"\);[\s\S]*return surface\?\.offsetHeight/);
+test("opening a dock drawer never changes the attached editor position", () => {
+  assert.doesNotMatch(component, /surface = popover\.querySelector<HTMLElement>\("\.canvas-node-editor-surface"\)/);
+  assert.doesNotMatch(component, /const (popoverHeight|estimatedPopoverHeight|naturalHeight)/);
   assert.match(component, /isCompact, isDockNode, isImageNode/);
 });
 
@@ -605,10 +606,10 @@ test("audio nodes use the branded rounded player instead of browser gray control
   assert.match(styles, /\.canvas-audio-panel-meta-chips span\{[^}]*border-radius:999px/);
 });
 
-test("audio editor keeps its natural height after viewport fitting", () => {
+test("audio editor keeps its natural height without a panel height clamp", () => {
   assert.match(component, /className="canvas-audio-panel"/);
-  assert.match(component, /if \(!audioNode\) return popover\.scrollHeight \|\| estimatedPopoverHeight/);
-  assert.match(component, /const naturalHeight = \(head\?\.offsetHeight \|\| 0\) \+ \(body\?\.scrollHeight \|\| 0\) \+ 2/);
+  assert.doesNotMatch(component, /estimatedPopoverHeight/);
+  assert.doesNotMatch(component, /naturalHeight = \(head\?\.offsetHeight/);
   assert.match(styles, /\.canvas-audio-panel\{display:grid;gap:11px;min-width:0\}/);
 });
 
@@ -746,13 +747,12 @@ test("dock local edit control keeps editing and removal actions in a clear segme
 });
 
 test("regular editor stays below its node in the stacked main-composer layout", () => {
-  assert.match(component, /placeCanvasNodeEditorAdaptive\(/);
-  assert.match(component, /const adaptivePosition = placeCanvasNodeEditorAdaptive\(\s*anchor,/);
+  assert.match(component, /placeCanvasNodeEditorDock\(/);
+  assert.match(component, /const nextPosition = placeCanvasNodeEditorDock\(\s*anchor,/);
   assert.doesNotMatch(component, /--canvas-editor-width/);
   assert.doesNotMatch(component, /layoutAnchor/);
-  assert.match(component, /data-placement=\{position\.placement\}/);
-  assert.match(component, /const position = \{ \.\.\.adaptivePosition, maxHeight: popoverHeight \}/);
-  assert.match(component, /maxHeight: promptExpanded \|\| stackedEditor \|\| isDockNode \? undefined : position\.maxHeight/);
+  assert.match(component, /data-placement="bottom"/);
+  assert.doesNotMatch(component, /maxHeight: promptExpanded \|\| stackedEditor \|\| isDockNode/);
   assert.doesNotMatch(component, /needsFullPanelLift/);
   assert.doesNotMatch(component, /useTopPlacement/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\)\[data-density\]\{[^}]*width:min\(620px,calc\(100vw - 24px\)\)!important/);

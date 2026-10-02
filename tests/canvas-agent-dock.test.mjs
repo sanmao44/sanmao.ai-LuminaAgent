@@ -718,7 +718,7 @@ test("canvas overlays step aside for the open agent panel", () => {
   assert.ok(canvas.includes("const placementStage = { ...stageSize, width: canvasVisibleStageWidth(stage) };"));
   assert.match(canvas, /placeCanvasGroupToolbar\(anchor, placementStage, overlay, 10\)/);
   assert.match(canvas, /placeCanvasNodeToolbar\(anchor, placementStage, overlay, 10\)/);
-  assert.match(canvas, /\{ width: canvasVisibleStageWidth\(stage\), height: stageHeight \},/);
+  assert.match(canvas, /const visibleStage = \{ width: canvasVisibleStageWidth\(stage\), height: stageHeight \};/);
 });
 
 test("storing a reply as a node brings it into view", () => {

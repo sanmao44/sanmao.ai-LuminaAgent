@@ -98,24 +98,24 @@ test("fits a tall editor below its node without moving it across the anchor", ()
   assert.equal(editor.top, anchor.top + anchor.height + 14);
 });
 
-test("moves the complete editor above the node when below placement would clip it", () => {
-  const editor = layout.placeCanvasNodeEditorAdaptive(
+test("keeps the complete editor below the node when below placement would clip it", () => {
+  const editor = layout.placeCanvasNodeEditorDock(
     { left: 300, top: 520, width: 380, height: 120 },
     { width: 1280, height: 720 },
     { width: 640, height: 300 },
   );
 
-  assert.deepEqual(editor, { left: 170, top: 206, placement: "top" });
+  assert.deepEqual(editor, { left: 170, top: 654 });
 });
 
 test("keeps the editor below the node when the full panel fits", () => {
-  const editor = layout.placeCanvasNodeEditorAdaptive(
+  const editor = layout.placeCanvasNodeEditorDock(
     { left: 300, top: 120, width: 380, height: 120 },
     { width: 1280, height: 720 },
     { width: 640, height: 300 },
   );
 
-  assert.deepEqual(editor, { left: 170, top: 254, placement: "bottom" });
+  assert.deepEqual(editor, { left: 170, top: 254 });
 });
 
 test("keeps a below-node editor inside the horizontal viewport margins", () => {
