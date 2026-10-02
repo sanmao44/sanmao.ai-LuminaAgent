@@ -5025,3 +5025,75 @@ html[data-theme="dark"] .canvas-node[data-node-kind="angle"]{--node-color:#a78bf
 /* Task log search: keep focus on the field without the browser default hard rectangle. */
 .canvas-workspace .canvas-log-search:focus-within{border-color:color-mix(in srgb,var(--accent) 52%,var(--line));background:color-mix(in srgb,var(--panel-3) 72%,var(--panel-2));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 13%,transparent),0 3px 10px color-mix(in srgb,var(--shadow-color,#111827) 12%,transparent);transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease}
 .canvas-workspace .canvas-log-search input:focus-visible{outline:0;outline-offset:0;box-shadow:none}
+
+/* Node editor contract: every collapsed node editor uses the same attached
+   frame as the video variant editor. The drawers inside it remain independent
+   overlays; only the editor shell is normalized here. Keep this final rule at
+   the end of the stylesheet so historical node-type and density overrides do
+   not reintroduce different desktop widths. */
+@media (min-width:721px){
+  .canvas-node-editor-popover:not(.is-prompt-expanded),
+  .canvas-node-editor-popover:not(.is-prompt-expanded)[data-density],
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density],
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density],
+  .canvas-node-editor-popover.is-image-dock:not(.is-video-variant):not(.is-prompt-expanded)[data-density],
+  .canvas-node-editor-popover.is-image-dock.is-video-variant:not(.is-prompt-expanded),
+  .canvas-node-editor-popover.is-video-variant:not(.is-prompt-expanded){
+    width:min(680px,calc(100vw - 32px))!important;
+    max-width:min(680px,calc(100vw - 32px))!important;
+    max-height:min(420px,calc(100dvh - 24px))!important;
+  }
+}
+
+@media (max-width:720px){
+  .canvas-node-editor-popover:not(.is-prompt-expanded),
+  .canvas-node-editor-popover:not(.is-prompt-expanded)[data-density],
+  .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density],
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density],
+  .canvas-node-editor-popover.is-image-dock.is-video-variant:not(.is-prompt-expanded),
+  .canvas-node-editor-popover.is-video-variant:not(.is-prompt-expanded){
+    width:calc(100vw - 16px)!important;
+    max-width:calc(100vw - 16px)!important;
+    max-height:min(70dvh,calc(100dvh - 16px))!important;
+  }
+}
+
+.canvas-node-editor-prompt-actions .canvas-prompt-clear-action,
+.canvas-node-editor-dock-variant-actions .canvas-prompt-clear-action,
+.canvas-node-variant-editor-head .canvas-prompt-clear-action{
+  color:var(--muted);
+}
+.canvas-node-editor-prompt-actions .canvas-prompt-clear-action:hover,
+.canvas-node-editor-dock-variant-actions .canvas-prompt-clear-action:hover,
+.canvas-node-variant-editor-head .canvas-prompt-clear-action:hover{
+  border-color:var(--danger);
+  background:var(--danger-soft);
+  color:var(--danger);
+}
+.canvas-node-editor-prompt-actions>button.canvas-prompt-clear-action,
+.canvas-node-editor-prompt-actions>button.canvas-prompt-clear-action:hover{
+  border-color:color-mix(in srgb,var(--danger) 42%,var(--line));
+  background:var(--danger-soft);
+  color:var(--danger);
+  font-weight:700;
+}
+.canvas-node-editor-dock-variant-actions .canvas-prompt-clear-action{
+  height:24px;
+  padding:0 7px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--panel-2);
+  font:inherit;
+  font-size:8px;
+  cursor:pointer;
+}
+.canvas-node-variant-editor-head .canvas-prompt-clear-action{
+  height:24px;
+  padding:0 7px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--panel-2);
+  font:inherit;
+  font-size:8px;
+  cursor:pointer;
+}

@@ -19931,6 +19931,7 @@ function CanvasNodeEditorPopover({
 
   const promptOptimizationActions = (
     <div className="canvas-node-editor-prompt-actions" aria-label="提示词操作">
+      {visibleEditorPrompt.trim() && <button type="button" className="canvas-prompt-clear-action" disabled={promptOptimizing} title="清空当前节点提示词" aria-label="清空当前节点提示词" onClick={() => { handleEditorPromptChange(""); setPromptBeforeOptimization(null); window.setTimeout(() => promptRef.current?.focus(), 0); }}><span aria-hidden="true">⌫</span><span>清空</span></button>}
       {visibleEditorPrompt.trim() && <button type="button" disabled={promptOptimizing} aria-busy={promptOptimizing} title={editorChatAvailable ? "使用 AI 优化当前提示词" : "请先在模型库启用对话模型"} onClick={() => void optimizeEditorPrompt()}><span aria-hidden="true">✦</span><span>{promptOptimizing ? "优化中…" : "AI 优化"}</span></button>}
       {promptBeforeOptimization !== null && <button type="button" disabled={promptOptimizing} title="撤销 AI 优化" onClick={undoEditorPromptOptimization}><span aria-hidden="true">↶</span><span>撤销</span></button>}
     </div>
@@ -20309,6 +20310,7 @@ function CanvasNodeEditorPopover({
                         <div className="canvas-node-editor-dock-variant-actions">
                           <span className="canvas-node-editor-dock-variant-count">{variantRequirements.length} 条</span>
                           <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
+                          {(data.variantRequirementsText ?? variantRequirements.join("\n")).trim() && <button type="button" className="canvas-prompt-clear-action" title="清空变体要求" aria-label="清空变体要求" onClick={() => onVariantRequirementsChange(node, "")}>⌫ <span>清空</span></button>}
                           <button type="button" aria-label="关闭变体" onClick={() => setImageDockPanel(null)}>×</button>
                         </div>
                       </div>
@@ -20539,6 +20541,7 @@ function CanvasNodeEditorPopover({
                 <div className="canvas-node-variant-editor-head">
                   <label>变体要求 <small>逐条编辑、回车新增 · {variantRequirements.length} 条</small></label>
                   <CanvasGeneratorHelp kind={data.kind === "video" ? "video" : "image"} />
+                  {(data.variantRequirementsText ?? variantRequirements.join("\n")).trim() && <button type="button" className="canvas-prompt-clear-action" title="清空变体要求" aria-label="清空变体要求" onClick={() => onVariantRequirementsChange(node, "")}>⌫ <span>清空</span></button>}
                 </div>
                 <CanvasVariantRequirementsEditor
                   value={data.variantRequirementsText ?? variantRequirements.join("\n")}
@@ -21629,7 +21632,7 @@ function CanvasNodeCard({
           />
           {node.type === "generator" && (
             <div className="canvas-node-variant-editor">
-              <label>变体要求 <small>逐条编辑、回车新增 · {variantRequirements.length} 条</small></label>
+              <div className="canvas-node-variant-editor-head"><label>变体要求 <small>逐条编辑、回车新增 · {variantRequirements.length} 条</small></label>{(data.variantRequirementsText ?? variantRequirements.join("\n")).trim() && <button type="button" className="canvas-prompt-clear-action" title="清空变体要求" aria-label="清空变体要求" onClick={() => onVariantRequirementsChange(node, "")}>⌫ <span>清空</span></button>}</div>
               <CanvasVariantRequirementsEditor
                 value={data.variantRequirementsText ?? variantRequirements.join("\n")}
                 references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
