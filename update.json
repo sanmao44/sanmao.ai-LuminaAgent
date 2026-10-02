@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.72/SANMAO.AI-0.7.72.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.72/SANMAO.AI-0.7.72.zip"
   ],
-  "sha256": "fe08351b6a81d04d430ca3bcc450f7cc288b3556c35c0a1d9da8d93bc498484d",
+  "sha256": "277ed9f281a8e226e21388323c7e9b3972f082c850e12457def2af76b4a3f98f",
   "publishedAt": "2026-10-02T06:17:35Z",
   "notes": [
     "Canvas Core authority migration：画布文档、历史与 Agent 目标编辑进一步收敛到 Core，修复画布编辑器关闭与紧凑布局。",
