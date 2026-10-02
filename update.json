@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.73/SANMAO.AI-0.7.73.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.73/SANMAO.AI-0.7.73.zip"
   ],
-  "sha256": "277ed9f281a8e226e21388323c7e9b3972f082c850e12457def2af76b4a3f98f",
+  "sha256": "09be2b6848862970520677a7fc09db585bff081ccdd62d708b67d28a6fa813be",
   "publishedAt": "2026-10-02T13:05:35Z",
   "notes": [
     "Canvas Core authority 收敛：Document、History、Selection 保持单一 ownership，更新 Agent 目标编辑与相关行为测试。",
