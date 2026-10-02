@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.71/SANMAO.AI-0.7.71.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.71/SANMAO.AI-0.7.71.zip"
   ],
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "2cb0aaf2d2cf04760461d3ff1e8854da1d48e08d915f0b3d85b64ea7804b3fd5",
   "publishedAt": "2026-10-02T01:50:58Z",
   "notes": [
     "Tool Runtime Consolidation：统一 Tool policy、dispatch、execution adapter 与 Tool Loop，缩减 Agent Route 中的重复编排。",
