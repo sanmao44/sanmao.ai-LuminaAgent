@@ -2771,27 +2771,25 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   .canvas-node-editor-dock-popover{width:calc(100vw - 16px);max-height:calc(100vh - 96px)}
 }
 
-/* Wide composer layout: keep the editing surface aligned with the reference
-   card. The prompt and references get the full row, while node-specific
-   settings follow underneath as one full-width section. This avoids a large
-   empty half-column when a node only has a few generation controls. */
+/* Keep every collapsed editor in the same attached footprint. Expanded prompt
+   editing remains the deliberate escape hatch for a larger work surface. */
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded),
 .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded){
-  width:min(1280px,calc(100vw - 48px));
-  max-width:calc(100vw - 48px);
-  max-height:min(680px,calc(100dvh - 32px));
-  border-radius:20px;
+  width:min(620px,calc(100vw - 24px));
+  max-width:calc(100vw - 24px);
+  max-height:min(560px,calc(100dvh - 24px));
+  border-radius:18px;
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-body{
   display:block;
   overflow:visible;
-  padding:14px 16px 12px;
+  padding:9px 12px 8px;
 }
 
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-columns{
   display:grid;
   grid-template-columns:minmax(0,1fr);
-  gap:12px;
+  gap:8px;
   min-width:0;
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-copy,
@@ -2807,30 +2805,30 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
   min-width:0;
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap{
-  padding:14px 16px;
-  border-radius:16px;
+  padding:10px 11px;
+  border-radius:13px;
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-label{
-  margin:0 1px 8px;
+  margin:0 1px 5px;
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
-  min-height:142px;
-  max-height:260px;
-  padding:12px 13px;
-  font-size:11px;
-  line-height:1.65;
+  min-height:64px;
+  max-height:150px;
+  padding:8px 9px;
+  font-size:10px;
+  line-height:1.55;
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references{
-  gap:8px;
-  padding:10px 12px;
-  border-radius:15px;
+  gap:5px;
+  padding:7px 8px;
+  border-radius:12px;
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references>.canvas-editor-section-head{
   display:flex;
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-references>.canvas-editor-reference-slot{
-  padding:8px 10px;
-  border-radius:12px;
+  padding:5px 6px;
+  border-radius:10px;
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-editor-reference-items{
   flex-wrap:nowrap;
@@ -2840,13 +2838,13 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-variant-editor,
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{
-  padding:12px 14px;
-  border-radius:15px;
+  padding:9px 10px;
+  border-radius:12px;
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-settings>.creation-parameter-editor{
   display:grid;
   grid-template-columns:minmax(0,1fr);
-  gap:9px;
+  gap:7px;
   background:color-mix(in srgb,var(--panel-2) 72%,transparent);
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .creation-parameter-grid.primary{
@@ -2876,11 +2874,9 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 
 /* The image dock already has the same information order; only widen its
    desktop rail so it shares the same visual rhythm as video and Agent nodes. */
-.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="compact"]{
-  width:min(1040px,calc(100vw - 48px));
-}
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="compact"],
 .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density="micro"]{
-  width:min(820px,calc(100vw - 48px));
+  width:min(620px,calc(100vw - 24px));
 }
 
 @media(max-width:720px){
@@ -3311,9 +3307,9 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
    editors. Keep the width useful without letting the dock become a viewport-
    wide banner, and let it extend below the stage when the node is low. */
 .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density]{
-  width:min(940px,calc(100vw - 64px))!important;
-  max-width:calc(100vw - 64px)!important;
-  max-height:none!important;
+  width:min(620px,calc(100vw - 24px))!important;
+  max-width:calc(100vw - 24px)!important;
+  max-height:min(560px,calc(100dvh - 24px))!important;
 }
 .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-tool.params{
   flex:0 1 360px;
@@ -3322,9 +3318,9 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 
 @media(max-width:720px){
   .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density]{
-    width:calc(100vw - 32px)!important;
-    max-width:calc(100vw - 32px)!important;
-    max-height:none!important;
+    width:calc(100vw - 16px)!important;
+    max-width:calc(100vw - 16px)!important;
+    max-height:calc(100dvh - 16px)!important;
   }
   .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-tool.params{
     flex:1 1 auto;
@@ -3337,10 +3333,12 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
    generic frame-slot and editor defaults. Long text still scrolls inside its
    own field; the editor itself remains a non-scrolling surface. */
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded){
-  width:min(920px,calc(100vw - 64px));
+  width:min(620px,calc(100vw - 24px));
+  max-height:min(560px,calc(100dvh - 24px))!important
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density]{
-  width:min(920px,calc(100vw - 64px))!important;
+  width:min(620px,calc(100vw - 24px))!important;
+  max-height:min(560px,calc(100dvh - 24px))!important
 }
 .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded) .canvas-node-editor-body{
   padding:4px 8px 3px;
@@ -4931,8 +4929,8 @@ html[data-theme="dark"] .canvas-node[data-node-kind="angle"]{--node-color:#a78bf
   .canvas-node-editor-popover:not(.is-prompt-expanded)[data-density],
   .canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density],
   .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded)[data-density]{
-    width:min(var(--canvas-editor-width,720px),calc(100vw - 48px))!important;
-    max-width:min(var(--canvas-editor-width,720px),calc(100vw - 48px))!important;
+    width:min(620px,calc(100vw - 24px))!important;
+    max-width:min(620px,calc(100vw - 24px))!important;
   }
   .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-image-dock{
     position:relative;

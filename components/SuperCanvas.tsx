@@ -5193,6 +5193,10 @@ export default function SuperCanvas() {
       if (interaction.kind === "marquee") {
         const start = stagePoint(interaction.startX, interaction.startY);
         const point = stagePoint(event.clientX, event.clientY);
+        // A blank-canvas click is still a click, not a zero-sized marquee.
+        // Keep a small pointer jitter from replacing the current selection
+        // while the editor is waiting for pointer-up to dismiss itself.
+        if (!interaction.changed && Math.hypot(dx, dy) <= 4) return;
         const left = Math.min(start.x, point.x);
         const right = Math.max(start.x, point.x);
         const top = Math.min(start.y, point.y);
@@ -5278,32 +5282,11 @@ export default function SuperCanvas() {
         }
       }
       if (interaction.kind === "marquee") {
-        const start = stagePoint(interaction.startX, interaction.startY);
-        const point = stagePoint(event.clientX, event.clientY);
-        const left = Math.min(start.x, point.x);
-        const right = Math.max(start.x, point.x);
-        const top = Math.min(start.y, point.y);
-        const bottom = Math.max(start.y, point.y);
-        const camera = docRef.current.camera;
-        const ids = docRef.current.nodes
-          .filter((node) => {
-            const x = node.x * camera.zoom + camera.x;
-            const y = node.y * camera.zoom + camera.y;
-            const size = nodeSize(node);
-            return (
-              x < right &&
-              x + size.w * camera.zoom > left &&
-              y < bottom &&
-              y + size.h * camera.zoom > top
-            );
-          })
-          .map((node) => node.id);
-        setSelectedIds(
-          new Set(
-            interaction.additive ? [...interaction.baseSelection, ...ids] : ids,
-          ),
-        );
-        setSelectedGroupId(null);
+        if (!interaction.changed && !interaction.additive) {
+          // Restore the old blank-canvas click behavior after the left button
+          // became the marquee gesture: close node editors and other overlays.
+          clearSelection();
+        }
       }
       if (interaction.kind === "connect") {
         const point = stagePoint(event.clientX, event.clientY);
