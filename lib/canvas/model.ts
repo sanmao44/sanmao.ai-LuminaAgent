@@ -1275,6 +1275,30 @@ export function isCanvasGridComposeLineageEdge(
   );
 }
 
+type CanvasAutomaticBatchKind = "generated" | "grid-split" | "variant";
+
+/** Identify batch output edges whose provenance is useful only as one grouped connection. */
+function canvasAutomaticBatchKind(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+): CanvasAutomaticBatchKind | null {
+  const target = nodeById(document, edge.target);
+  if (!target) return edge.kind === "generated" ? "generated" : null;
+  const operation = target.data.imageOperation;
+  if (
+    edge.kind === "lineage" &&
+    operation?.operation === "grid" &&
+    operation.sourceNodeId === edge.source
+  ) return "grid-split";
+  const generation = target.data.generation;
+  if (
+    edge.kind === "generated" &&
+    generation?.sourceGeneratorId === edge.source &&
+    generation.variantBatchId
+  ) return "variant";
+  return edge.kind === "generated" ? "generated" : null;
+}
+
 /** Internal member edges collapse into the group and should not be painted. */
 function isCanvasEdgeDrawable(
   document: CanvasDocument,
@@ -1294,23 +1318,28 @@ function isCanvasEdgeDrawable(
  * to the same result group; only the first one is painted so the batch shows a
  * single connection into the group instead of a bundle of parallel lines.
  */
-const generatedEdgeFirstIdsCache = new WeakMap<
+const automaticBatchFirstIdsCache = new WeakMap<
   CanvasDocument,
   Map<string, string>
 >();
 
-function generatedEdgeFirstIds(document: CanvasDocument) {
-  const cached = generatedEdgeFirstIdsCache.get(document);
+function automaticBatchFirstIds(document: CanvasDocument) {
+  const cached = automaticBatchFirstIdsCache.get(document);
   if (cached) return cached;
   const firstIds = new Map<string, string>();
   document.edges.forEach((candidate) => {
-    if (candidate.kind !== "generated") return;
+    const kind = canvasAutomaticBatchKind(document, candidate);
+    if (!kind) return;
+    if (
+      (kind === "grid-split" || kind === "variant") &&
+      !groupForNode(document, candidate.target)
+    ) return;
     if (!isCanvasEdgeDrawable(document, candidate)) return;
     const endpoints = canvasEdgeEndpoints(document, candidate);
-    const key = `${endpoints.source}->${endpoints.target}`;
+    const key = `${kind}:${endpoints.source}->${endpoints.target}`;
     if (!firstIds.has(key)) firstIds.set(key, candidate.id);
   });
-  generatedEdgeFirstIdsCache.set(document, firstIds);
+  automaticBatchFirstIdsCache.set(document, firstIds);
   return firstIds;
 }
 
@@ -1319,10 +1348,15 @@ export function isCanvasEdgeVisible(
   edge: CanvasEdge,
 ) {
   if (!isCanvasEdgeDrawable(document, edge)) return false;
-  if (edge.kind !== "generated") return true;
+  const kind = canvasAutomaticBatchKind(document, edge);
+  if (!kind) return true;
+  if (
+    (kind === "grid-split" || kind === "variant") &&
+    !groupForNode(document, edge.target)
+  ) return false;
   const endpoints = canvasEdgeEndpoints(document, edge);
-  const firstId = generatedEdgeFirstIds(document).get(
-    `${endpoints.source}->${endpoints.target}`,
+  const firstId = automaticBatchFirstIds(document).get(
+    `${kind}:${endpoints.source}->${endpoints.target}`,
   );
   return !firstId || firstId === edge.id;
 }

@@ -915,13 +915,13 @@ const CONNECTION_NODE_OPTIONS: Array<{
 ];
 const CANVAS_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["Esc"], label: "关闭弹层、取消当前操作并清除选择" },
-  { keys: ["左键"], label: "拖动空白区域平移画布" },
+  { keys: ["左键"], label: "拖动空白区域框选节点" },
   { keys: ["双击左键"], label: "打开创建节点菜单" },
   { keys: ["右键"], label: "打开画布操作菜单" },
   { keys: ["中键"], label: "拖动平移画布" },
   { keys: ["Space", "左键"], label: "按住 Space 拖动空白区域平移画布" },
   { keys: ["Shift", "左键"], label: "追加选择节点或对象组" },
-  { keys: ["Ctrl"], label: "按住并拖拽框选节点" },
+  { keys: ["Ctrl/Cmd"], label: "按住并拖拽框选节点" },
   { keys: ["Ctrl", "G"], label: "合并选中的图片为组" },
   { keys: ["Ctrl", "Shift", "G"], label: "释放选中的分组" },
   { keys: ["Ctrl", "Z"], label: "撤销上一步操作" },
@@ -4657,7 +4657,8 @@ export default function SuperCanvas() {
       }
       // A normal left-button press on canvas content is handled by that
       // content's own pointer handlers (node/group drag, resize, connect).
-      // Don't hijack it into a canvas pan here.
+      // Blank-canvas left drags select nodes; only an explicit middle-button
+      // or Space gesture pans the viewport.
       if (!panIntent && (overCanvasContent || overUiOverlay)) return;
       // While explicitly panning (middle mouse button or holding Space), avoid
       // starting a pan from a UI overlay that manages its own drag (menus,
@@ -4670,8 +4671,8 @@ export default function SuperCanvas() {
       cancelPendingNodeClick();
       if (
         event.button === 0 &&
-        (event.ctrlKey || event.metaKey) &&
-        !spaceHeldRef.current
+        !spaceHeldRef.current &&
+        !referencePicker
       )
         return startMarquee(event);
       event.preventDefault();

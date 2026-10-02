@@ -433,6 +433,7 @@ test('常用技能排在技能索引与检索前面', () => {
 
 test('Agent 路由接入技能工具与渐进披露', async () => {
   const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
+  const adapter = await readFile(new URL('../packages/tool-runtime/adapter.ts', import.meta.url), 'utf8');
   const skillTools = await readFile(new URL('../lib/tools/skills.ts', import.meta.url), 'utf8');
   assert.match(route, /import \{ buildAgentSkillContext,[^}]*\} from '@\/lib\/skills';/);
   assert.match(route, /import \{ fetchSkillFilesFromGithub \} from '@\/lib\/skill-archive';/);
@@ -446,7 +447,7 @@ test('Agent 路由接入技能工具与渐进披露', async () => {
   assert.match(route, /tags: args\.tags/);
   assert.match(route, /recordSkillUsage\(skill\.id, \{ pending: false \}\)/);
   assert.match(route, /skillsEnabled: skillsAvailableThisTurn,/);
-  assert.match(route, /if \(kind === 'skill'\) \{/);
+  assert.match(adapter, /if \(kind === 'skill'\) \{/);
   assert.match(route, /const skillContext = buildAgentSkillContext\(\{ settings: state\.settings, dataDir: resolveLocalDataDir\(\) \}\);/);
   assert.ok(route.match(/system \+= skillPromptSection;/g).length === 2);
   assert.match(route, /skillInstalls >= SKILL_INSTALL_MAX_PER_REQUEST/);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [component, canvas, styles, context, canvasApi, route, markdown] = await Promise.all([
+const [component, canvas, styles, context, canvasApi, route, markdown, adapter] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/canvas.css", import.meta.url), "utf8"),
@@ -10,6 +10,7 @@ const [component, canvas, styles, context, canvasApi, route, markdown] = await P
   readFile(new URL("../lib/canvas/api.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../components/AgentMarkdown.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../packages/tool-runtime/adapter.ts", import.meta.url), "utf8"),
 ]);
 
 test("the canvas agent dock mounts in SuperCanvas and is bound to the selection", () => {
@@ -530,11 +531,11 @@ test("the dock keeps reporting a run and previews its images", () => {
 });
 
 test("image tools support ordered prompt batches while preserving single-prompt compatibility", () => {
-  assert.match(route, /Array\.isArray\(args\.prompts\)/);
-  assert.match(route, /slice\(0, 20\)/);
-  assert.match(route, /Math\.min\(2, prompts\.length\)/);
-  assert.match(route, /resultsByPrompt\.flat\(\)/);
-  assert.match(route, /batchIndex: promptIndex/);
+  assert.match(adapter, /Array\.isArray\(args\.prompts\)/);
+  assert.match(adapter, /slice\(0, 20\)/);
+  assert.match(adapter, /Math\.min\(2, prompts\.length\)/);
+  assert.match(adapter, /resultsByPrompt\.flat\(\)/);
+  assert.match(adapter, /batchIndex: promptIndex/);
   assert.match(component, /batchPrompt/);
   assert.match(component, /canvas-agent-dock-batch-items/);
   assert.match(component, /已完成/);

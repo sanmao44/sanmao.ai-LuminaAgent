@@ -12,7 +12,9 @@ const MODULES = [
   'lib/agent/context-budget',
   'lib/agent/browser-metrics',
   'lib/agent/browser-freshness',
-  'lib/agent/tool-loop',
+  'packages/tool-runtime/tool-loop',
+  'packages/tool-runtime/runtime',
+  'packages/tool-runtime/mcp-executor',
   'lib/agent/progress',
   'lib/agent-client',
   'lib/task-store',
@@ -151,7 +153,15 @@ export async function importTwiceByPath(entry) {
 
 /** 通用工具循环：纯逻辑、无依赖，单独跑真实实现。 */
 export async function buildToolLoopModule() {
-  return load('lib/agent/tool-loop.mjs');
+  return load('packages/tool-runtime/tool-loop.mjs');
+}
+
+export async function buildToolRuntimeModule() {
+  return load('packages/tool-runtime/runtime.mjs');
+}
+
+export async function buildMcpExecutorModule() {
+  return load('packages/tool-runtime/mcp-executor.mjs');
 }
 
 export async function buildContextBudgetModule() {

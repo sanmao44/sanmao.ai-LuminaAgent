@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { buildMcpExecutorModule } from './tools-build.mjs';
 
 const root = new URL('..', import.meta.url);
 const read = (path) => readFile(new URL(path, root), 'utf8');
@@ -14,6 +15,7 @@ const [page, route, history, providers, nativeSearch, webSearch, styles] = await
   read('app/globals.css'),
 ]);
 const sendButton = await read('components/AgentSendButton.tsx');
+const { executeMcpTool } = await buildMcpExecutorModule();
 
 test('Agent composer switches between send and an accessible stop action', () => {
   assert.ok(page.includes("import AgentSendButton from '@/components/AgentSendButton'"));
@@ -57,18 +59,36 @@ test('each conversation owns an independent request and only the active one is s
 test('server cancellation reaches model, search, image, stream, and subprocess transports', () => {
   assert.ok(route.includes("request.signal.addEventListener('abort', abortFromClient"));
   assert.ok(route.includes('runNativeWebSearch(agentRuntime.provider, agentRuntime.model, llmMessages, plannedNativeQuery, requestController.signal)'));
-  assert.ok(route.includes('searchWeb(query, requestController.signal)'));
   assert.ok(route.includes('chatCompletion(runtime.provider, runtime.model.rawId, payload, callSignal)'));
   assert.ok(route.includes('chatCompletionStream(runtime.provider, runtime.model.rawId, payload, callSignal)'));
   assert.ok(route.includes('chatCompletion(selectedRuntime.provider, selectedRuntime.model.rawId, payload, callSignal)'));
-  assert.ok(route.includes('generateImage(candidate.provider, candidate.model.rawId'));
-  assert.ok(route.includes('editImage(candidate.provider, candidate.model.rawId'));
   assert.ok(route.includes('status: cancelled ? 499 : 502'));
   assert.ok(route.includes("cancelled ? '本轮 Agent 已停止。'"));
   assert.ok(providers.includes('signal: combineSignals(signal, 180000)'));
   assert.ok(nativeSearch.includes('signal: combineSignals(signal, 180000)'));
   assert.ok(webSearch.includes("execFileAsync('powershell.exe'"));
   assert.ok(webSearch.includes('signal,'));
+});
+
+test('shared MCP execution propagates cancellation without returning a synthetic success', async () => {
+  const controller = new AbortController();
+  const pending = executeMcpTool({
+    callId: 'cancelled-mcp',
+    server: { id: 'test', name: 'Test', url: 'http://test', enabled: true, allowWrite: false },
+    meta: { serverId: 'test', serverName: 'Test', toolName: 'search', readOnly: true, blocked: false },
+    args: { q: 'x' },
+    signal: controller.signal,
+    timeoutMs: 10_000,
+    decision: 'call',
+    retry: true,
+    dependencies: {
+      call: async (_server, _name, _args, options) => new Promise((_resolve, reject) => {
+        options.signal?.addEventListener('abort', () => reject(options.signal.reason || new Error('aborted')), { once: true });
+      }),
+    },
+  });
+  controller.abort(new Error('AGENT_CANCELLED'));
+  await assert.rejects(pending, /AGENT_CANCELLED|aborted/);
 });
 
 test('cancelled searches do not enter provider fallback or cache a partial response', () => {

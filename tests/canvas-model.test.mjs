@@ -152,6 +152,57 @@ test('comparison expands grouped provenance connections', () => {
     ['original'],
   );
 });
+test('automatic grid split edges collapse to one grouped connection and disappear after ungrouping', () => {
+  const source = {
+    id: 'source', type: 'media', x: 0, y: 0,
+    data: { kind: 'image', url: '/source.png' },
+  };
+  const slices = [1, 2, 3].map((index) => ({
+    id: `slice-${index}`, type: 'media', x: 300 + index * 20, y: 0,
+    data: {
+      kind: 'image', url: `/slice-${index}.png`,
+      imageOperation: { operation: 'grid', sourceNodeId: 'source' },
+    },
+  }));
+  const edges = slices.map((slice, index) => ({
+    id: `edge-${index}`, source: 'source', target: slice.id, kind: 'lineage',
+  }));
+  const grouped = {
+    nodes: [source, ...slices],
+    groups: [{ id: 'slice-group', name: '宫格切分', nodeIds: slices.map((slice) => slice.id) }],
+    edges,
+  };
+  assert.equal(edges.filter((edge) => model.isCanvasEdgeVisible(grouped, edge)).length, 1);
+  const ungrouped = { ...grouped, groups: [] };
+  assert.equal(edges.filter((edge) => model.isCanvasEdgeVisible(ungrouped, edge)).length, 0);
+});
+
+test('automatic variant edges collapse to one grouped connection and keep ordinary lineage visible', () => {
+  const generator = {
+    id: 'generator', type: 'generator', x: 0, y: 0,
+    data: { kind: 'image' },
+  };
+  const variants = [1, 2, 3].map((index) => ({
+    id: `variant-${index}`, type: 'media', x: 300 + index * 20, y: 0,
+    data: {
+      kind: 'image', url: `/variant-${index}.png`,
+      generation: { kind: 'image', sourceGeneratorId: 'generator', variantBatchId: 'batch-1' },
+    },
+  }));
+  const edges = variants.map((variant, index) => ({
+    id: `variant-edge-${index}`, source: 'generator', target: variant.id, kind: 'generated',
+  }));
+  const grouped = {
+    nodes: [generator, ...variants],
+    groups: [{ id: 'variant-group', name: '图片变体批次', nodeIds: variants.map((variant) => variant.id) }],
+    edges,
+  };
+  assert.equal(edges.filter((edge) => model.isCanvasEdgeVisible(grouped, edge)).length, 1);
+  const ungrouped = { ...grouped, groups: [] };
+  assert.equal(edges.filter((edge) => model.isCanvasEdgeVisible(ungrouped, edge)).length, 0);
+  const ordinary = { id: 'ordinary', source: 'generator', target: 'variant-1', kind: 'lineage' };
+  assert.equal(model.isCanvasEdgeVisible(ungrouped, ordinary), true);
+});
 const storageSource = await readFile(new URL('../lib/canvas/storage.ts', import.meta.url), 'utf8');
 
 test('normalizes NOVA-compatible documents and drops invalid graph references', () => {

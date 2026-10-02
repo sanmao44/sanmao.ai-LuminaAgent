@@ -2,7 +2,7 @@
 
 ## Round 8 — Agent / Tool / MCP Test Seam
 
-本轮只处理下一轮 Tool Loop / MCP execution 迁移会直接受影响的测试耦合，不改变产品行为、API contract、streaming、Tool 或 MCP 语义，也没有开始 Tool Runtime / Agent Runtime 大迁移。
+本轮先完成 0.7.69 的行为测试收尾，再把 Tool execution orchestration 的 ownership 迁入 Runtime；不改变产品行为、API contract、streaming、Tool 或 MCP 语义。Agent Runtime 的其他边界仍未迁移。
 
 ### 已转换为行为覆盖
 
@@ -19,9 +19,9 @@ Agent 的 streaming、artifact、approval、image safety、cancel、canvas/UI �
 
 ### 边界记录
 
-- Source of Truth 仍是现有 Route、`lib/tools/*`、`lib/mcp/*` 和 approval state；本轮只抽出参数解析 seam。
-- `call-arguments.ts` 是临时迁移 seam，删除条件是 Tool Runtime 接管统一参数 validation/normalization 后由 Contract 覆盖同等行为。
-- Phase 6 Tool Runtime 仍未开始；下一轮必须先定义统一 lifecycle Contract，再接入真实 Native/MCP 路径。
+- Tool execution orchestration 的 Source of Truth 已切换为 `packages/tool-runtime`；`lib/tools/*`、`lib/mcp/*` 和 approval state 仍是能力与持久化边界。
+- `call-arguments.ts` 的参数归一化已由 Tool Runtime 统一调用；删除条件是稳定 Contract 覆盖同等行为并移除全部调用者。
+- Phase 6 Tool Runtime 已进入迁移：`packages/tool-runtime/runtime.ts`、`tool-loop.ts`、`adapter.ts` 与 `mcp-executor.ts` 已接入真实 Agent Route；下一步是拆分 adapter 依赖并逐步退出 Route 的审批/streaming 兼容职责。
 
 > 审计日期：2026-09-30  
 > 范围：核对已建立的 Contract、Adapter 与 Next Core 是否进入真实调用链，并记录仍然存在的双轨状态。  
@@ -39,7 +39,7 @@ Agent 的 streaming、artifact、approval、image safety、cancel、canvas/UI �
 | Storage | `client-history`、`workspace`、`.data` JSON、filesystem 和各领域专用 store | `lib/repositories/*`；Task Repository 包装 `createTaskStore` | `packages/contracts/storage.ts` | 页面会话/工作区读写；`/api/state` provider 公共状态；视频和超分任务 CRUD | IndexedDB、localStorage、JSON 文件仍是实际持久化事实来源 | Repository 与直接 Legacy store 并存；Clone、Agent Progress 仍直连 store | `app/api/workspace/route.ts`、artifact/media storage 和 Clone/Progress 仍知道具体存储 | 为 Clone、Agent Progress 和 workspace API 补领域端口，先覆盖调用者再替换 Adapter | 没有业务调用者直接引用具体存储模块，且数据迁移/兼容策略验证完成 |
 | Task | 视频、超分、Clone、Agent Progress 的专用状态与服务 | 视频/超分 store 通过 `createTaskRepository`；Clone stage 和 Progress 状态映射 Adapter | `packages/contracts/task.ts`、`packages/task-runtime/runtime.ts` | 视频/超分 refresh、cancel、retry；Clone resume/cancel/idempotency；Agent Progress active 判断 | 各自 Legacy 记录和 API wire status 仍是持久化/对外事实来源 | 统一 TaskState 与领域状态同时存在（如 `done`、`processing`、Clone stages） | Provider polling、retry 创建、progress persistence、generation logs 仍绕过统一 Task Runtime | 定义统一 query/progress/cancellation application port，逐个迁移 polling 与 retry 行为 | 所有长任务共享 Contract，领域 Adapter 无独立状态规则，且 Legacy store 无调用者 |
 | Provider | `lib/providers.ts` 传输实现；Route 中的 routing、failover、health、streaming 和 media 分支 | `lib/provider-runtime/chat.ts` 的 Legacy Chat Adapter | `packages/contracts/model.ts`、`ModelRuntime` | 紧凑非流式纯文本 Agent 通过 `createLegacyChatModelRuntime` | Provider registry、Route 选择结果和现有 health 状态仍是事实来源 | 文本单次调用经 ModelRuntime，其余调用仍直接使用 `chatCompletion*` 或媒体 Provider | Route 仍直接 import `lib/providers`，并持有 provider/model 选择与 failover 业务 | 先定义 capability-based routing port，再迁移一条 streaming 或媒体能力 | Agent/Application 层不再 import 具体 Provider 传输 API，且各能力 Adapter 有行为覆盖 |
-| Tool / MCP | `lib/tools/registry.ts`、`lib/tools/policy.ts`、`lib/mcp/*` 与 Agent Route 的工具循环 | 当前只有既有 registry/policy/MCP 实现，没有独立统一 Adapter | 尚未形成 `packages/tool-runtime`；仅有 Phase 1 中预留的 Tool Contract 类型 | 仍由 Agent Route 发现、审批、执行和拼接工具结果 | Route 的 tool loop、MCP catalog 和 approval state 仍是事实来源 | Native、MCP、Browser、Filesystem、Artifact 各有执行分支 | Route 直接依赖工具和 MCP 实现，未经过统一 Tool Runtime 生命周期 | 先定义 `discover → resolve → validate → authorize → execute → observe → return` 的统一边界，再接入一类 Native/MCP 工具 | 统一 Runtime 覆盖所有 Tool 来源、Route 无直接执行分支、旧 registry/policy 仅作为 Adapter |
+| Tool / MCP | `app/api/agent/route.ts` 中原有编排、`lib/tools/*`、`lib/mcp/*` | `packages/tool-runtime/adapter.ts` + `mcp-executor.ts` | `packages/tool-runtime/runtime.ts` + `tool-loop.ts` | Route 构造 Runtime；首次执行与 approval resume 共用 Runtime MCP executor | `packages/tool-runtime` 是 Tool execution orchestration 唯一 authoritative owner | Route 仍保留 approval coordination、streaming/context/provider/artifact/browser/image 等兼容边界 | Route 不再直接 dispatch/execute MCP body；adapter 依赖仍是兼容 seam | 继续拆分 adapter ports，并在行为覆盖后移除 Route approval/policy glue | Route 不再包含 tool dispatch/loop/MCP execution orchestration，Legacy 对应实现删除 |
 | Canvas | `components/SuperCanvas.tsx` 的 document、selection、viewport、gesture、undo/redo 和持久化 | `CanvasCore` 与 `lib/canvas/patch.ts` 作为局部兼容层 | `packages/canvas-core/runtime.ts` | `commit` 和 Agent Canvas Patch 会经过 `CanvasCore` operation；核心单元测试脱离 React | React document state、selection state、viewport/camera 和 undo/redo 数组仍是事实来源 | CanvasCore history 与 React `undoStack`/`redoStack` 双轨；selection/viewport 也未统一 | 大多数 pointer gesture、节点操作、保存和 UI undo/redo 仍直接调用 React state | 让一次完整 document mutation 以 Core transaction 为唯一写入入口，再迁移 selection/viewport/history | SuperCanvas 只负责渲染和适配，所有 domain mutation/selection/history 都由 Core 持有 |
 | Page / UI | `app/page.tsx` 页面组合根、feature state、业务回调和 section renderer | `WorkspaceShell`、`MainColumn`、topbar、sidebar 与 Agent presentation 组件 | 组件边界已建立；尚无独立 page application core | 根 shell、侧栏和多组 Agent 展示组件已真实渲染 | `app/page.tsx` 仍是状态、数据加载和回调的事实来源 | 已拆出的展示组件与 page 状态/组合逻辑双轨存在 | 页面仍直接拥有 Agent、History、Provider、Canvas 和 workspace 业务动作 | 在领域边界稳定后继续抽取 section application boundary，不以移动文件作为目标 | page 只保留 composition；section state/action 不再由 page 直接实现 |
 
@@ -63,7 +63,17 @@ Agent 的 streaming、artifact、approval、image safety、cancel、canvas/UI �
 
 ## 本轮边界与后续顺序
 
-- 本轮不修改运行时代码，不改变产品行为，不换数据库，不做物理拆仓。
+- 本轮不修改数据库、不做物理拆仓，也不进入 Canvas、Storage 或前后端拆分。
 - 已完成的 Agent、Storage、Task、Provider、Canvas 和 Page/UI 垂直切片可以继续维护，但其 Legacy 责任仍按上表保留。
-- 下一步优先定义独立 Tool Runtime Contract，并为一条真实 Native/MCP 路径建立行为覆盖。
+- Tool Runtime 已有真实 Native/MCP 路径和行为覆盖；下一步继续拆分 adapter ports，并在测试迁移后退出 Route 的 approval/streaming 兼容职责。
 - Canvas Core 和 page/UI 的后续工作必须先解决 Source of Truth，再扩大组件拆分。
+
+## Tool Runtime Consolidation
+
+- **migration in progress**：Tool execution orchestration 的 ownership 已迁入 `packages/tool-runtime`，其余 Route 兼容边界仍在迁移。
+- **cutover completed**：policy resolution、参数归一化、dispatch、execution normalization、Tool Loop，以及 approval resume 使用的 MCP executor 已切换到 Runtime。
+- **legacy removed**：Route 中原有的 Tool Loop、MCP execution body 和 `executeToolCallUnchecked`/`executeToolCall` 编排已删除；`lib/agent/tool-loop.ts` 仅保留兼容 re-export。
+- **route reduction**：`app/api/agent/route.ts` 从 3,158 行降至 2,653 行，移除了 loop、dispatch、execution 和 MCP orchestration 的核心实现。
+- **remaining boundary**：Route 仍负责 HTTP/auth/validation、streaming、context、provider routing、approval record/deferred response transport，以及 artifact/image/browser/filesystem/progress/generation-log 兼容逻辑。
+- **remaining migration blockers**：`packages/tool-runtime/adapter.ts` 仍是 Route 注入的兼容 seam，后续可按领域拆分 browser/image/artifact ports；`agent-artifacts.test.mjs`、`agent-progress.test.mjs`、`agent-image-safety.test.mjs`、`canvas-agent-dock.test.mjs`、`skills.test.mjs` 仍有 adapter/UI 源码耦合断言，需后续先补行为覆盖再转换。
+- **source of truth**：Tool execution orchestration 的唯一 authoritative owner 是 `packages/tool-runtime`；Route 只负责入口、应用协调和传输兼容边界。

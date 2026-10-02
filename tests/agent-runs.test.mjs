@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { buildToolRuntimeModule } from './tools-build.mjs';
 
 const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
 const resume = await readFile(new URL('../lib/agent/resume.ts', import.meta.url), 'utf8');
@@ -8,18 +9,22 @@ const runRoute = await readFile(new URL('../app/api/agent/runs/[id]/route.ts', i
 const client = await readFile(new URL('../lib/agent-client.ts', import.meta.url), 'utf8');
 const card = await readFile(new URL('../components/AgentApprovalCard.tsx', import.meta.url), 'utf8');
 const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
+const { ToolRuntime } = await buildToolRuntimeModule();
 
-test('风险调用不当场执行，而是整批延后等确认', () => {
+test('风险调用不当场执行，而是整批延后等确认', async () => {
   assert.match(route, /import \{[^}]*assessToolApproval[^}]*\} from '@\/lib\/agent\/approval';/, '审批判定只能来自共享模块，不能各写一套');
   // MCP 调用先过本机一侧的路径检查（Filesystem、上传来源），再进审批判定。
-  assert.match(route, /const guard = guardMcpCall\(mcpGuardMeta, args\);/);
-  // 两处审批判定（本轮整批延后、续跑前的复核）都要把用户当前的档位交进去。
-  const tiered = route.match(/policy: state\.settings\.mcpApprovalPolicy/g) || [];
-  assert.ok(tiered.length >= 2, '本轮与续跑两处审批都要按当前档位判断');
-  assert.match(route, /if \(assessment\.required && policy\.tool\?\.mcp\) \{/);
-  assert.match(route, /deferredCalls = executionCalls\.slice\(callIndex\);/);
-  // 页面文本只在同一次执行循环里顺手累积，结果失败时不作数。
-  assert.match(route, /if \(!result\.isError\) recentPageText = appendPageContext\(recentPageText, meta\.toolName, result\.text\);/);
+  const runtime = new ToolRuntime({
+    context: { fileGeneration: false, deliveryRequest: false, skillsEnabled: false, imageAllowed: false, mcpAdmin: false, canvas: false },
+    extraTools: [{ id: 'mcp:github:create_issue', name: 'github__create_issue', description: 'create', schema: { type: 'object' }, permissions: ['network'], tags: ['mcp'], source: 'mcp', risk: 'write', gating: () => true, mcp: { serverId: 'github', serverName: 'GitHub', toolName: 'create_issue', readOnly: false, blocked: false } }],
+    authorize: () => 'defer',
+    execute: async () => { throw new Error('must not execute'); },
+  });
+  const result = await runtime.execute({ id: 'approval-call', function: { name: 'github__create_issue', arguments: '{}' } });
+  assert.equal(result.deferred, true);
+  assert.deepEqual(result.results, []);
+  assert.match(route, /const toolRuntime = new ToolRuntime\(/);
+  assert.match(route, /assessment\.required/);
 });
 
 test('待确认的调用必须整轮返回，绝不能写进下一轮对话历史', () => {
@@ -57,7 +62,8 @@ test('续跑只继续下发只读工具，写工具一次确认只换来一次�
   assert.match(resume, /tools: continuationTools, tool_choice: 'auto'/);
   assert.match(resume, /续跑只允许继续调用只读工具/);
   // 模型在续跑里点名写工具时，结果里只会得到一句拒绝，而不是真的执行。
-  assert.match(resume, /if \(!policy\.allowed \|\| !meta \|\| !server \|\| !meta\.readOnly \|\| meta\.blocked\) \{/);
+  assert.match(resume, /executeMcpTool\(/);
+  assert.match(resume, /executeTabbitTool\(/);
   // 续跑仍然保留一次「不带工具」的收尾，只读补读失败也能把话说清楚。
   assert.match(resume, /const reply = await chatCompletion\(runtime\.provider, runtime\.model\.rawId, \{ messages, tool_choice: 'none' \}/);
   assert.match(resume, /retry: meta\.readOnly/);
@@ -66,7 +72,7 @@ test('续跑只继续下发只读工具，写工具一次确认只换来一次�
 
 test('续跑时重新校验配置：服务被移除、停用或写入权限被改过就不执行', () => {
   assert.match(resume, /const policy = resolveToolPolicy\(pending\.name, record\.gating, mcpTools\);/);
-  assert.match(resume, /if \(!policy\.allowed \|\| !meta \|\| !server\) \{/);
+  assert.match(resume, /if \(!policy\.allowed \|\| !meta \|\| \(!server && meta\.serverId !== 'tabbit'\)\) \{/);
   assert.match(resume, /这一步已经不能执行了/);
 });
 

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { buildToolLoopModule } from './tools-build.mjs';
 
-const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu, mentionEditor, skillInline, toolLoop] = await Promise.all([
+const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu, mentionEditor, skillInline] = await Promise.all([
   readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
@@ -16,8 +17,8 @@ const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, e
   readFile(new URL("../components/AgentSkillMenu.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/ReferenceMentionEditor.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/SkillInlineText.tsx", import.meta.url), "utf8"),
-  readFile(new URL("../lib/agent/tool-loop.ts", import.meta.url), "utf8"),
 ]);
+const { runToolLoop } = await buildToolLoopModule();
 
 test("a reply reports back which skills the agent actually read", () => {
   assert.match(route, /const usedSkills: Array<\{ id: string; name: string \}> = \[\];/);
@@ -99,18 +100,19 @@ test("an enabled skill keeps the request on the tool round so the model can real
   assert.match(route, /const cleanedMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\);/);
   assert.match(route, /plainMessage = filesystemActionRequest \|\| browserAutomationRequest \|\| mcpExecutionRequest \|\| artifactGenerationRequest \|\| hasInlineToolCallMarkup\(plainMessage\)/, '工具调用文本不能被当成普通技能回答直接展示');
 });
-test("the tool round hands the assistant turn back so thinking models accept the follow-up", () => {
-  // deepseek 之类的思维链模型在带 tool_calls 的助手消息上要求回传 reasoning_content，
-  // 否则后续请求会被服务商以 400 拒绝，用户只能看到一句占位答案。
-  assert.match(route, /const carriedAssistantFields = typeof toolCallMessage\?\.reasoning_content === 'string'/);
-  assert.match(route, /tool_calls: toolCalls, \.\.\.carriedAssistantFields \}, \.\.\.toolResults\]/);
-  // 补轮的助手消息现在由通用循环统一拼接，回传字段跟着搬到了 lib/agent/tool-loop.ts。
-  assert.match(toolLoop, /reasoning_content: reply\.reasoning_content \}/);
-  assert.match(toolLoop, /options\.messages\.push\(\{ role: 'assistant', content: reply\?\.content \?\? null, tool_calls: calls/);
+test("the tool round preserves reasoning and tool calls for thinking models", async () => {
+  const messages = [];
+  const outcome = await runToolLoop({
+    messages,
+    callModel: async ({ step }) => step === 0
+      ? { reasoning_content: 'thinking', content: null, tool_calls: [{ id: 'skill-1', function: { name: 'skill_read', arguments: '{}' } }] }
+      : { content: 'done' },
+    runCalls: async () => [{ role: 'tool', tool_call_id: 'skill-1', content: JSON.stringify({ ok: true }) }],
+  });
+  assert.equal(outcome.text, 'done');
+  assert.deepEqual(messages[0], { role: 'assistant', content: null, tool_calls: [{ id: 'skill-1', function: { name: 'skill_read', arguments: '{}' } }], reasoning_content: 'thinking' });
+  assert.equal(messages[1].tool_call_id, 'skill-1');
   assert.match(route, /maxSteps: SKILL_TOOL_FOLLOWUP_MAX_ROUNDS/);
-  // 工具轮之后的失败不再静默降级成占位答案。
-  assert.match(route, /console\.error\('\[Agent\] 工具轮之后的流式回答失败：', llmFailure\);/);
-  assert.match(route, /fallback: `\$\{finalText\}（整理回答失败：\$\{llmFailure\.slice\(0, 200\)\}）`/);
 });
 
 test("installed skills can check source updates, export markdown, and pending cards show details", () => {

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
+const adapter = await readFile(new URL('../packages/tool-runtime/adapter.ts', import.meta.url), 'utf8');
 const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const clientTypes = await readFile(new URL('../lib/agent-client.ts', import.meta.url), 'utf8');
 const historyTypes = await readFile(new URL('../lib/client-history.ts', import.meta.url), 'utf8');
@@ -42,7 +43,7 @@ test('archive_generate 排在最后执行，并能带上本轮生成的文件', 
   const sortLine = route.slice(sortIndex, route.indexOf('\n', sortIndex));
   assert.match(sortLine, /Number\(isArchiveToolCall\(left\)\) - Number\(isArchiveToolCall\(right\)\)/);
   // 执行顺序仍按上面排好的 executionCalls；改成带下标是为了能从「需要确认」的那一步起整批延后。
-  assert.match(route, /for \(let callIndex = 0; callIndex < executionCalls\.length; callIndex \+= 1\) \{/);
+  assert.match(route, /toolRuntime\.executeCalls\(executionCalls\)/);
   assert.match(route, /args\.includeGeneratedThisTurn === false/);
   assert.match(route, /const collected = await collectArchiveEntries\(ids\);/);
 });
@@ -114,8 +115,8 @@ test('同轮“先生成再打包”会补一轮交付物工具，而不是把�
   assert.match(route, /const ARTIFACT_TOOL_MAX_ROUNDS = 2;/);
   assert.match(route, /const artifactToolsOnly = callableTools\.filter\(\(tool: any\) => isArtifactToolCall\(\{ function: \{ name: tool\?\.function\?\.name \} \}\)\);/);
   assert.match(route, /const runArtifactToolCall = async \(call: any\): Promise<ChatMessage> => \{/);
-  assert.match(route, /if \(kind === 'artifact'\) \{/);
-  assert.match(route, /results\.push\(await runArtifactToolCall\(call\)\);/);
+  assert.match(adapter, /if \(kind === 'artifact'\) \{/);
+  assert.match(adapter, /results\.push\(await runArtifactToolCall\(call\)\);/);
   assert.match(route, /if \(artifactGenerationRequest && artifactToolsOnly\.length && toolCalls\.some\(isArtifactToolCall\)/);
   // 补轮循环收进 lib/agent/tool-loop.ts：这里只校验它还挂在原来的条件下、用原来的工具集和顺序。
   assert.match(route, /maxSteps: ARTIFACT_TOOL_MAX_ROUNDS/);

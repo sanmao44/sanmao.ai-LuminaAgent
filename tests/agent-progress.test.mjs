@@ -17,7 +17,7 @@ const progressFile = path.join(dataDir, "agent-progress.json");
 const readRecords = () => JSON.parse(readFileSync(progressFile, "utf8"));
 
 const read = (relative) => readFile(new URL(`../${relative}`, import.meta.url), "utf8");
-const [source, route, agentRoute, page, dock, client, styles] = await Promise.all([
+const [source, route, agentRoute, page, dock, client, styles, adapter] = await Promise.all([
   read("lib/agent/progress.ts"),
   read("app/api/agent/progress/route.ts"),
   read("app/api/agent/route.ts"),
@@ -25,6 +25,7 @@ const [source, route, agentRoute, page, dock, client, styles] = await Promise.al
   read("components/CanvasAgentDock.tsx"),
   read("lib/agent-client.ts"),
   read("app/globals.css"),
+  read("packages/tool-runtime/adapter.ts"),
 ]);
 
 test("进度只用前端给的短 id 做键：空格、路径、超长都拒绝", () => {
@@ -167,7 +168,7 @@ test("进度接口要管理员身份、不缓存，且只回一条快照", () =>
 
 test("主管线在真正耗时的节点写进度，收尾时关掉", () => {
   assert.match(agentRoute, /agentRunId = \(await beginAgentRun\(\(body as \{ runId\?: unknown \}\)\.runId\)\)\?\.runId \|\| null;/);
-  assert.match(agentRoute, /reportToolProgress\(agentToolProgress\(kind, String\(call\?\.function\?\.name \|\| ''\)\)\)/);
+  assert.match(adapter, /reportToolProgress\(agentToolProgress\(kind, String\(call\?\.function\?\.name \|\| ''\)\)\)/);
   assert.match(agentRoute, /reportToolProgress\(agentToolProgress\('skill'/);
   assert.match(agentRoute, /reportToolProgress\(agentToolProgress\('artifact'/);
   assert.match(agentRoute, /reportProgress\(\{ stage: 'tool', message: '正在准备可用工具…' \}\);/);

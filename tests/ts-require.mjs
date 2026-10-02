@@ -24,9 +24,11 @@ export function createTsRequire(baseDir) {
    * 装载器只认相对路径时，被实例化的模块一旦引入带别名的依赖（store.ts 引 approval.ts 就是），
    * 测试会崩在 MODULE_NOT_FOUND，而且报出来的是别名，看不出真正原因。
    */
-  const aliasFile = (specifier) => (specifier.startsWith('@/lib/')
-    ? `${path.join(base, normalizePath(specifier.slice('@/lib/'.length)))}.ts`
-    : null);
+  const aliasFile = (specifier) => {
+    if (specifier.startsWith('@/lib/')) return `${path.join(base, normalizePath(specifier.slice('@/lib/'.length)))}.ts`;
+    if (specifier.startsWith('@/packages/')) return `${path.join(path.dirname(base), 'packages', normalizePath(specifier.slice('@/packages/'.length)))}.ts`;
+    return null;
+  };
 
   const load = (id) => {
     const normalized = normalizePath(id);
