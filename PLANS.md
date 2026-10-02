@@ -2,7 +2,7 @@
 
 > **当前状态（2026-09-30）**：第七轮 Architecture Convergence Audit 已完成记录。前六轮均已建立最小 Contract、Adapter 和至少一条真实调用路径，但尚未完成全域 Legacy removal；详细的真实调用链、双轨状态、绕过点和删除条件见 [`docs/next-architecture/migration-status.md`](docs/next-architecture/migration-status.md)。
 
-> **当前任务（2026-10-02）：Tool Runtime Consolidation 迁移进行中。** `packages/tool-runtime` 已成为 Tool execution orchestration 的 authoritative owner；Route 仍保留 streaming、context、provider、artifact、browser、image 等边界，approval resume 已复用 `mcp-executor.ts`。
+> **当前任务（2026-10-02）：Canvas Core Phase II — History Authority 已完成 cutover，Document / Selection 仍在迁移。** `CanvasCore` 已成为唯一 history owner；`packages/tool-runtime/adapter.ts` 保持为有删除条件的 migration adapter。
 
 ## 当前阶段状态
 
@@ -14,7 +14,7 @@
 | Phase 4 Task Runtime | 垂直切片完成，迁移进行中 | 状态/取消/重试判断已复用 Runtime；polling、持久化和专用 wire status 仍保留。 |
 | Phase 5 Provider Runtime | 垂直切片完成，迁移进行中 | 一条文本 Agent 路径使用 ModelRuntime；routing、failover、streaming、image/video/search 仍为 Legacy。 |
 | Phase 6 Tool Runtime | 迁移进行中，核心职责已 cutover | `packages/tool-runtime` 已接管 policy resolution、dispatch、execution adapter 与唯一 Tool Loop；approval resume 复用 MCP executor。Route 仍保留 streaming、context/provider、artifact/browser/image/progress 等兼容边界。 |
-| Phase 7 Canvas Core | 局部接入，未完成 | CanvasCore 已被 SuperCanvas 使用，但 React document/selection/viewport/history 仍是主要 Source of Truth。 |
+| Phase 7 Canvas Core | Phase II 进行中：History cutover completed | CanvasCore 已成为唯一 history owner；React undo/redo state machine 已移除。Document projection、selection、viewport 和部分 mutation 仍在 SuperCanvas 迁移中。 |
 | Phase 8–9 UI cleanup | 垂直切片完成，迁移进行中 | shell、sidebar、Agent presentation 已拆出；`app/page.tsx` 仍是 composition root 和状态 owner。 |
 | Round 7 Architecture Audit | 已完成 | 已形成迁移矩阵；本轮不修改产品代码。 |
 | Round 8 Agent / Tool / MCP test seam | 已完成本轮最小切片 | Tool/MCP 关键行为已由真实 Runtime/MCP executor 覆盖；Agent/UI/transport 结构断言仍按领域逐步转换。 |
@@ -514,5 +514,5 @@ Phase 6 — Tool Runtime Consolidation（核心职责已 cutover，迁移进行�
 下一次代码施工优先级：
 
 ```text
-Phase 6 — Tool Runtime Consolidation：继续拆分 adapter ports，完成行为测试迁移后退出 Route 的 approval/streaming 兼容职责
+Phase 7 — Canvas Core Phase II：继续完成 Document Authority，再迁移 Domain Selection；保持 `packages/tool-runtime/adapter.ts` 为有删除条件的 migration adapter
 ```

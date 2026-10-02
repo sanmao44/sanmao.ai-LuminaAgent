@@ -85,11 +85,19 @@ export class CanvasCore<TDocument extends CanvasCoreDocument> {
     return this.current;
   }
 
-  replace(document: TDocument, options: { record?: boolean } = {}) {
+  replace(document: TDocument, options: { record?: boolean; clearHistory?: boolean; preserveHistory?: boolean } = {}) {
     if (options.record) this.pushPast(this.current);
-    else this.future = [];
+    if (options.clearHistory) this.clearHistory();
+    else if (!options.preserveHistory) this.future = [];
     this.current = document;
     return this.current;
+  }
+
+  /** Record the current document as an undo boundary without changing it. */
+  record() {
+    this.pushPast(this.current);
+    this.future = [];
+    return this.history();
   }
 
   setSelection(selection: CanvasCoreSelection) {

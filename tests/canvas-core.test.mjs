@@ -50,3 +50,25 @@ test('CanvasCore caps history and clears redo after a new operation', () => {
   core.apply({ id: 'add-final', label: 'add', apply: (value) => ({ ...value, nodes: [...value.nodes, { id: 'final' }] }) });
   assert.equal(core.history().future.length, 0);
 });
+
+test('CanvasCore history is the single owner for sequential edits and boundaries', () => {
+  const core = new CanvasCore(document());
+  const add = (id) => core.apply({
+    id: `add-${id}`,
+    label: 'add',
+    apply: (value) => ({ ...value, nodes: [...value.nodes, { id }] }),
+  });
+
+  add('a');
+  add('b');
+  assert.deepEqual(core.document().nodes.map((node) => node.id), ['a', 'b']);
+  assert.equal(core.history().past.length, 2);
+  assert.equal(core.undo()?.nodes.at(-1)?.id, 'a');
+  assert.equal(core.redo()?.nodes.at(-1)?.id, 'b');
+  core.undo();
+  core.record();
+  assert.equal(core.history().past.length, 2);
+  add('c');
+  assert.equal(core.history().future.length, 0);
+  assert.deepEqual(core.undo()?.nodes.map((node) => node.id), ['a']);
+});

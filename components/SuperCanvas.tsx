@@ -2972,8 +2972,10 @@ export default function SuperCanvas() {
   const [pendingClickNodeId, setPendingClickNodeId] = useState<string | null>(null);
   const [editorDrafts, setEditorDrafts] = useState<Record<string, CanvasEditorDraft>>({});
   const [customImagePresets, setCustomImagePresets] = useState<CustomImagePreset[]>(() => readCustomImagePresets());
-  const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
-  const [redoStack, setRedoStack] = useState<CanvasSnapshot[]>([]);
+  // History is owned by CanvasCore. React only keeps a render tick so controls
+  // can project the Core history without maintaining a second state machine.
+  const [, setHistoryVersion] = useState(0);
+  const canvasHistory = canvasCoreRef.current.history();
   const [mode, setMode] = useState<Mode>("image");
   const [drafts, setDrafts] = useState<CanvasDrafts>({
     image: { prompt: "", params: readSharedCreationSettings("image") },
@@ -3531,8 +3533,8 @@ export default function SuperCanvas() {
     [document, referenceOwnerId, selectedGroupId],
   );
 
-  const setDoc = useCallback((next: CanvasDocument) => {
-    const previous = docRef.current;
+  const setDoc = useCallback((next: CanvasDocument, options: { preserveHistory?: boolean } = {}) => {
+    const previous = canvasCoreRef.current.document();
     // Pan/zoom only replace the camera; the node/edge/group collections keep
     // their identities. Skip the video-reference sync and editor-draft
     // reconcile so zooming/panning stays smooth on large boards.
@@ -3542,6 +3544,7 @@ export default function SuperCanvas() {
       next.edges === previous.edges &&
       next.groups === previous.groups
     ) {
+      canvasCoreRef.current.replace(next, options);
       docRef.current = next;
       setDocument(next);
       return;
@@ -3556,6 +3559,7 @@ export default function SuperCanvas() {
       next.nodes !== previous.nodes &&
       canvasNodesPositionOnly(previous, next)
     ) {
+      canvasCoreRef.current.replace(next, options);
       docRef.current = next;
       setDocument(next);
       return;
@@ -3565,38 +3569,42 @@ export default function SuperCanvas() {
       syncCanvasVideoEditorReferences(syncCanvasVideoReferences(next, runtime)),
     );
     setEditorDrafts((current) => syncCanvasEditorDraftInputModes(current, normalized, runtime));
+    canvasCoreRef.current.replace(normalized, options);
     docRef.current = normalized;
     setDocument(normalized);
   }, [runtime]);
   const replaceDoc = useCallback((next: CanvasDocument) => {
     const normalized = syncCanvasVideoEditorReferences(syncCanvasVideoReferences(normalizeDocument(next), runtime));
+    canvasCoreRef.current.replace(normalized, { clearHistory: true });
     docRef.current = normalized;
     setDocument(normalized);
+    setHistoryVersion((value) => value + 1);
   }, [runtime]);
   const focusCanvasStage = useCallback(() => {
     stageRef.current?.focus({ preventScroll: true });
   }, []);
   const updateDoc = useCallback(
     (updater: (value: CanvasDocument) => CanvasDocument) =>
-      setDoc(updater(docRef.current)),
+      setDoc(updater(canvasCoreRef.current.document())),
     [setDoc],
   );
   const commit = useCallback(
     (updater: (value: CanvasDocument) => CanvasDocument) => {
-      const previous = snapshot(docRef.current);
-      canvasCoreRef.current.sync(docRef.current);
       const result = canvasCoreRef.current.apply({
         id: `legacy-${Date.now().toString(36)}`,
         label: "canvas.commit",
         apply: updater,
       });
       if (!result.changed) return;
-      setUndoStack((items) => [...items, previous].slice(-60));
-      setRedoStack([]);
-      updateDoc(() => result.document);
+      setHistoryVersion((value) => value + 1);
+      setDoc(result.document);
     },
-    [updateDoc],
+    [setDoc],
   );
+  const recordHistory = useCallback(() => {
+    canvasCoreRef.current.record();
+    setHistoryVersion((value) => value + 1);
+  }, []);
   const addLog = useCallback(
     (message: string) => {
       const normalized = message.toLowerCase();
@@ -3861,6 +3869,7 @@ export default function SuperCanvas() {
         const initial = loadCanvasDocument(storage.activeId);
         const recovered = recoverInterruptedCanvasDocument(initial);
         const initialDocument = syncCanvasVideoEditorReferences(recovered.document);
+        canvasCoreRef.current.replace(initialDocument, { clearHistory: true });
         docRef.current = initialDocument;
         setDocument(initialDocument);
         setProjects(storage.projects);
@@ -4034,13 +4043,15 @@ export default function SuperCanvas() {
 
   useEffect(() => {
     if (!ready || !runtime) return;
-    const synchronized = syncCanvasVideoEditorReferences(syncCanvasVideoReferences(docRef.current, runtime));
-    if (synchronized !== docRef.current) {
-      const normalized = normalizeCanvasDocumentLayers(docRef.current, synchronized);
+    const currentDocument = canvasCoreRef.current.document();
+    const synchronized = syncCanvasVideoEditorReferences(syncCanvasVideoReferences(currentDocument, runtime));
+    if (synchronized !== currentDocument) {
+      const normalized = normalizeCanvasDocumentLayers(currentDocument, synchronized);
+      canvasCoreRef.current.replace(normalized);
       docRef.current = normalized;
       setDocument(normalized);
     }
-    const pending = docRef.current.nodes.filter((node) =>
+    const pending = canvasCoreRef.current.document().nodes.filter((node) =>
       node.type === "upscale" &&
       node.data.status === "running" &&
       node.data.upscaleRequestId &&
@@ -5032,10 +5043,7 @@ export default function SuperCanvas() {
         }));
       if (interaction.kind === "drag") {
         if (!interaction.changed && Math.abs(dx) + Math.abs(dy) > 2) {
-          setUndoStack((items) =>
-            [...items, snapshot(docRef.current)].slice(-60),
-          );
-          setRedoStack([]);
+          recordHistory();
           if (interaction.copyOnMove) {
             const copies = duplicateNodes(
               docRef.current,
@@ -5122,10 +5130,7 @@ export default function SuperCanvas() {
       if (interaction.kind === "resize") {
         if (!interaction.changed && Math.abs(dx) + Math.abs(dy) > 2) {
           interaction.changed = true;
-          setUndoStack((items) =>
-            [...items, snapshot(docRef.current)].slice(-60),
-          );
-          setRedoStack([]);
+          recordHistory();
         }
         if (interaction.changed)
           updateDoc((value) => ({
@@ -5145,10 +5150,7 @@ export default function SuperCanvas() {
       if (interaction.kind === "resizeGroup") {
         if (!interaction.changed && Math.abs(dx) + Math.abs(dy) > 2) {
           interaction.changed = true;
-          setUndoStack((items) =>
-            [...items, snapshot(docRef.current)].slice(-60),
-          );
-          setRedoStack([]);
+          recordHistory();
         }
         if (interaction.changed) {
           const baseWidth = Math.max(
@@ -5610,12 +5612,9 @@ export default function SuperCanvas() {
     [stageSize.height, stageSize.width, updateDoc],
   );
   const moveMinimapNodes = useCallback(
-    (positions: Record<string, Point>, recordHistory: boolean) => {
-      if (recordHistory) {
-        setUndoStack((items) =>
-          [...items, snapshot(docRef.current)].slice(-60),
-        );
-        setRedoStack([]);
+    (positions: Record<string, Point>, shouldRecordHistory: boolean) => {
+      if (shouldRecordHistory) {
+        recordHistory();
       }
       updateDoc((value) => ({
         ...value,
@@ -5624,7 +5623,7 @@ export default function SuperCanvas() {
         ),
       }));
     },
-    [updateDoc],
+    [recordHistory, updateDoc],
   );
   /* rightInset 是右侧浮层（Agent 面板）占掉的宽度：取景只按它左边那块可见区域算，
      否则「定位节点」和刚落下的结果会有半边藏在面板后面。
@@ -5683,9 +5682,7 @@ export default function SuperCanvas() {
       ? arrangeCanvasGroup(docRef.current, activeGroup.id, mode)
       : arrangeCanvas(docRef.current, selected, undefined, { aspectRatio });
     if (result.changed) {
-      const previous = snapshot(docRef.current);
-      setUndoStack((items) => [...items, previous].slice(-60));
-      setRedoStack([]);
+      recordHistory();
       setDoc(result.document);
       addLog(
         activeGroup
@@ -5813,23 +5810,19 @@ export default function SuperCanvas() {
   );
 
   const undo = useCallback(() => {
-    const previous = undoStack.at(-1);
+    const previous = canvasCoreRef.current.undo();
     if (!previous) return;
-    const current = snapshot(docRef.current);
-    setRedoStack((items) => [...items, current]);
-    setUndoStack((items) => items.slice(0, -1));
-    setDoc(normalizeDocument(previous));
+    setHistoryVersion((value) => value + 1);
+    setDoc(previous, { preserveHistory: true });
     clearSelection();
-  }, [clearSelection, setDoc, undoStack]);
+  }, [clearSelection, setDoc]);
   const redo = useCallback(() => {
-    const next = redoStack.at(-1);
+    const next = canvasCoreRef.current.redo();
     if (!next) return;
-    const current = snapshot(docRef.current);
-    setUndoStack((items) => [...items, current]);
-    setRedoStack((items) => items.slice(0, -1));
-    setDoc(normalizeDocument(next));
+    setHistoryVersion((value) => value + 1);
+    setDoc(next, { preserveHistory: true });
     clearSelection();
-  }, [clearSelection, redoStack, setDoc]);
+  }, [clearSelection, setDoc]);
 
   const addNode = useCallback(
     (
@@ -6124,8 +6117,6 @@ export default function SuperCanvas() {
       replaceDoc(next);
       setActiveProjectId(id);
       clearSelection();
-      setUndoStack([]);
-      setRedoStack([]);
       setProjectMenuOpen(false);
       addLog(
         `已打开项目：${projects.find((project) => project.id === id)?.name || "未命名画布"}`,
@@ -6147,13 +6138,11 @@ export default function SuperCanvas() {
     saveCanvasDocument(project.id, normalizeDocument(null));
     setProjects(next);
     setActiveProjectId(project.id);
-    setDoc(normalizeDocument(null));
+    replaceDoc(normalizeDocument(null));
     clearSelection();
-    setUndoStack([]);
-    setRedoStack([]);
     setProjectMenuOpen(false);
     notify("已新建画布");
-  }, [clearSelection, notify, projects, setDoc]);
+  }, [clearSelection, notify, projects, replaceDoc]);
   const saveProjectName = useCallback(() => {
     const name = projectRenameValue.trim();
     if (!name || !currentProject) return;
@@ -6230,8 +6219,6 @@ export default function SuperCanvas() {
         replaceDoc(loadCanvasDocument(replacement.id));
         setActiveProjectId(replacement.id);
         clearSelection();
-        setUndoStack([]);
-        setRedoStack([]);
         setProjectMenuOpen(false);
       }
       notify("画布项目已删除");
@@ -10689,7 +10676,6 @@ export default function SuperCanvas() {
   const applyAgentCanvasPatch = useCallback((patch: CanvasPatch): CanvasAgentDockPlanResult => {
     const validation = validateCanvasPatch(docRef.current, patch);
     if (!validation.ok) return { ids: [], error: validation.error };
-    const previous = snapshot(docRef.current);
     canvasCoreRef.current.sync(docRef.current);
     const result = canvasCoreRef.current.apply({
       id: patch.runId || `agent-patch-${Date.now().toString(36)}`,
@@ -10700,8 +10686,7 @@ export default function SuperCanvas() {
         apply: (document) => applyCanvasPatch(document, patch),
       }],
     });
-    if (result.changed) setUndoStack((items) => [...items, previous].slice(-60));
-    setRedoStack([]);
+    if (result.changed) setHistoryVersion((value) => value + 1);
     updateDoc(() => result.document);
     const addedIds = patch.operations
       .filter((operation): operation is Extract<CanvasPatch["operations"][number], { op: "add_node" }> => operation.op === "add_node")
@@ -15223,7 +15208,7 @@ export default function SuperCanvas() {
             type="button"
             className="canvas-icon-button"
             onClick={undo}
-            disabled={!undoStack.length}
+            disabled={!canvasHistory.past.length}
           >
             ↶
           </button>
@@ -15231,7 +15216,7 @@ export default function SuperCanvas() {
             type="button"
             className="canvas-icon-button"
             onClick={redo}
-            disabled={!redoStack.length}
+            disabled={!canvasHistory.future.length}
           >
             ↷
           </button>
@@ -17012,7 +16997,7 @@ export default function SuperCanvas() {
                   setContextMenu(null);
                   undo();
                 }}
-                disabled={!undoStack.length}
+                disabled={!canvasHistory.past.length}
               >
                 <span className="canvas-menu-icon" aria-hidden="true">↶</span>
                 <span className="canvas-menu-copy">
@@ -17027,7 +17012,7 @@ export default function SuperCanvas() {
                   setContextMenu(null);
                   redo();
                 }}
-                disabled={!redoStack.length}
+                disabled={!canvasHistory.future.length}
               >
                 <span className="canvas-menu-icon" aria-hidden="true">↷</span>
                 <span className="canvas-menu-copy">

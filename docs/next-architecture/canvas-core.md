@@ -4,8 +4,9 @@
 
 `lib/canvas/model.ts` already owns document normalization, snapshots and
 domain helpers. `lib/canvas/patch.ts` validates and applies structured Agent
-operations. `SuperCanvas` still owns React state, selection, viewport updates
-and the undo/redo arrays; this remains the legacy adapter during migration.
+operations. `SuperCanvas` still owns React document projection, selection,
+viewport updates and persistence adapters. History has completed its authority
+cutover: `CanvasCore` now owns undo/redo history while React only projects it.
 
 ## Scope
 
@@ -21,6 +22,7 @@ unchanged.
 
 ## Remaining legacy responsibility
 
-Pointer gesture history, full React selection rendering, project persistence
-and the remaining document mutations still live in `SuperCanvas`. They will
-move behind the Core in later vertical slices after behavior coverage exists.
+Pointer gesture document mutations, full React selection rendering, project persistence
+and the remaining document adapters still live in `SuperCanvas`. Document and
+Selection authority remain migration in progress; history is cut over and no
+second React history state machine remains.

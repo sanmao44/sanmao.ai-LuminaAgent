@@ -1,9 +1,19 @@
 # Architecture Convergence Audit
 
-## Round 8 — Agent / Tool / MCP Test Seam
+## Round 9 — Canvas Core Phase II — History Authority Cutover
 
-本轮先完成 0.7.69 的行为测试收尾，再把 Tool execution orchestration 的 ownership 迁入 Runtime；不改变产品行为、API contract、streaming、Tool 或 MCP 语义。Agent Runtime 的其他边界仍未迁移。
+本轮推进 Canvas Core Phase II，只切换 History Authority；不改变 document editing、undo/redo、selection、Agent Canvas Patch、持久化或 UI 行为。Document 与 Selection authority 仍按后续切片迁移。
 
+### 本轮真实切换
+
+- **Document Authority**：migration in progress。`CanvasCore` 已承载 Core mutation/history，但 `SuperCanvas` 仍保留 document projection、restore、持久化和部分 legacy `updateDoc` 入口。
+- **History Authority**：**cutover completed**。`CanvasCore.past/future` 是唯一 authoritative history；React `undoStack/redoStack` state machine 已删除，UI 只读取 Core history projection，并通过 Core `undo/redo/record`。
+- **Selection Authority**：migration in progress。`CanvasCore.selection` 已存在，但 React `selectedIds`/group/edge 仍是当前交互和渲染 projection owner，尚未完成 domain selection cutover。
+- `packages/tool-runtime/adapter.ts` 仍为 migration adapter，保留明确兼容 seam，未宣称 legacy removed。
+
+### History 调用核对
+
+`commit`、Agent Canvas Patch、拖拽/缩放/排列等现有 history boundary 均通过 `CanvasCore.record/apply`；项目切换、恢复和新建通过 `CanvasCore.replace(..., { clearHistory: true })` 清空历史。React 仅保留 render tick，删除对应 state machine 后 Core 仍可独立执行 commit、undo、redo、redo invalidation 和 history boundary。
 ### 已转换为行为覆盖
 
 - `tests/tools-registry.test.mjs`：工具注册、门控、schema、权限、能力标签到执行类别的行为。
@@ -40,7 +50,7 @@ Agent 的 streaming、artifact、approval、image safety、cancel、canvas/UI �
 | Task | 视频、超分、Clone、Agent Progress 的专用状态与服务 | 视频/超分 store 通过 `createTaskRepository`；Clone stage 和 Progress 状态映射 Adapter | `packages/contracts/task.ts`、`packages/task-runtime/runtime.ts` | 视频/超分 refresh、cancel、retry；Clone resume/cancel/idempotency；Agent Progress active 判断 | 各自 Legacy 记录和 API wire status 仍是持久化/对外事实来源 | 统一 TaskState 与领域状态同时存在（如 `done`、`processing`、Clone stages） | Provider polling、retry 创建、progress persistence、generation logs 仍绕过统一 Task Runtime | 定义统一 query/progress/cancellation application port，逐个迁移 polling 与 retry 行为 | 所有长任务共享 Contract，领域 Adapter 无独立状态规则，且 Legacy store 无调用者 |
 | Provider | `lib/providers.ts` 传输实现；Route 中的 routing、failover、health、streaming 和 media 分支 | `lib/provider-runtime/chat.ts` 的 Legacy Chat Adapter | `packages/contracts/model.ts`、`ModelRuntime` | 紧凑非流式纯文本 Agent 通过 `createLegacyChatModelRuntime` | Provider registry、Route 选择结果和现有 health 状态仍是事实来源 | 文本单次调用经 ModelRuntime，其余调用仍直接使用 `chatCompletion*` 或媒体 Provider | Route 仍直接 import `lib/providers`，并持有 provider/model 选择与 failover 业务 | 先定义 capability-based routing port，再迁移一条 streaming 或媒体能力 | Agent/Application 层不再 import 具体 Provider 传输 API，且各能力 Adapter 有行为覆盖 |
 | Tool / MCP | `app/api/agent/route.ts` 中原有编排、`lib/tools/*`、`lib/mcp/*` | `packages/tool-runtime/adapter.ts` + `mcp-executor.ts` | `packages/tool-runtime/runtime.ts` + `tool-loop.ts` | Route 构造 Runtime；首次执行与 approval resume 共用 Runtime MCP executor | `packages/tool-runtime` 是 Tool execution orchestration 唯一 authoritative owner | Route 仍保留 approval coordination、streaming/context/provider/artifact/browser/image 等兼容边界 | Route 不再直接 dispatch/execute MCP body；adapter 依赖仍是兼容 seam | 继续拆分 adapter ports，并在行为覆盖后移除 Route approval/policy glue | Route 不再包含 tool dispatch/loop/MCP execution orchestration，Legacy 对应实现删除 |
-| Canvas | `components/SuperCanvas.tsx` 的 document、selection、viewport、gesture、undo/redo 和持久化 | `CanvasCore` 与 `lib/canvas/patch.ts` 作为局部兼容层 | `packages/canvas-core/runtime.ts` | `commit` 和 Agent Canvas Patch 会经过 `CanvasCore` operation；核心单元测试脱离 React | React document state、selection state、viewport/camera 和 undo/redo 数组仍是事实来源 | CanvasCore history 与 React `undoStack`/`redoStack` 双轨；selection/viewport 也未统一 | 大多数 pointer gesture、节点操作、保存和 UI undo/redo 仍直接调用 React state | 让一次完整 document mutation 以 Core transaction 为唯一写入入口，再迁移 selection/viewport/history | SuperCanvas 只负责渲染和适配，所有 domain mutation/selection/history 都由 Core 持有 |
+| Canvas | `components/SuperCanvas.tsx` document、selection、viewport、gesture、persistence 与 legacy adapters | `CanvasCore` + `lib/canvas/patch.ts` | `packages/canvas-core/runtime.ts` | commit、Agent Canvas Patch 与 UI history boundary 进入 Core；Core behavior tests 独立于 React | History Authority = CanvasCore；Document / Selection / viewport 仍 migration in progress | React document projection、selection、viewport 仍保留；React undo/redo state machine 已删除 | 大多数 pointer gesture、节点操作、保存仍经过 legacy adapter | 完成 Document Authority，再迁移 Domain Selection | SuperCanvas 只负责 rendering/projection/adapter，domain mutation/history/selection 由 Core 持有 |
 | Page / UI | `app/page.tsx` 页面组合根、feature state、业务回调和 section renderer | `WorkspaceShell`、`MainColumn`、topbar、sidebar 与 Agent presentation 组件 | 组件边界已建立；尚无独立 page application core | 根 shell、侧栏和多组 Agent 展示组件已真实渲染 | `app/page.tsx` 仍是状态、数据加载和回调的事实来源 | 已拆出的展示组件与 page 状态/组合逻辑双轨存在 | 页面仍直接拥有 Agent、History、Provider、Canvas 和 workspace 业务动作 | 在领域边界稳定后继续抽取 section application boundary，不以移动文件作为目标 | page 只保留 composition；section state/action 不再由 page 直接实现 |
 
 ## Storage 调用核对
@@ -49,7 +59,7 @@ Agent 的 streaming、artifact、approval、image safety、cancel、canvas/UI �
 
 ## Canvas 调用核对
 
-`SuperCanvas` 创建并同步 `CanvasCore`，其 `commit` 和 Agent Canvas Patch 会调用 Core 的 operation boundary。但 React 的 `document`、`selectedIds`/group/edge selection、camera/viewport，以及独立的 `undoStack`/`redoStack` 仍被大量交互直接读写。因此 Canvas Core 是已接入的兼容边界，不是当前唯一 Source of Truth；本轮不应宣称 Canvas migration 已完成。
+`SuperCanvas` 创建并同步 `CanvasCore`。本轮已删除 React `undoStack`/`redoStack` state machine，所有 history boundary 和 UI undo/redo 经过 Core；document、selection、viewport 仍是 migration in progress。
 
 ## 源码耦合测试审计
 
