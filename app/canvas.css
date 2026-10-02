@@ -5205,3 +5205,62 @@ html[data-theme="dark"] .canvas-node[data-node-kind="angle"]{--node-color:#a78bf
     max-height:none!important;
   }
 }
+
+/* Final collapsed-editor sizing contract. Historical density rules cap the
+   shell at 400/420/560px. That is unsafe because model parameters are
+   content-driven: the shell shrinks first and its footer is painted outside
+   the border. Let the shell grow with its children; only prompt fields and
+   explicit drawers may scroll. */
+.canvas-node-editor-popover.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density],
+.canvas-node-editor-popover.is-columns-node:not(.is-prompt-expanded)[data-density],
+.canvas-node-editor-popover.is-image-dock:not(.is-video-variant):not(.is-prompt-expanded)[data-density],
+.canvas-node-editor-popover.is-image-dock.is-video-variant:not(.is-prompt-expanded),
+.canvas-node-editor-popover.is-video-variant:not(.is-prompt-expanded){
+  max-height:none!important;
+  overflow:visible!important;
+}
+.canvas-node-editor-popover:not(.is-prompt-expanded)>.canvas-node-editor-surface{
+  height:auto;
+  min-height:0;
+  flex:0 0 auto;
+  overflow:hidden;
+}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-body{
+  height:auto;
+  min-height:0;
+  flex:0 0 auto;
+  max-height:none!important;
+  overflow:visible!important;
+}
+.canvas-node-editor-popover:not(.is-prompt-expanded)>.canvas-node-editor-actions{
+  position:static;
+  z-index:auto;
+  flex:0 0 auto;
+  width:100%;
+  min-height:0;
+  margin:0;
+  box-sizing:border-box;
+}
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-toolbar{
+  display:flex;
+  flex:0 0 auto;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:7px;
+  min-height:34px;
+  height:auto;
+  overflow:visible;
+}
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-tool.model{
+  flex:0 1 auto;
+  min-width:0;
+}
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-tool.params{
+  flex:1 1 240px;
+  min-width:min(240px,100%);
+  max-width:none;
+}
+.canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-toolbar>.canvas-node-editor-generate{
+  flex:0 0 auto;
+  margin-left:auto;
+}
