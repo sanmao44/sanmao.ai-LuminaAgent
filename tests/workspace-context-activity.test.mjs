@@ -129,6 +129,13 @@ test('canvas Agent run context freezes the original selection and edit sources',
   assert.ok(Object.isFrozen(snapshot.sourceNodeIds));
 });
 
+test('canvas Agent target operation distinguishes edits from analysis and questions', () => {
+  assert.equal(runContext.canvasAgentTargetOperation('改一下这段文案', 'text'), 'edit');
+  assert.equal(runContext.canvasAgentTargetOperation('把背景换成深蓝色', 'image'), 'edit');
+  assert.equal(runContext.canvasAgentTargetOperation('分析一下这张图怎么样？', 'image'), 'generate');
+  assert.equal(runContext.canvasAgentTargetOperation('帮我生成一个新版本', 'image'), 'generate');
+});
+
 test('provenance helpers deduplicate sources and create stable edge IDs', () => {
   const drafts = provenance.provenanceDraftsForSources(
     ['node-a', 'node-a', '', ' node-b '],

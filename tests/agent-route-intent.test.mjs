@@ -19,7 +19,7 @@ function harness(options = {}) {
   const images = [];
   const imageRuntimeRequests = [];
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: [], kind: 'chat' };
-  const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: ['generate'], providerId: 'test' };
+  const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
   const runtime = { model, provider };
   const reply = (message) => ({ choices: [{ message }] });
@@ -202,6 +202,22 @@ test('language model cannot override the system default image model through tool
   assert.equal(data.images.length, 1);
   assert.equal(agent.images[0].prompt, '系统默认模型测试');
   assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'auto' }]);
+});
+
+test('canvas image edit target overrides vague wording and reaches the edit capability', async () => {
+  const agent = harness({ imageCapabilities: ['generate', 'edit'], reply: (payload) => payload.tools
+    ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"背景换成深蓝色"}}</tool_call>' }
+    : { content: '修改完成。' } });
+  const data = await agent.post([{ role: 'user', content: '改一下，背景换成深蓝色', references: [{ id: 'image-1', nodeId: 'image-1', kind: 'image', name: '当前选中图片', url: 'data:image/png;base64,dGVzdA==' }] }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['image-1'], assetIds: [] },
+    canvasTarget: { nodeIds: ['image-1'], kind: 'image', operation: 'edit' },
+  });
+  assert.equal(agent.images.length, 1);
+  assert.equal(agent.images[0].mode, 'edit');
+  assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
+  assert.equal(data.images.length, 1);
 });
 
 test('legacy client image model overrides are ignored by Agent generation', async () => {

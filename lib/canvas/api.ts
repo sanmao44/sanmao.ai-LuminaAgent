@@ -1,6 +1,7 @@
 import type { CanvasRuntimeState } from "./types";
 import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
+import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
@@ -866,6 +867,7 @@ export async function generateCanvasAgent(
     runId?: string;
     context?: WorkspaceContext;
     canvasDocument?: CanvasDocument;
+    canvasTarget?: CanvasAgentTarget;
     signal?: AbortSignal;
   },
   onEvent?: (event: CanvasAgentStreamEvent) => void,
@@ -910,6 +912,7 @@ export async function generateCanvasAgent(
           ...(input.runId ? { runId: input.runId } : {}),
           ...(input.context ? { context: input.context } : {}),
           ...(input.canvasDocument ? { canvasDocument: input.canvasDocument } : {}),
+          ...(input.canvasTarget ? { canvasTarget: input.canvasTarget } : {}),
         },
         { signal: controller.signal, onEvent },
       );

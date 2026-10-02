@@ -35,6 +35,7 @@ import {
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import {
   createCanvasAgentRunContext,
+  canvasAgentTargetOperation,
   normalizeCanvasAgentRunContext,
   type CanvasAgentRunContext,
 } from "@/lib/canvas/run-context";
@@ -113,7 +114,7 @@ type Props = {
     images: AgentGeneratedImage[],
     meta: { prompt: string; model?: string; runContext?: CanvasAgentRunContext },
   ) => string[];
-  onApplyText: (text: string, meta: { prompt: string }) => string[];
+  onApplyText: (text: string, meta: { prompt: string; runContext?: CanvasAgentRunContext }) => string[];
   onApplyPlan: (plan: CanvasAgentDockPlan, images?: AgentGeneratedImage[], runContext?: CanvasAgentRunContext) => CanvasAgentDockPlanResult;
   onCreateAgentNode: (text: string) => void;
   onUseAsImagePrompt: (text: string) => void;
@@ -931,10 +932,22 @@ export default function CanvasAgentDock({
        * 单次模型调用可能很久，所以同一步骤超过 3 秒会带上秒表（见 lib/agent-client）。
        */
       const progressRunId = createId();
+      const selectedTargetReferences = orderedReferences.filter((reference) =>
+        orderedSelectedNodeIds.includes(reference.nodeId || reference.id),
+      );
+      const selectedTargetKinds = new Set(selectedTargetReferences.map((reference) => reference.kind));
+      const targetKind = selectedTargetKinds.size > 1
+        ? "mixed"
+        : selectedTargetReferences[0]?.kind || "none";
       const runContext = createCanvasAgentRunContext({
         runId: progressRunId,
         context,
         references: orderedReferences,
+        target: {
+          nodeIds: orderedSelectedNodeIds,
+          kind: targetKind,
+          operation: canvasAgentTargetOperation(text, targetKind),
+        },
       });
       const stopAgentProgress = pollAgentProgress(progressRunId, {
         signal: controller.signal,
@@ -960,6 +973,11 @@ export default function CanvasAgentDock({
             runId: progressRunId,
             context,
             canvasDocument,
+            canvasTarget: {
+              nodeIds: [...runContext.targetNodeIds],
+              kind: runContext.targetKind,
+              operation: runContext.operation,
+            },
             references: orderedReferences.slice(0, CANVAS_AGENT_DOCK_MAX_REFERENCES),
             signal: controller.signal,
           },
@@ -1044,8 +1062,9 @@ export default function CanvasAgentDock({
               : message));
           }
         }
-        if (autoApply && canvasAgentDockShouldAutoApplyText(text)) {
-          const appliedIds = onApplyText(content, { prompt: mentionText });
+        if (autoApply && (canvasAgentDockShouldAutoApplyText(text)
+          || (runContext.operation === "edit" && runContext.targetKind === "text"))) {
+          const appliedIds = onApplyText(content, { prompt: mentionText, runContext });
           if (appliedIds.length) {
             setMessages((value) =>
               value.map((message) => (message.id === assistantMessageId ? { ...message, textNodeId: appliedIds[0] } : message)),

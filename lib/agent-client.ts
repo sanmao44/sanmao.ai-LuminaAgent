@@ -5,6 +5,7 @@ import type { CreativeReference } from "./creative-references";
 import type { WorkspaceContext } from "./workspace-context";
 import type { CanvasDocument } from "./canvas/types";
 import type { CanvasPatch } from "./canvas/patch";
+import type { CanvasAgentTarget } from "./canvas/run-context";
 
 export const AGENT_CONTEXT_MESSAGE_LIMIT = 12;
 
@@ -53,6 +54,8 @@ export type AgentRequestPayload = {
   context?: WorkspaceContext;
   /** Current Canvas document used only to validate an Agent-proposed patch. */
   canvasDocument?: CanvasDocument;
+  /** The selected canvas nodes are an explicit target, not incidental prompt context. */
+  canvasTarget?: CanvasAgentTarget;
 };
 
 export type AgentGeneratedFile = {

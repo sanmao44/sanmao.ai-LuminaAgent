@@ -10313,7 +10313,8 @@ export default function SuperCanvas() {
           });
         return next;
       });
-      setSelectedIds(new Set(nodes.map((node) => node.id)));
+      const appliedIds = nodes.map((node) => node.id);
+      setSelectedIds(new Set(appliedIds));
       setSelectedGroupId(null);
       setContextMenu(null);
       void recordCanvasImages(incoming, {
@@ -10332,8 +10333,10 @@ export default function SuperCanvas() {
         } : {}),
         provenance: provenanceDraftsForSources(referenceIds, provenanceRelation, provenanceContext),
       });
-      notify(`已把 ${nodes.length} 张 Agent 图片加入画布`);
-      fitView(nodes.map((node) => node.id));
+      notify(runContext?.operation === "edit" && anchor
+        ? `已基于选中节点完成修改，结果已生成并保留来源关系`
+        : `已把 ${nodes.length} 张 Agent 图片加入画布`);
+      fitView(appliedIds);
       return nodes.map((node) => node.id);
     },
     [
@@ -10683,10 +10686,33 @@ export default function SuperCanvas() {
   }, [fitView, notify, updateDoc]);
 
   const applyAgentDockText = useCallback(
-    (text: string, meta: { prompt: string }) => {
+    (text: string, meta: { prompt: string; runContext?: CanvasAgentRunContext }) => {
       const content = String(text || "").trim();
       if (!content) return [];
-      const anchor = selectedSingle || selectedNodes[0] || null;
+      const anchor = meta.runContext?.anchorNodeId
+        ? nodeById(docRef.current, meta.runContext.anchorNodeId) || null
+        : selectedSingle || selectedNodes[0] || null;
+      if (meta.runContext?.operation === "edit" && anchor?.type === "prompt") {
+        commit((value) => ({
+          ...value,
+          nodes: value.nodes.map((node) => node.id !== anchor.id ? node : {
+            ...node,
+            data: {
+              ...node.data,
+              text: content,
+              agentResponse: content,
+              agentPrompt: meta.prompt,
+              role: node.data.role || "Agent 回复",
+              status: "completed" as const,
+              statusLabel: "Agent 已更新",
+            },
+          }),
+        }));
+        setSelectedIds(new Set([anchor.id]));
+        notify("已按选中文字节点更新内容");
+        fitView([anchor.id]);
+        return [anchor.id];
+      }
       const origin = anchor
         ? { x: anchor.x, y: anchor.y }
         : screenToWorld(stageSize.width / 2, stageSize.height / 2);
