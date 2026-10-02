@@ -746,12 +746,12 @@ test("dock local edit control keeps editing and removal actions in a clear segme
 });
 
 test("regular editor stays below its node in the stacked main-composer layout", () => {
-  assert.match(component, /fitCanvasNodeEditorBelow\(/);
-  assert.match(component, /const fittedPosition = fitCanvasNodeEditorBelow\(\s*anchor,/);
+  assert.match(component, /placeCanvasNodeEditorAdaptive\(/);
+  assert.match(component, /const adaptivePosition = placeCanvasNodeEditorAdaptive\(\s*anchor,/);
   assert.doesNotMatch(component, /--canvas-editor-width/);
   assert.doesNotMatch(component, /layoutAnchor/);
-  assert.match(component, /data-placement="bottom"/);
-  assert.match(component, /const position = stackedEditor\s*\? \{ \.\.\.fittedPosition, maxHeight: popoverHeight \}/);
+  assert.match(component, /data-placement=\{position\.placement\}/);
+  assert.match(component, /const position = \{ \.\.\.adaptivePosition, maxHeight: popoverHeight \}/);
   assert.match(component, /maxHeight: promptExpanded \|\| stackedEditor \|\| isDockNode \? undefined : position\.maxHeight/);
   assert.doesNotMatch(component, /needsFullPanelLift/);
   assert.doesNotMatch(component, /useTopPlacement/);

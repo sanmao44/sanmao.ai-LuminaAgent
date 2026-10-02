@@ -5137,3 +5137,49 @@ html[data-theme="dark"] .canvas-node[data-node-kind="angle"]{--node-color:#a78bf
     max-height:132px!important;
   }
 }
+
+/* Final node-editor overflow contract.
+   The editor shell must grow with its content; only text fields and explicit
+   drawers are allowed to scroll. This prevents the right-side scrollbar seen
+   when a long prompt or reference list made the whole panel a scroll box. */
+.canvas-node-editor-popover:not(.is-prompt-expanded){
+  max-height:none!important;
+  overflow:visible!important;
+}
+.canvas-node-editor-popover:not(.is-prompt-expanded)>.canvas-node-editor-surface{
+  min-height:0;
+  overflow:visible!important;
+}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-body{
+  min-height:0;
+  max-height:none!important;
+  overflow:visible!important;
+  scrollbar-width:none;
+}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-body::-webkit-scrollbar{
+  display:none;
+}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor,
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+  min-height:0;
+}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-prompt-wrap>.reference-mention-editor .reference-mention-editor-content{
+  overflow-x:hidden;
+  overflow-y:auto;
+  scrollbar-width:thin;
+}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-editor-reference-items{
+  overflow-x:auto;
+  overflow-y:hidden;
+}
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-dock-drawer,
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-node-editor-dock-drawer .canvas-node-editor-dock-drawer-body,
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-parameter-drawer,
+.canvas-node-editor-popover:not(.is-prompt-expanded) .canvas-variant-list{
+  scrollbar-width:thin;
+}
+@media(max-width:720px){
+  .canvas-node-editor-popover:not(.is-prompt-expanded){
+    max-height:none!important;
+  }
+}

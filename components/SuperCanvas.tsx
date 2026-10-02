@@ -166,7 +166,7 @@ import {
 import { getVideoModelLimits } from "@/lib/video-model-limits";
 import { is65535Provider } from "@/lib/video-platform";
 import {
-  fitCanvasNodeEditorBelow,
+  placeCanvasNodeEditorAdaptive,
   placeCanvasGroupToolbar,
   placeCanvasContextMenu,
   placeCanvasNodeToolbar,
@@ -19648,7 +19648,12 @@ function CanvasNodeEditorPopover({
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState({ left: 18, top: 86, maxHeight: 580 });
+  const [position, setPosition] = useState<{
+    left: number;
+    top: number;
+    maxHeight: number;
+    placement: "top" | "bottom";
+  }>({ left: 18, top: 86, maxHeight: 580, placement: "bottom" });
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [promptOptimizing, setPromptOptimizing] = useState(false);
@@ -20086,23 +20091,23 @@ function CanvasNodeEditorPopover({
     // panel may clamp to the stage margins when it is wider than the node,
     // but it must not be recentered independently from the node.
     /* 参数面板同理：贴到面板左边，别让 Agent 面板压住正在调的那几个参数。 */
-    const fittedPosition = fitCanvasNodeEditorBelow(
+    const visibleStage = { width: canvasVisibleStageWidth(stage), height: stageHeight };
+    // Keep the complete editor laid out as one panel. If the measured panel
+    // cannot fit below the node, place it above the node instead of constraining
+    // the body and exposing a second, panel-level scrollbar.
+    const adaptivePosition = placeCanvasNodeEditorAdaptive(
       anchor,
-      { width: canvasVisibleStageWidth(stage), height: stageHeight },
+      visibleStage,
       { width: popoverWidth, height: popoverHeight },
       14,
       12,
     );
-    // Keep the compact composer attached below its node. Its own text areas
-    // handle long content, so the complete panel may continue below the stage
-    // instead of being lifted or turned into a scroll drawer.
-    const position = stackedEditor
-      ? { ...fittedPosition, maxHeight: popoverHeight }
-      : fittedPosition;
+    const position = { ...adaptivePosition, maxHeight: popoverHeight };
     setPosition((current) =>
       current.left === position.left &&
       current.top === position.top &&
-      current.maxHeight === position.maxHeight
+      current.maxHeight === position.maxHeight &&
+      current.placement === position.placement
         ? current
         : position,
     );
@@ -20139,7 +20144,7 @@ function CanvasNodeEditorPopover({
     <div
       ref={popoverRef}
        className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
-      data-placement="bottom"
+      data-placement={position.placement}
       data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
       data-prompt-expanded={promptExpanded ? "true" : "false"}
