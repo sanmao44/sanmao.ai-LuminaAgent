@@ -58,6 +58,9 @@ function harness(options = {}) {
       normalizeStarApiLandscapePrompt: (_provider, _model, prompt) => prompt,
       normalizeStarApiLandscapeImages: async (_provider, _model, _input, images) => images,
     },
+    '@/packages/model-runtime/media': {
+      invokeMediaModelCandidates: async (initial, _loadFallbacks, operation) => operation(initial),
+    },
   });
   return {
     calls,

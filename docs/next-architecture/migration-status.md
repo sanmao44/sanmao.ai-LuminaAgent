@@ -1,4 +1,4 @@
-﻿# Migration Status
+# Migration Status
 
 状态词只使用：`vertical slice completed`、`migration in progress`、`cutover completed`、`legacy removed`。
 
@@ -9,13 +9,13 @@
 | Storage | cutover completed for server business data | Repository ports and SQLite adapter after marker activation | JSON, IndexedDB, localStorage and filesystem remain adapter or migration inputs; remove after compatibility and rollback callers reach zero |
 | Backup / Restore | cutover completed | `lib/backup-application-service.ts`; `client/client.json` contains the single canonical workspace representation | Buffer compatibility APIs and local snapshot callers remain until migrated |
 | Database | migration in progress | SQLite is authoritative only after explicit guarded cutover and application restart | Legacy JSON remains migration and rollback input; ordinary rollback is rejected after any post-cutover write |
-| Agent | migration in progress | `packages/agent-core` plus `apps/api/agent-entry.ts` for the compact non-streaming path | Route still owns streaming, context, provider and capability orchestration |
-| Tool / MCP | migration in progress | `packages/tool-runtime` for policy, resolution, dispatch, loop and MCP execution | Compatibility adapter and transport approval glue remain |
+| Agent | migration in progress | `packages/agent-core` plus `apps/api/agent-entry.ts` and `apps/api/agent-stream.ts` for runtime and streaming application seams | Route still owns request context, capability/tool orchestration and execution lifecycle |
+| Tool / MCP | migration in progress | `packages/tool-runtime` for policy, resolution, dispatch, loop, MCP and Tabbit execution seams | `adapter.ts` remains a compatibility coordinator; artifact/image/skill orchestration and transport approval glue remain |
 | Provider | migration in progress | `packages/model-runtime/legacy-chat-adapter.ts` plus `invocation.ts` for compact text normalization and attempt lifecycle | Routing, streaming and media branches remain legacy paths; health/failover policy is still supplied by the route |
 | Task | migration in progress | Repository adapters plus `packages/task-runtime` contracts | Clone creation, confirmation and resume dispatch now cross `apps/worker/task-entry.ts`; pipeline internals, polling and family-specific wire states remain |
 | Canvas Document / History / Selection | cutover completed | CanvasCore | UI projection and persistence adapters remain |
-| Physical Web/API/Worker split | migration in progress | `apps/api/agent-entry.ts` and `apps/worker/task-entry.ts` are the first real seams; Next remains the host | No standalone deployable apps yet; UI and remaining routes stay in the existing application |
-| Observability | migration in progress | `RuntimeObserver` contract and bounded observer | Agent, Tool, MCP, Database, Backup, Provider and video Task boundaries are instrumented; broader task/media coverage remains |
+| Physical Web/API/Worker split | migration in progress | `apps/api/agent-entry.ts`, `apps/api/agent-stream.ts` and `apps/worker/task-entry.ts` are real seams; Next remains the host | No standalone deployable apps yet; UI and remaining routes stay in the existing application because ownership is not complete enough to deploy independently |
+| Observability | migration in progress | `RuntimeObserver` contract with bounded in-process diagnostics and redacted JSONL operational sink (`packages/observability`) | Agent, Tool, MCP, Database, Backup, Provider and video Task boundaries are instrumented; broader task/media coverage and long-term OpenTelemetry export remain |
 | Eval | migration in progress | Existing behavior suite plus `tests/architecture-eval.test.mjs` and `tests/part-b-boundaries.test.mjs` | Fixed cross-runtime eval is intentionally small and will grow with each ownership cutover |
 
 ## Data cutover safety
@@ -35,6 +35,6 @@
 
 ## Part B boundary
 
-Part A Data Cutover Closure is implemented and its targeted migration, rollback, backup and transaction tests pass. Part B remains `migration in progress`: API and Worker entry seams now exist for the migrated slices, Clone background execution no longer starts from the HTTP route, provider attempt lifecycle is shared, and obsolete compatibility bridges were removed, but there are no standalone deployable Web/API/Worker applications yet; the Agent route still owns substantial orchestration, the Tool adapter remains a migration adapter, Provider and Task ownership are partial, and Legacy purge is only started for bridges with zero callers.
+Part A Data Cutover Closure is implemented and its targeted migration, rollback, backup and transaction tests pass. Part B remains `migration in progress`: API and Worker entry seams now exist for the migrated slices, including a provider-neutral Agent stream adapter; Clone background execution no longer starts from the HTTP route, provider attempt lifecycle and media candidate fallback are shared, and obsolete compatibility bridges were removed. Runtime lifecycle events now reach a redacted, bounded JSONL operational sink and read-only admin endpoint. There are no standalone deployable Web/API/Worker applications yet; the Agent route still owns substantial context, capability and execution orchestration, the Tool adapter remains a migration adapter, Provider and Task ownership are partial, and Legacy purge is only started for bridges with zero callers.
 
 Last reviewed: 2026-10-03.

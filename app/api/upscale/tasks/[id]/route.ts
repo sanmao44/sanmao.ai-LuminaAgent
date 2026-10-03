@@ -1,5 +1,6 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { cancelUpscaleTask, publicUpscaleTask, refreshUpscaleTask, retryUpscaleTask } from '@/lib/upscale-service';
+import { cancelUpscaleTask, publicUpscaleTask, retryUpscaleTask } from '@/lib/upscale-service';
+import { runUpscaleTask } from '@/apps/worker/task-entry';
 import { findUpscaleTask, removeUpscaleTask } from '@/lib/upscale-task-store';
 import { getUpscaleCatalogModel } from '@/lib/upscale-catalog';
 import { upscaleTaskRuntime } from '@/lib/upscale-task-runtime';
@@ -9,7 +10,7 @@ export const runtime = 'nodejs';
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   const id = (await context.params).id;
-  const task = await refreshUpscaleTask(id);
+  const task = await runUpscaleTask(id);
   if (!task) return Response.json({ error: '高清任务不存在。' }, { status: 404 });
   const model = getUpscaleCatalogModel(task.model);
   return Response.json({

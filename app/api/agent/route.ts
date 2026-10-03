@@ -51,6 +51,8 @@ import { type McpRepeatTracker, type ToolLoopTraceStep } from '@/packages/tool-r
 import { createToolExecutionAdapter } from '@/packages/tool-runtime/adapter';
 import { ToolRuntime } from '@/packages/tool-runtime/runtime';
 import { BufferedRuntimeObserver } from '@/packages/contracts/observability';
+import { CompositeRuntimeObserver } from '@/packages/contracts/observability';
+import { FileRuntimeObserver } from '@/packages/observability/index';
 import { AGENT_INLINE_TEXT_MAX_CHARS, boundAgentContext, modelInputCharBudget } from '@/lib/agent/context-budget';
 import { createBrowserMetricsCollector } from '@/lib/agent/browser-metrics';
 import { browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
@@ -71,6 +73,7 @@ import { buildAgentSkillContext, buildSkillToolContent, installSkill, installSki
 import { fetchSkillFilesFromGithub } from '@/lib/skill-archive';
 import { fetchSkillText, parseGithubSkillTarget, stripToolCallMarkup } from '@/lib/skills';
 import { resolveLocalDataDir } from '@/lib/data-paths';
+import path from 'node:path';
 import { normalizeWorkspaceContext } from '@/lib/workspace-context';
 import { isTabbitCliAvailable, runTabbitBrowserAction } from '@/lib/tabbit-cli';
 import { getStorageRoots, persistImageBuffer } from '@/lib/image-storage';
@@ -96,7 +99,7 @@ import {
 import { runPlainAgentTurn } from '@/apps/api/agent-entry';
 import type { AgentMessage, ModelDescriptor } from '@/packages/contracts';
 import { createLegacyChatModelRuntime } from '@/packages/model-runtime/legacy-chat-adapter';
-import { invokeModelCandidates, invokeProviderWithFailover } from '@/packages/model-runtime/invocation';
+import { invokeModelCandidates, invokeProviderWithFailover, withProviderResponseDeadline } from '@/packages/model-runtime/invocation';
 
 async function safeDiscoverMcpForRequest(options: Parameters<typeof discoverMcpForRequest>[0]) {
   try {
@@ -148,114 +151,18 @@ function isAgentRequestCancelled(error: unknown) {
 }
 
 async function withAgentCallDeadline<T>(signal: AbortSignal, timeoutMs: number, operation: (callSignal: AbortSignal) => Promise<T>) {
-  const callTimeoutMs = timeoutMs || AGENT_MODEL_CALL_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timeoutError = Object.assign(new Error(`模型在 ${Math.round(callTimeoutMs / 1000)} 秒内没有返回响应`), { name: 'TimeoutError', providerFailureKind: 'timeout' as const });
-  const abortFromParent = () => controller.abort(signal.reason || new Error('AGENT_CANCELLED'));
-  const timer = setTimeout(() => controller.abort(timeoutError), callTimeoutMs);
-  let ownsResponseBody = false;
-  const readWithTimeout = async (reader: ReadableStreamDefaultReader<Uint8Array>, waitMs: number, error: Error) => {
-    let waitTimer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race<ReadableStreamReadResult<Uint8Array>>([
-        reader.read(),
-        new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
-          waitTimer = setTimeout(() => {
-            // Rejecting the race alone would leave the provider's reader
-            // pending in the background. Abort it as well so the transport
-            // and the stream wrapper share the same failure boundary.
-            if (!controller.signal.aborted) controller.abort(error);
-            reject(error);
-          }, waitMs);
-        }),
-      ]);
-    } finally {
-      if (waitTimer) clearTimeout(waitTimer);
-    }
-  };
-  if (signal.aborted) abortFromParent();
-  else signal.addEventListener('abort', abortFromParent, { once: true });
-  try {
-    const result = await operation(controller.signal);
-    // Fetch resolves as soon as the upstream headers arrive. For a streaming
-    // model that is not enough: a stalled body would otherwise bypass the
-    // automatic failover deadline and keep the Agent waiting for minutes.
-    if (result instanceof Response && result.body) {
-      const reader = result.body.getReader();
-      const abortReader = () => void reader.cancel(controller.signal.reason).catch(() => undefined);
-      controller.signal.addEventListener('abort', abortReader, { once: true });
-      const cleanupReader = () => {
-        controller.signal.removeEventListener('abort', abortReader);
-        try { reader.releaseLock(); } catch {}
-      };
-      let firstChunk: ReadableStreamReadResult<Uint8Array>;
-      try {
-        firstChunk = await readWithTimeout(reader, callTimeoutMs, timeoutError);
-        if (controller.signal.aborted) throw controller.signal.reason || new Error('AGENT_CANCELLED');
-        if (firstChunk.done) {
-          cleanupReader();
-          return new Response(null, {
-            status: result.status,
-            statusText: result.statusText,
-            headers: new Headers(result.headers),
-          }) as T;
-        }
-      } catch (error) {
-        await reader.cancel(error).catch(() => undefined);
-        cleanupReader();
-        throw error;
-      }
-      ownsResponseBody = true;
-      clearTimeout(timer);
-      const cleanupBody = () => {
-        cleanupReader();
-        signal.removeEventListener('abort', abortFromParent);
-      };
-      let firstChunkPending = true;
-      const body = new ReadableStream<Uint8Array>({
-        async pull(streamController) {
-          try {
-            if (firstChunkPending) {
-              firstChunkPending = false;
-              if (firstChunk.value) streamController.enqueue(firstChunk.value);
-              else streamController.close();
-              return;
-            }
-            const next = await readWithTimeout(
-              reader,
-              AGENT_STREAM_IDLE_TIMEOUT_MS,
-              Object.assign(new Error(`模型流式响应在 ${Math.round(AGENT_STREAM_IDLE_TIMEOUT_MS / 1000)} 秒内没有新内容`), { name: 'TimeoutError', providerFailureKind: 'timeout' as const }),
-            );
-            if (next.done) {
-              cleanupBody();
-              streamController.close();
-            } else if (next.value) streamController.enqueue(next.value);
-          } catch (error) {
-            await reader.cancel(error).catch(() => undefined);
-            cleanupBody();
-            streamController.error(error);
-          }
-        },
-        cancel(reason) {
-          void reader.cancel(reason).catch(() => undefined).finally(cleanupBody);
-        },
-      });
-      return new Response(body, {
-        status: result.status,
-        statusText: result.statusText,
-        headers: new Headers(result.headers),
-      }) as T;
-    }
-    return result;
-  } catch (error) {
-    if (controller.signal.aborted && controller.signal.reason === timeoutError) throw timeoutError;
-    throw error;
-  } finally {
-    if (!ownsResponseBody) {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', abortFromParent);
-    }
-  }
+  return withProviderResponseDeadline({
+    signal,
+    timeoutMs: timeoutMs || AGENT_MODEL_CALL_TIMEOUT_MS,
+    idleTimeoutMs: AGENT_STREAM_IDLE_TIMEOUT_MS,
+    operation,
+    timeoutError: (phase, durationMs) => Object.assign(
+      new Error(phase === 'idle'
+        ? `\u6a21\u578b\u6d41\u5f0f\u54cd\u5e94\u5728 ${Math.round(durationMs / 1000)} \u79d2\u5185\u6ca1\u6709\u65b0\u5185\u5bb9`
+        : `\u6a21\u578b\u5728 ${Math.round(durationMs / 1000)} \u79d2\u5185\u6ca1\u6709\u8fd4\u56de\u54cd\u5e94`),
+      { name: 'TimeoutError', providerFailureKind: 'timeout' as const },
+    ),
+  });
 }
 
 export const runtime = 'nodejs';
@@ -484,148 +391,7 @@ function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; m
   };
 }
 
-type MetadataValue<T> = T | (() => T);
-type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?: string; modelId?: string; modelName?: string; providerName?: string; batchId?: string; batchIndex?: number; batchTotal?: number; batchPrompt?: string; batchStatus?: 'succeeded' | 'failed'; batchError?: string }>; batchItems?: Array<{ batchId: string; index: number; total: number; prompt: string; status: 'succeeded' | 'failed'; error?: string; imageCount?: number }>; files: GeneratedFile[]; generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }>; model: MetadataValue<string>; modelId?: MetadataValue<string | undefined>; providerName?: MetadataValue<string | undefined>; fallbackFrom?: MetadataValue<string | undefined>; deliverable: AgentDeliverable; durationSeconds?: number; fallback?: string; webSearch?: WebSearchMeta | null; webSearchDecision?: WebSearchDecisionMeta; statuses?: Array<Record<string, unknown>>; skills?: Array<{ id: string; name: string }>; mcpTools?: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }>; toolTrace?: ToolLoopTraceStep[]; canvasPatch?: CanvasPatch; finalize?: (text: string) => Promise<string> | string; approval?: { id: string; expiresAt: number; message: string; calls: Array<Record<string, unknown>> }; streamBufferChars?: number; };
-
-type AgentUsage = { promptTokens?: number; completionTokens?: number; totalTokens?: number };
-type AgentStreamSettlement = { status: 'success' | 'error'; responseChars: number; error?: string } & AgentUsage;
-
-function streamAgentResult(upstream: Response | null | (() => Promise<Response | null>), metadata: AgentStreamMetadata, signal?: AbortSignal, onSettled?: (result: AgentStreamSettlement) => Promise<void> | void) {
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-  const send = (controller: ReadableStreamDefaultController<Uint8Array>, event: Record<string, unknown>) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-  let settled = false;
-  const settle = async (result: AgentStreamSettlement) => {
-    if (settled) return;
-    settled = true;
-    await onSettled?.(result);
-  };
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      let text = '';
-      let emitted = 0;
-      let streamUsage: AgentUsage = {};
-      const emitSafeText = () => {
-        const clean = stripToolCallMarkup(text);
-        const safe = clean.slice(0, Math.max(0, clean.length - (metadata.streamBufferChars ?? 96)));
-        if (safe.length > emitted) {
-          send(controller, { type: 'delta', text: safe.slice(emitted) });
-          emitted = safe.length;
-        }
-      };
-      let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-      let settlement: AgentStreamSettlement = { status: 'error', responseChars: 0, error: '助手流式响应未完成' };
-      const cancel = () => {
-        void reader?.cancel().catch(() => undefined);
-        try { controller.close(); } catch {}
-      };
-      signal?.addEventListener('abort', cancel, { once: true });
-      try {
-        if (signal?.aborted) {
-          controller.close();
-          return;
-        }
-        for (const status of metadata.statuses || [{ type: 'status', stage: 'answering', message: '正在准备回答…' }]) {
-          if (signal?.aborted) return;
-          send(controller, status);
-        }
-        const upstreamResponse = typeof upstream === 'function' ? await upstream() : upstream;
-        if (!upstreamResponse?.body) {
-          text = metadata.fallback || '';
-          if (text) emitSafeText();
-        } else {
-          reader = upstreamResponse.body.getReader();
-          let buffer = '';
-          const consume = (raw: string) => {
-            buffer += raw;
-            const events = buffer.split(/\r?\n\r?\n/);
-            buffer = events.pop() || '';
-            for (const event of events) {
-              const dataLine = event.split(/\r?\n/).find((line) => line.startsWith('data:'));
-              if (!dataLine) continue;
-              const value = dataLine.slice(5).trim();
-              if (!value || value === '[DONE]') continue;
-              try {
-                const parsed = JSON.parse(value);
-                const payload = parsed?.data || parsed;
-                const usage = payload?.usage;
-                if (usage && typeof usage === 'object') {
-                  const prompt = Number(usage.prompt_tokens ?? usage.input_tokens);
-                  const completion = Number(usage.completion_tokens ?? usage.output_tokens);
-                  const total = Number(usage.total_tokens);
-                  const hasPrompt = Number.isFinite(prompt) && prompt >= 0;
-                  const hasCompletion = Number.isFinite(completion) && completion >= 0;
-                  const hasTotal = Number.isFinite(total) && total >= 0;
-                  streamUsage = {
-                    ...(hasPrompt ? { promptTokens: prompt } : {}),
-                    ...(hasCompletion ? { completionTokens: completion } : {}),
-                    ...(hasTotal ? { totalTokens: total } : hasPrompt && hasCompletion ? { totalTokens: prompt + completion } : {}),
-                  };
-                }
-                const delta = payload?.choices?.[0]?.delta?.content || payload?.choices?.[0]?.message?.content || '';
-                if (typeof delta === 'string' && delta) { text += delta; emitSafeText(); }
-              } catch {}
-            }
-          };
-          while (true) {
-            if (signal?.aborted) return;
-            const part = await reader.read();
-            if (part.done) break;
-            if (signal?.aborted) return;
-            consume(decoder.decode(part.value, { stream: true }));
-          }
-          if (signal?.aborted) return;
-          consume(decoder.decode());
-          if (!text && buffer.trim()) {
-            try {
-              const parsed = JSON.parse(buffer.trim().replace(/^data:\s*/, ''));
-              const payload = parsed?.data || parsed;
-              text = payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.text || '';
-              if (text) emitSafeText();
-            } catch {}
-          }
-        }
-        if (signal?.aborted) return;
-        const streamedFinal = text || metadata.fallback || '';
-        let finalized = streamedFinal;
-        if (metadata.finalize) {
-          try { finalized = await metadata.finalize(streamedFinal); }
-          catch { finalized = streamedFinal; }
-        }
-        const cleanedFinal = stripToolCallMarkup(finalized).trim();
-        const unexecutedCall = hasInlineToolCallMarkup(finalized) && !metadata.images.length && !metadata.files.length;
-        const finalText = (!unexecutedCall && cleanedFinal) || (metadata.images.length || metadata.files.length
-          ? `已完成${metadata.images.length ? ` ${metadata.images.length} 张图片` : ''}${metadata.files.length ? ` ${metadata.files.length} 个文件` : ''}。`
-          : '当前模型未能完成这次请求，没有可交付的结果。请重试或切换支持工具调用的对话模型。');
-        if (finalText.startsWith(text.slice(0, emitted)) && finalText.length > emitted) send(controller, { type: 'delta', text: finalText.slice(emitted) });
-        if (metadata.approval) send(controller, { type: 'approval_required', approvalId: metadata.approval.id, runId: metadata.approval.id, summary: metadata.approval.message, approval: metadata.approval });
-        const model = typeof metadata.model === 'function' ? metadata.model() : metadata.model;
-        const modelId = typeof metadata.modelId === 'function' ? metadata.modelId() : metadata.modelId;
-        const providerName = typeof metadata.providerName === 'function' ? metadata.providerName() : metadata.providerName;
-        const fallbackFrom = typeof metadata.fallbackFrom === 'function' ? metadata.fallbackFrom() : metadata.fallbackFrom;
-        send(controller, { type: 'final', message: finalText, images: metadata.images, ...(metadata.batchItems ? { batchItems: metadata.batchItems } : {}), files: metadata.files, generations: metadata.generations, model, ...(modelId ? { modelId } : {}), ...(providerName ? { providerName } : {}), ...(fallbackFrom ? { fallbackFrom } : {}), deliverable: metadata.deliverable, ...(metadata.durationSeconds !== undefined ? { durationSeconds: metadata.durationSeconds } : {}), ...(metadata.canvasPatch ? { canvasPatch: metadata.canvasPatch } : {}), webSearch: metadata.webSearch || null, webSearchDecision: metadata.webSearchDecision || null, skills: metadata.skills || [], mcpTools: metadata.mcpTools || [], toolTrace: metadata.toolTrace || [], ...(metadata.approval ? { approval: metadata.approval, needsApproval: true } : {}) });
-        settlement = (!unexecutedCall && cleanedFinal) || metadata.images.length || metadata.files.length
-          ? { status: 'success', responseChars: finalText.length, ...streamUsage }
-          : { status: 'error', responseChars: finalText.length, error: finalText, ...streamUsage };
-        controller.close();
-      } catch (error) {
-        const message = describeProviderFailure(error);
-        settlement = { status: 'error', responseChars: text.length, error: signal?.aborted ? '本轮 Agent 已停止。' : message, ...streamUsage };
-        if (signal?.aborted) return;
-        send(controller, { type: 'error', message });
-        controller.close();
-      } finally {
-        signal?.removeEventListener('abort', cancel);
-        if (signal?.aborted && settlement.status === 'success') settlement = { status: 'error', responseChars: text.length, error: '本轮 Agent 已停止。' };
-        await settle(settlement);
-      }
-    },
-    cancel() {
-      void settle({ status: 'error', responseChars: 0, error: '客户端已关闭流式响应' });
-    },
-  });
-  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' } });
-}
+import { streamAgentResult, type AgentStreamMetadata, type AgentStreamSettlement } from '@/apps/api/agent-stream';
 function toChatContent(message: ClientMessage, allowVideo = false): string | ChatContentPart[] {
   const refs = normalizeCreativeReferences(message.references, 16).map((reference) => (
     reference.kind === 'text' && reference.text
@@ -681,7 +447,10 @@ export async function POST(request: Request) {
    * （app/api/agent/progress）。只写固定阶段文案，不带用户内容；没有 runId 就整个不生效。
    */
   let agentRunId: string | null = null;
-  const runtimeObserver = new BufferedRuntimeObserver(256);
+  const runtimeObserver = new CompositeRuntimeObserver([
+    new BufferedRuntimeObserver(256),
+    new FileRuntimeObserver({ directory: path.join(resolveLocalDataDir(), 'runtime-events') }),
+  ]);
   let progressToolCalls = 0;
   const reportProgress = (patch: { stage: AgentProgressStage; message: string }) => {
     if (!agentRunId) return;

@@ -11,43 +11,12 @@ import { normalizeGenerationSource, type GenerationSource } from '@/lib/generati
 import { enforceLocalEditMask } from '@/lib/local-edit-composite';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { normalizeStarApiLandscapeImages, normalizeStarApiLandscapePrompt } from '@/lib/image-orientation';
+import { invokeMediaModelCandidates } from '@/packages/model-runtime/media';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
 
-function isSafeImageModelFallbackError(error: unknown) {
-  const failure = error as { providerFailureKind?: string; providerStatus?: number; status?: number; message?: string } | null;
-  const status = Number(failure?.providerStatus || failure?.status);
-  const message = String(failure?.message || '').toLowerCase();
-  const explicitCompatibility = /unsupported\s+(?:model|image|edit|generation)|(?:model|image|edit|generation)\s+(?:not found|does not exist|is not supported|unsupported)|unknown model|model .*not supported|configured account|does not support (?:this )?(?:model|image|image generation|image editing)|不支持(?:此模型|该模型|这个模型|图片生成|图片修改)|未找到模型|模型不存在|模型不支持|账号未配置(?:该模型)?/.test(message);
-  return failure?.providerFailureKind === 'http'
-    && [400, 404, 415, 422].includes(status)
-    && explicitCompatibility;
-}
-
-async function runImageModelCandidates<T extends { model: { id: string } }, R>(
-  initial: T,
-  loadFallbacks: () => Promise<readonly T[]>,
-  operation: (runtime: T) => Promise<R>,
-) {
-  const candidates: T[] = [initial];
-  let fallbacksLoaded = false;
-  for (let index = 0; index < candidates.length; index += 1) {
-    try {
-      return await operation(candidates[index]);
-    } catch (error) {
-      if (!isSafeImageModelFallbackError(error)) throw error;
-      if (index < candidates.length - 1) continue;
-      if (fallbacksLoaded) throw error;
-      fallbacksLoaded = true;
-      let fallbacks: readonly T[];
-      try { fallbacks = await loadFallbacks(); } catch { throw error; }
-      candidates.push(...fallbacks.filter((candidate) => candidate.model.id !== initial.model.id));
-      if (index >= candidates.length - 1) throw error;
-    }
-  }
-  throw new Error('没有可用的生图模型');
-}
+const runImageModelCandidates = invokeMediaModelCandidates;
 
 function readCameraNumber(value: unknown, field: string) {
   if (value === undefined) return undefined;

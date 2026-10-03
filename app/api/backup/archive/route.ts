@@ -6,7 +6,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { BufferedRuntimeObserver } from '@/packages/contracts/observability';
+import { BufferedRuntimeObserver, CompositeRuntimeObserver } from '@/packages/contracts/observability';
+import { FileRuntimeObserver } from '@/packages/observability/index';
+import { resolveLocalDataDir } from '@/lib/data-paths';
 
 export const runtime = 'nodejs';
 
@@ -48,7 +50,10 @@ async function stageRequestBody(request: Request, target: string, maxBytes: numb
 export async function POST(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   let releaseRuntimeRequest = async () => {};
-  const runtimeObserver = new BufferedRuntimeObserver(64);
+  const runtimeObserver = new CompositeRuntimeObserver([
+    new BufferedRuntimeObserver(64),
+    new FileRuntimeObserver({ directory: path.join(resolveLocalDataDir(), 'runtime-events') }),
+  ]);
   try {
     releaseRuntimeRequest = await beginRuntimeRequest('backup-export');
     const body = await request.json();
@@ -83,7 +88,10 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   let releaseRuntimeRequest = async () => {};
-  const runtimeObserver = new BufferedRuntimeObserver(64);
+  const runtimeObserver = new CompositeRuntimeObserver([
+    new BufferedRuntimeObserver(64),
+    new FileRuntimeObserver({ directory: path.join(resolveLocalDataDir(), 'runtime-events') }),
+  ]);
   try {
     releaseRuntimeRequest = await beginRuntimeRequest('backup-restore');
     const backupPassword = request.headers.get('x-sanmao-backup-password') || '';

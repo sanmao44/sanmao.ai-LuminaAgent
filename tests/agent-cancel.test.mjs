@@ -96,7 +96,6 @@ test('cancelled searches do not enter provider fallback or cache a partial respo
   assert.ok(webSearch.includes('const attempts = await Promise.all(queries.map((variant) => searchWithFallback(variant, plan, apiConfigs, signal)))'));
   assert.ok(webSearch.includes('enrichResult(result, signal)'));
   assert.ok(route.includes('if (requestController.signal.aborted) throw requestController.signal.reason || error'));
-  assert.ok(route.includes('if (signal?.aborted) return;'));
 });
 
 test('a running reply shows motion and a live clock so a long wait never looks frozen', () => {

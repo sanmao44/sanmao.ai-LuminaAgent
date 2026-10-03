@@ -1,5 +1,5 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { createVideoGeneration } from '@/lib/video-task-service';
+import { runVideoGeneration } from '@/apps/worker/task-entry';
 import type { VideoGenerationInput } from '@/lib/types';
 import { normalizeGenerationSource } from '@/lib/generation-source';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
       requireAudio: raw.requireAudio ?? raw.require_audio,
     };
     const key = request.headers.get('Idempotency-Key') || String(body.idempotencyKey || '');
-    const task = await createVideoGeneration({ modelId: String(body.model || 'auto'), input, idempotencyKey: key, source: normalizeGenerationSource(body.source, 'workspace') });
+    const task = await runVideoGeneration({ modelId: String(body.model || 'auto'), input, idempotencyKey: key, source: normalizeGenerationSource(body.source, 'workspace') });
     return Response.json({ ok: true, task }, { status: task?.status === 'failed' ? 502 : 202 });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });

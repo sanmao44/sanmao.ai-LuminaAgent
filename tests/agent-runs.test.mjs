@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { buildToolRuntimeModule } from './tools-build.mjs';
+import { createTsRequire } from './ts-require.mjs';
 
 const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
 const resume = await readFile(new URL('../lib/agent/resume.ts', import.meta.url), 'utf8');
@@ -10,6 +11,7 @@ const client = await readFile(new URL('../lib/agent-client.ts', import.meta.url)
 const card = await readFile(new URL('../components/AgentApprovalCard.tsx', import.meta.url), 'utf8');
 const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const { ToolRuntime } = await buildToolRuntimeModule();
+const { streamAgentResult } = createTsRequire(process.cwd())('./apps/api/agent-stream');
 
 test('风险调用不当场执行，而是整批延后等确认', async () => {
   assert.match(route, /import \{[^}]*assessToolApproval[^}]*\} from '@\/lib\/agent\/approval';/, '审批判定只能来自共享模块，不能各写一套');
@@ -38,11 +40,17 @@ test('待确认的调用必须整轮返回，绝不能写进下一轮对话历�
   assert.match(route, /step 存不下|没能保存下来/);
 });
 
-test('流式与非流式都带上待确认信息，前端两种路径都能渲染', () => {
-  assert.match(route, /send\(controller, \{ type: 'approval_required'/);
-  assert.match(route, /\.\.\.\(metadata\.approval \? \{ approval: metadata\.approval, needsApproval: true \} : \{\}\)/);
-  assert.match(route, /approval\?: \{ id: string; expiresAt: number; message: string; calls: Array<Record<string, unknown>> \}/);
-  assert.match(route, /const approvalMessage = approvalMessageFor\(pendingCalls\);/);
+test('流式与非流式都带上待确认信息，前端两种路径都能渲染', async () => {
+  const approval = { id: 'approval-1', expiresAt: Date.now() + 60_000, message: 'needs confirmation', calls: [{ name: 'github__create_issue' }] };
+  const response = await streamAgentResult(null, {
+    fallback: 'waiting for approval', images: [], files: [], generations: [], model: 'test-model', deliverable: 'TEXT', approval,
+  });
+  const events = (await response.text()).trim().split('\n\n').map((frame) => JSON.parse(frame.slice(6)));
+  const approvalEvent = events.find((event) => event.type === 'approval_required');
+  const finalEvent = events.find((event) => event.type === 'final');
+  assert.equal(approvalEvent?.approvalId, approval.id);
+  assert.equal(finalEvent?.needsApproval, true);
+  assert.equal(finalEvent?.approval?.id, approval.id);
 });
 
 test('续跑接口只认 approve / reject，执行哪个调用由服务端记录决定', () => {

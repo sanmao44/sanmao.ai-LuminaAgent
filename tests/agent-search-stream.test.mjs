@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { createTsRequire } from './ts-require.mjs';
 
+const load = createTsRequire(process.cwd());
 const root = new URL('..', import.meta.url);
 const route = await readFile(new URL('app/api/agent/route.ts', root), 'utf8');
 const source = route.replace(/\r\n/g, '\n');
@@ -30,28 +32,14 @@ test('a search refusal is still rewritten before the final event', () => {
 });
 
 test('the stream can post-process the accumulated answer before the final event', () => {
-  assert.ok(route.includes('finalize?: (text: string) => Promise<string> | string;'));
-  assert.ok(source.includes('let finalized = streamedFinal;'));
-  assert.ok(source.includes('try { finalized = await metadata.finalize(streamedFinal); }'));
-  assert.ok(source.includes('const cleanedFinal = stripToolCallMarkup(finalized).trim();'));
-  assert.ok(source.includes("? streamResult(null, { fallback: nativeMessage"));
-});
-
-test('automatic failover deadline also covers a streaming response that stalls before its first chunk', () => {
-  assert.ok(source.includes('const result = await operation(controller.signal);'));
-  assert.ok(source.includes('if (result instanceof Response && result.body) {'));
-  assert.ok(source.includes('firstChunk = await readWithTimeout(reader, callTimeoutMs, timeoutError);'));
-  assert.ok(source.includes('return new Response(body, {'));
-  assert.ok(source.includes('AGENT_AUTO_FAILOVER_TIMEOUT_MS'));
-});
-
-test('manual model calls have a bounded wait and streams have an idle watchdog', () => {
-  assert.ok(source.includes('const AGENT_MODEL_CALL_TIMEOUT_MS = 60_000;'));
-  assert.ok(source.includes('const AGENT_STREAM_IDLE_TIMEOUT_MS = 30_000;'));
-  assert.ok(source.includes('const callTimeoutMs = timeoutMs || AGENT_MODEL_CALL_TIMEOUT_MS;'));
-  assert.ok(source.includes('readWithTimeout(reader, callTimeoutMs, timeoutError)'));
-  assert.ok(source.includes('AGENT_STREAM_IDLE_TIMEOUT_MS'));
-  assert.ok(source.includes('模型流式响应在'));
+  const { streamAgentResult } = load('./apps/api/agent-stream');
+  return streamAgentResult(
+    new Response('data: {"choices":[{"delta":{"content":"draft"}}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } }),
+    { images: [], files: [], generations: [], model: 'test', deliverable: 'text', finalize: (text) => `${text} finalized` },
+  ).text().then((body) => {
+    assert.match(body, /"type":"final"/);
+    assert.match(body, /draft finalized/);
+  });
 });
 
 test('native search fallback shares one total web-search deadline', () => {

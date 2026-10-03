@@ -44,6 +44,111 @@ export async function invokeProviderWithFailover<T, R>(options: ProviderInvocati
   }
 }
 
+export type ProviderResponseDeadlineOptions<T> = {
+  signal: AbortSignal;
+  timeoutMs: number;
+  idleTimeoutMs: number;
+  operation: (signal: AbortSignal) => Promise<T>;
+  timeoutError: (phase: 'initial' | 'idle', timeoutMs: number) => Error;
+};
+
+/**
+ * Bounds both the initial provider response and gaps between streaming chunks.
+ * The provider adapter owns the transport call; this helper owns cancellation
+ * and reader cleanup so every streaming capability uses the same lifecycle.
+ */
+export async function withProviderResponseDeadline<T>(options: ProviderResponseDeadlineOptions<T>): Promise<T> {
+  const controller = new AbortController();
+  const timeoutError = options.timeoutError('initial', options.timeoutMs);
+  const abortFromParent = () => controller.abort(options.signal.reason || new Error('AGENT_CANCELLED'));
+  const timer = setTimeout(() => controller.abort(timeoutError), options.timeoutMs);
+  let ownsResponseBody = false;
+  const readWithTimeout = async (reader: ReadableStreamDefaultReader<Uint8Array>, waitMs: number, error: Error) => {
+    let waitTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race<ReadableStreamReadResult<Uint8Array>>([
+        reader.read(),
+        new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
+          waitTimer = setTimeout(() => {
+            if (!controller.signal.aborted) controller.abort(error);
+            reject(error);
+          }, waitMs);
+        }),
+      ]);
+    } finally {
+      if (waitTimer) clearTimeout(waitTimer);
+    }
+  };
+  if (options.signal.aborted) abortFromParent();
+  else options.signal.addEventListener('abort', abortFromParent, { once: true });
+  try {
+    const result = await options.operation(controller.signal);
+    if (result instanceof Response && result.body) {
+      const reader = result.body.getReader();
+      const abortReader = () => void reader.cancel(controller.signal.reason).catch(() => undefined);
+      controller.signal.addEventListener('abort', abortReader, { once: true });
+      const cleanupReader = () => {
+        controller.signal.removeEventListener('abort', abortReader);
+        try { reader.releaseLock(); } catch {}
+      };
+      let firstChunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        firstChunk = await readWithTimeout(reader, options.timeoutMs, timeoutError);
+        if (controller.signal.aborted) throw controller.signal.reason || new Error('AGENT_CANCELLED');
+        if (firstChunk.done) {
+          cleanupReader();
+          return new Response(null, { status: result.status, statusText: result.statusText, headers: new Headers(result.headers) }) as T;
+        }
+      } catch (error) {
+        await reader.cancel(error).catch(() => undefined);
+        cleanupReader();
+        throw error;
+      }
+      ownsResponseBody = true;
+      clearTimeout(timer);
+      const cleanupBody = () => {
+        cleanupReader();
+        options.signal.removeEventListener('abort', abortFromParent);
+      };
+      let firstChunkPending = true;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(streamController) {
+          try {
+            if (firstChunkPending) {
+              firstChunkPending = false;
+              if (firstChunk.value) streamController.enqueue(firstChunk.value);
+              else streamController.close();
+              return;
+            }
+            const next = await readWithTimeout(reader, options.idleTimeoutMs, options.timeoutError('idle', options.idleTimeoutMs));
+            if (next.done) {
+              cleanupBody();
+              streamController.close();
+            } else if (next.value) streamController.enqueue(next.value);
+          } catch (error) {
+            await reader.cancel(error).catch(() => undefined);
+            cleanupBody();
+            streamController.error(error);
+          }
+        },
+        cancel(reason) {
+          void reader.cancel(reason).catch(() => undefined).finally(cleanupBody);
+        },
+      });
+      return new Response(body, { status: result.status, statusText: result.statusText, headers: new Headers(result.headers) }) as T;
+    }
+    return result;
+  } catch (error) {
+    if (controller.signal.aborted && controller.signal.reason === timeoutError) throw timeoutError;
+    throw error;
+  } finally {
+    if (!ownsResponseBody) {
+      clearTimeout(timer);
+      options.signal.removeEventListener('abort', abortFromParent);
+    }
+  }
+}
+
 /** Provider-neutral candidate selection for capability-specific media calls. */
 export async function invokeModelCandidates<T extends { model: { id: string } }, R>(
   initial: T,
@@ -61,7 +166,8 @@ export async function invokeModelCandidates<T extends { model: { id: string } },
       if (index < candidates.length - 1) continue;
       if (fallbacksLoaded) throw error;
       fallbacksLoaded = true;
-      const fallbacks = await loadFallbacks();
+      let fallbacks: readonly T[];
+      try { fallbacks = await loadFallbacks(); } catch { throw error; }
       candidates.push(...fallbacks.filter((candidate) => candidate.model.id !== initial.model.id));
       if (index >= candidates.length - 1) throw error;
     }

@@ -119,6 +119,7 @@ export async function executeTabbitTool(input: {
   run: (args: Record<string, unknown>, options: { signal?: AbortSignal }) => Promise<TabbitCallResult>;
   onUsage?: (ok: boolean) => void;
   onAudit?: (info: { args: Record<string, unknown>; ok: boolean; durationMs: number; decision: 'call' | 'approval'; summary: unknown }) => void;
+  decorateResult?: (result: TabbitCallResult, durationMs: number) => unknown;
 }): Promise<{ message: ChatMessage; ok: boolean; durationMs: number }> {
   const startedAt = Date.now();
   try {
@@ -126,12 +127,14 @@ export async function executeTabbitTool(input: {
     const durationMs = Date.now() - startedAt;
     input.onUsage?.(result.ok);
     input.onAudit?.({ args: input.args, ok: result.ok, durationMs, decision: input.decision, summary: result.response ?? result.error });
+    const decorated = input.decorateResult?.(result, durationMs);
     return {
-      message: { role: 'tool', tool_call_id: input.callId, content: JSON.stringify({ ok: result.ok, source: 'Tabbit Browser（原生 CLI / Browser-owned Playwright）', untrusted: true, content: result.response ?? result, ...(result.error ? { error: result.error } : {}) }) },
+      message: { role: 'tool', tool_call_id: input.callId, content: JSON.stringify({ ok: result.ok, source: 'Tabbit Browser（原生 CLI / Browser-owned Playwright）', untrusted: true, content: decorated ?? result.response ?? result, ...(result.error ? { error: result.error } : {}) }) },
       ok: result.ok,
       durationMs,
     };
   } catch (error) {
+    if (input.signal?.aborted) throw input.signal.reason || error;
     const durationMs = Date.now() - startedAt;
     const reason = errorMessage(error, 'Tabbit 浏览器调用失败');
     input.onUsage?.(false);

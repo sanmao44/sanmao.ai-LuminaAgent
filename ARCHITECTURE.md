@@ -444,12 +444,18 @@ legacy chat adapter. Provider attempt/failover lifecycle is shared through
 `packages/model-runtime/invocation.ts`; the route supplies timeout, health and
 candidate selection policy.
 `apps/worker/task-entry.ts` dispatches Clone analysis and confirmed/resumed
-execution without making the HTTP route the worker owner. The existing Next app still hosts the
-remaining streaming, media, provider failover and task polling paths, so this
+execution, plus Video/Upscale submission and reconciliation, without making the HTTP route the worker owner. `apps/api/agent-stream.ts` owns provider-neutral SSE adaptation and final stream serialization. The existing Next app still hosts the
+remaining context, capability, media, provider health and family-specific task paths, so this
 is `migration in progress`, not a completed physical split. The old
 `lib/agent/runtime.ts`, `lib/provider-runtime/chat.ts` and root
 `packages/model-runtime.ts` compatibility bridges are removed; imports now
 target the package and application seams directly.
+
+`packages/tool-runtime/mcp-executor.ts` now owns the shared MCP and Tabbit
+execution result and audit boundary. `packages/tool-runtime/adapter.ts` remains
+a temporary coordinator for context-heavy artifact, image and skill flows; its
+deletion condition is zero callers for those compatibility bindings after the
+corresponding capability ports are behavior-tested.
 
 The repository ports are now used by conversation, workspace gallery,
 asset-collection, video/upscale task, clone-job and Agent-progress paths.
@@ -708,3 +714,7 @@ Agent E → tests/review
 8. Coding Agent 可在局部上下文安全开发
 9. 没有新的万能 Route / 万能 Component
 10. Legacy 面积持续缩小
+
+### Operational observability adapter
+
+`packages/contracts/observability.ts` 定义 provider-neutral `RuntimeObserver`；`packages/observability/runtime-sink.ts` 提供本地 operational adapter，按日写入 `.data/runtime-events/*.jsonl`，限制单文件大小并保留 7 天。它只持久化白名单 RuntimeEvent 字段，不写入 prompt、tool arguments、响应正文、文件内容或 secret。Agent、Backup、Worker 入口和关键 Runtime 通过 bounded diagnostics 与该 sink 组合使用，管理员可通过 `GET /api/observability` 查询最近事件。Domain/Core 只依赖 contract，长期 OpenTelemetry exporter 仍是后续演进项。

@@ -6,7 +6,7 @@ import { getPublicState, getRuntimeImageModelForCapability } from '@/lib/store';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
-import { startCloudUpscale } from '@/lib/upscale-service';
+import { runUpscaleGeneration } from '@/apps/worker/task-entry';
 import { isUpscaleModelId } from '@/lib/upscale-catalog';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     const requestedModel = String(body.model || 'auto').trim();
     const hasConnectedCloud = publicState.upscaleConnections.some((connection) => connection.connected);
     if (isUpscaleModelId(requestedModel) || (requestedModel === 'auto' && hasConnectedCloud)) {
-      const cloud = await startCloudUpscale({
+      const cloud = await runUpscaleGeneration({
         reference,
         sourceImageId: String(body.sourceImageId || '').trim() || undefined,
         requestedModel,

@@ -5,8 +5,10 @@
 The model registry already stores provider-neutral model kind and capability
 metadata. `lib/store.ts` resolves enabled models into runtime candidates, while
 `lib/providers.ts` owns the existing OpenAI-compatible, Gemini, Agnes and other
-transport adapters. The Agent route still constructs the compact plain model
-runtime inline and parses the legacy chat response shape there.
+transport adapters. Provider attempt lifecycle and capability-specific media
+candidate fallback now live in `packages/model-runtime`; API routes inject only
+transport operations and health persistence. The compact plain model adapter
+still normalizes the legacy chat response shape at the application boundary.
 
 ## Scope
 
@@ -20,15 +22,20 @@ timeouts, usage accounting and provider health tracking remain unchanged.
 The non-streamed compact plain Agent turn now uses
 `packages/model-runtime/legacy-chat-adapter.ts`. It receives the same selected
 registry model, the same bounded messages and the same tracked `chatCompletion`
-callback. Provider attempt lifecycle, bounded telemetry and failover looping
-are shared by `packages/model-runtime/invocation.ts`; the route still injects
-timeout, candidate selection and health tracking. Streaming, tools, MCP,
-images, video and search remain on the existing path.
+callback. Provider attempt lifecycle and bounded telemetry are shared by
+`packages/model-runtime/invocation.ts`; `apps/api/agent-stream.ts` owns the
+provider-neutral SSE response boundary; image and edit routes share the
+capability boundary in `packages/model-runtime/media.ts`, which only falls back
+on explicit compatibility rejection. The route still injects timeout, candidate
+selection and health tracking. Streaming, tools, MCP, video and search remain on
+the existing path.
 
 ## Non-goals and remaining legacy responsibility
 
-This slice does not move provider HTTP/SDK code, routing policy, health
-persistence, streaming or media operations. `lib/providers.ts` remains the
-temporary transport adapter until each capability gets a behavior-tested port.
+This slice does not move provider HTTP/SDK code, health persistence, or the
+remaining streaming/video operations. `lib/providers.ts` remains the temporary
+transport adapter until each capability gets a behavior-tested port. Media
+routing and compatibility fallback have moved behind the model-runtime seam;
+image transport and persistence remain injected adapters.
 The former `lib/provider-runtime/chat.ts` and root `packages/model-runtime.ts`
 bridges were removed after their callers moved to the package seams.

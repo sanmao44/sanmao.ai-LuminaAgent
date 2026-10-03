@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import test from 'node:test';
 import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
 async function compile(relative, names) {
   const source = await readFile(new URL(relative, import.meta.url), 'utf8');
@@ -15,16 +16,8 @@ async function compile(relative, names) {
 const outcome = await compile('../lib/agent/tool-outcome.ts');
 const move = await compile('../lib/agent/filesystem-result.ts');
 const strip = await compile('../lib/skills.ts', ['MODEL_TOOL_MARKUP_PATTERN', 'TRAILING_PARTIAL_MARKUP', 'dropPartialMarkupTail', 'INTERNAL_CONTEXT_MARKER', 'stripToolCallMarkup'].filter((name) => name !== 'stripToolCallMarkup'));
-// Load the actual stream function with only its pure markup dependencies.
-const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
-const tree = ts.createSourceFile('route.ts', route, ts.ScriptTarget.Latest, true);
-const streamNode = tree.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'streamAgentResult');
-const skillsSource = await readFile(new URL('../lib/skills.ts', import.meta.url), 'utf8');
-const skillsTree = ts.createSourceFile('skills.ts', skillsSource, ts.ScriptTarget.Latest, true);
-const stripNode = skillsTree.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'stripToolCallMarkup');
 const inline = await compile('../lib/agent/inline-tool-calls.ts');
-const js = ts.transpileModule(`${stripNode.getText(skillsTree).replace('export ', '')}\n${streamNode.getText(tree)}\nreturn streamAgentResult;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-const stream = new Function(...Object.keys(strip), 'hasInlineToolCallMarkup', js)(...Object.values(strip), inline.hasInlineToolCallMarkup);
+const stream = createTsRequire(process.cwd())('./apps/api/agent-stream').streamAgentResult;
 
 test('chunked tool markup never becomes a visible delta or a false success', async () => {
   const encoder = new TextEncoder();

@@ -42,3 +42,11 @@ export class BufferedRuntimeObserver implements RuntimeObserver {
   }
   snapshot() { return this.events.map((event) => ({ ...event })); }
 }
+
+/** Compose bounded local diagnostics with an operational persistence sink. */
+export class CompositeRuntimeObserver implements RuntimeObserver {
+  constructor(private readonly observers: readonly RuntimeObserver[]) {}
+  emit(event: RuntimeEvent) {
+    return Promise.all(this.observers.map((observer) => Promise.resolve(observer.emit(event)))).then(() => undefined);
+  }
+}

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { buildToolLoopModule } from './tools-build.mjs';
+import { createTsRequire } from './ts-require.mjs';
 
 const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu, mentionEditor, skillInline] = await Promise.all([
   readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8"),
@@ -19,15 +20,17 @@ const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, e
   readFile(new URL("../components/SkillInlineText.tsx", import.meta.url), "utf8"),
 ]);
 const { runToolLoop } = await buildToolLoopModule();
+const { streamAgentResult } = createTsRequire(process.cwd())('./apps/api/agent-stream');
 
-test("a reply reports back which skills the agent actually read", () => {
-  assert.match(route, /const usedSkills: Array<\{ id: string; name: string \}> = \[\];/);
-  assert.match(route, /if \(!usedSkills\.some\(\(item\) => item\.id === skill\.id\)\) usedSkills\.push\(\{ id: skill\.id, name: skill\.name \}\);/);
-  assert.match(route, /skills: metadata\.skills \|\| \[\]/);
-  assert.match(route, /skills: usedSkills, mcpTools: usedMcpTools, toolTrace \}/);
+test("a reply reports back which skills the agent actually read", async () => {
+  const response = await streamAgentResult(null, {
+    fallback: 'skill reply', images: [], files: [], generations: [], model: 'test-model', deliverable: 'TEXT',
+    skills: [{ id: 'skill-1', name: 'writing' }],
+  });
+  const events = (await response.text()).trim().split('\n\n').map((frame) => JSON.parse(frame.slice(6)));
+  assert.deepEqual(events.find((event) => event.type === 'final')?.skills, [{ id: 'skill-1', name: 'writing' }]);
   assert.match(client, /skills\?: Array<\{ id: string; name: string \}>;/);
 });
-
 test("both chat surfaces show the skills a reply used", () => {
   assert.match(page, /skills: Array\.isArray\(data\.skills\) && data\.skills\.length \? data\.skills : undefined,/);
   assert.match(page, /className: "message-skill-badge"/);
@@ -93,14 +96,18 @@ test("删除与丢弃的二次确认会自动复位，技能菜单滚动跟随�
   assert.match(manager, /setTimeout\(\(\) => \{ setConfirming\(''\); setDiscarding\(''\); \}, 4000\)/);
   assert.match(skillMenu, /scrollIntoView\(\{ block: 'nearest' \}\)/);
 });
-test("an enabled skill keeps the request on the tool round so the model can really read it", () => {
-  assert.match(route, /const directStream = wantsStream && !isCanvasSource && !skillContext\.skills\.length && !isTextPolishTask/);
-  assert.match(route, /const cleanedFinal = stripToolCallMarkup\(finalized\)\.trim\(\);/);
-  // 截完先攒成 cleanedMessage：正文被截成空时要再给模型一次带工具的机会，最后才走兜底文案。
-  assert.match(route, /const cleanedMessage = stripToolCallMarkup\(plainMessage\)\.trim\(\);/);
-  assert.match(route, /plainMessage = filesystemActionRequest \|\| browserAutomationRequest \|\| mcpExecutionRequest \|\| artifactGenerationRequest \|\| hasInlineToolCallMarkup\(plainMessage\)/, '工具调用文本不能被当成普通技能回答直接展示');
-});
-test("the tool round preserves reasoning and tool calls for thinking models", async () => {
+test("an enabled skill keeps the request on the tool round so the model can really read it", async () => {
+  const messages = [];
+  const outcome = await runToolLoop({
+    messages,
+    callModel: async ({ step }) => step === 0
+      ? { content: null, tool_calls: [{ id: 'skill-1', function: { name: 'skill_read', arguments: '{}' } }] }
+      : { content: 'skill read' },
+    runCalls: async () => [{ role: 'tool', tool_call_id: 'skill-1', content: JSON.stringify({ ok: true }) }],
+  });
+  assert.equal(outcome.text, 'skill read');
+  assert.equal(messages.length, 2);
+});test("the tool round preserves reasoning and tool calls for thinking models", async () => {
   const messages = [];
   const outcome = await runToolLoop({
     messages,

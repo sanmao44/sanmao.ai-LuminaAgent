@@ -1,6 +1,6 @@
 import { isTrustedAppRequest } from '@/lib/auth';
 import { listVideoTasksPage } from '@/lib/video-task-store';
-import { refreshVideoTask } from '@/lib/video-task-service';
+import { runVideoTask } from '@/apps/worker/task-entry';
 import { videoTaskRuntime } from '@/lib/video-task-runtime';
 import { BufferedRuntimeObserver } from '@/packages/contracts/observability';
 
@@ -21,6 +21,6 @@ export async function GET(request: Request) {
     source,
     media,
   });
-  const refreshed = await Promise.all(result.tasks.map((task) => videoTaskRuntime.isActive(task.status) ? refreshVideoTask(task.id) : task));
+  const refreshed = await Promise.all(result.tasks.map((task) => videoTaskRuntime.isActive(task.status) ? runVideoTask(task.id) : task));
   return Response.json({ ...result, tasks: refreshed.filter(Boolean) }, { headers: { 'Cache-Control': 'no-store' } });
 }

@@ -8,11 +8,11 @@
 
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
-| Phase 1 Agent Runtime | migration in progress | Compact non-streaming text path uses `packages/agent-core` through `apps/api/agent-entry.ts`; Tool, Streaming, Artifact, Browser, Filesystem and Route orchestration remain legacy. |
+| Phase 1 Agent Runtime | migration in progress | Compact non-streaming text path uses `packages/agent-core` through `apps/api/agent-entry.ts`; provider-neutral SSE adaptation uses `apps/api/agent-stream.ts`; Tool, context, capability and execution orchestration remain in the Route. |
 | Phase 2 Test Decoupling | migration in progress | Tool/MCP behavior is covered; remaining Agent/UI/Route source-coupled assertions migrate by domain. |
 | Phase 3 Storage Boundary | migration in progress | Session, workspace gallery, asset collections, provider state, server workspace, MCP configuration, video/upscale, clone and progress use repository adapters; UI preferences, artifact/media and legacy storage internals remain. |
-| Phase 4 Task Runtime | migration in progress | State and cancellation/retry decisions reuse Runtime; clone dispatch has a Worker entry seam, while polling, persistence and wire status remain specialized. |
-| Phase 5 Provider Runtime | migration in progress | One text Agent path uses `packages/model-runtime` through the API entry; routing, failover, streaming and media remain legacy. |
+| Phase 4 Task Runtime | migration in progress | State and cancellation/retry decisions reuse Runtime; Clone, Video and Upscale submission/reconciliation cross `apps/worker/task-entry.ts`, while persistence and family-specific wire status remain specialized. |
+| Phase 5 Provider Runtime | migration in progress | Text invocation, bounded failover, streaming response deadlines and image/edit compatibility fallback use `packages/model-runtime`; provider transport, health persistence and video branches remain injected legacy adapters. |
 | Phase 6 Tool Runtime | migration in progress | packages/tool-runtime owns policy, resolution, dispatch, execution, loop and MCP executor; Route compatibility boundaries remain. |
 | Phase 7 Canvas Core | cutover completed | CanvasCore 已成为 Document、History、Selection 的唯一 authority；SuperCanvas 只保留 projection、gesture、persistence 与 UI adapter。 |
 | Phase 8 UI cleanup | migration in progress | Shell, sidebar and Agent presentation are extracted; app/page.tsx remains composition/state owner. |
@@ -525,3 +525,7 @@ Data Cutover Closure 已完成；Part B 为 migration in progress
 ```text
 Part A 已完成 server repository 收口、多物理根 restore rollback、流式 HTTP backup、crash journal、SQLite cutover、migration command 与 observer 接线；Part B 已建立 Agent API 与 Clone Worker 的真实入口，确认/恢复后的 Clone 执行也统一经 Worker dispatch，Provider 调用生命周期已收口到 `packages/model-runtime/invocation.ts`，并删除无调用的 Agent/Provider 兼容桥。`packages/tool-runtime/adapter.ts` 仍是有删除条件的 migration adapter，继续沿真实 ownership seam 推进。
 ```
+
+## Part B observability update (2026-10-03)
+
+`RuntimeObserver` 同时支持 bounded in-process diagnostics 与 `packages/observability` 的 redacted JSONL operational sink。Agent、Tool、MCP、Provider、Task、Database 和 Backup 事件写入 `.data/runtime-events/`，按日分片并保留 7 天，只保存 RuntimeEvent 白名单字段，不记录 prompt、tool arguments、文件内容或 secrets。`GET /api/observability` 提供只读管理员查询；长期可替换为 OpenTelemetry exporter，当前切片不引入 SDK。

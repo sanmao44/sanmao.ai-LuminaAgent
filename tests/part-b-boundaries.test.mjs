@@ -50,25 +50,60 @@ test('Worker exposes a separate execution dispatch for confirmed clone jobs', as
   assert.equal(typeof runCloneJob, 'function');
 });
 
-test('Provider invocation seam performs bounded failover and emits provider lifecycle events', async () => {
-  const { invokeProviderWithFailover } = load('./packages/model-runtime/invocation');
+test('Worker task boundaries execute video and upscale runners with lifecycle events', async () => {
+  const { runVideoTask, runUpscaleTask } = load('./apps/worker/task-entry');
+  const { BufferedRuntimeObserver } = load('./packages/contracts/observability');
+  const videoObserver = new BufferedRuntimeObserver();
+  const upscaleObserver = new BufferedRuntimeObserver();
+  const seen = [];
+  const video = await runVideoTask('video-boundary-test', async (taskId) => { seen.push(`video:${taskId}`); return { status: 'running' }; }, videoObserver);
+  const upscale = await runUpscaleTask('upscale-boundary-test', async (taskId) => { seen.push(`upscale:${taskId}`); return { status: 'succeeded' }; }, upscaleObserver);
+  assert.deepEqual(seen, ['video:video-boundary-test', 'upscale:upscale-boundary-test']);
+  assert.equal(video.status, 'running');
+  assert.equal(upscale.status, 'succeeded');
+  assert.deepEqual(videoObserver.snapshot().map((event) => `${event.identity}:${event.phase}`), ['video:started', 'video:completed']);
+  assert.deepEqual(upscaleObserver.snapshot().map((event) => `${event.identity}:${event.phase}`), ['upscale:started', 'upscale:completed']);
+});
+
+test('Worker task boundaries preserve task failures and emit failed lifecycle events', async () => {
+  const { runVideoTask } = load('./apps/worker/task-entry');
   const { BufferedRuntimeObserver } = load('./packages/contracts/observability');
   const observer = new BufferedRuntimeObserver();
-  const runtimes = [{ name: 'first' }, { name: 'second' }];
-  let selected = 0;
-  let attempts = 0;
-  const result = await invokeProviderWithFailover({
-    current: () => runtimes[selected],
-    canFailover: true,
-    advance: () => { selected += 1; return selected < runtimes.length; },
-    signal: new AbortController().signal,
-    operation: async (runtime) => { attempts += 1; if (runtime.name === 'first') throw new Error('first unavailable'); return 'ok'; },
-    isCancelled: () => false,
-    identity: (runtime) => runtime.name,
-    operationIdPrefix: 'provider-boundary-test',
-    observer,
-    nextAttempt: () => attempts + 1,
+  await assert.rejects(() => runVideoTask('video-boundary-failure', async () => { throw new Error('video runner failed'); }, observer), /video runner failed/);
+  assert.deepEqual(observer.snapshot().map((event) => `${event.identity}:${event.phase}`), ['video:started', 'video:failed']);
+  assert.equal(observer.snapshot()[1].errorClass, 'Error');
+});
+
+test('Worker generation boundaries execute provider submissions through injectable runners', async () => {
+  const { runVideoGeneration, runUpscaleGeneration } = load('./apps/worker/task-entry');
+  const { BufferedRuntimeObserver } = load('./packages/contracts/observability');
+  const videoObserver = new BufferedRuntimeObserver();
+  const upscaleObserver = new BufferedRuntimeObserver();
+  const video = await runVideoGeneration({ input: { prompt: 'test' } }, async (options) => ({ id: options.input.prompt, status: 'pending' }), videoObserver);
+  const upscale = await runUpscaleGeneration({ reference: 'image-ref', sourceImageId: 'image-1' }, async (options) => ({ task: { id: options.sourceImageId }, model: { id: 'test-model' } }), upscaleObserver);
+  assert.equal(video.id, 'test');
+  assert.equal(upscale.task.id, 'image-1');
+  assert.deepEqual(videoObserver.snapshot().map((event) => `${event.identity}:${event.phase}`), ['video:started', 'video:completed']);
+  assert.deepEqual(upscaleObserver.snapshot().map((event) => `${event.identity}:${event.phase}`), ['upscale:started', 'upscale:completed']);
+});
+
+test('Provider streaming deadline preserves response status and bounds idle chunks', async () => {
+  const { withProviderResponseDeadline } = load('./packages/model-runtime/invocation');
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('first'));
+      setTimeout(() => controller.enqueue(new TextEncoder().encode('second')), 5);
+      setTimeout(() => controller.close(), 10);
+    },
   });
-  assert.equal(result, 'ok');
-  assert.deepEqual(observer.snapshot().map((event) => `${event.identity}:${event.phase}`), ['first:started', 'first:failed', 'second:started', 'second:completed']);
+  const response = await withProviderResponseDeadline({
+    signal: new AbortController().signal,
+    timeoutMs: 100,
+    idleTimeoutMs: 50,
+    operation: async () => new Response(body, { status: 207, headers: { 'x-provider': 'test' } }),
+    timeoutError: (phase, timeoutMs) => new Error(`${phase}:${timeoutMs}`),
+  });
+  assert.equal(response.status, 207);
+  assert.equal(response.headers.get('x-provider'), 'test');
+  assert.equal(await response.text(), 'firstsecond');
 });

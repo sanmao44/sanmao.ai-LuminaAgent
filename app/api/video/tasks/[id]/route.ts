@@ -1,7 +1,8 @@
 import { isTrustedAppRequest } from '@/lib/auth';
 import { moveMediaToTrash } from '@/lib/generation-log';
 import { findVideoTask, removeVideoTask } from '@/lib/video-task-store';
-import { cancelVideoTask, refreshVideoTask, retryVideoTask, saveVideoTaskLocally } from '@/lib/video-task-service';
+import { cancelVideoTask, retryVideoTask, saveVideoTaskLocally } from '@/lib/video-task-service';
+import { runVideoTask } from '@/apps/worker/task-entry';
 import { videoTaskRuntime } from '@/lib/video-task-runtime';
 
 export const runtime = 'nodejs';
@@ -11,7 +12,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const { id } = await context.params;
   const task = await findVideoTask(id);
   if (!task) return Response.json({ error: '视频任务不存在' }, { status: 404 });
-  const refreshed = videoTaskRuntime.isActive(task.status) ? await refreshVideoTask(id) : task;
+  const refreshed = videoTaskRuntime.isActive(task.status) ? await runVideoTask(id) : task;
   return Response.json({ task: refreshed || task }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
