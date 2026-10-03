@@ -1,17 +1,21 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.73",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.73",
+  "latestVersion": "0.7.74",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.74",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.73/SANMAO.AI-0.7.73.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.74/SANMAO.AI-0.7.74.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.73/SANMAO.AI-0.7.73.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.73/SANMAO.AI-0.7.73.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.73/SANMAO.AI-0.7.73.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.74/SANMAO.AI-0.7.74.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.74/SANMAO.AI-0.7.74.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.74/SANMAO.AI-0.7.74.zip"
   ],
   "sha256": "09be2b6848862970520677a7fc09db585bff081ccdd62d708b67d28a6fa813be",
-  "publishedAt": "2026-10-02T13:05:35Z",
+  "publishedAt": "2026-10-03T07:30:52Z",
   "notes": [
+    "SQLite 本地数据库切换：业务数据通过 Repository 边界统一读写，保留迁移与回滚路径。",
+    "备份与恢复改为分阶段、可回滚的事务流程，导出与归档使用流式处理。",
+    "MCP 配置、Provider、Workspace 与资产存储进一步收敛到 Repository。",
+    "画布编辑器自适应布局与节点控制继续优化。",
     "Canvas Core authority 收敛：Document、History、Selection 保持单一 ownership，更新 Agent 目标编辑与相关行为测试。",
     "画布图片编辑器尺寸、折叠高度、紧凑布局与粘贴处理修复。",
     "Tool Runtime Consolidation：统一 Tool policy、dispatch、execution adapter 与 Tool Loop，缩减 Agent Route 中的重复编排。",
