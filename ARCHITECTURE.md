@@ -451,9 +451,10 @@ serializes. Restore writes through a file-level rollback transaction and uses
 streaming tar extraction. Archive export now reads disk-backed entries through
 file streams and hashes them without a second media buffer. HTTP restore stages
 the request body to a bounded temporary file, decrypts the v1 envelope as a
-stream, and extracts tar entries directly to staging files before the rollback
-transaction copies them into place. Compatibility Buffer APIs remain for local
-snapshots and older callers. No database adapter is active yet; the final
+stream, and extracts tar entries directly to staging files. The restore
+transaction commits staged files only after validation and records an active or
+committed journal phase for crash recovery. Compatibility Buffer APIs remain for
+local snapshots and older callers. No database adapter is active yet; the final
 local/server database choice remains a Phase 11 blocker.
 
 ---

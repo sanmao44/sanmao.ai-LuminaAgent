@@ -47,3 +47,22 @@ test('recovers a rollback journal left by an interrupted restore', async () => {
     await rm(journalRoot, { recursive: true, force: true });
   }
 });
+
+test('keeps a committed transaction and only removes its journal after cutover', async () => {
+  const commitRoot = await mkdtemp(path.join(os.tmpdir(), 'sanmao-transaction-commit-'));
+  try {
+    const target = path.join(commitRoot, 'state.json');
+    await writeFile(target, 'before');
+    const tx = new transactionModule.BackupRestoreTransaction(commitRoot, 'durable');
+    await tx.write(target, 'after');
+    const journal = path.join(commitRoot, '.restore-rollback-durable', 'journal.json');
+    const committed = JSON.parse(await readFile(journal, 'utf8'));
+    assert.equal(committed.phase, 'active');
+    await tx.commit();
+    await assert.rejects(() => readFile(journal));
+    await transactionModule.BackupRestoreTransaction.recover(commitRoot);
+    assert.equal(await readFile(target, 'utf8'), 'after');
+  } finally {
+    await rm(commitRoot, { recursive: true, force: true });
+  }
+});

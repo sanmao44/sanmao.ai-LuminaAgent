@@ -2,7 +2,7 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createArchiveBudget, createBackupArchive, describeBackupSource, extractBackupArchiveFile, extractBackupArchiveStreaming, sha256, sha256File, type BackupArchiveEntry, type BackupArchiveFileEntry, type BackupArchiveSource } from '@/lib/backup-archive';
+import { createArchiveBudget, createBackupArchive, describeBackupSource, extractBackupArchiveFile, extractBackupArchiveStreaming, sha256, type BackupArchiveEntry, type BackupArchiveFileEntry, type BackupArchiveSource } from '@/lib/backup-archive';
 import { decryptBackupFile, decryptBackupPayload, encryptBackupPayload, isEncryptedBackup, isEncryptedBackupFile, validateBackupPassword } from '@/lib/backup-crypto';
 import { getDefaultStoragePath } from '@/lib/image-storage';
 import { getDefaultAudioStoragePath } from '@/lib/audio-storage';
@@ -438,7 +438,6 @@ export async function restoreBackupArchive(uploaded: Buffer, backupPassword: str
 export async function restoreBackupArchiveFile(uploadedPath: string, backupPassword: string, uploadedBytes: number) {
   if (uploadedBytes > maxArchiveBytes) throw new Error(`Backup archive exceeds ${maxArchiveLabel}`);
   const staging = await mkdtemp(path.join(tmpdir(), 'sanmao-restore-'));
-  const encryptedPath = path.join(staging, 'uploaded.backup');
   const archivePath = path.join(staging, 'archive.gz');
   const extractDir = path.join(staging, 'entries');
   try {
