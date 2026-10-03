@@ -439,8 +439,9 @@ Repository Port
 
 The repository ports are now used by conversation, workspace gallery,
 asset-collection, video/upscale task, clone-job and Agent-progress paths.
-MCP user configuration also crosses `McpConfigRepository`; its JSON file is
-only the pre-cutover adapter and SQLite is authoritative after the marker.
+MCP user configuration crosses `McpConfigRepository`; provider state and the
+server workspace API also use repository adapters. Their JSON files are only
+pre-cutover adapters and SQLite is authoritative after the marker.
 `lib/repositories/*` remains a temporary adapter layer over IndexedDB, JSON and
 filesystem implementations. SQLite is now the selected local authoritative
 adapter after an explicit `npm run migrate:database` cutover; legacy files are

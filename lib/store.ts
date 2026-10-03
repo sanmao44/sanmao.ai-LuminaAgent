@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID, createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderTextProtocol, ProviderType, PublicState, RegistryModel, WebSearchApiProvider, NativeSearchDetection, NativeSearchOverride, NativeSearchProtocol, ModelBilling, UpscaleConnection, UpscaleConnectionStatus, UpscaleProviderId } from './types';
 import { selectAutomaticModel } from './model-selection';
@@ -10,8 +10,7 @@ import { buildManualModelRecord, mergeProviderModelRecords } from './model-regis
 import { buildPublicUpscaleModels } from './upscale-catalog';
 import { resolveProviderConfigDir } from './data-paths';
 import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
-import { isSqliteActive } from './database/sqlite';
-import { readAuthoritativeProviderState, writeAuthoritativeProviderState } from './repositories/server-provider-repository';
+import { providerStateRepository } from './repositories/server-provider-repository';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -42,7 +41,6 @@ type StoredUpscaleConnection = {
 };
 
 const dataDir = resolveProviderConfigDir();
-const statePath = path.join(dataDir, 'state.json');
 const keyPath = path.join(dataDir, 'master.key');
 const CURRENT_SCHEMA_VERSION = 3;
 const emptyState: StoreData = { schemaVersion: CURRENT_SCHEMA_VERSION, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultVideoModelId: null, defaultProviderId: null, imageStoragePath: '', videoStoragePath: '' }, upscaleConnections: [] };
@@ -104,26 +102,12 @@ export async function decryptSecret(payload: string) {
 
 async function readState(): Promise<StoreData> {
   await ensureDir();
-  if (isSqliteActive()) {
-    const stored = readAuthoritativeProviderState();
-    if (stored) {
-      const nextState: StoreData = {
-        schemaVersion: CURRENT_SCHEMA_VERSION,
-        providers: Array.isArray(stored.providers) ? stored.providers as StoredProvider[] : [],
-        models: Array.isArray(stored.models) ? stored.models as RegistryModel[] : [],
-        settings: { ...emptyState.settings, ...(stored.settings || {}) },
-        upscaleConnections: Array.isArray(stored.upscaleConnections) ? stored.upscaleConnections as StoredUpscaleConnection[] : [],
-        webSearch: stored.webSearch && typeof stored.webSearch === 'object' ? stored.webSearch as StoreData['webSearch'] : undefined,
-      };
-      return nextState;
-    }
-    // Once the SQLite marker is active, the legacy JSON file is rollback
-    // material only. Falling through to state.json here would silently make
-    // it a second Source of Truth when a database record is missing.
-    return structuredClone(emptyState);
-  }
   try {
-    const parsed = JSON.parse(await readFile(statePath, 'utf8')) as Partial<StoreData>;
+    const parsed = await providerStateRepository.read();
+    if (!parsed) {
+      if (stateCorruptionError) throw new Error(stateCorruptionError);
+      return structuredClone(emptyState);
+    }
     if (!parsed || typeof parsed !== 'object' || (!Array.isArray(parsed.providers) && parsed.providers !== undefined) || (!Array.isArray(parsed.models) && parsed.models !== undefined) || (parsed.settings !== undefined && (!parsed.settings || typeof parsed.settings !== 'object'))) {
       throw new Error('state.json 数据结构无效');
     }
@@ -147,9 +131,7 @@ async function readState(): Promise<StoreData> {
       return structuredClone(emptyState);
     }
     if (error instanceof SyntaxError || (error instanceof Error && /state\.json 数据结构无效/.test(error.message))) {
-      const corruptPath = `${statePath.replace(/\.json$/i, '')}.corrupt-${Date.now()}.json`;
-      try { await rename(statePath, corruptPath); } catch {}
-      stateCorruptionError = `服务端配置已损坏，原文件已保留为 ${path.basename(corruptPath)}，请从备份恢复`;
+      stateCorruptionError = error instanceof Error ? error.message : '服务端配置已损坏，请从备份恢复';
       throw new Error(stateCorruptionError);
     }
     throw error;
@@ -157,14 +139,7 @@ async function readState(): Promise<StoreData> {
 }
 
 async function writeStateDirect(data: StoreData) {
-  if (isSqliteActive()) {
-    writeAuthoritativeProviderState(data);
-    return;
-  }
-  await ensureDir();
-  const tmp = `${statePath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, { encoding: 'utf8', flush: true });
-  await rename(tmp, statePath);
+  await providerStateRepository.write(data);
 }
 
 async function mutateState<T>(mutator: (state: StoreData) => Promise<T> | T): Promise<T> {

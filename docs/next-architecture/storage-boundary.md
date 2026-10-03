@@ -35,6 +35,13 @@ The adapters in `lib/repositories/` are explicitly temporary:
   writes and idempotency semantics;
 - `provider-config-repository.ts` delegates to the existing public-state
   builder and does not expose provider secrets.
+- `server-provider-repository.ts` owns provider state JSON compatibility and
+  SQLite access after cutover.
+- `server-workspace-repository.ts` owns workspace JSON recovery, metadata and
+  SQLite access after cutover.
+
+The HTTP workspace route and provider state store now call these server
+repositories; they no longer select JSON or SQLite themselves.
 
 They can be removed when equivalent storage implementations are available
 behind the ports and no callers depend on the legacy modules directly.
@@ -64,7 +71,8 @@ database or new runtime dependency was added.
 
 ### Current Gate result
 
-Key session, workspace, asset and task callers now cross repository boundaries.
+Key session, workspace, provider, MCP, asset and task callers now cross
+repository boundaries.
 SQLite is now the selected local authoritative adapter after an explicit
 `npm run migrate:database` cutover. Before activation, JSON, workspace and MCP
 files are copied into a durable rollback tree; after activation new server

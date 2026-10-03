@@ -76,6 +76,19 @@ export interface ProviderConfigRepository<TPublicState = unknown> {
   getPublicState(): Promise<TPublicState>;
 }
 
+/** Server-side durable provider state boundary. */
+export interface ProviderStateRepository<TState = unknown> {
+  read(): Promise<TState | null>;
+  write(value: TState): Promise<void>;
+}
+
+/** Server-side workspace persistence boundary. */
+export interface ServerWorkspaceRepository<TSnapshot = unknown> {
+  read(): Promise<TSnapshot | null>;
+  metadata(): Promise<{ updatedAt: number; revision: number } | null>;
+  write(value: TSnapshot): Promise<void>;
+}
+
 /** Synchronous configuration port for local MCP registration. */
 export interface McpConfigRepository<TServer = unknown> {
   list(): TServer[];

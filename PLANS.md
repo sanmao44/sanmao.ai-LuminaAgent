@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | Phase 1 Agent Runtime | migration in progress | Compact non-streaming text path uses AgentRuntime; Tool, Streaming, Artifact, Browser, Filesystem and Route orchestration remain legacy. |
 | Phase 2 Test Decoupling | migration in progress | Tool/MCP behavior is covered; remaining Agent/UI/Route source-coupled assertions migrate by domain. |
-| Phase 3 Storage Boundary | migration in progress | Session, workspace gallery, asset collections, provider state, MCP configuration, video/upscale, clone and progress use repository adapters; UI preferences, artifact/media and legacy storage internals remain. |
+| Phase 3 Storage Boundary | migration in progress | Session, workspace gallery, asset collections, provider state, server workspace, MCP configuration, video/upscale, clone and progress use repository adapters; UI preferences, artifact/media and legacy storage internals remain. |
 | Phase 4 Task Runtime | migration in progress | State and cancellation/retry decisions reuse Runtime; polling, persistence and wire status remain specialized. |
 | Phase 5 Provider Runtime | migration in progress | One text Agent path uses ModelRuntime; routing, failover, streaming and media remain legacy. |
 | Phase 6 Tool Runtime | migration in progress | packages/tool-runtime owns policy, resolution, dispatch, execution, loop and MCP executor; Route compatibility boundaries remain. |
