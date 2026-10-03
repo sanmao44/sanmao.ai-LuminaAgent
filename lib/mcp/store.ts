@@ -4,6 +4,7 @@ import path from 'node:path';
 import { resolveLocalDataDir } from '@/lib/data-paths';
 import { findCatalogEntry, isStdioCatalogEntry, listCatalogServers } from './catalog';
 import type { McpServerConfig } from './types';
+import { isSqliteActive, listSqliteRecords, readSqliteRecord, writeSqliteRecord, deleteSqliteRecord } from '@/lib/database/sqlite';
 
 export const MCP_MAX_SERVERS = 20;
 export const MCP_MAX_HEADERS = 12;
@@ -175,7 +176,8 @@ export function listMcpServers(options: McpStoreOptions = {}): McpServerConfig[]
   // 内置连接器的命令、参数和工具白名单由代码维护（lib/mcp/catalog.ts）。用户配置里如果留着同名旧副本，
   // 两边会同时生效：参数按旧的来、白名单也可能对不上代码（早期版本写进去的 browser_run_code_unsafe
   // 就是这么漏出来的）。这里按目录条目 id 认领：属于内置连接器的 id 只认代码这一份。
-  const userServers = readUserMcpServers(options).filter((server) => !isBuiltinStdioServerId(server.id) && !isBuiltinStdioServerId(server.catalogId));
+  const userServers = (isSqliteActive(options.dataDir) ? (readSqliteRecord<{ servers?: McpServerConfig[] }>('mcp', 'primary', options.dataDir) || {}).servers || [] : readUserMcpServers(options))
+    .filter((server) => !isBuiltinStdioServerId(server.id) && !isBuiltinStdioServerId(server.catalogId));
   // 同一个 id 只保留第一条：用户配置里的旧副本可能和目录条目重名。
   const seen = new Set<string>();
   const merged = [...userServers, ...listCatalogServers({ ...options, roots })].filter((server) => {
@@ -225,6 +227,10 @@ function readUserMcpServers(options: McpStoreOptions = {}): McpServerConfig[] {
 }
 
 export function saveMcpServers(servers: readonly McpServerConfig[], options: McpStoreOptions = {}) {
+  if (isSqliteActive(options.dataDir)) {
+    writeSqliteRecord('mcp', 'primary', { version: 1, servers: servers.slice(0, MCP_MAX_SERVERS) }, options.dataDir);
+    return servers.slice(0, MCP_MAX_SERVERS);
+  }
   const file = resolveMcpStoreFile(options);
   mkdirSync(path.dirname(file), { recursive: true });
   const payload = JSON.stringify({ version: 1, servers: servers.slice(0, MCP_MAX_SERVERS) }, null, 2) + '\n';

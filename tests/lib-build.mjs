@@ -1,5 +1,5 @@
-import { rmSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { rmSync, existsSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
@@ -23,7 +23,7 @@ export async function buildLibModules(modules, entry) {
     // data-paths is a shared dependency of stores that resolve their durable
     // data directory at module load time. Keep it in the isolated build even
     // when a test only names the store entry point.
-    const targets = [...new Set(['lib/data-paths', ...modules])];
+    const targets = [...new Set(['lib/data-paths', 'lib/database/sqlite', ...modules])];
     for (const target of targets) {
       const compiled = ts.transpileModule(await readFile(path.join(process.cwd(), `${target}.ts`), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -32,14 +32,26 @@ export async function buildLibModules(modules, entry) {
       const rewritten = compiled.replace(/(from\s+)(["'])(\.[^"']*)(["'])/g, (match, keyword, open, specifier, close) => (
         specifier.endsWith('.mjs') ? match : `${keyword}${open}${specifier}.mjs${close}`
       ));
-      const relativeTarget = target.startsWith('lib/repositories/')
-        ? target.slice('lib/'.length)
-        : path.basename(target);
+      const relativeTarget = target.startsWith('lib/') ? target.slice('lib/'.length) : path.basename(target);
       const file = path.join(outDir, `${relativeTarget}.mjs`);
       await mkdir(path.dirname(file), { recursive: true });
       await writeFile(file, rewritten);
     }
-    const load = (name) => import(pathToFileURL(path.join(outDir, `${name}.mjs`)).href);
+    const findByBasename = async (root, base) => {
+      for (const entry of await readdir(root, { withFileTypes: true })) {
+        const candidate = path.join(root, entry.name);
+        if (entry.isDirectory()) { const found = await findByBasename(candidate, base); if (found) return found; }
+        else if (entry.name === `${base}.mjs`) return candidate;
+      }
+      return null;
+    };
+    const load = async (name) => {
+      const nested = path.join(outDir, `${name}.mjs`);
+      const direct = path.join(outDir, `${path.basename(name)}.mjs`);
+      const target = existsSync(nested) ? nested : existsSync(direct) ? direct : await findByBasename(outDir, path.basename(name));
+      if (!target) throw new Error(`test module not built: ${name}`);
+      return import(pathToFileURL(target).href);
+    };
     return { main: await load(entry), load };
   } catch (error) {
     await rm(outDir, { recursive: true, force: true }).catch(() => undefined);

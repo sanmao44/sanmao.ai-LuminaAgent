@@ -440,9 +440,10 @@ Repository Port
 The repository ports are now used by conversation, workspace gallery,
 asset-collection, video/upscale task, clone-job and Agent-progress paths.
 `lib/repositories/*` remains a temporary adapter layer over IndexedDB, JSON and
-filesystem implementations. Canvas UI preferences, MCP/media/artifact routes
-and workspace synchronization internals still have direct storage access and
-must be migrated before a database cutover.
+filesystem implementations. SQLite is now the selected local authoritative
+adapter after an explicit `npm run migrate:database` cutover; legacy files are
+kept only as migration and rollback sources. Canvas UI preferences,
+media/artifact roots and client history remain bounded compatibility adapters.
 
 Backup archives use schema version 1 with `client/client.json` as the canonical
 workspace representation. `lib/backup-application-service.ts` owns export and
@@ -454,8 +455,8 @@ the request body to a bounded temporary file, decrypts the v1 envelope as a
 stream, and extracts tar entries directly to staging files. The restore
 transaction commits staged files only after validation and records an active or
 committed journal phase for crash recovery. Compatibility Buffer APIs remain for
-local snapshots and older callers. No database adapter is active yet; the final
-local/server database choice remains a Phase 11 blocker.
+local snapshots and older callers. PostgreSQL remains a future cloud adapter; it
+is not introduced in this local-first cutover.
 
 ---
 

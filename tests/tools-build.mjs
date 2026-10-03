@@ -6,6 +6,7 @@ import ts from 'typescript';
 
 const MODULES = [
   'lib/data-paths',
+  'lib/database/sqlite',
   'packages/task-runtime/runtime',
   'packages/contracts/task',
   'lib/skills',

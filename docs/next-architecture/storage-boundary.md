@@ -64,10 +64,29 @@ database or new runtime dependency was added.
 
 ### Current Gate result
 
-Key session, workspace, asset and task callers now cross repository boundaries,
-but direct storage access remains in UI preferences, media/artifact routes and
-legacy client-history internals. Gate 1 is therefore **partially complete**;
-database cutover must wait until those remaining paths have owners.
+Key session, workspace, asset and task callers now cross repository boundaries.
+SQLite is now the selected local authoritative adapter after an explicit
+`npm run migrate:database` cutover. Before activation, JSON, workspace and MCP
+files are copied into a durable rollback tree; after activation new server
+writes use SQLite and the old files are read only by migration/rollback or the
+legacy backup importer. Browser IndexedDB/localStorage remains a client-owned
+compatibility source and enters the cutover through the canonical backup
+workspace snapshot.
+
+Direct storage access remains in UI preferences, media/artifact roots and
+client-history internals. These are bounded compatibility paths, not a second
+server database authority. Gate 1 is **completed for server business data**;
+the remaining client and blob adapters have explicit owners and deletion
+conditions.
+
+### Database decision and migration boundary
+
+- SQLite (`node:sqlite`) is the local authoritative database; no dependency was added.
+- `lib/database/sqlite.ts` owns the adapter and schema; business callers use repositories.
+- `npm run migrate:database` performs stage, validate, cutover and rollback-source capture.
+- `npm run migrate:database -- rollback` restores legacy JSON sources and removes the active marker.
+- The command is idempotent only before activation; an active marker is a deliberate cutover fence.
+- PostgreSQL remains a future cloud adapter and is not introduced in this local-first slice.
 
 These are intentional follow-up migrations; changing them here would widen
 the slice and risk changing existing persistence behavior.

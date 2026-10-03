@@ -12,6 +12,7 @@
     "build:release-zip": "node scripts/build-release-zip.mjs",
     "check": "npm run typecheck && npm run validate:update && npm test && npm run build",
     "smoke:github": "node scripts/smoke-github.mjs",
+    "migrate:database": "node scripts/migrate-database.mjs",
     "generate:launcher-icons": "node scripts/generate-launcher-icons.mjs",
     "build:playwright-extension": "node scripts/build-playwright-extension.mjs"
   },

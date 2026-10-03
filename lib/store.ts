@@ -10,13 +10,15 @@ import { buildManualModelRecord, mergeProviderModelRecords } from './model-regis
 import { buildPublicUpscaleModels } from './upscale-catalog';
 import { resolveProviderConfigDir } from './data-paths';
 import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
+import { isSqliteActive } from './database/sqlite';
+import { readAuthoritativeProviderState, writeAuthoritativeProviderState } from './repositories/server-provider-repository';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
   encryptedVideoApiKey?: string;
 };
 
-type StoreData = {
+export type StoreData = {
   schemaVersion: number;
   providers: StoredProvider[];
   models: RegistryModel[];
@@ -102,6 +104,20 @@ export async function decryptSecret(payload: string) {
 
 async function readState(): Promise<StoreData> {
   await ensureDir();
+  if (isSqliteActive()) {
+    const stored = readAuthoritativeProviderState();
+    if (stored) {
+      const nextState: StoreData = {
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        providers: Array.isArray(stored.providers) ? stored.providers as StoredProvider[] : [],
+        models: Array.isArray(stored.models) ? stored.models as RegistryModel[] : [],
+        settings: { ...emptyState.settings, ...(stored.settings || {}) },
+        upscaleConnections: Array.isArray(stored.upscaleConnections) ? stored.upscaleConnections as StoredUpscaleConnection[] : [],
+        webSearch: stored.webSearch && typeof stored.webSearch === 'object' ? stored.webSearch as StoreData['webSearch'] : undefined,
+      };
+      return nextState;
+    }
+  }
   try {
     const parsed = JSON.parse(await readFile(statePath, 'utf8')) as Partial<StoreData>;
     if (!parsed || typeof parsed !== 'object' || (!Array.isArray(parsed.providers) && parsed.providers !== undefined) || (!Array.isArray(parsed.models) && parsed.models !== undefined) || (parsed.settings !== undefined && (!parsed.settings || typeof parsed.settings !== 'object'))) {
@@ -137,6 +153,10 @@ async function readState(): Promise<StoreData> {
 }
 
 async function writeStateDirect(data: StoreData) {
+  if (isSqliteActive()) {
+    writeAuthoritativeProviderState(data);
+    return;
+  }
   await ensureDir();
   const tmp = `${statePath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, { encoding: 'utf8', flush: true });
@@ -288,6 +308,12 @@ export async function getPublicState(): Promise<PublicState> {
       webSearchQianfanConfigured: Boolean(qianfanEnvConfigured || (webSearchKey && state.webSearch?.provider === 'baidu-qianfan')),
     },
   };
+}
+
+/** Backup / migration boundary. Secrets remain encrypted at rest and never
+ * cross the public provider repository. */
+export async function getStoredStateForBackup(): Promise<StoreData> {
+  return readState();
 }
 
 export async function getWebSearchApiConfig() {

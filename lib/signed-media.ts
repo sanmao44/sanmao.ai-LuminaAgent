@@ -6,6 +6,8 @@ import { resolveStoredFileWithFallback } from './image-storage';
 import { resolveStoredVideoFileWithFallback } from './video-storage';
 import { resolveStoredAudioFileWithFallback } from './audio-storage';
 import { resolveLocalDataDir, resolveProviderConfigDir } from './data-paths';
+import { isSqliteActive } from './database/sqlite';
+import { readAuthoritativeProviderSettings } from './repositories/server-provider-config';
 
 export const AGNES_PUBLIC_MEDIA_URL_REQUIRED = 'AGNES_PUBLIC_MEDIA_URL_REQUIRED';
 export const AGNES_PUBLIC_MEDIA_URL_INVALID = 'AGNES_PUBLIC_MEDIA_URL_INVALID';
@@ -60,6 +62,13 @@ async function configuredStorageRoot(kind: 'image' | 'video' | 'audio') {
       ? process.env.SANMAO_VIDEO_STORAGE_PATH
       : process.env.SANMAO_AUDIO_STORAGE_PATH;
   if (environmentRoot?.trim()) return environmentRoot.trim();
+  if (isSqliteActive()) {
+    const settings = readAuthoritativeProviderSettings();
+    const configured = settings?.[
+      kind === 'image' ? 'imageStoragePath' : kind === 'video' ? 'videoStoragePath' : 'audioStoragePath'
+    ];
+    return typeof configured === 'string' ? configured.trim() : '';
+  }
   try {
     const state = JSON.parse(await readFile(path.join(resolveProviderConfigDir(), 'state.json'), 'utf8')) as { settings?: Record<string, unknown> };
     const configured = state.settings?.[

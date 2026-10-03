@@ -11,6 +11,9 @@ import { encryptSecret } from './store';
 import { resolveLocalDataDir, resolveProviderConfigDir } from './data-paths';
 import { BackupRestoreTransaction } from './backup-restore-transaction';
 import { validateWorkspaceShape } from './workspace-format';
+import { isSqliteActive, listSqliteRecords, openSqliteDatabase, readSqliteRecord, replaceSqliteDomain, sqliteDatabasePath } from './database/sqlite';
+import { getStoredStateForBackup } from './store';
+import { readAuthoritativeWorkspace } from './repositories/server-workspace-repository';
 
 const dataDir = resolveLocalDataDir();
 const providerConfigDir = resolveProviderConfigDir();
@@ -143,14 +146,22 @@ function snapshotName() { return `snapshot-${new Date().toISOString().replace(/[
 
 async function createLocalSnapshotInternal(reason: string) {
   await mkdir(snapshotDir, { recursive: true });
-  const state = await readFile(statePath).catch(() => jsonBuffer({ schemaVersion: 2, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } }));
-  const workspace = await readFile(workspacePath).catch(() => Buffer.alloc(0));
+  const state = isSqliteActive(dataDir)
+    ? jsonBuffer(await getStoredStateForBackup())
+    : await readFile(statePath).catch(() => jsonBuffer({ schemaVersion: 2, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } }));
+  const workspace = isSqliteActive(dataDir)
+    ? (() => { const value = readAuthoritativeWorkspace(dataDir); return value ? jsonBuffer(value) : Buffer.alloc(0); })()
+    : await readFile(workspacePath).catch(() => Buffer.alloc(0));
   const durable = new Map<string, Buffer>();
   for (const name of SNAPSHOT_DURABLE_FILES) {
-    const data = await readFile(path.join(dataDir, name)).catch(() => Buffer.alloc(0));
+    const data = isSqliteActive(dataDir)
+      ? (() => { const records = listSqliteRecords<Record<string, unknown>>(`task:${name}`, dataDir); return records.length ? jsonBuffer(records.map((record) => record.value)) : Buffer.alloc(0); })()
+      : await readFile(path.join(dataDir, name)).catch(() => Buffer.alloc(0));
     if (data.length) durable.set(name, data);
   }
-  const mcpConfig = await readFile(path.join(dataDir, 'mcp', 'servers.json')).catch(() => Buffer.alloc(0));
+  const mcpConfig = isSqliteActive(dataDir)
+    ? (() => { const value = readSqliteRecord<{ version?: number; servers?: unknown[] }>('mcp', 'primary', dataDir); return value ? jsonBuffer(value) : Buffer.alloc(0); })()
+    : await readFile(path.join(dataDir, 'mcp', 'servers.json')).catch(() => Buffer.alloc(0));
   const logFiles = (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value));
   const logBytes = new Map<string, number>();
   for (const name of logFiles) {
@@ -388,7 +399,27 @@ export async function restoreLocalSnapshot(snapshotPath: string, configuredStora
   const transaction = new BackupRestoreTransaction(dataDir, `snapshot-${process.pid}-${Date.now()}`);
   try {
     await BackupRestoreTransaction.recover(dataDir);
-    await transaction.write(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    if (isSqliteActive(dataDir)) {
+      const stagedDatabase = path.join(dataDir, `.restore-snapshot-db-${process.pid}-${Date.now()}.sqlite`);
+      await (await import('node:fs/promises')).copyFile(sqliteDatabasePath(dataDir), stagedDatabase);
+      const db = openSqliteDatabase(stagedDatabase);
+      replaceSqliteDomain(db, 'provider-config', [{ key: 'primary', value: state }]);
+      const workspace = byName.get('client/client.json') || (legacyWorkspaceEntry ? byName.get('server/workspace.json') : undefined);
+      if (workspace) replaceSqliteDomain(db, 'workspace', [{ key: 'primary', value: JSON.parse(workspace.data.toString('utf8')) }]);
+      for (const name of SNAPSHOT_DURABLE_FILES) {
+        const entry = byName.get(`server/tasks/${name}`);
+        const raw = entry ? JSON.parse(entry.data.toString('utf8')) as unknown : [];
+        const records = Array.isArray(raw) ? raw.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string')) : [];
+        replaceSqliteDomain(db, `task:${name}`, records.map((value) => ({ key: String(value.id), value })));
+      }
+      const mcp = byName.get('server/mcp/servers.json');
+      replaceSqliteDomain(db, 'mcp', mcp ? [{ key: 'primary', value: JSON.parse(mcp.data.toString('utf8')) }] : []);
+      db.close();
+      await transaction.copy(stagedDatabase, sqliteDatabasePath(dataDir));
+      await rm(stagedDatabase, { force: true });
+    } else {
+      await transaction.write(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    }
     const restoredLogs = entries.filter((entry) => entry.name.startsWith('server/logs/') && entry.name.endsWith('.jsonl'));
     for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) await transaction.remove(path.join(dataDir, name));
     for (const entry of restoredLogs) await transaction.write(path.join(dataDir, path.basename(entry.name)), entry.data);
@@ -396,15 +427,15 @@ export async function restoreLocalSnapshot(snapshotPath: string, configuredStora
     for (const name of SNAPSHOT_DURABLE_FILES) {
       const entry = byName.get(`server/tasks/${name}`);
       if (!entry) continue;
-      await transaction.write(path.join(dataDir, name), entry.data);
+      if (!isSqliteActive(dataDir)) await transaction.write(path.join(dataDir, name), entry.data);
       restoredTasks += 1;
     }
     const mcpConfig = byName.get('server/mcp/servers.json');
-    if (mcpConfig) await transaction.write(path.join(dataDir, 'mcp', 'servers.json'), mcpConfig.data);
+    if (mcpConfig && !isSqliteActive(dataDir)) await transaction.write(path.join(dataDir, 'mcp', 'servers.json'), mcpConfig.data);
     const masterKey = byName.get('server/master.key');
     if (masterKey && !process.env.SANMAO_MASTER_KEY?.trim()) await transaction.write(keyPath, masterKey.data);
     const workspace = byName.get('client/client.json') || (legacyWorkspaceEntry ? byName.get('server/workspace.json') : undefined);
-    if (workspace) await transaction.write(workspacePath, workspace.data);
+    if (workspace && !isSqliteActive(dataDir)) await transaction.write(workspacePath, workspace.data);
     const imageRoot = path.resolve(configuredStoragePath.trim() || getDefaultStoragePath());
     const videoRoot = path.resolve(process.env.SANMAO_VIDEO_STORAGE_PATH?.trim() || getDefaultVideoStoragePath());
     const audioRoot = path.resolve(process.env.SANMAO_AUDIO_STORAGE_PATH?.trim() || getDefaultAudioStoragePath());

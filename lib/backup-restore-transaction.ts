@@ -105,11 +105,12 @@ export class BackupRestoreTransaction {
     await rm(this.root, { recursive: true, force: true }).catch(() => undefined);
   }
 
-  async commit() {
+  async commit(options: { failAfterCapture?: boolean } = {}) {
     // This is the durable cutover point. If the process dies after this
     // marker, the new state is authoritative and recovery only removes the
     // rollback tree; before it, recovery restores the previous state.
     for (const operation of this.operations.values()) await this.capture(operation.target);
+    if (options.failAfterCapture) throw new Error('Injected restore cutover failure after multi-root capture');
     for (const operation of this.operations.values()) {
       if (operation.type === 'remove') {
         await rm(operation.target, { force: true });

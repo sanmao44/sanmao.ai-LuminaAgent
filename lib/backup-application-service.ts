@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createArchiveBudget, createBackupArchive, describeBackupSource, extractBackupArchiveFile, extractBackupArchiveStreaming, sha256, type BackupArchiveEntry, type BackupArchiveFileEntry, type BackupArchiveSource } from '@/lib/backup-archive';
@@ -12,6 +12,8 @@ import { listInstalledSkillDirs, listSkillFilesForBackup, resolveSkillArchivePat
 import { resolveLocalDataDir, resolveProviderConfigDir } from '@/lib/data-paths';
 import { validateWorkspaceShape } from '@/lib/workspace-format';
 import { BackupRestoreTransaction } from '@/lib/backup-restore-transaction';
+import { getStoredStateForBackup } from '@/lib/store';
+import { isSqliteActive, listSqliteRecords, openSqliteDatabase, readSqliteRecord, replaceSqliteDomain, sqliteDatabasePath } from '@/lib/database/sqlite';
 
 
 const dataDir = resolveLocalDataDir();
@@ -31,6 +33,27 @@ const BACKUP_SCHEMA_VERSION = 1;
 
 async function readOptional(file: string) {
   try { return await readFile(file); } catch { return Buffer.alloc(0); }
+}
+
+async function readStateForBackup() {
+  if (isSqliteActive()) return jsonBuffer(await getStoredStateForBackup());
+  return readOptional(statePath);
+}
+
+async function readDurableTaskForBackup(name: string) {
+  if (isSqliteActive()) {
+    const records = listSqliteRecords<Record<string, unknown>>(`task:${name}`);
+    return records.length ? jsonBuffer(records.map((record) => record.value)) : Buffer.alloc(0);
+  }
+  return readOptional(path.join(dataDir, name));
+}
+
+async function readMcpForBackup() {
+  if (isSqliteActive()) {
+    const value = readSqliteRecord<{ version?: number; servers?: unknown[] }>('mcp', 'primary');
+    return value ? jsonBuffer(value) : Buffer.alloc(0);
+  }
+  return readOptional(path.join(dataDir, 'mcp', 'servers.json'));
 }
 
 /** File-level restore transaction. Existing files are moved to a rollback tree
@@ -72,6 +95,13 @@ type BackupManifest = {
 };
 
 type RestoreEntry = BackupArchiveEntry | BackupArchiveFileEntry;
+
+function asTaskRecords(raw: Buffer) {
+  const parsed = JSON.parse(raw.toString('utf8')) as unknown;
+  return Array.isArray(parsed)
+    ? parsed.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string'))
+    : [];
+}
 
 function entryBytes(entry: RestoreEntry) {
   return 'data' in entry ? entry.data.byteLength : entry.size;
@@ -166,7 +196,7 @@ type BackupMode = 'content' | 'complete';
 async function exportArchive(client: unknown, mode: BackupMode) {
   const includeSecrets = mode === 'complete';
   const budget = createArchiveBudget(maxArchiveBytes, maxArchiveLabel);
-  const stateRaw = await readOptional(statePath);
+  const stateRaw = await readStateForBackup();
   const rawState = stateRaw.length ? validateState(stateRaw) : { schemaVersion: 2, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } };
   const state = includeSecrets ? rawState : stripStateSecrets(rawState);
   const configuredImagePath = String(state.settings?.imageStoragePath || '');
@@ -198,12 +228,12 @@ async function exportArchive(client: unknown, mode: BackupMode) {
   await appendMediaDirectory(entries, configuredVideoPath || getDefaultVideoStoragePath(), 'videos', budget);
   await appendMediaDirectory(entries, getDefaultAudioStoragePath(), 'audio', budget);
   for (const name of SNAPSHOT_DURABLE_FILES) {
-    const data = await readOptional(path.join(dataDir, name));
+    const data = await readDurableTaskForBackup(name);
     if (!data.length) continue;
     budget.add(data.byteLength, `server/tasks/${name}`);
     entries.push({ name: `server/tasks/${name}`, data });
   }
-  const mcpConfig = await readOptional(path.join(dataDir, 'mcp', 'servers.json'));
+  const mcpConfig = await readMcpForBackup();
   if (mcpConfig.length) { budget.add(mcpConfig.byteLength, 'server/mcp/servers.json'); entries.push({ name: 'server/mcp/servers.json', data: mcpConfig }); }
   await appendDirectory(entries, path.join(dataDir, 'artifacts'), 'artifacts', budget);
 
@@ -284,7 +314,7 @@ async function restoreArchive(entries: RestoreEntry[]) {
   const workspace = client.workspace || (workspaceEntry ? JSON.parse((await readEntry(workspaceEntry)).toString('utf8')) : null);
   if (workspace) validateWorkspaceShape(workspace);
   if (backupMode === 'content') {
-    const current = await readOptional(statePath).then((raw) => raw.length ? validateState(raw) : null);
+    const current = await readStateForBackup().then((raw) => raw.length ? validateState(raw) : null);
     if (current) {
       const currentById = new Map(current.providers.map((provider) => [String(provider.id), provider]));
       state.providers = state.providers.map((provider) => {
@@ -307,8 +337,26 @@ async function restoreArchive(entries: RestoreEntry[]) {
   const transaction = new BackupRestoreTransaction(dataDir);
   try {
     await BackupRestoreTransaction.recover(dataDir);
-    await transaction.write(statePath, jsonBuffer(state));
-    if (workspace) await transaction.write(workspacePath, jsonBuffer(workspace));
+    let stagedDatabase: string | null = null;
+    if (isSqliteActive(dataDir)) {
+      stagedDatabase = path.join(dataDir, `.restore-db-${process.pid}-${Date.now()}.sqlite`);
+      await copyFile(sqliteDatabasePath(dataDir), stagedDatabase);
+      const db = openSqliteDatabase(stagedDatabase);
+      replaceSqliteDomain(db, 'provider-config', [{ key: 'primary', value: state }]);
+      if (workspace) replaceSqliteDomain(db, 'workspace', [{ key: 'primary', value: workspace }]);
+      for (const name of SNAPSHOT_DURABLE_FILES) {
+        const entry = byName.get(`server/tasks/${name}`);
+        const records = entry ? asTaskRecords(await readEntry(entry)) : [];
+        replaceSqliteDomain(db, `task:${name}`, records.map((value) => ({ key: String(value.id), value })));
+      }
+      const mcp = byName.get('server/mcp/servers.json');
+      replaceSqliteDomain(db, 'mcp', mcp ? [{ key: 'primary', value: JSON.parse((await readEntry(mcp)).toString('utf8')) }] : []);
+      db.close();
+      await transaction.copy(stagedDatabase, sqliteDatabasePath(dataDir));
+    } else {
+      await transaction.write(statePath, jsonBuffer(state));
+    }
+    if (workspace && !isSqliteActive(dataDir)) await transaction.write(workspacePath, jsonBuffer(workspace));
 
   const restoredLogs = entries.filter((entry) => entry.name.startsWith('server/logs/') && entry.name.endsWith('.jsonl'));
   for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) await transaction.remove(path.join(dataDir, name));
@@ -384,14 +432,18 @@ async function restoreArchive(entries: RestoreEntry[]) {
     restoredSkillIds.add(relative.split('/')[0]);
   }
 
-  for (const entry of entries.filter((value) => value.name.startsWith('server/tasks/'))) {
-    const name = path.basename(entry.name);
-    if (!(SNAPSHOT_DURABLE_FILES as readonly string[]).includes(name)) continue;
-    await writeEntry(transaction, path.join(dataDir, name), entry);
+  if (!isSqliteActive(dataDir)) {
+    for (const entry of entries.filter((value) => value.name.startsWith('server/tasks/'))) {
+      const name = path.basename(entry.name);
+      if (!(SNAPSHOT_DURABLE_FILES as readonly string[]).includes(name)) continue;
+      await writeEntry(transaction, path.join(dataDir, name), entry);
+    }
   }
   const restoredMcp = byName.get('server/mcp/servers.json');
-  if (restoredMcp) await writeEntry(transaction, path.join(dataDir, 'mcp', 'servers.json'), restoredMcp);
-  else await transaction.remove(path.join(dataDir, 'mcp', 'servers.json'));
+  if (!isSqliteActive(dataDir)) {
+    if (restoredMcp) await writeEntry(transaction, path.join(dataDir, 'mcp', 'servers.json'), restoredMcp);
+    else await transaction.remove(path.join(dataDir, 'mcp', 'servers.json'));
+  }
   let restoredArtifacts = 0;
   const artifactRoot = path.resolve(dataDir, 'artifacts');
   const expectedArtifacts = new Set(entries.filter((value) => value.name.startsWith('artifacts/')).map((entry) => path.resolve(artifactRoot, entry.name.slice('artifacts/'.length).replace(/\\/g, '/'))));
@@ -411,6 +463,12 @@ async function restoreArchive(entries: RestoreEntry[]) {
   } catch (error) {
     await transaction.rollback();
     throw error;
+  } finally {
+    // The staged database is copied into the transaction tree before commit;
+    // removing this temporary never touches the live database.
+    for (const file of await readdir(dataDir).catch(() => [])) {
+      if (file.startsWith('.restore-db-') && file.endsWith('.sqlite')) await rm(path.join(dataDir, file), { force: true }).catch(() => undefined);
+    }
   }
 }
 

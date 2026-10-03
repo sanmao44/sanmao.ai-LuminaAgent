@@ -66,3 +66,25 @@ test('keeps a committed transaction and only removes its journal after cutover',
     await rm(commitRoot, { recursive: true, force: true });
   }
 });
+
+test('multi-root cutover failure after capture restores every physical root', async () => {
+  const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'sanmao-transaction-multi-root-'));
+  const externalRoot = await mkdtemp(path.join(os.tmpdir(), 'sanmao-transaction-media-'));
+  try {
+    const state = path.join(dataRoot, 'state.json');
+    const media = path.join(externalRoot, 'images', 'one.bin');
+    await mkdir(path.dirname(media), { recursive: true });
+    await writeFile(state, 'old-state');
+    await writeFile(media, 'old-media');
+    const tx = new transactionModule.BackupRestoreTransaction(dataRoot, 'multi-root');
+    await tx.write(state, 'new-state');
+    await tx.write(media, 'new-media');
+    await assert.rejects(() => tx.commit({ failAfterCapture: true }), /Injected restore cutover failure/);
+    await tx.rollback();
+    assert.equal(await readFile(state, 'utf8'), 'old-state');
+    assert.equal(await readFile(media, 'utf8'), 'old-media');
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+    await rm(externalRoot, { recursive: true, force: true });
+  }
+});

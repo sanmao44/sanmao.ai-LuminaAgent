@@ -2,6 +2,9 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isAdminRequest } from '@/lib/auth';
 import { resolveLocalDataDir, resolveProviderConfigDir } from '@/lib/data-paths';
+import { isSqliteActive } from '@/lib/database/sqlite';
+import { getStoredStateForBackup, type StoreData } from '@/lib/store';
+import { writeAuthoritativeProviderState } from '@/lib/repositories/server-provider-repository';
 
 export const runtime = 'nodejs';
 
@@ -31,7 +34,11 @@ function validateState(raw: string) {
 export async function GET(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   try {
-    const [storedState, masterKey, generationLogs] = await Promise.all([readOptional(statePath), readOptional(keyPath), readOptional(logPath)]);
+    const [storedState, masterKey, generationLogs] = await Promise.all([
+      isSqliteActive(dataDir) ? getStoredStateForBackup().then((value) => JSON.stringify(value)) : readOptional(statePath),
+      readOptional(keyPath),
+      readOptional(logPath),
+    ]);
     const state = storedState || JSON.stringify({ schemaVersion: 2, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultProviderId: null, imageStoragePath: '' } }, null, 2);
     return Response.json({
       ok: true,
@@ -61,7 +68,8 @@ export async function POST(request: Request) {
 
     await mkdir(dataDir, { recursive: true });
     if (masterKey && !process.env.SANMAO_MASTER_KEY?.trim()) await writeAtomic(keyPath, `${masterKey}\n`);
-    await writeAtomic(statePath, state);
+    if (isSqliteActive(dataDir)) writeAuthoritativeProviderState(JSON.parse(state) as StoreData);
+    else await writeAtomic(statePath, state);
     await writeAtomic(logPath, generationLogs);
     return Response.json({ ok: true, externalMasterKey: Boolean(process.env.SANMAO_MASTER_KEY?.trim()) });
   } catch (error) {

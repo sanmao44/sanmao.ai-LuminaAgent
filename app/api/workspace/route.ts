@@ -8,6 +8,8 @@ import { validateWorkspaceShape } from '@/lib/workspace-format';
 import { WORKSPACE_TEMP_PATTERN, sweepStaleWorkspaceTemps } from '@/lib/workspace-temps';
 import { ensureDataFoundation } from '@/lib/data-foundation';
 import { resolveLocalDataDir } from '@/lib/data-paths';
+import { isSqliteActive } from '@/lib/database/sqlite';
+import { readAuthoritativeWorkspace, writeAuthoritativeWorkspace, type StoredWorkspaceSnapshot } from '@/lib/repositories/server-workspace-repository';
 
 export const runtime = 'nodejs';
 
@@ -18,8 +20,6 @@ const maxWorkspaceBytes = 80 * 1024 * 1024;
 const workspaceTempSweepIntervalMs = 60 * 1000;
 let lastWorkspaceTempSweepAt = 0;
 let workspaceMutationChain: Promise<unknown> = Promise.resolve();
-
-type StoredWorkspaceSnapshot = WorkspaceSnapshot & { revision?: number };
 
 function revisionOf(workspace: StoredWorkspaceSnapshot | null) {
   const value = Number(workspace?.revision || 0);
@@ -69,6 +69,7 @@ async function recoverWorkspace() {
 }
 
 async function readWorkspace() {
+  if (isSqliteActive(dataDir)) return readAuthoritativeWorkspace(dataDir);
   try {
     const raw = await readFile(workspacePath, 'utf8');
     return parseWorkspace(raw);
@@ -81,6 +82,10 @@ async function readWorkspace() {
 }
 
 async function readWorkspaceMetadata() {
+  if (isSqliteActive(dataDir)) {
+    const workspace = readAuthoritativeWorkspace(dataDir);
+    return workspace ? { updatedAt: Number(workspace.updatedAt) || 0, revision: revisionOf(workspace) } : null;
+  }
   try {
     const raw = await readFile(workspaceMetaPath, 'utf8');
     const value = JSON.parse(raw) as { updatedAt?: unknown; revision?: unknown };
@@ -114,6 +119,12 @@ async function readWorkspaceMetadata() {
 }
 
 async function writeAtomic(content: string) {
+  if (isSqliteActive(dataDir)) {
+    const workspace = parseWorkspace(content);
+    if (!workspace) throw new Error('workspace is empty');
+    writeAuthoritativeWorkspace(dataDir, workspace);
+    return;
+  }
   await mkdir(dataDir, { recursive: true });
   const temporary = `${workspacePath}.${Date.now()}.${process.pid}.tmp`;
   try {
