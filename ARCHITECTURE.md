@@ -450,12 +450,14 @@ workspace representation. `lib/backup-application-service.ts` owns export and
 restore orchestration while the HTTP route only authenticates, parses and
 serializes. Restore writes through a file-level rollback transaction and uses
 streaming tar extraction. Archive export now reads disk-backed entries through
-file streams and hashes them without a second media buffer. HTTP restore stages
+file streams, writes the gzip archive to a staging file, and encrypts that file
+incrementally without a second media buffer. HTTP restore stages
 the request body to a bounded temporary file, decrypts the v1 envelope as a
 stream, and extracts tar entries directly to staging files. The restore
 transaction commits staged files only after validation and records an active or
-committed journal phase for crash recovery. Compatibility Buffer APIs remain for
-local snapshots and older callers. PostgreSQL remains a future cloud adapter; it
+committed journal phase for crash recovery. Compatibility Buffer APIs remain for local
+snapshots and older callers; the production HTTP export path is file/stream based.
+PostgreSQL remains a future cloud adapter; it
 is not introduced in this local-first cutover.
 
 ---

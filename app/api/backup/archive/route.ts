@@ -1,10 +1,11 @@
 import { isAdminRequest } from '@/lib/auth';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
-import { createBackupExport, getBackupLimits, restoreBackupArchiveFile } from '@/lib/backup-application-service';
-import { createWriteStream } from 'node:fs';
+import { createBackupExportFile, getBackupLimits, restoreBackupArchiveFile } from '@/lib/backup-application-service';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 
 export const runtime = 'nodejs';
 
@@ -56,8 +57,10 @@ export async function POST(request: Request) {
     const backupPassword = String(body?.backupPassword || '');
     const backupMode = body?.backupMode === 'complete' ? 'complete' : body?.backupMode === 'content' ? 'content' : null;
     if (!backupMode) throw new Error('必须明确选择内容备份或完整加密备份');
-    const result = await createBackupExport(client, backupPassword, backupMode);
-    return new Response(result.encrypted, {
+    const result = await createBackupExportFile(client, backupPassword, backupMode);
+    const stream = createReadStream(result.filePath, { highWaterMark: 1024 * 1024 });
+    stream.once('close', () => { void rm(result.cleanupPath, { recursive: true, force: true }); });
+    return new Response(Readable.toWeb(stream) as unknown as BodyInit, {
       headers: {
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': `attachment; filename="SANMAO-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.sanmao-backup"`,

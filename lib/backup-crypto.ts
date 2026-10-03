@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync, type Cipher, type DecipherGCM } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { open, rm } from 'node:fs/promises';
 
 const MAGIC = 'SANMAO-ENCRYPTED-BACKUP';
 const VERSION = 1;
@@ -63,6 +63,43 @@ export function encryptBackupPayload(payload: Buffer, password: string) {
     tag: cipher.getAuthTag().toString('base64url'),
   };
   return Buffer.concat([Buffer.from(`${JSON.stringify(envelope)}\n`, 'utf8'), encrypted]);
+}
+
+/** Encrypt a disk-backed archive without retaining ciphertext in memory. */
+export async function encryptBackupFile(inputPath: string, outputPath: string, password: string) {
+  validateBackupPassword(password);
+  const salt = randomBytes(16);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', deriveKey(password, salt), iv);
+  const placeholder = '0'.repeat(22);
+  const envelope = { format: MAGIC, version: VERSION, kdf: 'scrypt' as const, salt: salt.toString('base64url'), iv: iv.toString('base64url'), tag: placeholder };
+  const header = Buffer.from(`${JSON.stringify(envelope)}\n`, 'utf8');
+  const input = createReadStream(inputPath, { highWaterMark: 1024 * 1024 });
+  const output = createWriteStream(outputPath, { flags: 'wx' });
+  try {
+    await writeCryptoChunk(output, header);
+    for await (const raw of input) {
+      const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+      for (let offset = 0; offset < chunk.length; offset += CIPHER_CHUNK_BYTES) {
+        const part = cipher.update(chunk.subarray(offset, offset + CIPHER_CHUNK_BYTES));
+        if (part.length) await writeCryptoChunk(output, part);
+      }
+    }
+    const tail = cipher.final();
+    if (tail.length) await writeCryptoChunk(output, tail);
+    await endCryptoOutput(output);
+    const tag = cipher.getAuthTag().toString('base64url');
+    const finalHeader = Buffer.from(`${JSON.stringify({ ...envelope, tag })}\n`, 'utf8');
+    if (finalHeader.length !== header.length) throw new Error('Backup encryption header length changed');
+    const handle = await open(outputPath, 'r+');
+    try { await handle.write(finalHeader, 0, finalHeader.length, 0); await handle.sync(); }
+    finally { await handle.close(); }
+  } catch (error) {
+    input.destroy();
+    output.destroy();
+    await rm(outputPath, { force: true }).catch(() => undefined);
+    throw error instanceof Error ? error : new Error(String(error));
+  }
 }
 
 export function isEncryptedBackup(payload: Buffer) {

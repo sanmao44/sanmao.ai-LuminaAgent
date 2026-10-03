@@ -2,8 +2,8 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createArchiveBudget, createBackupArchive, describeBackupSource, extractBackupArchiveFile, extractBackupArchiveStreaming, sha256, type BackupArchiveEntry, type BackupArchiveFileEntry, type BackupArchiveSource } from '@/lib/backup-archive';
-import { decryptBackupFile, decryptBackupPayload, encryptBackupPayload, isEncryptedBackup, isEncryptedBackupFile, validateBackupPassword } from '@/lib/backup-crypto';
+import { createArchiveBudget, createBackupArchive, createBackupArchiveStream, describeBackupSource, extractBackupArchiveFile, extractBackupArchiveStreaming, sha256, type BackupArchiveEntry, type BackupArchiveFileEntry, type BackupArchiveSource } from '@/lib/backup-archive';
+import { decryptBackupFile, decryptBackupPayload, encryptBackupFile, encryptBackupPayload, isEncryptedBackup, isEncryptedBackupFile, validateBackupPassword } from '@/lib/backup-crypto';
 import { getDefaultStoragePath } from '@/lib/image-storage';
 import { getDefaultAudioStoragePath } from '@/lib/audio-storage';
 import { getDefaultVideoStoragePath } from '@/lib/video-storage';
@@ -275,8 +275,7 @@ async function exportArchive(client: unknown, mode: BackupMode) {
     externalMasterKey: Boolean(process.env.SANMAO_MASTER_KEY?.trim()),
     files: await Promise.all(entries.map(async (entry) => ({ name: entry.name, ...(await describeBackupSource(entry)) }))),
   };
-  const archive = await createBackupArchive([{ name: 'manifest.json', data: jsonBuffer(manifest) }, ...entries]);
-  return { archive, manifest };
+  return { entries: [{ name: 'manifest.json', data: jsonBuffer(manifest) }, ...entries], manifest };
 }
 
 async function manifestEntries(entries: RestoreEntry[], manifest: { files?: Array<{ name: string; bytes: number; sha256: string }> }) {
@@ -476,8 +475,50 @@ async function restoreArchive(entries: RestoreEntry[]) {
 export async function createBackupExport(client: unknown, backupPassword: string, mode: BackupMode) {
   validateBackupPassword(backupPassword);
   const result = await exportArchive(client, mode);
-  const encrypted = encryptBackupPayload(result.archive, backupPassword);
+  const encrypted = encryptBackupPayload(await createBackupArchive(result.entries), backupPassword);
   return { encrypted, manifest: result.manifest };
+}
+
+/**
+ * Production export path. Archive and encryption are both disk/stream based;
+ * the returned directory is owned by the caller and must be removed after the
+ * HTTP response finishes.
+ */
+export async function createBackupExportFile(client: unknown, backupPassword: string, mode: BackupMode) {
+  validateBackupPassword(backupPassword);
+  const result = await exportArchive(client, mode);
+  const staging = await mkdtemp(path.join(tmpdir(), 'sanmao-backup-export-'));
+  const archivePath = path.join(staging, 'archive.gz');
+  const encryptedPath = path.join(staging, 'backup.sanmao-backup');
+  try {
+    const output = createWriteStream(archivePath, { flags: 'wx' });
+    try {
+      for await (const chunk of createBackupArchiveStream(result.entries)) {
+        if (output.write(chunk)) continue;
+        await new Promise<void>((resolve, reject) => {
+          const onError = (error: Error) => { output.off('drain', onDrain); reject(error); };
+          const onDrain = () => { output.off('error', onError); resolve(); };
+          output.once('error', onError);
+          output.once('drain', onDrain);
+        });
+      }
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => { output.off('finish', onFinish); reject(error); };
+        const onFinish = () => { output.off('error', onError); resolve(); };
+        output.once('error', onError);
+        output.once('finish', onFinish);
+        output.end();
+      });
+    } catch (error) {
+      output.destroy();
+      throw error;
+    }
+    await encryptBackupFile(archivePath, encryptedPath, backupPassword);
+    return { filePath: encryptedPath, cleanupPath: staging, manifest: result.manifest };
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function restoreBackupArchive(uploaded: Buffer, backupPassword: string) {

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import { createGunzip, createGzip, gunzipSync } from 'node:zlib';
 
 export type BackupArchiveEntry = { name: string; data: Buffer };
@@ -105,33 +106,58 @@ async function writeFileSource(stream: ReturnType<typeof createGzip>, filePath: 
 }
 
 export async function createBackupArchive(entries: BackupArchiveSource[]) {
-  const gzip = createGzip({ level: 6, chunkSize: 1024 * 1024 });
   const parts: Buffer[] = [];
-  gzip.on('data', (chunk: Buffer) => parts.push(chunk));
-  const finished = new Promise<Buffer>((resolve, reject) => {
-    gzip.on('error', reject);
-    gzip.on('end', () => resolve(parts.length === 1 ? parts[0] : Buffer.concat(parts)));
+  for await (const chunk of createBackupArchiveStream(entries)) parts.push(chunk);
+  return parts.length === 1 ? parts[0] : Buffer.concat(parts);
+}
+
+/**
+ * Stream a gzip-compressed tar archive without retaining the complete archive
+ * in memory. The old createBackupArchive API remains Buffer-based for legacy
+ * callers and tests; production HTTP export uses this generator.
+ */
+export async function* createBackupArchiveStream(entries: BackupArchiveSource[]): AsyncGenerator<Buffer> {
+  const gzip = createGzip({ level: 6, chunkSize: 1024 * 1024 });
+  const output = new PassThrough({ highWaterMark: 1024 * 1024 });
+  let writerError: Error | null = null;
+  // Always consume gzip errors. The writer may intentionally destroy the
+  // compressor after a validation failure; without a listener Node reports a
+  // second unhandled error after the original failure has already propagated.
+  gzip.on('error', (error) => {
+    if (!writerError) writerError = error instanceof Error ? error : new Error(String(error));
   });
-  try {
-    for (const entry of entries) {
-      const name = entry.name.replace(/\\/g, '/').replace(/^\/+/, '');
-      if (!name || name.split('/').includes('..')) throw new Error('备份文件名无效');
-      const size = 'data' in entry ? entry.data.length : entry.size;
-      await writeChunk(gzip, tarHeader(name, size));
-      if (size) {
-        if ('data' in entry) await writeChunk(gzip, entry.data);
-        else if (await writeFileSource(gzip, entry.filePath) !== size) throw new Error(`备份文件在读取期间发生变化：${name}`);
+  gzip.pipe(output);
+  const writer = (async () => {
+    try {
+      for (const entry of entries) {
+        const name = entry.name.replace(/\\/g, '/').replace(/^\/+/, '');
+        if (!name || name.split('/').includes('..')) throw new Error('\u5907\u4efd\u6587\u4ef6\u540d\u65e0\u6548');
+        const size = 'data' in entry ? entry.data.length : entry.size;
+        await writeChunk(gzip, tarHeader(name, size));
+        if (size) {
+          if ('data' in entry) await writeChunk(gzip, entry.data);
+          else if (await writeFileSource(gzip, entry.filePath) !== size) throw new Error(`\u5907\u4efd\u6587\u4ef6\u5728\u8bfb\u53d6\u671f\u95f4\u53d1\u751f\u53d8\u5316\uff1a${name}`);
+        }
+        const padding = (512 - (size % 512)) % 512;
+        if (padding) await writeChunk(gzip, Buffer.alloc(padding));
       }
-      const padding = (512 - (size % 512)) % 512;
-      if (padding) await writeChunk(gzip, Buffer.alloc(padding));
+      await writeChunk(gzip, Buffer.alloc(1024));
+      gzip.end();
+    } catch (error) {
+      writerError = error instanceof Error ? error : new Error(String(error));
+      gzip.destroy(writerError);
+      output.destroy(writerError);
     }
-    await writeChunk(gzip, Buffer.alloc(1024));
-    gzip.end();
-    return await finished;
-  } catch (error) {
-    gzip.destroy(error as Error);
-    await finished.catch(() => undefined);
-    throw error;
+  })();
+
+  try {
+    for await (const chunk of output) yield Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    await writer;
+    if (writerError) throw writerError;
+  } finally {
+    if (!gzip.destroyed) gzip.destroy();
+    if (!output.destroyed) output.destroy();
+    await writer.catch(() => undefined);
   }
 }
 
