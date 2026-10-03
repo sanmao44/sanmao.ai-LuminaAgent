@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -29,4 +29,21 @@ test('successful restore removes rollback files and keeps new content', async ()
   await transaction.commit();
   assert.equal(await readFile(existing, 'utf8'), 'after');
   await assert.rejects(() => readFile(path.join(root, '.restore-rollback-commit', 'settings.json')));
+});
+
+test('recovers a rollback journal left by an interrupted restore', async () => {
+  const journalRoot = await mkdtemp(path.join(os.tmpdir(), 'sanmao-transaction-journal-'));
+  try {
+    const target = path.join(journalRoot, 'state.json');
+    const rollback = path.join(journalRoot, '.restore-rollback-crash', 'state.json');
+    const journal = path.join(journalRoot, '.restore-rollback-crash', 'journal.json');
+    await writeFile(target, 'new-state');
+    await mkdir(path.join(journalRoot, '.restore-rollback-crash'), { recursive: true });
+    await writeFile(rollback, 'old-state');
+    await writeFile(journal, JSON.stringify([{ target, existed: true, backup: rollback, captured: true }]));
+    await transactionModule.BackupRestoreTransaction.recover(journalRoot);
+    assert.equal(await readFile(target, 'utf8'), 'old-state');
+  } finally {
+    await rm(journalRoot, { recursive: true, force: true });
+  }
 });

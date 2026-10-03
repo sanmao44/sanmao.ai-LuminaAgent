@@ -15,7 +15,7 @@
 | Canvas History | React `undoStack/redoStack` removed | `setHistoryVersion` render tick | `CanvasCore.past/future` | commit, undo, redo and record use Core | `CanvasCore.history()` | none | no history bypass found in current mutation path | cutover completed | retain nested snapshot regression coverage | no React history state returns; persistence history is a separate future concern |
 | Canvas Selection | React selection state machine removed | selection setter functions call Core; `useSyncExternalStore` projection | `CanvasCore.selection()` | node/group/edge selection and invalidation after edits use Core | `CanvasCore.selection()` | none for domain selection; transient hover/marquee/gesture remain UI local | legacy callsites use Core setter adapters, not a second owner | cutover completed | replace setter adapters with explicit command names | all selection writes use Core commands directly |
 | UI | `app/page.tsx` composition, feature state and callbacks | WorkspaceShell, MainColumn, presentation components | component boundaries; application layer remains future | shell/sidebar/Agent presentation components are rendered in production | `app/page.tsx` remains state/composition owner | extracted components coexist with page-owned feature state | page directly performs several domain actions | migration in progress | extract callbacks after domain boundaries stabilize | page is composition only |
-| Backup / Restore | backup API, local snapshots, filesystem archive implementation | `lib/backup-archive.ts`, `lib/backup-restore-transaction.ts`, snapshot helpers | manifest schema v1; canonical `client/client.json`; streaming tar extraction | `/api/backup/archive` and `/api/storage/snapshots` use file-level rollback transaction; restore uses streaming tar extraction | Legacy API + filesystem remains authoritative | encrypted request/decrypt, HTTP request ingestion and export archive creation still use bounded full buffers; application service is pending | API routes still own serialization and restore orchestration | migration in progress | move crypto and export to file/stream interfaces, then extract application service | staged validation and cutover are service-owned; legacy route only transports |
+| Backup / Restore | backup API, local snapshots, filesystem archive implementation | `lib/backup-archive.ts`, `lib/backup-restore-transaction.ts`, `lib/backup-application-service.ts`, snapshot helpers | manifest schema v1; canonical `client/client.json`; streaming tar extraction | `/api/backup/archive` delegates export and restore to the application service; HTTP upload is staged to disk; v1 decryption and tar extraction stream to staging files; restore uses file-level rollback and recovery journal | Legacy filesystem remains physical persistence truth; application service owns backup use-case orchestration | local snapshots still materialize selected entries; compatibility Buffer APIs remain for local snapshot and older callers | `/api/backup/archive` retains protocol/auth/runtime transport concerns only | migration in progress | add staged-tree atomic cutover semantics | staged validation, journal recovery and cutover are service-owned; legacy route only transports |
 
 ## Canvas Authority Result
 
@@ -38,7 +38,7 @@
 | Workspace persistence | workspace/storage tests | restore after restart | persistence owner remains legacy |
 | Task lifecycle | `tests/task-runtime.test.mjs`, video/task tests | cancel/retry in UI | clone/progress still specialized |
 | Provider execution | provider compatibility/video provider tests | configured provider smoke | routing/failover still legacy |
-| Backup / Restore | `tests/backup-archive.test.mjs`, `tests/backup-crypto.test.mjs`, snapshot tests | encrypted archive round trip | no independent backup application service |
+| Backup / Restore | `tests/backup-archive.test.mjs`, `tests/backup-archive-file-source.test.mjs`, `tests/backup-crypto.test.mjs`, `tests/backup-restore-transaction.test.mjs`, snapshot tests | encrypted archive round trip, disk-backed archive source, streaming decryption, staging and journal recovery | full staged-tree validation and atomic cutover remain |
 
 ## Source-Coupled Tests Remaining
 
@@ -46,7 +46,7 @@
 
 ## Audit Boundary
 
-本轮完成 Storage repository 扩展、Backup/Restore 文件级 rollback hardening、canonical workspace schema 以及 restore tar 的流式解析；未完成加密请求与导出端的全量 Buffer 消除、独立 backup application service 或 Database Cutover，也未执行 Provider 大重构、Tool Runtime 第二轮大拆、SuperCanvas presentation 大拆或前后端物理拆分。
+本轮完成 Storage repository 扩展、Backup/Restore 文件级 rollback hardening、canonical workspace schema、restore tar 的流式解析、备份 application service、导出端磁盘文件流，以及 HTTP restore 的临时文件、流式解密和磁盘 staging；未完成 crash journal、staged-tree atomic cutover 或 Database Cutover，也未执行 Provider 大重构、Tool Runtime 第二轮大拆、SuperCanvas presentation 大拆或前后端物理拆分。
 
 `packages/tool-runtime/adapter.ts` 仍是 migration adapter；删除条件是所有 Route/approval resume 调用改用稳定 Tool Runtime ports，且 adapter 不再承载兼容业务规则。
 

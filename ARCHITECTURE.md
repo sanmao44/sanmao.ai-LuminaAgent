@@ -445,11 +445,16 @@ and workspace synchronization internals still have direct storage access and
 must be migrated before a database cutover.
 
 Backup archives use schema version 1 with `client/client.json` as the canonical
-workspace representation. Restore writes through a file-level rollback
-transaction and uses streaming tar extraction; archive construction,
-encryption/decryption and HTTP request ingestion still use bounded full
-buffers. No database adapter is active yet; the final local/server database
-choice remains a Phase 11 blocker.
+workspace representation. `lib/backup-application-service.ts` owns export and
+restore orchestration while the HTTP route only authenticates, parses and
+serializes. Restore writes through a file-level rollback transaction and uses
+streaming tar extraction. Archive export now reads disk-backed entries through
+file streams and hashes them without a second media buffer. HTTP restore stages
+the request body to a bounded temporary file, decrypts the v1 envelope as a
+stream, and extracts tar entries directly to staging files before the rollback
+transaction copies them into place. Compatibility Buffer APIs remain for local
+snapshots and older callers. No database adapter is active yet; the final
+local/server database choice remains a Phase 11 blocker.
 
 ---
 

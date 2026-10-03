@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import test from 'node:test';
 import ts from 'typescript';
 
@@ -25,5 +27,21 @@ test('rejects short or incorrect backup passwords without exposing plaintext', (
   const tampered = Buffer.from(encrypted);
   tampered[tampered.length - 1] ^= 1;
   assert.throws(() => crypto.decryptBackupPayload(tampered, 'correct-local-password'), /密码错误或备份文件已被篡改/);
+});
+
+test('decrypts the v1 envelope from disk without a full payload buffer', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sanmao-crypto-'));
+  try {
+    const payload = Buffer.alloc(2 * 1024 * 1024 + 31, 5);
+    const encrypted = crypto.encryptBackupPayload(payload, 'correct-local-password');
+    const input = join(root, 'input.backup');
+    const output = join(root, 'output.archive');
+    await writeFile(input, encrypted);
+    assert.equal(await crypto.isEncryptedBackupFile(input), true);
+    await crypto.decryptBackupFile(input, output, 'correct-local-password');
+    assert.deepEqual(await readFile(output), payload);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 

@@ -387,6 +387,7 @@ export async function restoreLocalSnapshot(snapshotPath: string, configuredStora
   await mkdir(providerConfigDir, { recursive: true });
   const transaction = new BackupRestoreTransaction(dataDir, `snapshot-${process.pid}-${Date.now()}`);
   try {
+    await BackupRestoreTransaction.recover(dataDir);
     await transaction.write(statePath, `${JSON.stringify(state, null, 2)}\n`);
     const restoredLogs = entries.filter((entry) => entry.name.startsWith('server/logs/') && entry.name.endsWith('.jsonl'));
     for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) await transaction.remove(path.join(dataDir, name));

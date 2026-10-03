@@ -17,7 +17,7 @@
 | Phase 7 Canvas Core | cutover completed | CanvasCore 已成为 Document、History、Selection 的唯一 authority；SuperCanvas 只保留 projection、gesture、persistence 与 UI adapter。 |
 | Phase 8 UI cleanup | migration in progress | Shell, sidebar and Agent presentation are extracted; app/page.tsx remains composition/state owner. |
 | Data Architecture Gate 1 | migration in progress | Repository ownership expanded; remaining direct storage paths are recorded in storage-boundary.md. |
-| Backup / Restore Hardening | migration in progress | Restore uses file-level rollback transactions; archive schema v1 is canonical for client workspace; streaming and application-service extraction remain. |
+| Backup / Restore Hardening | migration in progress | Restore uses file-level rollback transactions; archive schema v1 is canonical for client workspace; export/restore orchestration is in an application service; HTTP restore staging, streaming v1 decryption, and disk-backed tar extraction avoid full request and media buffers. |
 | Database Cutover | migration in progress | No database adapter has been selected or activated; DB-ready repository ports and rollback prerequisites remain. |
 | Round 7 Architecture Audit | cutover completed | Migration matrix established from real call paths. |
 | Round 8 Agent / Tool / MCP test seam | cutover completed | Tool/MCP behavior is covered by real Runtime/MCP executor paths; remaining source assertions migrate by domain. |
@@ -517,5 +517,5 @@ Architecture Audit II（Canvas authority 已 cutover，迁移记录已更新）
 下一次代码施工优先级：
 
 ```text
-Storage Consolidation → Backup / Restore Hardening → Database Cutover（本轮完成 repository 扩展与 restore rollback；数据库仍因方案未确定保持 blocker）；保持 `packages/tool-runtime/adapter.ts` 为有删除条件的 migration adapter
+Storage Consolidation → Backup / Restore Hardening → Database Cutover（本轮完成 repository 扩展、restore rollback、流式导入和 crash journal；数据库仍因方案未确定保持 blocker）；保持 `packages/tool-runtime/adapter.ts` 为有删除条件的 migration adapter
 ```
