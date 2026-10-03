@@ -16,6 +16,7 @@ function normalizePath(target) {
 export function createTsRequire(baseDir) {
   // Windows 上来自 fileURLToPath 之外的路径可能带前导斜杠，先归一化再解析依赖。
   const base = path.resolve(normalizePath(baseDir));
+  const projectRoot = path.basename(base).toLowerCase() === 'lib' ? path.dirname(base) : base;
   const nodeRequire = createRequire(path.join(base, 'noop.cjs'));
   const cache = new Map();
 
@@ -25,8 +26,9 @@ export function createTsRequire(baseDir) {
    * 测试会崩在 MODULE_NOT_FOUND，而且报出来的是别名，看不出真正原因。
    */
   const aliasFile = (specifier) => {
-    if (specifier.startsWith('@/lib/')) return `${path.join(base, normalizePath(specifier.slice('@/lib/'.length)))}.ts`;
-    if (specifier.startsWith('@/packages/')) return `${path.join(path.dirname(base), 'packages', normalizePath(specifier.slice('@/packages/'.length)))}.ts`;
+    if (specifier.startsWith('@/lib/')) return `${path.join(projectRoot, 'lib', normalizePath(specifier.slice('@/lib/'.length)))}.ts`;
+    if (specifier.startsWith('@/packages/')) return `${path.join(projectRoot, 'packages', normalizePath(specifier.slice('@/packages/'.length)))}.ts`;
+    if (specifier.startsWith('@/apps/')) return `${path.join(projectRoot, 'apps', normalizePath(specifier.slice('@/apps/'.length)))}.ts`;
     return null;
   };
 

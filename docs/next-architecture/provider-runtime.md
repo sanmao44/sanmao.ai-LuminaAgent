@@ -18,14 +18,17 @@ timeouts, usage accounting and provider health tracking remain unchanged.
 ## Real path
 
 The non-streamed compact plain Agent turn now uses
-`createLegacyChatModelRuntime`. It receives the same selected registry model,
-the same bounded messages and the same tracked `chatCompletion` callback.
-Streaming, tools, MCP, images, video, search and route-level model selection
-remain on the existing path.
+`packages/model-runtime/legacy-chat-adapter.ts`. It receives the same selected
+registry model, the same bounded messages and the same tracked `chatCompletion`
+callback. Provider attempt lifecycle, bounded telemetry and failover looping
+are shared by `packages/model-runtime/invocation.ts`; the route still injects
+timeout, candidate selection and health tracking. Streaming, tools, MCP,
+images, video and search remain on the existing path.
 
 ## Non-goals and remaining legacy responsibility
 
-This slice does not move provider HTTP/SDK code, routing policy, failover,
-health persistence, streaming or media operations. `lib/providers.ts` remains
-the temporary transport adapter until each capability gets a behavior-tested
-port.
+This slice does not move provider HTTP/SDK code, routing policy, health
+persistence, streaming or media operations. `lib/providers.ts` remains the
+temporary transport adapter until each capability gets a behavior-tested port.
+The former `lib/provider-runtime/chat.ts` and root `packages/model-runtime.ts`
+bridges were removed after their callers moved to the package seams.

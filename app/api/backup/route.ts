@@ -5,7 +5,7 @@ import { resolveLocalDataDir, resolveProviderConfigDir } from '@/lib/data-paths'
 import { isSqliteActive } from '@/lib/database/sqlite';
 import { getStoredStateForBackup, type StoreData } from '@/lib/store';
 import { BackupRestoreTransaction } from '@/lib/backup-restore-transaction';
-import { openSqliteDatabase, replaceSqliteDomain, sqliteDatabasePath } from '@/lib/database/sqlite';
+import { markSqliteDatabaseChanged, openSqliteDatabase, replaceSqliteDomain, sqliteDatabasePath } from '@/lib/database/sqlite';
 
 export const runtime = 'nodejs';
 
@@ -70,6 +70,7 @@ export async function POST(request: Request) {
         await copyFile(sqliteDatabasePath(dataDir), stagedDatabase);
         const db = openSqliteDatabase(stagedDatabase);
         replaceSqliteDomain(db, 'provider-config', [{ key: 'primary', value: JSON.parse(state) as StoreData }]);
+        markSqliteDatabaseChanged(db);
         db.close();
         await transaction.copy(stagedDatabase, sqliteDatabasePath(dataDir));
       } else {

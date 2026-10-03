@@ -79,6 +79,46 @@ test('database rollback refuses after a post-cutover write instead of losing new
   assert.ok(result.restartRequired);
 });
 
+test('backup restore closes rollback window and preserves restored SQLite data', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-db-backup-restore-window-'));
+  const previousDataDir = process.env.SANMAO_DATA_DIR;
+  const previousProviderDir = process.env.SANMAO_PROVIDER_CONFIG_DIR;
+  const previousImageStorage = process.env.SANMAO_IMAGE_STORAGE_PATH;
+  const previousVideoStorage = process.env.SANMAO_VIDEO_STORAGE_PATH;
+  const previousAudioStorage = process.env.SANMAO_AUDIO_STORAGE_PATH;
+  const previousSnapshotMinFree = process.env.SANMAO_SNAPSHOT_MIN_FREE_BYTES;
+  process.env.SANMAO_DATA_DIR = root;
+  process.env.SANMAO_PROVIDER_CONFIG_DIR = root;
+  process.env.SANMAO_IMAGE_STORAGE_PATH = path.join(root, 'images');
+  process.env.SANMAO_VIDEO_STORAGE_PATH = path.join(root, 'videos');
+  process.env.SANMAO_AUDIO_STORAGE_PATH = path.join(root, 'audio');
+  process.env.SANMAO_SNAPSHOT_MIN_FREE_BYTES = '0';
+  try {
+    await writeFile(path.join(root, 'workspace.json'), JSON.stringify({ ...workspace(), clientId: 'before' }));
+    await migration.migrateLegacyStorageToSqlite({ dataDir: root, providerConfigDir: root, now: () => '2026-01-01T00:00:00.000Z' });
+    const backup = createTsRequire(process.cwd())('./lib/backup-application-service');
+    const restoredWorkspace = { ...workspace(), clientId: 'restored' };
+    const exported = await backup.createBackupExport({ workspace: restoredWorkspace }, 'test-password', 'content');
+    await backup.restoreBackupArchive(exported.encrypted, 'test-password');
+    await assert.rejects(() => migration.rollbackSqliteMigration(root), /普通 rollback 已拒绝/);
+    assert.equal(sqlite.readSqliteRecord('workspace', 'primary', root).clientId, 'restored');
+  } finally {
+    if (previousDataDir === undefined) delete process.env.SANMAO_DATA_DIR;
+    else process.env.SANMAO_DATA_DIR = previousDataDir;
+    if (previousProviderDir === undefined) delete process.env.SANMAO_PROVIDER_CONFIG_DIR;
+    else process.env.SANMAO_PROVIDER_CONFIG_DIR = previousProviderDir;
+    if (previousImageStorage === undefined) delete process.env.SANMAO_IMAGE_STORAGE_PATH;
+    else process.env.SANMAO_IMAGE_STORAGE_PATH = previousImageStorage;
+    if (previousVideoStorage === undefined) delete process.env.SANMAO_VIDEO_STORAGE_PATH;
+    else process.env.SANMAO_VIDEO_STORAGE_PATH = previousVideoStorage;
+    if (previousAudioStorage === undefined) delete process.env.SANMAO_AUDIO_STORAGE_PATH;
+    else process.env.SANMAO_AUDIO_STORAGE_PATH = previousAudioStorage;
+    if (previousSnapshotMinFree === undefined) delete process.env.SANMAO_SNAPSHOT_MIN_FREE_BYTES;
+    else process.env.SANMAO_SNAPSHOT_MIN_FREE_BYTES = previousSnapshotMinFree;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('migration command drains runtime and reports restart-required cutover', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-db-command-'));
   await writeFile(path.join(root, 'workspace.json'), JSON.stringify(workspace()));

@@ -1,13 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
-const source = await readFile(new URL('../lib/provider-runtime/chat.ts', import.meta.url), 'utf8');
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
-const { createLegacyChatModelRuntime } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { createLegacyChatModelRuntime } = createTsRequire(process.cwd())('./packages/model-runtime/legacy-chat-adapter');
 
 test('legacy chat adapter normalizes provider responses behind the model contract', async () => {
   const calls = [];

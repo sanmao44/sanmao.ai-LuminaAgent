@@ -1,5 +1,6 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { cleanupCloneJobDirectory, renderBlueprintVariant, renderBlueprintVariants, rerenderCloneJob, runCloneJob } from '@/lib/clone/pipeline';
+import { cleanupCloneJobDirectory, renderBlueprintVariant, renderBlueprintVariants, rerenderCloneJob } from '@/lib/clone/pipeline';
+import { dispatchCloneExecutionJob } from '@/apps/worker/task-entry';
 import { buildBlueprintVariantPlans, normalizeCloneOptions } from '@/lib/clone/plan';
 import { findCloneJob, removeCloneJob, updateCloneJob } from '@/lib/clone/store';
 import { canResumeCloneJob, cloneTaskRuntime } from '@/lib/clone/task-runtime';
@@ -225,7 +226,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
     const latest = await findCloneJob(id) || job;
     const updated = await updateCloneJob(id, { planConfirmed: true, shots, blueprint: latest.blueprint ? { ...latest.blueprint, shots, updatedAt: new Date().toISOString() } : undefined, stage: 'queued', message: '已确认镜头计划，等待生成' });
-    void runCloneJob(id).catch(() => undefined);
+    dispatchCloneExecutionJob(id);
     return Response.json({ ok: true, job: updated }, { status: 202 });
   }
   if (action !== 'resume') return Response.json({ error: '不支持的操作。' }, { status: 400 });
@@ -233,7 +234,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return Response.json({ error: '这条任务已经结束了，请重新设置参数再开始。' }, { status: 400 });
   }
   // 续跑是后台任务，立刻把任务交回前端轮询。
-  void runCloneJob(id).catch(() => undefined);
+  dispatchCloneExecutionJob(id);
   return Response.json({ ok: true, job: await findCloneJob(id) }, { status: 202 });
 }
 

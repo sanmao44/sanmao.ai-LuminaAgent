@@ -11,7 +11,7 @@ import { encryptSecret } from './store';
 import { resolveLocalDataDir, resolveProviderConfigDir } from './data-paths';
 import { BackupRestoreTransaction } from './backup-restore-transaction';
 import { validateWorkspaceShape } from './workspace-format';
-import { isSqliteActive, listSqliteRecords, openSqliteDatabase, readSqliteRecord, replaceSqliteDomain, sqliteDatabasePath } from './database/sqlite';
+import { isSqliteActive, listSqliteRecords, markSqliteDatabaseChanged, openSqliteDatabase, readSqliteRecord, replaceSqliteDomain, sqliteDatabasePath } from './database/sqlite';
 import { getStoredStateForBackup } from './store';
 import { readAuthoritativeWorkspace } from './repositories/server-workspace-repository';
 
@@ -414,6 +414,11 @@ export async function restoreLocalSnapshot(snapshotPath: string, configuredStora
       }
       const mcp = byName.get('server/mcp/servers.json');
       replaceSqliteDomain(db, 'mcp', mcp ? [{ key: 'primary', value: JSON.parse(mcp.data.toString('utf8')) }] : []);
+      // Snapshot restore is an authoritative SQLite mutation and therefore
+      // closes the strict rollback window before the staged image is swapped.
+      db.exec('BEGIN IMMEDIATE');
+      markSqliteDatabaseChanged(db);
+      db.exec('COMMIT');
       db.close();
       await transaction.copy(stagedDatabase, sqliteDatabasePath(dataDir));
       await rm(stagedDatabase, { force: true });

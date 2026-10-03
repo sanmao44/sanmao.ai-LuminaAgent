@@ -18,29 +18,11 @@ function isSafeImageModelFallbackError(error: unknown) {
     && explicitCompatibility;
 }
 
-async function runImageModelCandidates<T extends { model: { id: string } }, R>(
+const runImageModelCandidates = <T extends { model: { id: string } }, R>(
   initial: T,
   loadFallbacks: () => Promise<readonly T[]>,
   operation: (runtime: T) => Promise<R>,
-) {
-  const candidates: T[] = [initial];
-  let fallbacksLoaded = false;
-  for (let index = 0; index < candidates.length; index += 1) {
-    try {
-      return await operation(candidates[index]);
-    } catch (error) {
-      if (!isSafeImageModelFallbackError(error)) throw error;
-      if (index < candidates.length - 1) continue;
-      if (fallbacksLoaded) throw error;
-      fallbacksLoaded = true;
-      let fallbacks: readonly T[];
-      try { fallbacks = await loadFallbacks(); } catch { throw error; }
-      candidates.push(...fallbacks.filter((candidate) => candidate.model.id !== initial.model.id));
-      if (index >= candidates.length - 1) throw error;
-    }
-  }
-  throw new Error('没有可用的生图模型');
-}
+) => invokeModelCandidates(initial, loadFallbacks, operation, isSafeImageModelFallbackError);
 import { buildCinematicDirectorInstructions } from '@/lib/cinematic-shock-opening-director';
 import { isValidOneTakeDuration, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { isTrustedAppRequest } from '@/lib/auth';
@@ -111,9 +93,10 @@ import {
   type PresentationInput,
   type SpreadsheetInput,
 } from '@/lib/artifacts';
-import { runPlainAgentTurn } from '@/lib/agent/runtime';
-import type { AgentMessage, ModelDescriptor } from '@/lib/agent/runtime';
-import { createLegacyChatModelRuntime } from '@/packages/model-runtime';
+import { runPlainAgentTurn } from '@/apps/api/agent-entry';
+import type { AgentMessage, ModelDescriptor } from '@/packages/contracts';
+import { createLegacyChatModelRuntime } from '@/packages/model-runtime/legacy-chat-adapter';
+import { invokeModelCandidates, invokeProviderWithFailover } from '@/packages/model-runtime/invocation';
 
 async function safeDiscoverMcpForRequest(options: Parameters<typeof discoverMcpForRequest>[0]) {
   try {
@@ -981,24 +964,20 @@ export async function POST(request: Request) {
       operation: (runtime: NonNullable<typeof agentRuntime>, callSignal: AbortSignal) => Promise<T>,
     ) => {
       const canFailover = automaticChatModel && orderedRuntimeCandidates.length > 1 && !payload.tools?.length;
-      while (true) {
-        const runtime = agentRuntime;
-        const startedAt = Date.now();
-        llmCallCount += 1;
-        const providerOperationId = `${agentRunId || 'agent-request'}-provider-${llmCallCount}`;
-        void runtimeObserver.emit({ operationId: providerOperationId, kind: 'provider', phase: 'started', at: startedAt, identity: runtime.provider.name });
-        try {
-          const result = await withAgentCallDeadline(signal, canFailover ? AGENT_AUTO_FAILOVER_TIMEOUT_MS : AGENT_MODEL_CALL_TIMEOUT_MS, (callSignal) => operation(runtime, callSignal));
-          noteAgentModelSuccess(runtime, Date.now() - startedAt);
-          void runtimeObserver.emit({ operationId: providerOperationId, kind: 'provider', phase: 'completed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'completed', identity: runtime.provider.name });
-          return result;
-        } catch (error) {
-          if (isAgentRequestCancelled(error)) throw error;
-          noteAgentModelFailure(runtime, error, Date.now() - startedAt);
-          void runtimeObserver.emit({ operationId: providerOperationId, kind: 'provider', phase: 'failed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'failed', identity: runtime.provider.name, errorClass: error instanceof Error ? error.name : 'UnknownError' });
-          if (!canFailover || !advanceAgentModel()) throw error;
-        }
-      }
+      return invokeProviderWithFailover({
+        current: () => agentRuntime,
+        canFailover,
+        advance: advanceAgentModel,
+        signal,
+        operation: (runtime, callSignal) => withAgentCallDeadline(signal, canFailover ? AGENT_AUTO_FAILOVER_TIMEOUT_MS : AGENT_MODEL_CALL_TIMEOUT_MS, (deadlineSignal) => operation(runtime, deadlineSignal || callSignal)),
+        isCancelled: isAgentRequestCancelled,
+        identity: (runtime) => runtime.provider.name,
+        operationIdPrefix: agentRunId || 'agent-request',
+        observer: runtimeObserver,
+        nextAttempt: () => { llmCallCount += 1; return llmCallCount; },
+        onSuccess: noteAgentModelSuccess,
+        onFailure: noteAgentModelFailure,
+      });
     };
     const trackedChatCompletion = (
       provider: Parameters<typeof chatCompletion>[0],
@@ -1021,16 +1000,20 @@ export async function POST(request: Request) {
       signal: AbortSignal,
       operation: (selectedRuntime: NonNullable<typeof agentRuntime>, callSignal: AbortSignal) => Promise<T>,
     ) => {
-      const startedAt = Date.now();
-      llmCallCount += 1;
-      try {
-        const result = await operation(runtime, signal);
-        noteAgentModelSuccess(runtime, Date.now() - startedAt);
-        return result;
-      } catch (error) {
-        if (!isAgentRequestCancelled(error)) noteAgentModelFailure(runtime, error, Date.now() - startedAt);
-        throw error;
-      }
+      return invokeProviderWithFailover({
+        current: () => runtime,
+        canFailover: false,
+        advance: () => false,
+        signal,
+        operation: (_selectedRuntime, callSignal) => operation(runtime, callSignal),
+        isCancelled: isAgentRequestCancelled,
+        identity: (selectedRuntime) => selectedRuntime.provider.name,
+        operationIdPrefix: agentRunId || 'agent-request',
+        observer: runtimeObserver,
+        nextAttempt: () => { llmCallCount += 1; return llmCallCount; },
+        onSuccess: noteAgentModelSuccess,
+        onFailure: noteAgentModelFailure,
+      });
     };
     const trackedSpecificChatCompletion = (
       runtime: NonNullable<typeof agentRuntime>,

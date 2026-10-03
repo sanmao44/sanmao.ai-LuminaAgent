@@ -523,5 +523,5 @@ Data Cutover Closure 已完成；Part B 为 migration in progress
 下一次代码施工优先级：
 
 ```text
-Part A 已完成 server repository 收口、多物理根 restore rollback、流式 HTTP backup、crash journal、SQLite cutover、migration command 与 observer 接线；Part B 已建立 Agent API 与 Clone Worker 的首批真实入口，并补充 Provider/Task observer 与边界 eval，继续保持 `packages/tool-runtime/adapter.ts` 为有删除条件的 migration adapter，沿真实 ownership seam 推进。
+Part A 已完成 server repository 收口、多物理根 restore rollback、流式 HTTP backup、crash journal、SQLite cutover、migration command 与 observer 接线；Part B 已建立 Agent API 与 Clone Worker 的真实入口，确认/恢复后的 Clone 执行也统一经 Worker dispatch，Provider 调用生命周期已收口到 `packages/model-runtime/invocation.ts`，并删除无调用的 Agent/Provider 兼容桥。`packages/tool-runtime/adapter.ts` 仍是有删除条件的 migration adapter，继续沿真实 ownership seam 推进。
 ```

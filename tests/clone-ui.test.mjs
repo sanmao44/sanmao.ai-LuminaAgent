@@ -331,7 +331,7 @@ test("关掉弹窗不等于任务丢了：重开接回任务、失败可续跑�
   assert.match(dialog, /action: "resume" \}\)/);
   assert.match(dialog, /沿用这条任务接着跑/);
   assert.match(jobRoute, /if \(action !== 'resume'\)/);
-  assert.match(jobRoute, /void runCloneJob\(id\)/);
+  assert.match(jobRoute, /dispatchCloneExecutionJob\(id\)/);
 });
 
 test("拆解轨道自动优先带视觉的模型，不再被默认纯文本模型拖成等间隔切分", () => {

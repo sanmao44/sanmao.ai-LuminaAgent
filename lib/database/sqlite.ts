@@ -122,7 +122,7 @@ export async function withSqliteTransaction<T>(fn: (db: DatabaseSync) => T | Pro
     db.exec('BEGIN IMMEDIATE');
     try {
       const result = await fn(db);
-      db.exec("INSERT INTO sanmao_meta(key, value) VALUES ('postCutoverWrites', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1");
+      markSqliteDatabaseChanged(db);
       db.exec('COMMIT');
       return result;
     } catch (error) {
@@ -137,6 +137,11 @@ export async function withSqliteTransaction<T>(fn: (db: DatabaseSync) => T | Pro
 export function sqlitePostCutoverWrites(dataDir = resolveLocalDataDir()) {
   if (!isSqliteActive(dataDir)) return 0;
   return withSqliteDatabase((db) => Number((db.prepare("SELECT value FROM sanmao_meta WHERE key = 'postCutoverWrites'").get() as { value?: string } | undefined)?.value || 0), dataDir);
+}
+
+/** Mark the SQLite authoritative image as changed after cutover. */
+export function markSqliteDatabaseChanged(db: DatabaseSync) {
+  db.exec("INSERT INTO sanmao_meta(key, value) VALUES ('postCutoverWrites', '1') ON CONFLICT(key) DO UPDATE SET value = '1'");
 }
 
 export function readSqliteRecord<T>(domain: string, key: string, dataDir = resolveLocalDataDir()): T | null {
@@ -159,7 +164,7 @@ export function writeSqliteRecord<T>(domain: string, key: string, value: T, data
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(domain, record_key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
         .run(domain, key, JSON.stringify(value), new Date().toISOString(), order);
-      db.exec("INSERT INTO sanmao_meta(key, value) VALUES ('postCutoverWrites', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1");
+      markSqliteDatabaseChanged(db);
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');
@@ -179,7 +184,7 @@ export function deleteSqliteRecord(domain: string, key: string, dataDir = resolv
     db.exec('BEGIN IMMEDIATE');
     try {
       db.prepare('DELETE FROM sanmao_records WHERE domain = ? AND record_key = ?').run(domain, key);
-      db.exec("INSERT INTO sanmao_meta(key, value) VALUES ('postCutoverWrites', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1");
+      markSqliteDatabaseChanged(db);
       db.exec('COMMIT');
     } catch (error) {
       try { db.exec('ROLLBACK'); } catch {}
@@ -199,7 +204,7 @@ export function replaceSqliteDomain<T>(db: DatabaseSync, domain: string, records
       VALUES (?, ?, ?, ?, ?)`);
     const now = new Date().toISOString();
     records.forEach((record, index) => insert.run(domain, record.key, JSON.stringify(record.value), now, index));
-    if (countAsPostCutoverWrite) db.exec("INSERT INTO sanmao_meta(key, value) VALUES ('postCutoverWrites', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1");
+    if (countAsPostCutoverWrite) markSqliteDatabaseChanged(db);
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');

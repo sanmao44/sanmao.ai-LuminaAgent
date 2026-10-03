@@ -14,7 +14,7 @@ import { resolveLocalDataDir, resolveProviderConfigDir } from '@/lib/data-paths'
 import { validateWorkspaceShape } from '@/lib/workspace-format';
 import { BackupRestoreTransaction } from '@/lib/backup-restore-transaction';
 import { getStoredStateForBackup } from '@/lib/store';
-import { isSqliteActive, listSqliteRecords, openSqliteDatabase, readSqliteRecord, replaceSqliteDomain, sqliteDatabasePath } from '@/lib/database/sqlite';
+import { isSqliteActive, listSqliteRecords, markSqliteDatabaseChanged, openSqliteDatabase, readSqliteRecord, replaceSqliteDomain, sqliteDatabasePath } from '@/lib/database/sqlite';
 import { CURRENT_BACKUP_SCHEMA_VERSION, validateCurrentBackupManifest } from '@/lib/backup-schema';
 import type { RuntimeObserver } from '@/packages/contracts/observability';
 
@@ -355,6 +355,12 @@ async function restoreArchive(entries: RestoreEntry[]) {
       }
       const mcp = byName.get('server/mcp/servers.json');
       replaceSqliteDomain(db, 'mcp', mcp ? [{ key: 'primary', value: JSON.parse((await readEntry(mcp)).toString('utf8')) }] : [], false);
+      // A successful restore changes the authoritative SQLite state even
+      // though it is prepared in a staged image. Close the ordinary rollback
+      // window before swapping the image into place.
+      db.exec('BEGIN IMMEDIATE');
+      markSqliteDatabaseChanged(db);
+      db.exec('COMMIT');
       db.close();
       await transaction.copy(stagedDatabase, sqliteDatabasePath(dataDir));
     } else {

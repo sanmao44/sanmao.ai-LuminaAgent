@@ -439,11 +439,17 @@ Repository Port
 
 Part B has started at real ownership seams. `apps/api/agent-entry.ts` is the
 application entry for the migrated compact text Agent turn, and
-`packages/model-runtime` owns its provider-neutral legacy chat adapter.
-`apps/worker/task-entry.ts` dispatches Clone's long-running pipeline without
-making the HTTP route the worker owner. The existing Next app still hosts the
+`packages/model-runtime/legacy-chat-adapter.ts` owns its provider-neutral
+legacy chat adapter. Provider attempt/failover lifecycle is shared through
+`packages/model-runtime/invocation.ts`; the route supplies timeout, health and
+candidate selection policy.
+`apps/worker/task-entry.ts` dispatches Clone analysis and confirmed/resumed
+execution without making the HTTP route the worker owner. The existing Next app still hosts the
 remaining streaming, media, provider failover and task polling paths, so this
-is `migration in progress`, not a completed physical split.
+is `migration in progress`, not a completed physical split. The old
+`lib/agent/runtime.ts`, `lib/provider-runtime/chat.ts` and root
+`packages/model-runtime.ts` compatibility bridges are removed; imports now
+target the package and application seams directly.
 
 The repository ports are now used by conversation, workspace gallery,
 asset-collection, video/upscale task, clone-job and Agent-progress paths.
