@@ -107,3 +107,32 @@ test('Provider streaming deadline preserves response status and bounds idle chun
   assert.equal(response.headers.get('x-provider'), 'test');
   assert.equal(await response.text(), 'firstsecond');
 });
+
+test('Provider streaming deadline rejects when the first chunk never arrives', async () => {
+  const { withProviderResponseDeadline } = load('./packages/model-runtime/invocation');
+  const response = await withProviderResponseDeadline({
+    signal: new AbortController().signal,
+    timeoutMs: 10,
+    idleTimeoutMs: 10,
+    operation: async () => new Response(new ReadableStream(), { status: 200 }),
+    timeoutError: (phase, timeoutMs) => new Error(`${phase}:${timeoutMs}`),
+  }).catch((error) => error);
+  assert.equal(response instanceof Error, true);
+  assert.equal(response.message, 'initial:10');
+});
+
+test('Provider streaming deadline rejects when a later chunk stalls', async () => {
+  const { withProviderResponseDeadline } = load('./packages/model-runtime/invocation');
+  const body = new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('first')); },
+    pull() { return new Promise(() => {}); },
+  });
+  const response = await withProviderResponseDeadline({
+    signal: new AbortController().signal,
+    timeoutMs: 100,
+    idleTimeoutMs: 10,
+    operation: async () => new Response(body, { status: 200 }),
+    timeoutError: (phase, timeoutMs) => new Error(`${phase}:${timeoutMs}`),
+  });
+  await assert.rejects(() => response.text(), /idle:10/);
+});

@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { buildLibModules } from './lib-build.mjs';
 
@@ -15,6 +14,7 @@ const context = await load('workspace-context');
 const activity = await load('adapters');
 const runContext = await load('run-context');
 const provenance = await load('normalize');
+const { prepareAgentRequestContext } = await import('../packages/agent-core/request-context.ts');
 
 test('workspace context keeps a stable local scope and normalizes persisted values', () => {
   const values = new Map();
@@ -176,11 +176,10 @@ test('canvas lineage resolves persisted edges and legacy source fields per task'
   assert.equal(provenance.canvasLineageForTask(document, 'other').length, 0);
 });
 
-test('agent route consumes the context and writes it into task logs', async () => {
-  const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
-  assert.match(route, /normalizeWorkspaceContext\(body\.context\)/);
-  assert.match(route, /projectId: workspaceContext\.creativeProjectId/);
-  assert.match(route, /canvasId: workspaceContext\.canvasId/);
-  assert.match(route, /taskId: agentRunId/);
-  assert.match(route, /\.\.\.taskContext/);
+test('agent application context writes stable workspace fields into task logs', () => {
+  const result = prepareAgentRequestContext({
+    body: { context: { creativeProjectId: 'p', chatId: 'c', canvasId: 'cv', selectedNodeIds: ['n'] } },
+    runId: 'agent-run', normalizeWorkspaceContext: (value) => value, normalizeDocument: (value) => value, normalizeGenerationSource: () => 'agent',
+  });
+  assert.deepEqual(result.taskContext, { projectId: 'p', chatId: 'c', canvasId: 'cv', nodeId: 'n', taskId: 'agent-run' });
 });

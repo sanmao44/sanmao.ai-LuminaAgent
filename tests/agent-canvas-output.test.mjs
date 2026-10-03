@@ -1,26 +1,33 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { createTsRequire } from './ts-require.mjs';
 
-const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
-const superCanvas = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
+const load = createTsRequire(process.cwd());
 
-test('canvas Agent requests suppress continuation directions without changing main Agent behavior', () => {
-  assert.ok(route.includes("const isCanvasSource = sourceForLog === 'canvas';"));
-  assert.match(
-    route,
-    /const ordinaryChatDirectionsInstructions = isCanvasSource\s*\n\s*\? .*超级画布输出规则：只输出本轮任务所需的最终结果。/s,
-  );
-  assert.ok(route.includes('只在任务完成且确有帮助时，追加“你还可以继续”小节'));
-  assert.ok(route.includes('每条必须是用户向助手下达的指令'));
+test('Agent request context marks canvas nodes as text-only and keeps dock execution explicit', () => {
+  const { prepareAgentRequestContext } = load('./packages/agent-core/request-context');
+  const normalizedWorkspace = { creativeProjectId: 'project-1', chatId: 'chat-1', canvasId: 'canvas-1', selectedNodeIds: ['node-1'] };
+  const node = prepareAgentRequestContext({
+    body: { source: 'canvas', executionMode: 'node', context: { selectedNodeIds: ['node-1'] }, canvasTarget: { kind: 'image', operation: 'edit' } },
+    runId: 'run-1', normalizeWorkspaceContext: () => normalizedWorkspace, normalizeDocument: (value) => value, normalizeGenerationSource: () => 'canvas',
+  });
+  assert.equal(node.isCanvasSource, true);
+  assert.equal(node.isCanvasNodeExecution, true);
+  assert.equal(node.canvasTargetKind, 'image');
+  assert.equal(node.taskContext.taskId, 'run-1');
+
+  const dock = prepareAgentRequestContext({
+    body: { source: 'canvas', executionMode: 'agent-dock', canvasTarget: { kind: 'image', operation: 'edit' } },
+    runId: 'run-2', normalizeWorkspaceContext: () => null, normalizeDocument: (value) => value, normalizeGenerationSource: () => 'canvas',
+  });
+  assert.equal(dock.isCanvasNodeExecution, false);
 });
 
-test('canvas Agent commits only a non-empty final message and clears streamed drafts on failure', () => {
-  assert.match(
-    superCanvas,
-    /let finalEventReceived = false;[\s\S]*?let finalEventText = "";[\s\S]*?if \(event\.type === "final"\)[\s\S]*?finalEventText = String\(event\.message \|\| ""\)\.trim\(\);[\s\S]*?const responseText = String\(finalEventReceived \? finalEventText : response\.message \|\| ""\)\.trim\(\);\s*if \(!responseText\) throw new Error\("Agent 没有返回有效结果，请重试。"\);/,
-  );
-  assert.ok(superCanvas.includes('agentResponse: undefined,'));
-  assert.ok(superCanvas.includes('text: String(node.data.agentPrompt || prompt),'));
-  assert.ok(superCanvas.includes('role: "Agent 输入",'));
+test('Agent request context derives stable task ownership fields from workspace state', () => {
+  const { prepareAgentRequestContext } = load('./packages/agent-core/request-context');
+  const result = prepareAgentRequestContext({
+    body: { context: { creativeProjectId: 'p', chatId: 'c', canvasId: 'cv', selectedNodeIds: ['n'] } },
+    runId: 'agent-run', normalizeWorkspaceContext: (value) => value, normalizeDocument: (value) => value, normalizeGenerationSource: () => 'agent',
+  });
+  assert.deepEqual(result.taskContext, { projectId: 'p', chatId: 'c', canvasId: 'cv', nodeId: 'n', taskId: 'agent-run' });
 });

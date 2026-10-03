@@ -2,7 +2,7 @@
 
 > **当前状态（2026-10-02）**：Canvas Document、History、Selection 已由 CanvasCore 完成 authority cutover；全域 Legacy removal 仍未完成。各领域真实调用链、双轨状态、绕过点和删除条件见 [`docs/next-architecture/migration-status.md`](docs/next-architecture/migration-status.md)。
 
-> **当前任务（2026-10-03）：Data Cutover Closure 已完成实现并通过 targeted/full verification；Physical Architecture / Remaining Migration / Legacy Purge 进入 migration in progress。** Part B 只能沿真实 ownership seam 推进，不创建空的 apps 目录或复制 God File。
+> **当前任务（2026-10-03）：Data Cutover Closure 已完成实现并通过 targeted/full verification；Physical Architecture / Remaining Migration / Legacy Purge 处于 migration in progress。** SQLite logical authoritative cutover 已完成，但 legacy database compatibility/removal 仍在迁移；Part B 只能沿真实 ownership seam 推进，不创建空的 apps 目录或复制 God File。
 
 ## 当前阶段状态
 

@@ -1,24 +1,14 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { createTsRequire } from './ts-require.mjs';
 
-const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
-const adapter = await readFile(new URL('../packages/tool-runtime/adapter.ts', import.meta.url), 'utf8');
+const load = createTsRequire(process.cwd());
 
-test('does not execute upstream image tool calls for text-only Agent requests', () => {
-  assert.ok(route.includes('const imageToolsAllowed = imageGenerationRequest;'));
-  assert.ok(route.includes('const blockedImageToolCall = !imageToolsAllowed && rawToolCalls.some(isImageToolCall);'));
-  assert.ok(route.includes('rawToolCalls.filter((call: any) => !isImageToolCall(call))'));
-  assert.ok(adapter.includes('if (!imageToolsAllowed) return { results };'));
-  assert.ok(route.includes('图片请求已拦截，正在整理文字回答'));
-});
-
-test('canvas Agent nodes are explicitly text-only while the dock opts into execution', () => {
-  assert.ok(route.includes("const isCanvasNodeExecution = isCanvasSource && body.executionMode !== 'agent-dock';"));
-  assert.ok(route.includes("requestedDeliverable = 'TEXT';"));
-  assert.ok(route.includes("const callableTools = toolSchemasFor(gatingContext, mcpTools, toolSelectionText, lazyGroupKeywords);"));
-  assert.ok(route.includes("if (isCanvasNodeExecution) callableTools.splice(0, callableTools.length);"));
-  assert.ok(route.includes("const webMode = isCanvasNodeExecution ? 'off' : resolveAgentWebMode("));
-  assert.ok(route.includes("const artifactGenerationRequest = fileGenerationRequest"));
-  assert.ok(route.includes("if (!isCanvasNodeExecution && isCanvasSource && canvasDocument) {"));
+test('tool runtime leaves image execution disabled when the capability gate is false', async () => {
+  const { createToolExecutionAdapter } = load('./packages/tool-runtime/adapter');
+  const state = { generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 1000, usedMcpTools: [], browserUses: [], browserRecoveryNeeded: false, generated: [], browserDownloadCount: 0, stalledMcpReason: '', batchItems: [], generations: [], recentPageText: '' };
+  const execute = createToolExecutionAdapter({ state, imageToolsAllowed: false, toolExecutionKind: () => 'image', agentToolProgress: () => null, reportToolProgress: () => {} });
+  const result = await execute({ call: { id: 'image-1', function: { name: 'image_generate', arguments: '{}' } }, policy: { allowed: true }, args: {} });
+  assert.deepEqual(result.results, []);
+  assert.deepEqual(state.generated, []);
 });

@@ -1,6 +1,5 @@
 import { chatCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth, type ChatContentPart, type ChatMessage } from '@/lib/providers';
 import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, getRuntimeModel, getRuntimeModelCandidates } from '@/lib/store';
-import { isAgentModelCircuitOpen, noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates } from '@/lib/agent/model-health';
 import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { getProviderPreset } from '@/lib/provider-presets';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
@@ -99,7 +98,10 @@ import {
 import { runPlainAgentTurn } from '@/apps/api/agent-entry';
 import type { AgentMessage, ModelDescriptor } from '@/packages/contracts';
 import { createLegacyChatModelRuntime } from '@/packages/model-runtime/legacy-chat-adapter';
-import { invokeModelCandidates, invokeProviderWithFailover, withProviderResponseDeadline } from '@/packages/model-runtime/invocation';
+import { invokeModelCandidates, withProviderResponseDeadline } from '@/packages/model-runtime/invocation';
+import { createProviderCoordinator } from '@/packages/model-runtime/provider-coordinator';
+import { noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates } from '@/lib/agent/model-health';
+import { prepareAgentRequestContext } from '@/packages/agent-core/request-context';
 
 async function safeDiscoverMcpForRequest(options: Parameters<typeof discoverMcpForRequest>[0]) {
   try {
@@ -465,36 +467,8 @@ export async function POST(request: Request) {
     releaseRuntimeRequest = await beginRuntimeRequest('agent');
     const body = await request.json();
     agentRunId = (await beginAgentRun((body as { runId?: unknown }).runId))?.runId || null;
-    const workspaceContext = body.context && typeof body.context === 'object'
-      ? normalizeWorkspaceContext(body.context)
-      : null;
-    const canvasDocument = body.canvasDocument && typeof body.canvasDocument === 'object'
-      ? normalizeDocument(body.canvasDocument)
-      : null;
-    const canvasTarget = body.canvasTarget && typeof body.canvasTarget === 'object'
-      ? body.canvasTarget as { nodeIds?: unknown; kind?: unknown; operation?: unknown }
-      : null;
-    const canvasTargetNodeIds = Array.isArray(canvasTarget?.nodeIds)
-      ? [...new Set(canvasTarget.nodeIds.map((id) => String(id || '').trim()).filter(Boolean))].slice(0, 64)
-      : workspaceContext?.selectedNodeIds || [];
-    const canvasTargetKind = ['none', 'text', 'image', 'video', 'mixed'].includes(String(canvasTarget?.kind))
-      ? String(canvasTarget?.kind)
-      : 'none';
-    const canvasTargetOperation = canvasTarget?.operation === 'edit' ? 'edit' : 'generate';
-    const taskContext = {
-      ...(workspaceContext ? {
-        projectId: workspaceContext.creativeProjectId,
-        chatId: workspaceContext.chatId,
-        canvasId: workspaceContext.canvasId,
-        ...(workspaceContext.selectedNodeIds[0] ? { nodeId: workspaceContext.selectedNodeIds[0] } : {}),
-      } : {}),
-      ...(agentRunId ? { taskId: agentRunId } : {}),
-    };
-    const sourceForLog: GenerationSource = normalizeGenerationSource(body.source, 'agent');
-    const isCanvasSource = sourceForLog === 'canvas';
-    // The canvas-node surface is deliberately text-only. The right-side dock
-    // is the execution surface and must opt in explicitly from the client.
-    const isCanvasNodeExecution = isCanvasSource && body.executionMode !== 'agent-dock';
+    const preparedRequestContext = prepareAgentRequestContext({ body, runId: agentRunId, normalizeWorkspaceContext, normalizeDocument, normalizeGenerationSource });
+    const { workspaceContext, canvasDocument, canvasTargetNodeIds, canvasTargetKind, canvasTargetOperation, taskContext, sourceForLog, isCanvasSource, isCanvasNodeExecution } = preparedRequestContext;
     wantsStream = body.stream === true;
     const isReversePromptTask = body.task === 'reverse_prompt';
     const isOneTakeVideoPromptTask = body.task === 'one_take_video_prompt';
@@ -537,22 +511,29 @@ export async function POST(request: Request) {
     const runtimeCandidates = typeof getRuntimeModelCandidates === 'function'
       ? await getRuntimeModelCandidates(requestedChatModelId, 'chat')
       : fallbackRuntime ? [fallbackRuntime] : [];
-    const orderedRuntimeCandidates = requestedChatModelId === 'auto'
-      ? orderAgentModelCandidates(runtimeCandidates)
-      : runtimeCandidates;
+    const orderedRuntimeCandidates = runtimeCandidates;
     let agentRuntime = orderedRuntimeCandidates[0]!;
     const automaticChatModel = requestedChatModelId === 'auto';
-    let agentRuntimeIndex = 0;
     let modelFallbackFrom = '';
-    const advanceAgentModel = () => {
-      if (!automaticChatModel || agentRuntimeIndex >= orderedRuntimeCandidates.length - 1) return false;
-      const previous = agentRuntime;
-      agentRuntimeIndex += 1;
-      agentRuntime = orderedRuntimeCandidates[agentRuntimeIndex];
-      modelFallbackFrom = previous?.model.displayName || '';
-      reportProgress({ stage: 'answering', message: `当前模型响应异常，已切换到 ${agentRuntime.model.displayName}，正在重试…` });
-      return true;
-    };
+    const providerCoordinator = createProviderCoordinator({
+      requestedModelId: requestedChatModelId,
+      candidates: orderedRuntimeCandidates,
+      signal: requestController.signal,
+      operationIdPrefix: agentRunId || 'agent-request',
+      observer: runtimeObserver,
+      nextAttempt: () => { llmCallCount += 1; return llmCallCount; },
+      reportFallback: (from, to) => {
+        modelFallbackFrom = from.model.displayName;
+        agentRuntime = to;
+        reportProgress({ stage: 'answering', message: `模型已切换到 ${to.model.displayName}` });
+      },
+      isCancelled: isAgentRequestCancelled,
+      timeoutMs: AGENT_MODEL_CALL_TIMEOUT_MS,
+      failoverTimeoutMs: AGENT_AUTO_FAILOVER_TIMEOUT_MS,
+      idleTimeoutMs: AGENT_STREAM_IDLE_TIMEOUT_MS,
+      timeoutError: (phase, durationMs) => Object.assign(new Error(phase === 'idle' ? `模型流式响应在 ${Math.round(durationMs / 1000)} 秒内没有新内容` : `模型在 ${Math.round(durationMs / 1000)} 秒内没有返回响应`), { name: 'TimeoutError', providerFailureKind: 'timeout' as const }),
+      health: { order: orderAgentModelCandidates, onSuccess: noteAgentModelSuccess, onFailure: noteAgentModelFailure },
+    });
     if (!agentRuntime) return Response.json({ error: '还没有可用的对话模型。请先到“模型库”勾选一个对话模型。' }, { status: 400 });
 
     const contextMaxChars = modelInputCharBudget(agentRuntime.model.contextWindow, agentRuntime.model.maxInputTokens, agentRuntime.model.maxOutputTokens);
@@ -732,21 +713,9 @@ export async function POST(request: Request) {
       signal: AbortSignal,
       operation: (runtime: NonNullable<typeof agentRuntime>, callSignal: AbortSignal) => Promise<T>,
     ) => {
-      const canFailover = automaticChatModel && orderedRuntimeCandidates.length > 1 && !payload.tools?.length;
-      return invokeProviderWithFailover({
-        current: () => agentRuntime,
-        canFailover,
-        advance: advanceAgentModel,
-        signal,
-        operation: (runtime, callSignal) => withAgentCallDeadline(signal, canFailover ? AGENT_AUTO_FAILOVER_TIMEOUT_MS : AGENT_MODEL_CALL_TIMEOUT_MS, (deadlineSignal) => operation(runtime, deadlineSignal || callSignal)),
-        isCancelled: isAgentRequestCancelled,
-        identity: (runtime) => runtime.provider.name,
-        operationIdPrefix: agentRunId || 'agent-request',
-        observer: runtimeObserver,
-        nextAttempt: () => { llmCallCount += 1; return llmCallCount; },
-        onSuccess: noteAgentModelSuccess,
-        onFailure: noteAgentModelFailure,
-      });
+      const result = await providerCoordinator.invoke<T>(payload, signal, operation);
+      agentRuntime = providerCoordinator.current;
+      return result;
     };
     const trackedChatCompletion = (
       provider: Parameters<typeof chatCompletion>[0],
@@ -769,20 +738,7 @@ export async function POST(request: Request) {
       signal: AbortSignal,
       operation: (selectedRuntime: NonNullable<typeof agentRuntime>, callSignal: AbortSignal) => Promise<T>,
     ) => {
-      return invokeProviderWithFailover({
-        current: () => runtime,
-        canFailover: false,
-        advance: () => false,
-        signal,
-        operation: (_selectedRuntime, callSignal) => operation(runtime, callSignal),
-        isCancelled: isAgentRequestCancelled,
-        identity: (selectedRuntime) => selectedRuntime.provider.name,
-        operationIdPrefix: agentRunId || 'agent-request',
-        observer: runtimeObserver,
-        nextAttempt: () => { llmCallCount += 1; return llmCallCount; },
-        onSuccess: noteAgentModelSuccess,
-        onFailure: noteAgentModelFailure,
-      });
+      return providerCoordinator.invokeSpecific<T>(runtime, signal, operation);
     };
     const trackedSpecificChatCompletion = (
       runtime: NonNullable<typeof agentRuntime>,

@@ -70,8 +70,10 @@ export async function withProviderResponseDeadline<T>(options: ProviderResponseD
         reader.read(),
         new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
           waitTimer = setTimeout(() => {
-            if (!controller.signal.aborted) controller.abort(error);
             reject(error);
+            queueMicrotask(() => {
+              if (!controller.signal.aborted) controller.abort(error);
+            });
           }, waitMs);
         }),
       ]);

@@ -496,6 +496,22 @@ is not introduced in this local-first cutover.
 
 所有长任务使用统一 Task Model。
 
+## 26. Physical, logical and deployment boundaries
+
+The current product is a modular Next monolith. Its logical boundaries are
+Web/UI, HTTP/API, Application/Runtime, Core/Ports, and Infrastructure adapters.
+The physical boundaries are the existing `app/` and `components/` host, `apps/api`
+application seams, `apps/worker` task seams, and reusable `packages/*` cores.
+There are no standalone Web/API/Worker executables yet: deployment remains one
+Next host plus in-process worker dispatch. A separate executable is introduced
+only after its domain owner, production path, and persistence contract no longer
+depend on the host route.
+
+Part B remains `migration in progress`. Agent request context preparation and
+provider attempt coordination have real package owners, while Route capability
+orchestration, Tool migration coordination, media transport, and task family
+polling remain explicit migration responsibilities.
+
 适用：
 - image
 - video

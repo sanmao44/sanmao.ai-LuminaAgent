@@ -15,6 +15,12 @@ statuses (`processing`) are translated by small adapters; API response shapes
 and task files remain unchanged. Completed-task retry remains an explicit
 compatibility rule in each adapter because the legacy service accepted it.
 
+Video generation, cloud-upscale submission, and active-task reconciliation now
+cross `apps/worker/task-entry.ts`. The Worker boundary owns the execution
+lifecycle event and delegates the current provider/storage implementation to
+the existing services. HTTP routes retain authentication, input normalization,
+and response adaptation; they no longer call those execution services directly.
+
 Agent Progress now uses the same runtime policy to decide whether a snapshot
 can still receive progress updates. Its legacy `done` field and snapshot
 shape remain unchanged.
@@ -29,9 +35,11 @@ cancelled jobs do neither.
 
 ## Non-goals
 
-This slice does not move provider polling, retry creation, progress storage,
-generation logs, or UI labels. Those responsibilities remain in the existing
-services until their behavior has a dedicated runtime contract.
+This slice does not move provider polling internals, retry creation, progress
+storage, generation logs, or UI labels. Those responsibilities remain in the
+existing services behind the Worker execution boundary until their behavior
+has a dedicated runtime contract. The Worker boundary is therefore a real
+ownership seam, while the service implementations remain migration adapters.
 
 Clone model orchestration, provider polling, artifact persistence, and the
 Clone-specific stage vocabulary remain in the legacy pipeline and adapters.
