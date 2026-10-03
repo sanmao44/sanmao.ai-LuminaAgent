@@ -10,7 +10,8 @@ import RuntimeServiceControl from '@/components/RuntimeServiceControl';
 import { getProviderPreset, providerPresets } from '@/lib/provider-presets';
 import { agnesBillingLabel } from '@/lib/agnes';
 import AgnesConnectionGuide from '@/components/AgnesConnectionGuide';
-import { listGallery, loadImageDirectoryHandle, patchGalleryItem, removeGalleryItems, replaceGalleryItems, saveGalleryItems, saveImageDirectoryHandle } from '@/lib/client-history';
+import { loadImageDirectoryHandle, saveImageDirectoryHandle } from '@/lib/client-history';
+import { assetRepository } from '@/lib/repositories/asset-repository';
 import Link from 'next/link';
 import LocalEditEditor from '@/components/MaskEditor';
 import VideoStudio from '@/components/VideoStudio';
@@ -6901,7 +6902,7 @@ export default function Page() {
     }
     async function refreshGallery() {
         try {
-            const items = await listGallery();
+            const items = await assetRepository.listGallery();
             setGallery(items);
             syncHistoryNotice(items);
         } catch (error) {
@@ -7066,7 +7067,8 @@ export default function Page() {
             const res = await fetch('/api/storage/snapshots', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || '恢复快照失败');
-            notify(`快照恢复完成：${data.restoredImages || 0} 个图片文件，正在重新加载`);
+            const skipped = Number(data.skippedMediaCount || 0);
+            notify(`快照恢复完成：${data.restoredImages || 0} 个图片文件${skipped ? `，${skipped} 个媒体文件未包含` : ''}，正在重新加载`);
             window.setTimeout(()=>window.location.reload(), 700);
         } catch (error) { notify(error instanceof Error ? error.message : '恢复快照失败'); }
         finally { setBackupBusy(false); }
@@ -7173,7 +7175,7 @@ export default function Page() {
             }
             const client = {
                 workspace: await workspaceRepository.collect(),
-                gallery: await normalizeGalleryForBackup(await listGallery()),
+                gallery: await normalizeGalleryForBackup(await assetRepository.listGallery()),
                 chatSessions: [...await conversationRepository.list()],
                 preferences
             };
@@ -7207,7 +7209,7 @@ export default function Page() {
     }
     async function restoreClientBackup(client) {
         if (!client || !Array.isArray(client.gallery) || !Array.isArray(client.chatSessions)) throw new Error('备份缺少浏览器历史数据');
-        await replaceGalleryItems(client.gallery);
+        await assetRepository.replaceGallery(client.gallery);
         await conversationRepository.replaceAll(client.chatSessions);
         if (client.workspace) {
             await workspaceRepository.restore(client.workspace);
@@ -8207,7 +8209,7 @@ export default function Page() {
                   annotations: Array.isArray(meta.annotations) && meta.annotations.length ? meta.annotations : undefined,
                   ...(meta.mask ? { mask: meta.mask } : {})
              }));
-        await saveGalleryItems(items);
+        await assetRepository.saveGallery(items);
         setGallery((old)=>[
                 ...items,
                 ...old
@@ -9807,7 +9809,7 @@ export default function Page() {
         await persistAgentSession(activeId, next).catch(()=>undefined);
     }
     async function toggleFavorite(item) {
-        await patchGalleryItem(item.id, {
+        await assetRepository.patchGallery(item.id, {
             favorite: !item.favorite
         });
         setGallery((old)=>old.map((x)=>x.id === item.id ? {
@@ -10460,7 +10462,7 @@ export default function Page() {
             danger: true,
             confirmText: '确认删除',
             action: async ()=>{
-                await removeGalleryItems(ids);
+                await assetRepository.removeGallery(ids);
                 setGallery((old)=>old.filter((x)=>!ids.includes(x.id)));
                 setResultItems((old)=>old.filter((x)=>!ids.includes(x.id)));
                 setGenerateTasks((old)=>old.map((task)=>({
@@ -14194,6 +14196,10 @@ export default function Page() {
                                                          className: "settings-backup-latest",
                                                          children: localSnapshots[0] ? `最近快照 ${new Date(localSnapshots[0].createdAt).toLocaleString()} · ${formatStorageBytes(localSnapshots[0].bytes)}` : '尚无自动快照'
                                                      }),
+                                                     localSnapshots[0]?.skippedMediaCount ? /*#__PURE__*/ _jsx("small", {
+                                                         className: "settings-backup-warning",
+                                                         children: `最近快照跳过了 ${localSnapshots[0].skippedMediaCount} 个媒体文件；如需完整恢复，请使用完整备份。`
+                                                     }) : null,
                                                      /*#__PURE__*/ _jsxs("div", {
                                                          className: "settings-backup-actions",
                                                         children: [
@@ -14236,7 +14242,7 @@ export default function Page() {
                                                                      if (!latest) return;
                                                                      setConfirmState({
                                                                          title: '恢复最近自动快照？',
-                                                                         text: '当前服务端配置和日志会被快照覆盖；现有图片文件不会自动删除。恢复前会再创建一个保护快照。',
+                                                                         text: '当前服务端配置和日志会被快照覆盖；快照中未包含的媒体不会被自动删除。快照若显示跳过了媒体文件，它不等同于完整灾难恢复备份。恢复前会再创建一个保护快照。',
                                                                          danger: true,
                                                                          confirmText: '确认恢复',
                                                                          action: ()=>restoreLocalSnapshotByName(latest.name)

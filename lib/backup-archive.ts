@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createGzip, gunzipSync } from 'node:zlib';
+import { createGunzip, createGzip, gunzipSync } from 'node:zlib';
 
 export type BackupArchiveEntry = { name: string; data: Buffer };
 
@@ -107,6 +107,63 @@ export function extractBackupArchive(archive: Buffer) {
     entries.push({ name, data: tar.subarray(offset, offset + size) });
     offset += Math.ceil(size / 512) * 512;
   }
+  return entries;
+}
+
+/**
+ * Streaming counterpart used by restore paths. It keeps the encrypted input
+ * and each extracted file, but does not materialize a second Buffer for the
+ * complete uncompressed tar archive. This is intentionally additive so older
+ * callers and backup files retain their synchronous compatibility API.
+ */
+export async function extractBackupArchiveStreaming(archive: Buffer) {
+  const gunzip = createGunzip({ chunkSize: 1024 * 1024 });
+  const entries: BackupArchiveEntry[] = [];
+  let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  let current: { name: string; size: number; parts: Buffer[]; remaining: number; padding: number } | null = null;
+  let finished = false;
+
+  const consume = (chunk: Buffer) => {
+    pending = pending.length ? Buffer.concat([pending, chunk]) as Buffer : chunk;
+    while (pending.length) {
+      if (current) {
+        if (current.remaining > 0) {
+          const take = Math.min(current.remaining, pending.length);
+          current.parts.push(pending.subarray(0, take));
+          current.remaining -= take;
+          pending = pending.subarray(take);
+          if (current.remaining > 0) continue;
+        }
+        if (pending.length < current.padding) return;
+        if (current.padding) pending = pending.subarray(current.padding);
+        entries.push({ name: current.name, data: current.parts.length === 1 ? current.parts[0] : Buffer.concat(current.parts, current.size) });
+        current = null;
+        continue;
+      }
+      if (pending.length < 512) return;
+      const header = pending.subarray(0, 512);
+      pending = pending.subarray(512);
+      if (header.every((byte) => byte === 0)) { finished = true; return; }
+      const shortName = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '');
+      const prefixText = header.subarray(345, 500).toString('utf8').replace(/\0.*$/, '');
+      const name = prefixText ? prefixText + '/' + shortName : shortName;
+      const sizeText = header.subarray(124, 136).toString('ascii').replace(/\0.*$/, '').trim();
+      const size = sizeText ? Number.parseInt(sizeText, 8) : 0;
+      if (!name || !Number.isSafeInteger(size) || size < 0 || name.startsWith('/') || name.split('/').includes('..')) throw new Error('备份归档内容无效');
+      current = { name, size, parts: [], remaining: size, padding: (512 - (size % 512)) % 512 };
+    }
+  };
+
+  const error = await new Promise<Error | null>((resolve) => {
+    gunzip.on('data', (chunk: Buffer) => {
+      try { consume(chunk); } catch (cause) { gunzip.destroy(cause as Error); }
+    });
+    gunzip.on('error', (cause) => resolve(cause instanceof Error ? cause : new Error(String(cause))));
+    gunzip.on('end', () => resolve(null));
+    gunzip.end(archive);
+  });
+  if (error) throw error;
+  if (current || !finished) throw new Error('备份归档内容不完整');
   return entries;
 }
 

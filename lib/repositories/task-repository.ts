@@ -16,6 +16,7 @@ export type TaskRepositoryOptions = {
 export function createTaskRepository<TTask extends TaskRecord>(options: TaskRepositoryOptions): TaskRepository<TTask> {
   const store = createTaskStore<TTask>(options);
   return {
+    mutate: store.mutate,
     find: store.find,
     findByIdempotencyKey: store.findByKey,
     list: store.list,

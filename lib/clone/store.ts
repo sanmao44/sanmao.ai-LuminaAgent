@@ -3,11 +3,11 @@
  * （`.data/clone-jobs.json`，原子写回、并发串行化）。
  */
 import { randomUUID } from 'node:crypto';
-import { createTaskStore } from '../task-store';
+import { createTaskRepository } from '../repositories/task-repository';
 import { reusesCloneJobIdempotencyKey } from './task-runtime';
 import type { CloneAsset, CloneCapabilities, CloneJob, CloneModelIds, CloneModels, CloneOptions, CloneReference, CloneStage } from './types';
 
-const store = createTaskStore<CloneJob>({ fileName: 'clone-jobs.json', maxList: 200 });
+const store = createTaskRepository<CloneJob>({ fileName: 'clone-jobs.json', maxList: 200 });
 
 export type CreateCloneJobInput = {
   reference: CloneReference;

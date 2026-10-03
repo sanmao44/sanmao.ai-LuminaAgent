@@ -41,6 +41,9 @@ test('快照把视频、音频和图片一起打包', async () => {
   const raw = await readFile(snapshot.path);
   const entries = archive.extractBackupArchive(crypto.decryptBackupPayload(raw, process.env.SANMAO_MASTER_KEY));
   const manifest = JSON.parse(entries.find((entry) => entry.name === 'manifest.json').data.toString('utf8'));
+  assert.equal(manifest.schemaVersion, 1);
+  assert.deepEqual(manifest.canonical, { workspace: 'client/client.json' });
+  assert.equal(entries.some((entry) => entry.name === 'server/workspace.json'), false);
   assert.deepEqual(manifest.media, { videos: 1, audio: 1, images: 1, skipped: 0 });
   assert.deepEqual(
     entries.map((entry) => entry.name).filter((name) => name.startsWith('videos/') || name.startsWith('audio/') || name.startsWith('images/')).sort(),

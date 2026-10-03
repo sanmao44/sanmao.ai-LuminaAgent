@@ -102,7 +102,7 @@ test("克隆接口创建任务、后台跑管线并暴露进度与取消", () =>
   assert.match(route, /hasImageModel: Boolean\(imageRuntime\)/);
   assert.match(jobRoute, /findCloneJob\(id\)/);
   assert.match(cancelRoute, /cancelRequested: true/);
-  assert.match(store, /createTaskStore<CloneJob>\(\{ fileName: 'clone-jobs\.json', maxList: 200 \}\)/);
+  assert.match(store, /createTaskRepository<CloneJob>\(\{ fileName: 'clone-jobs\.json', maxList: 200 \}\)/);
   assert.match(route, /参考图或参考视频/);
 });
 

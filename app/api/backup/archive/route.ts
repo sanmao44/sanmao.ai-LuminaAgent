@@ -1,7 +1,7 @@
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isAdminRequest } from '@/lib/auth';
-import { createArchiveBudget, createBackupArchive, extractBackupArchive, sha256, type BackupArchiveEntry } from '@/lib/backup-archive';
+import { createArchiveBudget, createBackupArchive, extractBackupArchiveStreaming, sha256, type BackupArchiveEntry } from '@/lib/backup-archive';
 import { decryptBackupPayload, encryptBackupPayload, isEncryptedBackup, validateBackupPassword } from '@/lib/backup-crypto';
 import { getDefaultStoragePath } from '@/lib/image-storage';
 import { getDefaultAudioStoragePath } from '@/lib/audio-storage';
@@ -11,6 +11,7 @@ import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operati
 import { listInstalledSkillDirs, listSkillFilesForBackup, resolveSkillArchivePath, resolveSkillsDir, shouldSkipSkillPath } from '@/lib/skills';
 import { resolveLocalDataDir, resolveProviderConfigDir } from '@/lib/data-paths';
 import { validateWorkspaceShape } from '@/lib/workspace-format';
+import { BackupRestoreTransaction } from '@/lib/backup-restore-transaction';
 
 export const runtime = 'nodejs';
 
@@ -18,6 +19,7 @@ const dataDir = resolveLocalDataDir();
 const providerConfigDir = resolveProviderConfigDir();
 const statePath = path.join(providerConfigDir, 'state.json');
 const keyPath = path.join(providerConfigDir, 'master.key');
+const workspacePath = path.join(dataDir, 'workspace.json');
 const maxClientBytes = 80 * 1024 * 1024;
 /**
  * 恢复时整个归档要进内存：一次解密、一次解压，峰值约为归档体积的 3 倍。
@@ -26,19 +28,15 @@ const maxClientBytes = 80 * 1024 * 1024;
  */
 const maxArchiveBytes = 4 * 1024 * 1024 * 1024;
 const maxArchiveLabel = `${maxArchiveBytes / (1024 * 1024 * 1024)}GB`;
-const workspacePath = path.join(dataDir, 'workspace.json');
+const BACKUP_SCHEMA_VERSION = 1;
 
 async function readOptional(file: string) {
   try { return await readFile(file); } catch { return Buffer.alloc(0); }
 }
 
-async function writeAtomic(file: string, content: Buffer) {
-  await mkdir(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${Date.now()}.tmp`;
-  await writeFile(temporary, content);
-  await rename(temporary, file);
-}
-
+/** File-level restore transaction. Existing files are moved to a rollback tree
+ * before writes, so a failed restore can return the live tree to its original
+ * state without copying large media buffers. */
 async function listFiles(root: string): Promise<string[]> {
   try {
     const result: string[] = [];
@@ -146,8 +144,8 @@ async function exportArchive(client: unknown, mode: BackupMode) {
     { name: 'server/state.json', data: stateEntry },
     { name: 'client/client.json', data: clientEntry },
   ];
-  const workspace = await readOptional(workspacePath);
-  if (workspace.length) { budget.add(workspace.byteLength, 'server/workspace.json'); entries.push({ name: 'server/workspace.json', data: workspace }); }
+  // client/client.json is the canonical workspace representation. The server
+  // workspace file is only a sync mirror and is not emitted as a second truth.
   const masterKey = await readOptional(keyPath);
   if (includeSecrets && masterKey.length) entries.push({ name: 'server/master.key', data: masterKey });
 
@@ -193,6 +191,8 @@ async function exportArchive(client: unknown, mode: BackupMode) {
   const manifest = {
     format: 'sanmao-ai-local-backup-archive',
     version: 2,
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    canonical: { workspace: 'client/client.json' },
     backupMode: mode,
     includesSecrets: includeSecrets && Boolean(masterKey.length),
     exportedAt: new Date().toISOString(),
@@ -200,7 +200,7 @@ async function exportArchive(client: unknown, mode: BackupMode) {
     videoCount: entries.filter((entry) => entry.name.startsWith('videos/')).length,
     audioCount: entries.filter((entry) => entry.name.startsWith('audio/')).length,
     artifactCount: entries.filter((entry) => entry.name.startsWith('artifacts/')).length,
-    includesWorkspace: Boolean(workspace.length),
+    includesWorkspace: Boolean((client as { workspace?: unknown } | null)?.workspace),
     includesMcpConfig: Boolean(mcpConfig.length),
     portableDirectoryAuthorizations: false,
     skillCount,
@@ -228,13 +228,14 @@ function manifestEntries(entries: BackupArchiveEntry[], manifest: any) {
 }
 
 async function restoreArchive(archive: Buffer) {
-  const entries = extractBackupArchive(archive);
+  const entries = await extractBackupArchiveStreaming(archive);
   const byName = new Map(entries.map((entry) => [entry.name, entry]));
   const manifestEntry = byName.get('manifest.json');
   const stateEntry = byName.get('server/state.json');
   if (!manifestEntry || !stateEntry) throw new Error('备份缺少 manifest.json 或 server/state.json');
   const manifest = JSON.parse(manifestEntry.data.toString('utf8'));
   if (manifest.format !== 'sanmao-ai-local-backup-archive' || manifest.version !== 2) throw new Error('不支持的备份版本');
+  if (Number(manifest.schemaVersion || 1) !== BACKUP_SCHEMA_VERSION) throw new Error('不支持的备份 schema 版本');
   manifestEntries(entries, manifest);
   const state = validateState(stateEntry.data);
   const backupMode: BackupMode = manifest.backupMode === 'complete' || byName.has('server/master.key') ? 'complete' : 'content';
@@ -267,14 +268,16 @@ async function restoreArchive(archive: Buffer) {
   state.settings!.imageStoragePath = '';
   state.settings!.videoStoragePath = '';
   await mkdir(dataDir, { recursive: true });
-  await writeAtomic(statePath, jsonBuffer(state));
-  if (workspace) await writeAtomic(workspacePath, jsonBuffer(workspace));
+  const transaction = new BackupRestoreTransaction(dataDir);
+  try {
+    await transaction.write(statePath, jsonBuffer(state));
+    if (workspace) await transaction.write(workspacePath, jsonBuffer(workspace));
 
   const restoredLogs = entries.filter((entry) => entry.name.startsWith('server/logs/') && entry.name.endsWith('.jsonl'));
-  for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) await rm(path.join(dataDir, name), { force: true });
-  for (const entry of restoredLogs) await writeAtomic(path.join(dataDir, path.basename(entry.name)), entry.data);
+  for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) await transaction.remove(path.join(dataDir, name));
+  for (const entry of restoredLogs) await transaction.write(path.join(dataDir, path.basename(entry.name)), entry.data);
   const masterKey = byName.get('server/master.key');
-  if (masterKey && !process.env.SANMAO_MASTER_KEY?.trim()) await writeAtomic(keyPath, masterKey.data);
+  if (masterKey && !process.env.SANMAO_MASTER_KEY?.trim()) await transaction.write(keyPath, masterKey.data);
 
   const imageRoot = getDefaultStoragePath();
   await mkdir(imageRoot, { recursive: true });
@@ -285,7 +288,7 @@ async function restoreArchive(archive: Buffer) {
     const target = path.resolve(imageRoot, relative);
     if (target !== imageRoot && !target.startsWith(`${imageRoot}${path.sep}`)) continue;
     await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, entry.data);
+    await transaction.write(target, entry.data);
     restoredImages += 1;
   }
 
@@ -297,7 +300,7 @@ async function restoreArchive(archive: Buffer) {
     const target = path.resolve(videoRoot, relative);
     if (target !== videoRoot && !target.startsWith(`${videoRoot}${path.sep}`)) continue;
     await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, entry.data);
+    await transaction.write(target, entry.data);
     restoredVideos += 1;
   }
   let restoredAudio = 0;
@@ -308,7 +311,7 @@ async function restoreArchive(archive: Buffer) {
     const target = path.resolve(audioRoot, relative);
     if (target !== audioRoot && !target.startsWith(`${audioRoot}${path.sep}`)) continue;
     await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, entry.data);
+    await transaction.write(target, entry.data);
     restoredAudio += 1;
   }
 
@@ -321,7 +324,7 @@ async function restoreArchive(archive: Buffer) {
     const target = resolveSkillArchivePath(skillsRoot, relative);
     if (!target) continue;
     await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, entry.data);
+    await transaction.write(target, entry.data);
     restoredSkillFiles += 1;
     restoredSkillIds.add(relative.split('/')[0]);
   }
@@ -329,10 +332,10 @@ async function restoreArchive(archive: Buffer) {
   for (const entry of entries.filter((value) => value.name.startsWith('server/tasks/'))) {
     const name = path.basename(entry.name);
     if (!(SNAPSHOT_DURABLE_FILES as readonly string[]).includes(name)) continue;
-    await writeAtomic(path.join(dataDir, name), entry.data);
+    await transaction.write(path.join(dataDir, name), entry.data);
   }
   const restoredMcp = byName.get('server/mcp/servers.json');
-  if (restoredMcp) await writeAtomic(path.join(dataDir, 'mcp', 'servers.json'), restoredMcp.data);
+  if (restoredMcp) await transaction.write(path.join(dataDir, 'mcp', 'servers.json'), restoredMcp.data);
   let restoredArtifacts = 0;
   const artifactRoot = path.resolve(dataDir, 'artifacts');
   for (const entry of entries.filter((value) => value.name.startsWith('artifacts/'))) {
@@ -341,11 +344,16 @@ async function restoreArchive(archive: Buffer) {
     const target = path.resolve(artifactRoot, relative);
     if (target !== artifactRoot && !target.startsWith(`${artifactRoot}${path.sep}`)) continue;
     await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, entry.data);
+    await transaction.write(target, entry.data);
     restoredArtifacts += 1;
   }
 
-  return { client, manifest: { ...manifest, backupMode }, restoredImages, restoredVideos, restoredAudio, restoredArtifacts, restoredWorkspace: Boolean(workspace), restoredSkills: restoredSkillIds.size, restoredSkillFiles, externalMasterKey: Boolean(manifest.externalMasterKey), includesSecrets: backupMode === 'complete' };
+    await transaction.commit();
+    return { client, manifest: { ...manifest, backupMode, schemaVersion: BACKUP_SCHEMA_VERSION }, restoredImages, restoredVideos, restoredAudio, restoredArtifacts, restoredWorkspace: Boolean(workspace), restoredSkills: restoredSkillIds.size, restoredSkillFiles, externalMasterKey: Boolean(manifest.externalMasterKey), includesSecrets: backupMode === 'complete' };
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
 }
 
 export async function POST(request: Request) {

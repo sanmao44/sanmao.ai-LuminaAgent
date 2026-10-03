@@ -66,3 +66,15 @@ test('导出预算在超限的那一刻就停下，并给出恢复上限', () =>
   assert.throws(() => budget.add(1, 'videos/c.mp4'), /备份体积超过恢复上限 4GB（已到 videos\/c\.mp4）/);
   assert.equal(budget.used(), 1025);
 });
+
+test('流式归档解析与兼容解析保持相同条目', async () => {
+  const entries = [
+    { name: 'manifest.json', data: Buffer.from('{"schemaVersion":1}', 'utf8') },
+    { name: 'videos/large.bin', data: Buffer.alloc(2 * 1024 * 1024 + 17, 7) },
+  ];
+  const created = await archive.createBackupArchive(entries);
+  const streamed = await archive.extractBackupArchiveStreaming(created);
+  const legacy = archive.extractBackupArchive(created);
+  assert.deepEqual(streamed.map((entry) => entry.name), legacy.map((entry) => entry.name));
+  assert.deepEqual(streamed[1].data, legacy[1].data);
+});

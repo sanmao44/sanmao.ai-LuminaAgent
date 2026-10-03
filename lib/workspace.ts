@@ -2,14 +2,8 @@
 
 import {
   DEFAULT_ASSET_COLLECTIONS,
-  listAssetCollections,
-  listAssetIndex,
   listChatSessions,
-  listGallery,
-  replaceAssetIndexItems,
   replaceChatSessions,
-  replaceGalleryItems,
-  saveAssetCollections,
   type AssetCollection,
   type AssetIndexItem,
   type ChatSession,
@@ -33,6 +27,7 @@ import {
   workspaceHasData,
 } from './workspace-format';
 import { readWorkspaceContext } from './workspace-context';
+import { assetRepository } from './repositories/asset-repository';
 
 const META_KEY = 'sanmao.workspace.sync.meta.v1';
 const CLIENT_ID_KEY = 'sanmao.workspace.client-id.v1';
@@ -142,10 +137,10 @@ function readPreferences() {
 
 export async function collectWorkspaceSnapshot(updatedAt = Date.now()): Promise<WorkspaceSnapshot> {
   const [gallery, chatSessions, assetIndex, assetCollections] = await Promise.all([
-    listGallery().catch(() => [] as GalleryItem[]),
+    assetRepository.listGallery().catch(() => [] as GalleryItem[]),
     listChatSessions().catch(() => [] as ChatSession[]),
-    listAssetIndex().catch(() => [] as AssetIndexItem[]),
-    listAssetCollections().catch(() => DEFAULT_ASSET_COLLECTIONS as AssetCollection[]),
+    assetRepository.listIndex().catch(() => [] as AssetIndexItem[]),
+    assetRepository.listCollections().catch(() => DEFAULT_ASSET_COLLECTIONS as AssetCollection[]),
   ]);
   const legacyChatProjectId = readWorkspaceContext().creativeProjectId;
   return {
@@ -212,10 +207,10 @@ async function requestWorkspaceMetadataInternal(): Promise<WorkspaceMetadataResp
 export async function restoreWorkspaceSnapshot(snapshot: WorkspaceSnapshot) {
   await withWorkspaceRestoreSuppressedAsync(async () => {
     if (!restoreCanvasWorkspace(snapshot.canvas)) throw new Error('恢复画布失败');
-    await replaceGalleryItems(snapshot.gallery);
+    await assetRepository.replaceGallery(snapshot.gallery);
     await replaceChatSessions(snapshot.chatSessions);
-    await replaceAssetIndexItems(snapshot.assetIndex);
-    await saveAssetCollections(snapshot.assetCollections);
+    await assetRepository.replaceIndex(snapshot.assetIndex);
+    await assetRepository.saveCollections(snapshot.assetCollections);
     for (const key of WORKSPACE_PREFERENCE_KEYS) {
       try { window.localStorage.removeItem(key); } catch {}
     }

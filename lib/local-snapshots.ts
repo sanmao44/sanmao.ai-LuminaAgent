@@ -2,13 +2,15 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { createBackupArchive, extractBackupArchive, sha256, type BackupArchiveEntry } from './backup-archive';
+import { createBackupArchive, extractBackupArchiveStreaming, sha256, type BackupArchiveEntry } from './backup-archive';
 import { decryptBackupPayload, encryptBackupPayload } from './backup-crypto';
 import { getDefaultStoragePath, getStorageRoots } from './image-storage';
 import { getDefaultAudioStoragePath, getAudioStorageRoots } from './audio-storage';
 import { getDefaultVideoStoragePath, getVideoStorageRoots } from './video-storage';
 import { encryptSecret } from './store';
 import { resolveLocalDataDir, resolveProviderConfigDir } from './data-paths';
+import { BackupRestoreTransaction } from './backup-restore-transaction';
+import { validateWorkspaceShape } from './workspace-format';
 
 const dataDir = resolveLocalDataDir();
 const providerConfigDir = resolveProviderConfigDir();
@@ -17,6 +19,8 @@ const statePath = path.join(providerConfigDir, 'state.json');
 const workspacePath = path.join(dataDir, 'workspace.json');
 const keyPath = path.join(providerConfigDir, 'master.key');
 const SNAPSHOT_FORMAT = 'sanmao-ai-auto-snapshot';
+const SNAPSHOT_SCHEMA_VERSION = 1;
+const SNAPSHOT_METADATA_SUFFIX = '.meta.json';
 const KEEP_SNAPSHOTS = 7;
 /** 快照失败后的退避时长：心跳每 2 秒触发一次，不能失败一次就重试一次。 */
 const SNAPSHOT_RETRY_BACKOFF_MS = 30 * 60 * 1000;
@@ -183,7 +187,9 @@ async function createLocalSnapshotInternal(reason: string) {
   }
 
   const entries: BackupArchiveEntry[] = [{ name: 'server/state.json', data: state }];
-  if (workspace.length) entries.push({ name: 'server/workspace.json', data: workspace });
+  // Keep one canonical archive location, matching full backups. The automatic
+  // snapshot reads the existing durable sync mirror as its source.
+  if (workspace.length) entries.push({ name: 'client/client.json', data: workspace });
   if (mcpConfig.length) entries.push({ name: 'server/mcp/servers.json', data: mcpConfig });
   for (const [name, data] of durable) entries.push({ name: `server/tasks/${name}`, data });
   for (const name of logFiles) {
@@ -206,6 +212,8 @@ async function createLocalSnapshotInternal(reason: string) {
   const manifest = {
     format: SNAPSHOT_FORMAT,
     version: 1,
+    schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+    canonical: { workspace: 'client/client.json' },
     reason,
     createdAt: new Date().toISOString(),
     signature,
@@ -216,6 +224,12 @@ async function createLocalSnapshotInternal(reason: string) {
   const encrypted = encryptBackupPayload(archive, await snapshotPassword());
   const file = path.join(snapshotDir, snapshotName());
   await writeFile(file, encrypted, { flag: 'wx', flush: true });
+  try {
+    await writeFile(`${file}${SNAPSHOT_METADATA_SUFFIX}`, `${JSON.stringify({ skippedMediaCount: media.skipped, imageCount: media.images, videoCount: media.videos, audioCount: media.audio, updatedAt: manifest.createdAt }, null, 2)}\n`, 'utf8');
+  } catch (error) {
+    await rm(file, { force: true }).catch(() => undefined);
+    throw error;
+  }
   await pruneLocalSnapshots();
   await writeSnapshotSignature(signature, path.basename(file));
   return {
@@ -253,6 +267,7 @@ async function reserveSnapshotSpace(requiredBytes: number) {
   if (available === null || available >= needed) return true;
   for (const old of (await listLocalSnapshots()).slice(1)) {
     await rm(old.path, { force: true }).catch(() => undefined);
+    await rm(`${old.path}${SNAPSHOT_METADATA_SUFFIX}`, { force: true }).catch(() => undefined);
     available += old.bytes;
     if (available >= needed) return true;
   }
@@ -266,6 +281,7 @@ async function pruneLocalSnapshots() {
   for (const snapshot of await listLocalSnapshots()) {
     if (kept > 0 && (kept >= KEEP_SNAPSHOTS || keptBytes + snapshot.bytes > SNAPSHOT_TOTAL_MAX_BYTES)) {
       await rm(snapshot.path, { force: true }).catch(() => undefined);
+      await rm(`${snapshot.path}${SNAPSHOT_METADATA_SUFFIX}`, { force: true }).catch(() => undefined);
       continue;
     }
     kept += 1;
@@ -315,13 +331,15 @@ export async function ensureLocalSnapshot() {
 }
 
 export async function listLocalSnapshots() {
-  const result: Array<{ name: string; path: string; createdAt: string; bytes: number }> = [];
+  const result: Array<{ name: string; path: string; createdAt: string; bytes: number; skippedMediaCount?: number; imageCount?: number; videoCount?: number; audioCount?: number }> = [];
   for (const name of await readdir(snapshotDir).catch(() => [])) {
     if (!/^snapshot-.*\.sanmao-snapshot$/.test(name)) continue;
     const file = path.join(snapshotDir, name);
     try {
       const info = await stat(file);
-      result.push({ name, path: file, createdAt: new Date(info.mtimeMs).toISOString(), bytes: info.size });
+      let metadata: { skippedMediaCount?: number; imageCount?: number; videoCount?: number; audioCount?: number } = {};
+      try { metadata = JSON.parse(await readFile(`${file}${SNAPSHOT_METADATA_SUFFIX}`, 'utf8')) as typeof metadata; } catch {}
+      result.push({ name, path: file, createdAt: new Date(info.mtimeMs).toISOString(), bytes: info.size, ...metadata });
     } catch {}
   }
   return result.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -332,8 +350,19 @@ function validateEntries(entries: BackupArchiveEntry[]) {
   const manifestEntry = byName.get('manifest.json');
   const stateEntry = byName.get('server/state.json');
   if (!manifestEntry || !stateEntry) throw new Error('快照缺少 manifest.json 或 server/state.json');
-  const manifest = JSON.parse(manifestEntry.data.toString('utf8')) as { format?: string; version?: number; files?: Array<{ name: string; bytes: number; sha256: string }> };
+  const manifest = JSON.parse(manifestEntry.data.toString('utf8')) as {
+    format?: string;
+    version?: number;
+    schemaVersion?: number;
+    canonical?: { workspace?: string };
+    media?: { skipped?: number };
+    files?: Array<{ name: string; bytes: number; sha256: string }>;
+  };
   if (manifest.format !== SNAPSHOT_FORMAT || manifest.version !== 1 || !Array.isArray(manifest.files)) throw new Error('快照格式不受支持');
+  const legacyWorkspaceEntry = manifest.schemaVersion === undefined;
+  if (!legacyWorkspaceEntry && (manifest.schemaVersion !== SNAPSHOT_SCHEMA_VERSION || manifest.canonical?.workspace !== 'client/client.json')) {
+    throw new Error('快照 schema 版本或 canonical workspace 无效');
+  }
   const expected = new Map(manifest.files.map((entry) => [entry.name, entry]));
   for (const entry of entries) {
     if (entry.name === 'manifest.json') continue;
@@ -343,50 +372,54 @@ function validateEntries(entries: BackupArchiveEntry[]) {
   if (expected.size !== entries.length - 1) throw new Error('快照缺少文件');
   const state = JSON.parse(stateEntry.data.toString('utf8')) as { providers?: unknown; models?: unknown; settings?: Record<string, unknown> };
   if (!Array.isArray(state.providers) || !Array.isArray(state.models) || !state.settings || typeof state.settings !== 'object') throw new Error('快照中的服务端配置格式无效');
-  return { byName, state };
+  const workspaceEntry = byName.get('client/client.json') || (legacyWorkspaceEntry ? byName.get('server/workspace.json') : undefined);
+  if (workspaceEntry) validateWorkspaceShape(JSON.parse(workspaceEntry.data.toString('utf8')));
+  return { byName, state, legacyWorkspaceEntry, manifest };
 }
 
 export async function restoreLocalSnapshot(snapshotPath: string, configuredStoragePath = '') {
   if (!existsSync(snapshotPath)) throw new Error('快照文件不存在');
   const encrypted = await readFile(snapshotPath);
-  const entries = extractBackupArchive(decryptBackupPayload(encrypted, await snapshotPassword()));
-  const { byName, state } = validateEntries(entries);
+  const entries = await extractBackupArchiveStreaming(decryptBackupPayload(encrypted, await snapshotPassword()));
+  const { byName, state, legacyWorkspaceEntry, manifest } = validateEntries(entries);
   state.settings = { ...state.settings, imageStoragePath: configuredStoragePath };
   await mkdir(dataDir, { recursive: true });
   await mkdir(providerConfigDir, { recursive: true });
-  await writeFile(`${statePath}.snapshot.tmp`, `${JSON.stringify(state, null, 2)}\n`, { flush: true });
-  const restoredLogs = entries.filter((entry) => entry.name.startsWith('server/logs/') && entry.name.endsWith('.jsonl'));
-  for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) await rm(path.join(dataDir, name), { force: true });
-  for (const entry of restoredLogs) await writeFile(path.join(dataDir, path.basename(entry.name)), entry.data);
-  let restoredTasks = 0;
-  for (const name of SNAPSHOT_DURABLE_FILES) {
-    const entry = byName.get(`server/tasks/${name}`);
-    if (!entry) continue;
-    await writeFile(path.join(dataDir, name), entry.data, { flush: true });
-    restoredTasks += 1;
+  const transaction = new BackupRestoreTransaction(dataDir, `snapshot-${process.pid}-${Date.now()}`);
+  try {
+    await transaction.write(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    const restoredLogs = entries.filter((entry) => entry.name.startsWith('server/logs/') && entry.name.endsWith('.jsonl'));
+    for (const name of (await readdir(dataDir).catch(() => [])).filter((value) => /^generation-logs(?:-\d+)?\.jsonl$/.test(value))) await transaction.remove(path.join(dataDir, name));
+    for (const entry of restoredLogs) await transaction.write(path.join(dataDir, path.basename(entry.name)), entry.data);
+    let restoredTasks = 0;
+    for (const name of SNAPSHOT_DURABLE_FILES) {
+      const entry = byName.get(`server/tasks/${name}`);
+      if (!entry) continue;
+      await transaction.write(path.join(dataDir, name), entry.data);
+      restoredTasks += 1;
+    }
+    const mcpConfig = byName.get('server/mcp/servers.json');
+    if (mcpConfig) await transaction.write(path.join(dataDir, 'mcp', 'servers.json'), mcpConfig.data);
+    const masterKey = byName.get('server/master.key');
+    if (masterKey && !process.env.SANMAO_MASTER_KEY?.trim()) await transaction.write(keyPath, masterKey.data);
+    const workspace = byName.get('client/client.json') || (legacyWorkspaceEntry ? byName.get('server/workspace.json') : undefined);
+    if (workspace) await transaction.write(workspacePath, workspace.data);
+    const imageRoot = path.resolve(configuredStoragePath.trim() || getDefaultStoragePath());
+    const videoRoot = path.resolve(process.env.SANMAO_VIDEO_STORAGE_PATH?.trim() || getDefaultVideoStoragePath());
+    const audioRoot = path.resolve(process.env.SANMAO_AUDIO_STORAGE_PATH?.trim() || getDefaultAudioStoragePath());
+    const restoredImages = await restoreSnapshotMedia(transaction, entries, 'images', imageRoot, SNAPSHOT_MEDIA_PATTERNS.images);
+    const restoredVideos = await restoreSnapshotMedia(transaction, entries, 'videos', videoRoot, SNAPSHOT_MEDIA_PATTERNS.videos);
+    const restoredAudio = await restoreSnapshotMedia(transaction, entries, 'audio', audioRoot, SNAPSHOT_MEDIA_PATTERNS.audio);
+    await transaction.commit();
+    return { restoredImages, restoredVideos, restoredAudio, restoredTasks, restoredMcpConfig: Boolean(mcpConfig), restoredWorkspace: Boolean(workspace), skippedMediaCount: Number(manifest.media?.skipped || 0), state };
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
   }
-  const mcpConfig = byName.get('server/mcp/servers.json');
-  if (mcpConfig) {
-    await mkdir(path.join(dataDir, 'mcp'), { recursive: true });
-    await writeFile(path.join(dataDir, 'mcp', 'servers.json'), mcpConfig.data, { flush: true });
-  }
-  const masterKey = byName.get('server/master.key');
-  if (masterKey && !process.env.SANMAO_MASTER_KEY?.trim()) await writeFile(keyPath, masterKey.data, { flush: true });
-  const workspace = byName.get('server/workspace.json');
-  if (workspace) await writeFile(`${workspacePath}.snapshot.tmp`, workspace.data, { flush: true });
-  const imageRoot = path.resolve(configuredStoragePath.trim() || getDefaultStoragePath());
-  const videoRoot = path.resolve(process.env.SANMAO_VIDEO_STORAGE_PATH?.trim() || getDefaultVideoStoragePath());
-  const audioRoot = path.resolve(process.env.SANMAO_AUDIO_STORAGE_PATH?.trim() || getDefaultAudioStoragePath());
-  const restoredImages = await restoreSnapshotMedia(entries, 'images', imageRoot, SNAPSHOT_MEDIA_PATTERNS.images);
-  const restoredVideos = await restoreSnapshotMedia(entries, 'videos', videoRoot, SNAPSHOT_MEDIA_PATTERNS.videos);
-  const restoredAudio = await restoreSnapshotMedia(entries, 'audio', audioRoot, SNAPSHOT_MEDIA_PATTERNS.audio);
-  await rename(`${statePath}.snapshot.tmp`, statePath);
-  if (workspace) await rename(`${workspacePath}.snapshot.tmp`, workspacePath);
-  return { restoredImages, restoredVideos, restoredAudio, restoredTasks, restoredMcpConfig: Boolean(mcpConfig), restoredWorkspace: Boolean(workspace), state };
 }
 
 /** 把快照里的某一类媒体写回目标目录，路径一律限制在目标目录内。 */
-async function restoreSnapshotMedia(entries: BackupArchiveEntry[], folder: 'images' | 'videos' | 'audio', root: string, pattern: RegExp) {
+async function restoreSnapshotMedia(transaction: BackupRestoreTransaction, entries: BackupArchiveEntry[], folder: 'images' | 'videos' | 'audio', root: string, pattern: RegExp) {
   await mkdir(root, { recursive: true });
   let restored = 0;
   for (const entry of entries.filter((value) => value.name.startsWith(`${folder}/`))) {
@@ -395,7 +428,7 @@ async function restoreSnapshotMedia(entries: BackupArchiveEntry[], folder: 'imag
     const target = path.resolve(root, relative);
     if (target !== root && !target.startsWith(`${root}${path.sep}`)) continue;
     await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, entry.data);
+    await transaction.write(target, entry.data);
     restored += 1;
   }
   return restored;

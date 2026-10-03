@@ -224,13 +224,12 @@ import {
 } from "@/lib/assets";
 import {
   DEFAULT_ASSET_COLLECTIONS,
-  listAssetCollections,
-  saveAssetCollections,
   type AssetCollection,
   type GalleryLocalEditMask,
 } from "@/lib/client-history";
 import { startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
 import { workspaceRepository } from "@/lib/repositories/workspace-repository";
+import { assetRepository } from "@/lib/repositories/asset-repository";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
 import OneTakeDurationPicker from "@/components/OneTakeDurationPicker";
 import ModelPicker from "@/components/ModelPicker";
@@ -17413,7 +17412,7 @@ function CanvasAssetCollectionPicker({
 
   useEffect(() => {
     let active = true;
-    void listAssetCollections()
+    void assetRepository.listCollections()
       .then((items) => {
         if (!active) return;
         setCollections(items);
@@ -17475,7 +17474,7 @@ function CanvasAssetCollectionPicker({
     };
     const next = [...collections, item];
     try {
-      await saveAssetCollections(next);
+      await assetRepository.saveCollections(next);
       setCollections(next);
       setCollectionId(item.id);
       setNewCollectionName("");
@@ -17642,7 +17641,7 @@ function CanvasAssetDrawer({
 
   useEffect(() => {
     let active = true;
-    void listAssetCollections().then((items) => {
+    void assetRepository.listCollections().then((items) => {
       if (!active) return;
       setCollections(items);
       const valid = collectionSelection === "all" || items.some((item) => item.id === collectionSelection);
@@ -17772,7 +17771,7 @@ function CanvasAssetDrawer({
     const item: AssetCollection = { id: `collection_${Date.now().toString(36)}`, name, createdAt: Date.now(), updatedAt: Date.now() };
     const next = [...collections, item];
     setCollections(next); setNewCollectionName("");
-    await saveAssetCollections(next);
+    await assetRepository.saveCollections(next);
     setCollection(item.id);
     onCollectionSelectionChange(item.id);
   };
@@ -17794,7 +17793,7 @@ function CanvasAssetDrawer({
         ),
       );
       const next = collections.filter((item) => item.id !== collectionId);
-      await saveAssetCollections(next);
+      await assetRepository.saveCollections(next);
       setCollections(next);
       setAssets((items) =>
         items.map((asset) =>
@@ -17820,7 +17819,7 @@ function CanvasAssetDrawer({
     if (!nextName || nextName === target.name) return;
     const next = collections.map((item) => item.id === collectionId ? { ...item, name: nextName, updatedAt: Date.now() } : item);
     try {
-      await saveAssetCollections(next);
+      await assetRepository.saveCollections(next);
       setCollections(next);
       onNotify(`已将资产集合重命名为“${nextName}”。`);
     } catch (error) {

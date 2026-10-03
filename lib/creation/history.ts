@@ -1,6 +1,7 @@
 'use client';
 
-import { saveGalleryItems, type GalleryItem, type GalleryLocalEditMask, type GallerySource } from '../client-history';
+import { type GalleryItem, type GalleryLocalEditMask, type GallerySource } from '../client-history';
+import { assetRepository } from '../repositories/asset-repository';
 import type { ReferenceImageRecord, UpscaleOutputFormat } from '../types';
 import type { LocalEditAnnotation } from '../local-edit';
 import type { ProvenanceEdge, ProvenanceEdgeDraft } from '../provenance/types';
@@ -78,6 +79,6 @@ export async function recordCanvasImages(
     ...(provenance?.length ? { provenance } : {}),
     };
   });
-  await saveGalleryItems(items);
+  await assetRepository.saveGallery(items);
   return items;
 }

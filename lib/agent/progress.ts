@@ -8,7 +8,7 @@
  *   MAX_RUNS 条、超过 TTL 就删。进度是给"这一刻"看的，不是审计记录。
  * - 任何一次读写失败都只是没有进度，绝不能让这一轮对话失败。
  */
-import { createTaskStore } from '@/lib/task-store';
+import { createTaskRepository } from '@/lib/repositories/task-repository';
 import { TaskRuntime } from '@/packages/task-runtime/runtime';
 
 export type AgentProgressStage = "thinking" | "web_search" | "tool" | "artifact" | "skill" | "mcp" | "image" | "answering";
@@ -49,7 +49,7 @@ const PROGRESS_TTL_MS = 10 * 60 * 1000;
 const MAX_RUNS = 32;
 const INITIAL_MESSAGE = '正在整理对话上下文…';
 
-const store = createTaskStore<AgentProgressRecord>({ fileName: 'agent-progress.json', maxList: MAX_RUNS });
+const store = createTaskRepository<AgentProgressRecord>({ fileName: 'agent-progress.json', maxList: MAX_RUNS });
 
 /** 只接受前端生成的短 id：多余字符直接拒绝，避免这里变成任意的存储键。 */
 export function normalizeAgentRunId(value: unknown): string | null {

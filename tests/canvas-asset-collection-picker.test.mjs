@@ -34,7 +34,7 @@ test("collection picker only shows writable asset collections", () => {
   assert.match(picker, /const collectionOptions = collections\s+\.filter\(\(item\) => isAssignableCanvasAssetCollection\(item\.id\)\)/);
   assert.doesNotMatch(picker, /disabled: !item\.assignable/);
   assert.doesNotMatch(picker, /智能筛选视图不可直接归类/);
-  assert.match(picker, /saveAssetCollections\(next\)/);
+  assert.match(picker, /assetRepository\.saveCollections\(next\)/);
   assert.match(picker, /CANVAS_ASSET_LAST_COLLECTION_KEY/);
   assert.match(picker, /全局资产中心的“\{selectedCollection\?\.name/);
   assert.match(styles, /\.canvas-asset-target-dialog\{/);

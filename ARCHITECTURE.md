@@ -435,6 +435,22 @@ Repository Port
 - SQL
 除非该代码本身就是 Infrastructure Adapter。
 
+### Current migration state
+
+The repository ports are now used by conversation, workspace gallery,
+asset-collection, video/upscale task, clone-job and Agent-progress paths.
+`lib/repositories/*` remains a temporary adapter layer over IndexedDB, JSON and
+filesystem implementations. Canvas UI preferences, MCP/media/artifact routes
+and workspace synchronization internals still have direct storage access and
+must be migrated before a database cutover.
+
+Backup archives use schema version 1 with `client/client.json` as the canonical
+workspace representation. Restore writes through a file-level rollback
+transaction and uses streaming tar extraction; archive construction,
+encryption/decryption and HTTP request ingestion still use bounded full
+buffers. No database adapter is active yet; the final local/server database
+choice remains a Phase 11 blocker.
+
 ---
 
 ## 16. Task Runtime

@@ -22,8 +22,18 @@ export interface WorkspaceRepository<TSnapshot = unknown> {
   restore(snapshot: TSnapshot): Promise<void>;
 }
 
-export interface AssetRepository<TAsset extends StorageEntity = StorageEntity> {
+export interface AssetRepository<TAsset extends StorageEntity = StorageEntity, TGallery extends StorageEntity = TAsset, TIndex extends StorageEntity = TAsset> {
   list(extra?: TAsset[]): Promise<readonly TAsset[]>;
+  listGallery(): Promise<TGallery[]>;
+  saveGallery(items: readonly TGallery[]): Promise<void>;
+  patchGallery(id: string, patch: Partial<TGallery>): Promise<void>;
+  removeGallery(ids: readonly string[]): Promise<void>;
+  replaceGallery(items: readonly TGallery[]): Promise<void>;
+  listIndex(): Promise<TIndex[]>;
+  saveIndex(item: TIndex): Promise<void>;
+  replaceIndex(items: readonly TIndex[]): Promise<void>;
+  listCollections(): Promise<{ id: string; name: string; color?: string; createdAt: number; updatedAt: number; builtin?: boolean }[]>;
+  saveCollections(collections: readonly { id: string; name: string; color?: string; createdAt: number; updatedAt: number; builtin?: boolean }[]): Promise<void>;
 }
 
 export type TaskRecord = StorageEntity & {
@@ -45,6 +55,8 @@ export type TaskPage<TTask> = {
 };
 
 export interface TaskRepository<TTask extends TaskRecord = TaskRecord> {
+  /** Serialized read-modify-write for domain-specific atomic transitions. */
+  mutate<R>(fn: (tasks: TTask[]) => R | Promise<R>): Promise<R>;
   find(id: string): Promise<TTask | null>;
   findByIdempotencyKey(key: string): Promise<TTask | null>;
   list(limit?: number): Promise<readonly TTask[]>;

@@ -16,6 +16,7 @@ const MODULES = [
   'packages/tool-runtime/runtime',
   'packages/tool-runtime/mcp-executor',
   'lib/agent/progress',
+  'lib/repositories/task-repository',
   'lib/agent-client',
   'lib/task-store',
   'lib/agent/approval',
