@@ -90,8 +90,19 @@ export class BackupRestoreTransaction {
 
   async rollback() {
     for (const entry of [...this.captured.values()].reverse()) {
-      await rm(entry.target, { force: true }).catch(() => undefined);
-      if (entry.existed && entry.backup) {
+      // A journal entry is written before the live file is moved. If the
+      // process fails after the move but before the second journal write, the
+      // rollback file is the evidence that capture completed.
+      if (!entry.captured) {
+        if (!entry.existed || !entry.backup) continue;
+        try { if (!(await stat(entry.backup)).isFile()) continue; } catch { continue; }
+      }
+      if (!entry.existed) {
+        await rm(entry.target, { force: true }).catch(() => undefined);
+        continue;
+      }
+      if (entry.backup) {
+        await rm(entry.target, { force: true }).catch(() => undefined);
         await mkdir(path.dirname(entry.target), { recursive: true });
         try {
           await rename(entry.backup, entry.target);
@@ -151,6 +162,12 @@ export class BackupRestoreTransaction {
         continue;
       }
       for (const entry of entries.reverse()) {
+        if (!entry.captured) {
+          if (!entry.existed || !entry.backup) continue;
+          let backupExists = false;
+          try { backupExists = (await stat(entry.backup)).isFile(); } catch {}
+          if (!backupExists) continue;
+        }
         if (!entry.existed || !entry.backup) {
           if (entry.captured) await rm(entry.target, { force: true }).catch(() => undefined);
           continue;

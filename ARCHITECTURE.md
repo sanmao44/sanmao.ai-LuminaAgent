@@ -457,6 +457,9 @@ stream, and extracts tar entries directly to staging files. The restore
 transaction commits staged files only after validation and records an active or
 committed journal phase for crash recovery. Compatibility Buffer APIs remain for local
 snapshots and older callers; the production HTTP export path is file/stream based.
+The legacy JSON backup endpoint and browser IndexedDB restore path also use the
+same staged transaction boundary: browser restore captures the current
+repository workspace and restores it if a later store write fails.
 PostgreSQL remains a future cloud adapter; it
 is not introduced in this local-first cutover.
 

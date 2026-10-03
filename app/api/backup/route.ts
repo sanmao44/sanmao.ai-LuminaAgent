@@ -1,10 +1,11 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { isAdminRequest } from '@/lib/auth';
 import { resolveLocalDataDir, resolveProviderConfigDir } from '@/lib/data-paths';
 import { isSqliteActive } from '@/lib/database/sqlite';
 import { getStoredStateForBackup, type StoreData } from '@/lib/store';
-import { writeAuthoritativeProviderState } from '@/lib/repositories/server-provider-repository';
+import { BackupRestoreTransaction } from '@/lib/backup-restore-transaction';
+import { openSqliteDatabase, replaceSqliteDomain, sqliteDatabasePath } from '@/lib/database/sqlite';
 
 export const runtime = 'nodejs';
 
@@ -16,13 +17,6 @@ const logPath = path.join(dataDir, 'generation-logs.jsonl');
 
 async function readOptional(file: string) {
   try { return await readFile(file, 'utf8'); } catch { return ''; }
-}
-
-async function writeAtomic(file: string, content: string) {
-  await mkdir(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${Date.now()}.tmp`;
-  await writeFile(temporary, content, 'utf8');
-  await rename(temporary, file);
 }
 
 function validateState(raw: string) {
@@ -67,10 +61,29 @@ export async function POST(request: Request) {
     if (masterKey && !/^[a-f0-9]{64}$/i.test(masterKey)) throw new Error('备份中的主密钥格式无效');
 
     await mkdir(dataDir, { recursive: true });
-    if (masterKey && !process.env.SANMAO_MASTER_KEY?.trim()) await writeAtomic(keyPath, `${masterKey}\n`);
-    if (isSqliteActive(dataDir)) writeAuthoritativeProviderState(JSON.parse(state) as StoreData);
-    else await writeAtomic(statePath, state);
-    await writeAtomic(logPath, generationLogs);
+    await BackupRestoreTransaction.recover(dataDir);
+    const transaction = new BackupRestoreTransaction(dataDir, `legacy-backup-${process.pid}-${Date.now()}`);
+    let stagedDatabase = '';
+    try {
+      if (isSqliteActive(dataDir)) {
+        stagedDatabase = path.join(dataDir, `.restore-legacy-db-${process.pid}-${Date.now()}.sqlite`);
+        await copyFile(sqliteDatabasePath(dataDir), stagedDatabase);
+        const db = openSqliteDatabase(stagedDatabase);
+        replaceSqliteDomain(db, 'provider-config', [{ key: 'primary', value: JSON.parse(state) as StoreData }]);
+        db.close();
+        await transaction.copy(stagedDatabase, sqliteDatabasePath(dataDir));
+      } else {
+        await transaction.write(statePath, state);
+      }
+      if (masterKey && !process.env.SANMAO_MASTER_KEY?.trim()) await transaction.write(keyPath, `${masterKey}\n`);
+      await transaction.write(logPath, generationLogs);
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    } finally {
+      if (stagedDatabase) await rm(stagedDatabase, { force: true }).catch(() => undefined);
+    }
     return Response.json({ ok: true, externalMasterKey: Boolean(process.env.SANMAO_MASTER_KEY?.trim()) });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : '恢复服务端数据失败' }, { status: 400 });

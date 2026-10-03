@@ -117,6 +117,10 @@ async function readState(): Promise<StoreData> {
       };
       return nextState;
     }
+    // Once the SQLite marker is active, the legacy JSON file is rollback
+    // material only. Falling through to state.json here would silently make
+    // it a second Source of Truth when a database record is missing.
+    return structuredClone(emptyState);
   }
   try {
     const parsed = JSON.parse(await readFile(statePath, 'utf8')) as Partial<StoreData>;

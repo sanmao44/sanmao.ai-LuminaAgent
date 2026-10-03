@@ -7209,11 +7209,6 @@ export default function Page() {
     }
     async function restoreClientBackup(client) {
         if (!client || !Array.isArray(client.gallery) || !Array.isArray(client.chatSessions)) throw new Error('备份缺少浏览器历史数据');
-        await assetRepository.replaceGallery(client.gallery);
-        await conversationRepository.replaceAll(client.chatSessions);
-        if (client.workspace) {
-            await workspaceRepository.restore(client.workspace);
-        }
         const preferenceKeys = [
             'sanmao-theme',
             'sanmao-success-sound',
@@ -7223,8 +7218,34 @@ export default function Page() {
             'sanmao-image-presets-v1',
             PROVIDER_SETUP_DISMISSED_STORAGE_KEY
         ];
-        for (const key of preferenceKeys) localStorage.removeItem(key);
-        for (const [key, value] of Object.entries(client.preferences || {})) if (preferenceKeys.includes(key) && typeof value === 'string') localStorage.setItem(key, value);
+        const previous = await workspaceRepository.collect();
+        const previousPreferences = Object.fromEntries(preferenceKeys.flatMap((key) => {
+            const value = localStorage.getItem(key);
+            return value === null ? [] : [[key, value]];
+        }));
+        const applyPreferences = (preferences) => {
+            for (const key of preferenceKeys) localStorage.removeItem(key);
+            for (const [key, value] of Object.entries(preferences || {})) {
+                if (preferenceKeys.includes(key) && typeof value === 'string') localStorage.setItem(key, value);
+            }
+        };
+        try {
+            await assetRepository.replaceGallery(client.gallery);
+            await conversationRepository.replaceAll(client.chatSessions);
+            if (client.workspace) await workspaceRepository.restore(client.workspace);
+            applyPreferences(client.preferences);
+        } catch (error) {
+            // Browser stores are separate IndexedDB transactions. Restore the
+            // captured repository snapshot if any later store or preference
+            // write fails, so a failed import does not leave mixed history.
+            try {
+                await workspaceRepository.restore(previous);
+                applyPreferences(previousPreferences);
+            } catch (rollbackError) {
+                console.error('[Backup] client restore rollback failed', rollbackError);
+            }
+            throw error;
+        }
     }
     async function prepareRestoreBackup(file) {
         try {
