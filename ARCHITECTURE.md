@@ -437,6 +437,14 @@ Repository Port
 
 ### Current migration state
 
+Part B has started at real ownership seams. `apps/api/agent-entry.ts` is the
+application entry for the migrated compact text Agent turn, and
+`packages/model-runtime` owns its provider-neutral legacy chat adapter.
+`apps/worker/task-entry.ts` dispatches Clone's long-running pipeline without
+making the HTTP route the worker owner. The existing Next app still hosts the
+remaining streaming, media, provider failover and task polling paths, so this
+is `migration in progress`, not a completed physical split.
+
 The repository ports are now used by conversation, workspace gallery,
 asset-collection, video/upscale task, clone-job and Agent-progress paths.
 MCP user configuration crosses `McpConfigRepository`; provider state and the
@@ -448,7 +456,7 @@ adapter after an explicit `npm run migrate:database` cutover; legacy files are
 kept only as migration and rollback sources. Canvas UI preferences,
 media/artifact roots and client history remain bounded compatibility adapters.
 
-Backup archives use schema version 1 with `client/client.json` as the canonical
+Backup archive format uses version 2 and domain schema version 1; `client/client.json` is the canonical
 workspace representation. `lib/backup-application-service.ts` owns export and
 restore orchestration while the HTTP route only authenticates, parses and
 serializes. Restore writes through a file-level rollback transaction and uses
@@ -462,7 +470,11 @@ committed journal phase for crash recovery. Compatibility Buffer APIs remain for
 snapshots and older callers; the production HTTP export path is file/stream based.
 The legacy JSON backup endpoint and browser IndexedDB restore path also use the
 same staged transaction boundary: browser restore captures the current
-repository workspace and restores it if a later store write fails.
+repository workspace and restores it if a later store write fails. Database,
+Backup, Provider and video Task operations emit the shared RuntimeObserver
+lifecycle events without recording prompt, tool arguments, file contents or
+secrets. Fixed architecture evals cover the migrated AgentRun, backup
+canonical boundary and the API/Worker seams.
 PostgreSQL remains a future cloud adapter; it
 is not introduced in this local-first cutover.
 

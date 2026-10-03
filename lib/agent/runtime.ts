@@ -7,3 +7,4 @@
  */
 export { AgentRuntime } from '../../packages/agent-core/runtime';
 export type { AgentMessage, ModelDescriptor } from '../../packages/contracts';
+export { runPlainAgentTurn } from '../../apps/api/agent-entry';

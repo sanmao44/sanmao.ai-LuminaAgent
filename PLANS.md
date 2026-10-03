@@ -2,17 +2,17 @@
 
 > **当前状态（2026-10-02）**：Canvas Document、History、Selection 已由 CanvasCore 完成 authority cutover；全域 Legacy removal 仍未完成。各领域真实调用链、双轨状态、绕过点和删除条件见 [`docs/next-architecture/migration-status.md`](docs/next-architecture/migration-status.md)。
 
-> **当前任务（2026-10-02）：Canvas Authority Completion + Architecture Audit II 已完成。** `CanvasCore` 已成为 Document、History、Selection 的唯一 authoritative owner；React 只保留 subscription/projection 与 UI-only transient state。`packages/tool-runtime/adapter.ts` 保持为有删除条件的 migration adapter。
+> **当前任务（2026-10-03）：Data Cutover Closure 已完成实现并通过 targeted/full verification；Physical Architecture / Remaining Migration / Legacy Purge 进入 migration in progress。** Part B 只能沿真实 ownership seam 推进，不创建空的 apps 目录或复制 God File。
 
 ## 当前阶段状态
 
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
-| Phase 1 Agent Runtime | migration in progress | Compact non-streaming text path uses AgentRuntime; Tool, Streaming, Artifact, Browser, Filesystem and Route orchestration remain legacy. |
+| Phase 1 Agent Runtime | migration in progress | Compact non-streaming text path uses `packages/agent-core` through `apps/api/agent-entry.ts`; Tool, Streaming, Artifact, Browser, Filesystem and Route orchestration remain legacy. |
 | Phase 2 Test Decoupling | migration in progress | Tool/MCP behavior is covered; remaining Agent/UI/Route source-coupled assertions migrate by domain. |
 | Phase 3 Storage Boundary | migration in progress | Session, workspace gallery, asset collections, provider state, server workspace, MCP configuration, video/upscale, clone and progress use repository adapters; UI preferences, artifact/media and legacy storage internals remain. |
-| Phase 4 Task Runtime | migration in progress | State and cancellation/retry decisions reuse Runtime; polling, persistence and wire status remain specialized. |
-| Phase 5 Provider Runtime | migration in progress | One text Agent path uses ModelRuntime; routing, failover, streaming and media remain legacy. |
+| Phase 4 Task Runtime | migration in progress | State and cancellation/retry decisions reuse Runtime; clone dispatch has a Worker entry seam, while polling, persistence and wire status remain specialized. |
+| Phase 5 Provider Runtime | migration in progress | One text Agent path uses `packages/model-runtime` through the API entry; routing, failover, streaming and media remain legacy. |
 | Phase 6 Tool Runtime | migration in progress | packages/tool-runtime owns policy, resolution, dispatch, execution, loop and MCP executor; Route compatibility boundaries remain. |
 | Phase 7 Canvas Core | cutover completed | CanvasCore 已成为 Document、History、Selection 的唯一 authority；SuperCanvas 只保留 projection、gesture、persistence 与 UI adapter。 |
 | Phase 8 UI cleanup | migration in progress | Shell, sidebar and Agent presentation are extracted; app/page.tsx remains composition/state owner. |
@@ -514,14 +514,14 @@ Next recommended slice
 
 # 当前立即执行任务
 
-当前优先级：
+当前阶段：
 
 ```text
-Architecture Audit II（Canvas authority 已 cutover，迁移记录已更新）
+Data Cutover Closure 已完成；Part B 为 migration in progress
 ```
 
 下一次代码施工优先级：
 
 ```text
-Storage Consolidation → Backup / Restore Hardening → Database Cutover（本轮完成 server repository 收口、多物理根 restore rollback、流式导入、crash journal、SQLite cutover 与 migration command）；保持 `packages/tool-runtime/adapter.ts` 为有删除条件的 migration adapter
+Part A 已完成 server repository 收口、多物理根 restore rollback、流式 HTTP backup、crash journal、SQLite cutover、migration command 与 observer 接线；Part B 已建立 Agent API 与 Clone Worker 的首批真实入口，并补充 Provider/Task observer 与边界 eval，继续保持 `packages/tool-runtime/adapter.ts` 为有删除条件的 migration adapter，沿真实 ownership seam 推进。
 ```

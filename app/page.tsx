@@ -7174,10 +7174,12 @@ export default function Page() {
                 if (value !== null) preferences[key] = value;
             }
             const client = {
-                workspace: await workspaceRepository.collect(),
-                gallery: await normalizeGalleryForBackup(await assetRepository.listGallery()),
-                chatSessions: [...await conversationRepository.list()],
-                preferences
+                workspace: {
+                    ...(await workspaceRepository.collect()),
+                    gallery: await normalizeGalleryForBackup(await assetRepository.listGallery()),
+                    chatSessions: [...await conversationRepository.list()],
+                    preferences,
+                },
             };
             const res = await fetch('/api/backup/archive', {
                 method: 'POST',
@@ -7200,7 +7202,7 @@ export default function Page() {
             anchor.remove();
             window.setTimeout(()=>URL.revokeObjectURL(objectUrl), 1500);
             const skillCount = Number(res.headers.get('X-SANMAO-Backup-Skills') || 0);
-            notify(`加密备份完成：${client.gallery.length} 张图片索引、${client.chatSessions.length} 段对话、${skillCount} 个技能，已包含服务端图片与技能文件`);
+            notify(`加密备份完成：${client.workspace.gallery.length} 张图片索引、${client.workspace.chatSessions.length} 段对话、${skillCount} 个技能，已包含服务端图片与技能文件`);
         } catch (error) {
             notify(error instanceof Error ? error.message : '导出备份失败');
         } finally{
@@ -7208,7 +7210,8 @@ export default function Page() {
         }
     }
     async function restoreClientBackup(client) {
-        if (!client || !Array.isArray(client.gallery) || !Array.isArray(client.chatSessions)) throw new Error('备份缺少浏览器历史数据');
+        const canonical = client?.workspace && typeof client.workspace === 'object' ? client.workspace : client;
+        if (!canonical || !Array.isArray(canonical.gallery) || !Array.isArray(canonical.chatSessions)) throw new Error('备份缺少浏览器历史数据');
         const preferenceKeys = [
             'sanmao-theme',
             'sanmao-success-sound',
@@ -7230,10 +7233,10 @@ export default function Page() {
             }
         };
         try {
-            await assetRepository.replaceGallery(client.gallery);
-            await conversationRepository.replaceAll(client.chatSessions);
-            if (client.workspace) await workspaceRepository.restore(client.workspace);
-            applyPreferences(client.preferences);
+            await assetRepository.replaceGallery(canonical.gallery);
+            await conversationRepository.replaceAll(canonical.chatSessions);
+            if (client?.workspace && typeof client.workspace === 'object') await workspaceRepository.restore(canonical);
+            applyPreferences(canonical.preferences);
         } catch (error) {
             // Browser stores are separate IndexedDB transactions. Restore the
             // captured repository snapshot if any later store or preference
@@ -7282,7 +7285,8 @@ export default function Page() {
                 return;
             }
             const parsed = JSON.parse(await file.text());
-            if (parsed?.format !== 'sanmao-ai-local-backup' || parsed.version !== 1 || !parsed.server || !parsed.client || !Array.isArray(parsed.client.gallery) || !Array.isArray(parsed.client.chatSessions)) throw new Error('这不是有效的 SANMAO.AI 本地备份文件');
+            const legacyClient = parsed?.client?.workspace && typeof parsed.client.workspace === 'object' ? parsed.client.workspace : parsed?.client;
+            if (parsed?.format !== 'sanmao-ai-local-backup' || parsed.version !== 1 || !parsed.server || !legacyClient || !Array.isArray(legacyClient.gallery) || !Array.isArray(legacyClient.chatSessions)) throw new Error('这不是有效的 SANMAO.AI 本地备份文件');
             const keyWarning = parsed.server.externalMasterKey ? '该备份原先使用环境变量主密钥，恢复后仍需配置相同的 SANMAO_MASTER_KEY。' : '备份包含恢复接口密钥所需的本机主密钥，请妥善保存。';
             setConfirmState({
                 title: '恢复本地备份？',

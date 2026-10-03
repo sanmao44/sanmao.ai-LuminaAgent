@@ -2,6 +2,9 @@
   "name": "sanmao-ai-studio",
   "version": "0.7.74",
   "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "dev": "next dev --webpack -p 3210",
     "build": "next build --webpack",

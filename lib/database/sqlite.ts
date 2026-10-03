@@ -77,6 +77,32 @@ export function readSqliteMarker(dataDir = resolveLocalDataDir()): SqliteDatabas
   }
 }
 
+/**
+ * Return the cutover identity captured by a repository when it is created.
+ * A repository must never silently follow a later marker written by another
+ * process or migration. Callers use this value as a process lifetime fence.
+ */
+export function sqliteAuthorityId(dataDir = resolveLocalDataDir()) {
+  return isSqliteActive(dataDir) ? readSqliteMarker(dataDir)?.migrationId || null : null;
+}
+
+export function assertSqliteAuthority(expectedMigrationId: string | null, dataDir = resolveLocalDataDir()) {
+  const currentMigrationId = sqliteAuthorityId(dataDir);
+  if (!currentMigrationId || currentMigrationId !== expectedMigrationId) {
+    throw new Error('SQLite authoritative store changed; restart the application before using this repository instance');
+  }
+}
+
+export function createSqliteAuthorityFence(dataDir = resolveLocalDataDir()) {
+  const expectedMigrationId = sqliteAuthorityId(dataDir);
+  return () => {
+    const currentMigrationId = sqliteAuthorityId(dataDir);
+    if (currentMigrationId !== expectedMigrationId) {
+      throw new Error('Database authoritative store changed; restart the application before using this repository instance');
+    }
+  };
+}
+
 export async function ensureSqliteDirectory(dataDir = resolveLocalDataDir()) {
   await mkdir(dataDir, { recursive: true });
   return dataDir;
@@ -85,6 +111,32 @@ export async function ensureSqliteDirectory(dataDir = resolveLocalDataDir()) {
 export function withSqliteDatabase<T>(fn: (db: DatabaseSync) => T, dataDir = resolveLocalDataDir()) {
   const db = openSqliteDatabase(sqliteDatabasePath(dataDir));
   try { return fn(db); } finally { db.close(); }
+}
+
+/** Run one domain mutation in one SQLite transaction. Callers must not open a
+ * second connection or commit individual records inside the callback. */
+export async function withSqliteTransaction<T>(fn: (db: DatabaseSync) => T | Promise<T>, dataDir = resolveLocalDataDir()): Promise<T> {
+  if (!isSqliteActive(dataDir)) throw new Error('SQLite database is not active');
+  const db = openSqliteDatabase(sqliteDatabasePath(dataDir));
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = await fn(db);
+      db.exec("INSERT INTO sanmao_meta(key, value) VALUES ('postCutoverWrites', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1");
+      db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  } finally {
+    db.close();
+  }
+}
+
+export function sqlitePostCutoverWrites(dataDir = resolveLocalDataDir()) {
+  if (!isSqliteActive(dataDir)) return 0;
+  return withSqliteDatabase((db) => Number((db.prepare("SELECT value FROM sanmao_meta WHERE key = 'postCutoverWrites'").get() as { value?: string } | undefined)?.value || 0), dataDir);
 }
 
 export function readSqliteRecord<T>(domain: string, key: string, dataDir = resolveLocalDataDir()): T | null {
@@ -107,6 +159,7 @@ export function writeSqliteRecord<T>(domain: string, key: string, value: T, data
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(domain, record_key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
         .run(domain, key, JSON.stringify(value), new Date().toISOString(), order);
+      db.exec("INSERT INTO sanmao_meta(key, value) VALUES ('postCutoverWrites', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1");
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');
@@ -122,13 +175,23 @@ export function listSqliteRecords<T>(domain: string, dataDir = resolveLocalDataD
 
 export function deleteSqliteRecord(domain: string, key: string, dataDir = resolveLocalDataDir()) {
   if (!isSqliteActive(dataDir)) return;
-  withSqliteDatabase((db) => { db.prepare('DELETE FROM sanmao_records WHERE domain = ? AND record_key = ?').run(domain, key); }, dataDir);
+  withSqliteDatabase((db) => {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare('DELETE FROM sanmao_records WHERE domain = ? AND record_key = ?').run(domain, key);
+      db.exec("INSERT INTO sanmao_meta(key, value) VALUES ('postCutoverWrites', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1");
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }, dataDir);
 }
 
 /** Replace one domain inside a prepared database image. This is used by
  * staged backup restore; callers atomically swap the image only after every
  * domain has validated. */
-export function replaceSqliteDomain<T>(db: DatabaseSync, domain: string, records: Array<{ key: string; value: T }>) {
+export function replaceSqliteDomain<T>(db: DatabaseSync, domain: string, records: Array<{ key: string; value: T }>, countAsPostCutoverWrite = true) {
   db.exec('BEGIN IMMEDIATE');
   try {
     db.prepare('DELETE FROM sanmao_records WHERE domain = ?').run(domain);
@@ -136,6 +199,7 @@ export function replaceSqliteDomain<T>(db: DatabaseSync, domain: string, records
       VALUES (?, ?, ?, ?, ?)`);
     const now = new Date().toISOString();
     records.forEach((record, index) => insert.run(domain, record.key, JSON.stringify(record.value), now, index));
+    if (countAsPostCutoverWrite) db.exec("INSERT INTO sanmao_meta(key, value) VALUES ('postCutoverWrites', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1");
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');

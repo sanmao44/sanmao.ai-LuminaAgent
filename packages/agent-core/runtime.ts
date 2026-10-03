@@ -6,6 +6,7 @@ import type {
   AgentRunState,
   ContextBuilder,
   ModelRuntime,
+  RuntimeObserver,
 } from '../contracts';
 
 export type AgentRuntimeDependencies = {
@@ -13,6 +14,7 @@ export type AgentRuntimeDependencies = {
   context: ContextBuilder;
   policy: AgentPolicy;
   now?: () => number;
+  observer?: RuntimeObserver;
 };
 
 function errorText(error: unknown) {
@@ -34,6 +36,7 @@ export class AgentRuntime {
     const events: AgentEvent[] = [];
     let state: AgentRunState = 'created';
     const startedAt = this.now();
+    void this.dependencies.observer?.emit({ operationId: request.runId, kind: 'agent', phase: 'started', at: startedAt });
     events.push({ type: 'AgentRunStarted', runId: request.runId, at: startedAt });
 
     const decision = this.dependencies.policy.decide(request);
@@ -60,10 +63,12 @@ export class AgentRuntime {
         outputChars: response.content.length,
       });
       state = 'completed';
+      void this.dependencies.observer?.emit({ operationId: request.runId, kind: 'agent', phase: 'completed', at: this.now(), durationMs: this.now() - startedAt, status: state, identity: response.modelId });
       events.push({ type: 'AgentRunCompleted', runId: request.runId, at: this.now() });
       return { run: { id: request.runId, state }, output: response.content, modelId: response.modelId, events };
     } catch (error) {
       state = request.signal?.aborted ? 'cancelled' : 'failed';
+      void this.dependencies.observer?.emit({ operationId: request.runId, kind: 'agent', phase: 'failed', at: this.now(), durationMs: this.now() - startedAt, status: state, errorClass: error instanceof Error ? error.name : 'UnknownError' });
       events.push({ type: 'AgentRunFailed', runId: request.runId, at: this.now(), error: errorText(error) });
       throw error;
     }

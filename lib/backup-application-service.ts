@@ -1,5 +1,6 @@
 import { createReadStream, createWriteStream } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createArchiveBudget, createBackupArchive, createBackupArchiveStream, describeBackupSource, extractBackupArchiveFile, extractBackupArchiveStreaming, sha256, type BackupArchiveEntry, type BackupArchiveFileEntry, type BackupArchiveSource } from '@/lib/backup-archive';
@@ -14,6 +15,8 @@ import { validateWorkspaceShape } from '@/lib/workspace-format';
 import { BackupRestoreTransaction } from '@/lib/backup-restore-transaction';
 import { getStoredStateForBackup } from '@/lib/store';
 import { isSqliteActive, listSqliteRecords, openSqliteDatabase, readSqliteRecord, replaceSqliteDomain, sqliteDatabasePath } from '@/lib/database/sqlite';
+import { CURRENT_BACKUP_SCHEMA_VERSION, validateCurrentBackupManifest } from '@/lib/backup-schema';
+import type { RuntimeObserver } from '@/packages/contracts/observability';
 
 
 const dataDir = resolveLocalDataDir();
@@ -29,7 +32,7 @@ const maxClientBytes = 80 * 1024 * 1024;
  */
 const maxArchiveBytes = 4 * 1024 * 1024 * 1024;
 const maxArchiveLabel = `${maxArchiveBytes / (1024 * 1024 * 1024)}GB`;
-const BACKUP_SCHEMA_VERSION = 1;
+const BACKUP_SCHEMA_VERSION = CURRENT_BACKUP_SCHEMA_VERSION;
 
 async function readOptional(file: string) {
   try { return await readFile(file); } catch { return Buffer.alloc(0); }
@@ -296,21 +299,23 @@ async function restoreArchive(entries: RestoreEntry[]) {
   const manifestEntry = byName.get('manifest.json');
   const stateEntry = byName.get('server/state.json');
   if (!manifestEntry || !stateEntry) throw new Error('Backup is missing manifest.json or server/state.json');
-  const manifest = JSON.parse((await readEntry(manifestEntry)).toString('utf8')) as BackupManifest;
+  const manifest = validateCurrentBackupManifest(JSON.parse((await readEntry(manifestEntry)).toString('utf8')) as BackupManifest) as BackupManifest;
   if (manifest.format !== 'sanmao-ai-local-backup-archive' || manifest.version !== 2) throw new Error('Unsupported backup version');
-  if (Number(manifest.schemaVersion || 1) !== BACKUP_SCHEMA_VERSION) throw new Error('Unsupported backup schema version');
-  if (manifest.canonical?.workspace && manifest.canonical.workspace !== 'client/client.json') throw new Error('Unsupported canonical workspace');
   await manifestEntries(entries, manifest);
   const state = validateState(await readEntry(stateEntry));
   const backupMode: BackupMode = manifest.backupMode === 'complete' || byName.has('server/master.key') ? 'complete' : 'content';
   const clientEntry = byName.get('client/client.json');
   if (manifest.canonical?.workspace === 'client/client.json' && !clientEntry) throw new Error('Backup is missing canonical client/client.json');
-  const client = clientEntry ? JSON.parse((await readEntry(clientEntry)).toString('utf8')) as { gallery?: unknown; chatSessions?: unknown; workspace?: unknown } : {};
+  const rawClient = clientEntry ? JSON.parse((await readEntry(clientEntry)).toString('utf8')) as { gallery?: unknown; chatSessions?: unknown; workspace?: unknown } : {};
+  const client = rawClient.workspace && typeof rawClient.workspace === 'object'
+    ? { workspace: rawClient.workspace as Record<string, unknown> }
+    : rawClient;
+  const canonicalWorkspace = (client.workspace && typeof client.workspace === 'object' ? client.workspace : client) as { gallery?: unknown; chatSessions?: unknown; preferences?: unknown };
   if (clientEntry) {
-    if (!Array.isArray(client.gallery) || !Array.isArray(client.chatSessions)) throw new Error('Invalid backup browser history');
+    if (!Array.isArray(canonicalWorkspace.gallery) || !Array.isArray(canonicalWorkspace.chatSessions)) throw new Error('Invalid backup browser history');
   }
   const workspaceEntry = byName.get('server/workspace.json');
-  const workspace = client.workspace || (workspaceEntry ? JSON.parse((await readEntry(workspaceEntry)).toString('utf8')) : null);
+  const workspace = (client.workspace && typeof client.workspace === 'object' ? client.workspace : null) || (workspaceEntry ? JSON.parse((await readEntry(workspaceEntry)).toString('utf8')) : null);
   if (workspace) validateWorkspaceShape(workspace);
   if (backupMode === 'content') {
     const current = await readStateForBackup().then((raw) => raw.length ? validateState(raw) : null);
@@ -341,15 +346,15 @@ async function restoreArchive(entries: RestoreEntry[]) {
       stagedDatabase = path.join(dataDir, `.restore-db-${process.pid}-${Date.now()}.sqlite`);
       await copyFile(sqliteDatabasePath(dataDir), stagedDatabase);
       const db = openSqliteDatabase(stagedDatabase);
-      replaceSqliteDomain(db, 'provider-config', [{ key: 'primary', value: state }]);
-      if (workspace) replaceSqliteDomain(db, 'workspace', [{ key: 'primary', value: workspace }]);
+      replaceSqliteDomain(db, 'provider-config', [{ key: 'primary', value: state }], false);
+      if (workspace) replaceSqliteDomain(db, 'workspace', [{ key: 'primary', value: workspace }], false);
       for (const name of SNAPSHOT_DURABLE_FILES) {
         const entry = byName.get(`server/tasks/${name}`);
         const records = entry ? asTaskRecords(await readEntry(entry)) : [];
-        replaceSqliteDomain(db, `task:${name}`, records.map((value) => ({ key: String(value.id), value })));
+        replaceSqliteDomain(db, `task:${name}`, records.map((value) => ({ key: String(value.id), value })), false);
       }
       const mcp = byName.get('server/mcp/servers.json');
-      replaceSqliteDomain(db, 'mcp', mcp ? [{ key: 'primary', value: JSON.parse((await readEntry(mcp)).toString('utf8')) }] : []);
+      replaceSqliteDomain(db, 'mcp', mcp ? [{ key: 'primary', value: JSON.parse((await readEntry(mcp)).toString('utf8')) }] : [], false);
       db.close();
       await transaction.copy(stagedDatabase, sqliteDatabasePath(dataDir));
     } else {
@@ -472,11 +477,20 @@ async function restoreArchive(entries: RestoreEntry[]) {
 }
 
 
-export async function createBackupExport(client: unknown, backupPassword: string, mode: BackupMode) {
-  validateBackupPassword(backupPassword);
-  const result = await exportArchive(client, mode);
-  const encrypted = encryptBackupPayload(await createBackupArchive(result.entries), backupPassword);
-  return { encrypted, manifest: result.manifest };
+export async function createBackupExport(client: unknown, backupPassword: string, mode: BackupMode, observer?: RuntimeObserver) {
+  const operationId = `backup-export-${randomUUID()}`;
+  const startedAt = Date.now();
+  void observer?.emit({ operationId, kind: 'backup', phase: 'started', at: startedAt, identity: mode });
+  try {
+    validateBackupPassword(backupPassword);
+    const result = await exportArchive(client, mode);
+    const encrypted = encryptBackupPayload(await createBackupArchive(result.entries), backupPassword);
+    void observer?.emit({ operationId, kind: 'backup', phase: 'completed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'exported', identity: mode });
+    return { encrypted, manifest: result.manifest };
+  } catch (error) {
+    void observer?.emit({ operationId, kind: 'backup', phase: 'failed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'failed', identity: mode, errorClass: error instanceof Error ? error.name : 'UnknownError' });
+    throw error;
+  }
 }
 
 /**
@@ -484,9 +498,15 @@ export async function createBackupExport(client: unknown, backupPassword: string
  * the returned directory is owned by the caller and must be removed after the
  * HTTP response finishes.
  */
-export async function createBackupExportFile(client: unknown, backupPassword: string, mode: BackupMode) {
-  validateBackupPassword(backupPassword);
-  const result = await exportArchive(client, mode);
+export async function createBackupExportFile(client: unknown, backupPassword: string, mode: BackupMode, observer?: RuntimeObserver) {
+  const operationId = `backup-export-${randomUUID()}`;
+  const startedAt = Date.now();
+  void observer?.emit({ operationId, kind: 'backup', phase: 'started', at: startedAt, identity: mode });
+  let result: Awaited<ReturnType<typeof exportArchive>>;
+  try { validateBackupPassword(backupPassword); result = await exportArchive(client, mode); } catch (error) {
+    void observer?.emit({ operationId, kind: 'backup', phase: 'failed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'failed', identity: mode, errorClass: error instanceof Error ? error.name : 'UnknownError' });
+    throw error;
+  }
   const staging = await mkdtemp(path.join(tmpdir(), 'sanmao-backup-export-'));
   const archivePath = path.join(staging, 'archive.gz');
   const encryptedPath = path.join(staging, 'backup.sanmao-backup');
@@ -514,32 +534,47 @@ export async function createBackupExportFile(client: unknown, backupPassword: st
       throw error;
     }
     await encryptBackupFile(archivePath, encryptedPath, backupPassword);
+    void observer?.emit({ operationId, kind: 'backup', phase: 'completed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'exported', identity: mode });
     return { filePath: encryptedPath, cleanupPath: staging, manifest: result.manifest };
   } catch (error) {
+    void observer?.emit({ operationId, kind: 'backup', phase: 'failed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'failed', identity: mode, errorClass: error instanceof Error ? error.name : 'UnknownError' });
     await rm(staging, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
 }
 
-export async function restoreBackupArchive(uploaded: Buffer, backupPassword: string) {
+export async function restoreBackupArchive(uploaded: Buffer, backupPassword: string, observer?: RuntimeObserver) {
+  const operationId = `backup-restore-${randomUUID()}`;
+  const startedAt = Date.now();
+  void observer?.emit({ operationId, kind: 'backup', phase: 'started', at: startedAt, identity: 'buffer' });
+  try {
   if (uploaded.byteLength > maxArchiveBytes) throw new Error(`Backup archive exceeds ${maxArchiveLabel}`);
   const encrypted = isEncryptedBackup(uploaded);
   const archive = encrypted ? decryptBackupPayload(uploaded, backupPassword) : uploaded;
   if (archive.byteLength > maxArchiveBytes) throw new Error(`Backup archive exceeds ${maxArchiveLabel}`);
   await createLocalSnapshot('before-restore');
   const result = await restoreArchive(await extractBackupArchiveStreaming(archive));
-  return { legacyUnencrypted: !encrypted, ...result };
+  const output = { legacyUnencrypted: !encrypted, ...result };
+  void observer?.emit({ operationId, kind: 'backup', phase: 'completed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'restored', identity: 'buffer' });
+  return output;
+  } catch (error) {
+    void observer?.emit({ operationId, kind: 'backup', phase: 'failed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'failed', identity: 'buffer', errorClass: error instanceof Error ? error.name : 'UnknownError' });
+    throw error;
+  }
 }
 
 /** Restore an HTTP upload using disk staging. The request route writes the
  * upload to a temporary file, then this service decrypts and extracts one
  * entry at a time without a full archive Buffer. */
-export async function restoreBackupArchiveFile(uploadedPath: string, backupPassword: string, uploadedBytes: number) {
-  if (uploadedBytes > maxArchiveBytes) throw new Error(`Backup archive exceeds ${maxArchiveLabel}`);
+export async function restoreBackupArchiveFile(uploadedPath: string, backupPassword: string, uploadedBytes: number, observer?: RuntimeObserver) {
+  const operationId = `backup-restore-${randomUUID()}`;
+  const startedAt = Date.now();
+  void observer?.emit({ operationId, kind: 'backup', phase: 'started', at: startedAt, identity: 'file' });
   const staging = await mkdtemp(path.join(tmpdir(), 'sanmao-restore-'));
   const archivePath = path.join(staging, 'archive.gz');
   const extractDir = path.join(staging, 'entries');
   try {
+    if (uploadedBytes > maxArchiveBytes) throw new Error(`Backup archive exceeds ${maxArchiveLabel}`);
     const encrypted = await isEncryptedBackupFile(uploadedPath);
     if (encrypted) {
       await decryptBackupFile(uploadedPath, archivePath, backupPassword);
@@ -552,7 +587,12 @@ export async function restoreBackupArchiveFile(uploadedPath: string, backupPassw
     if (info.size > maxArchiveBytes) throw new Error(`Backup archive exceeds ${maxArchiveLabel}`);
     await createLocalSnapshot('before-restore');
     const result = await restoreArchive(await extractBackupArchiveFile(archivePath, extractDir));
-    return { legacyUnencrypted: !encrypted, ...result };
+    const output = { legacyUnencrypted: !encrypted, ...result };
+    void observer?.emit({ operationId, kind: 'backup', phase: 'completed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'restored', identity: 'file' });
+    return output;
+  } catch (error) {
+    void observer?.emit({ operationId, kind: 'backup', phase: 'failed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'failed', identity: 'file', errorClass: error instanceof Error ? error.name : 'UnknownError' });
+    throw error;
   } finally {
     await rm(staging, { recursive: true, force: true }).catch(() => undefined);
   }

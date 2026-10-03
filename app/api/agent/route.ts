@@ -68,6 +68,7 @@ import { isMcpRuntimeAction, runMcpRuntimeAction } from '@/lib/mcp/runtime-admin
 import { type McpRepeatTracker, type ToolLoopTraceStep } from '@/packages/tool-runtime/tool-loop';
 import { createToolExecutionAdapter } from '@/packages/tool-runtime/adapter';
 import { ToolRuntime } from '@/packages/tool-runtime/runtime';
+import { BufferedRuntimeObserver } from '@/packages/contracts/observability';
 import { AGENT_INLINE_TEXT_MAX_CHARS, boundAgentContext, modelInputCharBudget } from '@/lib/agent/context-budget';
 import { createBrowserMetricsCollector } from '@/lib/agent/browser-metrics';
 import { browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
@@ -110,9 +111,9 @@ import {
   type PresentationInput,
   type SpreadsheetInput,
 } from '@/lib/artifacts';
-import { AgentRuntime } from '@/lib/agent/runtime';
+import { runPlainAgentTurn } from '@/lib/agent/runtime';
 import type { AgentMessage, ModelDescriptor } from '@/lib/agent/runtime';
-import { createLegacyChatModelRuntime } from '@/lib/provider-runtime/chat';
+import { createLegacyChatModelRuntime } from '@/packages/model-runtime';
 
 async function safeDiscoverMcpForRequest(options: Parameters<typeof discoverMcpForRequest>[0]) {
   try {
@@ -697,6 +698,7 @@ export async function POST(request: Request) {
    * （app/api/agent/progress）。只写固定阶段文案，不带用户内容；没有 runId 就整个不生效。
    */
   let agentRunId: string | null = null;
+  const runtimeObserver = new BufferedRuntimeObserver(256);
   let progressToolCalls = 0;
   const reportProgress = (patch: { stage: AgentProgressStage; message: string }) => {
     if (!agentRunId) return;
@@ -983,13 +985,17 @@ export async function POST(request: Request) {
         const runtime = agentRuntime;
         const startedAt = Date.now();
         llmCallCount += 1;
+        const providerOperationId = `${agentRunId || 'agent-request'}-provider-${llmCallCount}`;
+        void runtimeObserver.emit({ operationId: providerOperationId, kind: 'provider', phase: 'started', at: startedAt, identity: runtime.provider.name });
         try {
           const result = await withAgentCallDeadline(signal, canFailover ? AGENT_AUTO_FAILOVER_TIMEOUT_MS : AGENT_MODEL_CALL_TIMEOUT_MS, (callSignal) => operation(runtime, callSignal));
           noteAgentModelSuccess(runtime, Date.now() - startedAt);
+          void runtimeObserver.emit({ operationId: providerOperationId, kind: 'provider', phase: 'completed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'completed', identity: runtime.provider.name });
           return result;
         } catch (error) {
           if (isAgentRequestCancelled(error)) throw error;
           noteAgentModelFailure(runtime, error, Date.now() - startedAt);
+          void runtimeObserver.emit({ operationId: providerOperationId, kind: 'provider', phase: 'failed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'failed', identity: runtime.provider.name, errorClass: error instanceof Error ? error.name : 'UnknownError' });
           if (!canFailover || !advanceAgentModel()) throw error;
         }
       }
@@ -1442,8 +1448,7 @@ export async function POST(request: Request) {
           structuredOutput: false,
         },
       };
-      const runtime = new AgentRuntime({
-        model: createLegacyChatModelRuntime({
+      const modelRuntime = createLegacyChatModelRuntime({
           descriptor: model,
           invoke: (messages, signal) => trackedChatCompletion(
             agentRuntime.provider,
@@ -1451,18 +1456,17 @@ export async function POST(request: Request) {
             { messages: messages.map((item): ChatMessage => ({ role: item.role, content: item.content })) },
             signal || requestController.signal,
           ),
-        }),
-        context: { build: (input) => input.messages },
-        policy: { decide: () => ({ allowed: true }) },
       });
-      const result = await runtime.run({
+      const result = await runPlainAgentTurn({
         runId: agentRunId || `request-${Date.now()}`,
         model,
+        runtime: modelRuntime,
         messages: plainMessages.map((item): AgentMessage => ({
           role: item.role === 'system' || item.role === 'assistant' ? item.role : 'user',
           content: item.content,
         })),
         signal: requestController.signal,
+        observer: runtimeObserver,
       });
       const message = stripToolCallMarkup(result.output).trim();
       llmResponseChars = message.length;
@@ -2223,10 +2227,12 @@ const auditMcpCall = (
     const toolExecutionState = { webSearchData, webSearchError, generatedFiles, canvasPatch, mcpToolCallCount, mcpTurnBudget, usedMcpTools, browserUses, browserRecoveryNeeded, generated, browserDownloadCount, stalledMcpReason, preparedCaption, batchItems, generations, generatedArtifactCount, skillToolCalls, skillInstalls };
     const executeToolCallAdapter = createToolExecutionAdapter({
       state: toolExecutionState,
+      observer: runtimeObserver,
       toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, runArtifactToolCall, runSkillToolCall, canvasDocument, parseToolArguments, validateCanvasPatch, agentRunId, MCP_MANAGE_LABELS, isMcpRuntimeAction, runMcpRuntimeAction, latestInstruction, runMcpManageAction, executionPublicState, runTabbitBrowserAction, mcpToolCallLimit, browserMetrics, auditMcpCall, mcpServerById, isBrowserMutationTool, browserToolName, browserMutationBatches, mcpTurnBudgetLimit, mcpFilesystemRoots, localDataDir, persistImageBuffer, mcpRepeatTracker, agentTurnStartedAt, ARTIFACT_MAX_PER_TURN, appendPageContext, reportProgress, imageToolsAllowed, batchPlanContent, isBareImageExecution, extractBatchPrompts, fallbackImagePrompt, requestedImageCapability, latestRefs, trackedChatCompletion, agentRuntime, requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog, referenceRecords, runImageModelCandidates, getRuntimeImageModelCandidates, editImage, generateImage, persistGenerationResult, imageDownloadAuth, finishGenerationLog, artifactToolError, generatedFileFromArtifact, getStorageRoots, isValidArtifactId, collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact, mcpFilesystemWriteRoots,
     });
     const toolRuntime = new ToolRuntime({
       context: gatingContext,
+      observer: runtimeObserver,
       extraTools: mcpTools,
       onPolicyDenied: async ({ policy }) => {
         const meta = policy.tool?.mcp;

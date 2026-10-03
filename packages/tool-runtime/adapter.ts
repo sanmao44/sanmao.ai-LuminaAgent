@@ -11,6 +11,7 @@ import type { ChatMessage } from '@/lib/providers';
 import type { CanvasPatch } from '@/lib/canvas/patch';
 import type { ToolPolicyDecision } from '@/lib/tools/policy';
 import type { ToolRuntimeCall } from './runtime';
+import type { RuntimeObserver } from '../contracts/observability';
 type GeneratedFile = { name: string; size: number; [key: string]: unknown };
 type ToolCall = { id?: string; function?: { name?: string; arguments?: string } };
 type RuntimeImage = { provider: unknown; model: { id: string; rawId: string; displayName: string }; itemRuntime?: RuntimeImage; batchIndex?: number; batchPrompt?: string; url?: string; [key: string]: unknown };
@@ -23,6 +24,7 @@ type AdapterState = Record<string, unknown> & {
   browserDownloadCount: number; stalledMcpReason: string; preparedCaption?: unknown; batchItems: Array<Record<string, unknown>>; generations: Array<Record<string, unknown>>; recentPageText: string;
 };
 type AdapterBindings = {
+  observer?: RuntimeObserver;
   toolExecutionKind: (name: unknown, tools: readonly unknown[]) => string | null; mcpTools: readonly unknown[]; reportToolProgress: (patch: unknown) => void; agentToolProgress: (kind: unknown, name: string) => unknown;
   webDecision: { query?: string }; latest?: { content?: unknown }; requestController: AbortController; searchWeb: (query: string, signal: AbortSignal) => Promise<unknown>; formatWebSearchContext: (data: unknown) => string;
   normalizeGeneratedFile: (raw: unknown, index: number) => GeneratedFile | null; runArtifactToolCall: (call: ToolCall) => Promise<ChatMessage>; runSkillToolCall: (call: ToolCall) => Promise<ChatMessage>; canvasDocument?: unknown; parseToolArguments: (raw?: string) => unknown;
@@ -48,7 +50,7 @@ export type ToolExecutionAdapterDependencies = { state: Record<string, unknown> 
 export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDependencies) {
   const state = dependencies.state as AdapterState;
   const { state: _state, ...deps } = dependencies;
-  const { toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, runArtifactToolCall, runSkillToolCall, canvasDocument, parseToolArguments, validateCanvasPatch, agentRunId, MCP_MANAGE_LABELS, isMcpRuntimeAction, runMcpRuntimeAction, latestInstruction, runMcpManageAction, executionPublicState, runTabbitBrowserAction, mcpToolCallLimit, browserMetrics, auditMcpCall, mcpServerById, browserMutationBatches, mcpTurnBudgetLimit, mcpFilesystemRoots, localDataDir, persistImageBuffer, mcpRepeatTracker, agentTurnStartedAt, ARTIFACT_MAX_PER_TURN, appendPageContext, reportProgress, imageToolsAllowed, batchPlanContent, isBareImageExecution, extractBatchPrompts, fallbackImagePrompt, requestedImageCapability, latestRefs, trackedChatCompletion, agentRuntime, requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog, referenceRecords, runImageModelCandidates, getRuntimeImageModelCandidates, editImage, generateImage, persistGenerationResult, imageDownloadAuth, finishGenerationLog, artifactToolError, generatedFileFromArtifact, getStorageRoots, isValidArtifactId, collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact } = deps as unknown as AdapterBindings;
+  const { observer, toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, runArtifactToolCall, runSkillToolCall, canvasDocument, parseToolArguments, validateCanvasPatch, agentRunId, MCP_MANAGE_LABELS, isMcpRuntimeAction, runMcpRuntimeAction, latestInstruction, runMcpManageAction, executionPublicState, runTabbitBrowserAction, mcpToolCallLimit, browserMetrics, auditMcpCall, mcpServerById, browserMutationBatches, mcpTurnBudgetLimit, mcpFilesystemRoots, localDataDir, persistImageBuffer, mcpRepeatTracker, agentTurnStartedAt, ARTIFACT_MAX_PER_TURN, appendPageContext, reportProgress, imageToolsAllowed, batchPlanContent, isBareImageExecution, extractBatchPrompts, fallbackImagePrompt, requestedImageCapability, latestRefs, trackedChatCompletion, agentRuntime, requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog, referenceRecords, runImageModelCandidates, getRuntimeImageModelCandidates, editImage, generateImage, persistGenerationResult, imageDownloadAuth, finishGenerationLog, artifactToolError, generatedFileFromArtifact, getStorageRoots, isValidArtifactId, collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact } = deps as unknown as AdapterBindings;
   return async (input: { call: ToolRuntimeCall; policy: ToolPolicyDecision; args: Record<string, unknown>; executionContext?: unknown }): Promise<ToolCallRun> => {
     const { call, policy, args } = input;
     const executionContext = input.executionContext as { stepCalls: readonly ToolCall[]; callIndex: number } | undefined;
@@ -216,6 +218,7 @@ export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDep
             decision: 'call',
             retry: meta.readOnly,
             dependencies: {
+              observer,
               call: async (targetServer, toolName, callArgs, options) => localImage
                 ? { isError: false, text: JSON.stringify({ name: localImage.name, size: localImage.size, image: localImage.url, displayed: true }) }
                 : callMcpTool(targetServer, toolName, callArgs, options),
@@ -370,23 +373,32 @@ export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDep
         const initialRuntime = imageRuntime;
         const runPrompt = async (itemPrompt: string, promptIndex: number) => {
           let itemRuntime = initialRuntime;
-          const itemImages = await runImageModelCandidates(
-            initialRuntime,
-            async () => explicitlyRequestedImageModel
-              ? []
-              : getRuntimeImageModelCandidates('auto', mode === 'generate' ? 'generate' : 'edit'),
-            async (candidate: typeof initialRuntime) => {
-              itemRuntime = candidate;
-              return mode === 'edit'
-                ? editImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences, fidelity: 'high' }, requestController.signal)
-                : generateImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences }, requestController.signal);
-            },
-          );
-          return itemImages.map((image: RuntimeImage) => ({
-            ...image,
-            itemRuntime,
-            ...(batchId ? { batchId, batchIndex: promptIndex, batchTotal: prompts.length, batchPrompt: itemPrompt } : {}),
-          }));
+          const providerOperationId = `${agentRunId || 'agent-request'}-image-${promptIndex + 1}`;
+          const providerStartedAt = Date.now();
+          void observer?.emit({ operationId: providerOperationId, kind: 'provider', phase: 'started', at: providerStartedAt, identity: String((initialRuntime.provider as { name?: unknown }).name || 'image') });
+          try {
+            const itemImages = await runImageModelCandidates(
+              initialRuntime,
+              async () => explicitlyRequestedImageModel
+                ? []
+                : getRuntimeImageModelCandidates('auto', mode === 'generate' ? 'generate' : 'edit'),
+              async (candidate: typeof initialRuntime) => {
+                itemRuntime = candidate;
+                return mode === 'edit'
+                  ? editImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences, fidelity: 'high' }, requestController.signal)
+                  : generateImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences }, requestController.signal);
+              },
+            );
+            void observer?.emit({ operationId: providerOperationId, kind: 'provider', phase: 'completed', at: Date.now(), durationMs: Date.now() - providerStartedAt, status: 'completed', identity: String((itemRuntime.provider as { name?: unknown }).name || 'image') });
+            return itemImages.map((image: RuntimeImage) => ({
+              ...image,
+              itemRuntime,
+              ...(batchId ? { batchId, batchIndex: promptIndex, batchTotal: prompts.length, batchPrompt: itemPrompt } : {}),
+            }));
+          } catch (error) {
+            void observer?.emit({ operationId: providerOperationId, kind: 'provider', phase: 'failed', at: Date.now(), durationMs: Date.now() - providerStartedAt, status: 'failed', identity: String((itemRuntime.provider as { name?: unknown }).name || 'image'), errorClass: error instanceof Error ? error.name : 'UnknownError' });
+            throw error;
+          }
         };
         const resultsByPrompt: RuntimeImage[][] = Array.from({ length: prompts.length }, () => []);
         let nextPromptIndex = 0;

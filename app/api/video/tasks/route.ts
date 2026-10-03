@@ -2,6 +2,7 @@ import { isTrustedAppRequest } from '@/lib/auth';
 import { listVideoTasksPage } from '@/lib/video-task-store';
 import { refreshVideoTask } from '@/lib/video-task-service';
 import { videoTaskRuntime } from '@/lib/video-task-runtime';
+import { BufferedRuntimeObserver } from '@/packages/contracts/observability';
 
 export const runtime = 'nodejs';
 

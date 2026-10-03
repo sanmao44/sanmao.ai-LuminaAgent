@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveLocalDataDir } from '../data-paths';
-import { isSqliteActive, readSqliteRecord, writeSqliteRecord } from '../database/sqlite';
+import { createSqliteAuthorityFence, isSqliteActive, readSqliteRecord, writeSqliteRecord } from '../database/sqlite';
 import type { McpConfigRepository } from '@/packages/contracts/storage';
 
 type McpConfigRepositoryOptions = { dataDir?: string };
@@ -23,13 +23,16 @@ function readLegacy<TServer>(dataDir: string): TServer[] {
 
 export function createMcpConfigRepository<TServer>(options: McpConfigRepositoryOptions = {}): McpConfigRepository<TServer> & { filePath(): string } {
   const dataDir = path.resolve(options.dataDir || resolveLocalDataDir());
+  const assertStoreStable = createSqliteAuthorityFence(dataDir);
   return {
     filePath: () => storeFile(dataDir),
     list() {
+      assertStoreStable();
       if (isSqliteActive(dataDir)) return readSqliteRecord<{ servers?: TServer[] }>('mcp', 'primary', dataDir)?.servers || [];
       return readLegacy<TServer>(dataDir);
     },
     save(servers) {
+      assertStoreStable();
       const next = servers.slice(0, 20);
       if (isSqliteActive(dataDir)) {
         writeSqliteRecord('mcp', 'primary', { version: 1, servers: next }, dataDir);

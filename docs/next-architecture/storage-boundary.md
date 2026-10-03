@@ -91,9 +91,9 @@ conditions.
 
 - SQLite (`node:sqlite`) is the local authoritative database; no dependency was added.
 - `lib/database/sqlite.ts` owns the adapter and schema; business callers use repositories.
-- `npm run migrate:database` performs stage, validate, cutover and rollback-source capture.
+- `npm run migrate:database -- --runtime-guard` performs drain, stage, validate, cutover and rollback-source capture. It leaves a restart fence; the launcher clears that fence only after the new process is ready.
 - `npm run migrate:database -- rollback` restores legacy JSON sources and removes the active marker.
-- The command is idempotent only before activation; an active marker is a deliberate cutover fence.
+- Repository instances never silently switch stores after initialization. The command is idempotent only before activation; an active marker is a deliberate cutover fence. Ordinary rollback is strict-window and refuses after a post-cutover write.
 - PostgreSQL remains a future cloud adapter and is not introduced in this local-first slice.
 
 These are intentional follow-up migrations; changing them here would widen

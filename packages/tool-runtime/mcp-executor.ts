@@ -1,5 +1,6 @@
 import type { ChatMessage } from '@/lib/providers';
 import type { McpServerConfig, McpToolMeta } from '@/lib/mcp/types';
+import type { RuntimeObserver } from '../contracts/observability';
 
 export type McpCallResult = { isError: boolean; text: string };
 export type McpGuardResult = { ok: true; args?: Record<string, unknown> } | { ok: false; error: string };
@@ -22,6 +23,7 @@ export type McpExecutionDependencies = {
   onRemoteSuccess?: (server: McpServerConfig) => void;
   onAudit?: (info: McpExecutionInfo & { allowed: boolean; ok: boolean; summary: unknown }) => void;
   decorateResult?: (info: McpExecutionInfo & { ok: boolean; text: string }) => Promise<Record<string, unknown>> | Record<string, unknown>;
+  observer?: RuntimeObserver;
 };
 
 function errorMessage(error: unknown, fallback: string) {
@@ -42,6 +44,8 @@ export async function executeMcpTool(input: {
 }): Promise<{ message: ChatMessage; ok: boolean; text: string; durationMs: number; guarded: boolean; result?: McpCallResult; args: Record<string, unknown> }> {
   const { server, meta, dependencies } = input;
   const startedAt = Date.now();
+  const operationId = String(input.callId || `mcp-${startedAt}`);
+  void dependencies.observer?.emit({ operationId, kind: 'mcp', phase: 'started', at: startedAt, identity: `${meta.serverId}:${meta.toolName}` });
   const args = { ...input.args };
   const base = { server, meta, args, decision: input.decision } as const;
   const guard = dependencies.guard?.(server, meta, args);
@@ -49,6 +53,7 @@ export async function executeMcpTool(input: {
     const durationMs = Date.now() - startedAt;
     dependencies.onUsage?.({ server, meta, ok: false });
     dependencies.onAudit?.({ ...base, durationMs, allowed: false, ok: false, summary: guard.error });
+    void dependencies.observer?.emit({ operationId, kind: 'mcp', phase: 'failed', at: Date.now(), durationMs, status: 'guarded', identity: `${meta.serverId}:${meta.toolName}`, errorClass: 'GuardDenied' });
     return { message: { role: 'tool', tool_call_id: input.callId, content: JSON.stringify({ ok: false, error: guard.error }) }, ok: false, text: guard.error, durationMs, guarded: false, args };
   }
   const effectiveArgs = guard && guard.ok && guard.args ? guard.args : args;
@@ -71,6 +76,7 @@ export async function executeMcpTool(input: {
     if (ok) dependencies.onRemoteSuccess?.(server);
     else dependencies.onRemoteFailure?.(server, result.text, { onlyAuth: true });
     const info = { ...base, args: effectiveArgs, result, durationMs, ok, text: result.text };
+    void dependencies.observer?.emit({ operationId, kind: 'mcp', phase: ok ? 'completed' : 'failed', at: Date.now(), durationMs, status: ok ? 'completed' : 'failed', identity: `${meta.serverId}:${meta.toolName}`, ...(ok ? {} : { errorClass: 'RemoteError' }) });
     dependencies.onAudit?.({ ...info, allowed: true, ok, summary: result.text });
     const extra = await dependencies.decorateResult?.(info) || {};
     const content = {
@@ -89,6 +95,7 @@ export async function executeMcpTool(input: {
     dependencies.onUsage?.({ server, meta, ok: false });
     dependencies.onRemoteFailure?.(server, reason);
     dependencies.onAudit?.({ ...base, durationMs, allowed: true, ok: false, summary: reason });
+    void dependencies.observer?.emit({ operationId, kind: 'mcp', phase: 'failed', at: Date.now(), durationMs, status: 'failed', identity: `${meta.serverId}:${meta.toolName}`, errorClass: error instanceof Error ? error.name : 'UnknownError' });
     return {
       message: { role: 'tool', tool_call_id: input.callId, content: JSON.stringify({ ok: false, error: meta.readOnly ? reason : `${reason}；这次调用是否已经在外部生效无法确认，请先核实结果，再决定是否重试。` }) },
       ok: false,

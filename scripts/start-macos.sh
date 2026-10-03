@@ -273,18 +273,18 @@ printf '%s\n' '========================================'
 
 printf '\n==> 检查 Node.js\n'
 if ! command -v node >/dev/null 2>&1; then
-  fail '没有检测到 Node.js。请先安装 Node.js 20.9 或更高版本，然后重新双击启动器。'
+  fail '没有检测到 Node.js。请先安装 Node.js 22.13.0 或更高版本，然后重新双击启动器。'
 fi
 
 NODE_VERSION=`node --version 2>/dev/null || true`
 NODE_VERSION=`printf '%s' $NODE_VERSION | sed 's/^v//'`
 NODE_MAJOR=`printf '%s' $NODE_VERSION | cut -d. -f1`
 NODE_MINOR=`printf '%s' $NODE_VERSION | cut -d. -f2`
-if [ $NODE_MAJOR -lt 20 ]; then
-  fail 'SANMAO.AI 需要 Node.js 20.9 或更高版本。'
+if [ $NODE_MAJOR -lt 22 ]; then
+  fail 'SANMAO.AI 需要 Node.js 22.13.0 或更高版本。'
 fi
-if [ $NODE_MAJOR -eq 20 ] && [ $NODE_MINOR -lt 9 ]; then
-  fail 'SANMAO.AI 需要 Node.js 20.9 或更高版本。'
+if [ $NODE_MAJOR -eq 22 ] && [ $NODE_MINOR -lt 13 ]; then
+  fail 'SANMAO.AI 需要 Node.js 22.13.0 或更高版本。'
 fi
 printf 'Node.js：v%s\n' $NODE_VERSION
 

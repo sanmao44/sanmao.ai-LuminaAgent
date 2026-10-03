@@ -59,3 +59,13 @@ test('AgentRuntime marks aborted model calls as cancelled', async () => {
   }));
   await assert.rejects(() => runtime.run({ runId: 'run-3', model: dependencies().model.descriptor, messages: [], signal: controller.signal }), /cancelled/);
 });
+
+test('AgentRuntime emits provider-neutral structured telemetry without user content', async () => {
+  const events = [];
+  const runtime = new AgentRuntime(dependencies({ observer: { emit: (event) => events.push(event) } }));
+  await runtime.run({ runId: 'run-observe', model: dependencies().model.descriptor, messages: [{ role: 'user', content: 'secret prompt' }] });
+  assert.deepEqual(events.map((event) => event.phase), ['started', 'completed']);
+  assert.equal(events[0].kind, 'agent');
+  assert.equal(events[1].operationId, 'run-observe');
+  assert.equal('content' in events[1], false);
+});

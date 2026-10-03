@@ -1,11 +1,12 @@
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveProviderConfigDir } from '../data-paths';
-import { isSqliteActive, readSqliteRecord, writeSqliteRecord } from '../database/sqlite';
+import { createSqliteAuthorityFence, isSqliteActive, readSqliteRecord, writeSqliteRecord } from '../database/sqlite';
 import type { StoreData } from '../store';
 import type { ProviderStateRepository } from '@/packages/contracts/storage';
 
 const stateFile = (configDir = resolveProviderConfigDir()) => path.join(configDir, 'state.json');
+const assertStoreStable = createSqliteAuthorityFence();
 
 /**
  * Server provider state adapter. The legacy JSON file is kept inside this
@@ -14,6 +15,7 @@ const stateFile = (configDir = resolveProviderConfigDir()) => path.join(configDi
  */
 export const providerStateRepository: ProviderStateRepository<Partial<StoreData>> = {
   async read() {
+    assertStoreStable();
     const dataDir = resolveProviderConfigDir();
     if (isSqliteActive()) return readSqliteRecord<Partial<StoreData>>('provider-config', 'primary');
     try {
@@ -30,6 +32,7 @@ export const providerStateRepository: ProviderStateRepository<Partial<StoreData>
     }
   },
   async write(value) {
+    assertStoreStable();
     if (isSqliteActive()) {
       writeSqliteRecord('provider-config', 'primary', value);
       return;

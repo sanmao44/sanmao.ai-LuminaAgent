@@ -1,16 +1,18 @@
-import { copyFile, mkdir, readFile, rename, rm, stat, writeFile, readdir } from 'node:fs/promises';
+﻿﻿import { copyFile, mkdir, readFile, rename, rm, stat, writeFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { resolveLocalDataDir, resolveProviderConfigDir } from '../data-paths';
 import { validateWorkspaceShape } from '../workspace-format';
 import { createHash } from 'node:crypto';
-import { isSqliteActive, openSqliteDatabase, readSqliteMarker, sqliteDatabasePath, SQLITE_DATABASE_FILE, SQLITE_MARKER_FILE, SQLITE_SCHEMA_VERSION, type SqliteDatabaseMarker } from './sqlite';
+import { isSqliteActive, openSqliteDatabase, readSqliteMarker, sqliteDatabasePath, SQLITE_DATABASE_FILE, SQLITE_MARKER_FILE, SQLITE_SCHEMA_VERSION, sqlitePostCutoverWrites, type SqliteDatabaseMarker } from './sqlite';
+import type { RuntimeObserver } from '../../packages/contracts/observability';
 
 export type DatabaseMigrationOptions = {
   dataDir?: string;
   providerConfigDir?: string;
   failAfter?: 'stage' | 'validate' | 'before-commit';
   now?: () => string;
+  observer?: RuntimeObserver;
 };
 
 export type DatabaseMigrationResult = {
@@ -20,6 +22,8 @@ export type DatabaseMigrationResult = {
   imported: Record<string, number>;
   legacyRoots: string[];
   activated: boolean;
+  restartRequired: boolean;
+  rollbackMode: 'strict-window';
 };
 
 type DatabaseMigrationJournal = {
@@ -68,7 +72,7 @@ async function recoverDatabaseMigrations(dataDir: string) {
 
 function asArray(value: unknown) { return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string')) : []; }
 
-export async function migrateLegacyStorageToSqlite(options: DatabaseMigrationOptions = {}): Promise<DatabaseMigrationResult> {
+async function migrateLegacyStorageToSqliteInternal(options: DatabaseMigrationOptions = {}): Promise<DatabaseMigrationResult> {
   const dataDir = path.resolve(options.dataDir || resolveLocalDataDir());
   const providerConfigDir = path.resolve(options.providerConfigDir || resolveProviderConfigDir());
   const now = options.now || (() => new Date().toISOString());
@@ -77,7 +81,7 @@ export async function migrateLegacyStorageToSqlite(options: DatabaseMigrationOpt
   const active = readSqliteMarker(dataDir);
   if (active && !isSqliteActive(dataDir)) throw new Error('SQLite marker exists but database is missing or invalid; restore from rollback before retrying');
   if (active && isSqliteActive(dataDir)) {
-    return { migrationId: active.migrationId, databasePath: active.databasePath, rollbackPath: active.rollbackPath, imported: {}, legacyRoots: active.legacyRoots, activated: true };
+    return { migrationId: active.migrationId, databasePath: active.databasePath, rollbackPath: active.rollbackPath, imported: {}, legacyRoots: active.legacyRoots, activated: true, restartRequired: false, rollbackMode: 'strict-window' };
   }
   const migrationId = `db-${now().replace(/[^0-9A-Za-z]/g, '')}-${randomUUID().slice(0, 8)}`;
   const root = path.join(dataDir, 'migrations', migrationId);
@@ -115,6 +119,7 @@ export async function migrateLegacyStorageToSqlite(options: DatabaseMigrationOpt
     if (options.failAfter === 'stage') throw new Error('Injected database migration failure after staging');
     db.prepare("INSERT INTO sanmao_meta(key, value) VALUES ('schemaVersion', ?)").run(String(SQLITE_SCHEMA_VERSION));
     db.prepare("INSERT INTO sanmao_meta(key, value) VALUES ('canonical', ?)").run('sqlite');
+    db.prepare("INSERT INTO sanmao_meta(key, value) VALUES ('postCutoverWrites', '0') ON CONFLICT(key) DO UPDATE SET value = '0'").run();
     db.exec('COMMIT');
     await writeMigrationJournal(journalPath, { migrationId, phase: 'validated', databasePath: path.join(dataDir, SQLITE_DATABASE_FILE), rollbackPath: rollback, updatedAt: now() });
   } catch (error) {
@@ -135,12 +140,29 @@ export async function migrateLegacyStorageToSqlite(options: DatabaseMigrationOpt
   await writeMigrationJournal(journalPath, { migrationId, phase: 'activated', databasePath: activePath, rollbackPath: rollback, updatedAt: now() });
   // The marker is the cutover fence. Legacy JSON stays untouched as an
   // explicit rollback source; all new server writes route to SQLite.
-  return { migrationId, databasePath: activePath, rollbackPath: rollback, imported, legacyRoots: [dataDir, providerConfigDir], activated: true };
+  return { migrationId, databasePath: activePath, rollbackPath: rollback, imported, legacyRoots: [dataDir, providerConfigDir], activated: true, restartRequired: true, rollbackMode: 'strict-window' };
 }
 
-export async function rollbackSqliteMigration(dataDir = resolveLocalDataDir()) {
+export async function migrateLegacyStorageToSqlite(options: DatabaseMigrationOptions = {}): Promise<DatabaseMigrationResult> {
+  const operationId = `database-migration-${randomUUID()}`;
+  const startedAt = Date.now();
+  void options.observer?.emit({ operationId, kind: 'database', phase: 'started', at: startedAt, identity: 'legacy-to-sqlite' });
+  try {
+    const result = await migrateLegacyStorageToSqliteInternal(options);
+    void options.observer?.emit({ operationId, kind: 'database', phase: 'completed', at: Date.now(), durationMs: Date.now() - startedAt, status: result.activated ? 'activated' : 'already-active', identity: result.migrationId });
+    return result;
+  } catch (error) {
+    void options.observer?.emit({ operationId, kind: 'database', phase: 'failed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'failed', errorClass: error instanceof Error ? error.name : 'UnknownError' });
+    throw error;
+  }
+}
+
+async function rollbackSqliteMigrationInternal(dataDir = resolveLocalDataDir()) {
   const marker = await readJson(path.join(dataDir, SQLITE_MARKER_FILE)) as SqliteDatabaseMarker | null;
   if (!marker || marker.format !== 'sanmao-sqlite-database') throw new Error('No active SQLite migration');
+  if (sqlitePostCutoverWrites(dataDir) > 0) {
+    throw new Error('SQLite 已在 cutover 后产生新写入，普通 rollback 已拒绝；请先导出当前数据，再执行 reverse migration。');
+  }
   const rollbackRoot = path.resolve(marker.rollbackPath);
   const restore = async (root: string, relative = '') => {
     const entries = await (await import('node:fs/promises')).readdir(path.join(root, relative), { withFileTypes: true }).catch(() => []);
@@ -166,5 +188,19 @@ export async function rollbackSqliteMigration(dataDir = resolveLocalDataDir()) {
   const journalPath = path.join(path.dirname(rollbackRoot), 'journal.json');
   await writeMigrationJournal(journalPath, { migrationId: marker.migrationId, phase: 'rolled-back', databasePath: sqliteDatabasePath(dataDir), rollbackPath: rollbackRoot, updatedAt: new Date().toISOString() }).catch(() => undefined);
   return { migrationId: marker.migrationId, rolledBack: true };
+}
+
+export async function rollbackSqliteMigration(dataDir = resolveLocalDataDir(), observer?: RuntimeObserver) {
+  const operationId = `database-rollback-${randomUUID()}`;
+  const startedAt = Date.now();
+  void observer?.emit({ operationId, kind: 'database', phase: 'started', at: startedAt, identity: 'sqlite-rollback' });
+  try {
+    const result = await rollbackSqliteMigrationInternal(dataDir);
+    void observer?.emit({ operationId, kind: 'database', phase: 'completed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'rolled-back', identity: result.migrationId });
+    return result;
+  } catch (error) {
+    void observer?.emit({ operationId, kind: 'database', phase: 'failed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'failed', errorClass: error instanceof Error ? error.name : 'UnknownError' });
+    throw error;
+  }
 }
 

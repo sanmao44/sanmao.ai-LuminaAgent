@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import { BufferedRuntimeObserver } from '@/packages/contracts/observability';
 
 export const runtime = 'nodejs';
 
@@ -47,6 +48,7 @@ async function stageRequestBody(request: Request, target: string, maxBytes: numb
 export async function POST(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   let releaseRuntimeRequest = async () => {};
+  const runtimeObserver = new BufferedRuntimeObserver(64);
   try {
     releaseRuntimeRequest = await beginRuntimeRequest('backup-export');
     const body = await request.json();
@@ -57,7 +59,7 @@ export async function POST(request: Request) {
     const backupPassword = String(body?.backupPassword || '');
     const backupMode = body?.backupMode === 'complete' ? 'complete' : body?.backupMode === 'content' ? 'content' : null;
     if (!backupMode) throw new Error('必须明确选择内容备份或完整加密备份');
-    const result = await createBackupExportFile(client, backupPassword, backupMode);
+    const result = await createBackupExportFile(client, backupPassword, backupMode, runtimeObserver);
     const stream = createReadStream(result.filePath, { highWaterMark: 1024 * 1024 });
     stream.once('close', () => { void rm(result.cleanupPath, { recursive: true, force: true }); });
     return new Response(Readable.toWeb(stream) as unknown as BodyInit, {
@@ -81,6 +83,7 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   if (!isAdminRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   let releaseRuntimeRequest = async () => {};
+  const runtimeObserver = new BufferedRuntimeObserver(64);
   try {
     releaseRuntimeRequest = await beginRuntimeRequest('backup-restore');
     const backupPassword = request.headers.get('x-sanmao-backup-password') || '';
@@ -91,7 +94,7 @@ export async function PUT(request: Request) {
     const uploadedPath = path.join(staging, 'uploaded.backup');
     try {
       const uploadedBytes = await stageRequestBody(request, uploadedPath, maxArchiveBytes);
-      const result = await restoreBackupArchiveFile(uploadedPath, backupPassword, uploadedBytes);
+      const result = await restoreBackupArchiveFile(uploadedPath, backupPassword, uploadedBytes, runtimeObserver);
       return Response.json({ ok: true, ...result });
     } finally {
       await rm(staging, { recursive: true, force: true }).catch(() => undefined);

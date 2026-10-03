@@ -3,7 +3,7 @@ import path from 'node:path';
 import { resolveLocalDataDir } from '../data-paths';
 import { validateWorkspaceShape } from '../workspace-format';
 import { WORKSPACE_TEMP_PATTERN, sweepStaleWorkspaceTemps } from '../workspace-temps';
-import { isSqliteActive, readSqliteRecord, writeSqliteRecord } from '../database/sqlite';
+import { createSqliteAuthorityFence, isSqliteActive, readSqliteRecord, writeSqliteRecord } from '../database/sqlite';
 import type { WorkspaceSnapshot } from '../workspace-types';
 import type { ServerWorkspaceRepository } from '@/packages/contracts/storage';
 
@@ -14,6 +14,7 @@ const paths = (dataDir = resolveLocalDataDir()) => ({
   workspace: path.join(dataDir, 'workspace.json'),
   metadata: path.join(dataDir, 'workspace-meta.json'),
 });
+const assertStoreStable = createSqliteAuthorityFence();
 
 function parse(raw: string) {
   if (!raw.trim()) return null;
@@ -67,6 +68,7 @@ async function writeLegacy(root: ReturnType<typeof paths>, content: string) {
 export const serverWorkspaceRepository: ServerWorkspaceRepository<StoredWorkspaceSnapshot> = {
   async read() {
     const root = paths();
+    assertStoreStable();
     if (isSqliteActive(root.dataDir)) return readAuthoritativeWorkspace(root.dataDir);
     try { return parse(await readFile(root.workspace, 'utf8')); }
     catch (error) {
@@ -78,6 +80,7 @@ export const serverWorkspaceRepository: ServerWorkspaceRepository<StoredWorkspac
   },
   async metadata() {
     const root = paths();
+    assertStoreStable();
     if (isSqliteActive(root.dataDir)) {
       const workspace = readAuthoritativeWorkspace(root.dataDir);
       return workspace ? { updatedAt: Number(workspace.updatedAt) || 0, revision: Number(workspace.revision) || 0 } : null;
@@ -97,6 +100,7 @@ export const serverWorkspaceRepository: ServerWorkspaceRepository<StoredWorkspac
   },
   async write(value) {
     const root = paths();
+    assertStoreStable();
     const workspace = validateWorkspaceShape(value) as unknown as StoredWorkspaceSnapshot;
     if (isSqliteActive(root.dataDir)) { writeAuthoritativeWorkspace(root.dataDir, workspace); return; }
     await writeLegacy(root, `${JSON.stringify(workspace, null, 2)}\n`);

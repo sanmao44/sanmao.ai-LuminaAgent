@@ -1042,16 +1042,16 @@ Write-Step '检查 Node.js'
 try {
   $nodeVersionText = (& node --version 2>$null).Trim()
 } catch {
-  Fail '没有检测到 Node.js。请先安装 Node.js 20.9 或更高版本，然后重新双击启动。'
+  Fail '没有检测到 Node.js。请先安装 Node.js 22.13.0 或更高版本，然后重新双击启动。'
 }
 if (-not $nodeVersionText) {
-  Fail '没有检测到 Node.js。请先安装 Node.js 20.9 或更高版本。'
+  Fail '没有检测到 Node.js。请先安装 Node.js 22.13.0 或更高版本。'
 }
 $ver = $nodeVersionText.TrimStart('v').Split('.')
 $major = [int]$ver[0]
 $minor = if ($ver.Length -gt 1) { [int]$ver[1] } else { 0 }
-if (($major -lt 20) -or ($major -eq 20 -and $minor -lt 9)) {
-  Fail "当前 Node.js 是 $nodeVersionText，SANMAO.AI 需要 Node.js 20.9 或更高版本。"
+if (($major -lt 22) -or ($major -eq 22 -and $minor -lt 13)) {
+  Fail "当前 Node.js 是 $nodeVersionText，SANMAO.AI 需要 Node.js 22.13.0 或更高版本。"
 }
 Write-Host "Node.js：$nodeVersionText" -ForegroundColor Green
 

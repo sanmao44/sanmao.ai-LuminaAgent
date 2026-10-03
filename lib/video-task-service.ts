@@ -9,6 +9,7 @@ import { is65535Provider, isJimengProvider, isAgnesProvider } from './video-plat
 import { prepareVideoInputMedia } from './video-input-media';
 import type { GenerationSource } from './generation-source';
 import { canRetryVideoTask, videoTaskRuntime } from './video-task-runtime';
+import { BufferedRuntimeObserver, type RuntimeObserver } from '@/packages/contracts/observability';
 
 function cleanInput(input: VideoGenerationInput, defaultSeconds = 5): VideoGenerationInput {
   const prompt = String(input.prompt || '').trim();
@@ -356,9 +357,25 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
 const refreshingVideoTasks = new Map<string, Promise<VideoTask | null>>();
 
 export async function refreshVideoTask(id: string) {
+  return refreshVideoTaskWithObserver(id, new BufferedRuntimeObserver(16));
+}
+
+export async function refreshVideoTaskWithObserver(id: string, observer?: RuntimeObserver) {
   const inFlight = refreshingVideoTasks.get(id);
   if (inFlight) return inFlight;
-  const running = refreshVideoTaskOnce(id).finally(() => refreshingVideoTasks.delete(id));
+  const operationId = `video-task-${id}`;
+  const startedAt = Date.now();
+  void observer?.emit({ operationId, kind: 'task', phase: 'started', at: startedAt, identity: 'video' });
+  const running = refreshVideoTaskOnce(id)
+    .then((result) => {
+      void observer?.emit({ operationId, kind: 'task', phase: 'completed', at: Date.now(), durationMs: Date.now() - startedAt, status: result?.status, identity: 'video' });
+      return result;
+    })
+    .catch((error) => {
+      void observer?.emit({ operationId, kind: 'task', phase: 'failed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'failed', identity: 'video', errorClass: error instanceof Error ? error.name : 'UnknownError' });
+      throw error;
+    })
+    .finally(() => refreshingVideoTasks.delete(id));
   refreshingVideoTasks.set(id, running);
   return running;
 }
