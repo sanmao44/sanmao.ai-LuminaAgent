@@ -4,6 +4,7 @@ import type {
   ProviderConfigRepository as ProviderConfigRepositoryPort,
   TaskRepository as TaskRepositoryPort,
   WorkspaceRepository as WorkspaceRepositoryPort,
+  McpConfigRepository as McpConfigRepositoryPort,
 } from '@/packages/contracts';
 import type { PublicState } from '../types';
 import type { AssetRecord } from '../asset-catalog';
@@ -22,3 +23,4 @@ export type ProviderConfigRepository = ProviderConfigRepositoryPort<PublicState>
 export type AssetRepository = AssetRepositoryPort<AssetRecord, GalleryItem, AssetIndexItem>;
 export type ConversationRepository = ConversationRepositoryPort<ChatSession>;
 export type TaskRepository<TTask extends TaskRecord = TaskRecord> = TaskRepositoryPort<TTask>;
+export type McpConfigRepository<TServer = unknown> = McpConfigRepositoryPort<TServer>;

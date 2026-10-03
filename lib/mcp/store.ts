@@ -1,10 +1,10 @@
 import { listFilesystemRoots } from './filesystem-roots';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { resolveLocalDataDir } from '@/lib/data-paths';
 import { findCatalogEntry, isStdioCatalogEntry, listCatalogServers } from './catalog';
 import type { McpServerConfig } from './types';
-import { isSqliteActive, listSqliteRecords, readSqliteRecord, writeSqliteRecord, deleteSqliteRecord } from '@/lib/database/sqlite';
+import { createMcpConfigRepository } from '@/lib/repositories/mcp-config-repository';
 
 export const MCP_MAX_SERVERS = 20;
 export const MCP_MAX_HEADERS = 12;
@@ -176,7 +176,7 @@ export function listMcpServers(options: McpStoreOptions = {}): McpServerConfig[]
   // 内置连接器的命令、参数和工具白名单由代码维护（lib/mcp/catalog.ts）。用户配置里如果留着同名旧副本，
   // 两边会同时生效：参数按旧的来、白名单也可能对不上代码（早期版本写进去的 browser_run_code_unsafe
   // 就是这么漏出来的）。这里按目录条目 id 认领：属于内置连接器的 id 只认代码这一份。
-  const userServers = (isSqliteActive(options.dataDir) ? (readSqliteRecord<{ servers?: McpServerConfig[] }>('mcp', 'primary', options.dataDir) || {}).servers || [] : readUserMcpServers(options))
+  const userServers = readUserMcpServers(options)
     .filter((server) => !isBuiltinStdioServerId(server.id) && !isBuiltinStdioServerId(server.catalogId));
   // 同一个 id 只保留第一条：用户配置里的旧副本可能和目录条目重名。
   const seen = new Set<string>();
@@ -204,12 +204,8 @@ function isBuiltinStdioServerId(value: unknown) {
  * 目录服务（stdio）不在这份文件里，见 lib/mcp/catalog.ts：命令来自代码，不来自用户输入。
  */
 function readUserMcpServers(options: McpStoreOptions = {}): McpServerConfig[] {
-  const file = resolveMcpStoreFile(options);
-  if (!existsSync(file)) return [];
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8'));
-    const servers = Array.isArray(parsed?.servers) ? parsed.servers : [];
-    return servers
+  const servers = createMcpConfigRepository<McpServerConfig>({ dataDir: options.dataDir }).list();
+  return servers
       .map((item: unknown) => {
         try {
           // 读自己的配置文件时可以带回 catalogId：写入侧（app/api/mcp）不接受这个字段，
@@ -221,25 +217,10 @@ function readUserMcpServers(options: McpStoreOptions = {}): McpServerConfig[] {
       })
       .filter((item: McpServerConfig | null): item is McpServerConfig => Boolean(item))
       .slice(0, MCP_MAX_SERVERS);
-  } catch {
-    return [];
-  }
 }
 
 export function saveMcpServers(servers: readonly McpServerConfig[], options: McpStoreOptions = {}) {
-  if (isSqliteActive(options.dataDir)) {
-    writeSqliteRecord('mcp', 'primary', { version: 1, servers: servers.slice(0, MCP_MAX_SERVERS) }, options.dataDir);
-    return servers.slice(0, MCP_MAX_SERVERS);
-  }
-  const file = resolveMcpStoreFile(options);
-  mkdirSync(path.dirname(file), { recursive: true });
-  const payload = JSON.stringify({ version: 1, servers: servers.slice(0, MCP_MAX_SERVERS) }, null, 2) + '\n';
-  // 先写临时文件再改名，避免进程中断留下半截 JSON 导致配置整体读不出来。
-  const temporary = `${file}.tmp`;
-  // 请求头里可能有 token，文件权限按仅本人可读写（Windows 上由 ACL 决定，这里是尽力而为）。
-  writeFileSync(temporary, payload, { encoding: 'utf8', mode: 0o600 });
-  renameSync(temporary, file);
-  return servers.slice(0, MCP_MAX_SERVERS);
+  return createMcpConfigRepository<McpServerConfig>({ dataDir: options.dataDir }).save(servers.slice(0, MCP_MAX_SERVERS));
 }
 
 export function upsertMcpServer(input: unknown, options: McpStoreOptions = {}) {

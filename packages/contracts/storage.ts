@@ -75,3 +75,9 @@ export interface TaskRepository<TTask extends TaskRecord = TaskRecord> {
 export interface ProviderConfigRepository<TPublicState = unknown> {
   getPublicState(): Promise<TPublicState>;
 }
+
+/** Synchronous configuration port for local MCP registration. */
+export interface McpConfigRepository<TServer = unknown> {
+  list(): TServer[];
+  save(servers: readonly TServer[]): TServer[];
+}
