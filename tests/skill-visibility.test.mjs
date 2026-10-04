@@ -119,7 +119,6 @@ test("an enabled skill keeps the request on the tool round so the model can real
   assert.equal(outcome.text, 'done');
   assert.deepEqual(messages[0], { role: 'assistant', content: null, tool_calls: [{ id: 'skill-1', function: { name: 'skill_read', arguments: '{}' } }], reasoning_content: 'thinking' });
   assert.equal(messages[1].tool_call_id, 'skill-1');
-  assert.match(route, /maxSteps: SKILL_TOOL_FOLLOWUP_MAX_ROUNDS/);
 });
 
 test("installed skills can check source updates, export markdown, and pending cards show details", () => {

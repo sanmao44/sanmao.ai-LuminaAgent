@@ -1,27 +1,21 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { moveMediaToTrash } from '@/lib/generation-log';
-import { findVideoTask, removeVideoTask } from '@/lib/video-task-store';
-import { saveVideoTaskLocally } from '@/lib/video-task-service';
-import { cancelVideoTask, retryVideoTask } from '@/apps/worker/task-control';
-import { runVideoTask } from '@/apps/worker/task-entry';
-import { videoTaskRuntime } from '@/lib/video-task-runtime';
+import { cancelVideoTask, getVideoTask, removeVideoTask, retryVideoTask, saveVideoTask, TaskControlConflictError } from '@/apps/worker/task-control';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   const { id } = await context.params;
-  const task = await findVideoTask(id);
+  const task = await getVideoTask(id);
   if (!task) return Response.json({ error: '视频任务不存在' }, { status: 404 });
-  const refreshed = videoTaskRuntime.isActive(task.status) ? await runVideoTask(id) : task;
-  return Response.json({ task: refreshed || task }, { headers: { 'Cache-Control': 'no-store' } });
+  return Response.json({ task }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   const { id } = await context.params;
   try {
-    const task = await saveVideoTaskLocally(id);
+    const task = await saveVideoTask(id);
     if (!task) return Response.json({ error: '视频任务不存在' }, { status: 404 });
     return Response.json({ ok: true, task }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) { return Response.json({ error: error instanceof Error ? error.message : '再次保存视频失败' }, { status: 400 }); }
@@ -46,16 +40,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   const { id } = await context.params;
-  const existing = await findVideoTask(id);
-  if (!existing) return Response.json({ error: '视频任务不存在' }, { status: 404 });
-  if (videoTaskRuntime.isActive(existing.status)) {
-    return Response.json({ error: '视频正在生成，先取消任务再删除。' }, { status: 409 });
+  try {
+    const task = await removeVideoTask(id);
+    if (!task) return Response.json({ error: '视频任务不存在' }, { status: 404 });
+    return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (error) {
+    if (error instanceof TaskControlConflictError) return Response.json({ error: error.message }, { status: 409 });
+    return Response.json({ error: error instanceof Error ? error.message : '删除视频任务失败' }, { status: 500 });
   }
-
-  const task = await removeVideoTask(id);
-  if (!task) return Response.json({ error: '视频任务不存在' }, { status: 404 });
-  await Promise.all([...new Set(task.localVideoPaths || [])].map(async (file) => {
-    try { await moveMediaToTrash(file, 'videos'); } catch { /* The task record can still be removed when its file is already gone. */ }
-  }));
-  return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
 }

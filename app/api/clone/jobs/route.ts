@@ -1,14 +1,13 @@
 import { isTrustedAppRequest } from '@/lib/auth';
 import { OFFLINE_SPEECH_LABEL, offlineSpeechSupported } from '@/lib/clone/offline-speech';
 import { decideCapabilities, normalizeCloneOptions } from '@/lib/clone/plan';
-import { reapStaleCloneJobs } from '@/lib/clone/pipeline';
 import { cloneJobSummary, createCloneJob, listCloneJobs } from '@/lib/clone/store';
 import type { CloneAsset, CloneReference } from '@/lib/clone/types';
 import { getRuntimeCloneVideoModel, getRuntimeImageGenerationModel, getRuntimeVisionModel } from '@/lib/store';
 import { resolveSpeechRuntime } from '@/lib/clone/speech';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { getVideoModelLimits } from '@/lib/video-model-limits';
-import { dispatchCloneJob } from '@/apps/worker/task-entry';
+import { dispatchCloneJob, reapCloneTasks } from '@/apps/worker/task-entry';
 
 export const runtime = 'nodejs';
 export const maxDuration = 3600;
@@ -52,7 +51,7 @@ function readAssets(raw: unknown): CloneAsset[] {
 export async function GET(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   // 画布每 5 秒拉一次这个列表：顺手把中断的任务标成失败，用户才有「继续任务」可点。
-  await reapStaleCloneJobs();
+  await reapCloneTasks();
   const jobs = await listCloneJobs(30);
   return Response.json({ ok: true, jobs: jobs.map(cloneJobSummary) });
 }

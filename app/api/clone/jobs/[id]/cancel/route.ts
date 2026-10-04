@@ -1,6 +1,6 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { findCloneJob, updateCloneJob } from '@/lib/clone/store';
-import { cloneTaskRuntime } from '@/lib/clone/task-runtime';
+import { findCloneJob } from '@/lib/clone/store';
+import { cancelCloneTask } from '@/apps/worker/task-control';
 
 export const runtime = 'nodejs';
 
@@ -13,12 +13,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const { id } = await context.params;
   const job = await findCloneJob(id);
   if (!job) return Response.json({ error: '任务不存在。' }, { status: 404 });
-  if (!cloneTaskRuntime.canCancel(job.stage)) return Response.json({ ok: true, job });
-  const updated = await updateCloneJob(id, {
-    cancelRequested: true,
-    stage: 'cancelled',
-    message: '已取消（已经提交给服务商的生成请求可能仍在计费）',
-    finishedAt: new Date().toISOString(),
-  });
+  const updated = await cancelCloneTask(id);
   return Response.json({ ok: true, job: updated });
 }

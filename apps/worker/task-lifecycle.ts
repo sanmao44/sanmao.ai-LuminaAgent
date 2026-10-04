@@ -4,7 +4,7 @@ import { FileRuntimeObserver } from '../../packages/observability/runtime-sink';
 import { resolveLocalDataDir } from '../../lib/data-paths';
 import path from 'node:path';
 
-export async function runTaskLifecycle<T>(identity: 'video' | 'upscale', taskId: string, operation: () => Promise<T>, observer: RuntimeObserver = new CompositeRuntimeObserver([
+export async function runTaskLifecycle<T>(identity: 'clone' | 'video' | 'upscale', taskId: string, operation: () => Promise<T>, observer: RuntimeObserver = new CompositeRuntimeObserver([
   new BufferedRuntimeObserver(16),
   new FileRuntimeObserver({ directory: path.join(resolveLocalDataDir(), 'runtime-events') }),
 ])): Promise<T> {

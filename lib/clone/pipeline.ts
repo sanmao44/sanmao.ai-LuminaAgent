@@ -24,7 +24,7 @@ import { getPublicMediaTransportStatusLive } from '../signed-media';
 import { persistVideoBuffer, resolveStoredVideoFileWithFallback } from '../video-storage';
 import { getVideoModelLimits } from '../video-model-limits';
 import { requiresPublicMediaRelay } from '../video-platform';
-import { createVideoGeneration, refreshVideoTask } from '../video-task-service';
+import { runVideoGeneration, refreshVideoTask } from '@/apps/worker/video-task';
 import { askText, chatText, parseJsonBlock } from './chat';
 import { detectAudioBeats, detectSceneChanges, extractFrameFiles, extractReferenceAudioTrack, extractSpeechAudio, extractVideoSegment, prepareImageFrame, probeMediaSeconds, runFfmpegCapture } from './media';
 import { transcribeLocalAudio, transcribeReferenceAudio } from './asr';
@@ -888,7 +888,7 @@ async function generateShotVideo(runtime: VideoRuntime, job: CloneJob, shot: Clo
     delete input.referenceImages;
     delete input.videoMode;
   }
-  const task = await createVideoGeneration({ modelId: runtime.model.id, input, source: 'canvas' });
+  const task = await runVideoGeneration({ modelId: runtime.model.id, input, source: 'canvas' });
   if (!task) throw new Error('视频任务创建失败。');
   if (task.status === 'failed') throw new Error(task.error || '视频任务失败。');
   const deadline = Date.now() + VIDEO_POLL_TIMEOUT_MS;

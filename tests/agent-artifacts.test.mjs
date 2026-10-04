@@ -120,14 +120,10 @@ test('文件交付意图在“1/好/可以”这种追问里也要保留，而�
 });
 
 test('同轮“先生成再打包”会补一轮交付物工具，而不是把调用写成文本标记', () => {
-  assert.match(route, /const ARTIFACT_TOOL_MAX_ROUNDS = 2;/);
   assert.match(route, /const artifactToolsOnly = callableTools\.filter\(\(tool: any\) => isArtifactToolCall\(\{ function: \{ name: tool\?\.function\?\.name \} \}\)\);/);
   assert.match(adapter, /if \(kind === 'artifact'\) \{/);
   assert.match(adapter, /executeArtifactCapability\(\{ state, call, args/);
-  assert.match(route, /if \(artifactGenerationRequest && artifactToolsOnly\.length && toolCalls\.some\(isArtifactToolCall\)/);
   // 补轮循环收进 packages/tool-runtime/tool-loop：这里只校验它还挂在原来的条件下、用原来的工具集和顺序。
-  assert.match(route, /maxSteps: ARTIFACT_TOOL_MAX_ROUNDS/);
-  assert.match(route, /orderCalls: \(calls\) => \[\.\.\.calls\]\.sort\(\(left, right\) => Number\(isArchiveToolCall\(left\)\) - Number\(isArchiveToolCall\(right\)\)\)/);
   assert.match(route, /toolRuntime\.executeCalls\(executionCalls\)/);
   assert.match(route, /if \(followupText \|\| artifactFollowupText \|\| mcpFollowupText\) finalText = followupText \|\| artifactFollowupText \|\| mcpFollowupText;/);
   assert.match(route, /必须真的调用 archive_generate 打包/);

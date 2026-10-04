@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createTsRequire } from './ts-require.mjs';
 
-const [component, canvas, styles, context, canvasApi, route, markdown, adapter, imageCapability] = await Promise.all([
+const [component, canvas, styles, context, canvasApi, markdown, adapter, imageCapability] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/canvas.css", import.meta.url), "utf8"),
   readFile(new URL("../lib/canvas/agent-dock.ts", import.meta.url), "utf8"),
   readFile(new URL("../lib/canvas/api.ts", import.meta.url), "utf8"),
-  readFile(new URL("../apps/api/agent-application.ts", import.meta.url), "utf8"),
   readFile(new URL("../components/AgentMarkdown.tsx", import.meta.url), "utf8"),
   readFile(new URL("../packages/tool-runtime/adapter.ts", import.meta.url), "utf8"),
   readFile(new URL("../packages/tool-runtime/image-capability.ts", import.meta.url), "utf8"),
@@ -69,9 +69,10 @@ test("canvas context never decides what the dock asks for", () => {
   // 画布上下文里有“画布 / 图片 / 渲染”，一旦参与意图判断，问什么都会变成生图。
   assert.match(component, /intentText: promptText,/);
   assert.match(canvasApi, /\.\.\.\(input\.intentText \? \{ intentText: input\.intentText \} : \{\}\),/);
-  assert.match(route, /const latestInstruction = agentInstructionText\(body\.intentText, latest\?\.content \|\| ''\);/);
-  assert.match(route, /classifyAgentDeliverable\(latestInstruction, \{/);
-  assert.match(route, /shouldUseAgentWebSearch\(webMode, latestInstruction, messages\.slice\(0, -1\)\)/);
+  const planning = createTsRequire(process.cwd())('./packages/agent-core/request-planning');
+  const plan = planning.planAgentRequest({ body: { webMode: 'off', intentText: '询问一下' }, messages: [{ role: 'user', content: '询问一下' }], isCanvasSource: true, isCanvasNodeExecution: true, canvasTargetNodeIds: [], canvasTargetKind: 'none', canvasTargetOperation: 'generate' });
+  assert.equal(plan.webMode, 'off');
+  assert.equal(plan.requestModeAllowsExecution, false);
 });
 
 test("agent text and images land on the canvas through the shared undostack", () => {

@@ -1,0 +1,87 @@
+import type { ChatMessage } from '@/lib/providers';
+import { isArchiveToolCall } from '@/lib/tools';
+import { SKILL_TOOL_MAX_CALLS } from '@/lib/skills';
+import { stripToolCallMarkup } from '@/lib/skills';
+import type { ToolLoopTraceStep, ToolLoopCall } from '@/packages/tool-runtime/tool-loop';
+import type { ToolRuntime, ToolRuntimeCall } from '@/packages/tool-runtime/runtime';
+
+type ToolReply = { content?: unknown; tool_calls?: unknown; reasoning_content?: unknown } | null;
+
+export type CapabilityFollowupOptions = {
+  messages: ChatMessage[];
+  contextMaxChars: number;
+  signal: AbortSignal;
+  toolRuntime: Pick<ToolRuntime, 'runLoop' | 'executeCalls'>;
+  callModel: (input: { messages: ChatMessage[]; tools: unknown[]; step: number }) => Promise<ToolReply>;
+  skillTools: readonly unknown[];
+  artifactTools: readonly unknown[];
+  skillToolCalls: number;
+  artifactRequested: boolean;
+  initialToolCalls: readonly ToolLoopCall[];
+  hasGenerated: boolean;
+  hasGeneratedFiles: boolean;
+  hasWebSearch: boolean;
+  setDeferredCalls?: (calls: ToolRuntimeCall[]) => void;
+};
+
+export type CapabilityFollowupResult = {
+  skillText: string;
+  artifactText: string;
+  trace: ToolLoopTraceStep[];
+};
+
+/**
+ * Application execution lifecycle for capability follow-ups.
+ *
+ * The HTTP application supplies model and ToolRuntime ports; this module owns
+ * the ordering, bounded rounds and trace semantics for Skill and Artifact
+ * continuation. No provider, route or persistence implementation is embedded.
+ */
+export async function runCapabilityFollowups(options: CapabilityFollowupOptions): Promise<CapabilityFollowupResult> {
+  const trace: ToolLoopTraceStep[] = [];
+  let skillText = '';
+  let artifactText = '';
+  let skillToolCalls = options.skillToolCalls;
+
+  const runCalls = async (calls: ToolLoopCall[]) => {
+    const runtimeCalls = calls.filter((call): call is ToolRuntimeCall => Boolean(call?.function?.name));
+    const execution = await options.toolRuntime.executeCalls(runtimeCalls);
+    if (runtimeCalls.length && runtimeCalls.every((call) => String(call.function.name).startsWith('skill_'))) {
+      skillToolCalls += runtimeCalls.length;
+    }
+    if (execution.deferredCalls.length) options.setDeferredCalls?.(execution.deferredCalls);
+    return execution.results;
+  };
+
+  if (options.skillToolCalls > 0 && options.skillTools.length && !options.hasGenerated && !options.hasGeneratedFiles && !options.hasWebSearch) {
+    const outcome = await options.toolRuntime.runLoop({
+      messages: options.messages,
+      contextMaxChars: options.contextMaxChars,
+      maxSteps: 2,
+      signal: options.signal,
+      callModel: async ({ step, messages }) => options.callModel({ step, messages: messages as ChatMessage[], tools: [...options.skillTools] }),
+      runCalls: async (calls) => runCalls(calls),
+      shouldContinue: () => skillToolCalls < SKILL_TOOL_MAX_CALLS,
+      finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
+    });
+    skillText = outcome.text;
+    trace.push(...outcome.trace);
+  }
+
+  if (options.artifactRequested && options.artifactTools.length && options.initialToolCalls.some((call) => isArchiveToolCall(call) || String(call?.function?.name || '').startsWith('document_') || String(call?.function?.name || '').startsWith('spreadsheet_') || String(call?.function?.name || '').startsWith('presentation_')) && !options.hasGenerated && !options.hasWebSearch) {
+    const outcome = await options.toolRuntime.runLoop({
+      messages: options.messages,
+      contextMaxChars: options.contextMaxChars,
+      maxSteps: 2,
+      signal: options.signal,
+      callModel: async ({ step, messages }) => options.callModel({ step, messages: messages as ChatMessage[], tools: [...options.artifactTools] }),
+      runCalls: async (calls) => runCalls(calls),
+      orderCalls: (calls) => [...calls].sort((left, right) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right))),
+      finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
+    });
+    artifactText = outcome.text;
+    trace.push(...outcome.trace);
+  }
+
+  return { skillText, artifactText, trace };
+}

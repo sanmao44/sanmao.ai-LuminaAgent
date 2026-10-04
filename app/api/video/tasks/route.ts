@@ -1,8 +1,6 @@
 import { isTrustedAppRequest } from '@/lib/auth';
 import { listVideoTasksPage } from '@/lib/video-task-store';
-import { runVideoTask } from '@/apps/worker/task-entry';
-import { videoTaskRuntime } from '@/lib/video-task-runtime';
-import { BufferedRuntimeObserver } from '@/packages/contracts/observability';
+import { getVideoTasks } from '@/apps/worker/task-control';
 
 export const runtime = 'nodejs';
 
@@ -21,6 +19,6 @@ export async function GET(request: Request) {
     source,
     media,
   });
-  const refreshed = await Promise.all(result.tasks.map((task) => videoTaskRuntime.isActive(task.status) ? runVideoTask(task.id) : task));
+  const refreshed = await getVideoTasks(result.tasks);
   return Response.json({ ...result, tasks: refreshed.filter(Boolean) }, { headers: { 'Cache-Control': 'no-store' } });
 }

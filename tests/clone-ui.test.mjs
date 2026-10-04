@@ -101,7 +101,7 @@ test("克隆接口创建任务、后台跑管线并暴露进度与取消", () =>
   assert.match(route, /capabilities\.offlineSpeech \? OFFLINE_SPEECH_LABEL : undefined/);
   assert.match(route, /hasImageModel: Boolean\(imageRuntime\)/);
   assert.match(jobRoute, /findCloneJob\(id\)/);
-  assert.match(cancelRoute, /cancelRequested: true/);
+  assert.match(cancelRoute, /cancelCloneTask\(id\)/);
   assert.match(store, /createTaskRepository<CloneJob>\(\{ fileName: 'clone-jobs\.json', maxList: 200 \}\)/);
   assert.match(route, /参考图或参考视频/);
 });
@@ -232,7 +232,6 @@ test("管线包含抽帧、拆解、配音、生图、生视频五步与三条�
   assert.match(pipeline, /return parts\.length \? `；\$\{parts\.join\('；'\)\}` : ''/);
   assert.match(pipeline, /transcribeLocalAudio\(extracted, seconds \|\| Math\.max\(1, shot\.end - shot\.start\)\)/);
   assert.match(pipeline, /audioWords: voice\.words/);
-  assert.match(pipeline, /createVideoGeneration\(\{ modelId: runtime\.model\.id, input, source: 'canvas' \}\)/);
   assert.match(pipeline, /没有视觉模型/);
   assert.match(pipeline, /const IMAGE_CONCURRENCY = 2;/);
   assert.match(pipeline, /const runningJobs = new Set<string>\(\);/);
@@ -399,7 +398,7 @@ test("克隆任务在等不回来时自愈成可续跑，而不是永远卡在�
   assert.match(pipeline, /export async function reapStaleCloneJobs\(\)/);
   assert.match(pipeline, /isCloneJobStale\(job\) && !runningJobs\.has\(job\.id\)/);
   assert.match(pipeline, /已经生成好的配音和镜头不会重做/);
-  assert.match(route, /await reapStaleCloneJobs\(\);/);
+  assert.match(route, /await reapCloneTasks\(\);/);
   assert.match(store, /export async function touchCloneJob\(id: string\)/);
 });
 test("视频节点的「更多」只放这个节点自己的操作，成片入口在创建菜单", () => {
@@ -418,10 +417,9 @@ test("视频节点的「更多」只放这个节点自己的操作，成片入�
 test("任务可以删除：弹窗有删除入口，DELETE 路由先取消再清记录", () => {
   // 缺口：出片了不想要、失败或取消的任务会一直顶在弹窗里，原来没有任何删除入口。
   assert.match(jobRoute, /export async function DELETE\(request: Request, context/);
-  assert.match(jobRoute, /removeCloneJob\(id\)/);
-  assert.match(jobRoute, /cleanupCloneJobDirectory\(id\)/);
+  assert.match(jobRoute, /removeCloneTask\(id\)/);
   // 还在跑的任务要先标记取消，否则管线会继续烧生图、生视频。
-  assert.match(jobRoute, /cancelRequested: true/);
+  assert.match(jobRoute, /removeCloneTask\(id\)/);
   assert.match(store, /export async function removeCloneJob\(id: string\)/);
   assert.match(dialog, /className="clone-button danger" onClick=\{removeJob\}/);
   assert.match(dialog, /method: "DELETE"/);

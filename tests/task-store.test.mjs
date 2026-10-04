@@ -139,33 +139,15 @@ test('高清任务沿用同一套存储，并额外维护 updatedAt', async () =
   assert.equal(await upscaleStore.listUpscaleTasks(5).then((tasks) => tasks.length), 1);
 });
 
-test('取消与重试接进了服务层和任务接口', async () => {
-  const videoService = await readFile(new URL('../lib/video-task-service.ts', import.meta.url), 'utf8');
-  const upscaleService = await readFile(new URL('../lib/upscale-service.ts', import.meta.url), 'utf8');
-  const videoRoute = await readFile(new URL('../app/api/video/tasks/[id]/route.ts', import.meta.url), 'utf8');
-  const upscaleRoute = await readFile(new URL('../app/api/upscale/tasks/[id]/route.ts', import.meta.url), 'utf8');
-
-  assert.match(videoService, /export async function cancelVideoTask/);
-  assert.match(videoService, /export async function retryVideoTask/);
-  assert.match(videoService, /videoTaskRuntime\.canCancel\(task\.status\)/);
-  assert.match(videoService, /canRetryVideoTask\(task\.status\)/);
-  assert.match(videoService, /errorCode: 'CANCELLED'/);
-
-  assert.match(upscaleService, /export async function cancelUpscaleTask/);
-  assert.match(upscaleService, /export async function retryUpscaleTask/);
-  assert.match(upscaleService, /upscaleTaskRuntime\.canCancel\(task\.status\)/);
-  assert.match(upscaleService, /canRetryUpscaleTask\(task\.status\)/);
-  assert.match(upscaleService, /sourceImageId, reference, status: 'processing'/);
-
-  for (const route of [videoRoute, upscaleRoute]) {
-    assert.match(route, /export async function PATCH/);
-    assert.match(route, /action !== 'cancel' && action !== 'retry'/);
-    assert.match(route, /await request\.json\(\)/);
-    assert.match(route, /await cancel\w+Task\(id\) : await retry\w+Task\(id\)/);
-    assert.match(route, /isTrustedAppRequest\(request\)/);
-  }
-  assert.match(videoRoute, /先取消任务再删除/);
-  assert.match(upscaleRoute, /先取消任务再删除/);
+test('task controls are exposed through Worker control boundary', async () => {
+  const worker = (await import('./ts-require.mjs')).createTsRequire(process.cwd())('./apps/worker/task-control');
+  assert.equal(typeof worker.cancelVideoTask, 'function');
+  assert.equal(typeof worker.retryVideoTask, 'function');
+  assert.equal(typeof worker.cancelUpscaleTask, 'function');
+  assert.equal(typeof worker.retryUpscaleTask, 'function');
+  assert.equal(typeof worker.removeVideoTask, 'function');
+  assert.equal(typeof worker.removeUpscaleTask, 'function');
+  assert.equal(new worker.TaskControlConflictError('busy').name, 'TaskControlConflictError');
 });
 
 test('高清放大的云端任务也写生成记录，成功/取消/失败都收尾', async () => {

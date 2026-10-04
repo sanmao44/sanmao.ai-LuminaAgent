@@ -23,12 +23,15 @@ The non-streamed compact plain Agent turn now uses
 `packages/model-runtime/legacy-chat-adapter.ts`. It receives the same selected
 registry model, the same bounded messages and the same tracked `chatCompletion`
 callback. Provider attempt lifecycle and bounded telemetry are shared by
-`packages/model-runtime/invocation.ts`; `apps/api/agent-stream.ts` owns the
+`packages/model-runtime/invocation.ts`; `packages/model-runtime/agent-invoker.ts`
+adapts application model calls to that coordinator; `apps/api/agent-stream.ts` owns the
 provider-neutral SSE response boundary; image and edit routes share the
 capability boundary in `packages/model-runtime/media.ts`, which only falls back
-on explicit compatibility rejection. The route still injects timeout, candidate
-selection and health tracking. Streaming, tools, MCP, video and search remain on
-the existing path.
+on explicit compatibility rejection. The application entry constructs the
+shared `ProviderCoordinator` directly and passes health persistence through its
+`ProviderHealthPort`; transport callbacks remain injected. A zero-caller
+session wrapper was removed rather than kept as another ownership layer.
+Streaming, tools, MCP, video and search remain on the existing path.
 
 ## Non-goals and remaining legacy responsibility
 
@@ -36,6 +39,8 @@ This slice does not move provider HTTP/SDK code, health persistence, or the
 remaining streaming/video operations. `lib/providers.ts` remains the temporary
 transport adapter until each capability gets a behavior-tested port. Media
 routing and compatibility fallback have moved behind the model-runtime seam;
-image transport and persistence remain injected adapters.
+image transport and persistence remain injected adapters. Provider health
+persistence and video provider branches remain legacy adapters until their
+ports have behavior coverage.
 The former `lib/provider-runtime/chat.ts` and root `packages/model-runtime.ts`
 bridges were removed after their callers moved to the package seams.

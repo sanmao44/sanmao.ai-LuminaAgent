@@ -71,8 +71,11 @@ import type { AgentMessage, ModelDescriptor } from '@/packages/contracts';
 import { createLegacyChatModelRuntime } from '@/packages/model-runtime/legacy-chat-adapter';
 import { withProviderResponseDeadline } from '@/packages/model-runtime/invocation';
 import { createProviderCoordinator } from '@/packages/model-runtime/provider-coordinator';
+import { createAgentModelInvoker } from '@/packages/model-runtime/agent-invoker';
 import { noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates } from '@/lib/agent/model-health';
 import { prepareAgentRequestContext } from '@/packages/agent-core/request-context';
+import { planAgentRequest } from '@/packages/agent-core/request-planning';
+import { runCapabilityFollowups } from '@/apps/api/agent-execution';
 
 async function safeDiscoverMcpForRequest(options: Parameters<typeof discoverMcpForRequest>[0]) {
   try {
@@ -185,9 +188,7 @@ function normalizeGeneratedFile(raw: any, index: number): GeneratedFile | null {
 }
 
 /** Office/ZIP 只回传元数据与下载地址，二进制永远不进 SSE 和聊天历史。 */
-const ARTIFACT_TOOL_MAX_ROUNDS = 2;
 /** 技能工具一样需要链式调用，补轮上限和交付物保持一致。 */
-const SKILL_TOOL_FOLLOWUP_MAX_ROUNDS = 2;
 /**
  * MCP 工具（浏览器、文件、远端连接器）的补轮上限。
  * 打开网页 → 看页面 → 点击 → 输入 → 再看结果，少一轮就断在半路，所以给得比技能宽一些；
@@ -504,80 +505,15 @@ export async function runAgentApplication(request: Request) {
     const latestReferenceImageCount = latestRefs.filter((reference) => reference.kind !== 'text').length;
     // 画布等调用方会把系统上下文拼在用户消息末尾（"画布 / 图片 / 渲染"这些词都在里面）。
     // 意图判断一律只看用户原话，避免把普通提问判成生图请求。
-    const latestInstruction = agentInstructionText(body.intentText, latest?.content || '');
-    const previousImagePlan = [...messages.slice(0, -1)].reverse().find((message) => message.role === 'assistant'
-      && /(?:^|\n)\s*1[\.、\)]/.test(message.content)
-      && extractBatchPrompts(message.content).length >= 2);
-    const selectedTextBatchPlan = latestRefs
-      .filter((reference) => reference.kind === 'text' && typeof reference.text === 'string')
-      .map((reference) => reference.text || '')
-      .find((text) => extractBatchPrompts(text).length >= 2) || '';
-    const batchPlanContent = selectedTextBatchPlan || previousImagePlan?.content || '';
     const supportsVideoInput = agentRuntime.model.capabilities.includes('video-input');
     if (latestRefs.some((reference) => reference.kind === 'video') && !supportsVideoInput) {
       return Response.json({ error: '当前对话模型没有明确声明 video-input 能力，已阻止发送视频引用；请切换支持视频输入的模型。' }, { status: 400 });
     }
-    const intentDecision = classifyAgentDeliverable(latestInstruction, {
-      messages: messages.slice(0, -1),
-      hasReferences: latestRefs.length > 0,
-      hasFiles: Boolean(latest?.files?.length),
-    });
-    const previousAssistantForRouting = [...messages].reverse().find((message) => message.role === 'assistant')?.content || '';
-    const previousUserForGithubInstall = [...messages].slice(0, -1).reverse().find((message) => message.role === 'user')?.content || '';
-    const previousContextForGithubInstall = messages.slice(0, -1).map((message) => message.content).join('\n');
-    const directGithubMcpRepo = !isCanvasNodeExecution
-      ? extractGithubMcpInstallRequest(latestInstruction, previousAssistantForRouting, previousUserForGithubInstall, previousContextForGithubInstall)
-      : null;
-    // A client-supplied deliverable is a UI hint, not execution authority.
-    // The server-side request mode is the single side-effect gate shared by
-    // image, file, web, MCP and Skill paths.
-    const canvasTargetExecution = isCanvasSource
-      && body.executionMode === 'agent-dock'
-      && canvasTargetNodeIds.length > 0
-      && canvasTargetOperation === 'edit'
-      && intentDecision.mode !== 'ask'
-      && intentDecision.mode !== 'discuss'
-      && Boolean(latestInstruction.trim());
-    let requestModeAllowsExecution = intentDecision.mode === 'execute'
-      || intentDecision.mode === 'follow_up'
-      || Boolean(previousImagePlan && isBareImageExecution(latestInstruction))
-      || Boolean(directGithubMcpRepo)
-      || canvasTargetExecution;
-    const routingStartedAt = Date.now();
-    // Compatibility contract for the canvas dock: web intent is decided from
-    // the user's latest instruction, never from injected canvas context. The
-    // shared router below performs this decision once; keep the historical
-    // call shape documented without issuing a second web-search evaluation.
-    // shouldUseAgentWebSearch(webMode, latestInstruction, messages.slice(0, -1))
-    const webMode = isCanvasNodeExecution ? 'off' : resolveAgentWebMode(body.webMode, body.webSearch);
-    const requestRoute = classifyAgentRequest(latestInstruction, {
-      messages: messages.slice(0, -1),
-      hasReferences: latestRefs.length > 0,
-      hasFiles: Boolean(latest?.files?.length),
-    }, { webMode: isCanvasNodeExecution ? 'off' : webMode, previousAssistant: previousAssistantForRouting, intent: intentDecision });
-    const routerMs = Date.now() - routingStartedAt;
-    const latestMessage = messages[messages.length - 1]!;
-    const modelContextMessages: ClientMessage[] = [
-      ...selectAgentContextMessages(messages.slice(0, -1), requestRoute.contextNeed),
-      latestMessage,
-    ];
-    const routeSummary = requestRoute.needsTools || routeNeedsSemanticReview(requestRoute)
-      ? routeToolSummary(requestRoute)
-      : {
-        route: requestRoute.route,
-        contextNeed: requestRoute.contextNeed,
-        shouldSearch: requestRoute.web.shouldSearch,
-      };
-    const hasExplicitDeliverable = ['IMAGE', 'TEXT', 'BOTH', 'CLARIFY', 'OTHER'].includes(body.deliverable);
-    let requestedDeliverable = requestModeAllowsExecution && hasExplicitDeliverable
-      ? body.deliverable as AgentDeliverable
-      : requestRoute.intent.deliverable;
-    if (previousImagePlan && isBareImageExecution(latestInstruction) && requestModeAllowsExecution) {
-      requestedDeliverable = 'IMAGE';
-    }
-    let requestedIntentReason = hasExplicitDeliverable && typeof body.intentReason === 'string' && body.intentReason.trim()
-      ? body.intentReason.trim().slice(0, 320)
-      : requestRoute.intent.reason;
+    const planning = planAgentRequest({ body, messages, isCanvasSource, isCanvasNodeExecution, canvasTargetNodeIds, canvasTargetKind, canvasTargetOperation });
+    const { latestInstruction, previousImagePlan, batchPlanContent, intentDecision, previousAssistantForRouting, directGithubMcpRepo, webMode, requestRoute, routerMs, modelContextMessages, routeSummary, requestedDeliverable: plannedDeliverable, requestedIntentReason: plannedIntentReason } = planning;
+    let requestModeAllowsExecution = planning.requestModeAllowsExecution;
+    let requestedDeliverable = plannedDeliverable;
+    let requestedIntentReason = plannedIntentReason;
     if (isCanvasNodeExecution) {
       requestedDeliverable = 'TEXT';
       requestedIntentReason = '左侧 Agent 节点仅允许文案输出，实施操作请交给右侧 Agent 助手。';
@@ -663,15 +599,17 @@ export async function runAgentApplication(request: Request) {
       task: body.task ? String(body.task).slice(0, 100) : undefined,
       ...taskContext,
     }).catch(() => null);
+    const modelInvoker = createAgentModelInvoker<NonNullable<typeof agentRuntime>, Parameters<typeof chatCompletion>[2], Awaited<ReturnType<typeof chatCompletion>>>({
+      coordinator: providerCoordinator,
+      defaultSignal: requestController.signal,
+      invoke: (runtime, payload, callSignal) => chatCompletion(runtime.provider, runtime.model.rawId, payload, callSignal),
+      onCurrent: (runtime) => { agentRuntime = runtime; },
+    });
     const invokeChatModel = async <T>(
       payload: Parameters<typeof chatCompletion>[2],
       signal: AbortSignal,
       operation: (runtime: NonNullable<typeof agentRuntime>, callSignal: AbortSignal) => Promise<T>,
-    ) => {
-      const result = await providerCoordinator.invoke<T>(payload, signal, operation);
-      agentRuntime = providerCoordinator.current;
-      return result;
-    };
+    ) => modelInvoker.invokeWith(payload, operation, signal) as Promise<T>;
     const trackedChatCompletion = (
       provider: Parameters<typeof chatCompletion>[0],
       rawModelId: Parameters<typeof chatCompletion>[1],
@@ -693,7 +631,7 @@ export async function runAgentApplication(request: Request) {
       signal: AbortSignal,
       operation: (selectedRuntime: NonNullable<typeof agentRuntime>, callSignal: AbortSignal) => Promise<T>,
     ) => {
-      return providerCoordinator.invokeSpecific<T>(runtime, signal, operation);
+      return modelInvoker.invokeSpecificWith(runtime, payload, operation, signal) as Promise<T>;
     };
     const trackedSpecificChatCompletion = (
       runtime: NonNullable<typeof agentRuntime>,
@@ -1938,16 +1876,17 @@ const auditMcpCall = (
     // 轮数、总次数、中止和 Trace 统一由 lib/agent/tool-loop.ts 管，两份重复的循环收成一份。
     const toolTrace: ToolLoopTraceStep[] = [];
     let followupText = '';
-    if (skillToolCalls > 0 && skillToolsOnly.length && !generated.length && !generatedFiles.length && !webSearchData) {
-      const skillLoop = await toolRuntime.runLoop({
+    let artifactFollowupText = '';
+    if (skillToolCalls > 0 || (artifactGenerationRequest && toolCalls.some(isArtifactToolCall))) {
+      const followups = await runCapabilityFollowups({
         messages: secondMessages,
         contextMaxChars,
-        maxSteps: SKILL_TOOL_FOLLOWUP_MAX_ROUNDS,
         signal: requestController.signal,
-        callModel: async () => {
+        toolRuntime,
+        callModel: async ({ messages, tools }) => {
           const followup = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
-            messages: secondMessages,
-            tools: skillToolsOnly,
+            messages: messages as ChatMessage[],
+            tools,
             tool_choice: 'auto',
           }, requestController.signal).catch((error) => {
             if (requestController.signal.aborted) throw requestController.signal.reason || error;
@@ -1955,60 +1894,20 @@ const auditMcpCall = (
           });
           return followup?.choices?.[0]?.message || null;
         },
-        runCalls: async (calls) => {
-          const runtimeCalls = calls.filter((call): call is ToolRuntimeCall => Boolean(call?.function?.name));
-          const execution = await toolRuntime.executeCalls(runtimeCalls);
-          if (execution.deferredCalls.length) deferredCalls = execution.deferredCalls;
-          return execution.results;
-        },
-        shouldContinue: () => skillToolCalls < SKILL_TOOL_MAX_CALLS,
-        finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
+        skillTools: skillToolsOnly,
+        artifactTools: artifactToolsOnly,
+        skillToolCalls,
+        artifactRequested: artifactGenerationRequest,
+        initialToolCalls: toolCalls,
+        hasGenerated: generated.length > 0,
+        hasGeneratedFiles: generatedFiles.length > 0,
+        hasWebSearch: Boolean(webSearchData),
+        setDeferredCalls: (calls) => { deferredCalls = calls; },
       });
-      followupText = skillLoop.text;
-      toolTrace.push(...skillLoop.trace);
+      followupText = followups.skillText;
+      artifactFollowupText = followups.artifactText;
+      toolTrace.push(...followups.trace);
     }
-    // 交付物工具和技能工具一样需要链式调用：模型经常先调用 document_generate /
-    // spreadsheet_generate，拿到结果后才决定调用 archive_generate 打包。如果这一轮
-    // 完全不给工具，它会把调用写成文本标记（例如 “<archive_generate …”），既不执行
-    // 也会显示成乱码。这里只为交付物工具补最多两轮原生调用。
-    let artifactFollowupText = '';
-    if (artifactGenerationRequest && artifactToolsOnly.length && toolCalls.some(isArtifactToolCall) && !generated.length && !webSearchData) {
-      const artifactLoop = await toolRuntime.runLoop({
-        messages: secondMessages,
-        contextMaxChars,
-        maxSteps: ARTIFACT_TOOL_MAX_ROUNDS,
-        signal: requestController.signal,
-        callModel: async () => {
-          const artifactFollowup = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
-            messages: secondMessages,
-            tools: artifactToolsOnly,
-            tool_choice: 'auto',
-          }, requestController.signal).catch((error) => {
-            if (requestController.signal.aborted) throw requestController.signal.reason || error;
-            return null;
-          });
-          return artifactFollowup?.choices?.[0]?.message || null;
-        },
-        orderCalls: (calls) => [...calls].sort((left, right) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right))),
-        runCalls: async (calls) => {
-          const runtimeCalls = calls.filter((call): call is ToolRuntimeCall => Boolean(call?.function?.name));
-          const execution = await toolRuntime.executeCalls(runtimeCalls);
-          if (execution.deferredCalls.length) deferredCalls = execution.deferredCalls;
-          return execution.results;
-        },
-        finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
-      });
-      artifactFollowupText = artifactLoop.text;
-      toolTrace.push(...artifactLoop.trace);
-    }
-    /**
-     * MCP 工具和技能、交付物一样需要链式调用：打开 → 看页面 → 点 → 输入，少一步就做不成事。
-     * 首轮执行完必须把工具再交给模型一次，否则它没有工具可用，只能把下一步写成文本标记
-     * （用户在气泡里看到的就是一段 <tool_call>）。
-     *
-     * 补轮走同一个 executeToolCall：权限、路径、审批、审计、停滞检测照旧生效；
-     * 中途撞上需要确认的调用，就和首轮一样整轮停下、返回确认卡片。
-     */
     let mcpFollowupText = '';
     const mcpFollowupTools = callableTools.filter((tool: any) => ['mcp', 'tabbit'].includes(toolExecutionKind(tool?.function?.name, mcpTools) || ''));
     /** 只有生成工具产出的文件才算这一轮已经收尾；浏览器下载出来的文件不该挡住后面的操作。 */

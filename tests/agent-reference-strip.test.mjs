@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createTsRequire } from './ts-require.mjs';
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
-const route = await readFile(new URL("../apps/api/agent-application.ts", import.meta.url), "utf8");
+const planning = createTsRequire(process.cwd())('./packages/agent-core/request-planning');
 const messageReferences = await readFile(new URL("../components/AgentMessageReferences.tsx", import.meta.url), "utf8");
 
 test("documents and text references are labelled as 引用 instead of 参考图", () => {
@@ -40,9 +41,11 @@ test("text thumbnail styles exist for both strips", () => {
   assert.doesNotMatch(styles, /\.message-ref-thumb>span\{/);
 });
 
-test("agent prompt counts only real image references and forbids invented attachment text", () => {
-  assert.match(route, /const latestReferenceImageCount = latestRefs\.filter\(\(reference\) => reference\.kind !== 'text'\)\.length;/);
-  assert.match(route, /本轮参考图数量：\$\{latestReferenceImageCount\}（只统计图片\/视频素材，引用文本与上传文档不计入）/);
-  assert.match(route, /17\. \[引用文本：名称\] 和 \[用户上传文件：名称\] 里的正文就是用户给的文字内容，它们不是参考图/);
-  assert.match(route, /绝对不要编造或猜测附件正文/);
+test("agent prompt counts only real image references and preserves text references", () => {
+  const plan = planning.planAgentRequest({ body: { webMode: 'off' }, messages: [{ role: 'user', content: '????', references: [
+    { id: 'image', kind: 'image', name: 'img', url: 'data:image/png;base64,x' },
+    { id: 'text', kind: 'text', name: 'brief', text: 'caption' },
+  ] }], isCanvasSource: false, isCanvasNodeExecution: false, canvasTargetNodeIds: [], canvasTargetKind: 'none', canvasTargetOperation: 'generate' });
+  assert.equal(plan.latestReferenceImageCount, 1);
+  assert.equal(plan.latestRefs.find((reference) => reference.kind === 'text')?.text, 'caption');
 });

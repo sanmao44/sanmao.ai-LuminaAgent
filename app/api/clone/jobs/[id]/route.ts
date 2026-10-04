@@ -1,9 +1,10 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { cleanupCloneJobDirectory, renderBlueprintVariant, renderBlueprintVariants, rerenderCloneJob } from '@/lib/clone/pipeline';
+import { renderBlueprintVariant, renderBlueprintVariants, rerenderCloneJob } from '@/lib/clone/pipeline';
 import { dispatchCloneExecutionJob } from '@/apps/worker/task-entry';
+import { removeCloneTask } from '@/apps/worker/task-control';
 import { buildBlueprintVariantPlans, normalizeCloneOptions } from '@/lib/clone/plan';
-import { findCloneJob, removeCloneJob, updateCloneJob } from '@/lib/clone/store';
-import { canResumeCloneJob, cloneTaskRuntime } from '@/lib/clone/task-runtime';
+import { findCloneJob, updateCloneJob } from '@/lib/clone/store';
+import { canResumeCloneJob } from '@/lib/clone/task-runtime';
 import type { CloneBlueprintVariantOverride, CloneBlueprintVariantSpec, CloneShot } from '@/lib/clone/types';
 import { normalizeVideoEditorState } from '@/lib/canvas/video-editor';
 import type { CanvasVideoEditorState } from '@/lib/canvas/types';
@@ -248,9 +249,6 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   const { id } = await context.params;
   const job = await findCloneJob(id);
   if (!job) return Response.json({ ok: true, deleted: false });
-  const wasRunning = cloneTaskRuntime.isActive(job.stage);
-  if (wasRunning) await updateCloneJob(id, { cancelRequested: true });
-  const removed = await removeCloneJob(id);
-  await cleanupCloneJobDirectory(id);
-  return Response.json({ ok: true, deleted: Boolean(removed), cancelled: wasRunning });
+  const result = await removeCloneTask(id);
+  return Response.json({ ok: true, deleted: result.removed, cancelled: result.cancelled });
 }
