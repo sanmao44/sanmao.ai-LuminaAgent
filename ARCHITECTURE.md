@@ -510,8 +510,8 @@ depend on the host route.
 Part B remains `migration in progress`. Agent request context preparation and
 provider attempt coordination have real package owners; `apps/api/agent-application.ts`
 now delegates model invocation through `packages/model-runtime/agent-invoker.ts`
-and bounded Skill/Artifact continuation through `apps/api/agent-execution.ts`,
-while context/MCP-browser orchestration and compatibility assembly remain explicit
+and bounded Skill/Artifact/MCP-browser continuation through `apps/api/agent-execution.ts`,
+while request context, policy/approval and compatibility assembly remain explicit
 application responsibilities. Tool capability modules and Worker task controls are real
 production seams; media transport, provider health persistence, and task family
 polling/retry persistence remain migration adapters.

@@ -2,7 +2,7 @@ import type { ChatMessage } from '@/lib/providers';
 import { isArchiveToolCall } from '@/lib/tools';
 import { SKILL_TOOL_MAX_CALLS } from '@/lib/skills';
 import { stripToolCallMarkup } from '@/lib/skills';
-import type { ToolLoopTraceStep, ToolLoopCall } from '@/packages/tool-runtime/tool-loop';
+import type { ToolLoopTraceStep, ToolLoopCall, ToolLoopMessage, ToolLoopReply } from '@/packages/tool-runtime/tool-loop';
 import type { ToolRuntime, ToolRuntimeCall } from '@/packages/tool-runtime/runtime';
 
 type ToolReply = { content?: unknown; tool_calls?: unknown; reasoning_content?: unknown } | null;
@@ -28,6 +28,31 @@ export type CapabilityFollowupResult = {
   skillText: string;
   artifactText: string;
   trace: ToolLoopTraceStep[];
+};
+
+export type McpCapabilityFollowupOptions = {
+  messages: ChatMessage[];
+  contextMaxChars: number;
+  signal: AbortSignal;
+  toolRuntime: Pick<ToolRuntime, 'runLoop' | 'executeCalls'>;
+  mcpTools: readonly unknown[];
+  maxSteps: number;
+  maxCalls: number;
+  deadlineMs?: number;
+  callModel: (messages: ChatMessage[]) => Promise<ToolLoopReply | null>;
+  shouldContinue: () => boolean;
+  continueOnEmpty?: () => string | false;
+  continueOnText?: (input: { text: string }) => string | false;
+  setDeferredCalls?: (calls: ToolRuntimeCall[]) => void;
+};
+
+export type McpCapabilityFollowupResult = {
+  text: string;
+  trace: ToolLoopTraceStep[];
+  stopReason: string;
+  stepMessages: ChatMessage[];
+  stepReply: ToolLoopReply | null;
+  deferredCalls: ToolRuntimeCall[];
 };
 
 /**
@@ -84,4 +109,38 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
   }
 
   return { skillText, artifactText, trace };
+}
+
+/** MCP/browser continuation lifecycle. Transport, policy and approval remain injected by the application. */
+export async function runMcpCapabilityFollowup(options: McpCapabilityFollowupOptions): Promise<McpCapabilityFollowupResult> {
+  let stepMessages: ChatMessage[] = [];
+  let stepReply: ToolLoopReply | null = null;
+  let deferredCalls: ToolRuntimeCall[] = [];
+  const outcome = await options.toolRuntime.runLoop({
+    messages: options.messages,
+    contextMaxChars: options.contextMaxChars,
+    maxSteps: options.maxSteps,
+    maxCalls: options.maxCalls,
+    deadlineMs: options.deadlineMs,
+    signal: options.signal,
+    callModel: async ({ messages }) => {
+      stepMessages = [...(messages as ChatMessage[])];
+      stepReply = await options.callModel(messages as ChatMessage[]);
+      return stepReply;
+    },
+    runCalls: async (calls) => {
+      const runtimeCalls = calls.filter((call): call is ToolRuntimeCall => Boolean(call?.function?.name));
+      const execution = await options.toolRuntime.executeCalls(runtimeCalls);
+      if (execution.deferredCalls.length) {
+        deferredCalls = execution.deferredCalls;
+        options.setDeferredCalls?.(deferredCalls);
+      }
+      return execution.results as ToolLoopMessage[];
+    },
+    shouldContinue: () => options.shouldContinue(),
+    continueOnEmpty: () => options.continueOnEmpty?.() || false,
+    continueOnText: ({ text }) => options.continueOnText?.({ text }) || false,
+    finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
+  });
+  return { text: outcome.text, trace: outcome.trace, stopReason: outcome.stopReason, stepMessages, stepReply, deferredCalls };
 }

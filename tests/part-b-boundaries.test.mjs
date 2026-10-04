@@ -75,6 +75,34 @@ test('Agent execution boundary owns bounded skill and artifact follow-ups', asyn
   assert.equal(result.trace.length, 2);
 });
 
+test('Agent execution boundary owns MCP continuation lifecycle', async () => {
+  const { runMcpCapabilityFollowup } = load('./apps/api/agent-execution');
+  const calls = [];
+  const toolRuntime = {
+    async runLoop(options) {
+      const reply = await options.callModel({ step: 0, messages: options.messages });
+      const requested = Array.isArray(reply?.tool_calls) ? reply.tool_calls : [];
+      if (requested.length) await options.runCalls(requested, { step: 0 });
+      return { text: 'browser complete', trace: [{ step: 0, calls: requested.map((call) => call.function.name), durationMs: 1, continued: false }], stopReason: 'no_tool_calls' };
+    },
+    async executeCalls(runtimeCalls) { calls.push(...runtimeCalls); return { results: [], deferredCalls: [], stalled: false }; },
+  };
+  const result = await runMcpCapabilityFollowup({
+    messages: [{ role: 'user', content: 'open the page' }],
+    contextMaxChars: 4000,
+    signal: new AbortController().signal,
+    toolRuntime,
+    mcpTools: [{ function: { name: 'browser_open' } }],
+    maxSteps: 2,
+    maxCalls: 2,
+    callModel: async () => ({ tool_calls: [{ id: 'mcp-1', function: { name: 'browser_open' } }] }),
+    shouldContinue: () => false,
+  });
+  assert.equal(result.text, 'browser complete');
+  assert.deepEqual(calls.map((call) => call.function.name), ['browser_open']);
+  assert.equal(result.stopReason, 'no_tool_calls');
+});
+
 test('Worker entry executes and observes a clone task through its runner port', async () => {
   const { runCloneJob } = load('./apps/worker/task-entry');
   const { BufferedRuntimeObserver } = load('./packages/contracts/observability');

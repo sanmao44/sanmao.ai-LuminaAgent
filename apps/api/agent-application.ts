@@ -75,7 +75,7 @@ import { createAgentModelInvoker } from '@/packages/model-runtime/agent-invoker'
 import { noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates } from '@/lib/agent/model-health';
 import { prepareAgentRequestContext } from '@/packages/agent-core/request-context';
 import { planAgentRequest } from '@/packages/agent-core/request-planning';
-import { runCapabilityFollowups } from '@/apps/api/agent-execution';
+import { runCapabilityFollowups, runMcpCapabilityFollowup } from '@/apps/api/agent-execution';
 
 async function safeDiscoverMcpForRequest(options: Parameters<typeof discoverMcpForRequest>[0]) {
   try {
@@ -1914,42 +1914,32 @@ const auditMcpCall = (
     const generatedDeliveryCount = generatedFiles.length - browserDownloadCount;
     if (!followupText && !artifactFollowupText && !generated.length && !generatedDeliveryCount && !webSearchData && mcpToolCallCount > 0 && mcpFollowupTools.length) {
       /** 这一步（补轮的一轮）之前的历史、模型回复与已执行结果：撞上确认时要用它们存档。 */
-      let stepMessages: ChatMessage[] = [];
-      let stepReply: any = null;
       let stepResults: ChatMessage[] = [];
-      const mcpLoop = await toolRuntime.runLoop({
+      const mcpLoop = await runMcpCapabilityFollowup({
         messages: secondMessages,
         contextMaxChars,
+        toolRuntime,
+        mcpTools: mcpFollowupTools,
         maxSteps: mcpFollowupMaxRounds,
         maxCalls: Math.max(1, mcpToolCallLimit - mcpToolCallCount),
         deadlineMs: browserAutomationRequest ? BROWSER_EXECUTION_LIMITS.deadlineMs : undefined,
         signal: requestController.signal,
-        callModel: async ({ messages }) => {
+        callModel: async (messages) => {
           const reply = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
-            messages: messages as ChatMessage[],
+            messages,
             tools: mcpFollowupTools,
             tool_choice: 'auto',
           }, requestController.signal).catch((error) => {
             if (requestController.signal.aborted) throw requestController.signal.reason || error;
             return null;
           });
-          stepMessages = [...(messages as ChatMessage[])];
           const rawReply = reply?.choices?.[0]?.message || null;
           const inlineCalls = rawReply && !(Array.isArray(rawReply.tool_calls) && rawReply.tool_calls.length)
             ? parseInlineToolCalls(rawReply.content, mcpFollowupTools)
             : [];
-          // 文本格式通常把同一份快照上的多步动作一次吐出；浏览器 ref 会在第一步后失效，
-          // 只能先恢复第一步，执行后重新取快照，再让模型规划下一步。
-          stepReply = inlineCalls.length
+          return inlineCalls.length
             ? { ...rawReply, content: null, tool_calls: inlineCalls.slice(0, 1) }
             : rawReply;
-          return stepReply;
-        },
-        runCalls: async (calls) => {
-          const runtimeCalls = calls.filter((call): call is ToolRuntimeCall => Boolean(call?.function?.name));
-          const execution = await toolRuntime.executeCalls(runtimeCalls);
-          if (execution.deferredCalls.length) deferredCalls = execution.deferredCalls;
-          return execution.results;
         },
         shouldContinue: () => !deferredCalls.length && !stalledMcpReason && mcpToolCallCount < mcpToolCallLimit && mcpTurnBudget > 0,
         continueOnEmpty: () => {
@@ -1961,8 +1951,6 @@ const auditMcpCall = (
         },
         continueOnText: ({ text }) => {
           if (!browserAutomationRequest || browserExternalBlocker(browserUses) || browserCompletionPrompts >= MCP_BROWSER_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
-          // 模型有时会在工具失败后用自然语言承认「还没做完」，这不是连续任务的完成信号。
-          // 只匹配明确的未完成/等待/无法提交措辞，避免把普通说明误判成需要重试。
           const submissionGap = browserTextSubmissionGap(latestInstruction, browserUses);
           if (!browserTextNeedsContinuation(text) && !submissionGap && !hasInlineToolCallMarkup(text)) return false;
           browserCompletionPrompts += 1;
@@ -1970,8 +1958,9 @@ const auditMcpCall = (
           browserRecoveryNeeded = false;
           return `${browserContinuationPrompt(recovery)} 若只是等待或元素暂时不可见，请换用合适的快照、滚动或等待方式重试；只有全部动作都已验证成功，或确认遇到登录、验证码等无法由助手解决的外部阻塞时，才能停止。`;
         },
-        finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
+        setDeferredCalls: (calls) => { deferredCalls = calls; },
       });
+      const { stepMessages, stepReply } = mcpLoop;
       mcpFollowupText = mcpLoop.text;
       toolTrace.push(...mcpLoop.trace);
       if (browserAutomationRequest && !deferredCalls.length) {
