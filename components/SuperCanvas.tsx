@@ -16821,6 +16821,7 @@ export default function SuperCanvas() {
           onMoveNodes={moveMinimapNodes}
         />
         <CanvasAgentDock
+          key={`${agentWorkspaceContext.creativeProjectId}:${agentWorkspaceContext.canvasId || "default"}`}
           open={agentDockOpen}
           onToggle={applyAgentDockOpen}
           status={agentDockStatus}

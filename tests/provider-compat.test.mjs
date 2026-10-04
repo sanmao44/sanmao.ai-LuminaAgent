@@ -81,6 +81,69 @@ test('detects native task transport from endpoint metadata', () => {
   assert.equal(provider.videoTransport, 'native-task');
 });
 
+test('prepares local chat media for every provider while preserving remote URLs', async () => {
+  const calls = [];
+  const prepared = await providers.prepareProviderChatMessages([
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'describe the image' },
+        { type: 'image_url', image_url: { url: '/api/storage/file?name=reference.png' } },
+        { type: 'image_url', image_url: { url: 'http://localhost:3210/api/storage/file?name=local.png' } },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,INLINE' } },
+        { type: 'image_url', image_url: { url: 'https://cdn.example/reference.png' } },
+      ],
+    },
+  ], (value, kind) => {
+    calls.push({ value, kind });
+    return `https://relay.example/${calls.length}`;
+  });
+
+  assert.deepEqual(calls, [
+    { value: '/api/storage/file?name=reference.png', kind: 'image' },
+    { value: 'http://localhost:3210/api/storage/file?name=local.png', kind: 'image' },
+    { value: 'data:image/png;base64,INLINE', kind: 'image' },
+  ]);
+  assert.equal(prepared[0].content[1].image_url.url, 'https://relay.example/1');
+  assert.equal(prepared[0].content[2].image_url.url, 'https://relay.example/2');
+  assert.equal(prepared[0].content[3].image_url.url, 'https://relay.example/3');
+  assert.equal(prepared[0].content[4].image_url.url, 'https://cdn.example/reference.png');
+  const localOnly = await providers.prepareProviderChatMessages([
+    { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,INLINE' } }] },
+  ], (value) => `https://relay.example/${value}`, { prepareDataUrls: true });
+  assert.equal(localOnly[0].content[0].image_url.url, 'https://relay.example/data:image/png;base64,INLINE');
+});
+
+test('chat, stream and Responses requests all receive provider-ready media', async () => {
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    requests.push({ url: String(url), body });
+    if (body.stream) return new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
+    return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }), { headers: { 'content-type': 'application/json' } });
+  };
+  const provider = {
+    id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'custom',
+    baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key',
+  };
+  const messages = [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://cdn.example/reference.png' } }] }];
+  try {
+    await providers.chatCompletion(provider, 'deepseek-chat', { messages });
+    await providers.chatCompletionStream(provider, 'deepseek-chat', { messages });
+    await providers.responsesCompletion(provider, 'deepseek-chat', messages);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.deepEqual(requests.map(({ url }) => url), [
+    'https://api.deepseek.com/v1/chat/completions',
+    'https://api.deepseek.com/v1/chat/completions',
+    'https://api.deepseek.com/v1/responses',
+  ]);
+  assert.ok(requests.every(({ body }) => body.messages?.[0]?.content[0].image_url.url === 'https://cdn.example/reference.png'
+    || body.input?.[0]?.content[0].image_url.url === 'https://cdn.example/reference.png'));
+});
+
 test('uses the OpenAI video task status default for a custom compatible provider', () => {
   const config = presets.resolveProviderConfiguration({
     platform: 'custom',

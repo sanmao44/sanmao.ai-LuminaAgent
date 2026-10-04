@@ -12,7 +12,6 @@ import path from 'node:path';
 import { unzipSync, type UnzipFileInfo } from 'fflate';
 import { fetchSkillBytes, githubArchiveUrls, parseGithubSkillTarget, type GithubSkillTarget } from '@/lib/skills';
 import { resolveLocalDataDir } from '@/lib/data-paths';
-import { resolveNpmCliPath } from './npm-cli';
 import { listMcpServers, normalizeMcpServerId, saveMcpServers } from './store';
 import type { McpServerConfig } from './types';
 
@@ -25,6 +24,11 @@ const UV_VERSION = '0.12.19';
 const UV_ARCHIVE_URL = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-pc-windows-msvc.zip`;
 const UV_ARCHIVE_SHA256 = '6dbb02d79e419522f1c500f0adb1cddcff0cda7d59b0d66ea7f5e3b4a1b2f5f0';
 const UV_ARCHIVE_MAX_BYTES = 32 * 1024 * 1024;
+
+function resolveNpmCliPath(nodePath: string = process.execPath) {
+  const candidate = path.join(path.dirname(nodePath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  return existsSync(candidate) ? candidate : null;
+}
 
 export type GithubMcpInstallResult = {
   server: McpServerConfig;

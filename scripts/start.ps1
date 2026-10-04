@@ -443,28 +443,9 @@ function Test-SanmaoMediaRelayRequired {
   $dataRoot = Resolve-SanmaoProviderConfigDir -Root $root
   $statePath = Join-Path $dataRoot 'state.json'
   if (-not (Test-Path -LiteralPath $statePath)) { return $false }
-  try {
-    $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $hasUpscaleConnection = @($state.upscaleConnections | Where-Object {
-        $_.status -eq 'healthy' -and (
-          (-not [string]::IsNullOrWhiteSpace([string]$_.encryptedSecretId) -and -not [string]::IsNullOrWhiteSpace([string]$_.encryptedSecretKey)) -or
-          (-not [string]::IsNullOrWhiteSpace([string]$_.encryptedAccessKeyId) -and -not [string]::IsNullOrWhiteSpace([string]$_.encryptedAccessKeySecret))
-        )
-      }).Count -gt 0
-    if ($hasUpscaleConnection) { return $true }
-    foreach ($provider in @($state.providers)) {
-      $transport = ([string]$provider.videoTransport).ToLowerInvariant()
-      $hasCredential = -not [string]::IsNullOrWhiteSpace([string]$provider.encryptedApiKey) -or -not [string]::IsNullOrWhiteSpace([string]$provider.encryptedVideoApiKey) -or -not [string]::IsNullOrWhiteSpace([string]$provider.apiKey)
-      if (-not $hasCredential) { continue }
-      if ($transport -eq 'agnes-videos' -or $transport -eq 'openai-videos') { return $true }
-      if ($transport -eq 'native-task' -or $transport -eq 'jimeng-cli') { continue }
-      if ($transport -eq 'auto' -or -not $transport) {
-        $hasVideoModel = @($state.models | Where-Object { $_.providerId -eq $provider.id -and ($_.kind -eq 'video' -or @($_.capabilities) -contains 'video-generate') }).Count -gt 0
-        if ($hasVideoModel) { return $true }
-      }
-    }
-  } catch {}
-  return $false
+  $policyPath = Join-Path $PSScriptRoot 'media-relay-policy.mjs'
+  if (-not (Test-Path -LiteralPath $policyPath -PathType Leaf)) { return $false }
+  try { & node $policyPath $statePath; return $LASTEXITCODE -eq 0 } catch { return $false }
 }
 
 $script:MediaRelayRequired = Test-SanmaoMediaRelayRequired

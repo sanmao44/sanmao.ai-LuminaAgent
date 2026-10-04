@@ -855,6 +855,7 @@ export async function waitForCanvasAgentGeneration(taskId: string, maxWaitMs = 3
 export async function generateCanvasAgent(
   input: {
     messages: Array<{ role: "user" | "assistant"; content: string; references?: Array<Pick<CreativeReference, "id" | "kind" | "name" | "url" | "text" | "mimeType" | "nodeId">> }>;
+    memory?: string;
     model?: string;
     webMode?: "off" | "auto" | "always";
     executionMode?: AgentExecutionMode;
@@ -902,6 +903,7 @@ export async function generateCanvasAgent(
           source: "canvas",
           ...(input.executionMode ? { executionMode: input.executionMode } : {}),
           messages,
+          ...(input.memory ? { memory: input.memory } : {}),
           model: input.model || "auto",
           ...(input.task ? { task: input.task } : {}),
           ...(input.durationSeconds !== undefined ? { durationSeconds: input.durationSeconds } : {}),

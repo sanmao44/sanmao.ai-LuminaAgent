@@ -13,6 +13,7 @@ phase. Non-blocking architecture debt is tracked separately in
 | --- | --- | --- | --- | --- | --- | --- |
 | Windows offline voice synthesis | 0.7.x baseline | `System.Speech` is unavailable in the current restricted Windows test context | media / voice | medium | test is skipped with environment evidence | tracked |
 | Remaining source-coupled UI assertions | 0.7.x baseline | Some historical UI tests still assume implementation file locations | UI / migration tooling | low | existing source assertions | tracked; not a pre-lock blocker |
+| Canvas Agent memory and conversation scope | 0.7.66 behavior | Canvas Agent history was stored in one shared key and requests only carried the latest bounded turns; long or switched-canvas conversations lost continuity | Agent / Canvas | P1 | canvas dock, memory and architecture tests | resolved |
 
 ## Final convergence checkpoint (2026-10-04)
 

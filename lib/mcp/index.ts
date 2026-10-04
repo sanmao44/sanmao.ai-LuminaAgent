@@ -141,12 +141,12 @@ export {
   catalogRuntimeStatus,
   installCatalogServer,
   resolveCatalogInstallLogFile,
+  resolveNpmCliPath,
   sameArgs,
   startCatalogServer,
   stopCatalogServer,
 } from './catalog-runtime';
 export type { McpCatalogRuntimeState, McpCatalogRuntimeStatus } from './catalog-runtime';
-export { resolveNpmCliPath } from './npm-cli';
 export {
   MCP_LAZY_KEYWORD_LIMIT,
   MCP_FORBIDDEN_TOOLS,

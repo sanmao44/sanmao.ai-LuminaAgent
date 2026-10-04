@@ -57,7 +57,6 @@ const MODULES = [
   'lib/artifacts/storage',
   'lib/mcp/client',
   'lib/mcp/stdio',
-  'lib/mcp/npm-cli',
   'lib/mcp/catalog-runtime',
   'lib/mcp/tools',
   'lib/mcp/audit',

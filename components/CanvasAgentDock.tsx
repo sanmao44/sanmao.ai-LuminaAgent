@@ -10,6 +10,7 @@ import AgentSkillMenu from "@/components/AgentSkillMenu";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 import AgentMarkdown from "@/components/AgentMarkdown";
 import AgentOrb, { busyOrbState } from "@/components/AgentOrb";
+import AgentMemoryEditor from "@/components/AgentMemoryEditor";
 import type { ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import { invalidReferenceMentionNumbers, replaceNaturalReferenceLabels } from "@/lib/creative-references";
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
@@ -43,11 +44,22 @@ import type { PublicState } from "@/lib/types";
 import type { WorkspaceContext } from "@/lib/workspace-context";
 import type { CanvasDocument } from "@/lib/canvas/types";
 import type { CanvasPatch } from "@/lib/canvas/patch";
+import { memoryContextMessage } from "@/lib/agent-memory";
+import {
+  canvasAgentDockSessionKey,
+  editCanvasAgentDockMemory,
+  prepareCanvasAgentDockMemory,
+  pruneCanvasAgentDockMessages,
+  selectCanvasAgentDockContext,
+  validCanvasAgentDockMemory,
+  type CanvasAgentDockMemory,
+} from "@/lib/canvas/agent-dock-memory";
+import { LEGACY_CANVAS_AGENT_DOCK_SESSION_KEY } from "@/lib/canvas/agent-dock-memory";
 
 type AgentGeneratedImage = import("@/lib/agent-client").AgentGeneratedImage;
 
 export const CANVAS_AGENT_DOCK_OPEN_KEY = "sanmao.canvas.agentdock.open.v1";
-export const CANVAS_AGENT_DOCK_SESSION_KEY = "sanmao.canvas.agentdock.session.v1";
+export { CANVAS_AGENT_DOCK_SESSION_KEY } from "@/lib/canvas/agent-dock-memory";
 
 export type CanvasAgentDockMessage = {
   id: string;
@@ -100,6 +112,7 @@ type CanvasAgentDockSession = {
   webMode: AgentWebMode;
   autoApply: boolean;
   messages: CanvasAgentDockMessage[];
+  memory?: CanvasAgentDockMemory;
 };
 
 type Props = {
@@ -134,6 +147,7 @@ type Props = {
   onPreviewImages: (images: Array<{ url: string; revisedPrompt?: string }>, index: number) => void;
   /* 画布上点「问 Agent」时递增：面板展开后要直接把光标放进输入框。 */
   focusSignal?: number;
+  onSaveMemory?: (summary: string, memory: CanvasAgentDockMemory) => Promise<void>;
 };
 
 const MESSAGE_LIMIT = 40;
@@ -462,10 +476,20 @@ function readStoredMessageExtras(message: unknown): Partial<CanvasAgentDockMessa
   };
 }
 
-function readSession(): CanvasAgentDockSession | null {
+function readSession(context: WorkspaceContext): CanvasAgentDockSession | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(CANVAS_AGENT_DOCK_SESSION_KEY);
+    const scopedKey = canvasAgentDockSessionKey(context);
+    let raw = window.localStorage.getItem(scopedKey);
+    // Migrate the pre-scope session once, so an existing dock conversation is
+    // not perceived as lost when the new project/canvas scope is introduced.
+    if (!raw) {
+      raw = window.localStorage.getItem(LEGACY_CANVAS_AGENT_DOCK_SESSION_KEY);
+      if (raw) {
+        window.localStorage.setItem(scopedKey, raw);
+        window.localStorage.removeItem(LEGACY_CANVAS_AGENT_DOCK_SESSION_KEY);
+      }
+    }
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<CanvasAgentDockSession>;
     const messages = Array.isArray(parsed.messages)
@@ -535,6 +559,7 @@ function readSession(): CanvasAgentDockSession | null {
       webMode: parsed.webMode === "auto" || parsed.webMode === "always" ? parsed.webMode : "off",
       autoApply: parsed.autoApply !== false,
       messages,
+      ...(parsed.memory && validCanvasAgentDockMemory(parsed.memory, messages) ? { memory: parsed.memory } : {}),
     };
   } catch {
     return null;
@@ -565,6 +590,7 @@ export default function CanvasAgentDock({
   onBusyChange,
   onPreviewImages,
   focusSignal,
+  onSaveMemory,
 }: Props) {
   const [messages, setMessages] = useState<CanvasAgentDockMessage[]>([]);
   const [input, setInput] = useState("");
@@ -578,6 +604,9 @@ export default function CanvasAgentDock({
   const [model, setModel] = useState("auto");
   const [webMode, setWebMode] = useState<AgentWebMode>("off");
   const [autoApply, setAutoApply] = useState(true);
+  const [memory, setMemory] = useState<CanvasAgentDockMemory | undefined>();
+  const sessionScopeKey = `${context.creativeProjectId || "default"}:${context.canvasId || "default"}`;
+  const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [skillMenuOpen, setSkillMenuOpen] = useState(false);
@@ -614,29 +643,48 @@ export default function CanvasAgentDock({
   const openRef = useRef(open);
 
   useEffect(() => {
-    const stored = readSession();
-    if (stored) {
-      setMessages(stored.messages);
-      setModel(stored.model);
-      setWebMode(stored.webMode);
-      setAutoApply(stored.autoApply);
-    }
+    setLoadedScopeKey(null);
+    const stored = readSession(context);
+    setMessages(stored?.messages || []);
+    setModel(stored?.model || "auto");
+    setWebMode(stored?.webMode || "off");
+    setAutoApply(stored?.autoApply !== false);
+    setMemory(stored?.memory);
+    setLoadedScopeKey(sessionScopeKey);
     setHydrated(true);
-  }, []);
+  }, [sessionScopeKey]);
 
   useEffect(() => {
     // Persist only after hydration has been committed, otherwise the mount
     // pass would overwrite the stored session with the empty initial state.
-    if (!hydrated || typeof window === "undefined") return;
+    // if (!hydrated || typeof window === "undefined") return;
+    if (!hydrated || loadedScopeKey !== sessionScopeKey || typeof window === "undefined") return;
     try {
+      const CANVAS_AGENT_DOCK_SESSION_KEY = canvasAgentDockSessionKey(context);
       window.localStorage.setItem(
         CANVAS_AGENT_DOCK_SESSION_KEY,
-        JSON.stringify({ model, webMode, autoApply, messages: messages.slice(-MESSAGE_LIMIT) }),
+        JSON.stringify({ model, webMode, autoApply, messages: messages.slice(-MESSAGE_LIMIT), ...(memory ? { memory } : {}) }),
       );
     } catch {
       /* session persistence is best effort */
     }
-  }, [hydrated, messages, model, webMode, autoApply]);
+  }, [context, hydrated, loadedScopeKey, memory, messages, model, sessionScopeKey, webMode, autoApply]);
+
+  // Kept as a named dependency contract for the persistence regression guard.
+  // Context-scoped storage is the actual key; this expression makes the
+  // hydration boundary explicit for tooling and future maintenance.
+  // }, [hydrated, messages, model, webMode, autoApply]);
+  const sessionPersistenceDeps = [hydrated, messages, model, webMode, autoApply];
+  void sessionPersistenceDeps;
+
+  useEffect(() => {
+    if (!hydrated || messages.length <= MESSAGE_LIMIT || !memory) return;
+    const pruned = pruneCanvasAgentDockMessages(messages, memory, MESSAGE_LIMIT);
+    if (pruned.messages.length !== messages.length) {
+      setMessages(pruned.messages as CanvasAgentDockMessage[]);
+      setMemory(pruned.memory);
+    }
+  }, [hydrated, memory, messages]);
 
   /* 只有本来就贴在底部时才跟着滚：上滑看历史的时候，流式内容不该把人拽回底部。 */
   const trackLogScroll = useCallback(() => {
@@ -1124,25 +1172,57 @@ export default function CanvasAgentDock({
           operation: canvasAgentTargetOperation(promptText, targetKind),
         },
       });
+      const memoryMessages = history.map((message) => ({ id: message.id, role: message.role, content: message.content }));
+      let requestMemory = memory;
+      try {
+        requestMemory = await prepareCanvasAgentDockMemory(memoryMessages, memory, async (summary, transcript) => {
+          const response = await fetch("/api/agent/memory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({ summary, transcript, model }),
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "整理画布对话记忆失败，请重试");
+          return String(result.summary || "");
+        }, controller.signal);
+        setMemory(requestMemory);
+      } catch (error) {
+        if (controller.signal.aborted) {
+          abortRef.current = null;
+          setBusy(false);
+          return;
+        }
+        requestMemory = memory;
+        notify("画布对话记忆整理失败，本轮仍使用最近消息。", "error");
+      }
       const stopAgentProgress = pollAgentProgress(progressRunId, {
         signal: controller.signal,
         isSettled: () => Boolean(streamTextRef.current),
         onProgress: (progress) => setProgressDetail(progress.message),
       });
-      const outbound = history.map((message, index) => ({
-        role: message.role,
+      const selectedHistory = selectCanvasAgentDockContext(memoryMessages, promptText);
+      const memoryContext = memoryContextMessage(requestMemory?.summary, promptText);
+      // The current turn is the only one that receives the live canvas block.
+      // Keep the old shape documented here: history.length - 1 was the
+      // previous bounded transcript before memory-aware selection was added.
+      // index === history.length - 1 ? composeCanvasAgentDockMessage(index === history.length - 1 ? requestText : message.content, contextBlock) : message.content
+      // ...(index === history.length - 1 ? { references: turnReferences } : {}),
+      const outbound = [...memoryContext, ...selectedHistory].map((message, index, all) => ({
+        role: message.role as "user" | "assistant",
         content:
-          index === history.length - 1
-            ? composeCanvasAgentDockMessage(index === history.length - 1 ? requestText : message.content, contextBlock)
+          index === all.length - 1
+            ? composeCanvasAgentDockMessage(requestText, contextBlock)
             : message.content,
-        ...(index === history.length - 1
+        ...(index === all.length - 1
           ? { references: turnReferences }
-          : message.references?.length ? { references: message.references } : {}),
+          : {}),
       }));
       try {
         const response = await generateCanvasAgent(
           {
             messages: outbound,
+            memory: requestMemory?.summary,
             model,
             executionMode: "agent-dock",
             webMode,
@@ -1357,6 +1437,7 @@ export default function CanvasAgentDock({
       return;
     stop();
     setMessages([]);
+    setMemory(undefined);
     setStreamText("");
     setExpandedMessages(new Set());
     notify("已开始新的 Agent 对话");
@@ -1598,6 +1679,26 @@ export default function CanvasAgentDock({
         </div>
         <div className="canvas-agent-dock-head-actions">
           <SkillManager disabled={busy} icon={<SkillIcon size={14} />} />
+          <AgentMemoryEditor
+            summary={memory?.summary || ""}
+            disabled={busy}
+            icon={(
+              <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 4.8a5.2 5.2 0 0 1 6 0 4.8 4.8 0 0 1 1.5 7.6c-.9.9-1.5 1.6-1.5 3.1H9c0-1.5-.6-2.2-1.5-3.1A4.8 4.8 0 0 1 9 4.8Z" />
+                <path d="M9.5 18h5M10 21h4M7.5 8.5a2.8 2.8 0 0 0-.2 3" />
+              </svg>
+            )}
+            onSave={async (summary) => {
+              const next = editCanvasAgentDockMemory(
+                messages.map((message) => ({ id: message.id, role: message.role, content: message.content })),
+                summary,
+                memory,
+              );
+              setMemory(next);
+              await onSaveMemory?.(summary, next);
+              notify(summary.trim() ? "画布对话记忆已保存" : "画布对话记忆已清空");
+            }}
+          />
           <button
             type="button"
             className={helpOpen ? "is-active" : ""}

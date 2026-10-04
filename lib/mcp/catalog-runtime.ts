@@ -5,10 +5,9 @@
  * 装到项目数据目录里，不写全局 npm 前缀，不动系统环境；失败时把日志尾部原样给用户。
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { listMcpServerTools } from './client';
-import { resolveNpmCliPath } from './npm-cli';
 import { MCP_STDIO_IDLE_TIMEOUT_MS, closeStdioServer, stdioServerStatus } from './stdio';
 import type { McpProtocolNegotiation } from './protocol';
 import {
@@ -99,6 +98,15 @@ function appendLog(entry: McpStdioCatalogEntry, chunk: string, options: { dataDi
 
 export function resolveCatalogInstallLogFile(entryId: string, options: { dataDir?: string } = {}) {
   return path.join(catalogDataDir(options), 'mcp', 'logs', `${entryId}-install.log`);
+}
+
+/**
+ * 用 Node 自带的 npm CLI 安装，而不是 shell 里敲 `npm install`：
+ * 不经过 shell，参数分开传，Windows 上也不会碰上 .cmd 的执行限制。
+ */
+export function resolveNpmCliPath(nodePath: string = process.execPath) {
+  const candidate = path.join(path.dirname(nodePath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  return existsSync(candidate) ? candidate : null;
 }
 
 function looksLikeNetworkFailure(log: string) {

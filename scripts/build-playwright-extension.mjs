@@ -55,17 +55,10 @@ function run(command, args, options = {}) {
 /**
  * 用 Node 自带的 npm CLI，而不是 shell 里的 `npm`：
  * Windows 上 npm 是 npm.cmd，spawn 不带 shell 时找不到（ENOENT）。这与运行时安装依赖同一套做法。
- *
- * npm 相对 node 的位置随发行布局不同：Windows / 官方 zip 在 <nodeDir>/node_modules/npm，
- * 官方 Unix tarball（含 actions/setup-node）在 <nodeDir>/../lib/node_modules/npm。
  */
 function resolveNpmCli() {
-  const nodeDir = path.dirname(process.execPath);
-  const candidate = [
-    path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-    path.resolve(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-  ].find((file) => existsSync(file));
-  if (!candidate) throw new Error('这台机器上找不到 npm，无法安装构建依赖');
+  const candidate = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  if (!existsSync(candidate)) throw new Error('这台机器上找不到 npm，无法安装构建依赖');
   return candidate;
 }
 

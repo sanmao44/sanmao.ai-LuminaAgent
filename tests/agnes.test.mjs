@@ -16,6 +16,7 @@ async function importTypeScript(sourceUrl, source, fileName = sourceUrl.pathname
 
 const providersUrl = new URL('../lib/providers.ts', import.meta.url);
 const providersSource = await readFile(providersUrl, 'utf8');
+const signedMediaImport = `import('./signed-media')`;
 const detectionSource = await readFile(new URL('../lib/native-search-detection.ts', import.meta.url), 'utf8');
 const modelKindSource = await readFile(new URL('../lib/model-kind.ts', import.meta.url), 'utf8');
 const agnesSource = await readFile(new URL('../lib/agnes.ts', import.meta.url), 'utf8');
@@ -27,7 +28,10 @@ const providers = await importTypeScript(providersUrl, [
     .replace("import { inferNativeSearch } from './native-search-detection';", '')
     .replace("import { inferModelKind } from './model-kind';", '')
     .replace("import { agnesModelCatalog } from './agnes';", ''),
-].join('\n'));
+].join('\n').replace(signedMediaImport, `Promise.resolve({ preparePublicMediaUrl: async (value, kind) => {
+  const signed = await globalThis.__providerTestSignedMedia.preparePublicMediaUrl(value, kind);
+  return signed;
+} })`));
 
 const videoUrl = new URL('../lib/video-providers.ts', import.meta.url);
 const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
@@ -314,7 +318,7 @@ test('does not retry a per-minute video submission limit and gives an actionable
   });
 });
 
-test('uses the Agnes media relay for local images without sending API credentials', async () => {
+test('uses the shared media relay for local images without sending API credentials', async () => {
   const previous = {
     relay: process.env.SANMAO_MEDIA_RELAY_URL,
     defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
@@ -325,21 +329,34 @@ test('uses the Agnes media relay for local images without sending API credential
   delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
   delete process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN;
   delete process.env.SANMAO_PUBLIC_BASE_URL;
+  globalThis.__providerTestSignedMedia = signed;
   const calls = [];
   globalThis.fetch = async (url, init) => {
     calls.push({ url: String(url), init });
+    if (!String(url).endsWith('/api/relay/media')) {
+      return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
     const form = init.body;
     assert.equal(form.get('kind'), 'image');
     assert.equal(form.get('file').type, 'image/png');
     return new Response(JSON.stringify({ ok: true, url: 'https://relay.example/api/relay/media/signed-token', expiresAt: '2026-08-29T00:30:00.000Z' }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   try {
-    const url = await signed.prepareAgnesMediaUrl('data:image/png;base64,AAECAw==', 'image');
-    assert.equal(url, 'https://relay.example/api/relay/media/signed-token');
-    assert.equal(calls.length, 1);
+    const response = await providers.chatCompletion({
+      id: 'deepseek-provider', name: 'DeepSeek', type: 'openai-compatible', platform: 'custom',
+      baseUrl: 'https://api.deepseek.com/v1', apiKey: 'server-only-key',
+    }, 'deepseek-chat', {
+      messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AAECAw==' } }] }],
+    });
+    assert.equal(response.choices[0].message.content, 'ok');
+    assert.equal(calls.length, 2);
     assert.equal(calls[0].url, 'https://relay.example/api/relay/media');
     assert.equal(calls[0].init.headers, undefined);
+    const requestBody = JSON.parse(calls[1].init.body);
+    assert.equal(requestBody.messages[0].content[0].image_url.url, 'https://relay.example/api/relay/media/signed-token');
+    assert.equal(calls[1].init.headers.Authorization, 'Bearer server-only-key');
   } finally {
+    delete globalThis.__providerTestSignedMedia;
     if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
     if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
     if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;

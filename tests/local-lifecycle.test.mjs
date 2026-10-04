@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher, linuxLauncher, lanLauncher, freeRelayPs, freeRelayWatchPs, freeRelaySh, readme, videoStudio] = await Promise.all([
+const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher, linuxLauncher, lanLauncher, freeRelayPs, freeRelayWatchPs, freeRelaySh, readme, videoStudio, relayPolicySource] = await Promise.all([
   readFile(new URL("../components/LocalLifecycle.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -17,7 +17,10 @@ const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher,
   readFile(new URL("../scripts/free-relay-common.sh", import.meta.url), "utf8"),
   readFile(new URL("../README.md", import.meta.url), "utf8"),
   readFile(new URL("../components/VideoStudio.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/media-relay-policy.mjs", import.meta.url), "utf8"),
 ]);
+
+const { requiresMediaRelay } = await import('../scripts/media-relay-policy.mjs');
 
 test("local lifecycle is mounted once for both the app and canvas routes", () => {
   assert.match(layout, /import LocalLifecycle from ['"]@\/components\/LocalLifecycle['"]/);
@@ -86,10 +89,10 @@ test("every existing launcher prepares the optional public media relay", () => {
 test("launchers enable free relay only for configured providers that need public media", () => {
   assert.match(windowsLauncher, /function Test-SanmaoMediaRelayRequired/);
   assert.match(windowsLauncher, /SANMAO_DATA_DIR/);
+  assert.match(windowsLauncher, /media-relay-policy\.mjs/);
   assert.match(windowsLauncher, /if \(\$FreeRelay\.IsPresent -and \$script:MediaRelayRequired\)/);
   assert.match(windowsLauncher, /elseif \(-not \$script:MediaRelayRequired\)/);
-  assert.match(windowsLauncher, /openai-videos/);
-  assert.match(windowsLauncher, /video-generate/);
+  assert.match(windowsLauncher, /media-relay-policy\.mjs/);
   assert.match(windowsLauncher, /Stop-SanmaoFreeRelayTunnel -Root \$root/);
   assert.match(windowsLauncher, /free-relay-watch\.ps1/);
   assert.match(windowsLauncher, /-OriginPort/);
@@ -97,14 +100,25 @@ test("launchers enable free relay only for configured providers that need public
   assert.match(macLauncher, /media_relay_required\(\)/);
   assert.match(macLauncher, /SANMAO_DATA_DIR/);
   assert.match(macLauncher, /if \[ "\$MEDIA_RELAY_REQUIRED" -eq 1 \]; then/);
-  assert.match(macLauncher, /openai-videos/);
+  assert.match(macLauncher, /media-relay-policy\.mjs/);
   assert.match(macLauncher, /free_relay_stop "\$ROOT_DIR"/);
   assert.match(linuxLauncher, /MEDIA_RELAY_REQUIRED=0/);
   assert.match(linuxLauncher, /SANMAO_DATA_DIR/);
   assert.match(linuxLauncher, /if \[ "\$MEDIA_RELAY_REQUIRED" -eq 1 \]; then/);
-  assert.match(linuxLauncher, /openai-videos/);
+  assert.match(linuxLauncher, /media-relay-policy\.mjs/);
   assert.match(linuxLauncher, /free_relay_stop "\$ROOT_DIR"/);
 
-  assert.match(readme, /只有检测到已保存且有访问密钥、且视频传输需要公网媒体地址的服务商/);
+  assert.match(readme, /检测到已保存并启用的视觉聊天模型/);
   assert.match(readme, /没有此类配置时不会下载或启动中转/);
+});
+
+test('media relay policy includes enabled vision chats and keeps native video local', () => {
+  const visionProvider = { id: 'deepseek', apiKey: 'configured', videoTransport: 'auto' };
+  const visionModel = { providerId: 'deepseek', kind: 'chat', enabled: true, published: true, capabilities: ['chat', 'vision'] };
+  assert.equal(requiresMediaRelay({ providers: [visionProvider], models: [visionModel] }), true);
+  assert.equal(requiresMediaRelay({ providers: [visionProvider], models: [{ ...visionModel, enabled: false }] }), false);
+  assert.equal(requiresMediaRelay({ providers: [{ ...visionProvider, videoTransport: 'native-task' }], models: [visionModel] }), true);
+  assert.equal(requiresMediaRelay({ providers: [{ id: 'native', apiKey: 'configured', videoTransport: 'native-task' }], models: [{ providerId: 'native', kind: 'video', capabilities: ['video-generate'] }] }), false);
+  assert.equal(requiresMediaRelay({ providers: [visionProvider], models: [{ providerId: 'deepseek', kind: 'video', capabilities: ['video-generate'] }] }), true);
+  assert.match(relayPolicySource, /capabilities\.includes\('vision'\)/);
 });

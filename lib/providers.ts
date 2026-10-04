@@ -51,13 +51,13 @@ export type DiscoveredModel = {
   maxOutputTokens?: number;
 };
 
-async function prepareAgnesMediaUrl(value: string, kind: 'image' | 'video' | 'audio') {
+async function preparePublicMediaUrl(value: string, kind: 'image' | 'video' | 'audio') {
   const input = String(value || '').trim();
-  if (!input || (/^https?:\/\//i.test(input) && !isLocalAgnesMediaUrl(input))) return input;
-  return (await import('./signed-media')).prepareAgnesMediaUrl(input, kind);
+  if (!input || (/^https?:\/\//i.test(input) && !isLocalProviderMediaUrl(input))) return input;
+  return (await import('./signed-media')).preparePublicMediaUrl(input, kind);
 }
 
-function isLocalAgnesMediaUrl(value: string) {
+function isLocalProviderMediaUrl(value: string) {
   try {
     const parsed = new URL(value);
     const host = parsed.hostname.toLowerCase();
@@ -69,15 +69,29 @@ function isLocalAgnesMediaUrl(value: string) {
   } catch { return true; }
 }
 
-async function prepareAgnesChatMessages<T extends { content: unknown }>(messages: T[]) {
+export async function prepareProviderChatMessages<T extends { content: unknown }>(
+  messages: T[],
+  prepareMedia: (value: string, kind: 'image' | 'video' | 'audio') => Promise<string> | string = preparePublicMediaUrl,
+  options: { prepareDataUrls?: boolean } = { prepareDataUrls: true },
+) {
   return Promise.all(messages.map(async (message) => {
     if (!Array.isArray(message.content)) return message;
     const content = await Promise.all(message.content.map(async (part: any) => {
       if (part?.type === 'image_url' && typeof part?.image_url?.url === 'string') {
-        return { ...part, image_url: { ...part.image_url, url: await prepareAgnesMediaUrl(part.image_url.url, 'image') } };
+        const value = String(part.image_url.url).trim();
+        const url = !value || (/^https?:\/\//i.test(value) && !isLocalProviderMediaUrl(value))
+          || (/^data:/i.test(value) && !options.prepareDataUrls)
+          ? value
+          : await prepareMedia(value, 'image');
+        return { ...part, image_url: { ...part.image_url, url } };
       }
       if (part?.type === 'video_url' && typeof part?.video_url?.url === 'string') {
-        return { ...part, video_url: { ...part.video_url, url: await prepareAgnesMediaUrl(part.video_url.url, 'video') } };
+        const value = String(part.video_url.url).trim();
+        const url = !value || (/^https?:\/\//i.test(value) && !isLocalProviderMediaUrl(value))
+          || (/^data:/i.test(value) && !options.prepareDataUrls)
+          ? value
+          : await prepareMedia(value, 'video');
+        return { ...part, video_url: { ...part.video_url, url } };
       }
       return part;
     }));
@@ -892,9 +906,9 @@ export function buildAgnesImagePayload(rawModelId: string, input: { prompt: stri
 }
 
 async function generateAgnesImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; references?: string[]; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque'; mask?: string }, references: string[] = [], signal?: AbortSignal) {
-  const media = await Promise.all(references.map((reference) => prepareAgnesMediaUrl(reference, 'image')));
+  const media = await Promise.all(references.map((reference) => preparePublicMediaUrl(reference, 'image')));
   const payload = buildAgnesImagePayload(rawModelId, input, media);
-  if (input.mask) payload.extra_body.mask = await prepareAgnesMediaUrl(input.mask, 'image');
+  if (input.mask) payload.extra_body.mask = await preparePublicMediaUrl(input.mask, 'image');
   const data = await fetchJson(providerEndpoint(provider, provider.imageGenerationPath, '/images/generations'), {
     method: 'POST',
     headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
@@ -1418,7 +1432,7 @@ function agnesTextEndpoint(provider: RuntimeProvider, protocol: ProviderTextProt
 
 async function agnesChatRequest(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, options: { stream?: boolean } = {}) {
   const protocol = agnesTextProtocol(provider);
-  const messages = await prepareAgnesChatMessages(payload.messages);
+  const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: true });
   const body: Record<string, unknown> = protocol === 'responses'
       ? { model: rawModelId, input: messages, max_output_tokens: 65536, ...(payload.tools?.length ? { tools: payload.tools } : {}), ...(options.stream ? { stream: true } : {}) }
       : protocol === 'messages'
@@ -1433,12 +1447,13 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
     const data = await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000, signal);
     return normalizeAgnesResponse(data, request.protocol);
   }
+  const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: true });
   const data = await fetchJson(providerEndpoint(provider, provider.chatPath, '/chat/completions'), {
     method: 'POST',
     headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: rawModelId,
-      messages: payload.messages,
+      messages,
       ...(payload.tools?.length ? { tools: payload.tools, tool_choice: payload.tool_choice || 'auto' } : {}),
     }),
   }, 180000, signal);
@@ -1451,9 +1466,10 @@ export async function responsesCompletion(provider: RuntimeProvider, rawModelId:
     const request = await agnesChatRequest(provider, rawModelId, { messages, tools: options.tools }, { stream: options.stream });
     return normalizeAgnesResponse(await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000), request.protocol);
   }
+  const preparedInput = typeof input === 'string' ? input : await prepareProviderChatMessages(input, preparePublicMediaUrl, { prepareDataUrls: true });
   const body: Record<string, unknown> = {
     model: rawModelId,
-    input,
+    input: preparedInput,
     ...(options.tools?.length ? { tools: options.tools } : {}),
     ...(options.stream ? { stream: true } : {}),
   };
@@ -1513,12 +1529,13 @@ export async function chatCompletionStream(provider: RuntimeProvider, rawModelId
     const request = await agnesChatRequest(provider, rawModelId, payload, { stream: true });
     return fetchStreamingResponse(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' }, body: JSON.stringify(request.body) }, 180000, signal);
   }
+  const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: true });
   return fetchStreamingResponse(providerEndpoint(provider, provider.chatPath, '/chat/completions'), {
     method: 'POST',
     headers: { ...authHeaders(provider), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' },
     body: JSON.stringify({
       model: rawModelId,
-      messages: payload.messages,
+      messages,
       stream: true,
       ...(payload.tools?.length ? { tools: payload.tools, tool_choice: payload.tool_choice || 'auto' } : {}),
     }),
