@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.75",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.75",
+  "latestVersion": "0.7.76",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.76",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.75/SANMAO.AI-0.7.75.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.76/SANMAO.AI-0.7.76.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.75/SANMAO.AI-0.7.75.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.75/SANMAO.AI-0.7.75.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.75/SANMAO.AI-0.7.75.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.76/SANMAO.AI-0.7.76.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.76/SANMAO.AI-0.7.76.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.76/SANMAO.AI-0.7.76.zip"
   ],
   "sha256": "312293ad867f85fe43e24b8778f987faf9c22cd6e2c12557283e3b63f5e60844",
-  "publishedAt": "2026-10-04T04:54:28Z",
+  "publishedAt": "2026-10-04T14:05:00Z",
   "notes": [
     "SQLite 本地数据库切换：业务数据通过 Repository 边界统一读写，保留迁移与回滚路径。",
     "备份与恢复改为分阶段、可回滚的事务流程，导出与归档使用流式处理。",
