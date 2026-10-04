@@ -2,6 +2,11 @@
 
 ## Scope
 
+> Historical implementation record. Current ownership, remaining compatibility
+> layers and machine-enforced rules are defined by `ARCHITECTURE.md` and
+> `docs/next-architecture/migration-status.md`; where this file and those differ,
+> the authoritative documents win.
+
 Phase 4 starts with a provider-neutral lifecycle vocabulary and one executable
 read path. The runtime defines the shared states `pending`, `queued`, `running`,
 `waiting`, `succeeded`, `failed`, and `cancelled`, plus active/cancel/retry

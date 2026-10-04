@@ -4,13 +4,15 @@
 
 ## 0. 总目标
 
-SANMAO.AI 正在从现有 0.7.x 架构逐步演进为面向 Agent 时代的清晰架构。
+SANMAO.AI 的架构迁移已经完成并封板（Final Architecture Lock）。
 
-当前阶段不是“全量推翻重写”，也不是“继续在旧核心里堆功能”，而是：
+当前长期目标是：**在已锁定的分层架构上开发产品功能，而不是继续重构架构。**
 
-**保持现有产品可用，同时逐块重写核心能力，并通过明确 Contract 将旧实现逐步替换。**
+当前部署形态是 Modular Next Monolith：Web、HTTP、Application、Runtime/Core、Infrastructure 是代码内的逻辑边界，不是独立部署单元，除非真实部署需求证明必须拆分。
 
-旧代码用于确认产品行为，不用于决定新架构应该怎样实现。
+架构、领域 ownership、兼容层与封板状态以 `ARCHITECTURE.md` 与 `docs/next-architecture/migration-status.md` 为准。
+
+Legacy 代码用于确认产品行为，不用于决定新功能应该写在哪一层。
 
 ---
 
@@ -35,66 +37,48 @@ SANMAO.AI 正在从现有 0.7.x 架构逐步演进为面向 Agent 时代的清�
 
 ---
 
-## 2. Legacy 与 Next Core
+## 2. 分层与模块边界
 
-### Legacy 区
-
-现有大文件与旧编排逻辑包括但不限于：
-
-- `app/page.tsx`
-- `components/SuperCanvas.tsx`
-- `app/api/agent/route.ts`
-- 现有散落的浏览器存储、`.data`、JSON、任务文件等
-
-Legacy 允许继续运行、允许修真正阻塞使用的问题，但原则上：
-
-**禁止继续向这些位置加入新的大型业务能力。**
-
-### Next Core 区
-
-新的核心能力应逐步进入明确模块，例如：
+最终分层如下，任何新功能都必须落在其 owning 层：
 
 ```text
-packages/
-  contracts/
-  agent-core/
-  model-runtime/
-  tool-runtime/
-  storage/
-  task-runtime/
-  canvas-core/
-  artifact-core/
-  observability/
+UI（app/page.tsx、components/**）                        ← 仅 presentation / interaction
+        ↓
+HTTP Transport（app/api/**/route.ts）                    ← 仅 auth、解析、序列化、错误映射
+        ↓
+Application（apps/api、apps/worker）                     ← 用例编排、生命周期
+        ↓
+Runtime / Core / Ports（packages/**）                    ← 领域状态与能力
+        ↑
+Infrastructure Adapters（lib/**、packages/observability） ← SDK、DB、文件、Provider
+        ↓
+Persistence / Provider / MCP / Filesystem
 ```
 
-如果当前仓库尚未适合 `packages/`，可以采用过渡目录，但必须：
-- 说明原因；
-- 保持边界清晰；
-- 不得把过渡目录变成新的垃圾桶。
+- 新增功能前先确认 owning domain，再通过 Contract / Port / Runtime / Core / Repository / Adapter 实现。
+- 禁止为了方便把业务逻辑重新塞进 `app/page.tsx`、`components/SuperCanvas.tsx`、API Route、HTTP Transport、直接存储调用或 Provider SDK 调用点。
+- `packages/contracts/**` 是唯一的跨模块 Contract 来源；前端不得手写与后端重复的类型。
+- 领域 authority 清单（Agent / Tool / Provider / Task / Canvas / Storage / Backup）见 `ARCHITECTURE.md` 的 Ownership Matrix。
+- 已知兼容层、其使用者与删除条件集中在 `docs/next-architecture/migration-status.md`；不得新增未登记的兼容路径。
+- 现有超大文件不再接收新的领域 ownership；拆分属于已登记的 Post-Lock Improvement，不是新的架构迁移阶段。
 
 ---
 
-## 3. 迁移期新增职责门槛
+## 3. 职责归属与兼容层
 
-迁移期间，**Legacy 可以继续修改，但架构职责和 ownership 只能保持或减少**。
+架构已封板，**每个领域只有一个 authoritative owner**（见 `ARCHITECTURE.md`）。
 
-- 已经存在并接入真实路径的 Next Core、Contract、Runtime 或 Repository 边界，新业务职责必须进入该边界。
-- Legacy 允许承载 Bug 修复、兼容逻辑和明确标注的 Migration Adapter，但不得继续获得新的领域 ownership。
-- 如果目标领域还没有合适边界，先建立最小的 Contract、Port 或 Application 边界，再接入真实路径；不要为了赶进度把新职责继续塞进 Legacy。
-- “Legacy 只减不增”约束的是架构职责和 ownership，不是禁止修改 Legacy 文件。
-
-迁移期允许双轨，但每条双轨路径都必须明确记录：
-
-1. 当前 Source of Truth；
-2. Adapter 的角色和使用方；
-3. 删除旧路径的条件。
+- 新业务职责必须进入对应领域的 Contract / Runtime / Repository / Application 边界，不得在 Legacy 文件中新增领域 ownership。
+- Legacy 文件允许继续修改，但只能承载 Bug 修复、兼容读取和已登记的 Migration Adapter。
+- 兼容层必须登记在 `docs/next-architecture/migration-status.md`，并写明：为什么存在、谁在使用、删除条件。
+- 不允许新增未登记的兼容路径；不允许创建第二个 Source of Truth。
 
 完成任务前必须自检：
 
 - 是否绕过了已有 Contract、Runtime 或 Repository；
 - 是否制造了第二个 Source of Truth；
 - Core / Domain 是否新增了 React、Next.js、Provider SDK 或其他基础设施依赖；
-- 是否复制了 Legacy 逻辑，而不是迁移 ownership。
+- 是否把 Legacy 逻辑复制成新实现，而不是把 ownership 迁移进边界。
 
 ---
 
@@ -125,6 +109,41 @@ Core / Domain 禁止直接依赖：
 - UI state
 
 Provider、MCP、Database、Filesystem、HTTP 都应该作为 Adapter 存在。
+
+### 4.1 Route / Transport 规则
+
+HTTP Route 只允许承担：
+
+- authentication / authorization boundary
+- request parsing
+- transport validation
+- 调用 Application boundary
+- HTTP / SSE response serialization
+- HTTP error mapping
+
+禁止重新承担：Agent execution lifecycle、Tool loop、Provider routing、Task lifecycle、Domain state authority。
+
+### 4.2 UI 规则
+
+UI 可以拥有：rendering state、hover、menus、pointer state、transient interaction、animation、presentation composition。
+
+UI 不得重新成为：Canvas document / history / selection authority、Task lifecycle authority、persistence authority、Provider routing authority。
+
+以上规则由 `tests/architecture-enforcement.test.mjs` 机器化校验。
+
+### 4.3 Source of Truth 规则
+
+一个领域概念只能有一个 authoritative owner。禁止重新出现两个可独立写入的 owner：
+
+```text
+React + Core
+Route + Runtime
+Old storage + SQLite
+API + Worker
+Legacy lifecycle + TaskRuntime
+```
+
+Projection / cache / adapter 可以存在，但必须明确它不是 Source of Truth。
 
 ---
 
@@ -302,16 +321,10 @@ Agent 不直接改 React state，而应提交结构化 Canvas Command / Operatio
 
 业务只依赖 Repository / Store Port。
 
-迁移期间允许 Legacy Adapter，但必须明确标注：
-
-```text
-TEMPORARY MIGRATION ADAPTER
-```
-
-并记录：
-- 为什么存在
-- 谁在使用
-- 删除条件
+- 业务逻辑不得新增直接访问 SQLite、JSON 持久化、IndexedDB、localStorage 或文件系统的路径；必须经过已有 Repository / Port。
+- 合理的例外仅限：UI preference、纯浏览器本地 UI 状态、媒体/文件 blob 适配器。
+- 兼容读取器与 Migration Adapter 必须登记在 `docs/next-architecture/migration-status.md`，写明为什么存在、谁在使用、删除条件。
+- SQLite 只有一个 authoritative adapter：`lib/database/sqlite.ts`；由 `tests/architecture-enforcement.test.mjs` 机器化校验。
 
 ---
 
@@ -351,6 +364,8 @@ expect(source).toContain(...)
 - Application behavior
 - Adapter integration
 - E2E user behavior
+
+架构规则必须机器化校验：新增或修改分层规则时，同步更新 `tests/architecture-enforcement.test.mjs`，而不是只改文档。
 
 重构源码字符串测试时，先建立行为覆盖，再删除旧断言。
 
@@ -523,3 +538,15 @@ Recommended next phase
 > 一个第一次进入仓库的人类工程师或 Coding Agent，是否可以在很短时间内知道这个模块负责什么、不负责什么、依赖谁、谁依赖它，以及如何在不理解整个仓库的情况下安全修改它。
 
 如果不能，继续简化边界。
+
+---
+
+## 20. 架构约束的机器化执行
+
+架构规则不能只存在于文档里。
+
+- `tests/architecture-enforcement.test.mjs` 是封板后架构规则的唯一执行入口，覆盖六类约束：Dependency、Route、Repository、Legacy、Runtime Infrastructure、Source-Test。
+- Repository 约束维护一份“仍直接访问文件系统的 legacy route”允许清单；新增条目意味着新增兼容路径，必须同时在 `docs/next-architecture/migration-status.md` 登记删除条件。
+- Source-Test 约束用 `tests/architecture-source-test-baseline.json` 冻结现有历史 source-coupled 测试；新增此类测试会失败，必须改为 transpile → execute → behavior 测试。
+- 新增或放宽架构规则时，必须先改测试再改文档；不允许让测试与规则长期不一致。
+- 兼容层与 Post-Lock Improvement 清单由 `docs/next-architecture/migration-status.md` 与 `docs/next-architecture/post-lock-improvements.md` 维护。

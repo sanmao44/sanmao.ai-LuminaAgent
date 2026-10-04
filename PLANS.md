@@ -1,10 +1,23 @@
-﻿# SANMAO.AI Migration Plan
+﻿# SANMAO.AI Plan
 
 Last reviewed: 2026-10-04
 
 ## Current phase
 
-Final Pre-Lock construction is complete. Final Architecture Lock is intentionally not started in this phase; it may begin only after all verification gates pass.
+Architecture Migration: **complete**.
+
+Final Architecture Lock: **complete**.
+
+Architecture is no longer the active workstream. The next work is product
+quality, not further architecture migration.
+
+## Current main line
+
+1. Product Regression Recovery
+2. Feature Parity Audit
+3. Regression / Smoke Baseline
+4. Desktop Packaging
+5. Normal Product Development
 
 ## Completed gates
 
@@ -17,20 +30,26 @@ Final Pre-Lock construction is complete. Final Architecture Lock is intentionall
 - Provider policy boundary: cutover completed. Provider Coordinator owns ordering, routing, failover, deadlines and attempt lifecycle.
 - Tool capability boundary: cutover completed. Tool Runtime owns execution; Skill, MCP, Artifact, Image, Browser and Filesystem behavior reaches infrastructure through capability ports.
 - Task / Worker boundary: cutover completed. Worker entry/control/lifecycle are authoritative for Clone, Video and Upscale execution, polling, retry, cancel, progress and persistence transitions.
+- Final Architecture Lock: complete. `tests/architecture-enforcement.test.mjs` machine-enforces the locked dependency direction and ownership boundaries.
 
-## Compatibility remaining
+## Rules for future work
 
-- The Agent application still calls a bounded set of legacy domain helpers through the composition root; remove each helper after its injected port has a production caller and behavior coverage.
-- Provider SDK, HTTP and media transports remain adapters; remove each after the corresponding Provider Runtime port no longer needs the legacy implementation.
-- `packages/tool-runtime/adapter.ts` remains the single compatibility bridge for existing Tool Runtime callers; remove it after direct capability registration is complete.
-- Worker-only family services and Clone pipeline retain provider-specific polling and persistence mechanics; remove or replace each adapter only after the Worker task port owns the same behavior and rollback coverage is present.
-- Legacy JSON and browser/local storage readers remain migration or rollback inputs only; remove them after zero production callers and a verified rollback path.
-- No core ownership is left in a second production path. Final Architecture Lock itself remains a separate, not-yet-started action.
+- New features enter the owning layer described in `ARCHITECTURE.md`; they must
+  not add domain ownership to legacy files.
+- Remaining compatibility layers, their users and their deletion conditions are
+  recorded in `docs/next-architecture/migration-status.md`.
+- Deliberately deferred, non-blocking work is recorded in
+  `docs/next-architecture/post-lock-improvements.md` and
+  `docs/regression-backlog.md`.
 
 ## Physical architecture
 
-SANMAO.AI remains a Modular Next Monolith. Web, API and Worker are logical boundaries within the Next host and are not separate deployment units.
+SANMAO.AI remains a Modular Next Monolith. Web, API and Worker are logical
+boundaries inside the Next host and are not separate deployment units.
 
 ## Verification policy
 
-Every migration slice requires targeted behavior tests, typecheck, `npm run check`, build and `git diff --check`. Source-layout-coupled tests must not be added; existing historical tests are converted as their locked boundary is migrated.
+Every change requires targeted behavior tests, typecheck, `npm run check`,
+build and `git diff --check`. Architecture rules are enforced by
+`tests/architecture-enforcement.test.mjs`. Source-layout-coupled tests must not
+be added; historical ones are tracked in the regression backlog.

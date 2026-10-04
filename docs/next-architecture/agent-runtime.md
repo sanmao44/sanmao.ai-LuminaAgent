@@ -1,5 +1,10 @@
 # Agent Runtime Architecture Assessment
 
+> Historical implementation record. Current ownership, remaining compatibility
+> layers and machine-enforced rules are defined by `ARCHITECTURE.md` and
+> `docs/next-architecture/migration-status.md`; where this file and those differ,
+> the authoritative documents win.
+
 ## Scope
 
 Phase 1 establishes one executable `AgentRun` path while preserving the existing

@@ -1,5 +1,10 @@
 # Page / UI Cleanup Assessment
 
+> Historical implementation record. Current ownership, remaining compatibility
+> layers and machine-enforced rules are defined by `ARCHITECTURE.md` and
+> `docs/next-architecture/migration-status.md`; where this file and those differ,
+> the authoritative documents win.
+
 ## Current state
 
 `app/page.tsx` still owns navigation state, workspace data loading, feature

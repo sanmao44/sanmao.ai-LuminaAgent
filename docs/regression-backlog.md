@@ -3,9 +3,11 @@
 This file records known product regressions separately from architecture gate
 results. Items remain here until a behavior test and a production fix exist.
 
-This backlog is not a claim of complete product regression coverage. User-facing
-regressions from the architecture migration remain to be restored in a later
-focused pass; Part B records them without expanding its scope.
+This backlog is not a claim of complete product regression coverage.
+Architecture Migration and Final Architecture Lock are complete; user-facing
+regressions from the migration are restored in the Product Regression Recovery
+phase. Non-blocking architecture debt is tracked separately in
+`docs/next-architecture/post-lock-improvements.md`.
 
 | Feature | Last known good version | Current symptom | Affected domain | Severity | Automated coverage | Status |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -14,4 +16,8 @@ focused pass; Part B records them without expanding its scope.
 
 ## Final convergence checkpoint (2026-10-04)
 
-The pre-lock architecture pass does not claim full product regression recovery. User-facing regressions remain tracked separately and are outside this migration slice. The Agent transport, runtime ports and Worker boundaries are covered by behavior/contract tests; historical UI source assertions remain backlog items and are not ownership blockers.
+The architecture lock does not claim full product regression recovery.
+User-facing regressions remain tracked separately and are the first item of the
+next phase. The Agent transport, runtime ports and Worker boundaries are covered
+by behavior/contract tests; historical UI source assertions remain backlog items
+and are not ownership blockers.

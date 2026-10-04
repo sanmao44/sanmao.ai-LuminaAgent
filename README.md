@@ -126,7 +126,7 @@ npm start
 
 ## 本地数据
 
-服务商/API Key：服务端 `.data/` 目录保存，API Key 使用 AES-256-GCM 加密。源码运行在 Git 工作树时，服务商配置会自动跟随主工作树的 `.data/state.json` 和 `.data/master.key`，因此不同工作树可以直接共用已保存的服务商与模型；画布、图库、图片、日志和任务等其他本地数据仍按各自工作树隔离。需要自定义位置时可设置 `SANMAO_PROVIDER_CONFIG_DIR`，它优先于自动判断。
+服务商/API Key：服务端 `.data/` 目录保存，API Key 使用 AES-256-GCM 加密。执行 `npm run migrate:database` 完成守卫式切换后，`.data/sanmao.sqlite` 是服务端业务数据的 authoritative 存储，旧 `.data/state.json` 只作为迁移与回滚输入保留。源码运行在 Git 工作树时，切换前服务商配置会自动跟随主工作树的 `.data/state.json` 和 `.data/master.key`，因此不同工作树可以直接共用已保存的服务商与模型；画布、图库、图片、日志和任务等其他本地数据仍按各自工作树隔离。需要自定义位置时可设置 `SANMAO_PROVIDER_CONFIG_DIR`，它优先于自动判断。
 
 生成历史：浏览器 IndexedDB 保存。这样图片不会因为刷新页面立即丢失，也无需第一版就搭数据库。
 
@@ -207,4 +207,7 @@ SANMAO_UPDATE_GITHUB_PROXIES=https://ghfast.top/,https://gh-proxy.com/
 ## 相关文档
 
 - [WORKFLOW.md](WORKFLOW.md) — 开发与发布流程
+- [ARCHITECTURE.md](ARCHITECTURE.md) — 最终架构、ownership matrix 与机器化约束
+- [PLANS.md](PLANS.md) — 当前工作主线
+- [docs/next-architecture/migration-status.md](docs/next-architecture/migration-status.md) — 各领域所有权状态与兼容层删除条件
 - [CHANGELOG.md](CHANGELOG.md) — 版本更新记录

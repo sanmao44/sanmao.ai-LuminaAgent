@@ -1,5 +1,10 @@
 # Canvas Core Authority Migration
 
+> Historical implementation record. Current ownership, remaining compatibility
+> layers and machine-enforced rules are defined by `ARCHITECTURE.md` and
+> `docs/next-architecture/migration-status.md`; where this file and those differ,
+> the authoritative documents win.
+
 ## Current result
 
 CanvasCore is framework independent and now owns the three Canvas domain authorities:

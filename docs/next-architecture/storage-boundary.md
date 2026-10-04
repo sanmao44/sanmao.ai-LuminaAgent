@@ -1,5 +1,10 @@
 # Storage Boundary Assessment
 
+> Historical implementation record. Current ownership, remaining compatibility
+> layers and machine-enforced rules are defined by `ARCHITECTURE.md` and
+> `docs/next-architecture/migration-status.md`; where this file and those differ,
+> the authoritative documents win.
+
 ## Scope
 
 Phase 3 introduces protocol-neutral Repository Ports while preserving the
