@@ -1,4 +1,3 @@
-import { browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
 import { executeMcpManageCapability, executeMcpCapability, executeTabbitCapability } from './mcp-capability';
 import type { ChatMessage } from '@/lib/providers';
 import type { CanvasPatch } from '@/lib/canvas/patch';
@@ -9,7 +8,7 @@ import type { ToolRuntimeState, ToolCall, GeneratedFile, RuntimeImage } from './
 import { executeCanvasCapability, executeFileCapability, executeWebCapability } from './native-capabilities';
 import { executeImageCapability } from './image-capability';
 import { executeSkillCapability } from './skill-capability';
-import { executeArtifactCapability } from './artifact-capability';
+import { executeArtifactCapability, type ArtifactCapabilityInfrastructure } from './artifact-capability';
 type TabbitResult = { ok: boolean; response?: unknown; error?: unknown };
 type McpMeta = { serverId: string; serverName: string; toolName: string; readOnly: boolean; blocked: boolean };
 type McpServer = Parameters<typeof import('./mcp-executor').executeMcpTool>[0]['server'];
@@ -33,13 +32,21 @@ export type ToolExecutionAdapterBindings = {
   editImage: (provider: unknown, model: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<RuntimeImage[]>; generateImage: (provider: unknown, model: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<RuntimeImage[]>;
   persistGenerationResult: (options: Record<string, unknown>) => Promise<{ images: RuntimeImage[] }>; imageDownloadAuth: (provider: unknown) => unknown; finishGenerationLog: (id: string, patch: Record<string, unknown>) => Promise<void>;
   imageStoragePath?: string;
+  mcpCall: import('./mcp-capability').McpCapabilityInfrastructure['call']; mcpCallTimeoutMs: number;
+  importBrowserArtifacts: import('./mcp-capability').McpCapabilityInfrastructure['importBrowserArtifacts'];
+  shouldImportBrowserArtifacts: import('./mcp-capability').McpCapabilityInfrastructure['shouldImportBrowserArtifacts'];
+  noteRemoteCatalogCallFailure: import('./mcp-capability').McpCapabilityInfrastructure['noteRemoteCatalogCallFailure'];
+  noteRemoteCatalogCallSuccess: import('./mcp-capability').McpCapabilityInfrastructure['noteRemoteCatalogCallSuccess'];
+  importLocalImage: import('./mcp-capability').McpCapabilityInfrastructure['importLocalImage']; isLocalImageRead: import('./mcp-capability').McpCapabilityInfrastructure['isLocalImageRead'];
+  verifyFilesystemMove: import('./mcp-capability').McpCapabilityInfrastructure['verifyFilesystemMove']; browserToolName: import('./mcp-capability').McpCapabilityInfrastructure['browserToolName']; isBrowserMutationTool: import('./mcp-capability').McpCapabilityInfrastructure['isBrowserMutationTool'];
+  artifactInfrastructure: ArtifactCapabilityInfrastructure;
 };
 export type ToolCallRun = { results: ChatMessage[]; deferred?: true; stalled?: true };
 export type ToolExecutionAdapterDependencies = { state: Record<string, unknown> } & Record<string, unknown>;
 export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDependencies) {
   const state = dependencies.state as AdapterState;
   const { state: _state, ...deps } = dependencies;
-  const { observer, toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, skillContext, skillInstaller, canvasDocument, parseToolArguments, validateCanvasPatch, agentRunId, MCP_MANAGE_LABELS, isMcpRuntimeAction, runMcpRuntimeAction, latestInstruction, runMcpManageAction, executionPublicState, runTabbitBrowserAction, mcpToolCallLimit, browserMetrics, auditMcpCall, mcpServerById, browserMutationBatches, mcpTurnBudgetLimit, mcpFilesystemRoots, localDataDir, persistImageBuffer, mcpRepeatTracker, agentTurnStartedAt, ARTIFACT_MAX_PER_TURN, appendPageContext, reportProgress, imageToolsAllowed, batchPlanContent, isBareImageExecution, extractBatchPrompts, fallbackImagePrompt, requestedImageCapability, latestRefs, trackedChatCompletion, agentRuntime, requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog, referenceRecords, getRuntimeImageModelCandidates, editImage, generateImage, persistGenerationResult, imageDownloadAuth, finishGenerationLog, imageStoragePath } = deps as unknown as ToolExecutionAdapterBindings;
+  const { observer, toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, skillContext, skillInstaller, canvasDocument, parseToolArguments, validateCanvasPatch, agentRunId, MCP_MANAGE_LABELS, isMcpRuntimeAction, runMcpRuntimeAction, latestInstruction, runMcpManageAction, executionPublicState, runTabbitBrowserAction, mcpToolCallLimit, browserMetrics, auditMcpCall, mcpServerById, browserMutationBatches, mcpTurnBudgetLimit, mcpFilesystemRoots, localDataDir, persistImageBuffer, mcpRepeatTracker, agentTurnStartedAt, ARTIFACT_MAX_PER_TURN, appendPageContext, reportProgress, imageToolsAllowed, batchPlanContent, isBareImageExecution, extractBatchPrompts, fallbackImagePrompt, requestedImageCapability, latestRefs, trackedChatCompletion, agentRuntime, requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog, referenceRecords, getRuntimeImageModelCandidates, editImage, generateImage, persistGenerationResult, imageDownloadAuth, finishGenerationLog, imageStoragePath, mcpCall, mcpCallTimeoutMs, importBrowserArtifacts, shouldImportBrowserArtifacts, noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess, importLocalImage, isLocalImageRead, verifyFilesystemMove, browserToolName, isBrowserMutationTool, artifactInfrastructure } = deps as unknown as ToolExecutionAdapterBindings;
   return async (input: { call: ToolRuntimeCall; policy: ToolPolicyDecision; args: Record<string, unknown>; executionContext?: unknown }): Promise<ToolCallRun> => {
     const { call, policy, args } = input;
     const executionContext = input.executionContext as { stepCalls: readonly ToolCall[]; callIndex: number } | undefined;
@@ -76,7 +83,7 @@ export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDep
         return { results };
       }
       if (kind === 'artifact') {
-        results.push(await executeArtifactCapability({ state, call, args, signal: requestController.signal, imageStoragePath: executionPublicState.settings.imageStoragePath }));
+        results.push(await executeArtifactCapability({ state, call, args, signal: requestController.signal, imageStoragePath: executionPublicState.settings.imageStoragePath, infrastructure: artifactInfrastructure }));
         return { results };
       }
       if (kind === 'skill') {
@@ -128,6 +135,17 @@ export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDep
           ARTIFACT_MAX_PER_TURN,
           appendPageContext,
           reportProgress,
+          mcpCall,
+          mcpCallTimeoutMs,
+          importBrowserArtifacts,
+          shouldImportBrowserArtifacts,
+          noteRemoteCatalogCallFailure,
+          noteRemoteCatalogCallSuccess,
+          importLocalImage,
+          isLocalImageRead,
+          verifyFilesystemMove,
+          browserToolName,
+          isBrowserMutationTool,
         });
       if (kind === 'tabbit') return executeTabbitCapability({
           state,
@@ -160,6 +178,17 @@ export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDep
           ARTIFACT_MAX_PER_TURN,
           appendPageContext,
           reportProgress,
+          mcpCall,
+          mcpCallTimeoutMs,
+          importBrowserArtifacts,
+          shouldImportBrowserArtifacts,
+          noteRemoteCatalogCallFailure,
+          noteRemoteCatalogCallSuccess,
+          importLocalImage,
+          isLocalImageRead,
+          verifyFilesystemMove,
+          browserToolName,
+          isBrowserMutationTool,
         });
       if (kind === 'mcp') return executeMcpCapability({
           state,
@@ -192,6 +221,17 @@ export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDep
           ARTIFACT_MAX_PER_TURN,
           appendPageContext,
           reportProgress,
+          mcpCall,
+          mcpCallTimeoutMs,
+          importBrowserArtifacts,
+          shouldImportBrowserArtifacts,
+          noteRemoteCatalogCallFailure,
+          noteRemoteCatalogCallSuccess,
+          importLocalImage,
+          isLocalImageRead,
+          verifyFilesystemMove,
+          browserToolName,
+          isBrowserMutationTool,
         });
       if (kind === 'image') {
         return executeImageCapability({

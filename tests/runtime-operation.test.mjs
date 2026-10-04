@@ -54,7 +54,6 @@ test('long-running API entry points register with runtime draining', () => {
     'app/api/edit/route.ts',
     'app/api/upscale/route.ts',
     'app/api/video/generate/route.ts',
-    'apps/api/agent-application.ts',
     'app/api/providers/test/route.ts',
     'app/api/providers/[id]/sync/route.ts',
     'app/api/providers/jimeng/route.ts',

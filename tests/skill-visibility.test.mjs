@@ -4,8 +4,7 @@ import test from "node:test";
 import { buildToolLoopModule } from './tools-build.mjs';
 import { createTsRequire } from './ts-require.mjs';
 
-const [route, page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu, mentionEditor, skillInline] = await Promise.all([
-  readFile(new URL("../apps/api/agent-application.ts", import.meta.url), "utf8"),
+const [page, dock, manager, canvasStyles, globals, client, updateRoute, exportRoute, managerStyles, skillMenu, mentionEditor, skillInline] = await Promise.all([
   readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/SkillManager.tsx", import.meta.url), "utf8"),

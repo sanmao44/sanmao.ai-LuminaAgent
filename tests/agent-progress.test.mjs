@@ -17,10 +17,9 @@ const progressFile = path.join(dataDir, "agent-progress.json");
 const readRecords = () => JSON.parse(readFileSync(progressFile, "utf8"));
 
 const read = (relative) => readFile(new URL(`../${relative}`, import.meta.url), "utf8");
-const [source, route, agentRoute, page, dock, client, styles, adapter] = await Promise.all([
+const [source, route, page, dock, client, styles, adapter] = await Promise.all([
   read("lib/agent/progress.ts"),
   read("app/api/agent/progress/route.ts"),
-  read("apps/api/agent-application.ts"),
   read("app/page.tsx"),
   read("components/CanvasAgentDock.tsx"),
   read("lib/agent-client.ts"),

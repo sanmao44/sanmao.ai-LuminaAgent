@@ -1,16 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
 import { createTsRequire } from './ts-require.mjs';
 
 const requireTs = createTsRequire(fileURLToPath(new URL('../lib', import.meta.url)));
 const realSkills = requireTs('./skills');
-const applicationSource = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../apps/api/agent-application.ts', import.meta.url), 'utf8'));
-const compiled = ts.transpileModule(applicationSource, {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
-}).outputText;
-
 function harness(options = {}) {
   const calls = [];
   const discoveryCalls = [];
@@ -24,12 +18,32 @@ function harness(options = {}) {
   const reply = (message) => ({ choices: [{ message }] });
   const noOp = async () => {};
   const mocks = {
+    '@/apps/api/agent-composition': {
+      createAgentApplicationComposition: (options) => {
+        const providerApi = mocks['@/lib/providers'];
+        return {
+          observer: { emit() {} },
+          invokeChatModel: async (payload) => {
+            const response = await providerApi.chatCompletion(options.candidates[0].provider, options.candidates[0].model.rawId, payload, options.signal);
+            options.onCurrent?.(options.candidates[0]);
+            return response;
+          },
+          invokeChatModelStream: async (payload) => providerApi.chatCompletionStream(options.candidates[0].provider, options.candidates[0].model.rawId, payload, options.signal),
+          invokeSpecificChatModel: async (runtime, payload, signal) => providerApi.chatCompletion(runtime.provider, runtime.model.rawId, payload, signal),
+        };
+      },
+    },
+    '@/apps/api/agent-application-contract': {
+      applicationJson: (body, options = {}) => ({ kind: 'json', body, ...(options.status === undefined ? {} : { status: options.status }) }),
+      applicationStream: (body) => ({ kind: 'stream', body }),
+    },
     '@/lib/providers': {
       chatCompletion: async (_provider, _model, payload) => {
         calls.push(payload);
         return reply(options.reply?.(payload, calls.length) || { content: '已经完成。' });
       },
       chatCompletionStream: async () => { throw new Error('unexpected direct stream'); },
+      describeProviderFailure: () => 'provider failure',
       generateImage: async (_provider, _model, args) => { images.push({ mode: 'generate', ...args }); return options.emptyImages ? [] : [{ url: '/test.png' }]; },
       editImage: async (_provider, _model, args) => { images.push({ mode: 'edit', ...args }); return [{ url: '/test.png' }]; },
       imageDownloadAuth: () => undefined,
@@ -72,8 +86,7 @@ function harness(options = {}) {
     '@/lib/image-storage': {},
     '@/lib/artifacts': { isValidArtifactId: () => false },
   };
-  const module = { exports: {} };
-  new Function('require', 'module', 'exports', compiled)((id) => mocks[id] || requireTs(id === '@/lib/tools' ? '@/lib/tools/index' : id), module, module.exports);
+  const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
     calls, discoveryCalls, manageCalls, images, imageRuntimeRequests,
     async post(messages, extra = {}) {
@@ -81,9 +94,9 @@ function harness(options = {}) {
         method: 'POST',
         body: JSON.stringify({ messages, webMode: 'off', ...extra }),
       });
-      const response = await module.exports.runAgentApplication({ body: await request.json(), signal: request.signal });
-      const data = await response.json();
-      assert.equal(response.status, 200, JSON.stringify(data));
+      const output = await application.runAgentApplication({ body: await request.json(), signal: request.signal });
+      assert.equal(output.kind, 'json', 'harness covers non-stream behavior');
+      const data = output.body;
       return data;
     },
   };

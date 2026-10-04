@@ -1,51 +1,25 @@
-# Migration Status
+﻿# Migration Status
 
-鐘舵€佽瘝鍙娇鐢細`vertical slice completed`銆乣migration in progress`銆乣cutover completed`銆乣legacy removed`銆?
+Last reviewed: 2026-10-04
 
-## Current gates
-
-| Area | Status | Authoritative owner | Remaining legacy and deletion condition |
+| Area | Status | Authoritative owner | Legacy remaining and deletion condition |
 | --- | --- | --- | --- |
-| Storage | cutover completed | Repository ports and SQLite adapter own server business data after marker activation | JSON, IndexedDB, localStorage and filesystem remain adapter or migration inputs; remove after compatibility and rollback callers reach zero |
-| Backup / Restore | cutover completed | `lib/backup-application-service.ts`; `client/client.json` contains the single canonical workspace representation | Buffer compatibility APIs and local snapshot callers remain until migrated |
-| Database | cutover completed | SQLite is authoritative after explicit guarded cutover and application restart | Legacy JSON remains migration, compatibility and rollback input; remove only after compatibility and reverse-migration callers reach zero; ordinary rollback is rejected after any post-cutover write |
-| Agent | migration in progress | `app/api/agent/route.ts` owns auth/transport only; `packages/agent-core/request-planning.ts` owns request planning; `apps/api/agent-execution.ts` owns bounded Skill/Artifact and MCP/browser continuation lifecycles; `packages/model-runtime/agent-invoker.ts` owns model invocation through the provider coordinator | `apps/api/agent-application.ts` still assembles request context, policy/approval, provider transport and capability compatibility ports; delete each adapter after tested port cutover |
-| Tool / MCP | migration in progress | `packages/tool-runtime` owns policy, resolution, dispatch, loop, MCP/Tabbit and Web/File/Canvas/Image capability seams | `adapter.ts` remains a bounded compatibility dispatcher for artifact/skill and shared state; delete after those callers move behind tested ports |
-| Provider | migration in progress | `packages/model-runtime/provider-coordinator.ts` owns candidate ordering, bounded failover and attempt deadlines; `packages/model-runtime/agent-invoker.ts` is the only Agent application invocation port; health persistence enters through `ProviderHealthPort`; `apps/api/agent-stream.ts` owns Agent SSE adaptation | Provider HTTP/SDK transport, health persistence implementation and video/media branches remain adapters; image delivery remains a capability port assembled by the application |
-| Task | migration in progress | Repository adapters plus `packages/task-runtime` contracts and `apps/worker/task-entry.ts` plus `task-control.ts`/`task-lifecycle.ts` own execution, polling, cancellation, removal and stale reconciliation boundaries | Provider polling internals, retry creation, progress persistence and family-specific wire states remain in video/upscale and Clone service adapters; remove those adapters after runtime contracts cover them |
-| Canvas Document / History / Selection | cutover completed | CanvasCore | UI projection and persistence adapters remain |
-| Physical Web/API/Worker split | migration in progress | `app/api/agent/route.ts` is a transport adapter for `apps/api/agent-application.ts`; `apps/api/agent-entry.ts`, `apps/api/agent-stream.ts` and `apps/worker/task-entry.ts` are real seams; Next remains the host | No standalone deployable apps yet; UI and remaining routes stay in the existing application because execution still shares this process |
-| Observability | migration in progress | `RuntimeObserver` contract with bounded in-process diagnostics and redacted JSONL operational sink (`packages/observability`), queryable through `GET /api/observability` | Agent, Tool, MCP, Database, Backup, Provider and Worker task control boundaries are instrumented; broader task/media coverage and long-term OpenTelemetry export remain |
-| Eval | migration in progress | Existing behavior suite plus `tests/architecture-eval.test.mjs` and `tests/part-b-boundaries.test.mjs` | Fixed cross-runtime eval is intentionally small and will grow with each ownership cutover |
+| Storage | cutover completed | Repository ports and SQLite adapter | JSON, IndexedDB, localStorage and filesystem adapters remain for compatibility or migration; delete after callers reach zero |
+| Backup / Restore | cutover completed | Backup application service and canonical `client/client.json` | Buffer/local snapshot compatibility remains until callers migrate |
+| Database | cutover completed | SQLite after guarded activation and restart | Legacy JSON is migration/rollback input; remove after compatibility and reverse migration callers reach zero |
+| Agent | migration in progress | HTTP transport plus Agent Application and runtime ports | Context, policy and capability compatibility adapters remain; remove after tested port cutover |
+| Provider | migration in progress | Provider coordinator and model runtime | SDK/media adapters remain; remove after provider ports cover production paths |
+| Tool / MCP | migration in progress | Tool Runtime and capability ports | `adapter.ts` remains bounded compatibility dispatch; remove each binding after port cutover |
+| Task / Worker | migration in progress | Worker task entry/control/lifecycle | Family-specific polling, retry creation and persistence adapters remain |
+| Canvas | cutover completed | CanvasCore | UI projection and persistence adapters remain |
+| Physical boundary | migration in progress | Modular Next Monolith with in-process worker dispatch | No standalone Web/API/Worker deployables are claimed |
+| Observability | migration in progress | RuntimeObserver plus redacted JSONL sink and query endpoint | Broader media/task coverage and long-term export remain |
+| Eval | migration in progress | Behavior suite and architecture evals | Expand with each ownership cutover |
 
-## Data cutover safety
+## Data safety
 
-- `npm run migrate:database -- --runtime-guard` drains writes, waits for active requests, stages and validates SQLite, activates the marker, and leaves a restart fence. The launcher must restart before writes reopen.
-- Repository instances reject a store change detected after initialization. They never silently switch from JSON to SQLite.
-- Rollback uses a strict window. It is allowed before a post-cutover write; after a write it fails closed and requires export plus reverse migration.
-- SQLite task mutations use one `BEGIN IMMEDIATE` transaction for read, validation, all writes and deletes.
+SQLite activation requires write drain, migration, validation and application restart. Repository instances reject silent store changes. Ordinary rollback is rejected after any post-cutover authoritative write. Restore stages and validates before commit.
 
-## Backup schema and memory behavior
+## Final Architecture Lock
 
-- Archive format `version` is `2`; domain `schemaVersion` is currently `1`.
-- `lib/backup-schema.ts` owns version detection, normalization, migration and current-schema validation. Legacy manifests without a version normalize to v1.
-- New archives contain one canonical client representation: `client/client.json -> { workspace }`. The workspace owns gallery, chat sessions and preferences. Legacy top-level fields are import compatibility only.
-- Production HTTP archive export, encryption, upload staging, decryption and extraction use disk/stream paths. Compatibility Buffer APIs remain for older local snapshot callers.
-- Restore validates the archive, stages all roots, validates staged state, then commits through the rollback transaction. Failed restore rolls back the staged transaction.
-
-## Part B boundary
-
-Part A Data Cutover Closure is implemented and its targeted migration, rollback, backup and transaction tests pass. Part B remains `migration in progress`: API and Worker entry seams now exist for the migrated slices, including provider-neutral Agent stream and Skill/Artifact/MCP/browser continuation execution boundaries; Clone background execution, cancellation/removal and stale reconciliation no longer mutate lifecycle state in HTTP routes; video/upscale polling and terminal controls cross the Worker control boundary; provider attempt lifecycle and media candidate fallback are shared, and obsolete zero-caller compatibility bridges were removed. Runtime lifecycle events now reach a redacted, bounded JSONL operational sink and read-only admin endpoint. There are no standalone deployable Web/API/Worker applications yet; the API application still assembles request context, policy/approval and provider/capability adapters, the Tool adapter remains a migration adapter, Provider and Task ownership are partial, and Legacy purge is only started for bridges with zero callers.
-
-Last reviewed: 2026-10-04.
-
-## Final convergence checkpoint (2026-10-04)
-
-- **Agent:** logical transport cutover completed for HTTP parsing/auth delegation; Application/Runtime and streaming remain production owners. Legacy removal is still in progress.
-- **Provider:** coordinator is authoritative for candidate ordering, failover, attempt lifecycle, and deadlines; SDK/media adapters remain migration dependencies.
-- **Task/Worker:** worker entry/control/lifecycle own the migrated clone, video, and upscale lifecycle seams; family-specific persistence and provider polling adapters remain.
-- **Tool:** `packages/tool-runtime` owns runtime policy/dispatch; `adapter.ts` is a bounded compatibility dispatcher with a documented deletion condition.
-- **Physical boundary:** Modular Next Monolith (single Next host plus in-process worker dispatch); no standalone deployables are claimed.
-- **Final Architecture Lock:** not started.
-
-Last reviewed: 2026-10-04.
+Not started. This checkpoint is the final pre-lock construction phase.

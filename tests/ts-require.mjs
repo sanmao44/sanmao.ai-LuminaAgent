@@ -13,7 +13,7 @@ function normalizePath(target) {
  * 让“按 CommonJS 方式实例化 TS 模块”的测试也能解析项目内的相对 TS 依赖。
  * 返回值可直接当成 require 传给 new Function('require', ...)。
  */
-export function createTsRequire(baseDir) {
+export function createTsRequire(baseDir, overrides = {}) {
   // Windows 上来自 fileURLToPath 之外的路径可能带前导斜杠，先归一化再解析依赖。
   const base = path.resolve(normalizePath(baseDir));
   const projectRoot = path.basename(base).toLowerCase() === 'lib' ? path.dirname(base) : base;
@@ -47,6 +47,7 @@ export function createTsRequire(baseDir) {
 
   const load = (id) => {
     const normalized = normalizePath(id);
+    if (Object.prototype.hasOwnProperty.call(overrides, normalized)) return overrides[normalized];
     const aliased = aliasFile(normalized);
     if (!aliased && !normalized.startsWith('.') && !path.isAbsolute(normalized)) return nodeRequire(id);
     const resolved = aliased || (path.isAbsolute(normalized) ? normalized : path.resolve(base, normalized));
@@ -60,6 +61,7 @@ export function createTsRequire(baseDir) {
     cache.set(file, module);
     const localRequire = (next) => {
       const normalizedNext = normalizePath(next);
+      if (Object.prototype.hasOwnProperty.call(overrides, normalizedNext)) return overrides[normalizedNext];
       if (aliasFile(normalizedNext)) return load(normalizedNext);
       return normalizedNext.startsWith('.') || path.isAbsolute(normalizedNext)
         ? load(path.resolve(path.dirname(file), normalizedNext))

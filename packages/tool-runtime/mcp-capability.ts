@@ -1,15 +1,9 @@
-import { callMcpTool, MCP_CALL_TIMEOUT_MS } from '@/lib/mcp/client';
-import { importBrowserArtifacts, shouldImportBrowserArtifacts } from '@/lib/mcp/browser-downloads';
-import { noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess } from '@/lib/mcp/catalog-remote';
-import { importLocalImage, isLocalImageRead } from '@/lib/agent/local-image';
-import { verifyFilesystemMove } from '@/lib/agent/filesystem-result';
-import { browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
 import { TOOL_LOOP_MCP_REPEAT_LIMIT, mcpCallSignature, trackMcpRepeat } from './tool-loop';
 import { executeMcpTool, executeTabbitTool } from './mcp-executor';
 import type { ChatMessage } from '@/lib/providers';
 import type { ToolPolicyDecision } from '@/lib/tools/policy';
 import type { RuntimeObserver } from '../contracts/observability';
-import type { ToolCall, ToolRuntimeState, ToolCallRun } from './capability-state';
+import type { GeneratedFile, ToolCall, ToolRuntimeState, ToolCallRun } from './capability-state';
 
 type TabbitResult = { ok: boolean; response?: unknown; error?: unknown };
 type McpMeta = { serverId: string; serverName: string; toolName: string; readOnly: boolean; blocked: boolean };
@@ -46,6 +40,31 @@ export type McpCapabilityDependencies = {
   ARTIFACT_MAX_PER_TURN: number;
   appendPageContext: (current: string, source: string, text: string) => string;
   reportProgress: (patch: unknown) => void;
+  mcpCall: McpCapabilityInfrastructure['call'];
+  mcpCallTimeoutMs: number;
+  importBrowserArtifacts: McpCapabilityInfrastructure['importBrowserArtifacts'];
+  shouldImportBrowserArtifacts: McpCapabilityInfrastructure['shouldImportBrowserArtifacts'];
+  noteRemoteCatalogCallFailure: McpCapabilityInfrastructure['noteRemoteCatalogCallFailure'];
+  noteRemoteCatalogCallSuccess: McpCapabilityInfrastructure['noteRemoteCatalogCallSuccess'];
+  importLocalImage: McpCapabilityInfrastructure['importLocalImage'];
+  isLocalImageRead: McpCapabilityInfrastructure['isLocalImageRead'];
+  verifyFilesystemMove: McpCapabilityInfrastructure['verifyFilesystemMove'];
+  browserToolName: McpCapabilityInfrastructure['browserToolName'];
+  isBrowserMutationTool: McpCapabilityInfrastructure['isBrowserMutationTool'];
+};
+
+/** Concrete MCP/browser/filesystem services are supplied by the composition root. */
+export type McpCapabilityInfrastructure = {
+  call: (server: McpServer, toolName: string, args: Record<string, unknown>, options: { signal?: AbortSignal; retry: boolean; timeouts: { call: number } }) => Promise<{ isError: boolean; text: string }>;
+  importBrowserArtifacts: (input: { since: number; max: number }) => Promise<{ files: GeneratedFile[]; skipped: number }>;
+  shouldImportBrowserArtifacts: (catalogId: string, failed: boolean) => boolean;
+  noteRemoteCatalogCallFailure: (server: McpServer, text: string, options?: { onlyAuth?: boolean }) => void;
+  noteRemoteCatalogCallSuccess: (server: McpServer) => void;
+  importLocalImage: (path: string, options: { roots: readonly string[]; dataDir?: string }, persist: (bytes: Buffer) => Promise<{ url: string }>) => Promise<{ name: string; size: number; url: string }>;
+  isLocalImageRead: (toolName: string, args: Record<string, unknown>) => boolean;
+  verifyFilesystemMove: (args: Record<string, unknown>) => Promise<string | null>;
+  browserToolName: (name: string) => string;
+  isBrowserMutationTool: (name: string) => boolean;
 };
 
 const toolMessage = (callId: string | undefined, payload: unknown): ChatMessage => ({ role: 'tool', tool_call_id: callId, content: JSON.stringify(payload) });
@@ -93,27 +112,27 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
   const meta = input.policy.tool?.mcp;
   const server = meta ? input.mcpServerById.get(meta.serverId) : undefined;
   if (!meta || !server) return { results: [toolMessage(call.id, { ok: false, error: 'MCP 服务已被移除或停用，请刷新后重试。' })] };
-  if (server.catalogId === 'playwright' && isBrowserMutationTool(browserToolName(meta.toolName)) && input.browserMutationBatches.has(input.stepCalls as object)) {
+  if (server.catalogId === 'playwright' && input.isBrowserMutationTool(input.browserToolName(meta.toolName || '')) && input.browserMutationBatches.has(input.stepCalls as object)) {
     return { results: [toolMessage(call.id, { ok: false, error: '上一步浏览器动作可能已经改变页面，请先获取最新快照后继续。' })] };
   }
   if (state.mcpToolCallCount >= input.mcpToolCallLimit || state.mcpTurnBudget <= 0) return { results: [toolMessage(call.id, { ok: false, error: `本轮外部服务调用已达上限（最多 ${input.mcpToolCallLimit} 次、共 ${Math.round(input.mcpTurnBudgetLimit / 1000)} 秒）。` })] };
   state.mcpToolCallCount += 1;
   const mcpStartedAt = Date.now();
   input.reportProgress({ stage: 'mcp', message: `正在调用 MCP：${meta.serverName} / ${meta.toolName}` });
-  if (server.catalogId === 'playwright' && isBrowserMutationTool(browserToolName(meta.toolName))) input.browserMutationBatches.add(input.stepCalls as object);
+  if (server.catalogId === 'playwright' && input.isBrowserMutationTool(input.browserToolName(meta.toolName || ''))) input.browserMutationBatches.add(input.stepCalls as object);
   try {
-    const localImage = server.catalogId === 'filesystem' && isLocalImageRead(meta.toolName, args)
-      ? await importLocalImage(String(args.path), { roots: input.mcpFilesystemRoots, dataDir: input.localDataDir }, (bytes) => input.persistImageBuffer(bytes, 'image/png', input.executionPublicState.settings.imageStoragePath))
+    const localImage = server.catalogId === 'filesystem' && input.isLocalImageRead(meta.toolName, args)
+      ? await input.importLocalImage(String(args.path), { roots: input.mcpFilesystemRoots, dataDir: input.localDataDir }, (bytes) => input.persistImageBuffer(bytes, 'image/png', input.executionPublicState.settings.imageStoragePath))
       : null;
     const mcpExecution = await executeMcpTool({
       callId: call.id, server, meta, args, signal: input.requestController.signal,
-      timeoutMs: Math.max(5_000, Math.min(MCP_CALL_TIMEOUT_MS, state.mcpTurnBudget)), decision: 'call', retry: meta.readOnly,
+      timeoutMs: Math.max(5_000, Math.min(input.mcpCallTimeoutMs, state.mcpTurnBudget)), decision: 'call', retry: meta.readOnly,
       dependencies: {
         observer: input.observer,
-        call: async (targetServer, toolName, callArgs, options) => localImage ? { isError: false, text: JSON.stringify({ name: localImage.name, size: localImage.size, image: localImage.url, displayed: true }) } : callMcpTool(targetServer, toolName, callArgs, options),
-        verifyFilesystemMove: (moveArgs) => verifyFilesystemMove(moveArgs),
-        onRemoteFailure: (targetServer, reason, options) => noteRemoteCatalogCallFailure(targetServer, reason, options),
-        onRemoteSuccess: (targetServer) => noteRemoteCatalogCallSuccess(targetServer),
+        call: async (targetServer, toolName, callArgs, options) => localImage ? { isError: false, text: JSON.stringify({ name: localImage.name, size: localImage.size, image: localImage.url, displayed: true }) } : input.mcpCall(targetServer, toolName, callArgs, options),
+        verifyFilesystemMove: (moveArgs) => input.verifyFilesystemMove(moveArgs),
+        onRemoteFailure: (targetServer, reason, options) => input.noteRemoteCatalogCallFailure(targetServer, reason, options),
+        onRemoteSuccess: (targetServer) => input.noteRemoteCatalogCallSuccess(targetServer),
         onAudit: (audit) => input.auditMcpCall(audit.meta, { risk: input.policy.tool?.risk, allowed: audit.allowed, decision: 'call', ok: audit.ok, durationMs: audit.durationMs, summary: audit.summary }),
         decorateResult: async ({ ok, text }) => {
           const extra: Record<string, unknown> = {};
@@ -123,8 +142,8 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
             if (ok) state.recentPageText = input.appendPageContext(state.recentPageText, meta.toolName, browserResult);
             state.browserUses.push({ name: meta.toolName, ok, args, result: browserResult }); state.browserRecoveryNeeded = !ok; extra.content = browserResult;
           } else if (ok) state.recentPageText = input.appendPageContext(state.recentPageText, meta.toolName, text);
-          if (shouldImportBrowserArtifacts(server.catalogId, !ok)) {
-            const downloaded = await importBrowserArtifacts({ since: input.agentTurnStartedAt, max: input.ARTIFACT_MAX_PER_TURN - state.generatedFiles.length }).catch(() => ({ files: [], skipped: 0 }));
+          if (input.shouldImportBrowserArtifacts(String(server.catalogId || ''), !ok)) {
+            const downloaded = await input.importBrowserArtifacts({ since: input.agentTurnStartedAt, max: input.ARTIFACT_MAX_PER_TURN - state.generatedFiles.length }).catch(() => ({ files: [], skipped: 0 }));
             state.generatedFiles.push(...downloaded.files); state.browserDownloadCount += downloaded.files.length;
             if (downloaded.files.length) extra.downloaded = downloaded.files.map((file) => `${file.name}, ${Math.max(1, Math.round(file.size / 1024))} KB`);
           }

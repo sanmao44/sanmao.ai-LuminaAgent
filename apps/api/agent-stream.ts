@@ -21,8 +21,9 @@ export type AgentStreamMetadata = { images: Array<{ url: string; revisedPrompt?:
 
 export type AgentUsage = { promptTokens?: number; completionTokens?: number; totalTokens?: number };
 export type AgentStreamSettlement = { status: 'success' | 'error'; responseChars: number; error?: string } & AgentUsage;
+export type AgentUpstreamResponse = { body: ReadableStream<Uint8Array> | null };
 
-export function streamAgentResult(upstream: Response | null | (() => Promise<Response | null>), metadata: AgentStreamMetadata, signal?: AbortSignal, onSettled?: (result: AgentStreamSettlement) => Promise<void> | void) {
+export function createAgentStream(upstream: AgentUpstreamResponse | null | (() => Promise<AgentUpstreamResponse | null>), metadata: AgentStreamMetadata, signal?: AbortSignal, onSettled?: (result: AgentStreamSettlement) => Promise<void> | void) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const send = (controller: ReadableStreamDefaultController<Uint8Array>, event: Record<string, unknown>) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
@@ -156,5 +157,10 @@ export function streamAgentResult(upstream: Response | null | (() => Promise<Res
       void settle({ status: 'error', responseChars: 0, error: '客户端已关闭流式响应' });
     },
   });
-  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' } });
+  return stream;
+}
+
+/** Compatibility HTTP wrapper for existing stream behavior tests and adapters. */
+export function streamAgentResult(upstream: AgentUpstreamResponse | null | (() => Promise<AgentUpstreamResponse | null>), metadata: AgentStreamMetadata, signal?: AbortSignal, onSettled?: (result: AgentStreamSettlement) => Promise<void> | void) {
+  return new Response(createAgentStream(upstream, metadata, signal, onSettled), { headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' } });
 }

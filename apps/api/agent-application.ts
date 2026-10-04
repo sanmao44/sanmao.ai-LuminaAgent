@@ -1,4 +1,6 @@
 import { chatCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth, type ChatContentPart, type ChatMessage } from '@/lib/providers';
+import { collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact } from '@/lib/artifacts';
+import { getStorageRoots } from '@/lib/image-storage';
 import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, getRuntimeModel, getRuntimeModelCandidates } from '@/lib/store';
 import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { getProviderPreset } from '@/lib/provider-presets';
@@ -15,7 +17,7 @@ import { extractGithubMcpInstallRequest, isArtifactFollowUpRequest, isImageConti
 import { isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor } from '@/lib/tools';
 import { tabbitBrowserTool } from '@/lib/tools';
 import { parseToolArguments } from '@/lib/tools/call-arguments';
-import { MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS } from '@/lib/mcp/client';
+import { callMcpTool, MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS } from '@/lib/mcp/client';
 import { MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime, mcpServersForTurn } from '@/lib/mcp/tools';
 import { listMcpServers } from '@/lib/mcp/store';
 import { BROWSER_TOOL_GUIDE } from '@/lib/mcp/browser-guidance';
@@ -33,9 +35,7 @@ import { isMcpRuntimeAction, runMcpRuntimeAction } from '@/lib/mcp/runtime-admin
 import { type McpRepeatTracker, type ToolLoopTraceStep } from '@/packages/tool-runtime/tool-loop';
 import { createToolExecutionAdapter } from '@/packages/tool-runtime/adapter';
 import { ToolRuntime, type ToolRuntimeCall } from '@/packages/tool-runtime/runtime';
-import { BufferedRuntimeObserver } from '@/packages/contracts/observability';
-import { CompositeRuntimeObserver } from '@/packages/contracts/observability';
-import { FileRuntimeObserver } from '@/packages/observability/index';
+import type { RuntimeObserver } from '@/packages/contracts/observability';
 import { AGENT_INLINE_TEXT_MAX_CHARS, boundAgentContext, modelInputCharBudget } from '@/lib/agent/context-budget';
 import { createBrowserMetricsCollector } from '@/lib/agent/browser-metrics';
 import { browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
@@ -55,7 +55,6 @@ import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-person
 import { buildAgentSkillContext, SKILL_TOOL_MAX_CALLS } from '@/lib/skills';
 import { stripToolCallMarkup } from '@/lib/skills';
 import { resolveLocalDataDir } from '@/lib/data-paths';
-import path from 'node:path';
 import { normalizeWorkspaceContext } from '@/lib/workspace-context';
 import { isTabbitCliAvailable, runTabbitBrowserAction } from '@/lib/tabbit-cli';
 import { persistImageBuffer } from '@/lib/image-storage';
@@ -70,13 +69,13 @@ import { runPlainAgentTurn } from '@/apps/api/agent-entry';
 import type { AgentMessage, ModelDescriptor } from '@/packages/contracts';
 import { createLegacyChatModelRuntime } from '@/packages/model-runtime/legacy-chat-adapter';
 import { withProviderResponseDeadline } from '@/packages/model-runtime/invocation';
-import { createProviderCoordinator } from '@/packages/model-runtime/provider-coordinator';
-import { createAgentModelInvoker } from '@/packages/model-runtime/agent-invoker';
 import { noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates } from '@/lib/agent/model-health';
 import { prepareAgentRequestContext } from '@/packages/agent-core/request-context';
 import { planAgentRequest } from '@/packages/agent-core/request-planning';
 import { runCapabilityFollowups, runMcpCapabilityFollowup } from '@/apps/api/agent-execution';
 import type { AgentHttpInput } from '@/apps/api/agent-http-contract';
+import { applicationJson } from '@/apps/api/agent-application-contract';
+import { createAgentApplicationComposition, type AgentCompositionRuntime } from '@/apps/api/agent-composition';
 
 async function safeDiscoverMcpForRequest(options: Parameters<typeof discoverMcpForRequest>[0]) {
   try {
@@ -351,7 +350,8 @@ function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; m
   };
 }
 
-import { streamAgentResult, type AgentStreamMetadata, type AgentStreamSettlement } from '@/apps/api/agent-stream';
+import { createAgentStream, type AgentStreamMetadata, type AgentStreamSettlement, type AgentUpstreamResponse } from '@/apps/api/agent-stream';
+import { applicationStream, type AgentApplicationOutput } from '@/apps/api/agent-application-contract';
 function toChatContent(message: ClientMessage, allowVideo = false): string | ChatContentPart[] {
   const refs = normalizeCreativeReferences(message.references, 16).map((reference) => (
     reference.kind === 'text' && reference.text
@@ -391,7 +391,7 @@ const MCP_MANAGE_LABELS: Record<string, string> = { list: '列出服务', probe:
 
 export type AgentApplicationInput = AgentHttpInput;
 
-export async function runAgentApplication(input: AgentApplicationInput) {
+export async function runAgentApplication(input: AgentApplicationInput): Promise<AgentApplicationOutput> {
   const signal = input.signal;
   const requestController = new AbortController();
   let wantsStream = false;
@@ -409,10 +409,7 @@ export async function runAgentApplication(input: AgentApplicationInput) {
    * （app/api/agent/progress）。只写固定阶段文案，不带用户内容；没有 runId 就整个不生效。
    */
   let agentRunId: string | null = null;
-  const runtimeObserver = new CompositeRuntimeObserver([
-    new BufferedRuntimeObserver(256),
-    new FileRuntimeObserver({ directory: path.join(resolveLocalDataDir(), 'runtime-events') }),
-  ]);
+  let runtimeObserver: RuntimeObserver;
   let progressToolCalls = 0;
   const reportProgress = (patch: { stage: AgentProgressStage; message: string }) => {
     if (!agentRunId) return;
@@ -438,7 +435,7 @@ export async function runAgentApplication(input: AgentApplicationInput) {
     const isTextPolishTask = body.task === 'polish_text';
     const isPromptOptimizationTask = isOptimizePromptTask || isTextPolishTask;
     if (isOneTakeVideoPromptTask && body.durationSeconds !== undefined && !isValidOneTakeDuration(body.durationSeconds)) {
-      return Response.json({ error: '一镜到底时长必须是 1–60 之间的整数秒。' }, { status: 400 });
+      return applicationJson({ error: '一镜到底时长必须是 1–60 之间的整数秒。' }, { status: 400 });
     }
     const oneTakeDuration = isOneTakeVideoPromptTask
       ? normalizeOneTakeDuration(body.durationSeconds, ONE_TAKE_DEFAULT_DURATION)
@@ -462,7 +459,7 @@ export async function runAgentApplication(input: AgentApplicationInput) {
             .map(normalizeHistoryFile)
           : [],
       }));
-    if (!messages.length) return Response.json({ error: '消息不能为空。' }, { status: 400 });
+    if (!messages.length) return applicationJson({ error: '消息不能为空。' }, { status: 400 });
 
     const requestedChatModelId = String(body.model || 'auto');
     const fallbackRuntime = typeof getRuntimeModelCandidates === 'function'
@@ -475,12 +472,11 @@ export async function runAgentApplication(input: AgentApplicationInput) {
     let agentRuntime = orderedRuntimeCandidates[0]!;
     const automaticChatModel = requestedChatModelId === 'auto';
     let modelFallbackFrom = '';
-    const providerCoordinator = createProviderCoordinator({
+    const composition = createAgentApplicationComposition<NonNullable<typeof agentRuntime>>({
       requestedModelId: requestedChatModelId,
       candidates: orderedRuntimeCandidates,
       signal: requestController.signal,
       operationIdPrefix: agentRunId || 'agent-request',
-      observer: runtimeObserver,
       nextAttempt: () => { llmCallCount += 1; return llmCallCount; },
       reportFallback: (from, to) => {
         modelFallbackFrom = from.model.displayName;
@@ -492,9 +488,13 @@ export async function runAgentApplication(input: AgentApplicationInput) {
       failoverTimeoutMs: AGENT_AUTO_FAILOVER_TIMEOUT_MS,
       idleTimeoutMs: AGENT_STREAM_IDLE_TIMEOUT_MS,
       timeoutError: (phase, durationMs) => Object.assign(new Error(phase === 'idle' ? `模型流式响应在 ${Math.round(durationMs / 1000)} 秒内没有新内容` : `模型在 ${Math.round(durationMs / 1000)} 秒内没有返回响应`), { name: 'TimeoutError', providerFailureKind: 'timeout' as const }),
-      health: { order: orderAgentModelCandidates, onSuccess: noteAgentModelSuccess, onFailure: noteAgentModelFailure },
+      orderCandidates: orderAgentModelCandidates,
+      onModelHealthSuccess: noteAgentModelSuccess,
+      onModelHealthFailure: noteAgentModelFailure,
+      onCurrent: (runtime) => { agentRuntime = runtime; },
     });
-    if (!agentRuntime) return Response.json({ error: '还没有可用的对话模型。请先到“模型库”勾选一个对话模型。' }, { status: 400 });
+    runtimeObserver = composition.observer;
+    if (!agentRuntime) return applicationJson({ error: '还没有可用的对话模型。请先到“模型库”勾选一个对话模型。' }, { status: 400 });
 
     const contextMaxChars = modelInputCharBudget(agentRuntime.model.contextWindow, agentRuntime.model.maxInputTokens, agentRuntime.model.maxOutputTokens);
     let state: Awaited<ReturnType<typeof getPublicState>> | null = null;
@@ -511,7 +511,7 @@ export async function runAgentApplication(input: AgentApplicationInput) {
     // 意图判断一律只看用户原话，避免把普通提问判成生图请求。
     const supportsVideoInput = agentRuntime.model.capabilities.includes('video-input');
     if (latestRefs.some((reference) => reference.kind === 'video') && !supportsVideoInput) {
-      return Response.json({ error: '当前对话模型没有明确声明 video-input 能力，已阻止发送视频引用；请切换支持视频输入的模型。' }, { status: 400 });
+      return applicationJson({ error: '当前对话模型没有明确声明 video-input 能力，已阻止发送视频引用；请切换支持视频输入的模型。' }, { status: 400 });
     }
     const planning = planAgentRequest({ body, messages, isCanvasSource, isCanvasNodeExecution, canvasTargetNodeIds, canvasTargetKind, canvasTargetOperation });
     const { latestInstruction, previousImagePlan, batchPlanContent, intentDecision, previousAssistantForRouting, directGithubMcpRepo, webMode, requestRoute, routerMs, modelContextMessages, routeSummary, requestedDeliverable: plannedDeliverable, requestedIntentReason: plannedIntentReason } = planning;
@@ -579,17 +579,17 @@ export async function runAgentApplication(input: AgentApplicationInput) {
       }).catch(() => undefined);
     };
     const streamResult = (
-      upstream: Response | null | (() => Promise<Response | null>),
+      upstream: AgentUpstreamResponse | null | (() => Promise<AgentUpstreamResponse | null>),
       metadata: Omit<AgentStreamMetadata, 'deliverable'>,
     ) => {
       const release = releaseRuntimeRequest;
-      const response = streamAgentResult(upstream, { ...metadata, ...oneTakeResponseFields, deliverable: requestedDeliverable }, requestController.signal, async (result) => {
+      const response = createAgentStream(upstream, { ...metadata, ...oneTakeResponseFields, deliverable: requestedDeliverable }, requestController.signal, async (result) => {
         await settleLlmLog?.(result);
         await release();
       });
       streamOwnsRuntimeRequest = true;
       releaseRuntimeRequest = async () => {};
-      return response;
+      return applicationStream(response);
     };
     const referenceRecords = referenceRecordsForLog(body.referenceImages || latestRefs.filter((reference) => reference.kind === 'image'));
     llmLogPromise = startGenerationLog({
@@ -603,45 +603,27 @@ export async function runAgentApplication(input: AgentApplicationInput) {
       task: body.task ? String(body.task).slice(0, 100) : undefined,
       ...taskContext,
     }).catch(() => null);
-    const modelInvoker = createAgentModelInvoker<NonNullable<typeof agentRuntime>, Parameters<typeof chatCompletion>[2], Awaited<ReturnType<typeof chatCompletion>>>({
-      coordinator: providerCoordinator,
-      defaultSignal: requestController.signal,
-      invoke: (runtime, payload, callSignal) => chatCompletion(runtime.provider, runtime.model.rawId, payload, callSignal),
-      onCurrent: (runtime) => { agentRuntime = runtime; },
-    });
-    const invokeChatModel = async <T>(
-      payload: Parameters<typeof chatCompletion>[2],
-      signal: AbortSignal,
-      operation: (runtime: NonNullable<typeof agentRuntime>, callSignal: AbortSignal) => Promise<T>,
-    ) => modelInvoker.invokeWith(payload, operation, signal) as Promise<T>;
+    const invokeChatModel = (payload: Parameters<typeof chatCompletion>[2], signal: AbortSignal) => composition.invokeChatModel(payload, signal);
     const trackedChatCompletion = (
-      provider: Parameters<typeof chatCompletion>[0],
-      rawModelId: Parameters<typeof chatCompletion>[1],
+      _provider: Parameters<typeof chatCompletion>[0],
+      _rawModelId: Parameters<typeof chatCompletion>[1],
       payload: Parameters<typeof chatCompletion>[2],
       signal?: Parameters<typeof chatCompletion>[3],
-    ) => invokeChatModel(payload, signal || requestController.signal, (runtime, callSignal) => chatCompletion(runtime.provider, runtime.model.rawId, payload, callSignal)).then((response) => {
+    ) => invokeChatModel(payload, signal || requestController.signal).then((response) => {
       recordLlmUsage(response);
       return response;
     });
     const trackedChatCompletionStream = (
-      provider: Parameters<typeof chatCompletionStream>[0],
-      rawModelId: Parameters<typeof chatCompletionStream>[1],
+      _provider: Parameters<typeof chatCompletionStream>[0],
+      _rawModelId: Parameters<typeof chatCompletionStream>[1],
       payload: Parameters<typeof chatCompletionStream>[2],
       signal?: Parameters<typeof chatCompletionStream>[3],
-    ) => invokeChatModel(payload, signal || requestController.signal, (runtime, callSignal) => chatCompletionStream(runtime.provider, runtime.model.rawId, payload, callSignal));
-    const invokeSpecificChatModel = async <T>(
-      runtime: NonNullable<typeof agentRuntime>,
-      payload: Parameters<typeof chatCompletion>[2],
-      signal: AbortSignal,
-      operation: (selectedRuntime: NonNullable<typeof agentRuntime>, callSignal: AbortSignal) => Promise<T>,
-    ) => {
-      return modelInvoker.invokeSpecificWith(runtime, payload, operation, signal) as Promise<T>;
-    };
+    ) => composition.invokeChatModelStream(payload, signal || requestController.signal).then((response) => ({ body: response?.body || null }));
     const trackedSpecificChatCompletion = (
       runtime: NonNullable<typeof agentRuntime>,
       payload: Parameters<typeof chatCompletion>[2],
       signal: AbortSignal,
-    ) => invokeSpecificChatModel(runtime, payload, signal, (selectedRuntime, callSignal) => chatCompletion(selectedRuntime.provider, selectedRuntime.model.rawId, payload, callSignal)).then((response) => {
+    ) => composition.invokeSpecificChatModel(runtime, payload, signal).then((response) => {
       recordLlmUsage(response);
       return response;
     });
@@ -662,14 +644,14 @@ export async function runAgentApplication(input: AgentApplicationInput) {
         await settleLlmLog?.({ status: 'success', responseChars: message.length });
         return wantsStream
           ? streamResult(null, { fallback: message, images: [], files: [], generations: [], model: agentRuntime.model.displayName, mcpTools, statuses: [{ type: 'status', stage: 'answering', message: 'MCP 已安装并接入' }] })
-          : Response.json({ ok: true, message, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, mcpTools });
+          : applicationJson({ ok: true, message, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, mcpTools });
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
         const message = `安装失败：${error instanceof Error ? error.message : '无法安装这个 MCP 仓库'}`;
         await settleLlmLog?.({ status: 'error', responseChars: message.length, error: message });
         return wantsStream
           ? streamResult(null, { fallback: message, images: [], files: [], generations: [], model: agentRuntime.model.displayName, mcpTools: [{ ...mcpTools[0], ok: false }], statuses: [{ type: 'status', stage: 'answering', message: 'MCP 安装失败' }] })
-          : Response.json({ ok: true, message, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, mcpTools: [{ ...mcpTools[0], ok: false }] });
+          : applicationJson({ ok: true, message, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, mcpTools: [{ ...mcpTools[0], ok: false }] });
       }
     }
     const trackedNativeWebSearch = (...args: Parameters<typeof runNativeWebSearch>) => {
@@ -783,7 +765,7 @@ export async function runAgentApplication(input: AgentApplicationInput) {
       const clarification = '这次要用哪张图片？请选中要引用的图片后再发送，我不会猜测或从其他对话取图。';
       return wantsStream
         ? streamResult(null, { fallback: clarification, images: [], files: [], generations: [], model: agentRuntime.model.displayName })
-        : Response.json({ ok: true, message: clarification, images: [], files: [], deliverable: requestedDeliverable });
+        : applicationJson({ ok: true, message: clarification, images: [], files: [], deliverable: requestedDeliverable });
     }
     const previousImageRequest = [...messages.slice(0, -1)].reverse().find((message) => message.role === 'user');
     const previousImageIntent = previousImageRequest ? classifyAgentDeliverable(previousImageRequest.content) : null;
@@ -795,7 +777,7 @@ export async function runAgentApplication(input: AgentApplicationInput) {
       const clarification = messages.length === 1 ? '请告诉我要生成什么画面。新对话不会使用其他对话的内容。' : '这次要生成什么画面？当前话题还没有明确的图片要求。';
       return wantsStream
         ? streamResult(null, { fallback: clarification, images: [], files: [], generations: [], model: agentRuntime.model.displayName })
-        : Response.json({ ok: true, message: clarification, images: [], files: [], deliverable: 'CLARIFY' });
+        : applicationJson({ ok: true, message: clarification, images: [], files: [], deliverable: 'CLARIFY' });
     }
     const routeArtifactRequest = artifactRouteIsGenerated(requestRoute.route);
     const fileGenerationRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && (likelyFileGenerationRequest(latestInstruction) || requestRoute.artifactKind === 'file');
@@ -1023,7 +1005,7 @@ export async function runAgentApplication(input: AgentApplicationInput) {
         );
         const message = stripToolCallMarkup(chatContentText(response?.choices?.[0]?.message?.content)).trim();
         llmResponseChars = message.length;
-        return Response.json({
+        return applicationJson({
           ok: true,
           message,
           images: [],
@@ -1075,7 +1057,7 @@ export async function runAgentApplication(input: AgentApplicationInput) {
       });
       const message = stripToolCallMarkup(result.output).trim();
       llmResponseChars = message.length;
-      return Response.json({
+      return applicationJson({
         ok: true,
         message,
         images: [],
@@ -1153,7 +1135,7 @@ export async function runAgentApplication(input: AgentApplicationInput) {
               webSearchDecision: { mode: 'off', status: 'disabled', reason: '导演任务不需要联网' },
               statuses: [{ type: 'status', stage: 'answering', message: '导演方案已生成，正在准备成片…' }],
             })
-            : Response.json({
+            : applicationJson({
               ok: true,
               message: content,
               images: [],
@@ -1483,7 +1465,7 @@ const auditMcpCall = (
       llmResponseChars = nativeMessage.length;
       return wantsStream
         ? streamResult(null, { fallback: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata(), statuses: [{ type: 'status', stage: 'web_search', message: '已使用模型原生联网搜索，正在整理中文回答…' }] })
-        : Response.json({ ok: true, message: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata() });
+        : applicationJson({ ok: true, message: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata() });
     }
     // 直连流式不提供工具。启用中的技能会把索引写进系统提示，模型在这里只能把调用写成文本标记，所以有技能时改走工具轮。
     const directStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && !needsWebSearch && !browserAutomationRequest && !filesystemRequest && !callableTools.length && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;
@@ -1524,7 +1506,7 @@ const auditMcpCall = (
         llmResponseChars = String(fallbackMessage).length;
         return wantsStream
           ? streamResult(null, { fallback: fallbackMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() })
-          : Response.json({ ok: true, message: fallbackMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: false, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+          : applicationJson({ ok: true, message: fallbackMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: false, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
       }
     }
 
@@ -1534,7 +1516,7 @@ const auditMcpCall = (
       llmResponseChars = identityMessage.length;
       return wantsStream
         ? streamResult(null, { fallback: identityMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: null, webSearchDecision: searchDecisionMetadata() })
-        : Response.json({ ok: true, message: identityMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: false, webSearch: null, webSearchDecision: searchDecisionMetadata() });
+        : applicationJson({ ok: true, message: identityMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: false, webSearch: null, webSearchDecision: searchDecisionMetadata() });
     }
 
     const message = first?.choices?.[0]?.message;
@@ -1634,7 +1616,7 @@ const auditMcpCall = (
           ? '本次操作尚未执行，模型没有成功调用所需工具。请检查对应服务是否已启用、目录是否已授权，或切换支持工具调用的模型。'
           : cleanedMessage || '当前对话模型没有返回内容。';
         llmResponseChars = plainMessage.length;
-        return wantsStream ? streamResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }) : Response.json({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+        return wantsStream ? streamResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }) : applicationJson({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
       }
     }
 
@@ -1697,7 +1679,17 @@ const auditMcpCall = (
     const executeToolCallAdapter = createToolExecutionAdapter({
       state: toolExecutionState,
       observer: runtimeObserver,
-      toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, skillContext, skillInstaller: { kind: 'agent', name: '画布助手', detail: 'agent' }, canvasDocument, parseToolArguments, validateCanvasPatch, agentRunId, MCP_MANAGE_LABELS, isMcpRuntimeAction, runMcpRuntimeAction, latestInstruction, runMcpManageAction, executionPublicState, runTabbitBrowserAction, mcpToolCallLimit, browserMetrics, auditMcpCall, mcpServerById, isBrowserMutationTool, browserToolName, browserMutationBatches, mcpTurnBudgetLimit, mcpFilesystemRoots, localDataDir, persistImageBuffer, mcpRepeatTracker, agentTurnStartedAt, ARTIFACT_MAX_PER_TURN, appendPageContext, reportProgress, imageToolsAllowed, batchPlanContent, isBareImageExecution, extractBatchPrompts, fallbackImagePrompt, requestedImageCapability, latestRefs, trackedChatCompletion, agentRuntime, requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog, referenceRecords, getRuntimeImageModelCandidates, editImage, generateImage, persistGenerationResult, imageDownloadAuth, finishGenerationLog, imageStoragePath: executionPublicState.settings.imageStoragePath,
+      toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, skillContext, skillInstaller: { kind: 'agent', name: '画布助手', detail: 'agent' }, canvasDocument, parseToolArguments, validateCanvasPatch, agentRunId, MCP_MANAGE_LABELS, isMcpRuntimeAction, runMcpRuntimeAction, latestInstruction, runMcpManageAction, executionPublicState, runTabbitBrowserAction, mcpToolCallLimit, browserMetrics, auditMcpCall, mcpServerById, isBrowserMutationTool, browserToolName, browserMutationBatches, mcpTurnBudgetLimit, mcpFilesystemRoots, localDataDir, persistImageBuffer, mcpRepeatTracker, agentTurnStartedAt, ARTIFACT_MAX_PER_TURN, appendPageContext, reportProgress, imageToolsAllowed, batchPlanContent, isBareImageExecution, extractBatchPrompts, fallbackImagePrompt, requestedImageCapability, latestRefs, trackedChatCompletion, agentRuntime, requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog, referenceRecords, getRuntimeImageModelCandidates, editImage, generateImage, persistGenerationResult, imageDownloadAuth, finishGenerationLog, imageStoragePath: executionPublicState.settings.imageStoragePath, mcpCall: callMcpTool, mcpCallTimeoutMs: MCP_CALL_TIMEOUT_MS, importBrowserArtifacts, shouldImportBrowserArtifacts, noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess, importLocalImage, isLocalImageRead, verifyFilesystemMove,
+        artifactInfrastructure: {
+          maxPerTurn: ARTIFACT_MAX_PER_TURN,
+          isValidArtifactId,
+          getStorageRoots,
+          generateDocumentArtifact: (input: Parameters<typeof generateDocumentArtifact>[0], options: Parameters<typeof generateDocumentArtifact>[2]) => generateDocumentArtifact(input, undefined, options),
+          generateSpreadsheetArtifact: (input: Parameters<typeof generateSpreadsheetArtifact>[0]) => generateSpreadsheetArtifact(input),
+          generatePresentationArtifact: (input: Parameters<typeof generatePresentationArtifact>[0], options: Parameters<typeof generatePresentationArtifact>[2]) => generatePresentationArtifact(input, undefined, options),
+          collectArchiveEntries,
+          generateArchiveArtifact: (input: Parameters<typeof generateArchiveArtifact>[0]) => generateArchiveArtifact(input),
+        },
     });
     const toolRuntime = new ToolRuntime({
       context: gatingContext,
@@ -1819,7 +1811,7 @@ const auditMcpCall = (
       messages: readonly ChatMessage[];
       assistant: { content: string | null; tool_calls: unknown[]; reasoning_content?: string };
       executed: readonly ChatMessage[];
-    }): { response: Response; message: string } | { response: null; reason: string } => {
+    }): { response: AgentApplicationOutput; message: string } | { response: null; reason: string } => {
       const pendingCalls = input.pending;
       const approvalMessage = approvalMessageFor(pendingCalls);
       let approvalPayload: { id: string; expiresAt: number; message: string; policy: string; calls: Array<Record<string, unknown>> } | null = null;
@@ -1848,7 +1840,7 @@ const auditMcpCall = (
         };
       }
       return {
-        response: Response.json({ ok: true, message: approvalMessage, needsApproval: true, approval: approvalPayload, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), mcpTools: usedMcpTools }),
+        response: applicationJson({ ok: true, message: approvalMessage, needsApproval: true, approval: approvalPayload, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), mcpTools: usedMcpTools }),
         message: approvalMessage,
       };
     };
@@ -2014,7 +2006,7 @@ const auditMcpCall = (
       if (pendingImage) {
         const message = '服务商已接收图片任务，正在生成，请勿重复提交。';
         preserveLlmLogPending = true;
-        return Response.json({ pending: true, taskId: agentRunId, message, images: [], files: generatedFiles, generations, deliverable: requestedDeliverable }, { status: 202 });
+        return applicationJson({ pending: true, taskId: agentRunId, message, images: [], files: generatedFiles, generations, deliverable: requestedDeliverable }, { status: 202 });
       }
       const errors = toolResults.flatMap((result) => {
         try {
@@ -2025,7 +2017,7 @@ const auditMcpCall = (
       const failure = `图片未生成成功：${errors.at(-1) || '未收到有效图片结果'}。`;
       await settleLlmLog?.({ status: 'error', responseChars: failure.length, error: failure });
       if (wantsStream) return streamResult(null, { fallback: failure, images: [], files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName });
-      return Response.json({ ok: true, message: failure, images: [], files: generatedFiles, generations, deliverable: requestedDeliverable });
+      return applicationJson({ ok: true, message: failure, images: [], files: generatedFiles, generations, deliverable: requestedDeliverable });
     }
     let finalText = generated.length || generatedFiles.length
       ? `已完成${generated.length ? ` ${generated.length} 张图片` : ''}${generated.length && generatedFiles.length ? '，' : ''}${generatedFiles.length ? ` ${generatedFiles.length} 个文件` : ''}。`
@@ -2048,7 +2040,7 @@ const auditMcpCall = (
     if (verifiedFailure) {
       await settleLlmLog?.({ status: 'error', responseChars: verifiedFailure.length, error: verifiedFailure });
       if (wantsStream) return streamResult(null, { fallback: verifiedFailure, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, mcpTools: usedMcpTools, toolTrace });
-      return Response.json({ ok: true, message: verifiedFailure, images: generated, batchItems, files: generatedFiles, generations, deliverable: requestedDeliverable, mcpTools: usedMcpTools, toolTrace });
+      return applicationJson({ ok: true, message: verifiedFailure, images: generated, batchItems, files: generatedFiles, generations, deliverable: requestedDeliverable, mcpTools: usedMcpTools, toolTrace });
     }
     if (wantsStream) {
       if (followupText || artifactFollowupText || mcpFollowupText) return streamResult(null, { fallback: followupText || artifactFollowupText || mcpFollowupText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
@@ -2080,19 +2072,19 @@ const auditMcpCall = (
       await settleLlmLog?.({ status: 'error', responseChars: 0, error: llmFailure });
     }
     llmResponseChars = String(finalText || '').length;
-    return Response.json({ ok: true, message: finalText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, ...(canvasPatch ? { canvasPatch } : {}), toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace });
+    return applicationJson({ ok: true, message: finalText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, ...(canvasPatch ? { canvasPatch } : {}), toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace });
   } catch (error) {
     llmFailure = describeProviderFailure(error);
     const providerPossiblyAccepted = Boolean((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask);
     if (providerPossiblyAccepted) {
       preserveLlmLogPending = true;
       const message = '服务商已接收任务，正在生成，请勿重复提交。';
-      return Response.json({ pending: true, taskId: agentRunId, message }, { status: 202 });
+      return applicationJson({ pending: true, taskId: agentRunId, message }, { status: 202 });
     }
     if (!streamOwnsRuntimeRequest) await settleLlmLog?.({ status: 'error', responseChars: llmResponseChars, error: llmFailure });
-    if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
+    if (error instanceof RuntimeDrainingError) return applicationJson({ error: error.message, retryable: true }, { status: 409 });
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'AGENT_CANCELLED');
-    return Response.json({ error: cancelled ? '本轮 Agent 已停止。' : describeProviderFailure(error), cancelled }, { status: cancelled ? 499 : 502 });
+    return applicationJson({ error: cancelled ? '本轮 Agent 已停止。' : describeProviderFailure(error), cancelled }, { status: cancelled ? 499 : 502 });
   } finally {
     /* 主管线已经交出响应：正文开始流式返回，进度轮询到此为止。 */
     await finishAgentRun(agentRunId);

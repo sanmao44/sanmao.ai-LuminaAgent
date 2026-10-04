@@ -4,6 +4,19 @@ import { createTsRequire } from './ts-require.mjs';
 
 const load = createTsRequire(process.cwd());
 const capabilities = load('./packages/tool-runtime/native-capabilities');
+const artifacts = load('./lib/artifacts/index');
+const artifactLimits = load('./lib/artifacts/limits');
+const imageStorage = load('./lib/image-storage');
+const artifactInfrastructure = {
+  maxPerTurn: artifactLimits.ARTIFACT_MAX_PER_TURN,
+  isValidArtifactId: artifacts.isValidArtifactId,
+  getStorageRoots: imageStorage.getStorageRoots,
+  generateDocumentArtifact: (input, options) => artifacts.generateDocumentArtifact(input, undefined, options),
+  generateSpreadsheetArtifact: artifacts.generateSpreadsheetArtifact,
+  generatePresentationArtifact: (input, options) => artifacts.generatePresentationArtifact(input, undefined, options),
+  collectArchiveEntries: artifacts.collectArchiveEntries,
+  generateArchiveArtifact: artifacts.generateArchiveArtifact,
+};
 
 test('native web capability returns bounded tool results and preserves search state', async () => {
   const result = await capabilities.executeWebCapability({
@@ -71,7 +84,7 @@ test('image capability normalizes ordered prompt batches at the runtime boundary
 test('artifact capability executes through its runtime port and returns metadata only', async () => {
   const { executeArtifactCapability } = load('./packages/tool-runtime/artifact-capability');
   const state = { generatedFiles: [], generatedArtifactCount: 0 };
-  const result = await executeArtifactCapability({ state, call: { id: 'artifact-1', function: { name: 'document_generate' } }, args: { filename: 'part-b-runtime-contract.docx', markdown: '# Runtime contract' }, signal: new AbortController().signal });
+  const result = await executeArtifactCapability({ state, call: { id: 'artifact-1', function: { name: 'document_generate' } }, args: { filename: 'part-b-runtime-contract.docx', markdown: '# Runtime contract' }, signal: new AbortController().signal, infrastructure: artifactInfrastructure });
   const payload = JSON.parse(String(result.content));
   assert.equal(payload.ok, true);
   assert.equal(typeof payload.file.artifactId, 'string');
@@ -82,7 +95,9 @@ test('artifact capability executes through its runtime port and returns metadata
 test('skill capability executes search through the runtime port', async () => {
   const { executeSkillCapability } = load('./packages/tool-runtime/skill-capability');
   const state = { generatedFiles: [], generatedArtifactCount: 0, skillToolCalls: 0, skillInstalls: 0, usedSkills: [] };
-  const result = await executeSkillCapability({ state, call: { id: 'skill-1', function: { name: 'skill_search' } }, args: { query: 'runtime' }, skillContext: { settings: { enabled: true, autoApprove: false }, skills: [{ id: 'runtime', name: 'Runtime', description: 'runtime guidance', tags: ['runtime'], body: 'body', enabled: true }], pending: [], indexSection: '', toolHint: '' }, signal: new AbortController().signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
+  const skill = load('./lib/skills');
+  const skillArchive = load('./lib/skill-archive');
+  const result = await executeSkillCapability({ state, call: { id: 'skill-1', function: { name: 'skill_search' } }, args: { query: 'runtime' }, skillContext: { settings: { enabled: true, autoApprove: false }, skills: [{ id: 'runtime', name: 'Runtime', description: 'runtime guidance', tags: ['runtime'], body: 'body', enabled: true }], pending: [], indexSection: '', toolHint: '' }, signal: new AbortController().signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}), infrastructure: { maxCalls: skill.SKILL_TOOL_MAX_CALLS, maxInstalls: skill.SKILL_INSTALL_MAX_PER_REQUEST, buildSkillToolContent: skill.buildSkillToolContent, installSkill: skill.installSkill, installSkillFromDocument: skill.installSkillFromDocument, readSkill: skill.readSkill, readSkillFile: skill.readSkillFile, recordSkillUsage: skill.recordSkillUsage, searchSkills: skill.searchSkills, fetchSkillText: skill.fetchSkillText, parseGithubSkillTarget: skill.parseGithubSkillTarget, fetchSkillFilesFromGithub: skillArchive.fetchSkillFilesFromGithub } });
   const payload = JSON.parse(String(result.content));
   assert.equal(payload.ok, true);
   assert.equal(payload.skills[0].id, 'runtime');

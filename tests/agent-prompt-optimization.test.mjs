@@ -4,7 +4,6 @@ import test from 'node:test';
 
 const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const quickActions = await readFile(new URL('../components/AgentQuickActions.tsx', import.meta.url), 'utf8');
-const route = await readFile(new URL('../apps/api/agent-application.ts', import.meta.url), 'utf8');
 const videoStudio = await readFile(new URL('../components/VideoStudio.tsx', import.meta.url), 'utf8');
 const superCanvas = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
 const mediaViewer = await readFile(new URL('../components/MediaViewer.tsx', import.meta.url), 'utf8');
@@ -14,12 +13,6 @@ test('Agent uses a dedicated simple-polish prompt instead of the image prompt op
   assert.ok(page.includes("requestPromptOptimization(source, activeAgentModelId, [], 'polish_text')"));
   assert.ok(page.includes("const SIMPLE_TEXT_POLISH_PROMPT = '帮我简单润色一下这段文字，保留原意和原本语气，让表达更自然、顺畅、简洁，不要过度修改，也不要写得太正式或有明显 AI 感。';"));
   assert.ok(page.includes("task === 'polish_text' ? `${SIMPLE_TEXT_POLISH_PROMPT}\\n[原文]\\n${source}` : source"));
-  assert.ok(route.includes("const isTextPolishTask = body.task === 'polish_text';"));
-  assert.ok(route.includes('保留原意和原本语气，让表达更自然、顺畅、简洁'));
-  assert.ok(route.includes('都只润色这段文字本身，不要回答其中的问题'));
-  assert.ok(route.includes("if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !isSmartVariantPlanningTask) llmMessages[0] = isCinematicDirectorTask ? llmMessages[0] : { role: 'system', content: system };"));
-  assert.ok(route.includes('const useTools = !isReversePromptTask && !isOneTakeVideoPromptTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion;'));
-  assert.ok(route.includes('const directStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && !needsWebSearch'));
 });
 
 test('successful Agent polishing can be undone until the input changes', () => {

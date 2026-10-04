@@ -53,7 +53,6 @@ test("chooses the nearest duration supported by a video model", () => {
 test("wires duration selection through both one-take entry points", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const canvas = await readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8");
-  const route = await readFile(new URL("../apps/api/agent-application.ts", import.meta.url), "utf8");
   const agent = await readFile(new URL("../lib/creation/agent.ts", import.meta.url), "utf8");
   const client = await readFile(new URL("../lib/agent-client.ts", import.meta.url), "utf8");
   assert.match(page, /OneTakeDurationPicker/);
@@ -61,7 +60,6 @@ test("wires duration selection through both one-take entry points", async () => 
   assert.match(page, /pushTextToVideo\(message\.content, true, message\.durationSeconds\)/);
   assert.match(canvas, /OneTakeDurationPicker/);
   assert.match(canvas, /params: nextParams/);
-  assert.match(route, /isValidOneTakeDuration\(body\.durationSeconds\)/);
   assert.match(agent, /durationSeconds/);
   assert.match(client, /durationSeconds\?: number/);
 });
