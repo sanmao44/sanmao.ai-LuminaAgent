@@ -1,13 +1,12 @@
 import { isTrustedAppRequest } from '@/lib/auth';
 import { OFFLINE_SPEECH_LABEL, offlineSpeechSupported } from '@/lib/clone/offline-speech';
 import { decideCapabilities, normalizeCloneOptions } from '@/lib/clone/plan';
-import { cloneJobSummary, createCloneJob, listCloneJobs } from '@/lib/clone/store';
 import type { CloneAsset, CloneReference } from '@/lib/clone/types';
 import { getRuntimeCloneVideoModel, getRuntimeImageGenerationModel, getRuntimeVisionModel } from '@/lib/store';
 import { resolveSpeechRuntime } from '@/lib/clone/speech';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { getVideoModelLimits } from '@/lib/video-model-limits';
-import { dispatchCloneJob, reapCloneTasks } from '@/apps/worker/task-entry';
+import { createCloneTask, listCloneTasks } from '@/apps/worker/clone-task';
 
 export const runtime = 'nodejs';
 export const maxDuration = 3600;
@@ -51,9 +50,8 @@ function readAssets(raw: unknown): CloneAsset[] {
 export async function GET(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   // 画布每 5 秒拉一次这个列表：顺手把中断的任务标成失败，用户才有「继续任务」可点。
-  await reapCloneTasks();
-  const jobs = await listCloneJobs(30);
-  return Response.json({ ok: true, jobs: jobs.map(cloneJobSummary) });
+  const jobs = await listCloneTasks(30);
+  return Response.json({ ok: true, jobs });
 }
 
 export async function POST(request: Request) {
@@ -92,7 +90,7 @@ export async function POST(request: Request) {
     if (requestedSpeech && requestedSpeech !== 'auto' && !speechRuntime) {
       return Response.json({ error: '指定的配音模型不可用：请在「模型库」把它归类为「配音」并启用，或改用自动选择。' }, { status: 400 });
     }
-    const created = await createCloneJob({
+    const created = await createCloneTask({
       reference,
       assets,
       options,
@@ -117,7 +115,6 @@ export async function POST(request: Request) {
     });
     // 后台跑，立刻把任务交给前端轮询；与生成任务的持久化后台写法一致。
     // Worker boundary dispatches the long-running pipeline.
-    dispatchCloneJob(created.task.id);
     return Response.json({ ok: true, job: created.task, capabilities, warnings: modelWarnings }, { status: created.created ? 202 : 200 });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });

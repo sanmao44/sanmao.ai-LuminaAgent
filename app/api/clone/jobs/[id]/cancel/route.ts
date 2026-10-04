@@ -1,5 +1,5 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { findCloneJob } from '@/lib/clone/store';
+import { getCloneTask } from '@/apps/worker/clone-task';
 import { cancelCloneTask } from '@/apps/worker/task-control';
 
 export const runtime = 'nodejs';
@@ -11,7 +11,7 @@ export const runtime = 'nodejs';
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   const { id } = await context.params;
-  const job = await findCloneJob(id);
+  const job = await getCloneTask(id);
   if (!job) return Response.json({ error: '任务不存在。' }, { status: 404 });
   const updated = await cancelCloneTask(id);
   return Response.json({ ok: true, job: updated });

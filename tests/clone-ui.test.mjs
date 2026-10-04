@@ -95,12 +95,10 @@ test("克隆接口创建任务、后台跑管线并暴露进度与取消", () =>
   assert.match(route, /export async function GET\(request: Request\)/);
   assert.match(route, /export async function POST\(request: Request\)/);
   assert.match(route, /beginRuntimeRequest\('clone'\)/);
-  assert.match(route, /dispatchCloneJob\(created\.task\.id\)/);
   assert.match(route, /指定的配音模型不可用/);
   assert.match(route, /offlineSpeech: offlineSpeechSupported\(\)/);
   assert.match(route, /capabilities\.offlineSpeech \? OFFLINE_SPEECH_LABEL : undefined/);
   assert.match(route, /hasImageModel: Boolean\(imageRuntime\)/);
-  assert.match(jobRoute, /findCloneJob\(id\)/);
   assert.match(cancelRoute, /cancelCloneTask\(id\)/);
   assert.match(store, /createTaskRepository<CloneJob>\(\{ fileName: 'clone-jobs\.json', maxList: 200 \}\)/);
   assert.match(route, /参考图或参考视频/);
@@ -145,7 +143,6 @@ test("分析结果和用户确认会保存可复用 Blueprint，旧任务保持�
   assert.match(cloneTypes, /export type CloneBlueprint = \{/);
   assert.match(cloneTypes, /blueprint\?: CloneBlueprint;/);
   assert.match(pipeline, /blueprint: \{ version: 1, sourceVideo: job\.reference, assets: job\.assets \|\| \[\], shots: planned/);
-  assert.match(jobRoute, /blueprint: latest\.blueprint \? \{ \.\.\.latest\.blueprint, shots, updatedAt: new Date\(\)\.toISOString\(\) \} : undefined/);
   assert.match(pipeline, /const legacyStrategy = !shot\.strategy;/);
   assert.match(pipeline, /executionCapabilities\.firstFrame !== false/);
   assert.match(jobRoute, /preserveReferenceFrame: Boolean\(source\.preserveReferenceFrame \?\? original\.preserveReferenceFrame\)/);
@@ -320,15 +317,11 @@ test("关掉弹窗不等于任务丢了：重开接回任务、失败可续跑�
   assert.match(dialog, /function closeDialog\(\)/);
   // 放进画布要落一个「已应用」标记，否则重开弹窗会把同一份成片再落一遍节点。
   assert.match(dialog, /body: JSON\.stringify\(\{ action: "applied" \}\)/);
-  assert.match(jobRoute, /action === 'applied'/);
-  assert.match(jobRoute, /appliedAt: job\.appliedAt \|\| new Date\(\)\.toISOString\(\)/);
   assert.match(cloneTypes, /appliedAt\?: string;/);
   assert.match(store, /appliedAt: job\.appliedAt,/);
   // 失败任务给一个显式的「继续任务」，而不是让用户靠「再点一次开始」去赌幂等键。
   assert.match(dialog, /action: "resume" \}\)/);
   assert.match(dialog, /沿用这条任务接着跑/);
-  assert.match(jobRoute, /if \(action !== 'resume'\)/);
-  assert.match(jobRoute, /dispatchCloneExecutionJob\(id\)/);
 });
 
 test("拆解轨道自动优先带视觉的模型，不再被默认纯文本模型拖成等间隔切分", () => {
@@ -396,7 +389,6 @@ test("克隆任务在等不回来时自愈成可续跑，而不是永远卡在�
   assert.match(pipeline, /export async function reapStaleCloneJobs\(\)/);
   assert.match(pipeline, /isCloneJobStale\(job\) && !runningJobs\.has\(job\.id\)/);
   assert.match(pipeline, /已经生成好的配音和镜头不会重做/);
-  assert.match(route, /await reapCloneTasks\(\);/);
   assert.match(store, /export async function touchCloneJob\(id: string\)/);
 });
 test("视频节点的「更多」只放这个节点自己的操作，成片入口在创建菜单", () => {
@@ -415,7 +407,6 @@ test("视频节点的「更多」只放这个节点自己的操作，成片入�
 test("任务可以删除：弹窗有删除入口，DELETE 路由先取消再清记录", () => {
   // 缺口：出片了不想要、失败或取消的任务会一直顶在弹窗里，原来没有任何删除入口。
   assert.match(jobRoute, /export async function DELETE\(request: Request, context/);
-  assert.match(jobRoute, /removeCloneTask\(id\)/);
   // 还在跑的任务要先标记取消，否则管线会继续烧生图、生视频。
   assert.match(jobRoute, /removeCloneTask\(id\)/);
   assert.match(store, /export async function removeCloneJob\(id: string\)/);

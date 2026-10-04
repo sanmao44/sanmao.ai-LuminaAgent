@@ -1,10 +1,9 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { dispatchCloneExecutionJob, renderCloneVariantBatchTask, renderCloneVariantTask, rerenderCloneTask } from '@/apps/worker/task-entry';
+import { renderCloneVariantBatchTask, renderCloneVariantTask, rerenderCloneTask } from '@/apps/worker/task-entry';
+import { confirmCloneTask, getCloneTask, resumeCloneTask, updateCloneTaskMetadata } from '@/apps/worker/clone-task';
 import { removeCloneTask } from '@/apps/worker/task-control';
 import { buildBlueprintVariantPlans, normalizeCloneOptions } from '@/lib/clone/plan';
-import { findCloneJob, updateCloneJob } from '@/lib/clone/store';
-import { canResumeCloneJob } from '@/lib/clone/task-runtime';
-import type { CloneBlueprintVariantOverride, CloneBlueprintVariantSpec, CloneShot } from '@/lib/clone/types';
+import type { CloneBlueprintVariantOverride, CloneBlueprintVariantSpec, CloneJob, CloneShot } from '@/lib/clone/types';
 import { normalizeVideoEditorState } from '@/lib/canvas/video-editor';
 import type { CanvasVideoEditorState } from '@/lib/canvas/types';
 
@@ -41,7 +40,7 @@ function normalizeVariantSpec(value: unknown, fallbackId: string, fallbackName: 
 
 function normalizeShotStrategy(
   requested: CloneShot['strategy'] | undefined,
-  job: Awaited<ReturnType<typeof findCloneJob>>,
+  job: CloneJob | null,
   assetIds: string[],
 ) {
   if (!job) return 'text' as const;
@@ -57,7 +56,7 @@ export const runtime = 'nodejs';
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   const { id } = await context.params;
-  const job = await findCloneJob(id);
+  const job = await getCloneTask(id);
   if (!job) return Response.json({ error: '任务不存在。' }, { status: 404 });
   return Response.json({ ok: true, job });
 }
@@ -72,7 +71,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const { id } = await context.params;
   const body = await request.json().catch(() => ({}));
   const action = body && typeof body === 'object' ? String((body as { action?: unknown }).action || '') : '';
-  const job = await findCloneJob(id);
+  const job = await getCloneTask(id);
   if (!job) return Response.json({ error: '任务不存在。' }, { status: 404 });
   if (action === 'rerender') {
     try {
@@ -130,7 +129,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     });
     if (!specs.length) return Response.json({ error: '没有有效的变体方案' }, { status: 400 });
     const plans = buildBlueprintVariantPlans(job.blueprint, specs, normalizeCloneOptions(job.options), job.referenceAnalysis?.transcriptData);
-    const updated = await updateCloneJob(id, {
+    const updated = await updateCloneTaskMetadata(id, {
       blueprint: { ...job.blueprint, variants: specs, updatedAt: new Date().toISOString() },
     });
     return Response.json({ ok: true, plans, variants: specs, job: updated });
@@ -191,12 +190,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
   }
   if (action === 'applied') {
-    return Response.json({ ok: true, job: await updateCloneJob(id, { appliedAt: job.appliedAt || new Date().toISOString() }) });
+    return Response.json({ ok: true, job: await updateCloneTaskMetadata(id, { appliedAt: job.appliedAt || new Date().toISOString() }) });
   }
   if (action === 'confirm') {
-    if (job.stage !== 'planned') return Response.json({ error: '镜头计划尚未生成' }, { status: 400 });
     const rawShots = body && typeof body === 'object' ? (body as { shots?: unknown }).shots : undefined;
     let shots = job.shots;
+    let confirmationWarnings: string[] = [];
     if (rawShots !== undefined) {
       if (!Array.isArray(rawShots) || rawShots.length !== job.shots.length) return Response.json({ error: '镜头计划数量不匹配' }, { status: 400 });
       const allowed = new Set(['reference', 'keyframe', 'text', 'static']);
@@ -222,20 +221,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           preserveReferenceFrame: Boolean(source.preserveReferenceFrame ?? original.preserveReferenceFrame),
         };
       });
-      if (strategyWarnings.length) await updateCloneJob(id, { warnings: [...new Set([...job.warnings, ...strategyWarnings])] });
+      confirmationWarnings = strategyWarnings;
     }
-    const latest = await findCloneJob(id) || job;
-    const updated = await updateCloneJob(id, { planConfirmed: true, shots, blueprint: latest.blueprint ? { ...latest.blueprint, shots, updatedAt: new Date().toISOString() } : undefined, stage: 'queued', message: '已确认镜头计划，等待生成' });
-    dispatchCloneExecutionJob(id);
-    return Response.json({ ok: true, job: updated }, { status: 202 });
+    try {
+      const updated = await confirmCloneTask(id, { shots, warnings: confirmationWarnings });
+      if (!updated) return Response.json({ error: '任务不存在。' }, { status: 404 });
+      return Response.json({ ok: true, job: updated }, { status: 202 });
+    } catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : '镜头计划确认失败' }, { status: 400 });
+    }
   }
   if (action !== 'resume') return Response.json({ error: '不支持的操作。' }, { status: 400 });
-  if (!canResumeCloneJob(job.stage)) {
-    return Response.json({ error: '这条任务已经结束了，请重新设置参数再开始。' }, { status: 400 });
+  try {
+    const resumed = await resumeCloneTask(id);
+    if (!resumed) return Response.json({ error: '任务不存在。' }, { status: 404 });
+    return Response.json({ ok: true, job: resumed }, { status: 202 });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : '继续任务失败' }, { status: 400 });
   }
-  // 续跑是后台任务，立刻把任务交回前端轮询。
-  dispatchCloneExecutionJob(id);
-  return Response.json({ ok: true, job: await findCloneJob(id) }, { status: 202 });
 }
 
 /**
@@ -246,7 +249,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   const { id } = await context.params;
-  const job = await findCloneJob(id);
+  const job = await getCloneTask(id);
   if (!job) return Response.json({ ok: true, deleted: false });
   const result = await removeCloneTask(id);
   return Response.json({ ok: true, deleted: result.removed, cancelled: result.cancelled });

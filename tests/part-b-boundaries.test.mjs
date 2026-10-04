@@ -142,6 +142,50 @@ test('Worker owns stale Clone reconciliation through an injectable reaper', asyn
   assert.deepEqual(observer.snapshot().map((event) => `${event.identity}:${event.phase}`), ['clone:started', 'clone:completed']);
 });
 
+test('Worker Clone command boundary owns creation, confirmation, metadata, and resume policy', async () => {
+  const worker = load('./apps/worker/clone-task');
+  const store = load('./lib/clone/store');
+  const idempotencyKey = `clone-boundary-${Date.now()}-${Math.random()}`;
+  const dispatched = [];
+  const created = await worker.createCloneTask({
+    reference: { name: 'Boundary reference', url: 'https://example.test/reference.png', seconds: 1, kind: 'image' },
+    assets: [],
+    options: { aspect: '16:9' },
+    capabilities: {},
+    models: { chat: '', image: '' },
+    warnings: [],
+    autoConfirmPlan: false,
+    idempotencyKey,
+  }, (id) => dispatched.push(`create:${id}`));
+  const id = created.task.id;
+  try {
+    assert.equal(created.created, true);
+    assert.deepEqual(dispatched, [`create:${id}`]);
+    assert.equal((await worker.getCloneTask(id)).stage, 'queued');
+
+    const shot = { index: 0, start: 0, end: 1, visual: 'visual', line: 'line', prompt: 'prompt', status: 'pending' };
+    await store.updateCloneJob(id, { stage: 'planned', shots: [shot] });
+    const confirmed = await worker.confirmCloneTask(id, { shots: [shot] }, (taskId) => dispatched.push(`confirm:${taskId}`));
+    assert.equal(confirmed.stage, 'queued');
+    assert.equal(confirmed.planConfirmed, true);
+    assert.deepEqual(dispatched, [`create:${id}`, `confirm:${id}`]);
+
+    const applied = await worker.updateCloneTaskMetadata(id, { appliedAt: '2026-10-04T00:00:00.000Z' });
+    assert.equal(applied.appliedAt, '2026-10-04T00:00:00.000Z');
+
+    await store.updateCloneJob(id, { stage: 'failed' });
+    const resumed = await worker.resumeCloneTask(id, (taskId) => dispatched.push(`resume:${taskId}`));
+    assert.equal(resumed.stage, 'failed');
+    assert.deepEqual(dispatched, [`create:${id}`, `confirm:${id}`, `resume:${id}`]);
+
+    await store.updateCloneJob(id, { stage: 'done' });
+    await assert.rejects(() => worker.resumeCloneTask(id, () => dispatched.push(`unexpected:${id}`)), /已经结束了/);
+    assert.deepEqual(dispatched, [`create:${id}`, `confirm:${id}`, `resume:${id}`]);
+  } finally {
+    await store.removeCloneJob(id);
+  }
+});
+
 test('Worker exposes execution dispatch and clone cancellation is an explicit lifecycle transition', async () => {
   const { dispatchCloneExecutionJob, runCloneJob } = load('./apps/worker/task-entry');
   const { cloneCancellationPatch } = load('./apps/worker/task-control');
