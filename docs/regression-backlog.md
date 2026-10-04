@@ -11,3 +11,7 @@ focused pass; Part B records them without expanding its scope.
 | --- | --- | --- | --- | --- | --- | --- |
 | Windows offline voice synthesis | 0.7.x baseline | `System.Speech` is unavailable in the current restricted Windows test context | media / voice | medium | test is skipped with environment evidence | tracked |
 | Remaining source-coupled UI assertions | 0.7.x baseline | Some tests still assume implementation file locations | UI / migration tooling | low | existing source assertions | migration in progress |
+
+## Final convergence checkpoint (2026-10-04)
+
+The architecture pass did not claim full product regression recovery. User-facing regressions remain tracked separately and are outside this migration slice. The new Agent transport contract is covered through application behavior tests; no new source-layout assertion was added.

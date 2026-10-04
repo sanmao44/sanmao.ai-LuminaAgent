@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { buildMcpExecutorModule } from './tools-build.mjs';
+import { createTsRequire } from './ts-require.mjs';
 
 const root = new URL('..', import.meta.url);
 const read = (path) => readFile(new URL(path, root), 'utf8');
@@ -16,6 +17,7 @@ const [page, route, history, providers, nativeSearch, webSearch, styles] = await
 ]);
 const sendButton = await read('components/AgentSendButton.tsx');
 const { executeMcpTool } = await buildMcpExecutorModule();
+const { readAgentHttpInput } = createTsRequire(process.cwd())('./apps/api/agent-http-contract');
 
 test('Agent composer switches between send and an accessible stop action', () => {
   assert.ok(page.includes("import AgentSendButton from '@/components/AgentSendButton'"));
@@ -56,8 +58,17 @@ test('each conversation owns an independent request and only the active one is s
   assert.ok(page.includes('agentRequestsRef.current.get(sessionId)'));
 });
 
+test('HTTP transport preserves the request abort signal for application cancellation', async () => {
+  const controller = new AbortController();
+  const request = new Request('http://localhost/api/agent', { method: 'POST', body: JSON.stringify({ messages: [{ role: 'user', content: 'hello' }] }), signal: controller.signal });
+  const input = await readAgentHttpInput(request);
+  assert.equal(input.body.messages[0].content, 'hello');
+  assert.equal(input.signal, request.signal);
+  controller.abort(new Error('AGENT_CANCELLED'));
+  assert.equal(input.signal.aborted, true);
+});
+
 test('server cancellation reaches model, search, image, stream, and subprocess transports', () => {
-  assert.ok(route.includes("request.signal.addEventListener('abort', abortFromClient"));
   assert.ok(route.includes('runNativeWebSearch(agentRuntime.provider, agentRuntime.model, llmMessages, plannedNativeQuery, requestController.signal)'));
   assert.ok(route.includes('chatCompletion(runtime.provider, runtime.model.rawId, payload, callSignal)'));
   assert.ok(route.includes('chatCompletionStream(runtime.provider, runtime.model.rawId, payload, callSignal)'));

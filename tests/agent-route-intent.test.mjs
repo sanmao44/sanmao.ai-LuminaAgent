@@ -1,16 +1,15 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { createTsRequire } from './ts-require.mjs';
 
-const source = await readFile(new URL('../apps/api/agent-application.ts', import.meta.url), 'utf8');
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
-}).outputText;
 const requireTs = createTsRequire(fileURLToPath(new URL('../lib', import.meta.url)));
 const realSkills = requireTs('./skills');
+const applicationSource = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../apps/api/agent-application.ts', import.meta.url), 'utf8'));
+const compiled = ts.transpileModule(applicationSource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+}).outputText;
 
 function harness(options = {}) {
   const calls = [];
@@ -78,10 +77,11 @@ function harness(options = {}) {
   return {
     calls, discoveryCalls, manageCalls, images, imageRuntimeRequests,
     async post(messages, extra = {}) {
-      const response = await module.exports.runAgentApplication(new Request('http://localhost/api/agent', {
+      const request = new Request('http://localhost/api/agent', {
         method: 'POST',
         body: JSON.stringify({ messages, webMode: 'off', ...extra }),
-      }));
+      });
+      const response = await module.exports.runAgentApplication({ body: await request.json(), signal: request.signal });
       const data = await response.json();
       assert.equal(response.status, 200, JSON.stringify(data));
       return data;

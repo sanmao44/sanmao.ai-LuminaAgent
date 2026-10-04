@@ -76,6 +76,7 @@ import { noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates
 import { prepareAgentRequestContext } from '@/packages/agent-core/request-context';
 import { planAgentRequest } from '@/packages/agent-core/request-planning';
 import { runCapabilityFollowups, runMcpCapabilityFollowup } from '@/apps/api/agent-execution';
+import type { AgentHttpInput } from '@/apps/api/agent-http-contract';
 
 async function safeDiscoverMcpForRequest(options: Parameters<typeof discoverMcpForRequest>[0]) {
   try {
@@ -388,7 +389,10 @@ function toChatContent(message: ClientMessage, allowVideo = false): string | Cha
 /** MCP 管理动作在界面徽标上的中文名。 */
 const MCP_MANAGE_LABELS: Record<string, string> = { list: '列出服务', probe: '连接自检', add: '添加服务', update: '修改配置', remove: '删除服务', install_from_repo: '安装 GitHub MCP', runtime_status: '查看本地运行时', runtime_start: '启动本地运行时', runtime_stop: '关闭本地运行时' };
 
-export async function runAgentApplication(request: Request) {
+export type AgentApplicationInput = AgentHttpInput;
+
+export async function runAgentApplication(input: AgentApplicationInput) {
+  const signal = input.signal;
   const requestController = new AbortController();
   let wantsStream = false;
   let streamOwnsRuntimeRequest = false;
@@ -397,9 +401,9 @@ export async function runAgentApplication(request: Request) {
   let llmFailure = '';
   let preserveLlmLogPending = false;
   let settleLlmLog: ((result: AgentStreamSettlement) => Promise<void>) | null = null;
-  const abortFromClient = () => requestController.abort(request.signal.reason || new Error('AGENT_CANCELLED'));
-  if (request.signal.aborted) requestController.abort(request.signal.reason || new Error('AGENT_CANCELLED'));
-  else request.signal.addEventListener('abort', abortFromClient, { once: true });
+  const abortFromClient = () => requestController.abort(signal.reason || new Error('AGENT_CANCELLED'));
+  if (signal.aborted) requestController.abort(signal.reason || new Error('AGENT_CANCELLED'));
+  else signal.addEventListener('abort', abortFromClient, { once: true });
   /*
    * 长任务进度：前端给一个 runId，主管线在真正耗时的节点写一条快照，前端按 runId 轮询读取
    * （app/api/agent/progress）。只写固定阶段文案，不带用户内容；没有 runId 就整个不生效。
@@ -421,7 +425,7 @@ export async function runAgentApplication(request: Request) {
   };
   try {
     releaseRuntimeRequest = await beginRuntimeRequest('agent');
-    const body = await request.json();
+    const body = input.body;
     agentRunId = (await beginAgentRun((body as { runId?: unknown }).runId))?.runId || null;
     const preparedRequestContext = prepareAgentRequestContext({ body, runId: agentRunId, normalizeWorkspaceContext, normalizeDocument, normalizeGenerationSource });
     const { workspaceContext, canvasDocument, canvasTargetNodeIds, canvasTargetKind, canvasTargetOperation, taskContext, sourceForLog, isCanvasSource, isCanvasNodeExecution } = preparedRequestContext;
@@ -2100,6 +2104,6 @@ const auditMcpCall = (
     // POST returns. Keep this bridge listener alive until the client aborts;
     // removing it here would leave the upstream request running in the
     // background when the user presses Stop.
-    if (!wantsStream) request.signal.removeEventListener('abort', abortFromClient);
+    if (!wantsStream) signal.removeEventListener('abort', abortFromClient);
   }
 }

@@ -738,3 +738,13 @@ Agent E → tests/review
 ### Operational observability adapter
 
 `packages/contracts/observability.ts` 定义 provider-neutral `RuntimeObserver`；`packages/observability/runtime-sink.ts` 提供本地 operational adapter，按日写入 `.data/runtime-events/*.jsonl`，限制单文件大小并保留 7 天。它只持久化白名单 RuntimeEvent 字段，不写入 prompt、tool arguments、响应正文、文件内容或 secret。Agent、Backup、Worker 入口和关键 Runtime 通过 bounded diagnostics 与该 sink 组合使用，管理员可通过 `GET /api/observability` 查询最近事件。Domain/Core 只依赖 contract，长期 OpenTelemetry exporter 仍是后续演进项。
+
+## Final convergence checkpoint (2026-10-04)
+
+This repository remains a **Modular Next Monolith**. The logical boundaries are Web/UI, HTTP/API transport, Application/Runtime, Core/Ports, and Infrastructure. The physical code boundaries are `app/`, `components/`, `apps/api/`, `apps/worker/`, and `packages/`. The current deployment boundary is one Next host with in-process worker dispatch; separate Web/API/Worker executables are not justified by the current production path.
+
+`app/api/agent/route.ts` is transport-only and delegates authentication, JSON decoding, and response production to `apps/api/agent-transport.ts` and `apps/api/agent-http-contract.ts`, then to `apps/api/agent-application.ts`. The application receives structured input and an abort signal; it does not read an HTTP `Request`. Streaming adaptation remains in `apps/api/agent-stream.ts` and execution follow-ups remain in `apps/api/agent-execution.ts`.
+
+Provider candidate ordering, failover, attempt lifecycle, and deadlines are authoritative in `packages/model-runtime/provider-coordinator.ts`; SDK and media branches remain adapters. Task lifecycle controls are authoritative in `apps/worker/task-control.ts`, `apps/worker/task-entry.ts`, and `apps/worker/task-lifecycle.ts`, with family-specific provider persistence still retained behind adapters. `packages/tool-runtime/adapter.ts` remains a bounded migration dispatcher and is not a second source of truth; its deletion requires artifact/skill compatibility callers to move to stable capability ports.
+
+This is a logical ownership convergence checkpoint, not Final Architecture Lock. Legacy removal and independent deployment remain migration work.

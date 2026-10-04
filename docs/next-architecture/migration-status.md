@@ -38,3 +38,14 @@
 Part A Data Cutover Closure is implemented and its targeted migration, rollback, backup and transaction tests pass. Part B remains `migration in progress`: API and Worker entry seams now exist for the migrated slices, including provider-neutral Agent stream and Skill/Artifact/MCP/browser continuation execution boundaries; Clone background execution, cancellation/removal and stale reconciliation no longer mutate lifecycle state in HTTP routes; video/upscale polling and terminal controls cross the Worker control boundary; provider attempt lifecycle and media candidate fallback are shared, and obsolete zero-caller compatibility bridges were removed. Runtime lifecycle events now reach a redacted, bounded JSONL operational sink and read-only admin endpoint. There are no standalone deployable Web/API/Worker applications yet; the API application still assembles request context, policy/approval and provider/capability adapters, the Tool adapter remains a migration adapter, Provider and Task ownership are partial, and Legacy purge is only started for bridges with zero callers.
 
 Last reviewed: 2026-10-04.
+
+## Final convergence checkpoint (2026-10-04)
+
+- **Agent:** logical transport cutover completed for HTTP parsing/auth delegation; Application/Runtime and streaming remain production owners. Legacy removal is still in progress.
+- **Provider:** coordinator is authoritative for candidate ordering, failover, attempt lifecycle, and deadlines; SDK/media adapters remain migration dependencies.
+- **Task/Worker:** worker entry/control/lifecycle own the migrated clone, video, and upscale lifecycle seams; family-specific persistence and provider polling adapters remain.
+- **Tool:** `packages/tool-runtime` owns runtime policy/dispatch; `adapter.ts` is a bounded compatibility dispatcher with a documented deletion condition.
+- **Physical boundary:** Modular Next Monolith (single Next host plus in-process worker dispatch); no standalone deployables are claimed.
+- **Final Architecture Lock:** not started.
+
+Last reviewed: 2026-10-04.

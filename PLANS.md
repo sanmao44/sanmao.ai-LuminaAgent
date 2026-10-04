@@ -529,3 +529,9 @@ Part A 宸插畬鎴?server repository 鏀跺彛銆佸鐗╃悊鏍?restore rol
 ## Part B observability update (2026-10-03)
 
 `RuntimeObserver` 鍚屾椂鏀寔 bounded in-process diagnostics 涓?`packages/observability` 鐨?redacted JSONL operational sink銆侫gent銆乀ool銆丮CP銆丳rovider銆乀ask銆丏atabase 鍜?Backup 浜嬩欢鍐欏叆 `.data/runtime-events/`锛屾寜鏃ュ垎鐗囧苟淇濈暀 7 澶╋紝鍙繚瀛?RuntimeEvent 鐧藉悕鍗曞瓧娈碉紝涓嶈褰?prompt銆乼ool arguments銆佹枃浠跺唴瀹规垨 secrets銆俙GET /api/observability` 鎻愪緵鍙绠＄悊鍛樻煡璇紱闀挎湡鍙浛鎹负 OpenTelemetry exporter锛屽綋鍓嶅垏鐗囦笉寮曞叆 SDK銆?
+
+## Final convergence checkpoint (2026-10-04)
+
+Part B remains `migration in progress` at the physical and legacy-removal levels. The Agent HTTP boundary now uses a structured transport contract: `app/api/agent/route.ts` delegates to `apps/api/agent-transport.ts`, which performs auth and request decoding before invoking the Application entry. The Application no longer consumes `Request.json()` or owns HTTP request parsing. This preserves the existing streaming, cancellation, provider, tool, task, and response behavior.
+
+The deployment decision is a Modular Next Monolith: one Next host and in-process worker dispatch. Do not create empty independent Web/API/Worker executables. Provider and task runtime seams are real production paths; remaining adapters are retained only where their deletion conditions are not yet met. Final Architecture Lock is intentionally not started.
