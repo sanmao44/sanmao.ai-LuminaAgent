@@ -144,6 +144,35 @@ test('chat, stream and Responses requests all receive provider-ready media', asy
     || body.input?.[0]?.content[0].image_url.url === 'https://cdn.example/reference.png'));
 });
 
+test('OpenAI-compatible chat keeps inline data URLs without a relay conversion', async () => {
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    requests.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const provider = {
+    id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek',
+    baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key',
+  };
+  const inline = 'data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA';
+  try {
+    await providers.chatCompletion(provider, 'deepseek-v4-flash', {
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: 'describe' },
+        { type: 'image_url', image_url: { url: inline } },
+      ] }],
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].messages[0].content[1].image_url.url, inline);
+});
+
 test('uses the OpenAI video task status default for a custom compatible provider', () => {
   const config = presets.resolveProviderConfiguration({
     platform: 'custom',

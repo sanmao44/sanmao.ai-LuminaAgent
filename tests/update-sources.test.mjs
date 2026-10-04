@@ -9,7 +9,21 @@ import { validateUpdateManifest, validSha256 } from '../scripts/validate-update-
 
 async function loadTs(fileUrl, replacements = []) {
   let source = await readFile(fileUrl, 'utf8');
-  for (const [from, to] of replacements) source = source.replace(from, to);
+  for (const [from, to] of replacements) {
+    const exact = source.indexOf(from);
+    if (exact >= 0) {
+      source = `${source.slice(0, exact)}${to}${source.slice(exact + from.length)}`;
+      continue;
+    }
+    // Source files may be checked out with CRLF while the test fixture uses
+    // LF. Normalize only for the harness so the replacement cannot silently
+    // fail and leave an unresolved alias in the data URL module.
+    const normalizedSource = source.replace(/\r\n/g, '\n');
+    const normalizedFrom = from.replace(/\r\n/g, '\n');
+    const normalizedIndex = normalizedSource.indexOf(normalizedFrom);
+    if (normalizedIndex < 0) throw new Error(`loadTs replacement not found in ${fileUrl.pathname}: ${normalizedFrom.slice(0, 80)}`);
+    source = `${normalizedSource.slice(0, normalizedIndex)}${to}${normalizedSource.slice(normalizedIndex + normalizedFrom.length)}`;
+  }
   const compiled = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: fileUrl.pathname,

@@ -1432,6 +1432,7 @@ function agnesTextEndpoint(provider: RuntimeProvider, protocol: ProviderTextProt
 
 async function agnesChatRequest(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, options: { stream?: boolean } = {}) {
   const protocol = agnesTextProtocol(provider);
+  // Agnes requires a publicly reachable media URL.
   const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: true });
   const body: Record<string, unknown> = protocol === 'responses'
       ? { model: rawModelId, input: messages, max_output_tokens: 65536, ...(payload.tools?.length ? { tools: payload.tools } : {}), ...(options.stream ? { stream: true } : {}) }
@@ -1447,7 +1448,9 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
     const data = await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000, signal);
     return normalizeAgnesResponse(data, request.protocol);
   }
-  const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: true });
+  // OpenAI-compatible providers accept inline image data URLs. Keep them
+  // inline; only local paths are promoted to a public relay URL.
+  const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: false });
   const data = await fetchJson(providerEndpoint(provider, provider.chatPath, '/chat/completions'), {
     method: 'POST',
     headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
@@ -1466,7 +1469,7 @@ export async function responsesCompletion(provider: RuntimeProvider, rawModelId:
     const request = await agnesChatRequest(provider, rawModelId, { messages, tools: options.tools }, { stream: options.stream });
     return normalizeAgnesResponse(await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000), request.protocol);
   }
-  const preparedInput = typeof input === 'string' ? input : await prepareProviderChatMessages(input, preparePublicMediaUrl, { prepareDataUrls: true });
+  const preparedInput = typeof input === 'string' ? input : await prepareProviderChatMessages(input, preparePublicMediaUrl, { prepareDataUrls: false });
   const body: Record<string, unknown> = {
     model: rawModelId,
     input: preparedInput,
@@ -1529,7 +1532,7 @@ export async function chatCompletionStream(provider: RuntimeProvider, rawModelId
     const request = await agnesChatRequest(provider, rawModelId, payload, { stream: true });
     return fetchStreamingResponse(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' }, body: JSON.stringify(request.body) }, 180000, signal);
   }
-  const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: true });
+  const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: false });
   return fetchStreamingResponse(providerEndpoint(provider, provider.chatPath, '/chat/completions'), {
     method: 'POST',
     headers: { ...authHeaders(provider), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' },

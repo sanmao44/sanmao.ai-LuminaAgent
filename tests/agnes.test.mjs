@@ -343,9 +343,9 @@ test('uses the shared media relay for local images without sending API credentia
   };
   try {
     const response = await providers.chatCompletion({
-      id: 'deepseek-provider', name: 'DeepSeek', type: 'openai-compatible', platform: 'custom',
-      baseUrl: 'https://api.deepseek.com/v1', apiKey: 'server-only-key',
-    }, 'deepseek-chat', {
+      id: 'agnes-provider', name: 'Agnes', type: 'openai-compatible', platform: 'agnes',
+      baseUrl: 'https://api.agnes-ai.cn/v1', apiKey: 'server-only-key',
+    }, 'agnes-3.0-flash', {
       messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AAECAw==' } }] }],
     });
     assert.equal(response.choices[0].message.content, 'ok');
