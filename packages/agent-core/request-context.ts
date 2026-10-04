@@ -1,6 +1,6 @@
-import type { WorkspaceContext } from '@/lib/workspace-context';
-import type { CanvasDocument } from '@/lib/canvas/types';
-import type { GenerationSource } from '@/lib/generation-source';
+import type { GenerationSource, WorkspaceContext } from '../contracts/context';
+
+type CanvasDocument = unknown;
 
 export type AgentRequestContextInput = {
   body: Record<string, unknown>;

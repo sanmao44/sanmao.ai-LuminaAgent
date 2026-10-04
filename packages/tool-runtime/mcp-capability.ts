@@ -1,7 +1,7 @@
 import { TOOL_LOOP_MCP_REPEAT_LIMIT, mcpCallSignature, trackMcpRepeat } from './tool-loop';
 import { executeMcpTool, executeTabbitTool } from './mcp-executor';
-import type { ChatMessage } from '@/lib/providers';
-import type { ToolPolicyDecision } from '@/lib/tools/policy';
+import type { ChatMessage } from '../contracts/chat';
+import type { ToolPolicyDecision } from '../contracts/tool';
 import type { RuntimeObserver } from '../contracts/observability';
 import type { GeneratedFile, ToolCall, ToolRuntimeState, ToolCallRun } from './capability-state';
 
@@ -66,6 +66,12 @@ export type McpCapabilityInfrastructure = {
   browserToolName: (name: string) => string;
   isBrowserMutationTool: (name: string) => boolean;
 };
+
+/** Infrastructure capabilities supplied by the composition root. */
+export type McpCapabilityPorts = Omit<
+  McpCapabilityDependencies,
+  'state' | 'call' | 'policy' | 'args' | 'stepCalls' | 'callIndex'
+>;
 
 const toolMessage = (callId: string | undefined, payload: unknown): ChatMessage => ({ role: 'tool', tool_call_id: callId, content: JSON.stringify(payload) });
 

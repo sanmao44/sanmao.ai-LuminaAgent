@@ -1,5 +1,5 @@
-import type { ChatMessage } from '@/lib/providers';
-import type { McpServerConfig, McpToolMeta } from '@/lib/mcp/types';
+import type { ChatMessage } from '../contracts/chat';
+import type { McpServerConfig, McpToolMeta } from '../contracts/mcp';
 import type { RuntimeObserver } from '../contracts/observability';
 
 export type McpCallResult = { isError: boolean; text: string };

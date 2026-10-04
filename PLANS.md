@@ -4,7 +4,7 @@ Last reviewed: 2026-10-04
 
 ## Current phase
 
-Final Pre-Lock Cutover is in progress. Do not start Final Architecture Lock until all verification gates pass.
+Final Pre-Lock construction is complete. Final Architecture Lock is intentionally not started in this phase; it may begin only after all verification gates pass.
 
 ## Completed gates
 
@@ -13,14 +13,19 @@ Final Pre-Lock Cutover is in progress. Do not start Final Architecture Lock unti
 - Backup / Restore hardening: cutover completed with staged transactional restore, canonical archive schema and version migration boundary.
 - SQLite database cutover: cutover completed. SQLite is authoritative after explicit guarded activation and restart.
 - HTTP Agent parsing and serialization boundary: cutover completed. Transport owns Request/Response concerns.
+- Agent Application and composition boundary: cutover completed. Application owns planning, execution lifecycle and output; composition owns concrete infrastructure assembly.
+- Provider policy boundary: cutover completed. Provider Coordinator owns ordering, routing, failover, deadlines and attempt lifecycle.
+- Tool capability boundary: cutover completed. Tool Runtime owns execution; Skill, MCP, Artifact, Image, Browser and Filesystem behavior reaches infrastructure through capability ports.
+- Task / Worker boundary: cutover completed. Worker entry/control/lifecycle are authoritative for Clone, Video and Upscale execution, polling, retry, cancel, progress and persistence transitions.
 
-## Remaining migration
+## Compatibility remaining
 
-- Agent Application execution and composition are separated by `apps/api/agent-composition.ts`, while context, policy and capability compatibility adapters remain migration in progress.
-- Provider coordinator is authoritative for candidate ordering, failover, deadlines and attempt lifecycle. Provider SDK/media adapters remain migration in progress.
-- Tool Runtime owns dispatch and policy. `packages/tool-runtime/adapter.ts` remains a bounded compatibility adapter until remaining artifact/skill/image bindings move to ports.
-- Worker task entry/control/lifecycle own migrated Clone, Video and Upscale seams. Family-specific provider polling and persistence remain migration in progress.
-- Legacy purge proceeds only when the new owner is authoritative, production paths are switched, behavior coverage exists and rollback is handled.
+- The Agent application still calls a bounded set of legacy domain helpers through the composition root; remove each helper after its injected port has a production caller and behavior coverage.
+- Provider SDK, HTTP and media transports remain adapters; remove each after the corresponding Provider Runtime port no longer needs the legacy implementation.
+- `packages/tool-runtime/adapter.ts` remains the single compatibility bridge for existing Tool Runtime callers; remove it after direct capability registration is complete.
+- Worker-only family services and Clone pipeline retain provider-specific polling and persistence mechanics; remove or replace each adapter only after the Worker task port owns the same behavior and rollback coverage is present.
+- Legacy JSON and browser/local storage readers remain migration or rollback inputs only; remove them after zero production callers and a verified rollback path.
+- No core ownership is left in a second production path. Final Architecture Lock itself remains a separate, not-yet-started action.
 
 ## Physical architecture
 

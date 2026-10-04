@@ -1,6 +1,4 @@
-import { resolveToolPolicy, type ToolPolicyDecision } from '@/lib/tools/policy';
-import { parseToolArguments } from '@/lib/tools/call-arguments';
-import type { ToolDefinition, ToolGatingContext } from '@/lib/tools/registry';
+import { parseToolArguments, resolveExtraToolPolicy, type ToolDefinition, type ToolGatingContext, type ToolPolicyDecision, type ToolPolicyResolver } from '../contracts/tool';
 import { runToolLoop, type RunToolLoopOptions, type ToolLoopCall, type ToolLoopMessage, type ToolLoopTraceStep } from './tool-loop';
 import type { RuntimeObserver } from '../contracts/observability';
 
@@ -15,6 +13,8 @@ export type ToolRuntimeAuthorization = 'allow' | 'defer' | { deny: string; args?
 export type ToolRuntimeDependencies = {
   context: ToolGatingContext;
   extraTools?: readonly ToolDefinition[];
+  resolvePolicy?: ToolPolicyResolver;
+  parseArguments?: (raw?: string) => unknown;
   authorize?: (input: { call: ToolRuntimeCall; policy: ToolPolicyDecision; args: Record<string, unknown> }) => Promise<ToolRuntimeAuthorization> | ToolRuntimeAuthorization;
   onPolicyDenied?: (input: { call: ToolRuntimeCall; policy: ToolPolicyDecision }) => void | Promise<void>;
   execute: (input: { call: ToolRuntimeCall; policy: ToolPolicyDecision; args: Record<string, unknown>; executionContext?: unknown }) => Promise<ToolRuntimeExecution>;
@@ -24,7 +24,7 @@ export type ToolRuntimeDependencies = {
 
 export class ToolRuntime {
   constructor(private readonly dependencies: ToolRuntimeDependencies) {}
-  resolve(call: ToolRuntimeCall) { return resolveToolPolicy(call.function.name, this.dependencies.context, this.dependencies.extraTools || []); }
+  resolve(call: ToolRuntimeCall) { return (this.dependencies.resolvePolicy || resolveExtraToolPolicy)(call.function.name, this.dependencies.context, this.dependencies.extraTools || []); }
   async execute(call: ToolRuntimeCall, executionContext?: unknown): Promise<ToolRuntimeExecution> {
     const startedAt = Date.now();
     const operationId = String(call.id || `tool-${startedAt}`);
@@ -36,7 +36,7 @@ export class ToolRuntime {
       void this.dependencies.observer?.emit({ operationId, kind: 'tool', phase: 'failed', at: Date.now(), durationMs: Date.now() - startedAt, status: 'denied', identity: call.function.name, errorClass: 'PolicyDenied' });
       return result;
     }
-    const raw = parseToolArguments(call.function.arguments);
+    const raw = (this.dependencies.parseArguments || parseToolArguments)(call.function.arguments);
     const args = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
     const authorization = await this.dependencies.authorize?.({ call, policy, args });
     if (authorization === 'defer') {

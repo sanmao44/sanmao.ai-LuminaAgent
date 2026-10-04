@@ -1,23 +1,48 @@
-import type { ChatMessage } from '@/lib/providers';
+import type { ChatMessage } from '../contracts/chat';
 import type { ToolCall, RuntimeImage, ToolRuntimeState } from './capability-state';
-import type { ToolExecutionAdapterBindings } from './adapter';
+import type { RuntimeObserver } from '../contracts/observability';
 import { invokeMediaModelCandidates } from '../model-runtime/media';
+
+export type ImageCapabilityPorts = {
+  observer?: RuntimeObserver;
+  latest?: { content?: unknown };
+  requestController: AbortController;
+  imageToolsAllowed: boolean;
+  batchPlanContent?: string;
+  isBareImageExecution: (input: string) => boolean;
+  extractBatchPrompts: (content: string) => string[];
+  fallbackImagePrompt: string;
+  requestedImageCapability?: 'generate' | 'edit';
+  latestRefs: readonly Record<string, unknown>[];
+  trackedChatCompletion: (provider: unknown, model: string, payload: Record<string, unknown>, signal?: AbortSignal) => Promise<{ choices?: Array<{ message?: { content?: unknown } }> } | null>;
+  agentRuntime: { provider: unknown; model: { rawId: string } };
+  requestedAgentImageModelId?: string;
+  imageModels: readonly { id?: string; capabilities?: readonly string[] }[];
+  getRuntimeImageGenerationModel: (id?: string | null) => Promise<{ provider: unknown; model: { id: string; rawId: string; displayName: string } } | null>;
+  getRuntimeImageModelForCapability: (id: string | null | undefined, capability: string) => Promise<{ provider: unknown; model: { id: string; rawId: string; displayName: string } } | null>;
+  appendGenerationLog: (log: Record<string, unknown>) => Promise<void>;
+  sourceForLog: string;
+  taskContext: Record<string, unknown>;
+  startGenerationLog: (log: Record<string, unknown>) => Promise<string>;
+  referenceRecords: readonly Record<string, unknown>[];
+  getRuntimeImageModelCandidates: (id: string, capability: string) => readonly RuntimeImage[];
+  editImage: (provider: unknown, model: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<RuntimeImage[]>;
+  generateImage: (provider: unknown, model: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<RuntimeImage[]>;
+  persistGenerationResult: (options: Record<string, unknown>) => Promise<{ images: RuntimeImage[] }>;
+  imageDownloadAuth: (provider: unknown) => unknown;
+  finishGenerationLog: (id: string, patch: Record<string, unknown>) => Promise<void>;
+  latestInstruction?: string;
+  agentRunId?: string;
+  executionPublicState: { settings: { imageStoragePath?: string } };
+};
 
 export type ImageCapabilityInput = {
   state: ToolRuntimeState & Record<string, unknown>;
   call: ToolCall;
   args: Record<string, unknown>;
   results: ChatMessage[];
-} & Pick<ToolExecutionAdapterBindings,
-  | 'observer' | 'latest' | 'requestController' | 'imageToolsAllowed' | 'batchPlanContent'
-  | 'isBareImageExecution' | 'extractBatchPrompts' | 'fallbackImagePrompt'
-  | 'requestedImageCapability' | 'latestRefs' | 'trackedChatCompletion' | 'agentRuntime'
-  | 'requestedAgentImageModelId' | 'imageModels' | 'getRuntimeImageGenerationModel'
-  | 'getRuntimeImageModelForCapability' | 'appendGenerationLog' | 'sourceForLog'
-  | 'taskContext' | 'startGenerationLog' | 'referenceRecords'
-  | 'getRuntimeImageModelCandidates' | 'editImage' | 'generateImage' | 'persistGenerationResult'
-  | 'imageDownloadAuth' | 'finishGenerationLog' | 'latestInstruction' | 'agentRunId' | 'executionPublicState'
->;
+  ports: ImageCapabilityPorts;
+};
 
 export function normalizeImagePromptBatch(input: { args: Record<string, unknown>; latestInstruction: string; batchPlanContent?: string; fallbackImagePrompt: string; isBareImageExecution: (value: string) => boolean; extractBatchPrompts: (value: string) => string[] }) {
   const { args, latestInstruction, batchPlanContent, fallbackImagePrompt, isBareImageExecution, extractBatchPrompts } = input;
@@ -29,16 +54,17 @@ export function normalizeImagePromptBatch(input: { args: Record<string, unknown>
 }
 
 export async function executeImageCapability(input: ImageCapabilityInput): Promise<{ results: ChatMessage[] }> {
+  const { state, call, args, results } = input;
+  if (!input.ports?.imageToolsAllowed) return { results };
   const {
-    state, call, args, results, observer, latest, requestController, imageToolsAllowed, batchPlanContent,
+    observer, latest, requestController, imageToolsAllowed, batchPlanContent,
     isBareImageExecution, extractBatchPrompts, fallbackImagePrompt, requestedImageCapability, latestRefs,
     trackedChatCompletion, agentRuntime, requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel,
     getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog,
     referenceRecords, getRuntimeImageModelCandidates, editImage, generateImage,
     persistGenerationResult, imageDownloadAuth, finishGenerationLog, latestInstruction, agentRunId, executionPublicState,
-  } = input;
+  } = input.ports;
   let { generated, preparedCaption, batchItems, generations } = state;
-  if (!imageToolsAllowed) return { results };
       const startedAt = Date.now();
       const promptBatch = normalizeImagePromptBatch({ args, latestInstruction: latestInstruction || '', batchPlanContent, fallbackImagePrompt, isBareImageExecution, extractBatchPrompts });
       const { effectiveRequestedPrompts, prompts, prompt, count } = promptBatch;

@@ -1,10 +1,5 @@
-import type { ChatMessage } from '@/lib/providers';
-import type {
-  ArtifactDescriptor,
-  DocumentInput,
-  PresentationInput,
-  SpreadsheetInput,
-} from '@/lib/artifacts';
+import type { ArtifactDescriptor, DocumentInput, PresentationInput, SpreadsheetInput } from '../contracts/artifact';
+import type { ChatMessage } from '../contracts/chat';
 import type { ToolCall, ToolRuntimeState, GeneratedFile } from './capability-state';
 
 export type ArtifactCapabilityInput = {

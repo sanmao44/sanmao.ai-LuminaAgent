@@ -1,4 +1,5 @@
-import type { CanvasPatch } from '@/lib/canvas/patch';
+import type { CanvasPatch } from '../contracts/canvas';
+import type { ChatMessage } from '../contracts/chat';
 
 export type GeneratedFile = { name: string; size: number; [key: string]: unknown };
 export type ToolCall = { id?: string; function?: { name?: string; arguments?: string } };
@@ -36,4 +37,4 @@ export type ToolRuntimeState = {
   usedSkills: Array<{ id: string; name: string }>;
 };
 
-export type ToolCallRun = { results: import('@/lib/providers').ChatMessage[]; deferred?: true; stalled?: true };
+export type ToolCallRun = { results: ChatMessage[]; deferred?: true; stalled?: true };

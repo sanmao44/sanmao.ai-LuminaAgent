@@ -58,7 +58,7 @@ export interface AgentPolicy {
   decide(request: AgentRequest): PolicyDecision;
 }
 
-export type ToolDefinition = {
+export type AgentToolDefinition = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
@@ -77,6 +77,6 @@ export type ToolResult = {
 };
 
 export interface ToolRuntime {
-  discover(): readonly ToolDefinition[];
+  discover(): readonly AgentToolDefinition[];
   execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult>;
 }

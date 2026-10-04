@@ -1,6 +1,5 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { renderBlueprintVariant, renderBlueprintVariants, rerenderCloneJob } from '@/lib/clone/pipeline';
-import { dispatchCloneExecutionJob } from '@/apps/worker/task-entry';
+import { dispatchCloneExecutionJob, renderCloneVariantBatchTask, renderCloneVariantTask, rerenderCloneTask } from '@/apps/worker/task-entry';
 import { removeCloneTask } from '@/apps/worker/task-control';
 import { buildBlueprintVariantPlans, normalizeCloneOptions } from '@/lib/clone/plan';
 import { findCloneJob, updateCloneJob } from '@/lib/clone/store';
@@ -86,7 +85,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const timeline = rawTimeline && typeof rawTimeline === 'object'
         ? normalizeVideoEditorState(rawTimeline as CanvasVideoEditorState)
         : undefined;
-      const updated = await rerenderCloneJob(id, shots, timeline);
+      const updated = await rerenderCloneTask(id, shots, timeline);
       return Response.json({ ok: true, job: updated }, { status: 202 });
     } catch (error) {
       return Response.json({ error: error instanceof Error ? error.message : '重新合成失败' }, { status: 400 });
@@ -148,7 +147,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     });
     if (!variants.length) return Response.json({ error: 'No valid variants' }, { status: 400 });
     try {
-      const rendered = await renderBlueprintVariants(id, variants);
+      const rendered = await renderCloneVariantBatchTask(id, variants);
       return Response.json({ ok: true, results: rendered, plans: rendered.map((item) => item.plan), job: rendered.at(-1)?.job || job });
     } catch (error) {
       return Response.json({ error: error instanceof Error ? error.message : 'Batch variant rendering failed' }, { status: 400 });
@@ -185,7 +184,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           };
         }),
       };
-      const rendered = await renderBlueprintVariant(id, variant);
+      const rendered = await renderCloneVariantTask(id, variant);
       return Response.json({ ok: true, ...rendered });
     } catch (error) {
       return Response.json({ error: error instanceof Error ? error.message : '变体合成失败' }, { status: 400 });

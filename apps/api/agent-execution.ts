@@ -12,6 +12,8 @@ export type CapabilityFollowupOptions = {
   contextMaxChars: number;
   signal: AbortSignal;
   toolRuntime: Pick<ToolRuntime, 'runLoop' | 'executeCalls'>;
+  boundAgentContext: (messages: ToolLoopMessage[], maxChars: number) => ToolLoopMessage[];
+  boundToolResult: (content: string) => string;
   callModel: (input: { messages: ChatMessage[]; tools: unknown[]; step: number }) => Promise<ToolReply>;
   skillTools: readonly unknown[];
   artifactTools: readonly unknown[];
@@ -35,6 +37,8 @@ export type McpCapabilityFollowupOptions = {
   contextMaxChars: number;
   signal: AbortSignal;
   toolRuntime: Pick<ToolRuntime, 'runLoop' | 'executeCalls'>;
+  boundAgentContext: (messages: ToolLoopMessage[], maxChars: number) => ToolLoopMessage[];
+  boundToolResult: (content: string) => string;
   mcpTools: readonly unknown[];
   maxSteps: number;
   maxCalls: number;
@@ -82,6 +86,8 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
     const outcome = await options.toolRuntime.runLoop({
       messages: options.messages,
       contextMaxChars: options.contextMaxChars,
+      boundAgentContext: options.boundAgentContext,
+      boundToolResult: options.boundToolResult,
       maxSteps: 2,
       signal: options.signal,
       callModel: async ({ step, messages }) => options.callModel({ step, messages: messages as ChatMessage[], tools: [...options.skillTools] }),
@@ -97,6 +103,8 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
     const outcome = await options.toolRuntime.runLoop({
       messages: options.messages,
       contextMaxChars: options.contextMaxChars,
+      boundAgentContext: options.boundAgentContext,
+      boundToolResult: options.boundToolResult,
       maxSteps: 2,
       signal: options.signal,
       callModel: async ({ step, messages }) => options.callModel({ step, messages: messages as ChatMessage[], tools: [...options.artifactTools] }),
@@ -119,6 +127,8 @@ export async function runMcpCapabilityFollowup(options: McpCapabilityFollowupOpt
   const outcome = await options.toolRuntime.runLoop({
     messages: options.messages,
     contextMaxChars: options.contextMaxChars,
+    boundAgentContext: options.boundAgentContext,
+    boundToolResult: options.boundToolResult,
     maxSteps: options.maxSteps,
     maxCalls: options.maxCalls,
     deadlineMs: options.deadlineMs,

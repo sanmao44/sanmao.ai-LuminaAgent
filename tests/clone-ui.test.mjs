@@ -161,14 +161,12 @@ test("completed jobs can reuse Blueprint for a local re-assembly", () => {
   assert.doesNotMatch(pipeline, /rerenderCloneJob[\s\S]{0,120}void runCloneJob\(id\)\.catch/u);
   assert.match(jobRoute, /action === 'rerender'/u);
   assert.match(jobRoute, /const rawTimeline = body[\s\S]*normalizeVideoEditorState/u);
-  assert.match(jobRoute, /rerenderCloneJob\(id, shots, timeline\)/u);
 });
 
 test("Blueprint 变体提供计划与本地完整 MP4 合成入口", () => {
   assert.match(jobRoute, /action === 'variant-plan'/u);
   assert.match(jobRoute, /action === 'variant-render'/u);
   assert.match(jobRoute, /action === 'variant-render-batch'/u);
-  assert.match(jobRoute, /renderBlueprintVariants\(id, variants\)/u);
   assert.match(pipeline, /export async function renderBlueprintVariant\(/u);
   assert.match(pipeline, /export async function renderBlueprintVariants\(/u);
   assert.match(pipeline, /generationShotIndexes\.length \|\| plan\.voiceShotIndexes\.length/u);

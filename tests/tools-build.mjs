@@ -10,6 +10,7 @@ const MODULES = [
   'packages/task-runtime/runtime',
   'packages/contracts/task',
   'packages/contracts/storage',
+  'packages/contracts/tool',
   'lib/skills',
   'lib/agent/context-budget',
   'lib/agent/browser-metrics',

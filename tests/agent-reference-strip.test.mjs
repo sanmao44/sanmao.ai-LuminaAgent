@@ -6,6 +6,13 @@ import { createTsRequire } from './ts-require.mjs';
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const planning = createTsRequire(process.cwd())('./packages/agent-core/request-planning');
+const planningPorts = {
+  ...createTsRequire(process.cwd())('./lib/agent-web'),
+  ...createTsRequire(process.cwd())('./lib/agent-intent'),
+  ...createTsRequire(process.cwd())('./lib/agent-context'),
+  ...createTsRequire(process.cwd())('./lib/agent-routing'),
+  ...createTsRequire(process.cwd())('./lib/creative-references'),
+};
 const messageReferences = await readFile(new URL("../components/AgentMessageReferences.tsx", import.meta.url), "utf8");
 
 test("documents and text references are labelled as 引用 instead of 参考图", () => {
@@ -45,7 +52,7 @@ test("agent prompt counts only real image references and preserves text referenc
   const plan = planning.planAgentRequest({ body: { webMode: 'off' }, messages: [{ role: 'user', content: '????', references: [
     { id: 'image', kind: 'image', name: 'img', url: 'data:image/png;base64,x' },
     { id: 'text', kind: 'text', name: 'brief', text: 'caption' },
-  ] }], isCanvasSource: false, isCanvasNodeExecution: false, canvasTargetNodeIds: [], canvasTargetKind: 'none', canvasTargetOperation: 'generate' });
+  ] }], isCanvasSource: false, isCanvasNodeExecution: false, canvasTargetNodeIds: [], canvasTargetKind: 'none', canvasTargetOperation: 'generate', ports: planningPorts });
   assert.equal(plan.latestReferenceImageCount, 1);
   assert.equal(plan.latestRefs.find((reference) => reference.kind === 'text')?.text, 'caption');
 });

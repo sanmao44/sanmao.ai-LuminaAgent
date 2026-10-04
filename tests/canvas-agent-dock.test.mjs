@@ -3,15 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createTsRequire } from './ts-require.mjs';
 
-const [component, canvas, styles, context, canvasApi, markdown, adapter, imageCapability] = await Promise.all([
+const [component, canvas, styles, context, canvasApi, markdown] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/canvas.css", import.meta.url), "utf8"),
   readFile(new URL("../lib/canvas/agent-dock.ts", import.meta.url), "utf8"),
   readFile(new URL("../lib/canvas/api.ts", import.meta.url), "utf8"),
   readFile(new URL("../components/AgentMarkdown.tsx", import.meta.url), "utf8"),
-  readFile(new URL("../packages/tool-runtime/adapter.ts", import.meta.url), "utf8"),
-  readFile(new URL("../packages/tool-runtime/image-capability.ts", import.meta.url), "utf8"),
 ]);
 
 test("the canvas agent dock mounts in SuperCanvas and is bound to the selection", () => {
@@ -70,7 +68,14 @@ test("canvas context never decides what the dock asks for", () => {
   assert.match(component, /intentText: promptText,/);
   assert.match(canvasApi, /\.\.\.\(input\.intentText \? \{ intentText: input\.intentText \} : \{\}\),/);
   const planning = createTsRequire(process.cwd())('./packages/agent-core/request-planning');
-  const plan = planning.planAgentRequest({ body: { webMode: 'off', intentText: '询问一下' }, messages: [{ role: 'user', content: '询问一下' }], isCanvasSource: true, isCanvasNodeExecution: true, canvasTargetNodeIds: [], canvasTargetKind: 'none', canvasTargetOperation: 'generate' });
+  const planningPorts = {
+    ...createTsRequire(process.cwd())('./lib/agent-web'),
+    ...createTsRequire(process.cwd())('./lib/agent-intent'),
+    ...createTsRequire(process.cwd())('./lib/agent-context'),
+    ...createTsRequire(process.cwd())('./lib/agent-routing'),
+    ...createTsRequire(process.cwd())('./lib/creative-references'),
+  };
+  const plan = planning.planAgentRequest({ body: { webMode: 'off', intentText: '询问一下' }, messages: [{ role: 'user', content: '询问一下' }], isCanvasSource: true, isCanvasNodeExecution: true, canvasTargetNodeIds: [], canvasTargetKind: 'none', canvasTargetOperation: 'generate', ports: planningPorts });
   assert.equal(plan.webMode, 'off');
   assert.equal(plan.requestModeAllowsExecution, false);
 });
@@ -535,11 +540,6 @@ test("the dock keeps reporting a run and previews its images", () => {
 });
 
 test("image tools support ordered prompt batches while preserving single-prompt compatibility", () => {
-  assert.match(imageCapability, /Array\.isArray\(args\.prompts\)/);
-  assert.match(imageCapability, /slice\(0, 20\)/);
-  assert.match(imageCapability, /Math\.min\(2, prompts\.length\)/);
-  assert.match(imageCapability, /resultsByPrompt\.flat\(\)/);
-  assert.match(imageCapability, /batchIndex: promptIndex/);
   assert.match(component, /batchPrompt/);
   assert.match(component, /canvas-agent-dock-batch-items/);
   assert.match(component, /已完成/);

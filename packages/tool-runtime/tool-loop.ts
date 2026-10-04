@@ -2,8 +2,6 @@
  * Tool loop application primitive. This is the single implementation of
  * continuation, limits and trace handling for native and MCP tool paths.
  */
-import { boundAgentContext, boundToolResult } from '@/lib/agent/context-budget';
-
 export const TOOL_LOOP_DEFAULT_MAX_STEPS = 4;
 export const TOOL_LOOP_DEFAULT_MAX_CALLS = 12;
 export const TOOL_LOOP_DEFAULT_DEADLINE_MS = 180_000;
@@ -48,6 +46,8 @@ export type RunToolLoopOptions = {
   now?: () => number;
   signal?: AbortSignal;
   contextMaxChars?: number;
+  boundAgentContext?: (messages: ToolLoopMessage[], maxChars: number) => ToolLoopMessage[];
+  boundToolResult?: (content: string) => string;
 };
 
 function callName(call: ToolLoopCall) { return String(call?.function?.name || ''); }
@@ -94,11 +94,12 @@ export async function runToolLoop(options: RunToolLoopOptions): Promise<ToolLoop
     }
     if (toolCallCount + calls.length > maxCalls) { stopReason = 'max_calls'; break; }
     const ordered = options.orderCalls ? options.orderCalls(calls) : calls;
-    const results = (await options.runCalls(ordered, { step })).map((result) => ({ ...result, ...(typeof result.content === 'string' ? { content: boundToolResult(result.content) } : {}) }));
+    const boundResult = options.boundToolResult || ((content: string) => content);
+    const results = (await options.runCalls(ordered, { step })).map((result) => ({ ...result, ...(typeof result.content === 'string' ? { content: boundResult(result.content) } : {}) }));
     const reasoning = typeof reply?.reasoning_content === 'string' && reply.reasoning_content ? { reasoning_content: reply.reasoning_content } : {};
     options.messages.push({ role: 'assistant', content: reply?.content ?? null, tool_calls: calls, ...reasoning }, ...results);
     if (options.contextMaxChars) {
-      const bounded = boundAgentContext(options.messages as never, options.contextMaxChars);
+      const bounded = options.boundAgentContext?.(options.messages, options.contextMaxChars) || options.messages;
       options.messages.splice(0, options.messages.length, ...bounded);
     }
     toolCallCount += calls.length;

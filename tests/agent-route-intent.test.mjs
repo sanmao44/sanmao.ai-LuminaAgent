@@ -19,10 +19,137 @@ function harness(options = {}) {
   const noOp = async () => {};
   const mocks = {
     '@/apps/api/agent-composition': {
+      AGENT_BROWSER_EXECUTION_LIMITS: { maxSteps: 8, maxCalls: 12, toolTimeMs: 120_000, deadlineMs: 180_000, recoveryPrompts: 2 },
+      agentStripNativeSearchProcess: (text) => String(text || ''),
+      createAgentApplicationInfrastructure: () => {
+        const providerApi = mocks['@/lib/providers'];
+        const storeApi = mocks['@/lib/store'];
+        const persistenceApi = mocks['@/lib/generation-log'];
+        const generationPersistenceApi = mocks['@/lib/generation-persistence'];
+        const webApi = mocks['@/lib/web-search'];
+        const nativeSearchApi = mocks['@/lib/native-web-search'];
+        const mcpStoreApi = mocks['@/lib/mcp/store'];
+        const mcpDiscoveryApi = mocks['@/lib/mcp/discovery'];
+        const mcpToolsApi = mocks['@/lib/mcp/tools'];
+        const mcpAdminApi = mocks['@/lib/mcp/admin'];
+        const filesystemRootsApi = mocks['@/lib/mcp/filesystem-roots'];
+        const skillsApi = mocks['@/lib/skills'];
+        return {
+          provider: {
+            chatCompletion: providerApi.chatCompletion,
+            chatCompletionStream: providerApi.chatCompletionStream,
+            describeProviderFailure: providerApi.describeProviderFailure,
+            editImage: providerApi.editImage,
+            generateImage: providerApi.generateImage,
+            imageDownloadAuth: providerApi.imageDownloadAuth,
+          },
+          artifacts: {
+            collectArchiveEntries: async () => [],
+            generateArchiveArtifact: async () => ({ files: [] }),
+            generateDocumentArtifact: async () => ({ files: [] }),
+            generatePresentationArtifact: async () => ({ files: [] }),
+            generateSpreadsheetArtifact: async () => ({ files: [] }),
+            isValidArtifactId: mocks['@/lib/artifacts'].isValidArtifactId,
+            artifactDownloadUrl: (id) => `/api/artifacts/${id}`,
+            getStorageRoots: () => [],
+          },
+          models: {
+            getPublicState: storeApi.getPublicState,
+            getRuntimeImageGenerationModel: storeApi.getRuntimeImageGenerationModel,
+            getRuntimeImageModelCandidates: storeApi.getRuntimeImageModelCandidates,
+            getRuntimeImageModelForCapability: storeApi.getRuntimeImageModelForCapability,
+            getRuntimeModel: storeApi.getRuntimeModel,
+            getRuntimeModelCandidates: async () => [runtime],
+            filterModelsByActiveProviders: (models) => models,
+            getProviderPreset: () => ({ label: 'Test' }),
+          },
+          persistence: {
+            appendGenerationLog: persistenceApi.appendGenerationLog,
+            finishGenerationLog: persistenceApi.finishGenerationLog,
+            startGenerationLog: persistenceApi.startGenerationLog,
+            persistGenerationResult: generationPersistenceApi.persistGenerationResult,
+          },
+          web: {
+            planSearch: webApi.planSearch,
+            searchWeb: async () => ({ query: '', intent: { entities: [] }, results: [], status: 'empty', resultCount: 0, rounds: 0 }),
+          },
+          mcp: {
+            callMcpTool: async () => ({ ok: false, error: 'test MCP tool unavailable' }),
+            MCP_CALL_TIMEOUT_MS: 30_000,
+            MCP_TOOL_MAX_CALLS_PER_TURN: 8,
+            MCP_TURN_TIME_BUDGET_MS: 120_000,
+            MCP_TOOL_SEPARATOR: '__',
+            lazyMcpGroupKeywords: mcpToolsApi.lazyMcpGroupKeywords,
+            loadMcpToolRuntime: mcpToolsApi.loadMcpToolRuntime,
+            mcpServersForTurn: mcpToolsApi.mcpServersForTurn,
+            listMcpServers: mcpStoreApi.listMcpServers,
+            BROWSER_TOOL_GUIDE: '',
+            TABBIT_BROWSER_TOOL_GUIDE: '',
+            BROWSER_EXECUTION_LIMITS: { maxSteps: 8, maxCalls: 12, toolTimeMs: 120_000, deadlineMs: 180_000, recoveryPrompts: 2 },
+            browserExternalBlocker: () => '',
+            browserTextNeedsContinuation: () => false,
+            browserTextSubmissionGap: () => '',
+            guardMcpServerCall: (_meta, args) => ({ ok: true, args }),
+            importBrowserArtifacts: async () => [],
+            shouldImportBrowserArtifacts: () => false,
+            noteRemoteCatalogCallFailure: () => {},
+            noteRemoteCatalogCallSuccess: () => {},
+            listFilesystemRoots: filesystemRootsApi.listFilesystemRoots,
+            listFilesystemWriteRoots: filesystemRootsApi.listFilesystemWriteRoots,
+            recordMcpCall: () => {},
+            summarizeMcpAuditText: (text) => String(text || '').slice(0, 200),
+            runMcpManageAction: mcpAdminApi.runMcpManageAction,
+            isMcpRuntimeAction: () => false,
+            runMcpRuntimeAction: async () => ({ ok: false }),
+            discoverMcpForRequest: mcpDiscoveryApi.discoverMcpForRequest,
+          },
+          browser: {
+            isTabbitCliAvailable: () => false,
+            runTabbitBrowserAction: async () => ({ ok: false, error: 'test browser unavailable' }),
+          },
+          filesystem: {
+            persistImageBuffer: async () => null,
+            importLocalImage: async () => null,
+            isLocalImageRead: () => false,
+            verifyFilesystemMove: async () => ({ ok: false }),
+          },
+          skills: {
+            buildAgentSkillContext: skillsApi.buildAgentSkillContext,
+            createCapabilityPorts: (dataDir) => ({
+              maxCalls: skillsApi.SKILL_TOOL_MAX_CALLS,
+              maxInstalls: skillsApi.SKILL_INSTALL_MAX_PER_REQUEST,
+              searchSkills: (query, skills, limit) => skillsApi.searchSkills(query, [...skills], limit),
+              readSkill: (id, options = {}) => skillsApi.readSkill(id, { ...options, dataDir }),
+              readSkillFile: (id, file, options = {}) => skillsApi.readSkillFile(id, file, { ...options, dataDir }),
+              recordSkillUsage: (id, options = {}) => { skillsApi.recordSkillUsage(id, { ...options, dataDir }); },
+              buildSkillToolContent: (skill, file, offset) => skillsApi.buildSkillToolContent(skill, file, offset),
+              installSkill: (input) => skillsApi.installSkill(input, { dataDir }),
+              installSkillFromDocument: (input) => skillsApi.installSkillFromDocument(input, { dataDir }),
+              fetchSkillText: (source, options) => skillsApi.fetchSkillText(source, options),
+              parseGithubSkillTarget: (source) => skillsApi.parseGithubSkillTarget(source),
+              fetchSkillFilesFromGithub: async () => { throw new Error('test GitHub skill adapter unavailable'); },
+            }),
+            SKILL_TOOL_MAX_CALLS: 8,
+            stripToolCallMarkup: skillsApi.stripToolCallMarkup,
+          },
+          search: {
+            nativeSearchIsEnabled: nativeSearchApi.nativeSearchIsEnabled,
+            runNativeWebSearch: async () => ({ query: '', text: '', citations: [] }),
+            stripNativeSearchProcess: (text) => String(text || ''),
+          },
+          data: { resolveLocalDataDir: () => '/unused-test-data' },
+          health: {
+            orderAgentModelCandidates: (candidates) => candidates,
+            noteAgentModelSuccess: () => {},
+            noteAgentModelFailure: () => {},
+          },
+        };
+      },
       createAgentApplicationComposition: (options) => {
         const providerApi = mocks['@/lib/providers'];
         return {
           observer: { emit() {} },
+          infrastructure: options.infrastructure,
           invokeChatModel: async (payload) => {
             const response = await providerApi.chatCompletion(options.candidates[0].provider, options.candidates[0].model.rawId, payload, options.signal);
             options.onCurrent?.(options.candidates[0]);
@@ -30,6 +157,7 @@ function harness(options = {}) {
           },
           invokeChatModelStream: async (payload) => providerApi.chatCompletionStream(options.candidates[0].provider, options.candidates[0].model.rawId, payload, options.signal),
           invokeSpecificChatModel: async (runtime, payload, signal) => providerApi.chatCompletion(runtime.provider, runtime.model.rawId, payload, signal),
+          invokeCandidateChatModels: async (candidates, payload, signal) => providerApi.chatCompletion(candidates[0].provider, candidates[0].model.rawId, payload, signal),
         };
       },
     },
@@ -86,6 +214,7 @@ function harness(options = {}) {
     '@/lib/image-storage': {},
     '@/lib/artifacts': { isValidArtifactId: () => false },
   };
+  const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
     calls, discoveryCalls, manageCalls, images, imageRuntimeRequests,
@@ -94,7 +223,7 @@ function harness(options = {}) {
         method: 'POST',
         body: JSON.stringify({ messages, webMode: 'off', ...extra }),
       });
-      const output = await application.runAgentApplication({ body: await request.json(), signal: request.signal });
+      const output = await application.runAgentApplication({ body: await request.json(), signal: request.signal }, infrastructure);
       assert.equal(output.kind, 'json', 'harness covers non-stream behavior');
       const data = output.body;
       return data;

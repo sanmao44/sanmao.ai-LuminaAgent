@@ -431,24 +431,37 @@ test('常用技能排在技能索引与检索前面', () => {
   assert.equal(found[0].id, 'often');
 });
 
-test('Agent route uses the skill runtime capability boundary', async () => {
-  const adapter = await readFile(new URL('../packages/tool-runtime/adapter.ts', import.meta.url), 'utf8');
-  const skillTools = await readFile(new URL('../lib/tools/skills.ts', import.meta.url), 'utf8');
-  const capability = await readFile(new URL('../packages/tool-runtime/skill-capability.ts', import.meta.url), 'utf8');
-  assert.match(capability, /fetchSkillFilesFromGithub/);
-  assert.match(skillTools, /name: 'skill_search'/);
-  assert.match(skillTools, /name: 'skill_read'/);
-  assert.match(skillTools, /name: 'skill_install'/);
-  assert.match(skillTools, /offset: \{ type: 'number'/);
-  assert.match(skillTools, /tags: \{ type: 'string'/);
-  assert.match(adapter, /executeSkillCapability\(\{ state: state as AdapterState/);
-  assert.match(capability, /readSkillFile\(skill\.id, filePath, \{ pending: false, offset \}\)/);
-  assert.match(capability, /buildSkillToolContent\(skill, file, offset\)/);
-  assert.match(capability, /recordSkillUsage\(skill\.id, \{ pending: false \}\)/);
-  assert.match(capability, /SKILL_INSTALL_MAX_PER_REQUEST/);
-  assert.match(capability, /SKILL_TOOL_MAX_CALLS/);
-  assert.match(capability, /parsed\.roots\.length > 1/);
-  assert.match(capability, /parsed\.candidates\.slice\(0, 8\)/);
+test('Skill capability uses injected ports for search, read and install', async () => {
+  const { createTsRequire } = await import('./ts-require.mjs');
+  const { executeSkillCapability } = createTsRequire(process.cwd())('./packages/tool-runtime/skill-capability');
+  const skill = { id: 'demo', name: 'Demo', description: 'demo skill', tags: ['demo'], enabled: true, body: 'instructions' };
+  const state = { skillToolCalls: 0, skillInstalls: 0, usedSkills: [] };
+  const calls = [];
+  const ports = {
+    maxCalls: 6,
+    maxInstalls: 2,
+    searchSkills: () => [skill],
+    readSkill: () => skill,
+    readSkillFile: () => null,
+    recordSkillUsage: (id) => calls.push(['usage', id]),
+    buildSkillToolContent: (value) => JSON.stringify({ ok: true, id: value.id, content: value.body }),
+    installSkill: () => ({ ...skill, id: 'installed', name: 'Installed', pending: false }),
+    installSkillFromDocument: () => ({ ...skill, id: 'installed-doc', name: 'Installed document', pending: false }),
+    fetchSkillText: async () => ({ text: '# Demo\ncontent', url: 'https://example.com/skill.md' }),
+    parseGithubSkillTarget: () => null,
+    fetchSkillFilesFromGithub: async () => ({ roots: [], candidates: [], document: '', files: [] }),
+  };
+  const context = { settings: { enabled: true, autoApprove: true }, skills: [skill], pending: [], indexSection: '', toolHint: '' };
+  const signal = new AbortController().signal;
+  const result = await executeSkillCapability({ state, call: { id: 'search-1', function: { name: 'skill_search' } }, args: { query: 'demo' }, skillContext: context, skillPorts: ports, signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
+  assert.deepEqual(JSON.parse(result.content), { ok: true, query: 'demo', resultCount: 1, skills: [{ id: 'demo', name: 'Demo', description: 'demo skill', tags: ['demo'] }], hint: '用 skill_read 读取需要的技能后再执行。' });
+  const read = await executeSkillCapability({ state, call: { id: 'read-1', function: { name: 'skill_read' } }, args: { id: 'demo' }, skillContext: context, skillPorts: ports, signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
+  assert.equal(JSON.parse(read.content).content, 'instructions');
+  assert.deepEqual(calls, [['usage', 'demo']]);
+  const installed = await executeSkillCapability({ state, call: { id: 'install-1', function: { name: 'skill_install' } }, args: { name: 'New skill', body: 'new instructions' }, skillContext: context, skillPorts: ports, signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
+  assert.equal(JSON.parse(installed.content).id, 'installed');
+  assert.equal(state.skillToolCalls, 3);
+  assert.equal(state.skillInstalls, 1);
 });
 
 test('技能接口覆盖列表、导入、待确认与设置', async () => {

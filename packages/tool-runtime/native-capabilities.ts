@@ -1,5 +1,5 @@
-import type { ChatMessage } from '@/lib/providers';
-import type { CanvasPatch } from '@/lib/canvas/patch';
+import type { CanvasPatch } from '../contracts/canvas';
+import type { ChatMessage } from '../contracts/chat';
 
 export type NativeCapabilityResult = {
   message: ChatMessage;

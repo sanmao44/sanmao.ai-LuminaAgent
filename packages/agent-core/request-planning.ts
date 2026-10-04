@@ -1,14 +1,27 @@
-import { extractGithubMcpInstallRequest, resolveAgentWebMode } from '@/lib/agent-web';
-import { agentInstructionText, classifyAgentDeliverable, type AgentDeliverable } from '@/lib/agent-intent';
-import { isBareImageExecution } from '@/lib/agent-context';
-import { classifyAgentRequest, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
-import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import type {
+  AgentContextNeed,
+  AgentDeliverable,
+  AgentIntentContext,
+  AgentIntentDecision,
+  AgentPlanningMessage,
+  AgentRequestDecision,
+  AgentWebMode,
+  CreativeReference,
+} from '../contracts/planning';
 
-export type AgentPlanningMessage = {
-  role: 'user' | 'assistant';
-  content: string;
-  references?: CreativeReference[] | string[];
-  files?: { name: string; content?: string; artifactId?: string }[];
+export type { AgentPlanningMessage } from '../contracts/planning';
+
+export type AgentPlanningPorts = {
+  extractGithubMcpInstallRequest: (input: string, previousAssistantText?: string, previousUserText?: string, previousContextText?: string) => string | null;
+  resolveAgentWebMode: (value: unknown, legacy?: unknown) => AgentWebMode;
+  agentInstructionText: (intentText: unknown, fallback: unknown) => string;
+  classifyAgentDeliverable: (input: string, context?: AgentIntentContext) => AgentIntentDecision;
+  isBareImageExecution: (input: string) => boolean;
+  classifyAgentRequest: (input: string, context?: AgentIntentContext, options?: { webMode?: AgentWebMode; previousAssistant?: string; intent?: AgentIntentDecision }) => AgentRequestDecision;
+  routeNeedsSemanticReview: (decision: AgentRequestDecision) => boolean;
+  routeToolSummary: (decision: AgentRequestDecision) => Record<string, unknown>;
+  selectAgentContextMessages: (messages: AgentPlanningMessage[], need: AgentContextNeed) => AgentPlanningMessage[];
+  normalizeCreativeReferences: (input: unknown, max?: number) => CreativeReference[];
 };
 
 export type AgentRequestPlanningInput = {
@@ -19,13 +32,14 @@ export type AgentRequestPlanningInput = {
   canvasTargetNodeIds: readonly string[];
   canvasTargetKind: string;
   canvasTargetOperation: string;
+  ports: AgentPlanningPorts;
 };
 
 export function planAgentRequest(input: AgentRequestPlanningInput) {
-  const { body, messages, isCanvasSource, isCanvasNodeExecution, canvasTargetNodeIds, canvasTargetOperation } = input;
+  const { body, messages, isCanvasSource, isCanvasNodeExecution, canvasTargetNodeIds, canvasTargetOperation, ports } = input;
   const latest = [...messages].reverse().find((message) => message.role === 'user');
-  const latestRefs = normalizeCreativeReferences(latest?.references, 16);
-  const latestInstruction = agentInstructionText(body.intentText, latest?.content || '');
+  const latestRefs = ports.normalizeCreativeReferences(latest?.references, 16);
+  const latestInstruction = ports.agentInstructionText(body.intentText, latest?.content || '');
   const previousImagePlan = [...messages.slice(0, -1)].reverse().find((message) => message.role === 'assistant'
     && /(?:^|\n)\s*1[\.\u3002\u3001)]/.test(message.content)
     && extractBatchPrompts(message.content).length >= 2);
@@ -34,7 +48,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     .map((reference) => reference.text || '')
     .find((text) => extractBatchPrompts(text).length >= 2) || '';
   const batchPlanContent = selectedTextBatchPlan || previousImagePlan?.content || '';
-  const intentDecision = classifyAgentDeliverable(latestInstruction, {
+  const intentDecision = ports.classifyAgentDeliverable(latestInstruction, {
     messages: messages.slice(0, -1),
     hasReferences: latestRefs.length > 0,
     hasFiles: Boolean(latest?.files?.length),
@@ -43,7 +57,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   const previousUserForGithubInstall = [...messages].slice(0, -1).reverse().find((message) => message.role === 'user')?.content || '';
   const previousContextForGithubInstall = messages.slice(0, -1).map((message) => message.content).join('\n');
   const directGithubMcpRepo = !isCanvasNodeExecution
-    ? extractGithubMcpInstallRequest(latestInstruction, previousAssistantForRouting, previousUserForGithubInstall, previousContextForGithubInstall)
+    ? ports.extractGithubMcpInstallRequest(latestInstruction, previousAssistantForRouting, previousUserForGithubInstall, previousContextForGithubInstall)
     : null;
   const canvasTargetExecution = isCanvasSource
     && body.executionMode === 'agent-dock'
@@ -54,12 +68,12 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     && Boolean(latestInstruction.trim());
   let requestModeAllowsExecution = intentDecision.mode === 'execute'
     || intentDecision.mode === 'follow_up'
-    || Boolean(previousImagePlan && isBareImageExecution(latestInstruction))
+    || Boolean(previousImagePlan && ports.isBareImageExecution(latestInstruction))
     || Boolean(directGithubMcpRepo)
     || canvasTargetExecution;
-  const webMode = isCanvasNodeExecution ? 'off' : resolveAgentWebMode(body.webMode, body.webSearch);
+  const webMode = isCanvasNodeExecution ? 'off' : ports.resolveAgentWebMode(body.webMode, body.webSearch);
   const routingStartedAt = Date.now();
-  const requestRoute = classifyAgentRequest(latestInstruction, {
+  const requestRoute = ports.classifyAgentRequest(latestInstruction, {
     messages: messages.slice(0, -1),
     hasReferences: latestRefs.length > 0,
     hasFiles: Boolean(latest?.files?.length),
@@ -67,17 +81,17 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   const routerMs = Date.now() - routingStartedAt;
   const latestMessage = messages[messages.length - 1]!;
   const modelContextMessages = [
-    ...selectAgentContextMessages(messages.slice(0, -1), requestRoute.contextNeed),
+    ...ports.selectAgentContextMessages(messages.slice(0, -1), requestRoute.contextNeed),
     latestMessage,
   ];
-  const routeSummary = requestRoute.needsTools || routeNeedsSemanticReview(requestRoute)
-    ? routeToolSummary(requestRoute)
+  const routeSummary = requestRoute.needsTools || ports.routeNeedsSemanticReview(requestRoute)
+    ? ports.routeToolSummary(requestRoute)
     : { route: requestRoute.route, contextNeed: requestRoute.contextNeed, shouldSearch: requestRoute.web.shouldSearch };
   const hasExplicitDeliverable = ['IMAGE', 'TEXT', 'BOTH', 'CLARIFY', 'OTHER'].includes(String(body.deliverable));
   let requestedDeliverable: AgentDeliverable = requestModeAllowsExecution && hasExplicitDeliverable
     ? body.deliverable as AgentDeliverable
     : requestRoute.intent.deliverable;
-  if (previousImagePlan && isBareImageExecution(latestInstruction) && requestModeAllowsExecution) requestedDeliverable = 'IMAGE';
+  if (previousImagePlan && ports.isBareImageExecution(latestInstruction) && requestModeAllowsExecution) requestedDeliverable = 'IMAGE';
   let requestedIntentReason = hasExplicitDeliverable && typeof body.intentReason === 'string' && body.intentReason.trim()
     ? body.intentReason.trim().slice(0, 320)
     : requestRoute.intent.reason;

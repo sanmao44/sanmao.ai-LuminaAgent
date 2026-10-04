@@ -6,15 +6,15 @@ Last reviewed: 2026-10-04
 | --- | --- | --- | --- |
 | Storage | cutover completed | Repository ports and SQLite adapter | JSON, IndexedDB, localStorage and filesystem adapters remain for compatibility or migration; delete after callers reach zero |
 | Backup / Restore | cutover completed | Backup application service and canonical `client/client.json` | Buffer/local snapshot compatibility remains until callers migrate |
-| Database | cutover completed | SQLite after guarded activation and restart | Legacy JSON is migration/rollback input; remove after compatibility and reverse migration callers reach zero |
-| Agent | migration in progress | HTTP transport plus Agent Application and runtime ports | Context, policy and capability compatibility adapters remain; remove after tested port cutover |
-| Provider | migration in progress | Provider coordinator and model runtime | SDK/media adapters remain; remove after provider ports cover production paths |
-| Tool / MCP | migration in progress | Tool Runtime and capability ports | `adapter.ts` remains bounded compatibility dispatch; remove each binding after port cutover |
-| Task / Worker | migration in progress | Worker task entry/control/lifecycle | Family-specific polling, retry creation and persistence adapters remain |
+| Database | cutover completed | SQLite after guarded activation and restart | Legacy JSON is read-only migration/rollback input; remove after compatibility and reverse-migration callers reach zero |
+| Agent | cutover completed | Thin HTTP transport, Agent Application and injected composition/runtime ports | Bounded legacy helpers remain behind composition; remove after all callers use the application/port boundary |
+| Provider | cutover completed | Provider Coordinator and Model Runtime | SDK, HTTP and media adapters remain; remove after the corresponding provider ports replace their calls |
+| Tool / MCP | cutover completed | Tool Runtime and capability ports | `adapter.ts` is the single compatibility bridge; remove after direct capability registration covers all production callers |
+| Task / Worker | cutover completed | Worker task entry/control/lifecycle | Video, Upscale and Clone family services remain Worker-only execution/provider/persistence adapters; remove after task ports replace them |
 | Canvas | cutover completed | CanvasCore | UI projection and persistence adapters remain |
-| Physical boundary | migration in progress | Modular Next Monolith with in-process worker dispatch | No standalone Web/API/Worker deployables are claimed |
-| Observability | migration in progress | RuntimeObserver plus redacted JSONL sink and query endpoint | Broader media/task coverage and long-term export remain |
-| Eval | migration in progress | Behavior suite and architecture evals | Expand with each ownership cutover |
+| Physical boundary | settled | Modular Next Monolith with in-process worker dispatch | Separate Web/API/Worker deployables are intentionally deferred until deployment needs justify them |
+| Observability | operational | RuntimeObserver plus redacted JSONL sink and query endpoint | Lightweight pre-lock baseline is sufficient; broader export remains product hardening, not an ownership blocker |
+| Eval | operational baseline | Behavior suite and architecture evals | Add coverage with future product changes; current critical ownership paths are covered |
 
 ## Data safety
 

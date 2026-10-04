@@ -1,52 +1,43 @@
-import { executeMcpManageCapability, executeMcpCapability, executeTabbitCapability } from './mcp-capability';
-import type { ChatMessage } from '@/lib/providers';
-import type { CanvasPatch } from '@/lib/canvas/patch';
-import type { ToolPolicyDecision } from '@/lib/tools/policy';
+import { executeMcpManageCapability, executeMcpCapability, executeTabbitCapability, type McpCapabilityPorts } from './mcp-capability';
+import type { CanvasPatch } from '../contracts/canvas';
+import type { ChatMessage } from '../contracts/chat';
+import type { SkillCapabilityPorts, SkillContext } from '../contracts/skill';
+import type { ToolPolicyDecision } from '../contracts/tool';
 import type { ToolRuntimeCall } from './runtime';
 import type { RuntimeObserver } from '../contracts/observability';
-import type { ToolRuntimeState, ToolCall, GeneratedFile, RuntimeImage } from './capability-state';
+import type { ToolRuntimeState, ToolCall, GeneratedFile } from './capability-state';
 import { executeCanvasCapability, executeFileCapability, executeWebCapability } from './native-capabilities';
-import { executeImageCapability } from './image-capability';
+import { executeImageCapability, type ImageCapabilityPorts } from './image-capability';
 import { executeSkillCapability } from './skill-capability';
 import { executeArtifactCapability, type ArtifactCapabilityInfrastructure } from './artifact-capability';
-type TabbitResult = { ok: boolean; response?: unknown; error?: unknown };
-type McpMeta = { serverId: string; serverName: string; toolName: string; readOnly: boolean; blocked: boolean };
-type McpServer = Parameters<typeof import('./mcp-executor').executeMcpTool>[0]['server'];
-type AdapterState = ToolRuntimeState & Record<string, unknown>;
-export type ToolExecutionAdapterBindings = {
+export interface ToolExecutionAdapterBindings {
   observer?: RuntimeObserver;
-  toolExecutionKind: (name: unknown, tools: readonly unknown[]) => string | null; mcpTools: readonly unknown[]; reportToolProgress: (patch: unknown) => void; agentToolProgress: (kind: unknown, name: string) => unknown;
-  webDecision: { query?: string }; latest?: { content?: unknown }; requestController: AbortController; searchWeb: (query: string, signal: AbortSignal) => Promise<unknown>; formatWebSearchContext: (data: unknown) => string;
-  normalizeGeneratedFile: (raw: unknown, index: number) => GeneratedFile | null; skillContext: import('@/lib/skills').SkillContext; skillInstaller: { kind: 'agent'; name: string; detail: string }; canvasDocument?: unknown; parseToolArguments: (raw?: string) => unknown;
-  validateCanvasPatch: (document: unknown, patch: CanvasPatch) => { ok: true } | { ok: false; error: string; operationIndex?: number }; agentRunId?: string; MCP_MANAGE_LABELS: Record<string, string>; isMcpRuntimeAction: (action: string) => boolean;
-  runMcpRuntimeAction: (action: string, options: Record<string, unknown>) => Promise<{ result: Record<string, unknown> }>; latestInstruction?: string; runMcpManageAction: (args: Record<string, unknown>, options: Record<string, unknown>) => Promise<{ result: Record<string, unknown> }>;
-  executionPublicState: { settings: { imageStoragePath?: string } }; runTabbitBrowserAction: (args: Record<string, unknown>, options: { signal?: AbortSignal }) => Promise<TabbitResult>; mcpToolCallLimit: number;
-  browserMetrics: { record: (name: string, ok: boolean, text: string, durationMs: number) => string }; auditMcpCall: (meta: Omit<McpMeta, 'blocked'>, details: Record<string, unknown>) => void; mcpServerById: Map<string, McpServer>; browserMutationBatches: WeakSet<object>;
-  mcpTurnBudgetLimit: number; mcpFilesystemRoots: readonly string[]; localDataDir?: string; persistImageBuffer: (bytes: Buffer, contentType: string, configuredPath?: string) => Promise<{ url: string }>;
-  mcpRepeatTracker: Map<string, { count: number; text: string }>; agentTurnStartedAt: number; ARTIFACT_MAX_PER_TURN: number; appendPageContext: (current: string, source: string, text: string) => string; reportProgress: (patch: unknown) => void;
-  imageToolsAllowed: boolean; batchPlanContent?: string; isBareImageExecution: (input: string) => boolean; extractBatchPrompts: (content: string) => string[]; fallbackImagePrompt: string; requestedImageCapability?: 'generate' | 'edit'; latestRefs: readonly Record<string, unknown>[];
-  trackedChatCompletion: (provider: unknown, model: string, payload: Record<string, unknown>, signal?: AbortSignal) => Promise<{ choices?: Array<{ message?: { content?: unknown } }> } | null>; agentRuntime: { provider: unknown; model: { rawId: string } }; requestedAgentImageModelId?: string;
-  imageModels: readonly { id?: string; capabilities?: readonly string[] }[]; getRuntimeImageGenerationModel: (id?: string | null) => Promise<{ provider: unknown; model: { id: string; rawId: string; displayName: string } } | null>; getRuntimeImageModelForCapability: (id: string | null | undefined, capability: string) => Promise<{ provider: unknown; model: { id: string; rawId: string; displayName: string } } | null>;
-  appendGenerationLog: (log: Record<string, unknown>) => Promise<void>; sourceForLog: string; taskContext: Record<string, unknown>; startGenerationLog: (log: Record<string, unknown>) => Promise<string>; referenceRecords: readonly Record<string, unknown>[];
-  getRuntimeImageModelCandidates: (id: string, capability: string) => readonly RuntimeImage[];
-  editImage: (provider: unknown, model: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<RuntimeImage[]>; generateImage: (provider: unknown, model: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<RuntimeImage[]>;
-  persistGenerationResult: (options: Record<string, unknown>) => Promise<{ images: RuntimeImage[] }>; imageDownloadAuth: (provider: unknown) => unknown; finishGenerationLog: (id: string, patch: Record<string, unknown>) => Promise<void>;
-  imageStoragePath?: string;
-  mcpCall: import('./mcp-capability').McpCapabilityInfrastructure['call']; mcpCallTimeoutMs: number;
-  importBrowserArtifacts: import('./mcp-capability').McpCapabilityInfrastructure['importBrowserArtifacts'];
-  shouldImportBrowserArtifacts: import('./mcp-capability').McpCapabilityInfrastructure['shouldImportBrowserArtifacts'];
-  noteRemoteCatalogCallFailure: import('./mcp-capability').McpCapabilityInfrastructure['noteRemoteCatalogCallFailure'];
-  noteRemoteCatalogCallSuccess: import('./mcp-capability').McpCapabilityInfrastructure['noteRemoteCatalogCallSuccess'];
-  importLocalImage: import('./mcp-capability').McpCapabilityInfrastructure['importLocalImage']; isLocalImageRead: import('./mcp-capability').McpCapabilityInfrastructure['isLocalImageRead'];
-  verifyFilesystemMove: import('./mcp-capability').McpCapabilityInfrastructure['verifyFilesystemMove']; browserToolName: import('./mcp-capability').McpCapabilityInfrastructure['browserToolName']; isBrowserMutationTool: import('./mcp-capability').McpCapabilityInfrastructure['isBrowserMutationTool'];
+  toolExecutionKind(name: unknown, tools: readonly unknown[]): string | null;
+  mcpTools: readonly unknown[];
+  reportToolProgress(patch: unknown): void;
+  agentToolProgress(kind: unknown, name: string): unknown;
+  webDecision: { query?: string };
+  latest?: { content?: unknown };
+  requestController: AbortController;
+  searchWeb(query: string, signal: AbortSignal): Promise<unknown>;
+  formatWebSearchContext(data: unknown): string;
+  normalizeGeneratedFile(raw: unknown, index: number): GeneratedFile | null;
+  skillContext: SkillContext;
+  skillPorts?: SkillCapabilityPorts;
+  skillInstaller: { kind: 'agent'; name: string; detail: string };
+  canvasDocument?: unknown;
+  parseToolArguments(raw?: string): unknown;
+  mcpPorts: McpCapabilityPorts;
+  imagePorts: ImageCapabilityPorts;
   artifactInfrastructure: ArtifactCapabilityInfrastructure;
-};
+  validateCanvasPatch(document: unknown, patch: CanvasPatch): { ok: true } | { ok: false; error: string; operationIndex?: number };
+  agentRunId?: string | null;
+  executionPublicState: { settings: { imageStoragePath?: string } };
+}
 export type ToolCallRun = { results: ChatMessage[]; deferred?: true; stalled?: true };
-export type ToolExecutionAdapterDependencies = { state: Record<string, unknown> } & Record<string, unknown>;
+export type ToolExecutionAdapterDependencies = ToolExecutionAdapterBindings & { state: ToolRuntimeState };
 export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDependencies) {
-  const state = dependencies.state as AdapterState;
-  const { state: _state, ...deps } = dependencies;
-  const { observer, toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, skillContext, skillInstaller, canvasDocument, parseToolArguments, validateCanvasPatch, agentRunId, MCP_MANAGE_LABELS, isMcpRuntimeAction, runMcpRuntimeAction, latestInstruction, runMcpManageAction, executionPublicState, runTabbitBrowserAction, mcpToolCallLimit, browserMetrics, auditMcpCall, mcpServerById, browserMutationBatches, mcpTurnBudgetLimit, mcpFilesystemRoots, localDataDir, persistImageBuffer, mcpRepeatTracker, agentTurnStartedAt, ARTIFACT_MAX_PER_TURN, appendPageContext, reportProgress, imageToolsAllowed, batchPlanContent, isBareImageExecution, extractBatchPrompts, fallbackImagePrompt, requestedImageCapability, latestRefs, trackedChatCompletion, agentRuntime, requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel, getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog, referenceRecords, getRuntimeImageModelCandidates, editImage, generateImage, persistGenerationResult, imageDownloadAuth, finishGenerationLog, imageStoragePath, mcpCall, mcpCallTimeoutMs, importBrowserArtifacts, shouldImportBrowserArtifacts, noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess, importLocalImage, isLocalImageRead, verifyFilesystemMove, browserToolName, isBrowserMutationTool, artifactInfrastructure } = deps as unknown as ToolExecutionAdapterBindings;
+  const { state, observer, toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, skillContext, skillPorts, skillInstaller, canvasDocument, parseToolArguments, validateCanvasPatch, imagePorts, mcpPorts, artifactInfrastructure, agentRunId, executionPublicState } = dependencies;
   return async (input: { call: ToolRuntimeCall; policy: ToolPolicyDecision; args: Record<string, unknown>; executionContext?: unknown }): Promise<ToolCallRun> => {
     const { call, policy, args } = input;
     const executionContext = input.executionContext as { stepCalls: readonly ToolCall[]; callIndex: number } | undefined;
@@ -87,7 +78,7 @@ export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDep
         return { results };
       }
       if (kind === 'skill') {
-        results.push(await executeSkillCapability({ state: state as AdapterState & { skillToolCalls: number; skillInstalls: number; generatedArtifactCount: number; usedSkills: Array<{ id: string; name: string }> }, call, args, skillContext, signal: requestController.signal, installer: skillInstaller, parseToolArguments }));
+        results.push(await executeSkillCapability({ state, call, args, skillContext, skillPorts, signal: requestController.signal, installer: skillInstaller, parseToolArguments }));
         return { results };
       }
       if (kind === 'canvas') {
@@ -98,151 +89,18 @@ export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDep
           canvasDocument,
           parseToolArguments: () => parseToolArguments(call.function?.arguments),
           validateCanvasPatch,
-          runId: agentRunId,
+          runId: agentRunId || undefined,
         });
         if (execution.canvasPatch) canvasPatch = execution.canvasPatch;
         results.push(execution.message);
         return { results };
       }
-      if (kind === 'mcp-manage') return executeMcpManageCapability({
-          state,
-          call,
-          policy,
-          args,
-          stepCalls,
-          callIndex,
-          observer,
-          requestController,
-          agentRunId,
-          latestInstruction,
-          MCP_MANAGE_LABELS,
-          isMcpRuntimeAction,
-          runMcpRuntimeAction,
-          runMcpManageAction,
-          executionPublicState,
-          runTabbitBrowserAction,
-          mcpToolCallLimit,
-          mcpTurnBudgetLimit,
-          browserMetrics,
-          auditMcpCall,
-          mcpServerById,
-          browserMutationBatches,
-          mcpFilesystemRoots,
-          localDataDir,
-          persistImageBuffer,
-          mcpRepeatTracker,
-          agentTurnStartedAt,
-          ARTIFACT_MAX_PER_TURN,
-          appendPageContext,
-          reportProgress,
-          mcpCall,
-          mcpCallTimeoutMs,
-          importBrowserArtifacts,
-          shouldImportBrowserArtifacts,
-          noteRemoteCatalogCallFailure,
-          noteRemoteCatalogCallSuccess,
-          importLocalImage,
-          isLocalImageRead,
-          verifyFilesystemMove,
-          browserToolName,
-          isBrowserMutationTool,
-        });
-      if (kind === 'tabbit') return executeTabbitCapability({
-          state,
-          call,
-          policy,
-          args,
-          stepCalls,
-          callIndex,
-          observer,
-          requestController,
-          agentRunId,
-          latestInstruction,
-          MCP_MANAGE_LABELS,
-          isMcpRuntimeAction,
-          runMcpRuntimeAction,
-          runMcpManageAction,
-          executionPublicState,
-          runTabbitBrowserAction,
-          mcpToolCallLimit,
-          mcpTurnBudgetLimit,
-          browserMetrics,
-          auditMcpCall,
-          mcpServerById,
-          browserMutationBatches,
-          mcpFilesystemRoots,
-          localDataDir,
-          persistImageBuffer,
-          mcpRepeatTracker,
-          agentTurnStartedAt,
-          ARTIFACT_MAX_PER_TURN,
-          appendPageContext,
-          reportProgress,
-          mcpCall,
-          mcpCallTimeoutMs,
-          importBrowserArtifacts,
-          shouldImportBrowserArtifacts,
-          noteRemoteCatalogCallFailure,
-          noteRemoteCatalogCallSuccess,
-          importLocalImage,
-          isLocalImageRead,
-          verifyFilesystemMove,
-          browserToolName,
-          isBrowserMutationTool,
-        });
-      if (kind === 'mcp') return executeMcpCapability({
-          state,
-          call,
-          policy,
-          args,
-          stepCalls,
-          callIndex,
-          observer,
-          requestController,
-          agentRunId,
-          latestInstruction,
-          MCP_MANAGE_LABELS,
-          isMcpRuntimeAction,
-          runMcpRuntimeAction,
-          runMcpManageAction,
-          executionPublicState,
-          runTabbitBrowserAction,
-          mcpToolCallLimit,
-          mcpTurnBudgetLimit,
-          browserMetrics,
-          auditMcpCall,
-          mcpServerById,
-          browserMutationBatches,
-          mcpFilesystemRoots,
-          localDataDir,
-          persistImageBuffer,
-          mcpRepeatTracker,
-          agentTurnStartedAt,
-          ARTIFACT_MAX_PER_TURN,
-          appendPageContext,
-          reportProgress,
-          mcpCall,
-          mcpCallTimeoutMs,
-          importBrowserArtifacts,
-          shouldImportBrowserArtifacts,
-          noteRemoteCatalogCallFailure,
-          noteRemoteCatalogCallSuccess,
-          importLocalImage,
-          isLocalImageRead,
-          verifyFilesystemMove,
-          browserToolName,
-          isBrowserMutationTool,
-        });
+      if (kind === 'mcp-manage') return executeMcpManageCapability({ ...mcpPorts, state, call, policy, args, stepCalls, callIndex });
+      if (kind === 'tabbit') return executeTabbitCapability({ ...mcpPorts, state, call, policy, args, stepCalls, callIndex });
+      if (kind === 'mcp') return executeMcpCapability({ ...mcpPorts, state, call, policy, args, stepCalls, callIndex });
       if (kind === 'image') {
         return executeImageCapability({
-          state, call, args, results, observer, latest, requestController, imageToolsAllowed,
-          batchPlanContent, isBareImageExecution, extractBatchPrompts, fallbackImagePrompt,
-          requestedImageCapability, latestRefs, trackedChatCompletion, agentRuntime,
-          requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel,
-          getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext,
-          startGenerationLog, referenceRecords, getRuntimeImageModelCandidates,
-          editImage, generateImage, persistGenerationResult, imageDownloadAuth, finishGenerationLog,
-          latestInstruction, agentRunId, executionPublicState,
+          state, call, args, results, ports: imagePorts,
         });
       }
       Object.assign(state, { webSearchData, webSearchError, generatedFiles, canvasPatch, mcpToolCallCount, mcpTurnBudget, usedMcpTools, browserUses, browserRecoveryNeeded, generated, browserDownloadCount, stalledMcpReason, preparedCaption, batchItems, generations, recentPageText });

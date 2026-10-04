@@ -26,6 +26,13 @@ test('API application entry executes a provider-neutral AgentRun', async () => {
 
 test('Agent planning boundary produces a stable execution plan without transport dependencies', () => {
   const { planAgentRequest } = load('./packages/agent-core/request-planning');
+  const planningPorts = {
+    ...load('./lib/agent-web'),
+    ...load('./lib/agent-intent'),
+    ...load('./lib/agent-context'),
+    ...load('./lib/agent-routing'),
+    ...load('./lib/creative-references'),
+  };
   const plan = planAgentRequest({
     body: { webMode: 'off' },
     messages: [{ role: 'user', content: 'hello' }],
@@ -34,6 +41,7 @@ test('Agent planning boundary produces a stable execution plan without transport
     canvasTargetNodeIds: [],
     canvasTargetKind: 'none',
     canvasTargetOperation: 'generate',
+    ports: planningPorts,
   });
   assert.equal(plan.requestRoute.route, 'chat');
   assert.equal(plan.requestModeAllowsExecution, false);
@@ -143,6 +151,25 @@ test('Worker exposes execution dispatch and clone cancellation is an explicit li
   assert.equal(patch?.stage, 'cancelled');
   assert.equal(patch?.cancelRequested, true);
   assert.equal(cloneCancellationPatch({ id: 'clone-2', stage: 'done' }), null);
+});
+
+test('Worker owns clone reassembly and Blueprint variant execution boundaries', async () => {
+  const { rerenderCloneTask, renderCloneVariantTask, renderCloneVariantBatchTask } = load('./apps/worker/task-entry');
+  const { BufferedRuntimeObserver } = load('./packages/contracts/observability');
+  const calls = [];
+  const reassemblyObserver = new BufferedRuntimeObserver();
+  const variantObserver = new BufferedRuntimeObserver();
+  const batchObserver = new BufferedRuntimeObserver();
+  const reassembled = await rerenderCloneTask('clone-reassembly', undefined, undefined, async (id) => { calls.push(`reassembly:${id}`); return { id, mode: 'reassembly' }; }, reassemblyObserver);
+  const variant = await renderCloneVariantTask('clone-variant', { id: 'v1', name: 'V1', overrides: [] }, async (id, spec) => { calls.push(`variant:${id}:${spec.id}`); return { id, mode: 'variant' }; }, variantObserver);
+  const batch = await renderCloneVariantBatchTask('clone-batch', [{ id: 'v1', name: 'V1', overrides: [] }], async (id, specs) => { calls.push(`batch:${id}:${specs.length}`); return [{ id, mode: 'batch' }]; }, batchObserver);
+  assert.deepEqual(calls, ['reassembly:clone-reassembly', 'variant:clone-variant:v1', 'batch:clone-batch:1']);
+  assert.equal(reassembled.mode, 'reassembly');
+  assert.equal(variant.mode, 'variant');
+  assert.equal(batch[0].mode, 'batch');
+  assert.deepEqual(reassemblyObserver.snapshot().map((event) => `${event.identity}:${event.phase}`), ['clone:started', 'clone:completed']);
+  assert.deepEqual(variantObserver.snapshot().map((event) => `${event.identity}:${event.phase}`), ['clone:started', 'clone:completed']);
+  assert.deepEqual(batchObserver.snapshot().map((event) => `${event.identity}:${event.phase}`), ['clone:started', 'clone:completed']);
 });
 
 test('Worker task boundaries execute video and upscale runners with lifecycle events', async () => {

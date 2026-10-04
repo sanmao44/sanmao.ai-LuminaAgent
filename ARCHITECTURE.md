@@ -10,13 +10,13 @@ SANMAO.AI is a Modular Next Monolith. The Next host contains the web UI, HTTP tr
 
 - Storage: cutover completed. Repository ports and SQLite are authoritative for server business data. Legacy JSON remains only for migration, compatibility and rollback.
 - Backup / Restore: cutover completed. Restore is staged and transactional. New archives use one canonical client representation and versioned schema migration.
-- Database: cutover completed. SQLite is authoritative after guarded activation and restart. Legacy database compatibility removal remains migration in progress.
-- Agent: migration in progress. HTTP route is transport only. Application execution consumes the composition root and runtime ports; context, policy and capability adapters remain bounded migration work.
-- Provider: migration in progress. Provider coordinator owns candidate ordering, failover, deadlines and attempt lifecycle. SDK and media transports remain adapters.
-- Tool: migration in progress. Tool Runtime owns policy, resolution, dispatch and loop execution. The adapter is a bounded compatibility dispatcher for capabilities that have not fully moved to ports.
-- Task: migration in progress. Worker task entry/control/lifecycle own migrated task lifecycle seams; family-specific polling and persistence adapters remain.
+- Database: cutover completed. SQLite is authoritative after guarded activation and restart. Legacy JSON is read-only migration/rollback input; remove it after compatibility and reverse-migration callers reach zero.
+- Agent: core cutover completed. The HTTP route is transport only; Agent Application owns planning, execution lifecycle and application output; `agent-composition.ts` owns concrete composition and injects runtime/capability ports. Remove compatibility aliases after all callers use the application and port boundaries.
+- Provider: core cutover completed. Provider Coordinator is the only owner of candidate ordering, routing, failover, deadlines and attempt lifecycle. SDK, HTTP and media implementations remain infrastructure adapters and may be deleted after their port implementations replace the underlying legacy calls.
+- Tool: core cutover completed. Tool Runtime is the only execution authority and the capability modules depend on ports. `adapter.ts` remains a bounded application-to-capability compatibility bridge until every production caller registers capabilities directly with Tool Runtime.
+- Task: core cutover completed. Worker task entry/control/lifecycle are the only task lifecycle authority for Clone, Video and Upscale. Family services and Clone pipeline remain Worker-only execution/provider/persistence adapters; delete their compatibility entry points after those adapters are replaced by task ports.
 - Canvas Document / History / Selection: cutover completed. CanvasCore is authoritative.
-- Observability: migration in progress. Structured redacted JSONL sink and read-only query endpoint are active.
+- Observability: operational pre-lock baseline. Agent, Tool/MCP, Provider, Task, database and backup events use redacted observers and a queryable local sink; secrets, full prompts, arguments and private file contents are excluded.
 - Final Architecture Lock: not started.
 
 ## Dependency direction

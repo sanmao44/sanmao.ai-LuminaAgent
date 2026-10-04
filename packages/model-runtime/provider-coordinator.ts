@@ -109,6 +109,44 @@ export class ProviderCoordinator<T extends ProviderRuntime> {
       onFailure: this.options.health?.onFailure,
     });
   }
+  /** Run a capability-specific candidate set through the authoritative provider policy. */
+  async invokeCandidates<TResponse>(
+    candidates: readonly T[],
+    signal: AbortSignal,
+    operation: (runtime: T, callSignal: AbortSignal) => Promise<TResponse>,
+  ) {
+    const primary = candidates[0];
+    if (!primary) throw new Error('No provider candidate available');
+    const ordered = [primary, ...(this.options.health?.order(candidates.slice(1)) || candidates.slice(1))];
+    let index = 0;
+    return invokeProviderWithFailover({
+      current: () => ordered[index]!,
+      canFailover: ordered.length > 1,
+      advance: () => {
+        if (index >= ordered.length - 1) return false;
+        const previous = ordered[index]!;
+        index += 1;
+        const next = ordered[index]!;
+        this.options.reportFallback?.(previous, next);
+        return true;
+      },
+      signal,
+      operation: (runtime, callSignal) => withProviderResponseDeadline({
+        signal,
+        timeoutMs: this.options.failoverTimeoutMs,
+        idleTimeoutMs: this.options.idleTimeoutMs,
+        operation: (deadlineSignal) => operation(runtime, deadlineSignal || callSignal),
+        timeoutError: this.options.timeoutError,
+      }),
+      isCancelled: this.options.isCancelled,
+      identity: (runtime) => runtime.provider.name,
+      operationIdPrefix: this.options.operationIdPrefix,
+      observer: this.options.observer,
+      nextAttempt: this.options.nextAttempt,
+      onSuccess: this.options.health?.onSuccess,
+      onFailure: this.options.health?.onFailure,
+    });
+  }
 }
 
 export function createProviderCoordinator<T extends ProviderRuntime>(options: ProviderCoordinatorOptions<T>) {
