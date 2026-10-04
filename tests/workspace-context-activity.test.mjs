@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildLibModules } from './lib-build.mjs';
+import { createTsRequire } from './ts-require.mjs';
 
 const { load } = await buildLibModules([
   'lib/workspace-context',
@@ -14,7 +15,10 @@ const context = await load('workspace-context');
 const activity = await load('adapters');
 const runContext = await load('run-context');
 const provenance = await load('normalize');
-const { prepareAgentRequestContext } = await import('../packages/agent-core/request-context.ts');
+// 不能直接 import .ts：本地 Node 24 默认剥离类型，但 CI 的 Node 22.13 会报 ERR_UNKNOWN_FILE_EXTENSION。
+// 用仓库统一的 TS 转译加载器，行为与其它测试一致。
+const loadTs = createTsRequire(process.cwd());
+const { prepareAgentRequestContext } = loadTs('./packages/agent-core/request-context');
 
 test('workspace context keeps a stable local scope and normalizes persisted values', () => {
   const values = new Map();
