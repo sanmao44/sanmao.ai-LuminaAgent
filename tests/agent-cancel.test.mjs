@@ -7,7 +7,7 @@ const root = new URL('..', import.meta.url);
 const read = (path) => readFile(new URL(path, root), 'utf8');
 const [page, route, history, providers, nativeSearch, webSearch, styles] = await Promise.all([
   read('app/page.tsx'),
-  read('app/api/agent/route.ts'),
+  read('apps/api/agent-application.ts'),
   read('lib/client-history.ts'),
   read('lib/providers.ts'),
   read('lib/native-web-search.ts'),

@@ -1,7 +1,8 @@
 import { isTrustedAppRequest } from '@/lib/auth';
 import { moveMediaToTrash } from '@/lib/generation-log';
 import { findVideoTask, removeVideoTask } from '@/lib/video-task-store';
-import { cancelVideoTask, retryVideoTask, saveVideoTaskLocally } from '@/lib/video-task-service';
+import { saveVideoTaskLocally } from '@/lib/video-task-service';
+import { cancelVideoTask, retryVideoTask } from '@/apps/worker/task-control';
 import { runVideoTask } from '@/apps/worker/task-entry';
 import { videoTaskRuntime } from '@/lib/video-task-runtime';
 

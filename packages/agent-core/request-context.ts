@@ -1,9 +1,13 @@
+import type { WorkspaceContext } from '@/lib/workspace-context';
+import type { CanvasDocument } from '@/lib/canvas/types';
+import type { GenerationSource } from '@/lib/generation-source';
+
 export type AgentRequestContextInput = {
   body: Record<string, unknown>;
   runId?: string | null;
-  normalizeWorkspaceContext: (value: unknown) => any;
-  normalizeDocument: (value: unknown) => any;
-  normalizeGenerationSource: (value: unknown, fallback: any) => any;
+  normalizeWorkspaceContext: (value: unknown) => WorkspaceContext;
+  normalizeDocument: (value: unknown) => CanvasDocument;
+  normalizeGenerationSource: (value: unknown, fallback: GenerationSource) => GenerationSource;
 };
 
 /** Transport-neutral request context preparation used by the Agent application entry. */

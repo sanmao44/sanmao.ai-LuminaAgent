@@ -5,7 +5,7 @@ import test from 'node:test';
 import ts from 'typescript';
 import { createTsRequire } from './ts-require.mjs';
 
-const source = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
+const source = await readFile(new URL('../apps/api/agent-application.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
 }).outputText;
@@ -78,7 +78,7 @@ function harness(options = {}) {
   return {
     calls, discoveryCalls, manageCalls, images, imageRuntimeRequests,
     async post(messages, extra = {}) {
-      const response = await module.exports.POST(new Request('http://localhost/api/agent', {
+      const response = await module.exports.runAgentApplication(new Request('http://localhost/api/agent', {
         method: 'POST',
         body: JSON.stringify({ messages, webMode: 'off', ...extra }),
       }));

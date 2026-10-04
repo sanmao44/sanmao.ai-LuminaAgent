@@ -431,29 +431,29 @@ test('常用技能排在技能索引与检索前面', () => {
   assert.equal(found[0].id, 'often');
 });
 
-test('Agent 路由接入技能工具与渐进披露', async () => {
-  const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
+test('Agent route uses the skill runtime capability boundary', async () => {
+  const route = await readFile(new URL('../apps/api/agent-application.ts', import.meta.url), 'utf8');
   const adapter = await readFile(new URL('../packages/tool-runtime/adapter.ts', import.meta.url), 'utf8');
   const skillTools = await readFile(new URL('../lib/tools/skills.ts', import.meta.url), 'utf8');
-  assert.match(route, /import \{ buildAgentSkillContext,[^}]*\} from '@\/lib\/skills';/);
-  assert.match(route, /import \{ fetchSkillFilesFromGithub \} from '@\/lib\/skill-archive';/);
+  const capability = await readFile(new URL('../packages/tool-runtime/skill-capability.ts', import.meta.url), 'utf8');
+  assert.match(route, /buildAgentSkillContext/);
+  assert.match(capability, /fetchSkillFilesFromGithub/);
   assert.match(skillTools, /name: 'skill_search'/);
   assert.match(skillTools, /name: 'skill_read'/);
   assert.match(skillTools, /name: 'skill_install'/);
   assert.match(skillTools, /offset: \{ type: 'number'/);
   assert.match(skillTools, /tags: \{ type: 'string'/);
-  assert.match(route, /readSkillFile\(skill\.id, filePath, \{ pending: false, offset \}\)/);
-  assert.match(route, /buildSkillToolContent\(skill, file, offset\)/);
-  assert.match(route, /tags: args\.tags/);
-  assert.match(route, /recordSkillUsage\(skill\.id, \{ pending: false \}\)/);
   assert.match(route, /skillsEnabled: skillsAvailableThisTurn,/);
-  assert.match(adapter, /if \(kind === 'skill'\) \{/);
-  assert.match(route, /const skillContext = buildAgentSkillContext\(\{ settings: state\.settings, dataDir: resolveLocalDataDir\(\) \}\);/);
+  assert.match(adapter, /executeSkillCapability\(\{ state: state as AdapterState/);
+  assert.match(route, /const skillContext = requestRoute\.tools\.useSkills/);
   assert.ok(route.match(/system \+= skillPromptSection;/g).length === 2);
-  assert.match(route, /skillInstalls >= SKILL_INSTALL_MAX_PER_REQUEST/);
-  assert.match(route, /skillToolCalls >= SKILL_TOOL_MAX_CALLS/);
-  assert.match(route, /parsed\.roots\.length > 1/);
-  assert.match(route, /parsed\.candidates\.slice\(0, 8\)/);
+  assert.match(capability, /readSkillFile\(skill\.id, filePath, \{ pending: false, offset \}\)/);
+  assert.match(capability, /buildSkillToolContent\(skill, file, offset\)/);
+  assert.match(capability, /recordSkillUsage\(skill\.id, \{ pending: false \}\)/);
+  assert.match(capability, /SKILL_INSTALL_MAX_PER_REQUEST/);
+  assert.match(capability, /SKILL_TOOL_MAX_CALLS/);
+  assert.match(capability, /parsed\.roots\.length > 1/);
+  assert.match(capability, /parsed\.candidates\.slice\(0, 8\)/);
 });
 
 test('技能接口覆盖列表、导入、待确认与设置', async () => {

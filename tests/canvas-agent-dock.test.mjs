@@ -2,15 +2,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [component, canvas, styles, context, canvasApi, route, markdown, adapter] = await Promise.all([
+const [component, canvas, styles, context, canvasApi, route, markdown, adapter, imageCapability] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/canvas.css", import.meta.url), "utf8"),
   readFile(new URL("../lib/canvas/agent-dock.ts", import.meta.url), "utf8"),
   readFile(new URL("../lib/canvas/api.ts", import.meta.url), "utf8"),
-  readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8"),
+  readFile(new URL("../apps/api/agent-application.ts", import.meta.url), "utf8"),
   readFile(new URL("../components/AgentMarkdown.tsx", import.meta.url), "utf8"),
   readFile(new URL("../packages/tool-runtime/adapter.ts", import.meta.url), "utf8"),
+  readFile(new URL("../packages/tool-runtime/image-capability.ts", import.meta.url), "utf8"),
 ]);
 
 test("the canvas agent dock mounts in SuperCanvas and is bound to the selection", () => {
@@ -533,11 +534,11 @@ test("the dock keeps reporting a run and previews its images", () => {
 });
 
 test("image tools support ordered prompt batches while preserving single-prompt compatibility", () => {
-  assert.match(adapter, /Array\.isArray\(args\.prompts\)/);
-  assert.match(adapter, /slice\(0, 20\)/);
-  assert.match(adapter, /Math\.min\(2, prompts\.length\)/);
-  assert.match(adapter, /resultsByPrompt\.flat\(\)/);
-  assert.match(adapter, /batchIndex: promptIndex/);
+  assert.match(imageCapability, /Array\.isArray\(args\.prompts\)/);
+  assert.match(imageCapability, /slice\(0, 20\)/);
+  assert.match(imageCapability, /Math\.min\(2, prompts\.length\)/);
+  assert.match(imageCapability, /resultsByPrompt\.flat\(\)/);
+  assert.match(imageCapability, /batchIndex: promptIndex/);
   assert.match(component, /batchPrompt/);
   assert.match(component, /canvas-agent-dock-batch-items/);
   assert.match(component, /已完成/);

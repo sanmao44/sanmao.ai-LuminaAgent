@@ -1,20 +1,20 @@
-# PLANS.md — SANMAO.AI 架构演进执行计划
+﻿# PLANS.md 鈥?SANMAO.AI 鏋舵瀯婕旇繘鎵ц璁″垝
 
-> **当前状态（2026-10-02）**：Canvas Document、History、Selection 已由 CanvasCore 完成 authority cutover；全域 Legacy removal 仍未完成。各领域真实调用链、双轨状态、绕过点和删除条件见 [`docs/next-architecture/migration-status.md`](docs/next-architecture/migration-status.md)。
+> **褰撳墠鐘舵€侊紙2026-10-02锛?*锛欳anvas Document銆丠istory銆丼election 宸茬敱 CanvasCore 瀹屾垚 authority cutover锛涘叏鍩?Legacy removal 浠嶆湭瀹屾垚銆傚悇棰嗗煙鐪熷疄璋冪敤閾俱€佸弻杞ㄧ姸鎬併€佺粫杩囩偣鍜屽垹闄ゆ潯浠惰 [`docs/next-architecture/migration-status.md`](docs/next-architecture/migration-status.md)銆?
 
-> **当前任务（2026-10-03）：Data Cutover Closure 已完成实现并通过 targeted/full verification；Physical Architecture / Remaining Migration / Legacy Purge 处于 migration in progress。** SQLite logical authoritative cutover 已完成，但 legacy database compatibility/removal 仍在迁移；Part B 只能沿真实 ownership seam 推进，不创建空的 apps 目录或复制 God File。
+> **褰撳墠浠诲姟锛?026-10-03锛夛細Data Cutover Closure 宸插畬鎴愬疄鐜板苟閫氳繃 targeted/full verification锛汸hysical Architecture / Remaining Migration / Legacy Purge 澶勪簬 migration in progress銆?* SQLite logical authoritative cutover 宸插畬鎴愶紝浣?legacy database compatibility/removal 浠嶅湪杩佺Щ锛汸art B 鍙兘娌跨湡瀹?ownership seam 鎺ㄨ繘锛屼笉鍒涘缓绌虹殑 apps 鐩綍鎴栧鍒?God File銆?
 
-## 当前阶段状态
+## 褰撳墠闃舵鐘舵€?
 
-| 阶段 | 状态 | 说明 |
+| 闃舵 | 鐘舵€?| 璇存槑 |
 | --- | --- | --- |
-| Phase 1 Agent Runtime | migration in progress | Compact non-streaming text path uses `packages/agent-core` through `apps/api/agent-entry.ts`; provider-neutral SSE adaptation uses `apps/api/agent-stream.ts`; Tool, context, capability and execution orchestration remain in the Route. |
+| Phase 1 Agent Runtime | migration in progress | Compact non-streaming text path uses `packages/agent-core` through `apps/api/agent-entry.ts`; provider-neutral SSE adaptation uses `apps/api/agent-stream.ts`; The Route owns auth/transport; `apps/api/agent-application.ts` now owns capability and execution orchestration while further domain extraction remains. |
 | Phase 2 Test Decoupling | migration in progress | Tool/MCP behavior is covered; remaining Agent/UI/Route source-coupled assertions migrate by domain. |
 | Phase 3 Storage Boundary | migration in progress | Session, workspace gallery, asset collections, provider state, server workspace, MCP configuration, video/upscale, clone and progress use repository adapters; UI preferences, artifact/media and legacy storage internals remain. |
-| Phase 4 Task Runtime | migration in progress | State and cancellation/retry decisions reuse Runtime; Clone, Video and Upscale submission/reconciliation cross `apps/worker/task-entry.ts`, while persistence and family-specific wire status remain specialized. |
+| Phase 4 Task Runtime | migration in progress | State and cancellation/retry decisions reuse Runtime; Clone, Video and Upscale submission/reconciliation cross `apps/worker/task-entry.ts`; cancel/retry control crosses `apps/worker/task-control.ts` with shared lifecycle instrumentation, while provider polling and family-specific persistence remain specialized. |
 | Phase 5 Provider Runtime | migration in progress | Text invocation, bounded failover, streaming response deadlines and image/edit compatibility fallback use `packages/model-runtime`; provider transport, health persistence and video branches remain injected legacy adapters. |
-| Phase 6 Tool Runtime | migration in progress | packages/tool-runtime owns policy, resolution, dispatch, execution, loop and MCP executor; Route compatibility boundaries remain. |
-| Phase 7 Canvas Core | cutover completed | CanvasCore 已成为 Document、History、Selection 的唯一 authority；SuperCanvas 只保留 projection、gesture、persistence 与 UI adapter。 |
+| Phase 6 Tool Runtime | migration in progress | packages/tool-runtime owns policy, resolution, dispatch, execution, loop and MCP executor; Web/File/Canvas capability ports are active, while `apps/api/agent-application.ts` still supplies artifact/image/skill compatibility bindings to the migration adapter. |
+| Phase 7 Canvas Core | cutover completed | CanvasCore 宸叉垚涓?Document銆丠istory銆丼election 鐨勫敮涓€ authority锛汼uperCanvas 鍙繚鐣?projection銆乬esture銆乸ersistence 涓?UI adapter銆?|
 | Phase 8 UI cleanup | migration in progress | Shell, sidebar and Agent presentation are extracted; app/page.tsx remains composition/state owner. |
 | Data Architecture Gate 1 | cutover completed | Server business data crosses repository/port boundaries; client IndexedDB/localStorage and blob adapters remain bounded compatibility owners. |
 | Backup / Restore Hardening | cutover completed | Restore uses multi-root staged rollback transactions; archive schema v1 and canonical `client/client.json` are enforced; HTTP and legacy JSON restore use the transaction boundary, browser IndexedDB restore captures and rolls back the current repository snapshot, and HTTP export/archive/encryption plus upload/decryption/tar extraction are disk/stream based, while local snapshots retain compatibility Buffer APIs. |
@@ -22,91 +22,91 @@
 | Round 7 Architecture Audit | cutover completed | Migration matrix established from real call paths. |
 | Round 8 Agent / Tool / MCP test seam | cutover completed | Tool/MCP behavior is covered by real Runtime/MCP executor paths; remaining source assertions migrate by domain. |
 
-后续执行遵循纵向切片原则：先补行为覆盖，再收敛一个边界；不因审计结论跳过 Tool Runtime 或提前删除 Legacy。
+鍚庣画鎵ц閬靛惊绾靛悜鍒囩墖鍘熷垯锛氬厛琛ヨ涓鸿鐩栵紝鍐嶆敹鏁涗竴涓竟鐣岋紱涓嶅洜瀹¤缁撹璺宠繃 Tool Runtime 鎴栨彁鍓嶅垹闄?Legacy銆?
 
 ## 0. Purpose
 
-本文件定义当前架构演进的施工顺序。
+鏈枃浠跺畾涔夊綋鍓嶆灦鏋勬紨杩涚殑鏂藉伐椤哄簭銆?
 
-原则：
+鍘熷垯锛?
 
-**不做“大爆炸式重写”，采用可运行的纵向切片逐步替换。**
+**涓嶅仛鈥滃ぇ鐖嗙偢寮忛噸鍐欌€濓紝閲囩敤鍙繍琛岀殑绾靛悜鍒囩墖閫愭鏇挎崲銆?*
 
-每一个 Phase 必须独立可验证。
+姣忎竴涓?Phase 蹇呴』鐙珛鍙獙璇併€?
 
 ---
 
-# Phase 0 — 建立治理基线
+# Phase 0 鈥?寤虹珛娌荤悊鍩虹嚎
 
-## 目标
+## 鐩爣
 
-让所有后续 Coding Agent 都遵守同一套规则。
+璁╂墍鏈夊悗缁?Coding Agent 閮介伒瀹堝悓涓€濂楄鍒欍€?
 
 ## Deliverables
 
 - [x] `AGENTS.md`
 - [x] `ARCHITECTURE.md`
 - [x] `PLANS.md`
-- [x] 确认 `WORKFLOW.md` 仍为发布流程唯一事实来源
-- [x] 建立 `docs/next-architecture/`
-- [ ] 建立 Architecture Decision Record 目录（可选）
+- [x] 纭 `WORKFLOW.md` 浠嶄负鍙戝竷娴佺▼鍞竴浜嬪疄鏉ユ簮
+- [x] 寤虹珛 `docs/next-architecture/`
+- [ ] 寤虹珛 Architecture Decision Record 鐩綍锛堝彲閫夛級
 
-## 完成标准
+## 瀹屾垚鏍囧噯
 
-未来 Agent 开始任务前可以明确知道：
-- 当前目标架构
-- Legacy 边界
-- 哪些规则不可破坏
-- 当前正在施工哪一阶段
+鏈潵 Agent 寮€濮嬩换鍔″墠鍙互鏄庣‘鐭ラ亾锛?
+- 褰撳墠鐩爣鏋舵瀯
+- Legacy 杈圭晫
+- 鍝簺瑙勫垯涓嶅彲鐮村潖
+- 褰撳墠姝ｅ湪鏂藉伐鍝竴闃舵
 
 ---
 
-# Phase 1 — Agent Runtime Vertical Slice
+# Phase 1 鈥?Agent Runtime Vertical Slice
 
-## 目标
+## 鐩爣
 
-证明“在旧 SANMAO 内重写新核心”可行。
+璇佹槑鈥滃湪鏃?SANMAO 鍐呴噸鍐欐柊鏍稿績鈥濆彲琛屻€?
 
-第一阶段不要求重写整个 Agent。
+绗竴闃舵涓嶈姹傞噸鍐欐暣涓?Agent銆?
 
-只建立一个最小、真实、可运行的新 Agent Runtime，并让至少一条现有请求路径经过它。
+鍙缓绔嬩竴涓渶灏忋€佺湡瀹炪€佸彲杩愯鐨勬柊 Agent Runtime锛屽苟璁╄嚦灏戜竴鏉＄幇鏈夎姹傝矾寰勭粡杩囧畠銆?
 
-## 先研究
+## 鍏堢爺绌?
 
-必须阅读：
+蹇呴』闃呰锛?
 
 - `app/api/agent/route.ts`
 - `lib/agent/**`
 - `lib/agent-*`
 - `lib/tools/**`
 - `lib/mcp/**`
-- Provider 相关代码
-- Agent 相关测试
+- Provider 鐩稿叧浠ｇ爜
+- Agent 鐩稿叧娴嬭瘯
 
-不要无目的扫描整个仓库。
+涓嶈鏃犵洰鐨勬壂鎻忔暣涓粨搴撱€?
 
 ## Deliverables
 
 ### 1. Architecture Assessment
 
-创建：
+鍒涘缓锛?
 
 ```text
 docs/next-architecture/agent-runtime.md
 ```
 
-必须描述：
+蹇呴』鎻忚堪锛?
 
-- 当前 Agent 请求生命周期
-- `app/api/agent/route.ts` 当前职责
-- 已存在且值得保留的模块
-- 真正耦合点
+- 褰撳墠 Agent 璇锋眰鐢熷懡鍛ㄦ湡
+- `app/api/agent/route.ts` 褰撳墠鑱岃矗
+- 宸插瓨鍦ㄤ笖鍊煎緱淇濈暀鐨勬ā鍧?
+- 鐪熸鑰﹀悎鐐?
 - Target Architecture
 - Migration Boundary
 
 ### 2. Contracts
 
-建立最小必要 Contract：
+寤虹珛鏈€灏忓繀瑕?Contract锛?
 
 - AgentRun
 - AgentRunId
@@ -124,88 +124,88 @@ docs/next-architecture/agent-runtime.md
 - ContextBuilder
 - PolicyDecision
 
-不要过度设计。
+涓嶈杩囧害璁捐銆?
 
 ### 3. Minimal Runtime
 
-实现最小 Agent Runtime。
+瀹炵幇鏈€灏?Agent Runtime銆?
 
-要求：
-- 可脱离 HTTP 独立测试
-- 不依赖 Next Route
-- 不依赖 MCP SDK
-- 不依赖具体 Provider SDK
-- 不依赖数据库实现
+瑕佹眰锛?
+- 鍙劚绂?HTTP 鐙珛娴嬭瘯
+- 涓嶄緷璧?Next Route
+- 涓嶄緷璧?MCP SDK
+- 涓嶄緷璧栧叿浣?Provider SDK
+- 涓嶄緷璧栨暟鎹簱瀹炵幇
 
 ### 4. Existing Path Integration
 
-至少选一条已有 Agent 执行路径通过新 Runtime。
+鑷冲皯閫変竴鏉″凡鏈?Agent 鎵ц璺緞閫氳繃鏂?Runtime銆?
 
-不要求一次迁移所有 Tool / Provider / Canvas 行为。
+涓嶈姹備竴娆¤縼绉绘墍鏈?Tool / Provider / Canvas 琛屼负銆?
 
 ### 5. Tests
 
-新增行为测试。
+鏂板琛屼负娴嬭瘯銆?
 
-禁止新增源码字符串测试。
+绂佹鏂板婧愮爜瀛楃涓叉祴璇曘€?
 
-## 完成标准
+## 瀹屾垚鏍囧噯
 
 - [x] `docs/next-architecture/agent-runtime.md`
-- [x] 最小 Contract
-- [x] 最小 Runtime
-- [x] 一条真实路径接入
-- [x] 行为测试
-- [x] typecheck 通过
-- [x] 相关 tests 通过
-- [x] 旧 Agent API 仍工作
-- [x] 明确列出尚未迁移职责
+- [x] 鏈€灏?Contract
+- [x] 鏈€灏?Runtime
+- [x] 涓€鏉＄湡瀹炶矾寰勬帴鍏?
+- [x] 琛屼负娴嬭瘯
+- [x] typecheck 閫氳繃
+- [x] 鐩稿叧 tests 閫氳繃
+- [x] 鏃?Agent API 浠嶅伐浣?
+- [x] 鏄庣‘鍒楀嚭灏氭湭杩佺Щ鑱岃矗
 
-> Phase 1 的“完成”指最小纵向切片完成；它不表示 Route、Tool、Streaming 或 Provider 全面迁移。全域迁移状态见 `docs/next-architecture/migration-status.md`。
+> Phase 1 鐨勨€滃畬鎴愨€濇寚鏈€灏忕旱鍚戝垏鐗囧畬鎴愶紱瀹冧笉琛ㄧず Route銆乀ool銆丼treaming 鎴?Provider 鍏ㄩ潰杩佺Щ銆傚叏鍩熻縼绉荤姸鎬佽 `docs/next-architecture/migration-status.md`銆?
 
 ---
 
-# Phase 2 — Test Decoupling
+# Phase 2 鈥?Test Decoupling
 
-## 目标
+## 鐩爣
 
-解除源码结构对重构的锁死。
+瑙ｉ櫎婧愮爜缁撴瀯瀵归噸鏋勭殑閿佹銆?
 
-优先处理：
+浼樺厛澶勭悊锛?
 - `SuperCanvas.tsx`
 - `app/page.tsx`
 
-相关源码字符串断言。
+鐩稿叧婧愮爜瀛楃涓叉柇瑷€銆?
 
-## 方法
+## 鏂规硶
 
-不要直接删旧测试。
+涓嶈鐩存帴鍒犳棫娴嬭瘯銆?
 
-采用：
+閲囩敤锛?
 
 ```text
-建立行为测试
-→ 验证覆盖等价
-→ 删除源码字符串断言
+寤虹珛琛屼负娴嬭瘯
+鈫?楠岃瘉瑕嗙洊绛変环
+鈫?鍒犻櫎婧愮爜瀛楃涓叉柇瑷€
 ```
 
-## 完成标准
+## 瀹屾垚鏍囧噯
 
-- [ ] 关键用户行为已由行为测试覆盖
-- [ ] 不再依赖某段源码必须出现在固定文件
-- [ ] 拆分组件不会因为移动代码导致大量无意义测试失败
+- [ ] 鍏抽敭鐢ㄦ埛琛屼负宸茬敱琛屼负娴嬭瘯瑕嗙洊
+- [ ] 涓嶅啀渚濊禆鏌愭婧愮爜蹇呴』鍑虹幇鍦ㄥ浐瀹氭枃浠?
+- [ ] 鎷嗗垎缁勪欢涓嶄細鍥犱负绉诲姩浠ｇ爜瀵艰嚧澶ч噺鏃犳剰涔夋祴璇曞け璐?
 
 ---
 
-# Phase 3 — Storage Boundary
+# Phase 3 鈥?Storage Boundary
 
-## 目标
+## 鐩爣
 
-把业务逻辑从具体存储方案中拔出来。
+鎶婁笟鍔￠€昏緫浠庡叿浣撳瓨鍌ㄦ柟妗堜腑鎷斿嚭鏉ャ€?
 
 ## Deliverables
 
-定义真实 Repository Ports，例如：
+瀹氫箟鐪熷疄 Repository Ports锛屼緥濡傦細
 
 - ConversationRepository
 - WorkspaceRepository
@@ -213,26 +213,26 @@ docs/next-architecture/agent-runtime.md
 - TaskRepository
 - ProviderConfigRepository
 
-建立 Legacy Adapter 连接现有：
+寤虹珛 Legacy Adapter 杩炴帴鐜版湁锛?
 - IndexedDB
 - localStorage
 - `.data`
 - JSON
 - filesystem
 
-此阶段不要求立即换数据库。
+姝ら樁娈典笉瑕佹眰绔嬪嵆鎹㈡暟鎹簱銆?
 
-## 完成标准
+## 瀹屾垚鏍囧噯
 
-核心业务不直接知道存储实现。
+鏍稿績涓氬姟涓嶇洿鎺ョ煡閬撳瓨鍌ㄥ疄鐜般€?
 
 ---
 
-# Phase 4 — Task Runtime
+# Phase 4 鈥?Task Runtime
 
-## 目标
+## 鐩爣
 
-统一图片、视频、超分、导出等长任务模型。
+缁熶竴鍥剧墖銆佽棰戙€佽秴鍒嗐€佸鍑虹瓑闀夸换鍔℃ā鍨嬨€?
 
 ## Deliverables
 
@@ -243,17 +243,17 @@ docs/next-architecture/agent-runtime.md
 - cancellation semantics
 - unified task query
 
-尽量复用现有 `lib/task-store.ts` 中已经合理的部分。
+灏介噺澶嶇敤鐜版湁 `lib/task-store.ts` 涓凡缁忓悎鐞嗙殑閮ㄥ垎銆?
 
-不要为了新目录而重写已正确代码。
+涓嶈涓轰簡鏂扮洰褰曡€岄噸鍐欏凡姝ｇ‘浠ｇ爜銆?
 
 ---
 
-# Phase 5 — Model / Provider Runtime
+# Phase 5 鈥?Model / Provider Runtime
 
-## 目标
+## 鐩爣
 
-彻底清除新代码中的 provider-specific business branching。
+褰诲簳娓呴櫎鏂颁唬鐮佷腑鐨?provider-specific business branching銆?
 
 ## Deliverables
 
@@ -264,19 +264,19 @@ docs/next-architecture/agent-runtime.md
 - routing policy
 - provider health / availability abstraction
 
-## 完成标准
+## 瀹屾垚鏍囧噯
 
-Agent Core 不知道 OpenAI / Anthropic / Gemini 具体 SDK。
+Agent Core 涓嶇煡閬?OpenAI / Anthropic / Gemini 鍏蜂綋 SDK銆?
 
 ---
 
-# Phase 6 — Tool Runtime Consolidation
+# Phase 6 鈥?Tool Runtime Consolidation
 
-## 目标
+## 鐩爣
 
-让 Native / MCP / Remote Tool 共享统一执行语义。
+璁?Native / MCP / Remote Tool 鍏变韩缁熶竴鎵ц璇箟銆?
 
-## 生命周期
+## 鐢熷懡鍛ㄦ湡
 
 ```text
 discover
@@ -288,27 +288,27 @@ observe
 return
 ```
 
-## 重点
+## 閲嶇偣
 
-优先复用现有：
+浼樺厛澶嶇敤鐜版湁锛?
 - registry
 - selector
 - policy
 - executor
 
-只重写真正不合理边界。
+鍙噸鍐欑湡姝ｄ笉鍚堢悊杈圭晫銆?
 
 ---
 
-# Phase 7 — Canvas Core Rewrite
+# Phase 7 鈥?Canvas Core Rewrite
 
-## 目标
+## 鐩爣
 
-这是前端最大结构性技术债的核心治理阶段。
+杩欐槸鍓嶇鏈€澶х粨鏋勬€ф妧鏈€虹殑鏍稿績娌荤悊闃舵銆?
 
-**不要先拆 `SuperCanvas.tsx` UI。**
+**涓嶈鍏堟媶 `SuperCanvas.tsx` UI銆?*
 
-先创建真正独立的 Canvas Core。
+鍏堝垱寤虹湡姝ｇ嫭绔嬬殑 Canvas Core銆?
 
 ## Deliverables
 
@@ -320,27 +320,27 @@ return
 - History
 - Undo / Redo
 
-然后：
+鐒跺悗锛?
 
 ```text
 Legacy SuperCanvas UI
-        ↓
+        鈫?
 Compatibility Adapter
-        ↓
+        鈫?
 New Canvas Core
 ```
 
-## 完成标准
+## 瀹屾垚鏍囧噯
 
-Canvas 的核心状态变更与 React 解耦。
+Canvas 鐨勬牳蹇冪姸鎬佸彉鏇翠笌 React 瑙ｈ€︺€?
 
 ---
 
-# Phase 8 — SuperCanvas UI Decomposition
+# Phase 8 鈥?SuperCanvas UI Decomposition
 
-只有 Phase 7 完成到足够程度后再执行。
+鍙湁 Phase 7 瀹屾垚鍒拌冻澶熺▼搴﹀悗鍐嶆墽琛屻€?
 
-这时再按职责拆：
+杩欐椂鍐嶆寜鑱岃矗鎷嗭細
 - shell
 - viewport
 - node renderer
@@ -349,19 +349,19 @@ Canvas 的核心状态变更与 React 解耦。
 - agent dock
 - asset interaction
 
-目标不是单纯降低文件行数。
+鐩爣涓嶆槸鍗曠函闄嶄綆鏂囦欢琛屾暟銆?
 
-目标是让 UI 成为对 Canvas Core 的薄适配层。
+鐩爣鏄 UI 鎴愪负瀵?Canvas Core 鐨勮杽閫傞厤灞傘€?
 
 ---
 
-# Phase 9 — page.tsx Decomposition
+# Phase 9 鈥?page.tsx Decomposition
 
-最后处理主页面。
+鏈€鍚庡鐞嗕富椤甸潰銆?
 
-因为在 Agent / Storage / Task / Provider / Canvas 被抽离后，`page.tsx` 的很多复杂度会自然消失。
+鍥犱负鍦?Agent / Storage / Task / Provider / Canvas 琚娊绂诲悗锛宍page.tsx` 鐨勫緢澶氬鏉傚害浼氳嚜鐒舵秷澶便€?
 
-拆分方向：
+鎷嗗垎鏂瑰悜锛?
 
 - WorkspaceShell
 - Conversation
@@ -371,13 +371,13 @@ Canvas 的核心状态变更与 React 解耦。
 - Provider UI
 - History
 
-页面只负责 composition。
+椤甸潰鍙礋璐?composition銆?
 
 ---
 
-# Phase 10 — Frontend / Backend Hard Separation
+# Phase 10 鈥?Frontend / Backend Hard Separation
 
-如果前面核心边界已经稳定，再把当前 Next.js 一体化结构逐步演进为：
+濡傛灉鍓嶉潰鏍稿績杈圭晫宸茬粡绋冲畾锛屽啀鎶婂綋鍓?Next.js 涓€浣撳寲缁撴瀯閫愭婕旇繘涓猴細
 
 ```text
 apps/web
@@ -385,28 +385,28 @@ apps/api
 apps/worker
 ```
 
-不要在业务边界尚未稳定时先做物理拆仓。
+涓嶈鍦ㄤ笟鍔¤竟鐣屽皻鏈ǔ瀹氭椂鍏堝仛鐗╃悊鎷嗕粨銆?
 
-先逻辑分离，再物理分离。
+鍏堥€昏緫鍒嗙锛屽啀鐗╃悊鍒嗙銆?
 
 ---
 
-# Phase 11 — Database Modernization
+# Phase 11 鈥?Database Modernization
 
-本轮已选择 SQLite 作为本地 authoritative database。`node:sqlite` 通过
-`lib/database/sqlite.ts` 暴露给 Repository，迁移命令为
-`npm run migrate:database`，回滚命令为 `npm run migrate:database -- rollback`。
-迁移 journal 会记录 staging、validation、database installation、activation
-和 rollback 阶段；进程中断时只清理未激活的 staging，已激活数据库仍由 marker
-和 rollback source 控制。
-PostgreSQL 仍保留为未来云端 adapter，不属于本轮。
+鏈疆宸查€夋嫨 SQLite 浣滀负鏈湴 authoritative database銆俙node:sqlite` 閫氳繃
+`lib/database/sqlite.ts` 鏆撮湶缁?Repository锛岃縼绉诲懡浠や负
+`npm run migrate:database`锛屽洖婊氬懡浠や负 `npm run migrate:database -- rollback`銆?
+杩佺Щ journal 浼氳褰?staging銆乿alidation銆乨atabase installation銆乤ctivation
+鍜?rollback 闃舵锛涜繘绋嬩腑鏂椂鍙竻鐞嗘湭婵€娲荤殑 staging锛屽凡婵€娲绘暟鎹簱浠嶇敱 marker
+鍜?rollback source 鎺у埗銆?
+PostgreSQL 浠嶄繚鐣欎负鏈潵浜戠 adapter锛屼笉灞炰簬鏈疆銆?
 
-候选方向：
+鍊欓€夋柟鍚戯細
 
-- Local：评估 PGlite / SQLite
-- Server / Cloud：PostgreSQL
+- Local锛氳瘎浼?PGlite / SQLite
+- Server / Cloud锛歅ostgreSQL
 
-选择标准：
+閫夋嫨鏍囧噯锛?
 
 - migration quality
 - backup / restore
@@ -415,69 +415,69 @@ PostgreSQL 仍保留为未来云端 adapter，不属于本轮。
 - FTS / vector
 - operational simplicity
 
-不要仅因为“新”选择技术。
+涓嶈浠呭洜涓衡€滄柊鈥濋€夋嫨鎶€鏈€?
 
 ---
 
-# Phase 12 — Observability
+# Phase 12 鈥?Observability
 
-将关键新链路接入统一 telemetry。
+灏嗗叧閿柊閾捐矾鎺ュ叆缁熶竴 telemetry銆?
 
-优先：
+浼樺厛锛?
 - AgentRun
 - ModelCall
 - ToolCall
 - Task
 - Provider failure
 
-长期可采用 OpenTelemetry。
+闀挎湡鍙噰鐢?OpenTelemetry銆?
 
 ---
 
-# Phase 13 — Multi-Agent / A2A
+# Phase 13 鈥?Multi-Agent / A2A
 
-只有单 Agent Runtime 边界稳定后再扩展。
+鍙湁鍗?Agent Runtime 杈圭晫绋冲畾鍚庡啀鎵╁睍銆?
 
-新增：
+鏂板锛?
 - delegation
 - child runs
 - handoff
 - external agent adapter
 
-A2A 是 Adapter，不侵入 Domain。
+A2A 鏄?Adapter锛屼笉渚靛叆 Domain銆?
 
 ---
 
-# Phase 14 — Legacy Removal
+# Phase 14 鈥?Legacy Removal
 
-只有同时满足以下条件才删除旧实现：
+鍙湁鍚屾椂婊¤冻浠ヤ笅鏉′欢鎵嶅垹闄ゆ棫瀹炵幇锛?
 
-1. 新路径已有行为覆盖
-2. 新路径稳定运行
-3. 没有剩余调用者
-4. Migration Adapter 已无必要
-5. 数据兼容 / migration 已明确
+1. 鏂拌矾寰勫凡鏈夎涓鸿鐩?
+2. 鏂拌矾寰勭ǔ瀹氳繍琛?
+3. 娌℃湁鍓╀綑璋冪敤鑰?
+4. Migration Adapter 宸叉棤蹇呰
+5. 鏁版嵁鍏煎 / migration 宸叉槑纭?
 
-不要为了“目录看起来干净”过早删除旧逻辑。
+涓嶈涓轰簡鈥滅洰褰曠湅璧锋潵骞插噣鈥濊繃鏃╁垹闄ゆ棫閫昏緫銆?
 
 ---
 
-# 每个 Phase 的标准执行模板
+# 姣忎釜 Phase 鐨勬爣鍑嗘墽琛屾ā鏉?
 
-Coding Agent 每次执行一个 Phase 时：
+Coding Agent 姣忔鎵ц涓€涓?Phase 鏃讹細
 
 ## 1. Read
 
-读取：
+璇诲彇锛?
 - `AGENTS.md`
 - `ARCHITECTURE.md`
 - `PLANS.md`
 - `WORKFLOW.md`
-- 相关领域文件
+- 鐩稿叧棰嗗煙鏂囦欢
 
 ## 2. Assess
 
-先说明：
+鍏堣鏄庯細
 - Current State
 - Scope
 - Non-goals
@@ -485,21 +485,21 @@ Coding Agent 每次执行一个 Phase 时：
 
 ## 3. Implement
 
-只实现当前 Phase 的最小完整纵向切片。
+鍙疄鐜板綋鍓?Phase 鐨勬渶灏忓畬鏁寸旱鍚戝垏鐗囥€?
 
 ## 4. Verify
 
-先跑最相关测试，再运行：
+鍏堣窇鏈€鐩稿叧娴嬭瘯锛屽啀杩愯锛?
 
 ```bash
 npm run check
 ```
 
-除非用户明确要求仅做分析、不修改。
+闄ら潪鐢ㄦ埛鏄庣‘瑕佹眰浠呭仛鍒嗘瀽銆佷笉淇敼銆?
 
 ## 5. Report
 
-输出：
+杈撳嚭锛?
 
 ```text
 What changed
@@ -512,20 +512,20 @@ Next recommended slice
 
 ---
 
-# 当前立即执行任务
+# 褰撳墠绔嬪嵆鎵ц浠诲姟
 
-当前阶段：
+褰撳墠闃舵锛?
 
 ```text
-Data Cutover Closure 已完成；Part B 为 migration in progress
+Data Cutover Closure 宸插畬鎴愶紱Part B 涓?migration in progress
 ```
 
-下一次代码施工优先级：
+涓嬩竴娆′唬鐮佹柦宸ヤ紭鍏堢骇锛?
 
 ```text
-Part A 已完成 server repository 收口、多物理根 restore rollback、流式 HTTP backup、crash journal、SQLite cutover、migration command 与 observer 接线；Part B 已建立 Agent API 与 Clone Worker 的真实入口，确认/恢复后的 Clone 执行也统一经 Worker dispatch，Provider 调用生命周期已收口到 `packages/model-runtime/invocation.ts`，并删除无调用的 Agent/Provider 兼容桥。`packages/tool-runtime/adapter.ts` 仍是有删除条件的 migration adapter，继续沿真实 ownership seam 推进。
+Part A 宸插畬鎴?server repository 鏀跺彛銆佸鐗╃悊鏍?restore rollback銆佹祦寮?HTTP backup銆乧rash journal銆丼QLite cutover銆乵igration command 涓?observer 鎺ョ嚎锛汸art B 宸插缓绔?Agent API 涓?Clone Worker 鐨勭湡瀹炲叆鍙ｏ紝纭/鎭㈠鍚庣殑 Clone 鎵ц涔熺粺涓€缁?Worker dispatch锛孭rovider 璋冪敤鐢熷懡鍛ㄦ湡宸叉敹鍙ｅ埌 `packages/model-runtime/invocation.ts`锛屽苟鍒犻櫎鏃犺皟鐢ㄧ殑 Agent/Provider 鍏煎妗ャ€俙packages/tool-runtime/adapter.ts` 浠嶆槸鏈夊垹闄ゆ潯浠剁殑 migration adapter锛岀户缁部鐪熷疄 ownership seam 鎺ㄨ繘銆?
 ```
 
 ## Part B observability update (2026-10-03)
 
-`RuntimeObserver` 同时支持 bounded in-process diagnostics 与 `packages/observability` 的 redacted JSONL operational sink。Agent、Tool、MCP、Provider、Task、Database 和 Backup 事件写入 `.data/runtime-events/`，按日分片并保留 7 天，只保存 RuntimeEvent 白名单字段，不记录 prompt、tool arguments、文件内容或 secrets。`GET /api/observability` 提供只读管理员查询；长期可替换为 OpenTelemetry exporter，当前切片不引入 SDK。
+`RuntimeObserver` 鍚屾椂鏀寔 bounded in-process diagnostics 涓?`packages/observability` 鐨?redacted JSONL operational sink銆侫gent銆乀ool銆丮CP銆丳rovider銆乀ask銆丏atabase 鍜?Backup 浜嬩欢鍐欏叆 `.data/runtime-events/`锛屾寜鏃ュ垎鐗囧苟淇濈暀 7 澶╋紝鍙繚瀛?RuntimeEvent 鐧藉悕鍗曞瓧娈碉紝涓嶈褰?prompt銆乼ool arguments銆佹枃浠跺唴瀹规垨 secrets銆俙GET /api/observability` 鎻愪緵鍙绠＄悊鍛樻煡璇紱闀挎湡鍙浛鎹负 OpenTelemetry exporter锛屽綋鍓嶅垏鐗囦笉寮曞叆 SDK銆?

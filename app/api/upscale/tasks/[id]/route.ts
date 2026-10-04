@@ -1,5 +1,6 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { cancelUpscaleTask, publicUpscaleTask, retryUpscaleTask } from '@/lib/upscale-service';
+import { publicUpscaleTask } from '@/lib/upscale-service';
+import { cancelUpscaleTask, retryUpscaleTask } from '@/apps/worker/task-control';
 import { runUpscaleTask } from '@/apps/worker/task-entry';
 import { findUpscaleTask, removeUpscaleTask } from '@/lib/upscale-task-store';
 import { getUpscaleCatalogModel } from '@/lib/upscale-catalog';

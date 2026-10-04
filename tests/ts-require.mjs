@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 
@@ -26,9 +26,22 @@ export function createTsRequire(baseDir) {
    * 测试会崩在 MODULE_NOT_FOUND，而且报出来的是别名，看不出真正原因。
    */
   const aliasFile = (specifier) => {
-    if (specifier.startsWith('@/lib/')) return `${path.join(projectRoot, 'lib', normalizePath(specifier.slice('@/lib/'.length)))}.ts`;
-    if (specifier.startsWith('@/packages/')) return `${path.join(projectRoot, 'packages', normalizePath(specifier.slice('@/packages/'.length)))}.ts`;
-    if (specifier.startsWith('@/apps/')) return `${path.join(projectRoot, 'apps', normalizePath(specifier.slice('@/apps/'.length)))}.ts`;
+    const candidates = (root, relative) => {
+      const stem = path.join(projectRoot, root, normalizePath(relative));
+      return [`${stem}.ts`, path.join(stem, 'index.ts')];
+    };
+    if (specifier.startsWith('@/lib/')) {
+      const [file] = candidates('lib', specifier.slice('@/lib/'.length));
+      return existsSync(file) ? file : candidates('lib', specifier.slice('@/lib/'.length))[1];
+    }
+    if (specifier.startsWith('@/packages/')) {
+      const [file] = candidates('packages', specifier.slice('@/packages/'.length));
+      return existsSync(file) ? file : candidates('packages', specifier.slice('@/packages/'.length))[1];
+    }
+    if (specifier.startsWith('@/apps/')) {
+      const [file] = candidates('apps', specifier.slice('@/apps/'.length));
+      return existsSync(file) ? file : candidates('apps', specifier.slice('@/apps/'.length))[1];
+    }
     return null;
   };
 

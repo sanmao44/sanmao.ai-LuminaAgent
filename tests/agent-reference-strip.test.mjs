@@ -4,7 +4,7 @@ import test from "node:test";
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
-const route = await readFile(new URL("../app/api/agent/route.ts", import.meta.url), "utf8");
+const route = await readFile(new URL("../apps/api/agent-application.ts", import.meta.url), "utf8");
 const messageReferences = await readFile(new URL("../components/AgentMessageReferences.tsx", import.meta.url), "utf8");
 
 test("documents and text references are labelled as 引用 instead of 参考图", () => {

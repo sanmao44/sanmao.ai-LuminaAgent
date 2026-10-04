@@ -6,6 +6,14 @@ export type ProviderRuntime = {
   provider: { id: string; name: string };
 };
 
+/** Provider health is an application port; persistence and legacy model-health
+ * storage stay outside the provider runtime. */
+export type ProviderHealthPort<T extends ProviderRuntime> = {
+  order: (candidates: readonly T[]) => readonly T[];
+  onSuccess: (runtime: T, durationMs: number) => void;
+  onFailure: (runtime: T, error: unknown, durationMs: number) => void;
+};
+
 export type ProviderCoordinatorOptions<T extends ProviderRuntime> = {
   requestedModelId: string;
   candidates: readonly T[];
@@ -19,11 +27,7 @@ export type ProviderCoordinatorOptions<T extends ProviderRuntime> = {
   failoverTimeoutMs: number;
   idleTimeoutMs: number;
   timeoutError: (phase: 'initial' | 'idle', timeoutMs: number) => Error;
-  health?: {
-    order: (candidates: readonly T[]) => readonly T[];
-    onSuccess: (runtime: T, durationMs: number) => void;
-    onFailure: (runtime: T, error: unknown, durationMs: number) => void;
-  };
+  health?: ProviderHealthPort<T>;
 };
 
 /**

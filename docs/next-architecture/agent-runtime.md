@@ -10,9 +10,9 @@ automation, filesystem operations and streaming remain on the legacy path.
 
 ## Current state
 
-`app/api/agent/route.ts` currently owns most of the request lifecycle:
+`apps/api/agent-application.ts` currently owns the remaining application lifecycle; `app/api/agent/route.ts` is now the HTTP transport boundary:
 
-1. authenticates the request and opens the runtime-operation guard;
+1. receives an authenticated request from the transport route and opens the runtime-operation guard;
 2. normalizes messages, workspace and canvas context;
 3. classifies intent and selects a model/provider;
 4. builds prompts and bounded context;
@@ -21,7 +21,7 @@ automation, filesystem operations and streaming remain on the legacy path.
 7. serializes JSON/SSE responses and records generation/progress state.
 
 The route already has useful domain-adjacent modules: `lib/agent-routing.ts`
-for request classification, `lib/agent/tool-loop.ts` for bounded tool loops,
+for request classification, `packages/tool-runtime/tool-loop` for bounded tool loops,
 `lib/tools/registry.ts` and `lib/tools/policy.ts` for tool metadata and policy,
 `lib/agent/progress.ts` for run progress, and `lib/providers.ts` for the
 provider adapter boundary. These modules are retained.
@@ -40,8 +40,7 @@ HTTP request
   -> progress and generation log cleanup
 ```
 
-The main coupling point is that the route decides the Agent lifecycle and the
-provider call in the same function. The route also knows provider-specific
+The remaining coupling point is that the application entry still decides the Agent lifecycle and provider/tool coordination in the same function. The route also knows provider-specific
 runtime objects and tool implementation details. This is the first boundary to
 shrink; moving UI or storage code now would widen the migration unnecessarily.
 
@@ -104,12 +103,12 @@ logic. Existing run progress records and generation logs remain in place.
 
 ## Legacy responsibilities still remaining
 
-- Route-level model selection, timeout and automatic failover.
+- Application-level model selection, timeout and automatic failover; the HTTP route no longer owns these decisions.
 - Prompt construction and intent classification.
 - Tool discovery, approval, execution and follow-up loops.
 - MCP, browser, filesystem, artifact and canvas behavior.
 - Agent progress persistence and generation logs.
-- JSON/SSE serialization and HTTP error mapping.
+- Application response assembly plus JSON/SSE adaptation; HTTP authentication remains in the route.
 
 These are deliberate Phase 1 non-goals. They should move behind ports one
 vertical slice at a time after behavior coverage exists.

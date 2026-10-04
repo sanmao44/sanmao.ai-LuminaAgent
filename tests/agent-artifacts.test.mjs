@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { createTsRequire } from './ts-require.mjs';
 
-const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
+const route = await readFile(new URL('../apps/api/agent-application.ts', import.meta.url), 'utf8');
 const adapter = await readFile(new URL('../packages/tool-runtime/adapter.ts', import.meta.url), 'utf8');
 const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const clientTypes = await readFile(new URL('../lib/agent-client.ts', import.meta.url), 'utf8');
@@ -44,17 +45,24 @@ test('archive_generate 排在最后执行，并能带上本轮生成的文件', 
   assert.match(sortLine, /Number\(isArchiveToolCall\(left\)\) - Number\(isArchiveToolCall\(right\)\)/);
   // 执行顺序仍按上面排好的 executionCalls；改成带下标是为了能从「需要确认」的那一步起整批延后。
   assert.match(route, /toolRuntime\.executeCalls\(executionCalls\)/);
-  assert.match(route, /args\.includeGeneratedThisTurn === false/);
-  assert.match(route, /const collected = await collectArchiveEntries\(ids\);/);
+  // Artifact execution is owned by the Tool Runtime capability boundary.
+  // Its behavior is covered by tests/tool-runtime-capabilities.test.mjs.
+  assert.match(adapter, /executeArtifactCapability\(\{ state, call, args/);
 });
 
-test('Office/ZIP 结果只回传元数据，绝不带 content', () => {
-  const helper = functionBody(route, 'generatedFileFromArtifact');
-  assert.match(helper, /artifactId: artifact\.id/);
-  assert.match(helper, /downloadUrl: artifact\.downloadUrl/);
-  assert.doesNotMatch(helper, /content/);
-  assert.match(route, /Round 最多生成|本轮最多生成/);
-  assert.match(route, /ARTIFACT_MAX_PER_TURN/);
+test('Office/ZIP results return metadata only', async () => {
+  const load = createTsRequire(process.cwd());
+  const message = await load('./packages/tool-runtime/artifact-capability').executeArtifactCapability({
+    state: { generatedFiles: [], generatedArtifactCount: 0 },
+    call: { id: 'artifact-contract', function: { name: 'document_generate' } },
+    args: { filename: 'contract.docx', markdown: '# contract' },
+    signal: new AbortController().signal,
+  });
+  const payload = JSON.parse(String(message.content));
+  assert.equal(payload.ok, true);
+  assert.equal(typeof payload.file.artifactId, 'string');
+  assert.equal(typeof payload.file.downloadUrl, 'string');
+  assert.equal('content' in payload.file, false);
 });
 
 test('历史文件保留 artifact 元数据，且只给模型摘要', () => {
@@ -114,14 +122,13 @@ test('文件交付意图在“1/好/可以”这种追问里也要保留，而�
 test('同轮“先生成再打包”会补一轮交付物工具，而不是把调用写成文本标记', () => {
   assert.match(route, /const ARTIFACT_TOOL_MAX_ROUNDS = 2;/);
   assert.match(route, /const artifactToolsOnly = callableTools\.filter\(\(tool: any\) => isArtifactToolCall\(\{ function: \{ name: tool\?\.function\?\.name \} \}\)\);/);
-  assert.match(route, /const runArtifactToolCall = async \(call: any\): Promise<ChatMessage> => \{/);
   assert.match(adapter, /if \(kind === 'artifact'\) \{/);
-  assert.match(adapter, /results\.push\(await runArtifactToolCall\(call\)\);/);
+  assert.match(adapter, /executeArtifactCapability\(\{ state, call, args/);
   assert.match(route, /if \(artifactGenerationRequest && artifactToolsOnly\.length && toolCalls\.some\(isArtifactToolCall\)/);
-  // 补轮循环收进 lib/agent/tool-loop.ts：这里只校验它还挂在原来的条件下、用原来的工具集和顺序。
+  // 补轮循环收进 packages/tool-runtime/tool-loop：这里只校验它还挂在原来的条件下、用原来的工具集和顺序。
   assert.match(route, /maxSteps: ARTIFACT_TOOL_MAX_ROUNDS/);
   assert.match(route, /orderCalls: \(calls\) => \[\.\.\.calls\]\.sort\(\(left, right\) => Number\(isArchiveToolCall\(left\)\) - Number\(isArchiveToolCall\(right\)\)\)/);
-  assert.match(route, /results\.push\(await runArtifactToolCall\(call\)\);/);
+  assert.match(route, /toolRuntime\.executeCalls\(executionCalls\)/);
   assert.match(route, /if \(followupText \|\| artifactFollowupText \|\| mcpFollowupText\) finalText = followupText \|\| artifactFollowupText \|\| mcpFollowupText;/);
   assert.match(route, /必须真的调用 archive_generate 打包/);
 });

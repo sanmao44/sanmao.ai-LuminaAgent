@@ -4,7 +4,7 @@ import test from 'node:test';
 import { buildToolRuntimeModule } from './tools-build.mjs';
 import { createTsRequire } from './ts-require.mjs';
 
-const route = await readFile(new URL('../app/api/agent/route.ts', import.meta.url), 'utf8');
+const route = await readFile(new URL('../apps/api/agent-application.ts', import.meta.url), 'utf8');
 const resume = await readFile(new URL('../lib/agent/resume.ts', import.meta.url), 'utf8');
 const runRoute = await readFile(new URL('../app/api/agent/runs/[id]/route.ts', import.meta.url), 'utf8');
 const client = await readFile(new URL('../lib/agent-client.ts', import.meta.url), 'utf8');

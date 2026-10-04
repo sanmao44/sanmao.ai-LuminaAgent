@@ -16,7 +16,7 @@ import { getRuntimeModel } from '@/lib/store';
 import { MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, callMcpTool } from '@/lib/mcp/client';
 import { noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess } from '@/lib/mcp/catalog-remote';
 import { lazyMcpGroupKeywords, loadMcpToolRuntime } from '@/lib/mcp/tools';
-import { runToolLoop } from '@/lib/agent/tool-loop';
+import { runToolLoop } from '@/packages/tool-runtime/tool-loop';
 import { toModelToolSchema } from '@/lib/tools/registry';
 import { selectToolsForTurn } from '@/lib/tools/selector';
 import { resolveToolPolicy } from '@/lib/tools/policy';

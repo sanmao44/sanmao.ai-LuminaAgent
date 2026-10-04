@@ -23,7 +23,7 @@ const superCanvas = await readFile(
   "utf8",
 );
 const agentRoute = await readFile(
-  new URL("../app/api/agent/route.ts", import.meta.url),
+  new URL("../apps/api/agent-application.ts", import.meta.url),
   "utf8",
 );
 const canvasCss = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");

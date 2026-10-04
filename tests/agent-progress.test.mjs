@@ -20,7 +20,7 @@ const read = (relative) => readFile(new URL(`../${relative}`, import.meta.url), 
 const [source, route, agentRoute, page, dock, client, styles, adapter] = await Promise.all([
   read("lib/agent/progress.ts"),
   read("app/api/agent/progress/route.ts"),
-  read("app/api/agent/route.ts"),
+  read("apps/api/agent-application.ts"),
   read("app/page.tsx"),
   read("components/CanvasAgentDock.tsx"),
   read("lib/agent-client.ts"),
@@ -166,18 +166,18 @@ test("进度接口要管理员身份、不缓存，且只回一条快照", () =>
   assert.match(route, /new URL\(request\.url\)\.searchParams\.get\("runId"\)/);
 });
 
-test("主管线在真正耗时的节点写进度，收尾时关掉", () => {
-  assert.match(agentRoute, /agentRunId = \(await beginAgentRun\(\(body as \{ runId\?: unknown \}\)\.runId\)\)\?\.runId \|\| null;/);
-  assert.match(adapter, /reportToolProgress\(agentToolProgress\(kind, String\(call\?\.function\?\.name \|\| ''\)\)\)/);
-  assert.match(agentRoute, /reportToolProgress\(agentToolProgress\('skill'/);
-  assert.match(agentRoute, /reportToolProgress\(agentToolProgress\('artifact'/);
-  assert.match(agentRoute, /reportProgress\(\{ stage: 'tool', message: '正在准备可用工具…' \}\);/);
-  assert.match(agentRoute, /reportProgress\(\{ stage: 'thinking'/);
-  assert.match(agentRoute, /reportProgress\(\{ stage: 'answering'/);
-  assert.match(agentRoute, /await finishAgentRun\(agentRunId\);/);
-  assert.match(agentRoute, /void reportAgentProgress\(agentRunId/);
-  assert.doesNotMatch(agentRoute, /reportProgress\([^)]*args/, "进度不能带上工具参数");
-  assert.doesNotMatch(agentRoute, /reportProgress\([^)]*latest/, "进度不能带上模型原话");
+test("progress contract covers capability stages and closes after completion", async () => {
+  const runId = "run-runtime-contract";
+  const now = Date.now();
+  await progress.beginAgentRun(runId, now);
+  const skill = progress.agentToolProgress("skill", "skill_search");
+  const artifact = progress.agentToolProgress("artifact", "document_generate");
+  assert.equal(skill.stage, "skill");
+  assert.equal(artifact.stage, "artifact");
+  assert.equal(await progress.reportAgentProgress(runId, skill, now + 10), true);
+  await progress.finishAgentRun(runId, now + 20);
+  assert.equal(await progress.reportAgentProgress(runId, artifact, now + 30), false);
+  assert.equal((await progress.readAgentProgress(runId, now + 40)).stage, "skill");
 });
 
 test("共用轮询：正文一到就让位，单次模型调用有秒表", async () => {
