@@ -27,14 +27,13 @@ test("recognizes only the requested HTML preview types", () => {
 });
 
 test("adds preview only when ChatFileList receives a preview handler", () => {
-  assert.match(page, /function ChatFileList\(\{ files, onDownload, onPreview, onRemove \}\)/);
-  assert.match(page, /AgentChatFileList/);
+  assert.match(page, /_jsx\(AgentChatFileList, \{/);
   assert.match(page, /isPreviewable: isPreviewableChatFile/);
 
-  const assistantFiles = page.slice(page.indexOf("message.files?.length ? /*#__PURE__*/ _jsx(ChatFileList"));
+  const assistantFiles = page.slice(page.indexOf("message.files?.length ? /*#__PURE__*/ _jsx(AgentChatFileList"));
   assert.match(assistantFiles, /onPreview: message\.role === 'assistant' \? openChatFilePreview : undefined/);
 
-  const composerFiles = page.slice(page.indexOf("agentFiles.length > 0 && /*#__PURE__*/ _jsx(ChatFileList"));
+  const composerFiles = page.slice(page.indexOf("agentFiles.length > 0 && /*#__PURE__*/ _jsx(AgentChatFileList"));
   assert.doesNotMatch(composerFiles.slice(0, composerFiles.indexOf("agentFollowUp")), /onPreview: openChatFilePreview/);
 });
 

@@ -3589,18 +3589,6 @@ function OutpaintEditor({ item, model, onClose, onApply, onApplyLocal, onNotify 
         })
     });
 }
-function ChatFileList({ files, onDownload, onPreview, onRemove }) {
-    return /*#__PURE__*/ _jsx(AgentChatFileList, {
-        files,
-        Icon,
-        onDownload,
-        onPreview,
-        onRemove,
-        isPreviewable: isPreviewableChatFile,
-        fileTypeLabel: chatFileTypeLabel,
-        formatSize: formatFileSize
-    });
-}
 /**
  * 生图等待卡片：从发起请求一直显示到出图，中途的阶段进度不再把它换掉。
  * 正文开始流式输出（activity 被清空或 imageFlow 被撤销）时立刻让位给正文。
@@ -9689,12 +9677,16 @@ export default function Page() {
                                                                     className: message.pending ? 'pending' : '',
                                                                     text: message.content
                                                                 }),
-                                                                 message.files?.length ? /*#__PURE__*/ _jsx(ChatFileList, {
+                                                                 message.files?.length ? /*#__PURE__*/ _jsx(AgentChatFileList, {
                                                                      files: message.files,
+                                                                     Icon,
                                                                      onDownload: (file)=>{
                                                                          void downloadChatFile(file).catch(()=>notify('文件下载失败'));
                                                                      },
-                                                                     onPreview: message.role === 'assistant' ? openChatFilePreview : undefined
+                                                                     onPreview: message.role === 'assistant' ? openChatFilePreview : undefined,
+                                                                     isPreviewable: isPreviewableChatFile,
+                                                                     fileTypeLabel: chatFileTypeLabel,
+                                                                     formatSize: formatFileSize
                                                                  }) : null,
                                                                   !message.pending && !agentMessageSelectionActive && /*#__PURE__*/ _jsx(AgentMessageTools, {
                                                                     role: message.role,
@@ -9868,11 +9860,15 @@ export default function Page() {
                                                     hint: "支持图片 / 视频 / 文档",
                                                     accept: agentReferenceAccept
                                                 }),
-                                                agentFiles.length > 0 && /*#__PURE__*/ _jsx(ChatFileList, {
+                                                agentFiles.length > 0 && /*#__PURE__*/ _jsx(AgentChatFileList, {
                                                     files: agentFiles,
+                                                    Icon,
                                                     onDownload: (file)=>{
                                                         void downloadChatFile(file).catch(()=>notify('文件下载失败'));
                                                     },
+                                                    isPreviewable: isPreviewableChatFile,
+                                                    fileTypeLabel: chatFileTypeLabel,
+                                                    formatSize: formatFileSize,
                                                     onRemove: (file)=>{
                                                         setAgentFiles((old)=>old.filter((item)=>item.id !== file.id));
                                                         setAgentRefs((old)=>old.filter((reference)=>reference.id !== file.id));

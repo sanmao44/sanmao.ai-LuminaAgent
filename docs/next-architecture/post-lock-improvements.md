@@ -395,6 +395,16 @@ hardening work when the trigger applies.
   unchanged. Reference planning still uses `lib/creative-references.ts` as the
   only data conversion boundary.
 
+### Stage 6 chat file list boundary checkpoint (2026-10-06)
+
+- Removed the page-local `ChatFileList` forwarding wrapper. Both conversation
+  messages and the composer now render the existing `AgentChatFileList`
+  component directly with explicit presentation and page-owned operation
+  callbacks.
+- File preview eligibility, labels, and size formatting continue to come from
+  `lib/chat-file-preview.ts`; download, preview, remove, and notification
+  behavior remain in `app/page.tsx`.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
