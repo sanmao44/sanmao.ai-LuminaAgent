@@ -10,7 +10,11 @@ const variant = await readFile(
   new URL("../components/canvas/CanvasVariantEditors.tsx", import.meta.url),
   "utf8",
 );
-const source = component + "\n" + variant;
+const generatorCard = await readFile(
+  new URL("../components/canvas/CanvasGeneratorNodeCard.tsx", import.meta.url),
+  "utf8",
+);
+const source = component + "\n" + variant + "\n" + generatorCard;
 const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
@@ -20,7 +24,7 @@ test("variant generators expose shared contextual help in cards and editors", ()
   assert.match(source, /(?:export )?function CanvasGeneratorHelp\(\{ kind \}: \{ kind: CanvasMediaKind \}\)/);
   assert.match(source, /(?:export )?const CanvasVariantRequirementsEditor = memo\(function CanvasVariantRequirementsEditor\(/);
   assert.match(source, /className=\{\`canvas-variant-list-row/);
-  assert.equal((source.match(/<CanvasGeneratorHelp kind=\{data\.kind === "video" \? "video" : "image"\} \/>/g) || []).length, 3);
+  assert.equal((source.match(/<CanvasGeneratorHelp/g) || []).length, 3);
   assert.equal((source.match(/<CanvasVariantRequirementsEditor/g) || []).length, 4);
   assert.match(source, /aria-label=\{`查看\$\{label\}使用方法`\}/);
   assert.match(source, /aria-expanded=\{open\}/);

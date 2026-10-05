@@ -106,6 +106,11 @@ hardening work when the trigger applies.
   presentation and forwards only the open/cancel actions. Its lifecycle label
   is a pure function in `angle-card-state.ts`, covered independently; angle
   generation, reference lookup, and CanvasCore mutations remain in Workspace.
+- `CanvasGeneratorNodeCard.tsx` now owns batch generator presentation: shared
+  help, progress, output thumbnails, variant status rows, retry controls, and
+  model metadata. Workspace still derives variant state and owns retry,
+  preview, document, and generation actions; no generator state store was
+  introduced.
 - The remaining card body, editor, reference picker, generator and workbench
   branches remain in Workspace until each has a behavior-covered presentation
   boundary.
