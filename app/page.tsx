@@ -124,6 +124,7 @@ import MessageReferencePreviewModal from '@/components/MessageReferencePreviewMo
 import ChatFilePreviewDialog from '@/components/ChatFilePreviewDialog';
 import CompareViewer from '@/components/CompareViewer';
 import AssistantCodeBlock from '@/components/AssistantCodeBlock';
+import AssistantMarkdown from '@/components/AssistantMarkdown';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -3822,116 +3823,6 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
         isPreviewable: isPreviewableChatFile,
         fileTypeLabel: chatFileTypeLabel,
         formatSize: formatFileSize
-    });
-}
-function renderInlineMarkdown(text) {
-    const pattern = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\*[^*]+\*|_[^_]+_)/g;
-    const nodes = [];
-    let cursor = 0;
-    let match;
-    while(match = pattern.exec(text)){
-        if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
-        const token = match[0];
-        if (token.startsWith('**') || token.startsWith('__')) nodes.push(/*#__PURE__*/ _jsx("strong", {
-            children: token.slice(2, -2)
-        }, `${match.index}-b`));
-        else if (token.startsWith('`')) nodes.push(/*#__PURE__*/ _jsx("code", {
-            className: "inline-code",
-            children: token.slice(1, -1)
-        }, `${match.index}-c`));
-        else if (token.startsWith('[')) {
-            const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
-            if (link) nodes.push(/*#__PURE__*/ _jsx("a", {
-                href: link[2],
-                target: "_blank",
-                rel: "noreferrer",
-                children: link[1]
-            }, `${match.index}-a`));
-            else nodes.push(token);
-        } else nodes.push(/*#__PURE__*/ _jsx("em", {
-            children: token.slice(1, -1)
-        }, `${match.index}-i`));
-        cursor = match.index + token.length;
-    }
-    if (cursor < text.length) nodes.push(text.slice(cursor));
-    return nodes;
-}
-function MarkdownBlocks({ lines }) {
-    const blocks = [];
-    let paragraph = [];
-    const flushParagraph = ()=>{
-        if (!paragraph.length) return;
-        blocks.push(/*#__PURE__*/ _jsx("p", {
-            children: paragraph.map((line, index)=>/*#__PURE__*/ _jsxs(Fragment, {
-                    children: [
-                        index > 0 && /*#__PURE__*/ _jsx("br", {}),
-                        renderInlineMarkdown(line)
-                    ]
-                }, index))
-        }, `p-${blocks.length}`));
-        paragraph = [];
-    };
-    let index = 0;
-    while(index < lines.length){
-        const line = lines[index];
-        if (!line.trim()) {
-            flushParagraph();
-            index += 1;
-            continue;
-        }
-        const heading = line.match(/^(#{1,6})\s+(.+)$/);
-        if (heading) {
-            flushParagraph();
-            const Tag = `h${heading[1].length}`;
-            blocks.push(/*#__PURE__*/ _jsx(Tag, {
-                children: renderInlineMarkdown(heading[2])
-            }, `h-${index}`));
-            index += 1;
-            continue;
-        }
-        const unordered = line.match(/^\s*[-*+]\s+(.+)$/);
-        const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
-        if (unordered || ordered) {
-            flushParagraph();
-            const listItems = [];
-            const orderedList = Boolean(ordered);
-            while(index < lines.length){
-                const item = lines[index].match(orderedList ? /^\s*\d+[.)]\s+(.+)$/ : /^\s*[-*+]\s+(.+)$/);
-                if (!item) break;
-                listItems.push(item[1]);
-                index += 1;
-            }
-            const ListTag = orderedList ? 'ol' : 'ul';
-            blocks.push(/*#__PURE__*/ _jsx(ListTag, {
-                children: listItems.map((item, itemIndex)=>/*#__PURE__*/ _jsx("li", {
-                        children: renderInlineMarkdown(item)
-                    }, itemIndex))
-            }, `list-${index}`));
-            continue;
-        }
-        if (/^>\s?/.test(line)) {
-            flushParagraph();
-            const quote = [];
-            while(index < lines.length && /^>\s?/.test(lines[index])){
-                quote.push(lines[index].replace(/^>\s?/, ''));
-                index += 1;
-            }
-            blocks.push(/*#__PURE__*/ _jsx("blockquote", {
-                children: quote.map((item, quoteIndex)=>/*#__PURE__*/ _jsxs(Fragment, {
-                        children: [
-                            quoteIndex > 0 && /*#__PURE__*/ _jsx("br", {}),
-                            renderInlineMarkdown(item)
-                        ]
-                    }, quoteIndex))
-            }, `quote-${index}`));
-            continue;
-        }
-        paragraph.push(line);
-        index += 1;
-    }
-    flushParagraph();
-    return /*#__PURE__*/ _jsx(_Fragment, {
-        children: blocks
     });
 }
 function AgentImageLoadingCard({ activity }) {
@@ -10162,6 +10053,7 @@ export default function Page() {
                                                                     onRetryCurrent: ()=>void retryAgentMessage(message)
                                                                 }) : /*#__PURE__*/ _jsx(AssistantMarkdown, {
                                                                     content: message.content,
+                                                                    Icon,
                                                                     onNotify: notify,
                                                                     directionPicker: message.images?.length ? {
                                                                         kind: 'image',

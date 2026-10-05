@@ -340,6 +340,20 @@ hardening work when the trigger applies.
 - Behavior tests render typed and executable code variants. Existing Agent
   routing and message behavior remain unchanged.
 
+### Stage 6 assistant markdown checkpoint (2026-10-06)
+
+- `AssistantMarkdown.tsx` now owns assistant response presentation: inline
+  markdown, headings, lists, quotes, fenced code block composition, direction
+  suggestion placement, and long-response collapse state.
+- It receives message content, the shared icon renderer, notification callback,
+  and an optional direction picker contract. It does not own Agent requests,
+  message persistence, retry state, or image generation.
+- `app/page.tsx` retains message selection, continuation callbacks, Agent busy
+  state, and direction extraction; it passes those values through explicit
+  props. The existing `lib/agent-web.ts` remains the direction extraction owner.
+- Behavior tests cover markdown structure, code composition, and direction
+  action rendering.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
