@@ -23,7 +23,11 @@ const imagePresetNodeSupport = await readFile(
   new URL("../lib/canvas/image-presets.ts", import.meta.url),
   "utf8",
 );
-const component = `${workspace}\n${maskSummary}\n${presetControl}\n${imagePresetDomain}\n${imagePresetNodeSupport}`;
+const upscalePanel = await readFile(
+  new URL("../components/canvas/CanvasUpscaleSettingsPanel.tsx", import.meta.url),
+  "utf8",
+);
+const component = `${workspace}\n${maskSummary}\n${presetControl}\n${imagePresetDomain}\n${imagePresetNodeSupport}\n${upscalePanel}`;
 const mediaCard = await readFile(
   new URL("../components/canvas/CanvasMediaNodeCard.tsx", import.meta.url),
   "utf8",
@@ -276,10 +280,8 @@ test("upscale runs in place and keeps a visible processing state on the node", (
 });
 
 test("upscale settings use provider-specific controls with the main bilingual custom select menu", () => {
-  const start = component.indexOf("function CanvasUpscaleSettingsPanel");
-  const end = component.indexOf("type CanvasNodeEditorPopoverProps", start);
-  assert.ok(start >= 0 && end > start, "upscale settings panel should be present");
-  const panel = component.slice(start, end);
+  const panel = upscalePanel;
+  assert.match(panel, /export default function CanvasUpscaleSettingsPanel/);
   assert.equal((panel.match(/<SelectMenu/g) || []).length, 4);
   assert.doesNotMatch(panel, /<select\b/);
   [

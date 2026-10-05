@@ -176,6 +176,19 @@ hardening work when the trigger applies.
 - The canvas editor behavior suite, full test suite, typecheck, production
   build, and staged diff check pass for this boundary.
 
+### Stage 4 upscale settings checkpoint (2026-10-06)
+
+- `CanvasUpscaleSettingsPanel.tsx` now owns upscale model selection, provider
+  capability presentation, source/target dimension readout, cloud output
+  controls, and source image dimension loading.
+- The panel receives `CanvasUpscaleParams`, `CanvasRuntimeState`, an optional
+  source URL, and one `onChange` callback. It has no CanvasCore, repository,
+  filesystem, or provider SDK dependency.
+- `CanvasWorkspace.tsx` retains the upscale task mutation and passes the
+  existing `CANVAS_Z_INDEX` value through the explicit prop contract.
+- Upscale editor behavior tests, the full test suite, typecheck, production
+  build, and staged diff check pass for this boundary.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
