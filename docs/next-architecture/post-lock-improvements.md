@@ -76,8 +76,9 @@ hardening work when the trigger applies.
   It receives the visible node list and a render callback, and owns only the
   layer container plus stable node keys.
 - `CanvasWorkspace.tsx` still owns CanvasCore document/selection state, node
-  mutation callbacks, gesture handling, and the existing `CanvasNodeCard`
-  implementation. No node card logic or second state owner was introduced.
+  mutation callbacks, gesture handling, and the `CanvasNodeCard` shell. The
+  shell coordinates shared ports, selection, editor/workbench mounting, and
+  derived props; no second node state owner was introduced.
 - The existing card remains in Workspace for this first stage 4 slice because
   its media playback, editor, reference picker, and generation callbacks are
   tightly coupled. The media playback/retry state is also coupled to the
@@ -118,9 +119,20 @@ hardening work when the trigger applies.
 - `CanvasAudioNodePanel.tsx` now owns the independent audio node editor
   presentation, player, file input, and duration forwarding. Workspace keeps
   the replacement adapter and CanvasCore metadata mutation as callbacks.
-- The remaining card body, editor, reference picker, generator and workbench
-  branches remain in Workspace until each has a behavior-covered presentation
-  boundary.
+- The remaining card shell responsibilities, node editor popover, reference
+  picker, and workbench mounting remain in Workspace. They share transient
+  interaction state and CanvasCore callbacks, so they need dedicated behavior
+  coverage before another extraction is safe.
+
+### Stage 4 completion checkpoint (2026-10-06)
+
+- Media, upscale, angle, generator, Agent, and audio node presentation slices
+  are committed independently. `SuperCanvas.tsx` remains a stable re-export
+  boundary; no route or mounting contract changed.
+- `app/page.tsx` and CSS were audited but not mechanically split. Provider
+  management, Agent lifecycle, image editing, browser share rendering, and
+  global canvas styling still cross multiple existing contracts. Moving them
+  without behavior coverage would risk URL, data, or visual regressions.
 
 ## Adapter subdivision
 
