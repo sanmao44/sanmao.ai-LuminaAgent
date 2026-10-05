@@ -123,6 +123,7 @@ import SharePreviewModal from '@/components/SharePreviewModal';
 import MessageReferencePreviewModal from '@/components/MessageReferencePreviewModal';
 import ChatFilePreviewDialog from '@/components/ChatFilePreviewDialog';
 import CompareViewer from '@/components/CompareViewer';
+import AssistantCodeBlock from '@/components/AssistantCodeBlock';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -3933,228 +3934,6 @@ function MarkdownBlocks({ lines }) {
         children: blocks
     });
 }
-function renderCodeLine(text, language) {
-    if (![
-        'js',
-        'jsx',
-        'ts',
-        'tsx',
-        'javascript',
-        'typescript',
-        'json',
-        'css',
-        'html',
-        'htm',
-        'xml',
-        'svg'
-    ].includes(language)) return [
-        text
-    ];
-    const pattern = /(\/\/.*$|\/\*[\s\S]*?\*\/|<!--.*?-->|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:const|let|var|if|else|for|while|return|function|true|false|null|undefined|new|class|this|import|from|export|async|await|try|catch|throw)\b|\b\d+(?:\.\d+)?\b)/g;
-    const nodes = [];
-    let cursor = 0;
-    let match;
-    while(match = pattern.exec(text)){
-        if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
-        const token = match[0];
-        const className = /^(\/\/|\/\*|<!--)/.test(token) ? 'code-token-comment' : /^("|'|`)/.test(token) ? 'code-token-string' : /^\d/.test(token) ? 'code-token-number' : 'code-token-keyword';
-        nodes.push(/*#__PURE__*/ _jsx("span", {
-            className: className,
-            children: token
-        }, `${match.index}-${className}`));
-        cursor = match.index + token.length;
-    }
-    if (cursor < text.length) nodes.push(text.slice(cursor));
-    return nodes;
-}
-function codeDownloadExtension(language) {
-    if ([
-        'js',
-        'javascript'
-    ].includes(language)) return 'js';
-    if ([
-        'jsx'
-    ].includes(language)) return 'jsx';
-    if ([
-        'ts',
-        'typescript'
-    ].includes(language)) return 'ts';
-    if ([
-        'tsx'
-    ].includes(language)) return 'tsx';
-    if ([
-        'json'
-    ].includes(language)) return 'json';
-    if ([
-        'css'
-    ].includes(language)) return 'css';
-    if ([
-        'html',
-        'htm'
-    ].includes(language)) return 'html';
-    if ([
-        'xml'
-    ].includes(language)) return 'xml';
-    if ([
-        'svg'
-    ].includes(language)) return 'svg';
-    if ([
-        'py',
-        'python'
-    ].includes(language)) return 'py';
-    if ([
-        'yaml',
-        'yml'
-    ].includes(language)) return 'yml';
-    if ([
-        'sh',
-        'bash',
-        'shell'
-    ].includes(language)) return 'sh';
-    if ([
-        'ps1',
-        'powershell'
-    ].includes(language)) return 'ps1';
-    if ([
-        'md',
-        'markdown'
-    ].includes(language)) return 'md';
-    return 'txt';
-}
-function AssistantCodeBlock({ language, code, onNotify }) {
-    const [expanded, setExpanded] = useState(false);
-    const normalizedLanguage = language.trim().toLowerCase() || 'text';
-    const lines = code.replace(/\n$/, '').split('\n');
-    async function copyCode() {
-        try {
-            await navigator.clipboard.writeText(code);
-            onNotify('代码已复制');
-        } catch  {
-            onNotify('复制失败');
-        }
-    }
-    function downloadCode() {
-        try {
-            const url = URL.createObjectURL(new Blob([
-                code
-            ], {
-                type: 'text/plain;charset=utf-8'
-            }));
-            const anchor = document.createElement('a');
-            anchor.href = url;
-            anchor.download = `sanmao-code.${codeDownloadExtension(normalizedLanguage)}`;
-            document.body.appendChild(anchor);
-            anchor.click();
-            anchor.remove();
-            window.setTimeout(()=>URL.revokeObjectURL(url), 1500);
-            onNotify(`代码已下载：${anchor.download}`);
-        } catch  {
-            onNotify('代码下载失败');
-        }
-    }
-    function runCode() {
-        if (![
-            'html',
-            'htm',
-            'svg',
-            'xml'
-        ].includes(normalizedLanguage)) return onNotify('当前语言仅支持复制，不能在浏览器中直接运行');
-        const type = normalizedLanguage === 'svg' ? 'image/svg+xml' : 'text/html';
-        const url = URL.createObjectURL(new Blob([
-            code
-        ], {
-            type
-        }));
-        const tab = window.open(url, '_blank', 'noopener,noreferrer');
-        if (!tab) onNotify('浏览器拦截了预览窗口，请允许弹窗');
-        window.setTimeout(()=>URL.revokeObjectURL(url), 20000);
-    }
-    return /*#__PURE__*/ _jsxs("div", {
-        className: `assistant-code-block ${expanded ? 'expanded' : ''}`,
-        children: [
-            /*#__PURE__*/ _jsxs("div", {
-                className: "assistant-code-toolbar",
-                children: [
-                    /*#__PURE__*/ _jsx("span", {
-                        className: "assistant-code-language",
-                        children: normalizedLanguage
-                    }),
-                    /*#__PURE__*/ _jsxs("div", {
-                        className: "assistant-code-actions",
-                        children: [
-                            [
-                                'html',
-                                'htm',
-                                'svg',
-                                'xml'
-                            ].includes(normalizedLanguage) && /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                onClick: runCode,
-                                children: [
-                                    /*#__PURE__*/ _jsx("span", {
-                                        className: "code-run-symbol",
-                                        children: "▶"
-                                    }),
-                                    "运行"
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                onClick: downloadCode,
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "download",
-                                        size: 13
-                                    }),
-                                    "下载"
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                onClick: ()=>void copyCode(),
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "copy",
-                                        size: 13
-                                    }),
-                                    "复制"
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                onClick: ()=>setExpanded((value)=>!value),
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: expanded ? 'close' : 'full',
-                                        size: 13
-                                    }),
-                                    expanded ? '关闭' : '全屏'
-                                ]
-                            })
-                        ]
-                    })
-                ]
-            }),
-            /*#__PURE__*/ _jsx("pre", {
-                children: /*#__PURE__*/ _jsx("code", {
-                    children: lines.map((line, index)=>/*#__PURE__*/ _jsxs("span", {
-                            className: "assistant-code-line",
-                            children: [
-                                /*#__PURE__*/ _jsx("span", {
-                                    className: "assistant-code-number",
-                                    children: index + 1
-                                }),
-                                /*#__PURE__*/ _jsx("span", {
-                                    className: "assistant-code-text",
-                                    children: renderCodeLine(line || ' ', normalizedLanguage)
-                                })
-                            ]
-                        }, index))
-                })
-            })
-        ]
-    });
-}
 function AgentImageLoadingCard({ activity }) {
     const stage = activity?.stage || 'image_planning';
     const imageGenerating = stage === 'image' || stage === 'image_generating';
@@ -4314,6 +4093,7 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
                 blocks.push(/*#__PURE__*/ _jsx(AssistantCodeBlock, {
                     language: codeLanguage,
                     code: codeLines.join('\n'),
+                    Icon,
                     onNotify: onNotify
                 }, `code-${blocks.length}`));
                 codeLanguage = null;
@@ -4325,6 +4105,7 @@ function AssistantMarkdown({ content, onNotify, directionPicker }) {
     if (codeLanguage !== null) blocks.push(/*#__PURE__*/ _jsx(AssistantCodeBlock, {
         language: codeLanguage,
         code: codeLines.join('\n'),
+        Icon,
         onNotify: onNotify
     }, `code-${blocks.length}`));
     flushNormal();

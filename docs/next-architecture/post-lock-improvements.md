@@ -325,6 +325,21 @@ hardening work when the trigger applies.
 - Behavior tests cover current/parent rendering, reference labeling, mode and
   zoom controls. Provider, image-edit, and share workflows remain unchanged.
 
+### Stage 6 assistant code block checkpoint (2026-10-06)
+
+- `AssistantCodeBlock.tsx` now owns code block presentation: lightweight token
+  highlighting, line numbers, language-aware download naming, copy/run actions,
+  and expand/collapse state.
+- The component receives code, language, the shared icon renderer, and an
+  explicit notification callback. Clipboard, Blob, download, and preview-window
+  effects remain local to the presentation boundary; no Agent or provider state
+  is introduced.
+- `app/page.tsx` retains Markdown fence parsing, direction insertion, message
+  lifecycle, and notification ownership, passing `Icon` and `onNotify` into the
+  component.
+- Behavior tests render typed and executable code variants. Existing Agent
+  routing and message behavior remain unchanged.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

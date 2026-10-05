@@ -1,20 +1,26 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createTsRequire } from "./ts-require.mjs";
 
-const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-const start = page.indexOf("function codeDownloadExtension");
-const end = page.indexOf("function AgentImageLoadingCard", start);
-assert.ok(start >= 0 && end > start, "code block renderer should be present");
-const codeBlock = page.slice(start, end);
+const AssistantCodeBlock = createTsRequire(new URL("..", import.meta.url).pathname)("./components/AssistantCodeBlock").default;
+const Icon = ({ name }) => createElement("i", { "data-icon": name });
 
-test("code blocks expose a download action with language-aware filenames", () => {
-  assert.match(codeBlock, /function codeDownloadExtension\(language\)/);
-  assert.match(codeBlock, /'javascript'[\s\S]*?return 'js'/);
-  assert.match(codeBlock, /'typescript'[\s\S]*?return 'ts'/);
-  assert.match(codeBlock, /'markdown'[\s\S]*?return 'md'/);
-  assert.match(codeBlock, /return 'txt'/);
-  assert.match(codeBlock, /name: "download"/);
-  assert.match(codeBlock, /anchor\.download = `sanmao-code\.\$\{codeDownloadExtension\(normalizedLanguage\)\}`/);
-  assert.match(codeBlock, /代码已下载/);
+test("code blocks render language, numbered lines, highlighting and actions", () => {
+  const markup = renderToStaticMarkup(createElement(AssistantCodeBlock, { language: "typescript", code: "const answer = 42;\nreturn answer;", Icon, onNotify: () => {} }));
+  assert.match(markup, /class="assistant-code-block/);
+  assert.match(markup, />typescript<\/span>/);
+  assert.match(markup, /assistant-code-number/);
+  assert.match(markup, /code-token-keyword/);
+  assert.match(markup, /data-icon="download"/);
+  assert.match(markup, />??<\/button>/);
+  assert.match(markup, />??<\/button>/);
+});
+
+test("only executable markup languages expose the run action", () => {
+  const html = renderToStaticMarkup(createElement(AssistantCodeBlock, { language: "html", code: "<h1>Hi</h1>", Icon, onNotify: () => {} }));
+  const python = renderToStaticMarkup(createElement(AssistantCodeBlock, { language: "python", code: "print(1)", Icon, onNotify: () => {} }));
+  assert.match(html, /code-run-symbol/);
+  assert.doesNotMatch(python, /code-run-symbol/);
 });
