@@ -137,6 +137,20 @@ hardening work when the trigger applies.
   global canvas styling still cross multiple existing contracts. Moving them
   without behavior coverage would risk URL, data, or visual regressions.
 
+### Stage 4 reference mention checkpoint (2026-10-06)
+
+- `CanvasReferenceMentionMenu.tsx` now owns the canvas-specific reference
+  candidate menu presentation and forwards the selected candidate index to its
+  caller.
+- `mention-options.ts` owns the pure conversion from a `CanvasDocument` node
+  to the existing `ReferenceMentionOption` contract, including generated media
+  previews and stable fallback labels.
+- `CanvasWorkspace.tsx` retains mention parsing, reference edge creation,
+  selection, and document mutation. The extraction does not add a second
+  reference source of truth or change the shared menu contract.
+- Mention behavior tests, the full test suite, typecheck, production build,
+  and `git diff --check` pass for this slice.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
