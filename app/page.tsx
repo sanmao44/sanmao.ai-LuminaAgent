@@ -121,6 +121,7 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import SupportModal from '@/components/SupportModal';
 import SharePreviewModal from '@/components/SharePreviewModal';
 import MessageReferencePreviewModal from '@/components/MessageReferencePreviewModal';
+import ChatFilePreviewDialog from '@/components/ChatFilePreviewDialog';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -4317,102 +4318,6 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
         isPreviewable: isPreviewableChatFile,
         fileTypeLabel: chatFileTypeLabel,
         formatSize: formatFileSize
-    });
-}
-function ChatFilePreviewDialog({ file, onClose }) {
-    const [previewUrl, setPreviewUrl] = useState('');
-    useEffect(()=>{
-        let url = '';
-        try {
-            if (typeof URL !== 'undefined' && typeof Blob !== 'undefined') {
-                url = URL.createObjectURL(new Blob([
-                    file.content
-                ], {
-                    type: 'text/html;charset=utf-8'
-                }));
-            }
-        } catch {}
-        setPreviewUrl(url);
-        return ()=>{
-            if (url) URL.revokeObjectURL(url);
-        };
-    }, [file.content]);
-    return /*#__PURE__*/ _jsxs("div", {
-        className: "chat-file-preview-backdrop",
-        role: "presentation",
-        onClick: (event)=>{
-            if (event.target === event.currentTarget) onClose();
-        },
-        children: [
-            /*#__PURE__*/ _jsxs("section", {
-                className: "chat-file-preview-modal",
-                role: "dialog",
-                "aria-modal": "true",
-                "aria-labelledby": "chat-file-preview-title",
-                children: [
-                    /*#__PURE__*/ _jsxs("header", {
-                        className: "chat-file-preview-head",
-                        children: [
-                            /*#__PURE__*/ _jsxs("div", {
-                                children: [
-                                    /*#__PURE__*/ _jsx("small", {
-                                        children: file.label || 'HTML 预览'
-                                    }),
-                                    /*#__PURE__*/ _jsx("h2", {
-                                        id: "chat-file-preview-title",
-                                        title: file.name,
-                                        children: file.name
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsx("button", {
-                                type: "button",
-                                className: "chat-file-preview-close",
-                                onClick: onClose,
-                                "aria-label": "关闭预览",
-                                title: "关闭预览",
-                                children: /*#__PURE__*/ _jsx(Icon, {
-                                    name: "close",
-                                    size: 18
-                                })
-                            })
-                        ]
-                    }),
-                    /*#__PURE__*/ _jsx("div", {
-                        className: "chat-file-preview-stage",
-                        children: file.content ? /*#__PURE__*/ _jsx("iframe", {
-                            className: "chat-file-preview-frame",
-                            title: `${file.name} 预览`,
-                            srcDoc: file.content,
-                            src: previewUrl || undefined,
-                            sandbox: "allow-scripts",
-                            allow: "autoplay; fullscreen",
-                            loading: "eager",
-                            referrerPolicy: "no-referrer"
-                        }) : /*#__PURE__*/ _jsx("p", {
-                            style: {
-                                display: "grid",
-                                placeItems: "center",
-                                height: "100%",
-                                margin: 0,
-                                color: "var(--muted)",
-                                fontSize: 13
-                            },
-                            children: "正在生成预览…"
-                        })
-                    }),
-                    /*#__PURE__*/ _jsx("footer", {
-                        className: "chat-file-preview-foot",
-                        children: /*#__PURE__*/ _jsx("button", {
-                            type: "button",
-                            className: "secondary-action compact",
-                            onClick: onClose,
-                            children: "关闭"
-                        })
-                    })
-                ]
-            })
-        ]
     });
 }
 function renderInlineMarkdown(text) {
@@ -15913,6 +15818,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
              }),
              chatFilePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(ChatFilePreviewDialog, {
                  file: chatFilePreview,
+                 Icon,
                  onClose: ()=>setChatFilePreview(null)
              }), document.body),
              messageReferencePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(MessageReferencePreviewModal, {

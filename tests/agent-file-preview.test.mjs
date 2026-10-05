@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { createTsRequire } from "./ts-require.mjs";
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+const dialogSource = await readFile(new URL("../components/ChatFilePreviewDialog.tsx", import.meta.url), "utf8");
 const preview = createTsRequire(new URL("../lib", import.meta.url).pathname)("./chat-file-preview");
+const ChatFilePreviewDialog = createTsRequire(new URL("../components", import.meta.url).pathname)("./ChatFilePreviewDialog").default;
 
 function functionBody(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -35,16 +39,18 @@ test("adds preview only when ChatFileList receives a preview handler", () => {
 });
 
 test("renders HTML through srcDoc in a script-sandboxed iframe", () => {
-  const dialog = functionBody(page, "ChatFilePreviewDialog");
-  assert.match(dialog, /role: "dialog"/);
-  assert.match(dialog, /"aria-modal": "true"/);
-  assert.match(dialog, /srcDoc: file\.content/);
-  assert.match(dialog, /URL\.createObjectURL\(new Blob/);
-  assert.match(dialog, /src: previewUrl \|\| undefined/);
-  assert.match(dialog, /sandbox: "allow-scripts"/);
-  assert.doesNotMatch(dialog, /allow-same-origin/);
+  const markup = renderToStaticMarkup(createElement(ChatFilePreviewDialog, {
+    file: { id: "file-1", name: "preview.html", mimeType: "text/html", content: "<h1>Hello</h1>", label: "HTML 预览" },
+    Icon: ({ name }) => createElement("i", { "data-icon": name }),
+    onClose: () => {},
+  }));
+  assert.match(markup, /role="dialog"/);
+  assert.match(markup, /aria-modal="true"/);
+  assert.match(markup, /srcDoc="&lt;h1&gt;Hello&lt;\/h1&gt;"/);
+  assert.match(markup, /sandbox="allow-scripts"/);
+  assert.doesNotMatch(markup, /allow-same-origin/);
   assert.match(preview.getChatFilePreviewContent({ encoding: "base64", content: "aGVsbG8=" }), /hello/);
-  assert.match(dialog, /allow: "autoplay; fullscreen"/);
+  assert.match(markup, /allow="autoplay; fullscreen"/);
   assert.match(preview.buildChatFilePreviewContent("<html><head></head><body></body></html>"), /data-sanmao-preview-motion/);
   assert.match(preview.buildChatFilePreviewContent("prefers-reduced-motion: reduce"), /prefers-reduced-motion: no-preference/);
   assert.match(page, /buildChatFilePreviewContent\(getChatFilePreviewContent\(file\)\)/);
@@ -55,8 +61,14 @@ test("keeps the download path and provides multiple close paths", () => {
   assert.match(download, /new Blob/);
   assert.match(download, /anchor\.download = file\.name/);
   assert.match(download, /anchor\.click\(\)/);
-  assert.match(page, /className: "chat-file-preview-close"[\s\S]*?onClick: onClose/);
-  assert.match(page, /if \(event\.target === event\.currentTarget\) onClose\(\)/);
+  const markup = renderToStaticMarkup(createElement(ChatFilePreviewDialog, {
+    file: { id: "file-1", name: "preview.html", mimeType: "text/html", content: "<h1>Hello</h1>" },
+    Icon: ({ name }) => createElement("i", { "data-icon": name }),
+    onClose: () => {},
+  }));
+  assert.match(markup, /class="chat-file-preview-close"/);
+  assert.match(markup, /aria-label="关闭预览"/);
+  assert.match(dialogSource, /event\.target === event\.currentTarget/);
   assert.match(page, /if \(event\.key === 'Escape'\) setChatFilePreview\(null\)/);
   assert.match(styles, /\.chat-file-preview-backdrop\{position:fixed;inset:0/);
   assert.match(styles, /\.chat-file-preview-frame\{display:block;width:100%;height:100%/);

@@ -301,6 +301,18 @@ hardening work when the trigger applies.
 - Existing file preview tests now exercise the helper behavior directly and
   retain behavior coverage for the page-owned dialog/download path.
 
+### Stage 6 chat file preview dialog checkpoint (2026-10-06)
+
+- `ChatFilePreviewDialog.tsx` now owns the HTML/artifact preview presentation,
+  iframe sandbox attributes, close controls, and Blob URL creation/revocation.
+- The component receives the prepared file projection, shared icon renderer,
+  and close callback. It does not fetch artifacts, download files, resolve
+  preview content, own Escape handling, or manage page scroll locking.
+- `app/page.tsx` retains artifact fetch/normalization, preview state, Portal
+  mounting, Escape handling, download behavior, and notifications.
+- Behavior tests render the extracted dialog and retain page-owned download and
+  close-path checks; no URL, API, or file format behavior changed.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
