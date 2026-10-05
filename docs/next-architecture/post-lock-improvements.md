@@ -82,6 +82,10 @@ hardening work when the trigger applies.
   its media playback, editor, reference picker, and generation callbacks are
   tightly coupled. The next safe seam is a card contract with behavior
   coverage for callback freshness before moving the card body.
+- `CanvasNodeCardContract.ts` now defines the card props once and exports the
+  memo comparator. The comparator checks every Workspace callback and editor
+  collection, while intentionally ignoring camera-only document replacement.
+  Behavior tests cover callback freshness and camera-only stability.
 
 ## Adapter subdivision
 

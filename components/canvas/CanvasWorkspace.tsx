@@ -244,6 +244,10 @@ import { CanvasGeneratorHelp, CanvasVariantRequirementsEditor } from "@/componen
 import CanvasMinimap from "@/components/canvas/CanvasMinimap";
 import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStrip";
 import CanvasNodeLayer from "@/components/canvas/CanvasNodeLayer";
+import {
+  areCanvasNodeCardPropsEqual,
+  type CanvasNodeCardProps,
+} from "@/components/canvas/CanvasNodeCardContract";
 import CanvasGroupLayer from "@/components/canvas/CanvasGroupLayer";
 import MediaViewer, {
   type ImageVersionInfo,
@@ -17903,61 +17907,7 @@ function CanvasNodeCard({
   onOutputPreview,
   editing,
   onEdit,
-}: {
-  node: CanvasNode;
-  selected: boolean;
-  dragging: boolean;
-  referencePickerActive: boolean;
-  referencePickerTargetId: string | null;
-  referencePickerHoverNodeId: string | null;
-  referencePickerFlashNodeId: string | null;
-  document: CanvasDocument;
-  onPointerDown: (event: ReactPointerEvent, node: CanvasNode) => void;
-  onResize: (event: ReactPointerEvent, node: CanvasNode) => void;
-  onConnect: (
-    event: ReactPointerEvent,
-    nodeId: string,
-    port: "left" | "right",
-  ) => void;
-  onSelect: (event: ReactPointerEvent) => void;
-  onRemoveFromGroup: () => void;
-  onPreview: () => void;
-  onOpenVideoClip: () => void;
-  onOpenVideoEditor: () => void;
-  onOpenAngle: () => void;
-  onCancelAngle: () => void;
-  onTextPreview: () => void;
-  onLocalEdit: () => void;
-  onUseAsImagePrompt: () => void;
-  onRetryVariant: (variantIndex: number) => void;
-  onRetryFailedVariants: () => void;
-  onNaturalSize: (
-    nodeId: string,
-    width: number,
-    height: number,
-    durationSeconds?: number,
-  ) => void;
-  onPromptChange: (value: string) => void;
-  onEditorPromptChange: (node: CanvasNode, value: string) => void;
-  onEditorParamsChange: (node: CanvasNode, settings: CreationSettings) => void;
-  onVariantRequirementsChange: (node: CanvasNode, value: string) => void;
-  runtime: CanvasRuntimeState | null;
-  editorPrompt: string;
-  editorParams?: CanvasGenerationParams;
-  expanded: boolean;
-  onToggleEditor: (node: CanvasNode) => void;
-  onGenerate: (node: CanvasNode) => void;
-  onOneTake: (node: CanvasNode, durationSeconds: number) => void;
-  onReferenceReorder: (ownerId: string, draggedId: string, targetId: string) => void;
-  onReferenceRemove: (ownerId: string, sourceId: string) => void;
-  onReferenceDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
-  onAddReferenceFiles: (ownerId: string, files: File[]) => void;
-  editorContexts: CanvasNode[];
-  mentionCandidates: CanvasNode[];
-  onOutputPreview: (node: CanvasNode) => void;
-  editing: boolean;
-  onEdit: (value: boolean) => void;
-}) {
+}: CanvasNodeCardProps) {
   const size = nodeSize(node);
   const data = node.data;
   const group = groupForNode(document, node.id);
@@ -18894,21 +18844,5 @@ function CanvasNodeCard({
 // matters most when a canvas contains many image previews and rich text.
 const MemoizedCanvasNodeCard = memo(
   CanvasNodeCard,
-  (previous, next) =>
-    previous.node === next.node &&
-    previous.selected === next.selected &&
-    previous.dragging === next.dragging &&
-    previous.referencePickerActive === next.referencePickerActive &&
-    previous.referencePickerTargetId === next.referencePickerTargetId &&
-    previous.referencePickerHoverNodeId === next.referencePickerHoverNodeId &&
-    previous.referencePickerFlashNodeId === next.referencePickerFlashNodeId &&
-    previous.document.nodes === next.document.nodes &&
-    previous.document.edges === next.document.edges &&
-    previous.document.groups === next.document.groups &&
-    previous.runtime === next.runtime &&
-    previous.editorPrompt === next.editorPrompt &&
-    previous.editorParams === next.editorParams &&
-    previous.expanded === next.expanded &&
-    previous.onOneTake === next.onOneTake &&
-    previous.editing === next.editing,
+  areCanvasNodeCardPropsEqual,
 );
