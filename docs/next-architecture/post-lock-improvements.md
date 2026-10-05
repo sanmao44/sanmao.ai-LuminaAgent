@@ -1,6 +1,6 @@
 ﻿# Post-Lock Improvements
 
-Last reviewed: 2026-10-04
+Last reviewed: 2026-10-05
 
 This file records work that is deliberately deferred **after** the Final
 Architecture Lock. None of these items is an ownership blocker; none of them
@@ -28,9 +28,19 @@ hardening work when the trigger applies.
   render trees or audio player implementation.
 - Stage 1 targeted behavior tests, full test suite, typecheck, and production
   build pass.
+- Stage 2 is complete: context menu rendering, keyboard focus behavior, quick
+  toolbar placement, action groups, and menu layout calculations now live in
+  `components/canvas/CanvasContextMenu.tsx`,
+  `components/canvas/CanvasQuickToolbar.tsx`,
+  `lib/canvas/menu-labels.ts`, and `lib/canvas/menu-layout.ts`.
+- `CanvasWorkspace.tsx` retains action construction and CanvasCore mutations;
+  the extracted modules receive explicit targets, action contracts, document
+  snapshots, and stage refs. No second selection or document owner was added.
+- Stage 2 behavior tests, full test suite, typecheck, and production build are
+  required before advancing to viewport/selection work.
 - Remaining stages are intentionally deferred until this stage is committed:
-  context menus/toolbars, viewport/selection, node presentation, generation
-  boundaries, and page-level panels.
+  viewport/selection, node presentation, generation boundaries, and page-level
+  panels.
 
 ## Adapter subdivision
 

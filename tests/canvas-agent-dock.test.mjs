@@ -4,6 +4,9 @@ import test from "node:test";
 import { createTsRequire } from './ts-require.mjs';
 
 const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
+const menuLayout = await readFile(new URL("../lib/canvas/menu-layout.ts", import.meta.url), "utf8");
+const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
+const contextMenu = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
 
 const [component, canvas, styles, context, canvasApi, markdown] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
@@ -641,7 +644,7 @@ test("the canvas hands a selection to the dock with one click", () => {
   // 单节点快捷工具栏和多选工具条都接这个入口。
   assert.match(canvas, /id: "ask-agent",[\s\S]{0,140}?label: "问 Agent",/);
   assert.match(canvas, /icon: "agent",/);
-  assert.match(canvas, /case "agent":/);
+  assert.match(contextMenu, /case "agent":/);
   assert.ok(canvas.includes('title="打开 Agent 助手，用这些选中节点作为上下文"'));
   // 信号传给面板：展开后光标落在输入框里，不用再点一次。
   assert.match(canvas, /focusSignal=\{agentDockFocusSignal\}/);
@@ -703,8 +706,8 @@ test("the dock names the web modes the way the rest of the app does", async () =
 
 test("focusing a node keeps it clear of the open agent panel", () => {
   // 面板是右侧浮层：定位节点、落下结果、适应视图都要按面板左边那块可见区域取景，否则有半边藏在面板后面。
-  assert.match(canvas, /function canvasRightOverlayInset\(stage: HTMLElement \| null\) \{/);
-  assert.ok(canvas.includes('window.document.querySelector(".canvas-agent-dock")'));
+  assert.match(menuLayout, /export function canvasRightOverlayInset\(stage: HTMLElement \| null\) \{/);
+  assert.ok(menuLayout.includes('window.document.querySelector(".canvas-agent-dock")'));
   // 默认值就是面板当前占位：所有取景入口都自动让位，不会漏掉哪一处。
   assert.ok(canvas.includes("(ids?: string[], rightInset = canvasRightOverlayInset(stageRef.current)) => {"));
   assert.match(canvas, /const viewWidth = width - Math\.min\(Math\.max\(rightInset, 0\), Math\.max\(0, width - 240\)\);/);
@@ -712,16 +715,16 @@ test("focusing a node keeps it clear of the open agent panel", () => {
   assert.match(canvas, /x: viewWidth \/ 2 - \(minX \+ \(maxX - minX\) \/ 2\) \* zoom,/);
   assert.doesNotMatch(canvas, /agentDockRightInset/);
   // 窄屏下面板是横在底部的一条，它没占右半边时不该让位。
-  assert.match(canvas, /if \(rect\.width <= 0 \|\| rect\.left <= stageRect\.left \+ stageRect\.width \/ 2\) return 0;/);
+  assert.match(menuLayout, /if \(rect\.width <= 0 \|\| rect\.left <= stageRect\.left \+ stageRect\.width \/ 2\) return 0;/);
 });
 
 test("canvas overlays step aside for the open agent panel", () => {
   // 节点工具栏和参数面板同样是右侧浮层：面板打开时要贴到面板左边，别被压在面板下面。
-  assert.match(canvas, /function canvasVisibleStageWidth\(stage: HTMLElement \| null\) \{/);
-  assert.match(canvas, /const inset = Math\.min\(canvasRightOverlayInset\(stage\), Math\.max\(0, width - 240\)\);/);
-  assert.ok(canvas.includes("const placementStage = { ...stageSize, width: canvasVisibleStageWidth(stage) };"));
-  assert.match(canvas, /placeCanvasGroupToolbar\(anchor, placementStage, overlay, 10\)/);
-  assert.match(canvas, /placeCanvasNodeToolbar\(anchor, placementStage, overlay, 10\)/);
+  assert.match(menuLayout, /export function canvasVisibleStageWidth\(stage: HTMLElement \| null\) \{/);
+  assert.match(menuLayout, /const inset = Math\.min\(canvasRightOverlayInset\(stage\), Math\.max\(0, width - 240\)\);/);
+  assert.ok(quickToolbar.includes("const placementStage = { ...stageSize, width: canvasVisibleStageWidth(stage) };"));
+  assert.match(quickToolbar, /placeCanvasGroupToolbar\(anchor, placementStage, overlay, 10\)/);
+  assert.match(quickToolbar, /placeCanvasNodeToolbar\(anchor, placementStage, overlay, 10\)/);
   assert.match(canvas, /const visibleStage = \{ width: canvasVisibleStageWidth\(stage\), height: stageHeight \};/);
 });
 

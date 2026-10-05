@@ -6,6 +6,7 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const contextMenu = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
 const groupLayer = await readFile(
   new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url),
   "utf8",
@@ -106,8 +107,8 @@ test("group blank areas use an independent group context menu", () => {
   assert.match(contextHandler, /if \(groupElement && !node && !isolatedTarget\)/);
   assert.match(contextHandler, /event\.preventDefault\(\)[\s\S]*?menu: "group"[\s\S]*?groupId: group\.id/);
   assert.doesNotMatch(contextHandler, /groupMember|groupMember\.id/);
-  assert.match(component, /function CanvasGroupContextMenu/);
-  assert.match(component, /ariaLabel=\{`\$\{group\.name\}对象组右键菜单`\}/);
+  assert.match(contextMenu, /export function CanvasGroupContextMenu/);
+  assert.match(contextMenu, /ariaLabel=\{`\$\{group\.name\}对象组右键菜单`\}/);
   assert.match(component, /const group = groupForNode\(document, node\.id\);/);
   assert.match(component, /\{group && \([\s\S]*?className="canvas-node-group-remove"/);
   assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);

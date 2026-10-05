@@ -4,6 +4,7 @@ import test from "node:test";
 
 const viewer = await readFile(new URL("../components/MediaViewer.tsx", import.meta.url), "utf8");
 const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
+const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
 
 test("media viewer keeps the requested top controls and removes repeated bottom actions", () => {
@@ -46,7 +47,7 @@ test("Agent quick toolbar owns reverse prompting and writes the result back to a
   assert.match(quickActions, /id: "reverse-prompt"/);
   assert.match(quickActions, /label: reverseAgentNodeId === node\.id \? "反推中…" : "反推提示词"/);
   assert.match(quickActions, /disabled: !hasImageReferences \|\| !chatModelsAvailable \|\| nodeBusy/);
-  assert.match(canvas, /case "reverse-prompt":/);
+  assert.match(quickActions, /onClick: \(\) => void reverseAgentNodePrompt\(node\)/);
 });
 
 test("viewer preview surfaces use project theme variables in both theme modes", () => {

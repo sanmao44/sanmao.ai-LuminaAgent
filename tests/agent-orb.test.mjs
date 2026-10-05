@@ -22,6 +22,8 @@ const canvas = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const contextMenu = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
+const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
 
 test("agent orb stylesheet ships the shared state contract", () => {
   for (const state of [
@@ -113,8 +115,8 @@ test("canvas agent marks reuse the live orb instead of a bare glyph", () => {
   assert.doesNotMatch(dock, /✦/);
   /* 画布顶栏、右键菜单、节点卡片都走 AgentOrb，不再自己画星星。 */
   assert.match(canvas, /import AgentOrb, \{ busyOrbState, type AgentOrbState \} from "@\/components\/AgentOrb";/);
-  assert.match(canvas, /case "agent":\s*\n\s*return <AgentOrb state="idle" size=\{15\} label="" \/>;/);
-  assert.match(canvas, /function canvasPromptOrbState\(status: string \| undefined\): AgentOrbState/);
-  assert.match(canvas, /target\.node\.type === "prompt"\s*\n\s*\? <AgentOrb state=\{canvasPromptOrbState\(target\.node\.data\.status\)\}/);
+  assert.match(contextMenu, /case "agent":\s*\n\s*return <AgentOrb state="idle" size=\{15\} label="" \/>;/);
+  assert.match(contextMenu, /export function canvasPromptOrbState\(status: string \| undefined\): AgentOrbState/);
+  assert.match(quickToolbar, /target\.kind === "node" && target\.node\.type === "prompt"/);
   assert.doesNotMatch(canvas, /✦ 问 Agent|✦ Agent/);
 });

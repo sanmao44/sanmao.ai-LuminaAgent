@@ -7,6 +7,8 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const contextMenuComponent = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
+const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
 const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
 const groupLayer = await readFile(new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url), "utf8");
 const styles = await readFile(
@@ -57,6 +59,7 @@ test("card context menus select the target and preserve selected multi-actions",
   const groupContextMenuEnd = component.indexOf("// Below this threshold", groupContextMenuStart);
   assert.ok(groupContextMenuStart >= 0 && groupContextMenuEnd > groupContextMenuStart, "group context menu builder should exist");
   const groupContextMenu = component.slice(groupContextMenuStart, groupContextMenuEnd);
+  const renderedGroupMenu = contextMenu;
   const groupQuickActionsStart = component.indexOf("const groupQuickActions = useMemo");
   const groupQuickActions = component.slice(groupQuickActionsStart, groupContextMenuStart);
   const audioMenuStart = contextMenu.indexOf('if (node.type === "media" && node.data.kind === "audio")');
@@ -76,9 +79,9 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /if \(!selectedIds\.has\(node\.id\)\) selectNode\(node\)/);
   assert.match(component, /<CanvasNodeContextMenu/);
   assert.match(component, /<CanvasGroupContextMenu/);
-  assert.match(component, /className="canvas-group-context-menu"/);
-  assert.match(component, /className="canvas-node-context-menu"/);
-  assert.match(component, /className=\{`canvas-context-menu\$\{className/);
+  assert.match(contextMenuComponent, /className="canvas-group-context-menu"/);
+  assert.match(contextMenuComponent, /className="canvas-node-context-menu"/);
+  assert.match(contextMenuComponent, /className=\{`canvas-context-menu\$\{className/);
   assert.match(component, /label: "复制节点"/);
   assert.match(component, /label: "创建副本"/);
   assert.match(component, /preserveGroupConnections = false/);
@@ -92,7 +95,7 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(contextMenu, /label: "继续生成 \/ 变体"/);
   assert.match(contextMenu, /label: "下载"/);
   assert.match(contextMenu, /label: "加入资产"/);
-  assert.match(component, /groups\.filter\(\(group\) => group\.actions\.length > 0\)/);
+  assert.match(contextMenuComponent, /groups\.filter\(\(group\) => group\.actions\.length > 0\)/);
   assert.doesNotMatch(contextMenu, /label: "预览"/);
   assert.doesNotMatch(contextMenu, /label: "放大查看"/);
   assert.doesNotMatch(contextMenu, /label: "调整参数"/);
@@ -123,17 +126,17 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.doesNotMatch(quickActions, /id: "more"/);
   assert.match(quickActions, /id: "video-tools"/);
   assert.doesNotMatch(quickActions, /label: "预览"/);
-  assert.match(component, /aria-haspopup="menu"/);
-  assert.match(component, /aria-controls={`canvas-quick-menu-\$\{targetId\}-\$\{group\.id\}`}/);
-  assert.match(component, /aria-expanded=\{openGroupId === group\.id\}/);
-  assert.match(component, /className="canvas-node-quick-menu"/);
-  assert.match(component, /const focusFirstAction = \(\) =>/);
-  assert.match(component, /window\.document\.activeElement !== action/);
-  assert.match(component, /closeMenu\(true\)/);
-  assert.match(component, /addEventListener\("keydown", closeOnEscape, true\)/);
-  assert.match(component, /querySelector\("\.canvas-node-quick-menu"\)/);
-  assert.match(component, /event\.key !== "Escape"/);
-  assert.match(component, /\["ArrowDown", "ArrowUp", "Home", "End"\]/);
+  assert.match(quickToolbar, /aria-haspopup="menu"/);
+  assert.match(quickToolbar, /aria-controls={`canvas-quick-menu-\$\{targetId\}-\$\{group\.id\}`}/);
+  assert.match(quickToolbar, /aria-expanded=\{openGroupId === group\.id\}/);
+  assert.match(contextMenuComponent, /className="canvas-node-quick-menu"/);
+  assert.match(contextMenuComponent, /const focusFirstAction = \(\) =>/);
+  assert.match(contextMenuComponent, /window\.document\.activeElement !== action/);
+  assert.match(quickToolbar, /closeMenu\(true\)/);
+  assert.match(quickToolbar, /addEventListener\("keydown", closeOnEscape, true\)/);
+  assert.match(quickToolbar, /closest\("\.canvas-node-quick-menu"\)/);
+  assert.match(contextMenuComponent, /event\.key === "Escape"/);
+  assert.match(contextMenuComponent, /\["ArrowDown", "ArrowUp", "Home", "End"\]/);
   assert.match(styles, /\.canvas-node-quick-menu\{width:min\(266px/);
   assert.match(styles, /\.canvas-node-quick-menu-trigger\.open/);
   assert.match(groupContextMenu, /label: "复制组内容"/);
@@ -150,7 +153,7 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(groupQuickActions, /label: "解组"/);
   assert.match(groupQuickActions, /label: "删除组内对象"/);
   assert.doesNotMatch(groupContextMenu, /图片编辑|局部编辑|复制图片|作为参考|继续生成/);
-  assert.match(component, /target: CanvasQuickToolbarTarget/);
+  assert.match(quickToolbar, /target: CanvasQuickToolbarTarget/);
   assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
   // 「问 Agent」要能从每条选中路径进：节点工具栏、多选工具栏、对象组工具栏、两种右键菜单。
   assert.match(groupQuickActions, /id: "ask-agent",[\s\S]{0,120}?label: "问 Agent",/);
@@ -199,10 +202,10 @@ test("context paste uses the right-click world position while keyboard paste kee
 test("context menu keeps native controls isolated and remains bounded on small screens", () => {
   assert.match(component, /button,textarea,input,select/);
   assert.match(component, /event\.preventDefault\(\);\s+const point = stagePoint/);
-  assert.match(component, /function CanvasContextMenuFrame/);
-  assert.match(component, /placeCanvasContextMenu\(/);
+  assert.match(contextMenuComponent, /export function CanvasContextMenuFrame/);
+  assert.match(contextMenuComponent, /placeCanvasContextMenu\(/);
   assert.match(component, /getBoundingClientRect\(\)/);
-  assert.match(component, /new ResizeObserver\(schedule\)/);
+  assert.match(contextMenuComponent, /new ResizeObserver\(schedule\)/);
   assert.match(component, /canvas-context-menu-body/);
   assert.doesNotMatch(component, /window\.innerHeight - 640/);
   assert.match(styles, /\.canvas-node-context-menu\{width:min\(320px,calc\(100vw - 16px\)\)/);
@@ -213,8 +216,8 @@ test("context menu keeps native controls isolated and remains bounded on small s
   assert.match(styles, /\.canvas-group-arrange-menu button\{[^}]*min-width:0[^}]*box-sizing:border-box/);
   assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-item-context:disabled/);
   assert.match(styles, /@media\(max-width:420px\)\{\.canvas-node-context-menu/);
-  const nodeMenuStart = component.indexOf("function CanvasNodeContextMenu");
-  const nodeMenuEnd = component.indexOf("function CanvasNodeEditorPopover", nodeMenuStart);
+  const nodeMenuStart = contextMenuComponent.indexOf("export function CanvasNodeContextMenu");
+  const nodeMenuEnd = contextMenuComponent.length;
   assert.ok(nodeMenuStart >= 0 && nodeMenuEnd > nodeMenuStart, "node context menu renderer should exist");
   const nodeMenu = component.slice(nodeMenuStart, nodeMenuEnd);
   assert.doesNotMatch(nodeMenu, /canvas-menu-group-title|canvas-menu-group-mark/);

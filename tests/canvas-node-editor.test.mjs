@@ -6,6 +6,10 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const quickToolbar = await readFile(
+  new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url),
+  "utf8",
+);
 const audioPlayer = await readFile(
   new URL("../components/canvas/CanvasAudioPlayer.tsx", import.meta.url),
   "utf8",
@@ -75,10 +79,10 @@ test("completed media cards always generate a new result branch", () => {
 });
 
 test("overlay positioning ignores identical geometry updates", () => {
-  const toolbarStart = component.indexOf("function CanvasQuickToolbar");
+  const toolbarStart = quickToolbar.indexOf("function CanvasQuickToolbar");
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
-  assert.ok(toolbarStart >= 0 && editorStart > toolbarStart, "canvas overlays should be present");
-  const toolbar = component.slice(toolbarStart, editorStart);
+  assert.ok(toolbarStart >= 0 && editorStart >= 0, "canvas overlays should be present");
+  const toolbar = quickToolbar.slice(toolbarStart);
   assert.match(toolbar, /setPosition\(\(current\) =>[\s\S]*current\.left === nextPosition\.left[\s\S]*current\.top === nextPosition\.top[\s\S]*\? current/);
 
   const editor = component.slice(editorStart);
@@ -823,9 +827,9 @@ test("multi-select layout toolbar exposes alignment and distribution icons only 
 });
 
 test("group selection uses a toolbar attached to the group card while ordinary multi-select keeps its toolbar", () => {
-  assert.match(component, /function CanvasQuickToolbar\(/);
+  assert.match(quickToolbar, /function CanvasQuickToolbar\(/);
   assert.match(groupLayer, /data-canvas-group-id=\{group\.id\}/);
-  assert.match(component, /placeCanvasGroupToolbar\(anchor, placementStage, overlay, 10\)/);
+  assert.match(quickToolbar, /placeCanvasGroupToolbar\(anchor, placementStage, overlay, 10\)/);
   assert.match(component, /arrangeCanvasGroup\(canvasCoreRef\.current\.document\(\), activeGroup\.id, mode\)/);
   assert.doesNotMatch(component, /arrangeCanvas\(docRef\.current, selected, mode\)/);
   assert.match(component, /title="按节点父子关系整理选中对象"/);
