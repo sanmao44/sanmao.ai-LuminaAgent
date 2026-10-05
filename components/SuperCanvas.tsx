@@ -21486,7 +21486,7 @@ function CanvasNodeCard({
               return (
                 <div className={`canvas-variant-state ${state?.status || "pending"}`} key={`${node.id}-variant-${index}`}>
                   <span>{index + 1}</span>
-                  <p title={instruction || "默认变体"}>{instruction || "默认变体"}</p>
+                  <p>{instruction || "默认变体"}</p>
                   <small>{variantStatusLabel(state?.status || "pending")}</small>
                   {state?.status === "failed" && (
                     <button
