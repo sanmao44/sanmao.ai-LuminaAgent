@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createTsRequire } from "./ts-require.mjs";
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+const preview = createTsRequire(new URL("../lib", import.meta.url).pathname)("./chat-file-preview");
 
 function functionBody(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -13,12 +15,11 @@ function functionBody(source, name) {
 }
 
 test("recognizes only the requested HTML preview types", () => {
-  const detector = functionBody(page, "isPreviewableChatFile");
-  assert.match(detector, /mimeType === 'text\/html'/);
-  assert.match(detector, /mimeType === 'application\/xhtml\+xml'/);
-  assert.match(detector, /name\.endsWith\('\.html'\)/);
-  assert.match(detector, /name\.endsWith\('\.htm'\)/);
-  assert.doesNotMatch(detector, /\.json|\.csv|\.txt/);
+  assert.equal(preview.isPreviewableChatFile({ name: "page.html", mimeType: "text/html" }), true);
+  assert.equal(preview.isPreviewableChatFile({ name: "page.htm", mimeType: "text/plain" }), true);
+  assert.equal(preview.isPreviewableChatFile({ name: "data.json", mimeType: "application/json" }), false);
+  assert.equal(preview.isPreviewableChatFile({ name: "rows.csv", mimeType: "text/csv" }), false);
+  assert.equal(preview.isPreviewableChatFile({ name: "notes.txt", mimeType: "text/plain" }), false);
 });
 
 test("adds preview only when ChatFileList receives a preview handler", () => {
@@ -42,10 +43,10 @@ test("renders HTML through srcDoc in a script-sandboxed iframe", () => {
   assert.match(dialog, /src: previewUrl \|\| undefined/);
   assert.match(dialog, /sandbox: "allow-scripts"/);
   assert.doesNotMatch(dialog, /allow-same-origin/);
-  assert.match(page, /new TextDecoder\('utf-8', \{ fatal: true \}\)\.decode\(bytes\)/);
+  assert.match(preview.getChatFilePreviewContent({ encoding: "base64", content: "aGVsbG8=" }), /hello/);
   assert.match(dialog, /allow: "autoplay; fullscreen"/);
-  assert.match(page, /function buildChatFilePreviewContent\(content\)/);
-  assert.match(page, /prefers-reduced-motion\\s\*:\\s\*reduce/);
+  assert.match(preview.buildChatFilePreviewContent("<html><head></head><body></body></html>"), /data-sanmao-preview-motion/);
+  assert.match(preview.buildChatFilePreviewContent("prefers-reduced-motion: reduce"), /prefers-reduced-motion: no-preference/);
   assert.match(page, /buildChatFilePreviewContent\(getChatFilePreviewContent\(file\)\)/);
 });
 

@@ -121,6 +121,7 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import SupportModal from '@/components/SupportModal';
 import SharePreviewModal from '@/components/SharePreviewModal';
 import MessageReferencePreviewModal from '@/components/MessageReferencePreviewModal';
+import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -1133,56 +1134,6 @@ async function downloadChatFile(file) {
     anchor.click();
     anchor.remove();
     window.setTimeout(()=>URL.revokeObjectURL(objectUrl), 1500);
-}
-function isPreviewableChatFile(file) {
-    const mimeType = String(file?.mimeType || '').split(';', 1)[0].trim().toLowerCase();
-    const name = String(file?.name || '').trim().toLowerCase();
-    if (mimeType === 'text/html' || mimeType === 'application/xhtml+xml' || name.endsWith('.html') || name.endsWith('.htm')) return true;
-    // Office / ZIP 产物由服务端解析成预览页；文本类文件仍然在本地直接渲染 HTML。
-    return typeof file?.artifactId === 'string' && file.artifactId.trim().length > 0 && /\.(docx|xlsx|pptx|zip)$/.test(name);
-}
-function chatFilePreviewKindLabel(file) {
-    const name = String(file?.name || '').trim().toLowerCase();
-    if (name.endsWith('.docx')) return 'Word 预览';
-    if (name.endsWith('.xlsx')) return 'Excel 预览';
-    if (name.endsWith('.pptx')) return 'PPT 预览';
-    if (name.endsWith('.zip')) return '压缩包预览';
-    return 'HTML 预览';
-}
-function isOfficeArtifactChatFile(file) {
-    const name = String(file?.name || '').trim().toLowerCase();
-    return typeof file?.artifactId === 'string' && file.artifactId.trim().length > 0 && /\.(docx|xlsx|pptx|zip)$/.test(name);
-}
-function getChatFilePreviewContent(file) {
-    if (file?.encoding !== 'base64') return String(file?.content || '');
-    const binary = atob(String(file?.content || '').replace(/\s/g, ''));
-    const bytes = Uint8Array.from(binary, (char)=>char.charCodeAt(0));
-    try {
-        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    } catch {
-        // Keep previewing files with a legacy Chinese encoding when the runtime
-        // exposes that decoder; otherwise fall back to replacement decoding.
-        try {
-            return new TextDecoder('gb18030').decode(bytes);
-        } catch {
-            return new TextDecoder('utf-8').decode(bytes);
-        }
-    }
-}
-function buildChatFilePreviewContent(content) {
-    const source = String(content || '').replace(/prefers-reduced-motion\s*:\s*reduce/gi, 'prefers-reduced-motion: no-preference');
-    const bootstrap = '<script data-sanmao-preview-motion>(function(){try{var nativeMatchMedia=window.matchMedia&&window.matchMedia.bind(window);window.matchMedia=function(query){var text=String(query);if(/prefers-reduced-motion/i.test(text))return{media:text,matches:false,onchange:null,addListener:function(){},removeListener:function(){},addEventListener:function(){},removeEventListener:function(){},dispatchEvent:function(){return false}};return nativeMatchMedia?nativeMatchMedia(text):{media:text,matches:false,onchange:null,addListener:function(){},removeListener:function(){},addEventListener:function(){},removeEventListener:function(){},dispatchEvent:function(){return false}}};}catch(e){}})();</script>';
-    const head = source.match(/<head\b[^>]*>/i);
-    if (head) return source.replace(head[0], `${head[0]}${bootstrap}`);
-    const doctype = source.match(/^\s*<!doctype\b[^>]*>\s*/i);
-    if (doctype) return `${doctype[0]}${bootstrap}${source.slice(doctype[0].length)}`;
-    return `${bootstrap}${source}`;
-}
-function formatFileSize(size) {
-    if (!size || size < 1) return '文件';
-    if (size < 1024) return `${size} B`;
-    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 const SIMPLE_TEXT_POLISH_PROMPT = '帮我简单润色一下这段文字，保留原意和原本语气，让表达更自然、顺畅、简洁，不要过度修改，也不要写得太正式或有明显 AI 感。';
 async function requestPromptOptimization(source, model, references = [], task = 'optimize_prompt') {
@@ -4355,10 +4306,6 @@ function OutpaintEditor({ item, model, onClose, onApply, onApplyLocal, onNotify 
             ]
         })
     });
-}
-function chatFileTypeLabel(file) {
-    const match = String(file?.name || '').toLowerCase().match(/\.(docx|xlsx|pptx|pdf|zip)$/);
-    return match ? `${match[1].toUpperCase()} · ` : '';
 }
 function ChatFileList({ files, onDownload, onPreview, onRemove }) {
     return /*#__PURE__*/ _jsx(AgentChatFileList, {

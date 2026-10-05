@@ -288,6 +288,19 @@ hardening work when the trigger applies.
 - Behavior coverage renders image, video, and text variants through the shared
   TypeScript loader; targeted architecture and share tests remain green.
 
+### Stage 6 chat file preview domain helpers checkpoint (2026-10-06)
+
+- `lib/chat-file-preview.ts` now owns preview eligibility, artifact kind labels,
+  base64 text decoding, reduced-motion HTML bootstrap, file size formatting, and
+  attachment type labels for chat files.
+- `app/page.tsx` keeps file download, artifact preview requests, Blob URL
+  lifecycle, iframe sandbox presentation, preview state, and callbacks. It uses
+  the domain helpers as the only implementation for the pure conversions.
+- `ChatFilePreviewDialog` remains page-local because its browser Blob lifecycle
+  and sandbox behavior still need the existing page-owned preview flow.
+- Existing file preview tests now exercise the helper behavior directly and
+  retain behavior coverage for the page-owned dialog/download path.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
