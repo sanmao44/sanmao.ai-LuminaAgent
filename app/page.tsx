@@ -125,6 +125,7 @@ import ChatFilePreviewDialog from '@/components/ChatFilePreviewDialog';
 import CompareViewer from '@/components/CompareViewer';
 import AssistantMarkdown from '@/components/AssistantMarkdown';
 import AgentImageLoadingCard from '@/components/AgentImageLoadingCard';
+import CreativeReferenceStrip from '@/components/CreativeReferenceStrip';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -2268,231 +2269,6 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUps
 // 引用区可选的文件类型；助手输入框额外允许 Word/Excel/PPT/PDF。
 const referenceAccept = "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1";
 const agentReferenceAccept = `${referenceAccept},.docx,.xlsx,.pptx,.pdf`;
-function ReferenceStrip({ refs, onAdd, onRemove, onReorder, onClear, onPasteClick, onLocalUpscale, localUpscaleActive = false, label = '参考图', hint = '支持 PNG/JPG/WEBP', accept = referenceAccept }) {
-    const inputRef = useRef(null);
-    const [dragIndex, setDragIndex] = useState(null);
-    const [preview, setPreview] = useState(null);
-    useBodyScrollLock(Boolean(preview));
-    useEffect(()=>{
-        if (!preview) return;
-        const onKeyDown = (event)=>{
-            if (event.key === 'Escape') setPreview(null);
-        };
-        window.addEventListener('keydown', onKeyDown);
-        return ()=>window.removeEventListener('keydown', onKeyDown);
-    }, [
-        preview
-    ]);
-    return /*#__PURE__*/ _jsxs("div", {
-        className: `reference-block ${refs.length ? 'has-references' : ''}`,
-        children: [
-            /*#__PURE__*/ _jsxs("div", {
-                className: "reference-head",
-                children: [
-                    /*#__PURE__*/ _jsxs("span", {
-                        children: [
-                            /*#__PURE__*/ _jsx(Icon, {
-                                name: refs.length && refs.every((ref)=>ref.kind === 'text') ? 'file' : 'image',
-                                size: 14
-                            }),
-                            label,
-                            refs.length > 0 && /*#__PURE__*/ _jsxs("b", {
-                                children: [
-                                    refs.length,
-                                    " 个已添加"
-                                ]
-                            })
-                        ]
-                    }),
-                    /*#__PURE__*/ _jsxs("div", {
-                        children: [
-                            onLocalUpscale && /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                className: `local-upscale-reference ${localUpscaleActive ? 'active' : ''}`,
-                                disabled: !localUpscaleActive && (refs.length !== 1 || refs[0]?.kind !== 'image' || !creativeReferenceUrl(refs[0]) || refs.some((ref)=>ref.pending)),
-                                title: localUpscaleActive ? '返回普通生图模式' : refs.length !== 1 || refs[0]?.kind !== 'image' ? '请先添加 1 张图片参考' : refs.some((ref)=>ref.pending) ? '参考图正在准备，请稍候片刻' : '使用本地上传图片进行超分',
-                                onClick: (event)=>{
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    onLocalUpscale(event);
-                                },
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "upscale",
-                                        size: 12
-                                    }),
-                                    localUpscaleActive ? '返回生图' : '超分'
-                                ]
-                            }),
-                            onPasteClick && /*#__PURE__*/ _jsx("button", {
-                                type: "button",
-                                className: "paste-reference",
-                                onClick: onPasteClick,
-                                children: "粘贴"
-                            }),
-                            refs.length > 0 && onClear && /*#__PURE__*/ _jsxs("button", {
-                                type: "button",
-                                className: "clear-references",
-                                onClick: onClear,
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "close",
-                                        size: 11
-                                    }),
-                                    "清空"
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("small", {
-                                children: [
-                                    refs.length,
-                                    `/16 · ${hint}`
-                                ]
-                            })
-                        ]
-                    })
-                ]
-            }),
-            /*#__PURE__*/ _jsxs("div", {
-                className: `reference-strip ${refs.length ? 'has-items' : 'empty'}`,
-                children: [
-                    /*#__PURE__*/ _jsx("div", {
-                        className: "reference-items",
-                        children: refs.map((ref, index)=>/*#__PURE__*/ _jsxs("div", {
-                                className: `reference-thumb ${ref.pending ? 'pending' : ''} ${dragIndex === index ? 'dragging' : ''}`,
-                                title: `${ref.pending ? '正在准备 · ' : '点击预览 · '}${ref.name}${ref.kind === 'text' ? `\n${referencePreviewText(ref, 160)}` : ''}`,
-                                draggable: !ref.pending,
-                                onClick: ()=>setPreview(ref),
-                                onDragStart: (event)=>{
-                                    if (ref.pending) return;
-                                    setDragIndex(index);
-                                    event.dataTransfer.effectAllowed = 'move';
-                                    event.dataTransfer.setData('text/plain', ref.id);
-                                },
-                                onDragOver: (event)=>{
-                                    event.preventDefault();
-                                    if (!ref.pending) event.dataTransfer.dropEffect = 'move';
-                                },
-                                onDrop: (event)=>{
-                                    event.preventDefault();
-                                    if (!ref.pending && dragIndex !== null) onReorder(dragIndex, index);
-                                    setDragIndex(null);
-                                },
-                                onDragEnd: ()=>setDragIndex(null),
-                                children: [
-                                    ref.kind === 'video' ? /*#__PURE__*/ _jsx("video", { draggable: false, src: creativeReferenceUrl(ref), muted: true, playsInline: true }) : ref.kind === 'text' ? /*#__PURE__*/ _jsx("span", { className: "reference-text-thumb", children: /*#__PURE__*/ _jsx("small", { children: ref.name }) }) : /*#__PURE__*/ _jsx("img", { draggable: false, src: creativeReferenceUrl(ref), alt: ref.name }),
-                                    ref.pending && /*#__PURE__*/ _jsxs("span", {
-                                        className: "reference-pending-overlay",
-                                        children: [
-                                            /*#__PURE__*/ _jsx("i", {
-                                                className: "mini-loader"
-                                            }),
-                                            "准备中"
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsx("span", {
-                                        className: "reference-index",
-                                        children: index + 1
-                                    }),
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        className: "reference-remove",
-                                         title: "移除引用",
-                                         "aria-label": `移除引用 ${index + 1}`,
-                                        draggable: false,
-                                        onPointerDown: (event)=>event.stopPropagation(),
-                                        onClick: (event)=>{
-                                            event.stopPropagation();
-                                            onRemove(ref.id);
-                                        },
-                                        children: /*#__PURE__*/ _jsx(Icon, {
-                                            name: "close",
-                                            size: 11
-                                        })
-                                    })
-                                ]
-                            }, ref.id))
-                    }),
-                    refs.length < 16 && /*#__PURE__*/ _jsxs("button", {
-                        type: "button",
-                        className: "add-reference",
-                        onClick: ()=>inputRef.current?.click(),
-                        children: [
-                            /*#__PURE__*/ _jsx(Icon, {
-                                name: "upload",
-                                size: 18
-                            }),
-                            /*#__PURE__*/ _jsx("span", {
-                                children: refs.length ? '继续添加引用' : '点击、拖入或粘贴图片、视频或文本'
-                            })
-                        ]
-                    })
-                ]
-            }),
-            /*#__PURE__*/ _jsx("input", {
-                hidden: true,
-                ref: inputRef,
-                type: "file",
-                 accept: accept,
-                multiple: true,
-                onChange: (e)=>{
-                    if (e.target.files) onAdd(e.target.files);
-                    e.currentTarget.value = '';
-                }
-            }),
-            preview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
-                className: "reference-preview-backdrop",
-                onClick: ()=>setPreview(null),
-                children: /*#__PURE__*/ _jsxs("div", {
-                    className: "reference-preview surface",
-                    onClick: (event)=>event.stopPropagation(),
-                    children: [
-                        /*#__PURE__*/ _jsxs("div", {
-                            className: "reference-preview-head",
-                            children: [
-                                /*#__PURE__*/ _jsxs("div", {
-                                    children: [
-                                        /*#__PURE__*/ _jsx("span", {
-                                        children: preview.kind === 'video' ? '参考视频预览' : preview.kind === 'text' ? '引用文本预览' : '参考图预览'
-                                        }),
-                                        /*#__PURE__*/ _jsx("h3", {
-                                            children: preview.name
-                                        })
-                                    ]
-                                }),
-                                /*#__PURE__*/ _jsx("button", {
-                                    type: "button",
-                                    className: "icon-button",
-                                    onClick: ()=>setPreview(null),
-                                    children: /*#__PURE__*/ _jsx(Icon, {
-                                        name: "close"
-                                    })
-                                })
-                            ]
-                        }),
-                        /*#__PURE__*/ _jsx("div", {
-                            className: "reference-preview-stage",
-                            children: preview.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: creativeReferenceUrl(preview), controls: true, playsInline: true }) : preview.kind === 'text' ? /*#__PURE__*/ _jsx("pre", { children: preview.text }) : /*#__PURE__*/ _jsx("img", { src: creativeReferenceUrl(preview), alt: preview.name })
-                        }),
-                        /*#__PURE__*/ _jsxs("div", {
-                            className: "reference-preview-footer",
-                            children: [
-                                /*#__PURE__*/ _jsx("small", {
-                                    children: preview.kind === 'text' ? '完整文本内容' : '完整比例显示，不裁剪'
-                                }),
-                                /*#__PURE__*/ _jsx("button", {
-                                    type: "button",
-                                    className: "secondary-action compact",
-                                    onClick: ()=>setPreview(null),
-                                    children: "关闭"
-                                })
-                            ]
-                        })
-                    ]
-                })
-            }), document.body)
-        ]
-    });
-}
 function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSource: passedComparisonSource, previousItem, priority = false, onSelect, onPreview, onEdit, onUpscale, onReuse, onReference, onPushVideo, onCompare, onReversePrompt, onFavorite, onDownload, onDownloadShare, onDelete }) {
     const [menu, setMenu] = useState(false);
     const [imageState, setImageState] = useState('loading');
@@ -10075,8 +9851,9 @@ export default function Page() {
                                                     onCancel: resetMessageSelection,
                                                     onDeleteSelected: ()=>void deleteSelectedAgentMessages()
                                                 }),
-                                                agentRefs.length > 0 && /*#__PURE__*/ _jsx(ReferenceStrip, {
+                                                agentRefs.length > 0 && /*#__PURE__*/ _jsx(CreativeReferenceStrip, {
                                                     refs: agentRefs,
+                                                    Icon,
                                                     onAdd: (files)=>void addReferences(files, 'agent'),
                                                     onRemove: (id)=>{
                                                         setAgentRefs((old)=>old.filter((x)=>x.id !== id));
@@ -10512,8 +10289,9 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsx(ReferenceStrip, {
+                                            /*#__PURE__*/ _jsx(CreativeReferenceStrip, {
                                                 refs: generateRefs,
+                                                Icon,
                                                 onAdd: (files)=>void addReferences(files, 'generate'),
                                                 onPasteClick: ()=>void pasteClipboardImages('generate'),
                                                 onLocalUpscale: toggleLocalUpscaleMode,

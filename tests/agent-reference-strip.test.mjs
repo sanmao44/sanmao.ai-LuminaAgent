@@ -1,9 +1,14 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { createTsRequire } from './ts-require.mjs';
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const referenceStripSource = await readFile(new URL("../components/CreativeReferenceStrip.tsx", import.meta.url), "utf8");
+const referenceStrip = createTsRequire(process.cwd())('./components/CreativeReferenceStrip').default;
+const Icon = ({ name }) => createElement('i', { 'data-icon': name });
 const referencePresentation = await readFile(new URL("../lib/creative-references.ts", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const planning = createTsRequire(process.cwd())('./packages/agent-core/request-planning');
@@ -20,17 +25,36 @@ test("documents and text references are labelled as 引用 instead of 参考图"
   assert.match(page, /label: agentRefs\.some\(\(ref\)=>ref\.kind === 'text'\) \? "本轮引用" : "本轮参考图"/);
   assert.match(page, /hint: "支持图片 \/ 视频 \/ 文档"/);
   assert.match(page, /children: references\.some\(\(reference\)=>reference\.kind !== 'text'\) \? "参考图" : "引用"/);
-  assert.match(page, /name: refs\.length && refs\.every\(\(ref\)=>ref\.kind === 'text'\) \? 'file' : 'image'/);
+  const markup = renderToStaticMarkup(createElement(referenceStrip, {
+    refs: [{ id: 'text', kind: 'text', name: 'brief', text: 'caption' }],
+    Icon,
+    onAdd: () => {},
+    onRemove: () => {},
+    onReorder: () => {},
+    label: '本轮引用',
+    hint: '支持图片 / 视频 / 文档',
+    accept: '.txt',
+  }));
+  assert.match(markup, /data-icon="file"/);
+  assert.match(markup, /reference-text-thumb/);
 });
 
 test("text reference thumbnails show the file name and keep the body in the preview", () => {
-  assert.match(page, /className: "reference-text-thumb", children: \/\*#__PURE__\*\/ _jsx\("small", \{ children: ref\.name \}\)/);
+  const markup = renderToStaticMarkup(createElement(referenceStrip, {
+    refs: [{ id: 'text', kind: 'text', name: 'brief', text: 'full body' }],
+    Icon,
+    onAdd: () => {},
+    onRemove: () => {},
+    onReorder: () => {},
+    label: '本轮引用',
+    hint: '支持图片 / 视频 / 文档',
+    accept: '.txt',
+  }));
+  assert.match(markup, /reference-text-thumb/);
+  assert.match(markup, /brief/);
   assert.match(messageReferences, /className="message-ref-text"><small>\{reference\.name\}<\/small>/);
   assert.match(page, /children: \/\*#__PURE__\*\/ _jsx\("b", \{ children: referenceTextBadge\(reference\) \}\)/);
-  assert.match(page, /referencePreviewText\(ref, 160\)/);
-  assert.doesNotMatch(page, /referencePreviewText\(ref, 42\)/);
-  assert.doesNotMatch(page, /referencePreviewText\(ref, 28\)/);
-  assert.doesNotMatch(page, /referencePreviewText\(reference, 24\)/);
+  assert.match(referenceStripSource, /referencePreviewText\(ref, 160\)/);
 });
 
 test("document references keep an extension badge and the composer accepts office files", () => {
@@ -38,7 +62,7 @@ test("document references keep an extension badge and the composer accepts offic
   assert.match(referencePresentation, /extension\.toUpperCase\(\) : "TXT"/);
   assert.match(page, /const agentReferenceAccept = `\$\{referenceAccept\},\.docx,\.xlsx,\.pptx,\.pdf`/);
   assert.match(page, /accept: agentReferenceAccept/);
-  assert.match(page, /hint = '支持 PNG\/JPG\/WEBP', accept = referenceAccept/);
+  assert.match(referenceStripSource, /accept: string/);
 });
 
 test("text thumbnail styles exist for both strips", () => {

@@ -382,6 +382,19 @@ hardening work when the trigger applies.
   markdown/code path through the component boundary. No URL, API, or message
   format changed.
 
+### Stage 6 creative reference strip checkpoint (2026-10-06)
+
+- `CreativeReferenceStrip.tsx` now owns the shared creative reference
+  presentation: file input, thumbnail rendering, drag reorder affordances,
+  preview portal, Escape handling, and body scroll locking.
+- `app/page.tsx` retains the single `CreativeReference` state, file loading and
+  normalization, add/remove/reorder/clear mutations, local upscale toggle, and
+  paste behavior. The component receives explicit callbacks and never calls an
+  API, repository, or provider.
+- Existing image, video, text, document labels and accepted file formats remain
+  unchanged. Reference planning still uses `lib/creative-references.ts` as the
+  only data conversion boundary.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
