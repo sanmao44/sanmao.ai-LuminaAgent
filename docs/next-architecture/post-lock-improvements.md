@@ -80,12 +80,15 @@ hardening work when the trigger applies.
   implementation. No node card logic or second state owner was introduced.
 - The existing card remains in Workspace for this first stage 4 slice because
   its media playback, editor, reference picker, and generation callbacks are
-  tightly coupled. The next safe seam is a card contract with behavior
-  coverage for callback freshness before moving the card body.
+  tightly coupled. The media playback/retry state is also coupled to the
+  card's legacy encoded source and was not moved without a safe, encoding
+  preserving edit boundary.
 - `CanvasNodeCardContract.ts` now defines the card props once and exports the
   memo comparator. The comparator checks every Workspace callback and editor
   collection, while intentionally ignoring camera-only document replacement.
   Behavior tests cover callback freshness and camera-only stability.
+- Keep the card body and media state in Workspace until a behavior-covered
+  media presentation boundary can be edited without rewriting the legacy file.
 
 ## Adapter subdivision
 
