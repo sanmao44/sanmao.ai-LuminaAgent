@@ -42,6 +42,20 @@ hardening work when the trigger applies.
   viewport/selection, node presentation, generation boundaries, and page-level
   panels.
 
+### Viewport/selection boundary checkpoint (2026-10-05)
+
+- The next safe seam is the multi-selection toolbar and its alignment/
+  distribution controls, but its callbacks are currently interleaved with the
+  pointer interaction state machine and CanvasCore selection writes in
+  `CanvasWorkspace.tsx`.
+- A trial extraction was rolled back before commit. The workspace file uses a
+  legacy encoding/line-ending combination; whole-file PowerShell rewrites
+  produced invalid TypeScript, so further edits must use encoding-preserving
+  patches only.
+- Keep the current implementation until a behavior test covers the toolbar,
+  marquee selection, and camera interactions together. Do not introduce a
+  React viewport store or duplicate selection state.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
