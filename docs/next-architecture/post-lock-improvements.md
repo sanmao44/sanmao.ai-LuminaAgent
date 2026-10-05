@@ -218,6 +218,17 @@ hardening work when the trigger applies.
   in `app/page.tsx`; they combine API orchestration and cross-panel state and
   need a dedicated behavior seam before extraction.
 
+### Stage 6 admin login checkpoint (2026-10-06)
+
+- `AdminLogin.tsx` now owns the protected management login presentation for the
+  Providers and Models sections: password field, explanatory copy, icon,
+  disabled submit state, and busy label.
+- The component receives controlled password/busy values plus explicit change
+  and submit callbacks. Authentication requests, admin session refresh,
+  notifications, and section access remain in `app/page.tsx`.
+- Behavior tests render the component through the shared TypeScript loader;
+  the full suite, typecheck, and production build pass for this slice.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

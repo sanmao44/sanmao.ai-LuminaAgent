@@ -116,6 +116,7 @@ import AgentMessageImages from '@/components/AgentMessageImages';
 import SidebarNavigation from '@/components/SidebarNavigation';
 import SidebarBrandHeader from '@/components/SidebarBrandHeader';
 import ManualModelDialog from '@/components/ManualModelDialog';
+import AdminLogin from '@/components/AdminLogin';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -14178,8 +14179,9 @@ export default function Page() {
                             }),
                             section === 'providers' && (adminRequired && !isAdmin ? /*#__PURE__*/ _jsx(AdminLogin, {
                                 password: adminPassword,
-                                setPassword: setAdminPassword,
                                 busy: adminBusy,
+                                Icon: Icon,
+                                onPasswordChange: setAdminPassword,
                                 onSubmit: loginAdmin
                             }) : /*#__PURE__*/ _jsxs("section", {
                                 className: "management-page",
@@ -14777,8 +14779,9 @@ export default function Page() {
                             })),
                             section === 'models' && (adminRequired && !isAdmin ? /*#__PURE__*/ _jsx(AdminLogin, {
                                 password: adminPassword,
-                                setPassword: setAdminPassword,
                                 busy: adminBusy,
+                                Icon: Icon,
+                                onPasswordChange: setAdminPassword,
                                 onSubmit: loginAdmin
                             }) : /*#__PURE__*/ _jsxs("section", {
                                 className: "management-page models-page",
@@ -16368,48 +16371,5 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 children: toast
             })
         ]
-    });
-}
-function AdminLogin({ password, setPassword, busy, onSubmit }) {
-    return /*#__PURE__*/ _jsx("section", {
-        className: "admin-login-page",
-        children: /*#__PURE__*/ _jsxs("form", {
-            className: "admin-login surface",
-            onSubmit: onSubmit,
-            children: [
-                /*#__PURE__*/ _jsx("div", {
-                    className: "hero-orb small",
-                    children: /*#__PURE__*/ _jsx(Icon, {
-                        name: "model",
-                        size: 21
-                    })
-                }),
-                /*#__PURE__*/ _jsx("h1", {
-                    children: "管理员登录"
-                }),
-                /*#__PURE__*/ _jsx("p", {
-                    children: "接口服务和模型选择属于平台管理配置。普通使用者不需要进入这里。"
-                }),
-                /*#__PURE__*/ _jsxs("label", {
-                    children: [
-                        /*#__PURE__*/ _jsx("span", {
-                            children: "管理员密码"
-                        }),
-                        /*#__PURE__*/ _jsx("input", {
-                            type: "password",
-                            value: password,
-                            onChange: (e)=>setPassword(e.target.value),
-                            autoFocus: true,
-                            placeholder: "输入管理员密码"
-                        })
-                    ]
-                }),
-                /*#__PURE__*/ _jsx("button", {
-                    className: "primary-action",
-                    disabled: busy || !password.trim(),
-                    children: busy ? '验证中…' : '进入管理'
-                })
-            ]
-        })
     });
 }
