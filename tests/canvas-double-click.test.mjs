@@ -34,7 +34,7 @@ test("node editors and node quick panels stay outside the canvas double-click ha
 
 test("completed upscale results use the same image preview path as media nodes", () => {
   const cardStart = component.indexOf("function CanvasNodeCard");
-  const cardEnd = component.indexOf("function CanvasMaskSummary", cardStart);
+  const cardEnd = component.indexOf("const MemoizedCanvasNodeCard", cardStart);
   assert.ok(cardStart >= 0 && cardEnd > cardStart, "canvas node card should exist");
   const card = component.slice(cardStart, cardEnd);
 

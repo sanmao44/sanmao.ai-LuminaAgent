@@ -6,6 +6,14 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const variantEditors = await readFile(
+  new URL("../components/canvas/CanvasVariantEditors.tsx", import.meta.url),
+  "utf8",
+);
+const referenceStrip = await readFile(
+  new URL("../components/canvas/CanvasNodeReferenceStrip.tsx", import.meta.url),
+  "utf8",
+);
 const edgeLayer = await readFile(
   new URL("../components/canvas/CanvasEdgeLayer.tsx", import.meta.url),
   "utf8",
@@ -223,11 +231,12 @@ test("expanded prompt editing saves without triggering generation", () => {
 
 test("editor keeps references, variant requirements, parameters, mentions and generation", () => {
   assert.match(component, /<CanvasNodeReferenceStrip/);
+  assert.match(referenceStrip, /export default function CanvasNodeReferenceStrip/);
   assert.match(component, /<CanvasReferenceDraftStrip/);
   assert.match(component, /<CreationParameterEditor/);
   assert.match(component, /className="canvas-node-variant-editor"/);
   assert.match(component, /<CanvasVariantRequirementsEditor/);
-  assert.match(component, /className=\{\`canvas-variant-list-row/);
+  assert.match(component + variantEditors, /className=\{\`canvas-variant-list-row/);
   assert.match(component, /className="canvas-node-mention-menu"/);
   assert.match(component, /onGenerate\(node\)/);
   assert.match(component, /setMentionState\(null\)/);
@@ -272,10 +281,10 @@ test("image parameter dock closes when the pointer lands outside it", () => {
 });
 
 test("reference thumbnails keep the strip compact and scroll horizontally only", () => {
-  const start = component.indexOf("const renderItem =");
-  const end = component.indexOf("const renderSlot =", start);
+  const start = referenceStrip.indexOf("const renderItem =");
+  const end = referenceStrip.indexOf("const renderSlot =", start);
   assert.ok(start >= 0 && end > start, "reference item renderer should be present");
-  const renderItem = component.slice(start, end);
+  const renderItem = referenceStrip.slice(start, end);
   assert.match(renderItem, /role && \(/);
   assert.match(styles, /\.canvas-editor-reference-items\{[^}]*overflow-x:auto;overflow-y:hidden/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(\.is-prompt-expanded\) \.canvas-editor-reference-items[^}]*overflow-x:auto;overflow-y:hidden/);
