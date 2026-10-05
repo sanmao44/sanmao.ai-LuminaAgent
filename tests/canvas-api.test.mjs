@@ -662,6 +662,46 @@ test('canvas agent normalizes absolute loopback storage references before readin
   assert.deepEqual(requested, ['/api/storage/file?name=canvas-image.png']);
 });
 
+test('canvas agent recovers a missing local file from the browser image cache', async () => {
+  const mocks = withImageCanvas({ width: 1600, height: 900 });
+  const requested = [];
+  try {
+    const dataUrl = await withFetch(async (input) => {
+      requested.push(input);
+      return { ok: false, status: 404, async blob() { return new Blob(); } };
+    }, () => api.asDataUrl('/api/storage/file?name=canvas-image.png'));
+
+    assert.deepEqual(requested, ['/api/storage/file?name=canvas-image.png']);
+    assert.equal(dataUrl, 'data:image/png;base64,AA==');
+  } finally {
+    mocks.restore();
+  }
+});
+
+test('canvas agent reports a missing local file when the browser cache is also empty', async () => {
+  const mocks = withImageCanvas({ width: 1600, height: 900 });
+  const originalImage = globalThis.Image;
+  class MissingImage {
+    naturalWidth = 0;
+    naturalHeight = 0;
+    width = 0;
+    height = 0;
+    onload;
+    onerror;
+    set src(_value) { queueMicrotask(() => this.onerror?.()); }
+  }
+  globalThis.Image = MissingImage;
+  try {
+    await assert.rejects(
+      () => withFetch(async () => ({ ok: false, status: 404 }), () => api.asDataUrl('/api/storage/file?name=gone.png')),
+      /本地图片文件已丢失，请重新导入/,
+    );
+  } finally {
+    globalThis.Image = originalImage;
+    mocks.restore();
+  }
+});
+
 test('canvas agent archives a remote reference on the server when the browser cannot read it', async () => {
   const mocks = withImageCanvas({ width: 1600, height: 900 });
   const requested = [];

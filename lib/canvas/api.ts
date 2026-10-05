@@ -344,10 +344,90 @@ function normalizeCanvasReferenceUrl(url: string) {
   return url;
 }
 
+function isLocalCanvasStorageUrl(url: string) {
+  return url.startsWith("/api/storage/file?");
+}
+
+/**
+ * An image already rendered on the canvas can still be available in the
+ * browser's image cache after its backing file has disappeared from local
+ * storage.  `fetch(..., { cache: "no-store" })` deliberately bypasses that
+ * cache, so use an ordinary Image load as a last browser-side recovery path.
+ */
+function readCachedCanvasImage(url: string) {
+  if (typeof Image === "undefined" || typeof document === "undefined")
+    return Promise.reject(new Error("browser image cache unavailable"));
+
+  const render = (image: HTMLImageElement) => {
+    const width = Math.max(1, image.naturalWidth || image.width);
+    const height = Math.max(1, image.naturalHeight || image.height);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("canvas context unavailable");
+    context.drawImage(image, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL("image/png");
+    if (!/^data:image\//i.test(dataUrl))
+      throw new Error("cached image conversion failed");
+    return dataUrl;
+  };
+
+  const existing = Array.from(document.images || []).find((image) => {
+    if (!image.complete || !(image.naturalWidth || image.width)) return false;
+    const current = image.currentSrc || image.src;
+    return current === url || normalizeCanvasReferenceUrl(current) === url;
+  });
+  if (existing) {
+    try {
+      return Promise.resolve(render(existing));
+    } catch {
+      // Fall through to a fresh Image load if the existing element is not drawable.
+    }
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        resolve(render(image));
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error("cached image conversion failed"));
+      }
+    };
+    image.onerror = () => reject(new Error("browser image cache miss"));
+    image.src = url;
+  });
+}
+
 export async function asDataUrl(url: string) {
   if (!url || url.startsWith("data:")) return url;
-  const response = await fetch(normalizeCanvasReferenceUrl(url), { cache: "no-store" });
-  if (!response.ok) throw new Error("无法读取画布参考素材，请重新导入。");
+  const normalizedUrl = normalizeCanvasReferenceUrl(url);
+  let response: Response;
+  try {
+    response = await fetch(normalizedUrl, { cache: "no-store" });
+  } catch (error) {
+    if (isLocalCanvasStorageUrl(normalizedUrl)) {
+      try {
+        return await readCachedCanvasImage(normalizedUrl);
+      } catch {
+        // Keep the normal, actionable read error below when the cache is gone.
+      }
+    }
+    throw error;
+  }
+  if (!response.ok) {
+    if (isLocalCanvasStorageUrl(normalizedUrl)) {
+      try {
+        return await readCachedCanvasImage(normalizedUrl);
+      } catch {
+        // The backing file and the browser cache are both unavailable.
+      }
+    }
+    throw new Error(isLocalCanvasStorageUrl(normalizedUrl)
+      ? "本地图片文件已丢失，请重新导入。"
+      : "无法读取画布参考素材，请重新导入。");
+  }
   const blob = await response.blob();
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
