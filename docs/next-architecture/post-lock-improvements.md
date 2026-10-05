@@ -229,6 +229,19 @@ hardening work when the trigger applies.
 - Behavior tests render the component through the shared TypeScript loader;
   the full suite, typecheck, and production build pass for this slice.
 
+### Stage 6 confirmation dialog checkpoint (2026-10-06)
+
+- `ConfirmDialog.tsx` now owns the reusable confirmation surface, including
+  danger/neutral icon treatment, title and copy, cancel behavior, and confirm
+  button presentation.
+- The component receives a single confirmation state projection, an icon
+  renderer, and explicit close/confirm callbacks. Business actions are still
+  created and executed by `app/page.tsx`, so the dialog is not an action or
+  state owner.
+- Behavior coverage verifies danger and neutral rendering through the shared
+  TypeScript loader. Existing provider confirmation behavior remains at the
+  page boundary.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

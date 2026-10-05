@@ -117,6 +117,7 @@ import SidebarNavigation from '@/components/SidebarNavigation';
 import SidebarBrandHeader from '@/components/SidebarBrandHeader';
 import ManualModelDialog from '@/components/ManualModelDialog';
 import AdminLogin from '@/components/AdminLogin';
+import ConfirmDialog from '@/components/ConfirmDialog';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -16200,46 +16201,15 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 onClose: ()=>setManualModelProvider(null),
                 onSubmit: addManualModel
             }),
-            confirmState && /*#__PURE__*/ _jsx("div", {
-                className: "dialog-backdrop",
-                onClick: ()=>setConfirmState(null),
-                children: /*#__PURE__*/ _jsxs("div", {
-                    className: "confirm-dialog",
-                    onClick: (e)=>e.stopPropagation(),
-                    children: [
-                        /*#__PURE__*/ _jsx("div", {
-                            className: `dialog-icon ${confirmState.danger ? 'danger' : ''}`,
-                            children: /*#__PURE__*/ _jsx(Icon, {
-                                name: confirmState.danger ? 'trash' : 'agent',
-                                size: 22
-                            })
-                        }),
-                        /*#__PURE__*/ _jsx("h2", {
-                            children: confirmState.title
-                        }),
-                        /*#__PURE__*/ _jsx("p", {
-                            children: confirmState.text
-                        }),
-                        /*#__PURE__*/ _jsxs("div", {
-                            children: [
-                                /*#__PURE__*/ _jsx("button", {
-                                    className: "secondary-action",
-                                    onClick: ()=>setConfirmState(null),
-                                    children: "取消"
-                                }),
-                                /*#__PURE__*/ _jsx("button", {
-                                    className: confirmState.danger ? 'danger-action' : 'primary-action compact',
-                                    onClick: async ()=>{
-                                        const action = confirmState.action;
-                                        setConfirmState(null);
-                                        await action();
-                                    },
-                                    children: confirmState.confirmText || '确认'
-                                })
-                            ]
-                        })
-                    ]
-                })
+            confirmState && /*#__PURE__*/ _jsx(ConfirmDialog, {
+                state: confirmState,
+                Icon: Icon,
+                onClose: ()=>setConfirmState(null),
+                onConfirm: async ()=>{
+                    const action = confirmState.action;
+                    setConfirmState(null);
+                    await action();
+                }
             }),
              outpaintEditor && /*#__PURE__*/ _jsx(OutpaintEditor, {
                  item: outpaintEditor.item,
