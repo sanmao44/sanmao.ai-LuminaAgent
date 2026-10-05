@@ -4,6 +4,7 @@ import test from 'node:test';
 import ts from 'typescript';
 
 const source = await readFile(new URL('../lib/agent-context.ts', import.meta.url), 'utf8');
+const imageCardSource = await readFile(new URL('../components/ImageCard.tsx', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const context = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const history = [
@@ -58,6 +59,6 @@ test('new chat resets current content and drafts, retry keeps the original reque
   assert.match(page, /chatMemoryRef\.current\.get\(sessionId\)/);
   assert.doesNotMatch(page, /id: 'retry-instruction'/);
   assert.match(page, /conversationImage\(content, currentSessionMessages\)/);
-  assert.match(page, /item\.localFileName \? '本地图片'/);
+  assert.match(imageCardSource, /item\.localFileName \? "本地图片"/);
   assert.match(page, /prompt: image\.localFileName \|\| meta\.prompt/);
 });

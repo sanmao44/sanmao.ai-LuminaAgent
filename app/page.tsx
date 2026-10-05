@@ -126,6 +126,7 @@ import CompareViewer from '@/components/CompareViewer';
 import AssistantMarkdown from '@/components/AssistantMarkdown';
 import AgentImageLoadingCard from '@/components/AgentImageLoadingCard';
 import CreativeReferenceStrip from '@/components/CreativeReferenceStrip';
+import ImageCard from '@/components/ImageCard';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -2269,381 +2270,6 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUps
 // 引用区可选的文件类型；助手输入框额外允许 Word/Excel/PPT/PDF。
 const referenceAccept = "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1";
 const agentReferenceAccept = `${referenceAccept},.docx,.xlsx,.pptx,.pdf`;
-function ImageCard({ item, selected, selectionMode, sourceOverride, comparisonSource: passedComparisonSource, previousItem, priority = false, onSelect, onPreview, onEdit, onUpscale, onReuse, onReference, onPushVideo, onCompare, onReversePrompt, onFavorite, onDownload, onDownloadShare, onDelete }) {
-    const [menu, setMenu] = useState(false);
-    const [imageState, setImageState] = useState('loading');
-    const [retryToken, setRetryToken] = useState(0);
-    const imageRef = useRef(null);
-    useEffect(()=>{
-        setImageState('loading');
-        setRetryToken(0);
-    }, [item.url]);
-    useEffect(()=>{
-        const image = imageRef.current;
-        if (image?.complete) setImageState(image.naturalWidth > 0 ? 'loaded' : 'error');
-    }, [item.url, retryToken]);
-    const comparisonSource = passedComparisonSource || (previousItem ? {
-        item: previousItem,
-        kind: previousItem.id.startsWith('reference-') ? 'reference' : 'parent',
-        label: previousItem.id.startsWith('reference-') ? '参考图' : '前一版'
-    } : null);
-    const references = galleryReferences(item);
-    return /*#__PURE__*/ _jsxs("article", {
-        className: `image-card ${selected ? 'selected' : ''}`,
-        children: [
-            /*#__PURE__*/ _jsxs("button", {
-                className: "image-stage",
-                type: "button",
-                onClick: ()=>{
-                    if (imageState === 'error') {
-                        setImageState('loading');
-                        setRetryToken((value)=>value + 1);
-                        return;
-                    }
-                    if (selectionMode) onSelect?.();
-                    else onPreview?.();
-                },
-                children: [
-                    imageState === 'loading' && /*#__PURE__*/ _jsx("span", {
-                        className: "image-loading-placeholder",
-                        "aria-hidden": "true",
-                        children: /*#__PURE__*/ _jsx("span", {
-                            className: "image-loading-spinner"
-                        })
-                    }),
-                    /*#__PURE__*/ _jsx("img", {
-                        ref: imageRef,
-                        src: retryToken ? `${item.url}${item.url.includes('?') ? '&' : '?'}retry=${retryToken}` : item.url,
-                        alt: item.prompt || '生成图片',
-                        loading: priority ? 'eager' : 'lazy',
-                        decoding: 'async',
-                        fetchPriority: priority ? 'high' : 'low',
-                        onLoad: ()=>setImageState('loaded'),
-                        onError: ()=>setImageState('error')
-                    }),
-                    imageState === 'error' && /*#__PURE__*/ _jsx("span", {
-                        className: "image-load-error",
-                        children: "图片加载失败 · 点击重试"
-                    }),
-                    selectionMode && /*#__PURE__*/ _jsx("span", {
-                        className: `select-mark ${selected ? 'checked' : ''}`,
-                        children: selected && /*#__PURE__*/ _jsx(Icon, {
-                            name: "check",
-                            size: 14
-                        })
-                    }),
-                    typeof item.generationMs === 'number' && /*#__PURE__*/ _jsxs("span", {
-                        className: "image-duration",
-                        children: [
-                            "⏱ ",
-                            Math.max(0, item.generationMs / 1000).toFixed(1),
-                            "s"
-                        ]
-                    }),
-                    /*#__PURE__*/ _jsx("span", {
-                        className: "image-source",
-                        children: item.localFileName ? '本地图片' : sourceLabel(sourceOverride || item.source)
-                    })
-                ]
-            }),
-            /*#__PURE__*/ _jsxs("div", {
-                className: "image-card-body",
-                children: [
-                    /*#__PURE__*/ _jsx("p", {
-                        children: item.prompt || '未保存提示词'
-                    }),
-                    /*#__PURE__*/ _jsxs("div", {
-                        className: "image-meta",
-                        children: [
-                            /*#__PURE__*/ _jsx("span", {
-                                title: item.providerName ? `${item.modelName || '图片模型'} · ${item.providerName}` : item.modelName || '图片模型',
-                                children: item.providerName ? `${item.modelName || '图片模型'} · ${item.providerName}` : item.modelName || '图片模型'
-                            }),
-                            /*#__PURE__*/ _jsx("span", {
-                                children: item.outputSize || item.aspectRatio || '自动'
-                            }),
-                            /*#__PURE__*/ _jsx("span", {
-                                children: formatTime(item.createdAt)
-                            })
-                        ]
-                    }),
-                    references.length ? /*#__PURE__*/ _jsxs("div", {
-                        className: "image-card-references",
-                        title: references.map((reference, index) => `${reference.kind === 'text' ? '引用' : '图'} ${index + 1} · ${reference.name}`).join('\n'),
-                        children: [
-                            /*#__PURE__*/ _jsx("span", {
-                                className: "image-card-reference-label",
-                                children: references.some((reference)=>reference.kind !== 'text') ? "参考图" : "引用"
-                            }),
-                            references.slice(0, 4).map((reference, index) => /*#__PURE__*/ _jsxs("span", {
-                                className: "image-card-reference-thumb",
-                                children: [
-                                    reference.kind === 'video' ? /*#__PURE__*/ _jsx("video", { src: reference.url, muted: true, playsInline: true }) : reference.kind === 'text' ? /*#__PURE__*/ _jsx("span", { className: "reference-text-thumb", children: /*#__PURE__*/ _jsx("b", { children: referenceTextBadge(reference) }) }) : /*#__PURE__*/ _jsx("img", {
-                                        src: reference.url,
-                                        alt: `参考图 ${index + 1}`
-                                    }),
-                                    /*#__PURE__*/ _jsx("i", {
-                                        children: index + 1
-                                    })
-                                ]
-                            }, `${reference.url}-${index}`)),
-                            references.length > 4 ? /*#__PURE__*/ _jsx("small", {
-                                children: `+${references.length - 4}`
-                            }) : null
-                        ]
-                    }) : null,
-                    /*#__PURE__*/ _jsxs("div", {
-                        className: "image-actions",
-                        children: [
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "image-actions-main",
-                                children: [
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        onClick: onEdit,
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "edit",
-                                                size: 15
-                                            }),
-                                            "修改"
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "reuse-action",
-                                        onClick: onReuse,
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "reuse",
-                                                size: 15
-                                            }),
-                                            "复用参数"
-                                        ]
-                                    }),
-                                    onPushVideo && /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "push-video-action",
-                                        onClick: onPushVideo,
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "video",
-                                                size: 15
-                                            }),
-                                            "生视频"
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "reference-action",
-                                        onClick: onReference,
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "image",
-                                                size: 15
-                                            }),
-                                            "参考图"
-                                        ]
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "image-actions-secondary",
-                                children: [
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "download-action",
-                                        onClick: onDownload,
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "download",
-                                                size: 15
-                                            }),
-                                            "下载"
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("div", {
-                                        className: "more-wrap",
-                                        tabIndex: -1,
-                                        onBlur: (e)=>{
-                                            if (!e.currentTarget.contains(e.relatedTarget)) setMenu(false);
-                                        },
-                                        children: [
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>setMenu((v)=>!v),
-                                        title: "更多",
-                                        children: /*#__PURE__*/ _jsx(Icon, {
-                                            name: "more",
-                                            size: 16
-                                        })
-                                    }),
-                                    menu && /*#__PURE__*/ _jsxs("div", {
-                                        className: "more-menu",
-                                        children: [
-                                            /*#__PURE__*/ _jsxs("button", {
-                                                type: "button",
-                                                onClick: (event)=>{
-                                                    event.preventDefault();
-                                                    event.stopPropagation();
-                                                    void onReversePrompt();
-                                                    setMenu(false);
-                                                },
-                                                children: [
-                                                    /*#__PURE__*/ _jsx(Icon, {
-                                                        name: "agent",
-                                                        size: 15
-                                                    }),
-                                                    "反推提示词"
-                                                ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("button", {
-                                                type: "button",
-                                                onClick: (event)=>{
-                                                    event.preventDefault();
-                                                    event.stopPropagation();
-                                                    onUpscale();
-                                                    setMenu(false);
-                                                },
-                                                children: [
-                                                    /*#__PURE__*/ _jsx(Icon, {
-                                                        name: "upscale",
-                                                        size: 15
-                                                    }),
-                                                    "高清放大"
-                                                ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("button", {
-                                                type: "button",
-                                                onClick: (event)=>{
-                                                    event.preventDefault();
-                                                    event.stopPropagation();
-                                                    window.dispatchEvent(new CustomEvent('sanmao-angle', {
-                                                        detail: item
-                                                    }));
-                                                    setMenu(false);
-                                                },
-                                                children: [
-                                                    /*#__PURE__*/ _jsx(Icon, {
-                                                        name: "adjust",
-                                                        size: 15
-                                                    }),
-                                                    "调整角度"
-                                                ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("button", {
-                                                type: "button",
-                                                onClick: (event)=>{
-                                                    event.preventDefault();
-                                                    event.stopPropagation();
-                                                    window.dispatchEvent(new CustomEvent('sanmao-outpaint', {
-                                                        detail: item
-                                                    }));
-                                                    setMenu(false);
-                                                },
-                                                children: [
-                                                    /*#__PURE__*/ _jsx(Icon, {
-                                                        name: "full",
-                                                        size: 15
-                                                    }),
-                                                    "图像编辑 / 扩图"
-                                                ]
-                                            }),
-                                            comparisonSource && onCompare && /*#__PURE__*/ _jsxs("button", {
-                                                type: "button",
-                                                onClick: (event)=>{
-                                                    event.preventDefault();
-                                                    event.stopPropagation();
-                                                    onCompare();
-                                                    setMenu(false);
-                                                },
-                                                children: [
-                                                    /*#__PURE__*/ _jsx(Icon, {
-                                                        name: "compare",
-                                                        size: 15
-                                                    }),
-                                                    comparisonSource.kind === 'reference' ? '与参考图对比' : '前后对比'
-                                                ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("button", {
-                                                type: "button",
-                                                onClick: (event)=>{
-                                                    event.preventDefault();
-                                                    event.stopPropagation();
-                                                    onReuse();
-                                                    setMenu(false);
-                                                },
-                                                children: [
-                                                    /*#__PURE__*/ _jsx(Icon, {
-                                                        name: "reuse",
-                                                        size: 15
-                                                    }),
-                                                    "用此参数再生成"
-                                                ]
-                                            }),
-                                             /*#__PURE__*/ _jsxs("button", {
-                                                 type: "button",
-                                                 onClick: (event)=>{
-                                                      event.preventDefault();
-                                                      event.stopPropagation();
-                                                      void onDownloadShare?.();
-                                                     setMenu(false);
-                                                 },
-                                                 disabled: !references.length,
-                                                 children: [
-                                                     /*#__PURE__*/ _jsx(Icon, {
-                                                         name: "download",
-                                                         size: 15
-                                                     }),
-                                                     "下载分享版"
-                                                 ]
-                                             }),
-                                              /*#__PURE__*/ _jsxs("button", {
-                                                  type: "button",
-                                                  onClick: (event)=>{
-                                                      event.preventDefault();
-                                                      event.stopPropagation();
-                                                      onFavorite();
-                                                    setMenu(false);
-                                                },
-                                                children: [
-                                                    /*#__PURE__*/ _jsx(Icon, {
-                                                        name: "star",
-                                                        size: 15
-                                                    }),
-                                                    item.favorite ? '取消收藏' : '收藏'
-                                                ]
-                                            }),
-                                             /*#__PURE__*/ _jsxs("button", {
-                                                 type: "button",
-                                                 className: "danger",
-                                                 onClick: (event)=>{
-                                                     event.preventDefault();
-                                                     event.stopPropagation();
-                                                     onDelete();
-                                                    setMenu(false);
-                                                },
-                                                children: [
-                                                    /*#__PURE__*/ _jsx(Icon, {
-                                                        name: "trash",
-                                                        size: 15
-                                                    }),
-                                                    "删除"
-                                                ]
-                                            })
-                                        ]
-                                    })
-                                        ]
-                                    })
-                                ]
-                            })
-                        ]
-                    })
-                ]
-            })
-        ]
-    });
-}
 function centeredOutpaintLayout(sourceWidth, sourceHeight, canvasWidth, canvasHeight) {
     const width = Math.max(sourceWidth, Math.round(canvasWidth));
     const height = Math.max(sourceHeight, Math.round(canvasHeight));
@@ -9629,7 +9255,11 @@ export default function Page() {
                                                                 message.images?.length ? /*#__PURE__*/ _jsx(AgentMessageImages, {
                                                                     images: message.images,
                                                                     renderImage: (item)=>/*#__PURE__*/ _jsx(ImageCard, {
+                                                                            Icon,
+                                                                            sourceLabel,
                                                                             item: item,
+                                                                            onOpenAngle: ()=>void openAngleConsole(item),
+                                                                            onOpenOutpaint: ()=>openOutpaintEditor(item),
                                                                             previousItem: getGalleryParent(item),
                                                                             onPreview: ()=>openViewer(item),
                                                                             onEdit: ()=>openEdit(item),
@@ -11118,7 +10748,11 @@ export default function Page() {
                                                                 className: `result-grid ${task.status === 'pending' ? 'task-loading-results' : 'task-result-grid'}`,
                                                                 children: [
                                                                     task.items.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
+                                                                            Icon,
+                                                                            sourceLabel,
                                                                             item: item,
+                                                                            onOpenAngle: ()=>void openAngleConsole(item),
+                                                                            onOpenOutpaint: ()=>openOutpaintEditor(item),
                                                                             previousItem: getGalleryParent(item),
                                                                             onPreview: ()=>openViewer(item),
                                                                             onEdit: ()=>openEdit(item),
@@ -11208,7 +10842,11 @@ export default function Page() {
                                              }) : resultItems.length ? /*#__PURE__*/ _jsx("div", {
                                                 className: `result-grid ${resultItems.length === 1 ? 'featured-results' : ''}`,
                                                 children: resultItems.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
+                                                        Icon,
+                                                        sourceLabel,
                                                         item: item,
+                                                        onOpenAngle: ()=>void openAngleConsole(item),
+                                                        onOpenOutpaint: ()=>openOutpaintEditor(item),
                                                         previousItem: getGalleryParent(item),
                                                         onPreview: ()=>openViewer(item),
                                                         onEdit: ()=>openEdit(item),
@@ -11456,7 +11094,11 @@ export default function Page() {
                                             /*#__PURE__*/ _jsx("div", {
                                                 className: "history-grid",
                                                 children: pagedGallery.map((item, index)=>/*#__PURE__*/ _jsx(ImageCard, {
+                                                        Icon,
+                                                        sourceLabel,
                                                         item: item,
+                                                        onOpenAngle: ()=>void openAngleConsole(item),
+                                                        onOpenOutpaint: ()=>openOutpaintEditor(item),
                                                         priority: index < 4,
                                                         previousItem: getGalleryParent(item),
                                                         selectionMode: selectionMode,

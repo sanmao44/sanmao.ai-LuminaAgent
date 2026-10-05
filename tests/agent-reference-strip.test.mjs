@@ -7,6 +7,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const referenceStripSource = await readFile(new URL("../components/CreativeReferenceStrip.tsx", import.meta.url), "utf8");
+const imageCardSource = await readFile(new URL("../components/ImageCard.tsx", import.meta.url), "utf8");
 const referenceStrip = createTsRequire(process.cwd())('./components/CreativeReferenceStrip').default;
 const Icon = ({ name }) => createElement('i', { 'data-icon': name });
 const referencePresentation = await readFile(new URL("../lib/creative-references.ts", import.meta.url), "utf8");
@@ -24,7 +25,7 @@ const messageReferences = await readFile(new URL("../components/AgentMessageRefe
 test("documents and text references are labelled as 引用 instead of 参考图", () => {
   assert.match(page, /label: agentRefs\.some\(\(ref\)=>ref\.kind === 'text'\) \? "本轮引用" : "本轮参考图"/);
   assert.match(page, /hint: "支持图片 \/ 视频 \/ 文档"/);
-  assert.match(page, /children: references\.some\(\(reference\)=>reference\.kind !== 'text'\) \? "参考图" : "引用"/);
+  assert.match(imageCardSource, /references\.some\(\(reference\) => reference\.kind !== "text"\) \? "参考图" : "引用"/);
   const markup = renderToStaticMarkup(createElement(referenceStrip, {
     refs: [{ id: 'text', kind: 'text', name: 'brief', text: 'caption' }],
     Icon,
@@ -53,7 +54,7 @@ test("text reference thumbnails show the file name and keep the body in the prev
   assert.match(markup, /reference-text-thumb/);
   assert.match(markup, /brief/);
   assert.match(messageReferences, /className="message-ref-text"><small>\{reference\.name\}<\/small>/);
-  assert.match(page, /children: \/\*#__PURE__\*\/ _jsx\("b", \{ children: referenceTextBadge\(reference\) \}\)/);
+  assert.match(imageCardSource, /referenceTextBadge\(reference\)/);
   assert.match(referenceStripSource, /referencePreviewText\(ref, 160\)/);
 });
 

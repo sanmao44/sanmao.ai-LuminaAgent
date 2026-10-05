@@ -405,6 +405,21 @@ hardening work when the trigger applies.
   `lib/chat-file-preview.ts`; download, preview, remove, and notification
   behavior remain in `app/page.tsx`.
 
+### Stage 6 image card presentation checkpoint (2026-10-06)
+
+- `components/ImageCard.tsx` now owns historical image card presentation,
+  transient image loading/retry state, reference thumbnails, menu visibility,
+  and action button rendering.
+- `app/page.tsx` retains gallery/message item selection, comparison derivation,
+  history mutations, download/edit/upscale/reuse/favorite/delete behavior, and
+  the angle/outpaint workflows. All four existing render sites pass explicit
+  callbacks and the shared `GalleryItem` projection.
+- The card no longer dispatches `sanmao-angle` or `sanmao-outpaint` custom
+  events; those actions use direct callbacks while preserving the same page
+  workflows and URLs.
+- Direct component behavior covers metadata, references, action presentation,
+  and selection state. Complex editor and provider flows remain page-owned.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
