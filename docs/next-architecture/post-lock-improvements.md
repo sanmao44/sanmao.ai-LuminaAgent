@@ -256,6 +256,20 @@ hardening work when the trigger applies.
   full test, typecheck, and production build verification is required before
   the next page panel slice.
 
+### Stage 6 share preview checkpoint (2026-10-06)
+
+- `SharePreviewModal.tsx` now owns the generated conversation PNG preview
+  presentation: preview image, dimensions, close/continue-edit controls, and
+  download action.
+- The component receives the already-created preview projection, icon renderer,
+  close callback, and download callback. It does not create the canvas image,
+  manage Blob URLs, call browser download APIs, or issue notifications.
+- `app/page.tsx` retains share layout generation, Blob URL cleanup, download
+  anchor creation, and user feedback. Existing share image and conversation
+  layout modules remain the only data transformation owners.
+- Behavior coverage renders the modal through the shared TypeScript loader and
+  the existing share layout/selection tests remain green.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

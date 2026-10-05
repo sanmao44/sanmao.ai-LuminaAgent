@@ -119,6 +119,7 @@ import ManualModelDialog from '@/components/ManualModelDialog';
 import AdminLogin from '@/components/AdminLogin';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SupportModal from '@/components/SupportModal';
+import SharePreviewModal from '@/components/SharePreviewModal';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -15929,87 +15930,11 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 },
                 onCopyWechat: copyAuthorWechat
             }), document.body),
-            sharePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
-                className: "share-preview-backdrop",
-                role: "presentation",
-                onMouseDown: (event)=>{
-                    if (event.target === event.currentTarget) setSharePreview(null);
-                },
-                children: /*#__PURE__*/ _jsxs("section", {
-                    className: "share-preview-modal",
-                    role: "dialog",
-                    "aria-modal": "true",
-                    "aria-labelledby": "share-preview-title",
-                    children: [
-                        /*#__PURE__*/ _jsxs("header", {
-                            className: "share-preview-head",
-                            children: [
-                                /*#__PURE__*/ _jsxs("div", {
-                                    children: [
-                                        /*#__PURE__*/ _jsx("small", {
-                                            children: "SANMAO.AI SHARE"
-                                        }),
-                                        /*#__PURE__*/ _jsx("h2", {
-                                            id: "share-preview-title",
-                                            children: "分享对话预览"
-                                        }),
-                                        /*#__PURE__*/ _jsx("span", {
-                                            children: "确认内容后下载 PNG，完整对话仅在本地生成"
-                                        })
-                                    ]
-                                }),
-                                /*#__PURE__*/ _jsx("button", {
-                                    type: "button",
-                                    className: "share-preview-close",
-                                    onClick: ()=>setSharePreview(null),
-                                    "aria-label": "关闭分享预览",
-                                    children: /*#__PURE__*/ _jsx(Icon, {
-                                        name: "close",
-                                        size: 18
-                                    })
-                                })
-                            ]
-                        }),
-                        /*#__PURE__*/ _jsx("div", {
-                            className: "share-preview-stage",
-                            children: /*#__PURE__*/ _jsx("img", {
-                                src: sharePreview.url,
-                                alt: "SANMAO.AI 对话分享长图预览",
-                                style: { aspectRatio: `${sharePreview.width} / ${sharePreview.height}` }
-                            })
-                        }),
-                        /*#__PURE__*/ _jsxs("footer", {
-                            className: "share-preview-foot",
-                            children: [
-                                /*#__PURE__*/ _jsx("span", {
-                                    children: `${sharePreview.width} × ${sharePreview.height} PNG`
-                                }),
-                                /*#__PURE__*/ _jsxs("div", {
-                                    children: [
-                                        /*#__PURE__*/ _jsx("button", {
-                                            type: "button",
-                                            className: "secondary-action",
-                                            onClick: ()=>setSharePreview(null),
-                                            children: "继续编辑"
-                                        }),
-                                        /*#__PURE__*/ _jsxs("button", {
-                                            type: "button",
-                                            className: "primary-action compact share-preview-download",
-                                            onClick: downloadSharePreview,
-                                            children: [
-                                                /*#__PURE__*/ _jsx(Icon, {
-                                                    name: "download",
-                                                    size: 15
-                                                }),
-                                                "下载 PNG"
-                                            ]
-                                        })
-                                    ]
-                                })
-                            ]
-                        })
-                    ]
-                })
+            sharePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(SharePreviewModal, {
+                preview: sharePreview,
+                Icon: Icon,
+                onClose: ()=>setSharePreview(null),
+                onDownload: downloadSharePreview
             }), document.body),
             manualModelProvider && /*#__PURE__*/ _jsx(ManualModelDialog, {
                 providerName: manualModelProvider.name,
