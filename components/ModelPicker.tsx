@@ -85,7 +85,11 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   const quickPanelRef = useRef<HTMLDivElement | null>(null);
   const dialogSearchRef = useRef<HTMLInputElement | null>(null);
 
-  useBodyScrollLock(quickOpen || dialogOpen);
+  // The quick picker is an anchored, scrollable popover. Locking the page for
+  // it removes the viewport scrollbar and shifts fixed conversation chrome by
+  // one gutter width. Only the full-screen model browser needs modal scroll
+  // locking; the quick picker already tracks page scrolling while it is open.
+  useBodyScrollLock(dialogOpen);
 
   const availableModels = useMemo(() => models.filter((model) => {
     if (!model.enabled || !model.published) return false;
