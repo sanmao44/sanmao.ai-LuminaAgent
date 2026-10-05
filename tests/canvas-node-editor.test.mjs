@@ -6,6 +6,10 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const audioPlayer = await readFile(
+  new URL("../components/canvas/CanvasAudioPlayer.tsx", import.meta.url),
+  "utf8",
+);
 const variantEditors = await readFile(
   new URL("../components/canvas/CanvasVariantEditors.tsx", import.meta.url),
   "utf8",
@@ -607,10 +611,7 @@ test("grouped cards expose their own left and right connection ports", () => {
 });
 
 test("audio nodes use the branded rounded player instead of browser gray controls", () => {
-  const playerStart = component.indexOf("function CanvasAudioPlayer");
-  const playerEnd = component.indexOf("function CanvasAudioNodePanel", playerStart);
-  assert.ok(playerStart >= 0 && playerEnd > playerStart, "audio player should be a dedicated component");
-  const player = component.slice(playerStart, playerEnd);
+  const player = audioPlayer;
   assert.match(player, /className=\{`canvas-audio-player\$\{compact/);
   assert.match(player, /className="canvas-audio-player-native"/);
   assert.match(player, /className="canvas-audio-player-play"/);

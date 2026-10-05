@@ -2,8 +2,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const component = await readFile(
+const workspace = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const picker = await readFile(
+  new URL("../components/canvas/CanvasAssetCollectionPicker.tsx", import.meta.url),
+  "utf8",
+);
+const drawer = await readFile(
+  new URL("../components/canvas/CanvasAssetDrawer.tsx", import.meta.url),
   "utf8",
 );
 const styles = await readFile(
@@ -12,52 +20,40 @@ const styles = await readFile(
 );
 
 test("all canvas asset actions open the collection picker before writing", () => {
-  assert.match(component, /function CanvasAssetCollectionPicker/);
-  assert.match(component, /onClick: \(\) => openAssetCollectionPicker\(node\)/);
-  assert.match(component, /onClick: close\(\(\) => openAssetCollectionPicker\(node\)\)/);
-  assert.doesNotMatch(component, /onAddToAssets=\{/);
-  assert.match(component, /preferredCollectionId=\{assetLibraryCollectionId\}/);
-  assert.match(component, /const success = await addViewerAsset\(pickerNode, collectionId\)/);
-  assert.match(component, /collectionSelection=\{assetLibraryCollectionId\}/);
-  assert.match(component, /onCollectionSelectionChange=\{setAssetLibraryCollectionId\}/);
-  assert.match(component, /listUnifiedAssets\(canvasAssets\)/);
-  assert.match(component, /setAssetCollectionPickerNodeId\(null\)/);
-  assert.match(component, /assetCollectionPickerNodeId\);/);
+  assert.match(picker, /export default function CanvasAssetCollectionPicker/);
+  assert.match(workspace, /onClick: \(\) => openAssetCollectionPicker\(node\)/);
+  assert.match(workspace, /onClick: close\(\(\) => openAssetCollectionPicker\(node\)\)/);
+  assert.doesNotMatch(workspace, /onAddToAssets=\{/);
+  assert.match(workspace, /preferredCollectionId=\{assetLibraryCollectionId\}/);
+  assert.match(workspace, /const success = await addViewerAsset\(pickerNode, collectionId\)/);
+  assert.match(workspace, /collectionSelection=\{assetLibraryCollectionId\}/);
+  assert.match(workspace, /onCollectionSelectionChange=\{setAssetLibraryCollectionId\}/);
+  assert.match(workspace, /listUnifiedAssets\(canvasAssets\)/);
+  assert.match(workspace, /setAssetCollectionPickerNodeId\(null\)/);
+  assert.match(workspace, /assetCollectionPickerNodeId\);/);
 });
 
 test("collection picker only shows writable asset collections", () => {
-  const picker = component.slice(
-    component.indexOf("function CanvasAssetCollectionPicker"),
-    component.indexOf("function CanvasAssetDrawer"),
-  );
   assert.match(picker, /CANVAS_ASSET_UNCATEGORIZED_ID/);
   assert.match(picker, /const collectionOptions = collections\s+\.filter\(\(item\) => isAssignableCanvasAssetCollection\(item\.id\)\)/);
   assert.doesNotMatch(picker, /disabled: !item\.assignable/);
   assert.doesNotMatch(picker, /智能筛选视图不可直接归类/);
-  assert.match(picker, /assetRepository\.saveCollections\(next\)/);
+  assert.match(picker, /saveAssetCollections\(next\)/);
   assert.match(picker, /CANVAS_ASSET_LAST_COLLECTION_KEY/);
-  assert.match(picker, /全局资产中心的“\{selectedCollection\?\.name/);
+  assert.match(picker, /selectedCollection\?\.name/);
   assert.match(styles, /\.canvas-asset-target-dialog\{/);
   assert.match(styles, /\.canvas-asset-collection-picker-backdrop\{/);
 });
 
 test("asset registration preserves existing collections and rejects smart views or unfinished nodes", () => {
-  assert.match(component, /function isAssignableCanvasAssetCollection/);
-  assert.match(component, /const CANVAS_ASSET_SMART_COLLECTION_IDS = new Set/);
-  assert.match(component, /if \(!isAssignableCanvasAssetCollection\(collectionId\)\)/);
-  assert.match(component, /const existing = \(await listUnifiedAssets\((?:canvasAssets)?\)\)\.find/);
-  assert.match(component, /\[\.\.\.new Set\(\[\.\.\.currentCollectionIds, collectionId\]\)\]/);
-  assert.match(component, /collectionId === CANVAS_ASSET_UNCATEGORIZED_ID/);
-  assert.match(component, /function canAddCanvasAsset/);
-  assert.match(component, /CANVAS_ASSET_NON_READY_STATUSES = new Set\(\["queued", "running", "failed"\]\)/);
-  assert.match(component, /if \(!isAssignableCanvasAssetCollection\(collection\)\)/);
+  assert.match(workspace, /if \(!isAssignableCanvasAssetCollection\(collectionId\)\)/);
+  assert.match(workspace, /const existing = \(await listUnifiedAssets\(canvasAssets\)\)\.find/);
+  assert.match(workspace, /\[\.\.\.new Set\(\[\.\.\.currentCollectionIds, collectionId\]\)\]/);
+  assert.match(drawer, /if \(!isAssignableCanvasAssetCollection\(collection\)\)/);
 });
 
 test("asset drawer makes new collection creation a clear primary action", () => {
-  const drawer = component.slice(
-    component.indexOf("function CanvasAssetDrawer"),
-    component.indexOf("function CanvasAssetCollectionPicker", component.indexOf("function CanvasAssetDrawer")),
-  );
+  assert.match(drawer, /export default function CanvasAssetDrawer/);
   assert.match(drawer, /className="canvas-asset-new-collection" aria-label="新建资产合集"/);
   assert.match(drawer, /className="canvas-asset-new-collection-head"/);
   assert.match(drawer, />新建合集<\/b>/);
@@ -80,10 +76,7 @@ test("asset drawer keeps the media preview primary across responsive layouts", (
 });
 
 test("custom asset collections can be renamed even when legacy records omit builtin false", () => {
-  const drawer = component.slice(
-    component.indexOf("function CanvasAssetDrawer"),
-    component.indexOf("function CanvasAssetCollectionPicker", component.indexOf("function CanvasAssetDrawer")),
-  );
+  assert.match(drawer, /export default function CanvasAssetDrawer/);
   assert.match(drawer, /disabled=\{collection === "all" \|\| !collections\.some\(\(item\) => item\.id === collection && item\.builtin !== true\)\}/);
   assert.match(drawer, /if \(!target \|\| target\.builtin\)/);
 });

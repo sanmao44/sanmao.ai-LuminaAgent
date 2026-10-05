@@ -1,6 +1,6 @@
 'use client';
 
-import { type AssetIndexItem } from './client-history';
+import { type AssetCollection, type AssetIndexItem } from './client-history';
 import { assetRepository } from './repositories/asset-repository';
 import { assetOverlayId, stableHash, type AssetRecord } from './asset-catalog';
 import { normalizeAssetStorageKey, storageKeyFromAssetUrl } from './asset-references';
@@ -10,6 +10,14 @@ export { assetKey, assetOverlayId, mergeAssetRecords } from './asset-catalog';
 
 export async function listUnifiedAssets(extra: AssetRecord[] = []) {
   return [...await assetRepository.list(extra)];
+}
+
+export async function listAssetCollections() {
+  return [...await assetRepository.listCollections()];
+}
+
+export async function saveAssetCollections(collections: readonly AssetCollection[]) {
+  await assetRepository.saveCollections(collections);
 }
 
 export async function registerCanvasAsset(input: Omit<AssetRecord, 'favorite' | 'projectIds' | 'collectionIds' | 'tags'> & { favorite?: boolean; projectIds?: string[]; collectionIds?: string[]; tags?: string[] }) {

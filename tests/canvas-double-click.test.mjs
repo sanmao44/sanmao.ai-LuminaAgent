@@ -6,6 +6,14 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const assetDrawer = await readFile(
+  new URL("../components/canvas/CanvasAssetDrawer.tsx", import.meta.url),
+  "utf8",
+);
+const assetPicker = await readFile(
+  new URL("../components/canvas/CanvasAssetCollectionPicker.tsx", import.meta.url),
+  "utf8",
+);
 const canvasCss = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
@@ -53,7 +61,7 @@ test("canvas overlays share the token stack and asset preview owns the first Esc
   assert.match(canvasCss, /--canvas-z-toast:700/);
   assert.match(canvasCss, /\.canvas-world-content>\.canvas-edge-layer\{z-index:var\(--canvas-z-edge\)\}/);
   assert.match(canvasCss, /\.canvas-node-editor-popover\.is-prompt-expanded\{z-index:var\(--canvas-z-expanded-editor\)\}/);
-  assert.match(component, /return typeof document === "undefined" \? menu : createPortal\(menu, document\.body\)/);
+  assert.match(assetPicker, /return typeof document === "undefined" \? menu : createPortal\(menu, document\.body\)/);
   assert.match(component, /if \(window\.document\.querySelector\("\.canvas-asset-preview-backdrop"\)\) return;/);
-  assert.match(component, /if \(!preview\) return;[\s\S]*setPreview\(null\);[\s\S]*addEventListener\("keydown", handleEscape, true\)/);
+  assert.match(assetDrawer, /if \(!preview\) return;[\s\S]*setPreview\(null\);[\s\S]*addEventListener\("keydown", handleEscape, true\)/);
 });

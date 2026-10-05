@@ -18,6 +18,20 @@ hardening work when the trigger applies.
   touches the file, not as a standalone refactor.
 - Trigger: the next feature change that already needs to edit the file.
 
+### Frontend complexity refactor checkpoint (2026-10-05)
+
+- Stage 1 is complete: the canvas asset collection picker, asset drawer,
+  and shared audio preview now live in `components/canvas/` with the asset
+  eligibility and writable-collection rules in `lib/canvas/asset-library.ts`.
+- `CanvasWorkspace.tsx` retains CanvasCore state, document mutations, panel
+  visibility, and asset action callbacks; it no longer owns the asset panel
+  render trees or audio player implementation.
+- Stage 1 targeted behavior tests, full test suite, typecheck, and production
+  build pass.
+- Remaining stages are intentionally deferred until this stage is committed:
+  context menus/toolbars, viewport/selection, node presentation, generation
+  boundaries, and page-level panels.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
