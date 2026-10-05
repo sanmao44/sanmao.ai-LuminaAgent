@@ -2322,6 +2322,7 @@ export default function CanvasAgentDock({
           }}
         />
         <div className="canvas-agent-dock-composer-row">
+          <div className="canvas-agent-dock-composer-selectors">
           <button
             type="button"
             className={`canvas-agent-dock-skill ${skillMenuOpen ? "is-active" : ""}`}
@@ -2376,6 +2377,8 @@ export default function CanvasAgentDock({
           >
             {WEB_MODE_LABELS[webMode]}
           </button>
+          </div>
+          <div className="canvas-agent-dock-composer-actions">
           <label className="canvas-agent-dock-auto" title="开启后，出图结果自动加入画布；明确说保存、加入或放到画布时，文字回复也会创建节点">
             <input
               type="checkbox"
@@ -2387,6 +2390,7 @@ export default function CanvasAgentDock({
           <button type="submit" className={`canvas-agent-dock-send ${busy ? "is-busy" : ""}`} disabled={uploadingPastedImages}>
             {busy ? "停止" : uploadingPastedImages ? "上传图片…" : "发送"}
           </button>
+          </div>
         </div>
         <AgentSkillMenu
           open={skillMenuOpen}

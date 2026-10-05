@@ -1114,11 +1114,15 @@ html[data-theme="dark"] .canvas-workspace{
 /* 面板贴在屏幕底部，@ 菜单必须向上展开，并贴着输入框宽度。 */
 .canvas-agent-dock-mention-menu{min-width:0;max-width:100%}
 .canvas-agent-dock-composer:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
-.canvas-agent-dock-composer-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.canvas-agent-dock-model-wrap{min-width:88px;flex:1;display:flex}
-.canvas-agent-dock-creative-model-wrap{min-width:112px}
+.canvas-agent-dock-composer-row{display:grid;gap:8px;min-width:0}
+.canvas-agent-dock-composer-selectors{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1.18fr) auto;align-items:center;gap:6px;min-width:0}
+.canvas-agent-dock-composer-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;padding-top:7px;border-top:1px solid color-mix(in srgb,var(--line) 78%,transparent)}
+.canvas-agent-dock-model-wrap{min-width:0;display:flex}
+.canvas-agent-dock-creative-model-wrap{min-width:0}
 .canvas-agent-dock-model-wrap.is-busy{opacity:.5}
 .canvas-agent-dock-model{min-width:0;flex:1}
+.canvas-agent-dock-model .model-picker{min-width:0;width:100%}
+.canvas-agent-dock-model .model-picker-trigger{min-width:0;width:100%}
 /* 面板里的模型选择沿用节点编辑器那套紧凑触发器尺寸。 */
 .canvas-agent-dock-model .model-picker-trigger{height:30px;padding:0 9px;gap:6px;border-radius:9px;background:var(--panel-2)}
 .canvas-agent-dock-model .model-picker-trigger-copy>b{padding:2px 5px;font-size:7px}
@@ -1158,6 +1162,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 230px);width:min(880px,calc(100% - 512px))}
 @media(max-width:1280px){:root{--canvas-panel-width:min(430px,calc(100vw - 32px))}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 210px);width:min(820px,calc(100% - 472px))}}
 @media(max-width:1000px){.canvas-agent-dock{left:10px;right:10px;top:auto;bottom:10px;height:min(64vh,540px);width:auto}.canvas-agent-dock-rail{right:10px;top:auto;bottom:96px;transform:none}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:50%;width:calc(100% - 32px)}}
+@media(max-width:620px){.canvas-agent-dock-composer-selectors{grid-template-columns:auto minmax(0,1fr);}.canvas-agent-dock-composer-selectors .canvas-agent-dock-model-wrap{min-width:0}.canvas-agent-dock-composer-selectors .canvas-agent-dock-creative-model-wrap{grid-column:2}.canvas-agent-dock-composer-selectors .canvas-agent-dock-web{grid-column:1}.canvas-agent-dock-composer-actions{justify-content:space-between}.canvas-agent-dock-send{margin-left:auto}}
 @media(max-width:540px){.canvas-agent-dock-help-steps{grid-template-columns:1fr}.canvas-agent-dock-help-examples>div{grid-template-columns:1fr}}
 
 /* Node-first editor surface: the canvas remains the layout, each node owns
