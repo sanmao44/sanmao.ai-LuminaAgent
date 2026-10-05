@@ -189,6 +189,16 @@ hardening work when the trigger applies.
 - Upscale editor behavior tests, the full test suite, typecheck, production
   build, and staged diff check pass for this boundary.
 
+### Stage 4 reference list checkpoint (2026-10-06)
+
+- `CanvasReferenceList.tsx` now owns reference thumbnail rendering, text/video
+  previews, drag reorder affordances, remove controls, and list actions.
+- The component derives its display projection from `CanvasDocument` and the
+  existing `isCanvasMentionableNode`/`isCanvasReferenceableNode` model rules;
+  it only emits preview, reorder, add, paste, remove, and clear callbacks.
+- `CanvasWorkspace.tsx` retains all edge and document mutations. No reference
+  store or duplicate source of truth was introduced.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

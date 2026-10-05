@@ -133,6 +133,13 @@ export function isCanvasReferenceableNode(node: CanvasNode | undefined) {
   );
 }
 
+export function isCanvasMentionableNode(node: CanvasNode | undefined) {
+  return Boolean(node && (isCanvasReferenceableNode(node)
+    && node.data.kind !== "audio"
+    || (node.type === "prompt" && Boolean(String(node.data.text || node.data.agentResponse || "").trim()))
+    || (node.type === "generator" && Boolean(String(node.data.prompt || "").trim()))));
+}
+
 /** Only completed image outputs can feed the dedicated upscale input. */
 export function isCanvasReadyImageSource(node: CanvasNode | undefined) {
   if (!node || !isCanvasReferenceableNode(node)) return false;
