@@ -876,6 +876,7 @@ export async function generateCanvasAgent(
     messages: Array<{ role: "user" | "assistant"; content: string; references?: Array<Pick<CreativeReference, "id" | "kind" | "name" | "url" | "text" | "mimeType" | "nodeId">> }>;
     memory?: string;
     model?: string;
+    imageModelId?: string;
     webMode?: "off" | "auto" | "always";
     executionMode?: AgentExecutionMode;
     references?: Array<Pick<CreativeReference, "id" | "kind" | "name" | "url" | "text" | "mimeType" | "nodeId">>;
@@ -925,6 +926,7 @@ export async function generateCanvasAgent(
           messages,
           ...(input.memory ? { memory: input.memory } : {}),
           model: input.model || "auto",
+          ...(input.imageModelId ? { imageModelId: input.imageModelId } : {}),
           ...(input.task ? { task: input.task } : {}),
           ...(input.durationSeconds !== undefined ? { durationSeconds: input.durationSeconds } : {}),
           webMode: input.webMode || "off",

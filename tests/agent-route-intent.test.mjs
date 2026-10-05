@@ -362,13 +362,13 @@ test('canvas image edit target overrides vague wording and reaches the edit capa
   assert.equal(data.images.length, 1);
 });
 
-test('legacy client image model overrides are ignored by Agent generation', async () => {
+test('client image model selection reaches Agent generation explicitly', async () => {
   const agent = harness({ reply: (payload) => payload.tools
     ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"客户端旧参数测试","modelId":"stale-client-model"}}</tool_call>' }
     : { content: '图片已完成。' } });
-  const data = await agent.post([{ role: 'user', content: '生成一张客户端旧参数测试图' }], { imageModelId: 'stale-client-model' });
+  const data = await agent.post([{ role: 'user', content: '生成一张客户端选择测试图' }], { imageModelId: 'test-image' });
   assert.equal(data.images.length, 1);
-  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'auto' }]);
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'test-image' }]);
 });
 
 test('承接上一轮编号生图方案时直接批量执行，不只回复生成计划', async () => {

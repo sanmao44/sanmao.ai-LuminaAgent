@@ -67,6 +67,7 @@ export type CanvasAgentDockMessage = {
   role: "user" | "assistant";
   content: string;
   model?: string;
+  imageModelId?: string;
   images?: AgentGeneratedImage[];
   /** User pasted references are stored as durable canvas URLs, never inline data URLs. */
   references?: CanvasAgentDockReference[];
@@ -110,6 +111,7 @@ export type CanvasAgentDockMessage = {
 
 type CanvasAgentDockSession = {
   model: string;
+  imageModelId?: string;
   webMode: AgentWebMode;
   autoApply: boolean;
   messages: CanvasAgentDockMessage[];
@@ -501,6 +503,7 @@ function readSession(context: WorkspaceContext): CanvasAgentDockSession | null {
             role: message.role,
             content: String(message.content || ""),
             ...(message.model ? { model: String(message.model) } : {}),
+            ...(message.imageModelId ? { imageModelId: String(message.imageModelId) } : {}),
             ...(Array.isArray(message.images) && message.images.length
               ? { images: message.images.map((image) => ({
                   url: String(image.url || ""),
@@ -557,6 +560,7 @@ function readSession(context: WorkspaceContext): CanvasAgentDockSession | null {
       : [];
     return {
       model: typeof parsed.model === "string" && parsed.model ? parsed.model : "auto",
+      imageModelId: typeof parsed.imageModelId === "string" && parsed.imageModelId ? parsed.imageModelId : "auto",
       webMode: parsed.webMode === "auto" || parsed.webMode === "always" ? parsed.webMode : "off",
       autoApply: parsed.autoApply !== false,
       messages,
@@ -603,6 +607,7 @@ export default function CanvasAgentDock({
   /* 长任务阶段文案：主管线写快照，面板按 runId 轮询，正文开始流式返回就让位。 */
   const [progressDetail, setProgressDetail] = useState("");
   const [model, setModel] = useState("auto");
+  const [imageModelId, setImageModelId] = useState("auto");
   const [webMode, setWebMode] = useState<AgentWebMode>("off");
   const [autoApply, setAutoApply] = useState(true);
   const [memory, setMemory] = useState<CanvasAgentDockMemory | undefined>();
@@ -648,6 +653,7 @@ export default function CanvasAgentDock({
     const stored = readSession(context);
     setMessages(stored?.messages || []);
     setModel(stored?.model || "auto");
+    setImageModelId(stored?.imageModelId || "auto");
     setWebMode(stored?.webMode || "off");
     setAutoApply(stored?.autoApply !== false);
     setMemory(stored?.memory);
@@ -664,12 +670,12 @@ export default function CanvasAgentDock({
       const CANVAS_AGENT_DOCK_SESSION_KEY = canvasAgentDockSessionKey(context);
       window.localStorage.setItem(
         CANVAS_AGENT_DOCK_SESSION_KEY,
-        JSON.stringify({ model, webMode, autoApply, messages: messages.slice(-MESSAGE_LIMIT), ...(memory ? { memory } : {}) }),
+        JSON.stringify({ model, imageModelId, webMode, autoApply, messages: messages.slice(-MESSAGE_LIMIT), ...(memory ? { memory } : {}) }),
       );
     } catch {
       /* session persistence is best effort */
     }
-  }, [context, hydrated, loadedScopeKey, memory, messages, model, sessionScopeKey, webMode, autoApply]);
+  }, [context, hydrated, loadedScopeKey, memory, messages, model, imageModelId, sessionScopeKey, webMode, autoApply]);
 
   // Kept as a named dependency contract for the persistence regression guard.
   // Context-scoped storage is the actual key; this expression makes the
@@ -764,6 +770,20 @@ export default function CanvasAgentDock({
     () => (chipOrder.length ? orderByReferenceIds(selectedNodeIds, chipOrder, (id) => id) : selectedNodeIds),
     [chipOrder, selectedNodeIds],
   );
+  const liveCreativeRoute = useMemo(() => resolveCreativeRoute(input, {
+    messages: messages.map((message) => ({ role: message.role, content: message.content, images: message.images })),
+    hasReferences: orderedReferences.length > 0 || draftImages.length > 0,
+  }), [draftImages.length, input, messages, orderedReferences.length]);
+  const liveCreativeCapability = liveCreativeRoute.operation === "edit" ? "edit" : "generate";
+  const availableCreativeModels = useMemo(
+    () => (runtime?.models || []).filter((candidate) => candidate.enabled && candidate.published
+      && (candidate.kind === "image" || candidate.capabilities.includes("generate"))
+      && candidate.capabilities.includes(liveCreativeCapability)),
+    [liveCreativeCapability, runtime?.models],
+  );
+  useEffect(() => {
+    if (imageModelId !== "auto" && !availableCreativeModels.some((candidate) => candidate.id === imageModelId)) setImageModelId("auto");
+  }, [availableCreativeModels, imageModelId]);
   const chipMentionIndexes = useMemo(
     () => new Map(orderedReferences.map((reference, index) => [referenceOrderKey(reference), index + 1] as const)),
     [orderedReferences],
@@ -1064,11 +1084,21 @@ export default function CanvasAgentDock({
         messages: base.map((message) => ({ role: message.role, content: message.content, images: message.images })),
         hasReferences: turnReferences.length > 0,
       });
+      const creativeModelCapability = creativeRoute.operation === "edit" ? "edit" : "generate";
+      const selectedCreativeModel = imageModelId !== "auto"
+        && (runtime?.models || []).some((candidate) => candidate.id === imageModelId
+          && candidate.enabled && candidate.published && candidate.capabilities.includes(creativeModelCapability))
+        ? imageModelId
+        : "auto";
+      const requestCreativeModel = options.retry && sourceMessage?.imageModelId
+        ? sourceMessage.imageModelId
+        : selectedCreativeModel;
       const userMessage: CanvasAgentDockMessage = {
         id: createId(),
         role: "user",
         /* 存自解释的引用名：三天后回看这条消息，也不再依赖当时的 @ 编号。 */
         content: labelReferenceMentions(promptText, turnNodeReferences),
+        imageModelId: requestCreativeModel,
         ...(turnReferences.length ? { references: turnReferences } : {}),
         ...(turnNodeReferences.length ? { canvasReferences: turnNodeReferences } : {}),
         ...(turnNodeIds.length ? { canvasNodeIds: turnNodeIds } : {}),
@@ -1229,6 +1259,7 @@ export default function CanvasAgentDock({
             messages: outbound,
             memory: requestMemory?.summary,
             model,
+            imageModelId: requestCreativeModel,
             executionMode: "agent-dock",
             webMode,
             // 画布上下文只给模型看，意图判断必须用用户自己那句话。
@@ -1375,7 +1406,7 @@ export default function CanvasAgentDock({
         setProgressDetail("");
       }
     },
-    [autoApply, busy, canvasDocument, closeSkillMenu, context, contextBlock, draftImages, editingMessageId, input, messages, model, notify, onApplyCanvasPatch, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, selectedTotal, uploadingPastedImages, webMode],
+    [autoApply, busy, canvasDocument, closeSkillMenu, context, contextBlock, draftImages, editingMessageId, imageModelId, input, messages, model, notify, onApplyCanvasPatch, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, runtime?.models, selectedTotal, uploadingPastedImages, webMode],
   );
 
   const retryFailedBatchItems = useCallback((message: CanvasAgentDockMessage) => {
@@ -2316,6 +2347,23 @@ export default function CanvasAgentDock({
               placeholder="选择对话模型"
               onChange={setModel}
               className="canvas-agent-dock-model"
+            />
+          </div>
+          <div className={`canvas-agent-dock-model-wrap canvas-agent-dock-creative-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
+            <ModelPicker
+              models={availableCreativeModels}
+              value={imageModelId}
+              capability={liveCreativeCapability}
+              portalZIndex={CANVAS_Z_INDEX.modalPopover}
+              dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
+              defaultProviderId={runtime?.settings.defaultProviderId}
+              defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
+              defaultModelId={runtime?.settings.defaultImageModelId}
+              automaticHint="自动按当前生图或改图任务选择模型"
+              triggerPrefix="创作"
+              placeholder="选择创作模型"
+              onChange={setImageModelId}
+              className="canvas-agent-dock-model canvas-agent-dock-creative-model"
             />
           </div>
           <button

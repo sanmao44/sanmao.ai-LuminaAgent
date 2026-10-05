@@ -42,6 +42,8 @@ export type AgentRequestPayload = {
   referenceImages?: Array<Record<string, unknown>>;
   references?: CreativeReference[];
   model?: string;
+  /** Explicit creative/image model. `auto` keeps the server's capability-aware fallback policy. */
+  imageModelId?: string;
   task?: string;
   durationSeconds?: number;
   webMode?: "off" | "auto" | "always";

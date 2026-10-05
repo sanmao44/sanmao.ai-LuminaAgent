@@ -764,11 +764,12 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
           && m.published
           && m.capabilities.includes(requestedImageCapability))
       : [];
-    // Agent image generation always starts from the system image default. The
-    // old per-turn client field and any modelId emitted by the language model
-    // are intentionally ignored; only the compatibility fallback below may
-    // move to another image model.
-    const requestedAgentImageModelId = 'auto';
+    // Image model choice is independent from the chat model. `auto` keeps the
+    // capability-aware default and compatibility fallback policy; an explicit
+    // model is validated and executed without silently switching models.
+    const requestedAgentImageModelId = typeof body.imageModelId === 'string' && body.imageModelId.trim()
+      ? body.imageModelId.trim()
+      : 'auto';
     const imageModelText = imageModels.length
       ? imageModels.map((m) => `- ${m.displayName}（modelId=${m.id}，服务=${m.providerName}）`).join('\n')
       : `- 当前没有可用${requestedImageCapability === 'edit' ? '改图' : '生图'}模型（需要已启用、已发布且声明 ${requestedImageCapability} 能力的图片模型）`;

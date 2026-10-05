@@ -5378,6 +5378,7 @@ export default function Page() {
     const [selectedShareGroups, setSelectedShareGroups] = useState(new Set());
     const [agentFiles, setAgentFiles] = useState([]);
     const [agentModelId, setAgentModelId] = useState('auto');
+    const [agentImageModelId, setAgentImageModelId] = useState('auto');
     const [agentWebMode, setAgentWebMode] = useState('auto');
     const [agentWebModeMenuOpen, setAgentWebModeMenuOpen] = useState(false);
     const [webSearchApiProvider, setWebSearchApiProvider] = useState('baidu-qianfan');
@@ -5957,6 +5958,14 @@ export default function Page() {
         hasReferences: agentRefs.length > 0,
         hasFiles: agentFiles.length > 0,
     }, liveAgentIntent), [agentInput, agentFiles.length, agentRefs.length, liveAgentIntent, messages]);
+    const agentCreativeCapability = liveCreativeRoute.operation === 'edit' ? 'edit' : 'generate';
+    const availableAgentImageModels = agentCreativeCapability === 'edit' ? availableEditModels : availableGenerationModels;
+    const activeAgentImageModelId = agentImageModelId !== 'auto' && availableAgentImageModels.some((model)=>model.id === agentImageModelId)
+        ? agentImageModelId
+        : 'auto';
+    useEffect(()=>{
+        if (agentImageModelId !== 'auto' && !availableAgentImageModels.some((model)=>model.id === agentImageModelId)) setAgentImageModelId('auto');
+    }, [agentImageModelId, availableAgentImageModels]);
     const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
     const videoTotalPages = Math.max(1, Math.ceil(videoTotal / pageSize));
     const visibleVideoPage = Math.min(videoPage, videoTotalPages);
@@ -9391,12 +9400,14 @@ export default function Page() {
                         message: progress.message
                     })
             });
+            const retryImageModelId = latestUserMessage?.imageModelId || activeAgentImageModelId;
             const data = await requestAgent({
                     messages: payloadMessages,
                     memory,
                     persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
                     model: modelOverride,
+                    imageModelId: retryImageModelId,
                     ...(message.task === 'one_take_video_prompt' && message.durationSeconds !== undefined ? { task: message.task, durationSeconds: message.durationSeconds } : {}),
                     webMode: agentWebMode,
                     webSearch: agentWebMode !== 'off',
@@ -9567,6 +9578,7 @@ export default function Page() {
             id: uid('msg'),
             role: 'user',
             content: requestContent,
+            imageModelId: activeAgentImageModelId,
             references: refs,
             files,
             followUp: followUp || undefined
@@ -9703,6 +9715,7 @@ export default function Page() {
                     persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
+                    imageModelId: activeAgentImageModelId,
                     task,
                     ...(oneTakeDuration !== undefined ? { durationSeconds: oneTakeDuration } : {}),
                     webMode: agentWebMode,
@@ -11574,6 +11587,20 @@ export default function Page() {
                                                                      defaultProviderName: defaultProvider?.name,
                                                                      defaultModelId: state.settings.agentModelId,
                                                                      onChange: setAgentModelId,
+                                                                     className: "model-dropdown compact"
+                                                                 }),
+                                                                 /*#__PURE__*/ _jsx(ModelPicker, {
+                                                                     models: availableAgentImageModels,
+                                                                     value: activeAgentImageModelId,
+                                                                     capability: agentCreativeCapability,
+                                                                     health: state.agentHealth || [],
+                                                                     defaultProviderId: state.settings.defaultProviderId,
+                                                                     defaultProviderName: defaultProvider?.name,
+                                                                     defaultModelId: state.settings.defaultImageModelId,
+                                                                     automaticHint: agentCreativeCapability === 'edit' ? '根据当前改图任务自动选择支持 edit 的模型' : '根据当前生图任务自动选择支持 generate 的模型',
+                                                                     triggerPrefix: "创作",
+                                                                     placeholder: "选择创作模型",
+                                                                     onChange: setAgentImageModelId,
                                                                      className: "model-dropdown compact"
                                                                  }),
                                                                  /*#__PURE__*/ _jsx(AgentWebModeControl, {

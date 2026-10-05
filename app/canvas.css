@@ -1116,6 +1116,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-composer:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
 .canvas-agent-dock-composer-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .canvas-agent-dock-model-wrap{min-width:88px;flex:1;display:flex}
+.canvas-agent-dock-creative-model-wrap{min-width:112px}
 .canvas-agent-dock-model-wrap.is-busy{opacity:.5}
 .canvas-agent-dock-model{min-width:0;flex:1}
 /* 面板里的模型选择沿用节点编辑器那套紧凑触发器尺寸。 */
