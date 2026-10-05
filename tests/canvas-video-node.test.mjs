@@ -7,6 +7,10 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const mediaPlayback = await readFile(
+  new URL("../components/canvas/useCanvasMediaPlayback.ts", import.meta.url),
+  "utf8",
+);
 const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
@@ -44,9 +48,9 @@ test("video canvas cards expose a persistent visual and accessible distinction",
   assert.match(component, /title=\{videoControlLabel\}/);
   assert.match(component, /aria-label=\{`\$\{videoControlLabel\}/);
   assert.match(component, /onClick=\{toggleVideoPlayback\}/);
-  assert.match(component, /video\.play\(\)/);
-  assert.match(component, /video\.pause\(\)/);
-  assert.match(component, /video\.ended/);
+  assert.match(mediaPlayback, /video\.play\(\)/);
+  assert.match(mediaPlayback, /video\.pause\(\)/);
+  assert.match(mediaPlayback, /video\.ended/);
   const playButtonStart = component.indexOf("className={`canvas-video-play");
   const playButtonEnd = component.indexOf("</button>", playButtonStart);
   assert.ok(playButtonStart >= 0 && playButtonEnd > playButtonStart);

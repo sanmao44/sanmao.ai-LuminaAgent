@@ -87,8 +87,14 @@ hardening work when the trigger applies.
   memo comparator. The comparator checks every Workspace callback and editor
   collection, while intentionally ignoring camera-only document replacement.
   Behavior tests cover callback freshness and camera-only stability.
-- Keep the card body and media state in Workspace until a behavior-covered
-  media presentation boundary can be edited without rewriting the legacy file.
+- `useCanvasMediaPlayback.ts` now owns transient video playback, media retry,
+  missing/temporary load state, and clip playback settings. It receives only a
+  media URL and normalized clip projection; it does not persist CanvasCore
+  state or call generation APIs. The card keeps the existing media DOM and
+  delegates these events to the hook.
+- The remaining card body, editor, reference picker, generator and workbench
+  branches remain in Workspace until each has a behavior-covered presentation
+  boundary.
 
 ## Adapter subdivision
 
