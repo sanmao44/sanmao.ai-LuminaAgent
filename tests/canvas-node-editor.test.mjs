@@ -11,6 +11,10 @@ const mediaCard = await readFile(
   new URL("../components/canvas/CanvasMediaNodeCard.tsx", import.meta.url),
   "utf8",
 );
+const upscaleCard = await readFile(
+  new URL("../components/canvas/CanvasUpscaleNodeCard.tsx", import.meta.url),
+  "utf8",
+);
 const cardContractSource = await readFile(
   new URL("../components/canvas/CanvasNodeCardContract.ts", import.meta.url),
   "utf8",
@@ -224,8 +228,8 @@ test("upscale runs in place and keeps a visible processing state on the node", (
   assert.match(upscaleRun, /url: resultUrl/);
   assert.match(upscaleRun, /statusLabel: "超分节点生成的结果"/);
   assert.match(component, /setExpandedEditorId\(\(current\) => current === node\.id \? null : current\)/);
-  assert.match(component, /className="canvas-upscale-card-loading"/);
-  assert.match(component, /className="canvas-upscale-result-badge"/);
+  assert.match(upscaleCard, /className="canvas-upscale-card-loading"/);
+  assert.match(upscaleCard, /className="canvas-upscale-result-badge"/);
   assert.match(styles, /\.canvas-upscale-card-result/);
   assert.match(styles, /\.canvas-upscale-card-loading \.canvas-processing-indicator/);
 });
@@ -275,9 +279,9 @@ test("image cards show intrinsic resolution only after a valid image has loaded"
   assert.match(component, /Number\(data\.nativeWidth\) > 0/);
   assert.match(component, /Number\(data\.nativeHeight\) > 0/);
   assert.match(mediaCard, /className="canvas-image-resolution"/);
-  assert.match(component, /title=\{`图片分辨率 \$\{imageResolution\}`\}/);
-  assert.match(component, /className="canvas-image-resolution canvas-upscale-resolution"/);
-  assert.match(component, /canvas-upscale-resolution[\s\S]*title=\{`图片分辨率 \$\{imageResolution\}`\}/);
+  assert.match(mediaCard, /imageResolution/);
+  assert.match(upscaleCard, /className="canvas-image-resolution canvas-upscale-resolution"/);
+  assert.match(upscaleCard, /canvas-upscale-resolution[\s\S]*imageResolution/);
   assert.match(styles, /\.canvas-image-resolution\{[^}]*right:10px[^}]*bottom:10px/);
   assert.match(styles, /font-variant-numeric:tabular-nums/);
   assert.match(styles, /@media\(max-width:720px\)\{\.canvas-image-resolution/);
@@ -286,7 +290,7 @@ test("image cards show intrinsic resolution only after a valid image has loaded"
 test("upscale result frames use the loaded image dimensions for auto-fit", () => {
   assert.match(component, /upscaleCardSizeForRatio/);
   assert.match(component, /node\.type !== "media" && node\.type !== "upscale"/);
-  assert.match(component, /className="canvas-upscale-card-result"[\s\S]*?onLoad=\{\(event\) =>\s*onNaturalSize\(/);
+  assert.match(upscaleCard, /className="canvas-upscale-card-result"[\s\S]*?onLoad=\{\(event\) =>\s*onNaturalSize\(/);
   assert.match(component, /item\.data\.autoFit !== false \? upscaleCardSizeForRatio\(/);
   assert.match(component, /autoFit: item\.data\.autoFit !== false/);
 });

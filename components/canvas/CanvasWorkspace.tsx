@@ -244,6 +244,7 @@ import CanvasMinimap from "@/components/canvas/CanvasMinimap";
 import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStrip";
 import CanvasNodeLayer from "@/components/canvas/CanvasNodeLayer";
 import CanvasMediaNodeCard from "@/components/canvas/CanvasMediaNodeCard";
+import CanvasUpscaleNodeCard from "@/components/canvas/CanvasUpscaleNodeCard";
 import {
   areCanvasNodeCardPropsEqual,
   type CanvasNodeCardProps,
@@ -18165,49 +18166,17 @@ function CanvasNodeCard({
         />
       ) : null}
       {node.type === "upscale" && (
-        <div className={`canvas-upscale-card${hasUpscaleResult ? " has-result" : ""}`}>
-          <div className="canvas-upscale-card-head"><span>↗</span><div><b>图片超分</b><small>{hasUpscaleResult ? "超分节点生成的结果" : "独立超分节点"}</small></div></div>
-          {pending ? (
-            <div className="canvas-upscale-card-loading">
-              <CanvasProcessingIndicator
-                label={processingLabel}
-                progress={processingProgress}
-                kind={processingKind}
-                startedAt={data.processingStartedAt || data.generation?.createdAt}
-                waiting={data.status === "queued"}
-                compact
-              />
-            </div>
-          ) : hasUpscaleResult ? (
-            <div className="canvas-upscale-card-result" title="双击查看大图；拖动此节点到其他节点可作为图片参考">
-              <img
-                src={String(data.url)}
-                alt={String(data.name || "超分结果")}
-                draggable={false}
-                onLoad={(event) =>
-                  onNaturalSize(
-                    node.id,
-                    event.currentTarget.naturalWidth,
-                    event.currentTarget.naturalHeight,
-                  )
-                }
-              />
-              <span className="canvas-upscale-result-badge"><i>↗</i>{data.status === "failed" ? "上次超分结果" : "超分节点生成的结果"}</span>
-              {imageResolution && (
-                <span
-                  className="canvas-image-resolution canvas-upscale-resolution"
-                  title={`图片分辨率 ${imageResolution}`}
-                  aria-label={`图片分辨率 ${imageResolution}`}
-                >
-                  {imageResolution}
-                </span>
-              )}
-            </div>
-          ) : (
-            <div className="canvas-upscale-card-preview"><strong>{String((data.params as CanvasUpscaleParams | undefined)?.scale || 2)}×</strong><span>{String((data.params as CanvasUpscaleParams | undefined)?.algorithm || "lanczos")}</span></div>
-          )}
-          <div className="canvas-upscale-card-status">{pending ? processingLabel : data.status === "failed" ? String(data.statusLabel || "超分失败，可重试") : hasUpscaleResult ? "双击预览 · 拖到其他节点作为图片参考" : canvasUpscaleSource(document, node.id) ? "已连接图片 · 选中后打开设置" : "请连接一张已完成的图片"}</div>
-        </div>
+        <CanvasUpscaleNodeCard
+          node={node}
+          pending={pending}
+          hasResult={hasUpscaleResult}
+          processingLabel={processingLabel}
+          processingProgress={processingProgress}
+          processingKind={processingKind}
+          imageResolution={imageResolution}
+          sourceConnected={Boolean(canvasUpscaleSource(document, node.id))}
+          onNaturalSize={onNaturalSize}
+        />
       )}
       {node.type === "prompt" && (
         <div className="canvas-prompt-card">

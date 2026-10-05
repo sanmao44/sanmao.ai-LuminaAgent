@@ -98,6 +98,10 @@ hardening work when the trigger applies.
   already-derived status and Workspace callbacks; it does not read CanvasCore,
   repositories, providers, or task services. `CanvasWorkspace.tsx` no longer
   contains the duplicate media markup or playback hook instance.
+- `CanvasUpscaleNodeCard.tsx` now owns the upscale node's loading, result, and
+  preview presentation. It receives the derived source-connected flag and
+  Workspace's natural-size callback; the in-place generation mutation remains
+  in Workspace and the card has no API or CanvasCore dependency.
 - The remaining card body, editor, reference picker, generator and workbench
   branches remain in Workspace until each has a behavior-covered presentation
   boundary.
