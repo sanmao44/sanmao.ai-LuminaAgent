@@ -6,6 +6,10 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const groupLayer = await readFile(
+  new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url),
+  "utf8",
+);
 
 test("canvas node quick toolbar is shown only after a confirmed click", () => {
   assert.match(
@@ -89,10 +93,7 @@ test("dragging a grouped card moves only the node while the group bounds follow"
 });
 
 test("dragging one grouped card does not raise the group frame above its other members", () => {
-  const groupRender = component.slice(
-    component.indexOf("const groupInteraction ="),
-    component.indexOf("return (", component.indexOf("const groupInteraction =")),
-  );
+  const groupRender = groupLayer;
   assert.match(groupRender, /group\.nodeIds\.every\(\(id\) => draggingNodeIds\.has\(id\)\)/);
 });
 

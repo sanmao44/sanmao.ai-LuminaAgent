@@ -8,6 +8,10 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const groupLayer = await readFile(
+  new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url),
+  "utf8",
+);
 const maskEditor = await readFile(
   new URL("../components/MaskEditor.tsx", import.meta.url),
   "utf8",
@@ -31,7 +35,7 @@ test("space-pan cursor state follows the keyboard lifecycle", () => {
   assert.match(component, /spaceHeldRef\.current = false;\s*setPanReady\(false\)/);
   assert.match(component, /className=\{`canvas-stage \$\{panReady \? "is-pan-ready" : ""\} \$\{panActive \? "is-panning" : ""\}/);
   assert.match(component, /className=\{`canvas-node node-color-\$\{colorKey\} status-\$\{status\}[^`]*\$\{dragging \? "dragging" : ""\}/);
-  assert.match(component, /className=\{`canvas-group[^`]*selectedGroupId === group\.id && draggingNodeIds\.size > 0 \? "dragging" : ""/);
+  assert.match(groupLayer, /className=\{`canvas-group[^`]*selectedGroupId === group\.id && draggingNodeIds\.size > 0 \? "dragging" : ""/);
 });
 
 test("canvas shows a non-interactive middle-button pan affordance", () => {

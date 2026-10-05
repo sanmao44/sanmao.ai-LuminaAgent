@@ -8,6 +8,7 @@ const component = await readFile(
   "utf8",
 );
 const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
+const groupLayer = await readFile(new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url), "utf8");
 const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
@@ -175,7 +176,7 @@ test("layer actions use the shared entity stack and explain boundary no-ops", ()
 
   assert.match(reorder, /const boundary = action === "bring-to-back" \|\| action === "lower" \? "底层" : "顶层";/);
   assert.match(reorder, /选中的 \$\{entityIds\.length\} 个对象已在\$\{boundary\}/);
-  assert.match(component, /zIndex: canvasGroupPaintZIndex\([\s\S]*groupInteraction,[\s\S]*\),/);
+  assert.match(groupLayer, /zIndex: canvasGroupPaintZIndex\([\s\S]*groupInteraction[\s\S]*\)/);
   assert.match(component, /zIndex: canvasNodePaintZIndex\(document, node, dragging\)/);
   assert.match(styles, /\.canvas-world-content>\.canvas-group-layer,\.canvas-world-content>\.canvas-node-layer\{z-index:auto\}/);
   assert.doesNotMatch(styles, /\.canvas-world-content>\.canvas-group-layer\{z-index:var\(--canvas-z-group\)\}/);

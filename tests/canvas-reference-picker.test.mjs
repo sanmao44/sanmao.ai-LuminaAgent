@@ -6,6 +6,8 @@ const component = (await readFile(new URL("../components/canvas/CanvasWorkspace.
   .replace(/\r\n/g, "\n");
 const draftStrip = (await readFile(new URL("../components/CanvasReferenceDraftStrip.tsx", import.meta.url), "utf8"))
   .replace(/\r\n/g, "\n");
+const nodeReferenceStrip = (await readFile(new URL("../components/canvas/CanvasNodeReferenceStrip.tsx", import.meta.url), "utf8"))
+  .replace(/\r\n/g, "\n");
 const styles = (await readFile(new URL("../app/canvas.css", import.meta.url), "utf8"))
   .replace(/\r\n/g, "\n");
 const cursorStyles = (await readFile(new URL("../app/cursor.css", import.meta.url), "utf8"))
@@ -75,7 +77,7 @@ test("picker has no fixed prompt layer that can cover narrow editors", () => {
 });
 
 test("video frame slots forward their explicit first/last-frame roles", () => {
-  assert.match(component, /onPickFromCanvas\?\.\(slotRole\)/);
+  assert.match(nodeReferenceStrip, /onPickFromCanvas\?\.\(slotRole\)/);
   assert.match(component, /onPickFromCanvas=\{\(role\) => beginReferencePicker\(/);
   assert.match(component, /role,\n\s*\)\}/);
 });

@@ -18,6 +18,10 @@ const edgeLayer = await readFile(
   new URL("../components/canvas/CanvasEdgeLayer.tsx", import.meta.url),
   "utf8",
 );
+const groupLayer = await readFile(
+  new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url),
+  "utf8",
+);
 const parameterEditor = await readFile(
   new URL("../components/CreationParameterEditor.tsx", import.meta.url),
   "utf8",
@@ -819,7 +823,7 @@ test("multi-select layout toolbar exposes alignment and distribution icons only 
 
 test("group selection uses a toolbar attached to the group card while ordinary multi-select keeps its toolbar", () => {
   assert.match(component, /function CanvasQuickToolbar\(/);
-  assert.match(component, /data-canvas-group-id=\{group\.id\}/);
+  assert.match(groupLayer, /data-canvas-group-id=\{group\.id\}/);
   assert.match(component, /placeCanvasGroupToolbar\(anchor, placementStage, overlay, 10\)/);
   assert.match(component, /arrangeCanvasGroup\(canvasCoreRef\.current\.document\(\), activeGroup\.id, mode\)/);
   assert.doesNotMatch(component, /arrangeCanvas\(docRef\.current, selected, mode\)/);

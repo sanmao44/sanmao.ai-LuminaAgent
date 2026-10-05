@@ -242,6 +242,7 @@ import { CanvasSettingsPanel, CanvasShortcutsPanel, CONNECTION_STYLE_OPTIONS } f
 import { CanvasGeneratorHelp, CanvasVariantRequirementsEditor } from "@/components/canvas/CanvasVariantEditors";
 import CanvasMinimap from "@/components/canvas/CanvasMinimap";
 import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStrip";
+import CanvasGroupLayer from "@/components/canvas/CanvasGroupLayer";
 import MediaViewer, {
   type ImageVersionInfo,
   type MediaViewerItem,
@@ -15168,99 +15169,20 @@ export default function SuperCanvas() {
               onHover={handleConnectionHover}
               onLeave={handleConnectionLeave}
             />
-            <div className="canvas-group-layer">
-              {document.groups.map((group) => {
-                const bounds = groupBounds(document, group.id);
-                const availableImageCount = group.nodeIds.filter((id) => {
-                  const node = nodeById(document, id);
-                  return Boolean(
-                    node &&
-                      isCanvasReferenceableNode(node) &&
-                      node.data.kind === "image" &&
-                      node.data.url,
-                  );
-                }).length;
-                const composing = composingGroupId === group.id;
-                const groupInteraction =
-                  selectedGroupId === group.id &&
-                  group.nodeIds.length > 0 &&
-                  group.nodeIds.every((id) => draggingNodeIds.has(id)) &&
-                  draggingNodeIds.size > 0 &&
-                  (cursorTask === "dragging" || cursorTask === "resizing");
-                return (
-                  <div
-                    key={group.id}
-                    className={`canvas-group ${selectedGroupId === group.id ? "selected" : ""} ${selectedGroupId === group.id && draggingNodeIds.size > 0 ? "dragging" : ""} ${connection?.sourceId === group.id ? "connection-source" : ""} ${connectionTargetId === group.id ? "connection-target" : ""} ${assetDropGroupId === group.id ? "asset-drop-target" : ""}`}
-                    data-canvas-connectable-id={group.id}
-                    data-canvas-group-id={group.id}
-                    style={{
-                      left: bounds.x,
-                      top: bounds.y,
-                      width: bounds.w,
-                      height: bounds.h,
-                      zIndex: canvasGroupPaintZIndex(
-                        document,
-                        group,
-                        groupInteraction,
-                      ),
-                    }}
-                    onPointerDown={(event) => startGroupDrag(event, group)}
-                  >
-                    <button
-                      type="button"
-                      className="canvas-group-port left"
-                      aria-label={`从${group.name}左侧发起连线`}
-                      title={`从${group.name}左侧发起连线`}
-                      onPointerDown={(event) =>
-                        startConnection(event, group.id, "left")
-                      }
-                    />
-                    <button
-                      type="button"
-                      className="canvas-group-port right"
-                      aria-label={`从${group.name}右侧发起连线`}
-                      title={`从${group.name}右侧发起连线`}
-                      onPointerDown={(event) =>
-                        startConnection(event, group.id, "right")
-                      }
-                    />
-                    <button
-                      type="button"
-                      className="canvas-group-resize"
-                      aria-label="调整对象组大小"
-                      onPointerDown={(event) => startGroupResize(event, group)}
-                    />
-                    <div className="canvas-group-label">
-                      <button
-                        type="button"
-                        className={`canvas-group-compose ${composing ? "composing" : ""}`}
-                        disabled={availableImageCount < 2 || Boolean(composingGroupId)}
-                        title={
-                          availableImageCount >= 2
-                            ? `宫格拼接组内 ${availableImageCount} 张图片`
-                            : "组内至少需要 2 张可用图片才能宫格拼接"
-                        }
-                        aria-label={
-                          availableImageCount >= 2
-                            ? `宫格拼接组内 ${availableImageCount} 张图片`
-                            : "组内至少需要 2 张可用图片才能宫格拼接"
-                        }
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openComposeDialog(group.id);
-                        }}
-                      >
-                        {composing ? "…" : "▦"}
-                      </button>
-                      <span>⌘</span>
-                      <b>{group.name}</b>
-                      <small>{group.nodeIds.length} 个对象</small>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <CanvasGroupLayer
+              document={document}
+              selectedGroupId={selectedGroupId}
+              draggingNodeIds={draggingNodeIds}
+              cursorTask={cursorTask}
+              composingGroupId={composingGroupId}
+              connectionSourceId={connection?.sourceId || null}
+              connectionTargetId={connectionTargetId}
+              assetDropGroupId={assetDropGroupId}
+              onGroupPointerDown={startGroupDrag}
+              onGroupResize={startGroupResize}
+              onStartConnection={startConnection}
+              onComposeGroup={openComposeDialog}
+            />
             <div className="canvas-node-layer">
               {visibleCanvasNodes.map((node) => (
                 <MemoizedCanvasNodeCard
