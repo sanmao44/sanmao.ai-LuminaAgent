@@ -11,7 +11,11 @@ const maskSummary = await readFile(
   new URL("../components/canvas/CanvasMaskSummary.tsx", import.meta.url),
   "utf8",
 );
-const component = `${workspace}\n${maskSummary}`;
+const presetControl = await readFile(
+  new URL("../components/canvas/CanvasImagePresetControl.tsx", import.meta.url),
+  "utf8",
+);
+const component = `${workspace}\n${maskSummary}\n${presetControl}`;
 const mediaCard = await readFile(
   new URL("../components/canvas/CanvasMediaNodeCard.tsx", import.meta.url),
   "utf8",
@@ -830,17 +834,20 @@ test("image presets stay opaque in the editor and open custom forms in a separat
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
   assert.ok(editorStart >= 0, "node editor popover should be present");
   const editor = component.slice(editorStart);
+  const presetStart = component.indexOf("function CanvasImagePresetBadge");
+  assert.ok(presetStart >= 0, "image preset control should be present");
+  const preset = component.slice(presetStart);
   assert.match(editor, /const visibleEditorPrompt = supportsImagePresets/);
-  assert.match(editor, /className="canvas-image-preset-reference"/);
-  assert.match(editor, /onClick=\{clearImagePreset\}/);
-  assert.match(editor, /onClick=\{openNewPresetEditor\}/);
-  assert.match(editor, /onImagePresetSelect\(preset\);[\s\S]*setPresetPanelOpen\(false\);/);
-  assert.match(editor, /presetEditorOpen && imagePresetEnabled && createPortal/);
-  assert.match(editor, /className="canvas-preset-editor-backdrop"/);
-  assert.match(editor, /aria-modal="true"/);
-  assert.match(editor, /presetNameInputRef\.current\?\.focus\(\)/);
-  assert.match(editor, /输入要保存的完整提示词/);
-  assert.doesNotMatch(editor, /preset\.prompt\.slice\(0, 42\)/);
+  assert.match(preset, /className="canvas-image-preset-reference"/);
+  assert.match(preset, /onClear: \(\) => void/);
+  assert.match(preset, /onClick=\{openNewPresetEditor\}/);
+  assert.match(preset, /onSelect\(preset\);[\s\S]*setPresetPanelOpen\(false\);/);
+  assert.match(preset, /presetEditorOpen && createPortal/);
+  assert.match(preset, /className="canvas-preset-editor-backdrop"/);
+  assert.match(preset, /aria-modal="true"/);
+  assert.match(preset, /presetNameInputRef\.current\?\.focus\(\)/);
+  assert.match(preset, /输入要保存的完整提示词/);
+  assert.doesNotMatch(preset, /preset\.prompt\.slice\(0, 42\)/);
   assert.match(component, /function resolveCanvasImagePresetPrompt\(/);
   assert.match(component, /const supportsImagePresets = canvasNodeSupportsImagePresets\(currentNode\) && currentNode\.data\.kind === "image"/);
   assert.match(component, /resolveCanvasImagePresetPrompt\(userPrompt, presetId, customImagePresets\)/);

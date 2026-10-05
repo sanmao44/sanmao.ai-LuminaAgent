@@ -151,6 +151,20 @@ hardening work when the trigger applies.
 - Mention behavior tests, the full test suite, typecheck, production build,
   and `git diff --check` pass for this slice.
 
+### Stage 4 image preset checkpoint (2026-10-06)
+
+- `CanvasImagePresetControl.tsx` now owns the image preset drawer, custom
+  preset form, focus and Escape handling, outside-pointer dismissal, and
+  preset list presentation.
+- `CanvasImagePresetBadge` owns the active preset summary shown in the node
+  editor. Both components use the existing `ImagePreset` and
+  `CustomImagePreset` contracts from `lib/creation/image-presets.ts`.
+- `CanvasWorkspace.tsx` retains preset selection state, prompt normalization,
+  generation option construction, notifications, and persistence callbacks.
+  The control never writes localStorage or mutates CanvasCore directly.
+- The existing canvas editor behavior test now covers the extracted control
+  boundary while keeping Workspace generation and callback assertions.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
