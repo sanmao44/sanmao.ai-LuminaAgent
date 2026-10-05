@@ -33,6 +33,10 @@ const generatorCard = await readFile(
   new URL("../components/canvas/CanvasGeneratorNodeCard.tsx", import.meta.url),
   "utf8",
 );
+const agentCard = await readFile(
+  new URL("../components/canvas/CanvasAgentNodeCard.tsx", import.meta.url),
+  "utf8",
+);
 
 test("processing feedback uses one restrained signal animation system", () => {
   const motionStart = styles.lastIndexOf("/* Unified processing system");
@@ -84,13 +88,17 @@ test("all running canvas node kinds share the indicator and elapsed clock", () =
   assert.match(component, /formatProcessingTime/);
   assert.match(component, /className="canvas-processing-elapsed"/);
   assert.match(component, /canvas-processing-progress.*indeterminate/);
-  assert.match(canvas, /kind={processingKind}/);
+  assert.match(
+    canvas + mediaCard + upscaleCard + angleCard + generatorCard + agentCard,
+    /kind={processingKind}/,
+  );
   assert.equal(
     ((canvas.match(/<CanvasProcessingIndicator/g) || []).length
       + (mediaCard.match(/<CanvasProcessingIndicator/g) || []).length
       + (upscaleCard.match(/<CanvasProcessingIndicator/g) || []).length
       + (angleCard.match(/<CanvasProcessingIndicator/g) || []).length
-      + (generatorCard.match(/<CanvasProcessingIndicator/g) || []).length),
+      + (generatorCard.match(/<CanvasProcessingIndicator/g) || []).length
+      + (agentCard.match(/<CanvasProcessingIndicator/g) || []).length),
     5,
     "media, angle, upscale, Agent and generator nodes should use the shared indicator",
   );

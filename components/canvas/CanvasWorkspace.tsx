@@ -246,6 +246,7 @@ import CanvasNodeLayer from "@/components/canvas/CanvasNodeLayer";
 import CanvasMediaNodeCard from "@/components/canvas/CanvasMediaNodeCard";
 import CanvasAngleNodeCard from "@/components/canvas/CanvasAngleNodeCard";
 import CanvasGeneratorNodeCard from "@/components/canvas/CanvasGeneratorNodeCard";
+import CanvasAgentNodeCard from "@/components/canvas/CanvasAgentNodeCard";
 import CanvasUpscaleNodeCard from "@/components/canvas/CanvasUpscaleNodeCard";
 import {
   areCanvasNodeCardPropsEqual,
@@ -18167,83 +18168,27 @@ function CanvasNodeCard({
         />
       )}
       {node.type === "prompt" && (
-        <div className="canvas-prompt-card">
-          <div className="canvas-node-kicker">
-            <span><AgentOrb state={canvasPromptOrbState(data.status)} size={16} label="" /></span>
-            <b>{String(data.role || "Agent 节点")}</b>
-          </div>
-          {pending && (
-            <CanvasProcessingIndicator
-              label={processingLabel}
-              progress={processingProgress}
-              kind={processingKind}
-              startedAt={
-                data.processingStartedAt || data.generation?.createdAt
-              }
-              waiting={data.status === "queued"}
-            />
-          )}
-          {editing ? (
-            <ReferenceMentionEditor
-              value={agentInput}
-              references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
-              className="canvas-card-agent-editor"
-              menuClassName="canvas-node-mention-menu"
-              allowRichPaste={false}
-              onPaste={handleCardPromptPaste}
-              ariaLabel="Agent 任务"
-              placeholder="输入要交给 Agent 的任务…"
-              autoFocus
-              onChange={(value) => onPromptChange(value)}
-              onBlur={(event) => {
-                const next = event.relatedTarget;
-                if (next instanceof HTMLElement && next.closest(".canvas-node-editor-popover")) return;
-                onEdit(false);
-              }}
-              onPointerDown={(event) => event.stopPropagation()}
-            />
-          ) : (
-            <div className="canvas-prompt-preview">
-              {String(data.text || "双击输入 Agent 任务…")}
-            </div>
-          )}
-          <small>
-            {data.status === "running"
-              ? "Agent 正在思考…"
-              : data.status === "failed"
-                ? String(data.statusLabel || "Agent 请求失败，可在下方重试")
-                : data.model
-                  ? `对话模型 · ${String(data.model)}`
-                  : "可连接为对话上下文，也可作为图片或视频提示词"}
-          </small>
-          {agentResponse && data.status === "completed" && (
-            <div className="canvas-agent-response-tools">
-              <span>{agentResponse.length.toLocaleString()} 字</span>
-              <button
-                type="button"
-                title="将 Agent 回复填入图片提示词"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onUseAsImagePrompt();
-                }}
-              >
-                ✦ 转图片
-              </button>
-              <button
-                type="button"
-                title="放大查看 Agent 回复"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onTextPreview();
-                }}
-              >
-                ⤢ 放大查看
-              </button>
-            </div>
-          )}
-        </div>
+        <CanvasAgentNodeCard
+          node={node}
+          status={status}
+          pending={pending}
+          role={data.role}
+          model={data.model}
+          statusLabel={data.statusLabel}
+          agentInput={agentInput}
+          agentResponse={agentResponse}
+          processingLabel={processingLabel}
+          processingProgress={processingProgress}
+          processingKind={processingKind}
+          processingStartedAt={data.processingStartedAt || data.generation?.createdAt}
+          editing={editing}
+          references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
+          onPaste={handleCardPromptPaste}
+          onPromptChange={onPromptChange}
+          onEdit={onEdit}
+          onUseAsImagePrompt={onUseAsImagePrompt}
+          onTextPreview={onTextPreview}
+        />
       )}
       {node.type === "generator" && (
         <CanvasGeneratorNodeCard

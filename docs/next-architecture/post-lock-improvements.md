@@ -111,6 +111,10 @@ hardening work when the trigger applies.
   model metadata. Workspace still derives variant state and owns retry,
   preview, document, and generation actions; no generator state store was
   introduced.
+- `CanvasAgentNodeCard.tsx` now owns Agent node presentation, including the
+  shared progress indicator, mention editor wiring, response actions, and
+  status copy. Workspace still owns prompt/reference derivation and all Agent
+  generation or CanvasCore mutations.
 - The remaining card body, editor, reference picker, generator and workbench
   branches remain in Workspace until each has a behavior-covered presentation
   boundary.
