@@ -70,6 +70,19 @@ hardening work when the trigger applies.
   pass. The next safe seam is viewport coordinate/pointer behavior only after
   dedicated behavior coverage is added.
 
+### Stage 4 node presentation checkpoint (2026-10-06)
+
+- The node layer container now lives in `components/canvas/CanvasNodeLayer.tsx`.
+  It receives the visible node list and a render callback, and owns only the
+  layer container plus stable node keys.
+- `CanvasWorkspace.tsx` still owns CanvasCore document/selection state, node
+  mutation callbacks, gesture handling, and the existing `CanvasNodeCard`
+  implementation. No node card logic or second state owner was introduced.
+- The existing card remains in Workspace for this first stage 4 slice because
+  its media playback, editor, reference picker, and generation callbacks are
+  tightly coupled. The next safe seam is a card contract with behavior
+  coverage for callback freshness before moving the card body.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

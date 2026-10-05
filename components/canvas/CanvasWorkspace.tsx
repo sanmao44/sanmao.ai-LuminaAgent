@@ -243,6 +243,7 @@ import { CanvasSettingsPanel, CanvasShortcutsPanel, CONNECTION_STYLE_OPTIONS } f
 import { CanvasGeneratorHelp, CanvasVariantRequirementsEditor } from "@/components/canvas/CanvasVariantEditors";
 import CanvasMinimap from "@/components/canvas/CanvasMinimap";
 import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStrip";
+import CanvasNodeLayer from "@/components/canvas/CanvasNodeLayer";
 import CanvasGroupLayer from "@/components/canvas/CanvasGroupLayer";
 import MediaViewer, {
   type ImageVersionInfo,
@@ -15016,10 +15017,10 @@ export default function SuperCanvas() {
               onStartConnection={startConnection}
               onComposeGroup={openComposeDialog}
             />
-            <div className="canvas-node-layer">
-              {visibleCanvasNodes.map((node) => (
+            <CanvasNodeLayer
+              nodes={visibleCanvasNodes}
+              renderNode={(node) => (
                 <MemoizedCanvasNodeCard
-                  key={node.id}
                   node={node}
                   selected={selectedIds.has(node.id)}
                   dragging={draggingNodeIds.has(node.id)}
@@ -15085,8 +15086,8 @@ export default function SuperCanvas() {
                   editorContexts={incomingContext(document, node.id).filter((item) => item.type === "prompt" || item.type === "generator")}
                    mentionCandidates={incomingContext(document, node.id).filter(isCanvasMentionableNode)}
                 />
-              ))}
-           </div>
+              )}
+            />
           </div>
         </div>
         {selectedSingle &&
