@@ -51,10 +51,19 @@ export function createTsRequire(baseDir, overrides = {}) {
     const aliased = aliasFile(normalized);
     if (!aliased && !normalized.startsWith('.') && !path.isAbsolute(normalized)) return nodeRequire(id);
     const resolved = aliased || (path.isAbsolute(normalized) ? normalized : path.resolve(base, normalized));
-    const file = resolved.endsWith('.ts') ? resolved : `${resolved}.ts`;
+    const file = /\.(?:tsx?|mts|cts)$/u.test(resolved)
+      ? resolved
+      : existsSync(`${resolved}.ts`)
+        ? `${resolved}.ts`
+        : `${resolved}.tsx`;
     if (cache.has(file)) return cache.get(file).exports;
     const compiled = ts.transpileModule(readFileSync(file, 'utf8'), {
-      compilerOptions: { esModuleInterop: true, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      compilerOptions: {
+        esModuleInterop: true,
+        jsx: ts.JsxEmit.ReactJSX,
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+      },
       fileName: file,
     }).outputText;
     const module = { exports: {} };

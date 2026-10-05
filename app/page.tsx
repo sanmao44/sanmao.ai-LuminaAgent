@@ -115,6 +115,7 @@ import AgentApprovalResult from '@/components/AgentApprovalResult';
 import AgentMessageImages from '@/components/AgentMessageImages';
 import SidebarNavigation from '@/components/SidebarNavigation';
 import SidebarBrandHeader from '@/components/SidebarBrandHeader';
+import ManualModelDialog from '@/components/ManualModelDialog';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -16187,138 +16188,14 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                     ]
                 })
             }), document.body),
-            manualModelProvider && /*#__PURE__*/ _jsx("div", {
-                className: "dialog-backdrop manual-model-dialog-backdrop",
-                children: /*#__PURE__*/ _jsxs("form", {
-                    className: "manual-model-dialog",
-                    onClick: (event)=>event.stopPropagation(),
-                    onSubmit: addManualModel,
-                    children: [
-                        /*#__PURE__*/ _jsxs("div", {
-                            className: "manual-model-dialog-head",
-                            children: [
-                                /*#__PURE__*/ _jsxs("div", {
-                                    children: [
-                                        /*#__PURE__*/ _jsx("span", {
-                                            children: "模型登记"
-                                        }),
-                                        /*#__PURE__*/ _jsx("h2", {
-                                            children: `为 ${manualModelProvider.name} 添加模型`
-                                        })
-                                    ]
-                                }),
-                                /*#__PURE__*/ _jsx("button", {
-                                    type: "button",
-                                    className: "icon-button",
-                                    onClick: ()=>setManualModelProvider(null),
-                                    title: "关闭",
-                                    "aria-label": "关闭手动登记模型",
-                                    children: /*#__PURE__*/ _jsx(Icon, {
-                                        name: "close",
-                                        size: 16
-                                    })
-                                })
-                            ]
-                        }),
-                        /*#__PURE__*/ _jsxs("div", {
-                            className: "manual-model-fields",
-                            children: [
-                                /*#__PURE__*/ _jsxs("label", {
-                                    children: [
-                                        /*#__PURE__*/ _jsx("span", {
-                                            children: "模型 ID"
-                                        }),
-                                        /*#__PURE__*/ _jsx("input", {
-                                            autoFocus: true,
-                                            required: true,
-                                            value: manualModelForm.rawId,
-                                            onChange: (event)=>setManualModelForm((current)=>({ ...current, rawId: event.target.value })),
-                                            placeholder: "例如 gpt-image-2-pro"
-                                        })
-                                    ]
-                                }),
-                                /*#__PURE__*/ _jsxs("label", {
-                                    children: [
-                                        /*#__PURE__*/ _jsx("span", {
-                                            children: "显示名称（可选）"
-                                        }),
-                                        /*#__PURE__*/ _jsx("input", {
-                                            value: manualModelForm.displayName,
-                                            onChange: (event)=>setManualModelForm((current)=>({ ...current, displayName: event.target.value })),
-                                            placeholder: "留空使用模型 ID"
-                                        })
-                                    ]
-                                }),
-                                /*#__PURE__*/ _jsxs("div", {
-                                    className: "manual-model-kind-field",
-                                    children: [
-                                        /*#__PURE__*/ _jsx("span", {
-                                            children: "模型类型"
-                                        }),
-                                        /*#__PURE__*/ _jsxs("div", {
-                                            className: "segmented manual-model-kind",
-                                            children: [
-                                                /*#__PURE__*/ _jsx("button", {
-                                                    type: "button",
-                                                    className: manualModelForm.kind === 'auto' ? 'active' : '',
-                                                    onClick: ()=>setManualModelForm((current)=>({ ...current, kind: 'auto' })),
-                                                    children: "自动识别"
-                                                }),
-                                                /*#__PURE__*/ _jsx("button", {
-                                                    type: "button",
-                                                    className: manualModelForm.kind === 'chat' ? 'active' : '',
-                                                    onClick: ()=>setManualModelForm((current)=>({ ...current, kind: 'chat' })),
-                                                    children: "对话"
-                                                }),
-                                                /*#__PURE__*/ _jsx("button", {
-                                                    type: "button",
-                                                    className: manualModelForm.kind === 'image' ? 'active' : '',
-                                                    onClick: ()=>setManualModelForm((current)=>({ ...current, kind: 'image' })),
-                                                    children: "图片"
-                                                }),
-                                                /*#__PURE__*/ _jsx("button", {
-                                                    type: "button",
-                                                    className: manualModelForm.kind === 'video' ? 'active' : '',
-                                                    onClick: ()=>setManualModelForm((current)=>({ ...current, kind: 'video' })),
-                                                    children: "视频"
-                                                })
-                                            ]
-                                        })
-                                    ]
-                                })
-                            ]
-                        }),
-                        /*#__PURE__*/ _jsxs("div", {
-                            className: "manual-model-notice",
-                            children: [
-                                /*#__PURE__*/ _jsx(Icon, {
-                                    name: "agent",
-                                    size: 16
-                                }),
-                                /*#__PURE__*/ _jsx("p", {
-                                    children: "启用后会把这个模型 ID 接入 SANMAO 的真实生图调用链，并原样发送给服务商；手动登记不代表服务商已授权。APIKL 当前 Key 未授权 Pro/4K 时，调用仍会返回权限错误，不会自动降级到其他模型。"
-                                })
-                            ]
-                        }),
-                        /*#__PURE__*/ _jsxs("div", {
-                            className: "form-actions",
-                            children: [
-                                /*#__PURE__*/ _jsx("button", {
-                                    type: "button",
-                                    className: "secondary-action",
-                                    onClick: ()=>setManualModelProvider(null),
-                                    children: "取消"
-                                }),
-                                /*#__PURE__*/ _jsx("button", {
-                                    type: "submit",
-                                    className: "primary-action compact",
-                                    disabled: manualModelBusy,
-                                    children: manualModelBusy ? "登记中…" : "登记模型"
-                                })
-                            ]
-                        })
-                    ]
-                })
+            manualModelProvider && /*#__PURE__*/ _jsx(ManualModelDialog, {
+                providerName: manualModelProvider.name,
+                form: manualModelForm,
+                busy: manualModelBusy,
+                Icon: Icon,
+                onChange: (patch)=>setManualModelForm((current)=>({ ...current, ...patch })),
+                onClose: ()=>setManualModelProvider(null),
+                onSubmit: addManualModel
             }),
             confirmState && /*#__PURE__*/ _jsx("div", {
                 className: "dialog-backdrop",

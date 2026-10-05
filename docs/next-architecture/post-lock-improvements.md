@@ -199,6 +199,25 @@ hardening work when the trigger applies.
 - `CanvasWorkspace.tsx` retains all edge and document mutations. No reference
   store or duplicate source of truth was introduced.
 
+### Stage 6 page panel checkpoint (2026-10-06)
+
+- `ManualModelDialog.tsx` now owns the manual provider-model registration
+  dialog: field rendering, model-kind selection, explanatory notice, close
+  controls, and the busy submit presentation.
+- The dialog receives the provider name, controlled form projection, busy flag,
+  icon renderer, and explicit change/close/submit callbacks. It does not call
+  provider APIs, repositories, or navigation itself.
+- `app/page.tsx` retains the manual-model state, request to
+  `/api/providers/:id/models`, returned-state application, model filtering,
+  navigation, notifications, and the surrounding Provider management panel.
+- Behavior coverage renders the extracted component through the repository's
+  TypeScript test loader and verifies the controlled values, active kind,
+  close-safe backdrop, and busy submit state. The full suite, typecheck, and
+  production build pass for this slice.
+- Provider editor fields, Jimeng login, and the Agent/image/video panels remain
+  in `app/page.tsx`; they combine API orchestration and cross-panel state and
+  need a dedicated behavior seam before extraction.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
