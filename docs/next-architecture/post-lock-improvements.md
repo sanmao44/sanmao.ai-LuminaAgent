@@ -282,9 +282,8 @@ hardening work when the trigger applies.
   locking, Portal mounting, and `creativeReferenceUrl` conversion. The existing
   composer reference preview remains in its owning composer component and is
   intentionally unchanged.
-- `ChatFilePreviewDialog` remains in `app/page.tsx` because its iframe Blob URL
-  lifecycle and sandbox fallback are coupled to the current file preview path;
-  moving it without a dedicated browser behavior harness is higher risk.
+- `ChatFilePreviewDialog` is intentionally handled in the next checkpoint;
+  this checkpoint only moves the pure conversion and eligibility helpers.
 - Behavior coverage renders image, video, and text variants through the shared
   TypeScript loader; targeted architecture and share tests remain green.
 
@@ -296,8 +295,8 @@ hardening work when the trigger applies.
 - `app/page.tsx` keeps file download, artifact preview requests, Blob URL
   lifecycle, iframe sandbox presentation, preview state, and callbacks. It uses
   the domain helpers as the only implementation for the pure conversions.
-- `ChatFilePreviewDialog` remains page-local because its browser Blob lifecycle
-  and sandbox behavior still need the existing page-owned preview flow.
+- The browser Blob lifecycle and sandbox behavior are handled by the following
+  `ChatFilePreviewDialog` checkpoint; this helper module remains framework free.
 - Existing file preview tests now exercise the helper behavior directly and
   retain behavior coverage for the page-owned dialog/download path.
 
