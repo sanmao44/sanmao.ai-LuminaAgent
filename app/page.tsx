@@ -120,6 +120,7 @@ import AdminLogin from '@/components/AdminLogin';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SupportModal from '@/components/SupportModal';
 import SharePreviewModal from '@/components/SharePreviewModal';
+import MessageReferencePreviewModal from '@/components/MessageReferencePreviewModal';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -15967,65 +15968,13 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                  file: chatFilePreview,
                  onClose: ()=>setChatFilePreview(null)
              }), document.body),
-             messageReferencePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
-                className: "reference-preview-backdrop",
-                onClick: ()=>setMessageReferencePreview(null),
-                children: /*#__PURE__*/ _jsxs("div", {
-                    className: "reference-preview surface",
-                    onClick: (event)=>event.stopPropagation(),
-                    children: [
-                        /*#__PURE__*/ _jsxs("div", {
-                            className: "reference-preview-head",
-                            children: [
-                                /*#__PURE__*/ _jsxs("div", {
-                                    children: [
-                                        /*#__PURE__*/ _jsx("span", {
-                                            children: "参考图预览"
-                                        }),
-                                        /*#__PURE__*/ _jsx("h3", {
-                                            children: messageReferencePreview.name
-                                        })
-                                    ]
-                                }),
-                                /*#__PURE__*/ _jsx("button", {
-                                    type: "button",
-                                    className: "icon-button",
-                                    onClick: ()=>setMessageReferencePreview(null),
-                                    children: /*#__PURE__*/ _jsx(Icon, {
-                                        name: "close"
-                                    })
-                                })
-                            ]
-                        }),
-                        /*#__PURE__*/ _jsx("div", {
-                                className: "reference-preview-stage",
-                                children: messageReferencePreview.kind === 'video' ? /*#__PURE__*/ _jsx("video", {
-                                    src: creativeReferenceUrl(messageReferencePreview),
-                                    controls: true,
-                                    playsInline: true
-                                }) : messageReferencePreview.kind === 'text' ? /*#__PURE__*/ _jsx("pre", {
-                                    children: messageReferencePreview.text
-                                }) : /*#__PURE__*/ _jsx("img", {
-                                    src: creativeReferenceUrl(messageReferencePreview),
-                                    alt: messageReferencePreview.name
-                                })
-                        }),
-                        /*#__PURE__*/ _jsxs("div", {
-                            className: "reference-preview-footer",
-                            children: [
-                                /*#__PURE__*/ _jsx("small", {
-                                    children: "完整比例显示，不裁剪"
-                                }),
-                                /*#__PURE__*/ _jsx("button", {
-                                    type: "button",
-                                    className: "secondary-action compact",
-                                    onClick: ()=>setMessageReferencePreview(null),
-                                    children: "关闭"
-                                })
-                            ]
-                        })
-                    ]
-                })
+             messageReferencePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(MessageReferencePreviewModal, {
+                preview: {
+                    ...messageReferencePreview,
+                    url: creativeReferenceUrl(messageReferencePreview)
+                },
+                Icon,
+                onClose: ()=>setMessageReferencePreview(null)
             }), document.body),
             angleOpenBusy && /*#__PURE__*/ _jsxs("div", {
                 className: "angle-open-loading",

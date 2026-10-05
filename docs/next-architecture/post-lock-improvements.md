@@ -270,6 +270,24 @@ hardening work when the trigger applies.
 - Behavior coverage renders the modal through the shared TypeScript loader and
   the existing share layout/selection tests remain green.
 
+### Stage 6 message reference preview checkpoint (2026-10-06)
+
+- `MessageReferencePreviewModal.tsx` now owns the message reference preview
+  presentation for image, video, and text references, including close actions
+  and the existing full-size/no-crop footer hint.
+- The component receives a normalized preview projection, the shared icon
+  renderer, and an explicit close callback. It does not resolve reference URLs,
+  own preview state, install keyboard listeners, or access browser APIs.
+- `app/page.tsx` retains message preview state, Escape handling, body scroll
+  locking, Portal mounting, and `creativeReferenceUrl` conversion. The existing
+  composer reference preview remains in its owning composer component and is
+  intentionally unchanged.
+- `ChatFilePreviewDialog` remains in `app/page.tsx` because its iframe Blob URL
+  lifecycle and sandbox fallback are coupled to the current file preview path;
+  moving it without a dedicated browser behavior harness is higher risk.
+- Behavior coverage renders image, video, and text variants through the shared
+  TypeScript loader; targeted architecture and share tests remain green.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
