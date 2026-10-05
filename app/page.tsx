@@ -125,6 +125,7 @@ import ChatFilePreviewDialog from '@/components/ChatFilePreviewDialog';
 import CompareViewer from '@/components/CompareViewer';
 import AssistantCodeBlock from '@/components/AssistantCodeBlock';
 import AssistantMarkdown from '@/components/AssistantMarkdown';
+import AgentImageLoadingCard from '@/components/AgentImageLoadingCard';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -3823,34 +3824,6 @@ function ChatFileList({ files, onDownload, onPreview, onRemove }) {
         isPreviewable: isPreviewableChatFile,
         fileTypeLabel: chatFileTypeLabel,
         formatSize: formatFileSize
-    });
-}
-function AgentImageLoadingCard({ activity }) {
-    const stage = activity?.stage || 'image_planning';
-    const imageGenerating = stage === 'image' || stage === 'image_generating';
-    const message = stage === 'caption' ? '图片已生成，正在整理创作建议…' : imageGenerating ? '正在生成图片…' : '正在构思画面…';
-    const details = [activity?.model, activity?.mode === 'edit' ? '编辑模式' : activity?.mode === 'generate' ? '生成模式' : '', activity?.count ? `${activity.count} 张` : ''].filter(Boolean).join(' · ');
-    /* 第一行固定走生图语义（构思 / 生成 / 整理建议），服务端当前阶段文案退到第二行小字。 */
-    const note = details || (activity?.message && activity.message !== message ? activity.message : stage === 'caption' ? '马上展示图片与创作建议' : '正在处理本次创作请求');
-    return /*#__PURE__*/ _jsxs("div", {
-        className: "agent-image-loading-card",
-        role: "status",
-        "aria-live": "polite",
-        children: [
-            /*#__PURE__*/ _jsx("div", { className: "agent-image-loading-scan" }),
-            /*#__PURE__*/ _jsxs("div", {
-                className: "agent-image-loading-copy",
-                children: [
-                    /*#__PURE__*/ _jsx("strong", { children: message }),
-                    /*#__PURE__*/ _jsx("small", { children: note })
-                ]
-            }),
-            /*#__PURE__*/ _jsxs("div", {
-                className: "agent-image-loading-skeleton",
-                "aria-hidden": "true",
-                children: [/*#__PURE__*/ _jsx("i", {}), /*#__PURE__*/ _jsx("i", {}), /*#__PURE__*/ _jsx("i", {})]
-            })
-        ]
     });
 }
 /**

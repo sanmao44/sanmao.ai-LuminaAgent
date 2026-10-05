@@ -354,6 +354,20 @@ hardening work when the trigger applies.
 - Behavior tests cover markdown structure, code composition, and direction
   action rendering.
 
+### Stage 6 agent image loading card checkpoint (2026-10-06)
+
+- `AgentImageLoadingCard.tsx` now owns the image-generation waiting card
+  presentation: primary stage copy, secondary activity details, live status
+  semantics, scan effect, and skeleton layout.
+- The component receives only the existing activity projection. It does not
+  decide whether a message is in image flow, mutate Agent messages, poll work,
+  or invoke generation APIs.
+- `app/page.tsx` retains `showAgentImageLoadingCard`, imageFlow lifecycle flags,
+  retry behavior, and the input status bar projection. The same activity object
+  continues to feed the card, so no second task state owner was introduced.
+- Existing progress and intent behavior tests plus direct card rendering cover
+  the extracted boundary.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

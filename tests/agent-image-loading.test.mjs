@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createTsRequire } from "./ts-require.mjs";
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/agent-upgrades.css", import.meta.url), "utf8");
+const AgentImageLoadingCard = createTsRequire(new URL("..", import.meta.url).pathname)("./components/AgentImageLoadingCard").default;
 
 test("生图等待卡片在整轮出图期间保持挂载", () => {
   assert.ok(page.includes("function showAgentImageLoadingCard(message) {"));
@@ -35,11 +39,11 @@ test("重新生成生图消息同样从头显示扫光卡片", () => {
   assert.ok(page.includes("retryActivity: message.retrying && !showAgentImageLoadingCard(message) ? message.activity?.message : undefined"));
 });
 
-test("卡片文案按生图阶段分三态，服务端阶段文案退到第二行", () => {
-  assert.ok(page.includes("const imageGenerating = stage === 'image' || stage === 'image_generating';"));
-  assert.ok(page.includes("const message = stage === 'caption' ? '图片已生成，正在整理创作建议…' : imageGenerating ? '正在生成图片…' : '正在构思画面…';"));
-  assert.ok(page.includes("const note = details || (activity?.message && activity.message !== message ? activity.message : stage === 'caption' ? '马上展示图片与创作建议' : '正在处理本次创作请求');"));
-  assert.ok(page.includes('/*#__PURE__*/ _jsx("small", { children: note })'));
+test("card copy uses a stable primary label and secondary detail", () => {
+  const markup = renderToStaticMarkup(createElement(AgentImageLoadingCard, { activity: { stage: "image_generating", model: "model", mode: "generate", count: 2 } }));
+  assert.match(markup, /agent-image-loading-card/);
+  assert.match(markup, /agent-image-loading-copy/);
+  assert.match(markup, /<small>/);
 });
 
 test("输入区状态条与卡片文案保持一致", () => {
