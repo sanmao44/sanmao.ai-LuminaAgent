@@ -102,6 +102,10 @@ hardening work when the trigger applies.
   preview presentation. It receives the derived source-connected flag and
   Workspace's natural-size callback; the in-place generation mutation remains
   in Workspace and the card has no API or CanvasCore dependency.
+- `CanvasAngleNodeCard.tsx` now owns the angle node's reference/loading/result
+  presentation and forwards only the open/cancel actions. Its lifecycle label
+  is a pure function in `angle-card-state.ts`, covered independently; angle
+  generation, reference lookup, and CanvasCore mutations remain in Workspace.
 - The remaining card body, editor, reference picker, generator and workbench
   branches remain in Workspace until each has a behavior-covered presentation
   boundary.

@@ -244,6 +244,7 @@ import CanvasMinimap from "@/components/canvas/CanvasMinimap";
 import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStrip";
 import CanvasNodeLayer from "@/components/canvas/CanvasNodeLayer";
 import CanvasMediaNodeCard from "@/components/canvas/CanvasMediaNodeCard";
+import CanvasAngleNodeCard from "@/components/canvas/CanvasAngleNodeCard";
 import CanvasUpscaleNodeCard from "@/components/canvas/CanvasUpscaleNodeCard";
 import {
   areCanvasNodeCardPropsEqual,
@@ -18120,33 +18121,19 @@ function CanvasNodeCard({
           onOpen={onOpenVideoEditor}
         />
       ) : node.type === "angle" ? (
-        <div className="canvas-angle-card">
-          <div className="canvas-angle-card-head">
-            <span className="canvas-angle-card-icon" aria-hidden="true">◈</span>
-            <div><b>角度控制</b><small>相机视角 · 主体 · 光影</small></div>
-            <span className={`canvas-angle-card-state ${status}`}>{status === "queued" ? "排队中" : pending ? "生成中" : status === "failed" ? "失败" : angleReference ? "已连接" : "待输入"}</span>
-          </div>
-          {pending ? (
-            <CanvasProcessingIndicator label={processingLabel} progress={processingProgress} kind={processingKind} startedAt={data.processingStartedAt} waiting={data.status === "queued"} compact />
-          ) : angleReference?.data.url ? (
-            <div className="canvas-angle-card-reference">
-              <img src={String(angleReference.data.url)} alt={String(angleReference.data.name || "角度参考图")} draggable={false} />
-              <span>参考图</span>
-            </div>
-          ) : (
-            <div className="canvas-angle-card-empty"><b>连接一张已完成图片</b><small>角度节点只接受单张图片输入</small></div>
-          )}
-          <div className="canvas-angle-card-summary">
-            <span>机位 {angleParams ? `${Math.round(angleParams.camera.yaw)}° / ${Math.round(angleParams.camera.pitch)}°` : "原图"}</span>
-            <span>{angleParams?.subjectType || "通用主体"}</span>
-            <span>{angleParams?.lighting?.enabled ? "自定义灯光" : "原始光照"}</span>
-          </div>
-          {status === "failed" && <small className="canvas-angle-card-error">{String(data.statusLabel || "生成失败，可重试")}</small>}
-          <div className="canvas-angle-card-actions">
-            <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onOpenAngle(); }}>{status === "failed" ? "重试 / 编辑" : "打开工作台"}</button>
-            {pending && <button type="button" className="danger" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onCancelAngle(); }}>取消</button>}
-          </div>
-        </div>
+        <CanvasAngleNodeCard
+          angleReference={angleReference}
+          angleParams={angleParams}
+          status={status}
+          statusLabel={data.statusLabel}
+          pending={pending}
+          processingLabel={processingLabel}
+          processingProgress={processingProgress}
+          processingKind={processingKind}
+          processingStartedAt={data.processingStartedAt}
+          onOpenAngle={onOpenAngle}
+          onCancelAngle={onCancelAngle}
+        />
       ) : node.type === "media" ? (
         <CanvasMediaNodeCard
           node={node}

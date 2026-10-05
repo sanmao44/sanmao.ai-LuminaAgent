@@ -48,6 +48,18 @@ const referenceStrip = await readFile(
   new URL("../components/canvas/CanvasNodeReferenceStrip.tsx", import.meta.url),
   "utf8",
 );
+const angleCardStateSource = await readFile(
+  new URL("../components/canvas/angle-card-state.ts", import.meta.url),
+  "utf8",
+);
+const angleCardState = await import(
+  `data:text/javascript,${encodeURIComponent(ts.transpileModule(angleCardStateSource, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText)}`,
+);
 
 function createCardProps(overrides = {}) {
   const node = { id: "node-1" };
@@ -115,6 +127,14 @@ test("node card comparator ignores camera-only document replacement", () => {
     document: { ...previous.document, camera: { x: 100, y: 40, zoom: 1.2 } },
   };
   assert.equal(cardContract.areCanvasNodeCardPropsEqual(previous, next), true);
+});
+
+test("angle card state keeps lifecycle and input labels deterministic", () => {
+  assert.equal(angleCardState.canvasAngleCardStateLabel("queued", true, true), "排队中");
+  assert.equal(angleCardState.canvasAngleCardStateLabel("running", true, true), "生成中");
+  assert.equal(angleCardState.canvasAngleCardStateLabel("failed", false, true), "失败");
+  assert.equal(angleCardState.canvasAngleCardStateLabel("idle", false, true), "已连接");
+  assert.equal(angleCardState.canvasAngleCardStateLabel("idle", false, false), "待输入");
 });
 const edgeLayer = await readFile(
   new URL("../components/canvas/CanvasEdgeLayer.tsx", import.meta.url),
