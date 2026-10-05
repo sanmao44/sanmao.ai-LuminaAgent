@@ -61,6 +61,7 @@ const MODULES = [
   'lib/mcp/tools',
   'lib/mcp/audit',
   'lib/mcp/admin',
+  'lib/mcp/npm-cli',
   'lib/mcp/repo-installer',
   'lib/mcp/runtime-admin',
   'lib/mcp/index',
