@@ -10,6 +10,10 @@ const quickToolbar = await readFile(
   new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url),
   "utf8",
 );
+const selectionToolbar = await readFile(
+  new URL("../components/canvas/CanvasSelectionToolbar.tsx", import.meta.url),
+  "utf8",
+);
 const audioPlayer = await readFile(
   new URL("../components/canvas/CanvasAudioPlayer.tsx", import.meta.url),
   "utf8",
@@ -799,21 +803,21 @@ test("multi-select layout toolbar exposes alignment and distribution icons only 
   assert.match(component, /const CANVAS_DISTRIBUTION_OPTIONS/);
   assert.match(component, /alignCanvasNodes\(\s*canvasCoreRef\.current\.document\(\),\s*\[\.\.\.selectedIds\],\s*alignment,?\s*\)/);
   assert.match(component, /distributeCanvasNodes\(\s*canvasCoreRef\.current\.document\(\),\s*\[\.\.\.selectedIds\],\s*direction,?\s*\)/);
-  assert.match(component, /selectedNodes\.length >= 2 && !selectedGroupId/);
-  assert.match(component, /className="canvas-selection-layout-toolbar"/);
-  assert.match(component, /className="canvas-selection-layout-group alignment"/);
-  assert.match(component, /className="canvas-selection-layout-group distribution"/);
-  assert.match(component, /disabled=\{disabled\}/);
-  assert.match(component, /至少选择 3 个节点后可/);
+  assert.match(component, /<CanvasSelectionToolbar/);
+  assert.match(selectionToolbar, /className="canvas-selection-layout-toolbar"/);
+  assert.match(selectionToolbar, /className="canvas-selection-layout-group alignment"/);
+  assert.match(selectionToolbar, /className="canvas-selection-layout-group distribution"/);
+  assert.match(selectionToolbar, /disabled=\{disabled\}/);
+  assert.match(selectionToolbar, /至少选择 3 个节点后可/);
   ["左对齐", "水平居中", "右对齐", "顶部对齐", "垂直居中", "底部对齐"].forEach((label) => {
     assert.match(component, new RegExp(`label: "${label}"`));
   });
   ["水平均匀分布", "垂直均匀分布"].forEach((label) => {
     assert.match(component, new RegExp(`label: "${label}"`));
   });
-  assert.match(component, /function CanvasLayoutIcon/);
-  assert.match(component, /title=\{option\.title\}/);
-  assert.match(component, /aria-label=\{option\.title\}/);
+  assert.match(selectionToolbar, /function CanvasLayoutIcon/);
+  assert.match(selectionToolbar, /title=\{option\.title\}/);
+  assert.match(selectionToolbar, /aria-label=\{option\.title\}/);
   assert.match(component, /canvas-selection-toolbar,\.canvas-selection-layout-toolbar/);
   assert.match(component, /commit\(\(\) => result\.document\)/);
   assert.doesNotMatch(component, /canvas-selection-align-actions/);
@@ -832,12 +836,12 @@ test("group selection uses a toolbar attached to the group card while ordinary m
   assert.match(quickToolbar, /placeCanvasGroupToolbar\(anchor, placementStage, overlay, 10\)/);
   assert.match(component, /arrangeCanvasGroup\(canvasCoreRef\.current\.document\(\), activeGroup\.id, mode\)/);
   assert.doesNotMatch(component, /arrangeCanvas\(docRef\.current, selected, mode\)/);
-  assert.match(component, /title="按节点父子关系整理选中对象"/);
-  assert.match(component, /⌗ 整理选中\s*<\/button>/);
+  assert.match(selectionToolbar, /title="按节点父子关系整理选中对象"/);
+  assert.match(selectionToolbar, /⌗ 整理选中\s*<\/button>/);
   assert.match(component, /id: "arrange-group"[\s\S]*?label: "组内整理"/);
   assert.match(component, /className="canvas-group-arrange-menu"/);
   assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
-  assert.match(component, /selectedNodes\.length >= 2 && !selectedGroupId/);
+  assert.match(component, /<CanvasSelectionToolbar/);
   assert.match(styles, /\.canvas-node-quick-toolbar/);
 });
 

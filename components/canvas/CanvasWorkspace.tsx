@@ -231,6 +231,7 @@ import CanvasEdgeLayer from "@/components/canvas/CanvasEdgeLayer";
 import CanvasTextLightbox from "@/components/canvas/CanvasTextLightbox";
 import CanvasActivityDrawer from "@/components/canvas/CanvasActivityDrawer";
 import CanvasQuickToolbar from "@/components/canvas/CanvasQuickToolbar";
+import CanvasSelectionToolbar from "@/components/canvas/CanvasSelectionToolbar";
 import { CanvasContextMenuFrame, CanvasGroupContextMenu, CanvasNodeContextMenu, type CanvasContextMenuGroup, type CanvasQuickAction, type CanvasQuickToolbarActions } from "@/components/canvas/CanvasContextMenu";
 import { canvasRightOverlayInset, canvasVisibleStageWidth } from "@/lib/canvas/menu-layout";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
@@ -465,82 +466,6 @@ type CanvasContextMenuState = {
 type MentionState = { start: number; end: number; query: string } | null;
 type CanvasPanel = "assets" | "activity" | "settings" | "shortcuts";
 
-type CanvasLayoutIconKind = CanvasAlignment | CanvasDistribution;
-
-function CanvasLayoutIcon({
-  kind,
-}: {
-  kind: CanvasLayoutIconKind;
-}) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="18"
-      height="18"
-      aria-hidden="true"
-      focusable="false"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {kind === "left" && (
-        <>
-          <path d="M5 4v16" />
-          <path d="M8 7h11M8 12h7M8 17h11" />
-        </>
-      )}
-      {kind === "center-x" && (
-        <>
-          <path d="M12 4v16" strokeDasharray="2 2" />
-          <path d="M5 7h14M7 12h10M5 17h14" />
-        </>
-      )}
-      {kind === "right" && (
-        <>
-          <path d="M19 4v16" />
-          <path d="M5 7h11M9 12h7M5 17h11" />
-        </>
-      )}
-      {kind === "top" && (
-        <>
-          <path d="M4 5h16" />
-          <path d="M7 8v11M12 8v7M17 8v11" />
-        </>
-      )}
-      {kind === "center-y" && (
-        <>
-          <path d="M4 12h16" strokeDasharray="2 2" />
-          <path d="M7 5v14M12 7v10M17 5v14" />
-        </>
-      )}
-      {kind === "bottom" && (
-        <>
-          <path d="M4 19h16" />
-          <path d="M7 5v11M12 9v7M17 5v11" />
-        </>
-      )}
-      {kind === "horizontal" && (
-        <>
-          <rect x="4" y="8" width="3" height="8" rx="1" />
-          <rect x="10.5" y="8" width="3" height="8" rx="1" />
-          <rect x="17" y="8" width="3" height="8" rx="1" />
-          <path d="M7 19h3.5M13.5 19H17" />
-        </>
-      )}
-      {kind === "vertical" && (
-        <>
-          <rect x="8" y="4" width="8" height="3" rx="1" />
-          <rect x="8" y="10.5" width="8" height="3" rx="1" />
-          <rect x="8" y="17" width="8" height="3" rx="1" />
-          <path d="M19 7v3.5M19 13.5V17" />
-        </>
-      )}
-    </svg>
-  );
-}
-
 function mentionStateForValue(value: string, cursor: number): MentionState {
   return creativeReferenceMentionRange(value, cursor);
 }
@@ -752,7 +677,7 @@ const CANVAS_ALIGNMENT_OPTIONS: Array<{
   value: CanvasAlignment;
   label: string;
   title: string;
-  icon: CanvasLayoutIconKind;
+  icon: CanvasAlignment;
 }> = [
   { value: "left", label: "左对齐", title: "将选中节点左边缘对齐", icon: "left" },
   { value: "center-x", label: "水平居中", title: "将选中节点水平居中", icon: "center-x" },
@@ -765,7 +690,7 @@ const CANVAS_DISTRIBUTION_OPTIONS: Array<{
   value: CanvasDistribution;
   label: string;
   title: string;
-  icon: CanvasLayoutIconKind;
+  icon: CanvasDistribution;
 }> = [
   {
     value: "horizontal",
@@ -14226,51 +14151,6 @@ export default function SuperCanvas() {
   // The CSS tier removes filters and animation-heavy decoration while keeping
   // the actual node geometry and hit targets unchanged.
   const canvasZoomTier = document.camera.zoom < 0.28 ? "overview" : "detail";
-  const selectionToolbarContent = selectedNodes.length >= 2 ? (
-    <>
-      <b>{`已选 ${selectedNodes.length} 个对象`}</b>
-      <span />
-      <button
-        type="button"
-        title="打开 Agent 助手，用这些选中节点作为上下文"
-        onClick={askAgentAboutSelection}
-      >
-        <AgentOrb state={busyOrbState(agentDockBusy)} size={13} label="" />
-        问 Agent
-      </button>
-      <button type="button" onClick={makeGroup}>
-        ⌘ 成组
-      </button>
-      {selectedImageDownloads.length >= 2 && (
-        <button
-          type="button"
-          title="按选择顺序打包下载图片"
-          aria-label={`批量下载 ${selectedImageDownloads.length} 张图片`}
-          disabled={batchDownloading}
-          onClick={() => void downloadSelectedImages()}
-        >
-          {batchDownloading ? "⌛ 打包中…" : `↓ 下载 ${selectedImageDownloads.length} 张`}
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={() => arrangeCanvasAction()}
-        title="按节点父子关系整理选中对象"
-      >
-        ⌗ 整理选中
-      </button>
-      <button type="button" onClick={duplicateSelection}>
-        ⧉ 复制
-      </button>
-      <button type="button" onClick={() => fitView([...selectedIds])}>
-        ⌗ 聚焦
-      </button>
-      <button type="button" className="danger" onClick={deleteSelection}>
-        ⌫ 删除
-      </button>
-    </>
-  ) : null;
-
   const cloneReferences = useMemo<CanvasCloneReferenceOption[]>(
     () =>
       document.nodes
@@ -15664,67 +15544,24 @@ export default function SuperCanvas() {
               }
             />
           )}
-        {selectedNodes.length >= 2 && !selectedGroupId && (
-          <div
-            className="canvas-selection-toolbar"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-            onWheel={(event) => event.stopPropagation()}
-          >
-            {selectionToolbarContent}
-          </div>
-        )}
-        {selectedNodes.length >= 2 && !selectedGroupId && (
-          <div
-            className="canvas-selection-layout-toolbar"
-            aria-label="节点布局工具"
-            onPointerDown={(event) => event.stopPropagation()}
-          >
-            <div className="canvas-selection-layout-group alignment" aria-label="节点对齐">
-              {CANVAS_ALIGNMENT_OPTIONS.map((option) => (
-                <span
-                  className="canvas-selection-layout-tooltip"
-                  data-tooltip={option.title}
-                  key={option.value}
-                >
-                  <button
-                    type="button"
-                    title={option.title}
-                    aria-label={option.title}
-                    onClick={() => alignSelection(option.value)}
-                  >
-                    <CanvasLayoutIcon kind={option.icon} />
-                  </button>
-                </span>
-              ))}
-            </div>
-            <span className="canvas-selection-layout-divider" aria-hidden="true" />
-            <div className="canvas-selection-layout-group distribution" aria-label="节点均匀分布">
-              {CANVAS_DISTRIBUTION_OPTIONS.map((option) => {
-                const disabled = selectedNodes.length < 3;
-                const tooltip = disabled
-                  ? `至少选择 3 个节点后可${option.label}`
-                  : option.title;
-                return (
-                  <span
-                    className="canvas-selection-layout-tooltip"
-                    data-tooltip={tooltip}
-                    key={option.value}
-                  >
-                    <button
-                      type="button"
-                      title={tooltip}
-                      aria-label={tooltip}
-                      disabled={disabled}
-                      onClick={() => distributeSelection(option.value)}
-                    >
-                      <CanvasLayoutIcon kind={option.icon} />
-                    </button>
-                  </span>
-                );
-              })}
-            </div>
-          </div>
+        {!selectedGroupId && (
+          <CanvasSelectionToolbar
+            selectedCount={selectedNodes.length}
+            selectedImageCount={selectedImageDownloads.length}
+            batchDownloading={batchDownloading}
+            agentBusy={agentDockBusy}
+            alignmentOptions={CANVAS_ALIGNMENT_OPTIONS}
+            distributionOptions={CANVAS_DISTRIBUTION_OPTIONS}
+            onAskAgent={askAgentAboutSelection}
+            onMakeGroup={makeGroup}
+            onDownloadSelectedImages={() => void downloadSelectedImages()}
+            onArrange={() => arrangeCanvasAction()}
+            onDuplicate={duplicateSelection}
+            onFit={() => fitView([...selectedIds])}
+            onDelete={deleteSelection}
+            onAlign={alignSelection}
+            onDistribute={distributeSelection}
+          />
         )}
         <div ref={deckRef} className={`canvas-deck legacy-deck-hidden ${deckCollapsed ? "collapsed" : ""}${selectedAudioNode ? " audio-node-selected" : ""}`}>
           <div className="canvas-deck-top">

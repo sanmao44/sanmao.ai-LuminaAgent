@@ -56,6 +56,20 @@ hardening work when the trigger applies.
   marquee selection, and camera interactions together. Do not introduce a
   React viewport store or duplicate selection state.
 
+### Stage 3 selection presentation checkpoint (2026-10-06)
+
+- `CanvasSelectionToolbar.tsx` now owns the multi-selection action bar and the
+  alignment/distribution presentation. It receives counts, option contracts,
+  and callbacks; it does not read or write CanvasCore state.
+- `CanvasWorkspace.tsx` retains selection derivation, CanvasCore mutations,
+  history, downloads, grouping, focus, and Agent orchestration.
+- Marquee selection, camera transforms, pointer interaction, and node/group
+  gesture handling remain in Workspace because their shared interaction state
+  is not yet a stable component boundary.
+- Stage 3 targeted tests, full test suite, typecheck, and production build
+  pass. The next safe seam is viewport coordinate/pointer behavior only after
+  dedicated behavior coverage is added.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

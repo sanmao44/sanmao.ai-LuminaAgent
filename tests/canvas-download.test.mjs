@@ -73,10 +73,11 @@ test('does not create a partial zip when an image download fails', async () => {
 
 test('canvas exposes a multi-image download action without replacing single downloads', async () => {
   const component = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
+  const selectionToolbar = await readFile(new URL('../components/canvas/CanvasSelectionToolbar.tsx', import.meta.url), 'utf8');
   assert.match(component, /createCanvasImageZip\(downloadItems\)/);
-  assert.match(component, /selectedImageDownloads\.length >= 2/);
+  assert.match(selectionToolbar, /selectedImageCount >= 2/);
   assert.match(component, /\.filter\(\(node\) => isCanvasReadyImageSource\(node\)\)/);
-  assert.match(component, /按选择顺序打包下载图片/);
+  assert.match(selectionToolbar, /按选择顺序打包下载图片/);
   assert.match(component, /const downloadCanvasNode = useCallback/);
 });
 
