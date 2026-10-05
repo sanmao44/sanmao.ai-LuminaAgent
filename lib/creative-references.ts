@@ -233,6 +233,31 @@ export function referencePreviewText(reference: CreativeReference, max = 96) {
   return String(reference.text || "").replace(/\s+/g, " ").trim().slice(0, max) || reference.name;
 }
 
+export function creativeReferenceUrl(reference: { dataUrl?: unknown; url?: unknown } | null | undefined) {
+  return typeof reference?.dataUrl === "string" && reference.dataUrl
+    ? reference.dataUrl
+    : typeof reference?.url === "string"
+      ? reference.url
+      : "";
+}
+
+export function referenceTextBadge(reference: { name?: unknown }) {
+  const name = String(reference?.name || "");
+  const dot = name.lastIndexOf(".");
+  const extension = dot > 0 ? name.slice(dot + 1) : "";
+  return /^[a-z0-9]{1,5}$/i.test(extension) ? extension.toUpperCase() : "TXT";
+}
+
+export function referenceMentionOptions(references: readonly CreativeReferenceLike[] | null | undefined) {
+  return (references || []).map((reference, index) => ({
+    id: reference.id || `reference-${index + 1}`,
+    kind: reference.kind === "audio" ? "video" : reference.kind || "image",
+    name: reference.name || `引用素材 ${index + 1}`,
+    url: creativeReferenceUrl(reference),
+    text: reference.text,
+  }));
+}
+
 export function appendTextReferenceContext<T extends CreativeReferenceLike>(prompt: string, references: readonly T[]) {
   const textReferences = references.filter((reference) => reference.kind === "text" && reference.text?.trim());
   if (!textReferences.length) return prompt;

@@ -4,6 +4,7 @@ import test from "node:test";
 import { createTsRequire } from './ts-require.mjs';
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const referencePresentation = await readFile(new URL("../lib/creative-references.ts", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const planning = createTsRequire(process.cwd())('./packages/agent-core/request-planning');
 const planningPorts = {
@@ -33,9 +34,8 @@ test("text reference thumbnails show the file name and keep the body in the prev
 });
 
 test("document references keep an extension badge and the composer accepts office files", () => {
-  const badge = page.slice(page.indexOf("function referenceTextBadge"));
-  assert.notEqual(badge.indexOf("function referenceTextBadge"), -1);
-  assert.match(badge.slice(0, 400), /extension\.toUpperCase\(\) : 'TXT'/);
+  assert.match(referencePresentation, /export function referenceTextBadge/);
+  assert.match(referencePresentation, /extension\.toUpperCase\(\) : "TXT"/);
   assert.match(page, /const agentReferenceAccept = `\$\{referenceAccept\},\.docx,\.xlsx,\.pptx,\.pdf`/);
   assert.match(page, /accept: agentReferenceAccept/);
   assert.match(page, /hint = '支持 PNG\/JPG\/WEBP', accept = referenceAccept/);

@@ -23,7 +23,7 @@ import VideoRecordCard from '@/components/VideoRecordCard';
 import { getFavoriteModelIds, getLastModelCall, getRecentModelIds, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { filterModelsByActiveProviders, isProviderModelLibraryEnabled } from '@/lib/provider-availability';
-import { normalizeReferenceRecords } from '@/lib/reference-images';
+import { galleryReferences, normalizeReferenceRecords, referenceCount } from '@/lib/reference-images';
 import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
@@ -83,7 +83,7 @@ import { readWorkspaceContext } from '@/lib/workspace-context';
 import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import OneTakeDurationPicker from '@/components/OneTakeDurationPicker';
-import { appendTextReferenceContext, normalizeCreativeReference, referencePreviewText, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import { appendTextReferenceContext, creativeReferenceUrl, normalizeCreativeReference, referenceMentionOptions, referencePreviewText, referenceTextBadge, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from '@/lib/theme';
 import AgentApprovalCard from '@/components/AgentApprovalCard';
@@ -510,24 +510,6 @@ function chatFileToReference(file) {
     };
 }
 // 文本/文档引用角标：优先用真实扩展名，避免 Word/Excel 文档显示成统一的文本标记。
-function referenceTextBadge(reference) {
-    const name = String(reference?.name || '');
-    const dot = name.lastIndexOf('.');
-    const extension = dot > 0 ? name.slice(dot + 1) : '';
-    return /^[a-z0-9]{1,5}$/i.test(extension) ? extension.toUpperCase() : 'TXT';
-}
-function creativeReferenceUrl(reference) {
-    return typeof reference?.dataUrl === 'string' && reference.dataUrl ? reference.dataUrl : typeof reference?.url === 'string' ? reference.url : '';
-}
-function referenceMentionOptions(references) {
-    return (references || []).map((reference, index)=>({
-        id: reference.id || `reference-${index + 1}`,
-        kind: reference.kind || 'image',
-        name: reference.name || `引用素材 ${index + 1}`,
-        url: creativeReferenceUrl(reference),
-        text: reference.text
-    }));
-}
 function focusContentEditableToEnd(element) {
     if (!element) return;
     element.focus();
@@ -612,19 +594,6 @@ async function downloadUrl(url, filename) {
         a.click();
         a.remove();
     }
-}
-function galleryReferences(item) {
-    const references = normalizeReferenceRecords(item?.references, { keepDataUrls: true });
-    if (references.length) return references;
-    if (item?.compareReferenceUrl) return [{
-        id: `reference-${item.id}`,
-        name: item.compareReferenceName || '上传参考图',
-        url: item.compareReferenceUrl
-    }];
-    return [];
-}
-function referenceCount(item) {
-    return galleryReferences(item).length;
 }
 function truncateCanvasText(value, max = 28) {
     const text = String(value || '').trim();

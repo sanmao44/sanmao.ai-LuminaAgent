@@ -27,6 +27,28 @@ export function normalizeReferenceRecords(input: unknown, options: { max?: numbe
     .slice(0, max);
 }
 
+export function galleryReferences(item: {
+  id?: string;
+  references?: unknown;
+  compareReferenceUrl?: string;
+  compareReferenceName?: string;
+} | null | undefined) {
+  const references = normalizeReferenceRecords(item?.references, { keepDataUrls: true });
+  if (references.length) return references;
+  if (item?.compareReferenceUrl) {
+    return [{
+      id: `reference-${item.id || "item"}`,
+      name: item.compareReferenceName || "上传参考图",
+      url: item.compareReferenceUrl,
+    } satisfies ReferenceImageRecord];
+  }
+  return [];
+}
+
+export function referenceCount(item: Parameters<typeof galleryReferences>[0]) {
+  return galleryReferences(item).length;
+}
+
 export function isPersistedReferenceUrl(url: string) {
   return url.startsWith(STORAGE_REFERENCE_PREFIX) || /^https?:\/\//i.test(url);
 }
