@@ -1,10 +1,24 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import ts from "typescript";
 
 const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
+);
+const cardContractSource = await readFile(
+  new URL("../components/canvas/CanvasNodeCardContract.ts", import.meta.url),
+  "utf8",
+);
+const cardContractCompiled = ts.transpileModule(cardContractSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.ESNext,
+    target: ts.ScriptTarget.ES2022,
+  },
+}).outputText;
+const cardContract = await import(
+  `data:text/javascript,${encodeURIComponent(cardContractCompiled)}`,
 );
 const quickToolbar = await readFile(
   new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url),
@@ -26,6 +40,74 @@ const referenceStrip = await readFile(
   new URL("../components/canvas/CanvasNodeReferenceStrip.tsx", import.meta.url),
   "utf8",
 );
+
+function createCardProps(overrides = {}) {
+  const node = { id: "node-1" };
+  const nodes = [node];
+  const callback = () => {};
+  return {
+    node,
+    selected: false,
+    dragging: false,
+    referencePickerActive: false,
+    referencePickerTargetId: null,
+    referencePickerHoverNodeId: null,
+    referencePickerFlashNodeId: null,
+    document: { nodes, edges: [], groups: [] },
+    onPointerDown: callback,
+    onResize: callback,
+    onConnect: callback,
+    onSelect: callback,
+    onRemoveFromGroup: callback,
+    onPreview: callback,
+    onOpenVideoClip: callback,
+    onOpenVideoEditor: callback,
+    onOpenAngle: callback,
+    onCancelAngle: callback,
+    onTextPreview: callback,
+    onLocalEdit: callback,
+    onUseAsImagePrompt: callback,
+    onRetryVariant: callback,
+    onRetryFailedVariants: callback,
+    onNaturalSize: callback,
+    onPromptChange: callback,
+    onEditorPromptChange: callback,
+    onEditorParamsChange: callback,
+    onVariantRequirementsChange: callback,
+    runtime: null,
+    editorPrompt: "",
+    editorParams: undefined,
+    expanded: false,
+    onToggleEditor: callback,
+    onGenerate: callback,
+    onOneTake: callback,
+    onReferenceReorder: callback,
+    onReferenceRemove: callback,
+    onReferenceDrop: callback,
+    onAddReferenceFiles: callback,
+    editorContexts: [],
+    mentionCandidates: [],
+    onOutputPreview: callback,
+    editing: false,
+    onEdit: callback,
+    ...overrides,
+  };
+}
+
+test("node card comparator invalidates stale Workspace callbacks", () => {
+  const previous = createCardProps();
+  const next = { ...previous, onPreview: () => {} };
+  assert.equal(cardContract.areCanvasNodeCardPropsEqual(previous, next), false);
+});
+
+test("node card comparator ignores camera-only document replacement", () => {
+  const previous = createCardProps();
+  const next = {
+    ...previous,
+    document: { ...previous.document, camera: { x: 100, y: 40, zoom: 1.2 } },
+  };
+  assert.equal(cardContract.areCanvasNodeCardPropsEqual(previous, next), true);
+});
 const edgeLayer = await readFile(
   new URL("../components/canvas/CanvasEdgeLayer.tsx", import.meta.url),
   "utf8",
