@@ -11,6 +11,10 @@ const mediaPlayback = await readFile(
   new URL("../components/canvas/useCanvasMediaPlayback.ts", import.meta.url),
   "utf8",
 );
+const mediaCard = await readFile(
+  new URL("../components/canvas/CanvasMediaNodeCard.tsx", import.meta.url),
+  "utf8",
+);
 const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
@@ -41,26 +45,27 @@ test("formats loaded video durations without showing invalid values", () => {
 test("video canvas cards expose a persistent visual and accessible distinction", () => {
   assert.match(types, /durationMs\?: number/);
   assert.match(component, /formatCanvasVideoDuration\(data\.durationMs\)/);
-  assert.match(component, /className=\{`canvas-media-card\$\{data\.kind === "video" \? " video" : data\.kind === "audio" \? " audio" : ""\}`\}/);
-  assert.match(component, /className="canvas-video-mark"/);
-  assert.match(component, /▶ 视频\{videoDuration \? ` · \$\{videoDuration\}` : ""\}/);
-  assert.match(component, /className=\{`canvas-video-play/);
-  assert.match(component, /title=\{videoControlLabel\}/);
-  assert.match(component, /aria-label=\{`\$\{videoControlLabel\}/);
-  assert.match(component, /onClick=\{toggleVideoPlayback\}/);
+  assert.match(mediaCard, /className=\{`canvas-media-card\$\{data\.kind === "video" \? " video" : data\.kind === "audio" \? " audio" : ""\}`\}/);
+  assert.match(mediaCard, /className="canvas-video-mark"/);
+  assert.match(mediaCard, /▶ 视频\{videoDuration \? ` · \$\{videoDuration\}` : ""\}/);
+  assert.match(mediaCard, /className=\{`canvas-video-play/);
+  assert.match(mediaCard, /title=\{videoControlLabel\}/);
+  assert.match(mediaCard, /aria-label=\{`\$\{videoControlLabel\}/);
+  assert.match(mediaCard, /onClick=\{toggleVideoPlayback\}/);
   assert.match(mediaPlayback, /video\.play\(\)/);
   assert.match(mediaPlayback, /video\.pause\(\)/);
   assert.match(mediaPlayback, /video\.ended/);
-  const playButtonStart = component.indexOf("className={`canvas-video-play");
-  const playButtonEnd = component.indexOf("</button>", playButtonStart);
+  const playButtonStart = mediaCard.indexOf("className={`canvas-video-play");
+  const playButtonEnd = mediaCard.indexOf("</button>", playButtonStart);
   assert.ok(playButtonStart >= 0 && playButtonEnd > playButtonStart);
-  assert.doesNotMatch(component.slice(playButtonStart, playButtonEnd), /onPreview\(\)/);
-  assert.match(component, /<svg viewBox="0 0 24 24" aria-hidden="true">/);
-  assert.match(component, /aria-label=\{`视频预览\$\{videoDuration/);
-  assert.match(component, /className="canvas-image-resolution canvas-video-resolution"/);
-  assert.match(component, /title=\{`视频分辨率 \$\{videoResolution\}`\}/);
-  assert.match(component, /视频生成结果/);
-  assert.match(component, /视频生成失败/);
+  assert.doesNotMatch(mediaCard.slice(playButtonStart, playButtonEnd), /onPreview\(\)/);
+  assert.match(mediaCard, /<svg viewBox="0 0 24 24" aria-hidden="true">/);
+  assert.match(mediaCard, /aria-label=\{`视频预览\$\{videoDuration/);
+  assert.match(mediaCard, /className="canvas-image-resolution canvas-video-resolution"/);
+  assert.match(mediaCard, /title=\{`视频分辨率 \$\{videoResolution\}`\}/);
+  assert.match(mediaCard, /mediaFooterStatus/);
+  assert.match(component, /\u89c6\u9891\u751f\u6210\u7ed3\u679c/);
+  assert.match(component, /\u89c6\u9891\u751f\u6210\u5931\u8d25/);
   assert.match(styles, /\.canvas-media-card\.video\{/);
   assert.match(styles, /\.canvas-media-card\{[^}]*display:flex;flex-direction:column/);
   assert.match(styles, /\.canvas-media-stage\{[^}]*height:auto;flex:1 1 auto/);
@@ -72,7 +77,7 @@ test("video canvas cards expose a persistent visual and accessible distinction",
 test("video metadata persists both intrinsic size and duration on media nodes", () => {
   assert.match(component, /durationSeconds\?: number/);
   assert.match(component, /Math\.round\(durationSeconds \* 1000\)/);
-  assert.match(component, /event\.currentTarget\.duration/);
+  assert.match(mediaCard, /event\.currentTarget\.duration/);
   assert.match(component, /nativeWidth: width, nativeHeight: height/);
 });
 

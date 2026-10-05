@@ -7,6 +7,10 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const mediaCard = await readFile(
+  new URL("../components/canvas/CanvasMediaNodeCard.tsx", import.meta.url),
+  "utf8",
+);
 const cardContractSource = await readFile(
   new URL("../components/canvas/CanvasNodeCardContract.ts", import.meta.url),
   "utf8",
@@ -270,7 +274,7 @@ test("image cards show intrinsic resolution only after a valid image has loaded"
   assert.match(component, /data\.status !== "failed"/);
   assert.match(component, /Number\(data\.nativeWidth\) > 0/);
   assert.match(component, /Number\(data\.nativeHeight\) > 0/);
-  assert.match(component, /className="canvas-image-resolution"/);
+  assert.match(mediaCard, /className="canvas-image-resolution"/);
   assert.match(component, /title=\{`图片分辨率 \$\{imageResolution\}`\}/);
   assert.match(component, /className="canvas-image-resolution canvas-upscale-resolution"/);
   assert.match(component, /canvas-upscale-resolution[\s\S]*title=\{`图片分辨率 \$\{imageResolution\}`\}/);

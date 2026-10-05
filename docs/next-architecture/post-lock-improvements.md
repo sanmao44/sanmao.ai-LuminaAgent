@@ -92,6 +92,12 @@ hardening work when the trigger applies.
   media URL and normalized clip projection; it does not persist CanvasCore
   state or call generation APIs. The card keeps the existing media DOM and
   delegates these events to the hook.
+- `CanvasMediaNodeCard.tsx` now owns media node presentation for image, video,
+  and audio assets, including playback controls, load error states, asset drag
+  affordances, media badges, and natural-size callbacks. Its props carry the
+  already-derived status and Workspace callbacks; it does not read CanvasCore,
+  repositories, providers, or task services. `CanvasWorkspace.tsx` no longer
+  contains the duplicate media markup or playback hook instance.
 - The remaining card body, editor, reference picker, generator and workbench
   branches remain in Workspace until each has a behavior-covered presentation
   boundary.
