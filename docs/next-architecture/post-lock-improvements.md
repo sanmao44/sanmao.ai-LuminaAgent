@@ -115,6 +115,9 @@ hardening work when the trigger applies.
   shared progress indicator, mention editor wiring, response actions, and
   status copy. Workspace still owns prompt/reference derivation and all Agent
   generation or CanvasCore mutations.
+- `CanvasAudioNodePanel.tsx` now owns the independent audio node editor
+  presentation, player, file input, and duration forwarding. Workspace keeps
+  the replacement adapter and CanvasCore metadata mutation as callbacks.
 - The remaining card body, editor, reference picker, generator and workbench
   branches remain in Workspace until each has a behavior-covered presentation
   boundary.

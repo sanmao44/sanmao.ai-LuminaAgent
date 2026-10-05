@@ -40,6 +40,10 @@ const audioPlayer = await readFile(
   new URL("../components/canvas/CanvasAudioPlayer.tsx", import.meta.url),
   "utf8",
 );
+const audioPanel = await readFile(
+  new URL("../components/canvas/CanvasAudioNodePanel.tsx", import.meta.url),
+  "utf8",
+);
 const variantEditors = await readFile(
   new URL("../components/canvas/CanvasVariantEditors.tsx", import.meta.url),
   "utf8",
@@ -743,7 +747,7 @@ test("audio nodes use the branded rounded player instead of browser gray control
 });
 
 test("audio editor keeps its natural height without a panel height clamp", () => {
-  assert.match(component, /className="canvas-audio-panel"/);
+  assert.match(component + audioPanel, /className="canvas-audio-panel"/);
   assert.doesNotMatch(component, /estimatedPopoverHeight/);
   assert.doesNotMatch(component, /naturalHeight = \(head\?\.offsetHeight/);
   assert.match(styles, /\.canvas-audio-panel\{display:grid;gap:11px;min-width:0\}/);
