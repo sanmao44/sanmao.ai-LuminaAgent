@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const component = await readFile(
-  new URL("../components/SuperCanvas.tsx", import.meta.url),
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const lightboxComponent = await readFile(
+  new URL("../components/canvas/CanvasTextLightbox.tsx", import.meta.url),
   "utf8",
 );
 const styles = await readFile(
@@ -19,11 +23,7 @@ function sliceBetween(source, startText, endText) {
 }
 
 test("Agent response lightbox uses a dedicated large edit mode", () => {
-  const lightbox = sliceBetween(
-    component,
-    "function CanvasTextLightbox({",
-    "function CanvasPanelShell(",
-  );
+  const lightbox = lightboxComponent;
   assert.match(lightbox, /canvas-text-lightbox\$\{editing \? " is-editing"/);
   assert.match(lightbox, /className="canvas-text-edit-stage"/);
   assert.match(lightbox, /保存修改/);
@@ -36,11 +36,7 @@ test("Agent response lightbox uses a dedicated large edit mode", () => {
 });
 
 test("Agent response selection toolbar only operates on selected body text", () => {
-  const lightbox = sliceBetween(
-    component,
-    "function CanvasTextLightbox({",
-    "function CanvasPanelShell(",
-  );
+  const lightbox = lightboxComponent;
   assert.match(lightbox, /const bodyRef = useRef/);
   assert.match(lightbox, /body\.contains\(current\.anchorNode\)/);
   assert.match(lightbox, /body\.contains\(current\.focusNode\)/);

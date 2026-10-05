@@ -3,9 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createTsRequire } from './ts-require.mjs';
 
+const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
+
 const [component, canvas, styles, context, canvasApi, markdown] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
-  readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/canvas.css", import.meta.url), "utf8"),
   readFile(new URL("../lib/canvas/agent-dock.ts", import.meta.url), "utf8"),
   readFile(new URL("../lib/canvas/api.ts", import.meta.url), "utf8"),
@@ -48,7 +50,7 @@ test("the right-hand slot reads as one dock instead of separate overlays", () =>
   assert.match(styles, /\.canvas-panel-backdrop\{[^}]*background:transparent;backdrop-filter:none;pointer-events:none\}/);
   assert.match(styles, /\.canvas-workspace:has\(:is\(\.canvas-asset-drawer,\.canvas-panel-backdrop\)\) \.canvas-deck\{left:16px;transform:none;width:min\(900px,calc\(100% - 528px\)\)\}/);
   // Escape and the topbar button both close an open shell panel.
-  assert.match(canvas, /function CanvasPanelShell[\s\S]{0,400}?if \(event\.key === "Escape"\) onClose\(\);[\s\S]{0,400}?className="canvas-modal-backdrop canvas-panel-backdrop">/);
+  assert.match(`${canvas}\n${panels}`, /export function CanvasPanelShell[\s\S]{0,400}?if \(event\.key === "Escape"\) onClose\(\);[\s\S]{0,400}?className="canvas-modal-backdrop canvas-panel-backdrop">/);
   assert.doesNotMatch(canvas, /canvas-panel-backdrop" onClick=/);
   assert.match(canvas, /onClick=\{\(\) => activePanel === "settings" \? setActivePanel\(null\) : openCanvasPanel\("settings"\)\}/);
   assert.match(canvas, /onClick=\{\(\) => activePanel === "shortcuts" \? setActivePanel\(null\) : openCanvasPanel\("shortcuts"\)\}/);
@@ -659,7 +661,7 @@ test("the blank canvas and the keyboard can hand the whole canvas to the dock", 
   assert.ok(toolsMenu.includes("Ctrl/Cmd + K"));
   // 菜单项和快捷键共用这条入口：从哪进去，面板的状态都一样。
   assert.match(canvas, /\} else if \(!event\.repeat && modifier && key === "k"\) \{\s*\r?\n[\s\S]{0,160}?askAgentAboutCanvas\(\);/);
-  assert.match(canvas, /\{ keys: \["Ctrl", "K"\], label: "打开 Agent 助手并聚焦输入框，选中的节点会作为上下文" \},/);
+  assert.match(panels, /keys: \["Ctrl", "K"\]/);
   assert.match(canvas, /aria-keyshortcuts="Control\+K"/);
 });
 

@@ -4,7 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 
 const component = await readFile(
-  new URL("../components/SuperCanvas.tsx", import.meta.url),
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const styles = await readFile(

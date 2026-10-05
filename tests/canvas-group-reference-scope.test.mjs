@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const component = await readFile(
-  new URL("../components/SuperCanvas.tsx", import.meta.url),
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const groupLayer = await readFile(
+  new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url),
   "utf8",
 );
 const styles = await readFile(
@@ -27,8 +31,8 @@ test("canvas edge resolver expands only an explicit group source", () => {
 });
 
 test("group headers expose an accessible grid compose action", () => {
-  assert.match(component, /className=\{`canvas-group-compose/);
-  assert.match(component, /disabled=\{availableImageCount < 2 \|\| Boolean\(composingGroupId\)\}/);
+  assert.match(groupLayer, /className=\{`canvas-group-compose/);
+  assert.match(groupLayer, /disabled=\{availableImageCount < 2 \|\| Boolean\(composingGroupId\)\}/);
   assert.match(component, /const openComposeDialog = useCallback/);
   assert.match(component, /onClick: \(\) => openComposeDialog\(group\.id\)/);
   assert.match(component, /<CanvasGroupComposeDialog/);

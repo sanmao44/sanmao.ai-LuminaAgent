@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const component = await readFile(
-  new URL("../components/SuperCanvas.tsx", import.meta.url),
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const canvasCss = await readFile(
@@ -34,7 +34,7 @@ test("node editors and node quick panels stay outside the canvas double-click ha
 
 test("completed upscale results use the same image preview path as media nodes", () => {
   const cardStart = component.indexOf("function CanvasNodeCard");
-  const cardEnd = component.indexOf("function CanvasMinimap", cardStart);
+  const cardEnd = component.indexOf("const MemoizedCanvasNodeCard", cardStart);
   assert.ok(cardStart >= 0 && cardEnd > cardStart, "canvas node card should exist");
   const card = component.slice(cardStart, cardEnd);
 

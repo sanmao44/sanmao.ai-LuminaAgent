@@ -8,7 +8,7 @@ import ffmpegPath from "ffmpeg-static";
 
 const service = await readFile(new URL("../lib/video-trim-service.ts", import.meta.url), "utf8");
 const route = await readFile(new URL("../app/api/canvas/video-trim/route.ts", import.meta.url), "utf8");
-const canvas = await readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8");
+const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
 
 test("precise trimming decodes the selected range and exports indexed H.264 MP4", () => {
   assert.match(service, /trim=start=.*:end=/);

@@ -72,7 +72,7 @@ test('does not create a partial zip when an image download fails', async () => {
 });
 
 test('canvas exposes a multi-image download action without replacing single downloads', async () => {
-  const component = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
+  const component = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
   assert.match(component, /createCanvasImageZip\(downloadItems\)/);
   assert.match(component, /selectedImageDownloads\.length >= 2/);
   assert.match(component, /\.filter\(\(node\) => isCanvasReadyImageSource\(node\)\)/);
@@ -93,13 +93,13 @@ test('remote fetch failure saves through existing storage before zipping', async
 });
 
 test('group downloads use group members independently of selection', async () => {
-  const component = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
+  const component = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
   assert.match(component, /downloadSelectedImages\(groupImages\.map/);
   assert.match(component, /disabled: !groupImages\.length \|\| batchDownloading/);
 });
 
 test('upscale results expose a direct download action on the infinite canvas', async () => {
-  const component = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
+  const component = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
   const quickActionsStart = component.indexOf('const quickActions = useMemo');
   const contextMenuStart = component.indexOf('const contextMenuGroups = useMemo', quickActionsStart);
   assert.ok(quickActionsStart >= 0 && contextMenuStart > quickActionsStart);

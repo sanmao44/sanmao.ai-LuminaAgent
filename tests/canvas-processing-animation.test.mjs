@@ -14,7 +14,7 @@ const component = await readFile(
   "utf8",
 );
 const canvas = await readFile(
-  new URL("../components/SuperCanvas.tsx", import.meta.url),
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
 

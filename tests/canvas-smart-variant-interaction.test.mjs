@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const source = readFileSync(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8");
+const source = readFileSync(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
 
 test("smart variant portal isolates native control events from canvas gestures", () => {
   const portal = source.slice(source.indexOf('{smartVariantOpen && createPortal('), source.indexOf('<CanvasMinimap'));

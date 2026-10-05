@@ -19,7 +19,7 @@ const cinematicPanel = await readFile(
   "utf8",
 );
 const superCanvas = await readFile(
-  new URL("../components/SuperCanvas.tsx", import.meta.url),
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const canvasCss = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");

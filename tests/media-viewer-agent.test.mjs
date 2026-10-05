@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const viewer = await readFile(new URL("../components/MediaViewer.tsx", import.meta.url), "utf8");
-const canvas = await readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8");
+const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
 
 test("media viewer keeps the requested top controls and removes repeated bottom actions", () => {

@@ -9,7 +9,7 @@ const browserSource = await readFile(new URL("../lib/local-segmentation-browser.
 const editorSource = await readFile(new URL("../components/MaskEditor.tsx", import.meta.url), "utf8");
 const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const viewerSource = await readFile(new URL("../components/MediaViewer.tsx", import.meta.url), "utf8");
-const canvasSource = await readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8");
+const canvasSource = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: sourceUrl.pathname,

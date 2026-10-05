@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const component = await readFile(
-  new URL("../components/SuperCanvas.tsx", import.meta.url),
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const groupLayer = await readFile(
+  new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url),
   "utf8",
 );
 
@@ -89,10 +93,7 @@ test("dragging a grouped card moves only the node while the group bounds follow"
 });
 
 test("dragging one grouped card does not raise the group frame above its other members", () => {
-  const groupRender = component.slice(
-    component.indexOf("const groupInteraction ="),
-    component.indexOf("return (", component.indexOf("const groupInteraction =")),
-  );
+  const groupRender = groupLayer;
   assert.match(groupRender, /group\.nodeIds\.every\(\(id\) => draggingNodeIds\.has\(id\)\)/);
 });
 

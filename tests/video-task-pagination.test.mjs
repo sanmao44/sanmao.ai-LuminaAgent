@@ -66,7 +66,7 @@ test('video task API exposes page metadata and filter parameters', async () => {
   assert.match(route, /return Response\.json\(\{ \.\.\.result, tasks:/);
   assert.match(page, /const DEFAULT_HISTORY_PAGE_SIZE = 12/);
   assert.match(page, /const videoTotalPages = Math\.max\(1, Math\.ceil\(videoTotal \/ pageSize\)\)/);
-  assert.match(page, /pageSize: String\(pageSize\)/);
+  assert.match(page, /listVideoTasksPage\(\{ page: requestedPage, pageSize, source, media, search: historySearch \}\)/);
   assert.match(page, /每页 \$\{pageSize\} 项/);
   assert.match(page, /setVideoPage\(1\)/);
   assert.match(page, /className: "pagination creative-video-pagination"/);

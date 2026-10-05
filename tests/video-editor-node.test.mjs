@@ -16,7 +16,7 @@ async function loadTypeScript(path) {
 const editor = await loadTypeScript('../lib/canvas/video-editor.ts');
 const textLayout = await loadTypeScript('../lib/canvas/text-layout.ts');
 const modelSource = await readFile(new URL('../lib/canvas/model.ts', import.meta.url), 'utf8');
-const componentSource = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
+const componentSource = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
 const nodeSource = await readFile(new URL('../components/VideoEditorNode.tsx', import.meta.url), 'utf8');
 const workbenchSource = await readFile(new URL('../components/VideoEditorWorkbench.tsx', import.meta.url), 'utf8');
 const exportSource = await readFile(new URL('../lib/canvas/video-export.ts', import.meta.url), 'utf8');

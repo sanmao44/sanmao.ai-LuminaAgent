@@ -19,7 +19,7 @@ const settings = await readFile(new URL("../lib/creation/settings.ts", import.me
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const viewer = await readFile(new URL("../components/MediaViewer.tsx", import.meta.url), "utf8");
-const canvas = await readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8");
+const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
 
 test("brush and eraser preserve the mask alpha contract and coverage", () => {
   const pixels = raster.createProtectedMask(10, 10);
