@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { createTsRequire } from './ts-require.mjs';
 
 const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const clarify = await readFile(new URL('../components/AgentIntentClarifyCard.tsx', import.meta.url), 'utf8');
+const AssistantMarkdown = createTsRequire(new URL('..', import.meta.url).pathname)('./components/AssistantMarkdown').default;
+const Icon = ({ name }) => createElement('i', { 'data-icon': name });
 
 test('hides ordinary Agent deliverable notices from the composer', () => {
   assert.ok(page.includes("activeAgentIntent.deliverable === 'CLARIFY' && agentInput.trim()"));
@@ -29,7 +34,13 @@ test('automatically persists a Qianfan key after a successful connection test', 
 });
 
 test('renders follow-up directions only when the reply provided them', () => {
-  assert.ok(page.includes('const isDirectionHeading = directionPicker && directionPicker.directions.length > 0 &&'));
-  assert.ok(page.includes("if (directionPicker?.kind === 'chat' && !directionInserted && directionPicker.directions.length > 0) {"));
-  assert.ok(page.includes('if (!directions.length) return null;'));
+  const markup = renderToStaticMarkup(createElement(AssistantMarkdown, {
+    content: '### 后续方向\n\n1. 优化光线',
+    Icon,
+    onNotify: () => {},
+    directionPicker: { kind: 'image', directions: ['优化光线'], disabled: false, onSelect: () => {} },
+  }));
+  assert.match(markup, /agent-direction-section/);
+  assert.match(markup, /agent-direction-option/);
+  assert.match(markup, /aria-label="[^"]+"/);
 });

@@ -27,7 +27,7 @@ import { galleryReferences, normalizeReferenceRecords, referenceCount } from '@/
 import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
-import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, extractGithubRepositoryUrl, isChatDirectionHeading, isGithubMcpInstallFollowUp, isGithubMcpInstallHandoff, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
+import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, extractGithubRepositoryUrl, isGithubMcpInstallFollowUp, isGithubMcpInstallHandoff, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable, resolveCreativeRoute } from '@/lib/agent-intent';
 import { conversationImage, conversationMessageText } from '@/lib/agent-context';
 import { pollAgentProgress, requestAgent } from '@/lib/agent-client';
@@ -123,7 +123,6 @@ import SharePreviewModal from '@/components/SharePreviewModal';
 import MessageReferencePreviewModal from '@/components/MessageReferencePreviewModal';
 import ChatFilePreviewDialog from '@/components/ChatFilePreviewDialog';
 import CompareViewer from '@/components/CompareViewer';
-import AssistantCodeBlock from '@/components/AssistantCodeBlock';
 import AssistantMarkdown from '@/components/AssistantMarkdown';
 import AgentImageLoadingCard from '@/components/AgentImageLoadingCard';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
@@ -3870,138 +3869,6 @@ function createStreamUpdateScheduler(apply, delay = 32) {
         pending = null;
     };
     return { schedule, flush, cancel };
-}
-function AgentDirectionPicker({ directions, disabled, onSelect }) {
-    if (!directions.length) return null;
-    return /*#__PURE__*/ _jsx("div", {
-        className: "agent-direction-options",
-        children: directions.map((direction, index)=>/*#__PURE__*/ _jsxs("button", {
-                type: "button",
-                className: "agent-direction-option",
-                disabled: disabled,
-                title: direction,
-                "aria-label": `第${index + 1}项：${direction}`,
-                onClick: ()=>onSelect?.(direction),
-                children: [
-                    /*#__PURE__*/ _jsx("span", {
-                        className: "agent-direction-option-number",
-                        children: index + 1
-                    }),
-                    /*#__PURE__*/ _jsx("span", {
-                        className: "agent-direction-option-copy",
-                        children: direction
-                    }),
-                    /*#__PURE__*/ _jsx("span", {
-                        className: "agent-direction-option-arrow",
-                        "aria-hidden": "true",
-                        children: "›"
-                    })
-                ]
-            }, `${index}-${direction}`))
-    });
-}
-function AssistantMarkdown({ content, onNotify, directionPicker }) {
-    const shouldCollapse = content.length > 2400 || content.split(/\n/).length > 36;
-    const [expanded, setExpanded] = useState(false);
-    const lines = content.replace(/\r/g, '').split('\n');
-    const blocks = [];
-    let normalLines = [];
-    let codeLanguage = null;
-    let codeLines = [];
-    const flushNormal = ()=>{
-        if (normalLines.length) {
-            blocks.push(/*#__PURE__*/ _jsx(MarkdownBlocks, {
-                lines: normalLines
-            }, `markdown-${blocks.length}`));
-            normalLines = [];
-        }
-    };
-    let directionInserted = false;
-    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1){
-        const line = lines[lineIndex];
-        const isDirectionHeading = directionPicker && directionPicker.directions.length > 0 && (directionPicker.kind === 'chat' ? isChatDirectionHeading(line) : /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i.test(line));
-        if (isDirectionHeading && !directionInserted) {
-            flushNormal();
-            blocks.push(/*#__PURE__*/ _jsxs("section", {
-                className: "agent-direction-section",
-                children: [
-                    /*#__PURE__*/ _jsx("h3", {
-                        children: line.replace(/^\s*#{1,6}\s*/, '').trim()
-                    }),
-                    /*#__PURE__*/ _jsx(AgentDirectionPicker, {
-                        directions: directionPicker.directions,
-                        disabled: directionPicker.disabled,
-                        onSelect: directionPicker.onSelect
-                    })
-                ]
-            }, `directions-${blocks.length}`));
-            directionInserted = true;
-            lineIndex += 1;
-            while (lineIndex < lines.length) {
-                if (!lines[lineIndex].trim() || /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)/.test(lines[lineIndex])) {
-                    lineIndex += 1;
-                    continue;
-                }
-                break;
-            }
-            lineIndex -= 1;
-            continue;
-        }
-        const fence = line.match(/^\s*```\s*([^\s]*)\s*$/);
-        if (fence) {
-            if (codeLanguage === null) {
-                flushNormal();
-                codeLanguage = fence[1] || 'text';
-                codeLines = [];
-            } else {
-                blocks.push(/*#__PURE__*/ _jsx(AssistantCodeBlock, {
-                    language: codeLanguage,
-                    code: codeLines.join('\n'),
-                    Icon,
-                    onNotify: onNotify
-                }, `code-${blocks.length}`));
-                codeLanguage = null;
-                codeLines = [];
-            }
-        } else if (codeLanguage !== null) codeLines.push(line);
-        else normalLines.push(line);
-    }
-    if (codeLanguage !== null) blocks.push(/*#__PURE__*/ _jsx(AssistantCodeBlock, {
-        language: codeLanguage,
-        code: codeLines.join('\n'),
-        Icon,
-        onNotify: onNotify
-    }, `code-${blocks.length}`));
-    flushNormal();
-    if (directionPicker?.kind === 'chat' && !directionInserted && directionPicker.directions.length > 0) {
-        blocks.push(/*#__PURE__*/ _jsxs("section", {
-            className: "agent-direction-section chat-direction-section",
-            children: [
-                /*#__PURE__*/ _jsx("h3", { children: "你还可以继续" }),
-                /*#__PURE__*/ _jsx(AgentDirectionPicker, {
-                    directions: directionPicker.directions,
-                    disabled: directionPicker.disabled,
-                    onSelect: directionPicker.onSelect
-                })
-            ]
-        }, `directions-${blocks.length}`));
-    }
-    return /*#__PURE__*/ _jsxs("div", {
-        className: `assistant-markdown ${shouldCollapse && !expanded ? 'is-collapsed' : ''}`,
-        children: [
-            /*#__PURE__*/ _jsx("div", {
-                className: "assistant-markdown-content",
-                children: blocks
-            }),
-            shouldCollapse && /*#__PURE__*/ _jsx("button", {
-                type: "button",
-                className: "assistant-markdown-toggle",
-                "aria-expanded": expanded,
-                onClick: ()=>setExpanded((value)=>!value),
-                children: expanded ? '收起长内容' : '展开完整内容'
-            })
-        ]
-    });
 }
 export default function Page() {
     // 'boot'：还不知道本次安装是否看过开屏；'welcome'：首次进入展示开屏；'workspace'：直接进工作区。

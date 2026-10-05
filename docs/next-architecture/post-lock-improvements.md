@@ -368,6 +368,20 @@ hardening work when the trigger applies.
 - Existing progress and intent behavior tests plus direct card rendering cover
   the extracted boundary.
 
+### Stage 6 assistant markdown ownership checkpoint (2026-10-06)
+
+- Removed the stale inline `AgentDirectionPicker` and `AssistantMarkdown`
+  implementations from `app/page.tsx`. The page now uses the committed
+  `components/AssistantMarkdown.tsx` implementation as the only markdown and
+  follow-up direction presentation path.
+- `app/page.tsx` retains direction extraction, busy/selection guards, and the
+  continuation callbacks. `AssistantMarkdown` receives the existing
+  `directionPicker` projection and does not own Agent state or message
+  mutations.
+- Behavior coverage renders both image follow-up directions and the existing
+  markdown/code path through the component boundary. No URL, API, or message
+  format changed.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
