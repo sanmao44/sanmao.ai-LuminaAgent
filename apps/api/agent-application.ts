@@ -25,7 +25,8 @@ import { agentToolProgress, beginAgentRun, finishAgentRun, reportAgentProgress, 
 import { appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, normalizeMcpApprovalPolicy, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
-import { agentInstructionText, classifyAgentDeliverable, needsSemanticIntent, parseSemanticIntent, type AgentDeliverable } from '@/lib/agent-intent';
+import { agentInstructionText, classifyAgentDeliverable, needsSemanticIntent, parseSemanticIntent, resolveCreativeRoute, type AgentDeliverable } from '@/lib/agent-intent';
+import type { CreativeRoute } from '@/packages/contracts/creative';
 import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
 import { contextualImagePrompt, isBareImageExecution } from '@/lib/agent-context';
 import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
@@ -515,6 +516,8 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     let requestModeAllowsExecution = planning.requestModeAllowsExecution;
     let requestedDeliverable = plannedDeliverable;
     let requestedIntentReason = plannedIntentReason;
+    const suppliedCreativeRoute = body.creativeRoute && typeof body.creativeRoute === 'object' ? body.creativeRoute as CreativeRoute : undefined;
+    let creativeRoute: CreativeRoute;
     if (isCanvasNodeExecution) {
       requestedDeliverable = 'TEXT';
       requestedIntentReason = '左侧 Agent 节点仅允许文案输出，实施操作请交给右侧 Agent 助手。';
@@ -686,6 +689,28 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       requestedDeliverable = 'IMAGE';
       requestedIntentReason = '承接上一轮已确认的编号生图方案，直接执行批量生成。';
     }
+    // Recompute after semantic planning and continuation overrides so an approved
+    // image plan cannot remain gated by the earlier conversational route.
+    creativeRoute = resolveCreativeRoute(latestInstruction, {
+      messages: modelContextMessages,
+      hasReferences: latestReferenceImageCount > 0,
+      hasFiles: false,
+    }, {
+      // The server-side planning result is authoritative after semantic and
+      // continuation overrides. A client route is a UI hint and must never
+      // resurrect an older IMAGE decision for a new conversational turn.
+      deliverable: requestedDeliverable,
+      mode: requestModeAllowsExecution ? 'execute' : intentDecision.mode,
+      label: '',
+      summary: '',
+      reason: suppliedCreativeRoute?.reason || requestedIntentReason,
+      confidence: suppliedCreativeRoute?.confidence || intentDecision.confidence,
+      signals: [],
+    });
+    if (creativeRoute.lane === 'prompt') {
+      requestedDeliverable = 'TEXT';
+      requestedIntentReason = creativeRoute.reason;
+    }
     const fallbackImagePrompt = contextualImagePrompt(latestInstruction, selectAgentContextMessages(messages.slice(0, -1), requestRoute.contextNeed).map((message) => ({ role: message.role, content: message.content })));
     const reversePromptInstructions = [
       '你是一名专业的「图片反向提示词专家」。',
@@ -720,7 +745,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       && canvasTargetKind === 'image'
       && canvasTargetOperation === 'edit'
       && Boolean(latestInstruction.trim());
-    const imageGenerationRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion
+    const imageGenerationRequest = requestModeAllowsExecution && creativeRoute.lane === 'image' && creativeRoute.execution === 'run' && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion
       && (canvasImageEditRequest
         || requestedDeliverable === 'IMAGE'
         || requestedDeliverable === 'BOTH'

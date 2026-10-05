@@ -652,6 +652,16 @@ test('canvas agent reuses a bounded prepared-reference cache and invalidates by 
   }
 });
 
+test('canvas agent normalizes absolute loopback storage references before reading them', async () => {
+  const requested = [];
+  await withFileReader(() => withFetch(async (input) => {
+    requested.push(input);
+    return binaryResponse('image/png');
+  }, () => api.asDataUrl('http://localhost:3210/api/storage/file?name=canvas-image.png')));
+
+  assert.deepEqual(requested, ['/api/storage/file?name=canvas-image.png']);
+});
+
 test('canvas agent archives a remote reference on the server when the browser cannot read it', async () => {
   const mocks = withImageCanvas({ width: 1600, height: 900 });
   const requested = [];

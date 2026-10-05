@@ -28,7 +28,7 @@ import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-l
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, extractGithubRepositoryUrl, isChatDirectionHeading, isGithubMcpInstallFollowUp, isGithubMcpInstallHandoff, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
-import { agentDeliverableLabel, classifyAgentDeliverable } from '@/lib/agent-intent';
+import { agentDeliverableLabel, classifyAgentDeliverable, resolveCreativeRoute } from '@/lib/agent-intent';
 import { conversationImage, conversationMessageText } from '@/lib/agent-context';
 import { pollAgentProgress, requestAgent } from '@/lib/agent-client';
 import { editConversationMemory, prepareConversationMemory, selectRelevantConversationMessages, validConversationMemory } from '@/lib/agent-memory';
@@ -5952,6 +5952,11 @@ export default function Page() {
         agentFiles.length
     ]);
     const activeAgentIntent = liveAgentIntent;
+    const liveCreativeRoute = useMemo(() => resolveCreativeRoute(agentInput, {
+        messages,
+        hasReferences: agentRefs.length > 0,
+        hasFiles: agentFiles.length > 0,
+    }, liveAgentIntent), [agentInput, agentFiles.length, agentRefs.length, liveAgentIntent, messages]);
     const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
     const videoTotalPages = Math.max(1, Math.ceil(videoTotal / pageSize));
     const visibleVideoPage = Math.min(videoPage, videoTotalPages);
@@ -9551,6 +9556,12 @@ export default function Page() {
             hasFiles: files.length > 0
         });
         const selectedDeliverable = deliverableOverride || requestIntent.deliverable;
+            const creativeRoute = resolveCreativeRoute(requestContent, {
+                messages: currentSessionMessages,
+                hasReferences: refs.length > 0,
+                hasFiles: files.length > 0,
+                ...(task ? { task } : {}),
+            }, requestIntent);
         const likelyImageRequest = !task && (selectedDeliverable === 'IMAGE' || selectedDeliverable === 'BOTH');
         const user = {
             id: uid('msg'),
@@ -9698,6 +9709,7 @@ export default function Page() {
                     webSearch: agentWebMode !== 'off',
                     deliverable: selectedDeliverable,
                     intentReason: requestIntent.reason,
+                    creativeRoute,
                     runId: progressRunId
                 }, {
                 signal: requestController.signal,

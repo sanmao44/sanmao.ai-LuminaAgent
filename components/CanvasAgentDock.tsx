@@ -17,6 +17,7 @@ import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry
 import type { AgentWebMode } from "@/lib/creation/settings";
 import type { AgentApproval, AgentApprovalCall, AgentGeneratedFile, AgentMcpToolUse } from "@/lib/agent-client";
 import { pollAgentProgress } from "@/lib/agent-client";
+import { classifyAgentDeliverable, resolveCreativeRoute } from "@/lib/agent-intent";
 import { generateCanvasAgent, uploadCanvasAsset } from "@/lib/canvas/api";
 import {
   CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES,
@@ -1059,6 +1060,10 @@ export default function CanvasAgentDock({
             return index >= 0 ? messages.slice(0, index) : messages;
           })()
         : messages;
+      const creativeRoute = resolveCreativeRoute(promptText, {
+        messages: base.map((message) => ({ role: message.role, content: message.content, images: message.images })),
+        hasReferences: turnReferences.length > 0,
+      });
       const userMessage: CanvasAgentDockMessage = {
         id: createId(),
         role: "user",
@@ -1228,6 +1233,7 @@ export default function CanvasAgentDock({
             webMode,
             // 画布上下文只给模型看，意图判断必须用用户自己那句话。
             intentText: promptText,
+            creativeRoute,
             runId: progressRunId,
             context,
             canvasDocument,

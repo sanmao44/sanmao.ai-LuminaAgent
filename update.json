@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.77/SANMAO.AI-0.7.77.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.77/SANMAO.AI-0.7.77.zip"
   ],
-  "sha256": "62077d47bb11a05051caf72e4fea08633565b9e08102efebf95bb964e855887f",
+  "sha256": "e766b42cc8565d6bd317de6c8327bb4156ca84b2e6b9e8e555b560af6ccaa73d",
   "publishedAt": "2026-10-05T02:00:59Z",
   "notes": [
     "SQLite 本地数据库切换：业务数据通过 Repository 边界统一读写，保留迁移与回滚路径。",

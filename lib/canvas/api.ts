@@ -3,6 +3,7 @@ import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
+import type { CreativeRoute } from "@/packages/contracts/creative";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import {
@@ -325,9 +326,27 @@ export async function loadCanvasRuntime() {
   return request<CanvasRuntimeState>("/api/state");
 }
 
+function normalizeCanvasReferenceUrl(url: string) {
+  if (!/^https?:\/\//i.test(url)) return url;
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    const sameOrigin = typeof window !== "undefined" && parsed.origin === window.location.origin;
+    // Older canvas nodes can retain an absolute localhost URL. The image can
+    // still render in <img>, while fetching that URL from another loopback
+    // hostname is rejected by the storage route's cross-site guard.
+    if ((loopback || sameOrigin) && parsed.pathname === "/api/storage/file")
+      return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    // Keep the original URL; the caller reports the normal read failure.
+  }
+  return url;
+}
+
 export async function asDataUrl(url: string) {
   if (!url || url.startsWith("data:")) return url;
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetch(normalizeCanvasReferenceUrl(url), { cache: "no-store" });
   if (!response.ok) throw new Error("无法读取画布参考素材，请重新导入。");
   const blob = await response.blob();
   return new Promise<string>((resolve, reject) => {
@@ -864,6 +883,7 @@ export async function generateCanvasAgent(
     durationSeconds?: number;
     deliverable?: AgentDeliverable;
     intentReason?: string;
+    creativeRoute?: CreativeRoute;
     intentText?: string;
     runId?: string;
     context?: WorkspaceContext;
@@ -912,6 +932,7 @@ export async function generateCanvasAgent(
           references: preparedReferences,
           ...(input.deliverable ? { deliverable: input.deliverable } : {}),
           ...(input.intentReason ? { intentReason: input.intentReason } : {}),
+          ...(input.creativeRoute ? { creativeRoute: input.creativeRoute } : {}),
           ...(input.intentText ? { intentText: input.intentText } : {}),
           ...(input.runId ? { runId: input.runId } : {}),
           ...(input.context ? { context: input.context } : {}),

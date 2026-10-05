@@ -1,5 +1,6 @@
 export type AgentDeliverable = 'IMAGE' | 'TEXT' | 'BOTH' | 'CLARIFY' | 'OTHER';
 export type AgentRequestMode = 'execute' | 'ask' | 'discuss' | 'follow_up' | 'unknown';
+import type { CreativeRoute } from '@/packages/contracts/creative';
 
 export type AgentIntentMessage = {
   role?: 'user' | 'assistant' | string;
@@ -266,6 +267,54 @@ export function classifyAgentDeliverable(input: string, context: AgentIntentCont
     ? 'execute'
     : mode;
   return effectiveMode === decision.mode ? decision : { ...decision, mode: effectiveMode };
+}
+
+/**
+ * Convert the public deliverable decision into one executable creative lane.
+ * This is deliberately derived from the existing intent decision so the main
+ * Agent and Canvas Agent cannot drift into separate keyword routers.
+ */
+export function resolveCreativeRoute(
+  input: string,
+  context: AgentIntentContext & { task?: string } = {},
+  supplied?: AgentIntentDecision,
+): CreativeRoute {
+  const text = clean(input);
+  const decision = supplied || classifyAgentDeliverable(text, context);
+  const hasReference = Boolean(context.hasReferences);
+  const promptRequest = /(?:提示词|prompt|反推|提取提示|优化.*(?:提示词|prompt)|只要.*(?:提示词|prompt))/i.test(text)
+    || context.task === 'optimize_prompt'
+    || context.task === 'reverse_prompt';
+  const editRequest = hasReference && /(?:修改|调整|改成|换成|替换|去掉|加上|保留|重绘|重做|继续改|再来一版|基于.*(?:图|图片|图像)|背景.*(?:换|改)|衣服.*(?:换|改))/i.test(text);
+  const followUpEdit = hasReference && /^(?:继续|再来一版|再来一个|换一个|更亮|更暗|更简洁|更复杂)/i.test(text);
+  if (decision.deliverable === 'CLARIFY') {
+    return { lane: 'clarify', operation: 'none', execution: 'none', confidence: decision.confidence, reason: decision.reason, requiresReference: false };
+  }
+  if (decision.deliverable === 'IMAGE' || decision.deliverable === 'BOTH') {
+    const operation = editRequest || followUpEdit
+      ? 'edit'
+      : hasReference
+        ? 'reference-generate'
+        : 'generate';
+    return {
+      lane: 'image',
+      operation,
+      execution: decision.mode === 'execute' || decision.mode === 'follow_up' ? 'run' : 'none',
+      confidence: decision.confidence,
+      reason: decision.reason,
+      requiresReference: operation === 'edit',
+    };
+  }
+  if (decision.deliverable === 'TEXT' && promptRequest) {
+    return { lane: 'prompt', operation: 'none', execution: 'run', confidence: decision.confidence, reason: decision.reason, requiresReference: false };
+  }
+  if (decision.deliverable === 'OTHER' && (decision.mode === 'ask' || decision.mode === 'discuss')) {
+    return { lane: 'chat', operation: 'none', execution: 'none', confidence: decision.confidence, reason: decision.reason, requiresReference: false };
+  }
+  if (decision.deliverable === 'TEXT') {
+    return { lane: 'chat', operation: 'none', execution: decision.mode === 'execute' ? 'run' : 'none', confidence: decision.confidence, reason: decision.reason, requiresReference: false };
+  }
+  return { lane: 'chat', operation: 'none', execution: 'none', confidence: decision.confidence, reason: decision.reason, requiresReference: false };
 }
 
 /**
