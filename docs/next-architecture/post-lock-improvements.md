@@ -312,6 +312,19 @@ hardening work when the trigger applies.
 - Behavior tests render the extracted dialog and retain page-owned download and
   close-path checks; no URL, API, or file format behavior changed.
 
+### Stage 6 compare viewer checkpoint (2026-10-06)
+
+- `CompareViewer.tsx` now owns historical image comparison presentation and
+  transient viewer interaction: slider/side-by-side mode, zoom, pan, image
+  measurement, divider keyboard controls, and close affordances.
+- The component receives the current `GalleryItem`, an optional comparison
+  source projection, the parent item, shared icon renderer, and close callback.
+  It does not load history, mutate gallery state, persist files, or call APIs.
+- `app/page.tsx` retains comparison-source derivation, viewed-item bookkeeping,
+  compare state, body-scroll coordination, and Portal composition.
+- Behavior tests cover current/parent rendering, reference labeling, mode and
+  zoom controls. Provider, image-edit, and share workflows remain unchanged.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
