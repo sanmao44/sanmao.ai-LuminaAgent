@@ -119,6 +119,9 @@ hardening work when the trigger applies.
 - `CanvasAudioNodePanel.tsx` now owns the independent audio node editor
   presentation, player, file input, and duration forwarding. Workspace keeps
   the replacement adapter and CanvasCore metadata mutation as callbacks.
+- `CanvasMaskSummary.tsx` now owns the local edit mask summary presentation and
+  status copy. The editor still owns mask creation/removal and the CanvasCore
+  mutation callbacks remain in Workspace.
 - The remaining card shell responsibilities, node editor popover, reference
   picker, and workbench mounting remain in Workspace. They share transient
   interaction state and CanvasCore callbacks, so they need dedicated behavior

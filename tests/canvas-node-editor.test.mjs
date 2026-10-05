@@ -3,10 +3,15 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
 
-const component = await readFile(
+const workspace = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const maskSummary = await readFile(
+  new URL("../components/canvas/CanvasMaskSummary.tsx", import.meta.url),
+  "utf8",
+);
+const component = `${workspace}\n${maskSummary}`;
 const mediaCard = await readFile(
   new URL("../components/canvas/CanvasMediaNodeCard.tsx", import.meta.url),
   "utf8",
@@ -444,7 +449,7 @@ test("Agent nodes share deliverable routing, throttle streaming paint, and trust
 
 test("Agent editor exposes one-take only for two completed connected images", () => {
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
-  const editorEnd = component.indexOf("function CanvasMaskSummary", editorStart);
+  const editorEnd = workspace.length;
   assert.ok(editorStart >= 0 && editorEnd > editorStart, "Agent editor should be present");
   const editor = component.slice(editorStart, editorEnd);
   assert.match(editor, /const readyOneTakeReferences = editorReferences\.filter\(isCanvasReadyImageSource\)/);
@@ -503,7 +508,7 @@ test("image continuation uses the ordinary image API and keeps lineage on image 
 
 test("completed image editors remember the current-image reference switch per node", () => {
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
-  const editorEnd = component.indexOf("function CanvasMaskSummary", editorStart);
+  const editorEnd = workspace.length;
   assert.ok(editorStart >= 0 && editorEnd > editorStart, "image editor should be present");
   const editor = component.slice(editorStart, editorEnd);
   assert.match(editor, /useCurrentImageAsReference/);
@@ -860,9 +865,8 @@ test("canvas sends the move guide separately and keeps the original image as the
 
 test("local edit summary only occupies editor space when a mask exists", () => {
   const editorStart = component.indexOf("function CanvasNodeEditorPopover");
-  const summaryStart = component.indexOf("function CanvasMaskSummary");
-  assert.ok(editorStart >= 0 && summaryStart > editorStart, "mask editor components should be present");
-  const editor = component.slice(editorStart, summaryStart);
+  assert.ok(editorStart >= 0 && maskSummary.length > 0, "mask editor components should be present");
+  const editor = component.slice(editorStart);
   assert.match(editor, /onLocalEdit && maskState && \(/);
   assert.doesNotMatch(editor, /尚未设置，绘制后只重新生成指定区域/);
   assert.doesNotMatch(styles, /\.canvas-mask-summary\.empty/);
