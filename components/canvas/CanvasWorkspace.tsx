@@ -223,9 +223,7 @@ import CreationParameterEditor from "@/components/CreationParameterEditor";
 import OneTakeDurationPicker from "@/components/OneTakeDurationPicker";
 import ModelPicker from "@/components/ModelPicker";
 import CanvasReferenceDraftStrip from "@/components/CanvasReferenceDraftStrip";
-import CanvasProcessingIndicator, {
-  type CanvasProcessingKind,
-} from "@/components/canvas/CanvasProcessingIndicator";
+import type { CanvasProcessingKind } from "@/components/canvas/CanvasProcessingIndicator";
 import CanvasEdgeLayer from "@/components/canvas/CanvasEdgeLayer";
 import CanvasTextLightbox from "@/components/canvas/CanvasTextLightbox";
 import CanvasActivityDrawer from "@/components/canvas/CanvasActivityDrawer";
@@ -1537,16 +1535,6 @@ function variantStatesFor(node: CanvasNode): CanvasVariantState[] {
       ...(current?.updatedAt ? { updatedAt: current.updatedAt } : {}),
     };
   });
-}
-
-function variantStatusLabel(status: CanvasVariantState["status"]) {
-  return status === "running"
-    ? "生成中"
-    : status === "completed"
-      ? "已完成"
-      : status === "failed"
-        ? "失败"
-        : "等待中";
 }
 
 function variantBatchStatus(states: CanvasVariantState[]) {
