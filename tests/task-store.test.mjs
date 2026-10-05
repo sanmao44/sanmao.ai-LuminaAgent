@@ -184,13 +184,14 @@ test('生成记录按 id 收尾：取消后只剩下一条已取消的记录', a
 });
 test('视频卡片给出停止跟踪与重试入口，取消状态也有对应文案', async () => {
   const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  const client = await readFile(new URL('../lib/video-task-client.ts', import.meta.url), 'utf8');
   const card = await readFile(new URL('../components/VideoRecordCard.tsx', import.meta.url), 'utf8');
   const studio = await readFile(new URL('../components/VideoStudio.tsx', import.meta.url), 'utf8');
   const styles = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
 
-  assert.match(page, /method: 'PATCH'/);
+  assert.match(client, /method: 'PATCH'/);
   assert.match(page, /onCancel: \(\)=>patchVideoTask\(task, 'cancel'\), onRetry: \(\)=>patchVideoTask\(task, 'retry'\)/);
-  assert.match(page, /setVideoTasks\(\(old\)=>old\.map\(\(item\)=>item\.id === task\.id \? data\.task : item\)\)/);
+  assert.match(page, /setVideoTasks\(\(old\)=>old\.map\(\(item\)=>item\.id === task\.id \? updatedTask : item\)\)/);
   assert.match(page, /先取消任务再删除/);
 
   assert.match(card, /const canCancel = task\.status === 'pending' \|\| task\.status === 'running';/);

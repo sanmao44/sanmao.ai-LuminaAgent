@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 test('super canvas routes image sharing through the branded share exporter', async () => {
-  const component = await readFile(new URL('../components/SuperCanvas.tsx', import.meta.url), 'utf8');
+  const component = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
   const share = await readFile(new URL('../lib/canvas/share.ts', import.meta.url), 'utf8');
 
   assert.match(component, /import \{ downloadCanvasShareImage \} from "@\/lib\/canvas\/share"/);

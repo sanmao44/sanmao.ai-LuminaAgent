@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const component = await readFile(
-  new URL("../components/SuperCanvas.tsx", import.meta.url),
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const edgeLayer = await readFile(
+  new URL("../components/canvas/CanvasEdgeLayer.tsx", import.meta.url),
   "utf8",
 );
 const parameterEditor = await readFile(
@@ -513,26 +517,26 @@ test("opening a dock drawer never changes the attached editor position", () => {
 });
 
 test("selected related edges animate dashed guides and aligned tapered light trails", () => {
-  assert.match(component, /related \? "related"/);
+  assert.match(edgeLayer, /related \? "related"/);
   const guide = styles.match(/^\.canvas-edge-visual \.canvas-edge\.related\{([^}]+)\}/m)[1];
   const [dash, gap] = guide.match(/stroke-dasharray:(\d+) (\d+)/).slice(1).map(Number);
   const guideLoop = Number(styles.match(/@keyframes canvas-edge-related-dashes\{from\{stroke-dashoffset:0\}to\{stroke-dashoffset:-(\d+)/)[1]);
   assert.equal(guideLoop % (dash + gap), 0, "moving dashes must loop without a jump");
   assert.match(guide, /animation:canvas-edge-related-dashes [\d.]+s linear infinite/);
-  const segments = [...component.match(/const CANVAS_EDGE_FLOW_SEGMENTS = \[([\s\S]*?)\];/)[1].matchAll(/length: (\d+), width: ([\d.]+), opacity: ([\d.]+)/g)].map(match => ({length: +match[1], width: +match[2], opacity: +match[3]}));
+  const segments = [...edgeLayer.match(/const CANVAS_EDGE_FLOW_SEGMENTS = \[([\s\S]*?)\];/)[1].matchAll(/length: (\d+), width: ([\d.]+), opacity: ([\d.]+)/g)].map(match => ({length: +match[1], width: +match[2], opacity: +match[3]}));
   assert.ok(segments.length >= 6, "the trail needs a gradual taper");
   segments.slice(1).forEach((segment, index) => {
     assert.ok(segment.length < segments[index].length);
     assert.ok(segment.width >= segments[index].width);
     assert.ok(segment.opacity > segments[index].opacity);
   });
-  const period = Number(component.match(/strokeDasharray=\{`\$\{length\} \$\{(\d+) - length\}`\}/)[1]);
-  const trailLength = Number(component.match(/"--edge-flow-offset": `\$\{length - (\d+)\}px`/)[1]);
+  const period = Number(edgeLayer.match(/strokeDasharray=\{`\$\{length\} \$\{(\d+) - length\}`\}/)[1]);
+  const trailLength = Number(edgeLayer.match(/"--edge-flow-offset": `\$\{length - (\d+)\}px`/)[1]);
   const animationPeriod = Number(styles.match(/to\{stroke-dashoffset:calc\(var\(--edge-flow-offset\) - (\d+)px\)/)[1]);
   assert.equal(period, animationPeriod, "all strokes must advance by exactly one repeat");
   assert.equal(segments[0].length, trailLength);
   assert.ok(period > trailLength && 1000 / period >= 2, "separate light trails should repeat along the path");
-  const halo = component.match(/strokeDasharray="(\d+) (\d+)"\s+style=\{\{ "--edge-flow-offset": "(-?\d+)px"/);
+  const halo = edgeLayer.match(/strokeDasharray="(\d+) (\d+)"\s+style=\{\{ "--edge-flow-offset": "(-?\d+)px"/);
   assert.equal(+halo[1] + +halo[2], period);
   assert.equal(+halo[1] - +halo[3], trailLength, "halo and tapered strokes must share their bright leading end");
   assert.match(styles, /\.canvas-edge-flow-stroke\{[^}]*pointer-events:none[^}]*animation:canvas-edge-related-flow [\d.]+s linear infinite/);
@@ -552,8 +556,8 @@ test("canvas edges reveal one small red removal control at the pointer without a
   assert.match(component, /connectionCancelShowTimerRef\.current = window\.setTimeout/);
   assert.match(component, /}, CANVAS_CONNECTION_CANCEL_SHOW_DELAY_MS\);/);
   assert.match(component, /showConnectionCancel\(\s*edgeId,\s*stagePoint\(event\.clientX, event\.clientY\),\s*\)/);
-  assert.match(component, /onPointerMove=\{handlePointerMove\}/);
-  assert.match(component, /onHover=\{\(event\) => handleConnectionHover\(edge\.id, event\)\}/);
+  assert.match(edgeLayer, /onPointerMove=\{handlePointerMove\}/);
+  assert.match(edgeLayer, /onHover=\{\(event\) => onHover\(edge\.id, event\)\}/);
   assert.match(component, /const \[connectionCancelPointer, setConnectionCancelPointer\]/);
   assert.match(component, /connectionCancelPointer \|\| worldToScreen\(/);
   assert.match(component, /onPointerDown=\{\(event\) =>\s*connectionCancelEdge/);

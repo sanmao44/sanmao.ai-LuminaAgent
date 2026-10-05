@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
 
-const canvas = await readFile(new URL("../components/SuperCanvas.tsx", import.meta.url), "utf8");
+const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
 const dialog = await readFile(new URL("../components/canvas/CanvasCloneDialog.tsx", import.meta.url), "utf8");
 const route = await readFile(new URL("../app/api/clone/jobs/route.ts", import.meta.url), "utf8");
 const jobRoute = await readFile(new URL("../app/api/clone/jobs/[id]/route.ts", import.meta.url), "utf8");

@@ -44,7 +44,35 @@ import SkillInlineText from '@/components/SkillInlineText';
 import { filterSkills, skillMessageValue, skillSlashQuery } from '@/lib/skill-picker';
 import { normalizeConversationPersona, personaBadgeLabel } from '@/lib/agent-persona';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
-import { IMAGE_QUALITY_OPTIONS, IMAGE_RATIOS } from '@/lib/creation/settings';
+import { IMAGE_QUALITY_OPTIONS } from '@/lib/creation/settings';
+import { cleanupGenerationLogs, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
+import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVideoTask as patchVideoTaskRequest, saveVideoTaskLocally as saveVideoTaskLocallyRequest } from '@/lib/video-task-client';
+import { createManualStorageSnapshot, loadStorageMaintenance, restoreLocalStorageSnapshot } from '@/lib/storage-maintenance-client';
+import { formatStorageBytes } from '@/lib/storage-presentation';
+import {
+    chatHistoryGroupLabel,
+    editorRatio,
+    exactRatioFromDimensions,
+    formatTime,
+    generationLogIsLlm,
+    generationLogSourceLabel,
+    generationLogTitle,
+    generationMediaKind,
+    generationMediaLabel,
+    logAspectRatioLabel,
+    logDurationTone,
+    logOutputSizeLabel,
+    logResolutionLabel,
+    presetDimensions,
+    ratioDescriptions,
+    ratioFromDimensions,
+    ratioLabel,
+    ratios,
+    resolutionFromDimensions,
+    sizeTierFromDimensions,
+    sizeTiers,
+    outputDimensions,
+} from '@/lib/generation-log-presentation';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
 import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
 import { startWorkspaceSync } from '@/lib/workspace';
@@ -129,24 +157,6 @@ const emptyState = {
         defaultProviderId: null
     }
 };
-const ratios = [...IMAGE_RATIOS];
-const ratioDescriptions = {
-    自动: '单图匹配参考图，多图交给模型',
-    '1:1': '方形',
-    '16:9': '宽屏',
-    '9:16': '竖屏',
-    '4:3': '横向',
-    '3:4': '纵向',
-    '3:2': '相机横幅',
-    '2:3': '相机竖幅',
-    '5:4': '横向海报',
-    '4:5': '竖向海报',
-    '2:1': '全景',
-    '1:2': '长竖图',
-    '21:9': '超宽屏',
-    '9:21': '超长竖屏',
-    自定义: '输入宽高比例'
-};
 const examples = [
     '把一个简单想法变成专业生图提示词',
     '这个主题还能怎么玩？给我 3 个视觉方向',
@@ -190,28 +200,6 @@ function upscalePreviewDimensions(source, scale, model, targetSize = 'auto') {
     };
     return seedVrTargetSize(source.width, source.height, scale, targetSize);
 }
-const sizeTiers = [
-    {
-        value: '1k',
-        label: '1K',
-        longEdge: 1280
-    },
-    {
-        value: '2k',
-        label: '2K',
-        longEdge: 2048
-    },
-    {
-        value: '3k',
-        label: '3K',
-        longEdge: 3072
-    },
-    {
-        value: '4k',
-        label: '4K',
-        longEdge: 3840
-    }
-];
 function emptyProviderForm() {
     const preset = getProviderPreset('custom');
     return {
@@ -257,107 +245,6 @@ function platformLabel(platform) {
 }
 function sourceLabel(source) {
     return source === 'canvas' ? '画布生成' : source === 'agent' ? '助手生成' : source === 'edit' ? '图片修改' : source === 'upscale' ? '高清放大' : '直接生成';
-}
-function generationLogSourceLabel(log) {
-    if (log.taskKind === 'llm' || log.mode === 'llm') return log.source === 'canvas' ? '画布 LLM' : '助手 LLM';
-    if (log.source === 'canvas') return '画布生成';
-    if (log.mode === 'video') return log.operation === 'edit' ? '视频编辑' : log.operation === 'extend' ? '视频扩展' : '视频生成';
-    if (log.mode === 'audio' || log.mediaKind === 'audio') return '音频生成';
-    if (log.source === 'agent') return '助手生成';
-    return log.mode === 'edit' ? '图片修改' : log.mode === 'upscale' ? '图片超分' : '工作台生成';
-}
-function generationLogTitle(log) {
-    const prompt = String(log.prompt || '').trim();
-    if (!prompt) return generationLogIsLlm(log) ? '未填写对话内容' : '未填写提示词';
-    const contextIndexes = [prompt.indexOf('[画布上下文]'), prompt.indexOf('【画布上下文】')].filter((index)=>index >= 0);
-    const contextIndex = contextIndexes.length ? Math.min(...contextIndexes) : -1;
-    const userPrompt = (contextIndex >= 0 ? prompt.slice(0, contextIndex) : prompt)
-        .replace(/\s+/g, ' ')
-        .replace(/^#{1,6}\s*/, '')
-        .replace(/\*\*|__|`/g, '')
-        .trim();
-    return userPrompt || (generationLogIsLlm(log) ? '画布上下文任务' : '未填写提示词');
-}
-function generationMediaKind(log) {
-    if (log.taskKind === 'llm' || log.mode === 'llm') return 'llm';
-    if (log.mediaKind === 'audio' || log.mode === 'audio') return 'audio';
-    if (log.mediaKind === 'video' || log.mode === 'video') return 'video';
-    return 'image';
-}
-function generationLogIsLlm(log) {
-    return generationMediaKind(log) === 'llm';
-}
-function generationLlmCallLabel(log) {
-    const calls = typeof log.llmCallCount === 'number' ? log.llmCallCount : 0;
-    const chars = typeof log.responseChars === 'number' ? log.responseChars : 0;
-    return `${calls} 次模型调用 · ${chars} 字响应`;
-}
-function generationMediaLabel(kind) {
-    return kind === 'llm' ? 'LLM' : kind === 'video' ? '视频' : kind === 'audio' ? '音频' : '图片';
-}
-function ratioFromDimensions(width, height) {
-    if (!width || !height) return '未知';
-    const actual = width / height;
-    const candidates = ratios.filter((item)=>item.includes(':')).map((item)=>({
-            item,
-            value: Number(item.split(':')[0]) / Number(item.split(':')[1])
-        }));
-    return candidates.reduce((best, candidate)=>Math.abs(candidate.value - actual) < Math.abs(best.value - actual) ? candidate : best).item;
-}
-function exactRatioFromDimensions(width, height) {
-    if (!width || !height) return '自动';
-    const divisor = gcd(Math.round(width), Math.round(height));
-    return `${Math.round(width) / divisor}:${Math.round(height) / divisor}`;
-}
-function ratioValue(ratio, customWidth = 1, customHeight = 1) {
-    if (ratio === '自定义') return customWidth > 0 && customHeight > 0 ? customWidth / customHeight : 1;
-    const [rawWidth, rawHeight] = ratio.split(':').map(Number);
-    return rawWidth > 0 && rawHeight > 0 ? rawWidth / rawHeight : 1;
-}
-function ratioLabel(ratio, customWidth, customHeight) {
-    return ratio === '自定义' && customWidth > 0 && customHeight > 0 ? `${customWidth}:${customHeight}` : ratio;
-}
-function resolutionFromDimensions(width, height) {
-    const longEdge = Math.max(width, height);
-    return longEdge <= 1536 ? '1K' : longEdge <= 2304 ? '2K' : longEdge <= 3072 ? '3K' : '4K';
-}
-function logResolutionLabel(log, spec) {
-    return log.resolution || log.outputSize?.match(/^(1K|2K|3K|4K)/i)?.[1]?.toUpperCase() || spec?.resolution || '未记录';
-}
-function logOutputSizeLabel(log, spec) {
-    return log.outputSize || (spec ? `${spec.width}×${spec.height}` : '尺寸未记录');
-}
-function logAspectRatioLabel(log, spec) {
-    return log.aspectRatio || spec?.ratio || '比例未记录';
-}
-function logDurationTone(durationMs) {
-    if (!durationMs) return 'unknown';
-    return durationMs < 10000 ? 'fast' : durationMs < 30000 ? 'normal' : 'slow';
-}
-function formatTime(ts) {
-    return new Date(ts).toLocaleString('zh-CN', {
-        hour12: false,
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
-}
-function chatHistoryGroupLabel(ts) {
-    const date = new Date(ts);
-    const today = new Date();
-    const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const dayDifference = Math.round((todayDay.getTime() - dateDay.getTime()) / 86400000);
-    if (dayDifference <= 0) return '今天';
-    if (dayDifference === 1) return '昨天';
-    return '更早';
-}
-function nearest16(value) {
-    return Math.max(256, Math.round(value / 16) * 16);
-}
-function gcd(a, b) {
-    return b ? gcd(b, a % b) : a;
 }
 function reorderReferenceItems(items, fromIndex, toIndex) {
     if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= items.length || toIndex >= items.length) return items;
@@ -508,34 +395,6 @@ async function renderLocalImage(url, mode, ratio, background, flipX, rotation, s
         width: canvas.width,
         height: canvas.height
     };
-}
-function presetDimensions(ratio, tier, customRatioWidth = 1, customRatioHeight = 1) {
-    const longEdge = sizeTiers.find((item)=>item.value === tier)?.longEdge || 1280;
-    const value = ratioValue(ratio, customRatioWidth, customRatioHeight);
-    if (value >= 1) return {
-        width: longEdge,
-        height: nearest16(longEdge / value)
-    };
-    return {
-        width: nearest16(longEdge * value),
-        height: longEdge
-    };
-}
-function outputDimensions(outputSize) {
-    const match = outputSize?.match(/(\d+)\s*[x×]\s*(\d+)/i);
-    return match ? {
-        width: Number(match[1]),
-        height: Number(match[2])
-    } : null;
-}
-function sizeTierFromDimensions(width, height) {
-    const longEdge = Math.max(width, height);
-    return longEdge > 3072 ? '4k' : longEdge > 2304 ? '3k' : longEdge > 1536 ? '2k' : '1k';
-}
-function editorRatio(editor) {
-    if (editor.ratio !== '自动') return editor.ratio;
-    const dimensions = outputDimensions(editor.item.outputSize);
-    return dimensions ? exactRatioFromDimensions(dimensions.width, dimensions.height) : '1:1';
 }
 async function fileToReference(file, options) {
     if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) throw new Error('只能上传图片或视频文件');
@@ -6970,35 +6829,26 @@ export default function Page() {
     }
     async function refreshGenerationLogs() {
         try {
-            const res = await fetch('/api/generation-logs?limit=200', {
-                cache: 'no-store'
-            });
-            const data = await res.json();
-            const logs = Array.isArray(data.logs) ? data.logs : [];
+            const logs = await listGenerationLogs(200);
             setGenerationLogs(logs);
             syncLogErrorNotice(logs);
-        } catch  {}
+        } catch {}
     }
     async function refreshVideoTasks(requestedPage = videoPage) {
         try {
             const source = historyFilter === 'canvas' ? 'canvas' : historyFilter === 'agent' ? 'agent' : historyFilter === 'generate' ? 'workspace' : historyFilter === 'all' ? 'all' : 'none';
             const media = historyMediaFilter === 'all' || historyMediaFilter === 'video' ? 'video' : 'none';
-            const params = new URLSearchParams({ page: String(Math.max(1, Math.round(Number(requestedPage) || 1))), pageSize: String(pageSize), source, media });
-            if (historySearch.trim()) params.set('search', historySearch.trim());
-            const res = await fetch(`/api/video/tasks?${params.toString()}`, { cache: 'no-store' });
-            if (!res.ok) return;
-            const data = await res.json().catch(()=>({}));
-            setVideoTasks(Array.isArray(data.tasks) ? data.tasks : []);
-            setVideoTotal(Math.max(0, Number(data.total) || 0));
-            const nextPage = Math.max(1, Number(data.page) || 1);
+            const data = await listVideoTasksPage({ page: requestedPage, pageSize, source, media, search: historySearch });
+            if (!data) return;
+            setVideoTasks(data.tasks);
+            setVideoTotal(Math.max(0, data.total));
+            const nextPage = Math.max(1, data.page);
             if (nextPage !== videoPage) setVideoPage(nextPage);
         } catch  {}
     }
     async function deleteVideoTask(task) {
         try {
-            const res = await fetch(`/api/video/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' });
-            const data = await res.json().catch(()=>({}));
-            if (!res.ok) throw new Error(data.error || '删除视频任务失败');
+            await deleteVideoTaskRequest(task.id);
             setVideoTasks((old)=>old.filter((item)=>item.id !== task.id));
             setVideoTotal((total)=>Math.max(0, total - 1));
             void refreshVideoTasks(videoPage);
@@ -7009,19 +6859,9 @@ export default function Page() {
     }
     async function patchVideoTask(task, action) {
         try {
-            const res = await fetch(`/api/video/tasks/${encodeURIComponent(task.id)}`, {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    action
-                })
-            });
-            const data = await res.json().catch(()=>({}));
-            if (!res.ok) throw new Error(data.error || (action === 'cancel' ? '停止跟踪失败' : '重试失败'));
+            const updatedTask = await patchVideoTaskRequest(task.id, action);
             if (action === 'cancel') {
-                setVideoTasks((old)=>old.map((item)=>item.id === task.id ? data.task : item));
+                setVideoTasks((old)=>old.map((item)=>item.id === task.id ? updatedTask : item));
                 notify('已停止跟踪这条视频任务，服务商可能仍在生成');
             } else {
                 void refreshVideoTasks(videoPage);
@@ -7046,30 +6886,16 @@ export default function Page() {
     }
     async function refreshStorageMaintenance() {
         try {
-            const [usageResponse, snapshotResponse] = await Promise.all([
-                fetch('/api/storage/usage', { cache: 'no-store' }),
-                fetch('/api/storage/snapshots', { cache: 'no-store' })
-            ]);
-            const usageData = await usageResponse.json().catch(()=>({}));
-            const snapshotData = await snapshotResponse.json().catch(()=>({}));
-            if (usageResponse.ok) setStorageUsage(usageData.usage || null);
-            if (snapshotResponse.ok) setLocalSnapshots(Array.isArray(snapshotData.snapshots) ? snapshotData.snapshots : []);
+            const data = await loadStorageMaintenance();
+            setStorageUsage(data.usage || null);
+            setLocalSnapshots(data.snapshots);
         } catch {}
-    }
-    function formatStorageBytes(bytes) {
-        const value = Number(bytes || 0);
-        if (value < 1024) return `${value} B`;
-        if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-        if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-        return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
     }
     async function createManualSnapshot() {
         setBackupBusy(true);
         try {
-            const res = await fetch('/api/storage/snapshots', { method: 'POST' });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || '创建快照失败');
-            setLocalSnapshots(data.snapshots || []);
+            const data = await createManualStorageSnapshot();
+            setLocalSnapshots(Array.isArray(data.snapshots) ? data.snapshots : []);
             await refreshStorageMaintenance();
             notify('本地快照已创建');
         } catch (error) { notify(error instanceof Error ? error.message : '创建快照失败'); }
@@ -7078,9 +6904,7 @@ export default function Page() {
     async function restoreLocalSnapshotByName(name) {
         setBackupBusy(true);
         try {
-            const res = await fetch('/api/storage/snapshots', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || '恢复快照失败');
+            const data = await restoreLocalStorageSnapshot(name);
             const skipped = Number(data.skippedMediaCount || 0);
             notify(`快照恢复完成：${data.restoredImages || 0} 个图片文件${skipped ? `，${skipped} 个媒体文件未包含` : ''}，正在重新加载`);
             window.setTimeout(()=>window.location.reload(), 700);
@@ -7131,18 +6955,7 @@ export default function Page() {
             action: async ()=>{
                 setCleanupBusy(true);
                 try {
-                    const res = await fetch('/api/generation-logs', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            days,
-                            deleteImages
-                        })
-                    });
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.error || '清理日志失败');
+                    const data = await cleanupGenerationLogs(days, deleteImages);
                     await refreshGenerationLogs();
                      notify(`已清理 ${data.removedLogs || 0} 条日志${deleteImages ? `，${data.deletedImages || 0} 个图片文件已移入回收站` : ''}`);
                 } catch (error) {
@@ -7156,13 +6969,7 @@ export default function Page() {
     async function previewCleanupGenerationLogs(days, deleteImages) {
         setCleanupBusy(true);
         try {
-            const res = await fetch('/api/generation-logs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ days, deleteImages, dryRun: true })
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || '预览清理失败');
+            const data = await previewGenerationLogCleanup(days, deleteImages);
             notify(`预计清理 ${data.removedLogs || 0} 条日志${deleteImages ? `，${data.deletedImages || 0} 个图片文件将移入回收站` : ''}`);
         } catch (error) { notify(error instanceof Error ? error.message : '预览清理失败'); }
         finally { setCleanupBusy(false); }
@@ -7833,12 +7640,8 @@ export default function Page() {
     }
     async function saveVideoTaskLocally(task) {
         try {
-            const res = await fetch(`/api/video/tasks/${encodeURIComponent(task.id)}`, {
-                method: 'POST'
-            });
-            const data = await res.json().catch(()=>({}));
-            if (!res.ok) throw new Error(data.error || '再次保存视频失败');
-            setVideoTasks((old)=>old.map((item)=>item.id === task.id ? data.task : item));
+            const updatedTask = await saveVideoTaskLocallyRequest(task.id);
+            setVideoTasks((old)=>old.map((item)=>item.id === task.id ? updatedTask : item));
             void refreshVideoTasks(videoPage);
             notify('已再次保存视频');
         } catch (error) {

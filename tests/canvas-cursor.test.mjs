@@ -5,7 +5,7 @@ import test from "node:test";
 const css = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
 const globalCss = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const component = await readFile(
-  new URL("../components/SuperCanvas.tsx", import.meta.url),
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const maskEditor = await readFile(

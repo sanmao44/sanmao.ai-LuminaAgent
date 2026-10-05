@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const component = await readFile(
-  new URL("../components/SuperCanvas.tsx", import.meta.url),
+  new URL("../components/canvas/CanvasActivityDrawer.tsx", import.meta.url),
+  "utf8",
+);
+const workspace = await readFile(
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
@@ -44,23 +48,23 @@ test("task log keeps preview actions beside metadata instead of wasting a full r
   assert.match(styles, /\.canvas-task-log-card\{[^}]*grid-template-areas:"preview main status" "preview meta actions"/);
   assert.match(styles, /\.canvas-task-log-meta\{[^}]*grid-area:meta/);
   assert.match(styles, /\.canvas-task-log-actions\{[^}]*grid-area:actions/);
-  assert.match(component, /if \(lightboxReturnPanel\) setActivePanel\(lightboxReturnPanel\);/);
+  assert.match(workspace, /if \(lightboxReturnPanel\) setActivePanel\(lightboxReturnPanel\);/);
 });
 
 test("task log result chips return to the task log panel after the media viewer closes", () => {
-  const start = component.indexOf("const focusLogNode = useCallback(");
+  const start = workspace.indexOf("const focusLogNode = useCallback(");
   assert.ok(start >= 0, "task log node focus handler should exist");
   assert.match(
-    component.slice(start, start + 320),
+    workspace.slice(start, start + 320),
     /focusCanvasNode\(nodeId, openMedia, openMedia && activePanel === "activity" \? "activity" : null\)/,
   );
-  assert.match(component, /onFocusNode=\{focusLogNode\}/);
+  assert.match(workspace, /onFocusNode=\{focusLogNode\}/);
 });
 
 test("task log restores its scroll position after opening and closing media preview", () => {
-  assert.match(component, /activityPanelScrollTopRef = useRef<number \| null>\(null\)/);
-  assert.match(component, /restoreScrollTop=\{activityPanelScrollTopRef\.current\}/);
-  assert.match(component, /onRememberScrollPosition=\{\(scrollTop\) =>/);
+  assert.match(workspace, /activityPanelScrollTopRef = useRef<number \| null>\(null\)/);
+  assert.match(workspace, /restoreScrollTop=\{activityPanelScrollTopRef\.current\}/);
+  assert.match(component, /onRememberScrollPosition/);
   assert.match(component, /scrollBodyRef\.current\?\.scrollTo\(\{ top: restoreScrollTop, behavior: "auto" \}\)/);
   assert.match(component, /rememberScrollBeforeMediaOpen\(openMedia\)/);
 });
