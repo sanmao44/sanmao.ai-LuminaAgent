@@ -175,6 +175,39 @@ export function allImagePresets(custom: CustomImagePreset[] = []) {
   ];
 }
 
+export function resolveImagePresetPrompt(
+  prompt: string,
+  presetId: string | undefined,
+  customPresets: readonly CustomImagePreset[],
+) {
+  const userPrompt = prompt.trim();
+  if (!presetId) return userPrompt;
+  const preset = [...BUILTIN_IMAGE_PRESETS, ...customPresets].find((item) => item.id === presetId);
+  if (!preset) return userPrompt;
+  const presetPrompt = preset.prompt.trim();
+  if (!userPrompt || userPrompt === presetPrompt) return presetPrompt;
+  if (userPrompt.startsWith(presetPrompt)) {
+    const suffix = userPrompt.slice(presetPrompt.length).trim();
+    return suffix ? `${presetPrompt}\n\n${suffix}` : presetPrompt;
+  }
+  return `${presetPrompt}\n\n${userPrompt}`;
+}
+
+export function visibleImagePresetPrompt(
+  prompt: string,
+  presetId: string | undefined,
+  customPresets: readonly CustomImagePreset[],
+) {
+  const userPrompt = prompt.trim();
+  if (!presetId) return userPrompt;
+  const preset = [...BUILTIN_IMAGE_PRESETS, ...customPresets].find((item) => item.id === presetId);
+  if (!preset) return userPrompt;
+  const presetPrompt = preset.prompt.trim();
+  if (userPrompt === presetPrompt) return "";
+  if (userPrompt.startsWith(presetPrompt)) return userPrompt.slice(presetPrompt.length).trim();
+  return userPrompt;
+}
+
 export function normalizeCustomImagePresets(value: unknown): CustomImagePreset[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();

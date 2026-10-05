@@ -15,7 +15,15 @@ const presetControl = await readFile(
   new URL("../components/canvas/CanvasImagePresetControl.tsx", import.meta.url),
   "utf8",
 );
-const component = `${workspace}\n${maskSummary}\n${presetControl}`;
+const imagePresetDomain = await readFile(
+  new URL("../lib/creation/image-presets.ts", import.meta.url),
+  "utf8",
+);
+const imagePresetNodeSupport = await readFile(
+  new URL("../lib/canvas/image-presets.ts", import.meta.url),
+  "utf8",
+);
+const component = `${workspace}\n${maskSummary}\n${presetControl}\n${imagePresetDomain}\n${imagePresetNodeSupport}`;
 const mediaCard = await readFile(
   new URL("../components/canvas/CanvasMediaNodeCard.tsx", import.meta.url),
   "utf8",
@@ -848,9 +856,9 @@ test("image presets stay opaque in the editor and open custom forms in a separat
   assert.match(preset, /presetNameInputRef\.current\?\.focus\(\)/);
   assert.match(preset, /输入要保存的完整提示词/);
   assert.doesNotMatch(preset, /preset\.prompt\.slice\(0, 42\)/);
-  assert.match(component, /function resolveCanvasImagePresetPrompt\(/);
+  assert.match(component, /function resolveImagePresetPrompt\(/);
   assert.match(component, /const supportsImagePresets = canvasNodeSupportsImagePresets\(currentNode\) && currentNode\.data\.kind === "image"/);
-  assert.match(component, /resolveCanvasImagePresetPrompt\(userPrompt, presetId, customImagePresets\)/);
+  assert.match(component, /resolveImagePresetPrompt\(userPrompt, presetId, customImagePresets\)/);
   assert.match(styles, /\.canvas-image-preset-reference\{/);
   assert.match(styles, /\.canvas-preset-editor-backdrop\{/);
 });

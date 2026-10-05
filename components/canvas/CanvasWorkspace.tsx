@@ -152,7 +152,10 @@ import {
   writeCustomImagePresets,
   type CustomImagePreset,
   type ImagePreset,
+  resolveImagePresetPrompt,
+  visibleImagePresetPrompt,
 } from "@/lib/creation/image-presets";
+import { canvasNodeSupportsImagePresets } from "@/lib/canvas/image-presets";
 import { recordModelCall } from "@/lib/model-preferences";
 import { classifyAgentDeliverable } from "@/lib/agent-intent";
 import { getUpscaleCatalogModel } from "@/lib/upscale-catalog";
@@ -516,42 +519,6 @@ type CanvasGenerationRequest = {
   presetName?: string;
 };
 
-function resolveCanvasImagePresetPrompt(
-  prompt: string,
-  presetId: string | undefined,
-  customPresets: readonly CustomImagePreset[],
-) {
-  const userPrompt = prompt.trim();
-  if (!presetId) return userPrompt;
-  const preset = [...BUILTIN_IMAGE_PRESETS, ...customPresets].find((item) => item.id === presetId);
-  if (!preset) return userPrompt;
-  const presetPrompt = preset.prompt.trim();
-  if (!userPrompt || userPrompt === presetPrompt) return presetPrompt;
-  if (userPrompt.startsWith(presetPrompt)) {
-    const suffix = userPrompt.slice(presetPrompt.length).trim();
-    return suffix ? `${presetPrompt}\n\n${suffix}` : presetPrompt;
-  }
-  return `${presetPrompt}\n\n${userPrompt}`;
-}
-
-function visibleCanvasImagePresetPrompt(
-  prompt: string,
-  presetId: string | undefined,
-  customPresets: readonly CustomImagePreset[],
-) {
-  const userPrompt = prompt.trim();
-  if (!presetId) return userPrompt;
-  const preset = [...BUILTIN_IMAGE_PRESETS, ...customPresets].find((item) => item.id === presetId);
-  if (!preset) return userPrompt;
-  const presetPrompt = preset.prompt.trim();
-  if (userPrompt === presetPrompt) return "";
-  if (userPrompt.startsWith(presetPrompt)) return userPrompt.slice(presetPrompt.length).trim();
-  return userPrompt;
-}
-
-function canvasNodeSupportsImagePresets(node: CanvasNode) {
-  return node.type !== "generator" && node.type !== "prompt" && node.type !== "upscale" && node.data.kind === "image";
-}
 type Interaction =
   | {
       kind: "pan";
@@ -7313,7 +7280,7 @@ export default function SuperCanvas() {
     const useCurrentImageAsReference = options?.useCurrentImageAsReference !== false;
     const presetId = draft.presetId;
     const presetName = draft.presetName;
-    const userPrompt = visibleCanvasImagePresetPrompt(draft.prompt, presetId, customImagePresets);
+    const userPrompt = visibleImagePresetPrompt(draft.prompt, presetId, customImagePresets);
     // Keep the legacy signature stable for callers that only control reference usage.
     const hasTextReference = draft.references.some(
       (reference) => reference.kind === "text" && Boolean(reference.text?.trim()),
@@ -7340,7 +7307,7 @@ export default function SuperCanvas() {
       ...(reference.text ? { text: reference.text } : {}),
       ...(reference.mimeType ? { mimeType: reference.mimeType } : {}),
     })));
-    const prompt = resolveCanvasImagePresetPrompt(promptWithReferences, presetId, customImagePresets);
+    const prompt = resolveImagePresetPrompt(promptWithReferences, presetId, customImagePresets);
     const source = draft.sourceNodeId
       ? nodeById(canvasCoreRef.current.document(), draft.sourceNodeId)
       : undefined;
@@ -9197,7 +9164,7 @@ export default function SuperCanvas() {
           ? node.data.editor.draftPrompt
           : String(node.data.generation?.prompt || node.data.prompt || "");
       const persistedVisiblePrompt = canvasNodeSupportsImagePresets(node)
-        ? visibleCanvasImagePresetPrompt(
+        ? visibleImagePresetPrompt(
             persistedPrompt,
             node.data.generation?.presetId,
             customImagePresets,
@@ -10230,7 +10197,7 @@ export default function SuperCanvas() {
           : options?.presetName || currentNode.data.generation?.presetName
         : undefined;
       const effectivePrompt = supportsImagePresets
-        ? resolveCanvasImagePresetPrompt(userPrompt, presetId, customImagePresets)
+        ? resolveImagePresetPrompt(userPrompt, presetId, customImagePresets)
         : userPrompt;
       const generationRequest: CanvasGenerationRequest = {
         nodeId: currentNode.id,
@@ -16889,7 +16856,7 @@ function CanvasNodeEditorPopover({
     ? [...BUILTIN_IMAGE_PRESETS, ...customImagePresetList].find((preset) => preset.id === selectedPresetId)
     : undefined;
   const visibleEditorPrompt = supportsImagePresets
-    ? visibleCanvasImagePresetPrompt(editorPrompt, selectedPresetId, customImagePresetList)
+    ? visibleImagePresetPrompt(editorPrompt, selectedPresetId, customImagePresetList)
     : editorPrompt;
   const generationOptions = {
     ...(canUseCurrentImageAsReference ? { useCurrentImageAsReference } : {}),

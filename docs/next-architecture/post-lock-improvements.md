@@ -165,6 +165,17 @@ hardening work when the trigger applies.
 - The existing canvas editor behavior test now covers the extracted control
   boundary while keeping Workspace generation and callback assertions.
 
+### Stage 4 image preset domain checkpoint (2026-10-06)
+
+- `lib/creation/image-presets.ts` now owns preset prompt composition and the
+  visible prompt projection used by generation and editor drafts.
+- `lib/canvas/image-presets.ts` owns the pure node capability predicate used
+  to decide whether a node can expose image presets.
+- `CanvasWorkspace.tsx` keeps the same call sites and generation orchestration,
+  but no longer defines these pure domain transformations locally.
+- The canvas editor behavior suite, full test suite, typecheck, production
+  build, and staged diff check pass for this boundary.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
