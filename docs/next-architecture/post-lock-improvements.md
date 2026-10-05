@@ -242,6 +242,20 @@ hardening work when the trigger applies.
   TypeScript loader. Existing provider confirmation behavior remains at the
   page boundary.
 
+### Stage 6 support modal checkpoint (2026-10-06)
+
+- `SupportModal.tsx` now owns the community/support presentation: tab
+  navigation, QQ group information and copy affordance, reward QR panel, and
+  modal close behavior.
+- The component receives the active tab, icon renderer, tab/close/copy
+  callbacks, and does not access the clipboard, notifications, storage, or
+  browser APIs directly.
+- `app/page.tsx` retains the support visibility/tab state and clipboard
+  adapters so existing notification text and user flow remain unchanged.
+- Behavior coverage renders both tabs through the shared TypeScript loader;
+  full test, typecheck, and production build verification is required before
+  the next page panel slice.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

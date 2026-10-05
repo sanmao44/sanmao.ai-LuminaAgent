@@ -118,6 +118,7 @@ import SidebarBrandHeader from '@/components/SidebarBrandHeader';
 import ManualModelDialog from '@/components/ManualModelDialog';
 import AdminLogin from '@/components/AdminLogin';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import SupportModal from '@/components/SupportModal';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -15913,202 +15914,20 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                     })
                 ]
             }),
-            supportOpen && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
-                className: "support-modal-backdrop",
-                role: "presentation",
-                onMouseDown: (event)=>{
-                    if (event.target === event.currentTarget) setSupportOpen(false);
+            supportOpen && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(SupportModal, {
+                tab: supportTab,
+                Icon: Icon,
+                onTabChange: setSupportTab,
+                onClose: ()=>setSupportOpen(false),
+                onCopyGroup: async ()=>{
+                    try {
+                        await navigator.clipboard.writeText('1104660815');
+                        notify('QQ群号已复制：1104660815');
+                    } catch {
+                        notify('QQ群：1104660815');
+                    }
                 },
-                children: /*#__PURE__*/ _jsxs("section", {
-                    className: "support-modal",
-                    role: "dialog",
-                    "aria-modal": "true",
-                    "aria-labelledby": "support-modal-title",
-                    children: [
-                        /*#__PURE__*/ _jsxs("header", {
-                            className: "support-modal-head",
-                            children: [
-                                /*#__PURE__*/ _jsxs("div", {
-                                    className: "support-modal-title",
-                                    children: [
-                                        /*#__PURE__*/ _jsx("span", {
-                                            className: "support-modal-logo",
-                                            children: "S"
-                                        }),
-                                        /*#__PURE__*/ _jsxs("div", {
-                                            children: [
-                                                /*#__PURE__*/ _jsx("small", {
-                                                    children: "SANMAO.AI COMMUNITY"
-                                                }),
-                                                /*#__PURE__*/ _jsx("h2", {
-                                                    id: "support-modal-title",
-                                                    children: "交流与支持"
-                                                })
-                                            ]
-                                        })
-                                    ]
-                                }),
-                                /*#__PURE__*/ _jsx("button", {
-                                    type: "button",
-                                    className: "support-modal-close",
-                                    onClick: ()=>setSupportOpen(false),
-                                    "aria-label": "关闭",
-                                    children: /*#__PURE__*/ _jsx(Icon, {
-                                        name: "close",
-                                        size: 18
-                                    })
-                                })
-                            ]
-                        }),
-                        /*#__PURE__*/ _jsxs("div", {
-                            className: "support-tabs",
-                            role: "tablist",
-                            "aria-label": "交流与支持选项",
-                            children: [
-                                /*#__PURE__*/ _jsxs("button", {
-                                    type: "button",
-                                    role: "tab",
-                                    "aria-selected": supportTab === 'community',
-                                    className: supportTab === 'community' ? 'active' : '',
-                                    onClick: ()=>setSupportTab('community'),
-                                    children: [
-                                        /*#__PURE__*/ _jsx("span", {
-                                            className: "support-tab-icon qq",
-                                            children: "Q"
-                                        }),
-                                        /*#__PURE__*/ _jsx("span", {
-                                            children: "QQ 交流群"
-                                        })
-                                    ]
-                                }),
-                                /*#__PURE__*/ _jsxs("button", {
-                                    type: "button",
-                                    role: "tab",
-                                    "aria-selected": supportTab === 'reward',
-                                    className: supportTab === 'reward' ? 'active' : '',
-                                    onClick: ()=>setSupportTab('reward'),
-                                    children: [
-                                        /*#__PURE__*/ _jsx("span", {
-                                            className: "support-tab-icon reward",
-                                            children: "♡"
-                                        }),
-                                        /*#__PURE__*/ _jsx("span", {
-                                            children: "赞赏开发"
-                                        })
-                                    ]
-                                })
-                            ]
-                        }),
-                        /*#__PURE__*/ _jsx("div", {
-                            className: "support-modal-body",
-                            children: supportTab === 'community' ? /*#__PURE__*/ _jsxs("div", {
-                                className: "support-community-panel",
-                                role: "tabpanel",
-                                children: [
-                                    /*#__PURE__*/ _jsxs("div", {
-                                        className: "support-community-hero",
-                                        children: [
-                                            /*#__PURE__*/ _jsx("span", {
-                                                className: "support-community-orb",
-                                                children: /*#__PURE__*/ _jsx("img", {
-                                                    src: "/brand-mark.png",
-                                                    alt: "SANMAO.AI"
-                                                })
-                                            }),
-                                            /*#__PURE__*/ _jsxs("div", {
-                                                children: [
-                                                    /*#__PURE__*/ _jsx("span", {
-                                                        children: "官方 QQ 交流群"
-                                                    }),
-                                                    /*#__PURE__*/ _jsx("strong", {
-                                                        children: "1104660815"
-                                                    }),
-                                                    /*#__PURE__*/ _jsx("small", {
-                                                        children: "交流创作技巧、反馈问题，也能第一时间获取更新动态"
-                                                    })
-                                                ]
-                                            })
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "support-copy-button",
-                                        onClick: async ()=>{
-                                            try {
-                                                await navigator.clipboard.writeText('1104660815');
-                                                notify('QQ群号已复制：1104660815');
-                                            } catch  {
-                                                notify('QQ群：1104660815');
-                                            }
-                                        },
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "copy",
-                                                size: 15
-                                            }),
-                                            "复制群号"
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("div", {
-                                        className: "support-community-note",
-                                        children: [
-                                            /*#__PURE__*/ _jsx("span", {
-                                                children: "加入方式"
-                                            }),
-                                            /*#__PURE__*/ _jsx("p", {
-                                                children: "打开 QQ → 搜索群号 → 申请加入"
-                                            })
-                                        ]
-                                    })
-                                ]
-                            }) : /*#__PURE__*/ _jsxs("div", {
-                                className: "support-reward-panel",
-                                role: "tabpanel",
-                                children: [
-                                    /*#__PURE__*/ _jsxs("div", {
-                                        className: "support-reward-copy",
-                                        children: [
-                                            /*#__PURE__*/ _jsx("span", {
-                                                children: "自愿赞赏"
-                                            }),
-                                            /*#__PURE__*/ _jsx("h3", {
-                                                children: "每一份支持，都会变成下一次更新"
-                                            }),
-                                            /*#__PURE__*/ _jsx("p", {
-                                                children: "如果 SANMAO.AI 帮到了你，可以扫码请开发者喝杯咖啡。完全自愿，不影响任何功能。"
-                                            })
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("div", {
-                                        className: "support-qr-card",
-                                        children: [
-                                            /*#__PURE__*/ _jsx("img", {
-                                                src: "/mm-reward-qrcode.png",
-                                                alt: "SANMAO.AI 赞赏码"
-                                            }),
-                                            /*#__PURE__*/ _jsx("small", {
-                                                children: "微信扫码赞赏"
-                                            })
-                                        ]
-                                    })
-                                ]
-                            })
-                        }),
-                        /*#__PURE__*/ _jsxs("footer", {
-                            className: "support-modal-foot",
-                            children: [
-                                /*#__PURE__*/ _jsx("span", {
-                                    children: "感谢你的反馈、陪伴与支持"
-                                }),
-                                /*#__PURE__*/ _jsx("button", {
-                                    type: "button",
-                                    onClick: ()=>void copyAuthorWechat(),
-                                    children: "联系作者 · 微信 wcsanmao"
-                                })
-                            ]
-                        })
-                    ]
-                })
+                onCopyWechat: copyAuthorWechat
             }), document.body),
             sharePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
                 className: "share-preview-backdrop",
