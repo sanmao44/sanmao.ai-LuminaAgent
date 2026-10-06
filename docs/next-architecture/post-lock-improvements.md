@@ -1,4 +1,4 @@
-﻿# Post-Lock Improvements
+# Post-Lock Improvements
 
 Last reviewed: 2026-10-06
 
@@ -1445,3 +1445,17 @@ hardening work when the trigger applies.
 - Validation: targeted processing/node-editor behavior tests passed (66/66),
   `npm run typecheck` passed, full `npm run check` passed (1831 tests passed,
   2 skipped; production build succeeded), and final `git diff --check` passed.
+
+### Stage 6 canvas activity drawer CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-activity.css` now owns the activity summary and event rows,
+  including status colors, truncation, and narrow-screen columns. It loads
+  directly after the base canvas stylesheet.
+- `app/canvas.css` retains the side-panel shell, shared empty state, task-log
+  card styles, and shared scrolling rules. Activity data mapping, timestamps,
+  status labels, and click behavior remain in `CanvasActivityDrawer.tsx`.
+- The existing activity drawer behavior test now checks its domain stylesheet.
+  No interaction, API, task mapping, or CanvasCore ownership changed.
+- Validation: focused activity drawer/workspace activity tests passed (14/14),
+  `npm run typecheck` passed, full `npm run check` passed (1832 tests passed,
+  2 skipped; production build succeeded), and `git diff --check` passed.

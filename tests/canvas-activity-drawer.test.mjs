@@ -11,6 +11,10 @@ const workspace = await readFile(
   "utf8",
 );
 const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
+const activityStyles = await readFile(
+  new URL("../app/canvas-activity.css", import.meta.url),
+  "utf8",
+);
 
 test("task log detail button toggles the currently selected task", () => {
   const drawerStart = component.indexOf("function CanvasActivityDrawer(");
@@ -42,6 +46,14 @@ test("task log metadata keeps the important output details visually distinct", (
   );
   assert.match(styles, /\.canvas-task-log-meta-count\{[^}]*color:var\(--accent-text\)/);
   assert.match(styles, /\.canvas-task-log-meta-duration\{[^}]*color:var\(--warning\)/);
+});
+
+test("activity drawer owns its responsive event-row presentation", () => {
+  assert.match(activityStyles, /\.canvas-activity-summary\{/);
+  assert.match(activityStyles, /\.canvas-activity-list>button\.ok \.canvas-activity-dot\{[^}]*var\(--success\)/);
+  assert.match(activityStyles, /\.canvas-activity-list>button\.error \.canvas-activity-dot\{[^}]*var\(--danger\)/);
+  assert.match(activityStyles, /@media\(max-width:720px\)\{\.canvas-activity-list>button\{grid-template-columns:56px 10px minmax\(0,1fr\)\}/);
+  assert.doesNotMatch(styles, /\.canvas-activity-summary\{|\.canvas-activity-list>button\.ok/);
 });
 
 test("task log keeps preview actions beside metadata instead of wasting a full row", () => {
