@@ -242,6 +242,7 @@ import CanvasAssetDrawer from "@/components/canvas/CanvasAssetDrawer";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import CanvasWorkspaceHeader from "@/components/canvas/CanvasWorkspaceHeader";
 import CanvasViewport, { CanvasWorld } from "@/components/canvas/CanvasViewport";
+import CanvasViewportOverlay from "@/components/canvas/CanvasViewportOverlay";
 import { CanvasSettingsPanel, CanvasShortcutsPanel, CONNECTION_STYLE_OPTIONS } from "@/components/canvas/CanvasPanels";
 import { CanvasGeneratorHelp, CanvasVariantRequirementsEditor } from "@/components/canvas/CanvasVariantEditors";
 import CanvasMinimap from "@/components/canvas/CanvasMinimap";
@@ -14167,69 +14168,15 @@ export default function SuperCanvas() {
           );
         }}
       >
-        {fileDropActive && (
-          <div className="canvas-file-drop-hint" aria-hidden="true">
-            <span>↥</span>
-            <b>{agentDropActive ? "松开以把这张图放到画布上" : "松开以导入图片或视频"}</b>
-          </div>
-        )}
-        {referencePicker && (
-          <div className="canvas-hint canvas-reference-picker-hint" role="status" aria-live="polite">
-            <span aria-hidden="true">⌁</span>
-            <div>
-              <b>正在选择参考素材</b>
-              <small>点击画布中的可用节点选择参考；空白处可平移，按 Esc 取消</small>
-            </div>
-          </div>
-        )}
-        {cloneTask && (
-          <button
-            type="button"
-            className="canvas-status-chip canvas-clone-chip"
-            title={`克隆出片进行中：${cloneTask.message || "生成中"}，点击查看进度`}
-            onClick={(event) => {
-              event.stopPropagation();
-              setCloneDialogOpen(true);
-            }}
-          >
-            <span aria-hidden="true" />
-            <b>克隆出片</b>
-            <small>{cloneTask.message || "生成中"}</small>
-            <em>{Math.round(Math.max(0, Math.min(1, cloneTask.progress)) * 100)}%</em>
-          </button>
-        )}
-        <div className="canvas-grid" />
-        {snapGuides.length > 0 && (
-          <div className="canvas-snap-guides" aria-hidden="true">
-            {snapGuides.map((guide) => {
-              const zoom = document.camera.zoom;
-              if (guide.axis === "x") {
-                return (
-                  <span
-                    className="canvas-snap-guide x"
-                    key={`${guide.axis}-${guide.targetId}`}
-                    style={{
-                      left: document.camera.x + guide.position * zoom,
-                      top: document.camera.y + guide.start * zoom,
-                      height: Math.max(1, (guide.end - guide.start) * zoom),
-                    }}
-                  />
-                );
-              }
-              return (
-                <span
-                  className="canvas-snap-guide y"
-                  key={`${guide.axis}-${guide.targetId}`}
-                  style={{
-                    left: document.camera.x + guide.start * zoom,
-                    top: document.camera.y + guide.position * zoom,
-                    width: Math.max(1, (guide.end - guide.start) * zoom),
-                  }}
-                />
-              );
-            })}
-          </div>
-        )}
+        <CanvasViewportOverlay
+          camera={document.camera}
+          fileDropActive={fileDropActive}
+          agentDropActive={agentDropActive}
+          referencePickerActive={Boolean(referencePicker)}
+          cloneTask={cloneTask}
+          snapGuides={snapGuides}
+          onOpenCloneDialog={() => setCloneDialogOpen(true)}
+        />
         <CanvasWorld camera={document.camera} zoomTier={canvasZoomTier}>
             <CanvasEdgeLayer
               document={document}

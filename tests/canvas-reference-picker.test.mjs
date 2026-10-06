@@ -6,6 +6,8 @@ const component = (await readFile(new URL("../components/canvas/CanvasWorkspace.
   .concat("\n", await readFile(new URL("../components/canvas/CanvasNodeEditorPopover.tsx", import.meta.url), "utf8"))
   .concat("\n", await readFile(new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url), "utf8"))
   .replace(/\r\n/g, "\n");
+const viewportOverlay = (await readFile(new URL("../components/canvas/CanvasViewportOverlay.tsx", import.meta.url), "utf8"))
+  .replace(/\r\n/g, "\n");
 const draftStrip = (await readFile(new URL("../components/CanvasReferenceDraftStrip.tsx", import.meta.url), "utf8"))
   .replace(/\r\n/g, "\n");
 const nodeReferenceStrip = (await readFile(new URL("../components/canvas/CanvasNodeReferenceStrip.tsx", import.meta.url), "utf8"))
@@ -62,9 +64,9 @@ test("reference controls expose canvas picking while keeping file upload availab
 
 test("picker feedback keeps a visible instruction without blocking canvas nodes", () => {
   assert.match(component, /cancelReferencePicker\(\)/);
-  assert.match(component, /className="canvas-hint canvas-reference-picker-hint"/);
-  assert.match(component, /正在选择参考素材/);
-  assert.match(component, /点击画布中的可用节点选择参考；空白处可平移，按 Esc 取消/);
+  assert.match(viewportOverlay, /className="canvas-hint canvas-reference-picker-hint"/);
+  assert.match(viewportOverlay, /正在选择参考素材/);
+  assert.match(viewportOverlay, /点击画布中的可用节点选择参考；空白处可平移，按 Esc 取消/);
   assert.match(styles, /reference-picker-target/);
   assert.match(styles, /reference-picker-hover/);
   assert.match(styles, /reference-picker-flash/);

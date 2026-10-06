@@ -10,6 +10,7 @@ const contextMenu = await readFile(new URL("../components/canvas/CanvasContextMe
 const selectionToolbar = await readFile(new URL("../components/canvas/CanvasSelectionToolbar.tsx", import.meta.url), "utf8");
 const nodeEditor = await readFile(new URL("../components/canvas/CanvasNodeEditorPopover.tsx", import.meta.url), "utf8");
 const workspaceHeader = await readFile(new URL("../components/canvas/CanvasWorkspaceHeader.tsx", import.meta.url), "utf8");
+const viewportOverlay = await readFile(new URL("../components/canvas/CanvasViewportOverlay.tsx", import.meta.url), "utf8");
 
 const [component, canvasSource, styles, context, canvasApi, markdown] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
@@ -20,7 +21,7 @@ const [component, canvasSource, styles, context, canvasApi, markdown] = await Pr
   readFile(new URL("../components/AgentMarkdown.tsx", import.meta.url), "utf8"),
 ]);
 
-const canvas = `${canvasSource}\n${workspaceHeader}\n${nodeEditor}`;
+const canvas = `${canvasSource}\n${workspaceHeader}\n${viewportOverlay}\n${nodeEditor}`;
 
 test("the canvas agent dock mounts in SuperCanvas and is bound to the selection", () => {
   assert.match(canvas, /<CanvasAgentDock[\s\S]*?contextBlock=\{agentDockContext\.text\}/);

@@ -4,6 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 
 const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
+const viewportOverlay = await readFile(new URL("../components/canvas/CanvasViewportOverlay.tsx", import.meta.url), "utf8");
 const dialog = await readFile(new URL("../components/canvas/CanvasCloneDialog.tsx", import.meta.url), "utf8");
 const route = await readFile(new URL("../app/api/clone/jobs/route.ts", import.meta.url), "utf8");
 const jobRoute = await readFile(new URL("../app/api/clone/jobs/[id]/route.ts", import.meta.url), "utf8");
@@ -365,9 +366,9 @@ test("没有对话模型也能出片：降级为纯画面，成片超长不静�
 
 test("克隆进度挂在画布右上角状态胶囊上，跑完/失败提示一次", () => {
   assert.match(canvas, /const \[cloneTask, setCloneTask\] = useState/);
-  assert.match(canvas, /className="canvas-status-chip canvas-clone-chip"/);
-  assert.match(canvas, /title={`克隆出片进行中：\$\{cloneTask\.message/);
-  assert.match(canvas, /onClick=\{\(event\) => \{\s*\n\s*event\.stopPropagation\(\);\s*\n\s*setCloneDialogOpen\(true\);\s*\n\s*\}\}/);
+  assert.match(viewportOverlay, /className="canvas-status-chip canvas-clone-chip"/);
+  assert.match(viewportOverlay, /title={`克隆出片进行中：\$\{cloneTask\.message/);
+  assert.match(viewportOverlay, /onClick=\{\(event\) => \{\s*\n\s*event\.stopPropagation\(\);\s*\n\s*onOpenCloneDialog\(\);\s*\n\s*\}\}/);
   // 画布 stage 会在 pointerdown 时 setPointerCapture，把 click 抢走；胶囊必须列进
   // 「自己处理指针事件」的浮层清单里，否则点它不会有反应。
   assert.match(canvas, /\.canvas-context-menu,\.canvas-status-chip,/);

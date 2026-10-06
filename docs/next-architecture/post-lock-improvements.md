@@ -1153,3 +1153,20 @@ hardening work when the trigger applies.
   selection mutations. A later viewport interaction slice needs dedicated
   behavior coverage before moving those callbacks; CSS domain splitting remains
   deferred.
+
+### Stage 3 canvas viewport overlay checkpoint (2026-10-06)
+
+- `components/canvas/CanvasViewportOverlay.tsx` now owns the canvas grid,
+  snap-guide projection, external-drop hint, reference-picker hint, and clone
+  progress chip presentation.
+- The component receives the existing camera, transient flags, snap guide list,
+  and clone progress projection. Its only action callback opens the existing
+  clone dialog; it does not poll tasks, mutate CanvasCore, or own drag/picker
+  state.
+- `CanvasWorkspace.tsx` now retains only the state derivation and callback
+  wiring for these overlays. Existing file-drop, reference-picker, clone UI,
+  double-click, and cursor behavior coverage was redirected to the new UI
+  owner without changing URL, API, persistence, or visual class contracts.
+- Targeted tests and typecheck pass. Full check remains required before the
+  stage commit; viewport pointer-state extraction and CSS domain movement stay
+  deferred because their behavior is still coupled to node gestures.

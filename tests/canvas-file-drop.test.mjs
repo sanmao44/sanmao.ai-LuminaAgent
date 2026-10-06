@@ -6,6 +6,10 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const overlay = await readFile(
+  new URL("../components/canvas/CanvasViewportOverlay.tsx", import.meta.url),
+  "utf8",
+);
 
 test("canvas accepts external file drops at the pointer position", () => {
   assert.match(component, /function hasExternalFileTransfer\(dataTransfer: DataTransfer\)/);
@@ -15,7 +19,7 @@ test("canvas accepts external file drops at the pointer position", () => {
     component,
     /handleFiles\(\s*event\.dataTransfer\.files,\s*screenToWorld\(event\.clientX, event\.clientY\)/,
   );
-  assert.match(component, /className="canvas-file-drop-hint"/);
+  assert.match(overlay, /className="canvas-file-drop-hint"/);
 });
 
 test("external file drops keep the existing asset drop handler as a fallback", () => {
