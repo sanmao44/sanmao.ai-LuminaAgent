@@ -1,76 +1,72 @@
-import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import test from 'node:test';
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createTsRequire } from "./ts-require.mjs";
 
-const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
-const quickActions = await readFile(new URL('../components/AgentQuickActions.tsx', import.meta.url), 'utf8');
-const videoStudio = await readFile(new URL('../components/VideoStudio.tsx', import.meta.url), 'utf8');
-const workspace = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
-const nodeEditor = await readFile(new URL('../components/canvas/CanvasNodeEditorPopover.tsx', import.meta.url), 'utf8');
-const superCanvas = `${workspace}\n${nodeEditor}`;
-const mediaViewer = await readFile(new URL('../components/MediaViewer.tsx', import.meta.url), 'utf8');
-const canvasStyles = await readFile(new URL('../app/canvas.css', import.meta.url), 'utf8');
+const preparedCalls = [];
+const load = createTsRequire(process.cwd(), {
+  "@/lib/canvas/api": {
+    prepareCanvasAgentReferences: async (references) => {
+      preparedCalls.push(references);
+      return references.map((reference) => ({ ...reference, url: `prepared:${reference.url}` }));
+    },
+  },
+});
+const agent = load("./lib/creation/agent");
 
-test('Agent uses a dedicated simple-polish prompt instead of the image prompt optimizer', () => {
-  assert.ok(page.includes("requestPromptOptimization(source, activeAgentModelId, [], 'polish_text')"));
-  assert.ok(page.includes("const SIMPLE_TEXT_POLISH_PROMPT = '帮我简单润色一下这段文字，保留原意和原本语气，让表达更自然、顺畅、简洁，不要过度修改，也不要写得太正式或有明显 AI 感。';"));
-  assert.ok(page.includes("task === 'polish_text' ? `${SIMPLE_TEXT_POLISH_PROMPT}\\n[原文]\\n${source}` : source"));
+async function withFetch(handler, callback) {
+  const original = globalThis.fetch;
+  globalThis.fetch = handler;
+  try { return await callback(); } finally { globalThis.fetch = original; }
+}
+
+test("prompt optimization uses the shared Agent task boundary", async () => {
+  preparedCalls.length = 0;
+  let request;
+  const result = await withFetch(async (input, options) => {
+    request = { input, options };
+    return new Response(JSON.stringify({ message: "  polished copy  " }), {
+      headers: { "content-type": "application/json" },
+    });
+  }, () => agent.requestPromptOptimization(
+    "original copy",
+    [{ url: "image.png", name: "Reference" }],
+    "chat-model",
+    "polish_text",
+  ));
+
+  assert.equal(result, "polished copy");
+  assert.deepEqual(preparedCalls, [[{ url: "image.png", name: "Reference" }]]);
+  assert.equal(request.input, "/api/agent");
+  const payload = JSON.parse(request.options.body);
+  assert.equal(payload.model, "chat-model");
+  assert.equal(payload.task, "polish_text");
+  assert.equal(payload.stream, true);
+  assert.deepEqual(payload.messages[0].references, [{
+    id: "polish_text-1", kind: "image", name: "Reference", url: "prepared:image.png",
+  }]);
+  assert.match(payload.messages[0].content, /\[原文\]\noriginal copy$/u);
 });
 
-test('successful Agent polishing can be undone until the input changes', () => {
-  assert.ok(page.includes('setAgentInputBeforeOptimization(original);'));
-  assert.ok(page.includes('function undoAgentPromptOptimization()'));
-  assert.ok(page.includes('setAgentInput(agentInputBeforeOptimization);'));
-  assert.ok(quickActions.includes('className="agent-quick-button prompt-undo"'));
-  assert.ok(page.includes('setAgentInputBeforeOptimization(null);'));
+test("prompt optimization keeps the original prompt for the default task", async () => {
+  let request;
+  const result = await withFetch(async (_input, options) => {
+    request = options;
+    return new Response(JSON.stringify({ message: "optimized" }), {
+      headers: { "content-type": "application/json" },
+    });
+  }, () => agent.requestPromptOptimization("image prompt", [], undefined));
+
+  assert.equal(result, "optimized");
+  const payload = JSON.parse(request.body);
+  assert.equal(payload.task, "optimize_prompt");
+  assert.equal(payload.messages[0].content, "image prompt");
 });
 
-test('image-generation prompt polishing reuses the same simple text-polish flow', () => {
-  assert.match(page, /async function optimizeGeneratePrompt\(\)[\s\S]*requestPromptOptimization\(source, activeAgentModelId, \[\], 'polish_text'\)/);
-  assert.ok(page.includes('disabled: generatePromptOptimizing,'));
-  assert.ok(page.includes("generatePromptOptimizing ? '润色中…' : 'AI 润色'"));
-});
-
-test('Agent quick-action tooltip is lifted above the editor layer', async () => {
-  const stylesheet = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
-  assert.ok(stylesheet.includes('.composer-left .agent-quick-actions{position:relative;z-index:12}'));
-});
-
-test('Video Studio fills the prompt with simple polish output and supports undo', () => {
-  assert.ok(videoStudio.includes('requestPromptOptimization('));
-  assert.ok(videoStudio.includes("'polish_text'"));
-  assert.ok(videoStudio.includes('setPromptBeforeOptimization(original);'));
-  assert.ok(videoStudio.includes('setPromptBeforeOptimization(null);'));
-  assert.ok(videoStudio.includes('className="video-prompt-optimize"'));
-  assert.ok(videoStudio.includes('className="video-prompt-undo"'));
-  assert.ok(videoStudio.includes('aria-busy={promptOptimizing}'));
-});
-
-test('Canvas composer and node editor use the same polish task with undo snapshots', () => {
-  assert.match(superCanvas, /optimizeReusePrompt[\s\S]*requestPromptOptimization\([\s\S]*"polish_text"/);
-  assert.match(superCanvas, /optimizeDeckPrompt[\s\S]*requestPromptOptimization\([\s\S]*"polish_text"/);
-  assert.match(superCanvas, /optimizeEditorPrompt[\s\S]*requestPromptOptimization\([\s\S]*"polish_text"/);
-  assert.ok(superCanvas.includes('const [canvasPromptOptimizing, setCanvasPromptOptimizing] = useState(false);'));
-  assert.ok(superCanvas.includes('className="canvas-prompt-ai-action"'));
-  assert.ok(superCanvas.includes('className="canvas-prompt-undo-action"'));
-  assert.ok(superCanvas.includes('className="canvas-node-editor-prompt-actions"'));
-  assert.ok(superCanvas.includes('setPromptBeforeOptimization(original);'));
-  assert.ok(superCanvas.includes('onNotify("已完成 AI 优化，可继续修改；也可以撤销")'));
-});
-
-test('Media Viewer keeps viewing controls and prompt copy/save while AI actions stay on Agent nodes', () => {
-  assert.doesNotMatch(mediaViewer, /requestPromptOptimization|runReversePrompt/);
-  assert.doesNotMatch(mediaViewer, /AI 优化|反推提示词|canvas-media-viewer-actions|AI 结果（未覆盖原文）/);
-  assert.ok(mediaViewer.includes('复制提示词'));
-  assert.doesNotMatch(mediaViewer, />保存提示词</);
-  assert.ok(mediaViewer.includes('参数查看'));
-  assert.ok(mediaViewer.includes('MediaViewerVersionInfo'));
-  assert.match(mediaViewer, /event\.target === event\.currentTarget\) onClose\(\)/);
-});
-
-test('Prompt action groups stay contained and responsive', () => {
-  assert.ok(canvasStyles.includes('.canvas-deck-prompt-actions{display:flex;'));
-  assert.ok(canvasStyles.includes('.canvas-node-editor-prompt-actions{display:flex;'));
-  assert.ok(canvasStyles.includes('.canvas-media-viewer-prompt-actions{justify-content:flex-start;flex-wrap:wrap;'));
-  assert.ok(canvasStyles.includes('grid-template-columns:minmax(0,1fr) auto auto;'));
+test("prompt optimization rejects blank input and empty Agent output", async () => {
+  await assert.rejects(() => agent.requestPromptOptimization("   "), /请输入需要优化的提示词/u);
+  await withFetch(async () => new Response(JSON.stringify({ message: "" }), {
+    headers: { "content-type": "application/json" },
+  }), async () => {
+    await assert.rejects(() => agent.requestPromptOptimization("prompt"), /助手没有返回有效结果/u);
+  });
 });

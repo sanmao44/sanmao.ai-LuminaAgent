@@ -45,6 +45,7 @@ import { filterSkills, skillMessageValue, skillSlashQuery } from '@/lib/skill-pi
 import { normalizeConversationPersona, personaBadgeLabel } from '@/lib/agent-persona';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS } from '@/lib/creation/settings';
+import { requestPromptOptimization } from '@/lib/creation/agent';
 import { cleanupGenerationLogs, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
 import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVideoTask as patchVideoTaskRequest, saveVideoTaskLocally as saveVideoTaskLocallyRequest } from '@/lib/video-task-client';
 import { createManualStorageSnapshot, loadStorageMaintenance, restoreLocalStorageSnapshot } from '@/lib/storage-maintenance-client';
@@ -1026,25 +1027,6 @@ async function downloadChatFile(file) {
     anchor.click();
     anchor.remove();
     window.setTimeout(()=>URL.revokeObjectURL(objectUrl), 1500);
-}
-const SIMPLE_TEXT_POLISH_PROMPT = '帮我简单润色一下这段文字，保留原意和原本语气，让表达更自然、顺畅、简洁，不要过度修改，也不要写得太正式或有明显 AI 感。';
-async function requestPromptOptimization(source, model, references = [], task = 'optimize_prompt') {
-    const prompt = task === 'polish_text' ? `${SIMPLE_TEXT_POLISH_PROMPT}\n[原文]\n${source}` : source;
-    const data = await requestAgent({
-            messages: [
-                {
-                    role: 'user',
-                    content: prompt,
-                    references,
-                    files: []
-                }
-            ],
-            model,
-            task
-        });
-    const optimized = String(data.message || '').trim();
-    if (!optimized) throw new Error('助手没有返回优化后的文案');
-    return optimized;
 }
 function Icon({ name, size = 18 }) {
     const paths = {
@@ -7666,7 +7648,7 @@ export default function Page() {
         if (promptOptimizing) return;
         setPromptOptimizing(true);
         try {
-            const optimized = await requestPromptOptimization(source, activeAgentModelId, [], 'polish_text');
+            const optimized = await requestPromptOptimization(source, [], activeAgentModelId, 'polish_text');
             setAgentInputBeforeOptimization(original);
             setAgentInput(optimized);
             requestAnimationFrame(()=>{
@@ -7694,7 +7676,7 @@ export default function Page() {
         if (generatePromptOptimizing) return;
         setGeneratePromptOptimizing(true);
         try {
-            const optimized = await requestPromptOptimization(source, activeAgentModelId, [], 'polish_text');
+            const optimized = await requestPromptOptimization(source, [], activeAgentModelId, 'polish_text');
             setGeneratePromptBeforeOptimization(generatePrompt);
             setGeneratePrompt(optimized);
             requestAnimationFrame(()=>{

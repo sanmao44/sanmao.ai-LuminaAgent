@@ -7,6 +7,22 @@ Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
 
+### Stage 5 prompt optimization boundary checkpoint (2026-10-06)
+
+- `lib/creation/agent.ts` is now the single implementation for prompt
+  optimization and simple text polishing. It owns prompt task selection,
+  reference preparation, Agent request streaming, and empty-result errors.
+- `app/page.tsx` keeps only the two page interaction flows: input validation,
+  undo snapshots, focus restoration, notifications, and state updates. Its
+  duplicate request helper and prompt constant were removed; the existing
+  request URL, task names, payload shape, and user-facing flow are unchanged.
+- Behavior coverage in `tests/agent-prompt-optimization.test.mjs` executes the
+  shared boundary with injected reference preparation and mocked Agent HTTP,
+  covering polish/default tasks, payloads, blank input, and empty output.
+- Remaining risk: the page still owns Agent lifecycle, image generation, and
+  share/browser API orchestration. Those flows cross broader state and should
+  remain separate slices with dedicated behavior coverage.
+
 ### Stage 5 gallery history projection checkpoint (2026-10-06)
 
 - `lib/creation/gallery-items.ts` now owns the pure projection from generated
