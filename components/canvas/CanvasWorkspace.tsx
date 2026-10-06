@@ -241,6 +241,7 @@ import CanvasAssetCollectionPicker from "@/components/canvas/CanvasAssetCollecti
 import CanvasAssetDrawer from "@/components/canvas/CanvasAssetDrawer";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import CanvasWorkspaceHeader from "@/components/canvas/CanvasWorkspaceHeader";
+import CanvasViewport, { CanvasWorld } from "@/components/canvas/CanvasViewport";
 import { CanvasSettingsPanel, CanvasShortcutsPanel, CONNECTION_STYLE_OPTIONS } from "@/components/canvas/CanvasPanels";
 import { CanvasGeneratorHelp, CanvasVariantRequirementsEditor } from "@/components/canvas/CanvasVariantEditors";
 import CanvasMinimap from "@/components/canvas/CanvasMinimap";
@@ -13990,12 +13991,10 @@ export default function SuperCanvas() {
           />
         );
       })()}
-      <div
+      <CanvasViewport
         ref={stageRef}
         className={`canvas-stage ${panReady ? "is-pan-ready" : ""} ${panActive ? "is-panning" : ""} ${fileDropActive ? "is-file-drop-target" : ""} ${cursorTask !== "idle" ? `is-cursor-${cursorTask}` : ""}`}
-        data-canvas-cursor-task={cursorTask}
-        tabIndex={-1}
-        aria-keyshortcuts="Delete"
+        cursorTask={cursorTask}
         onPointerDown={handleStagePointerDown}
         onPointerDownCapture={handleStagePointerDownCapture}
         onPointerMove={(event) => {
@@ -14231,14 +14230,7 @@ export default function SuperCanvas() {
             })}
           </div>
         )}
-        <div className="canvas-world">
-          <div
-            className="canvas-world-content"
-            data-zoom-tier={canvasZoomTier}
-            style={{
-              transform: `translate3d(${document.camera.x}px,${document.camera.y}px,0) scale(${document.camera.zoom})`,
-            }}
-          >
+        <CanvasWorld camera={document.camera} zoomTier={canvasZoomTier}>
             <CanvasEdgeLayer
               document={document}
               visibleEdges={visibleCanvasEdges}
@@ -14343,8 +14335,7 @@ export default function SuperCanvas() {
                 />
               )}
             />
-          </div>
-        </div>
+        </CanvasWorld>
         {selectedSingle &&
           quickToolbarNodeId === selectedSingle.id &&
           !nodeGestureActive &&
@@ -15475,7 +15466,7 @@ export default function SuperCanvas() {
             </div>
           </CanvasContextMenuFrame>
         ) : null}
-      </div>
+      </CanvasViewport>
       {panoramaNodeId && (() => {
         const panoramaNode = nodeById(document, panoramaNodeId);
         const reference = canvasAngleReference(panoramaNode, isCanvasReadyImageSource);

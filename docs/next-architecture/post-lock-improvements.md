@@ -1134,3 +1134,22 @@ hardening work when the trigger applies.
   and workbench coordination. The next safe slice should be selected only after
   its props contract is isolated; broad CSS movement remains intentionally
   deferred.
+
+### Stage 3 canvas viewport shell checkpoint (2026-10-06)
+
+- `components/canvas/CanvasViewport.tsx` now owns the stable canvas stage DOM
+  contract, including the forwarded stage ref, cursor metadata, pointer,
+  drag/drop, context-menu, double-click, and wheel event surfaces.
+- `CanvasWorld` in the same module owns the camera transform wrapper and zoom
+  tier projection. It receives the existing `CanvasDocument.camera` projection
+  and does not store or mutate viewport state.
+- `CanvasWorkspace.tsx` still owns every event callback, interaction state,
+  coordinate conversion, CanvasCore action, selection mutation, and node/group
+  gesture. No React viewport store or duplicate camera authority was added.
+- Existing cursor, file-drop, double-click, reference-picker, and node-gesture
+  behavior tests pass after redirecting only the moved cursor metadata assertion
+  to the new owner.
+- Remaining risk: the pointer state machine is still interleaved with node and
+  selection mutations. A later viewport interaction slice needs dedicated
+  behavior coverage before moving those callbacks; CSS domain splitting remains
+  deferred.

@@ -11,6 +11,10 @@ const component = (await readFile(
   new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url),
   "utf8",
 ));
+const viewport = await readFile(
+  new URL("../components/canvas/CanvasViewport.tsx", import.meta.url),
+  "utf8",
+);
 const groupLayer = await readFile(
   new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url),
   "utf8",
@@ -61,7 +65,7 @@ test("canvas cursor follows the active pointer task", () => {
   assert.match(component, /setCursorTask\("resizing"\)/);
   assert.match(component, /setCursorTask\("dragging"\)/);
   assert.match(component, /setCursorTask\("copying"\)/);
-  assert.match(component, /data-canvas-cursor-task=\{cursorTask\}/);
+  assert.match(viewport, /data-canvas-cursor-task=\{cursorTask\}/);
   assert.match(css, /\.canvas-stage\.is-cursor-selecting,\.canvas-stage\.is-cursor-selecting \*\{cursor:crosshair!important\}/);
   assert.match(css, /\.canvas-stage\.is-cursor-connecting,\.canvas-stage\.is-cursor-connecting \*\{cursor:crosshair!important\}/);
   assert.match(css, /\.canvas-stage\.is-cursor-resizing,\.canvas-stage\.is-cursor-resizing \*\{cursor:nwse-resize!important\}/);
