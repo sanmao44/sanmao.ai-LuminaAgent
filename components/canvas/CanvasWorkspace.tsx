@@ -353,6 +353,10 @@ import {
 import { canvasVideoInputError } from "@/lib/canvas/video-input-validation";
 import { canvasVideoInputCapabilities } from "@/lib/canvas/video-capabilities";
 import {
+  mentionedCanvasMedia,
+  resolveCanvasMentionTokens,
+} from "@/lib/canvas/mention-resolution";
+import {
   copyCanvasGenerationParams,
   defaultCanvasGenerationParams,
 } from "@/lib/canvas/generation-params";
@@ -1723,27 +1727,6 @@ function compiledCanvasLocalEditPrompt(
   return annotations ? compileLocalEditPrompt(prompt, annotations) : prompt;
 }
 
-
-function mentionedMedia(prompt: string, candidates: CanvasNode[]) {
-  const ids = [...prompt.matchAll(/@([0-9]+)/g)]
-    .map((match) => Number(match[1]) - 1)
-    .filter(
-      (index) =>
-        Number.isInteger(index) && index >= 0 && index < candidates.length,
-    )
-    .map((index) => candidates[index].id);
-  return candidates.filter((node) => ids.includes(node.id) && isCanvasReferenceableNode(node));
-}
-
-function resolveMentionTokens(prompt: string, candidates: CanvasNode[]) {
-  return prompt.replace(/@([0-9]+)/g, (token, rawIndex: string) => {
-    const index = Number(rawIndex) - 1;
-    const candidate = index >= 0 && index < candidates.length ? candidates[index] : undefined;
-    return candidate
-      ? candidate.type === "prompt" ? `引用文本${index + 1}` : candidate.data.kind === "video" ? `参考视频${index + 1}` : `参考图${index + 1}`
-      : token;
-  });
-}
 
 function isEditableTarget(target: EventTarget | null) {
   return (
@@ -6403,7 +6386,7 @@ export default function SuperCanvas() {
       const promptFor = (index: number) => {
         const instruction = naturalRequirements[index]?.value || requirements[index];
         return smartPrompt(
-          resolveMentionTokens(
+          resolveCanvasMentionTokens(
             [
               naturalCommonPrompt.value,
               instruction ? `变体要求：${instruction}` : "",
@@ -8167,7 +8150,7 @@ export default function SuperCanvas() {
       ...new Map(
         [
           ...(hasExplicitMentions ? currentTargetInput : baseLinked),
-          ...mentionedMedia(sourcePrompt, mentionCandidates),
+          ...mentionedCanvasMedia(sourcePrompt, mentionCandidates, isCanvasReferenceableNode),
         ].map((node) => [node.id, node]),
       ).values(),
     ];
@@ -8177,7 +8160,7 @@ export default function SuperCanvas() {
       ...(hasExplicitMentions ? [] : selectedNodes.filter((node) => node.type === "prompt")),
     ];
     const prompt = smartPrompt(
-      resolveMentionTokens(sourcePrompt, mentionCandidates),
+      resolveCanvasMentionTokens(sourcePrompt, mentionCandidates),
       context,
     );
     if (!prompt.trim()) return notify("请输入生成提示词。", "error");

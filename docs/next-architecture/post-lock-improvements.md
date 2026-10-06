@@ -677,3 +677,23 @@ hardening work when the trigger applies.
 - Remaining risk: video mode synchronization still spans edge ordering,
   reference roles, and document updates; it remains in Workspace until a
   complete behavior-covered contract can move it safely.
+
+### Stage 5 canvas mention resolution checkpoint (2026-10-06)
+
+- `lib/canvas/mention-resolution.ts` now owns the pure conversion of numbered
+  `@N` canvas mentions into referenced media and provider-facing semantic
+  labels. It receives the existing referenceability predicate explicitly, so
+  node eligibility remains owned by Canvas model code.
+- `CanvasWorkspace.tsx` no longer defines `mentionedMedia` or
+  `resolveMentionTokens`; generation and variant prompt call sites use the
+  extracted functions. Input state, mention menus, context assembly, and task
+  orchestration remain in Workspace.
+- Behavior coverage verifies media selection order, invalid/non-media mentions,
+  and image/video/text label replacement while preserving unknown tokens. No
+  URL, API payload, persisted shape, or user interaction changed.
+- Validation: targeted mention resolution tests and `npm run typecheck` passed.
+  Full `npm test`, `npm run build`, and `npm run check` remain required before
+  committing this checkpoint.
+- Remaining risk: natural-language reference replacement and mention menu
+  presentation still depend on broader creative-reference and UI contracts;
+  they remain in their existing modules.
