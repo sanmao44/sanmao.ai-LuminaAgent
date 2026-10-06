@@ -1850,3 +1850,11 @@ hardening work when the trigger applies.
 - The legacy source-coupled Agnes parameter test was narrowed to the two paths that still own inline request construction. Variant payload behavior is covered by the new projection test, while `canvas-api.test.mjs` continues to verify final Agnes request serialization.
 - Validation: focused canvas/API/variant tests passed (108/108); `npm run check` passed (1852 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
 - Remaining risk: task polling, variant state transitions, and video result creation remain in `CanvasWorkspace.tsx`; extracting them requires an explicit task lifecycle contract and broader behavior coverage.
+
+### Stage 5 variant video polling projection checkpoint (2026-10-06)
+
+- `canvasVariantVideoTaskData` in `lib/canvas/variant-batch.ts` now owns the pure projection from a polled task to media node status, progress, URL, status label, and generation duration.
+- `CanvasWorkspace.tsx` keeps document traversal, task polling, variant aggregate state, and command/history side effects; `applyVideoTask` no longer duplicates node data projection.
+- Behavior coverage verifies completed task URL/progress/status and duration projection.
+- Validation: focused variant tests passed (11/11); `npm run check` passed (1853 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
+- Remaining risk: the polling loop and task lifecycle still live in Workspace; extracting them safely would require a shared runtime contract and coverage for timeout, retry, cancellation, and background reconciliation.

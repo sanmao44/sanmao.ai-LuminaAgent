@@ -130,6 +130,24 @@ test("keeps a pending variant video task running without duration", () => {
   assert.equal(pending.generation?.durationMs, undefined);
 });
 
+test("projects a polled video task onto existing node data", () => {
+  const data = batch.canvasVariantVideoTaskData(
+    {
+      kind: "video",
+      status: "running",
+      url: "",
+      generation: { kind: "video", createdAt: 1000 },
+    },
+    { status: "done", progress: 100, videoUrls: ["/finished.mp4"] },
+    1750,
+  );
+
+  assert.equal(data.status, "completed");
+  assert.equal(data.progress, 100);
+  assert.equal(data.url, "/finished.mp4");
+  assert.equal(data.generation?.durationMs, 750);
+});
+
 test("projects image variant provenance and duration without owning node creation", () => {
   const params = { kind: "image", model: "image-model", count: 1 };
   const data = batch.canvasVariantImageNodeData({

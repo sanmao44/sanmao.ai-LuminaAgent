@@ -98,6 +98,39 @@ export function canvasVideoTaskProgress(task: {
   };
 }
 
+/** Projects one polled video task into the existing media node data shape. */
+export function canvasVariantVideoTaskData(
+  data: CanvasNodeData,
+  task: {
+    status: string;
+    progress?: number;
+    videoUrls?: readonly string[];
+    error?: string;
+  },
+  now: number,
+): CanvasNodeData {
+  const progress = canvasVideoTaskProgress(task);
+  const generationDurationMs = progress.terminal && data.generation?.createdAt
+    ? Math.max(0, now - data.generation.createdAt)
+    : undefined;
+  return {
+    ...data,
+    status: progress.status,
+    progress: progress.progress,
+    url: progress.url || data.url,
+    statusLabel:
+      task.error ||
+      (progress.status === "completed"
+        ? "瑙嗛宸插畬鎴?"
+        : progress.terminal
+          ? "瑙嗛浠诲姟宸蹭腑鏂?"
+          : "瑙嗛鐢熸垚涓?"),
+    ...(generationDurationMs !== undefined && data.generation
+      ? { generation: { ...data.generation, durationMs: generationDurationMs } }
+      : {}),
+  };
+}
+
 export function canvasVariantVideoNodeData(input: {
   task: {
     id: string;

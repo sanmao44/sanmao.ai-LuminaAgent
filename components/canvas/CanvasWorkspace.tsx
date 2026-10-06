@@ -375,6 +375,7 @@ import {
   canvasVideoTaskProgress,
   canvasVariantImageRequest,
   canvasVariantVideoRequest,
+  canvasVariantVideoTaskData,
   canvasVariantVideoNodeData,
   prepareCanvasVariantBatch,
 } from "@/lib/canvas/variant-batch";
@@ -6073,35 +6074,15 @@ export default function SuperCanvas() {
           error?: string;
         },
       ) => {
-        const progress = canvasVideoTaskProgress(task);
         let next = {
           ...value,
-          nodes: value.nodes.map((node) => {
-            if (node.id !== targetId) return node;
-            const generationDurationMs = progress.terminal && node.data.generation?.createdAt
-              ? Math.max(0, Date.now() - node.data.generation.createdAt)
-              : undefined;
-            return {
-              ...node,
-              data: {
-                ...node.data,
-                status: progress.status,
-                progress: progress.progress,
-                url: progress.url || node.data.url,
-                statusLabel:
-                  task.error ||
-                  (progress.status === "completed"
-                    ? "视频已完成"
-                    : progress.terminal
-                      ? "视频任务已中断"
-                      : "视频生成中"),
-                ...(generationDurationMs !== undefined && node.data.generation
-                  ? { generation: { ...node.data.generation, durationMs: generationDurationMs } }
-                  : {}),
-              },
-            };
-          }),
+          nodes: value.nodes.map((node) =>
+            node.id === targetId
+              ? { ...node, data: canvasVariantVideoTaskData(node.data, task, Date.now()) }
+              : node,
+          ),
         };
+        const progress = canvasVideoTaskProgress(task);
         next = updateVariantState(next, index, {
           status: progress.status,
           progress: progress.progress,
