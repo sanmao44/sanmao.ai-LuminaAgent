@@ -137,6 +137,7 @@ import { canvasRectForRatio, cropSourceRect } from '@/lib/image-editor/local-ima
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 import { buildGalleryItems } from '@/lib/creation/gallery-items';
+import { storeImages } from '@/lib/image-storage-client';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -5988,18 +5989,9 @@ export default function Page() {
         const mediaSource = source.filter((entry)=>entry.reference.kind !== 'text');
         if (!mediaSource.length) return textRecords;
         try {
-            const response = await fetch('/api/storage/images', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    images: mediaSource.filter((entry)=>entry.reference.kind === 'image').map((entry)=>({ url: entry.dataUrl }))
-                })
-            });
-            const data = await response.json().catch(()=>({}));
+            const data = await storeImages(mediaSource.filter((entry)=>entry.reference.kind === 'image').map((entry)=>({ url: entry.dataUrl })));
             const imageSource = mediaSource.filter((entry)=>entry.reference.kind === 'image');
-            if (response.ok && Array.isArray(data.images)) return [
+            if (data.ok && Array.isArray(data.images)) return [
                 ...textRecords,
                 ...mediaSource.map((entry)=>({
                     id: entry.reference.id,
@@ -6020,20 +6012,9 @@ export default function Page() {
     async function persistHistoryImage(image) {
         if (!image?.url || (!image.url.startsWith('data:image/') && !/^https?:\/\//i.test(image.url))) return image;
         try {
-            const response = await fetch('/api/storage/images', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    images: [
-                        image
-                    ]
-                })
-            });
-            const data = await response.json().catch(()=>({}));
+            const data = await storeImages([image]);
             const saved = data.images?.[0];
-            return response.ok && typeof saved?.url === 'string' ? {
+            return data.ok && typeof saved?.url === 'string' ? {
                 ...image,
                 ...saved
             } : image;
@@ -7869,22 +7850,9 @@ export default function Page() {
         };
         let sourceUrl = item.url;
         if (/^https?:\/\//i.test(sourceUrl)) {
-            const cacheResponse = await fetch('/api/storage/images', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    images: [
-                        {
-                            url: sourceUrl
-                        }
-                    ]
-                })
-            });
-            const cacheData = await cacheResponse.json().catch(()=>({}));
+            const cacheData = await storeImages([{ url: sourceUrl }]);
             const cachedUrl = cacheData?.images?.[0]?.url;
-            if (!cacheResponse.ok || typeof cachedUrl !== 'string' || cachedUrl === sourceUrl) throw new Error('服务端无法读取这张远程图片，可能是图片链接已失效');
+            if (!cacheData.ok || typeof cachedUrl !== 'string' || cachedUrl === sourceUrl) throw new Error('服务端无法读取这张远程图片，可能是图片链接已失效');
             sourceUrl = cachedUrl;
         }
         const response = await fetch(sourceUrl);

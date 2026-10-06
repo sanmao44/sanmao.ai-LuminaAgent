@@ -26,6 +26,21 @@ hardening work when the trigger applies.
   effects; moving those requires an explicit application boundary and should
   not be combined with this pure projection.
 
+### Stage 6 image storage HTTP client checkpoint (2026-10-06)
+
+- `lib/image-storage-client.ts` now owns the browser HTTP boundary for the
+  existing `/api/storage/images` endpoint: request serialization, response
+  parsing, and valid image-record filtering.
+- `app/page.tsx` uses the client for reference persistence, history image
+  archival, and history-to-reference caching. It retains the existing fallback
+  behavior, user-facing errors, image conversion, and all React/Repository
+  side effects.
+- No URL, API payload, storage format, or user interaction changed. Canvas
+  API adapters remain independent and continue to own their own runtime
+  caching behavior.
+- Behavior coverage: `tests/image-storage-client.test.mjs`; full validation is
+  required before committing this checkpoint.
+
 ## File size and component splits
 
 - `app/page.tsx`, `components/SuperCanvas.tsx`, `components/CanvasAgentDock.tsx`,
