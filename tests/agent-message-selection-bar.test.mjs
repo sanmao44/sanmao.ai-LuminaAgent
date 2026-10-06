@@ -22,6 +22,7 @@ const selectionPushCompiled = ts.transpileModule(selectionPushSource, {
 const selectionPushModule = { exports: {} };
 new Function('require', 'module', 'exports', selectionPushCompiled)(require, selectionPushModule, selectionPushModule.exports);
 const AgentSelectionPush = selectionPushModule.exports.default;
+const selectionStyles = await readFile(new URL('../app/agent-selection-push.css', import.meta.url), 'utf8');
 
 test('AgentMessageSelectionBar exposes count, cancel and guarded delete actions', () => {
   const markup = renderToStaticMarkup(createElement(AgentMessageSelectionBar, {
@@ -73,4 +74,12 @@ test('AgentSelectionPush disables video handoff when no video model is available
   assert.match(markup, /selection-push below/);
   assert.match(markup, /请先启用模型/);
   assert.equal((markup.match(/disabled=""/g) || []).length, 2);
+});
+
+test('AgentSelectionPush keeps its responsive and reduced-motion styles in the feature sheet', () => {
+  assert.match(selectionStyles, /\.selection-push\{position:fixed/);
+  assert.match(selectionStyles, /\.selection-push\.above\{/);
+  assert.match(selectionStyles, /\.selection-push\.below\{/);
+  assert.match(selectionStyles, /@media\(max-width:520px\)/);
+  assert.match(selectionStyles, /@media\(prefers-reduced-motion:reduce\)/);
 });

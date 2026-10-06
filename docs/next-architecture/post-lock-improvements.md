@@ -1965,3 +1965,11 @@ hardening work when the trigger applies.
 - Behavior coverage is colocated with the existing `agent-message-selection-bar` behavior test using transpile-and-execute; no new source-layout test was added.
 - Validation: focused selection, composer, and one-take tests passed (12/12); `npm run typecheck` passed; full `npm run check` passed (1857 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
 - Remaining risk: the page still owns the full Agent message rendering and request lifecycle; extracting those safely requires larger interaction contracts and is outside this small slice.
+
+### Stage 6 agent selection push CSS boundary checkpoint (2026-10-07)
+
+- `app/agent-selection-push.css` now owns the selected-text handoff bar's feature styles: fixed placement, above/below transforms, image/video groups, responsive button layout, and reduced-motion behavior.
+- `app/globals.css` no longer carries those feature-specific rules; shared message and global surface styles remain unchanged. `app/layout.tsx` loads the feature sheet after the shared Agent styles, preserving cascade order. Existing `shadow-tuning.css` continues to provide the later shadow override.
+- The new stylesheet has no state, API, or data dependencies. URL, interaction, visual class names, and page callbacks are unchanged.
+- Validation: focused selection and CSS contract tests passed (5/5); `npm run typecheck` passed; full `npm run check` passed (1858 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
+- Remaining risk: `app/globals.css` still contains large legacy page and editor domains. Moving those safely requires domain-specific style contracts and visual coverage, especially for the complex image editor and provider settings forms.
