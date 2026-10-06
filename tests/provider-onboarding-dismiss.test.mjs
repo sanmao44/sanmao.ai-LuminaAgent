@@ -14,6 +14,7 @@ const providerListSource = await readFile(new URL('../components/ProviderList.ts
 const platformPickerSource = await readFile(new URL('../components/ProviderPlatformPicker.tsx', import.meta.url), 'utf8');
 const providerToolbarSource = await readFile(new URL('../components/ProviderListToolbar.tsx', import.meta.url), 'utf8');
 const providerPresetSummarySource = await readFile(new URL('../components/ProviderPresetSummary.tsx', import.meta.url), 'utf8');
+const providerConnectionFieldsSource = await readFile(new URL('../components/ProviderConnectionFields.tsx', import.meta.url), 'utf8');
 const providerListModule = { exports: {} };
 const providerListCompiled = ts.transpileModule(providerListSource, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -68,6 +69,19 @@ vm.runInNewContext(providerPresetSummaryCompiled, {
   },
 });
 const ProviderPresetSummary = providerPresetSummaryModule.exports.default;
+const providerConnectionFieldsModule = { exports: {} };
+const providerConnectionFieldsCompiled = ts.transpileModule(providerConnectionFieldsSource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText;
+vm.runInNewContext(providerConnectionFieldsCompiled, {
+  exports: providerConnectionFieldsModule.exports,
+  require(id) {
+    if (id === 'react/jsx-runtime') return require('react/jsx-runtime');
+    if (id === '@/components/AgnesConnectionGuide') return ({ baseUrl, testResult }) => createElement('aside', { 'data-base-url': baseUrl, 'data-test-result': testResult });
+    throw new Error(`Unexpected ProviderConnectionFields dependency: ${id}`);
+  },
+});
+const ProviderConnectionFields = providerConnectionFieldsModule.exports.default;
 
 test('first-run provider setup modal can be dismissed', () => {
   assert.match(pageSource, /const PROVIDER_SETUP_DISMISSED_STORAGE_KEY = 'sanmao-provider-setup-dismissed';/);
@@ -200,4 +214,29 @@ test('provider preset summary presents the selected preset and key link', () => 
   assert.match(markup, /官方 API 地址已内置/);
   assert.match(markup, /兼容参数已自动配置/);
   assert.match(markup, /href="https:\/\/platform.openai.com\/api-keys"/);
+});
+
+test('provider connection fields preserve controlled inputs and Agnes guide data', () => {
+  const values = [];
+  const props = {
+    name: 'Main', baseUrl: 'https://example.test/v1', apiKey: 'sk-test', platform: 'agnes',
+    needsBaseUrl: false, presetBaseUrl: 'https://api.agnes-ai.cn/v1', editing: true,
+    videoBaseUrl: 'https://api.agnes-ai.cn', savedBaseUrl: 'https://old.test/v1',
+    savedVideoBaseUrl: 'https://old.test', savedKeyMasked: 'sk-***', testResult: '连接成功',
+    onNameChange: (value) => values.push(['name', value]),
+    onBaseUrlChange: (value) => values.push(['base', value]),
+    onApiKeyChange: (value) => values.push(['key', value]),
+    onUseDomesticEndpoint: () => values.push(['agnes']),
+  };
+  const tree = ProviderConnectionFields(props);
+  const children = tree.props.children;
+  const nameField = children[0];
+  nameField.props.children[1].props.onChange({ target: { value: 'Backup' } });
+  const fixedUrl = children[1];
+  assert.equal(fixedUrl.props.className, 'provider-fixed-url wide');
+  const keyField = children[2];
+  keyField.props.children[1].props.onChange({ target: { value: 'sk-new' } });
+  const guide = children[3];
+  guide.props.onUseDomesticEndpoint();
+  assert.deepEqual(values, [['name', 'Backup'], ['key', 'sk-new'], ['agnes']]);
 });

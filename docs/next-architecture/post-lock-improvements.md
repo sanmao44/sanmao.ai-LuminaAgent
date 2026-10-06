@@ -2009,3 +2009,12 @@ hardening work when the trigger applies.
 - Behavior coverage renders the summary with a representative provider preset and verifies its notice and key link.
 - Validation: focused provider tests passed (38/38), `npm run typecheck` passed, full `npm run check` passed (1862 tests passed, 2 skipped; production build succeeded), and `git diff --check` passed.
 - Remaining risk: provider fields, Agnes-specific edit guidance, and Jimeng login remain attached to the page-owned draft and connection lifecycle.
+
+### Stage 6 provider connection fields checkpoint (2026-10-07)
+
+- `components/ProviderConnectionFields.tsx` now owns the active Provider connection field presentation: name, editable/fixed API address, API Key input, and Agnes connection guide composition.
+- `app/page.tsx` keeps the Provider draft, test-result clearing, preset application, saved-provider lookup, and all API/Jimeng lifecycle behavior; the component only emits controlled field changes and the existing Agnes endpoint action.
+- Existing labels, field names, placeholders, classes, Agnes guide inputs, and hidden video configuration remain unchanged. No Provider store, API client, duplicate type authority, or compatibility layer was introduced.
+- Behavior coverage verifies controlled name/key changes, fixed-address presentation, and Agnes callback forwarding.
+- Validation: focused provider tests passed (8/8), `npm run typecheck` passed, full `npm run check` passed (1863 tests passed, 2 skipped; production build succeeded), and `git diff --check` passed.
+- Remaining risk: the hidden video configuration and Jimeng login block remain in the page because their future activation and task lifecycle are coupled to page-owned state.

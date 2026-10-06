@@ -124,6 +124,7 @@ import ProviderList from '@/components/ProviderList';
 import ProviderPlatformPicker from '@/components/ProviderPlatformPicker';
 import ProviderListToolbar from '@/components/ProviderListToolbar';
 import ProviderPresetSummary from '@/components/ProviderPresetSummary';
+import ProviderConnectionFields from '@/components/ProviderConnectionFields';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SupportModal from '@/components/SupportModal';
 import SharePreviewModal from '@/components/SharePreviewModal';
@@ -11341,97 +11342,30 @@ export default function Page() {
                                             /*#__PURE__*/ _jsxs("div", {
                                                 className: "provider-fields provider-simple-fields",
                                                 children: [
-                                                    /*#__PURE__*/ _jsxs("label", {
-                                                        className: "wide provider-name-field",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("span", {
-                                                                children: "连接名称（可选）"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("input", {
-                                                                value: providerForm.name,
-                                                                onChange: (e)=>setProviderForm({
-                                                                        ...providerForm,
-                                                                        name: e.target.value
-                                                                    }),
-                                                                placeholder: "例如：主接口 / 备用接口"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("small", {
-                                                                children: "只用于列表识别，修改名称不会影响接口配置。"
-                                                            })
-                                                        ]
+                                                    /*#__PURE__*/ _jsx(ProviderConnectionFields, {
+                                                        name: providerForm.name,
+                                                        baseUrl: providerForm.baseUrl,
+                                                        apiKey: providerForm.apiKey,
+                                                        platform: providerForm.platform,
+                                                        needsBaseUrl: selectedProviderPreset.needsBaseUrl,
+                                                        presetBaseUrl: selectedProviderPreset.baseUrl,
+                                                        editing: Boolean(providerEditId),
+                                                        videoBaseUrl: providerForm.videoBaseUrl,
+                                                        savedBaseUrl: state.providers.find((provider)=>provider.id === providerEditId)?.baseUrl || '',
+                                                        savedVideoBaseUrl: state.providers.find((provider)=>provider.id === providerEditId)?.videoBaseUrl || '',
+                                                        savedKeyMasked: state.providers.find((provider)=>provider.id === providerEditId)?.maskedKey || '',
+                                                        testResult: providerTestResult,
+                                                        onNameChange: (value)=>setProviderForm((old)=>({ ...old, name: value })),
+                                                        onBaseUrlChange: (value)=>{
+                                                            setProviderTestResult('');
+                                                            setProviderForm((old)=>({ ...old, baseUrl: value }));
+                                                        },
+                                                        onApiKeyChange: (value)=>{
+                                                            setProviderTestResult('');
+                                                            setProviderForm((old)=>({ ...old, apiKey: value }));
+                                                        },
+                                                        onUseDomesticEndpoint: ()=>applyProviderPreset('agnes')
                                                     }),
-                                                    selectedProviderPreset.needsBaseUrl ? /*#__PURE__*/ _jsxs("label", {
-                                                        className: "wide",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("span", {
-                                                                children: "2. API 地址"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("input", {
-                                                                value: providerForm.baseUrl,
-                                                                onChange: (e)=>{
-                                                                    setProviderTestResult('');
-                                                                    setProviderForm({
-                                                                        ...providerForm,
-                                                                        baseUrl: e.target.value
-                                                                    });
-                                                                },
-                                                                placeholder: "粘贴服务商控制台提供的 API 地址"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("small", {
-                                                                children: "可以粘贴根地址或完整接口地址，系统会自动整理。"
-                                                            })
-                                                        ]
-                                                    }) : /*#__PURE__*/ _jsxs("div", {
-                                                        className: "provider-fixed-url wide",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("span", {
-                                                                children: "API 地址（已内置）"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("strong", {
-                                                                children: providerForm.baseUrl || selectedProviderPreset.baseUrl
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("small", {
-                                                                children: providerForm.platform === 'agnes' && providerForm.baseUrl && providerForm.baseUrl !== selectedProviderPreset.baseUrl ? "当前保留已选 Agnes 区域地址；请让它与 API Key 所属站点一致。" : "官方地址已经内置，无需填写。"
-                                                            })
-                                                        ]
-                                                    }),
-                                                    /*#__PURE__*/ _jsxs("label", {
-                                                        className: "wide",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsxs("span", {
-                                                                children: [
-                                                                    selectedProviderPreset.needsBaseUrl ? '3' : '2',
-                                                                    ". API Key"
-                                                                ]
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("input", {
-                                                                type: "password",
-                                                                autoComplete: "off",
-                                                                value: providerForm.apiKey,
-                                                                onChange: (e)=>{
-                                                                    setProviderTestResult('');
-                                                                    setProviderForm({
-                                                                        ...providerForm,
-                                                                        apiKey: e.target.value
-                                                                    });
-                                                                },
-                                                                placeholder: providerEditId ? '留空表示继续使用原密钥' : '粘贴服务商提供的 API Key'
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("small", {
-                                                                children: "密钥会加密保存在本机服务端，网页不会再次显示完整内容。"
-                                                            })
-                                                        ]
-                                                    }),
-                                                     providerForm.platform === 'agnes' && /*#__PURE__*/ _jsx(AgnesConnectionGuide, {
-                                                         baseUrl: providerForm.baseUrl,
-                                                         videoBaseUrl: providerForm.videoBaseUrl,
-                                                         savedBaseUrl: state.providers.find((provider)=>provider.id === providerEditId)?.baseUrl || '',
-                                                         savedVideoBaseUrl: state.providers.find((provider)=>provider.id === providerEditId)?.videoBaseUrl || '',
-                                                         savedKeyMasked: state.providers.find((provider)=>provider.id === providerEditId)?.maskedKey || '',
-                                                         hasDraftKey: Boolean(providerForm.apiKey.trim()),
-                                                         testResult: providerTestResult,
-                                                         onUseDomesticEndpoint: () => applyProviderPreset('agnes')
-                                                     }),
                                                      false && /*#__PURE__*/ _jsxs("div", {
                                                         className: "wide provider-video-settings",
                                                         children: [
