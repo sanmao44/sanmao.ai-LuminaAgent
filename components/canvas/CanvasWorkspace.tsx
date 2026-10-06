@@ -218,7 +218,6 @@ import {
   type CinematicOpeningSettings,
 } from "@/lib/cinematic-shock-opening-director";
 import { listUnifiedAssets, registerCanvasAsset, updateUnifiedAssetMetadata, type AssetRecord, type AssetSource } from "@/lib/assets";
-import type { GalleryLocalEditMask } from "@/lib/client-history";
 import { startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
 import { workspaceRepository } from "@/lib/repositories/workspace-repository";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
@@ -352,6 +351,7 @@ import {
 } from "@/lib/canvas/snap";
 import { canvasVideoInputError } from "@/lib/canvas/video-input-validation";
 import { canvasVideoInputCapabilities } from "@/lib/canvas/video-capabilities";
+import { canvasHistoryMask } from "@/lib/canvas/history-mask";
 import {
   mentionedCanvasMedia,
   resolveCanvasMentionTokens,
@@ -1697,18 +1697,6 @@ function isCanvasReferencePickerCandidate(node: CanvasNode | undefined) {
 
 const canvasReferenceRecordsFromNodes = (nodes: CanvasNode[]) =>
   createCanvasReferenceRecords(nodes, isCanvasReferenceableNode);
-
-function canvasLocalEditMaskForHistory(mask: ImageCreationSettings["mask"]): GalleryLocalEditMask | undefined {
-  if (!mask?.url) return undefined;
-  const parsedFeather = Number(mask.feather);
-  return {
-    dataUrl: mask.url,
-    feather: Number.isFinite(parsedFeather)
-      ? Math.max(0, Math.min(48, Math.round(parsedFeather)))
-      : 0,
-    ...(mask.annotations?.length ? { annotations: mask.annotations } : {}),
-  };
-}
 
 function compiledCanvasLocalEditPrompt(
   node: CanvasNode,
@@ -6603,7 +6591,7 @@ export default function SuperCanvas() {
                  parentId: generatorId,
                  references: canvasReferenceRecordsFromNodes(linked),
                   annotations: imageParams.mask?.annotations,
-                  mask: canvasLocalEditMaskForHistory(imageParams.mask),
+                  mask: canvasHistoryMask(imageParams.mask),
               }).catch(() => addLog("图片变体已生成，但写入历史失败"));
             } else {
               const videoParams = effectiveParams as VideoCreationSettings;
@@ -7445,7 +7433,7 @@ export default function SuperCanvas() {
          parentId: source.id,
          references: canvasReferenceRecordsFromNodes(usedReferenceNodes),
           annotations: params.mask?.annotations,
-          mask: canvasLocalEditMaskForHistory(params.mask),
+          mask: canvasHistoryMask(params.mask),
       }).then(() => setAssetRefresh((value) => value + 1)).catch(() => addLog("图片续生成完成，但写入主界面历史失败"));
       notify(`已生成 ${result.images.length} 张新图片，原图已保留`);
       addLog(`图片续生成完成：${result.images.length} 张`);
@@ -8042,7 +8030,7 @@ export default function SuperCanvas() {
              parentId: inputId,
              references: canvasReferenceRecordsFromNodes(referenceNodes),
               annotations: imageSettings.mask?.annotations,
-              mask: canvasLocalEditMaskForHistory(imageSettings.mask),
+              mask: canvasHistoryMask(imageSettings.mask),
           });
         addLog(`Agent 回复完成：${responseModel}`);
         notify(
@@ -8469,7 +8457,7 @@ export default function SuperCanvas() {
           parentId: sourceTarget?.data.url ? sourceTarget.id : undefined,
           references: canvasReferenceRecordsFromNodes(linked),
           annotations: imageParams.mask?.annotations,
-          mask: canvasLocalEditMaskForHistory(imageParams.mask),
+          mask: canvasHistoryMask(imageParams.mask),
         })
           .then(() => setAssetRefresh((value) => value + 1))
           .catch(() => addLog("图片已生成，但写入主界面历史失败"));

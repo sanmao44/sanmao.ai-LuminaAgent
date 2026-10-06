@@ -697,3 +697,23 @@ hardening work when the trigger applies.
 - Remaining risk: natural-language reference replacement and mention menu
   presentation still depend on broader creative-reference and UI contracts;
   they remain in their existing modules.
+
+### Stage 5 canvas history mask projection checkpoint (2026-10-06)
+
+- `lib/canvas/history-mask.ts` now owns the pure conversion from the existing
+  image creation mask to the existing `GalleryLocalEditMask` history contract.
+  It preserves URL requirements, feather clamping, and annotation omission
+  rules.
+- `CanvasWorkspace.tsx` no longer contains the conversion implementation; all
+  four history recording call sites use the extracted function. History
+  persistence, generation callbacks, and local-edit prompt compilation remain
+  in their existing owners.
+- Behavior coverage verifies feather clamping, invalid-value normalization,
+  annotation handling, and missing URL behavior. No API payload, persisted
+  shape, or user interaction changed.
+- Validation: targeted history mask tests and `npm run typecheck` passed. Full
+  `npm test`, `npm run build`, and `npm run check` remain required before
+  committing this checkpoint.
+- Remaining risk: local-edit prompt compilation still reads multiple node/draft
+  mask projections and remains coupled to editor state; it is not moved in this
+  slice.
