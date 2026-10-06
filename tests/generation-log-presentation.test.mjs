@@ -10,6 +10,8 @@ test("generation log presentation keeps media and source labels stable", () => {
   assert.equal(presentation.generationMediaKind({ mode: "video" }), "video");
   assert.equal(presentation.generationMediaKind({ mode: "audio" }), "audio");
   assert.equal(presentation.generationLogSourceLabel(imageLog), "\u753b\u5e03\u751f\u6210");
+  assert.equal(presentation.gallerySourceLabel("agent"), "\u52a9\u624b\u751f\u6210");
+  assert.equal(presentation.gallerySourceLabel("unknown"), "\u76f4\u63a5\u751f\u6210");
   assert.equal(presentation.generationLogTitle({ mode: "generate", prompt: "  ## scene **test**  " }), "scene test");
 });
 

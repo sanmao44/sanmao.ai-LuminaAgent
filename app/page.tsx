@@ -58,6 +58,7 @@ import {
     generationLogIsLlm,
     generationLogSourceLabel,
     generationLogTitle,
+    gallerySourceLabel,
     generationMediaKind,
     generationMediaLabel,
     logAspectRatioLabel,
@@ -220,9 +221,6 @@ function emptyProviderForm() {
 }
 function uid(prefix = 'id') {
     return `${prefix}-${crypto.randomUUID()}`;
-}
-function sourceLabel(source) {
-    return source === 'canvas' ? '画布生成' : source === 'agent' ? '助手生成' : source === 'edit' ? '图片修改' : source === 'upscale' ? '高清放大' : '直接生成';
 }
 function drawCoverImage(context, image, sourceWidth, sourceHeight, targetWidth, targetHeight) {
     const scale = Math.max(targetWidth / sourceWidth, targetHeight / sourceHeight);
@@ -8782,7 +8780,7 @@ export default function Page() {
                                                                     images: message.images,
                                                                     renderImage: (item)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                                             Icon,
-                                                                            sourceLabel,
+                                                                            sourceLabel: gallerySourceLabel,
                                                                             item: item,
                                                                             onOpenAngle: ()=>void openAngleConsole(item),
                                                                             onOpenOutpaint: ()=>openOutpaintEditor(item),
@@ -10275,7 +10273,7 @@ export default function Page() {
                                                                 children: [
                                                                     task.items.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                                             Icon,
-                                                                            sourceLabel,
+                                                                            sourceLabel: gallerySourceLabel,
                                                                             item: item,
                                                                             onOpenAngle: ()=>void openAngleConsole(item),
                                                                             onOpenOutpaint: ()=>openOutpaintEditor(item),
@@ -10369,7 +10367,7 @@ export default function Page() {
                                                 className: `result-grid ${resultItems.length === 1 ? 'featured-results' : ''}`,
                                                 children: resultItems.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                         Icon,
-                                                        sourceLabel,
+                                                        sourceLabel: gallerySourceLabel,
                                                         item: item,
                                                         onOpenAngle: ()=>void openAngleConsole(item),
                                                         onOpenOutpaint: ()=>openOutpaintEditor(item),
@@ -10621,7 +10619,7 @@ export default function Page() {
                                                 className: "history-grid",
                                                 children: pagedGallery.map((item, index)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                         Icon,
-                                                        sourceLabel,
+                                                        sourceLabel: gallerySourceLabel,
                                                         item: item,
                                                         onOpenAngle: ()=>void openAngleConsole(item),
                                                         onOpenOutpaint: ()=>openOutpaintEditor(item),
@@ -13244,7 +13242,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                         }),
                                         /*#__PURE__*/ _jsxs("small", {
                                             children: [
-                                                viewerItem.localFileName ? '本地图片' : sourceLabel(viewerItem.source),
+                                                viewerItem.localFileName ? '本地图片' : gallerySourceLabel(viewerItem.source),
                                                 " \xb7 ",
                                                 viewerItem.outputSize || viewerItem.aspectRatio || '自动',
                                                 " \xb7 ",

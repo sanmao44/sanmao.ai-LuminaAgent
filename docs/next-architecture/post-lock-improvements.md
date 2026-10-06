@@ -23,6 +23,16 @@ hardening work when the trigger applies.
   share/browser API orchestration. Those flows cross broader state and should
   remain separate slices with dedicated behavior coverage.
 
+### Stage 5 gallery source label checkpoint (2026-10-06)
+
+- `lib/generation-log-presentation.ts` now owns the pure gallery source label
+  projection used by page history cards and the selected-image viewer.
+- `app/page.tsx` keeps the gallery rendering and interaction callbacks, but no
+  longer defines this repeated source mapping locally. The `ImageCard` contract
+  and displayed labels are unchanged.
+- Behavior coverage extends `tests/generation-log-presentation.test.mjs` for
+  known and fallback sources. No URL, persisted field, or interaction changed.
+
 ### Stage 5 gallery history projection checkpoint (2026-10-06)
 
 - `lib/creation/gallery-items.ts` now owns the pure projection from generated

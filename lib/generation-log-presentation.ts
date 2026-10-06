@@ -53,6 +53,15 @@ export function generationLogSourceLabel(log: GenerationLog): string {
     if (log.source === 'agent') return '助手生成';
     return log.mode === 'edit' ? '图片修改' : log.mode === 'upscale' ? '图片超分' : '工作台生成';
 }
+
+export function gallerySourceLabel(source: unknown): string {
+    if (source === 'canvas') return '画布生成';
+    if (source === 'agent') return '助手生成';
+    if (source === 'edit') return '图片修改';
+    if (source === 'upscale') return '高清放大';
+    return '直接生成';
+}
+
 export function generationLogTitle(log: GenerationLog): string {
     const prompt = String(log.prompt || '').trim();
     if (!prompt) return generationLogIsLlm(log) ? '未填写对话内容' : '未填写提示词';
