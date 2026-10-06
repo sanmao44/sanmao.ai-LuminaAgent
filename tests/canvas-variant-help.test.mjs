@@ -6,6 +6,10 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const deck = await readFile(
+  new URL("../components/canvas/CanvasDeck.tsx", import.meta.url),
+  "utf8",
+);
 const variant = await readFile(
   new URL("../components/canvas/CanvasVariantEditors.tsx", import.meta.url),
   "utf8",
@@ -22,7 +26,7 @@ const nodeCard = await readFile(
   new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url),
   "utf8",
 );
-const source = component + "\n" + nodeEditor + "\n" + nodeCard + "\n" + variant + "\n" + generatorCard;
+const source = component + "\n" + deck + "\n" + nodeEditor + "\n" + nodeCard + "\n" + variant + "\n" + generatorCard;
 const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",

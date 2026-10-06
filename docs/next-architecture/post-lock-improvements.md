@@ -53,6 +53,16 @@ hardening work when the trigger applies.
 - Focused menu tests and typecheck pass; full repository validation remains
   required before committing this slice.
 
+
+### Stage 6 canvas generation deck checkpoint (2026-10-07)
+
+- `components/canvas/CanvasDeck.tsx` now owns the existing canvas generation deck presentation: mode switch, selection context, references, prompt editor, run action, variant requirements editor, and creation parameter editor.
+- `CanvasWorkspace.tsx` keeps CanvasCore, document/selection/history, file handling, generation API orchestration, prompt/reference mutations, parameter mutations, and smart-variant lifecycle; the deck receives explicit UI state and callbacks only.
+- The existing deck root and `deckRef` are preserved through `forwardRef`, so deck measurement, collapsed state, minimap positioning, keyboard shortcuts, drag/drop, paste, and generation actions keep their previous paths.
+- Updated the existing variant-help behavior test to include the extracted deck in its behavior-surface source set; no new source-coupled test was introduced.
+- Focused canvas tests, `npm run typecheck`, full `npm run check` (1855 passed, 2 skipped, production build success), and `git diff --check` passed.
+- Remaining risk: deck internals still combine presentation rows in one component; further splitting should wait for a narrower behavior boundary and should not move smart-variant lifecycle or CanvasCore mutations into child components.
+
 ### Stage 5 canvas smart-variant source projection checkpoint (2026-10-07)
 
 - `lib/canvas/smart-variant.ts` now owns the pure projection from a selected
