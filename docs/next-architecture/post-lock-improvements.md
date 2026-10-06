@@ -21,6 +21,17 @@ hardening work when the trigger applies.
   the existing Workspace/Core callbacks; splitting that React ownership needs a
   separate behavior-covered slice.
 
+### Stage 4 variant list CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-variant-editor.css` now owns the isolated variant requirement
+  list editor: rows, inline mention editing surface, add/remove actions and
+  footer note.
+- `app/canvas.css` keeps the shared variant editor shell plus node editor and
+  image-dock positioning rules, because those selectors serve multiple editor
+  surfaces.
+- The variant-help behavior test now combines the shared, generator-card and
+  variant-list styles before asserting the existing visual contract.
+
 ### Stage 4 video editor CSS boundary checkpoint (2026-10-06)
 
 - `app/canvas-video-editor.css` now owns the complete video editor node and
