@@ -14,7 +14,11 @@ const generatorCard = await readFile(
   new URL("../components/canvas/CanvasGeneratorNodeCard.tsx", import.meta.url),
   "utf8",
 );
-const source = component + "\n" + variant + "\n" + generatorCard;
+const nodeEditor = await readFile(
+  new URL("../components/canvas/CanvasNodeEditorPopover.tsx", import.meta.url),
+  "utf8",
+);
+const source = component + "\n" + nodeEditor + "\n" + variant + "\n" + generatorCard;
 const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",

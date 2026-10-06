@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const component = (await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8"))
+  .concat("\n", await readFile(new URL("../components/canvas/CanvasNodeEditorPopover.tsx", import.meta.url), "utf8"))
   .replace(/\r\n/g, "\n");
 const draftStrip = (await readFile(new URL("../components/CanvasReferenceDraftStrip.tsx", import.meta.url), "utf8"))
   .replace(/\r\n/g, "\n");

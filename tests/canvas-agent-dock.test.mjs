@@ -8,8 +8,9 @@ const menuLayout = await readFile(new URL("../lib/canvas/menu-layout.ts", import
 const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
 const contextMenu = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
 const selectionToolbar = await readFile(new URL("../components/canvas/CanvasSelectionToolbar.tsx", import.meta.url), "utf8");
+const nodeEditor = await readFile(new URL("../components/canvas/CanvasNodeEditorPopover.tsx", import.meta.url), "utf8");
 
-const [component, canvas, styles, context, canvasApi, markdown] = await Promise.all([
+const [component, canvasSource, styles, context, canvasApi, markdown] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
   readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/canvas.css", import.meta.url), "utf8"),
@@ -17,6 +18,8 @@ const [component, canvas, styles, context, canvasApi, markdown] = await Promise.
   readFile(new URL("../lib/canvas/api.ts", import.meta.url), "utf8"),
   readFile(new URL("../components/AgentMarkdown.tsx", import.meta.url), "utf8"),
 ]);
+
+const canvas = `${canvasSource}\n${nodeEditor}`;
 
 test("the canvas agent dock mounts in SuperCanvas and is bound to the selection", () => {
   assert.match(canvas, /<CanvasAgentDock[\s\S]*?contextBlock=\{agentDockContext\.text\}/);

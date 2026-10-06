@@ -560,3 +560,12 @@ hardening work when the trigger applies.
   `docs/next-architecture/migration-status.md` is met.
 - Trigger: the corresponding caller count reaching zero with a verified
   rollback path, or the next change to that adapter.
+
+### Stage 4 node editor boundary checkpoint (2026-10-06)
+
+- Moved the complete `CanvasNodeEditorPopover` implementation and its explicit props contract into `components/canvas/CanvasNodeEditorPopover.tsx`. The component owns editor-local prompt, preset, dock, resize, Escape and positioning state; Workspace continues to own CanvasCore mutations, generation, reference and persistence callbacks.
+- Added `lib/canvas/node-editor.ts` for the shared variant requirement and in-place video reference projections used by both the editor and Workspace. No second store, repository, task state machine or provider boundary was introduced.
+- Updated the existing node editor, prompt optimization, Agent dock, reference picker and variant-help behavior tests to include the extracted component source while preserving behavior assertions.
+- `CanvasWorkspace.tsx` is reduced by 959 lines; remaining responsibilities include CanvasCore coordination, generation orchestration, node cards, workbench mounting and high-coupling pointer state. CSS remains in existing domain files to avoid visual regressions.
+- Validation: targeted Canvas/editor tests 71 passed; full `npm test` 1777 passed; `npm run typecheck` passed; `npm run build` passed; `git diff --check` reports only the pre-existing user edit's trailing blank line in `AGENTS.md`.
+- Remaining risk: editor internals still combine prompt optimization, browser event lifecycles and parameter/reference panels. Further subdivision should wait for a behavior-covered boundary rather than introduce wrappers or duplicate state.

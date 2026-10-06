@@ -7,6 +7,10 @@ const workspace = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const nodeEditor = await readFile(
+  new URL("../components/canvas/CanvasNodeEditorPopover.tsx", import.meta.url),
+  "utf8",
+);
 const maskSummary = await readFile(
   new URL("../components/canvas/CanvasMaskSummary.tsx", import.meta.url),
   "utf8",
@@ -27,7 +31,7 @@ const upscalePanel = await readFile(
   new URL("../components/canvas/CanvasUpscaleSettingsPanel.tsx", import.meta.url),
   "utf8",
 );
-const component = `${workspace}\n${maskSummary}\n${presetControl}\n${imagePresetDomain}\n${imagePresetNodeSupport}\n${upscalePanel}`;
+const component = `${nodeEditor}\n${workspace}\n${maskSummary}\n${presetControl}\n${imagePresetDomain}\n${imagePresetNodeSupport}\n${upscalePanel}`;
 const mediaCard = await readFile(
   new URL("../components/canvas/CanvasMediaNodeCard.tsx", import.meta.url),
   "utf8",

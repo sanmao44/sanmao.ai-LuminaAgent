@@ -5,7 +5,9 @@ import test from 'node:test';
 const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const quickActions = await readFile(new URL('../components/AgentQuickActions.tsx', import.meta.url), 'utf8');
 const videoStudio = await readFile(new URL('../components/VideoStudio.tsx', import.meta.url), 'utf8');
-const superCanvas = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
+const workspace = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
+const nodeEditor = await readFile(new URL('../components/canvas/CanvasNodeEditorPopover.tsx', import.meta.url), 'utf8');
+const superCanvas = `${workspace}\n${nodeEditor}`;
 const mediaViewer = await readFile(new URL('../components/MediaViewer.tsx', import.meta.url), 'utf8');
 const canvasStyles = await readFile(new URL('../app/canvas.css', import.meta.url), 'utf8');
 
