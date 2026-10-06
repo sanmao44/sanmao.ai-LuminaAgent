@@ -4,7 +4,10 @@ import test from "node:test";
 import ts from "typescript";
 
 const sourceUrl = new URL("../lib/canvas/smart-variant.ts", import.meta.url);
-const source = await readFile(sourceUrl, "utf8");
+const source = (await readFile(sourceUrl, "utf8")).replace(
+  'import type { SmartVariantSourceUnit } from "@/lib/canvas/model";\n',
+  '',
+);
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: sourceUrl.pathname,

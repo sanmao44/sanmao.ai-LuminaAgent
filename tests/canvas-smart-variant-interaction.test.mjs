@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
+const planningSource = readFileSync(new URL("../lib/canvas/smart-variant.ts", import.meta.url), "utf8");
 
 test("smart variant portal isolates native control events from canvas gestures", () => {
   const portal = source.slice(source.indexOf('{smartVariantOpen && createPortal('), source.indexOf('<CanvasMinimap'));
@@ -22,7 +23,7 @@ test("smart variant apply uses the session target instead of current selection",
 });
 
 test("smart variant planning locks one output to each source unit and retries invalid mappings", () => {
-  const planning = source.slice(source.indexOf("function smartVariantPlanningPrompt"), source.indexOf("function variantStatesFor"));
+  const planning = planningSource;
   const open = source.slice(source.indexOf("const openSmartVariant ="), source.indexOf("const applySmartVariant ="));
   assert.ok(planning.includes("每个 sourceId 恰好生成一条变体"));
   assert.ok(planning.includes("禁止拆分一段为多条、合并多段为一条、遗漏或编造段落"));
@@ -35,7 +36,7 @@ test("smart variant planning locks one output to each source unit and retries in
 test("smart variant analysis has a bounded, cancellable request path", () => {
   const open = source.slice(source.indexOf("const cancelSmartVariant ="), source.indexOf("const applySmartVariant ="));
   const portal = source.slice(source.indexOf('{smartVariantOpen && createPortal('), source.indexOf('<CanvasMinimap'));
-  assert.ok(source.includes("const SMART_VARIANT_MAX_WAIT_MS = 75_000"));
+  assert.ok(planningSource.includes("export const SMART_VARIANT_MAX_WAIT_MS = 75_000"));
   assert.ok(open.includes("const controller = new AbortController()"));
   assert.ok(open.includes("window.setTimeout"));
   assert.ok(open.includes("generateCanvasAgent({"));

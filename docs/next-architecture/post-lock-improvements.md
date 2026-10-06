@@ -65,7 +65,23 @@ hardening work when the trigger applies.
   empty-source behavior are unchanged. No new type, store, API, or task
   runtime was introduced.
 - Focused source-projection behavior tests and typecheck pass. Full repository
-  validation is required before the stage commit.
+  validation passed with 1842 tests passed, 2 skipped, and production build
+  success. `git diff --check` passed.
+
+### Stage 5 canvas smart-variant planning boundary checkpoint (2026-10-07)
+
+- `lib/canvas/smart-variant.ts` now owns the pure smart-variant planning prompt,
+  JSON extraction, one-to-one source mapping validation, and the bounded wait
+  constant.
+- `CanvasWorkspace.tsx` retains request, cancellation, snapshot, editor, and
+  CanvasCore/document update orchestration; it no longer owns planning data
+  types or pure prompt/parse logic.
+- Existing source IDs, prompt text, error messages, request timeout, and
+  generated variant shape remain unchanged. No new API, store, task runtime,
+  compatibility layer, or duplicate contract was introduced.
+- Focused smart-variant behavior tests and typecheck passed. Full repository
+  validation passed with 1842 tests passed, 2 skipped, and production build
+  success. `git diff --check` passed.
 
 ### Stage 6 canvas asset projection boundary checkpoint (2026-10-07)
 
