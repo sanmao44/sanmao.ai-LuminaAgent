@@ -420,6 +420,18 @@ hardening work when the trigger applies.
 - Direct component behavior covers metadata, references, action presentation,
   and selection state. Complex editor and provider flows remain page-owned.
 
+### Stage 6 outpaint layout domain checkpoint (2026-10-06)
+
+- `lib/image-editor/outpaint-layout.ts` now owns the pure outpaint layout
+  projection, default padding, provider model rules, validation messages, and
+  bounds fitting.
+- `app/page.tsx` keeps `OutpaintEditor` rendering, pointer/zoom state, local
+  image operations, submission callbacks, and editor visibility. It imports
+  the pure functions without creating a second editor state or API boundary.
+- Behavior tests cover centering, model limits, validation, and fitting. The
+  complex image editor UI remains intentionally in the page until its local
+  editing behavior has a dedicated component boundary.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
