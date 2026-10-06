@@ -275,9 +275,9 @@ import CanvasImageEditorWorkbench, {
 } from "@/components/canvas/CanvasImageEditorWorkbench";
 import CanvasVideoClipWorkbench from "@/components/canvas/CanvasVideoClipWorkbench";
 import PanoramaWorkbench, { type PanoramaSnapshot } from "@/components/canvas/PanoramaWorkbench";
-import OneClickCinematicPanel, {
+import CanvasCinematicWorkbench, {
   type OneClickCinematicVideoSelection,
-} from "@/components/canvas/OneClickCinematicPanel";
+} from "@/components/canvas/CanvasCinematicWorkbench";
 import CanvasCloneDialog, {
   type CanvasCloneReferenceOption,
   type CanvasCloneAssetOption,
@@ -14224,7 +14224,7 @@ export default function SuperCanvas() {
           const source = document.nodes.find((item) => item.id === oneClickCinematicNodeId);
           if (!source || !isCanvasReadyImageSource(source)) return null;
           return (
-            <OneClickCinematicPanel
+            <CanvasCinematicWorkbench
               imageUrl={String(source.data.url)}
               imageName={String(source.data.name || "当前图片")}
               runtime={runtime}

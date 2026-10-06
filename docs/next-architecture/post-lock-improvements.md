@@ -1296,3 +1296,17 @@ hardening work when the trigger applies.
 - Angle console, image-angle, node-editor, and double-click behavior coverage
   passed after the extraction. Full `npm run check` remains the final gate for
   this slice before commit; CSS and generation service boundaries are deferred.
+
+### Stage 6 cinematic workbench shell checkpoint (2026-10-06)
+
+- `components/canvas/CanvasCinematicWorkbench.tsx` now provides the
+  canvas-specific entry contract for the one-click cinematic panel and keeps
+  the existing `OneClickCinematicPanel` as the sole implementation of model,
+  duration, and director controls.
+- `CanvasWorkspace.tsx` still validates the selected image, owns the panel
+  open state, and runs the existing cinematic generation callback. No video
+  request, provider selection, or task lifecycle was duplicated.
+- Cinematic director, node editor, double-click, full test, typecheck, build,
+  and repository check coverage passed. The underlying cinematic panel remains
+  intentionally intact because its controls and provider-specific validation
+  are a cohesive domain boundary.
