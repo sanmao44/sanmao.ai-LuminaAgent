@@ -1459,3 +1459,17 @@ hardening work when the trigger applies.
 - Validation: focused activity drawer/workspace activity tests passed (14/14),
   `npm run typecheck` passed, full `npm run check` passed (1832 tests passed,
   2 skipped; production build succeeded), and `git diff --check` passed.
+
+### Stage 6 panorama workbench CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-panorama.css` now owns the standalone spherical image viewer's
+  dialog, sphere stage, controls, status overlays, and responsive layout. The
+  sheet loads after `canvas.css`; the shared modal backdrop and z-index tokens
+  stay in the base sheet.
+- `PanoramaWorkbench.tsx` remains the sole owner of Three.js setup, pointer and
+  keyboard input, image capture, and apply callbacks. No rendering or image
+  behavior changed.
+- Panorama behavior tests now read viewer-specific CSS from its domain sheet.
+  Validation: focused panorama/activity tests passed (11/11), `npm run
+  typecheck` passed, full `npm run check` passed (1832 tests passed, 2 skipped;
+  production build succeeded), and `git diff --check` passed.

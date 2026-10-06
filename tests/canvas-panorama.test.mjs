@@ -18,6 +18,10 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const panoramaStyles = await readFile(
+  new URL("../app/canvas-panorama.css", import.meta.url),
+  "utf8",
+);
 
 test("completed image viewer exposes the panorama entry point", () => {
   assert.match(viewer, /onAngle\?: \(\) => void/);
@@ -57,8 +61,9 @@ test("panorama viewer applies the current local view without image generation", 
 });
 
 test("panorama viewer has bounded desktop and mobile layouts", () => {
-  assert.match(styles, /\.canvas-spherical-dialog\{[^}]*max-height:calc\(100vh - 36px\)/);
-  assert.match(styles, /\.canvas-spherical-stage\{[^}]*touch-action:none/);
-  assert.match(styles, /@media\(max-width:760px\)\{\.canvas-spherical-workbench/);
+  assert.match(panoramaStyles, /\.canvas-spherical-dialog\{[^}]*max-height:calc\(100vh - 36px\)/);
+  assert.match(panoramaStyles, /\.canvas-spherical-stage\{[^}]*touch-action:none/);
+  assert.match(panoramaStyles, /@media\(max-width:760px\)\{\.canvas-spherical-workbench/);
+  assert.doesNotMatch(styles, /\.canvas-spherical-dialog\{/);
   assert.match(viewer, /打开真实360°球体查看器/);
 });
