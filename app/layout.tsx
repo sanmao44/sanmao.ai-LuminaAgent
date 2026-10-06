@@ -5,6 +5,7 @@ import './agent-upgrades.css';
 import './agent-orb.css';
 import './desktop-readability.css';
 import './canvas.css';
+import './canvas-arrangement.css';
 import './canvas-cinematic.css';
 import './canvas-video-clip.css';
 import './canvas-video-editor.css';

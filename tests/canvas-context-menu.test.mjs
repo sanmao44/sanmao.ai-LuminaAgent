@@ -21,10 +21,22 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const arrangementStyles = await readFile(
+  new URL("../app/canvas-arrangement.css", import.meta.url),
+  "utf8",
+);
 const toolsStyles = await readFile(
   new URL("../app/canvas-tools.css", import.meta.url),
   "utf8",
 );
+
+test("canvas arrangement menus keep their responsive styles in the arrangement sheet", () => {
+  assert.match(arrangementStyles, /\.canvas-arrange-menu\{/);
+  assert.match(arrangementStyles, /\.canvas-topbar\.collapsed \.canvas-arrange-control/);
+  assert.match(arrangementStyles, /@media\(max-width:720px\)\{\.canvas-arrange-control/);
+  assert.match(arrangementStyles, /\.canvas-group-arrange-menu\{/);
+  assert.match(arrangementStyles, /@media\(max-width:540px\)\{\.canvas-group-arrange-menu/);
+});
 
 test("node context menu has no duplicate exact type branches or stale selection handlers", () => {
   const source = ts.createSourceFile(
@@ -218,8 +230,8 @@ test("context menu keeps native controls isolated and remains bounded on small s
   assert.match(styles, /\.canvas-context-menu-body\{[^}]*overflow-x:hidden[^}]*overflow-y:auto/);
   assert.match(styles, /\.canvas-context-menu-body\{[^}]*scrollbar-gutter:stable/);
   assert.match(styles, /max-height:min\(560px,calc\(100dvh - 16px\)\)/);
-  assert.match(styles, /\.canvas-group-arrange-menu\{[^}]*box-sizing:border-box[^}]*overflow-x:hidden/);
-  assert.match(styles, /\.canvas-group-arrange-menu button\{[^}]*min-width:0[^}]*box-sizing:border-box/);
+  assert.match(arrangementStyles, /\.canvas-group-arrange-menu\{[^}]*box-sizing:border-box[^}]*overflow-x:hidden/);
+  assert.match(arrangementStyles, /\.canvas-group-arrange-menu button\{[^}]*min-width:0[^}]*box-sizing:border-box/);
   assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-item-context:disabled/);
   assert.match(styles, /@media\(max-width:420px\)\{\.canvas-node-context-menu/);
   const nodeMenuStart = contextMenuComponent.indexOf("export function CanvasNodeContextMenu");

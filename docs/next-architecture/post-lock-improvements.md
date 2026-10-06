@@ -1408,3 +1408,22 @@ hardening work when the trigger applies.
   remains intentionally deferred because its rail, panel geometry, responsive
   deck adjustment, mention menus, model picker, and message rendering share
   cross-domain selectors.
+
+### Stage 6 canvas arrangement menu CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-arrangement.css` now owns topbar arrangement and group arrangement
+  menu presentation, including their small-screen rules. Shared group cards,
+  quick-toolbar container structure, and canvas layer tokens remain in the base
+  canvas stylesheet.
+- `app/layout.tsx` loads the arrangement sheet immediately after `canvas.css`,
+  preserving its order before workbench-specific sheets. The existing
+  `shadow-tuning.css` overrides remain later in the cascade.
+- `tests/canvas-context-menu.test.mjs` checks the group menu's bounds in the new
+  stylesheet and verifies both menus keep their responsive rules there. No
+  action, selection, CanvasCore command, URL, API, or document behavior moved.
+- Validation: targeted context-menu/group compose/group reference/group shortcut
+  tests passed (16/16), `npm run typecheck` and full `npm run check` are required
+  before this slice is committed; `git diff --check` must remain clean.
+- Remaining debt: `app/canvas.css` still contains the shared canvas stage,
+  groups, node/editor, Agent dock and other overlay rules. The Agent dock's
+  cross-domain geometry and message/composer styles remain deferred.
