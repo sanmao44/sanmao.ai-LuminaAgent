@@ -25,7 +25,6 @@ import {
   arrangeCanvas,
   arrangeCanvasGroup,
   CANVAS_GROUP_INSETS,
-  canvasEdgeEndpoints,
   canConnect,
   clone,
   connectionPath,
@@ -39,10 +38,8 @@ import {
   createVideoEditorNode,
   detachNodesFromGroups,
   distributeCanvasNodes,
-  edgeRouteLaneOffset,
   edgeTouchesSelection,
   entityBounds,
-  entityPortPoint,
   groupAtPoint,
   groupBounds,
   groupById,
@@ -368,6 +365,7 @@ import {
 import { canvasVideoInputError } from "@/lib/canvas/video-input-validation";
 import { canvasVideoInputCapabilities } from "@/lib/canvas/video-capabilities";
 import { canvasHistoryMask } from "@/lib/canvas/history-mask";
+import { canvasEdgeMidpoint } from "@/lib/canvas/edge-geometry";
 import { canvasVariantBatchStatus } from "@/lib/canvas/variant-status";
 import {
   applyCanvasVariantStatePatch,
@@ -465,30 +463,6 @@ async function rerenderCloneTimeline(jobId: string, timeline: CanvasVideoEditorS
     job = statusBody.job;
   }
   throw new Error("克隆时间轴合成等待超时，请稍后在克隆任务中查看");
-}
-
-function canvasEdgeMidpoint(document: CanvasDocument, edge: CanvasEdge): Point {
-  const endpoints = canvasEdgeEndpoints(document, edge);
-  const start = entityPortPoint(document, endpoints.source, edge.sourcePort || "right");
-  const end = entityPortPoint(document, endpoints.target, edge.targetPort || "left");
-  const sourceDirection = (edge.sourcePort || "right") === "right" ? 1 : -1;
-  const targetDirection = (edge.targetPort || "left") === "left" ? -1 : 1;
-  const laneOffset = edgeRouteLaneOffset(document, edge);
-  const dx = Math.max(72, Math.abs(end.x - start.x) * 0.42);
-  const t = 0.5;
-  const inverse = 1 - t;
-  return {
-    x:
-      inverse ** 3 * start.x +
-      3 * inverse ** 2 * t * (start.x + dx * sourceDirection) +
-      3 * inverse * t ** 2 * (end.x + dx * targetDirection) +
-      t ** 3 * end.x,
-    y:
-      inverse ** 3 * start.y +
-       3 * inverse ** 2 * t * (start.y + laneOffset) +
-       3 * inverse * t ** 2 * (end.y + laneOffset) +
-      t ** 3 * end.y,
-  };
 }
 
 function hasExternalFileTransfer(dataTransfer: DataTransfer) {

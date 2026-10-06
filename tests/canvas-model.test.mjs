@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
 async function loadTypeScript(path) {
   const sourceUrl = new URL(path, import.meta.url);
@@ -89,7 +90,24 @@ async function loadTypeScript(path) {
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
 
+
 const model = await loadTypeScript('../lib/canvas/model.ts');
+const edgeGeometry = createTsRequire(new URL('../lib/canvas', import.meta.url).pathname)('./edge-geometry.ts');
+
+test('canvas edge midpoint follows the routed curve midpoint', () => {
+  const source = model.createPrompt({ x: 0, y: 0 }, 'source');
+  const target = model.createPrompt({ x: 240, y: 120 }, 'target');
+  const document = model.addEdge({
+    nodes: [source, target],
+    groups: [],
+    edges: [],
+    camera: { x: 0, y: 0, zoom: 1 },
+  }, source.id, target.id, 'right', 'left');
+  const edge = document.edges[0];
+  const midpoint = edgeGeometry.canvasEdgeMidpoint(document, edge);
+  assert.deepEqual(midpoint, { x: 265, y: 150 });
+});
+
 test('comparison uses continuation provenance without adding generation inputs', () => {
   const nodes = ['original', 'result', 'reference', 'video', 'empty'].map((id) => ({
     id, type: 'media', x: 0, y: 0,

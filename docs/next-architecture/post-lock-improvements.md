@@ -1890,3 +1890,19 @@ hardening work when the trigger applies.
 - Validation: focused feedback/dock/clone/shadow tests passed (97/97),
   `npm run typecheck` passed, full `npm run check` passed (1853 tests passed,
   2 skipped; production build succeeded), and `git diff --check` passed.
+
+### Stage 5 canvas edge geometry projection checkpoint (2026-10-07)
+
+- `lib/canvas/edge-geometry.ts` now owns the pure Bézier midpoint projection
+  used by the connection-cancel affordance. It consumes existing
+  `CanvasDocument`/`CanvasEdge` contracts and delegates endpoint and lane
+  calculations to the canonical canvas model helpers.
+- `CanvasWorkspace.tsx` keeps connection interaction state, pointer handling,
+  cancel timing, and overlay rendering; it only imports the projection and no
+  longer carries the geometry implementation inline.
+- Behavior coverage verifies the routed midpoint through the existing canvas
+  model test harness. No document mutation, URL, API, or visual interaction
+  contract changed.
+- Validation: focused canvas model/reference tests passed (85/85),
+  `npm run typecheck` passed, full `npm run check` passed (1854 tests passed,
+  2 skipped; production build succeeded), and `git diff --check` passed.
