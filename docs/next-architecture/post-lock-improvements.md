@@ -1610,3 +1610,20 @@ hardening work when the trigger applies.
 - Remaining risk: generator execution and variant editing callbacks still
   cross CanvasWorkspace/Core boundaries; no React ownership move was attempted
   in this CSS-only slice.
+
+### Stage 6 context menu CSS boundary checkpoint (2026-10-07)
+
+- `app/canvas-context-menu.css` now owns the shared context-menu frame,
+  creation/tool/node/group menu rows, quick-action menu, responsive bounds,
+  reduced-motion behavior, and clone action icon styling.
+- `app/canvas.css` retains only the canvas stage, topbar, node, group and
+  shared overlay rules; no menu action, positioning helper, selection mutation,
+  or CanvasCore command moved.
+- `app/layout.tsx` loads the menu sheet immediately after `canvas.css`, and
+  behavior tests combine both files to preserve the existing cascade contract.
+- Validation: focused context-menu and node-editor suites passed (72/72);
+  `npm run check` passed (1833 tests passed, 2 skipped; typecheck, update
+  manifest validation and production build passed); `git diff --check` passed.
+- Remaining risk: menu action builders and pointer isolation remain coordinated
+  by `CanvasWorkspace.tsx`; extracting them requires behavior coverage for
+  selection and command callbacks, so this slice intentionally moved CSS only.

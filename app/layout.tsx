@@ -5,6 +5,7 @@ import './agent-upgrades.css';
 import './agent-orb.css';
 import './desktop-readability.css';
 import './canvas.css';
+import './canvas-context-menu.css';
 import './canvas-generator-node.css';
 import './canvas-variant-editor.css';
 import './canvas-smart-variant.css';

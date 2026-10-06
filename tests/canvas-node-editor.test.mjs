@@ -186,6 +186,9 @@ const styles = (await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 )).concat("\n", await readFile(
+  new URL("../app/canvas-context-menu.css", import.meta.url),
+  "utf8",
+), "\n", await readFile(
   new URL("../app/canvas-angle.css", import.meta.url),
   "utf8",
 ));

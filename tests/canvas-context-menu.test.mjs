@@ -17,10 +17,13 @@ const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToo
 const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
 const groupLayer = await readFile(new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url), "utf8");
 const connectionOverlay = await readFile(new URL("../components/canvas/CanvasConnectionOverlay.tsx", import.meta.url), "utf8");
-const styles = await readFile(
+const styles = (await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
-);
+)).concat("\n", await readFile(
+  new URL("../app/canvas-context-menu.css", import.meta.url),
+  "utf8",
+));
 const arrangementStyles = await readFile(
   new URL("../app/canvas-arrangement.css", import.meta.url),
   "utf8",
