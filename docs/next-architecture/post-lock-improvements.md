@@ -2083,3 +2083,19 @@ hardening work when the trigger applies.
   2 skipped; production build succeeded); and `git diff --check` passed.
 - Remaining risk: the Agent composer still shares global layout rules with
   several quick actions, so only the isolated duration surface moved here.
+
+### Stage 6 canvas viewport projection checkpoint (2026-10-07)
+
+- `lib/canvas/viewport.ts` now owns the pure client-to-stage, stage-to-world,
+  and world-to-stage coordinate projections used by the canvas UI.
+- `CanvasWorkspace.tsx` retains the stage DOM measurement, pointer lifecycle,
+  camera state, and all document/selection mutations. It now delegates the
+  coordinate formulas to the projection module instead of duplicating them in
+  callbacks.
+- `CanvasCore` remains the sole owner of the camera/document state. The new
+  module has no React, API, storage, task, or compatibility dependencies.
+- Behavior coverage verifies stage offsets, zoomed world projection, and the
+  inverse transform.
+- Validation: focused viewport and canvas model tests passed; full typecheck,
+  `npm run check`, production build, and `git diff --check` are required before
+  this slice is committed.

@@ -4,8 +4,9 @@ import {
   entityPortPoint,
 } from "./model";
 import type { CanvasDocument, CanvasEdge } from "./types";
+import type { CanvasViewportPoint } from "./viewport";
 
-export type CanvasPoint = { x: number; y: number };
+export type CanvasPoint = CanvasViewportPoint;
 
 /** Return the screen-space midpoint used by the connection cancel affordance. */
 export function canvasEdgeMidpoint(

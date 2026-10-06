@@ -343,6 +343,12 @@ import {
   normalizeCanvasMaskState,
   updateCanvasMaskState,
 } from "@/lib/canvas/mask";
+import {
+  canvasClientToStagePoint,
+  canvasStageToWorldPoint,
+  canvasWorldToStagePoint,
+  type CanvasViewportPoint,
+} from "@/lib/canvas/viewport";
 import { canvasUpscaleSize, loadImageDimensions, seedVrTargetSize } from "@/lib/canvas/upscale";
 import {
   CANVAS_MAX_REFERENCES,
@@ -441,7 +447,7 @@ type CanvasReferencePicker = {
   mode: "connected" | "draft";
   role?: CanvasInputRole;
 };
-type Point = { x: number; y: number };
+type Point = CanvasViewportPoint;
 const CANVAS_VIDEO_MAX_WAIT_MS = 30 * 60 * 1000;
 const CANVAS_CONNECTION_CANCEL_SHOW_DELAY_MS = 140;
 
@@ -2898,30 +2904,24 @@ export default function SuperCanvas() {
 
   const stagePoint = useCallback((clientX: number, clientY: number) => {
     const rect = stageRef.current?.getBoundingClientRect();
-    return { x: clientX - (rect?.left || 0), y: clientY - (rect?.top || 0) };
+    return canvasClientToStagePoint(
+      { x: clientX, y: clientY },
+      { left: rect?.left || 0, top: rect?.top || 0 },
+    );
   }, []);
   const screenToWorld = useCallback(
     (clientX: number, clientY: number) => {
       const point = stagePoint(clientX, clientY);
-      return {
-        x: (point.x - document.camera.x) / document.camera.zoom,
-        y: (point.y - document.camera.y) / document.camera.zoom,
-      };
+      return canvasStageToWorldPoint(point, document.camera);
     },
     [document.camera, stagePoint],
   );
   const stageToWorld = useCallback(
-    (point: Point) => ({
-      x: (point.x - document.camera.x) / document.camera.zoom,
-      y: (point.y - document.camera.y) / document.camera.zoom,
-    }),
+    (point: Point) => canvasStageToWorldPoint(point, document.camera),
     [document.camera],
   );
   const worldToScreen = useCallback(
-    (x: number, y: number) => ({
-      x: x * document.camera.zoom + document.camera.x,
-      y: y * document.camera.zoom + document.camera.y,
-    }),
+    (x: number, y: number) => canvasWorldToStagePoint({ x, y }, document.camera),
     [document.camera],
   );
 
