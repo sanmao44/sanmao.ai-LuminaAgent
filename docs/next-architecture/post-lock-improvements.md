@@ -2032,3 +2032,19 @@ hardening work when the trigger applies.
   2 skipped; production build succeeded); and `git diff --check` passed.
 - Remaining risk: provider form, Jimeng login, and hidden video configuration
   remain coupled to page-owned draft and connection lifecycle.
+
+### Stage 6 SuperCanvas shell CSS boundary checkpoint (2026-10-07)
+
+- `app/super-canvas.css` now owns the SuperCanvas entry button, shell toolbar,
+  placeholder, zoom controls, responsive rules, and reduced-motion rules that
+  were previously embedded in `app/globals.css`.
+- `app/layout.tsx` loads the feature sheet immediately after `globals.css`.
+  Existing class names, cascade order relative to the later `shadow-tuning.css`,
+  URL behavior, and CanvasWorkspace ownership are unchanged.
+- No new state, store, API boundary, contract, or compatibility path was added.
+- Validation: focused canvas appearance, workspace shell/topbar, and theme tests
+  passed (6/6); `npm run typecheck` passed; full `npm run check` passed (1863
+  passed, 2 skipped; production build succeeded); and `git diff --check` passed.
+- Remaining risk: CanvasWorkspace still owns the live canvas document,
+  selection, history, and interaction orchestration; this slice only moves the
+  stable shell presentation styles.

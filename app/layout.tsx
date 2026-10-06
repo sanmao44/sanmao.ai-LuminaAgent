@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import './super-canvas.css';
 import './provider-library.css';
 import './agent-upgrades.css';
 import './agent-selection-push.css';
