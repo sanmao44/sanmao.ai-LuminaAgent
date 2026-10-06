@@ -1170,3 +1170,21 @@ hardening work when the trigger applies.
 - Targeted tests and typecheck pass. Full check remains required before the
   stage commit; viewport pointer-state extraction and CSS domain movement stay
   deferred because their behavior is still coupled to node gestures.
+
+### Stage 2 blank-canvas create menu checkpoint (2026-10-06)
+
+- `components/canvas/CanvasCreateContextMenu.tsx` now owns the blank-canvas
+  create menu presentation, separators, labels, and keyboard-safe menu frame.
+- Its contract accepts the existing screen/world menu position and delegates
+  node creation and clone-dialog opening through callbacks. Workspace retains
+  `addNode`, CanvasCore mutations, notifications, and menu state ownership.
+- `CanvasNodeCreationKind` is the shared creation contract in
+  `lib/canvas/types.ts`; no duplicate creation type or compatibility layer was
+  introduced.
+- The context-menu behavior suite and typecheck pass for this extraction.
+  Full `npm test` passed with 1830 tests passing and 2 skipped; `npm run build`
+  and the repository `npm run check` also passed. `git diff --check` is clean
+  for this stage's files; the only excluded warning is the user's pre-existing
+  uncommitted `AGENTS.md` edit. Node/group menus and the tools menu remain in
+  Workspace because their action builders are still interleaved with selection
+  and clipboard orchestration.

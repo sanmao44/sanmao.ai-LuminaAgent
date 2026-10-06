@@ -3,13 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
 
+const createMenuComponent = await readFile(new URL("../components/canvas/CanvasCreateContextMenu.tsx", import.meta.url), "utf8");
 const component = (await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 )).concat("\n", await readFile(
   new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url),
   "utf8",
-));
+)).concat("\n", createMenuComponent);
 const contextMenuComponent = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
 const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
 const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
@@ -291,9 +292,9 @@ test("create menu uses separators instead of spacious group headings", () => {
   assert.equal((createMenu.match(/className="canvas-menu-group"/g) || []).length, 2);
   assert.doesNotMatch(createMenu, /canvas-menu-group-title|canvas-menu-group-mark/);
   assert.doesNotMatch(createMenu, /从空白开始创建|批量生成与变体/);
-  const basicNodesPosition = createMenu.indexOf('addNode("image", contextMenu.world)');
-  const upscalePosition = createMenu.indexOf('addNode("upscale", contextMenu.world)');
-  const workflowPosition = createMenu.indexOf('addNode("workflowImage", contextMenu.world)');
+  const basicNodesPosition = createMenu.indexOf('create("image")');
+  const upscalePosition = createMenu.indexOf('create("upscale")');
+  const workflowPosition = createMenu.indexOf('create("workflowImage")');
   assert.ok(basicNodesPosition >= 0 && upscalePosition > basicNodesPosition && workflowPosition > upscalePosition, "create menu should place upscale after basic nodes");
   assert.doesNotMatch(createMenu, /角度控制节点|addNode\("angle"/);
   assert.match(styles, /\.canvas-create-context-menu \.canvas-menu-item-tool\{[^}]*border-top:1px solid/);

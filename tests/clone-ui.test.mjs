@@ -4,6 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 
 const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
+const createMenu = await readFile(new URL("../components/canvas/CanvasCreateContextMenu.tsx", import.meta.url), "utf8");
 const viewportOverlay = await readFile(new URL("../components/canvas/CanvasViewportOverlay.tsx", import.meta.url), "utf8");
 const dialog = await readFile(new URL("../components/canvas/CanvasCloneDialog.tsx", import.meta.url), "utf8");
 const route = await readFile(new URL("../app/api/clone/jobs/route.ts", import.meta.url), "utf8");
@@ -61,8 +62,8 @@ test("弹窗按真实任务状态轮询并可取消、可放入画布", () => {
 
 test("克隆出片只从「创建节点」菜单进入，顶栏和节点「更多」都不放", () => {
   assert.match(canvas, /import CanvasCloneDialog, \{/);
-  assert.match(canvas, /className="canvas-menu-item canvas-menu-item-clone"/);
-  assert.match(canvas, /<b>克隆出片<\/b>/);
+  assert.match(createMenu, /className="canvas-menu-item canvas-menu-item-clone"/);
+  assert.match(createMenu, /<b>克隆出片<\/b>/);
   // 顶栏不挂常驻按钮，视频节点快捷菜单的「更多」里也没有这条：它属于「新建一条流程」，
   // 不属于某个节点的属性操作。
   assert.doesNotMatch(canvas, /canvas-clone-button/);

@@ -12,6 +12,17 @@ import type { ProvenanceEdge } from '../provenance/types';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale' | 'video-editor' | 'angle';
 export type CanvasMediaKind = 'image' | 'video' | 'audio';
+/** Node kinds accepted by the canvas creation command. */
+export type CanvasNodeCreationKind =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'text'
+  | 'workflowImage'
+  | 'workflowVideo'
+  | 'upscale'
+  | 'videoEditor'
+  | 'angle';
 /** A non-destructive range that reuses the original video source. */
 export type CanvasVideoClipState = {
   version: 1;
