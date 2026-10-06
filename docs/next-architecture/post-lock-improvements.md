@@ -1075,3 +1075,21 @@ hardening work when the trigger applies.
   before committing this checkpoint.
 - Remaining risk: the page still decides when a file action is available and
   which notification to show; those are presentation and interaction concerns.
+
+### Stage 6 image download adapter checkpoint (2026-10-06)
+
+- `lib/image-download.ts` now owns browser image downloads: response Blob
+  conversion, MIME based extension correction, temporary URL cleanup, and
+  data URL fallback behavior.
+- `app/page.tsx` keeps the existing download callbacks and filenames while
+  delegating the browser adapter; no URL, API payload, or user interaction
+  changed.
+- The adapter is a small UI infrastructure boundary and does not introduce a
+  second image persistence or asset authority.
+- Behavior coverage verifies fetched JPEG extension normalization, temporary
+  URL revocation, and data URL fallback download attributes.
+- Validation: targeted image download tests and `npm run typecheck` passed.
+  Full `npm run check`, production build, and `git diff --check` remain
+  required before committing this checkpoint.
+- Remaining risk: download availability and notification wording stay in the
+  page because they depend on the surrounding viewer interaction.

@@ -148,6 +148,7 @@ import { historyArtifactFiles } from '@/lib/agent/artifact-references';
 import { chatFileToCreativeReference, createCreativeReferenceFromFile, readAgentChatFile } from '@/lib/agent/attachment-client';
 import { makeWhiteBackgroundTransparent } from '@/lib/image-editor/transparent-background';
 import { downloadChatFile } from '@/lib/agent/chat-file-download';
+import { downloadImage } from '@/lib/image-download';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -243,34 +244,6 @@ function focusContentEditableToEnd(element) {
 }
 function clipboardImageFiles(data) {
     return Array.from(data.items || []).filter((item)=>item.kind === 'file' && item.type.startsWith('image/')).map((item)=>item.getAsFile()).filter((file)=>Boolean(file));
-}
-async function downloadUrl(url, filename) {
-    try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('fetch failed');
-        const blob = await response.blob();
-        const actualExtension = blob.type.includes('jpeg') ? 'jpg' : blob.type.includes('webp') ? 'webp' : blob.type.includes('png') ? 'png' : '';
-        if (actualExtension) filename = filename.replace(/\.(png|jpe?g|webp)$/i, `.${actualExtension}`);
-        const objectUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objectUrl;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.setTimeout(()=>URL.revokeObjectURL(objectUrl), 1500);
-    } catch  {
-        const dataExtension = url.match(/^data:image\/(png|jpeg|webp)/i)?.[1];
-        if (dataExtension) filename = filename.replace(/\.(png|jpe?g|webp)$/i, `.${dataExtension === 'jpeg' ? 'jpg' : dataExtension}`);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.target = '_blank';
-        a.rel = 'noreferrer';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-    }
 }
 async function downloadShareImage(item) {
     const references = galleryReferences(item).filter((reference) => reference.kind === 'image' && reference.url);
@@ -8056,7 +8029,7 @@ export default function Page() {
                                                                             onCompare: ()=>openCompare(item),
                                                                             onReversePrompt: ()=>reversePrompt(item),
                                                                             onFavorite: ()=>void toggleFavorite(item),
-                                                                            onDownload: ()=>void downloadUrl(item.url, `SANMAO-${item.id}.png`),
+                                                                            onDownload: ()=>void downloadImage(item.url, `SANMAO-${item.id}.png`),
                                                                             onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                                                             onDelete: ()=>askDeleteItems([
                                                                                     item.id
@@ -8561,7 +8534,7 @@ export default function Page() {
                                 onBrowseHistory: ()=>{ setRecordTab('works'); setSection('history'); },
                                 onGenerate: submitAngleGeneration,
                                 onOpenResult: (item)=>openViewer(item),
-                                onDownloadResult: (item)=>downloadUrl(item.url, `SANMAO-${item.id}.png`),
+                                onDownloadResult: (item)=>downloadImage(item.url, `SANMAO-${item.id}.png`),
                                 onDownloadShare: (item)=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                 onNotify: notify
                             }),
@@ -9550,7 +9523,7 @@ export default function Page() {
                                                                             onCompare: ()=>openCompare(item),
                                                                             onReversePrompt: ()=>reversePrompt(item),
                                                                             onFavorite: ()=>void toggleFavorite(item),
-                                                                            onDownload: ()=>void downloadUrl(item.url, `SANMAO-${item.id}.png`),
+                                                                            onDownload: ()=>void downloadImage(item.url, `SANMAO-${item.id}.png`),
                                                                             onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                                                             onDelete: ()=>askDeleteItems([
                                                                                     item.id
@@ -9644,7 +9617,7 @@ export default function Page() {
                                                         onCompare: ()=>openCompare(item),
                                                         onReversePrompt: ()=>reversePrompt(item),
                                                         onFavorite: ()=>void toggleFavorite(item),
-                                                        onDownload: ()=>void downloadUrl(item.url, `SANMAO-${item.id}.png`),
+                                                        onDownload: ()=>void downloadImage(item.url, `SANMAO-${item.id}.png`),
                                                         onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                                         onDelete: ()=>askDeleteItems([
                                                                 item.id
@@ -9813,7 +9786,7 @@ export default function Page() {
                                                         onClick: ()=>{
                                                             for (const id of selectedHistory){
                                                                 const item = gallery.find((x)=>x.id === id);
-                                                                if (item) void downloadUrl(item.url, `SANMAO-${item.id}.png`);
+                                                                if (item) void downloadImage(item.url, `SANMAO-${item.id}.png`);
                                                             }
                                                         },
                                                         children: [
@@ -9905,7 +9878,7 @@ export default function Page() {
                                                         onCompare: ()=>openCompare(item),
                                                         onReversePrompt: ()=>reversePrompt(item),
                                                         onFavorite: ()=>void toggleFavorite(item),
-                                                        onDownload: ()=>void downloadUrl(item.url, `SANMAO-${item.id}.png`),
+                                                        onDownload: ()=>void downloadImage(item.url, `SANMAO-${item.id}.png`),
                                                         onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
                                                         onDelete: ()=>askDeleteItems([
                                                                 item.id
@@ -12784,7 +12757,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                         /*#__PURE__*/ _jsxs("button", {
                                             type: "button",
                                             className: "download-primary",
-                                            onClick: ()=>void downloadUrl(viewerItem.url, `SANMAO-${viewerItem.id}.png`),
+                                            onClick: ()=>void downloadImage(viewerItem.url, `SANMAO-${viewerItem.id}.png`),
                                             children: [
                                                 /*#__PURE__*/ _jsx(Icon, {
                                                     name: "download",
