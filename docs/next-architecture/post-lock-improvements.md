@@ -1057,3 +1057,21 @@ hardening work when the trigger applies.
 - Remaining risk: the page still owns the preview modal composition and
   browser download action because those are UI lifecycle responsibilities;
   only the pure rendering boundary moved.
+
+### Stage 6 chat file download adapter checkpoint (2026-10-06)
+
+- `lib/agent/chat-file-download.ts` now owns authenticated artifact fetching,
+  inline UTF-8/base64 Blob construction, and browser download URL cleanup for
+  Agent chat files.
+- `app/page.tsx` keeps only the user-facing callback and existing failure
+  notification. It no longer owns file transport or Blob encoding details.
+- The adapter reuses the existing `ChatFile` contract from `lib/client-history`;
+  no new persisted shape, API route, storage owner, or compatibility layer was
+  introduced.
+- Behavior coverage verifies inline base64 downloads, remote artifact
+  downloads, filenames/MIME handling, and the existing 404 error mapping.
+- Validation: targeted download tests and `npm run typecheck` passed. Full
+  `npm run check`, production build, and `git diff --check` remain required
+  before committing this checkpoint.
+- Remaining risk: the page still decides when a file action is available and
+  which notification to show; those are presentation and interaction concerns.

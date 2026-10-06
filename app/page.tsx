@@ -147,6 +147,7 @@ import { prepareAgentReferences } from '@/lib/agent/reference-preparation';
 import { historyArtifactFiles } from '@/lib/agent/artifact-references';
 import { chatFileToCreativeReference, createCreativeReferenceFromFile, readAgentChatFile } from '@/lib/agent/attachment-client';
 import { makeWhiteBackgroundTransparent } from '@/lib/image-editor/transparent-background';
+import { downloadChatFile } from '@/lib/agent/chat-file-download';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -285,38 +286,6 @@ async function downloadShareImage(item) {
     });
 }
 /** 历史里助手生成过的 Office/ZIP 文件只回传元数据，服务端才能在下一轮继续引用或打包。 */
-async function downloadChatFile(file) {
-    if (file.downloadUrl) {
-        const response = await fetch(file.downloadUrl, { cache: 'no-store' });
-        if (!response.ok) throw new Error(response.status === 404 ? '文件已过期或被清理，请重新生成' : '文件下载失败');
-        const remoteUrl = URL.createObjectURL(await response.blob());
-        const remoteAnchor = document.createElement('a');
-        remoteAnchor.href = remoteUrl;
-        remoteAnchor.download = file.name || 'SANMAO-file';
-        document.body.appendChild(remoteAnchor);
-        remoteAnchor.click();
-        remoteAnchor.remove();
-        window.setTimeout(()=>URL.revokeObjectURL(remoteUrl), 1500);
-        return;
-    }
-    const blob = file.encoding === 'base64' ? new Blob([
-        Uint8Array.from(atob(file.content.replace(/\s/g, '')), (char)=>char.charCodeAt(0))
-    ], {
-        type: file.mimeType || 'application/octet-stream'
-    }) : new Blob([
-        file.content
-    ], {
-        type: file.mimeType || 'text/plain;charset=utf-8'
-    });
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = objectUrl;
-    anchor.download = file.name || 'SANMAO-file.txt';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(()=>URL.revokeObjectURL(objectUrl), 1500);
-}
 function Icon({ name, size = 18 }) {
     const paths = {
         agent: /*#__PURE__*/ _jsxs(_Fragment, {

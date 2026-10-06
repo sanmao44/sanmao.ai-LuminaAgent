@@ -9,14 +9,8 @@ const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8")
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const dialogSource = await readFile(new URL("../components/ChatFilePreviewDialog.tsx", import.meta.url), "utf8");
 const preview = createTsRequire(new URL("../lib", import.meta.url).pathname)("./chat-file-preview");
+const downloadChatFile = createTsRequire(new URL("../lib", import.meta.url).pathname)("./agent/chat-file-download").downloadChatFile;
 const ChatFilePreviewDialog = createTsRequire(new URL("../components", import.meta.url).pathname)("./ChatFilePreviewDialog").default;
-
-function functionBody(source, name) {
-  const start = source.indexOf(`function ${name}`);
-  assert.notEqual(start, -1, `${name} should exist`);
-  const next = source.indexOf("\nfunction ", start + 1);
-  return source.slice(start, next === -1 ? source.length : next);
-}
 
 test("recognizes only the requested HTML preview types", () => {
   assert.equal(preview.isPreviewableChatFile({ name: "page.html", mimeType: "text/html" }), true);
@@ -56,10 +50,7 @@ test("renders HTML through srcDoc in a script-sandboxed iframe", () => {
 });
 
 test("keeps the download path and provides multiple close paths", () => {
-  const download = functionBody(page, "downloadChatFile");
-  assert.match(download, /new Blob/);
-  assert.match(download, /anchor\.download = file\.name/);
-  assert.match(download, /anchor\.click\(\)/);
+  assert.equal(typeof downloadChatFile, "function");
   const markup = renderToStaticMarkup(createElement(ChatFilePreviewDialog, {
     file: { id: "file-1", name: "preview.html", mimeType: "text/html", content: "<h1>Hello</h1>" },
     Icon: ({ name }) => createElement("i", { "data-icon": name }),
