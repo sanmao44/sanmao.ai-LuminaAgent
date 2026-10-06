@@ -550,3 +550,119 @@ Recommended next phase
 - Source-Test 约束用 `tests/architecture-source-test-baseline.json` 冻结现有历史 source-coupled 测试；新增此类测试会失败，必须改为 transpile → execute → behavior 测试。
 - 新增或放宽架构规则时，必须先改测试再改文档；不允许让测试与规则长期不一致。
 - 兼容层与 Post-Lock Improvement 清单由 `docs/next-architecture/migration-status.md` 与 `docs/next-architecture/post-lock-improvements.md` 维护。
+
+## Feature-Driven Refactoring Policy
+
+当前阶段禁止主动发起无明确产品收益的大规模架构重构。
+
+默认开发模式为：
+
+**Feature First, Refactor Along the Path.**
+
+### 1. 功能优先
+
+每个任务的第一目标必须是完成用户可验证的功能、Bug 修复或产品质量改进。
+
+不得因为发现附近代码不够理想，就把当前任务扩大为：
+
+* 全模块重写
+* 全局状态管理迁移
+* 大规模目录调整
+* 大规模重命名
+* 与当前需求无关的抽象
+* “顺便清理”其他领域
+* 为了减少文件行数而机械拆文件
+
+### 2. 允许的伴随重构
+
+当当前功能直接触碰旧代码时，可以并鼓励进行局部重构，但必须满足：
+
+1. 重构范围与当前功能直接相关；
+2. 能减少当前功能继续增加 legacy ownership；
+3. 能把已有业务职责迁入正确 owner；
+4. 能降低重复逻辑、隐式状态或跨层依赖；
+5. 有现有测试或新增行为测试保护；
+6. 不改变无关产品行为。
+
+典型允许行为：
+
+* 从巨型 React 组件中抽出当前功能需要的 hook；
+* 把当前功能涉及的业务规则迁到 Core / Runtime / Application；
+* 把重复 API 类型迁到 contracts；
+* 把当前功能涉及的 persistence 调用迁到 Repository；
+* 把当前功能涉及的 Provider / Tool 行为迁到已有 Port；
+* 提取当前功能相关的 UI 子组件；
+* 删除因本次迁移而失去调用者的旧代码。
+
+### 3. 巨型文件规则
+
+`app/page.tsx`、`components/canvas/CanvasWorkspace.tsx` 以及其他 >1000 行文件视为 Legacy Integration Surface。
+
+允许修改，但原则上：
+
+* 不新增新的领域 ownership；
+* 不新增可独立存在的业务状态机；
+* 不新增大段 persistence / provider / lifecycle 逻辑；
+* 新功能优先进入所属 feature/domain 模块；
+* 巨型文件只保留 wiring、composition、rendering 和 interaction glue。
+
+如果实现一个新功能必须向巨型文件加入大量业务逻辑，应先提取与该功能直接相关的 boundary，再实现功能。
+
+### 4. 重构预算
+
+默认情况下，伴随重构应小于或接近功能本身的范围。
+
+出现以下任一情况时，应停止扩大当前重构范围，并将剩余问题记录到 post-lock improvements / regression backlog：
+
+* 开始修改与当前需求无关的领域；
+* 为完成局部功能需要重写整个 subsystem；
+* 重构产生大量无关文件 diff；
+* 需要同时改变多个 authoritative owner；
+* 测试无法区分功能变化与架构变化；
+* 重构风险已经明显大于当前功能收益。
+
+不得仅为了“代码更漂亮”扩大任务范围。
+
+### 5. 三次触碰规则
+
+如果连续多个产品任务反复被同一个结构问题阻塞，则可以提出一次独立的针对性重构。
+
+判断标准：
+
+* 同一问题已经影响至少 2–3 个实际功能；
+* 已经能明确新的稳定 boundary；
+* 重构完成后近期功能可以直接受益；
+* 有行为测试覆盖迁移前后的产品行为。
+
+这类重构必须针对具体 bottleneck，不得重新开启全项目架构迁移。
+
+### 6. 新代码规则
+
+所有新功能默认遵循：
+
+* 新业务规则进入 owning domain；
+* React 负责 presentation / interaction，不成为领域 Source of Truth；
+* Route 负责 transport，不拥有业务生命周期；
+* Infrastructure 通过 Port 接入；
+* 跨模块类型来自 contracts；
+* 优先复用现有边界，而不是建立第二套 abstraction。
+
+原则：
+
+> 新功能不继续制造旧债，旧债在被真实需求触及时逐步消除。
+
+### 7. 完成任务前自检
+
+Codex 在宣布任务完成前必须检查：
+
+* 本次产品目标是否完整实现；
+* 是否向 legacy 巨型文件新增了不必要的业务 ownership；
+* 是否出现第二个 Source of Truth；
+* 是否进行了与需求无关的重构；
+* 是否可以删除因本次迁移而失效的旧实现；
+* 是否增加或更新了对应行为测试；
+* architecture enforcement 是否通过；
+* targeted tests、typecheck、`npm run check`、build、`git diff --check` 是否通过。
+
+若某项无法运行，必须明确说明原因，不得把“未运行”描述为“通过”。
+
