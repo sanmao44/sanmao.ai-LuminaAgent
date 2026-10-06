@@ -40,6 +40,19 @@ hardening work when the trigger applies.
   media/prompt/generator behavior in Workspace and is deferred until those
   callbacks have a dedicated behavior boundary.
 
+### Stage 2 canvas action icon presentation checkpoint (2026-10-07)
+
+- `components/canvas/CanvasActionIcon.tsx` now owns the existing icon-name to
+  SVG/AgentOrb presentation mapping used by context menus and quick toolbars.
+- `CanvasContextMenu.tsx` and `CanvasQuickToolbar.tsx` retain only their menu
+  and toolbar composition; icon rendering is passed through the explicit
+  presentation component.
+- All icon names, SVG geometry, Agent orb rendering, and unknown-name fallback
+  behavior remain unchanged. No action contract, business callback, state, or
+  API behavior changed.
+- Focused menu tests and typecheck pass; full repository validation remains
+  required before committing this slice.
+
 ### Stage 6 canvas asset projection boundary checkpoint (2026-10-07)
 
 - `lib/canvas/asset-library.ts` now owns the pure projection from a Canvas media

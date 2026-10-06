@@ -7,6 +7,7 @@ const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", i
 const menuLayout = await readFile(new URL("../lib/canvas/menu-layout.ts", import.meta.url), "utf8");
 const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
 const contextMenu = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
+const actionIcon = await readFile(new URL("../components/canvas/CanvasActionIcon.tsx", import.meta.url), "utf8");
 const menuActions = await readFile(new URL("../lib/canvas/menu-actions.ts", import.meta.url), "utf8");
 const selectionToolbar = await readFile(new URL("../components/canvas/CanvasSelectionToolbar.tsx", import.meta.url), "utf8");
 const nodeEditor = await readFile(new URL("../components/canvas/CanvasNodeEditorPopover.tsx", import.meta.url), "utf8");
@@ -651,7 +652,7 @@ test("the canvas hands a selection to the dock with one click", () => {
   // 单节点快捷工具栏和多选工具条都接这个入口。
   assert.match(menuActions, /id: "ask-agent"/);
   assert.match(menuActions, /icon: "agent"/);
-  assert.match(contextMenu, /case "agent":/);
+  assert.match(actionIcon, /case "agent":/);
   assert.ok(selectionToolbar.includes('title="打开 Agent 助手，用这些选中节点作为上下文"'));
   // 信号传给面板：展开后光标落在输入框里，不用再点一次。
   assert.match(canvas, /focusSignal=\{agentDockFocusSignal\}/);

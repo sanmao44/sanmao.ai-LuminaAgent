@@ -7,7 +7,8 @@ import { groupBounds, nodeSize } from "@/lib/canvas/model";
 import type { CanvasDocument, CanvasGroup, CanvasNode } from "@/lib/canvas/types";
 import { placeCanvasGroupToolbar, placeCanvasNodeToolbar } from "@/lib/canvas/editor-layout";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
-import { CanvasActionIcon, CanvasNodeQuickMenu, canvasPromptOrbState, type CanvasQuickAction, type CanvasQuickActionGroup, type CanvasQuickToolbarActions, type CanvasQuickToolbarTarget } from "@/components/canvas/CanvasContextMenu";
+import { CanvasNodeQuickMenu, canvasPromptOrbState, type CanvasQuickAction, type CanvasQuickActionGroup, type CanvasQuickToolbarActions, type CanvasQuickToolbarTarget } from "@/components/canvas/CanvasContextMenu";
+import CanvasActionIcon from "@/components/canvas/CanvasActionIcon";
 type CanvasQuickToolbarPosition = {
   left: number;
   top: number;
