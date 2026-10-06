@@ -33,6 +33,24 @@ hardening work when the trigger applies.
 - Behavior coverage extends `tests/generation-log-presentation.test.mjs` for
   known and fallback sources. No URL, persisted field, or interaction changed.
 
+### Stage 5 Agent attachment boundary checkpoint (2026-10-06)
+
+- `lib/agent/attachment-client.ts` now owns the browser attachment conversion
+  used by the page: image/video File reading and optimization, text file
+  validation, Office/PDF extraction requests, and `ChatFile` to
+  `CreativeReference` projection.
+- `app/page.tsx` retains reference/file count limits, optimistic state updates,
+  notifications, clipboard routing, and history actions. ID generation remains
+  page-owned through an injected `uid` factory, so no second identity source
+  was introduced.
+- The existing attachment behavior suite now executes the client boundary with
+  real File objects and mocked extraction HTTP, covering local text, binary
+  extraction, media references, and angle input guards. No API URL, payload,
+  persisted file shape, or user flow changed.
+- Remaining risk: image compression still depends on browser Canvas APIs and
+  is shared with Canvas; moving that infrastructure or page-level attachment
+  state would require a separate browser behavior slice.
+
 ### Stage 5 gallery history projection checkpoint (2026-10-06)
 
 - `lib/creation/gallery-items.ts` now owns the pure projection from generated

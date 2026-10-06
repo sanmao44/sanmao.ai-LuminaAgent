@@ -7,9 +7,21 @@ import ExcelJS from 'exceljs';
 import PptxGenJS from 'pptxgenjs';
 import { buildArtifactsModule } from './artifacts-build.mjs';
 import { buildAttachmentsModule } from './attachments-build.mjs';
+import { createTsRequire } from './ts-require.mjs';
 
 const artifacts = await buildArtifactsModule();
 const attachments = await buildAttachmentsModule();
+const attachmentClient = createTsRequire(process.cwd(), {
+  [path.resolve('lib/canvas/api.ts')]: {
+    optimizeCanvasUploadFile: async (file) => ({
+      file,
+      changed: false,
+      originalSize: file.size,
+      uploadedSize: file.size,
+    }),
+    compressReferenceDataUrl: async (url) => `compressed:${url}`,
+  },
+})('./lib/agent/attachment-client');
 
 async function withStore(run) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-attachments-'));
@@ -126,18 +138,81 @@ test('坏文件给出中文原因，不支持的类型返回 null', async () => 
   assert.equal(attachments.isBinaryAttachmentName('笔记.txt'), false);
 });
 
-test('上传链路把 Office/PDF 交给服务端解析，文本文件仍走本地读取', async () => {
-  const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
-  const route = await readFile(new URL('../app/api/attachments/extract/route.ts', import.meta.url), 'utf8');
-  for (const extension of ['docx', 'xlsx', 'pptx', 'pdf']) assert.match(page, new RegExp(`'${extension}'`));
-  assert.match(page, /fetch\('\/api\/attachments\/extract'/);
-  assert.match(page, /form\.append\('file', file\)/);
-  assert.match(page, /const binaryAttachmentMaxBytes = 20 \* 1024 \* 1024/);
-  assert.match(page, /sourceSize: file\.size/);
-  assert.match(page, /truncated: Boolean\(data\?\.truncated\)/);
-  assert.match(page, /const agentReferenceAccept = `\$\{referenceAccept\},\.docx,\.xlsx,\.pptx,\.pdf`/);
-  assert.match(page, /accept: agentReferenceAccept/);
-  assert.match(route, /isTrustedAppRequest\(request\)/);
-  assert.match(route, /file\.size > ATTACHMENT_MAX_BYTES/);
-  assert.match(route, /text: parsed\.text/);
+test('attachment client reads text locally and maps it to a text reference', async () => {
+  const file = new File(['hello'], 'notes.md', { type: 'text/markdown' });
+  const chatFile = await attachmentClient.readAgentChatFile(file, (prefix) => `${prefix}-1`);
+
+  assert.deepEqual(chatFile, {
+    id: 'file-1',
+    name: 'notes.md',
+    mimeType: 'text/markdown',
+    content: 'hello',
+    encoding: 'utf8',
+    size: 5,
+  });
+  assert.deepEqual(attachmentClient.chatFileToCreativeReference(chatFile, () => 'unused'), {
+    id: 'file-1',
+    kind: 'text',
+    name: 'notes.md',
+    text: 'hello',
+    mimeType: 'text/markdown',
+  });
+});
+
+test('attachment client sends binary documents to the extraction endpoint', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (input, init) => {
+    request = { input, init };
+    return new Response(JSON.stringify({ text: 'extracted text', truncated: true }), {
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const file = new File(['docx-bytes'], 'brief.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+    const result = await attachmentClient.readAgentChatFile(file, (prefix) => `${prefix}-2`);
+    assert.equal(request.input, '/api/attachments/extract');
+    assert.equal(request.init.method, 'POST');
+    assert.equal(request.init.body.get('file').name, 'brief.docx');
+    assert.equal(result.id, 'file-2');
+    assert.equal(result.content, 'extracted text');
+    assert.equal(result.sourceSize, file.size);
+    assert.equal(result.truncated, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('attachment client prepares image references and guards angle input types', async () => {
+  const originalReader = globalThis.FileReader;
+  class TestFileReader {
+    result = '';
+    onload;
+    onerror;
+    readAsDataURL(file) {
+      this.result = `data:${file.type};base64,raw`;
+      this.onload?.();
+    }
+  }
+  globalThis.FileReader = TestFileReader;
+  try {
+    const image = await attachmentClient.createCreativeReferenceFromFile(
+      new File(['image'], 'image.png', { type: 'image/png' }),
+      { compressForChat: false, createId: (prefix) => `${prefix}-3` },
+    );
+    assert.equal(image.id, 'ref-3');
+    assert.equal(image.kind, 'image');
+    assert.equal(image.url, 'data:image/png;base64,raw');
+    await assert.rejects(
+      () => attachmentClient.createCreativeReferenceFromFile(
+        new File(['video'], 'clip.mp4', { type: 'video/mp4' }),
+        { target: 'angle', createId: () => 'unused' },
+      ),
+      /角度控制台只接受图片/u,
+    );
+  } finally {
+    globalThis.FileReader = originalReader;
+  }
 });
