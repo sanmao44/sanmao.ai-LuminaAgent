@@ -351,6 +351,7 @@ import {
 import { canvasVideoInputError } from "@/lib/canvas/video-input-validation";
 import { canvasVideoInputCapabilities } from "@/lib/canvas/video-capabilities";
 import { canvasHistoryMask } from "@/lib/canvas/history-mask";
+import { canvasVariantBatchStatus } from "@/lib/canvas/variant-status";
 import { canvasAngleReference } from "@/lib/canvas/angle-reference";
 import {
   mentionedCanvasMedia,
@@ -1396,14 +1397,6 @@ function parseSmartVariantPlan(message: string, sourceUnits: ReturnType<typeof s
       sources: [sourceById.get(item.sourceId)!.text],
     })),
   };
-}
-
-function variantBatchStatus(states: CanvasVariantState[]) {
-  if (states.some((state) => state.status === "running")) return "running" as const;
-  if (states.some((state) => state.status === "failed")) return "failed" as const;
-  if (states.length && states.every((state) => state.status === "completed"))
-    return "completed" as const;
-  return "queued" as const;
 }
 
 function rectanglesOverlap(
@@ -6105,11 +6098,11 @@ export default function SuperCanvas() {
                   data: {
                     ...node.data,
                     variantStates: states,
-                    status: variantBatchStatus(states),
+                    status: canvasVariantBatchStatus(states),
                     statusLabel:
-                      variantBatchStatus(states) === "completed"
+                      canvasVariantBatchStatus(states) === "completed"
                         ? "视频变体生成完成"
-                        : variantBatchStatus(states) === "failed"
+                        : canvasVariantBatchStatus(states) === "failed"
                           ? "部分视频变体失败"
                           : "视频变体生成中",
                   },
@@ -6261,7 +6254,7 @@ export default function SuperCanvas() {
                 }
               : state,
           );
-          const status = variantBatchStatus(states);
+          const status = canvasVariantBatchStatus(states);
           return {
             ...node,
             data: {

@@ -19,6 +19,7 @@ import { normalizeCreationSettings } from "../creation/settings";
 import { normalizeCanvasMaskState } from "./mask";
 import { createVideoEditorState, normalizeVideoEditorState } from "./video-editor";
 import { normalizeCanvasVideoClipState, videoClipDurationSeconds } from "./video-clip";
+import { canvasVariantBatchStatus } from "./variant-status";
 import {
   normalizeCanvasEntityLayers,
   normalizeCanvasNodeLayers,
@@ -1103,13 +1104,7 @@ export function recoverInterruptedCanvasDocument(
       };
     });
     if (!changed) return node;
-    const nextStatus: CanvasNodeData["status"] = variantStates.some((state) => state.status === "running")
-      ? "running"
-      : variantStates.some((state) => state.status === "failed")
-        ? "failed"
-        : variantStates.length && variantStates.every((state) => state.status === "completed")
-          ? "completed"
-          : "queued";
+    const nextStatus = canvasVariantBatchStatus(variantStates);
     return {
       ...node,
       data: {

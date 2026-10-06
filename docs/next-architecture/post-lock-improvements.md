@@ -737,3 +737,21 @@ hardening work when the trigger applies.
 - Remaining risk: angle generation and panorama workbench orchestration still
   combine UI lifecycle with request submission; they are intentionally not
   moved by this projection-only slice.
+
+### Stage 5 canvas variant status boundary checkpoint (2026-10-06)
+
+- `lib/canvas/variant-status.ts` now owns the aggregate status rule for canvas
+  variant batches. The existing recovery path in `lib/canvas/model.ts` and the
+  live generation paths in `CanvasWorkspace.tsx` use the same implementation,
+  removing a duplicate status owner.
+- The rule preserves the existing precedence: running, failed, completed only
+  for a non-empty all-completed batch, otherwise queued. No task lifecycle,
+  provider behavior, document shape, or UI interaction changed.
+- Behavior coverage verifies precedence, empty batches, pending states, and
+  all-completed batches. No URL or API contract changed.
+- Validation: targeted variant status tests and `npm run typecheck` passed. Full
+  `npm test`, `npm run build`, and `npm run check` remain required before
+  committing this checkpoint.
+- Remaining risk: variant generation still owns request submission, result
+  materialization, and node mutation in Workspace; only the aggregate status
+  rule moved.
