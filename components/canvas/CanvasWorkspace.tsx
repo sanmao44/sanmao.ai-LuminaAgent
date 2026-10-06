@@ -371,6 +371,7 @@ import { canvasHistoryMask } from "@/lib/canvas/history-mask";
 import { canvasVariantBatchStatus } from "@/lib/canvas/variant-status";
 import {
   applyCanvasVariantStatePatch,
+  canvasVariantImageNodeData,
   canvasVideoTaskProgress,
   canvasVariantVideoNodeData,
   prepareCanvasVariantBatch,
@@ -6178,23 +6179,18 @@ export default function SuperCanvas() {
                   image.url,
                   `图片变体 ${index + 1}-${outputIndex + 1}`,
                   positionFor(),
-                  {
-                    role: "变体结果",
-                    model: result.model?.name || imageParams.model,
-                    generation: {
-                      kind: "image",
-                      prompt,
-                      params: clone(imageParams),
-                      referenceIds: linked.map((item) => item.id),
-                      sourceGeneratorId: generatorId,
-                      variantBatchId: batchId,
-                      variantIndex: index,
-                      variantInstruction: requirements[index],
-                      createdAt: Date.now(),
-                      durationMs: generationDurationMs,
-                    },
-                    referenceOrder: linked.map((item) => item.id),
-                  },
+                  canvasVariantImageNodeData({
+                    prompt,
+                    params: clone(imageParams),
+                    linkedIds: linked.map((item) => item.id),
+                    sourceGeneratorId: generatorId,
+                    variantBatchId: batchId,
+                    variantIndex: index,
+                    variantInstruction: requirements[index],
+                    modelName: result.model?.name,
+                    generationStartedAt,
+                    now: Date.now(),
+                  }),
                 ),
               );
               updateDoc((value) => {

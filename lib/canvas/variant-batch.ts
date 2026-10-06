@@ -1,5 +1,5 @@
 import type { CanvasNodeData, CanvasVariantState } from "./types";
-import type { VideoCreationSettings } from "../creation/settings";
+import type { ImageCreationSettings, VideoCreationSettings } from "../creation/settings";
 import { canvasVariantBatchStatus } from "./variant-status";
 
 export type CanvasVariantBatchMode = "all" | "failed" | "pending";
@@ -69,6 +69,37 @@ export function canvasVariantVideoNodeData(input: {
       taskId: input.task.id,
       createdAt: input.generationStartedAt,
       ...(generationDurationMs !== undefined ? { durationMs: generationDurationMs } : {}),
+    },
+    referenceOrder: [...input.linkedIds],
+  };
+}
+
+export function canvasVariantImageNodeData(input: {
+  prompt: string;
+  params: ImageCreationSettings;
+  linkedIds: readonly string[];
+  sourceGeneratorId: string;
+  variantBatchId: string;
+  variantIndex: number;
+  variantInstruction: string;
+  modelName?: string;
+  generationStartedAt: number;
+  now: number;
+}): CanvasNodeData {
+  return {
+    role: "变体结果",
+    model: input.modelName || input.params.model,
+    generation: {
+      kind: "image",
+      prompt: input.prompt,
+      params: input.params,
+      referenceIds: [...input.linkedIds],
+      sourceGeneratorId: input.sourceGeneratorId,
+      variantBatchId: input.variantBatchId,
+      variantIndex: input.variantIndex,
+      variantInstruction: input.variantInstruction,
+      createdAt: input.now,
+      durationMs: Math.max(0, input.now - input.generationStartedAt),
     },
     referenceOrder: [...input.linkedIds],
   };

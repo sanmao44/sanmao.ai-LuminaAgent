@@ -1826,3 +1826,11 @@ hardening work when the trigger applies.
   subset would leave same-selector cascade ownership split across files and
   could change viewport/deck positioning. No behavior-safe slice was identified
   without first adding a dedicated style contract and broader visual coverage.
+
+### Stage 5 variant image result projection checkpoint (2026-10-06)
+
+- `canvasVariantImageNodeData` in `lib/canvas/variant-batch.ts` now owns the pure projection of generated variant image provenance and duration metadata.
+- `CanvasWorkspace.tsx` keeps result node creation, edge creation, batch status updates, and history recording; it no longer assembles the duplicated image metadata object inline.
+- Behavior coverage verifies source provenance, reference provenance, and duration preservation without changing node shape or generation flow.
+- Validation: focused variant batch tests passed (11/11); `npm run typecheck` passed; full `npm run check` passed (1850 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
+- Remaining risk: variant task submission and result orchestration remain coordinated by `CanvasWorkspace.tsx`; further extraction should continue through pure projections or explicit service boundaries without introducing a second task runtime.

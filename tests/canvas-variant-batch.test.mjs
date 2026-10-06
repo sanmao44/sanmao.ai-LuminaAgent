@@ -130,6 +130,40 @@ test("keeps a pending variant video task running without duration", () => {
   assert.equal(pending.generation?.durationMs, undefined);
 });
 
+test("projects image variant provenance and duration without owning node creation", () => {
+  const params = { kind: "image", model: "image-model", count: 1 };
+  const data = batch.canvasVariantImageNodeData({
+    prompt: "portrait",
+    params,
+    linkedIds: ["prompt-1", "image-1"],
+    sourceGeneratorId: "generator-1",
+    variantBatchId: "batch-1",
+    variantIndex: 1,
+    variantInstruction: "soft light",
+    modelName: "provider-image-model",
+    generationStartedAt: 2000,
+    now: 2450,
+  });
+
+  assert.deepEqual(data, {
+    role: "变体结果",
+    model: "provider-image-model",
+    generation: {
+      kind: "image",
+      prompt: "portrait",
+      params,
+      referenceIds: ["prompt-1", "image-1"],
+      sourceGeneratorId: "generator-1",
+      variantBatchId: "batch-1",
+      variantIndex: 1,
+      variantInstruction: "soft light",
+      createdAt: 2450,
+      durationMs: 450,
+    },
+    referenceOrder: ["prompt-1", "image-1"],
+  });
+});
+
 test("prepares only requested failed variants and preserves retry results", () => {
   const retained = { id: "variant-1", instruction: "one", status: "completed", resultIds: ["image-1"] };
   const failed = { id: "variant-2", instruction: "old", status: "failed", resultIds: ["image-2"], taskIds: ["task-2"] };
