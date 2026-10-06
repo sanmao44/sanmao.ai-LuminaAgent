@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 
 const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const providerListSource = await readFile(new URL('../components/ProviderList.tsx', import.meta.url), 'utf8');
+const platformPickerSource = await readFile(new URL('../components/ProviderPlatformPicker.tsx', import.meta.url), 'utf8');
 const providerListModule = { exports: {} };
 const providerListCompiled = ts.transpileModule(providerListSource, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -29,6 +30,18 @@ vm.runInNewContext(providerListCompiled, {
   },
 });
 const ProviderList = providerListModule.exports.default;
+const platformPickerModule = { exports: {} };
+const platformPickerCompiled = ts.transpileModule(platformPickerSource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText;
+vm.runInNewContext(platformPickerCompiled, {
+  exports: platformPickerModule.exports,
+  require(id) {
+    if (id === 'react/jsx-runtime') return require('react/jsx-runtime');
+    throw new Error(`Unexpected ProviderPlatformPicker dependency: ${id}`);
+  },
+});
+const ProviderPlatformPicker = platformPickerModule.exports.default;
 
 test('first-run provider setup modal can be dismissed', () => {
   assert.match(pageSource, /const PROVIDER_SETUP_DISMISSED_STORAGE_KEY = 'sanmao-provider-setup-dismissed';/);
@@ -111,4 +124,26 @@ test('provider list presents current state and forwards every action through its
     ['sync', 'provider-a'],
     ['delete', 'provider-a'],
   ]);
+});
+
+test('provider platform picker preserves preset links and forwards selection', () => {
+  const selected = [];
+  const Icon = ({ name }) => createElement('i', { 'data-icon': name });
+  const presets = [
+    { value: 'openai', label: 'OpenAI', short: 'OpenAI', description: '官方 API 地址已内置', type: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', needsBaseUrl: false, apiKeyUrl: 'https://platform.openai.com/api-keys', recommended: true },
+    { value: 'custom', label: '其他兼容平台', short: '其他平台', description: '自建中转', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true },
+  ];
+  const markup = renderToStaticMarkup(createElement(ProviderPlatformPicker, {
+    presets,
+    selectedPlatform: 'openai',
+    Icon,
+    onSelect: (platform) => selected.push(platform),
+  }));
+  assert.match(markup, /class="platform-option"/);
+  assert.match(markup, /href="https:\/\/platform.openai.com\/api-keys"/);
+  assert.match(markup, /class="platform-option"/);
+  const tree = ProviderPlatformPicker({ presets, selectedPlatform: 'openai', Icon, onSelect: (platform) => selected.push(platform) });
+  const options = tree.props.children[1].props.children;
+  options[1].props.children[0].props.onClick();
+  assert.deepEqual(selected, ['custom']);
 });

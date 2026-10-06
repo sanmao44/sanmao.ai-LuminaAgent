@@ -20,6 +20,7 @@ const compiled = ts.transpileModule(bundledSource, {
 const providers = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const presetSource = await readFile(new URL('../lib/provider-presets.ts', import.meta.url), 'utf8');
 const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
+const providerPickerSource = await readFile(new URL('../components/ProviderPlatformPicker.tsx', import.meta.url), 'utf8');
 const presetCompiled = ts.transpileModule(presetSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: new URL('../lib/provider-presets.ts', import.meta.url).pathname,
@@ -30,8 +31,8 @@ test('provider picker uses real local logos for visible providers', async () => 
   const visiblePresets = presets.providerPresets.filter((preset) => preset.showInPicker !== false && preset.value !== 'custom');
   assert.equal(visiblePresets.length, 13);
   assert.ok(visiblePresets.every((preset) => typeof preset.logo === 'string' && preset.logo.startsWith('/brand/providers/')) || visiblePresets.every((preset) => typeof preset.logo === 'string'));
-  assert.match(pageSource, /className: preset\.logo \? 'platform-logo' : ''/);
-  assert.match(pageSource, /children: preset\.logo \? .*src: preset\.logo/s);
+  assert.match(providerPickerSource, /className=\{preset\.logo \? "platform-logo" : ""\}/);
+  assert.match(providerPickerSource, /preset\.logo \? <img src=\{preset\.logo\} alt="" \/> : preset\.short\.slice\(0, 2\)/);
   for (const preset of visiblePresets) {
     const logoFile = new URL(`../public${preset.logo}`, import.meta.url);
     const logo = await readFile(logoFile);

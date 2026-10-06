@@ -1982,3 +1982,12 @@ hardening work when the trigger applies.
 - Behavior coverage renders the extracted list and invokes each callback through the contract; the existing first-run provider tests remain at the page boundary.
 - Validation: focused provider/Jimeng/theme tests passed (10/10), `npm run typecheck` passed, full `npm run check` passed (1859 tests passed, 2 skipped; production build succeeded), and `git diff --check` passed.
 - Remaining risk: provider form, Jimeng login, and Upscale connection panels remain in `app/page.tsx`; moving them safely requires preserving their coupled API and pointer/modal lifecycle contracts.
+
+### Stage 6 provider platform picker checkpoint (2026-10-07)
+
+- `components/ProviderPlatformPicker.tsx` now owns the provider preset cards, selected state presentation, recommendation/address hints, and API Key links.
+- `app/page.tsx` keeps provider preset application, draft state, and all connection/test behavior; the picker only emits the selected platform.
+- Existing preset ordering, labels, links, classes, URL targets, and selection behavior remain unchanged. No provider state, API boundary, duplicate contract, or compatibility layer was added.
+- Behavior coverage renders the picker and invokes its selection callback, while the existing first-run provider tests remain at the page boundary.
+- Validation: focused provider behavior tests passed (36/36), `npm run typecheck` passed, full `npm run check` passed (1860 tests passed, 2 skipped; production build succeeded), and `git diff --check` passed.
+- Remaining risk: the provider form fields and Jimeng configuration remain coupled to page-owned draft and API lifecycle and are intentionally not moved in this slice.

@@ -121,6 +121,7 @@ import SidebarBrandHeader from '@/components/SidebarBrandHeader';
 import ManualModelDialog from '@/components/ManualModelDialog';
 import AdminLogin from '@/components/AdminLogin';
 import ProviderList from '@/components/ProviderList';
+import ProviderPlatformPicker from '@/components/ProviderPlatformPicker';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SupportModal from '@/components/SupportModal';
 import SharePreviewModal from '@/components/SharePreviewModal';
@@ -11323,72 +11324,13 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsxs("div", {
-                                                className: "platform-picker",
-                                                children: [
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        className: "platform-picker-head",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("span", {
-                                                                children: "1. 选择服务商"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("small", {
-                                                                children: "New API、One API 和自建中转，请选“其他兼容平台”"
-                                                            })
-                                                        ]
-                                                    }),
-                                                    /*#__PURE__*/ _jsx("div", {
-                                                        children: providerPresets.filter((preset)=>preset.showInPicker !== false).map((preset)=>/*#__PURE__*/ _jsxs("div", {
-                                                                className: "platform-option",
-                                                                children: [
-                                                                    /*#__PURE__*/ _jsxs("button", {
-                                                                        type: "button",
-                                                                        className: providerForm.platform === preset.value ? 'active' : '',
-                                                                        onClick: ()=>applyProviderPreset(preset.value),
-                                                                        children: [
-                                                                            /*#__PURE__*/ _jsx("b", {
-                                                                                className: preset.logo ? 'platform-logo' : '',
-                                                                                children: preset.logo ? /*#__PURE__*/ _jsx("img", {
-                                                                                    src: preset.logo,
-                                                                                    alt: ""
-                                                                                }) : preset.short.slice(0, 2)
-                                                                            }),
-                                                                            /*#__PURE__*/ _jsxs("span", {
-                                                                                children: [
-                                                                                    /*#__PURE__*/ _jsx("strong", {
-                                                                                        children: preset.label
-                                                                                    }),
-                                                                                    /*#__PURE__*/ _jsx("small", {
-                                                                                        children: preset.description
-                                                                                    })
-                                                                                ]
-                                                                            }),
-                                                                            /*#__PURE__*/ _jsx("em", {
-                                                                                children: preset.recommended ? '推荐' : preset.needsBaseUrl ? '填地址' : '地址已内置'
-                                                                            }),
-                                                                            providerForm.platform === preset.value && /*#__PURE__*/ _jsx(Icon, {
-                                                                                name: "check",
-                                                                                size: 14
-                                                                            })
-                                                                        ]
-                                                                    }),
-                                                                    preset.apiKeyUrl && /*#__PURE__*/ _jsx("a", {
-                                                                        className: "platform-key-link",
-                                                                        href: preset.apiKeyUrl,
-                                                                        target: "_blank",
-                                                                        rel: "noreferrer",
-                                                                        onClick: (event)=>event.stopPropagation(),
-                                                                        children: "↗ 获取 API Key"
-                                                                    }),
-                                                                    preset.notice && /*#__PURE__*/ _jsx("span", {
-                                                                        className: `platform-notice ${preset.noticeTone === 'success' ? 'success' : ''}`,
-                                                                        children: preset.notice
-                                                                    })
-                                                                ]
-                                                            }, preset.value))
-                                                    })
-                                                ]
+                                            /*#__PURE__*/ _jsx(ProviderPlatformPicker, {
+                                                presets: providerPresets.filter((preset)=>preset.showInPicker !== false),
+                                                selectedPlatform: providerForm.platform,
+                                                Icon: Icon,
+                                                onSelect: applyProviderPreset
                                             }),
+
                                             /*#__PURE__*/ _jsxs("div", {
                                                 className: "provider-auto-note",
                                                 children: [
