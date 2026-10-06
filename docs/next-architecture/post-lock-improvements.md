@@ -1333,3 +1333,10 @@ hardening work when the trigger applies.
 - `app/canvas.css` retains the video-editor node/workbench domain and shared canvas z-index/token definitions. `app/layout.tsx` loads the clip stylesheet after the base canvas stylesheet so the previous cascade order is preserved.
 - `CanvasVideoClipWorkbench.tsx` remains the sole owner of local playback, trim pointer capture, keyboard handling, and clip creation callbacks. No CanvasCore, API, storage, provider, or data contract changed.
 - Validation: targeted video clip/editor/node tests passed (32/32), `npm run typecheck` passed, full `npm run check` passed (1830 tests passed, 2 skipped, production build succeeded), and `git diff --check` is clean for this slice. The pre-existing uncommitted `AGENTS.md` edit remains excluded.
+
+### Stage 6 image editor workbench CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-image-editor.css` now owns the image editor workbench presentation: operation tabs, preview/outpaint/crop/grid/transform overlays, controls, custom grid-line affordances, footer actions, responsive rules, and the fixed preview viewport refinements.
+- `app/canvas.css` keeps adjacent audio panel, group, node-editor, cursor-layer, and shared canvas token rules. The image editor stylesheet is loaded after the clip stylesheet and before the remaining canvas domain sheets, preserving the prior cascade for its selectors.
+- `CanvasImageEditorWorkbench.tsx` remains the sole owner of local edit state, pointer/keyboard interaction, API callbacks, and save semantics. `cursor.css` and `shadow-tuning.css` remain shared cross-domain overrides and were intentionally not duplicated or moved.
+- Validation: targeted image-editor/cursor/node-editor/double-click tests passed (77/77), `npm run typecheck` passed, full `npm run check` passed (1830 tests passed, 2 skipped, production build succeeded), and `git diff --check` is clean for this slice. The pre-existing uncommitted `AGENTS.md` edit remains excluded.

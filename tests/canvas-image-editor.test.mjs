@@ -7,7 +7,7 @@ const workbench = await readFile(
   "utf8",
 );
 const styles = await readFile(
-  new URL("../app/canvas.css", import.meta.url),
+  new URL("../app/canvas-image-editor.css", import.meta.url),
   "utf8",
 );
 const cursorStyles = await readFile(
