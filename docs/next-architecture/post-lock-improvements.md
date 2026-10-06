@@ -34,6 +34,19 @@ hardening work when the trigger applies.
 - Focused asset behavior tests passed; `npm run check` passed with 1835 tests
   passed, 2 skipped, and production build success. `git diff --check` passed.
 
+### Stage 6 canvas asset filtering projection checkpoint (2026-10-07)
+
+- `filterCanvasAssets` in `lib/canvas/asset-library.ts` now owns the pure
+  collection, kind, source, favorite, text, tag, recent-window, and sorting
+  projection used by the asset drawer.
+- `CanvasAssetDrawer.tsx` retains filter state and rendering only; it no longer
+  embeds the filtering and ordering implementation in the component body.
+- The projection keeps the existing smart collection semantics and uses an
+  injectable clock value for deterministic behavior coverage. No asset API,
+  record shape, URL, persistence path, or interaction changed.
+- Focused asset behavior tests passed; `npm run check` passed with 1836 tests
+  passed, 2 skipped, and production build success. `git diff --check` passed.
+
 ### Stage 4 generator node CSS boundary checkpoint (2026-10-06)
 
 - `app/canvas-generator-node.css` now owns the generator node card's scoped

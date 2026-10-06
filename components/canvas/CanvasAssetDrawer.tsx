@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import { createPortal } from "react-dom";
 import { hideUnifiedAsset, listAssetCollections, listUnifiedAssets, saveAssetCollections, setUnifiedAssetFavorite, updateUnifiedAssetMetadata, type AssetRecord, type AssetSource } from "@/lib/assets";
 import { DEFAULT_ASSET_COLLECTIONS, type AssetCollection } from "@/lib/client-history";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
-import { ASSET_SOURCE_LABELS, isAssignableCanvasAssetCollection } from "@/lib/canvas/asset-library";
+import { ASSET_SOURCE_LABELS, filterCanvasAssets, isAssignableCanvasAssetCollection } from "@/lib/canvas/asset-library";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import SelectMenu from "@/components/SelectMenu";
 
@@ -165,38 +165,15 @@ export default function CanvasAssetDrawer({
     onAddNodeToCollection(nodeId, collection);
   };
 
-  const filtered = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    const matchesCollection = (asset: AssetRecord) => {
-      if (collection === "all") return true;
-      if (collection === "uncategorized") return !asset.collectionIds?.length;
-      if (collection === "favorite") return asset.favorite;
-      if (collection === "image" || collection === "video" || collection === "audio") return asset.kind === collection;
-      if (collection === "generated") return asset.source === "history" || asset.source === "video-task" || asset.source === "canvas-output";
-      if (collection === "reference") return asset.source === "canvas-upload" || asset.tags?.includes("参考");
-      if (collection === "recent") return asset.createdAt >= Date.now() - 7 * 24 * 60 * 60 * 1000;
-      return asset.collectionIds?.includes(collection);
-    };
-    const result = assets.filter(
-      (asset) =>
-        (kind === "all" || asset.kind === kind) &&
-        (source === "all" || asset.source === source) &&
-        (!favoritesOnly || asset.favorite) &&
-        matchesCollection(asset) &&
-        (!tagFilter.trim() || asset.tags?.some((tag) => tag.toLowerCase().includes(tagFilter.trim().toLowerCase()))) &&
-        (!search ||
-          `${asset.name} ${asset.prompt || ""} ${asset.modelName || ""}`
-            .toLowerCase()
-            .includes(search)),
-    );
-    return [...result].sort((left, right) =>
-      sort === "oldest"
-        ? left.createdAt - right.createdAt
-        : sort === "name"
-          ? left.name.localeCompare(right.name, "zh-CN")
-          : right.createdAt - left.createdAt,
-    );
-  }, [assets, collection, favoritesOnly, kind, query, sort, source, tagFilter]);
+  const filtered = filterCanvasAssets(assets, {
+    collection,
+    kind,
+    source,
+    favoritesOnly,
+    query,
+    tagFilter,
+    sort,
+  });
 
   const createCollection = async () => {
     const name = newCollectionName.trim();

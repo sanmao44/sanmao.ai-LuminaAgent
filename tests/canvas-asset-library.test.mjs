@@ -27,6 +27,40 @@ test("canvas asset collections keep smart views read-only", () => {
   assert.equal(assetLibrary.isAssignableCanvasAssetCollection("generated"), false);
 });
 
+test("canvas asset filtering keeps collection, text, tag, favorite and sort semantics", () => {
+  const assets = [
+    {
+      id: "new-image", kind: "image", url: "new.png", name: "Sunset study", source: "canvas-upload",
+      createdAt: 900, favorite: true, prompt: "warm light", modelName: "Model A",
+      projectIds: [], collectionIds: ["ideas"], tags: ["reference"],
+    },
+    {
+      id: "old-video", kind: "video", url: "old.mp4", name: "Ocean clip", source: "video-task",
+      createdAt: 100, favorite: false, prompt: "blue water", modelName: "Model B",
+      projectIds: [], collectionIds: [], tags: [],
+    },
+    {
+      id: "mid-image", kind: "image", url: "mid.png", name: "Portrait", source: "history",
+      createdAt: 500, favorite: false, prompt: "studio light", modelName: "Model C",
+      projectIds: [], collectionIds: ["ideas"], tags: [],
+    },
+  ];
+  const options = {
+    collection: "ideas",
+    kind: "image",
+    source: "all",
+    favoritesOnly: false,
+    query: "sunset",
+    tagFilter: "ref",
+    sort: "newest",
+    now: 1000,
+  };
+  assert.deepEqual(assetLibrary.filterCanvasAssets(assets, options).map((asset) => asset.id), ["new-image"]);
+  assert.deepEqual(assetLibrary.filterCanvasAssets(assets, { ...options, query: "", tagFilter: "", favoritesOnly: true }).map((asset) => asset.id), ["new-image"]);
+  assert.deepEqual(assetLibrary.filterCanvasAssets(assets, { ...options, collection: "recent", kind: "all", query: "", tagFilter: "", sort: "oldest" }).map((asset) => asset.id), ["old-video", "mid-image", "new-image"]);
+  assert.deepEqual(assetLibrary.filterCanvasAssets(assets, { ...options, collection: "all", kind: "all", query: "", tagFilter: "", sort: "name" }).map((asset) => asset.id), ["old-video", "mid-image", "new-image"]);
+});
+
 test("canvas asset eligibility requires ready media nodes", () => {
   const base = { type: "media", data: { kind: "image", url: "https://example.test/a.png" } };
   assert.equal(assetLibrary.canAddCanvasAsset(base), true);

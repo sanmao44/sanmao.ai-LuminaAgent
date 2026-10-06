@@ -22,6 +22,58 @@ export const ASSET_SOURCE_LABELS: Record<AssetSource, string> = {
   "canvas-output": "画布生成",
 };
 
+export type CanvasAssetKindFilter = "all" | AssetRecord["kind"];
+export type CanvasAssetSourceFilter = "all" | AssetSource;
+export type CanvasAssetSort = "newest" | "oldest" | "name";
+
+export function filterCanvasAssets(
+  assets: readonly AssetRecord[],
+  options: {
+    collection: string;
+    kind: CanvasAssetKindFilter;
+    source: CanvasAssetSourceFilter;
+    favoritesOnly: boolean;
+    query: string;
+    tagFilter: string;
+    sort: CanvasAssetSort;
+    now?: number;
+  },
+) {
+  const search = options.query.trim().toLowerCase();
+  const tagSearch = options.tagFilter.trim().toLowerCase();
+  const now = options.now ?? Date.now();
+  const matchesCollection = (asset: AssetRecord) => {
+    if (options.collection === "all") return true;
+    if (options.collection === "uncategorized") return !asset.collectionIds?.length;
+    if (options.collection === "favorite") return asset.favorite;
+    if (options.collection === "image" || options.collection === "video" || options.collection === "audio")
+      return asset.kind === options.collection;
+    if (options.collection === "generated")
+      return asset.source === "history" || asset.source === "video-task" || asset.source === "canvas-output";
+    if (options.collection === "reference")
+      return asset.source === "canvas-upload" || asset.tags?.includes("参考");
+    if (options.collection === "recent") return asset.createdAt >= now - 7 * 24 * 60 * 60 * 1000;
+    return asset.collectionIds?.includes(options.collection);
+  };
+
+  return assets
+    .filter((asset) =>
+      (options.kind === "all" || asset.kind === options.kind) &&
+      (options.source === "all" || asset.source === options.source) &&
+      (!options.favoritesOnly || asset.favorite) &&
+      matchesCollection(asset) &&
+      (!tagSearch || asset.tags?.some((tag) => tag.toLowerCase().includes(tagSearch))) &&
+      (!search || `${asset.name} ${asset.prompt || ""} ${asset.modelName || ""}`.toLowerCase().includes(search)),
+    )
+    .sort((left, right) =>
+      options.sort === "oldest"
+        ? left.createdAt - right.createdAt
+        : options.sort === "name"
+          ? left.name.localeCompare(right.name, "zh-CN")
+          : right.createdAt - left.createdAt,
+    );
+}
+
 export function isAssignableCanvasAssetCollection(collectionId: string) {
   return (
     collectionId === CANVAS_ASSET_UNCATEGORIZED_ID ||
