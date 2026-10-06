@@ -2099,3 +2099,16 @@ hardening work when the trigger applies.
 - Validation: focused viewport and canvas model tests passed; full typecheck,
   `npm run check`, production build, and `git diff --check` are required before
   this slice is committed.
+
+### Stage 6 canvas projection call-site convergence checkpoint (2026-10-07)
+
+- 框选命中、缩放锚点、右键菜单和空白双击菜单现在统一调用
+  `lib/canvas/viewport.ts` 的投影函数，删除了 Workspace 中重复的 camera
+  坐标公式。
+- Workspace 仍保留 pointer 生命周期、菜单状态、CanvasCore 更新和 DOM
+  测量；本阶段没有移动 document、selection、history 或 camera 的 owner。
+- 行为兼容验证覆盖视口投影、框选/拖拽、文件放置和上下文菜单；没有新增
+  API、存储、任务运行时或兼容层。
+- Validation: focused viewport/gesture/context-menu/file-drop tests passed
+  (19/19); full `npm run check` passed (1865 passed, 2 skipped; production
+  build succeeded); and `git diff --check` passed.
