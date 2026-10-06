@@ -13,6 +13,7 @@ import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
 import { replaceNaturalReferenceLabels } from "@/lib/creative-references";
 import type { CanvasReferenceDraft, CanvasReuseDraft } from "@/lib/canvas/reuse";
+import type { SmartVariantSourceUnit } from "@/lib/canvas/model";
 import type { CreationSettings } from "@/lib/creation/settings";
 
 type CanvasGenerationMode = Exclude<CanvasMediaKind, "audio">;
@@ -42,7 +43,7 @@ export type CanvasDeckProps = {
   runButtonTitle: string;
   deckModelState: { unavailableModelId?: string };
   runtime: CanvasRuntimeState | null;
-  smartVariantSources: readonly unknown[];
+  smartVariantSources: readonly SmartVariantSourceUnit[];
   reusePromptBeforeOptimization: string | null;
   deckPromptBeforeOptimization: string | null;
   smartVariantLoading: boolean;
@@ -52,7 +53,8 @@ export type CanvasDeckProps = {
   settings: CreationSettings;
   deckPromptRef: React.RefObject<HTMLDivElement | null>;
   onToggleCollapsed: () => void;
-  onModeChange: (mode: CanvasDeckMode | "clear-selection") => void;
+  onModeChange: (mode: CanvasDeckMode) => void;
+  onClearSelection: () => void;
   onOpenFilePicker: () => void;
   onAddReuseFiles: (files: File[]) => void;
   onReferenceFiles: (files: File[]) => void;
@@ -89,7 +91,7 @@ const CanvasDeck = forwardRef<HTMLDivElement, CanvasDeckProps>(function CanvasDe
     reuseDraft, referenceOwnerId, document, mentionCandidates, canvasPromptOptimizing, chatModelsAvailable,
     generationBusy, runButtonLabel, runButtonTitle, deckModelState, runtime,
     smartVariantSources, smartVariantLoading, smartVariantBeforeApply, reusePromptBeforeOptimization, deckPromptBeforeOptimization, variantRequirements,
-    variantRequirementCount, settings, deckPromptRef, agentBusy, onToggleCollapsed, onModeChange,
+    variantRequirementCount, settings, deckPromptRef, agentBusy, onToggleCollapsed, onModeChange, onClearSelection,
     onOpenFilePicker, onAddReuseFiles, onReferenceFiles, onRemoveReuseReference, onReorderReuseReference,
     onPasteReuseReference, onClearReuseReferences, onPreviewReuse, onReverseReusePrompt,
     onPreviewReference, onReorderReference, onRemoveComposerReference, onClearComposerReferences,
@@ -106,7 +108,7 @@ const CanvasDeck = forwardRef<HTMLDivElement, CanvasDeckProps>(function CanvasDe
                 type="button"
                 className={mode === "image" ? "active" : ""}
                 onClick={() => {
-                  if (selectedSingle) onModeChange("clear-selection");
+                  if (selectedSingle) onClearSelection();
                   onModeChange("image");
                 }}
               >
@@ -116,7 +118,7 @@ const CanvasDeck = forwardRef<HTMLDivElement, CanvasDeckProps>(function CanvasDe
                 type="button"
                 className={mode === "video" ? "active" : ""}
                 onClick={() => {
-                  if (selectedSingle) onModeChange("clear-selection");
+                  if (selectedSingle) onClearSelection();
                   onModeChange("video");
                 }}
               >
@@ -126,7 +128,7 @@ const CanvasDeck = forwardRef<HTMLDivElement, CanvasDeckProps>(function CanvasDe
                 type="button"
                 className={mode === "text" ? "active" : ""}
                 onClick={() => {
-                  if (selectedSingle) onModeChange("clear-selection");
+                  if (selectedSingle) onClearSelection();
                   onModeChange("text");
                 }}
               >

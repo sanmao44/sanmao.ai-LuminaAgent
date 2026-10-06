@@ -14274,7 +14274,7 @@ export default function SuperCanvas() {
           runButtonTitle={runButtonTitle}
           deckModelState={deckModelState}
           runtime={runtime}
-          smartVariantSources={smartVariantSources}
+          smartVariantSources={smartVariantSources.map((source) => ({ id: source.id, sourceId: source.id, sourceName: source.name, text: source.text }))}
           reusePromptBeforeOptimization={reusePromptBeforeOptimization}
           deckPromptBeforeOptimization={deckPromptBeforeOptimization}
           smartVariantLoading={smartVariantLoading}
@@ -14284,13 +14284,8 @@ export default function SuperCanvas() {
           settings={reuseDraft ? reuseDraft.params : deck.params}
           deckPromptRef={deckPromptRef}
           onToggleCollapsed={toggleDeckCollapsed}
-          onModeChange={(nextMode: CanvasDeckMode | "clear-selection") => {
-            if (nextMode === "clear-selection") {
-              clearSelection();
-              return;
-            }
-            setMode(nextMode);
-          }}
+          onModeChange={(nextMode: CanvasDeckMode) => setMode(nextMode)}
+          onClearSelection={clearSelection}
           onOpenFilePicker={() => openFilePicker()}
           onAddReuseFiles={(files) => void addReuseFiles(files)}
           onReferenceFiles={handleDeckReferenceFiles}

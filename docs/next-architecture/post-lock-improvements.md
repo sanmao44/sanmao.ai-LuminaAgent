@@ -54,6 +54,13 @@ hardening work when the trigger applies.
   required before committing this slice.
 
 
+
+### Stage 6 canvas deck contract checkpoint (2026-10-07)
+
+- `CanvasDeckProps` now uses the existing `SmartVariantSourceUnit` contract and exposes `onClearSelection` separately from generation mode changes.
+- No behavior, persisted data, API, or CanvasCore ownership changed; this only removes a local sentinel mode and an unknown-array prop.
+- Focused smart-variant/reference/help tests, `npm run typecheck`, full `npm run check` (1855 passed, 2 skipped, production build success), and `git diff --check` passed.
+
 ### Stage 6 canvas generation deck checkpoint (2026-10-07)
 
 - `components/canvas/CanvasDeck.tsx` now owns the existing canvas generation deck presentation: mode switch, selection context, references, prompt editor, run action, variant requirements editor, and creation parameter editor.
