@@ -1422,8 +1422,9 @@ hardening work when the trigger applies.
   stylesheet and verifies both menus keep their responsive rules there. No
   action, selection, CanvasCore command, URL, API, or document behavior moved.
 - Validation: targeted context-menu/group compose/group reference/group shortcut
-  tests passed (16/16), `npm run typecheck` and full `npm run check` are required
-  before this slice is committed; `git diff --check` must remain clean.
+  tests passed (16/16), `npm run typecheck` passed, full `npm run check` passed
+  (1831 tests passed, 2 skipped; production build succeeded), and
+  `git diff --check` is clean.
 - Remaining debt: `app/canvas.css` still contains the shared canvas stage,
   groups, node/editor, Agent dock and other overlay rules. The Agent dock's
   cross-domain geometry and message/composer styles remain deferred.
