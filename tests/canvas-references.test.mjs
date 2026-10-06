@@ -13,7 +13,18 @@ async function loadReferences() {
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 }
 
+async function loadVideoInputValidation() {
+  const sourceUrl = new URL("../lib/canvas/video-input-validation.ts", import.meta.url);
+  const source = await readFile(sourceUrl, "utf8");
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    fileName: sourceUrl.pathname,
+  }).outputText;
+  return import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+}
+
 const references = await loadReferences();
+const videoInputValidation = await loadVideoInputValidation();
 
 function node(id, type, kind, value) {
   return {
@@ -130,4 +141,19 @@ test("uses a connected still image as an in-place video generation target", () =
   assert.equal(references.shouldGenerateVideoInPlace(video, [node("video-ref", "media", "video")]), false);
   assert.equal(references.shouldGenerateVideoInPlace({ ...image, data: { ...image.data, url: "" } }, [image]), false);
   assert.equal(references.shouldGenerateVideoInPlace({ ...video, type: "generator" }, [image]), false);
+});
+
+test("explains invalid video input modes without mutating the resolved inputs", () => {
+  const image = node("image", "media", "image");
+  const video = node("video", "media", "video");
+  const limits = { maxReferenceImages: 2, maxReferenceVideos: 1 };
+  const textInputs = references.resolveCanvasVideoInputs([image], "text");
+  assert.match(videoInputValidation.canvasVideoInputError(textInputs, "text", limits), /文生视频模式/);
+
+  const frameInputs = references.resolveCanvasVideoInputs([image], "frames");
+  assert.match(videoInputValidation.canvasVideoInputError(frameInputs, "frames", limits), /首尾帧模式请先连接/);
+
+  const referenceInputs = references.resolveCanvasVideoInputs([video], "reference");
+  assert.match(videoInputValidation.canvasVideoInputError(referenceInputs, "reference", { ...limits, maxReferenceVideos: 0 }), /不支持参考视频/);
+  assert.deepEqual(referenceInputs.media.map((item) => item.id), ["video"]);
 });

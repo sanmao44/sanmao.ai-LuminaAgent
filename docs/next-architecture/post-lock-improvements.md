@@ -621,3 +621,19 @@ hardening work when the trigger applies.
 - Remaining risk: generation submission and task lifecycle still span several
   callbacks in Workspace. Extracting those paths requires a request/response
   contract and task-state coverage before moving implementation.
+
+### Stage 5 video input validation checkpoint (2026-10-06)
+
+- `lib/canvas/video-input-validation.ts` now owns the pure validation rules for
+  text, first-frame, first/last-frame, and reference video modes, including
+  model image/video limits and operation-specific restrictions.
+- The function consumes the existing `CanvasVideoInputs` projection and
+  `VideoModelLimits`; it does not resolve inputs, mutate CanvasCore state, call
+  providers, or choose how errors are displayed. Workspace keeps invocation,
+  request construction, and task orchestration.
+- Existing user-facing messages and validation order are unchanged. Behavior
+  tests cover missing slots, text-mode conflicts, unsupported reference video,
+  and the non-mutating contract.
+- Remaining risk: generation submission still combines request normalization,
+  API invocation, polling, and document updates. It needs a complete
+  request/result contract before a safe extraction.
