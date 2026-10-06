@@ -163,3 +163,12 @@ test("canvas asset collection service preserves and merges collection metadata",
     [],
   )).status, "invalid-collection");
 });
+
+test("canvas asset metadata helpers keep collection and tag updates stable", () => {
+  const asset = { collectionIds: ["ideas", "work"], tags: ["reference"] };
+  assert.deepEqual(assetService.collectionIdsAfterRemoval(asset, "ideas"), ["work"]);
+  assert.deepEqual(assetService.collectionIdsAfterAddition(asset, "ideas"), ["ideas", "work"]);
+  assert.deepEqual(assetService.collectionIdsAfterAddition(asset, "final"), ["ideas", "work", "final"]);
+  assert.deepEqual(assetService.tagsAfterAddition(asset, "reference"), ["reference"]);
+  assert.deepEqual(assetService.tagsAfterAddition(asset, "portrait"), ["reference", "portrait"]);
+});

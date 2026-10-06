@@ -47,6 +47,20 @@ hardening work when the trigger applies.
 - Focused asset behavior tests passed; `npm run check` passed with 1836 tests
   passed, 2 skipped, and production build success. `git diff --check` passed.
 
+### Stage 6 canvas asset drawer service boundary checkpoint (2026-10-07)
+
+- `lib/canvas/asset-library-service.ts` now exposes the asset drawer's existing
+  collection loading/saving, unified asset loading, metadata update, favorite,
+  hide, and tag/collection update operations through one Canvas asset boundary.
+- `CanvasAssetDrawer.tsx` retains loading state, optimistic UI state, prompt/
+  confirm interactions, notifications, and rendering, but no longer imports
+  the unified asset side-effect functions directly.
+- The service delegates to the existing `lib/assets` and repository boundary;
+  it adds no repository, API, record type, compatibility layer, or second
+  source of truth.
+- Focused asset behavior tests passed; `npm run check` passed with 1837 tests
+  passed, 2 skipped, and production build success. `git diff --check` passed.
+
 ### Stage 4 generator node CSS boundary checkpoint (2026-10-06)
 
 - `app/canvas-generator-node.css` now owns the generator node card's scoped

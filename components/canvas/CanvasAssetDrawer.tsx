@@ -2,10 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import { createPortal } from "react-dom";
-import { hideUnifiedAsset, listAssetCollections, listUnifiedAssets, saveAssetCollections, setUnifiedAssetFavorite, updateUnifiedAssetMetadata, type AssetRecord, type AssetSource } from "@/lib/assets";
+import { type AssetRecord, type AssetSource } from "@/lib/assets";
 import { DEFAULT_ASSET_COLLECTIONS, type AssetCollection } from "@/lib/client-history";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import { ASSET_SOURCE_LABELS, filterCanvasAssets, isAssignableCanvasAssetCollection } from "@/lib/canvas/asset-library";
+import {
+  collectionIdsAfterAddition,
+  collectionIdsAfterRemoval,
+  hideCanvasAsset,
+  loadCanvasAssetCollections,
+  loadCanvasAssets,
+  persistCanvasAssetCollections,
+  setCanvasAssetFavorite,
+  tagsAfterAddition,
+  updateCanvasAssetMetadata,
+} from "@/lib/canvas/asset-library-service";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import SelectMenu from "@/components/SelectMenu";
 
@@ -74,7 +85,7 @@ export default function CanvasAssetDrawer({
 
   useEffect(() => {
     let active = true;
-    void listAssetCollections().then((items) => {
+    void loadCanvasAssetCollections().then((items) => {
       if (!active) return;
       setCollections(items);
       const valid = collectionSelection === "all" || items.some((item) => item.id === collectionSelection);
@@ -99,7 +110,7 @@ export default function CanvasAssetDrawer({
   const reload = useCallback(() => {
     const loadVersion = ++assetLoadVersionRef.current;
     if (!hasLoadedAssetsRef.current) setLoading(true);
-    void listUnifiedAssets(extraAssetsRef.current)
+    void loadCanvasAssets(extraAssetsRef.current)
       .then((nextAssets) => {
         if (loadVersion !== assetLoadVersionRef.current) return;
         setAssets(nextAssets);
@@ -181,7 +192,7 @@ export default function CanvasAssetDrawer({
     const item: AssetCollection = { id: `collection_${Date.now().toString(36)}`, name, createdAt: Date.now(), updatedAt: Date.now() };
     const next = [...collections, item];
     setCollections(next); setNewCollectionName("");
-    await saveAssetCollections(next);
+    await persistCanvasAssetCollections(next);
     setCollection(item.id);
     onCollectionSelectionChange(item.id);
   };
@@ -197,13 +208,13 @@ export default function CanvasAssetDrawer({
       const affectedAssets = assets.filter((asset) => asset.collectionIds?.includes(collectionId));
       await Promise.all(
         affectedAssets.map((asset) =>
-          updateUnifiedAssetMetadata(asset, {
-            collectionIds: asset.collectionIds.filter((id) => id !== collectionId),
+          updateCanvasAssetMetadata(asset, {
+            collectionIds: collectionIdsAfterRemoval(asset, collectionId),
           }),
         ),
       );
       const next = collections.filter((item) => item.id !== collectionId);
-      await saveAssetCollections(next);
+      await persistCanvasAssetCollections(next);
       setCollections(next);
       setAssets((items) =>
         items.map((asset) =>
@@ -229,7 +240,7 @@ export default function CanvasAssetDrawer({
     if (!nextName || nextName === target.name) return;
     const next = collections.map((item) => item.id === collectionId ? { ...item, name: nextName, updatedAt: Date.now() } : item);
     try {
-      await saveAssetCollections(next);
+      await persistCanvasAssetCollections(next);
       setCollections(next);
       onNotify(`已将资产集合重命名为“${nextName}”。`);
     } catch (error) {
@@ -245,8 +256,8 @@ export default function CanvasAssetDrawer({
     const selected = assets.filter((asset) => selectedAssetIds.has(asset.id));
     if (!selected.length) return;
     try {
-      await Promise.all(selected.map((asset) => updateUnifiedAssetMetadata(asset, { collectionIds: [...new Set([...(asset.collectionIds || []), collection])] })));
-      setAssets((items) => items.map((asset) => selectedAssetIds.has(asset.id) ? { ...asset, collectionIds: [...new Set([...(asset.collectionIds || []), collection])] } : asset));
+      await Promise.all(selected.map((asset) => updateCanvasAssetMetadata(asset, { collectionIds: collectionIdsAfterAddition(asset, collection) })));
+      setAssets((items) => items.map((asset) => selectedAssetIds.has(asset.id) ? { ...asset, collectionIds: collectionIdsAfterAddition(asset, collection) } : asset));
       setSelectedAssetIds(new Set());
       onNotify(`已将 ${selected.length} 个资产加入“${collections.find((item) => item.id === collection)?.name || "当前集合"}”。`);
     } catch (error) {
@@ -256,7 +267,7 @@ export default function CanvasAssetDrawer({
 
   const toggleFavorite = async (asset: AssetRecord) => {
     try {
-      await setUnifiedAssetFavorite(asset, !asset.favorite);
+      await setCanvasAssetFavorite(asset, !asset.favorite);
       setAssets((items) =>
         items.map((item) =>
           item.id === asset.id ? { ...item, favorite: !item.favorite } : item,
@@ -269,7 +280,7 @@ export default function CanvasAssetDrawer({
 
   const hideAsset = async (asset: AssetRecord) => {
     try {
-      await hideUnifiedAsset(asset);
+      await hideCanvasAsset(asset);
       setAssets((items) => items.filter((item) => item.id !== asset.id));
       if (preview?.id === asset.id) setPreview(null);
       onNotify("已从资产索引隐藏，画布引用和磁盘文件保持不变。");
@@ -527,7 +538,7 @@ export default function CanvasAssetDrawer({
                       onClick={async () => {
                         const tag = window.prompt("输入标签");
                         if (!tag?.trim()) return;
-                        try { await updateUnifiedAssetMetadata(asset, { tags: [...new Set([...(asset.tags || []), tag.trim()])] }); reload(); }
+                        try { await updateCanvasAssetMetadata(asset, { tags: tagsAfterAddition(asset, tag.trim()) }); reload(); }
                         catch { onNotify("标签保存失败", "error"); }
                       }}
                     >#</button>

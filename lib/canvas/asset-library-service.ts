@@ -1,9 +1,14 @@
 import {
+  hideUnifiedAsset,
   listUnifiedAssets,
+  listAssetCollections,
   registerCanvasAsset,
+  saveAssetCollections,
+  setUnifiedAssetFavorite,
   updateUnifiedAssetMetadata,
   type AssetRecord,
 } from "@/lib/assets";
+import type { AssetCollection } from "@/lib/client-history";
 import {
   isAssignableCanvasAssetCollection,
   CANVAS_ASSET_UNCATEGORIZED_ID,
@@ -13,6 +18,45 @@ export type CanvasAssetCollectionResult =
   | { status: "invalid-collection" }
   | { status: "missing-asset" }
   | { status: "saved"; asset: AssetRecord; registered: boolean };
+
+export function loadCanvasAssets(extraAssets: AssetRecord[] = []) {
+  return listUnifiedAssets(extraAssets);
+}
+
+export function loadCanvasAssetCollections() {
+  return listAssetCollections();
+}
+
+export function persistCanvasAssetCollections(collections: readonly AssetCollection[]) {
+  return saveAssetCollections(collections);
+}
+
+export function updateCanvasAssetMetadata(
+  asset: AssetRecord,
+  patch: { collectionIds?: string[]; tags?: string[] },
+) {
+  return updateUnifiedAssetMetadata(asset, patch);
+}
+
+export function setCanvasAssetFavorite(asset: AssetRecord, favorite: boolean) {
+  return setUnifiedAssetFavorite(asset, favorite);
+}
+
+export function hideCanvasAsset(asset: AssetRecord) {
+  return hideUnifiedAsset(asset);
+}
+
+export function collectionIdsAfterRemoval(asset: AssetRecord, collectionId: string) {
+  return (asset.collectionIds || []).filter((id) => id !== collectionId);
+}
+
+export function collectionIdsAfterAddition(asset: AssetRecord, collectionId: string) {
+  return [...new Set([...(asset.collectionIds || []), collectionId])];
+}
+
+export function tagsAfterAddition(asset: AssetRecord, tag: string) {
+  return [...new Set([...(asset.tags || []), tag])];
+}
 
 function collectionIdsFor(asset: AssetRecord, collectionId: string) {
   if (collectionId === CANVAS_ASSET_UNCATEGORIZED_ID)
