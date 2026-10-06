@@ -371,6 +371,7 @@ import { canvasHistoryMask } from "@/lib/canvas/history-mask";
 import { canvasVariantBatchStatus } from "@/lib/canvas/variant-status";
 import {
   applyCanvasVariantStatePatch,
+  canvasVideoTaskProgress,
   prepareCanvasVariantBatch,
 } from "@/lib/canvas/variant-batch";
 import { canvasAngleReference } from "@/lib/canvas/angle-reference";
@@ -5742,50 +5743,31 @@ export default function SuperCanvas() {
         const result = await getCanvasVideoTask(taskId);
         if (!mountedRef.current) return;
         const task = result.task;
-        const hasVideoResult = Array.isArray(task.videoUrls) && task.videoUrls.some(Boolean);
-        const terminal =
-          hasVideoResult ||
-          task.status === "done" ||
-          task.status === "failed" ||
-          task.status === "cancelled" ||
-          task.status === "canceled";
+        const progress = canvasVideoTaskProgress(task);
         updateDoc((value) => {
           const targetNode = nodeById(value, nodeId);
           const variantIndex = targetNode?.data.generation?.variantIndex;
           const sourceGeneratorId = targetNode?.data.generation
             ?.sourceGeneratorId;
-          const nextStatus =
-            hasVideoResult || task.status === "done"
-              ? ("completed" as const)
-              : terminal
-                ? ("failed" as const)
-                : ("running" as const);
           return {
             ...value,
             nodes: value.nodes.map((node) => {
               if (node.id === nodeId) {
-                const generationDurationMs = terminal && node.data.generation?.createdAt
+                const generationDurationMs = progress.terminal && node.data.generation?.createdAt
                   ? Math.max(0, Date.now() - node.data.generation.createdAt)
                   : undefined;
                 return {
                   ...node,
                   data: {
                     ...node.data,
-                    status:
-                      hasVideoResult || task.status === "done"
-                        ? "completed" as const
-                        : terminal
-                          ? "failed" as const
-                          : "running" as const,
-                    progress: Number(
-                      task.progress || (hasVideoResult || task.status === "done" ? 100 : 0),
-                    ),
-                    url: task.videoUrls?.[0] || node.data.url,
+                    status: progress.status,
+                    progress: progress.progress,
+                    url: progress.url || node.data.url,
                     statusLabel:
                       task.error ||
-                      (hasVideoResult || task.status === "done"
+                      (progress.status === "completed"
                         ? "视频已完成"
-                        : terminal
+                        : progress.terminal
                           ? "视频任务已中断"
                           : "视频生成中"),
                     ...(generationDurationMs !== undefined && node.data.generation
@@ -5802,10 +5784,8 @@ export default function SuperCanvas() {
                   index === variantIndex
                     ? {
                         ...state,
-                        status: nextStatus,
-                        progress: Number(
-                          task.progress || (task.status === "done" ? 100 : 0),
-                        ),
+                        status: progress.status,
+                        progress: progress.progress,
                         ...(task.error ? { error: task.error } : {}),
                         updatedAt: Date.now(),
                       }
@@ -5830,7 +5810,7 @@ export default function SuperCanvas() {
             }),
           };
         });
-        if (!terminal) {
+        if (!progress.terminal) {
           const timer = window.setTimeout(() => {
             pollTimersRef.current.delete(timer);
             void pollVideo(nodeId, taskId);
@@ -5840,7 +5820,7 @@ export default function SuperCanvas() {
           pollAttemptsRef.current.delete(taskId);
           pollStartedAtRef.current.delete(taskId);
           addLog(
-            task.status === "done"
+              progress.status === "completed"
               ? "视频生成完成"
               : `视频任务失败：${task.error || "任务已中断"}`,
           );
@@ -6089,40 +6069,26 @@ export default function SuperCanvas() {
           error?: string;
         },
       ) => {
-        const hasVideoResult = Array.isArray(task.videoUrls) && task.videoUrls.some(Boolean);
-        const terminal = hasVideoResult || ["done", "failed", "cancelled", "canceled"].includes(task.status);
-        const variantStatus =
-          hasVideoResult || task.status === "done"
-            ? ("completed" as const)
-            : terminal
-              ? ("failed" as const)
-              : ("running" as const);
+        const progress = canvasVideoTaskProgress(task);
         let next = {
           ...value,
           nodes: value.nodes.map((node) => {
             if (node.id !== targetId) return node;
-            const generationDurationMs = terminal && node.data.generation?.createdAt
+            const generationDurationMs = progress.terminal && node.data.generation?.createdAt
               ? Math.max(0, Date.now() - node.data.generation.createdAt)
               : undefined;
             return {
               ...node,
               data: {
                 ...node.data,
-                status:
-                  hasVideoResult || task.status === "done"
-                    ? ("completed" as const)
-                    : terminal
-                      ? ("failed" as const)
-                      : ("running" as const),
-                progress: Number(
-                  task.progress || (hasVideoResult || task.status === "done" ? 100 : 0),
-                ),
-                url: task.videoUrls?.[0] || node.data.url,
+                status: progress.status,
+                progress: progress.progress,
+                url: progress.url || node.data.url,
                 statusLabel:
                   task.error ||
-                  (hasVideoResult || task.status === "done"
+                  (progress.status === "completed"
                     ? "视频已完成"
-                    : terminal
+                    : progress.terminal
                       ? "视频任务已中断"
                       : "视频生成中"),
                 ...(generationDurationMs !== undefined && node.data.generation
@@ -6133,8 +6099,8 @@ export default function SuperCanvas() {
           }),
         };
         next = updateVariantState(next, index, {
-          status: variantStatus,
-          progress: Number(task.progress || (task.status === "done" ? 100 : 0)),
+          status: progress.status,
+          progress: progress.progress,
           ...(task.error ? { error: task.error } : {}),
         });
         return next;

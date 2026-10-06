@@ -3,6 +3,28 @@ import { canvasVariantBatchStatus } from "./variant-status";
 
 export type CanvasVariantBatchMode = "all" | "failed" | "pending";
 
+export function canvasVideoTaskProgress(task: {
+  status: string;
+  progress?: number;
+  videoUrls?: readonly string[];
+  error?: string;
+}) {
+  const hasVideoResult = Array.isArray(task.videoUrls) && task.videoUrls.some(Boolean);
+  const terminal = hasVideoResult || ["done", "failed", "cancelled", "canceled"].includes(task.status);
+  const status = hasVideoResult || task.status === "done"
+    ? ("completed" as const)
+    : terminal
+      ? ("failed" as const)
+      : ("running" as const);
+  return {
+    hasVideoResult,
+    terminal,
+    status,
+    progress: Number(task.progress || (status === "completed" ? 100 : 0)),
+    url: task.videoUrls?.[0],
+  };
+}
+
 export function prepareCanvasVariantBatch(
   requirements: readonly string[],
   currentStates: readonly CanvasVariantState[],

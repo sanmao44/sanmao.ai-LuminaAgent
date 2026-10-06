@@ -112,6 +112,22 @@ hardening work when the trigger applies.
   repository validation passed with 1846 tests passed, 2 skipped, and
   production build success. `git diff --check` passed.
 
+### Stage 5 canvas video task status projection checkpoint (2026-10-07)
+
+- `canvasVideoTaskProgress` in `lib/canvas/variant-batch.ts` now owns the pure
+  normalization of a video task result into terminal state, canvas variant
+  status, progress, and the first result URL.
+- Shared video polling and variant-batch polling retain node/document writes,
+  status labels, duration timestamps, retry timers, logs, and CanvasCore
+  coordination; they consume the same projection instead of duplicating task
+  status branching.
+- Provider responses, task URLs, persisted node fields, polling cadence, and
+  user-visible behavior remain unchanged. No new task runtime, store, API,
+  compatibility layer, or duplicate type was introduced.
+- Focused behavior coverage passed with 87 tests, typecheck passed, and full
+  repository validation passed with 1847 tests passed, 2 skipped, and
+  production build success. `git diff --check` passed.
+
 ### Stage 6 canvas asset projection boundary checkpoint (2026-10-07)
 
 - `lib/canvas/asset-library.ts` now owns the pure projection from a Canvas media

@@ -46,6 +46,30 @@ test("patches one variant while preserving its canonical requirement and aggrega
   assert.equal(result.status, "failed");
 });
 
+test("normalizes pending, failed, done, and returned video task results", () => {
+  assert.deepEqual(batch.canvasVideoTaskProgress({ status: "processing", progress: 42 }), {
+    hasVideoResult: false,
+    terminal: false,
+    status: "running",
+    progress: 42,
+    url: undefined,
+  });
+  assert.deepEqual(batch.canvasVideoTaskProgress({ status: "failed", error: "provider" }), {
+    hasVideoResult: false,
+    terminal: true,
+    status: "failed",
+    progress: 0,
+    url: undefined,
+  });
+  assert.deepEqual(batch.canvasVideoTaskProgress({ status: "done", videoUrls: ["/video.mp4"] }), {
+    hasVideoResult: true,
+    terminal: true,
+    status: "completed",
+    progress: 100,
+    url: "/video.mp4",
+  });
+});
+
 test("prepares only requested failed variants and preserves retry results", () => {
   const retained = { id: "variant-1", instruction: "one", status: "completed", resultIds: ["image-1"] };
   const failed = { id: "variant-2", instruction: "old", status: "failed", resultIds: ["image-2"], taskIds: ["task-2"] };
