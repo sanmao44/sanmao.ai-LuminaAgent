@@ -20,6 +20,20 @@ hardening work when the trigger applies.
   `npm run check` passed with 1834 tests passed, 2 skipped, and production
   build success. `git diff --check` passed.
 
+### Stage 6 canvas asset collection service checkpoint (2026-10-07)
+
+- `lib/canvas/asset-library-service.ts` now owns the existing-asset lookup,
+  collection ID merge, smart-collection rejection, metadata update, and first
+  registration flow used by Canvas collection actions.
+- `CanvasWorkspace.tsx` keeps only node lookup, asset projection, notification,
+  refresh state, and the CanvasCore-facing callbacks. It no longer calls the
+  unified asset listing or metadata update APIs for collection writes.
+- The service reuses the existing `AssetRecord`, `listUnifiedAssets`,
+  `registerCanvasAsset`, and `updateUnifiedAssetMetadata` boundaries; no second
+  repository, asset type, or source of truth was introduced.
+- Focused asset behavior tests passed; `npm run check` passed with 1835 tests
+  passed, 2 skipped, and production build success. `git diff --check` passed.
+
 ### Stage 4 generator node CSS boundary checkpoint (2026-10-06)
 
 - `app/canvas-generator-node.css` now owns the generator node card's scoped

@@ -91,10 +91,8 @@ import {
 } from "@/lib/canvas/layers";
 import { createPortal } from "react-dom";
 import {
-  CANVAS_ASSET_UNCATEGORIZED_ID,
   canAddCanvasAsset,
   canvasNodeAssetRecord,
-  isAssignableCanvasAssetCollection,
 } from "@/lib/canvas/asset-library";
 import type { GenerationLog } from "@/lib/generation-log";
 import {
@@ -217,7 +215,11 @@ import {
   resolvedCinematicDuration,
   type CinematicOpeningSettings,
 } from "@/lib/cinematic-shock-opening-director";
-import { listUnifiedAssets, registerCanvasAsset, updateUnifiedAssetMetadata, type AssetRecord } from "@/lib/assets";
+import { registerCanvasAsset, type AssetRecord } from "@/lib/assets";
+import {
+  addExistingCanvasAssetToCollection,
+  registerCanvasAssetInCollection,
+} from "@/lib/canvas/asset-library-service";
 import { startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
 import { workspaceRepository } from "@/lib/repositories/workspace-repository";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
@@ -11524,22 +11526,20 @@ export default function SuperCanvas() {
   );
 
   const addNodeToCollection = useCallback(async (nodeId: string, collectionId: string) => {
-    if (!isAssignableCanvasAssetCollection(collectionId)) {
-      notify("请先选择未分类或自定义资产集合。", "error");
-      return;
-    }
     const node = nodeById(canvasCoreRef.current.document(), nodeId);
-    if (!node || node.type !== "media" || !node.data.url) return;
-    const asset = (await listUnifiedAssets(canvasAssets)).find(
-      (item) => item.url === node.data.url && item.kind === node.data.kind,
-    );
-    if (!asset) return notify("节点素材尚未登记到资产库。", "error");
+    if (!node || node.type !== "media" || !node.data.url || !node.data.kind) return;
     try {
-      const currentCollectionIds = asset.collectionIds || [];
-      const collectionIds = collectionId === CANVAS_ASSET_UNCATEGORIZED_ID
-        ? currentCollectionIds
-        : [...new Set([...currentCollectionIds, collectionId])];
-      await updateUnifiedAssetMetadata(asset, { collectionIds });
+      const result = await addExistingCanvasAssetToCollection(
+        { kind: node.data.kind, url: String(node.data.url) },
+        collectionId,
+        canvasAssets,
+      );
+      if (result.status === "invalid-collection") {
+        notify("请先选择未分类或自定义资产集合。", "error");
+        return;
+      }
+      if (result.status === "missing-asset")
+        return notify("节点素材尚未登记到资产库。", "error");
       setAssetRefresh((value) => value + 1);
       notify("节点素材已加入资产集合");
     } catch (error) { notify(error instanceof Error ? error.message : "资产集合保存失败", "error"); }
@@ -12055,19 +12055,17 @@ export default function SuperCanvas() {
     collectionId: string,
   ): Promise<boolean> => {
     const asset = viewerAsset(node);
-    if (!asset || !isAssignableCanvasAssetCollection(collectionId)) return false;
+    if (!asset) return false;
     try {
-      const existing = (await listUnifiedAssets(canvasAssets)).find(
-        (item) => item.kind === asset.kind && item.url === asset.url,
+      const result = await registerCanvasAssetInCollection(
+        asset,
+        collectionId,
+        canvasAssets,
       );
-      const currentCollectionIds = existing?.collectionIds || [];
-      const collectionIds = collectionId === CANVAS_ASSET_UNCATEGORIZED_ID
-        ? currentCollectionIds
-        : [...new Set([...currentCollectionIds, collectionId])];
-      if (existing)
-        await updateUnifiedAssetMetadata(existing, { collectionIds });
-      else
-        await registerCanvasAsset({ ...asset, collectionIds });
+      if (result.status === "invalid-collection") {
+        notify("请先选择未分类或自定义资产集合。", "error");
+        return false;
+      }
       setAssetRefresh((value) => value + 1);
       return true;
     } catch (error) {

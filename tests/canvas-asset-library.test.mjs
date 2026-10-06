@@ -3,6 +3,22 @@ import test from "node:test";
 import { createTsRequire } from "./ts-require.mjs";
 
 const assetLibrary = createTsRequire(process.cwd())("./lib/canvas/asset-library");
+const assetServiceCalls = { lists: [], updates: [], registrations: [] };
+const assetService = createTsRequire(process.cwd(), {
+  "@/lib/assets": {
+    listUnifiedAssets: async (extra = []) => {
+      assetServiceCalls.lists.push(extra);
+      return [...extra];
+    },
+    updateUnifiedAssetMetadata: async (asset, patch) => {
+      assetServiceCalls.updates.push({ asset, patch });
+    },
+    registerCanvasAsset: async (asset) => {
+      assetServiceCalls.registrations.push(asset);
+    },
+  },
+  "@/lib/canvas/asset-library": assetLibrary,
+})("./lib/canvas/asset-library-service");
 
 test("canvas asset collections keep smart views read-only", () => {
   assert.equal(assetLibrary.isAssignableCanvasAssetCollection("uncategorized"), true);
@@ -65,4 +81,51 @@ test("canvas nodes project to the existing asset record contract", () => {
   assert.equal(assetLibrary.canvasNodeAssetRecord({ ...node, type: "prompt" }, {
     activeProjectId: "active-project",
   }), null);
+});
+
+test("canvas asset collection service preserves and merges collection metadata", async () => {
+  assetServiceCalls.lists.length = 0;
+  assetServiceCalls.updates.length = 0;
+  assetServiceCalls.registrations.length = 0;
+  const existing = {
+    id: "asset-1",
+    kind: "image",
+    url: "image.png",
+    name: "Image",
+    source: "canvas-upload",
+    createdAt: 1,
+    favorite: false,
+    projectIds: [],
+    collectionIds: ["ideas"],
+    tags: [],
+  };
+
+  const updated = await assetService.addExistingCanvasAssetToCollection(
+    { kind: "image", url: "image.png" },
+    "selected",
+    [existing],
+  );
+  assert.equal(updated.status, "saved");
+  assert.deepEqual(assetServiceCalls.updates[0].patch.collectionIds, ["ideas", "selected"]);
+  assert.equal(assetServiceCalls.registrations.length, 0);
+
+  const registered = await assetService.registerCanvasAssetInCollection({
+    ...existing,
+    id: "asset-2",
+    url: "new.png",
+    collectionIds: [],
+  }, "new-collection", []);
+  assert.equal(registered.status, "saved");
+  assert.equal(assetServiceCalls.registrations.length, 1);
+  assert.deepEqual(assetServiceCalls.registrations[0].collectionIds, ["new-collection"]);
+  assert.equal((await assetService.addExistingCanvasAssetToCollection(
+    { kind: "image", url: "missing.png" },
+    "selected",
+    [],
+  )).status, "missing-asset");
+  assert.equal((await assetService.registerCanvasAssetInCollection(
+    existing,
+    "generated",
+    [],
+  )).status, "invalid-collection");
 });

@@ -14,6 +14,10 @@ const drawer = await readFile(
   new URL("../components/canvas/CanvasAssetDrawer.tsx", import.meta.url),
   "utf8",
 );
+const assetService = await readFile(
+  new URL("../lib/canvas/asset-library-service.ts", import.meta.url),
+  "utf8",
+);
 const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
@@ -40,7 +44,6 @@ test("all canvas asset actions open the collection picker before writing", () =>
   assert.match(workspace, /const success = await addViewerAsset\(pickerNode, collectionId\)/);
   assert.match(workspace, /collectionSelection=\{assetLibraryCollectionId\}/);
   assert.match(workspace, /onCollectionSelectionChange=\{setAssetLibraryCollectionId\}/);
-  assert.match(workspace, /listUnifiedAssets\(canvasAssets\)/);
   assert.match(workspace, /setAssetCollectionPickerNodeId\(null\)/);
   assert.match(workspace, /assetCollectionPickerNodeId\);/);
 });
@@ -58,9 +61,8 @@ test("collection picker only shows writable asset collections", () => {
 });
 
 test("asset registration preserves existing collections and rejects smart views or unfinished nodes", () => {
-  assert.match(workspace, /if \(!isAssignableCanvasAssetCollection\(collectionId\)\)/);
-  assert.match(workspace, /const existing = \(await listUnifiedAssets\(canvasAssets\)\)\.find/);
-  assert.match(workspace, /\[\.\.\.new Set\(\[\.\.\.currentCollectionIds, collectionId\]\)\]/);
+  assert.match(assetService, /if \(!isAssignableCanvasAssetCollection\(collectionId\)\)/);
+  assert.match(assetService, /collectionIdsFor\(asset, collectionId\)/);
   assert.match(drawer, /if \(!isAssignableCanvasAssetCollection\(collection\)\)/);
 });
 
