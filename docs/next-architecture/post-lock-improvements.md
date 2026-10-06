@@ -531,6 +531,17 @@ hardening work when the trigger applies.
 - `tests/image-editor-task.test.mjs` covers edit mask/move-guide drafts and
   upscale source/task fields.
 
+### Editor result projection checkpoint (2026-10-06)
+
+- `lib/image-editor/editor-result.ts` now owns the pure projection for model
+  preference recording, history metadata, and completion summaries after an
+  edit/upscale response.
+- `app/page.tsx` keeps response validation, task polling, `recordModelCall`,
+  `recordImages`, task status updates, and notifications. Storage and runtime
+  ownership remain unchanged.
+- `tests/image-editor-result.test.mjs` covers manual edit model parameters,
+  mask/reference history metadata, and cloud upscale format/quality fields.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

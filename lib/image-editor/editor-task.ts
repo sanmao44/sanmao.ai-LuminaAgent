@@ -7,9 +7,8 @@ type EditorTaskReference = {
   dataUrl: string;
 };
 
-type EditorTaskMask = {
+export type EditorMaskProjection = {
   dataUrl: string;
-  referenceId: string;
   annotations: readonly unknown[];
   feather: number;
   sourceImageDataUrl?: string;
@@ -37,12 +36,11 @@ function editorReference(editor: EditorRequestState): EditorTaskReference {
   };
 }
 
-function editorMask(editor: EditorRequestState): EditorTaskMask | null {
+export function editorMaskProjection(editor: EditorRequestState): EditorMaskProjection | null {
   if (!editor.mask) return null;
   const feather = Math.max(0, Math.min(48, Math.round(Number(editor.feather) || 0)));
   return {
     dataUrl: editor.mask,
-    referenceId: editor.item.id,
     annotations: editor.annotations || [],
     feather,
     ...(editor.sourceImageDataUrl ? { sourceImageDataUrl: editor.sourceImageDataUrl } : {}),
@@ -89,7 +87,9 @@ export function buildEditorTaskDraft(
           customWidth: editor.customWidth,
           customHeight: editor.customHeight,
           references: [reference],
-          mask: editorMask(editor),
+          mask: editorMaskProjection(editor)
+            ? { ...editorMaskProjection(editor)!, referenceId: editor.item.id }
+            : null,
         },
   };
 }

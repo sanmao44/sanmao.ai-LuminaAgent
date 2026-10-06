@@ -132,6 +132,7 @@ import { cloudUpscaleFormatOptions, isCloudUpscaleModel, qualityOptions, upscale
 import { editorModelSelectionPatch, upscaleEditorSettingsPatch } from '@/lib/image-editor/editor-form';
 import { buildEditorRequest } from '@/lib/image-editor/editor-request';
 import { buildEditorTaskDraft } from '@/lib/image-editor/editor-task';
+import { buildEditorModelCallInput, buildEditorHistoryMeta, editorCompletionInfo } from '@/lib/image-editor/editor-result';
 import { canvasRectForRatio, cropSourceRect } from '@/lib/image-editor/local-image-layout';
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
@@ -8195,61 +8196,11 @@ export default function Page() {
             if (!res.ok) throw new Error(data.error || '处理失败');
             if (currentEditor.mode === 'upscale' && data.taskId) patchGenerateTask(taskId, { upscaleTaskId: data.taskId, info: `${data.model?.name || '高清放大'} · 后台处理中` });
             if (currentEditor.mode === 'upscale' && data.taskId && (data.status === 'queued' || data.status === 'processing')) data = await waitForUpscaleTask(data.taskId, data);
-            const knownUpscaleModels = [
-                ...state.models,
-                ...(state.upscaleModels || [])
-            ];
-            const manualModel = currentEditor.modelId !== 'auto' ? knownUpscaleModels.find((model)=>model.id === currentEditor.modelId) : undefined;
-            const actualModel = data.model?.id ? knownUpscaleModels.find((model)=>model.id === data.model.id) : undefined;
-            recordModelCall({
-                context: currentEditor.mode === 'upscale' ? 'upscale' : 'edit',
-                mode: manualModel ? 'manual' : 'auto',
-                providerId: (manualModel || actualModel)?.providerId,
-                modelId: (manualModel || actualModel)?.id,
-                params: currentEditor.mode === 'upscale' ? {
-                    upscaleScale: currentEditor.scale,
-                    ...(cloudUpscale ? {
-                        upscaleOutputFormat: editorCloudOutputFormat,
-                        upscaleOutputQuality: editorCloudOutputFormat === 'jpg' ? currentEditor.upscaleOutputQuality : undefined
-                    } : {
-                        upscaleTarget: currentEditor.targetSize,
-                        upscaleSeed: currentEditor.seed,
-                        upscaleColorCorrection: currentEditor.colorCorrection,
-                        upscaleAlgorithm: currentEditor.algorithm
-                    })
-                } : {
-                    ratio: currentEditor.ratio,
-                    count: currentEditor.count,
-                    quality: currentEditor.quality,
-                    fidelity: currentEditor.fidelity,
-                    sizeMode: currentEditor.sizeMode,
-                    sizeTier: currentEditor.sizeTier,
-                    customWidth: currentEditor.customWidth,
-                    customHeight: currentEditor.customHeight
-                }
-            });
+            const knownUpscaleModels = [...state.models, ...(state.upscaleModels || [])];
+            recordModelCall(buildEditorModelCallInput(currentEditor, data, knownUpscaleModels, cloudUpscale, editorCloudOutputFormat));
             const durationMs = Math.round(performance.now() - requestStartedAt);
-            const items = await recordImages(data.images || [], {
-                prompt: currentEditor.mode === 'upscale' ? currentEditor.item.prompt : currentEditor.prompt,
-                modelId: data.model?.id,
-                modelName: data.model?.name,
-                providerName: data.model?.provider,
-                aspectRatio: currentEditor.ratio,
-                outputSize: currentEditor.mode === 'upscale' ? `${currentEditor.scale}× 超分` : undefined,
-                outputFormat: currentEditor.mode === 'upscale' && editorCloudOutputFormat ? editorCloudOutputFormat === 'jpg' ? 'jpeg' : editorCloudOutputFormat : currentEditor.mode === 'upscale' ? 'png' : undefined,
-                source: currentEditor.mode === 'upscale' ? 'upscale' : 'edit',
-                parentId: currentEditor.item.id,
-                sourceImageId: currentEditor.mode === 'upscale' ? currentEditor.item.id : undefined,
-                upscaleProvider: currentEditor.mode === 'upscale' ? data.model?.provider : undefined,
-                upscaleModel: currentEditor.mode === 'upscale' ? data.model?.id : undefined,
-                upscaleScale: currentEditor.mode === 'upscale' ? currentEditor.scale : undefined,
-                 upscaleTaskId: currentEditor.mode === 'upscale' ? data.taskId : undefined,
-                 generationMs: durationMs,
-                 references: [editorReference],
-                  annotations: currentEditor.mode === 'edit' && Array.isArray(currentEditor.annotations) ? currentEditor.annotations : undefined,
-                   mask: currentEditor.mode === 'edit' && currentEditor.mask ? { dataUrl: currentEditor.mask, feather: Math.max(0, Math.min(48, Math.round(Number(currentEditor.feather) || 0))), annotations: currentEditor.annotations || [], ...(currentEditor.sourceImageDataUrl ? { sourceImageDataUrl: currentEditor.sourceImageDataUrl } : {}) } : undefined
-             });
-            const info = `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${data.model?.name || '图片模型'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
+            const items = await recordImages(data.images || [], buildEditorHistoryMeta(currentEditor, data, durationMs, editorReference, editorCloudOutputFormat));
+            const info = editorCompletionInfo(currentEditor, data, durationMs, items.length);
             setResultItems((old)=>[
                     ...items,
                     ...old
