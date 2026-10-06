@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.81/SANMAO.AI-0.7.81.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.81/SANMAO.AI-0.7.81.zip"
   ],
-  "sha256": "bed0df4629034711722fedf6d0369a1465950795d97957629ad039eb7439c18b",
+  "sha256": "2d0a06e07bb31b6292ec5e2dbace2779396c489862fe5fca55ead6eaecdb5f42",
   "publishedAt": "2026-10-06T08:48:00.000Z",
   "notes": [
     "前端复杂度分阶段重构：画布节点展示、引用、预设和超分设置边界收敛。",
