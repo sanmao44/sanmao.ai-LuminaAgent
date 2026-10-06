@@ -1326,3 +1326,10 @@ hardening work when the trigger applies.
   `npm run typecheck` passed, full `npm run check` passed (1830 tests passed,
   2 skipped, production build succeeded), and `git diff --check` is clean for
   this slice. The pre-existing uncommitted `AGENTS.md` edit remains excluded.
+
+### Stage 6 video clip workbench CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-video-clip.css` now owns the complete `.canvas-video-clip-*` selector family for the ordinary video-node trim workbench, including responsive and theme refinements.
+- `app/canvas.css` retains the video-editor node/workbench domain and shared canvas z-index/token definitions. `app/layout.tsx` loads the clip stylesheet after the base canvas stylesheet so the previous cascade order is preserved.
+- `CanvasVideoClipWorkbench.tsx` remains the sole owner of local playback, trim pointer capture, keyboard handling, and clip creation callbacks. No CanvasCore, API, storage, provider, or data contract changed.
+- Validation: targeted video clip/editor/node tests passed (32/32), `npm run typecheck` passed, full `npm run check` passed (1830 tests passed, 2 skipped, production build succeeded), and `git diff --check` is clean for this slice. The pre-existing uncommitted `AGENTS.md` edit remains excluded.
