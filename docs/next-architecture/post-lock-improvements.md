@@ -1597,3 +1597,16 @@ hardening work when the trigger applies.
 - Video and node editor behavior tests now read media-card presentation rules from the domain sheet. No CanvasCore state, media URL, task status, API, or interaction callback changed.
 - Remaining risk: video play state still uses the existing `useCanvasMediaPlayback` hook and the card still coordinates media load callbacks; extracting that runtime needs separate browser behavior coverage.
 - Validation before full check: focused canvas node/editor and video suites passed (68/68), typecheck passed, and `git diff --check` passed.
+
+### Stage 4 generator node primitives checkpoint (2026-10-07)
+
+- Moved generator-card-only summary, prompt, retry-all and variant execution
+  state selectors into `app/canvas-generator-node.css`.
+- Removed the duplicated selector block from `app/canvas.css`; shared variant
+  editor and cross-surface node rules remain in the shared stylesheet.
+- Validation: `npm run check` passed (1833 tests passed, 2 skipped; typecheck,
+  update manifest validation and production build passed); `git diff --check`
+  passed.
+- Remaining risk: generator execution and variant editing callbacks still
+  cross CanvasWorkspace/Core boundaries; no React ownership move was attempted
+  in this CSS-only slice.
