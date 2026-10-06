@@ -343,6 +343,10 @@ import {
   type CanvasReuseDraft,
 } from "@/lib/canvas/reuse";
 import {
+  createCanvasReferenceDraft,
+  createCanvasReferenceRecords,
+} from "@/lib/canvas/reference-drafts";
+import {
   snapCanvasNodePositions,
   type CanvasSnapGuide,
 } from "@/lib/canvas/snap";
@@ -1753,45 +1757,8 @@ function syncCanvasVideoEditorReferences(document: CanvasDocument) {
   return next;
 }
 
-function canvasReferenceDraftFromNode(node: CanvasNode): CanvasReferenceDraft | null {
-  if (node.type === "prompt") {
-    const text = String(node.data.agentResponse || node.data.text || "").trim();
-    if (!text) return null;
-    return {
-      id: `node-ref:${node.id}`,
-      nodeId: node.id,
-      kind: "text",
-      text,
-      mimeType: "text/plain;charset=utf-8",
-      name: String(node.data.name || node.data.role || "文本引用"),
-      origin: "node",
-    };
-  }
-  if (node.type === "generator") {
-    const text = String(node.data.prompt || node.data.agentPrompt || "").trim();
-    if (!text) return null;
-    return {
-      id: `node-ref:${node.id}`,
-      nodeId: node.id,
-      kind: "text",
-      text,
-      mimeType: "text/plain;charset=utf-8",
-      name: String(node.data.name || "生成提示词"),
-      origin: "node",
-    };
-  }
-  if (!isCanvasReferenceableNode(node)) return null;
-  if (!node.data.kind) return null;
-  return {
-    id: `node-ref:${node.id}`,
-    nodeId: node.id,
-    kind: node.data.kind,
-    url: String(node.data.url),
-    name: String(node.data.name || (node.data.kind === "video" ? "视频素材" : node.data.kind === "audio" ? "音频素材" : "图片素材")),
-    ...(node.data.mimeType ? { mimeType: String(node.data.mimeType) } : {}),
-    origin: "node",
-  };
-}
+const canvasReferenceDraftFromNode = (node: CanvasNode) =>
+  createCanvasReferenceDraft(node, isCanvasReferenceableNode);
 
 function canvasAngleReferenceFromNode(node: CanvasNode | undefined): ClientReferenceImage | null {
   if (!isCanvasReadyImageSource(node) || node?.data.kind !== "image" || !node.data.url) return null;
@@ -1814,24 +1781,8 @@ function isCanvasReferencePickerCandidate(node: CanvasNode | undefined) {
   );
 }
 
-function canvasReferenceRecordsFromNodes(nodes: CanvasNode[]) {
-  const seen = new Set<string>();
-  return nodes
-    .map((node) => {
-      const draft = canvasReferenceDraftFromNode(node);
-      if (!draft || draft.kind === "audio" || seen.has(node.id)) return null;
-      seen.add(node.id);
-      return {
-        id: node.id,
-        kind: draft.kind,
-        name: draft.name,
-        url: draft.url || "",
-        ...(draft.text ? { text: draft.text } : {}),
-        ...(draft.mimeType ? { mimeType: draft.mimeType } : {}),
-      };
-    })
-    .filter((reference): reference is NonNullable<typeof reference> => Boolean(reference));
-}
+const canvasReferenceRecordsFromNodes = (nodes: CanvasNode[]) =>
+  createCanvasReferenceRecords(nodes, isCanvasReferenceableNode);
 
 function canvasLocalEditMaskForHistory(mask: ImageCreationSettings["mask"]): GalleryLocalEditMask | undefined {
   if (!mask?.url) return undefined;

@@ -600,3 +600,24 @@ hardening work when the trigger applies.
   state, edges/groups, menus, workbench mounting, and generation orchestration.
   Viewport, menu, and generation extraction should wait for a stable
   behavior-covered contract.
+
+### Stage 5 reference input projection checkpoint (2026-10-06)
+
+- `lib/canvas/reference-drafts.ts` now owns the pure conversion from a
+  `CanvasNode` to the existing `CanvasReferenceDraft` contract and to the
+  history reference record projection. It handles prompt, generator, media,
+  upscale, and audio node semantics in one implementation.
+- The converter receives the existing `isCanvasReferenceableNode` predicate as
+  an explicit contract, so it does not recreate node eligibility or introduce
+  another source of truth. It has no React, CanvasCore, API, repository, or
+  provider dependency.
+- `CanvasWorkspace.tsx` retains all reference selection, draft mutation,
+  generation orchestration, and persistence callbacks; it only invokes the
+  converter at those existing call sites. No URL, API payload, or history
+  record shape changed.
+- Behavior coverage now verifies prompt/generator/media/audio conversion,
+  metadata preservation, duplicate filtering, and audio exclusion from history
+  records.
+- Remaining risk: generation submission and task lifecycle still span several
+  callbacks in Workspace. Extracting those paths requires a request/response
+  contract and task-state coverage before moving implementation.

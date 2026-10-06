@@ -13,7 +13,18 @@ async function loadReuse() {
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 }
 
+async function loadReferenceDrafts() {
+  const sourceUrl = new URL("../lib/canvas/reference-drafts.ts", import.meta.url);
+  const source = await readFile(sourceUrl, "utf8");
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    fileName: sourceUrl.pathname,
+  }).outputText;
+  return import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+}
+
 const reuse = await loadReuse();
+const referenceDrafts = await loadReferenceDrafts();
 
 function reference(id, url = `data:image/png;base64,${id}`) {
   return { id, kind: "image", url, name: id, origin: "node", nodeId: id };
@@ -138,4 +149,30 @@ test("creates a reuse draft for an uploaded media node using fallback parameters
 test("ignores invalid source nodes instead of creating a destructive partial draft", () => {
   assert.equal(reuse.reuseDraftFromNode({ id: "prompt", type: "prompt", x: 0, y: 0, data: { text: "hello" } }, []), null);
   assert.equal(reuse.reuseDraftFromNode({ id: "media", type: "media", x: 0, y: 0, data: { kind: "image", url: "/image.png" } }, []), null);
+});
+
+test("projects prompt, generator, and media nodes into one reference contract", () => {
+  const isReferenceable = (node) => Boolean(
+    node && (node.type === "media" || node.type === "upscale") && node.data.kind && node.data.url,
+  );
+  const prompt = { id: "prompt-1", type: "prompt", data: { text: "  上下文  ", role: "Agent 回复" } };
+  const generator = { id: "generator-1", type: "generator", data: { prompt: "  变体提示  " } };
+  const image = { id: "image-1", type: "media", data: { kind: "image", url: "/image.png", name: "原图", mimeType: "image/png" } };
+  const audio = { id: "audio-1", type: "media", data: { kind: "audio", url: "/audio.mp3" } };
+  assert.deepEqual(referenceDrafts.createCanvasReferenceDraft(prompt, isReferenceable), {
+    id: "node-ref:prompt-1",
+    nodeId: "prompt-1",
+    kind: "text",
+    text: "上下文",
+    mimeType: "text/plain;charset=utf-8",
+    name: "Agent 回复",
+    origin: "node",
+  });
+  assert.equal(referenceDrafts.createCanvasReferenceDraft(generator, isReferenceable).text, "变体提示");
+  assert.equal(referenceDrafts.createCanvasReferenceDraft(image, isReferenceable).url, "/image.png");
+  assert.equal(referenceDrafts.createCanvasReferenceDraft(audio, isReferenceable).kind, "audio");
+  assert.deepEqual(referenceDrafts.createCanvasReferenceRecords([image, image, audio, prompt], isReferenceable), [
+    { id: "image-1", kind: "image", name: "原图", url: "/image.png", mimeType: "image/png" },
+    { id: "prompt-1", kind: "text", name: "Agent 回复", url: "", text: "上下文", mimeType: "text/plain;charset=utf-8" },
+  ]);
 });
