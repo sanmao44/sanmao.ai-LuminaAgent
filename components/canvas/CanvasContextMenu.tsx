@@ -9,6 +9,7 @@ import { nodeLabel } from "@/lib/canvas/menu-labels";
 export {
   appendCanvasAgentAction,
   createCanvasAgentAction,
+  projectCanvasGroupContextMenuGroups,
   prependCanvasAgentContextMenuGroup,
   type CanvasContextMenuGroup,
   type CanvasQuickAction,

@@ -25,6 +25,21 @@ hardening work when the trigger applies.
   interleaved with Workspace selection/document mutations; extracting them
   requires a larger behavior-covered slice and remains deferred.
 
+### Stage 2 canvas group menu projection checkpoint (2026-10-07)
+
+- `projectCanvasGroupContextMenuGroups` in `lib/canvas/menu-actions.ts` now
+  owns the pure projection from the existing group quick-action contract to
+  context-menu groups, including action order and close-wrapper placement.
+- `CanvasWorkspace.tsx` retains context-group presence, menu state cleanup,
+  copy selection, arrange command, and all underlying CanvasCore mutations.
+- The projection reuses the existing action and menu contracts; no duplicate
+  group state, action implementation, or compatibility layer was introduced.
+- Focused menu behavior tests and typecheck pass. Full repository validation is
+  required before the stage commit.
+- Remaining risk: node context-menu action construction still branches on
+  media/prompt/generator behavior in Workspace and is deferred until those
+  callbacks have a dedicated behavior boundary.
+
 ### Stage 6 canvas asset projection boundary checkpoint (2026-10-07)
 
 - `lib/canvas/asset-library.ts` now owns the pure projection from a Canvas media

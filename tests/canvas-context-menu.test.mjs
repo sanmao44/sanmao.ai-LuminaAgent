@@ -161,11 +161,11 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(contextMenuComponent, /\["ArrowDown", "ArrowUp", "Home", "End"\]/);
   assert.match(styles, /\.canvas-node-quick-menu\{width:min\(266px/);
   assert.match(styles, /\.canvas-node-quick-menu-trigger\.open/);
-  assert.match(groupContextMenu, /label: "复制组内容"/);
-  assert.match(groupContextMenu, /title: "复制组到剪贴板"/);
-  assert.match(groupContextMenu, /const dangerAction = groupQuickActionsWithAgent\.dangerAction/);
-  assert.match(groupContextMenu, /label: "删除"/);
-  assert.match(groupContextMenu, /label: "复制组内容"/);
+  assert.match(menuActions, /label: "复制组内容"/);
+  assert.match(menuActions, /title: "复制组到剪贴板"/);
+  assert.match(menuActions, /actions\.dangerAction/);
+  assert.match(menuActions, /label: "删除"/);
+  assert.match(menuActions, /projectCanvasGroupContextMenuGroups/);
   assert.match(groupQuickActions, /id: "duplicate-group"[\s\S]*?label: "复制组"/);
   assert.match(groupQuickActions, /label: "组内整理"/);
   assert.match(groupQuickActions, /label: "宫格拼接"/);

@@ -232,7 +232,7 @@ import CanvasTextLightbox from "@/components/canvas/CanvasTextLightbox";
 import CanvasActivityDrawer from "@/components/canvas/CanvasActivityDrawer";
 import CanvasQuickToolbar from "@/components/canvas/CanvasQuickToolbar";
 import CanvasSelectionToolbar from "@/components/canvas/CanvasSelectionToolbar";
-import { appendCanvasAgentAction, CanvasContextMenuFrame, CanvasGroupContextMenu, CanvasNodeContextMenu, prependCanvasAgentContextMenuGroup, type CanvasContextMenuGroup, type CanvasQuickAction, type CanvasQuickToolbarActions } from "@/components/canvas/CanvasContextMenu";
+import { appendCanvasAgentAction, CanvasContextMenuFrame, CanvasGroupContextMenu, CanvasNodeContextMenu, prependCanvasAgentContextMenuGroup, projectCanvasGroupContextMenuGroups, type CanvasContextMenuGroup, type CanvasQuickAction, type CanvasQuickToolbarActions } from "@/components/canvas/CanvasContextMenu";
 import { canvasRightOverlayInset, canvasVisibleStageWidth } from "@/lib/canvas/menu-layout";
 import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/lib/canvas/node-editor";
 import { canvasUpscaleSource, maskStateForNode, nodeStatus, progressValue, variantStatesFor } from "@/lib/canvas/node-card";
@@ -13488,49 +13488,11 @@ export default function SuperCanvas() {
       setContextMenu(null);
       action();
     };
-    const primary = groupQuickActionsWithAgent.primaryActions.map((action) => ({
-      ...action,
-      onClick: close(action.id === "arrange-group" ? () => arrangeCanvasAction() : action.onClick),
-    }));
-    const groupOperations = groupQuickActionsWithAgent.menuGroups.find(
-      (group) => group.id === "group-actions",
-    );
-    const layer = groupQuickActionsWithAgent.menuGroups.find(
-      (group) => group.id === "layer",
-    );
-    const dangerAction = groupQuickActionsWithAgent.dangerAction;
-    return [
-      {
-        label: "组操作",
-        actions: [
-          {
-            id: "copy-group",
-            icon: "copy",
-            label: "复制组内容",
-            title: "复制组到剪贴板",
-            onClick: close(() => void copySelection()),
-          },
-          ...primary,
-          ...(groupOperations?.actions || []).map((action) => ({
-            ...action,
-            onClick: close(action.onClick),
-          })),
-        ],
-      },
-      {
-        label: "层级",
-        actions: (layer?.actions || []).map((action) => ({
-          ...action,
-          onClick: close(action.onClick),
-        })),
-      },
-      {
-        label: "删除",
-        actions: dangerAction
-          ? [{ ...dangerAction, onClick: close(dangerAction.onClick) }]
-          : [],
-      },
-    ].filter((group) => group.actions.length > 0);
+    return projectCanvasGroupContextMenuGroups(groupQuickActionsWithAgent, {
+      onCopy: () => void copySelection(),
+      onArrange: arrangeCanvasAction,
+      closeAction: close,
+    });
   }, [arrangeCanvasAction, contextGroup, copySelection, groupQuickActionsWithAgent]);
 
   // Below this threshold the canvas is an overview, not a reading surface.
