@@ -1281,3 +1281,18 @@ hardening work when the trigger applies.
   2 skipped; production build and typecheck also passed. The card internals,
   editor popover, and pointer gesture state machine remain intentionally in
   their current modules because their behavior contracts are still coupled.
+
+### Stage 6 canvas angle workbench boundary checkpoint (2026-10-06)
+
+- `components/canvas/CanvasAngleWorkbench.tsx` now owns the embedded angle
+  console shell, wheel/pointer event isolation, and the presentation contract
+  for the canvas-owned angle panel. It delegates the existing `AngleConsole`
+  behavior through typed callbacks and keeps result actions disabled exactly as
+  before for the embedded surface.
+- `CanvasWorkspace.tsx` retains angle node lookup, reference projection,
+  transient versus persisted angle state, generation callbacks, draft updates,
+  CanvasCore mutations, and user notifications. No angle runtime or duplicate
+  state machine was introduced.
+- Angle console, image-angle, node-editor, and double-click behavior coverage
+  passed after the extraction. Full `npm run check` remains the final gate for
+  this slice before commit; CSS and generation service boundaries are deferred.

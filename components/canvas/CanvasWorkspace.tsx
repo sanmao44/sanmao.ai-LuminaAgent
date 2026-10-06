@@ -396,7 +396,8 @@ import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
 import { createProvenanceEdge, provenanceDraftsForSources } from "@/lib/provenance/normalize";
 import VideoEditorNode from "@/components/VideoEditorNode";
 import VideoEditorWorkbench from "@/components/VideoEditorWorkbench";
-import AngleConsole, { type AngleConsoleDraft } from "@/components/AngleConsole";
+import { type AngleConsoleDraft } from "@/components/AngleConsole";
+import CanvasAngleWorkbench from "@/components/canvas/CanvasAngleWorkbench";
 
 type CanvasGenerationMode = Exclude<CanvasMediaKind, "audio">;
 type Mode = CanvasGenerationMode | "text";
@@ -14293,52 +14294,35 @@ export default function SuperCanvas() {
           const ownerId = angleNode?.id || sourceNode?.id || "";
           const busyKey = transient ? `angle-image-${ownerId}` : ownerId;
           return (
-            <div
-              className="canvas-angle-workbench"
-              data-canvas-wheel-isolate
-              onPointerDown={(event) => event.stopPropagation()}
-              onPointerMove={(event) => event.stopPropagation()}
-              onPointerUp={(event) => event.stopPropagation()}
-              onPointerCancel={(event) => event.stopPropagation()}
-              onClick={(event) => event.stopPropagation()}
-              onDoubleClick={(event) => event.stopPropagation()}
-              onWheel={(event) => event.stopPropagation()}
-            >
-              <AngleConsole
-                theme={theme}
-                embedded
-                reference={reference}
-                initialCamera={angle?.camera}
-                initialCameraStart={angle?.cameraStart}
-                initialOutput={angle?.output}
-                initialNote={angle?.angleNote}
-                models={runtime?.models || []}
-                results={[]}
-                busy={generationKeys.has(busyKey)}
-                onReferenceFiles={(files) => {
-                  if (transient) {
-                    notify("生成新视角以当前图片为原始参考，不能在工作台内更换参考图。", "error");
-                  } else if (referenceNode && angleNode) {
-                    notify("请先移除当前参考图，再上传新的参考图。", "error");
-                  } else if (angleNode) {
-                    void addEditorReferenceFiles(angleNode.id, Array.from(files).slice(0, 1));
-                  }
-                }}
-                onExit={closeAngleWorkbench}
-                onRemoveReference={() => {
-                  if (transient) notify("当前工作台固定使用这张图片作为原始参考。", "error");
-                  else if (referenceNode && angleNode) removeNodeReference(angleNode.id, referenceNode.id);
-                }}
-                onBrowseHistory={() => notify(transient ? "请先关闭当前工作台，再选择另一张图片生成新视角。" : "请从画布中连接一张已完成图片作为参考。")}
-                onGenerate={(input) => transient && sourceNode ? runImageAngleGeneration(sourceNode.id, input) : angleNode ? runAngleGeneration(angleNode.id, input) : undefined}
-                onSaveAsNode={transient ? saveImageAngleAsNode : undefined}
-                onOpenResult={() => undefined}
-                onDownloadResult={() => undefined}
-                onDownloadShare={() => undefined}
-                onNotify={notify}
-                onDraftChange={transient ? undefined : handleCanvasAngleDraftChange}
-              />
-            </div>
+            <CanvasAngleWorkbench
+              theme={theme}
+              reference={reference}
+              initialCamera={angle?.camera}
+              initialCameraStart={angle?.cameraStart}
+              initialOutput={angle?.output}
+              initialNote={angle?.angleNote}
+              models={runtime?.models || []}
+              busy={generationKeys.has(busyKey)}
+              onReferenceFiles={(files) => {
+                if (transient) {
+                  notify("生成新视角以当前图片为原始参考，不能在工作台内更换参考图。", "error");
+                } else if (referenceNode && angleNode) {
+                  notify("请先移除当前参考图，再上传新的参考图。", "error");
+                } else if (angleNode) {
+                  void addEditorReferenceFiles(angleNode.id, Array.from(files).slice(0, 1));
+                }
+              }}
+              onExit={closeAngleWorkbench}
+              onRemoveReference={() => {
+                if (transient) notify("当前工作台固定使用这张图片作为原始参考。", "error");
+                else if (referenceNode && angleNode) removeNodeReference(angleNode.id, referenceNode.id);
+              }}
+              onBrowseHistory={() => notify(transient ? "请先关闭当前工作台，再选择另一张图片生成新视角。" : "请从画布中连接一张已完成图片作为参考。")}
+              onGenerate={(input) => transient && sourceNode ? runImageAngleGeneration(sourceNode.id, input) : angleNode ? runAngleGeneration(angleNode.id, input) : undefined}
+              onSaveAsNode={transient ? saveImageAngleAsNode : undefined}
+              onNotify={notify}
+              onDraftChange={transient ? undefined : handleCanvasAngleDraftChange}
+            />
           );
         })()}
         {expandedEditorId && !nodeGestureActive && (() => {
