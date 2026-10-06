@@ -6,6 +6,10 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const processingStyles = await readFile(
+  new URL("../app/canvas-processing.css", import.meta.url),
+  "utf8",
+);
 const component = await readFile(
   new URL(
     "../components/canvas/CanvasProcessingIndicator.tsx",
@@ -39,17 +43,17 @@ const agentCard = await readFile(
 );
 
 test("processing feedback uses one restrained signal animation system", () => {
-  const motionStart = styles.lastIndexOf("/* Unified processing system");
+  const motionStart = processingStyles.indexOf("/* Unified processing system");
   assert.ok(motionStart >= 0, "unified processing motion should be present");
-  const motion = styles.slice(motionStart);
+  const motion = processingStyles.slice(motionStart);
 
   assert.match(motion, /canvas-processing-orbit/);
   assert.match(motion, /canvas-processing-breathe/);
   assert.match(motion, /canvas-processing-indeterminate/);
-  assert.match(motion, /canvas-processing-node-signal/);
+  assert.match(styles, /canvas-processing-node-signal/);
   assert.doesNotMatch(component, /canvas-processing-signal|canvas-processing-live-dot/);
-  assert.match(motion, /contain:layout style\}/);
-  assert.doesNotMatch(motion, /contain:layout style paint/);
+  assert.match(styles, /\.canvas-node\.status-running,\.canvas-node\.status-queued\{contain:layout style\}/);
+  assert.doesNotMatch(styles, /contain:layout style paint/);
   assert.match(motion, /\.canvas-processing-indicator\.is-running[^}]*--processing-accent:var\(--canvas-node-running\)/);
   assert.match(
     styles,
@@ -61,16 +65,13 @@ test("processing feedback uses one restrained signal animation system", () => {
     /\.canvas-node\.status-running \.canvas-upscale-card-head>span/,
     "upscale running icons should use the shared running color",
   );
-  assert.ok(
-    motion.includes(".canvas-node.status-running::after") &&
-      motion.includes("inset:0"),
-  );
+  assert.match(styles, /\.canvas-node\.status-running::after[^}]*inset:0/);
   assert.ok(
     motion.includes(".canvas-processing-indicator.compact{") &&
       motion.includes("min-height:78px"),
   );
   assert.equal(
-    (styles.match(/(?:^|\n)\.canvas-processing-indicator\{/g) || []).length,
+    ((styles + processingStyles).match(/(?:^|\n)\.canvas-processing-indicator\{/g) || []).length,
     1,
     "processing styles should not be duplicated later in the cascade",
   );

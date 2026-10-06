@@ -1428,3 +1428,20 @@ hardening work when the trigger applies.
 - Remaining debt: `app/canvas.css` still contains the shared canvas stage,
   groups, node/editor, Agent dock and other overlay rules. The Agent dock's
   cross-domain geometry and message/composer styles remain deferred.
+
+### Stage 6 canvas processing indicator CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-processing.css` now owns the processing indicator surface,
+  status treatments, progress display, compact layout, and indicator motion
+  preferences. `app/layout.tsx` loads it immediately after `canvas.css`.
+- `app/canvas.css` retains node-shell status treatment, running/queued node
+  pseudo-elements, aura and card backgrounds, pending media-state padding, and
+  overview/pan reduced-motion rules. These selectors affect shared node
+  structure or rely on their original cascade position, along with the queued
+  node signal keyframe, so they were kept in the base sheet. The processing
+  sheet only pauses and reduces motion on its own indicator descendants.
+- `tests/canvas-processing-animation.test.mjs` now checks the indicator sheet
+  separately from the shared node shell; no runtime or product behavior moved.
+- Validation: targeted processing/node-editor behavior tests passed (66/66),
+  `npm run typecheck` passed, full `npm run check` passed (1831 tests passed,
+  2 skipped; production build succeeded), and final `git diff --check` passed.

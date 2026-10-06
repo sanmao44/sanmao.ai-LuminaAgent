@@ -1516,36 +1516,8 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-world-content[data-zoom-tier="overview"] .canvas-node{box-shadow:none;transition:none}
 .canvas-world-content[data-zoom-tier="overview"] .canvas-node.selected{box-shadow:0 0 0 2px color-mix(in srgb,var(--node-effective) 28%,transparent)}
 
-/* Unified processing system: a quiet surface, a single orbit and an honest
-   progress track. Soft light moves across the card without moving its content. */
-.canvas-processing-indicator{--processing-accent:var(--node-effective);position:relative;isolation:isolate;display:grid;grid-template-columns:36px minmax(0,1fr);align-items:center;gap:10px;min-width:0;flex-shrink:0;box-sizing:border-box;padding:12px;overflow:hidden;border:1px solid color-mix(in srgb,var(--processing-accent) 20%,var(--line));border-radius:14px;background:radial-gradient(ellipse at 0 0,color-mix(in srgb,var(--processing-accent) 8%,transparent),transparent 72%),linear-gradient(150deg,var(--panel),var(--panel-2));box-shadow:inset 0 1px 0 color-mix(in srgb,var(--text) 5%,transparent),0 4px 14px color-mix(in srgb,var(--processing-accent) 4%,transparent);text-align:left}
-.canvas-processing-indicator.is-running{--processing-accent:var(--canvas-node-running)}
-.canvas-processing-indicator.is-queued{--processing-accent:var(--canvas-node-queued)}
-.canvas-processing-visual{position:relative;width:36px;height:36px;display:grid;place-items:center;flex:none;color:var(--processing-accent)}
-.canvas-processing-orbit{position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 0deg,transparent 15%,color-mix(in srgb,var(--processing-accent) 12%,transparent) 48%,var(--processing-accent) 90%,transparent);padding:1px;mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);mask-composite:exclude;animation:canvas-processing-orbit 4.8s linear infinite;pointer-events:none}
-.canvas-processing-glyph{width:26px;height:26px;display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--processing-accent) 18%,var(--line));border-radius:9px;background:linear-gradient(145deg,color-mix(in srgb,var(--processing-accent) 10%,var(--panel)),var(--panel-2));box-shadow:inset 0 1px 0 color-mix(in srgb,var(--text) 5%,transparent)}
-.canvas-processing-glyph svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.45;stroke-linecap:round;stroke-linejoin:round}
-.canvas-processing-copy{min-width:0;display:grid;gap:7px;color:var(--text-2)}
-.canvas-processing-title{min-width:0;display:flex;align-items:center;gap:7px;justify-content:space-between}
-.canvas-processing-title b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:11px;font-weight:650;line-height:1.35}
-.canvas-processing-title em{height:17px;display:inline-flex;align-items:center;gap:5px;flex:none;padding:0 6px;border:1px solid color-mix(in srgb,var(--processing-accent) 16%,transparent);border-radius:999px;background:color-mix(in srgb,var(--processing-accent) 6%,transparent);color:color-mix(in srgb,var(--processing-accent) 74%,var(--text));font-size:8px;font-style:normal;font-weight:600;line-height:1}
-.canvas-processing-status-dot{width:4px;height:4px;flex:none;border-radius:50%;background:var(--processing-accent)}
-.canvas-processing-details{display:flex;align-items:baseline;gap:6px;min-width:0;color:var(--muted);font-variant-numeric:tabular-nums}
-.canvas-processing-details small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;font-weight:500;line-height:1.2}
-.canvas-processing-details-separator{color:var(--line-strong);font-size:9px}
-.canvas-processing-elapsed{flex:none;color:var(--text-2);font-size:10px;font-weight:550;letter-spacing:.03em;line-height:1}
-.canvas-processing-details .canvas-processing-percent{flex:none;margin-left:auto;color:color-mix(in srgb,var(--processing-accent) 70%,var(--text));font-weight:650}
-.canvas-processing-progress{position:relative;grid-column:1/-1;width:100%;height:2px;overflow:hidden;border-radius:999px;background:color-mix(in srgb,var(--processing-accent) 10%,var(--line))}
-.canvas-processing-progress>i{display:block;width:0;height:100%;border-radius:inherit;background:linear-gradient(90deg,color-mix(in srgb,var(--processing-accent) 45%,transparent),var(--processing-accent));transition:width .6s cubic-bezier(.22,1,.36,1)}
-.canvas-processing-progress.indeterminate>i{width:38%;animation:canvas-processing-indeterminate 3.2s cubic-bezier(.45,0,.3,1) infinite}
-.canvas-processing-indicator.compact{width:min(300px,calc(100% - 20px));min-height:78px;padding:13px 14px 11px;gap:11px}
+/* Processing status shares the node shell so card controls and ports stay visible. */
 .canvas-media-state.pending{width:100%;min-width:0;box-sizing:border-box;padding:16px}
-/* Waiting has no travelling light: a single breath keeps it distinct from work. */
-.canvas-processing-indicator.is-queued .canvas-processing-orbit{animation:none;background:none;padding:0;mask:none;border:1px dashed color-mix(in srgb,var(--processing-accent) 35%,transparent)}
-.canvas-processing-indicator.is-queued .canvas-processing-status-dot{animation:canvas-processing-breathe 3.6s ease-in-out infinite}
-.canvas-processing-indicator.is-queued .canvas-processing-progress>i{animation:none;opacity:.45}
-.canvas-processing-indicator.is-queued .canvas-processing-progress.indeterminate>i{width:18%;transform:none}
-/* Keep the connection ports and controls outside the card visible. */
 .canvas-node.status-running,.canvas-node.status-queued{contain:layout style}
 .canvas-node:is(.status-running,.status-queued) .canvas-prompt-card{border-radius:inherit}
 .canvas-node:is(.status-running,.status-queued):has(.canvas-generator-card){--generator-accent:var(--node-effective);--generator-accent-text:color-mix(in srgb,var(--node-effective) 70%,var(--text))}
@@ -1554,9 +1526,9 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-node.status-running::before,.canvas-node.status-queued::before{height:1px;top:0;left:20px;right:20px;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--node-effective) 70%,var(--text)) 50%,transparent);opacity:.8}
 .canvas-node.status-running::before{opacity:.28}
 .canvas-node.status-queued::before{opacity:.35;animation:canvas-processing-node-signal 5.8s ease-in-out infinite}
+@keyframes canvas-processing-node-signal{0%,100%{opacity:.25}50%{opacity:.6}}
 .canvas-node.status-running::after,.canvas-node.status-queued::after{content:"";position:absolute;z-index:var(--canvas-z-local-status);inset:0;border:1px solid color-mix(in srgb,var(--node-effective) 12%,transparent);border-radius:inherit;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--text) 6%,transparent),inset 0 0 20px color-mix(in srgb,var(--node-effective) 3%,transparent);pointer-events:none}
-/* Clip only the light surface, leaving ports and the soft outer halo visible.
-   Gradients supply diffusion; only transform and opacity animate. */
+/* Clip aura light while keeping its diffuse halo outside the card. */
 .canvas-node-aura{--aura-color:var(--node-effective);--aura-companion:var(--accent);--aura-strength:18%;--aura-delay:0s;position:absolute;z-index:var(--canvas-z-local-status);inset:0;border-radius:inherit;pointer-events:none}
 .canvas-node:nth-child(3n+1)>.canvas-node-aura{--aura-delay:-3s}
 .canvas-node:nth-child(3n+2)>.canvas-node-aura{--aura-delay:-6s}
@@ -1571,21 +1543,12 @@ html[data-theme="dark"] .canvas-node-aura{--aura-strength:24%}
 @keyframes canvas-node-aura-breathe{0%,100%{opacity:.4}50%{opacity:.85}}
 .canvas-node:is(.status-running,.status-queued) :is(.canvas-media-stage,.canvas-upscale-card,.canvas-angle-card,.canvas-prompt-card,.canvas-generator-card){background:radial-gradient(ellipse at 15% 0,color-mix(in srgb,var(--node-effective) 6%,transparent),transparent 65%),var(--panel-2)}
 .canvas-node:is(.status-running,.status-queued) .canvas-node-footer{background:linear-gradient(180deg,var(--panel),var(--panel-2));border-top:1px solid color-mix(in srgb,var(--node-effective) 10%,var(--line))}
-@keyframes canvas-processing-orbit{to{transform:rotate(360deg)}}
-@keyframes canvas-processing-breathe{0%,100%{opacity:.4}50%{opacity:1}}
-@keyframes canvas-processing-indeterminate{0%{transform:translateX(-110%);opacity:.25}30%,65%{opacity:1}100%{transform:translateX(275%);opacity:.25}}
-@keyframes canvas-processing-node-signal{0%,100%{opacity:.25}50%{opacity:.6}}
-/* Cards use the same geometry at every zoom; distant work needs no motion. */
-.canvas-world-content[data-zoom-tier="overview"] .canvas-processing-indicator *{animation:none!important;transition:none!important}
-.canvas-world-content[data-zoom-tier="overview"] .canvas-processing-progress.indeterminate>i{transform:none;opacity:.55}
 .canvas-world-content[data-zoom-tier="overview"] .canvas-node-aura{display:none}
 .canvas-stage.is-panning .canvas-node-aura::before,.canvas-stage.is-panning .canvas-node-aura-surface::before,.canvas-stage.is-panning .canvas-node-aura-surface::after,.canvas-node.dragging .canvas-node-aura::before,.canvas-node.dragging .canvas-node-aura-surface::before,.canvas-node.dragging .canvas-node-aura-surface::after{animation-play-state:paused!important}
-.canvas-stage.is-panning .canvas-processing-indicator *,.canvas-node.dragging .canvas-processing-indicator *,.canvas-stage.is-panning .canvas-node::before,.canvas-node.dragging::before{animation-play-state:paused!important}
-@media(max-width:480px){.canvas-processing-indicator.compact{width:calc(100% - 16px);padding:11px;gap:9px}.canvas-processing-title{gap:4px}.canvas-processing-title b{font-size:10px}}
-html[data-motion="off"] .canvas-processing-indicator *,html[data-motion="off"] .canvas-node:is(.status-running,.status-queued)::before{animation:none!important;transition:none!important}
+.canvas-stage.is-panning .canvas-node::before,.canvas-node.dragging::before{animation-play-state:paused!important}
+html[data-motion="off"] .canvas-node:is(.status-running,.status-queued)::before{animation:none!important;transition:none!important}
 html[data-motion="off"] .canvas-node-aura{display:none}
-html[data-motion="off"] .canvas-processing-progress.indeterminate>i{transform:none;opacity:.55}
-@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-processing-indicator *,html:not([data-motion="on"]) .canvas-node:is(.status-running,.status-queued)::before{animation:none!important;transition:none!important}html:not([data-motion="on"]) .canvas-processing-progress.indeterminate>i{transform:none;opacity:.55}html:not([data-motion="on"]) .canvas-node-aura{display:none}}
+@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-node:is(.status-running,.status-queued)::before{animation:none!important;transition:none!important}html:not([data-motion="on"]) .canvas-node-aura{display:none}}
 
 /* Keep nested scrolling local to the node or overlay instead of chaining into
    the canvas wheel-to-zoom gesture. */
