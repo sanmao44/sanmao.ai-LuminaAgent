@@ -246,6 +246,7 @@ import CanvasViewportOverlay from "@/components/canvas/CanvasViewportOverlay";
 import CanvasCreateContextMenu from "@/components/canvas/CanvasCreateContextMenu";
 import CanvasToolsContextMenu from "@/components/canvas/CanvasToolsContextMenu";
 import CanvasConnectionOverlay, { type CanvasConnectionNodePicker } from "@/components/canvas/CanvasConnectionOverlay";
+import CanvasMarquee, { type CanvasMarqueeState } from "@/components/canvas/CanvasMarquee";
 import { CanvasSettingsPanel, CanvasShortcutsPanel, CONNECTION_STYLE_OPTIONS } from "@/components/canvas/CanvasPanels";
 import { CanvasGeneratorHelp, CanvasVariantRequirementsEditor } from "@/components/canvas/CanvasVariantEditors";
 import CanvasMinimap from "@/components/canvas/CanvasMinimap";
@@ -1825,12 +1826,7 @@ export default function SuperCanvas() {
   });
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectVersions, setProjectVersions] = useState<CreativeProjectVersion[]>([]);
-  const [marquee, setMarquee] = useState<{
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  } | null>(null);
+  const [marquee, setMarquee] = useState<CanvasMarqueeState | null>(null);
   const [connection, setConnection] = useState<ConnectionPreview | null>(null);
   const [connectionNodePicker, setConnectionNodePicker] =
     useState<CanvasConnectionNodePicker | null>(null);
@@ -13879,10 +13875,6 @@ export default function SuperCanvas() {
     [commit, notify, screenToWorld, stageSize.height, stageSize.width],
   );
 
-  const marqueeWidth = marquee ? Math.abs(marquee.w) : 0;
-  const marqueeHeight = marquee ? Math.abs(marquee.h) : 0;
-  const marqueeChipVisible = marqueeWidth >= 132 && marqueeHeight >= 40;
-  const marqueeCountVisible = marqueeWidth >= 178;
 
   if (!ready)
     return (
@@ -14536,47 +14528,7 @@ export default function SuperCanvas() {
           onClosePicker={() => setConnectionNodePicker(null)}
           onSelectNode={connectNewNode}
         />
-        {marquee && (
-          <div
-            className="canvas-marquee"
-            style={{
-              left: Math.min(marquee.x, marquee.x + marquee.w),
-              top: Math.min(marquee.y, marquee.y + marquee.h),
-              width: Math.abs(marquee.w),
-              height: Math.abs(marquee.h),
-            }}
-          >
-            <svg className="canvas-marquee-outline" aria-hidden="true">
-              <rect
-                className="canvas-marquee-rail"
-                x="0"
-                y="0"
-                width="100%"
-                height="100%"
-                rx="15"
-                ry="15"
-              />
-              <rect
-                className="canvas-marquee-flow-stroke"
-                x="0"
-                y="0"
-                width="100%"
-                height="100%"
-                rx="15"
-                ry="15"
-              />
-            </svg>
-            {marqueeChipVisible && (
-              <span className="canvas-marquee-chip">
-                <i aria-hidden="true" />
-                <b>
-                  {Math.round(marqueeWidth)} × {Math.round(marqueeHeight)} px
-                </b>
-                {marqueeCountVisible && <small>已选 {selectedIds.size} 个</small>}
-              </span>
-            )}
-          </div>
-        )}
+        <CanvasMarquee marquee={marquee} selectedCount={selectedIds.size} />
         {selectedGroupId &&
           selectedGroup &&
           !nodeGestureActive &&

@@ -1248,3 +1248,19 @@ hardening work when the trigger applies.
 - `tests/canvas-node-editor.test.mjs` reads layout-specific assertions from the new stylesheet. No URL, API, data format, selection behavior, or pointer interaction changed.
 - Validation: targeted selection/Agent/node editor tests passed (138/138), `npm run typecheck` passed, `npm test` passed (1830 passed, 2 skipped), `npm run build` passed, and `npm run check` passed. `git diff --check` is clean for this stage files; the only excluded warning is the user pre-existing uncommitted `AGENTS.md` edit.
 - Remaining risk: primary selection toolbar buttons still share deck styles in `app/canvas.css`; keep that shared rule in place until a separate contract can prove it is safe to move.
+
+### Stage 3 canvas marquee presentation checkpoint (2026-10-06)
+
+- `components/canvas/CanvasMarquee.tsx` now owns the marquee frame, dimensions
+  chip, and selected-count chip presentation. Its contract accepts only the
+  existing marquee geometry and the current selected count.
+- `CanvasWorkspace.tsx` still owns marquee pointer gestures, transient state,
+  selection updates, and CanvasCore coordination. No second selection store or
+  interaction state machine was introduced.
+- `app/canvas-marquee.css` now owns the marquee frame, animated outline, chip,
+  and reduced-motion rules. The stage z-index contract remains in
+  `app/canvas.css` so the overlay keeps its existing stacking behavior.
+- Targeted marquee/node gesture coverage, typecheck, full tests, production
+  build, repository check, and `git diff --check` are required before this
+  checkpoint is committed. Pointer gesture state extraction remains deferred
+  because it is still coupled to selection and document mutations.
