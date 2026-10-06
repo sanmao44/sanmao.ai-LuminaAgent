@@ -256,7 +256,19 @@ hardening work when the trigger applies.
   existing `CreativeReferenceStrip` callbacks. Canvas draft ordering remains in
   `lib/canvas/reuse.ts` and is intentionally unchanged.
 - `tests/creative-reference-ordering.test.mjs` covers invalid moves, immutable valid
-  moves, and order preservation. Full validation is required before commit.
+  moves, and order preservation. The full suite, typecheck, production build,
+  and diff check pass for this slice.
+
+### Stage 6 upscale dimension projection checkpoint (2026-10-06)
+
+- `lib/canvas/upscale.ts` now owns `upscaleTargetDimensions`, the shared target
+  size projection for Cloud and SeedVR upscale models.
+- `app/page.tsx` and `CanvasUpscaleSettingsPanel.tsx` no longer duplicate the
+  Cloud multiplication and SeedVR target-size branches. Page state, task
+  submission, provider selection, and panel callbacks remain unchanged.
+- `tests/upscale-dimensions.test.mjs` covers Cloud, SeedVR target, and auto
+  projections. The full suite, typecheck, production build, and diff check pass
+  for this slice.
 
 ### Stage 6 admin login checkpoint (2026-10-06)
 

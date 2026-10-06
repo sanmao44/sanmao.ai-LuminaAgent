@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import SelectMenu from "@/components/SelectMenu";
 import type { CanvasRuntimeState, CanvasUpscaleParams } from "@/lib/canvas/types";
-import { loadImageDimensions, seedVrTargetSize } from "@/lib/canvas/upscale";
+import { loadImageDimensions, upscaleTargetDimensions } from "@/lib/canvas/upscale";
 
 export type CanvasUpscaleSettingsPanelProps = {
   params: CanvasUpscaleParams;
@@ -47,9 +47,7 @@ export default function CanvasUpscaleSettingsPanel({
   const isCloudModel = selectedCloudModel?.provider === "tencent-ci" || selectedCloudModel?.provider === "aliyun-viapi";
   const supportedScales = selectedCloudModel?.scales || [1, 2, 3, 4] as const;
   const selectedOutputQuality = selectedCloudModel?.outputQuality;
-  const target = sourceSize ? isCloudModel
-    ? { width: Math.max(1, Math.round(sourceSize.width * params.scale)), height: Math.max(1, Math.round(sourceSize.height * params.scale)) }
-    : seedVrTargetSize(sourceSize.width, sourceSize.height, params.scale, params.target) : null;
+  const target = sourceSize ? upscaleTargetDimensions(sourceSize, params.scale, selectedCloudModel, params.target) : null;
   const modelOptions = [
     { value: "auto", label: "自动选择", description: "使用默认厂商，失败时自动回退" },
     ...models.map((model) => ({ value: model.id, label: model.displayName, description: `${model.providerName} · ${model.rawId}` })),

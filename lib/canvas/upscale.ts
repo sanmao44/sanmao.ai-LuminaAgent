@@ -1,4 +1,5 @@
 export type CanvasUpscaleTarget = "auto" | "1K" | "2K" | "4K";
+export type UpscaleSourceSize = { width: number; height: number };
 
 /** Reads the intrinsic dimensions of an image without changing the source. */
 export function loadImageDimensions(url: string): Promise<{ width: number; height: number }> {
@@ -42,6 +43,21 @@ export function seedVrTargetSize(
     width: Math.max(1, Math.round(unitWidth * multiple)),
     height: Math.max(1, Math.round(unitHeight * multiple)),
   };
+}
+
+export function upscaleTargetDimensions(
+  source: UpscaleSourceSize,
+  scale: number,
+  model: { provider?: string } | null | undefined,
+  target: CanvasUpscaleTarget = "auto",
+) {
+  if (model?.provider === "tencent-ci" || model?.provider === "aliyun-viapi") {
+    return {
+      width: Math.max(1, Math.round(source.width * scale)),
+      height: Math.max(1, Math.round(source.height * scale)),
+    };
+  }
+  return seedVrTargetSize(source.width, source.height, scale, target);
 }
 
 export function canvasUpscaleSize(

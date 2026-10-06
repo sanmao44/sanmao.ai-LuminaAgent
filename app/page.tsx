@@ -74,7 +74,7 @@ import {
     outputDimensions,
 } from '@/lib/generation-log-presentation';
 import { compressReferenceDataUrl, optimizeCanvasUploadFile } from '@/lib/canvas/api';
-import { loadImageDimensions, seedVrTargetSize } from '@/lib/canvas/upscale';
+import { loadImageDimensions, upscaleTargetDimensions } from '@/lib/canvas/upscale';
 import { startWorkspaceSync } from '@/lib/workspace';
 import { workspaceRepository } from '@/lib/repositories/workspace-repository';
 import { conversationRepository } from '@/lib/repositories/conversation-repository';
@@ -180,14 +180,6 @@ const pageSizeOptions = HISTORY_PAGE_SIZE_OPTIONS.map((value)=>({
         label: `每页 ${value} 项`
     }));
 const generationLogPageSize = 16;
-function upscalePreviewDimensions(source, scale, model, targetSize = 'auto') {
-    if (!source) return null;
-    if (isCloudUpscaleModel(model)) return {
-        width: Math.max(1, Math.round(source.width * scale)),
-        height: Math.max(1, Math.round(source.height * scale))
-    };
-    return seedVrTargetSize(source.width, source.height, scale, targetSize);
-}
 function emptyProviderForm() {
     const preset = getProviderPreset('custom');
     return {
@@ -3911,7 +3903,7 @@ export default function Page() {
         customRatioWidth,
         customRatioHeight
     ]);
-    const generateUpscaleTargetPreview = useMemo(()=>upscalePreviewDimensions(generateUpscaleSourceSize, generateUpscaleScale, selectedUpscaleModel, generateUpscaleTarget), [
+    const generateUpscaleTargetPreview = useMemo(()=>generateUpscaleSourceSize ? upscaleTargetDimensions(generateUpscaleSourceSize, generateUpscaleScale, selectedUpscaleModel, generateUpscaleTarget) : null, [
         generateUpscaleSourceSize,
         generateUpscaleScale,
         generateUpscaleTarget,
@@ -3940,7 +3932,7 @@ export default function Page() {
         width: 0,
         height: 0
     };
-    const upscaleTargetPreview = useMemo(()=>editor?.mode === 'upscale' && upscaleSourceSize ? upscalePreviewDimensions(upscaleSourceSize, editor.scale, availableUpscaleModels.find((model)=>model.id === editor.modelId) || defaultUpscaleModel, editor.targetSize) : null, [
+    const upscaleTargetPreview = useMemo(()=>editor?.mode === 'upscale' && upscaleSourceSize ? upscaleTargetDimensions(upscaleSourceSize, editor.scale, availableUpscaleModels.find((model)=>model.id === editor.modelId) || defaultUpscaleModel, editor.targetSize) : null, [
         editor?.mode,
         editor?.scale,
         editor?.targetSize,
@@ -6427,7 +6419,7 @@ export default function Page() {
             if (taskMode === 'upscale') {
                 if (!submittedImageRefs.length) throw new Error('SeedVR2-7B 是图片超分模型，请先添加一张图片引用，再点击生成。');
                 const sourceSize = await loadImageDimensions(creativeReferenceUrl(submittedImageRefs[0]));
-                 const targetSize = upscalePreviewDimensions(sourceSize, taskUpscaleScale, taskModel, taskUpscaleTarget);
+                 const targetSize = upscaleTargetDimensions(sourceSize, taskUpscaleScale, taskModel, taskUpscaleTarget);
                  const cloudUpscale = isCloudUpscaleModel(taskModel);
                  const taskCloudOutputFormat = cloudUpscale && taskModel?.outputFormats?.includes(taskUpscaleOutputFormat) ? taskUpscaleOutputFormat : undefined;
                 const upscaleRes = await fetch('/api/upscale', {
@@ -8229,7 +8221,7 @@ export default function Page() {
         try {
             const sourceSize = currentEditor.mode === 'upscale' ? await loadImageDimensions(currentEditor.item.url) : null;
             const editorUpscaleModel = currentEditor.mode === 'upscale' ? availableUpscaleModels.find((model)=>model.id === currentEditor.modelId) || defaultUpscaleModel : null;
-            const targetSize = sourceSize ? upscalePreviewDimensions(sourceSize, currentEditor.scale, editorUpscaleModel, currentEditor.targetSize) : null;
+            const targetSize = sourceSize ? upscaleTargetDimensions(sourceSize, currentEditor.scale, editorUpscaleModel, currentEditor.targetSize) : null;
              const upscaleSize = targetSize ? `${targetSize.width}x${targetSize.height}` : '';
              const cloudUpscale = currentEditor.mode === 'upscale' && isCloudUpscaleModel(editorUpscaleModel);
              const editorCloudOutputFormat = cloudUpscale && editorUpscaleModel?.outputFormats?.includes(currentEditor.upscaleOutputFormat) ? currentEditor.upscaleOutputFormat : undefined;
