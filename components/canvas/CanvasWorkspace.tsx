@@ -5,7 +5,6 @@ import {
   useEffect,
   useLayoutEffect,
   useId,
-  memo,
   useMemo,
   useRef,
   useState,
@@ -235,9 +234,11 @@ import CanvasSelectionToolbar from "@/components/canvas/CanvasSelectionToolbar";
 import { CanvasContextMenuFrame, CanvasGroupContextMenu, CanvasNodeContextMenu, type CanvasContextMenuGroup, type CanvasQuickAction, type CanvasQuickToolbarActions } from "@/components/canvas/CanvasContextMenu";
 import { canvasRightOverlayInset, canvasVisibleStageWidth } from "@/lib/canvas/menu-layout";
 import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/lib/canvas/node-editor";
+import { canvasUpscaleSource, maskStateForNode, nodeStatus, progressValue, variantStatesFor } from "@/lib/canvas/node-card";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
 import { canvasPromptOrbState } from "@/components/canvas/CanvasContextMenu";
 import CanvasNodeEditorPopover from "@/components/canvas/CanvasNodeEditorPopover";
+import { MemoizedCanvasNodeCard } from "@/components/canvas/CanvasNodeCard";
 import CanvasAssetCollectionPicker from "@/components/canvas/CanvasAssetCollectionPicker";
 import CanvasAssetDrawer from "@/components/canvas/CanvasAssetDrawer";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
@@ -258,10 +259,6 @@ import CanvasReferenceList from "@/components/canvas/CanvasReferenceList";
 import { canvasMentionOption } from "@/components/canvas/mention-options";
 import CanvasReferenceMentionMenu from "@/components/canvas/CanvasReferenceMentionMenu";
 import CanvasUpscaleNodeCard from "@/components/canvas/CanvasUpscaleNodeCard";
-import {
-  areCanvasNodeCardPropsEqual,
-  type CanvasNodeCardProps,
-} from "@/components/canvas/CanvasNodeCardContract";
 import CanvasGroupLayer from "@/components/canvas/CanvasGroupLayer";
 import MediaViewer, {
   type ImageVersionInfo,
@@ -1235,11 +1232,6 @@ function maskParamsWithoutMask(value: unknown, runtime: CanvasRuntimeState | nul
   return withoutMask as ImageCreationSettings;
 }
 
-function maskStateForNode(node: CanvasNode) {
-  if (node.type !== "media" || node.data.kind !== "image") return undefined;
-  const legacyMask = canvasMaskStateFromParams(node.data.generation?.params) || canvasMaskStateFromParams(node.data.params);
-  return normalizeCanvasMaskState(node.data.mask, legacyMask);
-}
 function mediaViewerVersionInfo(
   document: CanvasDocument,
   node: CanvasNode,
@@ -1330,12 +1322,6 @@ function mediaViewerVersionInfo(
   };
 }
 
-function canvasUpscaleSource(document: CanvasDocument, nodeId: string) {
-  return incomingReferences(document, nodeId).find(
-    (item) => isCanvasReadyImageSource(item),
-  );
-}
-
 function canvasConnectableId(target: EventTarget | null) {
   return (target as HTMLElement | null)
     ?.closest<HTMLElement>("[data-canvas-connectable-id]")
@@ -1409,17 +1395,6 @@ function isCanvasWheelIsolatedTargetWithOptions(
   return false;
 }
 
-function nodeStatus(node: CanvasNode) {
-  if (node.data.status === "queued" || node.data.status === "running")
-    return node.data.statusLabel || "生成中";
-  if (node.data.status === "failed")
-    return node.data.statusLabel || "生成失败，可重试";
-  if (!node.data.url && node.data.status === "draft")
-    return node.data.statusLabel || "选中后在下方生成";
-  return node.data.role || "参考素材";
-}
-
-
 type SmartVariantDraft = {
   instruction: string;
   category?: string;
@@ -1487,25 +1462,6 @@ function parseSmartVariantPlan(message: string, sourceUnits: ReturnType<typeof s
       sources: [sourceById.get(item.sourceId)!.text],
     })),
   };
-}
-
-function variantStatesFor(node: CanvasNode): CanvasVariantState[] {
-  const requirements = variantRequirementsFor(node);
-  return requirements.map((instruction, index) => {
-    const current = node.data.variantStates?.[index];
-    return {
-      id: String(current?.id || `variant-${index + 1}`),
-      instruction,
-      status: current?.status || "pending",
-      resultIds: current?.resultIds || [],
-      ...(current?.taskIds ? { taskIds: current.taskIds } : {}),
-      ...(typeof current?.progress === "number"
-        ? { progress: current.progress }
-        : {}),
-      ...(current?.error ? { error: current.error } : {}),
-      ...(current?.updatedAt ? { updatedAt: current.updatedAt } : {}),
-    };
-  });
 }
 
 function variantBatchStatus(states: CanvasVariantState[]) {
@@ -16323,501 +16279,7 @@ export default function SuperCanvas() {
   );
 }
 
-function progressValue(value: unknown) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return undefined;
-  return Math.max(0, Math.min(100, Math.round(numeric)));
-}
-
-function CanvasNodeCard({
-  node,
-  selected,
-  dragging,
-  referencePickerActive,
-  referencePickerTargetId,
-  referencePickerHoverNodeId,
-  referencePickerFlashNodeId,
-  document,
-  onPointerDown,
-  onResize,
-  onConnect,
-  onSelect,
-  onRemoveFromGroup,
-  onPreview,
-  onOpenVideoClip,
-  onOpenVideoEditor,
-  onOpenAngle,
-  onCancelAngle,
-  onTextPreview,
-  onLocalEdit,
-  onUseAsImagePrompt,
-  onRetryVariant,
-  onRetryFailedVariants,
-  onNaturalSize,
-  onPromptChange,
-  onEditorPromptChange,
-  onEditorParamsChange,
-  onVariantRequirementsChange,
-  runtime,
-  editorPrompt,
-  editorParams,
-  expanded,
-  onToggleEditor,
-  onGenerate,
-  onOneTake,
-  onReferenceReorder,
-  onReferenceRemove,
-  onReferenceDrop,
-  onAddReferenceFiles,
-  editorContexts,
-  mentionCandidates,
-  onOutputPreview,
-  editing,
-  onEdit,
-}: CanvasNodeCardProps) {
-  const size = nodeSize(node);
-  const data = node.data;
-  const group = groupForNode(document, node.id);
-  const colorKey = canvasNodeColorKey(node);
-  const status = data.status || "idle";
-  const pending = data.status === "queued" || data.status === "running";
-  const imageResolution =
-    ((node.type === "media" && data.kind === "image") || node.type === "upscale") &&
-    Boolean(data.url) &&
-    !pending &&
-    data.status !== "failed" &&
-    Number(data.nativeWidth) > 0 &&
-    Number(data.nativeHeight) > 0
-      ? `${Math.round(Number(data.nativeWidth))} × ${Math.round(Number(data.nativeHeight))}`
-      : null;
-  const hasUpscaleResult = node.type === "upscale" && Boolean(data.url);
-  const failed = data.status === "failed" && !data.url;
-  const angleReference = node.type === "angle"
-    ? incomingReferences(document, node.id).find((item) => isCanvasReadyImageSource(item))
-    : undefined;
-  const angleParams = node.type === "angle" ? data.angle : undefined;
-  const videoClipSourceDuration =
-    Number(data.sourceDurationMs || data.durationMs) > 0
-      ? Number(data.sourceDurationMs || data.durationMs) / 1000
-      : undefined;
-  const videoClip =
-    node.type === "media" && data.kind === "video"
-      ? normalizeCanvasVideoClipState(data.videoClip, videoClipSourceDuration)
-      : undefined;
-  const sourceVideoDuration = formatCanvasVideoDuration(data.durationMs);
-  const videoDuration =
-    node.type === "media" && data.kind === "video" && data.url
-      ? videoClip
-        ? formatCanvasVideoDuration(Math.round(videoClipDurationSeconds(videoClip) * 1000))
-        : sourceVideoDuration
-      : "";
-  const videoResolution =
-    node.type === "media" &&
-    data.kind === "video" &&
-    Boolean(data.url) &&
-    !pending &&
-    data.status !== "failed" &&
-    Number(data.nativeWidth) > 0 &&
-    Number(data.nativeHeight) > 0
-      ? `${Math.round(Number(data.nativeWidth))} × ${Math.round(Number(data.nativeHeight))}`
-      : null;
-  const maskState = maskStateForNode(node);
-  const agentResponse =
-    node.type === "prompt" &&
-    (data.agentResponse || String(data.role || "").includes("回复"))
-      ? String(data.agentResponse || data.text || "")
-      : "";
-  const agentInput = String(
-    agentResponse ? data.agentPrompt || data.text || "" : data.text || "",
-  );
-  const handleCardPromptPaste = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
-    const files = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-      .flatMap((item) => {
-        const file = item.getAsFile();
-        return file ? [file] : [];
-      });
-    if (!files.length) return;
-    event.preventDefault();
-    event.stopPropagation();
-    onAddReferenceFiles(node.id, files);
-  }, [node.id, onAddReferenceFiles]);
-  const variantRequirements =
-    node.type === "generator" ? variantRequirementsFor(node) : [];
-  const variantStates =
-    node.type === "generator" ? variantStatesFor(node) : [];
-  const processingProgress = progressValue(data.progress);
-  const generatorProgress = variantStates.length
-    ? progressValue(
-        variantStates.reduce(
-          (total, state) =>
-            total +
-            (state.status === "completed"
-              ? 100
-              : progressValue(state.progress) || 0),
-          0,
-        ) / variantStates.length,
-      )
-    : processingProgress;
-  const processingMediaLabel =
-    data.kind === "video" ? "视频" : data.kind === "audio" ? "音频" : "图片";
-  const processingLabel =
-    data.status === "queued"
-      ? data.statusLabel || "排队等待中"
-      : data.statusLabel ||
-        (node.type === "prompt"
-          ? "Agent 正在思考"
-          : node.type === "generator"
-            ? "批量处理中"
-            : `${processingMediaLabel}生成中`);
-  const processingKind: CanvasProcessingKind =
-    node.type === "prompt"
-      ? "agent"
-      : node.type === "generator"
-        ? "generator"
-        : node.type === "angle"
-          ? "angle"
-          : node.type === "upscale"
-            ? "upscale"
-            : data.kind === "video"
-              ? "video"
-              : "image";
-  const mediaFooterStatus =
-    node.type === "media" && data.kind === "video"
-      ? pending
-        ? processingLabel
-        : data.status === "failed"
-          ? "视频生成失败"
-          : data.url
-            ? data.generation
-              ? "视频生成结果"
-              : "视频素材"
-             : "空视频节点"
-       : node.type === "media" && data.kind === "audio"
-         ? data.url ? "音频素材" : "等待导入音频"
-         : nodeStatus(node);
-  const completedVariants = variantStates.filter(
-    (state) => state.status === "completed",
-  ).length;
-  const failedVariants = variantStates.filter(
-    (state) => state.status === "failed",
-  ).length;
-  const imageParams =
-    node.type === "generator" && data.kind === "image"
-      ? (data.params as ImageCreationSettings | undefined)
-      : undefined;
-  const perVariantImageCount = Math.max(1, Number(imageParams?.count || 1));
-  const estimatedResultCount =
-    node.type === "generator" && data.kind === "image"
-      ? variantRequirements.length * perVariantImageCount
-      : 0;
-  const referenceCount =
-    node.type === "generator" ? incomingReferences(document, node.id).length : 0;
-  const editorReferences = incomingReferences(document, node.id);
-  const editorOutputs =
-    node.type === "generator"
-      ? document.nodes.filter(
-          (item) => item.type === "media" && item.data.generation?.sourceGeneratorId === node.id,
-        )
-      : [];
-  const [mentionState, setMentionState] = useState<MentionState>(null);
-  // 媒体文件被删/不在媒体库时给出可见提示，而不是留一片空白或只剩播放按钮。
-
-  return (
-    <article
-      className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""}${referencePickerActive && referencePickerTargetId === node.id ? " reference-picker-target" : ""}${referencePickerActive && referencePickerHoverNodeId === node.id ? " reference-picker-hover" : ""}${referencePickerFlashNodeId === node.id ? " reference-picker-flash" : ""}`}
-      data-canvas-node-id={node.id}
-      data-canvas-connectable-id={node.id}
-      data-node-color={colorKey}
-      data-node-kind={node.type === "angle" ? "angle" : node.type === "video-editor" ? "video-editor" : node.type === "upscale" ? "upscale" : node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
-      aria-busy={pending}
-      style={{
-        left: node.x,
-        top: node.y,
-        width: size.w,
-        height: size.h,
-        zIndex: canvasNodePaintZIndex(document, node, dragging),
-      }}
-      // Node movement and typed connections use the canvas pointer model.
-      // Do not enable native HTML dragging on the whole card: it steals click
-      // events from the editor controls and makes the card feel unresponsive.
-      draggable={false}
-      onDragStart={(event) => {
-        if (!data.url && node.type !== "prompt") return;
-        event.dataTransfer.effectAllowed = "copy";
-        event.dataTransfer.setData("application/x-sanmao-canvas-node", node.id);
-      }}
-      onPointerDown={(event) => onPointerDown(event, node)}
-      onDoubleClick={(event) => {
-        event.stopPropagation();
-        if (referencePickerActive) return;
-        if (node.type === "angle") onOpenAngle();
-        else if (node.type === "video-editor") onOpenVideoEditor();
-        else if (node.type === "media" && node.data.kind === "video" && node.data.url) onOpenVideoClip();
-        else if (node.type === "prompt") onEdit(true);
-        else if (node.type === "media" && node.data.kind === "audio") onToggleEditor(node);
-        else if (isCanvasReferenceableNode(node)) onPreview();
-        else onToggleEditor(node);
-      }}
-    >
-      {status === "running" && (
-        <div className="canvas-node-aura" aria-hidden="true">
-          <span className="canvas-node-aura-surface" />
-        </div>
-      )}
-      {group && (
-        <button
-          type="button"
-          className="canvas-node-group-remove"
-          aria-label="移出对象组"
-          title="移出对象组"
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            onRemoveFromGroup();
-          }}
-        >
-          出组
-        </button>
-      )}
-      <button
-        type="button"
-        className="canvas-port left"
-        aria-label="左侧连接端口"
-        onPointerDown={(event) => onConnect(event, node.id, "left")}
-      />
-      {node.type === "video-editor" ? (
-        <VideoEditorNode
-          node={node}
-          state={data.videoEditor}
-          inputs={incomingContext(document, node.id).filter(isCanvasReferenceableNode)}
-          onOpen={onOpenVideoEditor}
-        />
-      ) : node.type === "angle" ? (
-        <CanvasAngleNodeCard
-          angleReference={angleReference}
-          angleParams={angleParams}
-          status={status}
-          statusLabel={data.statusLabel}
-          pending={pending}
-          processingLabel={processingLabel}
-          processingProgress={processingProgress}
-          processingKind={processingKind}
-          processingStartedAt={data.processingStartedAt}
-          onOpenAngle={onOpenAngle}
-          onCancelAngle={onCancelAngle}
-        />
-      ) : node.type === "media" ? (
-        <CanvasMediaNodeCard
-          node={node}
-          pending={pending}
-          failed={failed}
-          processingLabel={processingLabel}
-          processingProgress={processingProgress}
-          processingKind={processingKind}
-          imageResolution={imageResolution}
-          videoResolution={videoResolution}
-          videoDuration={videoDuration}
-          videoClip={videoClip}
-          mediaFooterStatus={mediaFooterStatus}
-          maskState={maskState}
-          onNaturalSize={onNaturalSize}
-          onLocalEdit={onLocalEdit}
-        />
-      ) : null}
-      {node.type === "upscale" && (
-        <CanvasUpscaleNodeCard
-          node={node}
-          pending={pending}
-          hasResult={hasUpscaleResult}
-          processingLabel={processingLabel}
-          processingProgress={processingProgress}
-          processingKind={processingKind}
-          imageResolution={imageResolution}
-          sourceConnected={Boolean(canvasUpscaleSource(document, node.id))}
-          onNaturalSize={onNaturalSize}
-        />
-      )}
-      {node.type === "prompt" && (
-        <CanvasAgentNodeCard
-          node={node}
-          status={status}
-          pending={pending}
-          role={data.role}
-          model={data.model}
-          statusLabel={data.statusLabel}
-          agentInput={agentInput}
-          agentResponse={agentResponse}
-          processingLabel={processingLabel}
-          processingProgress={processingProgress}
-          processingKind={processingKind}
-          processingStartedAt={data.processingStartedAt || data.generation?.createdAt}
-          editing={editing}
-          references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
-          onPaste={handleCardPromptPaste}
-          onPromptChange={onPromptChange}
-          onEdit={onEdit}
-          onUseAsImagePrompt={onUseAsImagePrompt}
-          onTextPreview={onTextPreview}
-        />
-      )}
-      {node.type === "generator" && (
-        <CanvasGeneratorNodeCard
-          node={node}
-          kind={data.kind === "video" ? "video" : "image"}
-          status={status}
-          pending={pending}
-          processingLabel={processingLabel}
-          processingProgress={processingProgress}
-          processingKind={processingKind}
-          processingStartedAt={data.processingStartedAt || data.generation?.createdAt}
-          generatorProgress={generatorProgress}
-          referenceCount={referenceCount}
-          variantRequirements={variantRequirements}
-          variantStates={variantStates}
-          completedVariants={completedVariants}
-          failedVariants={failedVariants}
-          estimatedResultCount={estimatedResultCount}
-          editorOutputs={editorOutputs}
-          prompt={data.prompt}
-          model={(data.params as CanvasGenerationParams | undefined)?.model}
-          aspect={data.params && "aspect" in data.params ? data.params.aspect : undefined}
-          onRetryVariant={onRetryVariant}
-          onRetryFailedVariants={onRetryFailedVariants}
-          onOutputPreview={onOutputPreview}
-        />
-      )}
-      {false && expanded && (
-        <div
-          className="canvas-node-editor"
-          aria-label={`${nodeLabel(node)}编辑器`}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <div className="canvas-node-editor-head">
-            <div>
-              <b>{node.type === "prompt" ? "Agent 编辑器" : data.kind === "video" ? "视频编辑器" : "图片编辑器"}</b>
-              <small>节点内完成输入、引用、参数和生成</small>
-            </div>
-            <button type="button" draggable={false} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onToggleEditor(node); } }} aria-label="收起节点编辑器">⌃</button>
-          </div>
-          <div className="canvas-node-editor-prompt-wrap">
-            <textarea
-              aria-label={`${nodeLabel(node)}提示词`}
-              value={editorPrompt}
-              placeholder={node.type === "prompt" ? "输入 Agent 任务… 输入 @ 引用节点" : data.kind === "video" ? "描述动作、镜头和声音… 输入 @ 引用节点" : "描述想生成的画面… 输入 @ 引用节点"}
-              onChange={(event) => {
-                const value = event.target.value;
-                onEditorPromptChange(node, value);
-                setMentionState(mentionStateForValue(value, event.target.selectionStart));
-              }}
-              onClick={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
-              onKeyUp={(event) => setMentionState(mentionStateForValue(event.currentTarget.value, event.currentTarget.selectionStart))}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setMentionState(null);
-                if (event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
-                  event.preventDefault();
-                  onGenerate(node);
-                }
-              }}
-              rows={3}
-            />
-            <CanvasReferenceMentionMenu
-              document={document}
-              candidates={mentionCandidates}
-              open={Boolean(mentionState)}
-              query={mentionState?.query}
-              className="canvas-node-mention-menu"
-              onSelect={(candidateIndex) => {
-                const candidate = mentionCandidates[candidateIndex];
-                const activeMention = mentionState;
-                if (!candidate || !activeMention) return;
-                const next = insertCreativeMention(editorPrompt, activeMention.end, candidateIndex).value;
-                onEditorPromptChange(node, next);
-                const role: CanvasInputRole = candidate.type === "prompt" || candidate.type === "generator"
-                  ? "context"
-                  : candidate.data.kind === "video"
-                    ? node.type === "prompt" || node.data.kind === "video" ? "video" : "reference-image"
-                    : "reference-image";
-                onReferenceDrop(node.id, candidate.id, role);
-                setMentionState(null);
-              }}
-            />
-          </div>
-          <CanvasNodeReferenceStrip
-            target={node}
-            document={document}
-            runtime={runtime}
-            references={editorReferences}
-            contexts={editorContexts}
-            onReorder={onReferenceReorder}
-            onRemove={onReferenceRemove}
-            onDrop={onReferenceDrop}
-            onAddFiles={onAddReferenceFiles}
-            onPreview={onOutputPreview}
-            onTextPreview={onTextPreview}
-            resolveInputRoles={canvasInputRolesForTarget}
-            resolveVideoCapabilities={canvasVideoInputCapabilities}
-          />
-          {node.type === "generator" && (
-            <div className="canvas-node-variant-editor">
-              <div className="canvas-node-variant-editor-head"><label>变体要求 <small>逐条编辑、回车新增 · {variantRequirements.length} 条</small></label>{(data.variantRequirementsText ?? variantRequirements.join("\n")).trim() && <button type="button" className="canvas-prompt-clear-action" title="清空变体要求" aria-label="清空变体要求" onClick={() => onVariantRequirementsChange(node, "")}>⌫ <span>清空</span></button>}</div>
-              <CanvasVariantRequirementsEditor
-                value={data.variantRequirementsText ?? variantRequirements.join("\n")}
-                references={mentionCandidates.map((candidate, index) => canvasMentionOption(document, candidate, index))}
-                ariaLabel={`${nodeLabel(node)}变体要求`}
-                menuClassName="canvas-node-mention-menu canvas-variant-mention-menu"
-                menuPortal
-                onPasteFiles={(files) => onAddReferenceFiles(node.id, files)}
-                onChange={(value) => onVariantRequirementsChange(node, value)}
-              />
-            </div>
-          )}
-          {editorParams && (
-            <details className="canvas-node-parameters" open={false}>
-              <summary>
-                参数设置{" "}
-                <span>
-                  {node.type === "prompt"
-                    ? "对话模型和联网方式"
-                    : "模型、比例、尺寸和高级选项"}
-                </span>
-              </summary>
-              <CreationParameterEditor
-                settings={editorParams!}
-                runtime={runtime}
-                referenceCount={editorReferences.length}
-                portalZIndex={CANVAS_Z_INDEX.modalPopover}
-                dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
-                onChange={(settings) => onEditorParamsChange(node, settings)}
-              />
-            </details>
-          )}
-          <div className="canvas-node-editor-actions">
-            <span>{node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : "Ctrl/Cmd + Enter 生成"}</span>
-            <button type="button" className="canvas-node-editor-generate" disabled={pending} onClick={() => onGenerate(node)}>{pending ? "处理中…" : node.type === "prompt" ? "发送" : "生成"}</button>
-          </div>
-        </div>
-      )}
-      <button
-        type="button"
-        className="canvas-port right"
-        aria-label="右侧连接端口"
-        onPointerDown={(event) => onConnect(event, node.id, "right")}
-      />
-      <span
-        className="canvas-node-resize"
-        onPointerDown={(event) => onResize(event, node)}
-        title="调整卡片大小"
-      />
-    </article>
-  );
-}
-
 // Camera updates replace the document object, but they do not change the
 // node/edge/group collections. Keep node cards out of that render path; this
 // matters most when a canvas contains many image previews and rich text.
-const MemoizedCanvasNodeCard = memo(
-  CanvasNodeCard,
-  areCanvasNodeCardPropsEqual,
-);
+export { MemoizedCanvasNodeCard } from "@/components/canvas/CanvasNodeCard";

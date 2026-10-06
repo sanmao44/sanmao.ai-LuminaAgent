@@ -569,3 +569,34 @@ hardening work when the trigger applies.
 - `CanvasWorkspace.tsx` is reduced by 959 lines; remaining responsibilities include CanvasCore coordination, generation orchestration, node cards, workbench mounting and high-coupling pointer state. CSS remains in existing domain files to avoid visual regressions.
 - Validation: targeted Canvas/editor tests 71 passed; full `npm test` 1777 passed; `npm run typecheck` passed; `npm run build` passed; `git diff --check` reports only the pre-existing user edit's trailing blank line in `AGENTS.md`.
 - Remaining risk: editor internals still combine prompt optimization, browser event lifecycles and parameter/reference panels. Further subdivision should wait for a behavior-covered boundary rather than introduce wrappers or duplicate state.
+
+### Stage 4 node card boundary checkpoint (2026-10-06)
+
+- `CanvasNodeCard.tsx` now owns the node card presentation boundary: node-type
+  rendering, connection ports, resize and pointer event forwarding, Agent
+  prompt paste forwarding, and the memoized card comparator contract. It does
+  not own CanvasCore mutations, generation/task orchestration, persistence, or
+  provider access.
+- `lib/canvas/node-card.ts` owns the card display projections for mask state,
+  upscale source, status, progress, and generator variant requirements/states.
+  Workspace and the card use these projections as the single implementation.
+- `CanvasWorkspace.tsx` mounts the card layer and keeps document, selection,
+  command, generation, reference, and persistence ownership. The extracted
+  card removed roughly 540 lines from Workspace; current sizes are about
+  16,285 lines for Workspace and 412 lines for the card (the repository uses
+  generated/encoded UI text, so line counts are informational).
+- Existing boundary tests now include the new card source and validate callback
+  invalidation, camera-only document replacement, reference picking, double
+  click routing, node editor behavior, and variant help. The removed
+  `false && expanded` dead editor branch was not restored because it was never
+  rendered and its behavior is covered by the live editor component.
+- Validation: targeted Canvas/editor tests 76 passed; `npm run typecheck`,
+  `npm test` (1775 passed, 2 skipped, 0 failed), `npm run build`, and
+  `npm run check` all passed. `AGENTS.md` remains an unrelated user
+  modification and is intentionally not part of the stage. `git diff --check`
+  reports only that pre-existing EOF blank line and a line-ending warning for
+  one modified test file.
+- Remaining risk: Workspace still combines CanvasCore coordination, pointer
+  state, edges/groups, menus, workbench mounting, and generation orchestration.
+  Viewport, menu, and generation extraction should wait for a stable
+  behavior-covered contract.

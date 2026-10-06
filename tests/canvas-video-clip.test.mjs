@@ -14,7 +14,8 @@ async function loadTypeScript(path) {
 }
 
 const clip = await loadTypeScript("../lib/canvas/video-clip.ts");
-const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
+const canvas = (await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8"))
+  .concat("\n", await readFile(new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url), "utf8"));
 const workbench = await readFile(new URL("../components/canvas/CanvasVideoClipWorkbench.tsx", import.meta.url), "utf8");
 const canvasCss = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
 const types = await readFile(new URL("../lib/canvas/types.ts", import.meta.url), "utf8");

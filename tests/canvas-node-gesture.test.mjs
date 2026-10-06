@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const component = await readFile(
+const component = (await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
-);
+)).concat("\n", await readFile(
+  new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url),
+  "utf8",
+));
 const contextMenu = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
 const groupLayer = await readFile(
   new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url),

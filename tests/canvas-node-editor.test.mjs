@@ -31,7 +31,8 @@ const upscalePanel = await readFile(
   new URL("../components/canvas/CanvasUpscaleSettingsPanel.tsx", import.meta.url),
   "utf8",
 );
-const component = `${nodeEditor}\n${workspace}\n${maskSummary}\n${presetControl}\n${imagePresetDomain}\n${imagePresetNodeSupport}\n${upscalePanel}`;
+const nodeCard = await readFile(new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url), "utf8");
+const component = `${nodeEditor}\n${workspace}\n${nodeCard}\n${maskSummary}\n${presetControl}\n${imagePresetDomain}\n${imagePresetNodeSupport}\n${upscalePanel}`;
 const mediaCard = await readFile(
   new URL("../components/canvas/CanvasMediaNodeCard.tsx", import.meta.url),
   "utf8",
@@ -390,7 +391,7 @@ test("editor keeps references, variant requirements, parameters, mentions and ge
   assert.match(component, /className="canvas-node-variant-editor"/);
   assert.match(component, /<CanvasVariantRequirementsEditor/);
   assert.match(component + variantEditors, /className=\{\`canvas-variant-list-row/);
-  assert.match(component, /className="canvas-node-mention-menu"/);
+  assert.match(component, /menuClassName="canvas-node-mention-menu"/);
   assert.match(component, /onGenerate\(node\)/);
   assert.match(component, /setMentionState\(null\)/);
   assert.match(component, /setPromptExpanded\(false\)/);

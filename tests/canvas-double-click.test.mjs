@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const component = await readFile(
+const component = (await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
-);
+)).concat("\n", await readFile(
+  new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url),
+  "utf8",
+));
 const assetDrawer = await readFile(
   new URL("../components/canvas/CanvasAssetDrawer.tsx", import.meta.url),
   "utf8",

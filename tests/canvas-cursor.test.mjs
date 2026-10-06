@@ -4,10 +4,13 @@ import test from "node:test";
 
 const css = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
 const globalCss = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
-const component = await readFile(
+const component = (await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
-);
+)).concat("\n", await readFile(
+  new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url),
+  "utf8",
+));
 const groupLayer = await readFile(
   new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url),
   "utf8",
