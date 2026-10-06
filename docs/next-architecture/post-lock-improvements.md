@@ -101,6 +101,22 @@ hardening work when the trigger applies.
   browser Canvas rendering with page editor state. They should remain separate
   slices until their browser behavior has dedicated coverage.
 
+### Stage 6 local image renderer checkpoint (2026-10-06)
+
+- `lib/image-editor/local-image-renderer.ts` now owns the browser Canvas adapter
+  for local crop/canvas rendering: image loading, crop selection, rotation,
+  horizontal flip, ratio sizing, and transparent/white/black/blur backgrounds.
+- `app/page.tsx` retains local editor state, crop pointer interaction, apply
+  callbacks, notifications, and generation/history orchestration. The page no
+  longer owns the Canvas rendering implementation.
+- Behavior coverage in `tests/local-image-renderer.test.mjs` uses fake Image and
+  Canvas adapters to verify crop transforms, output dimensions, and canvas
+  background composition. Existing URL, payload, and interaction contracts are
+  unchanged.
+- Remaining risk: `renderOutpaintWhiteCanvas` remains page-local because its
+  layout state and apply flow have not yet received a dedicated browser
+  behavior boundary.
+
 ## File size and component splits
 
 - `app/page.tsx`, `components/SuperCanvas.tsx`, `components/CanvasAgentDock.tsx`,

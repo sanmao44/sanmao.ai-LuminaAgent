@@ -135,7 +135,8 @@ import { editorModelSelectionPatch, upscaleEditorSettingsPatch } from '@/lib/ima
 import { buildEditorRequest } from '@/lib/image-editor/editor-request';
 import { buildEditorTaskDraft } from '@/lib/image-editor/editor-task';
 import { buildEditorModelCallInput, buildEditorHistoryMeta, editorCompletionInfo } from '@/lib/image-editor/editor-result';
-import { canvasRectForRatio, cropSourceRect } from '@/lib/image-editor/local-image-layout';
+import { cropSourceRect } from '@/lib/image-editor/local-image-layout';
+import { renderLocalImage } from '@/lib/image-editor/local-image-renderer';
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 import { buildGalleryItems } from '@/lib/creation/gallery-items';
@@ -224,12 +225,6 @@ function emptyProviderForm() {
 function uid(prefix = 'id') {
     return `${prefix}-${crypto.randomUUID()}`;
 }
-function drawCoverImage(context, image, sourceWidth, sourceHeight, targetWidth, targetHeight) {
-    const scale = Math.max(targetWidth / sourceWidth, targetHeight / sourceHeight);
-    const width = Math.ceil(sourceWidth * scale);
-    const height = Math.ceil(sourceHeight * scale);
-    context.drawImage(image, (targetWidth - width) / 2, (targetHeight - height) / 2, width, height);
-}
 function clampNumber(value, min, max) {
     return Math.max(min, Math.min(max, value));
 }
@@ -251,69 +246,6 @@ async function renderOutpaintWhiteCanvas(url, layout) {
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
     context.drawImage(source, layout.offsetX, layout.offsetY, layout.sourceWidth, layout.sourceHeight);
-    return {
-        dataUrl: canvas.toDataURL('image/png'),
-        width: canvas.width,
-        height: canvas.height
-    };
-}
-async function renderLocalImage(url, mode, ratio, background, flipX, rotation, selectedCrop) {
-    const source = new Image();
-    if (/^https?:/i.test(url)) source.crossOrigin = 'anonymous';
-    await new Promise((resolve, reject)=>{
-        source.onload = ()=>resolve();
-        source.onerror = ()=>reject(new Error('无法读取这张图片，可能是远程图片未开放浏览器处理权限'));
-        source.src = url;
-    });
-    const rawCrop = mode === 'crop' && selectedCrop ? selectedCrop : mode === 'crop' ? cropSourceRect(source.naturalWidth, source.naturalHeight, ratio) : {
-        x: 0,
-        y: 0,
-        width: source.naturalWidth,
-        height: source.naturalHeight
-    };
-    const crop = {
-        x: Math.round(rawCrop.x),
-        y: Math.round(rawCrop.y),
-        width: Math.max(1, Math.round(rawCrop.width)),
-        height: Math.max(1, Math.round(rawCrop.height))
-    };
-    const swap = rotation === 90 || rotation === 270;
-    const transformed = document.createElement('canvas');
-    transformed.width = swap ? crop.height : crop.width;
-    transformed.height = swap ? crop.width : crop.height;
-    const context = transformed.getContext('2d');
-    if (!context) throw new Error('当前浏览器不支持本地图片处理');
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = 'high';
-    context.translate(transformed.width / 2, transformed.height / 2);
-    context.rotate(rotation * Math.PI / 180);
-    context.scale(flipX ? -1 : 1, 1);
-    context.drawImage(source, crop.x, crop.y, crop.width, crop.height, -crop.width / 2, -crop.height / 2, crop.width, crop.height);
-    if (mode === 'crop' || ratio === '原图') return {
-        dataUrl: transformed.toDataURL('image/png'),
-        width: transformed.width,
-        height: transformed.height
-    };
-    const target = canvasRectForRatio(transformed.width, transformed.height, ratio);
-    const canvas = document.createElement('canvas');
-    canvas.width = target.width;
-    canvas.height = target.height;
-    const output = canvas.getContext('2d');
-    if (!output) throw new Error('当前浏览器不支持本地图片处理');
-    output.imageSmoothingEnabled = true;
-    output.imageSmoothingQuality = 'high';
-    if (background === 'white' || background === 'black') {
-        output.fillStyle = background === 'white' ? '#ffffff' : '#050507';
-        output.fillRect(0, 0, canvas.width, canvas.height);
-    } else if (background === 'blur') {
-        output.save();
-        output.filter = 'blur(26px)';
-        drawCoverImage(output, transformed, transformed.width, transformed.height, canvas.width, canvas.height);
-        output.restore();
-        output.fillStyle = 'rgba(255,255,255,.06)';
-        output.fillRect(0, 0, canvas.width, canvas.height);
-    }
-    output.drawImage(transformed, Math.round((canvas.width - transformed.width) / 2), Math.round((canvas.height - transformed.height) / 2));
     return {
         dataUrl: canvas.toDataURL('image/png'),
         width: canvas.width,
