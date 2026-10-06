@@ -19,9 +19,9 @@ hardening work when the trigger applies.
   references, compare-reference metadata, masks, annotations, upscale fields,
   angle metadata, and provenance edges. No URL, API payload, persisted field,
   or user interaction changed.
-- Behavior coverage: `tests/gallery-items.test.mjs`; typecheck passed. Full
-  `npm test`, production build, and `npm run check` remain required before the
-  checkpoint is committed.
+- Behavior coverage: `tests/gallery-items.test.mjs`; `npm run typecheck`,
+  `npm test` (1809 passed, 2 skipped), production build, and `npm run check`
+  passed.
 - Remaining risk: the page still owns upload normalization and history side
   effects; moving those requires an explicit application boundary and should
   not be combined with this pure projection.
