@@ -1208,3 +1208,10 @@ hardening work when the trigger applies.
 - Node/group menus and CSS domain movement remain deferred because their action
   builders and gesture interactions are still coupled to selection/document
   mutations.
+### Stage 2 canvas tools CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-tools.css` now owns the blank-canvas tools context-menu presentation: compact sizing, action spacing, icons, danger/disabled states, shortcuts, separators, and the small-screen adjustment.
+- `app/canvas.css` retains the shared context-menu frame and node/group menu styles; no shared selector or menu behavior was moved. `app/layout.tsx` loads the new stylesheet immediately after the base canvas stylesheet so the existing cascade remains unchanged for the moved selectors.
+- `tests/canvas-context-menu.test.mjs` reads the tools stylesheet for tools-specific assertions while continuing to read `app/canvas.css` for shared menu behavior. No URL, API, data format, or interaction changed.
+- Validation: targeted canvas context-menu and Agent dock tests passed (69/69), `npm run typecheck` passed, `npm test` passed (1830 passed, 2 skipped), and `npm run build` passed. `git diff --check` remains clean for this stage files; the only excluded warning is the user pre-existing uncommitted `AGENTS.md` edit.
+- Remaining risk: the rest of `app/canvas.css` still contains multiple canvas domains. Continue with one selector family at a time only when its ownership and cascade order are explicit; do not move shared context-menu rules mechanically.

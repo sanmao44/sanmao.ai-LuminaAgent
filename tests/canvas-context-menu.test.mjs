@@ -20,6 +20,10 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const toolsStyles = await readFile(
+  new URL("../app/canvas-tools.css", import.meta.url),
+  "utf8",
+);
 
 test("node context menu has no duplicate exact type branches or stale selection handlers", () => {
   const source = ts.createSourceFile(
@@ -265,8 +269,8 @@ test("blank canvas exposes compact, ungrouped canvas operations", () => {
     actionPositions,
     [...actionPositions].sort((a, b) => a - b),
   );
-  assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-shortcut\{/);
-  assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-item:disabled\{/);
+  assert.match(toolsStyles, /\.canvas-tools-context-menu \.canvas-menu-shortcut\{/);
+  assert.match(toolsStyles, /\.canvas-tools-context-menu \.canvas-menu-item:disabled\{/);
   const arrangeIcon = toolsMenu.match(/<span className="canvas-menu-icon" aria-hidden="true">([^<]+)<\/span>\s*<span className="canvas-menu-copy">\s*<b>一键整理<\/b>/)?.[1];
   const fitIcon = toolsMenu.match(/<span className="canvas-menu-icon" aria-hidden="true">([^<]+)<\/span>\s*<span className="canvas-menu-copy">\s*<b>适应视图<\/b>/)?.[1];
   assert.equal(arrangeIcon, "⌗");
@@ -281,8 +285,8 @@ test("blank canvas exposes compact, ungrouped canvas operations", () => {
   assert.match(panels, /<section className="canvas-setting-section"><b>导出工作流<\/b>/);
   assert.match(panels, /<section className="canvas-setting-section"><b>导入工作流<\/b>/);
   assert.match(toolsMenu, /canvas-menu-item-danger/);
-  assert.match(styles, /\.canvas-tools-context-menu\{width:min\(252px,calc\(100vw - 16px\)\)/);
-  assert.match(styles, /\.canvas-tools-context-menu \.canvas-menu-item\{min-height:39px/);
+  assert.match(toolsStyles, /\.canvas-tools-context-menu\{width:min\(252px,calc\(100vw - 16px\)\)/);
+  assert.match(toolsStyles, /\.canvas-tools-context-menu \.canvas-menu-item\{min-height:39px/);
 });
 
 test("create menu uses separators instead of spacious group headings", () => {

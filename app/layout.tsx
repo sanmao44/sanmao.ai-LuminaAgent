@@ -5,6 +5,7 @@ import './agent-upgrades.css';
 import './agent-orb.css';
 import './desktop-readability.css';
 import './canvas.css';
+import './canvas-tools.css';
 import './canvas-compose.css';
 import './runtime-service.css';
 import './shadow-tuning.css';
