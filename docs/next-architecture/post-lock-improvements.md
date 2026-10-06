@@ -1222,3 +1222,10 @@ hardening work when the trigger applies.
 - `app/layout.tsx` loads the overlay stylesheet after the base canvas stylesheet and tools stylesheet. Behavior tests now read overlay-specific selectors from the new file while shared assertions remain on `app/canvas.css`.
 - Validation: targeted canvas/Agent/clone tests passed (116/116), `npm run typecheck` passed, `npm test` passed (1830 passed, 2 skipped), and `npm run build` passed. `git diff --check` is clean for this stage files; the only excluded warning is the user pre-existing uncommitted `AGENTS.md` edit.
 - Remaining risk: `app/canvas.css` still contains shared stage, node, menu, and workbench domains. Further CSS movement should keep z-index contracts and shared base selectors in the base file unless a complete ownership boundary is proven.
+### Stage 3 canvas selection CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-selection.css` now owns the multi-select layout toolbar presentation: alignment/distribution groups, icon button states, tooltips, divider, overflow behavior, and mobile sizing.
+- `app/canvas.css` retains the selection layer z-index contract and the shared primary selection toolbar rules. `CanvasSelectionToolbar.tsx` remains the presentation owner; CanvasCore selection, alignment, distribution, history, and callbacks remain in Workspace.
+- `tests/canvas-node-editor.test.mjs` reads layout-specific assertions from the new stylesheet. No URL, API, data format, selection behavior, or pointer interaction changed.
+- Validation: targeted selection/Agent/node editor tests passed (138/138), `npm run typecheck` passed, `npm test` passed (1830 passed, 2 skipped), `npm run build` passed, and `npm run check` passed. `git diff --check` is clean for this stage files; the only excluded warning is the user pre-existing uncommitted `AGENTS.md` edit.
+- Remaining risk: primary selection toolbar buttons still share deck styles in `app/canvas.css`; keep that shared rule in place until a separate contract can prove it is safe to move.

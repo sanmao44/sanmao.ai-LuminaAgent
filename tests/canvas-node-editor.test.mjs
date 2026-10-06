@@ -182,6 +182,10 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const selectionStyles = await readFile(
+  new URL("../app/canvas-selection.css", import.meta.url),
+  "utf8",
+);
 const shadowStyles = await readFile(
   new URL("../app/shadow-tuning.css", import.meta.url),
   "utf8",
@@ -961,13 +965,13 @@ test("multi-select layout toolbar exposes alignment and distribution icons only 
   assert.match(component, /canvas-selection-toolbar,\.canvas-selection-layout-toolbar/);
   assert.match(component, /commit\(\(\) => result\.document\)/);
   assert.doesNotMatch(component, /canvas-selection-align-actions/);
-  assert.match(styles, /\.canvas-selection-layout-toolbar\{position:absolute/);
-  assert.match(styles, /\.canvas-selection-layout-group\.alignment/);
-  assert.match(styles, /\.canvas-selection-layout-group\.distribution/);
-  assert.match(styles, /\.canvas-selection-layout-tooltip::after/);
+  assert.match(selectionStyles, /\.canvas-selection-layout-toolbar\{position:absolute/);
+  assert.match(selectionStyles, /\.canvas-selection-layout-group\.alignment/);
+  assert.match(selectionStyles, /\.canvas-selection-layout-group\.distribution/);
+  assert.match(selectionStyles, /\.canvas-selection-layout-tooltip::after/);
   // 按钮本来就装得下，隐藏的 tooltip 会让工具条虚增一段可滚动距离，滚动条不能露出来。
-  assert.match(styles, /\.canvas-selection-layout-toolbar\{[^}]*scrollbar-width:none\}/);
-  assert.match(styles, /\.canvas-selection-layout-toolbar::-webkit-scrollbar\{display:none\}/);
+  assert.match(selectionStyles, /\.canvas-selection-layout-toolbar\{[^}]*scrollbar-width:none\}/);
+  assert.match(selectionStyles, /\.canvas-selection-layout-toolbar::-webkit-scrollbar\{display:none\}/);
 });
 
 test("group selection uses a toolbar attached to the group card while ordinary multi-select keeps its toolbar", () => {
