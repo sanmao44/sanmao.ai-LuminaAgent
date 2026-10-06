@@ -5,7 +5,7 @@ import test from "node:test";
 const viewer = await readFile(new URL("../components/MediaViewer.tsx", import.meta.url), "utf8");
 const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
 const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
-const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
+const mediaViewerStyles = await readFile(new URL("../app/canvas-media-viewer.css", import.meta.url), "utf8");
 
 test("media viewer keeps the requested top controls and removes repeated bottom actions", () => {
   for (const label of ["前后对比", "参数查看", "原图", "分享版", "关闭预览"]) {
@@ -28,7 +28,7 @@ test("viewer parameter drawer exposes safe version metadata and keeps the overla
   assert.ok(viewer.includes("生成持续时间"));
   assert.ok(viewer.includes("generationDurationMs"));
   assert.ok(viewer.includes('canvas-media-viewer-prompt-head'));
-  assert.match(styles, /\.canvas-media-viewer-prompt\{display:grid;grid-template-columns:minmax\(0,1fr\);/);
+  assert.match(mediaViewerStyles, /\.canvas-media-viewer-prompt\{display:grid;grid-template-columns:minmax\(0,1fr\);/);
   assert.doesNotMatch(viewer, /CreationParameterEditor/);
   assert.match(viewer, /event\.target === event\.currentTarget\) onClose\(\)/);
   assert.match(canvas, /versionInfo: mediaViewerVersionInfo\(document, viewerNode, runtime\)/);
@@ -51,8 +51,8 @@ test("Agent quick toolbar owns reverse prompting and writes the result back to a
 });
 
 test("viewer preview surfaces use project theme variables in both theme modes", () => {
-  assert.doesNotMatch(styles, /\.media-viewer-shared \.media-viewer-stage[^}]*background:#0b0c10/);
-  assert.match(styles, /\.media-viewer-shared \.media-viewer-stage[^}]*var\(--bg-2\)/);
-  assert.match(styles, /\.canvas-media-version-facts>div[^}]*var\(--panel-2\)/);
-  assert.match(styles, /@media\(max-width:720px\)\{\.canvas-media-version-facts\{grid-template-columns:1fr/);
+  assert.doesNotMatch(mediaViewerStyles, /\.media-viewer-shared \.media-viewer-stage[^}]*background:#0b0c10/);
+  assert.match(mediaViewerStyles, /\.media-viewer-shared \.media-viewer-stage[^}]*var\(--bg-2\)/);
+  assert.match(mediaViewerStyles, /\.canvas-media-version-facts>div[^}]*var\(--panel-2\)/);
+  assert.match(mediaViewerStyles, /@media\(max-width:720px\)\{\.canvas-media-version-facts\{grid-template-columns:1fr/);
 });

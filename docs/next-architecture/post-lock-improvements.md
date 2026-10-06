@@ -1545,3 +1545,11 @@ hardening work when the trigger applies.
 - Validation: focused asset collection and preview tests passed (7/7); `npm run
   check` passed (1833 tests passed, 2 skipped; production build succeeded); and
   `git diff --check` passed.
+
+### Stage 6 media viewer CSS boundary checkpoint (2026-10-07)
+
+- `app/canvas-media-viewer.css` now owns the media viewer backdrop, header controls, comparison stage, zoom controls, references, parameter metadata, prompt projection, and responsive viewer rules.
+- `app/canvas.css` keeps shared lightbox primitives, canvas workbench layout, cursor behavior, and unrelated media/node styles. `app/layout.tsx` loads the domain sheet immediately after the shared canvas sheet.
+- The media viewer behavior suite now reads the domain stylesheet directly; no viewer state, URL, API, data shape, or interaction changed.
+- Remaining risk: the viewer still coordinates zoom, comparison, download, and prompt callbacks in `components/MediaViewer.tsx`; moving those behaviors needs a separate interaction-covered slice.
+- Validation: the focused media viewer suite passed (4/4); the full test suite passed (1833 passed, 2 skipped); typecheck, production build, and `git diff --check` passed.
