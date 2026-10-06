@@ -6,38 +6,25 @@ import { groupBounds, nodeSize } from "@/lib/canvas/model";
 import type { CanvasDocument, CanvasGroup, CanvasNode } from "@/lib/canvas/types";
 import { placeCanvasContextMenu } from "@/lib/canvas/editor-layout";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
-export type CanvasQuickAction = {
-  id: string;
-  icon: string;
-  label: string;
-  title?: string;
-  danger?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-};
-
-export type CanvasQuickActionGroup = {
-  id: string;
-  icon: string;
-  label: string;
-  title?: string;
-  actions: CanvasQuickAction[];
-};
-
-export type CanvasQuickToolbarActions = {
-  primaryActions: CanvasQuickAction[];
-  menuGroups: CanvasQuickActionGroup[];
-  dangerAction?: CanvasQuickAction;
-};
+export {
+  appendCanvasAgentAction,
+  createCanvasAgentAction,
+  prependCanvasAgentContextMenuGroup,
+  type CanvasContextMenuGroup,
+  type CanvasQuickAction,
+  type CanvasQuickActionGroup,
+  type CanvasQuickToolbarActions,
+} from "@/lib/canvas/menu-actions";
+import type {
+  CanvasContextMenuGroup,
+  CanvasQuickAction,
+  CanvasQuickActionGroup,
+  CanvasQuickToolbarActions,
+} from "@/lib/canvas/menu-actions";
 
 export type CanvasQuickToolbarTarget =
   | { kind: "node"; node: CanvasNode }
   | { kind: "group"; group: CanvasGroup };
-
-export type CanvasContextMenuGroup = {
-  label: string;
-  actions: CanvasQuickAction[];
-};
 
 /** Agent 文本节点的光球状态：排队与生成中＝思考中，失败＝错误色，其余＝空闲。 */
 export function canvasPromptOrbState(status: string | undefined): AgentOrbState {

@@ -232,7 +232,7 @@ import CanvasTextLightbox from "@/components/canvas/CanvasTextLightbox";
 import CanvasActivityDrawer from "@/components/canvas/CanvasActivityDrawer";
 import CanvasQuickToolbar from "@/components/canvas/CanvasQuickToolbar";
 import CanvasSelectionToolbar from "@/components/canvas/CanvasSelectionToolbar";
-import { CanvasContextMenuFrame, CanvasGroupContextMenu, CanvasNodeContextMenu, type CanvasContextMenuGroup, type CanvasQuickAction, type CanvasQuickToolbarActions } from "@/components/canvas/CanvasContextMenu";
+import { appendCanvasAgentAction, CanvasContextMenuFrame, CanvasGroupContextMenu, CanvasNodeContextMenu, prependCanvasAgentContextMenuGroup, type CanvasContextMenuGroup, type CanvasQuickAction, type CanvasQuickToolbarActions } from "@/components/canvas/CanvasContextMenu";
 import { canvasRightOverlayInset, canvasVisibleStageWidth } from "@/lib/canvas/menu-layout";
 import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/lib/canvas/node-editor";
 import { canvasUpscaleSource, maskStateForNode, nodeStatus, progressValue, variantStatesFor } from "@/lib/canvas/node-card";
@@ -12911,19 +12911,11 @@ export default function SuperCanvas() {
   ]);
   /* 节点快捷工具栏统一补一个「问 Agent」：任何节点都能一键交给右侧面板。 */
   const quickActionsWithAgent = useMemo<CanvasQuickToolbarActions>(
-    () => ({
-      ...quickActions,
-      primaryActions: [
-        ...quickActions.primaryActions,
-        {
-          id: "ask-agent",
-          icon: "agent",
-          label: "问 Agent",
-          title: "打开 Agent 助手并聚焦输入框，当前节点会自动作为上下文",
-          onClick: askAgentAboutSelection,
-        },
-      ],
-    }),
+    () => appendCanvasAgentAction(
+      quickActions,
+      askAgentAboutSelection,
+      "打开 Agent 助手并聚焦输入框，当前节点会自动作为上下文",
+    ),
     [askAgentAboutSelection, quickActions],
   );
 
@@ -13187,19 +13179,11 @@ export default function SuperCanvas() {
   ]);
   /* 对象组也要能整组交给 Agent：组工具栏和组右键菜单共用同一条入口。 */
   const groupQuickActionsWithAgent = useMemo<CanvasQuickToolbarActions>(
-    () => ({
-      ...groupQuickActions,
-      primaryActions: [
-        ...groupQuickActions.primaryActions,
-        {
-          id: "ask-agent",
-          icon: "agent",
-          label: "问 Agent",
-          title: "打开 Agent 助手并聚焦输入框，整组节点会自动作为上下文",
-          onClick: askAgentAboutSelection,
-        },
-      ],
-    }),
+    () => appendCanvasAgentAction(
+      groupQuickActions,
+      askAgentAboutSelection,
+      "打开 Agent 助手并聚焦输入框，整组节点会自动作为上下文",
+    ),
     [askAgentAboutSelection, groupQuickActions],
   );
   const contextMenuGroups = useMemo<CanvasContextMenuGroup[]>(() => {
@@ -13487,24 +13471,14 @@ export default function SuperCanvas() {
   ]);
   /* 节点右键菜单也补上同一入口：右键会把节点选中，所以上下文就是刚点的这些节点。 */
   const contextMenuGroupsWithAgent = useMemo<CanvasContextMenuGroup[]>(
-    () => [
-      {
-        label: "Agent",
-        actions: [
-          {
-            id: "ask-agent",
-            icon: "agent",
-            label: "问 Agent",
-            title: "打开 Agent 助手并聚焦输入框，选中的节点会自动作为上下文",
-            onClick: () => {
-              setContextMenu(null);
-              askAgentAboutSelection();
-            },
-          },
-        ],
+    () => prependCanvasAgentContextMenuGroup(
+      contextMenuGroups,
+      () => {
+        setContextMenu(null);
+        askAgentAboutSelection();
       },
-      ...contextMenuGroups,
-    ],
+      "打开 Agent 助手并聚焦输入框，选中的节点会自动作为上下文",
+    ),
     [askAgentAboutSelection, contextMenuGroups],
   );
 

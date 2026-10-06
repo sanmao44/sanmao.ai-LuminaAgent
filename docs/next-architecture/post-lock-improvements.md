@@ -7,6 +7,24 @@ Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
 
+### Stage 2 canvas Agent action contract checkpoint (2026-10-07)
+
+- `lib/canvas/menu-actions.ts` now owns the pure contract for appending the
+  existing Agent action to node/group quick actions and prepending it to node
+  context-menu groups.
+- `CanvasWorkspace.tsx` keeps the Agent callback, context-menu close behavior,
+  action construction, selection, and CanvasCore mutations; it no longer
+  duplicates the shared Agent action shape in three assembly sites.
+- `CanvasContextMenu.tsx` re-exports the shared menu contract for existing UI
+  consumers. No new store, API, type source, or compatibility layer was added.
+- Behavior coverage verifies original action order/reference preservation,
+  Agent action placement, title, and callback forwarding. Targeted tests,
+  typecheck, full `npm test` (1839 passed, 2 skipped), `npm run build`, and
+  `git diff --check` passed.
+- Remaining risk: node/group action builders and gesture state are still
+  interleaved with Workspace selection/document mutations; extracting them
+  requires a larger behavior-covered slice and remains deferred.
+
 ### Stage 6 canvas asset projection boundary checkpoint (2026-10-07)
 
 - `lib/canvas/asset-library.ts` now owns the pure projection from a Canvas media

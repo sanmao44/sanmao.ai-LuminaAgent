@@ -13,6 +13,7 @@ const component = (await readFile(
 const createMenuComponent = await readFile(new URL("../components/canvas/CanvasCreateContextMenu.tsx", import.meta.url), "utf8");
 const toolsMenuComponent = await readFile(new URL("../components/canvas/CanvasToolsContextMenu.tsx", import.meta.url), "utf8");
 const contextMenuComponent = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
+const menuActions = await readFile(new URL("../lib/canvas/menu-actions.ts", import.meta.url), "utf8");
 const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
 const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
 const groupLayer = await readFile(new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url), "utf8");
@@ -177,10 +178,10 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(quickToolbar, /target: CanvasQuickToolbarTarget/);
   assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
   // 「问 Agent」要能从每条选中路径进：节点工具栏、多选工具栏、对象组工具栏、两种右键菜单。
-  assert.match(groupQuickActions, /id: "ask-agent",[\s\S]{0,120}?label: "问 Agent",/);
+  assert.match(menuActions, /export function appendCanvasAgentAction/);
   assert.match(component, /const contextMenuGroupsWithAgent = useMemo<CanvasContextMenuGroup\[]>/);
   assert.match(component, /groups=\{contextMenuGroupsWithAgent\}/);
-  assert.match(quickActions, /id: "ask-agent",[\s\S]{0,140}?label: "问 Agent",/);
+  assert.match(menuActions, /export function prependCanvasAgentContextMenuGroup/);
   assert.match(component, /const runImageAngleGeneration = useCallback/);
   assert.match(component, /const pendingOutput = (?:createPendingNode \? )?createMedia\("image", "", "角度控制结果"/);
   assert.match(component, /status: "running"[\s\S]*?processingStartedAt: startedAt[\s\S]*?jobId: taskId/);
