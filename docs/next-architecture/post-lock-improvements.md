@@ -218,6 +218,20 @@ hardening work when the trigger applies.
   in `app/page.tsx`; they combine API orchestration and cross-panel state and
   need a dedicated behavior seam before extraction.
 
+### Stage 6 local image layout checkpoint (2026-10-06)
+
+- `lib/image-editor/local-image-layout.ts` now owns the pure ratio projection
+  used by the page-local crop and canvas editor. It preserves the existing
+  Chinese `原图` / `自由` labels while delegating crop geometry and canvas
+  expansion to `lib/canvas/image-operations.ts`.
+- `app/page.tsx` no longer defines duplicate `cropSourceRect` or
+  `canvasRectForRatio` implementations. Browser image loading, Canvas 2D
+  rendering, blob/data URL handling, and editor state remain in the page because
+  those concerns are still coupled to the local editor interaction contract.
+- `tests/local-image-layout.test.mjs` covers original/free behavior, crop
+  bounds, and canvas ratio expansion. Targeted tests, the full suite,
+  typecheck, production build, and diff check pass for this slice.
+
 ### Stage 6 admin login checkpoint (2026-10-06)
 
 - `AdminLogin.tsx` now owns the protected management login presentation for the

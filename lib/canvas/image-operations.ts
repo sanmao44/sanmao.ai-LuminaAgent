@@ -118,10 +118,8 @@ export function cropAspectRatio(aspect: CropAspect, source: ImageSize) {
   return ASPECTS[aspect];
 }
 
-export function cropRectForAspect(sourceValue: ImageSize, aspect: CropAspect): ImageRect {
+export function cropRectForRatio(sourceValue: ImageSize, ratio: number): ImageRect {
   const source = normalizeImageSize(sourceValue);
-  if (aspect === 'original') return { x: 0, y: 0, width: source.width, height: source.height };
-  const ratio = cropAspectRatio(aspect, source);
   if (!Number.isFinite(ratio) || ratio <= 0) return { x: 0, y: 0, width: source.width, height: source.height };
   if (source.width / source.height > ratio) {
     const width = Math.max(1, Math.min(source.width, Math.round(source.height * ratio)));
@@ -129,6 +127,21 @@ export function cropRectForAspect(sourceValue: ImageSize, aspect: CropAspect): I
   }
   const height = Math.max(1, Math.min(source.height, Math.round(source.width / ratio)));
   return { x: 0, y: Math.floor((source.height - height) / 2), width: source.width, height };
+}
+
+export function cropRectForAspect(sourceValue: ImageSize, aspect: CropAspect): ImageRect {
+  const source = normalizeImageSize(sourceValue);
+  if (aspect === 'original') return { x: 0, y: 0, width: source.width, height: source.height };
+  const ratio = cropAspectRatio(aspect, source);
+  return cropRectForRatio(source, ratio);
+}
+
+export function imageSizeForRatio(sourceValue: ImageSize, ratio: number): ImageSize {
+  const source = normalizeImageSize(sourceValue);
+  if (!Number.isFinite(ratio) || ratio <= 0) return source;
+  const sourceRatio = source.width / source.height;
+  if (sourceRatio > ratio) return { width: source.width, height: Math.max(1, Math.round(source.width / ratio)) };
+  return { width: Math.max(1, Math.round(source.height * ratio)), height: source.height };
 }
 
 export function clampImageRect(rect: ImageRect, sourceValue: ImageSize, aspect: CropAspect = 'free') {

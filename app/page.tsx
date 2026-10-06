@@ -129,6 +129,7 @@ import CreativeReferenceStrip from '@/components/CreativeReferenceStrip';
 import ImageCard from '@/components/ImageCard';
 import { centeredOutpaintLayout, defaultOutpaintLayout, fitOutpaintLayoutToRule, outpaintRuleForModel, validateOutpaintLayout } from '@/lib/image-editor/outpaint-layout';
 import { cloudUpscaleFormatOptions, isCloudUpscaleModel, qualityOptions, upscaleScales } from '@/lib/image-editor/editor-options';
+import { canvasRectForRatio, cropSourceRect } from '@/lib/image-editor/local-image-layout';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -241,50 +242,6 @@ function reorderReferenceItems(items, fromIndex, toIndex) {
     if (!moved) return items;
     next.splice(toIndex, 0, moved);
     return next;
-}
-function cropSourceRect(width, height, ratio) {
-    if (ratio === '原图' || ratio === '自由') return {
-        x: 0,
-        y: 0,
-        width,
-        height
-    };
-    const [rawWidth, rawHeight] = ratio.split(':').map(Number);
-    const targetRatio = rawWidth / rawHeight;
-    const sourceRatio = width / height;
-    if (sourceRatio > targetRatio) {
-        const cropWidth = Math.max(1, Math.round(height * targetRatio));
-        return {
-            x: Math.floor((width - cropWidth) / 2),
-            y: 0,
-            width: cropWidth,
-            height
-        };
-    }
-    const cropHeight = Math.max(1, Math.round(width / targetRatio));
-    return {
-        x: 0,
-        y: Math.floor((height - cropHeight) / 2),
-        width,
-        height: cropHeight
-    };
-}
-function canvasRectForRatio(width, height, ratio) {
-    if (ratio === '原图' || ratio === '自由') return {
-        width,
-        height
-    };
-    const [rawWidth, rawHeight] = ratio.split(':').map(Number);
-    const targetRatio = rawWidth / rawHeight;
-    const sourceRatio = width / height;
-    if (sourceRatio > targetRatio) return {
-        width,
-        height: Math.max(1, Math.round(width / targetRatio))
-    };
-    return {
-        width: Math.max(1, Math.round(height * targetRatio)),
-        height
-    };
 }
 function drawCoverImage(context, image, sourceWidth, sourceHeight, targetWidth, targetHeight) {
     const scale = Math.max(targetWidth / sourceWidth, targetHeight / sourceHeight);
