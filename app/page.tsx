@@ -140,6 +140,7 @@ import { buildGalleryItems } from '@/lib/creation/gallery-items';
 import { storeImages } from '@/lib/image-storage-client';
 import { applyMessageVersion, messageVersionIndex, messageVersionsFor, normalizeAssistantImageSources, normalizeChatSession } from '@/lib/conversation/session-normalization';
 import { prepareAgentReferences } from '@/lib/agent/reference-preparation';
+import { historyArtifactFiles } from '@/lib/agent/artifact-references';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -994,15 +995,6 @@ async function renderShareConversationImage(messages) {
     return { blob, width: canvas.width, height: canvas.height };
 }
 /** 历史里助手生成过的 Office/ZIP 文件只回传元数据，服务端才能在下一轮继续引用或打包。 */
-function historyArtifactFiles(message) {
-    if (!message || message.role !== 'assistant' || !Array.isArray(message.files)) return [];
-    return message.files.filter((file)=>file && typeof file.artifactId === 'string' && !file.content).slice(0, 8).map((file)=>({
-            name: file.name,
-            mimeType: file.mimeType,
-            artifactId: file.artifactId,
-            size: file.size
-        }));
-}
 async function downloadChatFile(file) {
     if (file.downloadUrl) {
         const response = await fetch(file.downloadUrl, { cache: 'no-store' });

@@ -11,6 +11,7 @@ const clientTypes = await readFile(new URL('../lib/agent-client.ts', import.meta
 const historyTypes = await readFile(new URL('../lib/client-history.ts', import.meta.url), 'utf8');
 
 const load = createTsRequire(process.cwd());
+const { historyArtifactFiles } = load('./lib/agent/artifact-references');
 const artifacts = load('./lib/artifacts/index');
 const artifactLimits = load('./lib/artifacts/limits');
 const imageStorage = load('./lib/image-storage');
@@ -57,5 +58,18 @@ test('client and history contracts preserve artifact references for later turns'
   assert.match(clientTypes, /artifactId\?: string/);
   assert.match(historyTypes, /artifactId\?: string/);
   assert.match(historyTypes, /downloadUrl\?: string/);
-  assert.match(page, /function historyArtifactFiles\(message\)/);
+  const result = historyArtifactFiles({
+    role: 'assistant',
+    files: [
+      { name: 'contract.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', artifactId: 'artifact-1', size: 42 },
+      { name: 'inline.txt', mimeType: 'text/plain', content: 'inline' },
+    ],
+  });
+  assert.deepEqual(result, [{
+    name: 'contract.docx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    artifactId: 'artifact-1',
+    size: 42,
+  }]);
+  assert.doesNotMatch(page, /function historyArtifactFiles\(message\)/);
 });

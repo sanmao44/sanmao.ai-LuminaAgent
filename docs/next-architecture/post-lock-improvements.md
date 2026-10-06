@@ -902,3 +902,23 @@ hardening work when the trigger applies.
 - Remaining risk: image compression still requires the browser adapter and
   remains injected from the page; moving that adapter would cross into browser
   media infrastructure and needs a separate contract.
+
+### Stage 6 Agent artifact history projection checkpoint (2026-10-06)
+
+- `lib/agent/artifact-references.ts` now owns the pure projection of persisted
+  assistant Artifact metadata into the bounded file references used by later
+  Agent turns. Inline file content is excluded and at most eight Artifact
+  references are forwarded, preserving the previous behavior.
+- `app/page.tsx` no longer defines the projection. It still owns context
+  selection, request assembly, retry behavior, and Agent lifecycle state.
+- The projection reuses `AgentClientFile` and `ChatHistoryMessage` field
+  contracts; Artifact storage, download URLs, authentication, and generation
+  remain in their existing infrastructure and HTTP boundaries.
+- Behavior coverage verifies Artifact metadata is preserved, inline content is
+  excluded, and the page no longer owns a duplicate implementation.
+- Validation: targeted Artifact tests and `npm run typecheck` passed. Full
+  `npm test`, `npm run build`, `npm run check`, and `git diff --check` remain
+  required before committing this checkpoint.
+- Remaining risk: page-level context selection still combines Artifact files
+  with conversation memory and retry history; only the pure file projection
+  moved in this slice.
