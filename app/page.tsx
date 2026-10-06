@@ -122,6 +122,7 @@ import ManualModelDialog from '@/components/ManualModelDialog';
 import AdminLogin from '@/components/AdminLogin';
 import ProviderList from '@/components/ProviderList';
 import ProviderPlatformPicker from '@/components/ProviderPlatformPicker';
+import ProviderListToolbar from '@/components/ProviderListToolbar';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SupportModal from '@/components/SupportModal';
 import SharePreviewModal from '@/components/SharePreviewModal';
@@ -11582,42 +11583,12 @@ export default function Page() {
                                         ]
                                     })
                                     }), document.body),
-                                    /*#__PURE__*/ _jsxs("div", {
-                                        className: "provider-list-toolbar surface",
-                                        children: [
-                                            /*#__PURE__*/ _jsxs("label", {
-                                                className: "provider-search-box",
-                                                children: [
-                                                    /*#__PURE__*/ _jsx(Icon, {
-                                                        name: "search",
-                                                        size: 15
-                                                    }),
-                                                    /*#__PURE__*/ _jsx("input", {
-                                                        value: providerSearch,
-                                                        onChange: (event)=>setProviderSearch(event.target.value),
-                                                        placeholder: "搜索名称、平台或接口地址…",
-                                                        "aria-label": "搜索接口服务商"
-                                                    }),
-                                                    providerSearch && /*#__PURE__*/ _jsx("button", {
-                                                        type: "button",
-                                                        onClick: ()=>setProviderSearch(''),
-                                                        "aria-label": "清空服务商搜索",
-                                                        children: "×"
-                                                    })
-                                                ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("span", {
-                                                children: [
-                                                    "显示 ",
-                                                    /*#__PURE__*/ _jsx("b", {
-                                                        children: visibleProviders.length
-                                                    }),
-                                                    " / ",
-                                                    manageableProviders.length,
-                                                    " 个"
-                                                ]
-                                            })
-                                        ]
+                                    /*#__PURE__*/ _jsx(ProviderListToolbar, {
+                                        search: providerSearch,
+                                        visibleCount: visibleProviders.length,
+                                        totalCount: manageableProviders.length,
+                                        Icon: Icon,
+                                        onSearchChange: setProviderSearch
                                     }),
                                     visibleProviders.length ? /*#__PURE__*/ _jsx(ProviderList, {
                                         providers: visibleProviders,

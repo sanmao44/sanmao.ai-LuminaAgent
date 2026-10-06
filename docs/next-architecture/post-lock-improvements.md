@@ -1991,3 +1991,12 @@ hardening work when the trigger applies.
 - Behavior coverage renders the picker and invokes its selection callback, while the existing first-run provider tests remain at the page boundary.
 - Validation: focused provider behavior tests passed (36/36), `npm run typecheck` passed, full `npm run check` passed (1860 tests passed, 2 skipped; production build succeeded), and `git diff --check` passed.
 - Remaining risk: the provider form fields and Jimeng configuration remain coupled to page-owned draft and API lifecycle and are intentionally not moved in this slice.
+
+### Stage 6 provider list toolbar checkpoint (2026-10-07)
+
+- `components/ProviderListToolbar.tsx` now owns the provider search input, clear action, search icon, and visible/total count presentation.
+- `app/page.tsx` keeps the search value and `visibleProviders` filtering projection; the toolbar only emits text changes.
+- Existing classes, labels, counts, clear behavior, and filtering semantics remain unchanged. No API, provider state, repository, or compatibility layer was introduced.
+- Behavior coverage renders the toolbar and invokes both search and clear callbacks through its contract.
+- Validation: focused provider tests passed (6/6), `npm run typecheck` passed, full `npm run check` passed (1861 tests passed, 2 skipped; production build succeeded), and `git diff --check` passed.
+- Remaining risk: the provider form fields and Jimeng configuration remain coupled to page-owned draft and API lifecycle and are intentionally not moved in this slice.

@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const providerListSource = await readFile(new URL('../components/ProviderList.tsx', import.meta.url), 'utf8');
 const platformPickerSource = await readFile(new URL('../components/ProviderPlatformPicker.tsx', import.meta.url), 'utf8');
+const providerToolbarSource = await readFile(new URL('../components/ProviderListToolbar.tsx', import.meta.url), 'utf8');
 const providerListModule = { exports: {} };
 const providerListCompiled = ts.transpileModule(providerListSource, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -42,6 +43,18 @@ vm.runInNewContext(platformPickerCompiled, {
   },
 });
 const ProviderPlatformPicker = platformPickerModule.exports.default;
+const providerToolbarModule = { exports: {} };
+const providerToolbarCompiled = ts.transpileModule(providerToolbarSource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText;
+vm.runInNewContext(providerToolbarCompiled, {
+  exports: providerToolbarModule.exports,
+  require(id) {
+    if (id === 'react/jsx-runtime') return require('react/jsx-runtime');
+    throw new Error(`Unexpected ProviderListToolbar dependency: ${id}`);
+  },
+});
+const ProviderListToolbar = providerToolbarModule.exports.default;
 
 test('first-run provider setup modal can be dismissed', () => {
   assert.match(pageSource, /const PROVIDER_SETUP_DISMISSED_STORAGE_KEY = 'sanmao-provider-setup-dismissed';/);
@@ -146,4 +159,18 @@ test('provider platform picker preserves preset links and forwards selection', (
   const options = tree.props.children[1].props.children;
   options[1].props.children[0].props.onClick();
   assert.deepEqual(selected, ['custom']);
+});
+
+test('provider list toolbar forwards search edits and clear actions', () => {
+  const values = [];
+  const Icon = ({ name }) => createElement('i', { 'data-icon': name });
+  const props = { search: 'open', visibleCount: 1, totalCount: 3, Icon, onSearchChange: (value) => values.push(value) };
+  const markup = renderToStaticMarkup(createElement(ProviderListToolbar, props));
+  assert.match(markup, /搜索名称、平台或接口地址/);
+  assert.match(markup, /显示 <b>1<\/b> \/ 3 个/);
+  const tree = ProviderListToolbar(props);
+  const label = tree.props.children[0];
+  label.props.children[1].props.onChange({ target: { value: 'agnes' } });
+  label.props.children[2].props.onClick();
+  assert.deepEqual(values, ['agnes', '']);
 });
