@@ -26,6 +26,10 @@ const previewStyles = await readFile(
   new URL("../app/canvas-asset-preview.css", import.meta.url),
   "utf8",
 );
+const assetStyles = await readFile(
+  new URL("../app/canvas-asset-library.css", import.meta.url),
+  "utf8",
+);
 
 test("all canvas asset actions open the collection picker before writing", () => {
   assert.match(picker, /export default function CanvasAssetCollectionPicker/);
@@ -68,19 +72,19 @@ test("asset drawer makes new collection creation a clear primary action", () => 
   assert.match(drawer, /创建后自动切换到新合集/);
   assert.match(drawer, /placeholder="输入合集名称，例如：灵感参考"/);
   assert.match(drawer, /disabled=\{!newCollectionName\.trim\(\)\}/);
-  assert.match(styles, /\.canvas-asset-new-collection\{display:grid;[^}]*border:1px solid color-mix/);
-  assert.match(styles, /\.canvas-asset-new-collection-form button\{[^}]*background:linear-gradient/);
+  assert.match(assetStyles, /\.canvas-asset-new-collection\{display:grid;[^}]*border:1px solid color-mix/);
+  assert.match(assetStyles, /\.canvas-asset-new-collection-form button\{[^}]*background:linear-gradient/);
 });
 
 test("asset drawer keeps the media preview primary across responsive layouts", () => {
   assert.match(styles, /\.canvas-asset-drawer\{[^}]*width:var\(--canvas-panel-width\)/);
-  assert.match(styles, /\.canvas-asset-drawer \.canvas-asset-kind\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\)\}/);
-  assert.match(styles, /\.canvas-asset-drawer \.canvas-asset-filters\{grid-template-columns:minmax\(0,1\.25fr\) repeat\(2,minmax\(0,1fr\)\)\}/);
-  assert.match(styles, /\.canvas-asset-drawer \.canvas-global-asset-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:10px\}/);
-  assert.match(styles, /\.canvas-asset-drawer \.canvas-global-asset-card\{display:block\}/);
-  assert.match(styles, /\.canvas-asset-drawer \.canvas-global-asset-preview\{[^}]*aspect-ratio:4 \/ 3/);
-  assert.match(styles, /\.canvas-asset-drawer \.canvas-asset-new-collection\{display:grid;grid-template-columns:minmax\(0,.82fr\) minmax\(0,1\.18fr\)/);
-  assert.match(styles, /@media\(max-width:720px\)\{[\s\S]*?\.canvas-asset-drawer \.canvas-global-asset-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/);
+  assert.match(assetStyles, /\.canvas-asset-drawer \.canvas-asset-kind\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\)\}/);
+  assert.match(assetStyles, /\.canvas-asset-drawer \.canvas-asset-filters\{grid-template-columns:minmax\(0,1\.25fr\) repeat\(2,minmax\(0,1fr\)\)\}/);
+  assert.match(assetStyles, /\.canvas-asset-drawer \.canvas-global-asset-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:10px\}/);
+  assert.match(assetStyles, /\.canvas-asset-drawer \.canvas-global-asset-card\{display:block\}/);
+  assert.match(assetStyles, /\.canvas-asset-drawer \.canvas-global-asset-preview\{[^}]*aspect-ratio:4 \/ 3/);
+  assert.match(assetStyles, /\.canvas-asset-drawer \.canvas-asset-new-collection\{display:grid;grid-template-columns:minmax\(0,.82fr\) minmax\(0,1\.18fr\)/);
+  assert.match(assetStyles, /@media\(max-width:720px\)\{[\s\S]*?\.canvas-asset-drawer \.canvas-global-asset-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/);
 });
 
 test("custom asset collections can be renamed even when legacy records omit builtin false", () => {

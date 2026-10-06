@@ -1529,3 +1529,19 @@ hardening work when the trigger applies.
 - Validation: focused asset collection and preview tests passed (7/7); `npm run
   check` passed (1832 tests passed, 2 skipped; production build succeeded); and
   `git diff --check` passed.
+
+### Stage 6 canvas asset library CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-asset-library.css` now owns asset drawer internals: search and
+  filters, collection dropzone, asset cards, media actions, loading/empty
+  states, and drawer-local responsive refinements.
+- `app/canvas.css` retains the drawer shell, z-index tokens, preview/picker
+  backdrops, shared panel slot geometry, deck offsets, and minimap rules. Those
+  selectors coordinate assets with other canvas panels and remain intentionally
+  cross-domain.
+- `CanvasAssetDrawer.tsx` and `CanvasAssetCollectionPicker.tsx` remain the sole
+  owners of asset loading, collection mutations, drag/drop, preview actions,
+  and Escape cleanup. No API, data, or interaction contract changed.
+- Validation: focused asset collection and preview tests passed (7/7); `npm run
+  check` passed (1833 tests passed, 2 skipped; production build succeeded); and
+  `git diff --check` passed.
