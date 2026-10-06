@@ -130,6 +130,7 @@ import ImageCard from '@/components/ImageCard';
 import { centeredOutpaintLayout, defaultOutpaintLayout, fitOutpaintLayoutToRule, outpaintRuleForModel, validateOutpaintLayout } from '@/lib/image-editor/outpaint-layout';
 import { cloudUpscaleFormatOptions, isCloudUpscaleModel, qualityOptions, upscaleScales } from '@/lib/image-editor/editor-options';
 import { editorModelSelectionPatch, upscaleEditorSettingsPatch } from '@/lib/image-editor/editor-form';
+import { buildEditorRequest } from '@/lib/image-editor/editor-request';
 import { canvasRectForRatio, cropSourceRect } from '@/lib/image-editor/local-image-layout';
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
@@ -8202,60 +8203,10 @@ export default function Page() {
     }
     async function processEditorTask(currentEditor, taskId) {
         const requestStartedAt = performance.now();
-        const editorReference = {
-            id: currentEditor.item.id,
-            name: `上一版-${currentEditor.item.id.slice(-6)}`,
-            url: currentEditor.item.url
-        };
         try {
             const sourceSize = currentEditor.mode === 'upscale' ? await loadImageDimensions(currentEditor.item.url) : null;
             const editorUpscaleModel = currentEditor.mode === 'upscale' ? availableUpscaleModels.find((model)=>model.id === currentEditor.modelId) || defaultUpscaleModel : null;
-            const targetSize = sourceSize ? upscaleTargetDimensions(sourceSize, currentEditor.scale, editorUpscaleModel, currentEditor.targetSize) : null;
-             const upscaleSize = targetSize ? `${targetSize.width}x${targetSize.height}` : '';
-             const cloudUpscale = currentEditor.mode === 'upscale' && isCloudUpscaleModel(editorUpscaleModel);
-             const editorCloudOutputFormat = cloudUpscale && editorUpscaleModel?.outputFormats?.includes(currentEditor.upscaleOutputFormat) ? currentEditor.upscaleOutputFormat : undefined;
-            const editRatio = editorRatio(currentEditor);
-            const editDimensions = currentEditor.sizeMode === 'custom' ? {
-                width: currentEditor.customWidth,
-                height: currentEditor.customHeight
-            } : presetDimensions(editRatio, currentEditor.sizeTier);
-            const endpoint = currentEditor.mode === 'upscale' ? '/api/upscale' : '/api/edit';
-            const body = currentEditor.mode === 'upscale' ? {
-                taskId,
-                sourceImageId: currentEditor.item.id,
-                model: currentEditor.modelId,
-                reference: currentEditor.item.url,
-                 referenceImages: [editorReference],
-                 scale: currentEditor.scale,
-                 ...(cloudUpscale ? {
-                    ...(editorCloudOutputFormat ? { outputFormat: editorCloudOutputFormat } : {}),
-                    ...(editorCloudOutputFormat === 'jpg' ? { outputQuality: currentEditor.upscaleOutputQuality } : {})
-                } : {
-                    size: upscaleSize,
-                    seed: currentEditor.seed,
-                    colorCorrection: currentEditor.colorCorrection,
-                    resizeMethod: currentEditor.algorithm
-                }),
-                prompt: currentEditor.prompt
-            } : {
-                taskId,
-                prompt: currentEditor.prompt.trim(),
-                model: currentEditor.modelId,
-                aspectRatio: editRatio,
-                sizeMode: currentEditor.sizeMode,
-                count: currentEditor.count,
-                width: editDimensions.width,
-                height: editDimensions.height,
-                resolution: currentEditor.sizeMode === 'custom' ? undefined : currentEditor.sizeTier.toUpperCase(),
-                quality: currentEditor.quality,
-                fidelity: currentEditor.fidelity,
-                references: [
-                    editorReference.url
-                ],
-                referenceImages: [editorReference],
-                mask: currentEditor.mask || undefined,
-                moveGuide: currentEditor.sourceImageDataUrl || undefined
-            };
+            const { endpoint, body, editorReference, ratio: editRatio, cloudUpscale, cloudOutputFormat: editorCloudOutputFormat } = buildEditorRequest(currentEditor, taskId, sourceSize, editorUpscaleModel);
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: {

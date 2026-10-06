@@ -20,6 +20,14 @@ const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8")
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const viewer = await readFile(new URL("../components/MediaViewer.tsx", import.meta.url), "utf8");
 const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
+let editorRequestSource = await readFile(new URL("../lib/image-editor/editor-request.ts", import.meta.url), "utf8");
+editorRequestSource = editorRequestSource
+  .replace(/import \{ editorRatio, presetDimensions \} from "@\/lib\/generation-log-presentation";/, `const editorRatio = (editor) => editor.ratio === "自动" ? "1:1" : editor.ratio; const presetDimensions = () => ({ width: 1024, height: 1024 });`)
+  .replace(/import \{ isCloudUpscaleModel \} from "@\/lib\/image-editor\/editor-options";/, `const isCloudUpscaleModel = () => false;`)
+  .replace(/import \{ upscaleTargetDimensions \} from "@\/lib\/canvas\/upscale";/, `const upscaleTargetDimensions = () => ({ width: 1024, height: 1024 });`);
+const editorRequest = await import(`data:text/javascript;base64,${Buffer.from(ts.transpileModule(editorRequestSource, {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+}).outputText).toString("base64")}`);
 
 test("brush and eraser preserve the mask alpha contract and coverage", () => {
   const pixels = raster.createProtectedMask(10, 10);
@@ -459,8 +467,31 @@ test("all image entry points use local edit wording while persisted field remain
   assert.match(editor, /initialMaskDataUrl/);
   assert.match(page, /const legacySavedMask = item\?\.params\?\.mask \|\| item\?\.mask/);
   assert.match(page, /const restoredMask = typeof legacySavedMask === 'string'/);
-  assert.match(page, /mask: currentEditor\.mask \|\| undefined/);
-  assert.match(page, /annotations: currentEditor\.mode === 'edit'/);
+  const request = editorRequest.buildEditorRequest({
+    mode: "edit",
+    item: { id: "source-1", url: "https://example.test/source.png", prompt: "source" },
+    prompt: "replace the background",
+    modelId: "auto",
+    ratio: "1:1",
+    count: 1,
+    quality: "自动",
+    fidelity: "high",
+    sizeMode: "system",
+    sizeTier: "1k",
+    customWidth: 1024,
+    customHeight: 1024,
+    mask: "data:image/png;base64,MASK",
+    sourceImageDataUrl: "data:image/png;base64,MOVE",
+    scale: 2,
+    targetSize: "auto",
+    seed: 42,
+    colorCorrection: "wavelet",
+    algorithm: "lanczos",
+    upscaleOutputFormat: "png",
+    upscaleOutputQuality: 95,
+  }, "task-1", null, null);
+  assert.equal(request.body.mask, "data:image/png;base64,MASK");
+  assert.equal(request.body.moveGuide, "data:image/png;base64,MOVE");
   assert.match(page, /onApply: \(dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl\)=>/);
   assert.match(page, /\.\.\.\(moveGuideDataUrl \? \{ sourceImageDataUrl: moveGuideDataUrl \} : \{\}\)/);
   assert.match(page, /sourceImageDataUrl: moveGuideDataUrl \|\| undefined/);

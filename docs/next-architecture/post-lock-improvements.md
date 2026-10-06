@@ -509,6 +509,17 @@ hardening work when the trigger applies.
 - `tests/image-editor-form.test.mjs` covers edit selection, supported upscale
   values, and fallback behavior for limited or unavailable models.
 
+### Editor request projection checkpoint (2026-10-06)
+
+- `lib/image-editor/editor-request.ts` now owns the pure edit/upscale request
+  projection: endpoint, reference metadata, dimensions, cloud output fields,
+  and local upscale parameters.
+- `app/page.tsx` still owns image dimension loading, fetch and response
+  handling, upscale polling, task lifecycle, history persistence, and user
+  notifications. No API route or payload shape changed.
+- `tests/image-editor-request.test.mjs` covers edit payloads, cloud upscale
+  output filtering, and local upscale target/algorithm fields.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
