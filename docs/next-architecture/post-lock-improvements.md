@@ -1956,3 +1956,12 @@ hardening work when the trigger applies.
 - Context-menu behavior tests continue to cover node/group action construction, blank-canvas actions, event isolation, and responsive placement; the contract assertion now follows the extracted `nodeGroups` prop.
 - Validation: focused context-menu, gesture, and editor-layout tests passed (33/33); `npm run typecheck` passed; full `npm run check` passed (1855 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
 - Remaining risk: menu action builders and context-menu state remain intentionally in `CanvasWorkspace.tsx`; moving them would couple the presentation layer to document mutation and requires a separate application contract.
+
+### Stage 6 agent selection push presentation checkpoint (2026-10-07)
+
+- `components/AgentSelectionPush.tsx` now owns the floating action bar shown after selecting assistant text, including placement classes, image/video handoff controls, disabled video state, and icon presentation.
+- `app/page.tsx` retains selection capture, `selectionPush` state, prompt mutation, navigation, model availability checks, notifications, and duration propagation. It now supplies an explicit presentation contract and callbacks.
+- No API, task runtime, conversation state, or duplicate routing logic was introduced. Existing CSS classes and callback behavior remain unchanged.
+- Behavior coverage is colocated with the existing `agent-message-selection-bar` behavior test using transpile-and-execute; no new source-layout test was added.
+- Validation: focused selection, composer, and one-take tests passed (12/12); `npm run typecheck` passed; full `npm run check` passed (1857 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
+- Remaining risk: the page still owns the full Agent message rendering and request lifecycle; extracting those safely requires larger interaction contracts and is outside this small slice.

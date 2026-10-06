@@ -115,6 +115,7 @@ import AgentMessageLabel from '@/components/AgentMessageLabel';
 import AgentChatFileList from '@/components/AgentChatFileList';
 import AgentApprovalResult from '@/components/AgentApprovalResult';
 import AgentMessageImages from '@/components/AgentMessageImages';
+import AgentSelectionPush from '@/components/AgentSelectionPush';
 import SidebarNavigation from '@/components/SidebarNavigation';
 import SidebarBrandHeader from '@/components/SidebarBrandHeader';
 import ManualModelDialog from '@/components/ManualModelDialog';
@@ -12850,116 +12851,12 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                     notify(`局部编辑范围已设置${coverage ? `（覆盖 ${Math.round(coverage * 100)}%）` : ''}，提交修改时会一并发送`);
                 }
             }),
-            selectionPush && section === 'agent' && /*#__PURE__*/ _jsxs("div", {
-                className: `selection-push ${selectionPush.placement === 'below' ? 'below' : 'above'}`,
-                style: {
-                    left: selectionPush.x,
-                    top: selectionPush.y
-                },
-                onMouseDown: (e)=>e.preventDefault(),
-                children: [
-                    /*#__PURE__*/ _jsxs("section", {
-                        className: "selection-push-group image",
-                        children: [
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "selection-push-group-title",
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "image",
-                                        size: 13
-                                    }),
-                                    /*#__PURE__*/ _jsx("span", {
-                                        children: "图片生成"
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "selection-push-group-actions",
-                                children: [
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "selection-push-jump",
-                                        title: "带入图片提示词并跳转",
-                                        onClick: ()=>pushTextToGenerate(selectionPush.text, true),
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "send",
-                                                size: 12
-                                            }),
-                                            "送入并跳转"
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "selection-push-stay",
-                                        title: "追加到图片提示词，留在当前页面",
-                                        onClick: ()=>pushTextToGenerate(selectionPush.text, false),
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "plus",
-                                                size: 12
-                                            }),
-                                            "继续选择"
-                                        ]
-                                    })
-                                ]
-                            })
-                        ]
-                    }),
-                    /*#__PURE__*/ _jsxs("section", {
-                        className: "selection-push-group video",
-                        children: [
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "selection-push-group-title",
-                                children: [
-                                    /*#__PURE__*/ _jsx(Icon, {
-                                        name: "video",
-                                        size: 13
-                                    }),
-                                    /*#__PURE__*/ _jsx("span", {
-                                        children: "视频生成"
-                                    }),
-                                    !availableVideoModels.length && /*#__PURE__*/ _jsx("small", {
-                                        children: "请先启用模型"
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "selection-push-group-actions",
-                                children: [
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "selection-push-jump",
-                                        title: availableVideoModels.length ? "带入视频提示词并跳转" : "请先在模型库启用视频模型",
-                                        disabled: !availableVideoModels.length,
-                                        onClick: ()=>pushTextToVideo(selectionPush.text, true),
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "send",
-                                                size: 12
-                                            }),
-                                            "送入并跳转"
-                                        ]
-                                    }),
-                                    /*#__PURE__*/ _jsxs("button", {
-                                        type: "button",
-                                        className: "selection-push-stay",
-                                        title: availableVideoModels.length ? "追加到视频提示词，留在当前页面" : "请先在模型库启用视频模型",
-                                        disabled: !availableVideoModels.length,
-                                        onClick: ()=>pushTextToVideo(selectionPush.text, false),
-                                        children: [
-                                            /*#__PURE__*/ _jsx(Icon, {
-                                                name: "plus",
-                                                size: 12
-                                            }),
-                                            "继续选择"
-                                        ]
-                                    })
-                                ]
-                            })
-                        ]
-                    })
-                ]
+            selectionPush && section === 'agent' && /*#__PURE__*/ _jsx(AgentSelectionPush, {
+                selection: selectionPush,
+                availableVideoModelCount: availableVideoModels.length,
+                Icon: Icon,
+                onPushImage: (navigate)=>pushTextToGenerate(selectionPush.text, navigate),
+                onPushVideo: (navigate)=>pushTextToVideo(selectionPush.text, navigate)
             }),
             supportOpen && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(SupportModal, {
                 tab: supportTab,
