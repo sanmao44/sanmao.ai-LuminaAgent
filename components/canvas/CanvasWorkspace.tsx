@@ -351,6 +351,10 @@ import {
   type CanvasSnapGuide,
 } from "@/lib/canvas/snap";
 import { canvasVideoInputError } from "@/lib/canvas/video-input-validation";
+import {
+  copyCanvasGenerationParams,
+  defaultCanvasGenerationParams,
+} from "@/lib/canvas/generation-params";
 import { copyCanvasImageToClipboard } from "@/lib/canvas/clipboard";
 import { generateLocalDepthVideo } from "@/lib/local-depth-video-browser";
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from "@/lib/theme";
@@ -750,21 +754,11 @@ function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
 }
 
-function defaultParams(kind: "image", runtime: CanvasRuntimeState | null): ImageCreationSettings;
-function defaultParams(kind: "video", runtime: CanvasRuntimeState | null): VideoCreationSettings;
-function defaultParams(kind: CanvasGenerationMode, runtime: CanvasRuntimeState | null): CanvasGenerationParams;
-function defaultParams(
-  kind: CanvasGenerationMode,
-  runtime: CanvasRuntimeState | null,
-): CanvasGenerationParams {
-  return readSharedCreationSettings(kind, runtime);
-}
-
 function defaultMediaParams(
   kind: CanvasMediaKind,
   runtime: CanvasRuntimeState | null,
 ): { params?: CanvasGenerationParams } {
-  return kind === "audio" ? {} : { params: defaultParams(kind, runtime) };
+  return kind === "audio" ? {} : { params: defaultCanvasGenerationParams(kind, runtime) };
 }
 
 type CanvasConnectionResult = {
@@ -1143,35 +1137,6 @@ function updateCanvasVideoModeAuto(document: CanvasDocument, targetId: string, a
   };
 }
 
-function copyParams(
-  value: unknown,
-  kind: "image",
-  runtime: CanvasRuntimeState | null,
-): ImageCreationSettings;
-function copyParams(
-  value: unknown,
-  kind: "video",
-  runtime: CanvasRuntimeState | null,
-): VideoCreationSettings;
-function copyParams(
-  value: unknown,
-  kind: CanvasGenerationMode,
-  runtime: CanvasRuntimeState | null,
-): CanvasGenerationParams;
-function copyParams(
-  value: unknown,
-  kind: CanvasGenerationMode,
-  runtime: CanvasRuntimeState | null,
-): CanvasGenerationParams {
-  return normalizeCreationSettings(
-    kind,
-    value && typeof value === "object"
-      ? clone(value as CanvasGenerationParams)
-      : defaultParams(kind, runtime),
-    runtime,
-  );
-}
-
 function generationKey(source: {
   node?: CanvasNode | null;
   target?: CanvasNode | null;
@@ -1191,7 +1156,7 @@ function dataUrlFile(dataUrl: string, name: string) {
 }
 
 function maskParamsWithoutMask(value: unknown, runtime: CanvasRuntimeState | null) {
-  const params = copyParams(value, "image", runtime) as ImageCreationSettings;
+  const params = copyCanvasGenerationParams(value, "image", runtime) as ImageCreationSettings;
   const { mask: _mask, ...withoutMask } = params;
   return withoutMask as ImageCreationSettings;
 }
@@ -3587,10 +3552,10 @@ export default function SuperCanvas() {
 
     const createdAt = Date.now();
     const sourceParams = currentSource.type === "upscale"
-      ? defaultParams("image", runtime)
+      ? defaultCanvasGenerationParams("image", runtime)
       : currentSource.data.generation?.params
         || currentSource.data.params
-        || defaultParams("image", runtime);
+        || defaultCanvasGenerationParams("image", runtime);
     const viewPrompt = `本地导出全景视图 · 水平 ${viewLabel} · 垂直 ${snapshot.pitch}° · 视野 ${snapshot.fov}°`;
     const result = {
       ...createMedia(
@@ -4942,13 +4907,13 @@ export default function SuperCanvas() {
           : kind === "text"
           ? createPrompt(seed)
           : kind === "workflowImage"
-            ? createGenerator("image", seed, defaultParams("image", runtime))
+            ? createGenerator("image", seed, defaultCanvasGenerationParams("image", runtime))
             : kind === "workflowVideo"
-              ? createGenerator("video", seed, defaultParams("video", runtime))
+              ? createGenerator("video", seed, defaultCanvasGenerationParams("video", runtime))
               : createEmptyMedia(
                   mediaKind,
                   seed,
-                  mediaKind === "audio" ? undefined : defaultParams(mediaKind, runtime),
+                  mediaKind === "audio" ? undefined : defaultCanvasGenerationParams(mediaKind, runtime),
                 );
       const point = position ? seed : openNodePosition(seed, draft);
       const node = { ...draft, x: point.x, y: point.y };
@@ -5015,13 +4980,13 @@ export default function SuperCanvas() {
           : kind === "text"
           ? createPrompt(picker.world)
           : kind === "workflowImage"
-            ? createGenerator("image", picker.world, defaultParams("image", runtime))
+            ? createGenerator("image", picker.world, defaultCanvasGenerationParams("image", runtime))
             : kind === "workflowVideo"
-              ? createGenerator("video", picker.world, defaultParams("video", runtime))
+              ? createGenerator("video", picker.world, defaultCanvasGenerationParams("video", runtime))
               : createEmptyMedia(
                   mediaKind,
                   picker.world,
-                  mediaKind === "audio" ? undefined : defaultParams(mediaKind, runtime),
+                  mediaKind === "audio" ? undefined : defaultCanvasGenerationParams(mediaKind, runtime),
                 );
       const size = nodeSize(draft);
       const seed = {
@@ -5689,7 +5654,7 @@ export default function SuperCanvas() {
         return {
           kind: "video" as const,
           prompt: drafts.video.prompt,
-          params: copyParams(drafts.video.params, "video", runtime),
+          params: copyCanvasGenerationParams(drafts.video.params, "video", runtime),
           node: null,
           target: null,
         };
@@ -5697,7 +5662,7 @@ export default function SuperCanvas() {
       return {
         kind: "image" as const,
         prompt: drafts.image.prompt,
-        params: copyParams(drafts.image.params, "image", runtime),
+        params: copyCanvasGenerationParams(drafts.image.params, "image", runtime),
         node: null,
         target: null,
       };
@@ -5727,7 +5692,7 @@ export default function SuperCanvas() {
         return {
           kind: "video" as const,
           prompt,
-          params: copyParams(paramsOverride || activeNode.data.params, "video", runtime),
+          params: copyCanvasGenerationParams(paramsOverride || activeNode.data.params, "video", runtime),
           node: activeNode,
           target: null,
         };
@@ -5735,7 +5700,7 @@ export default function SuperCanvas() {
       return {
         kind: "image" as const,
         prompt,
-        params: copyParams(paramsOverride || activeNode.data.params, "image", runtime),
+        params: copyCanvasGenerationParams(paramsOverride || activeNode.data.params, "image", runtime),
         node: activeNode,
         target: null,
       };
@@ -5750,7 +5715,7 @@ export default function SuperCanvas() {
         return {
           kind: "video" as const,
           prompt,
-          params: copyParams(value, "video", runtime),
+          params: copyCanvasGenerationParams(value, "video", runtime),
           node: null,
           target: activeNode,
         };
@@ -5758,7 +5723,7 @@ export default function SuperCanvas() {
       return {
         kind: "image" as const,
         prompt,
-        params: copyParams(value, "image", runtime),
+        params: copyCanvasGenerationParams(value, "image", runtime),
         node: null,
         target: activeNode,
       };
@@ -5781,7 +5746,7 @@ export default function SuperCanvas() {
       return {
         kind,
         prompt: promptOverride ?? drafts.video.prompt,
-        params: copyParams(paramsOverride || drafts.video.params, "video", runtime),
+        params: copyCanvasGenerationParams(paramsOverride || drafts.video.params, "video", runtime),
         node: null,
         target: null,
       };
@@ -5789,7 +5754,7 @@ export default function SuperCanvas() {
     return {
       kind,
       prompt: promptOverride ?? drafts.image.prompt,
-      params: copyParams(paramsOverride || drafts.image.params, "image", runtime),
+      params: copyCanvasGenerationParams(paramsOverride || drafts.image.params, "image", runtime),
       node: null,
       target: null,
     };
@@ -6075,7 +6040,7 @@ export default function SuperCanvas() {
         const draft = reuseDraftFromNode(
           target,
           references,
-          copyParams(
+          copyCanvasGenerationParams(
             target.data.generation?.params || target.data.params,
             targetKind,
             runtime,
@@ -6329,7 +6294,7 @@ export default function SuperCanvas() {
         ),
       }));
 
-      const sourceParams = copyParams(generator.data.params, kind, runtime);
+      const sourceParams = copyCanvasGenerationParams(generator.data.params, kind, runtime);
       const resolvedModel = resolveAvailableCreationModel(sourceParams, runtime);
       const effectiveParams = {
         ...sourceParams,
@@ -6875,7 +6840,7 @@ export default function SuperCanvas() {
       const draft = reuseDraftFromNode(
         source,
         linkedReferences,
-        copyParams(
+        copyCanvasGenerationParams(
           source.data.generation?.params || source.data.params,
           source.data.kind || "image",
           runtime,
@@ -7168,7 +7133,7 @@ export default function SuperCanvas() {
       return notify("这个图片续生成任务正在处理，请稍候。", "error");
     }
 
-    const paramsWithMask = copyParams(draft.params, "image", runtime) as ImageCreationSettings;
+    const paramsWithMask = copyCanvasGenerationParams(draft.params, "image", runtime) as ImageCreationSettings;
     const params = useCurrentImageAsReference
       ? paramsWithMask
       : (() => {
@@ -7298,7 +7263,7 @@ export default function SuperCanvas() {
           url,
           name,
           { x: outputPosition.x - 430, y: outputPosition.y + index * 300 },
-          { role: "续生成参考素材", params: defaultParams("image", runtime) },
+          { role: "续生成参考素材", params: defaultCanvasGenerationParams("image", runtime) },
         );
         const placed = {
           ...materialized,
@@ -7805,7 +7770,7 @@ export default function SuperCanvas() {
       const draft = reuseDraftFromNode(
         selectedMediaTarget,
         references,
-        copyParams(
+        copyCanvasGenerationParams(
           selectedMediaTarget.data.generation?.params || selectedMediaTarget.data.params,
           targetKind,
           runtime,
@@ -9036,7 +9001,7 @@ export default function SuperCanvas() {
       if (node.type === "prompt") return normalizeCreationSettings("text", node.data.params, runtime);
       if (node.type === "media" && node.data.kind === "audio") return undefined;
       const kind = node.data.kind === "video" ? "video" : "image";
-      return copyParams(node.data.generation?.params || node.data.params, kind, runtime);
+      return copyCanvasGenerationParams(node.data.generation?.params || node.data.params, kind, runtime);
     },
     [editorDrafts, runtime],
   );
@@ -10144,7 +10109,7 @@ export default function SuperCanvas() {
                     (reference): reference is CanvasReferenceDraft =>
                       Boolean(reference),
                   ),
-                copyParams(
+                copyCanvasGenerationParams(
                   node.data.generation?.params || node.data.params,
                   "image",
                   runtime,
@@ -10159,7 +10124,7 @@ export default function SuperCanvas() {
           ? await uploadCanvasAsset(dataUrlFile(moveGuideDataUrl, `move-guide-${node.id}.png`))
           : undefined;
         const liveDraft = editorDrafts[node.id];
-        const settings = copyParams(
+        const settings = copyCanvasGenerationParams(
           liveDraft?.params || existingDraft.params,
           "image",
           runtime,
@@ -10990,7 +10955,7 @@ export default function SuperCanvas() {
       const sourceParams =
         sourceWithImageParams?.data.generation?.params ||
         sourceWithImageParams?.data.params ||
-        defaultParams("image", runtime);
+        defaultCanvasGenerationParams("image", runtime);
       const resultName = `${group.name} · 宫格拼接`;
       const imageOperation: CanvasImageOperationMeta = {
         operation: "grid-compose",
@@ -11090,8 +11055,8 @@ export default function SuperCanvas() {
 
     const sourceDataUrl = await asDataUrl(String(source.data.url));
     const sourceParams = source.type === "upscale"
-      ? defaultParams("image", runtime)
-      : source.data.generation?.params || source.data.params || defaultParams("image", runtime);
+      ? defaultCanvasGenerationParams("image", runtime)
+      : source.data.generation?.params || source.data.params || defaultCanvasGenerationParams("image", runtime);
     const sourceName = String(source.data.name || "图片");
     const createdAt = Date.now();
     const operationLabel = request.operation === "outpaint"
@@ -12158,7 +12123,7 @@ export default function SuperCanvas() {
   const deckModelState = resolveAvailableCreationModel(deck.params, runtime);
   const maskNode = maskNodeId ? nodeById(document, maskNodeId) : undefined;
   const maskSettings = maskNode
-    ? (copyParams(
+    ? (copyCanvasGenerationParams(
         maskNode.data.generation?.params || maskNode.data.params,
         "image",
         runtime,

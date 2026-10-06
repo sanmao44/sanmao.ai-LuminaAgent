@@ -637,3 +637,23 @@ hardening work when the trigger applies.
 - Remaining risk: generation submission still combines request normalization,
   API invocation, polling, and document updates. It needs a complete
   request/result contract before a safe extraction.
+
+### Stage 5 generation parameter boundary checkpoint (2026-10-06)
+
+- `lib/canvas/generation-params.ts` now owns the pure canvas boundary for
+  reading shared generation defaults and copying/normalizing existing image,
+  video, and Agent parameters. It delegates to the existing creation settings
+  source of truth and the existing canvas deep-clone implementation.
+- `CanvasWorkspace.tsx` no longer defines `defaultParams` or `copyParams`; all
+  existing call sites use the extracted functions. API calls, provider
+  selection, task orchestration, CanvasCore mutation, and persistence remain in
+  Workspace.
+- Behavior coverage verifies shared-default delegation, deep-copy isolation,
+  normalization delegation, and fallback behavior for invalid input. No URL,
+  API payload, persisted shape, or user interaction changed.
+- Validation: targeted generation parameter tests and `npm run typecheck`
+  passed. Full `npm test`, `npm run build`, and `npm run check` remain required
+  before committing this checkpoint.
+- Remaining risk: generation submission still combines request normalization,
+  API invocation, polling, and document updates. `generationKey` remains in
+  Workspace because it is coupled to deck source and UI lifecycle state.
