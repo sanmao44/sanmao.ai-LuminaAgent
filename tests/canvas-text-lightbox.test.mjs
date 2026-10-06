@@ -14,6 +14,10 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const textStyles = await readFile(
+  new URL("../app/canvas-text-lightbox.css", import.meta.url),
+  "utf8",
+);
 
 function sliceBetween(source, startText, endText) {
   const start = source.indexOf(startText);
@@ -89,9 +93,10 @@ test("editing a completed reply preserves its Agent response identity", () => {
 });
 
 test("lightbox edit and selection styles are responsive", () => {
-  assert.match(styles, /\.canvas-text-lightbox\.is-editing\{[^}]*width:min\(1080px,100%\)/);
-  assert.match(styles, /\.canvas-text-edit-stage\{[^}]*flex:1/);
+  assert.match(textStyles, /\.canvas-text-lightbox\.is-editing\{[^}]*width:min\(1080px,100%\)/);
+  assert.match(textStyles, /\.canvas-text-edit-stage\{[^}]*flex:1/);
   assert.match(styles, /\.canvas-text-selection-toolbar\{[^}]*position:fixed/);
   assert.match(styles, /\.canvas-text-selection-toolbar\.below\{/);
-  assert.match(styles, /@media\(max-width:720px\)\{[\s\S]*?\.canvas-text-lightbox\.is-editing/);
+  assert.match(textStyles, /@media\(max-width:720px\)\{[\s\S]*?\.canvas-text-lightbox\.is-editing/);
+  assert.doesNotMatch(styles, /\.canvas-text-lightbox\{width:min\(900px,100%\)/);
 });

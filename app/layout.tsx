@@ -8,6 +8,7 @@ import './canvas.css';
 import './canvas-panorama.css';
 import './canvas-activity.css';
 import './canvas-processing.css';
+import './canvas-text-lightbox.css';
 import './canvas-arrangement.css';
 import './canvas-cinematic.css';
 import './canvas-video-clip.css';

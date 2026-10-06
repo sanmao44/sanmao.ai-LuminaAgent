@@ -1473,3 +1473,18 @@ hardening work when the trigger applies.
   Validation: focused panorama/activity tests passed (11/11), `npm run
   typecheck` passed, full `npm run check` passed (1832 tests passed, 2 skipped;
   production build succeeded), and `git diff --check` passed.
+
+### Stage 6 text lightbox CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-text-lightbox.css` now owns the text response lightbox shell,
+  prompt, editor mode, body, footer, and responsive rules. The shared text
+  selection toolbar remains in `app/canvas.css` because the Agent dock uses the
+  same selector; cursor and shadow overrides remain in their existing shared
+  sheets.
+- `CanvasTextLightbox.tsx` remains the owner of text selection, clipboard,
+  editing, save, and node action callbacks. No CanvasCore or Agent behavior
+  moved.
+- The lightbox behavior test now reads the moved presentation rules from the
+  domain stylesheet. Validation: focused text/cursor tests passed (11/11),
+  `npm run typecheck` passed, full `npm run check` passed (1832 tests passed,
+  2 skipped; production build succeeded), and `git diff --check` passed.
