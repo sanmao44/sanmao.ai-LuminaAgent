@@ -4,6 +4,42 @@ import { canvasVariantBatchStatus } from "./variant-status";
 
 export type CanvasVariantBatchMode = "all" | "failed" | "pending";
 
+/** Projects variant image settings into the existing canvas image API shape. */
+export function canvasVariantImageRequest(input: {
+  taskId: string;
+  prompt: string;
+  params: ImageCreationSettings;
+  references: readonly { url: string; name?: string }[];
+}) {
+  const { params } = input;
+  return {
+    taskId: input.taskId,
+    prompt: input.prompt,
+    model: params.model,
+    count: params.count,
+    aspect:
+      params.aspect === "鑷畾涔?"
+        ? `${params.customAspectWidth}:${params.customAspectHeight}`
+        : params.aspect,
+    resolution: params.resolution,
+    quality: params.quality,
+    sizeMode: params.sizeMode,
+    ...(params.sizeMode === "custom"
+      ? { width: params.width, height: params.height }
+      : {}),
+    outputFormat: params.outputFormat,
+    background:
+      params.backgroundMode === "api-transparent"
+        ? ("transparent" as const)
+        : params.backgroundMode === "opaque"
+          ? ("opaque" as const)
+          : undefined,
+    maskUrl: params.mask?.url,
+    moveGuideUrl: params.mask?.sourceUrl,
+    references: input.references.map((reference) => ({ ...reference })),
+  };
+}
+
 export function canvasVideoTaskProgress(task: {
   status: string;
   progress?: number;

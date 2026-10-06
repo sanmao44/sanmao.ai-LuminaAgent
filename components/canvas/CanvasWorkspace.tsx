@@ -373,6 +373,7 @@ import {
   applyCanvasVariantStatePatch,
   canvasVariantImageNodeData,
   canvasVideoTaskProgress,
+  canvasVariantImageRequest,
   canvasVariantVideoNodeData,
   prepareCanvasVariantBatch,
 } from "@/lib/canvas/variant-batch";
@@ -6144,32 +6145,14 @@ export default function SuperCanvas() {
             if (kind === "image") {
               const imageParams = effectiveParams as ImageCreationSettings;
               const generationStartedAt = Date.now();
-              const result = await generateCanvasImage({
-                taskId: uid("image-task"),
-                prompt,
-                model: imageParams.model,
-                count: imageParams.count,
-                aspect:
-                  imageParams.aspect === "自定义"
-                    ? `${imageParams.customAspectWidth}:${imageParams.customAspectHeight}`
-                    : imageParams.aspect,
-                resolution: imageParams.resolution,
-                quality: imageParams.quality,
-                sizeMode: imageParams.sizeMode,
-                ...(imageParams.sizeMode === "custom"
-                  ? { width: imageParams.width, height: imageParams.height }
-                  : {}),
-                outputFormat: imageParams.outputFormat,
-                background:
-                  imageParams.backgroundMode === "api-transparent"
-                    ? "transparent"
-                    : imageParams.backgroundMode === "opaque"
-                      ? "opaque"
-                      : undefined,
-                maskUrl: imageParams.mask?.url,
-                moveGuideUrl: imageParams.mask?.sourceUrl,
-                references: refs,
-              });
+              const result = await generateCanvasImage(
+                canvasVariantImageRequest({
+                  taskId: uid("image-task"),
+                  prompt,
+                  params: imageParams,
+                  references: refs,
+                }),
+              );
               if (!result.images?.length)
                 throw new Error("服务端没有返回图片结果。");
               const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);

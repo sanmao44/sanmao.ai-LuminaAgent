@@ -164,6 +164,48 @@ test("projects image variant provenance and duration without owning node creatio
   });
 });
 
+test("maps image variant settings into the existing generation request shape", () => {
+  const request = batch.canvasVariantImageRequest({
+    taskId: "image-task-1",
+    prompt: "portrait",
+    params: {
+      kind: "image",
+      model: "image-model",
+      aspect: "鑷畾涔?",
+      customAspectWidth: 7,
+      customAspectHeight: 5,
+      sizeMode: "custom",
+      width: 1400,
+      height: 1000,
+      resolution: "2K",
+      count: 2,
+      quality: "high",
+      outputFormat: "png",
+      backgroundMode: "api-transparent",
+      mask: { url: "/mask.png", sourceUrl: "/guide.png" },
+    },
+    references: [{ url: "/source.png", name: "source" }],
+  });
+
+  assert.deepEqual(request, {
+    taskId: "image-task-1",
+    prompt: "portrait",
+    model: "image-model",
+    count: 2,
+    aspect: "7:5",
+    resolution: "2K",
+    quality: "high",
+    sizeMode: "custom",
+    width: 1400,
+    height: 1000,
+    outputFormat: "png",
+    background: "transparent",
+    maskUrl: "/mask.png",
+    moveGuideUrl: "/guide.png",
+    references: [{ url: "/source.png", name: "source" }],
+  });
+});
+
 test("prepares only requested failed variants and preserves retry results", () => {
   const retained = { id: "variant-1", instruction: "one", status: "completed", resultIds: ["image-1"] };
   const failed = { id: "variant-2", instruction: "old", status: "failed", resultIds: ["image-2"], taskIds: ["task-2"] };

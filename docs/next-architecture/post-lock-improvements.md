@@ -1834,3 +1834,11 @@ hardening work when the trigger applies.
 - Behavior coverage verifies source provenance, reference provenance, and duration preservation without changing node shape or generation flow.
 - Validation: focused variant batch tests passed (11/11); `npm run typecheck` passed; full `npm run check` passed (1850 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
 - Remaining risk: variant task submission and result orchestration remain coordinated by `CanvasWorkspace.tsx`; further extraction should continue through pure projections or explicit service boundaries without introducing a second task runtime.
+
+### Stage 5 variant image request projection checkpoint (2026-10-06)
+
+- `canvasVariantImageRequest` in `lib/canvas/variant-batch.ts` now owns the pure mapping from image variant settings to the existing `generateCanvasImage` request shape, including custom aspect, size, background, mask, move guide, and references.
+- `CanvasWorkspace.tsx` keeps the request call, provider/API boundary, result node creation, edge creation, batch state, and history side effects; it no longer assembles those request fields inline.
+- Behavior coverage verifies the mapped request shape and preserves the existing API payload contract.
+- Validation: focused variant batch tests passed (9/9); `npm run check` passed (1851 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
+- Remaining risk: variant video request mapping and the surrounding task polling remain coupled to Workspace; extract them only with equivalent request and polling behavior coverage.
