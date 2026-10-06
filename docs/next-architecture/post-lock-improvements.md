@@ -1488,3 +1488,19 @@ hardening work when the trigger applies.
   domain stylesheet. Validation: focused text/cursor tests passed (11/11),
   `npm run typecheck` passed, full `npm run check` passed (1832 tests passed,
   2 skipped; production build succeeded), and `git diff --check` passed.
+
+### Stage 6 canvas task log CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-task-log.css` now owns task log card layout, status and preview
+  styling, metadata chips, lineage details, compact grid areas, and responsive
+  rules. `app/layout.tsx` loads it after the base canvas sheet and before the
+  shared shadow/theme overrides.
+- `app/canvas.css` retains the shared task/activity scroll behavior and the
+  task filter controls. `app/shadow-tuning.css` continues to own shared shadow
+  and light-theme card treatments. `CanvasActivityDrawer.tsx` keeps activity
+  projection, selection, media actions, and scroll restoration.
+- Task log presentation assertions now read the domain sheet. No task data,
+  interaction, CanvasCore ownership, API, or persistence behavior changed.
+- Validation: focused activity drawer tests passed (7/7); `npm run check`
+  passed (1832 tests passed, 2 skipped; production build succeeded); and
+  `git diff --check` passed.

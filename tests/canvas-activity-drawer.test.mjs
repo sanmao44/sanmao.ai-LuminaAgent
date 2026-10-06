@@ -11,6 +11,10 @@ const workspace = await readFile(
   "utf8",
 );
 const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
+const taskLogStyles = await readFile(
+  new URL("../app/canvas-task-log.css", import.meta.url),
+  "utf8",
+);
 const activityStyles = await readFile(
   new URL("../app/canvas-activity.css", import.meta.url),
   "utf8",
@@ -41,11 +45,11 @@ test("task log metadata keeps the important output details visually distinct", (
   assert.match(component, /className="canvas-task-log-meta-duration"/);
   assert.match(component, /className="canvas-task-log-meta-size"/);
   assert.match(
-    styles,
+    taskLogStyles,
     /\.canvas-task-log-meta span\{[^}]*min-height:22px[^}]*font-size:8px[^}]*font-weight:800/,
   );
-  assert.match(styles, /\.canvas-task-log-meta-count\{[^}]*color:var\(--accent-text\)/);
-  assert.match(styles, /\.canvas-task-log-meta-duration\{[^}]*color:var\(--warning\)/);
+  assert.match(taskLogStyles, /\.canvas-task-log-meta-count\{[^}]*color:var\(--accent-text\)/);
+  assert.match(taskLogStyles, /\.canvas-task-log-meta-duration\{[^}]*color:var\(--warning\)/);
 });
 
 test("activity drawer owns its responsive event-row presentation", () => {
@@ -57,9 +61,9 @@ test("activity drawer owns its responsive event-row presentation", () => {
 });
 
 test("task log keeps preview actions beside metadata instead of wasting a full row", () => {
-  assert.match(styles, /\.canvas-task-log-card\{[^}]*grid-template-areas:"preview main status" "preview meta actions"/);
-  assert.match(styles, /\.canvas-task-log-meta\{[^}]*grid-area:meta/);
-  assert.match(styles, /\.canvas-task-log-actions\{[^}]*grid-area:actions/);
+  assert.match(taskLogStyles, /\.canvas-task-log-card\{[^}]*grid-template-areas:"preview main status" "preview meta actions"/);
+  assert.match(taskLogStyles, /\.canvas-task-log-meta\{[^}]*grid-area:meta/);
+  assert.match(taskLogStyles, /\.canvas-task-log-actions\{[^}]*grid-area:actions/);
   assert.match(workspace, /if \(lightboxReturnPanel\) setActivePanel\(lightboxReturnPanel\);/);
 });
 
