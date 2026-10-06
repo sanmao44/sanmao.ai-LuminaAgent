@@ -2000,3 +2000,12 @@ hardening work when the trigger applies.
 - Behavior coverage renders the toolbar and invokes both search and clear callbacks through its contract.
 - Validation: focused provider tests passed (6/6), `npm run typecheck` passed, full `npm run check` passed (1861 tests passed, 2 skipped; production build succeeded), and `git diff --check` passed.
 - Remaining risk: the provider form fields and Jimeng configuration remain coupled to page-owned draft and API lifecycle and are intentionally not moved in this slice.
+
+### Stage 6 provider preset summary checkpoint (2026-10-07)
+
+- `components/ProviderPresetSummary.tsx` now owns the selected preset's automatic-configuration note, descriptive notice, and API Key link presentation.
+- `app/page.tsx` keeps preset selection and draft state; the summary receives the existing `ProviderPreset` and display icon only.
+- Existing labels, CSS classes, URL target, notice tone, and selection behavior remain unchanged. No new state, API, contract source, or compatibility path was added.
+- Behavior coverage renders the summary with a representative provider preset and verifies its notice and key link.
+- Validation: focused provider tests passed (38/38), `npm run typecheck` passed, full `npm run check` passed (1862 tests passed, 2 skipped; production build succeeded), and `git diff --check` passed.
+- Remaining risk: provider fields, Agnes-specific edit guidance, and Jimeng login remain attached to the page-owned draft and connection lifecycle.

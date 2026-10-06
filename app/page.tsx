@@ -123,6 +123,7 @@ import AdminLogin from '@/components/AdminLogin';
 import ProviderList from '@/components/ProviderList';
 import ProviderPlatformPicker from '@/components/ProviderPlatformPicker';
 import ProviderListToolbar from '@/components/ProviderListToolbar';
+import ProviderPresetSummary from '@/components/ProviderPresetSummary';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SupportModal from '@/components/SupportModal';
 import SharePreviewModal from '@/components/SharePreviewModal';
@@ -11332,44 +11333,11 @@ export default function Page() {
                                                 onSelect: applyProviderPreset
                                             }),
 
-                                            /*#__PURE__*/ _jsxs("div", {
-                                                className: "provider-auto-note",
-                                                children: [
-                                                    /*#__PURE__*/ _jsx(Icon, {
-                                                        name: "check",
-                                                        size: 18
-                                                    }),
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("strong", {
-                                                                children: selectedProviderPreset.label
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("span", {
-                                                                children: selectedProviderPreset.description
-                                                            }),
-                                                            selectedProviderPreset.notice && /*#__PURE__*/ _jsx("small", {
-                                                                className: `provider-preset-notice ${selectedProviderPreset.noticeTone === 'success' ? 'success' : ''}`,
-                                                                children: selectedProviderPreset.notice
-                                                            })
-                                                        ]
-                                                    }),
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        className: "provider-auto-note-actions",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("em", {
-                                                                children: "兼容参数已自动配置"
-                                                            }),
-                                                            selectedProviderPreset.apiKeyUrl && /*#__PURE__*/ _jsx("a", {
-                                                                className: "provider-key-link",
-                                                                href: selectedProviderPreset.apiKeyUrl,
-                                                                target: "_blank",
-                                                                rel: "noreferrer",
-                                                                children: "↗ 一键获取 API Key"
-                                                            })
-                                                        ]
-                                                    })
-                                                ]
+                                            /*#__PURE__*/ _jsx(ProviderPresetSummary, {
+                                                preset: selectedProviderPreset,
+                                                Icon: Icon
                                             }),
+
                                             /*#__PURE__*/ _jsxs("div", {
                                                 className: "provider-fields provider-simple-fields",
                                                 children: [

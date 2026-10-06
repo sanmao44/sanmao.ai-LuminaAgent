@@ -13,6 +13,7 @@ const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), '
 const providerListSource = await readFile(new URL('../components/ProviderList.tsx', import.meta.url), 'utf8');
 const platformPickerSource = await readFile(new URL('../components/ProviderPlatformPicker.tsx', import.meta.url), 'utf8');
 const providerToolbarSource = await readFile(new URL('../components/ProviderListToolbar.tsx', import.meta.url), 'utf8');
+const providerPresetSummarySource = await readFile(new URL('../components/ProviderPresetSummary.tsx', import.meta.url), 'utf8');
 const providerListModule = { exports: {} };
 const providerListCompiled = ts.transpileModule(providerListSource, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -55,6 +56,18 @@ vm.runInNewContext(providerToolbarCompiled, {
   },
 });
 const ProviderListToolbar = providerToolbarModule.exports.default;
+const providerPresetSummaryModule = { exports: {} };
+const providerPresetSummaryCompiled = ts.transpileModule(providerPresetSummarySource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText;
+vm.runInNewContext(providerPresetSummaryCompiled, {
+  exports: providerPresetSummaryModule.exports,
+  require(id) {
+    if (id === 'react/jsx-runtime') return require('react/jsx-runtime');
+    throw new Error(`Unexpected ProviderPresetSummary dependency: ${id}`);
+  },
+});
+const ProviderPresetSummary = providerPresetSummaryModule.exports.default;
 
 test('first-run provider setup modal can be dismissed', () => {
   assert.match(pageSource, /const PROVIDER_SETUP_DISMISSED_STORAGE_KEY = 'sanmao-provider-setup-dismissed';/);
@@ -173,4 +186,18 @@ test('provider list toolbar forwards search edits and clear actions', () => {
   label.props.children[1].props.onChange({ target: { value: 'agnes' } });
   label.props.children[2].props.onClick();
   assert.deepEqual(values, ['agnes', '']);
+});
+
+test('provider preset summary presents the selected preset and key link', () => {
+  const Icon = ({ name }) => createElement('i', { 'data-icon': name });
+  const preset = {
+    value: 'openai', label: 'OpenAI', short: 'OpenAI', description: '官方 API 地址已内置',
+    type: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', needsBaseUrl: false,
+    apiKeyUrl: 'https://platform.openai.com/api-keys', notice: '推荐', noticeTone: 'success',
+  };
+  const markup = renderToStaticMarkup(createElement(ProviderPresetSummary, { preset, Icon }));
+  assert.match(markup, /class="provider-auto-note"/);
+  assert.match(markup, /官方 API 地址已内置/);
+  assert.match(markup, /兼容参数已自动配置/);
+  assert.match(markup, /href="https:\/\/platform.openai.com\/api-keys"/);
 });
