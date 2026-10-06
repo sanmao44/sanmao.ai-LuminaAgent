@@ -857,3 +857,26 @@ hardening work when the trigger applies.
 - Remaining risk: conversation loading and Agent retry/persistence side
   effects still span the page component and Repository boundary; this slice
   moves only pure normalization and does not change their ownership.
+
+### Stage 6 canvas clipboard payload checkpoint (2026-10-06)
+
+- `lib/canvas/clipboard-payload.ts` now owns the Canvas clipboard payload
+  contract, payload validation, selected-node filtering, reference remapping,
+  node duplication, and internal edge/group duplication.
+- `CanvasWorkspace.tsx` keeps browser clipboard read/write, image and text
+  file handling, screen/world placement, collision avoidance, CanvasCore
+  commits, selection updates, and user notifications. It no longer defines a
+  second clipboard payload or duplicate-node implementation.
+- The new module reuses the existing `CanvasDocument`, `CanvasNode`,
+  `CanvasEdge`, `CanvasGroup`, `clone`, and `uid` authorities. No new store,
+  persisted shape, API contract, or compatibility path was added.
+- Behavior coverage verifies payload filtering and deep-copy isolation,
+  version validation, ID/reference remapping, and preservation of requested
+  group/input connections. Existing canvas dock and system clipboard tests
+  continue to pass.
+- Validation: targeted Canvas tests and `npm run typecheck` passed. Full
+  `npm test`, `npm run build`, `npm run check`, and `git diff --check` remain
+  required before committing this checkpoint.
+- Remaining risk: paste placement and browser clipboard permissions still
+  depend on Workspace interaction state; they remain there because moving them
+  would couple a pure payload contract to viewport and file-drop behavior.

@@ -153,7 +153,6 @@ test("the Agent can group or duplicate a selected workflow as one undoable plan"
   assert.match(context, /\(\?:命名为\|名为\|叫\)/);
   assert.match(context, /\.{3}\(groupName \? \{ groupName \} : \{\}\)/);
   assert.match(canvas, /if \(command === "duplicate-selection"\)/);
-  assert.match(canvas, /const copies = duplicateNodes\(/);
   assert.match(canvas, /const branchOffsetX = selectedForCopy\.length/);
   assert.match(canvas, /\{ x: branchOffsetX, y: 0 \}/);
   assert.match(canvas, /nodes: \[\.\.\.next\.nodes, \.\.\.copies\.nodes\]/);

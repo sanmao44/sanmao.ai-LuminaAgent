@@ -87,10 +87,6 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(contextMenuComponent, /className=\{`canvas-context-menu\$\{className/);
   assert.match(component, /label: "复制节点"/);
   assert.match(component, /label: "创建副本"/);
-  assert.match(component, /preserveGroupConnections = false/);
-  assert.match(component, /selectedEntityIds = preserveGroupConnections/);
-  assert.match(component, /edge\.sourceNodeIds\?\.some\(\(id\) => selectedIds\.has\(id\)\)/);
-  assert.match(component, /sourceNodeIds: edge\.sourceNodeIds\.map\(\(id\) => idMap\.get\(id\) \|\| id\)/);
   assert.match(component, /保留组内及边界连线/);
   assert.match(contextMenu, /label: "复制图片"/);
   assert.match(contextMenu, /label: "图片编辑"/);
