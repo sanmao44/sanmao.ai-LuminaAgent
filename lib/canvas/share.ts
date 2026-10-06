@@ -1,13 +1,13 @@
 import { buildShareImageLayout, buildSharePromptPlan } from "@/lib/share-image-layout";
 
 export type CanvasShareReference = {
-  id: string;
+  id?: string;
   name: string;
   url: string;
   kind?: "image" | "video";
 };
 
-export type CanvasShareItem = {
+export type ShareImageItem = {
   id: string;
   url: string;
   name?: string;
@@ -135,7 +135,9 @@ function shareDate(value: CanvasShareItem["createdAt"]) {
  * Canvas references are intentionally supplied by the caller because they come
  * from canvas edges instead of the gallery record shape.
  */
-export async function downloadCanvasShareImage(item: CanvasShareItem) {
+export type CanvasShareItem = ShareImageItem;
+
+export async function downloadCanvasShareImage(item: ShareImageItem) {
   const references = (item.references || []).filter(
     (reference) => reference.url && reference.kind !== "video",
   );

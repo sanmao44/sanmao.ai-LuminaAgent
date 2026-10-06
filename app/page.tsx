@@ -24,9 +24,9 @@ import { getFavoriteModelIds, getLastModelCall, getRecentModelIds, recordModelCa
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { filterModelsByActiveProviders, isProviderModelLibraryEnabled } from '@/lib/provider-availability';
 import { galleryReferences, normalizeReferenceRecords, referenceCount } from '@/lib/reference-images';
-import { buildShareImageLayout, buildSharePromptPlan } from '@/lib/share-image-layout';
 import { buildShareConversationLayout } from '@/lib/share-conversation-layout';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
+import { downloadCanvasShareImage } from '@/lib/canvas/share';
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, extractGithubRepositoryUrl, isGithubMcpInstallFollowUp, isGithubMcpInstallHandoff, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable, resolveCreativeRoute } from '@/lib/agent-intent';
 import { conversationImage, conversationMessageText } from '@/lib/agent-context';
@@ -271,9 +271,18 @@ async function downloadUrl(url, filename) {
         a.remove();
     }
 }
-function truncateCanvasText(value, max = 28) {
-    const text = String(value || '').trim();
-    return text.length > max ? `${text.slice(0, Math.max(1, max - 1))}…` : text;
+async function downloadShareImage(item) {
+    const references = galleryReferences(item).filter((reference) => reference.kind === 'image' && reference.url);
+    if (!references.length) throw new Error('这张图片没有保存参考图，无法生成分享版');
+    return downloadCanvasShareImage({
+        id: item.id,
+        url: item.url,
+        name: item.name,
+        prompt: item.prompt,
+        modelName: item.modelName,
+        createdAt: item.createdAt,
+        references,
+    });
 }
 function loadCanvasImage(url) {
     return new Promise((resolve, reject) => {
@@ -305,266 +314,9 @@ function roundCanvasRect(context, x, y, width, height, radius) {
     context.arcTo(x, y, x + width, y, r);
     context.closePath();
 }
-function drawCanvasPill(context, x, y, width, height, fill, stroke) {
-    roundCanvasRect(context, x, y, width, height, height / 2);
-    context.fillStyle = fill;
-    context.fill();
-    if (stroke) {
-        roundCanvasRect(context, x, y, width, height, height / 2);
-        context.strokeStyle = stroke;
-        context.lineWidth = 1;
-        context.stroke();
-    }
-}
-function drawCanvasImageContain(context, image, x, y, width, height, radius = 0) {
-    const imageRect = containCanvasRect(image.naturalWidth, image.naturalHeight, x, y, width, height);
-    context.save();
-    if (radius > 0) {
-        roundCanvasRect(context, x, y, width, height, radius);
-        context.clip();
-    }
-    context.drawImage(image, imageRect.x, imageRect.y, imageRect.width, imageRect.height);
-    context.restore();
-    return imageRect;
-}
-async function downloadShareImage(item) {
-    const references = galleryReferences(item).filter((reference)=>reference.kind === 'image' && reference.url);
-    if (!references.length) throw new Error('这张图片没有保存参考图，无法生成分享版');
-    const images = await Promise.all([
-        loadCanvasImage(item.url),
-        ...references.map((reference) => loadCanvasImage(reference.url)),
-        loadCanvasImage('/brand-mark.png'),
-        loadCanvasImage('/share-qr.png')
-    ]);
-    const resultImage = images[0];
-    const referenceImages = images.slice(1, references.length + 1);
-    const brandImage = images[references.length + 1];
-    const qrImage = images[references.length + 2];
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('浏览器不支持分享版图片生成');
-    const shareFont = '"Segoe UI", "Microsoft YaHei", sans-serif';
-    const promptMeasure = (value, fontSize = 22) => {
-        context.font = `500 ${fontSize}px ${shareFont}`;
-        return context.measureText(value).width;
-    };
-    const promptPlan = buildSharePromptPlan(item.prompt || '', promptMeasure, 1232);
-    const layout = buildShareImageLayout({
-        resultWidth: resultImage.naturalWidth,
-        resultHeight: resultImage.naturalHeight,
-        promptPlan,
-        referenceCount: references.length,
-    });
-    if (layout.overflow) throw new Error('提示词过长，无法在单张分享 PNG 中完整排版；请在应用内复制提示词后分享。');
-    canvas.width = layout.canvasWidth;
-    canvas.height = layout.canvasHeight;
-    context.fillStyle = '#eef1f6';
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    const backgroundGlow = context.createLinearGradient(0, 0, canvas.width, canvas.height);
-    backgroundGlow.addColorStop(0, 'rgba(117, 104, 245, .08)');
-    backgroundGlow.addColorStop(.42, 'rgba(255, 255, 255, 0)');
-    backgroundGlow.addColorStop(1, 'rgba(53, 193, 151, .08)');
-    context.fillStyle = backgroundGlow;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.fillStyle = 'rgba(117, 104, 245, .08)';
-    context.beginPath();
-    context.arc(canvas.width - 18, 30, 180, 0, Math.PI * 2);
-    context.fill();
-    context.fillStyle = 'rgba(53, 193, 151, .06)';
-    context.beginPath();
-    context.arc(35, layout.footerY + 100, 180, 0, Math.PI * 2);
-    context.fill();
-
-    const logoSize = 60;
-    context.shadowColor = 'rgba(25,35,56,.16)';
-    context.shadowBlur = 18;
-    context.shadowOffsetY = 6;
-    roundCanvasRect(context, layout.padding, 28, logoSize, logoSize, 16);
-    context.fillStyle = '#08090d';
-    context.fill();
-    context.shadowColor = 'transparent';
-    context.shadowBlur = 0;
-    context.shadowOffsetY = 0;
-    drawCanvasImageContain(context, brandImage, layout.padding, 28, logoSize, logoSize, 16);
-    context.fillStyle = '#182238';
-    context.font = `800 30px ${shareFont}`;
-    context.fillText('SANMAO.AI', layout.padding + 80, 54);
-    context.fillStyle = '#68758a';
-    context.font = `500 15px ${shareFont}`;
-    context.fillText('AI 创作工作台  ·  IMAGE SHARE', layout.padding + 82, 80);
-    const headerPillWidth = 270;
-    const headerPillX = canvas.width - layout.padding - headerPillWidth;
-    drawCanvasPill(context, headerPillX, 34, headerPillWidth, 42, 'rgba(255,255,255,.78)', '#d9deea');
-    context.fillStyle = '#7568f5';
-    context.font = `800 11px ${shareFont}`;
-    context.fillText('IMAGE / RESULT', headerPillX + 18, 52);
-    context.fillStyle = '#7d8798';
-    context.font = `500 11px ${shareFont}`;
-    context.textAlign = 'right';
-    context.fillText(new Date(item.createdAt).toLocaleDateString('zh-CN'), headerPillX + headerPillWidth - 18, 52);
-    context.textAlign = 'left';
-    context.fillStyle = '#9aa3b1';
-    context.font = `500 11px ${shareFont}`;
-    context.fillText('GENERATIVE IMAGE  ·  SANMAO.AI', headerPillX + 18, 67);
-
-    context.fillStyle = '#ffffff';
-    context.shadowColor = 'rgba(25,35,56,.12)';
-    context.shadowBlur = 24;
-    context.shadowOffsetY = 8;
-    roundCanvasRect(context, layout.resultFrame.x, layout.resultFrame.y, layout.resultFrame.width, layout.resultFrame.height, 20);
-    context.fill();
-    context.shadowColor = 'transparent';
-    context.shadowBlur = 0;
-    context.shadowOffsetY = 0;
-    context.fillStyle = '#192338';
-    context.font = `800 12px ${shareFont}`;
-    context.fillText('GENERATED IMAGE', layout.resultFrame.x + 28, layout.resultFrame.y + 18);
-    context.fillStyle = '#9aa3b1';
-    context.font = `500 12px ${shareFont}`;
-    context.textAlign = 'right';
-    context.fillText(`${truncateCanvasText(item.modelName || '图片模型', 42)}  ·  ${new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false })}`, layout.resultFrame.x + layout.resultFrame.width - 28, layout.resultFrame.y + 18);
-    context.textAlign = 'left';
-    drawCanvasImageContain(context, resultImage, layout.resultContent.x, layout.resultContent.y, layout.resultContent.width, layout.resultContent.height, 12);
-    context.strokeStyle = '#e4e7ef';
-    context.lineWidth = 1;
-    roundCanvasRect(context, layout.resultContent.x, layout.resultContent.y, layout.resultContent.width, layout.resultContent.height, 12);
-    context.stroke();
-    context.fillStyle = '#ffffff';
-    context.shadowColor = 'rgba(25,35,56,.08)';
-    context.shadowBlur = 18;
-    context.shadowOffsetY = 5;
-    roundCanvasRect(context, layout.promptFrame.x, layout.promptFrame.y, layout.promptFrame.width, layout.promptFrame.height, 18);
-    context.fill();
-    context.shadowColor = 'transparent';
-    context.shadowBlur = 0;
-    context.shadowOffsetY = 0;
-    context.fillStyle = '#7568f5';
-    roundCanvasRect(context, layout.promptFrame.x + 28, layout.promptFrame.y + 24, 6, 30, 3);
-    context.fill();
-    context.fillStyle = '#192338';
-    context.font = `700 22px ${shareFont}`;
-    context.fillText('提示词', layout.promptFrame.x + 50, layout.promptFrame.y + 48);
-    context.fillStyle = '#8792a3';
-    context.font = `500 13px ${shareFont}`;
-    context.fillText('用户提交内容', layout.promptFrame.x + 50, layout.promptFrame.y + 70);
-    const promptStartY = layout.promptFrame.y + 98;
-    const promptStartX = layout.promptFrame.x + 28;
-    const promptColumnWidth = promptPlan.columnWidth;
-    promptPlan.columns.forEach((column, columnIndex) => {
-        const x = promptStartX + columnIndex * (promptColumnWidth + promptPlan.columnGap);
-        let y = promptStartY;
-        context.fillStyle = '#526075';
-        context.font = `500 ${promptPlan.fontSize}px ${shareFont}`;
-        column.forEach((line) => {
-            if (!line) {
-                y += promptPlan.lineHeight + promptPlan.paragraphGap;
-                return;
-            }
-            context.fillText(line, x, y + promptPlan.fontSize);
-            y += promptPlan.lineHeight;
-        });
-    });
-    context.fillStyle = '#192338';
-    context.font = `700 23px ${shareFont}`;
-    context.fillText(`参考图（按提交顺序 · ${references.length} 张）`, layout.padding, layout.referenceHeadingY + 24);
-    const tileWidth = layout.referenceTileWidth;
-    const tileHeight = layout.referenceTileHeight;
-    const tileGap = layout.referenceTileGap;
-    references.forEach((reference, index) => {
-        const column = index % layout.referenceColumns;
-        const row = Math.floor(index / layout.referenceColumns);
-        const x = layout.padding + column * (tileWidth + tileGap);
-        const y = layout.referenceTilesY + row * (tileHeight + tileGap);
-        context.fillStyle = '#ffffff';
-        context.shadowColor = 'rgba(25,35,56,.08)';
-        context.shadowBlur = 14;
-        context.shadowOffsetY = 4;
-        roundCanvasRect(context, x, y, tileWidth, tileHeight, 14);
-        context.fill();
-        context.shadowColor = 'transparent';
-        context.shadowBlur = 0;
-        context.shadowOffsetY = 0;
-        const referenceImage = referenceImages[index];
-        drawCanvasImageContain(context, referenceImage, x + 12, y + 12, tileWidth - 24, 132, 10);
-        context.strokeStyle = '#e6e9f0';
-        context.lineWidth = 1;
-        roundCanvasRect(context, x + 12, y + 12, tileWidth - 24, 132, 10);
-        context.stroke();
-        context.fillStyle = '#526075';
-        context.font = `700 16px ${shareFont}`;
-        context.fillText(`图 ${index + 1}`, x + 12, y + 163);
-        context.fillStyle = '#7b8798';
-        context.font = `500 14px ${shareFont}`;
-        context.fillText(truncateCanvasText(reference.name, 18), x + 58, y + 163);
-    });
-
-    const footerX = layout.padding;
-    const footerY = layout.footerY;
-    const footerWidth = layout.contentWidth;
-    context.fillStyle = '#ffffff';
-    context.shadowColor = 'rgba(25,35,56,.10)';
-    context.shadowBlur = 22;
-    context.shadowOffsetY = 7;
-    roundCanvasRect(context, footerX, footerY, footerWidth, layout.footerHeight, 22);
-    context.fill();
-    context.shadowColor = 'transparent';
-    context.shadowBlur = 0;
-    context.shadowOffsetY = 0;
-    const footerAccent = context.createLinearGradient(footerX, footerY, footerX + footerWidth, footerY);
-    footerAccent.addColorStop(0, '#7568f5');
-    footerAccent.addColorStop(1, '#35c197');
-    context.fillStyle = footerAccent;
-    roundCanvasRect(context, footerX, footerY, footerWidth, 6, 3);
-    context.fill();
-    const footerLogoSize = 76;
-    context.fillStyle = '#08090d';
-    roundCanvasRect(context, footerX + 30, footerY + 40, footerLogoSize, footerLogoSize, 18);
-    context.fill();
-    drawCanvasImageContain(context, brandImage, footerX + 30, footerY + 40, footerLogoSize, footerLogoSize, 18);
-    context.fillStyle = '#182238';
-    context.font = `800 25px ${shareFont}`;
-    context.fillText('让灵感落地，把想法变成作品', footerX + 132, footerY + 72);
-    context.fillStyle = '#7568f5';
-    context.font = `800 15px ${shareFont}`;
-    context.fillText('SANMAO.AI  ·  AI 创作工作台', footerX + 132, footerY + 101);
-    context.fillStyle = '#68758a';
-    context.font = `500 14px ${shareFont}`;
-    context.fillText('从提示词到成片，让每一次创作都有迹可循。', footerX + 132, footerY + 130);
-    context.fillStyle = '#9aa3b1';
-    context.font = `500 12px ${shareFont}`;
-    context.fillText('内容由 SANMAO.AI 生成，仅供参考', footerX + 30, footerY + layout.footerHeight - 24);
-
-    const qrPanelWidth = layout.footerQrSize + 28;
-    const qrPanelHeight = layout.footerHeight - 28;
-    const qrPanelX = footerX + footerWidth - qrPanelWidth - 24;
-    const qrPanelY = footerY + 14;
-    roundCanvasRect(context, qrPanelX, qrPanelY, qrPanelWidth, qrPanelHeight, 18);
-    context.fillStyle = '#f7f8fb';
-    context.fill();
-    context.strokeStyle = '#e2e6ef';
-    context.lineWidth = 1;
-    roundCanvasRect(context, qrPanelX, qrPanelY, qrPanelWidth, qrPanelHeight, 18);
-    context.stroke();
-    context.fillStyle = '#182238';
-    context.font = `800 13px ${shareFont}`;
-    context.textAlign = 'center';
-    context.fillText('扫码访问 SANMAO.AI', qrPanelX + qrPanelWidth / 2, qrPanelY + 20);
-    drawCanvasImageContain(context, qrImage, qrPanelX + 14, qrPanelY + 27, layout.footerQrSize, qrPanelHeight - 36, 8);
-    context.textAlign = 'left';
-    const blob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('分享版图片导出失败')), 'image/png'));
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = objectUrl;
-    anchor.download = `SANMAO-${item.id}-分享版.png`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
-}
 const SHARE_FONT = '"Segoe UI", "Microsoft YaHei", sans-serif';
 const SHARE_TITLE = '让灵感落地，把想法变成作品';
 const SHARE_DISCLAIMER = '内容由 SANMAO.AI 生成，仅供参考';
-
 function drawShareInlineText(context, value, x, baseline, fontSize, color) {
     const pattern = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*]+\*|_[^_]+_)/g;
     const tokens = [];

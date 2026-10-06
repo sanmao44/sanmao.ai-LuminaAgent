@@ -1013,3 +1013,25 @@ hardening work when the trigger applies.
 - Remaining risk: page-level context selection still combines Artifact files
   with conversation memory and retry history; only the pure file projection
   moved in this slice.
+
+### Stage 6 gallery image sharing boundary checkpoint (2026-10-06)
+
+- `lib/canvas/share.ts` is now the single owner of generated gallery image
+  sharing: image loading, layout/rendering, PNG export, and download naming.
+- `app/page.tsx` keeps gallery reference lookup, image-only filtering, the
+  existing missing-reference error, and the click/notification orchestration;
+  it no longer contains a second Canvas drawing implementation.
+- `CanvasShareReference.id` remains optional so the shared renderer accepts
+  both Canvas references and persisted gallery references. The existing
+  `CanvasShareItem` name remains an alias for callers without introducing a
+  second contract.
+- Behavior coverage executes the shared renderer with browser fakes and
+  verifies branding, QR image loading, reference filtering, Canvas export,
+  and download anchor behavior. URL, API payloads, persisted shapes, and
+  user interaction remain unchanged.
+- Validation: targeted share tests and `npm run typecheck` passed. Full
+  `npm run check`, production build, and `git diff --check` are required
+  before committing this checkpoint.
+- Remaining risk: conversation long-image sharing still remains in
+  `app/page.tsx`; it has a different conversation layout contract and is not
+  moved in this slice.
