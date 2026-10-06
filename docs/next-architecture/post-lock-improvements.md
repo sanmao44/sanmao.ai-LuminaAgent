@@ -53,6 +53,20 @@ hardening work when the trigger applies.
 - Focused menu tests and typecheck pass; full repository validation remains
   required before committing this slice.
 
+### Stage 5 canvas smart-variant source projection checkpoint (2026-10-07)
+
+- `lib/canvas/smart-variant.ts` now owns the pure projection from a selected
+  generator and its directly connected prompt nodes to the existing smart
+  variant source contract.
+- `CanvasWorkspace.tsx` retains smart-variant request, cancellation, snapshot,
+  editor, and document-update orchestration; it only calls the projection for
+  current UI inputs.
+- Existing edge-kind filtering, source order, prompt fallback fields, and
+  empty-source behavior are unchanged. No new type, store, API, or task
+  runtime was introduced.
+- Focused source-projection behavior tests and typecheck pass. Full repository
+  validation is required before the stage commit.
+
 ### Stage 6 canvas asset projection boundary checkpoint (2026-10-07)
 
 - `lib/canvas/asset-library.ts` now owns the pure projection from a Canvas media

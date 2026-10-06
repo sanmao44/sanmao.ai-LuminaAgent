@@ -237,6 +237,7 @@ import { canvasRightOverlayInset, canvasVisibleStageWidth } from "@/lib/canvas/m
 import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/lib/canvas/node-editor";
 import { canvasUpscaleSource, maskStateForNode, nodeStatus, progressValue, variantStatesFor } from "@/lib/canvas/node-card";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
+import { canvasSmartVariantSources } from "@/lib/canvas/smart-variant";
 import { canvasPromptOrbState } from "@/components/canvas/CanvasContextMenu";
 import CanvasNodeEditorPopover from "@/components/canvas/CanvasNodeEditorPopover";
 import CanvasAssetCollectionPicker from "@/components/canvas/CanvasAssetCollectionPicker";
@@ -12929,23 +12930,10 @@ export default function SuperCanvas() {
     () => document.nodes.filter(isCanvasEmptyContentNode),
     [document.nodes],
   );
-  const smartVariantSources = useMemo(() => {
-    if (selectedSingle?.type !== "generator") return [];
-    const directIds = new Set(document.edges.filter((edge) => edge.target === selectedSingle.id && !["generated", "variant", "lineage"].includes(edge.kind || "")).map((edge) => edge.source));
-    const agents = document.nodes.filter((node) => directIds.has(node.id))
-      .filter((node) => node.type === "prompt")
-      .map((node) => ({
-        id: node.id,
-        name: String(node.data.name || "Agent"),
-        text: String(node.data.agentResponse || node.data.text || node.data.agentPrompt || "").trim(),
-      }))
-      .filter((item) => item.text);
-    if (!agents.length) return [];
-    return [
-      { id: "shared-prompt", name: "共同提示词", text: String(selectedSingle.data.prompt || "").trim() },
-      ...agents,
-    ].filter((item) => item.text);
-  }, [document, selectedSingle]);
+  const smartVariantSources = useMemo(
+    () => canvasSmartVariantSources(document, selectedSingle),
+    [document, selectedSingle],
+  );
   const [smartVariantOpen, setSmartVariantOpen] = useState(false);
   const [smartVariantLoading, setSmartVariantLoading] = useState(false);
   const [smartVariantPlan, setSmartVariantPlan] = useState<SmartVariantPlan | null>(null);
