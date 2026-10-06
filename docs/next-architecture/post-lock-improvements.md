@@ -1553,3 +1553,11 @@ hardening work when the trigger applies.
 - The media viewer behavior suite now reads the domain stylesheet directly; no viewer state, URL, API, data shape, or interaction changed.
 - Remaining risk: the viewer still coordinates zoom, comparison, download, and prompt callbacks in `components/MediaViewer.tsx`; moving those behaviors needs a separate interaction-covered slice.
 - Validation: the focused media viewer suite passed (4/4); the full test suite passed (1833 passed, 2 skipped); typecheck, production build, and `git diff --check` passed.
+
+### Stage 6 canvas media node CSS boundary checkpoint (2026-10-07)
+
+- `app/canvas-media-node.css` now owns media node cards, media loading and failure states, video playback overlays, and audio node presentation used by `CanvasMediaNodeCard.tsx`.
+- `app/canvas.css` keeps the generic canvas node shell, intrinsic resolution badges shared by media and upscale cards, shadow tuning, and cross-node running state backgrounds. The new sheet is loaded after the shared canvas sheet.
+- Video and node editor behavior tests now read media-card presentation rules from the domain sheet. No CanvasCore state, media URL, task status, API, or interaction callback changed.
+- Remaining risk: video play state still uses the existing `useCanvasMediaPlayback` hook and the card still coordinates media load callbacks; extracting that runtime needs separate browser behavior coverage.
+- Validation before full check: focused canvas node/editor and video suites passed (68/68), typecheck passed, and `git diff --check` passed.

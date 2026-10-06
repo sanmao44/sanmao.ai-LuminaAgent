@@ -22,6 +22,10 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const mediaNodeStyles = await readFile(
+  new URL("../app/canvas-media-node.css", import.meta.url),
+  "utf8",
+);
 const types = await readFile(
   new URL("../lib/canvas/types.ts", import.meta.url),
   "utf8",
@@ -69,10 +73,10 @@ test("video canvas cards expose a persistent visual and accessible distinction",
   assert.match(mediaCard, /mediaFooterStatus/);
   assert.match(component, /\u89c6\u9891\u751f\u6210\u7ed3\u679c/);
   assert.match(component, /\u89c6\u9891\u751f\u6210\u5931\u8d25/);
-  assert.match(styles, /\.canvas-media-card\.video\{/);
-  assert.match(styles, /\.canvas-media-card\{[^}]*display:flex;flex-direction:column/);
-  assert.match(styles, /\.canvas-media-stage\{[^}]*height:auto;flex:1 1 auto/);
-  assert.match(styles, /\.canvas-video-mark\{[^}]*border-radius:999px/);
+  assert.match(mediaNodeStyles, /\.canvas-media-card\.video\{/);
+  assert.match(mediaNodeStyles, /\.canvas-media-card\{[^}]*display:flex;flex-direction:column/);
+  assert.match(mediaNodeStyles, /\.canvas-media-stage\{[^}]*height:auto;flex:1 1 auto/);
+  assert.match(mediaNodeStyles, /\.canvas-video-mark\{[^}]*border-radius:999px/);
   assert.match(styles, /\.canvas-node-footer em\.video-status\{/);
   assert.match(styles, /\.canvas-video-resolution\{[^}]*border-color:rgba\(147,197,253/);
 });
