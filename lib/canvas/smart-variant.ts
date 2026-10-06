@@ -93,5 +93,3 @@ export function parseSmartVariantPlan(message: string, sourceUnits: readonly Sma
     })),
   };
 }
-
-\n

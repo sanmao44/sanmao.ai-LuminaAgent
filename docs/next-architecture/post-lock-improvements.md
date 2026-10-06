@@ -83,6 +83,20 @@ hardening work when the trigger applies.
   validation passed with 1842 tests passed, 2 skipped, and production build
   success. `git diff --check` passed.
 
+### Stage 5 canvas variant batch state projection checkpoint (2026-10-07)
+
+- `lib/canvas/variant-batch.ts` now owns the pure one-index variant state patch
+  and aggregate batch-status projection used by generation orchestration.
+- `CanvasWorkspace.tsx` retains request sequencing, provider calls, polling,
+  result node creation, grouping, notifications, and CanvasCore/document writes;
+  it delegates only the immutable state transformation.
+- Requirements remain sourced from the existing generator node state, and the
+  returned state/status shape is unchanged. No new store, task state machine,
+  API, provider path, compatibility layer, or duplicate type was introduced.
+- Focused behavior coverage passed with 84 tests, typecheck passed, and full
+  repository validation passed with 1844 tests passed, 2 skipped, and
+  production build success. `git diff --check` passed.
+
 ### Stage 6 canvas asset projection boundary checkpoint (2026-10-07)
 
 - `lib/canvas/asset-library.ts` now owns the pure projection from a Canvas media

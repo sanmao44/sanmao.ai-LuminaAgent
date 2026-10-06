@@ -369,6 +369,7 @@ import { canvasVideoInputError } from "@/lib/canvas/video-input-validation";
 import { canvasVideoInputCapabilities } from "@/lib/canvas/video-capabilities";
 import { canvasHistoryMask } from "@/lib/canvas/history-mask";
 import { canvasVariantBatchStatus } from "@/lib/canvas/variant-status";
+import { applyCanvasVariantStatePatch } from "@/lib/canvas/variant-batch";
 import { canvasAngleReference } from "@/lib/canvas/angle-reference";
 import {
   mentionedCanvasMedia,
@@ -5958,17 +5959,13 @@ export default function SuperCanvas() {
       ) => {
         const nextNodes = value.nodes.map((node) => {
           if (node.id !== generatorId) return node;
-          const states = variantStatesFor(node).map((state, stateIndex) =>
-            stateIndex === index
-              ? {
-                  ...state,
-                  ...patch,
-                  instruction: requirements[stateIndex],
-                  updatedAt: Date.now(),
-                }
-              : state,
+          const result = applyCanvasVariantStatePatch(
+            variantStatesFor(node),
+            requirements,
+            index,
+            patch,
           );
-          const status = canvasVariantBatchStatus(states);
+          const { states, status } = result;
           return {
             ...node,
             data: {
