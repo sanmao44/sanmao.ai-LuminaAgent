@@ -3864,14 +3864,13 @@ export default function SuperCanvas() {
         const camera = canvasCoreRef.current.document().camera;
         const ids = canvasCoreRef.current.document().nodes
           .filter((node) => {
-            const x = node.x * camera.zoom + camera.x;
-            const y = node.y * camera.zoom + camera.y;
+            const point = canvasWorldToStagePoint({ x: node.x, y: node.y }, camera);
             const size = nodeSize(node);
             return (
-              x < right &&
-              x + size.w * camera.zoom > left &&
-              y < bottom &&
-              y + size.h * camera.zoom > top
+              point.x < right &&
+              point.x + size.w * camera.zoom > left &&
+              point.y < bottom &&
+              point.y + size.h * camera.zoom > top
             );
           })
           .map((node) => node.id);
@@ -4189,10 +4188,7 @@ export default function SuperCanvas() {
       // next frame) instead of a stale render closure, then commit once per
       // animation frame.
       const currentCamera = pendingZoomCameraRef.current || canvasCoreRef.current.document().camera;
-      const before = {
-        x: (point.x - currentCamera.x) / currentCamera.zoom,
-        y: (point.y - currentCamera.y) / currentCamera.zoom,
-      };
+      const before = canvasStageToWorldPoint(point, currentCamera);
       const zoom = clamp(currentCamera.zoom * factor, 0.12, 3);
       pendingZoomCameraRef.current = {
         x: point.x - before.x * zoom,
@@ -11554,10 +11550,7 @@ export default function SuperCanvas() {
         event.preventDefault();
         const group = groupById(canvasCoreRef.current.document(), groupElement.dataset.canvasGroupId);
         const point = stagePoint(event.clientX, event.clientY);
-        const world = {
-          x: (point.x - document.camera.x) / document.camera.zoom,
-          y: (point.y - document.camera.y) / document.camera.zoom,
-        };
+        const world = canvasStageToWorldPoint(point, document.camera);
         if (group) {
           setSelectedGroupId(group.id);
           setSelectedIds(new Set(group.nodeIds));
@@ -11591,10 +11584,7 @@ export default function SuperCanvas() {
           y: event.clientY,
           menu: "node",
           nodeId: node.id,
-          world: {
-            x: (point.x - document.camera.x) / document.camera.zoom,
-            y: (point.y - document.camera.y) / document.camera.zoom,
-          },
+          world: canvasStageToWorldPoint(point, document.camera),
         });
         return;
       }
@@ -11602,10 +11592,7 @@ export default function SuperCanvas() {
         x: event.clientX,
         y: event.clientY,
         menu: "tools",
-        world: {
-          x: (point.x - document.camera.x) / document.camera.zoom,
-          y: (point.y - document.camera.y) / document.camera.zoom,
-        },
+        world: canvasStageToWorldPoint(point, document.camera),
       });
     },
     [document.camera, referencePicker, selectNode, selectedIds, stagePoint],
@@ -13656,10 +13643,7 @@ export default function SuperCanvas() {
               x: event.clientX,
               y: event.clientY,
               menu: "create",
-              world: {
-                x: (point.x - document.camera.x) / document.camera.zoom,
-                y: (point.y - document.camera.y) / document.camera.zoom,
-              },
+              world: canvasStageToWorldPoint(point, document.camera),
             });
           }
         }}
