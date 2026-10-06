@@ -3057,18 +3057,6 @@ html[data-theme="dark"] .agent-page{
 .sidebar-support-button{min-width:66px;height:36px;flex:none;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--panel) 70%,transparent);color:var(--muted);font-size:10px;font-weight:850}
 .sidebar-support-button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
 
-/* Long provider registries need a local locator without changing connection state. */
-.provider-list-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 10px;padding:10px 12px;border-radius:14px}
-.provider-search-box{height:38px;min-width:260px;max-width:520px;flex:1;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--muted)}
-.provider-search-box:focus-within{border-color:var(--accent);background:var(--panel);box-shadow:0 0 0 3px var(--control-focus-ring);color:var(--accent-text)}
-.provider-search-box input{min-width:0;flex:1;border:0;background:transparent;font-size:10px}
-.provider-search-box button{width:24px;height:24px;flex:none;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:15px;line-height:1}
-.provider-search-box button:hover{background:var(--danger-soft);color:var(--danger)}
-.provider-list-toolbar>span{flex:none;color:var(--muted);font-size:9px;font-variant-numeric:tabular-nums}.provider-list-toolbar>span b{color:var(--accent-text);font-size:11px}
-.provider-search-empty{min-height:180px;display:grid;place-items:center;align-content:center;gap:8px;padding:24px;text-align:center;color:var(--muted)}
-.provider-search-empty strong{color:var(--text);font-size:13px}.provider-search-empty span{font-size:9px}.provider-search-empty button{margin-top:4px}
-@media(max-width:620px){.provider-list-toolbar{align-items:stretch;flex-direction:column}.provider-search-box{width:100%;min-width:0;max-width:none}.provider-list-toolbar>span{align-self:flex-end}}
-
 /* Composer: separate writing from tools so the panel reads as one workspace. */
 .agent-composer-wrap{padding:12px 28px 12px;background:linear-gradient(180deg,transparent 0%,color-mix(in srgb,var(--bg) 72%,transparent) 28%,color-mix(in srgb,var(--bg) 96%,transparent) 58%,var(--bg) 100%)}
 .agent-composer{max-width:1040px;padding:14px 16px 12px;border-color:var(--agent-composer-border);border-radius:22px;background:var(--agent-composer-bg);box-shadow:var(--agent-composer-shadow),inset 0 1px 0 color-mix(in srgb,#fff 35%,transparent)}

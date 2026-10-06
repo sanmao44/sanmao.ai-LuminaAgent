@@ -2018,3 +2018,17 @@ hardening work when the trigger applies.
 - Behavior coverage verifies controlled name/key changes, fixed-address presentation, and Agnes callback forwarding.
 - Validation: focused provider tests passed (8/8), `npm run typecheck` passed, full `npm run check` passed (1863 tests passed, 2 skipped; production build succeeded), and `git diff --check` passed.
 - Remaining risk: the hidden video configuration and Jimeng login block remain in the page because their future activation and task lifecycle are coupled to page-owned state.
+
+### Stage 6 provider list CSS boundary checkpoint (2026-10-07)
+
+- `app/provider-library.css` now owns the provider registry toolbar, search field,
+  result count, empty state, and responsive rules. `app/globals.css` no longer
+  carries those provider-list selectors.
+- `app/layout.tsx` already loaded the feature sheet after `globals.css`, so the
+  existing selector order and cascade remain unchanged. No class names, layout
+  values, interaction behavior, or provider lifecycle code changed.
+- Validation: focused provider, onboarding, and theme tests passed (12/12);
+  `npm run typecheck` passed; full `npm run check` passed (1863 passed,
+  2 skipped; production build succeeded); and `git diff --check` passed.
+- Remaining risk: provider form, Jimeng login, and hidden video configuration
+  remain coupled to page-owned draft and connection lifecycle.
