@@ -228,7 +228,7 @@ import CanvasTextLightbox from "@/components/canvas/CanvasTextLightbox";
 import CanvasActivityDrawer from "@/components/canvas/CanvasActivityDrawer";
 import CanvasQuickToolbar from "@/components/canvas/CanvasQuickToolbar";
 import CanvasSelectionToolbar from "@/components/canvas/CanvasSelectionToolbar";
-import { appendCanvasAgentAction, CanvasContextMenuFrame, CanvasGroupContextMenu, CanvasNodeContextMenu, prependCanvasAgentContextMenuGroup, projectCanvasGroupContextMenuGroups, type CanvasContextMenuGroup, type CanvasQuickAction, type CanvasQuickToolbarActions } from "@/components/canvas/CanvasContextMenu";
+import { appendCanvasAgentAction, prependCanvasAgentContextMenuGroup, projectCanvasGroupContextMenuGroups, type CanvasContextMenuGroup, type CanvasQuickAction, type CanvasQuickToolbarActions } from "@/components/canvas/CanvasContextMenu";
 import { canvasRightOverlayInset, canvasVisibleStageWidth } from "@/lib/canvas/menu-layout";
 import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/lib/canvas/node-editor";
 import { canvasUpscaleSource, maskStateForNode, nodeStatus, progressValue, variantStatesFor } from "@/lib/canvas/node-card";
@@ -249,8 +249,6 @@ import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import CanvasWorkspaceHeader from "@/components/canvas/CanvasWorkspaceHeader";
 import CanvasViewport, { CanvasWorld } from "@/components/canvas/CanvasViewport";
 import CanvasViewportOverlay from "@/components/canvas/CanvasViewportOverlay";
-import CanvasCreateContextMenu from "@/components/canvas/CanvasCreateContextMenu";
-import CanvasToolsContextMenu from "@/components/canvas/CanvasToolsContextMenu";
 import CanvasConnectionOverlay, { type CanvasConnectionNodePicker } from "@/components/canvas/CanvasConnectionOverlay";
 import CanvasMarquee, { type CanvasMarqueeState } from "@/components/canvas/CanvasMarquee";
 import { CanvasSettingsPanel, CanvasShortcutsPanel, CONNECTION_STYLE_OPTIONS } from "@/components/canvas/CanvasPanels";
@@ -260,6 +258,7 @@ import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStr
 import CanvasNodeLayer from "@/components/canvas/CanvasNodeLayer";
 import CanvasDeck, { type CanvasDeckMode } from "@/components/canvas/CanvasDeck";
 import CanvasSmartVariantDialog from "@/components/canvas/CanvasSmartVariantDialog";
+import CanvasContextMenuLayer from "@/components/canvas/CanvasContextMenuLayer";
 import CanvasMediaNodeCard from "@/components/canvas/CanvasMediaNodeCard";
 import CanvasAngleNodeCard from "@/components/canvas/CanvasAngleNodeCard";
 import CanvasGeneratorNodeCard from "@/components/canvas/CanvasGeneratorNodeCard";
@@ -14401,44 +14400,30 @@ export default function SuperCanvas() {
           />,
           window.document.body,
         )}
-        {contextGroup && contextMenu?.menu === "group" && contextMenu.groupId ? (
-          <CanvasGroupContextMenu
-            group={contextGroup}
-            groups={groupContextMenuGroups}
-            position={contextMenu}
-          />
-        ) : contextNode && contextMenu?.menu === "node" && contextMenu.nodeId ? (
-          <CanvasNodeContextMenu
-            node={contextNode}
-            selectionCount={selectedIds.size}
-            groups={contextMenuGroupsWithAgent}
-            position={contextMenu}
-          />
-        ) : contextMenu?.menu === "create" ? (
-          <CanvasCreateContextMenu
-            position={contextMenu}
-            onClose={() => setContextMenu(null)}
-            onCreateNode={(kind, world) => addNode(kind, world)}
-            onOpenClone={() => setCloneDialogOpen(true)}
-          />
-        ) : contextMenu?.menu === "tools" ? (
-          <CanvasToolsContextMenu
-            position={contextMenu}
-            canUndo={Boolean(canvasHistory.past.length)}
-            canRedo={Boolean(canvasHistory.future.length)}
-            emptyContentCount={emptyContentNodes.length}
-            onClose={() => setContextMenu(null)}
-            onAskAgent={askAgentAboutCanvas}
-            onUpload={openFilePicker}
-            onOpenCreate={() => setContextMenu((current) => current ? { ...current, menu: "create" } : current)}
-            onPaste={(position) => pasteFromClipboard(position)}
-            onUndo={undo}
-            onRedo={redo}
-            onArrange={() => arrangeCanvasAction()}
-            onFit={() => fitView()}
-            onClean={deleteEmptyContentNodes}
-          />
-        ) : null}
+        <CanvasContextMenuLayer
+          menu={contextMenu?.menu || null}
+          position={contextMenu}
+          node={contextNode || null}
+          group={contextGroup || null}
+          selectionCount={selectedIds.size}
+          nodeGroups={contextMenuGroupsWithAgent}
+          groupGroups={groupContextMenuGroups}
+          canUndo={Boolean(canvasHistory.past.length)}
+          canRedo={Boolean(canvasHistory.future.length)}
+          emptyContentCount={emptyContentNodes.length}
+          onClose={() => setContextMenu(null)}
+          onCreateNode={(kind, world) => addNode(kind, world)}
+          onOpenClone={() => setCloneDialogOpen(true)}
+          onAskAgent={askAgentAboutCanvas}
+          onUpload={openFilePicker}
+          onOpenCreate={() => setContextMenu((current) => current ? { ...current, menu: "create" } : current)}
+          onPaste={(position) => pasteFromClipboard(position)}
+          onUndo={undo}
+          onRedo={redo}
+          onArrange={() => arrangeCanvasAction()}
+          onFit={() => fitView()}
+          onClean={deleteEmptyContentNodes}
+        />
       </CanvasViewport>
       {panoramaNodeId && (() => {
         const panoramaNode = nodeById(document, panoramaNodeId);

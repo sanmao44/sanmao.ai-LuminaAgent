@@ -1947,3 +1947,12 @@ hardening work when the trigger applies.
 - Behavior tests now exercise the extracted dialog while preserving the existing event-isolation and analysis lifecycle assertions.
 - Validation: focused smart variant and clone UI tests passed (35/35); `npm run typecheck` passed; full `npm run check` passed (1855 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
 - Remaining risk: smart variant request and apply orchestration remain in `CanvasWorkspace.tsx`; extracting them safely requires a stable application boundary and broader lifecycle coverage.
+
+### Stage 6 canvas context menu layer checkpoint (2026-10-07)
+
+- `components/canvas/CanvasContextMenuLayer.tsx` now owns the conditional composition of node, group, create, and tools context-menu presentations.
+- `CanvasWorkspace.tsx` retains context-menu state, menu group construction, CanvasCore actions, and all callbacks. It now passes an explicit presentation contract to the layer instead of embedding four render branches.
+- The layer depends only on existing menu components and canvas contracts; it adds no state store, API boundary, repository, task runtime, or compatibility path.
+- Context-menu behavior tests continue to cover node/group action construction, blank-canvas actions, event isolation, and responsive placement; the contract assertion now follows the extracted `nodeGroups` prop.
+- Validation: focused context-menu, gesture, and editor-layout tests passed (33/33); `npm run typecheck` passed; full `npm run check` passed (1855 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
+- Remaining risk: menu action builders and context-menu state remain intentionally in `CanvasWorkspace.tsx`; moving them would couple the presentation layer to document mutation and requires a separate application contract.

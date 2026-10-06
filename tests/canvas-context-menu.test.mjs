@@ -9,6 +9,9 @@ const component = (await readFile(
 )).concat("\n", await readFile(
   new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url),
   "utf8",
+), "\n", await readFile(
+  new URL("../components/canvas/CanvasContextMenuLayer.tsx", import.meta.url),
+  "utf8",
 ));
 const createMenuComponent = await readFile(new URL("../components/canvas/CanvasCreateContextMenu.tsx", import.meta.url), "utf8");
 const toolsMenuComponent = await readFile(new URL("../components/canvas/CanvasToolsContextMenu.tsx", import.meta.url), "utf8");
@@ -180,7 +183,7 @@ test("card context menus select the target and preserve selected multi-actions",
   // 「问 Agent」要能从每条选中路径进：节点工具栏、多选工具栏、对象组工具栏、两种右键菜单。
   assert.match(menuActions, /export function appendCanvasAgentAction/);
   assert.match(component, /const contextMenuGroupsWithAgent = useMemo<CanvasContextMenuGroup\[]>/);
-  assert.match(component, /groups=\{contextMenuGroupsWithAgent\}/);
+  assert.match(component, /nodeGroups=\{contextMenuGroupsWithAgent\}/);
   assert.match(menuActions, /export function prependCanvasAgentContextMenuGroup/);
   assert.match(component, /const runImageAngleGeneration = useCallback/);
   assert.match(component, /const pendingOutput = (?:createPendingNode \? )?createMedia\("image", "", "角度控制结果"/);
