@@ -3,14 +3,15 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
 
-const createMenuComponent = await readFile(new URL("../components/canvas/CanvasCreateContextMenu.tsx", import.meta.url), "utf8");
 const component = (await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 )).concat("\n", await readFile(
   new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url),
   "utf8",
-)).concat("\n", createMenuComponent);
+));
+const createMenuComponent = await readFile(new URL("../components/canvas/CanvasCreateContextMenu.tsx", import.meta.url), "utf8");
+const toolsMenuComponent = await readFile(new URL("../components/canvas/CanvasToolsContextMenu.tsx", import.meta.url), "utf8");
 const contextMenuComponent = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
 const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
 const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
@@ -206,7 +207,7 @@ test("context menu keeps native controls isolated and remains bounded on small s
   assert.match(contextMenuComponent, /placeCanvasContextMenu\(/);
   assert.match(component, /getBoundingClientRect\(\)/);
   assert.match(contextMenuComponent, /new ResizeObserver\(schedule\)/);
-  assert.match(component, /canvas-context-menu-body/);
+  assert.match(toolsMenuComponent, /canvas-context-menu-body/);
   assert.doesNotMatch(component, /window\.innerHeight - 640/);
   assert.match(styles, /\.canvas-node-context-menu\{width:min\(320px,calc\(100vw - 16px\)\)/);
   assert.match(styles, /\.canvas-context-menu-body\{[^}]*overflow-x:hidden[^}]*overflow-y:auto/);
@@ -227,17 +228,17 @@ test("context menu keeps native controls isolated and remains bounded on small s
 test("blank canvas exposes compact, ungrouped canvas operations", () => {
   assert.match(component, /menu: "create"/);
   assert.match(component, /menu: "tools"/);
-  assert.match(component, /ariaLabel="创建节点菜单"/);
-  assert.match(component, /ariaLabel="画布操作菜单"/);
-  assert.match(component, /className="canvas-tools-context-menu"/);
+  assert.match(createMenuComponent, /ariaLabel="创建节点菜单"/);
+  assert.match(toolsMenuComponent, /ariaLabel="画布操作菜单"/);
+  assert.match(toolsMenuComponent, /className="canvas-tools-context-menu"/);
   assert.match(component, /pasteFromClipboard\(position\)/);
-  assert.match(component, /<b>适应视图<\/b>/);
-  const toolsMenuStart = component.indexOf('ariaLabel="画布操作菜单"');
-  const toolsMenuEnd = component.indexOf("</CanvasContextMenuFrame>", toolsMenuStart);
-  const toolsMenu = component.slice(toolsMenuStart, toolsMenuEnd);
+  assert.match(toolsMenuComponent, /<b>适应视图<\/b>/);
+  const toolsMenuStart = toolsMenuComponent.indexOf('ariaLabel="画布操作菜单"');
+  const toolsMenuEnd = toolsMenuComponent.indexOf("</CanvasContextMenuFrame>", toolsMenuStart);
+  const toolsMenu = toolsMenuComponent.slice(toolsMenuStart, toolsMenuEnd);
   assert.match(toolsMenu, /className="canvas-menu-item canvas-menu-item-create"/);
   assert.match(toolsMenu, /<b>添加节点<\/b>/);
-  assert.match(toolsMenu, /menu: "create"/);
+  assert.match(component, /menu: "create"/);
   assert.match(toolsMenu, /<b>撤销<\/b>/);
   assert.match(toolsMenu, /<b>重做<\/b>/);
   assert.match(toolsMenu, /Ctrl\/Cmd \+ Z/);
@@ -271,9 +272,9 @@ test("blank canvas exposes compact, ungrouped canvas operations", () => {
   assert.equal(arrangeIcon, "⌗");
   assert.equal(fitIcon, "⛶");
   assert.notEqual(arrangeIcon, fitIcon);
-  assert.match(toolsMenu, /<b>清理空内容（\{emptyContentNodes\.length\}）<\/b>/);
-  assert.match(toolsMenu, /deleteEmptyContentNodes\(\)/);
-  assert.match(toolsMenu, /disabled=\{!emptyContentNodes\.length\}/);
+  assert.match(toolsMenu, /<b>清理空内容（\{emptyContentCount\}）<\/b>/);
+  assert.match(toolsMenu, /onClean/);
+  assert.match(toolsMenu, /disabled=\{!emptyContentCount\}/);
   // 工作流 JSON 的入口在“画布设置”，画布操作菜单不再重复一遍。
   assert.doesNotMatch(toolsMenu, /导出工作流 JSON/);
   assert.doesNotMatch(toolsMenu, /导入工作流 JSON/);
@@ -285,10 +286,10 @@ test("blank canvas exposes compact, ungrouped canvas operations", () => {
 });
 
 test("create menu uses separators instead of spacious group headings", () => {
-  const createMenuStart = component.indexOf('ariaLabel="创建节点菜单"');
-  const createMenuEnd = component.indexOf("</CanvasContextMenuFrame>", createMenuStart);
+  const createMenuStart = createMenuComponent.indexOf('ariaLabel="创建节点菜单"');
+  const createMenuEnd = createMenuComponent.indexOf("</CanvasContextMenuFrame>", createMenuStart);
   assert.ok(createMenuStart >= 0 && createMenuEnd > createMenuStart, "create menu should be present");
-  const createMenu = component.slice(createMenuStart, createMenuEnd);
+  const createMenu = createMenuComponent.slice(createMenuStart, createMenuEnd);
   assert.equal((createMenu.match(/className="canvas-menu-group"/g) || []).length, 2);
   assert.doesNotMatch(createMenu, /canvas-menu-group-title|canvas-menu-group-mark/);
   assert.doesNotMatch(createMenu, /从空白开始创建|批量生成与变体/);

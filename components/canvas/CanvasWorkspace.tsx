@@ -244,6 +244,7 @@ import CanvasWorkspaceHeader from "@/components/canvas/CanvasWorkspaceHeader";
 import CanvasViewport, { CanvasWorld } from "@/components/canvas/CanvasViewport";
 import CanvasViewportOverlay from "@/components/canvas/CanvasViewportOverlay";
 import CanvasCreateContextMenu from "@/components/canvas/CanvasCreateContextMenu";
+import CanvasToolsContextMenu from "@/components/canvas/CanvasToolsContextMenu";
 import { CanvasSettingsPanel, CanvasShortcutsPanel, CONNECTION_STYLE_OPTIONS } from "@/components/canvas/CanvasPanels";
 import { CanvasGeneratorHelp, CanvasVariantRequirementsEditor } from "@/components/canvas/CanvasVariantEditors";
 import CanvasMinimap from "@/components/canvas/CanvasMinimap";
@@ -15152,149 +15153,22 @@ export default function SuperCanvas() {
             onOpenClone={() => setCloneDialogOpen(true)}
           />
         ) : contextMenu?.menu === "tools" ? (
-          <CanvasContextMenuFrame
-            key="tools"
-            className="canvas-tools-context-menu"
+          <CanvasToolsContextMenu
             position={contextMenu}
-            ariaLabel="画布操作菜单"
-          >
-            <div className="canvas-menu-title">
-              <span>画布操作</span>
-            </div>
-            <div className="canvas-context-menu-body">
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-agent"
-                aria-keyshortcuts="Control+K"
-                onClick={() => {
-                  setContextMenu(null);
-                  askAgentAboutCanvas();
-                }}
-              >
-                <span className="canvas-menu-icon" aria-hidden="true"><AgentOrb state="idle" size={18} label="" /></span>
-                <span className="canvas-menu-copy">
-                  <b>问 Agent</b>
-                </span>
-                <small className="canvas-menu-shortcut">Ctrl/Cmd + K</small>
-              </button>
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-tool"
-                onClick={() => {
-                  const position = contextMenu.world;
-                  setContextMenu(null);
-                  openFilePicker(position);
-                }}
-              >
-                <span className="canvas-menu-icon" aria-hidden="true">⇧</span>
-                <span className="canvas-menu-copy">
-                  <b>上传</b>
-                </span>
-                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
-              </button>
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-create"
-                onClick={() => setContextMenu((current) => current ? { ...current, menu: "create" } : current)}
-              >
-                <span className="canvas-menu-icon" aria-hidden="true">＋</span>
-                <span className="canvas-menu-copy">
-                  <b>添加节点</b>
-                </span>
-                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
-              </button>
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-tool"
-                onClick={() => {
-                  const position = contextMenu.world;
-                  setContextMenu(null);
-                  void pasteFromClipboard(position);
-                }}
-              >
-                <span className="canvas-menu-icon" aria-hidden="true">⌘</span>
-                <span className="canvas-menu-copy">
-                  <b>粘贴</b>
-                </span>
-                <small className="canvas-menu-shortcut">Ctrl/Cmd + V</small>
-              </button>
-              <div className="canvas-menu-divider" role="separator" aria-hidden="true" />
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-tool"
-                onClick={() => {
-                  setContextMenu(null);
-                  undo();
-                }}
-                disabled={!canvasHistory.past.length}
-              >
-                <span className="canvas-menu-icon" aria-hidden="true">↶</span>
-                <span className="canvas-menu-copy">
-                  <b>撤销</b>
-                </span>
-                <small className="canvas-menu-shortcut">Ctrl/Cmd + Z</small>
-              </button>
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-tool"
-                onClick={() => {
-                  setContextMenu(null);
-                  redo();
-                }}
-                disabled={!canvasHistory.future.length}
-              >
-                <span className="canvas-menu-icon" aria-hidden="true">↷</span>
-                <span className="canvas-menu-copy">
-                  <b>重做</b>
-                </span>
-                <small className="canvas-menu-shortcut">Ctrl/Cmd + Shift + Z</small>
-              </button>
-              <div className="canvas-menu-divider" role="separator" aria-hidden="true" />
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-tool"
-                onClick={() => {
-                  setContextMenu(null);
-                  arrangeCanvasAction();
-                }}
-              >
-                <span className="canvas-menu-icon" aria-hidden="true">⌗</span>
-                <span className="canvas-menu-copy">
-                  <b>一键整理</b>
-                </span>
-                <span className="canvas-menu-arrow" aria-hidden="true">›</span>
-              </button>
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-tool"
-                onClick={() => {
-                  setContextMenu(null);
-                  fitView();
-                }}
-              >
-                <span className="canvas-menu-icon" aria-hidden="true">⛶</span>
-                <span className="canvas-menu-copy">
-                  <b>适应视图</b>
-                </span>
-                <small className="canvas-menu-shortcut">Z</small>
-              </button>
-              <button
-                type="button"
-                className="canvas-menu-item canvas-menu-item-tool canvas-menu-item-danger"
-                onClick={() => {
-                  setContextMenu(null);
-                  deleteEmptyContentNodes();
-                }}
-                disabled={!emptyContentNodes.length}
-                title="删除没有实际内容的节点，包括已连线节点；可通过撤销恢复"
-              >
-                <span className="canvas-menu-icon" aria-hidden="true">⌫</span>
-                <span className="canvas-menu-copy">
-                  <b>清理空内容（{emptyContentNodes.length}）</b>
-                </span>
-              </button>
-            </div>
-          </CanvasContextMenuFrame>
+            canUndo={Boolean(canvasHistory.past.length)}
+            canRedo={Boolean(canvasHistory.future.length)}
+            emptyContentCount={emptyContentNodes.length}
+            onClose={() => setContextMenu(null)}
+            onAskAgent={askAgentAboutCanvas}
+            onUpload={openFilePicker}
+            onOpenCreate={() => setContextMenu((current) => current ? { ...current, menu: "create" } : current)}
+            onPaste={(position) => pasteFromClipboard(position)}
+            onUndo={undo}
+            onRedo={redo}
+            onArrange={() => arrangeCanvasAction()}
+            onFit={() => fitView()}
+            onClean={deleteEmptyContentNodes}
+          />
         ) : null}
       </CanvasViewport>
       {panoramaNodeId && (() => {

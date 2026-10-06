@@ -1188,3 +1188,23 @@ hardening work when the trigger applies.
   uncommitted `AGENTS.md` edit. Node/group menus and the tools menu remain in
   Workspace because their action builders are still interleaved with selection
   and clipboard orchestration.
+
+### Stage 2 canvas tools context menu checkpoint (2026-10-06)
+
+- `components/canvas/CanvasToolsContextMenu.tsx` now owns the blank-canvas
+  tools menu presentation: Agent entry, upload, create-node transition, paste,
+  undo/redo, arrange, fit view, and empty-content cleanup.
+- Its props contract carries only the existing screen/world position, history
+  and empty-content projections, and callbacks. Workspace remains the owner of
+  context-menu state, CanvasCore history mutations, file picker, paste handling,
+  Agent dock opening, layout, viewport, and cleanup behavior.
+- The previous inline JSX was removed from Workspace; no duplicate action
+  implementation, store, repository, or compatibility layer was added.
+- Targeted canvas, Agent dock, double-click, file-drop, and clone behavior tests
+  pass (102/102). Full typecheck, `npm test` (1830 passed, 2 skipped),
+  production build, and repository `npm run check` all pass. `git diff --check`
+  is clean for this stage's files; the only excluded warning is the user's
+  pre-existing uncommitted `AGENTS.md` edit.
+- Node/group menus and CSS domain movement remain deferred because their action
+  builders and gesture interactions are still coupled to selection/document
+  mutations.

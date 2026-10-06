@@ -11,6 +11,7 @@ const selectionToolbar = await readFile(new URL("../components/canvas/CanvasSele
 const nodeEditor = await readFile(new URL("../components/canvas/CanvasNodeEditorPopover.tsx", import.meta.url), "utf8");
 const workspaceHeader = await readFile(new URL("../components/canvas/CanvasWorkspaceHeader.tsx", import.meta.url), "utf8");
 const viewportOverlay = await readFile(new URL("../components/canvas/CanvasViewportOverlay.tsx", import.meta.url), "utf8");
+const toolsMenuSource = await readFile(new URL("../components/canvas/CanvasToolsContextMenu.tsx", import.meta.url), "utf8");
 
 const [component, canvasSource, styles, context, canvasApi, markdown] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
@@ -661,10 +662,10 @@ test("the blank canvas and the keyboard can hand the whole canvas to the dock", 
   // 右键空白处没有可选的节点，不能沿用“先选中”的入口：整张画布就是上下文。
   assert.match(canvas, /const askAgentAboutCanvas = useCallback\(\(\) => \{\s*\r?\n    applyAgentDockOpen\(true\);/);
   assert.doesNotMatch(canvas, /const askAgentAboutCanvas = useCallback\(\(\) => \{[\s\S]{0,200}?notify\(/);
-  assert.ok(canvas.includes("canvas-menu-item canvas-menu-item-agent"));
+  assert.ok(toolsMenuSource.includes("canvas-menu-item canvas-menu-item-agent"));
   // 「画布操作」菜单是紧凑列表：不加描述行，也不多加分隔线。
-  const toolsStart = canvas.indexOf('ariaLabel="画布操作菜单"');
-  const toolsMenu = canvas.slice(toolsStart, canvas.indexOf("</CanvasContextMenuFrame>", toolsStart));
+  const toolsStart = toolsMenuSource.indexOf('className="canvas-tools-context-menu"');
+  const toolsMenu = toolsMenuSource.slice(toolsStart, toolsMenuSource.indexOf("</CanvasContextMenuFrame>", toolsStart));
   assert.ok(toolsMenu.includes("<b>问 Agent</b>"));
   assert.ok(toolsMenu.includes("Ctrl/Cmd + K"));
   // 菜单项和快捷键共用这条入口：从哪进去，面板的状态都一样。
