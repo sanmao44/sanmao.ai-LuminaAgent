@@ -657,3 +657,23 @@ hardening work when the trigger applies.
 - Remaining risk: generation submission still combines request normalization,
   API invocation, polling, and document updates. `generationKey` remains in
   Workspace because it is coupled to deck source and UI lifecycle state.
+
+### Stage 5 video capability projection checkpoint (2026-10-06)
+
+- `lib/canvas/video-capabilities.ts` now owns the pure projection from the
+  existing selected video model to the existing canvas input capability
+  contract. It delegates model resolution to `resolveAvailableCreationModel`
+  and preserves the prior fallback semantics when no model is available.
+- `CanvasWorkspace.tsx` no longer defines this projection; all existing
+  connection and submission call sites use the extracted function. Provider
+  selection, video input mode decisions, task orchestration, and CanvasCore
+  mutation remain in Workspace.
+- Behavior coverage verifies full capabilities, missing optional capabilities,
+  and unavailable-model fallback. No URL, API payload, persisted shape, or
+  user interaction changed.
+- Validation: targeted video capability tests and `npm run typecheck` passed.
+  Full `npm test`, `npm run build`, and `npm run check` remain required before
+  committing this checkpoint.
+- Remaining risk: video mode synchronization still spans edge ordering,
+  reference roles, and document updates; it remains in Workspace until a
+  complete behavior-covered contract can move it safely.

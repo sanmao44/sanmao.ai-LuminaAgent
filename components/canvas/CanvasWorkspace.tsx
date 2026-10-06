@@ -351,6 +351,7 @@ import {
   type CanvasSnapGuide,
 } from "@/lib/canvas/snap";
 import { canvasVideoInputError } from "@/lib/canvas/video-input-validation";
+import { canvasVideoInputCapabilities } from "@/lib/canvas/video-capabilities";
 import {
   copyCanvasGenerationParams,
   defaultCanvasGenerationParams,
@@ -1412,22 +1413,6 @@ function rectanglesOverlap(
     a.y < b.y + b.h + gap &&
     a.y + a.h + gap > b.y
   );
-}
-
-function canvasVideoInputCapabilities(
-  settings: VideoCreationSettings,
-  runtime: CanvasRuntimeState | null,
-) {
-  const resolved = resolveAvailableCreationModel(settings, runtime);
-  const model = resolved.model;
-  const capabilities = model?.capabilities || [];
-  return {
-    supportsReference: !model || capabilities.includes("video-reference") || capabilities.includes("video-generate"),
-    supportsFirstFrame: !model || capabilities.includes("video-first-frame") || capabilities.includes("video-generate"),
-    supportsFrames: !model || capabilities.includes("video-first-frame") || capabilities.includes("video-generate"),
-    supportsAudio: !model || capabilities.includes("video-audio"),
-    model,
-  };
 }
 
 function referenceNodesForCanvasEdge(document: CanvasDocument, edge: CanvasEdge) {
