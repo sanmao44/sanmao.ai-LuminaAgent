@@ -1386,3 +1386,25 @@ hardening work when the trigger applies.
 - `app/canvas.css` keeps the shared `.canvas-audio-player-*` controls, reference-audio preview, node footer status, and canvas group rules. The panel sheet is loaded after the image-editor sheet, preserving the existing cascade without copying the shared player contract.
 - `CanvasAudioNodePanel.tsx` remains the sole owner of file selection, replacement callbacks, duration updates, and event isolation. No storage, API, provider, or media contract changed.
 - Validation: targeted canvas node/editor/video/activity tests passed (74/74), `npm run typecheck` passed, full `npm run check` passed (1830 tests passed, 2 skipped, production build succeeded), and `git diff --check` is clean for this slice. The pre-existing uncommitted `AGENTS.md` edit remains excluded.
+
+### Stage 6 canvas group compose CSS boundary checkpoint (2026-10-06)
+
+- The complete historical `.canvas-compose-*` baseline block was moved from
+  `app/canvas.css` into `app/canvas-compose.css`, where the compose dialog's
+  existing selector family and later responsive refinements already live.
+- The mobile arrange-mode rules remain in `app/canvas.css` because they belong to
+  the topbar arrangement control rather than the compose dialog. No shared
+  canvas z-index, stage, group, document, selection, or task behavior moved.
+- `app/layout.tsx` already loads `canvas-compose.css` immediately after the base
+  canvas sheet, so the previous cascade order and visual behavior are preserved.
+- `tests/canvas-group-compose-dialog.test.mjs` now verifies the compose domain
+  stylesheet directly; no source-of-truth, API, URL, data format, or interaction
+  contract changed and no duplicate compatibility layer was added.
+- Validation: targeted group compose/reference/shortcut tests passed (8/8),
+  `npm run typecheck` passed, full `npm run check` passed (1830 tests passed,
+  2 skipped; production build succeeded), and `git diff --check` is clean.
+- Remaining risk: `app/canvas.css` still contains shared canvas layers, group
+  arrangement rules, node/editor surfaces, and Agent dock layout. The Agent dock
+  remains intentionally deferred because its rail, panel geometry, responsive
+  deck adjustment, mention menus, model picker, and message rendering share
+  cross-domain selectors.

@@ -6,15 +6,11 @@ const dialog = await readFile(
   new URL("../components/canvas/CanvasGroupComposeDialog.tsx", import.meta.url),
   "utf8",
 );
-const styles = await readFile(
-  new URL("../app/canvas.css", import.meta.url),
-  "utf8",
-);
 const composeStyles = await readFile(
   new URL("../app/canvas-compose.css", import.meta.url),
   "utf8",
 );
-const allStyles = `${styles}\n${composeStyles}`;
+const allStyles = composeStyles;
 
 test("grid compose dialog exposes tactile controls and a live preview", () => {
   assert.match(dialog, /role="dialog"/);
