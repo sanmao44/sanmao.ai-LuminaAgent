@@ -497,6 +497,18 @@ hardening work when the trigger applies.
   moving it mechanically would create duplicate UI contracts or risk changing
   controlled field behavior. A behavior-covered TSX boundary is still needed.
 
+### Editor form projection checkpoint (2026-10-06)
+
+- `lib/image-editor/editor-form.ts` now owns the pure model-selection
+  projection used by the edit/upscale modal. It keeps the selected upscale
+  scale and output format valid while preserving the existing fallback order.
+- `app/page.tsx` still owns editor state, controlled rendering, provider
+  navigation, mask handoff, API calls, and task lifecycle. The modal UI and
+  its callbacks were not moved in this slice because the source remains
+  compiled JSX with implicit page-local presentation helpers.
+- `tests/image-editor-form.test.mjs` covers edit selection, supported upscale
+  values, and fallback behavior for limited or unavailable models.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

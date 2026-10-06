@@ -129,6 +129,7 @@ import CreativeReferenceStrip from '@/components/CreativeReferenceStrip';
 import ImageCard from '@/components/ImageCard';
 import { centeredOutpaintLayout, defaultOutpaintLayout, fitOutpaintLayoutToRule, outpaintRuleForModel, validateOutpaintLayout } from '@/lib/image-editor/outpaint-layout';
 import { cloudUpscaleFormatOptions, isCloudUpscaleModel, qualityOptions, upscaleScales } from '@/lib/image-editor/editor-options';
+import { editorModelSelectionPatch, upscaleEditorSettingsPatch } from '@/lib/image-editor/editor-form';
 import { canvasRectForRatio, cropSourceRect } from '@/lib/image-editor/local-image-layout';
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
@@ -1799,19 +1800,7 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUps
                                                     defaultProviderName: defaultProviderName,
                                                     defaultModelId: defaultImageModelId,
                                                     onChange: (value)=>{
-                                                        if (editor.mode !== 'upscale') {
-                                                            update({
-                                                                modelId: value
-                                                            });
-                                                            return;
-                                                        }
-                                                        const nextModel = upscaleModelOptions.find((model)=>model.id === value);
-                                                        const nextScales = nextModel?.scales || upscaleScales;
-                                                        update({
-                                                            modelId: value,
-                                                            scale: nextScales.includes(editor.scale) ? editor.scale : nextScales.includes(2) ? 2 : nextScales[0],
-                                                            upscaleOutputFormat: nextModel?.outputFormats?.includes(editor.upscaleOutputFormat) ? editor.upscaleOutputFormat : nextModel?.outputFormats?.[0] || editor.upscaleOutputFormat
-                                                        });
+                                                        update(editorModelSelectionPatch(editor.mode, value, editor.scale, editor.upscaleOutputFormat, upscaleModelOptions, upscaleScales));
                                                     }
                                                 })
                                             ]
@@ -3575,9 +3564,9 @@ export default function Page() {
     function handleUpscaleModelChange(value) {
         setGenerateUpscaleModelId(value);
         const nextModel = value === 'auto' ? defaultUpscaleModel : availableUpscaleModels.find((model)=>model.id === value);
-        const nextScales = nextModel?.scales || upscaleScales;
-        if (!nextScales.includes(generateUpscaleScale)) setGenerateUpscaleScale(nextScales.includes(2) ? 2 : nextScales[0]);
-        if (nextModel?.outputFormats && !nextModel.outputFormats.includes(generateUpscaleOutputFormat)) setGenerateUpscaleOutputFormat(nextModel.outputFormats[0]);
+        const settings = upscaleEditorSettingsPatch(generateUpscaleScale, generateUpscaleOutputFormat, nextModel, upscaleScales);
+        if (settings.scale !== generateUpscaleScale) setGenerateUpscaleScale(settings.scale);
+        if (nextModel?.outputFormats && settings.upscaleOutputFormat !== generateUpscaleOutputFormat) setGenerateUpscaleOutputFormat(settings.upscaleOutputFormat);
     }
     const generateUpscaleMode = generateWorkflow === 'upscale';
     const activeAgentModelId = agentModelId !== 'auto' && availableChatModels.some((model)=>model.id === agentModelId) ? agentModelId : 'auto';
