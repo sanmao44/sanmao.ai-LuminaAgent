@@ -32,6 +32,17 @@ hardening work when the trigger applies.
 - The variant-help behavior test now combines the shared, generator-card and
   variant-list styles before asserting the existing visual contract.
 
+### Stage 4 smart variant dialog CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-smart-variant.css` now owns the smart variant action buttons,
+  modal backdrop, planning dialog, source summary, draft grid, loading/error
+  states and responsive layout.
+- The dialog remains mounted and coordinated by `CanvasWorkspace.tsx`; this
+  slice moves presentation only and keeps the existing planning/apply flow,
+  pointer isolation and portal behavior unchanged.
+- Shared variant editor and generator help styles remain in their domain files
+  because they are used by multiple canvas surfaces.
+
 ### Stage 4 video editor CSS boundary checkpoint (2026-10-06)
 
 - `app/canvas-video-editor.css` now owns the complete video editor node and

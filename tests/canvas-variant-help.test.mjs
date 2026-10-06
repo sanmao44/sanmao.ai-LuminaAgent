@@ -35,7 +35,11 @@ const variantStyles = await readFile(
   new URL("../app/canvas-variant-editor.css", import.meta.url),
   "utf8",
 );
-const combinedStyles = `${styles}\n${generatorStyles}\n${variantStyles}`;
+const smartVariantStyles = await readFile(
+  new URL("../app/canvas-smart-variant.css", import.meta.url),
+  "utf8",
+);
+const combinedStyles = `${styles}\n${generatorStyles}\n${variantStyles}\n${smartVariantStyles}`;
 
 test("variant generators expose shared contextual help in cards and editors", () => {
   assert.match(source, /(?:export )?function CanvasGeneratorHelp\(\{ kind \}: \{ kind: CanvasMediaKind \}\)/);
