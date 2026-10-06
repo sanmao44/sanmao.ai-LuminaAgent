@@ -4,6 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 
 const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
+const smartVariantDialog = await readFile(new URL("../components/canvas/CanvasSmartVariantDialog.tsx", import.meta.url), "utf8");
 const createMenu = await readFile(new URL("../components/canvas/CanvasCreateContextMenu.tsx", import.meta.url), "utf8");
 const viewportOverlay = await readFile(new URL("../components/canvas/CanvasViewportOverlay.tsx", import.meta.url), "utf8");
 const dialog = await readFile(new URL("../components/canvas/CanvasCloneDialog.tsx", import.meta.url), "utf8");
@@ -48,8 +49,8 @@ test("克隆弹窗拦住画布的指针事件，避免按钮点不动", () => {
   for (const handler of ["onPointerMove", "onPointerUp", "onClick", "onDoubleClick", "onWheel"]) {
     assert.ok(dialog.includes(`${handler}={(event) => event.stopPropagation()}`), handler);
   }
-  assert.ok(canvas.includes('className="smart-variant-backdrop"'), "同类弹窗保持同一处理");
-  assert.ok(canvas.includes("onPointerDown={(event) => event.stopPropagation()}"), "智能一键变体同款");
+  assert.ok(smartVariantDialog.includes('className="smart-variant-backdrop"'));
+  assert.ok(smartVariantDialog.includes("onPointerDown={(event) => event.stopPropagation()}"));
 });
 
 test("弹窗按真实任务状态轮询并可取消、可放入画布", () => {

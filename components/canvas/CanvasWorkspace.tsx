@@ -259,6 +259,7 @@ import CanvasMinimap from "@/components/canvas/CanvasMinimap";
 import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStrip";
 import CanvasNodeLayer from "@/components/canvas/CanvasNodeLayer";
 import CanvasDeck, { type CanvasDeckMode } from "@/components/canvas/CanvasDeck";
+import CanvasSmartVariantDialog from "@/components/canvas/CanvasSmartVariantDialog";
 import CanvasMediaNodeCard from "@/components/canvas/CanvasMediaNodeCard";
 import CanvasAngleNodeCard from "@/components/canvas/CanvasAngleNodeCard";
 import CanvasGeneratorNodeCard from "@/components/canvas/CanvasGeneratorNodeCard";
@@ -14328,51 +14329,21 @@ export default function SuperCanvas() {
           }}
           onVideoInputModeChange={reuseDraft || !selectedSingle || selectedSingle.data.kind !== "video" ? undefined : () => lockVideoInputMode(selectedSingle)}
         />
-        {smartVariantOpen && createPortal(
-          <div className="smart-variant-backdrop" role="dialog" aria-modal="true" aria-label="智能一键变体"
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerMove={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-            onDoubleClick={(event) => event.stopPropagation()}
-            onWheel={(event) => event.stopPropagation()}
-            onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") closeSmartVariant(); }}
-          >
-            <div className="smart-variant-dialog">
-              <header>
-                <div><strong>智能一键变体</strong><small>原文段落已锁定，AI 仅能一对一整理，不新增或删除信息</small></div>
-                <button type="button" onClick={closeSmartVariant} aria-label="关闭">×</button>
-              </header>
-              {smartVariantLoading ? <div className="smart-variant-loading">正在分析共同提示词和直接连接的 Agent 文案…<button type="button" onClick={cancelSmartVariant}>停止分析</button></div> : smartVariantError ? <div className="smart-variant-error">{smartVariantError}</div> : smartVariantPlan && (
-                <div className="smart-variant-grid">
-                  <section>
-                    <b>分析来源</b>
-                    {JSON.stringify(smartVariantSession.current?.sources) !== JSON.stringify(smartVariantSources) && <p role="status">原文已更新；当前显示上次分析来源。</p>}
-                    {smartVariantSession.current?.sources.map((source) => <details key={source.id} open><summary>{source.name}</summary><p>{source.text}</p></details>)}
-                    <b>识别分类</b>
-                    <div className="smart-variant-tags">{smartVariantPlan.categories.map((category) => <span key={category}>{category}</span>)}</div>
-                  </section>
-                  <section>
-                    <div className="smart-variant-result-head"><b>变体草稿</b><small>原文 {smartVariantSourceUnits((smartVariantSession.current?.sources || []).filter((source) => source.id !== "shared-prompt")).length} 段 → {smartVariantPlan.variants.length} 条，可编辑</small></div>
-                    <div className="smart-variant-drafts">
-                      {smartVariantPlan.variants.map((variant, index) => <article key={index}>
-                        <div><span>{index + 1}</span><input value={variant.category || ""} placeholder="分类" onChange={(event) => setSmartVariantPlan((current) => current && ({ ...current, variants: current.variants.map((item, itemIndex) => itemIndex === index ? { ...item, category: event.target.value } : item) }))} /></div>
-                        <textarea value={variant.instruction} onChange={(event) => setSmartVariantPlan((current) => current && ({ ...current, variants: current.variants.map((item, itemIndex) => itemIndex === index ? { ...item, instruction: event.target.value } : item) }))} />
-                        {variant.sources?.length ? <details><summary>查看来源片段</summary><p>{variant.sources.join("\n")}</p></details> : null}
-                      </article>)}
-                    </div>
-                  </section>
-                </div>
-              )}
-              <footer>
-                {smartVariantBusy && <span role="status">生成中，仅可查看；完成后可应用修改。</span>}
-                <button type="button" onClick={() => void openSmartVariant(true)} disabled={smartVariantLoading || !chatModelsAvailable || !smartVariantSources.length}>重新分析</button>
-                <button type="button" className="primary-small" onClick={applySmartVariant} disabled={!smartVariantPlan?.variants.length || smartVariantLoading || smartVariantBusy}>应用到变体要求</button>
-              </footer>
-            </div>
-          </div>,
-          window.document.body,
-        )}
+        <CanvasSmartVariantDialog
+          open={smartVariantOpen}
+          sources={smartVariantSession.current?.sources || []}
+          currentSources={smartVariantSources}
+          plan={smartVariantPlan}
+          loading={smartVariantLoading}
+          error={smartVariantError}
+          busy={smartVariantBusy}
+          chatModelsAvailable={chatModelsAvailable}
+          onClose={closeSmartVariant}
+          onCancel={cancelSmartVariant}
+          onReanalyze={() => void openSmartVariant(true)}
+          onApply={applySmartVariant}
+          onPlanChange={setSmartVariantPlan}
+        />
         <CanvasMinimap
           document={document}
           connectionStyle={connectionStyle}

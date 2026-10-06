@@ -1938,3 +1938,12 @@ hardening work when the trigger applies.
 - Validation: focused file/reference tests passed (10/10), `npm run typecheck`
   passed, full `npm run check` passed (1855 tests passed, 2 skipped; production
   build succeeded), and `git diff --check` passed.
+
+### Stage 6 smart variant dialog checkpoint (2026-10-07)
+
+- `components/canvas/CanvasSmartVariantDialog.tsx` now owns the smart variant modal presentation: portal shell, pointer and keyboard event isolation, source display, editable draft fields, loading/error/busy states, and callback forwarding.
+- `CanvasWorkspace.tsx` keeps smart variant request/cancel lifecycle, source session state, plan application, CanvasCore/document mutation, and generation orchestration. It no longer owns the modal JSX or draft field rendering.
+- The dialog consumes explicit `SmartVariantSource` and `SmartVariantPlan` contracts and does not introduce a store, repository, API, task state machine, or compatibility layer.
+- Behavior tests now exercise the extracted dialog while preserving the existing event-isolation and analysis lifecycle assertions.
+- Validation: focused smart variant and clone UI tests passed (35/35); `npm run typecheck` passed; full `npm run check` passed (1855 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
+- Remaining risk: smart variant request and apply orchestration remain in `CanvasWorkspace.tsx`; extracting them safely requires a stable application boundary and broader lifecycle coverage.

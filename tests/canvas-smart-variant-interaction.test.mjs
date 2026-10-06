@@ -3,15 +3,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
+const dialog = readFileSync(new URL("../components/canvas/CanvasSmartVariantDialog.tsx", import.meta.url), "utf8");
 const planningSource = readFileSync(new URL("../lib/canvas/smart-variant.ts", import.meta.url), "utf8");
 
 test("smart variant portal isolates native control events from canvas gestures", () => {
-  const portal = source.slice(source.indexOf('{smartVariantOpen && createPortal('), source.indexOf('<CanvasMinimap'));
+  const portal = dialog;
   for (const event of ["PointerDown", "PointerMove", "PointerUp", "Click", "DoubleClick", "Wheel"]) {
     assert.ok(portal.includes(`on${event}={(event) => event.stopPropagation()}`));
   }
   assert.ok(source.includes("if (!event.currentTarget.contains(event.target as Node)) return;"));
-  assert.ok(portal.includes("smartVariantSession.current?.sources.map"));
+  assert.ok(portal.includes("sources.map"));
   assert.ok(portal.includes("<article key={index}>"));
 });
 
@@ -35,12 +36,12 @@ test("smart variant planning locks one output to each source unit and retries in
 
 test("smart variant analysis has a bounded, cancellable request path", () => {
   const open = source.slice(source.indexOf("const cancelSmartVariant ="), source.indexOf("const applySmartVariant ="));
-  const portal = source.slice(source.indexOf('{smartVariantOpen && createPortal('), source.indexOf('<CanvasMinimap'));
+  const portal = dialog;
   assert.ok(planningSource.includes("export const SMART_VARIANT_MAX_WAIT_MS = 75_000"));
   assert.ok(open.includes("const controller = new AbortController()"));
   assert.ok(open.includes("window.setTimeout"));
   assert.ok(open.includes("generateCanvasAgent({"));
   assert.ok(open.includes("signal: controller.signal"));
   assert.ok(portal.includes("停止分析"));
-  assert.ok(portal.includes("closeSmartVariant"));
+  assert.ok(portal.includes("onClose"));
 });
