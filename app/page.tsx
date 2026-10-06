@@ -144,6 +144,7 @@ import { applyMessageVersion, messageVersionIndex, messageVersionsFor, normalize
 import { prepareAgentReferences } from '@/lib/agent/reference-preparation';
 import { historyArtifactFiles } from '@/lib/agent/artifact-references';
 import { chatFileToCreativeReference, createCreativeReferenceFromFile, readAgentChatFile } from '@/lib/agent/attachment-client';
+import { makeWhiteBackgroundTransparent } from '@/lib/image-editor/transparent-background';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -332,34 +333,6 @@ function focusContentEditableToEnd(element) {
 }
 function clipboardImageFiles(data) {
     return Array.from(data.items || []).filter((item)=>item.kind === 'file' && item.type.startsWith('image/')).map((item)=>item.getAsFile()).filter((file)=>Boolean(file));
-}
-async function makeWhiteBackgroundTransparent(image) {
-    const source = new Image();
-    if (/^https?:/i.test(image.url)) source.crossOrigin = 'anonymous';
-    await new Promise((resolve, reject)=>{
-        source.onload = ()=>resolve();
-        source.onerror = ()=>reject(new Error('图片读取失败'));
-        source.src = image.url;
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = source.naturalWidth;
-    canvas.height = source.naturalHeight;
-    const context = canvas.getContext('2d', {
-        willReadFrequently: true
-    });
-    if (!context) throw new Error('浏览器不支持本地透明处理');
-    context.drawImage(source, 0, 0);
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-    for(let i = 0; i < pixels.data.length; i += 4){
-        const r = pixels.data[i], g = pixels.data[i + 1], b = pixels.data[i + 2];
-        const min = Math.min(r, g, b), max = Math.max(r, g, b);
-        if (min > 218 && max - min < 24) pixels.data[i + 3] = Math.min(pixels.data[i + 3], Math.max(0, Math.round((255 - min) / 37 * 255)));
-    }
-    context.putImageData(pixels, 0, 0);
-    return {
-        ...image,
-        url: canvas.toDataURL('image/png')
-    };
 }
 async function downloadUrl(url, filename) {
     try {

@@ -85,6 +85,22 @@ hardening work when the trigger applies.
 - Behavior coverage: `tests/image-storage-client.test.mjs`; full validation is
   required before committing this checkpoint.
 
+### Stage 6 image editor transparency checkpoint (2026-10-06)
+
+- `lib/image-editor/transparent-background.ts` now owns the browser adapter that
+  loads a generated image, removes near-white pixels through the existing Canvas
+  API flow, and returns the same image record with a PNG data URL.
+- `app/page.tsx` keeps the generation task orchestration, local-transparent
+  fallback, history recording, notifications, and state updates. It no longer
+  defines the pixel transformation implementation.
+- Behavior coverage in `tests/transparent-background.test.mjs` uses fake Image
+  and Canvas adapters to verify cross-origin loading, metadata preservation,
+  near-white alpha conversion, and load failures. No API, persisted shape, or
+  user interaction changed.
+- Remaining risk: `renderLocalImage` and `renderOutpaintWhiteCanvas` still mix
+  browser Canvas rendering with page editor state. They should remain separate
+  slices until their browser behavior has dedicated coverage.
+
 ## File size and component splits
 
 - `app/page.tsx`, `components/SuperCanvas.tsx`, `components/CanvasAgentDock.tsx`,
