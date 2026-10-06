@@ -643,7 +643,6 @@ test("all canvas video generation paths forward Agnes V2.0 parameters", () => {
   assert.ok(generationStart >= 0 && generationEnd > generationStart, "normal generation path should be present");
 
   const paths = [
-    component.slice(variantStart, variantEnd),
     component.slice(continuationStart, continuationEnd),
     component.slice(generationStart, generationEnd),
   ];

@@ -1842,3 +1842,11 @@ hardening work when the trigger applies.
 - Behavior coverage verifies the mapped request shape and preserves the existing API payload contract.
 - Validation: focused variant batch tests passed (9/9); `npm run check` passed (1851 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
 - Remaining risk: variant video request mapping and the surrounding task polling remain coupled to Workspace; extract them only with equivalent request and polling behavior coverage.
+
+### Stage 5 variant video request projection checkpoint (2026-10-06)
+
+- `canvasVariantVideoRequest` in `lib/canvas/variant-batch.ts` now owns the pure mapping of resolved variant video inputs and settings to the existing `generateCanvasVideo` request shape.
+- `CanvasWorkspace.tsx` keeps video input validation, provider model resolution, API invocation, task polling, node/edge creation, batch state, and history side effects; it no longer assembles the request object inline.
+- The legacy source-coupled Agnes parameter test was narrowed to the two paths that still own inline request construction. Variant payload behavior is covered by the new projection test, while `canvas-api.test.mjs` continues to verify final Agnes request serialization.
+- Validation: focused canvas/API/variant tests passed (108/108); `npm run check` passed (1852 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
+- Remaining risk: task polling, variant state transitions, and video result creation remain in `CanvasWorkspace.tsx`; extracting them requires an explicit task lifecycle contract and broader behavior coverage.

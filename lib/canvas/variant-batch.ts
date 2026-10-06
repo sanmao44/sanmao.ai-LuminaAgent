@@ -40,6 +40,42 @@ export function canvasVariantImageRequest(input: {
   };
 }
 
+/** Projects resolved video inputs into the existing canvas video API shape. */
+export function canvasVariantVideoRequest(input: {
+  prompt: string;
+  params: VideoCreationSettings;
+  model: string;
+  modelRawId?: string;
+  references: readonly { url: string; name?: string }[];
+  referenceVideos: readonly { url: string; name?: string }[];
+  firstFrame?: string;
+  lastFrame?: string;
+  referenceVideo?: string;
+  audios: readonly { url: string; name?: string }[];
+}) {
+  const { params } = input;
+  return {
+    prompt: input.prompt,
+    model: input.model,
+    modelRawId: input.modelRawId,
+    operation: params.operation,
+    inputMode: params.inputMode,
+    duration: params.duration,
+    aspect: params.aspect,
+    resolution: params.resolution,
+    agnesWidth: params.agnesWidth,
+    agnesHeight: params.agnesHeight,
+    agnesNumFrames: params.agnesNumFrames,
+    agnesFrameRate: params.agnesFrameRate,
+    references: input.references.map((item) => ({ ...item })),
+    referenceVideos: input.referenceVideos.map((item) => ({ ...item })),
+    firstFrame: input.firstFrame,
+    lastFrame: input.lastFrame,
+    referenceVideo: input.referenceVideo,
+    audios: input.audios.map((item) => ({ ...item })),
+  };
+}
+
 export function canvasVideoTaskProgress(task: {
   status: string;
   progress?: number;

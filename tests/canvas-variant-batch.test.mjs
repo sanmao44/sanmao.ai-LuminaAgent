@@ -206,6 +206,55 @@ test("maps image variant settings into the existing generation request shape", (
   });
 });
 
+test("maps resolved video inputs into the existing generation request shape", () => {
+  const request = batch.canvasVariantVideoRequest({
+    prompt: "cinematic scene",
+    model: "video-model",
+    modelRawId: "provider-video-model",
+    params: {
+      kind: "video",
+      model: "video-model",
+      operation: "edit",
+      inputMode: "frames",
+      duration: 5,
+      aspect: "16:9",
+      resolution: "1080p",
+      audio: true,
+      agnesWidth: 1152,
+      agnesHeight: 768,
+      agnesNumFrames: 81,
+      agnesFrameRate: 24,
+    },
+    references: [{ url: "/first.png", name: "first" }],
+    referenceVideos: [{ url: "/source.mp4", name: "source" }],
+    firstFrame: "/first.png",
+    lastFrame: "/last.png",
+    referenceVideo: "/source.mp4",
+    audios: [{ url: "/audio.mp3", name: "audio" }],
+  });
+
+  assert.deepEqual(request, {
+    prompt: "cinematic scene",
+    model: "video-model",
+    modelRawId: "provider-video-model",
+    operation: "edit",
+    inputMode: "frames",
+    duration: 5,
+    aspect: "16:9",
+    resolution: "1080p",
+    agnesWidth: 1152,
+    agnesHeight: 768,
+    agnesNumFrames: 81,
+    agnesFrameRate: 24,
+    references: [{ url: "/first.png", name: "first" }],
+    referenceVideos: [{ url: "/source.mp4", name: "source" }],
+    firstFrame: "/first.png",
+    lastFrame: "/last.png",
+    referenceVideo: "/source.mp4",
+    audios: [{ url: "/audio.mp3", name: "audio" }],
+  });
+});
+
 test("prepares only requested failed variants and preserves retry results", () => {
   const retained = { id: "variant-1", instruction: "one", status: "completed", resultIds: ["image-1"] };
   const failed = { id: "variant-2", instruction: "old", status: "failed", resultIds: ["image-2"], taskIds: ["task-2"] };

@@ -374,6 +374,7 @@ import {
   canvasVariantImageNodeData,
   canvasVideoTaskProgress,
   canvasVariantImageRequest,
+  canvasVariantVideoRequest,
   canvasVariantVideoNodeData,
   prepareCanvasVariantBatch,
 } from "@/lib/canvas/variant-batch";
@@ -6229,35 +6230,29 @@ export default function SuperCanvas() {
               const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits, videoParams.operation);
               if (videoInputError) throw new Error(videoInputError);
               const generationStartedAt = Date.now();
-              const task = await generateCanvasVideo({
-                prompt,
-                model: effectiveParams.model,
-                modelRawId: resolvedModel.model?.rawId,
-                operation: videoParams.operation,
-                inputMode: videoParams.inputMode,
-                duration: videoParams.duration,
-                aspect: videoParams.aspect,
-                resolution: videoParams.resolution,
-                agnesWidth: videoParams.agnesWidth,
-                agnesHeight: videoParams.agnesHeight,
-                agnesNumFrames: videoParams.agnesNumFrames,
-                agnesFrameRate: videoParams.agnesFrameRate,
-                references: videoInputs.referenceImages.map((item) => ({
+              const task = await generateCanvasVideo(
+                canvasVariantVideoRequest({
+                  prompt,
+                  model: effectiveParams.model,
+                  modelRawId: resolvedModel.model?.rawId,
+                  params: videoParams,
+                  references: videoInputs.referenceImages.map((item) => ({
                     url: String(item.data.url),
                     name: String(item.data.name || "参考图片"),
                   })),
-                referenceVideos: videoInputs.referenceVideos.map((item) => ({
-                  url: String(item.data.url),
-                  name: String(item.data.name || "参考视频"),
-                })),
-                firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
-                lastFrame: videoInputs.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
-                referenceVideo: videoInputs.referenceVideo?.data.url ? String(videoInputs.referenceVideo.data.url) : undefined,
-                audios: videoInputs.audios.map((item) => ({
-                  url: String(item.data.url),
-                  name: String(item.data.name || "参考音频"),
-                })),
-              });
+                  referenceVideos: videoInputs.referenceVideos.map((item) => ({
+                    url: String(item.data.url),
+                    name: String(item.data.name || "参考视频"),
+                  })),
+                  firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
+                  lastFrame: videoInputs.lastFrame?.data.url ? String(videoInputs.lastFrame.data.url) : undefined,
+                  referenceVideo: videoInputs.referenceVideo?.data.url ? String(videoInputs.referenceVideo.data.url) : undefined,
+                  audios: videoInputs.audios.map((item) => ({
+                    url: String(item.data.url),
+                    name: String(item.data.name || "参考音频"),
+                  })),
+                }),
+              );
               const targetCreatedAt = Date.now();
               const target = createMedia(
                 "video",
