@@ -17,6 +17,7 @@ const [page, history, providers, nativeSearch, webSearch, styles] = await Promis
 const sendButton = await read('components/AgentSendButton.tsx');
 const { executeMcpTool } = await buildMcpExecutorModule();
 const { readAgentHttpInput } = createTsRequire(process.cwd())('./apps/api/agent-http-contract');
+const { normalizeChatSession } = createTsRequire(process.cwd())('./lib/conversation/session-normalization');
 
 test('Agent composer switches between send and an accessible stop action', () => {
   assert.ok(page.includes("import AgentSendButton from '@/components/AgentSendButton'"));
@@ -114,7 +115,24 @@ test('a running reply shows motion and a live clock so a long wait never looks f
 });
 
 test('restored pending messages are converted to interrupted history', () => {
-  assert.match(page, /if \(message\.pending\) \{/);
-  assert.match(page, /页面刷新或重启后中断/);
-  assert.match(page, /const \{ pending: _pending, activity: _activity, pendingSince: _pendingSince, \.\.\.rest \} = message/);
+  const result = normalizeChatSession({
+    id: 'restored-session',
+    title: 'Restored',
+    createdAt: 1,
+    updatedAt: 1,
+    messages: [{
+      id: 'pending-message',
+      role: 'assistant',
+      content: '  ',
+      pending: true,
+      activity: 'working',
+      pendingSince: 2,
+    }],
+  }, 'project-1');
+  const [message] = result.messages;
+  assert.equal(message.interrupted, true);
+  assert.equal(message.content, '本轮回答在页面刷新或重启后中断。');
+  assert.equal('pending' in message, false);
+  assert.equal('activity' in message, false);
+  assert.equal('pendingSince' in message, false);
 });

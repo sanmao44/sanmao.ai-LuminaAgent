@@ -834,3 +834,26 @@ hardening work when the trigger applies.
 - Remaining risk: variant generation still owns request submission, result
   materialization, and node mutation in Workspace; only the aggregate status
   rule moved.
+
+### Stage 6 conversation session normalization checkpoint (2026-10-06)
+
+- `lib/conversation/session-normalization.ts` now owns the pure normalization
+  of persisted Agent conversation records: assistant image source recovery,
+  legacy single-version projection, version selection clamping, version
+  application, pending-message interruption, and project fallback.
+- `app/page.tsx` keeps conversation Repository access, React state updates,
+  history migration writes, and Agent retry/session orchestration. It imports
+  the shared normalization functions instead of defining a second copy.
+- The module reuses `ChatHistoryMessage`, `ChatMessageVersion`, `ChatSession`,
+  and `GalleryItem` from `lib/client-history`; transient persisted fields are
+  represented only as a local compatibility intersection.
+- Behavior coverage verifies image source recovery, legacy version projection,
+  metadata inheritance, pending interruption, project fallback, and stored
+  version selection. URL, API payloads, persisted shapes, and user interaction
+  are unchanged.
+- Validation: targeted conversation normalization tests and `npm run
+  typecheck` passed. Full `npm test`, `npm run build`, `npm run check`, and
+  `git diff --check` remain required before committing this checkpoint.
+- Remaining risk: conversation loading and Agent retry/persistence side
+  effects still span the page component and Repository boundary; this slice
+  moves only pure normalization and does not change their ownership.

@@ -138,6 +138,7 @@ import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerT
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 import { buildGalleryItems } from '@/lib/creation/gallery-items';
 import { storeImages } from '@/lib/image-storage-client';
+import { applyMessageVersion, messageVersionIndex, messageVersionsFor, normalizeAssistantImageSources, normalizeChatSession } from '@/lib/conversation/session-normalization';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -5345,91 +5346,11 @@ export default function Page() {
             setWebSearchApiBusy(false);
         }
     }
-    function normalizeAssistantImageSources(inputMessages) {
-        return inputMessages.map((message)=>message.role === 'assistant' && message.images?.length ? {
-                ...message,
-                images: message.images.map((item)=>item.source === 'agent' ? item : {
-                        ...item,
-                        source: 'agent'
-                    })
-            } : message);
-    }
-    function messageVersionsFor(message) {
-        if (message.role !== 'assistant' || !message.versions?.length) return [
-            {
-                id: `${message.id}-v1`,
-                content: message.content,
-                images: message.images,
-                files: message.files,
-                interrupted: message.interrupted,
-                webSearch: message.webSearch,
-                webSearchDecision: message.webSearchDecision,
-                task: message.task,
-                durationSeconds: message.durationSeconds,
-                createdAt: 0
-            }
-        ];
-        return message.versions;
-    }
-    function messageVersionIndex(message) {
-        return Math.min(Math.max(0, message.activeVersion ?? messageVersionsFor(message).length - 1), messageVersionsFor(message).length - 1);
-    }
-    function applyMessageVersion(message, versions, activeVersion, retrying = false) {
-        const version = versions[activeVersion];
-        return {
-            ...message,
-            content: version.content,
-            images: version.images,
-            files: version.files,
-            interrupted: version.interrupted,
-            webSearch: version.webSearch ?? message.webSearch,
-            webSearchDecision: version.webSearchDecision ?? message.webSearchDecision,
-            task: version.task ?? message.task,
-            durationSeconds: version.durationSeconds ?? message.durationSeconds,
-            versions,
-            activeVersion,
-            retrying
-        };
-    }
-    function normalizeChatSession(session) {
-        const messages = normalizeAssistantImageSources(session.messages).map((message)=>{
-            // Pending messages are transient UI state. If one was persisted by
-            // an older build or restored from a workspace after a crash, there
-            // is no live request left to finish it. Keep the partial text but
-            // convert it to an explicit interrupted message so the composer is
-            // usable again and the history cannot spin forever.
-            if (message.pending) {
-                const { pending: _pending, activity: _activity, pendingSince: _pendingSince, ...rest } = message;
-                return {
-                    ...rest,
-                    content: String(rest.content || '').trim() || '本轮回答在页面刷新或重启后中断。',
-                    interrupted: true
-                };
-            }
-            if (message.role !== 'assistant' || !message.versions?.length) return message;
-            const versions = normalizeAssistantImageSources(message.versions.map((version)=>({
-                    role: 'assistant',
-                    ...version
-                }))).map(({ role: _role, ...version })=>version);
-            const activeVersion = Math.min(Math.max(0, message.activeVersion ?? versions.length - 1), versions.length - 1);
-            return applyMessageVersion({
-                ...message,
-                versions
-            }, versions, activeVersion);
-        });
-        const projectId = typeof session.projectId === 'string' && session.projectId.trim()
-            ? session.projectId.trim()
-            : readWorkspaceContext().creativeProjectId;
-        return {
-            ...session,
-            projectId,
-            messages
-        };
-    }
     async function refreshChatSessions() {
         try {
             const rawSessions = await conversationRepository.list();
-            const sessions = rawSessions.map(normalizeChatSession);
+            const fallbackProjectId = readWorkspaceContext().creativeProjectId;
+            const sessions = rawSessions.map((session)=>normalizeChatSession(session, fallbackProjectId));
             chatMemoryRef.current = new Map(sessions.map((session)=>[session.id, validConversationMemory(session.memory, session.messages)]));
             setChatSessions(sessions);
             // Persist the one-time migration so a stale pending marker cannot
@@ -6887,7 +6808,7 @@ export default function Page() {
         setSection('agent');
     }
     function openChatSession(session) {
-        const normalized = normalizeChatSession(session);
+        const normalized = normalizeChatSession(session, readWorkspaceContext().creativeProjectId);
         activeChatIdRef.current = session.id;
         agentPersonaRef.current = session.persona || '';
         setActiveChatId(session.id);
