@@ -1627,3 +1627,13 @@ hardening work when the trigger applies.
 - Remaining risk: menu action builders and pointer isolation remain coordinated
   by `CanvasWorkspace.tsx`; extracting them requires behavior coverage for
   selection and command callbacks, so this slice intentionally moved CSS only.
+
+### Stage 6 minimap boundary review (2026-10-07)
+
+- Reviewed `CanvasMinimap.tsx` and all `.canvas-minimap*` selectors.
+- Deferred CSS extraction: minimap presentation is interleaved with shared
+  responsive deck offsets, global readability overrides, node semantic color
+  variables, and reduced-motion contracts in `app/canvas.css`. Moving only a
+  subset would leave same-selector cascade ownership split across files and
+  could change viewport/deck positioning. No behavior-safe slice was identified
+  without first adding a dedicated style contract and broader visual coverage.
