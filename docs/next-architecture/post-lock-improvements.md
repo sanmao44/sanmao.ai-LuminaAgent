@@ -880,3 +880,25 @@ hardening work when the trigger applies.
 - Remaining risk: paste placement and browser clipboard permissions still
   depend on Workspace interaction state; they remain there because moving them
   would couple a pure payload contract to viewport and file-drop behavior.
+
+### Stage 6 Agent reference preparation checkpoint (2026-10-06)
+
+- `lib/agent/reference-preparation.ts` now owns the bounded conversion of
+  existing CreativeReference inputs into Agent request references. It reuses
+  `normalizeCreativeReference`, preserves order and the 16-item limit, and
+  compresses image URLs through an injected function.
+- `app/page.tsx` no longer defines this conversion. It still owns the
+  compression adapter selection, request/retry orchestration, reference
+  persistence, memory preparation, and React state updates.
+- The output is a transport projection of the existing CreativeReference
+  contract; no second reference authority, Provider SDK call, URL, or API
+  payload shape was introduced.
+- Behavior coverage verifies image compression, video/text pass-through,
+  metadata preservation, legacy normalization, ordering, and the existing
+  16-reference bound.
+- Validation: targeted Agent reference tests, `npm run typecheck`, full
+  `npm test` (1823 passed, 2 skipped), and `npm run build` passed. `git diff
+  --check` remains required before commit.
+- Remaining risk: image compression still requires the browser adapter and
+  remains injected from the page; moving that adapter would cross into browser
+  media infrastructure and needs a separate contract.

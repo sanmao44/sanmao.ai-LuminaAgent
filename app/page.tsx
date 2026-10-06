@@ -139,6 +139,7 @@ import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabe
 import { buildGalleryItems } from '@/lib/creation/gallery-items';
 import { storeImages } from '@/lib/image-storage-client';
 import { applyMessageVersion, messageVersionIndex, messageVersionsFor, normalizeAssistantImageSources, normalizeChatSession } from '@/lib/conversation/session-normalization';
+import { prepareAgentReferences } from '@/lib/agent/reference-preparation';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -441,21 +442,6 @@ function focusContentEditableToEnd(element) {
     range.collapse(false);
     selection.removeAllRanges();
     selection.addRange(range);
-}
-async function prepareCreativeReferencesForAgent(references) {
-    return Promise.all((references || []).slice(0, 16).map(async (rawReference, index) => {
-        const reference = normalizeCreativeReference(rawReference, index) || rawReference;
-        const url = reference.dataUrl || reference.url;
-        const preparedUrl = (reference.kind || 'image') === 'image' && url ? await compressReferenceDataUrl(url) : url;
-        return {
-            id: reference.id,
-            kind: reference.kind || 'image',
-            name: reference.name || '引用素材',
-            ...(preparedUrl ? { url: preparedUrl } : {}),
-            ...(reference.text ? { text: reference.text } : {}),
-            ...(reference.mimeType ? { mimeType: reference.mimeType } : {})
-        };
-    }));
 }
 function clipboardImageFiles(data) {
     return Array.from(data.items || []).filter((item)=>item.kind === 'file' && item.type.startsWith('image/')).map((item)=>item.getAsFile()).filter((file)=>Boolean(file));
@@ -7079,7 +7065,7 @@ export default function Page() {
             const retryImage = !referenceSource?.references?.length ? conversationImage(latestUserMessage?.content || '', retryHistory) : null;
             const retryReferences = retryImage ? [await galleryItemToReference(retryImage)] : referenceSource?.references || [];
             const [referencesForRequest, referenceRecords, memory] = await Promise.all([
-                prepareCreativeReferencesForAgent(retryReferences),
+                prepareAgentReferences(retryReferences, compressReferenceDataUrl),
                 persistReferenceImages(retryReferences),
                 prepareAgentMemory(sessionId, contextMessages, modelOverride, requestController.signal),
             ]);
@@ -7398,7 +7384,7 @@ export default function Page() {
             const referenceSource = latestUserMessage;
             updatePendingActivity({ stage: 'preparing', message: '正在准备引用和对话上下文…' });
             const [referencesForRequest, referenceRecords, memory] = await Promise.all([
-                prepareCreativeReferencesForAgent(referenceSource?.references || []),
+                prepareAgentReferences(referenceSource?.references || [], compressReferenceDataUrl),
                 persistReferenceImages(referenceSource?.references || []),
                 prepareAgentMemory(sessionId, nextMessages, activeAgentModelId, requestController.signal),
             ]);
