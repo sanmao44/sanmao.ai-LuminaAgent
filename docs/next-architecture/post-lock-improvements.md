@@ -247,6 +247,17 @@ hardening work when the trigger applies.
   and manual-model capability. The targeted tests, full suite, typecheck,
   production build, and diff check pass for this slice.
 
+### Stage 6 creative reference ordering checkpoint (2026-10-06)
+
+- `reorderCreativeReferences` now lives with the existing creative reference
+  normalization and mention contracts in `lib/creative-references.ts`.
+- `app/page.tsx` no longer owns a duplicate array reordering helper; it keeps
+  Agent and Generate reference state and passes the domain operation to the
+  existing `CreativeReferenceStrip` callbacks. Canvas draft ordering remains in
+  `lib/canvas/reuse.ts` and is intentionally unchanged.
+- `tests/creative-reference-ordering.test.mjs` covers invalid moves, immutable valid
+  moves, and order preservation. Full validation is required before commit.
+
 ### Stage 6 admin login checkpoint (2026-10-06)
 
 - `AdminLogin.tsx` now owns the protected management login presentation for the

@@ -83,7 +83,7 @@ import { readWorkspaceContext } from '@/lib/workspace-context';
 import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import OneTakeDurationPicker from '@/components/OneTakeDurationPicker';
-import { appendTextReferenceContext, creativeReferenceUrl, normalizeCreativeReference, referenceMentionOptions, referencePreviewText, referenceTextBadge, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import { appendTextReferenceContext, creativeReferenceUrl, normalizeCreativeReference, referenceMentionOptions, referencePreviewText, referenceTextBadge, reorderCreativeReferences, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from '@/lib/theme';
 import AgentApprovalCard from '@/components/AgentApprovalCard';
@@ -221,16 +221,6 @@ function uid(prefix = 'id') {
 }
 function sourceLabel(source) {
     return source === 'canvas' ? '画布生成' : source === 'agent' ? '助手生成' : source === 'edit' ? '图片修改' : source === 'upscale' ? '高清放大' : '直接生成';
-}
-function reorderReferenceItems(items, fromIndex, toIndex) {
-    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= items.length || toIndex >= items.length) return items;
-    const next = [
-        ...items
-    ];
-    const [moved] = next.splice(fromIndex, 1);
-    if (!moved) return items;
-    next.splice(toIndex, 0, moved);
-    return next;
 }
 function drawCoverImage(context, image, sourceWidth, sourceHeight, targetWidth, targetHeight) {
     const scale = Math.max(targetWidth / sourceWidth, targetHeight / sourceHeight);
@@ -9321,7 +9311,7 @@ export default function Page() {
                                                         setAgentRefs((old)=>old.filter((x)=>x.id !== id));
                                                         setAgentFiles((old)=>old.filter((file)=>file.id !== id));
                                                     },
-                                                    onReorder: (fromIndex, toIndex)=>setAgentRefs((old)=>reorderReferenceItems(old, fromIndex, toIndex)),
+                                                    onReorder: (fromIndex, toIndex)=>setAgentRefs((old)=>reorderCreativeReferences(old, fromIndex, toIndex)),
                                                     onClear: ()=>{
                                                         setAgentRefs([]);
                                                         setAgentFiles([]);
@@ -9766,7 +9756,7 @@ export default function Page() {
                                                     setGenerateRefs((old)=>old.filter((x)=>x.id !== id));
                                                     if (generateMask?.referenceId === id) setGenerateMask(null);
                                                 },
-                                                onReorder: (fromIndex, toIndex)=>setGenerateRefs((old)=>reorderReferenceItems(old, fromIndex, toIndex)),
+                                                onReorder: (fromIndex, toIndex)=>setGenerateRefs((old)=>reorderCreativeReferences(old, fromIndex, toIndex)),
                                                 onClear: ()=>{
                                                     setGenerateRefs([]);
                                                     setGenerateMask(null);

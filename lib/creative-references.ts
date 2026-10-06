@@ -110,6 +110,15 @@ export function normalizeCreativeReferences(input: unknown, max = 16): CreativeR
   return result;
 }
 
+export function reorderCreativeReferences<T>(items: T[], fromIndex: number, toIndex: number) {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= items.length || toIndex >= items.length) return items;
+  const next = [...items];
+  const [moved] = next.splice(fromIndex, 1);
+  if (moved === undefined) return items;
+  next.splice(toIndex, 0, moved);
+  return next;
+}
+
 /** Return the active @query at a textarea cursor, if there is one.
  *
  * An @ mention is an inline editing affordance, so it may start after any
