@@ -9,6 +9,7 @@ const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToo
 const contextMenu = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
 const selectionToolbar = await readFile(new URL("../components/canvas/CanvasSelectionToolbar.tsx", import.meta.url), "utf8");
 const nodeEditor = await readFile(new URL("../components/canvas/CanvasNodeEditorPopover.tsx", import.meta.url), "utf8");
+const workspaceHeader = await readFile(new URL("../components/canvas/CanvasWorkspaceHeader.tsx", import.meta.url), "utf8");
 
 const [component, canvasSource, styles, context, canvasApi, markdown] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
@@ -19,7 +20,7 @@ const [component, canvasSource, styles, context, canvasApi, markdown] = await Pr
   readFile(new URL("../components/AgentMarkdown.tsx", import.meta.url), "utf8"),
 ]);
 
-const canvas = `${canvasSource}\n${nodeEditor}`;
+const canvas = `${canvasSource}\n${workspaceHeader}\n${nodeEditor}`;
 
 test("the canvas agent dock mounts in SuperCanvas and is bound to the selection", () => {
   assert.match(canvas, /<CanvasAgentDock[\s\S]*?contextBlock=\{agentDockContext\.text\}/);
@@ -42,7 +43,7 @@ test("the right-hand slot hosts one panel at a time", () => {
   assert.match(canvas, /if \(open\) closeCanvasOverlayConflicts\(\);/);
   assert.match(canvas, /closeCanvasOverlayConflicts\(\);\s*setAgentDockOpen\(false\);\s*setActivePanel\(panel\);/);
   assert.match(canvas, /onToggle=\{applyAgentDockOpen\}/);
-  assert.match(canvas, /onClick=\{\(\) => applyAgentDockOpen\(!agentDockOpen\)\}/);
+  assert.match(workspaceHeader, /onClick=\{onToggleAgentDock\}/);
 });
 
 test("the right-hand slot reads as one dock instead of separate overlays", () => {
@@ -59,8 +60,8 @@ test("the right-hand slot reads as one dock instead of separate overlays", () =>
   // Escape and the topbar button both close an open shell panel.
   assert.match(`${canvas}\n${panels}`, /export function CanvasPanelShell[\s\S]{0,400}?if \(event\.key === "Escape"\) onClose\(\);[\s\S]{0,400}?className="canvas-modal-backdrop canvas-panel-backdrop">/);
   assert.doesNotMatch(canvas, /canvas-panel-backdrop" onClick=/);
-  assert.match(canvas, /onClick=\{\(\) => activePanel === "settings" \? setActivePanel\(null\) : openCanvasPanel\("settings"\)\}/);
-  assert.match(canvas, /onClick=\{\(\) => activePanel === "shortcuts" \? setActivePanel\(null\) : openCanvasPanel\("shortcuts"\)\}/);
+  assert.match(workspaceHeader, /onClick=\{\(\) => onTogglePanel\("settings"\)\}/);
+  assert.match(workspaceHeader, /onClick=\{\(\) => onTogglePanel\("shortcuts"\)\}/);
 });
 
 test("the dock sends canvas context only with the message being sent", () => {
@@ -525,7 +526,7 @@ test("the dock keeps reporting a run and previews its images", () => {
   assert.match(component, /onBusyChange\?\.\(busy\);/);
   assert.match(canvas, /onBusyChange=\{setAgentDockBusy\}/);
   assert.match(canvas, /const \[agentDockBusy, setAgentDockBusy\] = useState\(false\)/);
-  assert.match(canvas, /canvas-agent-button \$\{agentDockOpen \? "active" : ""\}\$\{agentDockBusy \? " is-busy" : ""\}/);
+  assert.match(workspaceHeader, /canvas-agent-button \$\{agentDockOpen \? "active" : ""\}\$\{agentDockBusy \? " is-busy" : ""\}/);
   assert.match(styles, /\.canvas-agent-button\.is-busy i\{animation:canvas-pulse/);
   // 收起后的入口改用光球报忙：旧的字形脉冲规则不能顺手扫到球体内部的 span。
   assert.doesNotMatch(styles, /\.canvas-agent-dock-rail\.is-busy span/);

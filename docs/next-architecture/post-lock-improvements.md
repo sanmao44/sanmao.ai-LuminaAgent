@@ -1111,3 +1111,26 @@ hardening work when the trigger applies.
 - Remaining risk: verify the extracted component with behavior coverage for
   project-menu propagation, rename Enter/Escape, topbar collapse persistence,
   and panel toggle callbacks before proceeding.
+
+### Stage 6 canvas workspace header extraction checkpoint (2026-10-06)
+
+- `components/canvas/CanvasWorkspaceHeader.tsx` now owns the canvas topbar
+  and project/version popover presentation, including local rename input state,
+  collapse control, panel buttons, save/sync badges, and keyboard/pointer
+  forwarding.
+- `CanvasWorkspace.tsx` remains the owner of CanvasCore state, project
+  persistence, version mutations, router navigation, panel orchestration, and
+  all business callbacks. No repository, provider, or filesystem dependency was
+  added to the header component.
+- Existing canvas behavior tests were updated to read the new UI owner while
+  retaining Workspace assertions for business ownership. URL, API, persisted
+  project/version shapes, CSS classes, button order, and interaction callbacks
+  remain compatible.
+- Validation: targeted canvas tests passed (67/67), `npm test` passed (1830
+  passed, 2 skipped), `npm run typecheck` passed, `npm run build` passed, and
+  `git diff --check` reports only the pre-existing user edit at the end of
+  `AGENTS.md`.
+- Remaining risk: `CanvasWorkspace.tsx` still owns viewport, node, generation,
+  and workbench coordination. The next safe slice should be selected only after
+  its props contract is isolated; broad CSS movement remains intentionally
+  deferred.
