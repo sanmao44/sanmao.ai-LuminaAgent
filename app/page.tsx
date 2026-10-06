@@ -136,6 +136,7 @@ import { buildEditorModelCallInput, buildEditorHistoryMeta, editorCompletionInfo
 import { canvasRectForRatio, cropSourceRect } from '@/lib/image-editor/local-image-layout';
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
+import { buildGalleryItems } from '@/lib/creation/gallery-items';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
 const rememberedSections = [
@@ -6067,36 +6068,22 @@ export default function Page() {
             return persistHistoryImage(image);
         }));
         const now = Date.now();
-        const items = storedImages.map((image, index)=>({
-                id: uid('img'),
+        const items = buildGalleryItems(
+            storedImages.map((image)=>({
                 url: image.url,
                 localFileName: image.localFileName,
-                prompt: image.localFileName || meta.prompt,
-                revisedPrompt: image.revisedPrompt,
-                modelId: meta.modelId,
-                modelName: meta.modelName,
-                providerName: meta.providerName,
-                aspectRatio: meta.aspectRatio,
-                outputSize: meta.outputSize,
-                outputFormat: meta.outputFormat,
-                generationMs: meta.generationMs,
-                source: meta.source,
-                projectId: meta.projectId || readWorkspaceContext().creativeProjectId,
-                createdAt: now + index,
-                favorite: false,
-                parentId: meta.parentId,
-                sourceImageId: meta.sourceImageId,
-                upscaleProvider: meta.upscaleProvider,
-                upscaleModel: meta.upscaleModel,
-                upscaleScale: meta.upscaleScale,
-                upscaleTaskId: meta.upscaleTaskId,
-                references: meta.references?.length ? meta.references : meta.compareReference ? [meta.compareReference] : undefined,
-                 compareReferenceUrl: meta.references?.[0]?.url || meta.compareReference?.url,
-                 compareReferenceName: meta.references?.[0]?.name || meta.compareReference?.name,
-                 angle: meta.angle,
-                  annotations: Array.isArray(meta.annotations) && meta.annotations.length ? meta.annotations : undefined,
-                  ...(meta.mask ? { mask: meta.mask } : {})
-             }));
+                revisedPrompt: image.revisedPrompt
+            })),
+            {
+                ...meta,
+                projectId: meta.projectId || readWorkspaceContext().creativeProjectId
+            },
+            {
+                createdAt: now,
+                createId: ()=>uid('img'),
+                includeCompareReference: true
+            }
+        );
         await assetRepository.saveGallery(items);
         setGallery((old)=>[
                 ...items,

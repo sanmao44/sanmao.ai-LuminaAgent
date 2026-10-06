@@ -1,11 +1,30 @@
 ﻿# Post-Lock Improvements
 
-Last reviewed: 2026-10-05
+Last reviewed: 2026-10-06
 
 This file records work that is deliberately deferred **after** the Final
 Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
+
+### Stage 5 gallery history projection checkpoint (2026-10-06)
+
+- `lib/creation/gallery-items.ts` now owns the pure projection from generated
+  image inputs and existing gallery metadata to `GalleryItem` records.
+- `lib/creation/history.ts` reuses that projection for Canvas persistence, and
+  `app/page.tsx` reuses it for page history recording while retaining image
+  upload, Repository writes, React state updates, history notifications, and
+  local directory persistence in the page owner.
+- The projection preserves prompt fallback, per-image model overrides,
+  references, compare-reference metadata, masks, annotations, upscale fields,
+  angle metadata, and provenance edges. No URL, API payload, persisted field,
+  or user interaction changed.
+- Behavior coverage: `tests/gallery-items.test.mjs`; typecheck passed. Full
+  `npm test`, production build, and `npm run check` remain required before the
+  checkpoint is committed.
+- Remaining risk: the page still owns upload normalization and history side
+  effects; moving those requires an explicit application boundary and should
+  not be combined with this pure projection.
 
 ## File size and component splits
 

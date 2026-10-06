@@ -5,8 +5,11 @@ import ts from 'typescript';
 
 const source = await readFile(new URL('../lib/agent-context.ts', import.meta.url), 'utf8');
 const imageCardSource = await readFile(new URL('../components/ImageCard.tsx', import.meta.url), 'utf8');
+const gallerySource = await readFile(new URL('../lib/creation/gallery-items.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const galleryCompiled = ts.transpileModule(gallerySource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const context = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const gallery = await import(`data:text/javascript;base64,${Buffer.from(galleryCompiled).toString('base64')}`);
 const history = [
   { id: 'u1', role: 'user', content: '画个对牛弹琴的寓意图，9:16' },
   { id: 'a1', role: 'assistant', content: '已生成', images: [{ id: 'img1', url: '/api/storage/file?name=one.png', prompt: '对牛弹琴', aspectRatio: '9:16' }] },
@@ -24,6 +27,8 @@ test('analysis and generation resolve the same actual image within the conversat
   assert.equal(context.conversationImage('画一张全新的海报', history), null);
   assert.equal(context.conversationImage('不用原图，生成新的场景', history), null);
   assert.equal(context.conversationImage('出图', [...history, { role: 'user', content: '出图' }, { role: 'assistant', content: '生成失败' }])?.id, 'img1');
+  const [item] = gallery.buildGalleryItems([{ url: 'image', localFileName: 'local.png' }], { prompt: 'prompt' }, { createdAt: 1, createId: () => 'item-1' });
+  assert.equal(item.prompt, 'local.png');
 });
 
 test('new conversations cannot retrieve other conversations and ambiguous sets are not guessed', () => {
@@ -60,5 +65,4 @@ test('new chat resets current content and drafts, retry keeps the original reque
   assert.doesNotMatch(page, /id: 'retry-instruction'/);
   assert.match(page, /conversationImage\(content, currentSessionMessages\)/);
   assert.match(imageCardSource, /item\.localFileName \? "本地图片"/);
-  assert.match(page, /prompt: image\.localFileName \|\| meta\.prompt/);
 });
