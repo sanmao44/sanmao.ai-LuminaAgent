@@ -117,6 +117,21 @@ hardening work when the trigger applies.
   layout state and apply flow have not yet received a dedicated browser
   behavior boundary.
 
+### Stage 6 outpaint renderer checkpoint (2026-10-06)
+
+- `lib/image-editor/outpaint-renderer.ts` now owns the browser Canvas adapter
+  for white-background outpainting: source loading, canvas sizing, padding
+  offsets, smoothing, and PNG export.
+- `app/page.tsx` retains outpaint layout calculation, model-rule validation,
+  pointer controls, apply callbacks, notifications, and task/history effects.
+  No layout source of truth or new state store was introduced.
+- Behavior coverage in `tests/outpaint-renderer.test.mjs` verifies white canvas
+  composition, exact offsets and dimensions, smoothing configuration, and load
+  failures with fake Image and Canvas adapters.
+- The local image editor browser adapters are now outside the page. The editor
+  UI, pointer state, and apply orchestration remain intentionally page-owned
+  until a component boundary has behavior coverage.
+
 ## File size and component splits
 
 - `app/page.tsx`, `components/SuperCanvas.tsx`, `components/CanvasAgentDock.tsx`,

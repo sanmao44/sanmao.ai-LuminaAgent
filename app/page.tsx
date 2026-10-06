@@ -130,6 +130,7 @@ import AgentImageLoadingCard from '@/components/AgentImageLoadingCard';
 import CreativeReferenceStrip from '@/components/CreativeReferenceStrip';
 import ImageCard from '@/components/ImageCard';
 import { centeredOutpaintLayout, defaultOutpaintLayout, fitOutpaintLayoutToRule, outpaintRuleForModel, validateOutpaintLayout } from '@/lib/image-editor/outpaint-layout';
+import { renderOutpaintWhiteCanvas } from '@/lib/image-editor/outpaint-renderer';
 import { cloudUpscaleFormatOptions, isCloudUpscaleModel, qualityOptions, upscaleScales } from '@/lib/image-editor/editor-options';
 import { editorModelSelectionPatch, upscaleEditorSettingsPatch } from '@/lib/image-editor/editor-form';
 import { buildEditorRequest } from '@/lib/image-editor/editor-request';
@@ -227,30 +228,6 @@ function uid(prefix = 'id') {
 }
 function clampNumber(value, min, max) {
     return Math.max(min, Math.min(max, value));
-}
-async function renderOutpaintWhiteCanvas(url, layout) {
-    const source = new Image();
-    if (/^https?:/i.test(url)) source.crossOrigin = 'anonymous';
-    await new Promise((resolve, reject)=>{
-        source.onload = ()=>resolve();
-        source.onerror = ()=>reject(new Error('无法读取这张图片，可能是远程图片未开放浏览器处理权限'));
-        source.src = url;
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = layout.canvasWidth;
-    canvas.height = layout.canvasHeight;
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('当前浏览器不支持本地扩图处理');
-    context.fillStyle = '#ffffff';
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = 'high';
-    context.drawImage(source, layout.offsetX, layout.offsetY, layout.sourceWidth, layout.sourceHeight);
-    return {
-        dataUrl: canvas.toDataURL('image/png'),
-        width: canvas.width,
-        height: canvas.height
-    };
 }
 function focusContentEditableToEnd(element) {
     if (!element) return;
