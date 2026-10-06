@@ -93,6 +93,7 @@ import { createPortal } from "react-dom";
 import {
   CANVAS_ASSET_UNCATEGORIZED_ID,
   canAddCanvasAsset,
+  canvasNodeAssetRecord,
   isAssignableCanvasAssetCollection,
 } from "@/lib/canvas/asset-library";
 import type { GenerationLog } from "@/lib/generation-log";
@@ -216,7 +217,7 @@ import {
   resolvedCinematicDuration,
   type CinematicOpeningSettings,
 } from "@/lib/cinematic-shock-opening-director";
-import { listUnifiedAssets, registerCanvasAsset, updateUnifiedAssetMetadata, type AssetRecord, type AssetSource } from "@/lib/assets";
+import { listUnifiedAssets, registerCanvasAsset, updateUnifiedAssetMetadata, type AssetRecord } from "@/lib/assets";
 import { startWorkspaceSync, type WorkspaceSyncStatus } from "@/lib/workspace";
 import { workspaceRepository } from "@/lib/repositories/workspace-repository";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
@@ -2277,26 +2278,13 @@ export default function SuperCanvas() {
     () =>
       document.nodes
         .filter((node) => node.type === "media" && Boolean(node.data.url))
-        .map((node) => ({
-          id: `canvas:${activeProjectId}:${node.id}`,
-          kind: node.data.kind || "image",
-          url: String(node.data.url),
-          name: String(node.data.name || "画布素材"),
-          source: (node.data.generation
-            ? "canvas-output"
-            : "canvas-upload") as AssetSource,
-          createdAt: Number(node.data.generation?.createdAt || 0),
-          favorite: false,
-          prompt: node.data.generation?.prompt,
-          modelId: node.data.generation?.params.model,
-          modelName:
-            typeof node.data.model === "string" ? node.data.model : undefined,
-          width: Number(node.data.nativeWidth) || undefined,
-          height: Number(node.data.nativeHeight) || undefined,
-          projectIds: currentProject?.projectId ? [currentProject.projectId] : [],
-          collectionIds: [],
-          tags: [],
-        })),
+        .flatMap((node) => {
+          const asset = canvasNodeAssetRecord(node, {
+            activeProjectId,
+            projectId: currentProject?.projectId,
+          });
+          return asset ? [asset] : [];
+        }),
     [activeProjectId, currentProject?.projectId, document.nodes],
   );
   const referenceOwnerId = selectedGroupId || selectedSingle?.id;
@@ -12057,23 +12045,10 @@ export default function SuperCanvas() {
   );
   const viewerAsset = useCallback((node: CanvasNode): AssetRecord | null => {
     if (!canAddCanvasAsset(node)) return null;
-    return {
-      id: `canvas:${activeProjectId}:${node.id}`,
-      kind: node.data.kind || "image",
-      url: String(node.data.url),
-      name: String(node.data.name || "画布素材"),
-      source: node.data.generation ? "canvas-output" : "canvas-upload",
-      createdAt: Number(node.data.generation?.createdAt || Date.now()),
-      favorite: false,
-      prompt: node.data.generation?.prompt,
-      modelId: node.data.generation?.params.model,
-      modelName: typeof node.data.model === "string" ? node.data.model : undefined,
-      width: Number(node.data.nativeWidth) || undefined,
-      height: Number(node.data.nativeHeight) || undefined,
-      projectIds: currentProject?.projectId ? [currentProject.projectId] : [],
-      collectionIds: [],
-      tags: [],
-    };
+    return canvasNodeAssetRecord(node, {
+      activeProjectId,
+      projectId: currentProject?.projectId,
+    }, Date.now());
   }, [activeProjectId, currentProject?.projectId]);
   const addViewerAsset = useCallback(async (
     node: CanvasNode,

@@ -7,6 +7,19 @@ Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
 
+### Stage 6 canvas asset projection boundary checkpoint (2026-10-07)
+
+- `lib/canvas/asset-library.ts` now owns the pure projection from a Canvas media
+  or upscale node to the existing `AssetRecord` contract.
+- `CanvasWorkspace.tsx` keeps the document projection, asset registration,
+  collection mutation, and CanvasCore callbacks, but no longer duplicates the
+  node-to-asset field mapping in its drawer and viewer paths.
+- No new type, repository, store, API, URL, or persisted data shape was added.
+- Behavior coverage verifies generated metadata, project identity, timestamp
+  fallback, and rejection of non-media nodes. Focused asset tests passed;
+  `npm run check` passed with 1834 tests passed, 2 skipped, and production
+  build success. `git diff --check` passed.
+
 ### Stage 4 generator node CSS boundary checkpoint (2026-10-06)
 
 - `app/canvas-generator-node.css` now owns the generator node card's scoped

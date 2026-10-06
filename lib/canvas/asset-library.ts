@@ -1,4 +1,4 @@
-import type { AssetSource } from "@/lib/assets";
+import type { AssetRecord, AssetSource } from "@/lib/assets";
 import type { CanvasNode } from "@/lib/canvas/types";
 
 export const CANVAS_ASSET_UNCATEGORIZED_ID = "uncategorized";
@@ -36,4 +36,31 @@ export function canAddCanvasAsset(node: CanvasNode) {
     Boolean(node.data.url) &&
     !CANVAS_ASSET_NON_READY_STATUSES.has(String(node.data.status || ""))
   );
+}
+
+export function canvasNodeAssetRecord(
+  node: CanvasNode,
+  context: { activeProjectId: string; projectId?: string },
+  fallbackCreatedAt = 0,
+): AssetRecord | null {
+  if ((node.type !== "media" && node.type !== "upscale") || !node.data.url)
+    return null;
+
+  return {
+    id: `canvas:${context.activeProjectId}:${node.id}`,
+    kind: node.data.kind || "image",
+    url: String(node.data.url),
+    name: String(node.data.name || "画布素材"),
+    source: (node.data.generation ? "canvas-output" : "canvas-upload") as AssetSource,
+    createdAt: Number(node.data.generation?.createdAt || fallbackCreatedAt),
+    favorite: false,
+    prompt: node.data.generation?.prompt,
+    modelId: node.data.generation?.params.model,
+    modelName: typeof node.data.model === "string" ? node.data.model : undefined,
+    width: Number(node.data.nativeWidth) || undefined,
+    height: Number(node.data.nativeHeight) || undefined,
+    projectIds: context.projectId ? [context.projectId] : [],
+    collectionIds: [],
+    tags: [],
+  };
 }
