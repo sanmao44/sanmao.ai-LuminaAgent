@@ -120,6 +120,7 @@ import SidebarNavigation from '@/components/SidebarNavigation';
 import SidebarBrandHeader from '@/components/SidebarBrandHeader';
 import ManualModelDialog from '@/components/ManualModelDialog';
 import AdminLogin from '@/components/AdminLogin';
+import ProviderList from '@/components/ProviderList';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SupportModal from '@/components/SupportModal';
 import SharePreviewModal from '@/components/SharePreviewModal';
@@ -11676,113 +11677,16 @@ export default function Page() {
                                             })
                                         ]
                                     }),
-                                    visibleProviders.length ? /*#__PURE__*/ _jsx("div", {
-                                        className: "provider-list",
-                                        // Jimeng is managed by the dedicated local CLI card above;
-                                        // keeping it out of the generic provider list avoids two
-                                        // competing connection flows for the same account.
-                                        children: visibleProviders.map((provider)=>/*#__PURE__*/ _jsxs("article", {
-                                                className: `provider-card surface ${providerEditId === provider.id ? 'editing' : ''}`,
-                                                "aria-current": providerEditId === provider.id || undefined,
-                                                children: [
-                                                    /*#__PURE__*/ _jsx("div", {
-                                                        className: "provider-logo",
-                                                        children: providerPlatformLabel(provider.platform).slice(0, 2)
-                                                    }),
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        className: "provider-content",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsxs("div", {
-                                                                children: [
-                                                                    /*#__PURE__*/ _jsx("strong", {
-                                                                        children: provider.name
-                                                                    }),
-                                                                     /*#__PURE__*/ _jsx("span", {
-                                                                         className: "provider-platform",
-                                                                         children: providerPlatformLabel(provider.platform)
-                                                                     }),
-                                                                     provider.platform === 'agnes' && /*#__PURE__*/ _jsx("span", {
-                                                                         className: `provider-credential-badge ${provider.credentialVerifiedAt ? 'verified' : 'unverified'}`,
-                                                                         children: provider.credentialVerifiedAt ? '上次验证通过' : '待验证 Key'
-                                                                     }),
-                                                                     /*#__PURE__*/ _jsx("span", {
-                                                                         className: `provider-status ${provider.status}`,
-                                                                        children: provider.status === 'healthy' ? '连接正常' : provider.status === 'error' ? '连接异常' : '待读取'
-                                                                    }),
-                                                                    /*#__PURE__*/ _jsxs("label", {
-                                                                        className: "provider-library-toggle",
-                                                                        title: isProviderModelLibraryEnabled(provider) ? '取消后隐藏并停用该服务商模型；不会清除模型勾选状态' : '加入模型库并恢复该服务商模型的上次勾选状态',
-                                                                        children: [
-                                                                            /*#__PURE__*/ _jsx("input", {
-                                                                                type: "checkbox",
-                                                                                "aria-label": `${isProviderModelLibraryEnabled(provider) ? '隐藏' : '加入'} ${provider.name} 的模型库`,
-                                                                                checked: isProviderModelLibraryEnabled(provider),
-                                                                                onChange: ()=>void toggleProviderModelLibrary(provider)
-                                                                            }),
-                                                                            /*#__PURE__*/ _jsx("span", {
-                                                                                children: isProviderModelLibraryEnabled(provider) ? '已加入模型库' : '已隐藏'
-                                                                            })
-                                                                        ]
-                                                                    }),
-                                                                    providerEditId === provider.id && /*#__PURE__*/ _jsxs("span", {
-                                                                        className: "provider-editing-badge",
-                                                                        children: [
-                                                                            /*#__PURE__*/ _jsx(Icon, {
-                                                                                name: "edit",
-                                                                                size: 10
-                                                                            }),
-                                                                            "正在编辑"
-                                                                        ]
-                                                                    })
-                                                                ]
-                                                            }),
-                                                            /*#__PURE__*/ _jsxs("p", {
-                                                                children: [
-                                                                    providerTypeLabel(provider.type),
-                                                                    " \xb7 ",
-                                                                    provider.baseUrl
-                                                                ]
-                                                            }),
-                                                            /*#__PURE__*/ _jsxs("small", {
-                                                                children: [
-                                                                    "密钥 ",
-                                                                    provider.maskedKey,
-                                                                    " \xb7 已选择 ",
-                                                                    provider.enabledModelCount,
-                                                                    " 个模型 \xb7 最近读取 ",
-                                                                    provider.lastSyncedAt || '—'
-                                                                ]
-                                                            })
-                                                        ]
-                                                    }),
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        className: "provider-card-actions",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                type: "button",
-                                                                disabled: !isManualModelProvider(provider),
-                                                                onClick: ()=>openManualModelDialog(provider),
-                                                                title: "手动登记模型",
-                                                                children: "手动添加模型"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                onClick: ()=>openEditProvider(provider),
-                                                                children: "修改"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                onClick: ()=>void syncProvider(provider.id),
-                                                                disabled: syncingId === provider.id,
-                                                                children: syncingId === provider.id ? '读取中…' : '重新读取模型'
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                className: "danger",
-                                                                onClick: ()=>askDeleteProvider(provider.id),
-                                                                children: "删除"
-                                                            })
-                                                        ]
-                                                    })
-                                                ]
-                                            }, provider.id))
+                                    visibleProviders.length ? /*#__PURE__*/ _jsx(ProviderList, {
+                                        providers: visibleProviders,
+                                        editingProviderId: providerEditId,
+                                        syncingProviderId: syncingId,
+                                        Icon: Icon,
+                                        onToggleModelLibrary: toggleProviderModelLibrary,
+                                        onOpenManualModelDialog: openManualModelDialog,
+                                        onOpenEdit: openEditProvider,
+                                        onSync: syncProvider,
+                                        onDelete: askDeleteProvider
                                     }) : !manageableProviders.length ? /*#__PURE__*/ _jsxs("div", {
                                         className: "provider-search-empty surface",
                                         children: [

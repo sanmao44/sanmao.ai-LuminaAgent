@@ -1973,3 +1973,12 @@ hardening work when the trigger applies.
 - The new stylesheet has no state, API, or data dependencies. URL, interaction, visual class names, and page callbacks are unchanged.
 - Validation: focused selection and CSS contract tests passed (5/5); `npm run typecheck` passed; full `npm run check` passed (1858 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
 - Remaining risk: `app/globals.css` still contains large legacy page and editor domains. Moving those safely requires domain-specific style contracts and visual coverage, especially for the complex image editor and provider settings forms.
+
+### Stage 6 provider list presentation checkpoint (2026-10-07)
+
+- `components/ProviderList.tsx` now owns the generic provider-card list presentation: provider identity/status, model-library toggle, editing badge, and manual/edit/sync/delete action buttons.
+- `app/page.tsx` keeps provider filtering, first-run gating, API calls, confirmation state, navigation, model synchronization, and the provider form modal. The list receives an explicit data and callback contract and does not access repositories, HTTP endpoints, or provider SDKs.
+- Existing provider records, labels, classes, button states, URLs, API payloads, and user flow remain unchanged. No second provider type, store, repository, compatibility layer, or source of truth was added.
+- Behavior coverage renders the extracted list and invokes each callback through the contract; the existing first-run provider tests remain at the page boundary.
+- Validation: focused provider/Jimeng/theme tests passed (10/10), `npm run typecheck` passed, full `npm run check` passed (1859 tests passed, 2 skipped; production build succeeded), and `git diff --check` passed.
+- Remaining risk: provider form, Jimeng login, and Upscale connection panels remain in `app/page.tsx`; moving them safely requires preserving their coupled API and pointer/modal lifecycle contracts.
