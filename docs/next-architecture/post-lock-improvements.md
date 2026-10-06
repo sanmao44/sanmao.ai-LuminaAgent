@@ -128,6 +128,20 @@ hardening work when the trigger applies.
   repository validation passed with 1847 tests passed, 2 skipped, and
   production build success. `git diff --check` passed.
 
+### Stage 5 canvas variant video node projection checkpoint (2026-10-07)
+
+- `canvasVariantVideoNodeData` in `lib/canvas/variant-batch.ts` now owns the
+  pure metadata projection for a submitted variant video task.
+- `CanvasWorkspace.tsx` retains node creation, placement, edge creation,
+  variant state updates, polling, grouping, and CanvasCore/document writes; it
+  passes the existing generation inputs into the projection.
+- Existing task IDs, model fallback, progress, status labels, generation
+  provenance, reference order, and duration semantics remain unchanged. No new
+  task runtime, store, API, compatibility layer, or duplicate type was added.
+- Focused behavior coverage passed with 10 tests, typecheck passed, and full
+  repository validation passed with 1849 tests passed, 2 skipped, and
+  production build success. `git diff --check` passed.
+
 ### Stage 6 canvas asset projection boundary checkpoint (2026-10-07)
 
 - `lib/canvas/asset-library.ts` now owns the pure projection from a Canvas media

@@ -372,6 +372,7 @@ import { canvasVariantBatchStatus } from "@/lib/canvas/variant-status";
 import {
   applyCanvasVariantStatePatch,
   canvasVideoTaskProgress,
+  canvasVariantVideoNodeData,
   prepareCanvasVariantBatch,
 } from "@/lib/canvas/variant-batch";
 import { canvasAngleReference } from "@/lib/canvas/angle-reference";
@@ -6278,38 +6279,24 @@ export default function SuperCanvas() {
                   name: String(item.data.name || "参考音频"),
                 })),
               });
-              const generationDurationMs = task.status === "done"
-                ? Math.max(0, Date.now() - generationStartedAt)
-                : undefined;
+              const targetCreatedAt = Date.now();
               const target = createMedia(
                 "video",
                 task.videoUrls?.[0] || "",
                 `视频变体 ${index + 1}`,
                 positionFor(),
-                {
-                  role: "变体结果",
-                  model: task.modelId || videoParams.model,
-                  jobId: task.id,
-                  status: task.status === "done" ? "completed" : "running",
-                  processingStartedAt:
-                    task.status === "done" ? undefined : Date.now(),
-                  progress: Number(task.progress || (task.status === "done" ? 100 : 0)),
-                  statusLabel: task.status === "done" ? "视频已完成" : "视频生成中",
-                  generation: {
-                    kind: "video",
-                    prompt,
-                    params: clone(videoParams),
-                    referenceIds: linked.map((item) => item.id),
-                    sourceGeneratorId: generatorId,
-                    variantBatchId: batchId,
-                    variantIndex: index,
-                    variantInstruction: requirements[index],
-                    taskId: task.id,
-                    createdAt: generationStartedAt,
-                    ...(generationDurationMs !== undefined ? { durationMs: generationDurationMs } : {}),
-                  },
-                  referenceOrder: linked.map((item) => item.id),
-                },
+                canvasVariantVideoNodeData({
+                  task,
+                  prompt,
+                  params: clone(videoParams),
+                  linkedIds: linked.map((item) => item.id),
+                  sourceGeneratorId: generatorId,
+                  variantBatchId: batchId,
+                  variantIndex: index,
+                  variantInstruction: requirements[index],
+                  generationStartedAt,
+                  now: targetCreatedAt,
+                }),
               );
               pollAttemptsRef.current.set(task.id, 1);
               const videoPollDeadline = Date.now() + CANVAS_VIDEO_MAX_WAIT_MS;

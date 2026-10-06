@@ -1,4 +1,5 @@
-import type { CanvasVariantState } from "./types";
+import type { CanvasNodeData, CanvasVariantState } from "./types";
+import type { VideoCreationSettings } from "../creation/settings";
 import { canvasVariantBatchStatus } from "./variant-status";
 
 export type CanvasVariantBatchMode = "all" | "failed" | "pending";
@@ -22,6 +23,54 @@ export function canvasVideoTaskProgress(task: {
     status,
     progress: Number(task.progress || (status === "completed" ? 100 : 0)),
     url: task.videoUrls?.[0],
+  };
+}
+
+export function canvasVariantVideoNodeData(input: {
+  task: {
+    id: string;
+    status: string;
+    progress?: number;
+    videoUrls?: readonly string[];
+    error?: string;
+    modelId?: string;
+  };
+  prompt: string;
+  params: VideoCreationSettings;
+  linkedIds: readonly string[];
+  sourceGeneratorId: string;
+  variantBatchId: string;
+  variantIndex: number;
+  variantInstruction: string;
+  generationStartedAt: number;
+  now: number;
+}): CanvasNodeData {
+  const completed = input.task.status === "done";
+  const generationDurationMs = completed
+    ? Math.max(0, input.now - input.generationStartedAt)
+    : undefined;
+  return {
+    role: "变体结果",
+    model: input.task.modelId || input.params.model,
+    jobId: input.task.id,
+    status: completed ? "completed" : "running",
+    processingStartedAt: completed ? undefined : input.now,
+    progress: Number(input.task.progress || (completed ? 100 : 0)),
+    statusLabel: completed ? "视频已完成" : "视频生成中",
+    generation: {
+      kind: "video",
+      prompt: input.prompt,
+      params: input.params,
+      referenceIds: [...input.linkedIds],
+      sourceGeneratorId: input.sourceGeneratorId,
+      variantBatchId: input.variantBatchId,
+      variantIndex: input.variantIndex,
+      variantInstruction: input.variantInstruction,
+      taskId: input.task.id,
+      createdAt: input.generationStartedAt,
+      ...(generationDurationMs !== undefined ? { durationMs: generationDurationMs } : {}),
+    },
+    referenceOrder: [...input.linkedIds],
   };
 }
 

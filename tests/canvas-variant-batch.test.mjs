@@ -70,6 +70,66 @@ test("normalizes pending, failed, done, and returned video task results", () => 
   });
 });
 
+test("projects a submitted variant video task into stable node metadata", () => {
+  const params = { kind: "video", model: "video-model", duration: 5 };
+  const completed = batch.canvasVariantVideoNodeData({
+    task: { id: "task-1", status: "done", progress: 100, videoUrls: ["/video.mp4"], modelId: "provider-model" },
+    prompt: "cinematic scene",
+    params,
+    linkedIds: ["image-1", "prompt-1"],
+    sourceGeneratorId: "generator-1",
+    variantBatchId: "batch-1",
+    variantIndex: 2,
+    variantInstruction: "wide shot",
+    generationStartedAt: 1000,
+    now: 1450,
+  });
+
+  assert.deepEqual(completed, {
+    role: "变体结果",
+    model: "provider-model",
+    jobId: "task-1",
+    status: "completed",
+    processingStartedAt: undefined,
+    progress: 100,
+    statusLabel: "视频已完成",
+    generation: {
+      kind: "video",
+      prompt: "cinematic scene",
+      params,
+      referenceIds: ["image-1", "prompt-1"],
+      sourceGeneratorId: "generator-1",
+      variantBatchId: "batch-1",
+      variantIndex: 2,
+      variantInstruction: "wide shot",
+      taskId: "task-1",
+      createdAt: 1000,
+      durationMs: 450,
+    },
+    referenceOrder: ["image-1", "prompt-1"],
+  });
+});
+
+test("keeps a pending variant video task running without duration", () => {
+  const pending = batch.canvasVariantVideoNodeData({
+    task: { id: "task-2", status: "queued", progress: 10 },
+    prompt: "scene",
+    params: { kind: "video", model: "auto", duration: 5 },
+    linkedIds: [],
+    sourceGeneratorId: "generator-1",
+    variantBatchId: "batch-1",
+    variantIndex: 0,
+    variantInstruction: "close shot",
+    generationStartedAt: 1000,
+    now: 1100,
+  });
+
+  assert.equal(pending.status, "running");
+  assert.equal(pending.processingStartedAt, 1100);
+  assert.equal(pending.progress, 10);
+  assert.equal(pending.generation?.durationMs, undefined);
+});
+
 test("prepares only requested failed variants and preserves retry results", () => {
   const retained = { id: "variant-1", instruction: "one", status: "completed", resultIds: ["image-1"] };
   const failed = { id: "variant-2", instruction: "old", status: "failed", resultIds: ["image-2"], taskIds: ["task-2"] };
