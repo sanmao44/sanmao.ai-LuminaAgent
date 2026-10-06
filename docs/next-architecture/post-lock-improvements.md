@@ -1340,3 +1340,10 @@ hardening work when the trigger applies.
 - `app/canvas.css` keeps adjacent audio panel, group, node-editor, cursor-layer, and shared canvas token rules. The image editor stylesheet is loaded after the clip stylesheet and before the remaining canvas domain sheets, preserving the prior cascade for its selectors.
 - `CanvasImageEditorWorkbench.tsx` remains the sole owner of local edit state, pointer/keyboard interaction, API callbacks, and save semantics. `cursor.css` and `shadow-tuning.css` remain shared cross-domain overrides and were intentionally not duplicated or moved.
 - Validation: targeted image-editor/cursor/node-editor/double-click tests passed (77/77), `npm run typecheck` passed, full `npm run check` passed (1830 tests passed, 2 skipped, production build succeeded), and `git diff --check` is clean for this slice. The pre-existing uncommitted `AGENTS.md` edit remains excluded.
+
+### Stage 6 audio node panel CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-audio-panel.css` now owns the `.canvas-audio-panel-*` presentation: intro/status, audio metadata, empty state, upload action, and responsive layout.
+- `app/canvas.css` keeps the shared `.canvas-audio-player-*` controls, reference-audio preview, node footer status, and canvas group rules. The panel sheet is loaded after the image-editor sheet, preserving the existing cascade without copying the shared player contract.
+- `CanvasAudioNodePanel.tsx` remains the sole owner of file selection, replacement callbacks, duration updates, and event isolation. No storage, API, provider, or media contract changed.
+- Validation: targeted canvas node/editor/video/activity tests passed (74/74), `npm run typecheck` passed, full `npm run check` passed (1830 tests passed, 2 skipped, production build succeeded), and `git diff --check` is clean for this slice. The pre-existing uncommitted `AGENTS.md` edit remains excluded.

@@ -8,6 +8,7 @@ import './canvas.css';
 import './canvas-cinematic.css';
 import './canvas-video-clip.css';
 import './canvas-image-editor.css';
+import './canvas-audio-panel.css';
 import './canvas-marquee.css';
 import './canvas-tools.css';
 import './canvas-viewport-overlay.css';

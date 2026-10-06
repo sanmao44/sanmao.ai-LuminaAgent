@@ -186,6 +186,10 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const audioPanelStyles = await readFile(
+  new URL("../app/canvas-audio-panel.css", import.meta.url),
+  "utf8",
+);
 const connectionStyles = await readFile(
   new URL("../app/canvas-connection.css", import.meta.url),
   "utf8",
@@ -779,14 +783,14 @@ test("audio nodes use the branded rounded player instead of browser gray control
   assert.match(component, /data-node-kind=\{node\.type === "prompt" \? "agent" : node\.type === "upscale" \? "upscale" : data\.kind === "video" \? "video" : data\.kind === "audio" \? "audio"/);
   assert.match(styles, /\.canvas-audio-player\{[^}]*border-radius:15px/);
   assert.match(styles, /\.canvas-audio-player-play\{[^}]*border-radius:50%/);
-  assert.match(styles, /\.canvas-audio-panel-meta-chips span\{[^}]*border-radius:999px/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel-meta-chips span\{[^}]*border-radius:999px/);
 });
 
 test("audio editor keeps its natural height without a panel height clamp", () => {
   assert.match(component + audioPanel, /className="canvas-audio-panel"/);
   assert.doesNotMatch(component, /estimatedPopoverHeight/);
   assert.doesNotMatch(component, /naturalHeight = \(head\?\.offsetHeight/);
-  assert.match(styles, /\.canvas-audio-panel\{display:grid;gap:11px;min-width:0\}/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel\{display:grid;gap:11px;min-width:0\}/);
 });
 
 test("image node editing persists parameters without turning uploads into generated media", () => {
