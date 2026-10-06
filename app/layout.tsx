@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import './one-take-duration.css';
 import './model-picker.css';
 import './super-canvas.css';
 import './provider-library.css';

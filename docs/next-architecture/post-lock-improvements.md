@@ -2068,3 +2068,18 @@ hardening work when the trigger applies.
 - Remaining risk: the ModelPicker base panel and model-library page styles remain
   in `globals.css` because they are shared by quick picker, dialog, canvas, and
   page-level model management flows.
+
+### Stage 6 OneTake duration CSS boundary checkpoint (2026-10-07)
+
+- `app/one-take-duration.css` now owns the OneTake duration popover, input,
+  validation message, actions, and mobile placement rules.
+- `app/globals.css` retains only the shared `.agent-quick-actions` positioning;
+  Canvas-specific placement overrides remain in `app/canvas.css`.
+- Existing classes, controlled form behavior, keyboard handling, and visual
+  tokens are unchanged. No state, API, task runtime, or compatibility layer was
+  added.
+- Validation: focused OneTake, canvas editor, and theme tests passed (66/66);
+  `npm run typecheck` passed; full `npm run check` passed (1863 passed,
+  2 skipped; production build succeeded); and `git diff --check` passed.
+- Remaining risk: the Agent composer still shares global layout rules with
+  several quick actions, so only the isolated duration surface moved here.
