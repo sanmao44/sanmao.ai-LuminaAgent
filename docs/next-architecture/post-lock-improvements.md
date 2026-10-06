@@ -2048,3 +2048,23 @@ hardening work when the trigger applies.
 - Remaining risk: CanvasWorkspace still owns the live canvas document,
   selection, history, and interaction orchestration; this slice only moves the
   stable shell presentation styles.
+
+### Stage 6 ModelPicker tooltip CSS boundary checkpoint (2026-10-07)
+
+- `app/model-picker.css` now owns the ModelPicker trigger tooltip positioning,
+  visibility, focus/hover transition, and Agent composer reverse placement.
+- The ModelPicker panel, dialog, page-level model library rules, canvas-specific
+  tooltip overrides, and z-index contracts remain in their existing stylesheets
+  because they intentionally cross feature and overlay boundaries.
+- `app/layout.tsx` loads the feature sheet immediately after `globals.css`; the
+  extracted rules are byte-identical to the previous block, preserving cascade,
+  URL behavior, and interaction semantics.
+- No state, API, model registry, duplicate contract, or compatibility layer was
+  introduced.
+- Validation: focused ModelPicker, canvas tooltip, and Agent editor tests
+  passed (68/68); `npm run typecheck` passed; full `npm run check` passed
+  (1863 passed, 2 skipped; production build succeeded); and `git diff --check`
+  passed.
+- Remaining risk: the ModelPicker base panel and model-library page styles remain
+  in `globals.css` because they are shared by quick picker, dialog, canvas, and
+  page-level model management flows.
