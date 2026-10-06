@@ -27,6 +27,11 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const generatorStyles = await readFile(
+  new URL("../app/canvas-generator-node.css", import.meta.url),
+  "utf8",
+);
+const combinedStyles = `${styles}\n${generatorStyles}`;
 
 test("variant generators expose shared contextual help in cards and editors", () => {
   assert.match(source, /(?:export )?function CanvasGeneratorHelp\(\{ kind \}: \{ kind: CanvasMediaKind \}\)/);
@@ -60,35 +65,35 @@ test("variant generators expose shared contextual help in cards and editors", ()
 });
 
 test("variant generator help stays in the node flow and supports visual states", () => {
-  assert.match(styles, /\.canvas-generator-head\{display:grid;grid-template-columns:auto minmax\(0,1fr\) auto;grid-template-rows:auto auto/);
-  assert.match(styles, /\.canvas-node-variant-editor-head\{display:grid;grid-template-columns:minmax\(0,1fr\) auto;grid-template-rows:auto auto/);
-  assert.match(styles, /\.canvas-node-variant-editor-head>label small\{overflow:visible;text-overflow:clip;white-space:normal;line-height:1\.25/);
-  assert.match(styles, /\.canvas-generator-help-popover\{[^}]*grid-column:1\/-1;grid-row:2/);
-  assert.match(styles, /\.canvas-generator-help-popover\[data-kind="image"\]/);
-  assert.match(styles, /\.canvas-generator-help-popover\[data-kind="video"\]/);
-  assert.match(styles, /\.canvas-generator-help-trigger:focus-visible/);
-  assert.match(styles, /@media\(max-width:720px\)\{\.canvas-generator-help-popover/);
-  assert.match(styles, /prefers-reduced-motion:reduce\).*canvas-generator-help/);
-  assert.match(styles, /\.canvas-node:has\(\.canvas-generator-card\) \.canvas-generator-prompt\{[^}]*flex:0 0 auto/);
-  assert.match(styles, /\.canvas-generator-section-heading/);
-  assert.match(styles, /\.canvas-node:has\(\.canvas-generator-card\) \.canvas-generator-head b\{[^}]*font-size:15px/);
-  assert.match(styles, /\.canvas-variant-list-row\{display:flex;align-items:flex-start;gap:6px/);
-  assert.match(styles, /\.canvas-variant-list-row-editor \.reference-mention-editor-content\{[^}]*white-space:pre;[^}]*overflow-x:auto;[^}]*overflow-y:hidden/);
-  assert.match(styles, /\.canvas-variant-list-actions button:focus-visible:not\(\:disabled\)/);
-  assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-count\{[^}]*font-variant-numeric:tabular-nums/);
-  assert.match(styles, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(combinedStyles, /\.canvas-generator-head\{display:grid;grid-template-columns:auto minmax\(0,1fr\) auto;grid-template-rows:auto auto/);
+  assert.match(combinedStyles, /\.canvas-node-variant-editor-head\{display:grid;grid-template-columns:minmax\(0,1fr\) auto;grid-template-rows:auto auto/);
+  assert.match(combinedStyles, /\.canvas-node-variant-editor-head>label small\{overflow:visible;text-overflow:clip;white-space:normal;line-height:1\.25/);
+  assert.match(combinedStyles, /\.canvas-generator-help-popover\{[^}]*grid-column:1\/-1;grid-row:2/);
+  assert.match(combinedStyles, /\.canvas-generator-help-popover\[data-kind="image"\]/);
+  assert.match(combinedStyles, /\.canvas-generator-help-popover\[data-kind="video"\]/);
+  assert.match(combinedStyles, /\.canvas-generator-help-trigger:focus-visible/);
+  assert.match(combinedStyles, /@media\(max-width:720px\)\{\.canvas-generator-help-popover/);
+  assert.match(combinedStyles, /prefers-reduced-motion:reduce\).*canvas-generator-help/);
+  assert.match(combinedStyles, /\.canvas-node:has\(\.canvas-generator-card\) \.canvas-generator-prompt\{[^}]*flex:0 0 auto/);
+  assert.match(combinedStyles, /\.canvas-generator-section-heading/);
+  assert.match(combinedStyles, /\.canvas-node:has\(\.canvas-generator-card\) \.canvas-generator-head b\{[^}]*font-size:15px/);
+  assert.match(combinedStyles, /\.canvas-variant-list-row\{display:flex;align-items:flex-start;gap:6px/);
+  assert.match(combinedStyles, /\.canvas-variant-list-row-editor \.reference-mention-editor-content\{[^}]*white-space:pre;[^}]*overflow-x:auto;[^}]*overflow-y:hidden/);
+  assert.match(combinedStyles, /\.canvas-variant-list-actions button:focus-visible:not\(\:disabled\)/);
+  assert.match(combinedStyles, /\.canvas-node-editor-popover\.is-image-dock \.canvas-node-editor-dock-variant-count\{[^}]*font-variant-numeric:tabular-nums/);
+  assert.match(combinedStyles, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(source, /data-kind=\{kind\}/);
-  assert.match(styles, /\.canvas-node:has\(\.canvas-generator-card\)\{[^}]*border:1px solid/);
-  assert.match(styles, /\.canvas-node:has\(\.canvas-generator-card\)::before/);
-  assert.match(styles, /\.canvas-generator-help-trigger\[data-kind="image"\]/);
-  assert.match(styles, /\.canvas-generator-help-trigger\[data-kind="video"\]/);
+  assert.match(combinedStyles, /\.canvas-node:has\(\.canvas-generator-card\)\{[^}]*border:1px solid/);
+  assert.match(combinedStyles, /\.canvas-node:has\(\.canvas-generator-card\)::before/);
+  assert.match(combinedStyles, /\.canvas-generator-help-trigger\[data-kind="image"\]/);
+  assert.match(combinedStyles, /\.canvas-generator-help-trigger\[data-kind="video"\]/);
   assert.doesNotMatch(source, /collapsedGeneratorOutputIds/);
   assert.match(source, /const visibleCanvasNodes = useMemo\(\s*\(\) => sortCanvasNodesByLayer\(document\.nodes\)/);
   assert.match(source, /const column = placement % 2/);
   assert.match(source, /const row = Math\.floor\(placement \/ 2\)/);
   assert.match(source, /x: generator\.x \+ nodeSize\(generator\)\.w \+ 110 \+ column \* 380/);
   assert.match(source, /y: generator\.y \+ row \* 300/);
-  assert.match(styles, /\.canvas-generator-head>\.canvas-generator-help-trigger\{grid-column:3;grid-row:1\}/);
-  assert.match(styles, /\.canvas-node-variant-editor-head>\.canvas-generator-help-trigger\{grid-column:2;grid-row:1\}/);
-  assert.match(styles, /\.canvas-generator-help-popover\{[^}]*grid-column:1\/-1/);
+  assert.match(combinedStyles, /\.canvas-generator-head>\.canvas-generator-help-trigger\{grid-column:3;grid-row:1\}/);
+  assert.match(combinedStyles, /\.canvas-node-variant-editor-head>\.canvas-generator-help-trigger\{grid-column:2;grid-row:1\}/);
+  assert.match(combinedStyles, /\.canvas-generator-help-popover\{[^}]*grid-column:1\/-1/);
 });

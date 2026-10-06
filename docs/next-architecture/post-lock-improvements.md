@@ -7,6 +7,20 @@ Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
 
+### Stage 4 generator node CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-generator-node.css` now owns the generator node card's scoped
+  presentation: accent frame, header, summary, prompt, output gallery, variant
+  execution queue, metadata and responsive card polish.
+- `app/canvas.css` keeps shared generator primitives, contextual help shared by
+  cards and editors, and node-editor/deck variant rules. The stylesheet is
+  loaded immediately after `canvas.css` so the existing cascade is preserved.
+- The existing variant-help behavior test reads both style files together and
+  continues to assert one combined presentation contract.
+- Remaining risk: generator execution state and variant editing still cross
+  the existing Workspace/Core callbacks; splitting that React ownership needs a
+  separate behavior-covered slice.
+
 ### Stage 4 video editor CSS boundary checkpoint (2026-10-06)
 
 - `app/canvas-video-editor.css` now owns the complete video editor node and
