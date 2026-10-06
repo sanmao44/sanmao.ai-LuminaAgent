@@ -18,6 +18,10 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const pickerStyles = await readFile(
+  new URL("../app/canvas-asset-collection-picker.css", import.meta.url),
+  "utf8",
+);
 
 test("all canvas asset actions open the collection picker before writing", () => {
   assert.match(picker, /export default function CanvasAssetCollectionPicker/);
@@ -41,7 +45,7 @@ test("collection picker only shows writable asset collections", () => {
   assert.match(picker, /saveAssetCollections\(next\)/);
   assert.match(picker, /CANVAS_ASSET_LAST_COLLECTION_KEY/);
   assert.match(picker, /selectedCollection\?\.name/);
-  assert.match(styles, /\.canvas-asset-target-dialog\{/);
+  assert.match(pickerStyles, /\.canvas-asset-target-dialog\{/);
   assert.match(styles, /\.canvas-asset-collection-picker-backdrop\{/);
 });
 

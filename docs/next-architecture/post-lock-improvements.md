@@ -1504,3 +1504,16 @@ hardening work when the trigger applies.
 - Validation: focused activity drawer tests passed (7/7); `npm run check`
   passed (1832 tests passed, 2 skipped; production build succeeded); and
   `git diff --check` passed.
+
+### Stage 6 asset collection picker CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-asset-collection-picker.css` now owns the collection target dialog,
+  collection selection body, and new-collection form controls. The shared modal
+  backdrop and asset picker z-index remain in `app/canvas.css`.
+- Asset drawer styling and the workspace deck/panel geometry remain in the base
+  sheet because their selectors participate in shared responsive layout.
+- The collection picker behavior suite now checks the dialog's domain sheet;
+  no collection, drag/drop, API, or persistence behavior changed.
+- Validation: collection picker behavior tests passed (6/6); `npm run check`
+  passed (1832 tests passed, 2 skipped; production build succeeded); and
+  `git diff --check` passed.

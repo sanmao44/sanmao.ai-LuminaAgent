@@ -1,0 +1,29 @@
+/* Canvas asset collection target dialog and picker form controls. */
+.canvas-asset-target-dialog{width:min(390px,calc(100vw - 32px));display:grid;gap:0;overflow:visible;border:1px solid var(--line-strong);border-radius:18px;background:color-mix(in srgb,var(--panel) 98%,transparent);box-shadow:0 24px 70px rgba(0,0,0,.42);backdrop-filter:blur(20px)}
+.canvas-asset-target-dialog>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 14px;border-bottom:1px solid var(--line)}
+.canvas-asset-target-dialog>header>div{display:flex;align-items:center;gap:9px;min-width:0}
+.canvas-asset-target-dialog>header>div>span{width:30px;height:30px;display:grid;place-items:center;flex:none;border-radius:10px;background:var(--accent-soft);color:var(--accent-text);font-size:16px}
+.canvas-asset-target-dialog>header>div>div{display:grid;gap:3px;min-width:0}
+.canvas-asset-target-dialog>header b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.canvas-asset-target-dialog>header small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:8px}
+.canvas-asset-target-dialog>header>button{width:28px;height:28px;display:grid;place-items:center;flex:none;border:0;border-radius:8px;background:var(--panel-2);color:var(--muted);font-size:17px;cursor:pointer}
+.canvas-asset-target-dialog>header>button:hover{background:var(--danger-soft);color:var(--danger)}
+.canvas-asset-collection-picker-body{display:grid;gap:9px;padding:14px}
+.canvas-asset-collection-picker-body>label{display:grid;gap:6px;color:var(--text-2);font-size:9px;font-weight:850}
+.canvas-asset-collection-picker-body>label .select-menu{min-width:0}
+.canvas-asset-collection-picker-body>label .select-menu-trigger{width:100%;height:38px;justify-content:space-between;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--text);font:inherit;font-size:10px;text-align:left}
+.canvas-asset-collection-picker-body>label .select-menu-trigger:hover,.canvas-asset-collection-picker-body>label .select-menu.open .select-menu-trigger{border-color:var(--accent);background:var(--accent-soft)}
+.canvas-asset-collection-picker-hint{color:var(--muted);font-size:8px;line-height:1.45}
+.canvas-asset-collection-picker-new{display:flex;gap:6px}
+.canvas-asset-collection-picker-new input{min-width:0;flex:1;height:34px;padding:0 9px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text);font:inherit;font-size:9px;outline:0}
+.canvas-asset-collection-picker-new input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}
+.canvas-asset-collection-picker-new button{height:34px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--accent-text);font-size:9px;font-weight:850;cursor:pointer}
+.canvas-asset-collection-picker-new button:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft)}
+.canvas-asset-collection-picker-new button:disabled{opacity:.4;cursor:not-allowed}
+.canvas-asset-target-dialog>footer{display:flex;justify-content:flex-end;gap:6px;padding:10px 14px 13px;border-top:1px solid var(--line)}
+.canvas-asset-target-dialog>footer button{height:32px;padding:0 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2);font-size:9px;cursor:pointer}
+.canvas-asset-target-dialog>footer button:hover:not(:disabled){border-color:var(--accent);color:var(--accent-text)}
+.canvas-asset-target-dialog>footer button.primary{border-color:var(--accent);background:var(--accent);color:#fff;font-weight:850}
+.canvas-asset-target-dialog>footer button.primary:hover:not(:disabled){background:var(--accent-2)}
+.canvas-asset-target-dialog>footer button:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:720px){.canvas-asset-target-dialog{width:min(100%,390px);border-radius:16px}.canvas-asset-target-dialog>header{padding:11px 12px}.canvas-asset-collection-picker-body{padding:12px}.canvas-asset-target-dialog>footer{padding:9px 12px 11px}.canvas-asset-target-dialog>footer button{flex:1}}
