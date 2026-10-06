@@ -182,10 +182,13 @@ const parameterEditor = await readFile(
   new URL("../components/CreationParameterEditor.tsx", import.meta.url),
   "utf8",
 );
-const styles = await readFile(
+const styles = (await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
-);
+)).concat("\n", await readFile(
+  new URL("../app/canvas-angle.css", import.meta.url),
+  "utf8",
+));
 const audioPanelStyles = await readFile(
   new URL("../app/canvas-audio-panel.css", import.meta.url),
   "utf8",

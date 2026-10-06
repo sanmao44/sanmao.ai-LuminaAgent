@@ -26,6 +26,26 @@ hardening work when the trigger applies.
   coupled to the existing task and CanvasCore adapters. Splitting that logic
   needs a separate behavior-covered boundary.
 
+### Stage 4 angle canvas CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-angle.css` now owns the Canvas-specific angle node card and
+  embedded workbench shell, including lifecycle colors, card actions, modal
+  framing, and responsive shell overrides.
+- The angle console's broader design system remains in `app/globals.css`; only
+  selectors whose ownership is the Canvas node/workbench shell moved. The
+  existing cascade order is preserved by loading the new file after the video
+  editor stylesheet.
+- `tests/canvas-node-editor.test.mjs` reads the shared Canvas styles together
+  with the angle domain stylesheet, keeping the existing behavior assertions on
+  one combined style surface.
+- Validation: targeted angle and Canvas node tests (78) passed; `npm run
+  typecheck` passed; `npm run check` passed with 1830 tests passed and 2
+  skipped; production build passed; `git diff --check` passed.
+- Remaining risk: the angle workbench implementation still coordinates its
+  draft and CanvasCore callbacks through the existing workspace boundary. Its
+  state and generation flow should remain intact until dedicated behavior
+  coverage supports a deeper split.
+
 ### Stage 5 prompt optimization boundary checkpoint (2026-10-06)
 
 - `lib/creation/agent.ts` is now the single implementation for prompt
