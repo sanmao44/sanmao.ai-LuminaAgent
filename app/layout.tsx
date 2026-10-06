@@ -7,6 +7,7 @@ import './desktop-readability.css';
 import './canvas.css';
 import './canvas-task-log.css';
 import './canvas-asset-collection-picker.css';
+import './canvas-asset-preview.css';
 import './canvas-panorama.css';
 import './canvas-activity.css';
 import './canvas-processing.css';

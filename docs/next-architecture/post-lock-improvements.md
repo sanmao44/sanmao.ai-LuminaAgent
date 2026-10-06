@@ -1517,3 +1517,15 @@ hardening work when the trigger applies.
 - Validation: collection picker behavior tests passed (6/6); `npm run check`
   passed (1832 tests passed, 2 skipped; production build succeeded); and
   `git diff --check` passed.
+
+### Stage 6 asset preview CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-asset-preview.css` now owns the asset preview modal, media stage,
+  footer actions, and narrow-screen sizing. The shared backdrop and asset
+  preview z-index remain in `app/canvas.css`.
+- `CanvasAssetDrawer.tsx` remains the sole owner of preview selection, media
+  rendering, download actions, and close behavior. No asset data or interaction
+  contract changed.
+- Validation: focused asset collection and preview tests passed (7/7); `npm run
+  check` passed (1832 tests passed, 2 skipped; production build succeeded); and
+  `git diff --check` passed.

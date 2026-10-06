@@ -22,6 +22,10 @@ const pickerStyles = await readFile(
   new URL("../app/canvas-asset-collection-picker.css", import.meta.url),
   "utf8",
 );
+const previewStyles = await readFile(
+  new URL("../app/canvas-asset-preview.css", import.meta.url),
+  "utf8",
+);
 
 test("all canvas asset actions open the collection picker before writing", () => {
   assert.match(picker, /export default function CanvasAssetCollectionPicker/);
@@ -83,4 +87,11 @@ test("custom asset collections can be renamed even when legacy records omit buil
   assert.match(drawer, /export default function CanvasAssetDrawer/);
   assert.match(drawer, /disabled=\{collection === "all" \|\| !collections\.some\(\(item\) => item\.id === collection && item\.builtin !== true\)\}/);
   assert.match(drawer, /if \(!target \|\| target\.builtin\)/);
+});
+
+test("asset preview keeps its media stage in the preview domain stylesheet", () => {
+  assert.match(previewStyles, /\.canvas-asset-preview-modal\{/);
+  assert.match(previewStyles, /\.canvas-asset-preview-stage\{/);
+  assert.match(previewStyles, /\.canvas-asset-preview-stage audio\{width:min\(620px,100%\)\}/);
+  assert.match(styles, /\.canvas-asset-preview-backdrop\{/);
 });
