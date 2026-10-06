@@ -369,7 +369,10 @@ import { canvasVideoInputError } from "@/lib/canvas/video-input-validation";
 import { canvasVideoInputCapabilities } from "@/lib/canvas/video-capabilities";
 import { canvasHistoryMask } from "@/lib/canvas/history-mask";
 import { canvasVariantBatchStatus } from "@/lib/canvas/variant-status";
-import { applyCanvasVariantStatePatch } from "@/lib/canvas/variant-batch";
+import {
+  applyCanvasVariantStatePatch,
+  prepareCanvasVariantBatch,
+} from "@/lib/canvas/variant-batch";
 import { canvasAngleReference } from "@/lib/canvas/angle-reference";
 import {
   mentionedCanvasMedia,
@@ -5888,17 +5891,12 @@ export default function SuperCanvas() {
       const kind = generator.data.kind === "video" ? "video" : "image";
       const requirements = variantRequirementsFor(generator);
       const currentStates = variantStatesFor(generator);
-      const requested = retryIndices
-        ? [...new Set(retryIndices)].filter(
-            (index) =>
-              index >= 0 &&
-              index < requirements.length &&
-              currentStates[index]?.status ===
-                (mode === "pending" ? "pending" : "failed"),
-          )
-        : requirements.map((_, index) => index);
-      const isRetry = mode === "failed";
-      const isResume = mode === "pending";
+      const { requested, initialStates, isRetry, isResume } = prepareCanvasVariantBatch(
+        requirements,
+        currentStates,
+        retryIndices,
+        mode,
+      );
       if (!requested.length)
         return notify(
           isRetry ? "当前没有可重试的失败变体。" : "请至少填写一条变体要求。",
@@ -5914,19 +5912,6 @@ export default function SuperCanvas() {
         (isRetry || isResume) && generator.data.variantBatchId
           ? String(generator.data.variantBatchId)
           : uid("variant-batch");
-      const initialStates = currentStates.map((state, index) => {
-        if (!requested.includes(index)) return state;
-        return {
-          ...state,
-          instruction: requirements[index],
-          status: "pending" as const,
-          resultIds: isRetry || isResume ? state.resultIds : [],
-          taskIds: isRetry || isResume ? state.taskIds : undefined,
-          progress: 0,
-          error: undefined,
-          updatedAt: Date.now(),
-        };
-      });
       updateDoc((value) => ({
         ...value,
         nodes: value.nodes.map((node) =>

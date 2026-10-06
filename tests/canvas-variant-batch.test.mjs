@@ -46,6 +46,60 @@ test("patches one variant while preserving its canonical requirement and aggrega
   assert.equal(result.status, "failed");
 });
 
+test("prepares only requested failed variants and preserves retry results", () => {
+  const retained = { id: "variant-1", instruction: "one", status: "completed", resultIds: ["image-1"] };
+  const failed = { id: "variant-2", instruction: "old", status: "failed", resultIds: ["image-2"], taskIds: ["task-2"] };
+  const result = batch.prepareCanvasVariantBatch(
+    ["canonical one", "canonical two", "canonical three"],
+    [retained, failed],
+    [1, 1, 9, -1],
+    "failed",
+    789,
+  );
+
+  assert.deepEqual(result.requested, [1]);
+  assert.equal(result.isRetry, true);
+  assert.equal(result.isResume, false);
+  assert.equal(result.initialStates[0], retained);
+  assert.deepEqual(result.initialStates[1], {
+    id: "variant-2",
+    instruction: "canonical two",
+    status: "pending",
+    resultIds: ["image-2"],
+    taskIds: ["task-2"],
+    progress: 0,
+    error: undefined,
+    updatedAt: 789,
+  });
+});
+
+test("an all-mode batch resets outputs for every requirement", () => {
+  const result = batch.prepareCanvasVariantBatch(
+    ["one", "two"],
+    [
+      { id: "variant-1", instruction: "old", status: "completed", resultIds: ["image-1"], taskIds: ["task-1"] },
+      { id: "variant-2", instruction: "old 2", status: "failed", resultIds: ["image-2"], error: "old error" },
+    ],
+    undefined,
+    "all",
+    987,
+  );
+
+  assert.deepEqual(result.requested, [0, 1]);
+  assert.deepEqual(result.initialStates.map((state) => ({
+    instruction: state.instruction,
+    status: state.status,
+    resultIds: state.resultIds,
+    taskIds: state.taskIds,
+    progress: state.progress,
+    error: state.error,
+    updatedAt: state.updatedAt,
+  })), [
+    { instruction: "one", status: "pending", resultIds: [], taskIds: undefined, progress: 0, error: undefined, updatedAt: 987 },
+    { instruction: "two", status: "pending", resultIds: [], taskIds: undefined, progress: 0, error: undefined, updatedAt: 987 },
+  ]);
+});
+
 test("returns a fresh state array and marks all completed variants as completed", () => {
   const states = [
     { id: "variant-1", instruction: "one", status: "pending", resultIds: [] },

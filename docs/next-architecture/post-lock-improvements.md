@@ -93,8 +93,23 @@ hardening work when the trigger applies.
 - Requirements remain sourced from the existing generator node state, and the
   returned state/status shape is unchanged. No new store, task state machine,
   API, provider path, compatibility layer, or duplicate type was introduced.
-- Focused behavior coverage passed with 84 tests, typecheck passed, and full
+- Focused behavior coverage passed with 86 tests, typecheck passed, and full
   repository validation passed with 1844 tests passed, 2 skipped, and
+  production build success. `git diff --check` passed.
+
+### Stage 5 canvas variant batch preparation checkpoint (2026-10-07)
+
+- `prepareCanvasVariantBatch` in `lib/canvas/variant-batch.ts` now owns the
+  pure selection of all/failed/pending variant indices and the initial state
+  reset rules for retry, resume, and fresh batches.
+- `CanvasWorkspace.tsx` retains generator lookup, busy guards, notifications,
+  batch IDs, provider calls, polling, result placement, grouping, and document
+  mutations; it only consumes the prepared request indices and states.
+- Existing retry deduplication, pending filtering, result/task retention, and
+  fresh-batch reset behavior are unchanged. No new store, task state machine,
+  API, provider path, compatibility layer, or duplicate type was introduced.
+- Focused behavior coverage passed with 86 tests, typecheck passed, and full
+  repository validation passed with 1846 tests passed, 2 skipped, and
   production build success. `git diff --check` passed.
 
 ### Stage 6 canvas asset projection boundary checkpoint (2026-10-07)
