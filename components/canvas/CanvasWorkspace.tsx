@@ -236,7 +236,6 @@ import { canvasUpscaleSource, maskStateForNode, nodeStatus, progressValue, varia
 import { nodeLabel } from "@/lib/canvas/menu-labels";
 import { canvasPromptOrbState } from "@/components/canvas/CanvasContextMenu";
 import CanvasNodeEditorPopover from "@/components/canvas/CanvasNodeEditorPopover";
-import { MemoizedCanvasNodeCard } from "@/components/canvas/CanvasNodeCard";
 import CanvasAssetCollectionPicker from "@/components/canvas/CanvasAssetCollectionPicker";
 import CanvasAssetDrawer from "@/components/canvas/CanvasAssetDrawer";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
@@ -14137,74 +14136,63 @@ export default function SuperCanvas() {
             />
             <CanvasNodeLayer
               nodes={visibleCanvasNodes}
-              renderNode={(node) => (
-                <MemoizedCanvasNodeCard
-                  node={node}
-                  selected={selectedIds.has(node.id)}
-                  dragging={draggingNodeIds.has(node.id)}
-                  referencePickerActive={Boolean(referencePicker)}
-                  referencePickerTargetId={referencePicker?.targetId || null}
-                  referencePickerHoverNodeId={referencePickerHoverNodeId}
-                  referencePickerFlashNodeId={referencePickerFlashNodeId}
-                  document={document}
-                  onPointerDown={startNodeDrag}
-                  onResize={startResize}
-                   onConnect={startConnection}
-                   onSelect={(event) => selectNode(node, event.shiftKey)}
-                   onRemoveFromGroup={() => removeNodeFromGroup(node.id)}
-                   onPreview={() =>
-                     openCanvasMediaViewer(node.id)
-                   }
-                   onOpenVideoClip={() => openCanvasVideoClipEditor(node.id)}
-                  onOpenAngle={() => openCanvasAngleConsole(node.id)}
-                  onCancelAngle={() => cancelAngleGeneration(node.id)}
-                   onOpenVideoEditor={() => openCanvasVideoEditor(node.id)}
-                  onOutputPreview={(output) => openCanvasMediaViewer(output.id)}
-                  onLocalEdit={() => openCanvasMaskEditor(node.id)}
-                  onTextPreview={() => openCanvasTextViewer(node.id)}
-                  onUseAsImagePrompt={() => useAgentResponseAsImagePrompt(node)}
-                  onRetryVariant={(variantIndex) =>
-                    retryVariant(node.id, variantIndex)
-                  }
-                  onRetryFailedVariants={() => retryFailedVariants(node.id)}
-                  editing={editingNodeId === node.id}
-                  onEdit={(value) => setEditingNodeId(value ? node.id : null)}
-                  onNaturalSize={setMediaNaturalSize}
-                  onPromptChange={(value) => updateEditorPrompt(node, value)}
-                  onEditorPromptChange={updateEditorPrompt}
-                  onEditorParamsChange={updateEditorParams}
-                  onVariantRequirementsChange={(target, value) => {
-                    if (target.type !== "generator") return;
-                    updateDoc((valueDoc) => ({
-                      ...valueDoc,
-                      nodes: valueDoc.nodes.map((item) => item.id === target.id ? {
-                        ...item,
-                        data: {
-                          ...item.data,
-                          variantRequirementsText: value,
-                          variantRequirements: normalizeVariantRequirements(value),
-                          variantStates: [],
-                          variantBatchId: undefined,
-                          variantGroupId: undefined,
-                        },
-                      } : item),
-                    }));
-                  }}
-                  runtime={runtime}
-                  editorPrompt={editorPromptFor(node)}
-                  editorParams={editorParamsFor(node)}
-                  expanded={expandedEditorId === node.id}
-                  onToggleEditor={toggleEditor}
-                  onGenerate={runEditorGeneration}
-                  onOneTake={runOneTakeForAgentNode}
-                  onReferenceReorder={reorderReference}
-                  onReferenceRemove={removeNodeReference}
-                  onReferenceDrop={addNodeReference}
-                  onAddReferenceFiles={addEditorReferenceFiles}
-                  editorContexts={incomingContext(document, node.id).filter((item) => item.type === "prompt" || item.type === "generator")}
-                   mentionCandidates={incomingContext(document, node.id).filter(isCanvasMentionableNode)}
-                />
-              )}
+              document={document}
+              selectedIds={selectedIds}
+              draggingNodeIds={draggingNodeIds}
+              referencePickerActive={Boolean(referencePicker)}
+              referencePickerTargetId={referencePicker?.targetId || null}
+              referencePickerHoverNodeId={referencePickerHoverNodeId}
+              referencePickerFlashNodeId={referencePickerFlashNodeId}
+              editingNodeId={editingNodeId}
+              expandedEditorId={expandedEditorId}
+              runtime={runtime}
+              editorPromptFor={editorPromptFor}
+              editorParamsFor={editorParamsFor}
+              onPointerDown={startNodeDrag}
+              onResize={startResize}
+              onConnect={startConnection}
+              onSelect={(event, node) => selectNode(node, event.shiftKey)}
+              onRemoveFromGroup={(node) => removeNodeFromGroup(node.id)}
+              onPreview={(node) => openCanvasMediaViewer(node.id)}
+              onOpenVideoClip={(node) => openCanvasVideoClipEditor(node.id)}
+              onOpenAngle={(node) => openCanvasAngleConsole(node.id)}
+              onCancelAngle={(node) => cancelAngleGeneration(node.id)}
+              onOpenVideoEditor={(node) => openCanvasVideoEditor(node.id)}
+              onOutputPreview={(node) => openCanvasMediaViewer(node.id)}
+              onLocalEdit={(node) => openCanvasMaskEditor(node.id)}
+              onTextPreview={(node) => openCanvasTextViewer(node.id)}
+              onUseAsImagePrompt={(node) => useAgentResponseAsImagePrompt(node)}
+              onRetryVariant={retryVariant}
+              onRetryFailedVariants={retryFailedVariants}
+              onEdit={(node, editing) => setEditingNodeId(editing ? node.id : null)}
+              onNaturalSize={setMediaNaturalSize}
+              onPromptChange={updateEditorPrompt}
+              onEditorPromptChange={updateEditorPrompt}
+              onEditorParamsChange={updateEditorParams}
+              onVariantRequirementsChange={(target, value) => {
+                if (target.type !== "generator") return;
+                updateDoc((valueDoc) => ({
+                  ...valueDoc,
+                  nodes: valueDoc.nodes.map((item) => item.id === target.id ? {
+                    ...item,
+                    data: {
+                      ...item.data,
+                      variantRequirementsText: value,
+                      variantRequirements: normalizeVariantRequirements(value),
+                      variantStates: [],
+                      variantBatchId: undefined,
+                      variantGroupId: undefined,
+                    },
+                  } : item),
+                }));
+              }}
+              onToggleEditor={toggleEditor}
+              onGenerate={runEditorGeneration}
+              onOneTake={runOneTakeForAgentNode}
+              onReferenceReorder={reorderReference}
+              onReferenceRemove={removeNodeReference}
+              onReferenceDrop={addNodeReference}
+              onAddReferenceFiles={addEditorReferenceFiles}
             />
         </CanvasWorld>
         {selectedSingle &&

@@ -1264,3 +1264,20 @@ hardening work when the trigger applies.
   build, repository check, and `git diff --check` are required before this
   checkpoint is committed. Pointer gesture state extraction remains deferred
   because it is still coupled to selection and document mutations.
+
+### Stage 4 canvas node layer adapter checkpoint (2026-10-06)
+
+- `components/canvas/CanvasNodeLayer.tsx` now owns the per-node presentation
+  mapping: selection/dragging projections, editor context projections, and the
+  complete `MemoizedCanvasNodeCard` prop wiring. It receives the existing
+  document snapshot and callback contract and renders the existing card as the
+  sole node-card implementation.
+- `CanvasWorkspace.tsx` now keeps node gesture callbacks, selection/document
+  mutations, generation actions, and editor state ownership. It no longer
+  constructs the node-card JSX inline and does not create a second node or
+  selection store.
+- Existing node editor, double-click, gesture, and reference-picker behavior
+  coverage passed after the move. Full check passed with 1830 tests passing and
+  2 skipped; production build and typecheck also passed. The card internals,
+  editor popover, and pointer gesture state machine remain intentionally in
+  their current modules because their behavior contracts are still coupled.
