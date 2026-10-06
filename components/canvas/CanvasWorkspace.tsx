@@ -90,7 +90,6 @@ import {
   type CanvasNodeLayerAction,
 } from "@/lib/canvas/layers";
 import { createPortal } from "react-dom";
-import type { ClientReferenceImage } from "@/lib/types";
 import {
   CANVAS_ASSET_UNCATEGORIZED_ID,
   canAddCanvasAsset,
@@ -352,6 +351,7 @@ import {
 import { canvasVideoInputError } from "@/lib/canvas/video-input-validation";
 import { canvasVideoInputCapabilities } from "@/lib/canvas/video-capabilities";
 import { canvasHistoryMask } from "@/lib/canvas/history-mask";
+import { canvasAngleReference } from "@/lib/canvas/angle-reference";
 import {
   mentionedCanvasMedia,
   resolveCanvasMentionTokens,
@@ -1673,18 +1673,6 @@ function syncCanvasVideoEditorReferences(document: CanvasDocument) {
 
 const canvasReferenceDraftFromNode = (node: CanvasNode) =>
   createCanvasReferenceDraft(node, isCanvasReferenceableNode);
-
-function canvasAngleReferenceFromNode(node: CanvasNode | undefined): ClientReferenceImage | null {
-  if (!isCanvasReadyImageSource(node) || node?.data.kind !== "image" || !node.data.url) return null;
-  const url = String(node.data.url);
-  return {
-    id: node.id,
-    name: String(node.data.name || "原始参考图"),
-    kind: "image",
-    url,
-    ...(url.startsWith("data:") ? { dataUrl: url } : {}),
-  };
-}
 
 function isCanvasReferencePickerCandidate(node: CanvasNode | undefined) {
   return Boolean(
@@ -10248,7 +10236,7 @@ export default function SuperCanvas() {
       return;
     }
     const source = incomingReferences(canvasCoreRef.current.document(), nodeId).find((item) => isCanvasReadyImageSource(item));
-    const sourceReference = canvasAngleReferenceFromNode(source);
+    const sourceReference = canvasAngleReference(source, isCanvasReadyImageSource);
     if (!source || !sourceReference) {
       notify("角度控制节点需要一张已完成的图片输入。", "error");
       return;
@@ -10453,7 +10441,7 @@ export default function SuperCanvas() {
     },
   ) => {
     const source = nodeById(canvasCoreRef.current.document(), sourceNodeId);
-    const sourceReference = canvasAngleReferenceFromNode(source);
+    const sourceReference = canvasAngleReference(source, isCanvasReadyImageSource);
     if (!source || !isCanvasReadyImageSource(source) || !sourceReference) {
       notify("生成新视角需要一张已完成的图片。", "error");
       return;
@@ -10748,7 +10736,7 @@ export default function SuperCanvas() {
   const saveImageAngleAsNode = useCallback((draft: AngleConsoleDraft) => {
     if (!angleImageNodeId) return;
     const source = nodeById(canvasCoreRef.current.document(), angleImageNodeId);
-    const sourceReference = canvasAngleReferenceFromNode(source);
+    const sourceReference = canvasAngleReference(source, isCanvasReadyImageSource);
     if (!source || !isCanvasReadyImageSource(source) || !sourceReference) {
       notify("当前图片已不可用，无法保存角度控制节点。", "error");
       return;
@@ -14852,7 +14840,7 @@ export default function SuperCanvas() {
             : angleNode
               ? incomingReferences(document, angleNode.id).find((item) => isCanvasReadyImageSource(item))
               : undefined;
-          const reference = canvasAngleReferenceFromNode(referenceNode);
+          const reference = canvasAngleReference(referenceNode, isCanvasReadyImageSource);
           const angle = angleNode
             ? normalizeCanvasAngleParams(angleNode.data.angle)
               : null;
@@ -15894,7 +15882,7 @@ export default function SuperCanvas() {
       </div>
       {panoramaNodeId && (() => {
         const panoramaNode = nodeById(document, panoramaNodeId);
-        const reference = canvasAngleReferenceFromNode(panoramaNode);
+        const reference = canvasAngleReference(panoramaNode, isCanvasReadyImageSource);
         if (!panoramaNode || !reference) return null;
         const imageParams = panoramaNode.data.generation?.params as ImageCreationSettings | undefined;
         const width = Number(panoramaNode.data.nativeWidth);

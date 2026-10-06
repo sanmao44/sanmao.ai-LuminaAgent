@@ -717,3 +717,23 @@ hardening work when the trigger applies.
 - Remaining risk: local-edit prompt compilation still reads multiple node/draft
   mask projections and remains coupled to editor state; it is not moved in this
   slice.
+
+### Stage 5 angle reference projection checkpoint (2026-10-06)
+
+- `lib/canvas/angle-reference.ts` now owns the pure projection of a ready image
+  CanvasNode into the existing `ClientReferenceImage` contract used by angle,
+  panorama, and image workbench flows. It receives the existing ready-image
+  predicate explicitly and preserves data URL handling and fallback naming.
+- `CanvasWorkspace.tsx` no longer defines this conversion; all existing angle,
+  panorama, and workbench call sites use the extracted function. Angle state,
+  workbench lifecycle, generation requests, and document mutation remain in
+  Workspace.
+- Behavior coverage verifies data URLs, remote URLs, fallback names, and
+  rejection of non-ready/non-image nodes. No URL, API payload, persisted shape,
+  or user interaction changed.
+- Validation: targeted angle reference tests and `npm run typecheck` passed.
+  Full `npm test`, `npm run build`, and `npm run check` remain required before
+  committing this checkpoint.
+- Remaining risk: angle generation and panorama workbench orchestration still
+  combine UI lifecycle with request submission; they are intentionally not
+  moved by this projection-only slice.
