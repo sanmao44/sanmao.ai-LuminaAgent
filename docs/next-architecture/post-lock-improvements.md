@@ -1093,3 +1093,21 @@ hardening work when the trigger applies.
   required before committing this checkpoint.
 - Remaining risk: download availability and notification wording stay in the
   page because they depend on the surrounding viewer interaction.
+
+### Stage 6 canvas workspace header boundary audit (2026-10-06)
+
+- The next safe extraction boundary is the top toolbar and project-version
+  popover in `components/canvas/CanvasWorkspace.tsx`. Its proposed contract is
+  presentation-only: project projections, panel/button state, save/sync
+  indicators, and callbacks for Workspace-owned actions.
+- This slice was intentionally not committed. The existing JSX contains
+  mixed legacy Windows-encoded strings; automated extraction through the
+  current shell converted user-facing literals and produced invalid TypeScript.
+  The failed attempt was fully reverted and the last passing commit remains
+  authoritative.
+- Keep project persistence, CanvasCore commands, and router behavior in
+  `CanvasWorkspace.tsx`; only local rename input state and toolbar rendering
+  should move after a byte-preserving extraction path is established.
+- Remaining risk: verify the extracted component with behavior coverage for
+  project-menu propagation, rename Enter/Escape, topbar collapse persistence,
+  and panel toggle callbacks before proceeding.
