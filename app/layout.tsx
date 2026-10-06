@@ -7,6 +7,7 @@ import './desktop-readability.css';
 import './canvas.css';
 import './canvas-cinematic.css';
 import './canvas-video-clip.css';
+import './canvas-video-editor.css';
 import './canvas-image-editor.css';
 import './canvas-audio-panel.css';
 import './canvas-marquee.css';

@@ -7,6 +7,25 @@ Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
 
+### Stage 4 video editor CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-video-editor.css` now owns the complete video editor node and
+  workbench selector family: node card, preview, inspector, timeline, direct
+  manipulation controls, export actions, and responsive overrides.
+- `app/canvas.css` keeps only shared canvas/workbench primitives and unrelated
+  node styles. `app/layout.tsx` loads the new file immediately after the
+  existing video clip domain stylesheet so the cascade remains stable.
+- `tests/video-editor-node.test.mjs` reads the shared and video editor styles
+  together, preserving the existing behavior and layout assertions without
+  creating a second style contract.
+- Validation: `npm run typecheck` passed; `npm run check` passed with 1830
+  tests passed and 2 skipped; production build passed; `git diff --check`
+  passed.
+- Remaining risk: the video editor workbench still owns its interaction state
+  and export callbacks, so its React implementation remains intentionally
+  coupled to the existing task and CanvasCore adapters. Splitting that logic
+  needs a separate behavior-covered boundary.
+
 ### Stage 5 prompt optimization boundary checkpoint (2026-10-06)
 
 - `lib/creation/agent.ts` is now the single implementation for prompt

@@ -21,7 +21,8 @@ const componentSource = (await readFile(new URL('../components/canvas/CanvasWork
 const nodeSource = await readFile(new URL('../components/VideoEditorNode.tsx', import.meta.url), 'utf8');
 const workbenchSource = await readFile(new URL('../components/VideoEditorWorkbench.tsx', import.meta.url), 'utf8');
 const exportSource = await readFile(new URL('../lib/canvas/video-export.ts', import.meta.url), 'utf8');
-const canvasCssSource = await readFile(new URL('../app/canvas.css', import.meta.url), 'utf8');
+const canvasCssSource = (await readFile(new URL('../app/canvas.css', import.meta.url), 'utf8'))
+  .concat('\n', await readFile(new URL('../app/canvas-video-editor.css', import.meta.url), 'utf8'));
 const cursorCssSource = await readFile(new URL('../app/cursor.css', import.meta.url), 'utf8');
 
 test('creates default video editor clips and keeps manual edits during input sync', () => {
