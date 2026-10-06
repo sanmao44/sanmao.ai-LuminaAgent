@@ -22,7 +22,7 @@ const superCanvas = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
-const canvasCss = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
+const canvasCss = await readFile(new URL("../app/canvas-cinematic.css", import.meta.url), "utf8");
 
 test("cinematic director keeps the default duration at eight seconds", () => {
   assert.equal(director.resolvedCinematicDuration("auto"), 8);

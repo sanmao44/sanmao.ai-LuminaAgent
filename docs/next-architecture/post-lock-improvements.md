@@ -1310,3 +1310,19 @@ hardening work when the trigger applies.
   and repository check coverage passed. The underlying cinematic panel remains
   intentionally intact because its controls and provider-specific validation
   are a cohesive domain boundary.
+
+### Stage 6 cinematic workbench CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-cinematic.css` now owns the complete `.canvas-one-click-*`
+  selector family, including the responsive rules and select-menu overrides
+  used by the cinematic settings surface.
+- `app/canvas.css` retains shared canvas layers and the action-cue styles used
+  by multiple compact toolbars. `app/layout.tsx` loads the cinematic sheet
+  immediately after the base canvas sheet, preserving the existing cascade.
+- The cinematic behavior test now reads its domain stylesheet directly. No URL,
+  API, data format, interaction, or visual contract changed; no duplicate
+  state, runtime, provider, or compatibility layer was introduced.
+- Validation: the cinematic director behavior test passed (6/6),
+  `npm run typecheck` passed, full `npm run check` passed (1830 tests passed,
+  2 skipped, production build succeeded), and `git diff --check` is clean for
+  this slice. The pre-existing uncommitted `AGENTS.md` edit remains excluded.
