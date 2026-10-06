@@ -432,6 +432,19 @@ hardening work when the trigger applies.
   complex image editor UI remains intentionally in the page until its local
   editing behavior has a dedicated component boundary.
 
+### Editor modal boundary audit (2026-10-06)
+
+- `EditorModal` remains in `app/page.tsx` after a boundary audit. Its fields
+  are controlled by the page editor state and combine edit/upscale model
+  capabilities, mask handoff, provider navigation, and submit validation.
+- The shared quality, upscale scale, cloud output format, and cloud-model
+  predicates now live in `lib/image-editor/editor-options.ts`; the page and
+  future editor component use the same option source.
+- A direct component move was intentionally not committed because the current
+  source is compiled JSX output with an implicit page `Icon`/`Dropdown` scope;
+  moving it mechanically would create duplicate UI contracts or risk changing
+  controlled field behavior. A behavior-covered TSX boundary is still needed.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility

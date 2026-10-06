@@ -128,6 +128,7 @@ import AgentImageLoadingCard from '@/components/AgentImageLoadingCard';
 import CreativeReferenceStrip from '@/components/CreativeReferenceStrip';
 import ImageCard from '@/components/ImageCard';
 import { centeredOutpaintLayout, defaultOutpaintLayout, fitOutpaintLayoutToRule, outpaintRuleForModel, validateOutpaintLayout } from '@/lib/image-editor/outpaint-layout';
+import { cloudUpscaleFormatOptions, isCloudUpscaleModel, qualityOptions, upscaleScales } from '@/lib/image-editor/editor-options';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -177,21 +178,6 @@ const pageSizeOptions = HISTORY_PAGE_SIZE_OPTIONS.map((value)=>({
         label: `每页 ${value} 项`
     }));
 const generationLogPageSize = 16;
-const qualityOptions = IMAGE_QUALITY_OPTIONS.map((item)=>({ value: item.value, label: item.label, meta: item.description }));
-const upscaleScales = [
-    1,
-    2,
-    3,
-    4
-];
-const cloudUpscaleFormatOptions = [
-    { value: 'png', label: 'PNG · 无损' },
-    { value: 'jpg', label: 'JPG · 体积更小' },
-    { value: 'bmp', label: 'BMP · 兼容性好' }
-];
-function isCloudUpscaleModel(model) {
-    return model?.provider === 'tencent-ci' || model?.provider === 'aliyun-viapi';
-}
 function upscalePreviewDimensions(source, scale, model, targetSize = 'auto') {
     if (!source) return null;
     if (isCloudUpscaleModel(model)) return {
