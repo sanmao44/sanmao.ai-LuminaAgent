@@ -365,6 +365,11 @@ import {
 import { canvasVideoInputError } from "@/lib/canvas/video-input-validation";
 import { canvasVideoInputCapabilities } from "@/lib/canvas/video-capabilities";
 import { canvasHistoryMask } from "@/lib/canvas/history-mask";
+import {
+  hasExternalFileTransfer,
+  isCanvasAudioFile,
+  isCanvasTextReferenceFile,
+} from "@/lib/canvas/file-input";
 import { canvasEdgeMidpoint } from "@/lib/canvas/edge-geometry";
 import { canvasVariantBatchStatus } from "@/lib/canvas/variant-status";
 import {
@@ -465,25 +470,6 @@ async function rerenderCloneTimeline(jobId: string, timeline: CanvasVideoEditorS
   throw new Error("克隆时间轴合成等待超时，请稍后在克隆任务中查看");
 }
 
-function hasExternalFileTransfer(dataTransfer: DataTransfer) {
-  return (
-    dataTransfer.types.includes("Files") ||
-    [...dataTransfer.items].some((item) => item.kind === "file")
-  );
-}
-
-const CANVAS_TEXT_REFERENCE_EXTENSIONS = new Set([
-  "txt", "md", "markdown", "json", "csv", "tsv", "html", "htm", "css",
-  "js", "jsx", "ts", "tsx", "py", "java", "sql", "xml", "svg", "yaml",
-  "yml", "sh", "ps1",
-]);
-
-function isCanvasTextReferenceFile(file: File) {
-  const extension = file.name.split(".").pop()?.toLowerCase() || "";
-  return file.type.startsWith("text/") || CANVAS_TEXT_REFERENCE_EXTENSIONS.has(extension) ||
-    ["application/json", "application/xml", "image/svg+xml"].includes(file.type);
-}
-
 type Notice = { message: string; kind: "ok" | "error" };
 type CanvasGenerationLog = GenerationLog;
 type CanvasContextMenuState = {
@@ -499,10 +485,6 @@ type CanvasPanel = "assets" | "activity" | "settings" | "shortcuts";
 
 function mentionStateForValue(value: string, cursor: number): MentionState {
   return creativeReferenceMentionRange(value, cursor);
-}
-
-function isCanvasAudioFile(file: File) {
-  return file.type.startsWith("audio/") || /\.(aac|flac|m4a|mp3|oga|ogg|opus|wav|webm)$/i.test(file.name);
 }
 
 type CanvasDrafts = {

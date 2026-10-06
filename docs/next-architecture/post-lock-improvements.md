@@ -1906,3 +1906,18 @@ hardening work when the trigger applies.
 - Validation: focused canvas model/reference tests passed (85/85),
   `npm run typecheck` passed, full `npm run check` passed (1854 tests passed,
   2 skipped; production build succeeded), and `git diff --check` passed.
+
+### Stage 5 canvas file input classification checkpoint (2026-10-07)
+
+- `lib/canvas/file-input.ts` now owns external file-transfer detection and the
+  text/audio file classification predicates used by canvas drop, reference,
+  reuse, and audio flows.
+- `CanvasWorkspace.tsx` retains file reading, object URL creation, upload,
+  asset registration, and node/document mutations; it imports only the pure
+  predicates and no new storage or compatibility path was added.
+- `tests/canvas-file-drop.test.mjs` exercises the predicates directly and keeps
+  the existing drop-handler behavior assertions for pointer routing and the
+  asset fallback.
+- Validation: focused file/reference tests passed (10/10), `npm run typecheck`
+  passed, full `npm run check` passed (1855 tests passed, 2 skipped; production
+  build succeeded), and `git diff --check` passed.
