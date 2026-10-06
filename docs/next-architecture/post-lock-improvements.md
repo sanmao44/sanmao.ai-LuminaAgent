@@ -1858,3 +1858,19 @@ hardening work when the trigger applies.
 - Behavior coverage verifies completed task URL/progress/status and duration projection.
 - Validation: focused variant tests passed (11/11); `npm run check` passed (1853 tests passed, 2 skipped; production build succeeded); and `git diff --check` passed.
 - Remaining risk: the polling loop and task lifecycle still live in Workspace; extracting them safely would require a shared runtime contract and coverage for timeout, retry, cancellation, and background reconciliation.
+
+### Stage 6 canvas panel CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-panels.css` now owns the canvas panel backdrop, side-panel shell,
+  settings sections, shortcut list, and panel-specific responsive rules.
+  `app/layout.tsx` loads it after the shared canvas stylesheet so the existing
+  cascade and visual behavior are preserved.
+- `app/canvas.css` retains shared canvas stage, shell, and task-log styles;
+  panel behavior, panel actions, and CanvasCore ownership remain unchanged.
+- `tests/canvas-agent-dock.test.mjs` composes the shared and panel domain
+  styles when checking the right-hand dock contract. The variant batch behavior
+  test now tolerates the canonical combined type import and CRLF line endings;
+  no production behavior or data contract changed.
+- Validation: focused canvas panel and variant behavior tests passed (72/72),
+  `npm run typecheck` passed, full `npm run check` passed (1853 tests passed,
+  2 skipped; production build succeeded), and `git diff --check` passed.

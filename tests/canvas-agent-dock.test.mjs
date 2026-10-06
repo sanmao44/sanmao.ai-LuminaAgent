@@ -23,6 +23,7 @@ const [component, canvasSource, styles, context, canvasApi, markdown] = await Pr
   readFile(new URL("../lib/canvas/api.ts", import.meta.url), "utf8"),
   readFile(new URL("../components/AgentMarkdown.tsx", import.meta.url), "utf8"),
 ]);
+const panelStyles = await readFile(new URL("../app/canvas-panels.css", import.meta.url), "utf8");
 
 const canvas = `${canvasSource}\n${workspaceHeader}\n${viewportOverlay}\n${nodeEditor}`;
 
@@ -52,15 +53,16 @@ test("the right-hand slot hosts one panel at a time", () => {
 
 test("the right-hand slot reads as one dock instead of separate overlays", () => {
   // One geometry token set drives the drawer, the dock and the shell panels.
-  assert.match(styles, /\.canvas-panel-backdrop\{[^}]*padding:var\(--canvas-panel-top\) var\(--canvas-panel-right\) var\(--canvas-panel-bottom\)/);
-  assert.match(styles, /\.canvas-side-panel\{pointer-events:auto;width:var\(--canvas-panel-width\)/);
-  assert.match(styles, /@media\(max-width:1280px\)\{:root\{--canvas-panel-width:min\(430px,calc\(100vw - 32px\)\)\}/);
-  assert.match(styles, /@media\(max-width:960px\)\{\s*:root\{--canvas-panel-width:min\(390px,calc\(100vw - 32px\)\)\}/);
+  const panelPresentation = `${styles}\n${panelStyles}`;
+  assert.match(panelPresentation, /\.canvas-panel-backdrop\{[^}]*padding:var\(--canvas-panel-top\) var\(--canvas-panel-right\) var\(--canvas-panel-bottom\)/);
+  assert.match(panelPresentation, /\.canvas-side-panel\{pointer-events:auto;width:var\(--canvas-panel-width\)/);
+  assert.match(panelPresentation, /@media\(max-width:1280px\)\{:root\{--canvas-panel-width:min\(430px,calc\(100vw - 32px\)\)\}/);
+  assert.match(panelPresentation, /@media\(max-width:960px\)\{\s*:root\{--canvas-panel-width:min\(390px,calc\(100vw - 32px\)\)\}/);
   // No breakpoint may pin the drawer to a width the side panels do not share.
   assert.doesNotMatch(styles, /\.canvas-asset-drawer\{width:min\(/);
   // The slot is a dock, so it must not dim the app or swallow topbar clicks.
-  assert.match(styles, /\.canvas-panel-backdrop\{[^}]*background:transparent;backdrop-filter:none;pointer-events:none\}/);
-  assert.match(styles, /\.canvas-workspace:has\(:is\(\.canvas-asset-drawer,\.canvas-panel-backdrop\)\) \.canvas-deck\{left:16px;transform:none;width:min\(900px,calc\(100% - 528px\)\)\}/);
+  assert.match(panelPresentation, /\.canvas-panel-backdrop\{[^}]*background:transparent;backdrop-filter:none;pointer-events:none\}/);
+  assert.match(panelPresentation, /\.canvas-workspace:has\(:is\(\.canvas-asset-drawer,\.canvas-panel-backdrop\)\) \.canvas-deck\{left:16px;transform:none;width:min\(900px,calc\(100% - 528px\)\)\}/);
   // Escape and the topbar button both close an open shell panel.
   assert.match(`${canvas}\n${panels}`, /export function CanvasPanelShell[\s\S]{0,400}?if \(event\.key === "Escape"\) onClose\(\);[\s\S]{0,400}?className="canvas-modal-backdrop canvas-panel-backdrop">/);
   assert.doesNotMatch(canvas, /canvas-panel-backdrop" onClick=/);

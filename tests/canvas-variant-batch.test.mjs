@@ -5,8 +5,8 @@ import ts from "typescript";
 
 const sourceUrl = new URL("../lib/canvas/variant-batch.ts", import.meta.url);
 const source = (await readFile(sourceUrl, "utf8"))
-  .replace('import type { CanvasVariantState } from "./types";\n', "")
-  .replace('import { canvasVariantBatchStatus } from "./variant-status";\n', `
+  .replace(/^import type \{[^}]+\} from "\.\/types";\r?\n/m, "")
+  .replace(/^import \{ canvasVariantBatchStatus \} from "\.\/variant-status";\r?\n/m, `
 function canvasVariantBatchStatus(states) {
   if (states.some((state) => state.status === "running")) return "running";
   if (states.some((state) => state.status === "failed")) return "failed";
