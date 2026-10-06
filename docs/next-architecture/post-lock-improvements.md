@@ -1035,3 +1035,25 @@ hardening work when the trigger applies.
 - Remaining risk: conversation long-image sharing still remains in
   `app/page.tsx`; it has a different conversation layout contract and is not
   moved in this slice.
+
+### Stage 6 conversation share renderer checkpoint (2026-10-06)
+
+- `lib/share-conversation-renderer.ts` now owns the browser Canvas rendering
+  of selected conversation messages, including image loading, markdown block
+  drawing, branded assets, layout application, and PNG Blob creation.
+- `app/page.tsx` keeps message selection, busy state, preview URL lifecycle,
+  download naming, and notifications. It passes the existing selected message
+  records into the renderer and no longer owns Canvas drawing details.
+- The renderer input is a local projection of the existing conversation
+  records and reuses `buildShareConversationLayout`; it does not add a second
+  persisted message or sharing contract.
+- Behavior coverage runs the renderer with browser Canvas/Image fakes and
+  verifies generated image, branding/QR asset loads, dimensions, and PNG
+  output. URL, API payloads, persisted shapes, and user interaction remain
+  unchanged.
+- Validation: targeted renderer test and `npm run typecheck` passed. Full
+  `npm run check`, production build, and `git diff --check` remain required
+  before committing this checkpoint.
+- Remaining risk: the page still owns the preview modal composition and
+  browser download action because those are UI lifecycle responsibilities;
+  only the pure rendering boundary moved.
