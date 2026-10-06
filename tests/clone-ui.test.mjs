@@ -14,6 +14,7 @@ const pipeline = (await readFile(new URL("../lib/clone/pipeline.ts", import.meta
 const store = await readFile(new URL("../lib/clone/store.ts", import.meta.url), "utf8");
 const match_types = await readFile(new URL("../lib/types.ts", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
+const overlayStyles = await readFile(new URL("../app/canvas-viewport-overlay.css", import.meta.url), "utf8");
 const storeLib = await readFile(new URL("../lib/store.ts", import.meta.url), "utf8");
 const cloneTypes = await readFile(new URL("../lib/clone/types.ts", import.meta.url), "utf8");
 const modelPicker = await readFile(new URL("../components/ModelPicker.tsx", import.meta.url), "utf8");
@@ -274,10 +275,13 @@ test("高级设置里选的模型真的生效，降级都不静默，幂等键�
 });
 
 test("克隆弹窗样式跟随画布主题并且窄屏可用", () => {
-  for (const selector of [".clone-backdrop{", ".clone-dialog{", ".clone-reference-card", ".clone-cost", ".clone-shots", ".clone-button.primary", ".clone-progress-track i{", ".clone-reference-stack{", ".clone-import-row{", ".canvas-clone-chip{", ".canvas-clone-chip em{"]) {
+  for (const selector of [".clone-backdrop{", ".clone-dialog{", ".clone-reference-card", ".clone-cost", ".clone-shots", ".clone-button.primary", ".clone-progress-track i{", ".clone-reference-stack{", ".clone-import-row{"]) {
     assert.ok(styles.includes(selector), selector);
   }
-  assert.match(styles, /\.canvas-clone-chip span\{flex:none/);
+  for (const selector of [".canvas-clone-chip{", ".canvas-clone-chip em{"]) {
+    assert.ok(overlayStyles.includes(selector), selector);
+  }
+  assert.match(overlayStyles, /\.canvas-clone-chip span\{flex:none/);
   // 弹窗里的模型选择器必须抬到 .clone-backdrop 之上：默认 300 会被 560 的遮罩压住，点开什么都看不到。
   assert.match(dialog, /import \{ CANVAS_Z_INDEX \} from "@\/lib\/canvas\/layers"/);
   const pickers = dialog.match(/portalZIndex=\{CANVAS_Z_INDEX\.modalPopover\}/g) || [];
@@ -379,7 +383,7 @@ test("克隆进度挂在画布右上角状态胶囊上，跑完/失败提示一�
   assert.match(canvas, /window\.setInterval\(\(\) => void tick\(\), 5000\)/);
   // 隐藏的标签页不轮询；动画跟随项目的 reduced-motion 约定。
   assert.match(canvas, /if \(window\.document\.hidden\) return;/);
-  assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{html:not\(\[data-motion="on"\]\) \.canvas-clone-chip span\{animation:none\}\}/);
+  assert.match(overlayStyles, /@media\(prefers-reduced-motion:reduce\)\{html:not\(\[data-motion="on"\]\) \.canvas-clone-chip span\{animation:none\}\}/);
 });
 
 test("克隆任务在等不回来时自愈成可续跑，而不是永远卡在旧阶段", () => {

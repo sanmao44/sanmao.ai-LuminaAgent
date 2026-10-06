@@ -14,6 +14,7 @@ const nodeReferenceStrip = (await readFile(new URL("../components/canvas/CanvasN
   .replace(/\r\n/g, "\n");
 const styles = (await readFile(new URL("../app/canvas.css", import.meta.url), "utf8"))
   .replace(/\r\n/g, "\n");
+const overlayStyles = await readFile(new URL("../app/canvas-viewport-overlay.css", import.meta.url), "utf8");
 const cursorStyles = (await readFile(new URL("../app/cursor.css", import.meta.url), "utf8"))
   .replace(/\r\n/g, "\n");
 
@@ -71,7 +72,7 @@ test("picker feedback keeps a visible instruction without blocking canvas nodes"
   assert.match(styles, /reference-picker-hover/);
   assert.match(styles, /reference-picker-flash/);
   assert.match(cursorStyles, /is-cursor-referencing/);
-  assert.match(styles, /\.canvas-reference-picker-hint\{[^}]*pointer-events:none/);
+  assert.match(overlayStyles, /\.canvas-reference-picker-hint\{[^}]*pointer-events:none/);
 });
 
 test("picker has no fixed prompt layer that can cover narrow editors", () => {

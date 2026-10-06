@@ -1215,3 +1215,10 @@ hardening work when the trigger applies.
 - `tests/canvas-context-menu.test.mjs` reads the tools stylesheet for tools-specific assertions while continuing to read `app/canvas.css` for shared menu behavior. No URL, API, data format, or interaction changed.
 - Validation: targeted canvas context-menu and Agent dock tests passed (69/69), `npm run typecheck` passed, `npm test` passed (1830 passed, 2 skipped), and `npm run build` passed. `git diff --check` remains clean for this stage files; the only excluded warning is the user pre-existing uncommitted `AGENTS.md` edit.
 - Remaining risk: the rest of `app/canvas.css` still contains multiple canvas domains. Continue with one selector family at a time only when its ownership and cascade order are explicit; do not move shared context-menu rules mechanically.
+### Stage 3 canvas viewport overlay CSS boundary checkpoint (2026-10-06)
+
+- `app/canvas-viewport-overlay.css` now owns the viewport overlay presentation used by `CanvasViewportOverlay`: grid paint, snap guide lines, external file-drop hint, reference-picker hint, and clone progress chip animation/state styling.
+- `app/canvas.css` retains the stage/world layering contract, shared `canvas-hint` and `canvas-status-chip` base styles, and unrelated node/edge/workbench rules. No interaction state, CanvasCore ownership, URL, API, or persisted data changed.
+- `app/layout.tsx` loads the overlay stylesheet after the base canvas stylesheet and tools stylesheet. Behavior tests now read overlay-specific selectors from the new file while shared assertions remain on `app/canvas.css`.
+- Validation: targeted canvas/Agent/clone tests passed (116/116), `npm run typecheck` passed, `npm test` passed (1830 passed, 2 skipped), and `npm run build` passed. `git diff --check` is clean for this stage files; the only excluded warning is the user pre-existing uncommitted `AGENTS.md` edit.
+- Remaining risk: `app/canvas.css` still contains shared stage, node, menu, and workbench domains. Further CSS movement should keep z-index contracts and shared base selectors in the base file unless a complete ownership boundary is proven.

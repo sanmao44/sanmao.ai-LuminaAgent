@@ -185,8 +185,8 @@ test('keeps guide segments local when the target is far away', () => {
 });
 
 test('uses fine dashed guide styling without glow', async () => {
-  const css = await readFile(new URL('../app/canvas.css', import.meta.url), 'utf8');
-  assert.match(css, /\.canvas-snap-guide\.x\{[^}]*repeating-linear-gradient/);
-  assert.match(css, /\.canvas-snap-guide\.y\{[^}]*repeating-linear-gradient/);
-  assert.doesNotMatch(css, /\.canvas-snap-guide\{[^}]*box-shadow/);
+  const overlayStyles = await readFile(new URL('../app/canvas-viewport-overlay.css', import.meta.url), 'utf8');
+  assert.match(overlayStyles, /\.canvas-snap-guide\.x\{[^}]*repeating-linear-gradient/);
+  assert.match(overlayStyles, /\.canvas-snap-guide\.y\{[^}]*repeating-linear-gradient/);
+  assert.doesNotMatch(overlayStyles, /\.canvas-snap-guide\{[^}]*box-shadow/);
 });
