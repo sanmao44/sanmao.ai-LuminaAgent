@@ -130,6 +130,7 @@ import ImageCard from '@/components/ImageCard';
 import { centeredOutpaintLayout, defaultOutpaintLayout, fitOutpaintLayoutToRule, outpaintRuleForModel, validateOutpaintLayout } from '@/lib/image-editor/outpaint-layout';
 import { cloudUpscaleFormatOptions, isCloudUpscaleModel, qualityOptions, upscaleScales } from '@/lib/image-editor/editor-options';
 import { canvasRectForRatio, cropSourceRect } from '@/lib/image-editor/local-image-layout';
+import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
 const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
 const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
@@ -217,18 +218,6 @@ function emptyProviderForm() {
 }
 function uid(prefix = 'id') {
     return `${prefix}-${crypto.randomUUID()}`;
-}
-function kindLabel(kind) {
-    return kind === 'chat' ? '对话模型' : kind === 'image' ? '图片模型' : kind === 'video' ? '视频模型' : kind === 'audio' ? '配音模型' : '未分类';
-}
-function typeLabel(type) {
-    return type === 'google-gemini' ? '谷歌 Gemini' : '通用兼容接口';
-}
-function isManualModelProvider(provider) {
-    return provider?.type === 'openai-compatible' || provider?.type === 'google-gemini';
-}
-function platformLabel(platform) {
-    return providerPresets.find((item)=>item.value === platform)?.short || '自定义';
 }
 function sourceLabel(source) {
     return source === 'canvas' ? '画布生成' : source === 'agent' ? '助手生成' : source === 'edit' ? '图片修改' : source === 'upscale' ? '高清放大' : '直接生成';
@@ -3284,7 +3273,7 @@ export default function Page() {
     const visibleProviders = useMemo(()=>{
         const query = providerSearch.trim().toLowerCase();
         if (!query) return manageableProviders;
-        return manageableProviders.filter((provider)=>`${provider.name || ''} ${platformLabel(provider.platform)} ${provider.baseUrl || ''} ${provider.type || ''}`.toLowerCase().includes(query));
+        return manageableProviders.filter((provider)=>`${provider.name || ''} ${providerPlatformLabel(provider.platform)} ${provider.baseUrl || ''} ${provider.type || ''}`.toLowerCase().includes(query));
     }, [
         manageableProviders,
         providerSearch
@@ -5951,7 +5940,7 @@ export default function Page() {
             });
             if (data?.state) {
                 const saved = data.state.models?.find((item) => item.id === model.id);
-                notify(`已归类为${kindLabel(saved?.kind || kind)}`);
+                notify(`已归类为${modelKindLabel(saved?.kind || kind)}`);
             }
         } finally {
             modelKindBusyRef.current.delete(model.id);
@@ -8731,7 +8720,7 @@ export default function Page() {
                                 }),
                                 /*#__PURE__*/ _jsx("span", {
                                 className: `kind-badge ${model.kind}`,
-                                    children: kindLabel(model.kind)
+                                    children: modelKindLabel(model.kind)
                                 }),
                                 model.source === 'manual' && /*#__PURE__*/ _jsx("span", {
                                     className: "model-source-badge",
@@ -8766,7 +8755,7 @@ export default function Page() {
                                 }),
                                 /*#__PURE__*/ _jsx("em", {
                                     className: `model-kind-status ${model.kind}`,
-                                    children: model.kind === 'unknown' ? '待分类' : kindLabel(model.kind).replace('模型', '')
+                                    children: model.kind === 'unknown' ? '待分类' : modelKindLabel(model.kind).replace('模型', '')
                                 })
                             ]
                         }),
@@ -12777,7 +12766,7 @@ export default function Page() {
                                                 children: [
                                                     /*#__PURE__*/ _jsx("div", {
                                                         className: "provider-logo",
-                                                        children: platformLabel(provider.platform).slice(0, 2)
+                                                        children: providerPlatformLabel(provider.platform).slice(0, 2)
                                                     }),
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "provider-content",
@@ -12789,7 +12778,7 @@ export default function Page() {
                                                                     }),
                                                                      /*#__PURE__*/ _jsx("span", {
                                                                          className: "provider-platform",
-                                                                         children: platformLabel(provider.platform)
+                                                                         children: providerPlatformLabel(provider.platform)
                                                                      }),
                                                                      provider.platform === 'agnes' && /*#__PURE__*/ _jsx("span", {
                                                                          className: `provider-credential-badge ${provider.credentialVerifiedAt ? 'verified' : 'unverified'}`,
@@ -12828,7 +12817,7 @@ export default function Page() {
                                                             }),
                                                             /*#__PURE__*/ _jsxs("p", {
                                                                 children: [
-                                                                    typeLabel(provider.type),
+                                                                    providerTypeLabel(provider.type),
                                                                     " \xb7 ",
                                                                     provider.baseUrl
                                                                 ]

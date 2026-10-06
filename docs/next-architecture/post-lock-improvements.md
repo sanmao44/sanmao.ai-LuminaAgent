@@ -232,6 +232,21 @@ hardening work when the trigger applies.
   bounds, and canvas ratio expansion. Targeted tests, the full suite,
   typecheck, production build, and diff check pass for this slice.
 
+### Stage 6 provider presentation checkpoint (2026-10-06)
+
+- `lib/provider-presentation.ts` now owns the Provider/Model presentation
+  labels and manual-model capability predicate previously defined in
+  `app/page.tsx`. It reuses `lib/types.ts` and `getProviderPreset` and has no
+  API, storage, or UI dependencies.
+- `app/page.tsx` retains Provider form state, API calls, model filtering, and
+  the Provider panel composition; it now consumes explicit presentation
+  functions. Gallery `sourceLabel` and reference ordering remain at their
+  existing boundaries because they belong to separate image and reference
+  contracts.
+- `tests/provider-presentation.test.mjs` covers the labels, preset fallback,
+  and manual-model capability. The targeted tests, full suite, typecheck,
+  production build, and diff check pass for this slice.
+
 ### Stage 6 admin login checkpoint (2026-10-06)
 
 - `AdminLogin.tsx` now owns the protected management login presentation for the
