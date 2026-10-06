@@ -131,6 +131,7 @@ import { centeredOutpaintLayout, defaultOutpaintLayout, fitOutpaintLayoutToRule,
 import { cloudUpscaleFormatOptions, isCloudUpscaleModel, qualityOptions, upscaleScales } from '@/lib/image-editor/editor-options';
 import { editorModelSelectionPatch, upscaleEditorSettingsPatch } from '@/lib/image-editor/editor-form';
 import { buildEditorRequest } from '@/lib/image-editor/editor-request';
+import { buildEditorTaskDraft } from '@/lib/image-editor/editor-task';
 import { canvasRectForRatio, cropSourceRect } from '@/lib/image-editor/local-image-layout';
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
@@ -8152,33 +8153,9 @@ export default function Page() {
         if (!currentEditor) return;
         if (currentEditor.mode !== 'upscale' && !currentEditor.prompt.trim()) return notify(currentEditor.mode === 'edit' ? '请描述要怎么修改' : '提示词不能为空');
         const taskId = uid('edit-task');
-        const taskPrompt = currentEditor.mode === 'upscale' ? currentEditor.item.prompt || 'Upscale this image' : currentEditor.prompt.trim();
-        const taskMode = currentEditor.mode;
+        const taskDraft = buildEditorTaskDraft(currentEditor, taskId, Date.now());
         setGenerateTasks((old)=>[
-                {
-                    id: taskId,
-                    status: 'pending',
-                    mode: taskMode,
-                    prompt: taskPrompt,
-                    expectedCount: 1,
-                    startedAt: Date.now(),
-                    info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · 后台处理中`,
-                    items: [],
-                    itemIds: [],
-                    request: currentEditor.mode === 'upscale' ? { sourceImageId: currentEditor.item.id, upscaleScale: currentEditor.scale, upscaleOutputFormat: currentEditor.upscaleOutputFormat, upscaleOutputQuality: currentEditor.upscaleOutputQuality, modelId: currentEditor.modelId, references: [{ id: currentEditor.item.id, kind: 'image', name: `上一版-${currentEditor.item.id.slice(-6)}`, dataUrl: currentEditor.item.url }] } : {
-                        modelId: currentEditor.modelId,
-                        ratio: currentEditor.ratio,
-                        count: currentEditor.count,
-                        quality: currentEditor.quality,
-                        fidelity: currentEditor.fidelity,
-                        sizeMode: currentEditor.sizeMode,
-                        sizeTier: currentEditor.sizeTier,
-                        customWidth: currentEditor.customWidth,
-                        customHeight: currentEditor.customHeight,
-                        references: [{ id: currentEditor.item.id, kind: 'image', name: `上一版-${currentEditor.item.id.slice(-6)}`, dataUrl: currentEditor.item.url }],
-                         mask: currentEditor.mask ? { dataUrl: currentEditor.mask, referenceId: currentEditor.item.id, annotations: currentEditor.annotations || [], feather: Math.max(0, Math.min(48, Math.round(Number(currentEditor.feather) || 0))), ...(currentEditor.sourceImageDataUrl ? { sourceImageDataUrl: currentEditor.sourceImageDataUrl } : {}) } : null
-                    }
-                },
+                taskDraft,
                 ...old
             ]);
         setGenerateClock(Date.now());

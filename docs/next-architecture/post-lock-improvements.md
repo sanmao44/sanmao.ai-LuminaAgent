@@ -520,6 +520,17 @@ hardening work when the trigger applies.
 - `tests/image-editor-request.test.mjs` covers edit payloads, cloud upscale
   output filtering, and local upscale target/algorithm fields.
 
+### Editor task draft projection checkpoint (2026-10-06)
+
+- `lib/image-editor/editor-task.ts` now owns the pure projection from the
+  page editor state into the existing `generateTasks` pending-task shape,
+  including retry fields, references, mask metadata, and feather bounds.
+- `app/page.tsx` keeps task insertion, editor closing, notification, and the
+  asynchronous processing lifecycle. The persisted task shape and recovery
+  fields remain unchanged.
+- `tests/image-editor-task.test.mjs` covers edit mask/move-guide drafts and
+  upscale source/task fields.
+
 ## Adapter subdivision
 
 - `packages/tool-runtime/adapter.ts` is the single Tool Runtime compatibility
