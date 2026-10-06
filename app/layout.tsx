@@ -5,6 +5,7 @@ import './agent-upgrades.css';
 import './agent-orb.css';
 import './desktop-readability.css';
 import './canvas.css';
+import './canvas-feedback.css';
 import './canvas-panels.css';
 import './canvas-context-menu.css';
 import './canvas-generator-node.css';

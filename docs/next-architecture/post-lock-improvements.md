@@ -1874,3 +1874,19 @@ hardening work when the trigger applies.
 - Validation: focused canvas panel and variant behavior tests passed (72/72),
   `npm run typecheck` passed, full `npm run check` passed (1853 tests passed,
   2 skipped; production build succeeded), and `git diff --check` passed.
+
+### Stage 6 canvas feedback CSS boundary checkpoint (2026-10-07)
+
+- `app/canvas-feedback.css` now owns the transient reference-picker hint,
+  clone status chip, and canvas notice toast, including their responsive
+  placement. The stylesheet is loaded after `canvas.css` so the existing
+  cascade remains stable.
+- `app/canvas.css` retains canvas stacking tokens, selection/deck controls,
+  and shared modal/workbench styles. Feedback state, clone polling, toast
+  lifecycle, and pointer behavior remain in their existing components.
+- `tests/canvas-reference-picker.test.mjs` reads the new feedback stylesheet
+  for its presentation contract; clone, dock, and shadow behavior remain
+  covered without changing user flows or data formats.
+- Validation: focused feedback/dock/clone/shadow tests passed (97/97),
+  `npm run typecheck` passed, full `npm run check` passed (1853 tests passed,
+  2 skipped; production build succeeded), and `git diff --check` passed.
