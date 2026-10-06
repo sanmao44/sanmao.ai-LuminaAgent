@@ -245,6 +245,7 @@ import CanvasViewport, { CanvasWorld } from "@/components/canvas/CanvasViewport"
 import CanvasViewportOverlay from "@/components/canvas/CanvasViewportOverlay";
 import CanvasCreateContextMenu from "@/components/canvas/CanvasCreateContextMenu";
 import CanvasToolsContextMenu from "@/components/canvas/CanvasToolsContextMenu";
+import CanvasConnectionOverlay, { type CanvasConnectionNodePicker } from "@/components/canvas/CanvasConnectionOverlay";
 import { CanvasSettingsPanel, CanvasShortcutsPanel, CONNECTION_STYLE_OPTIONS } from "@/components/canvas/CanvasPanels";
 import { CanvasGeneratorHelp, CanvasVariantRequirementsEditor } from "@/components/canvas/CanvasVariantEditors";
 import CanvasMinimap from "@/components/canvas/CanvasMinimap";
@@ -623,23 +624,6 @@ type ConnectionPreview = {
   end: Point;
   sourcePort: "left" | "right";
 };
-type ConnectableNodeKind =
-  | "image"
-  | "video"
-  | "audio"
-  | "text"
-  | "workflowImage"
-  | "workflowVideo"
-  | "upscale"
-  | "videoEditor"
-  | "angle";
-type ConnectionNodePicker = {
-  x: number;
-  y: number;
-  world: Point;
-  sourceId: string;
-  sourcePort: "left" | "right";
-};
 
 const CANVAS_SETTINGS_KEY = "sanmao.canvas.settings";
 const CANVAS_ARRANGE_MODE_KEY = "sanmao.canvas.arrange-mode";
@@ -702,61 +686,6 @@ const CANVAS_DISTRIBUTION_OPTIONS: Array<{
     label: "垂直均匀分布",
     title: "将选中节点按边缘等间隙垂直分布",
     icon: "vertical",
-  },
-];
-const CONNECTION_NODE_OPTIONS: Array<{
-  kind: ConnectableNodeKind;
-  icon: string;
-  label: string;
-  description: string;
-}> = [
-  {
-    kind: "image",
-    icon: "✦",
-    label: "图片节点",
-    description: "连接到图片生成节点",
-  },
-  {
-    kind: "video",
-    icon: "▶",
-    label: "视频节点",
-    description: "连接到视频生成节点",
-  },
-  {
-    kind: "audio",
-    icon: "♫",
-    label: "音频节点",
-    description: "作为视频生成的参考音频",
-  },
-  {
-    kind: "text",
-    icon: "T",
-    label: "Agent 节点",
-    description: "连接对话上下文并调用对话模型",
-  },
-  {
-    kind: "upscale",
-    icon: "↗",
-    label: "超分节点",
-    description: "连接一张已完成图片并打开超分设置",
-  },
-  {
-    kind: "workflowImage",
-    icon: "✧",
-    label: "图片变体生成器",
-    description: "按多条要求批量生成图片变体",
-  },
-  {
-    kind: "workflowVideo",
-    icon: "◆",
-    label: "视频变体生成器",
-    description: "按多条要求串行生成视频变体",
-  },
-  {
-    kind: "videoEditor",
-    icon: "✂",
-    label: "视频编辑节点",
-    description: "连接素材并打开多轨编辑工作台",
   },
 ];
 function clamp(value: number, min: number, max: number) {
@@ -1904,7 +1833,7 @@ export default function SuperCanvas() {
   } | null>(null);
   const [connection, setConnection] = useState<ConnectionPreview | null>(null);
   const [connectionNodePicker, setConnectionNodePicker] =
-    useState<ConnectionNodePicker | null>(null);
+    useState<CanvasConnectionNodePicker | null>(null);
   const [connectionTargetId, setConnectionTargetId] = useState<string | null>(
     null,
   );
@@ -4738,7 +4667,7 @@ export default function SuperCanvas() {
     ],
   );
   const connectNewNode = useCallback(
-    (kind: ConnectableNodeKind, picker: ConnectionNodePicker) => {
+    (kind: CanvasNodeCreationKind, picker: CanvasConnectionNodePicker) => {
       if (
         !nodeById(canvasCoreRef.current.document(), picker.sourceId) &&
         !groupById(canvasCoreRef.current.document(), picker.sourceId)
@@ -14569,91 +14498,44 @@ export default function SuperCanvas() {
             />
           );
         })()}
-        {connectionTargetEntity &&
-          connectionTargetBounds &&
-          connectionTargetScreen && (
-            <div
-              className="canvas-connection-target"
-              style={{
-                left: connectionTargetScreen.x - 8,
-                top: connectionTargetScreen.y - 8,
-                width: connectionTargetBounds.w * document.camera.zoom + 16,
-                height: connectionTargetBounds.h * document.camera.zoom + 16,
-              }}
-            />
-          )}
-        {connectionCancelScreen && (
-          <button
-            type="button"
-            className={`canvas-connection-cancel${connectionCancelEdge ? " canvas-connection-remove" : ""}`}
-            aria-label={connectionCancelEdge ? "删除此连线" : "取消连线"}
-            title={connectionCancelEdge ? "删除此连线" : "取消连线"}
-            style={{
-              left: connectionCancelScreen.x,
-              top: connectionCancelScreen.y,
-            }}
-            onPointerEnter={() => {
-              connectionCancelButtonHoverRef.current = true;
-              clearConnectionCancelHideTimer();
-            }}
-            onPointerLeave={() => {
-              connectionCancelButtonHoverRef.current = false;
-              if (!connectionCancelEdgeId) return;
-              if (!connectionHoverEdgeRef.current)
-                scheduleConnectionCancelHide(connectionCancelEdgeId);
-            }}
-            onPointerDown={(event) =>
-              connectionCancelEdge
-                ? removeConnection(connectionCancelEdge.id, event)
-                : cancelConnection(event)
-            }
-          >
-            ×
-          </button>
-        )}
-        {connectionNodePicker && connectionNodePickerScreen && (
-          <div
-            className="canvas-connection-picker"
-            style={{
-              left: connectionNodePickerScreen.x,
-              top: connectionNodePickerScreen.y,
-            }}
-            onPointerDown={(event) => event.stopPropagation()}
-          >
-            <div className="canvas-connection-picker-head">
-              <div>
-                <b>选择连接节点</b>
-                <small>松开后自动创建并连接</small>
-              </div>
-              <button
-                type="button"
-                aria-label="关闭节点选择"
-                onClick={() => setConnectionNodePicker(null)}
-              >
-                ×
-              </button>
-            </div>
-            <div className="canvas-connection-picker-options">
-              {CONNECTION_NODE_OPTIONS.map((option) => (
-                <button
-                  type="button"
-                  key={option.kind}
-                  onClick={() => {
-                    if (connectionNodePicker)
-                      connectNewNode(option.kind, connectionNodePicker);
-                  }}
-                >
-                  <span>{option.icon}</span>
-                  <i>
-                    <b>{option.label}</b>
-                    <small>{option.description}</small>
-                  </i>
-                  <em>›</em>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        <CanvasConnectionOverlay
+          target={
+            connectionTargetEntity && connectionTargetBounds && connectionTargetScreen
+              ? {
+                  screen: connectionTargetScreen,
+                  width: connectionTargetBounds.w * document.camera.zoom,
+                  height: connectionTargetBounds.h * document.camera.zoom,
+                }
+              : null
+          }
+          cancel={
+            connectionCancelScreen
+              ? { screen: connectionCancelScreen, edgeId: connectionCancelEdge?.id || null }
+              : null
+          }
+          picker={
+            connectionNodePicker && connectionNodePickerScreen
+              ? { value: connectionNodePicker, screen: connectionNodePickerScreen }
+              : null
+          }
+          onCancelPointerEnter={() => {
+            connectionCancelButtonHoverRef.current = true;
+            clearConnectionCancelHideTimer();
+          }}
+          onCancelPointerLeave={() => {
+            connectionCancelButtonHoverRef.current = false;
+            if (!connectionCancelEdgeId) return;
+            if (!connectionHoverEdgeRef.current)
+              scheduleConnectionCancelHide(connectionCancelEdgeId);
+          }}
+          onCancelPointerDown={(event) =>
+            connectionCancelEdge
+              ? removeConnection(connectionCancelEdge.id, event)
+              : cancelConnection(event)
+          }
+          onClosePicker={() => setConnectionNodePicker(null)}
+          onSelectNode={connectNewNode}
+        />
         {marquee && (
           <div
             className="canvas-marquee"

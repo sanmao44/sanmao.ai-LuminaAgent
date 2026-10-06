@@ -16,6 +16,7 @@ const contextMenuComponent = await readFile(new URL("../components/canvas/Canvas
 const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
 const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
 const groupLayer = await readFile(new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url), "utf8");
+const connectionOverlay = await readFile(new URL("../components/canvas/CanvasConnectionOverlay.tsx", import.meta.url), "utf8");
 const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
@@ -307,10 +308,10 @@ test("create menu uses separators instead of spacious group headings", () => {
 });
 
 test("connection picker places upscale before image variants", () => {
-  const optionsStart = component.indexOf("const CONNECTION_NODE_OPTIONS");
-  const optionsEnd = component.indexOf("function clamp", optionsStart);
+  const optionsStart = connectionOverlay.indexOf("CONNECTION_NODE_OPTIONS");
+  const optionsEnd = connectionOverlay.length;
   assert.ok(optionsStart >= 0 && optionsEnd > optionsStart, "connection node options should be present");
-  const options = component.slice(optionsStart, optionsEnd);
+  const options = connectionOverlay.slice(optionsStart, optionsEnd);
   const upscalePosition = options.indexOf('kind: "upscale"');
   const imageVariantPosition = options.indexOf('kind: "workflowImage"');
   assert.ok(upscalePosition >= 0 && imageVariantPosition > upscalePosition, "upscale should appear before image variants");

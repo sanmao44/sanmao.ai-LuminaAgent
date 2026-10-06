@@ -132,6 +132,25 @@ hardening work when the trigger applies.
   UI, pointer state, and apply orchestration remain intentionally page-owned
   until a component boundary has behavior coverage.
 
+### Canvas connection overlay checkpoint (2026-10-06)
+
+- `components/canvas/CanvasConnectionOverlay.tsx` now owns the presentation and
+  event forwarding for the connection target highlight, connection cancel or
+  edge removal control, and the connected-node picker.
+- `CanvasWorkspace.tsx` retains connection state, screen/world coordinate
+  derivation, hover timers, CanvasCore mutations, notifications, and new-node
+  creation. The overlay receives explicit geometry and callback contracts, so
+  it does not become a second connection state owner.
+- `app/canvas-connection.css` owns the connection overlay styles. The stage
+  z-index contract remains in `app/canvas.css`, and the new stylesheet is
+  loaded from `app/layout.tsx` after the base canvas styles.
+- Existing connection picker ordering and edge removal behavior tests now read
+  the extracted owner. No URL, API payload, document format, or interaction
+  contract changed.
+- Remaining risk: edge hover and pointer capture state is still interleaved
+  with Workspace's broader gesture state machine; moving that state would need
+  dedicated behavior coverage and is deferred.
+
 ## File size and component splits
 
 - `app/page.tsx`, `components/SuperCanvas.tsx`, `components/CanvasAgentDock.tsx`,

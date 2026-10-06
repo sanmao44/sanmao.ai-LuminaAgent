@@ -7,6 +7,10 @@ const workspace = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const connectionOverlay = await readFile(
+  new URL("../components/canvas/CanvasConnectionOverlay.tsx", import.meta.url),
+  "utf8",
+);
 const nodeEditor = await readFile(
   new URL("../components/canvas/CanvasNodeEditorPopover.tsx", import.meta.url),
   "utf8",
@@ -32,7 +36,7 @@ const upscalePanel = await readFile(
   "utf8",
 );
 const nodeCard = await readFile(new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url), "utf8");
-const component = `${nodeEditor}\n${workspace}\n${nodeCard}\n${maskSummary}\n${presetControl}\n${imagePresetDomain}\n${imagePresetNodeSupport}\n${upscalePanel}`;
+const component = `${nodeEditor}\n${workspace}\n${connectionOverlay}\n${nodeCard}\n${maskSummary}\n${presetControl}\n${imagePresetDomain}\n${imagePresetNodeSupport}\n${upscalePanel}`;
 const mediaCard = await readFile(
   new URL("../components/canvas/CanvasMediaNodeCard.tsx", import.meta.url),
   "utf8",
@@ -180,6 +184,10 @@ const parameterEditor = await readFile(
 );
 const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
+  "utf8",
+);
+const connectionStyles = await readFile(
+  new URL("../app/canvas-connection.css", import.meta.url),
   "utf8",
 );
 const selectionStyles = await readFile(
@@ -727,16 +735,16 @@ test("canvas edges reveal one small red removal control at the pointer without a
   assert.match(edgeLayer, /onHover=\{\(event\) => onHover\(edge\.id, event\)\}/);
   assert.match(component, /const \[connectionCancelPointer, setConnectionCancelPointer\]/);
   assert.match(component, /connectionCancelPointer \|\| worldToScreen\(/);
-  assert.match(component, /onPointerDown=\{\(event\) =>\s*connectionCancelEdge/);
+  assert.match(connectionOverlay, /onPointerDown=\{onCancelPointerDown\}/);
   assert.doesNotMatch(component, /悬停连线显示取消按钮/);
-  assert.match(styles, /\.canvas-connection-cancel\{[^}]*width:14px[^}]*height:14px/);
-  assert.match(styles, /\.canvas-connection-remove\{width:12px[^}]*height:12px/);
-  assert.match(styles, /\.canvas-connection-cancel\{[^}]*border:1px solid color-mix\(in srgb,var\(--danger\) 28%/);
-  assert.match(styles, /\.canvas-connection-cancel\{[^}]*background:color-mix\(in srgb,var\(--danger-soft\) 78%,var\(--panel-2\)\)/);
-  assert.match(styles, /\.canvas-connection-cancel\{[^}]*color:var\(--danger\)/);
-  assert.match(styles, /@keyframes canvas-connection-remove-attention\{/);
-  assert.match(styles, /\.canvas-connection-cancel\{[^}]*animation:canvas-connection-remove-attention \.42s ease-out both/);
-  assert.match(styles, /\.canvas-connection-cancel:hover,.canvas-connection-cancel:focus-visible\{[^}]*background:color-mix\(in srgb,var\(--danger-soft\)/);
+  assert.match(connectionStyles, /\.canvas-connection-cancel\{[^}]*width:14px[^}]*height:14px/);
+  assert.match(connectionStyles, /\.canvas-connection-remove\{width:12px[^}]*height:12px/);
+  assert.match(connectionStyles, /\.canvas-connection-cancel\{[^}]*border:1px solid color-mix\(in srgb,var\(--danger\) 28%/);
+  assert.match(connectionStyles, /\.canvas-connection-cancel\{[^}]*background:color-mix\(in srgb,var\(--danger-soft\) 78%,var\(--panel-2\)\)/);
+  assert.match(connectionStyles, /\.canvas-connection-cancel\{[^}]*color:var\(--danger\)/);
+  assert.match(connectionStyles, /@keyframes canvas-connection-remove-attention\{/);
+  assert.match(connectionStyles, /\.canvas-connection-cancel\{[^}]*animation:canvas-connection-remove-attention \.42s ease-out both/);
+  assert.match(connectionStyles, /\.canvas-connection-cancel:hover,.canvas-connection-cancel:focus-visible\{[^}]*background:color-mix\(in srgb,var\(--danger-soft\)/);
 });
 
 test("nested node scrolling does not trigger canvas zoom", () => {
