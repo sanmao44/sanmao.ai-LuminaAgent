@@ -21,6 +21,7 @@ const modelSource = await readFile(new URL('../lib/canvas/model.ts', import.meta
 const componentSource = (await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8'))
   .concat('\n', await readFile(new URL('../components/canvas/CanvasNodeCard.tsx', import.meta.url), 'utf8'));
 const nodeSource = await readFile(new URL('../components/VideoEditorNode.tsx', import.meta.url), 'utf8');
+const connectionCommandSource = await readFile(new URL('../lib/canvas/connection-command.ts', import.meta.url), 'utf8');
 const workbenchSource = await readFile(new URL('../components/VideoEditorWorkbench.tsx', import.meta.url), 'utf8');
 const exportSource = await readFile(new URL('../lib/canvas/video-export.ts', import.meta.url), 'utf8');
 const canvasCssSource = (await readFile(new URL('../app/canvas.css', import.meta.url), 'utf8'))
@@ -218,7 +219,7 @@ test('canvas recognizes the editor as a node but not as a rendered media source'
   assert.match(modelSource, /value === "video-editor"/);
   assert.match(modelSource, /type: "video-editor"/);
   assert.match(componentSource, /<VideoEditorWorkbench/);
-  assert.match(componentSource, /当前只保存编辑计划，暂不输出视频素材/);
+  assert.match(connectionCommandSource, /当前只保存编辑计划，暂不输出视频素材/);
   assert.match(componentSource, /if \(node\.type === "video-editor"\) onOpenVideoEditor\(\)/);
   assert.match(nodeSource, /多轨剪辑、裁剪、分割和字幕/);
 });

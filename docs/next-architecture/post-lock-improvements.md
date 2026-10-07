@@ -2466,3 +2466,20 @@ hardening work when the trigger applies.
 - Remaining risk: edge creation and deletion remain in Workspace because they
   coordinate connection policy and CanvasCore history. The current slice only
   moves read-only renderer projections.
+
+### Stage 6 canvas connection command boundary checkpoint (2026-10-07)
+
+- `lib/canvas/connection-command.ts` now owns the single existing connection
+  command implementation and its `CanvasConnectionResult` contract. It keeps
+  source/group resolution, angle and video-editor handling, capability limits,
+  input-role selection, edge mutation, and video-reference synchronization in
+  one domain adapter.
+- `CanvasWorkspace.tsx` now imports the command and retains only pointer/event
+  orchestration, user notifications, and CanvasCore commit/selection updates.
+  No second connection validator or document owner was introduced.
+- Behavior coverage verifies successful immutable connection, self-connection
+  rejection, and group-source scope. Existing Agent dock and group reference
+  behavior tests continue to exercise the production call path.
+- Remaining risk: the command still depends on the existing Canvas model and
+  capability projections by design; generation/API orchestration and page/CSS
+  migration remain separate phases.
