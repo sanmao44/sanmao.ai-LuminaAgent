@@ -52,7 +52,6 @@ import {
   incomingContext,
   incomingReferences,
   isCanvasEdgeVisible,
-  isCanvasGridComposeLineageEdge,
   normalizeVariantRequirements,
   mediaCardSizeForRatio,
   upscaleCardSizeForRatio,
@@ -116,11 +115,7 @@ import {
   saveCanvasDocument,
   saveCanvasProjects,
 } from "@/lib/canvas/storage";
-import {
-  canvasNodeColorKey,
-  canvasSourceColorKey,
-  type CanvasNodeColorKey,
-} from "@/lib/canvas/appearance";
+import { canvasSourceColorKey } from "@/lib/canvas/appearance";
 import { formatCanvasAudioDuration, formatCanvasVideoDuration } from "@/lib/canvas/media";
 import { downloadCanvasShareImage } from "@/lib/canvas/share";
 import {
@@ -420,6 +415,11 @@ import {
 } from "@/lib/canvas/generation-params";
 import { findCanvasNodePlacement } from "@/lib/canvas/node-placement";
 import { canvasGenerationKey } from "@/lib/canvas/generation-key";
+import {
+  canvasEdgeColorKeysByEntityId,
+  canvasEdgeGeometryKeysByEntityId,
+  visibleCanvasEdgeProjection,
+} from "@/lib/canvas/edge-projection";
 import {
   CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR,
   canvasConnectableId,
@@ -11444,55 +11444,14 @@ export default function SuperCanvas() {
   // memoized edge visuals use these instead of re-scanning the whole document
   // for source/target geometry and color on every render/frame.
   const canvasColorKeyById = useMemo(() => {
-    const nodeByIdMap = new Map(
-      document.nodes.map((node) => [node.id, node]),
-    );
-    const keyById = new Map<string, CanvasNodeColorKey>();
-    for (const node of document.nodes) {
-      keyById.set(node.id, canvasNodeColorKey(node));
-    }
-    for (const group of document.groups) {
-      const firstMember = group.nodeIds
-        .map((id) => nodeByIdMap.get(id))
-        .find((node): node is CanvasNode => Boolean(node));
-      keyById.set(
-        group.id,
-        firstMember ? canvasNodeColorKey(firstMember) : "image",
-      );
-    }
-    return keyById;
+    return canvasEdgeColorKeysByEntityId(document.nodes, document.groups);
   }, [document.nodes, document.groups]);
 
   // Geometry signatures for edge endpoints. Node keys encode the node's current
   // position/size so a moved node invalidates only the edges touching it. Group
   // keys encode member positions so group port points track their members.
   const canvasEntityGeometryKeyById = useMemo(() => {
-    const nodeByIdMap = new Map(
-      document.nodes.map((node) => [node.id, node]),
-    );
-    const keyById = new Map<string, string>();
-    for (const node of document.nodes) {
-      const size = nodeSize(node);
-      keyById.set(
-        node.id,
-        `n:${node.id}:${node.x}:${node.y}:${size.w}x${size.h}`,
-      );
-    }
-    for (const group of document.groups) {
-      const members = group.nodeIds
-        .map((id) => nodeByIdMap.get(id))
-        .filter((node): node is CanvasNode => Boolean(node));
-      keyById.set(
-        group.id,
-        `g:${group.id}:${members
-          .map((node) => {
-            const size = nodeSize(node);
-            return `${node.id}:${node.x}:${node.y}:${size.w}x${size.h}`;
-          })
-          .join("|")}`,
-      );
-    }
-    return keyById;
+    return canvasEdgeGeometryKeysByEntityId(document.nodes, document.groups);
   }, [document.nodes, document.groups]);
 
   // Group visibility is a pure id set, so build it once per group collection
@@ -11503,16 +11462,7 @@ export default function SuperCanvas() {
     [document.groups],
   );
   const visibleCanvasEdges = useMemo(
-    () =>
-      document.edges.filter((edge) => {
-        const sourceVisible =
-          visibleCanvasNodeIds.has(edge.source) ||
-          canvasGroupIdSet.has(edge.source);
-        const targetVisible =
-          visibleCanvasNodeIds.has(edge.target) ||
-          canvasGroupIdSet.has(edge.target);
-        return sourceVisible && targetVisible && !isCanvasGridComposeLineageEdge(document, edge);
-      }),
+    () => visibleCanvasEdgeProjection(document, visibleCanvasNodeIds, canvasGroupIdSet),
     [document.edges, document.nodes, canvasGroupIdSet, visibleCanvasNodeIds],
   );
   // The flow/dash animation is the main paint cost at scale. Keep it only when

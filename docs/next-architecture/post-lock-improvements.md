@@ -2451,3 +2451,18 @@ hardening work when the trigger applies.
 - Remaining risk: generation orchestration remains in Workspace because it
   coordinates CanvasCore mutations, task runtime state, provider requests, and
   UI callbacks; this slice deliberately moves no lifecycle ownership.
+
+### Stage 6 canvas edge visual projection checkpoint (2026-10-07)
+
+- `lib/canvas/edge-projection.ts` now owns edge color keys, endpoint geometry
+  signatures, and the visible edge filter used by the canvas renderer.
+- `CanvasWorkspace.tsx` retains memoization timing and passes the projected
+  maps/edges to `CanvasEdgeLayer`; the new functions are pure and depend only on
+  existing canvas model and appearance authorities.
+- Behavior tests cover node/group color fallback, group geometry signatures,
+  endpoint visibility, and compose-lineage suppression. Rendering inputs keep
+  their existing values and ordering; no document or interaction contract
+  changed.
+- Remaining risk: edge creation and deletion remain in Workspace because they
+  coordinate connection policy and CanvasCore history. The current slice only
+  moves read-only renderer projections.

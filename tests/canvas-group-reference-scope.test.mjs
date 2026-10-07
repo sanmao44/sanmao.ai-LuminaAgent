@@ -7,6 +7,10 @@ const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const edgeProjection = await readFile(
+  new URL("../lib/canvas/edge-projection.ts", import.meta.url),
+  "utf8",
+);
 const groupLayer = await readFile(
   new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url),
   "utf8",
@@ -101,8 +105,8 @@ test("group headers expose an accessible grid compose action", () => {
   assert.match(component, /operation: "grid-compose"/);
   assert.match(component, /sourceNodeIds: sourceIds/);
   assert.match(component, /kind: "lineage"/);
-  assert.match(component, /isCanvasGridComposeLineageEdge/);
-  assert.match(component, /!isCanvasGridComposeLineageEdge\(document, edge\)/);
+  assert.match(edgeProjection, /isCanvasGridComposeLineageEdge\(document, edge\)/);
+  assert.match(edgeProjection, /sourceVisible && targetVisible && !isCanvasGridComposeLineageEdge/);
   assert.match(styles, /\.canvas-group-label \.canvas-group-compose/);
   assert.match(styles, /\.canvas-group-label \.canvas-group-compose:disabled/);
   assert.match(styles, /\.canvas-group-label \.canvas-group-compose:hover/);
