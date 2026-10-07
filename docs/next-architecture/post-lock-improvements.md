@@ -2437,3 +2437,17 @@ hardening work when the trigger applies.
   Workspace because they cross capability checks, source grouping, video mode,
   and CanvasCore synchronization; generation/API orchestration and large CSS
   boundaries remain intentionally untouched.
+
+### Stage 6 canvas generation key projection checkpoint (2026-10-07)
+
+- `lib/canvas/generation-key.ts` now owns the stable in-flight generation key
+  projection used by image, video, reuse, and deck generation entry points.
+- `CanvasWorkspace.tsx` retains the generation key set, lifecycle, busy-state
+  updates, and task orchestration; it delegates only the node/target/draft key
+  selection and no longer defines a duplicate local projection.
+- Behavior coverage verifies source-node precedence, target fallback, and draft
+  mode keys. No URL, API, document format, persistence, provider, task state
+  machine, or user interaction contract changed.
+- Remaining risk: generation orchestration remains in Workspace because it
+  coordinates CanvasCore mutations, task runtime state, provider requests, and
+  UI callbacks; this slice deliberately moves no lifecycle ownership.

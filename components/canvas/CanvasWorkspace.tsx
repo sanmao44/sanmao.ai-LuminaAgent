@@ -419,6 +419,7 @@ import {
   defaultMediaParams,
 } from "@/lib/canvas/generation-params";
 import { findCanvasNodePlacement } from "@/lib/canvas/node-placement";
+import { canvasGenerationKey } from "@/lib/canvas/generation-key";
 import {
   CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR,
   canvasConnectableId,
@@ -889,14 +890,6 @@ function connectCanvasNodesInDocument(
     ? (connectedTarget.data.params.inputMode as CanvasVideoInputMode)
     : videoMode;
   return { ok: true, document: synchronized, inputRole, videoMode: connectedMode };
-}
-
-function generationKey(source: {
-  node?: CanvasNode | null;
-  target?: CanvasNode | null;
-  kind: Mode;
-}) {
-  return source.node?.id || source.target?.id || `draft:${source.kind}`;
 }
 
 async function waitForCanvasUpscaleTask(taskId: string) {
@@ -6603,7 +6596,7 @@ export default function SuperCanvas() {
           ? source.params
           : normalizeCreationSettings("text", null, runtime);
       const resolved = resolveAvailableCreationModel(settings, runtime);
-      const activeKey = generationKey(source);
+      const activeKey = canvasGenerationKey(source);
       if (generationKeysRef.current.has(activeKey))
         return notify("这个 Agent 节点正在回复。", "error");
       const incoming = source.node
@@ -7026,7 +7019,7 @@ export default function SuperCanvas() {
       .filter((item) => item.url);
     const sourceNode = source.node;
     let targetId = sourceTarget?.id || "";
-    const activeKey = generationKey(source);
+    const activeKey = canvasGenerationKey(source);
     if (generationKeysRef.current.has(activeKey))
       return notify("这个节点正在生成，请稍候。", "error");
     generationKeysRef.current.add(activeKey);
@@ -10900,7 +10893,7 @@ export default function SuperCanvas() {
   const deckKind = deck.kind;
   const generationBusy = reuseDraft
     ? generationKeys.has(`reuse:${reuseDraft.sourceNodeId || reuseDraft.kind}`)
-    : generationKeys.has(generationKey(deck));
+    : generationKeys.has(canvasGenerationKey(deck));
   const deckModelState = resolveAvailableCreationModel(deck.params, runtime);
   const maskNode = maskNodeId ? nodeById(document, maskNodeId) : undefined;
   const maskSettings = maskNode
