@@ -5,6 +5,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
 const menuLayout = await readFile(new URL("../lib/canvas/menu-layout.ts", import.meta.url), "utf8");
+const viewport = await readFile(new URL("../lib/canvas/viewport.ts", import.meta.url), "utf8");
 const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
 const contextMenu = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
 const actionIcon = await readFile(new URL("../components/canvas/CanvasActionIcon.tsx", import.meta.url), "utf8");
@@ -720,9 +721,9 @@ test("focusing a node keeps it clear of the open agent panel", () => {
   assert.ok(menuLayout.includes('window.document.querySelector(".canvas-agent-dock")'));
   // 默认值就是面板当前占位：所有取景入口都自动让位，不会漏掉哪一处。
   assert.ok(canvas.includes("(ids?: string[], rightInset = canvasRightOverlayInset(stageRef.current)) => {"));
-  assert.match(canvas, /const viewWidth = width - Math\.min\(Math\.max\(rightInset, 0\), Math\.max\(0, width - 240\)\);/);
-  assert.match(canvas, /camera: \{ x: viewWidth \/ 2, y: height \/ 2, zoom: 1 \}/);
-  assert.match(canvas, /x: viewWidth \/ 2 - \(minX \+ \(maxX - minX\) \/ 2\) \* zoom,/);
+  assert.match(viewport, /export function canvasFitCamera\(/);
+  assert.match(viewport, /Math\.max\(\s*0\.12,\s*\n?\s*Math\.min\(\s*\n?\s*1\.25/);
+  assert.match(viewport, /if \(!bounds\.length\) \{[\s\S]*?zoom: 1/);
   assert.doesNotMatch(canvas, /agentDockRightInset/);
   // 窄屏下面板是横在底部的一条，它没占右半边时不该让位。
   assert.match(menuLayout, /if \(rect\.width <= 0 \|\| rect\.left <= stageRect\.left \+ stageRect\.width \/ 2\) return 0;/);

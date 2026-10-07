@@ -2,6 +2,12 @@ import type { CanvasCamera } from "./types";
 
 /** A point in either the stage or world coordinate space. */
 export type CanvasViewportPoint = { x: number; y: number };
+export type CanvasViewportBounds = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
 
 /** Convert browser client coordinates into coordinates relative to the stage. */
 export function canvasClientToStagePoint(
@@ -49,6 +55,38 @@ export function canvasZoomCameraAtPoint(
   return {
     x: stagePoint.x - worldPoint.x * zoom,
     y: stagePoint.y - worldPoint.y * zoom,
+    zoom,
+  };
+}
+
+/** Fit world bounds into the visible stage while preserving the canvas limits. */
+export function canvasFitCamera(
+  bounds: readonly CanvasViewportBounds[],
+  stage: { width: number; height: number },
+  rightInset = 0,
+): CanvasCamera {
+  const viewWidth = stage.width - Math.min(
+    Math.max(rightInset, 0),
+    Math.max(0, stage.width - 240),
+  );
+  if (!bounds.length) {
+    return { x: viewWidth / 2, y: stage.height / 2, zoom: 1 };
+  }
+  const minX = Math.min(...bounds.map((item) => item.x));
+  const minY = Math.min(...bounds.map((item) => item.y));
+  const maxX = Math.max(...bounds.map((item) => item.x + item.w));
+  const maxY = Math.max(...bounds.map((item) => item.y + item.h));
+  const zoom = Math.max(
+    0.12,
+    Math.min(
+      1.25,
+      (viewWidth - 180) / Math.max(1, maxX - minX),
+      (stage.height - 320) / Math.max(1, maxY - minY),
+    ),
+  );
+  return {
+    x: viewWidth / 2 - (minX + (maxX - minX) / 2) * zoom,
+    y: (stage.height - 120) / 2 - (minY + (maxY - minY) / 2) * zoom,
     zoom,
   };
 }

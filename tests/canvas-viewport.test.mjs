@@ -45,3 +45,16 @@ test("zoom keeps the anchored world point stable and clamps the zoom", () => {
   assert.equal(viewport.canvasZoomCameraAtPoint(anchor, camera, 100).zoom, 3);
   assert.equal(viewport.canvasZoomCameraAtPoint(anchor, camera, 0).zoom, 0.12);
 });
+
+test("fit camera centers bounds in the visible stage and respects the inset", () => {
+  const camera = viewport.canvasFitCamera(
+    [{ x: 100, y: 80, w: 300, h: 200 }],
+    { width: 1200, height: 760 },
+    240,
+  );
+  assert.deepEqual(camera, { x: 167.5, y: 95, zoom: 1.25 });
+  assert.deepEqual(
+    viewport.canvasFitCamera([], { width: 1000, height: 600 }, 200),
+    { x: 400, y: 300, zoom: 1 },
+  );
+});

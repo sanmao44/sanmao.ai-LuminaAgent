@@ -2122,3 +2122,13 @@ hardening work when the trigger applies.
   anchored camera inline.
 - The zoom contract is covered by inverse projection and clamp behavior tests;
   no URL, API, data format, or interaction contract changed.
+
+### Stage 6 canvas fit-view projection checkpoint (2026-10-07)
+
+- `lib/canvas/viewport.ts` now owns the pure bounds-to-camera fit calculation,
+  including the existing right overlay inset and `0.12..1.25` fit zoom limits.
+- `CanvasWorkspace.tsx` retains target lookup, stage measurement, and the
+  CanvasCore document update; it no longer aggregates bounds or computes the
+  fitted camera inline.
+- Empty-canvas centering and inset behavior are covered by viewport tests. No
+  document shape, URL, API, or user interaction changed.

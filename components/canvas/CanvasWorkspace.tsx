@@ -345,6 +345,7 @@ import {
 } from "@/lib/canvas/mask";
 import {
   canvasClientToStagePoint,
+  canvasFitCamera,
   canvasStageToWorldPoint,
   canvasZoomCameraAtPoint,
   canvasWorldToStagePoint,
@@ -4270,34 +4271,11 @@ export default function SuperCanvas() {
       const rect = stageRef.current?.getBoundingClientRect();
       const width = rect?.width || 1200;
       const height = rect?.height || 760;
-      const viewWidth = width - Math.min(Math.max(rightInset, 0), Math.max(0, width - 240));
-      if (!targets.length) {
-        updateDoc((value) => ({
-          ...value,
-          camera: { x: viewWidth / 2, y: height / 2, zoom: 1 },
-        }));
-        return;
-      }
       const bounds = targets.map((id) => entityBounds(canvasCoreRef.current.document(), id));
-      const minX = Math.min(...bounds.map((item) => item.x));
-      const minY = Math.min(...bounds.map((item) => item.y));
-      const maxX = Math.max(...bounds.map((item) => item.x + item.w));
-      const maxY = Math.max(...bounds.map((item) => item.y + item.h));
-      const zoom = clamp(
-        Math.min(
-          (viewWidth - 180) / Math.max(1, maxX - minX),
-          (height - 320) / Math.max(1, maxY - minY),
-        ),
-        0.12,
-        1.25,
-      );
+      const camera = canvasFitCamera(bounds, { width, height }, rightInset);
       updateDoc((value) => ({
         ...value,
-        camera: {
-          x: viewWidth / 2 - (minX + (maxX - minX) / 2) * zoom,
-          y: (height - 120) / 2 - (minY + (maxY - minY) / 2) * zoom,
-          zoom,
-        },
+        camera,
       }));
     },
     [updateDoc],
