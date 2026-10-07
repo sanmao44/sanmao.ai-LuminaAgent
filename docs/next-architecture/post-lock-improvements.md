@@ -2301,3 +2301,22 @@ hardening work when the trigger applies.
 - Remaining risk: `connectCanvasNodesInDocument` still combines capability
   resolution, edge mutation, video-mode selection, and CanvasCore synchronization;
   it remains intact until a stable command contract can cover the whole flow.
+
+### Stage 6 canvas video reference reconciliation checkpoint (2026-10-07)
+
+- `lib/canvas/video-reference-sync.ts` now owns the pure reconciliation of
+  automatic video input mode, persisted reference order, and edge input roles.
+- `CanvasWorkspace.tsx` retains CanvasCore ownership, pointer and connection
+  orchestration, capability lookup callers, and document commit timing. The new
+  module returns immutable documents and does not access React, API, storage, or
+  provider SDKs.
+- The existing `video-mode`, `reference-edges`, `input-roles`, and
+  `video-capabilities` modules remain the sole authorities for their respective
+  projections; no duplicate type or state source was introduced.
+- Behavior coverage now executes legacy parameter hydration and reference
+  reconciliation through the extracted module. Focused canvas/video/editor tests
+  passed (102/102); full typecheck, `npm run check`, production build, and
+  `git diff --check` are required before committing this slice.
+- Remaining risk: connection validation and edge mutation still share one
+  Workspace function because their command contract crosses capability checks,
+  source grouping, and CanvasCore synchronization.

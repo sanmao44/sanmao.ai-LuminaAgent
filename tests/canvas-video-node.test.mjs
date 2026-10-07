@@ -5,6 +5,7 @@ import ts from "typescript";
 import { createTsRequire } from "./ts-require.mjs";
 
 const videoMode = createTsRequire(process.cwd())("./lib/canvas/video-mode");
+const videoReferenceSync = createTsRequire(process.cwd())("./lib/canvas/video-reference-sync");
 
 const component = (await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
@@ -128,6 +129,7 @@ test("video reference synchronization hydrates legacy generation params", () => 
   const document = { version: "1", nodes: [node], groups: [], edges: [], camera: { x: 0, y: 0, zoom: 1 } };
   assert.equal(videoMode.updateCanvasVideoMode(document, "video-1", "reference", null).nodes[0].data.params.inputMode, "reference");
   assert.doesNotMatch(component, /target\.data\.kind !== "video" \|\|[\s\S]{0,160}!target\.data\.params/);
-  assert.match(component, /!hasTopLevelVideoParams/);
-  assert.match(component, /updateCanvasVideoMode\(next, target\.id, inputMode, runtime\)/);
+  const synchronized = videoReferenceSync.syncCanvasVideoReferences(document, null);
+  assert.equal(synchronized.nodes[0].data.params.inputMode, "text");
+  assert.equal(synchronized.nodes[0].data.generation.params.inputMode, "text");
 });
