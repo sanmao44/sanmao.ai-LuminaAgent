@@ -7,6 +7,27 @@ Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
 
+### Stage 3 canvas reference edge projection checkpoint (2026-10-07)
+
+- `lib/canvas/reference-edges.ts` now owns the pure projection from persisted
+  Canvas edges to concrete reference nodes, ordered target edges, and source
+  edge IDs.
+- `CanvasWorkspace.tsx` keeps CanvasCore/document mutation, video input role
+  inference, edge role/order writes, and synchronization orchestration; it
+  delegates only the immutable edge projection.
+- Explicit group sources still expand, member edges never fall back to their
+  containing group, `sourceNodeIds` remains authoritative, and generated /
+  variant / lineage edges remain excluded. No new type, store, API, task
+  runtime, compatibility layer, or duplicate source of truth was introduced.
+- Behavior coverage now executes the extracted module directly and verifies
+  group scope, subset de-duplication, filtering, ordering, and source ID
+  projection. Focused canvas tests, `npm run typecheck`, full `npm run check`
+  (1874 passed, 2 skipped, production build success), and `git diff --check`
+  passed.
+- Remaining risk: `canvasInputRolesForTarget` still combines edge projection
+  with video-specific input role inference and remains in Workspace until a
+  narrower contract can be extracted safely.
+
 ### Stage 2 canvas Agent action contract checkpoint (2026-10-07)
 
 - `lib/canvas/menu-actions.ts` now owns the pure contract for appending the

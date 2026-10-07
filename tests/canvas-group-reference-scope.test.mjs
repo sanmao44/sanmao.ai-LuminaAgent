@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createTsRequire } from "./ts-require.mjs";
 
 const component = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
@@ -14,20 +15,79 @@ const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
 );
+const referenceEdges = createTsRequire(process.cwd())("./lib/canvas/reference-edges");
+
+function node(id, kind = "image", url = `/${id}.png`) {
+  return { id, type: "media", x: 0, y: 0, data: { kind, url } };
+}
+
+function documentWith(nodes, groups, edges) {
+  return { version: "1", nodes, groups, edges, camera: { x: 0, y: 0, zoom: 1 } };
+}
 
 test("canvas edge resolver expands only an explicit group source", () => {
-  const start = component.indexOf("function referenceNodesForCanvasEdge");
-  const end = component.indexOf("function referenceEdgesForCanvasTarget", start);
-  assert.ok(start >= 0 && end > start, "canvas reference resolver should be present");
+  const member = node("member");
+  const sibling = node("sibling");
+  const target = node("target");
+  const document = documentWith(
+    [member, sibling, target],
+    [{ id: "group", name: "Group", nodeIds: [member.id, sibling.id] }],
+    [],
+  );
 
-  const resolver = component.slice(start, end);
-  assert.match(resolver, /const sourceGroup = groupById\(document, edge\.source\)/);
-  assert.match(resolver, /if \(!sourceGroup\)/);
-  assert.doesNotMatch(
-    resolver,
-    /source\?\.groupId/,
+  assert.deepEqual(
+    referenceEdges.referenceNodesForCanvasEdge(document, { id: "direct", source: member.id, target: target.id }),
+    [member],
     "a member edge must not fall back to its containing group",
   );
+  assert.deepEqual(
+    referenceEdges.referenceNodesForCanvasEdge(document, { id: "group-edge", source: "group", target: target.id }),
+    [member, sibling],
+  );
+});
+
+test("group edge sourceNodeIds restricts and de-duplicates projected members", () => {
+  const first = node("first");
+  const second = node("second");
+  const target = node("target");
+  const document = documentWith(
+    [first, second, target],
+    [{ id: "group", name: "Group", nodeIds: [first.id, second.id] }],
+    [],
+  );
+
+  assert.deepEqual(
+    referenceEdges.referenceNodesForCanvasEdge(document, {
+      id: "subset",
+      source: "group",
+      target: target.id,
+      sourceNodeIds: [second.id, second.id, "missing"],
+    }),
+    [second],
+  );
+});
+
+test("reference edges filter generated output and preserve explicit order", () => {
+  const source = node("source");
+  const second = node("second");
+  const target = node("target");
+  const document = documentWith(
+    [source, second, target],
+    [],
+    [
+      { id: "un-ordered", source: second.id, target: target.id },
+      { id: "generated", source: source.id, target: target.id, kind: "generated", order: 0 },
+      { id: "ordered", source: source.id, target: target.id, order: 1 },
+      { id: "first", source: second.id, target: target.id, order: 0 },
+    ],
+  );
+
+  assert.deepEqual(
+    referenceEdges.referenceEdgesForCanvasTarget(document, target.id).map(({ edge }) => edge.id),
+    ["first", "ordered", "un-ordered"],
+  );
+  assert.deepEqual(referenceEdges.referenceEdgeIdsForCanvasSource(document, target.id, source.id), ["ordered"]);
+  assert.deepEqual(referenceEdges.referenceEdgeIdsForCanvasSource(document, target.id, second.id), ["first", "un-ordered"]);
 });
 
 test("group headers expose an accessible grid compose action", () => {
