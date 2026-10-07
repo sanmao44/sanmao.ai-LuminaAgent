@@ -20,6 +20,16 @@ async function loadTypeScript(path) {
     const dependencyDataUrl = `data:text/javascript;base64,${Buffer.from(dependencyCompiled).toString('base64')}`;
     compiled = compiled.replace('from "../agent-client"', `from "${dependencyDataUrl}"`);
   }
+  if (compiled.includes('from "../video-task-output"')) {
+    const dependencyUrl = new URL('../lib/video-task-output.ts', import.meta.url);
+    const dependencySource = await readFile(dependencyUrl, 'utf8');
+    const dependencyCompiled = ts.transpileModule(dependencySource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: dependencyUrl.pathname,
+    }).outputText;
+    const dependencyDataUrl = `data:text/javascript;base64,${Buffer.from(dependencyCompiled).toString('base64')}`;
+    compiled = compiled.replace('from "../video-task-output"', `from "${dependencyDataUrl}"`);
+  }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
 

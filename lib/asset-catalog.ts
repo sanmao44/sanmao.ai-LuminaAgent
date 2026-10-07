@@ -1,5 +1,6 @@
 import type { AssetIndexItem, GalleryItem } from './client-history';
 import { normalizeAssetStorageKey, storageKeyFromAssetUrl } from './asset-references';
+import { videoTaskOutputUrls } from './video-task-output';
 
 export type AssetSource = 'history' | 'video-task' | 'canvas-upload' | 'canvas-output';
 
@@ -35,6 +36,7 @@ type VideoTaskAssetSource = {
   completedAt?: string;
   input?: { prompt?: string };
   videoUrls?: string[];
+  remoteVideoUrls?: string[];
 };
 
 export function assetKey(kind: AssetRecord['kind'], url: string) {
@@ -100,7 +102,7 @@ export function indexAsset(item: AssetIndexItem): AssetRecord | null {
 }
 
 export function videoAssets(tasks: VideoTaskAssetSource[]) {
-  return tasks.flatMap((task) => (task.videoUrls || []).map((url, index): AssetRecord => ({
+  return tasks.flatMap((task) => videoTaskOutputUrls(task).map((url, index): AssetRecord => ({
     id: `video:${task.id}:${index}`,
     taskId: task.id,
     kind: 'video',

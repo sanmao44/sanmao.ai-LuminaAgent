@@ -295,7 +295,7 @@ export async function persistGeneratedImages(images: GeneratedImage[], configure
       return { ...image, url: `/api/storage/file?name=${encodeURIComponent(name)}` };
     } catch (error) {
       failures.push(`第 ${index + 1} 张：${error instanceof Error ? error.message : '未知错误'}`);
-      if (options.preserveRemoteImages && /^https?:\/\//i.test(image.url)) remoteFallbacks.push({ index, url: image.url, error: error instanceof Error ? error.message : '鏈煡閿欒' });
+      if (options.preserveRemoteImages && String(image.url || '').trim()) remoteFallbacks.push({ index, url: image.url, error: error instanceof Error ? error.message : '鏈煡閿欒' });
       return null;
     }
   }));

@@ -159,7 +159,7 @@ test('高清放大的云端任务也写生成记录，成功/取消/失败都收
   assert.match(service, /const logId = await startGenerationLog\(\{/, '云端任务要有开始记录');
   assert.match(service, /existing = await updateUpscaleTask\(existing\.id, \{ logId \}\) \|\| existing;/, '记录 id 要落在任务上');
   assert.match(service, /if \(!task\?\.logId\) return;/, '升级前遗留的旧任务不该补出只有结尾的孤儿记录');
-  assert.match(service, /\{ status: 'success', imageCount: 1, imageUrls: \[saved\.url\]/, '成功要写回图片地址');
+  assert.match(service, /\{ status: 'success', imageCount: 1, imageUrls: \[outputUrl\]/, '成功要写回图片地址');
   assert.match(service, /errorCode: 'CANCELLED'/);
   assert.match(service, /errorCode: 'TASK_TIMEOUT'/);
   assert.match(store, /logId\?: string;/);
@@ -194,14 +194,14 @@ test('视频卡片给出停止跟踪与重试入口，取消状态也有对应�
   assert.match(page, /setVideoTasks\(\(old\)=>old\.map\(\(item\)=>item\.id === task\.id \? updatedTask : item\)\)/);
   assert.match(page, /先取消任务再删除/);
 
-  assert.match(card, /const canCancel = task\.status === 'pending' \|\| task\.status === 'running';/);
-  assert.match(card, /const canRetry = task\.status === 'failed' \|\| task\.status === 'cancelled';/);
+  assert.match(card, /const canCancel = status === 'pending' \|\| status === 'running';/);
+  assert.match(card, /const canRetry = status === 'failed' \|\| status === 'cancelled';/);
   assert.match(card, /status === 'cancelled' \? '已取消'/);
   assert.match(card, /onCancel\?: \(\) => void \| Promise<void>;/);
 
   assert.match(studio, /status === 'cancelled' \? '已取消'/);
-  assert.match(studio, /: task\.status === 'cancelled' \? <>/);
-  assert.match(studio, /\(task\.status === 'pending' \|\| task\.status === 'running'\) && <span className="video-task-scan"/);
+  assert.match(studio, /: status === 'cancelled' \? <>/);
+  assert.match(studio, /\(status === 'pending' \|\| status === 'running'\) && <span className="video-task-scan"/);
 
   assert.match(styles, /\.creative-status-pill\.cancelled\{/);
   assert.match(styles, /\.creative-video-actions \.creative-video-cancel\{/);

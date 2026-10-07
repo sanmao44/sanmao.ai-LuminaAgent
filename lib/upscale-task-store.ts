@@ -23,6 +23,9 @@ export type UpscaleTask = {
   source?: GenerationSource;
   status: UpscaleTaskStatus;
   localImageUrl?: string;
+  /** Provider URL or inline fallback retained when local archiving fails. */
+  remoteImageUrl?: string;
+  storageError?: string;
   errorCode?: string;
   error?: string;
   createdAt: string;

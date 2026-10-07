@@ -200,9 +200,23 @@ async function callPoll(provider: Awaited<ReturnType<typeof getProviderWithKey>>
 async function persistResult(task: VideoTask, result: VideoProviderTask) {
   const state = await getPublicState();
   const shouldNormalizeAspect = /agnes-video-2\.5/i.test(task.providerModel || '');
-  const stored = await persistGeneratedVideos(result.videos, state.settings.videoStoragePath, shouldNormalizeAspect ? { aspectRatio: task.input.aspectRatio } : undefined);
+  let stored: Awaited<ReturnType<typeof persistGeneratedVideos>>;
+  try {
+    stored = await persistGeneratedVideos(result.videos, state.settings.videoStoragePath, shouldNormalizeAspect ? { aspectRatio: task.input.aspectRatio } : undefined);
+  } catch (error) {
+    stored = {
+      videos: [],
+      path: state.settings.videoStoragePath || '',
+      storageError: `本地视频保存失败：${error instanceof Error ? error.message : '未知错误'}`,
+    };
+  }
   const remoteVideoUrls = result.videos.map((video) => video.url);
-  const videoUrls = stored.videos.map((video) => video.url);
+  // A provider result is still deliverable when local archiving fails. Keep
+  // the remote URL in the primary result field so every consumer can render it
+  // without having to know which storage path succeeded.
+  const videoUrls = stored.videos.length
+    ? stored.videos.map((video) => video.url)
+    : remoteVideoUrls;
   const completedAt = new Date().toISOString();
   const updated = await updateVideoTask(task.id, {
     status: 'done',

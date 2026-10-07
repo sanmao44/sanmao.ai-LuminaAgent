@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import { preparePublicMediaUrl } from './signed-media';
-import { persistImageBuffer } from './image-storage';
+import { getDefaultStoragePath, persistImageBuffer } from './image-storage';
 import { getPublicState, getUpscaleConnectionWithCredentials, setUpscaleConnectionStatus, type UpscaleConnectionCredentials } from './store';
 import { getUpscaleCatalogModel, isUpscaleModelId, preferredUpscaleModelId } from './upscale-catalog';
 import { finishGenerationLog, startGenerationLog, type GenerationLog } from './generation-log';
@@ -10,6 +11,7 @@ import { createUpscaleProvider, isUpscaleProviderError, uploadAliyunImageToOss, 
 import { createUpscaleTask, findUpscaleTask, updateUpscaleTask, type UpscaleTask } from './upscale-task-store';
 import type { ReferenceImageRecord, UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
 import { canRetryUpscaleTask, upscaleTaskRuntime } from './upscale-task-runtime';
+import { upscaleTaskOutputUrl, upscaleTaskStatus } from './upscale-task-output';
 
 const activePolls = new Set<string>();
 const TASK_TIMEOUT_MS = 20 * 60 * 1000;
@@ -81,18 +83,44 @@ async function publicImageUrl(reference: string, provider: UpscaleProviderId, st
   return preparePublicMediaUrl(reference, 'image');
 }
 
-async function saveResult(task: UpscaleTask, result: { buffer: Buffer; mime: string }) {
+async function saveResult(task: UpscaleTask, result: { buffer: Buffer; mime: string; remoteImageUrl?: string }) {
   const state = await getPublicState();
-  const saved = await persistImageBuffer(result.buffer, result.mime, state.settings.imageStoragePath);
+  let outputUrl = '';
+  let storagePath = state.settings.imageStoragePath || '';
+  let storageError = '';
+  try {
+    const saved = await persistImageBuffer(result.buffer, result.mime, state.settings.imageStoragePath);
+    outputUrl = saved.url;
+    storagePath = saved.path;
+  } catch (error) {
+    storageError = `本地图片保存失败：${error instanceof Error ? error.message : '未知错误'}`;
+    // A configured legacy path can be unavailable while the durable media
+    // root is still writable. Try that root before falling back to inline data.
+    const fallbackPath = getDefaultStoragePath();
+    if (path.resolve(fallbackPath) !== path.resolve(state.settings.imageStoragePath || fallbackPath)) {
+      try {
+        const saved = await persistImageBuffer(result.buffer, result.mime, fallbackPath);
+        outputUrl = saved.url;
+        storagePath = saved.path;
+      } catch (fallbackError) {
+        storageError = `${storageError}；备用目录保存失败：${fallbackError instanceof Error ? fallbackError.message : '未知错误'}`;
+      }
+    }
+    // The provider result is already available in memory. Keep a browser-
+    // readable fallback so a storage outage cannot turn success into failure.
+    if (!outputUrl) outputUrl = `data:${result.mime};base64,${result.buffer.toString('base64')}`;
+  }
   const updated = await updateUpscaleTask(task.id, {
     status: 'succeeded',
-    localImageUrl: saved.url,
+    localImageUrl: outputUrl,
+    ...(result.remoteImageUrl ? { remoteImageUrl: result.remoteImageUrl } : {}),
+    storageError: storageError || undefined,
     completedAt: new Date().toISOString(),
     nextPollAt: undefined,
     error: undefined,
     errorCode: undefined,
   });
-  await finishTaskLog(updated, { status: 'success', imageCount: 1, imageUrls: [saved.url], storagePath: saved.path });
+  await finishTaskLog(updated, { status: 'success', imageCount: 1, imageUrls: [outputUrl], storagePath, storageError: storageError || undefined });
   return updated;
 }
 
@@ -116,7 +144,14 @@ export async function startCloudUpscale(input: { reference: string; sourceImageI
   const key = input.idempotencyKey || idempotencyKey(sourceImageId, reference, modelId, scale, outputFormat, outputQuality);
   const inserted = await createUpscaleTask({ provider: model.provider, model: modelId, scale, outputFormat, outputQuality, sourceImageId, reference, status: 'processing', idempotencyKey: key, prompt: input.prompt?.trim() || DEFAULT_UPSCALE_PROMPT, source: normalizeGenerationSource(input.source, 'workspace') });
   let existing = inserted.task;
-  if (!inserted.created && (existing.status === 'succeeded' || existing.status === 'queued' || existing.status === 'processing' && existing.providerTaskId)) return { task: existing, model };
+  const existingStatus = upscaleTaskStatus(existing);
+  if (!inserted.created && existingStatus === 'succeeded') {
+    const repaired = existing.status === 'succeeded'
+      ? existing
+      : await updateUpscaleTask(existing.id, { status: 'succeeded', completedAt: existing.completedAt || new Date().toISOString(), errorCode: undefined });
+    return { task: repaired || existing, model };
+  }
+  if (!inserted.created && (existingStatus === 'queued' || existingStatus === 'processing') && existing.providerTaskId) return { task: existing, model };
   if (inserted.created) {
     const logId = await startGenerationLog({
       mode: 'upscale',
@@ -181,6 +216,7 @@ export async function refreshUpscaleTask(id: string) {
 
 export function publicUpscaleTask(task: UpscaleTask | null) {
   if (!task) return null;
+  const outputUrl = upscaleTaskOutputUrl(task);
   return {
     id: task.id,
     providerTaskId: task.providerTaskId,
@@ -190,8 +226,10 @@ export function publicUpscaleTask(task: UpscaleTask | null) {
     outputFormat: task.outputFormat,
     outputQuality: task.outputQuality,
     sourceImageId: task.sourceImageId,
-    status: task.status,
-    localImageUrl: task.localImageUrl,
+    status: upscaleTaskStatus(task),
+    localImageUrl: outputUrl || undefined,
+    remoteImageUrl: task.remoteImageUrl,
+    storageError: task.storageError,
     errorCode: task.errorCode,
     error: task.error,
     createdAt: task.createdAt,

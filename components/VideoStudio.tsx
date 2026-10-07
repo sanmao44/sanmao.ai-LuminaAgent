@@ -13,6 +13,7 @@ import { replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeR
 import { nearestOneTakeVideoDuration, normalizeOneTakeDuration } from '@/lib/one-take-video-duration';
 import { requestPromptOptimization } from '@/lib/creation/agent';
 import { AGNES_V20_DIMENSION_PRESETS, AGNES_V20_DURATION_PRESETS } from '@/lib/creation/settings';
+import { videoTaskOutputUrl, videoTaskStatus } from '@/lib/video-task-output';
 
 type VideoTask = {
   id: string;
@@ -456,11 +457,11 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     window.setTimeout(() => promptRef.current?.focus(), 0);
   }
 
-  const filteredTasks = tasks.filter((task) => taskStatusFilter === 'all' || task.status === taskStatusFilter);
+  const filteredTasks = tasks.filter((task) => taskStatusFilter === 'all' || videoTaskStatus(task) === taskStatusFilter);
   const taskStatusCounts = {
     all: tasks.length,
-    done: tasks.filter((task) => task.status === 'done').length,
-    failed: tasks.filter((task) => task.status === 'failed').length,
+    done: tasks.filter((task) => videoTaskStatus(task) === 'done').length,
+    failed: tasks.filter((task) => videoTaskStatus(task) === 'failed').length,
   };
 
   async function optimizePrompt() {
@@ -746,7 +747,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   }, []);
 
   useEffect(() => {
-    if (!tasks.some((task) => task.status === 'pending' || task.status === 'running')) return;
+    if (!tasks.some((task) => ['pending', 'running'].includes(videoTaskStatus(task)))) return;
     const timer = window.setTimeout(() => void refreshTasks(), 2200);
     return () => window.clearTimeout(timer);
   }, [tasks]);
@@ -754,7 +755,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   useEffect(() => {
     setSelectedTaskId((current) => {
       if (current && tasks.some((task) => task.id === current)) return current;
-      return tasks.find((task) => task.status === 'done' && task.videoUrls?.length)?.id || tasks[0]?.id || null;
+      return tasks.find((task) => videoTaskStatus(task) === 'done' && videoTaskOutputUrl(task))?.id || tasks[0]?.id || null;
     });
   }, [tasks]);
 
@@ -951,7 +952,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   }
 
   const selectedTask = useMemo(() => tasks.find((task) => task.id === selectedTaskId) || null, [selectedTaskId, tasks]);
-  const previewTask = selectedTask?.status === 'done' && selectedTask.videoUrls?.length ? selectedTask : null;
+  const previewTask = selectedTask && videoTaskStatus(selectedTask) === 'done' && videoTaskOutputUrl(selectedTask) ? selectedTask : null;
 
   async function saveTaskLocally(task: VideoTask) {
     try {
@@ -1074,22 +1075,23 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       </div>
       <aside className={`video-preview-column ${mobilePanel === 'preview' || mobilePanel === 'tasks' ? 'is-active' : ''}`}>
         <div className={`video-preview-card ${mobilePanel === 'preview' ? 'mobile-panel-visible' : ''}`}>
-          <div className="video-card-heading"><div><span>预览与任务</span><small>{selectedTask ? `${selectedTask.modelName || '自动模型'} · ${statusLabel(selectedTask.status)}` : tasks.length ? `${tasks.length} 个本地任务` : '生成后会显示在这里'}</small></div><button className="video-quiet-button" type="button" onClick={() => void refreshTasks()}>刷新</button></div>
-          {previewTask ? <video className="video-preview-player" src={previewTask.videoUrls?.[0]} controls playsInline /> : <div className={`video-preview-empty ${selectedTask ? `video-preview-${selectedTask.status}` : ''}`}><div className="video-play-orb">{selectedTask?.status === 'failed' ? '!' : selectedTask?.status === 'cancelled' ? '—' : selectedTask?.status === 'pending' || selectedTask?.status === 'running' ? '…' : '▶'}</div><span>{selectedTask?.status === 'failed' ? '视频任务失败' : selectedTask?.status === 'cancelled' ? '这条任务已停止跟踪' : selectedTask?.status === 'pending' || selectedTask?.status === 'running' ? '正在等待服务商完成…' : selectedTask ? '任务已完成，但没有可预览的视频' : '完成的视频会自动出现在这里'}</span><small>{selectedTask?.error || (selectedTask ? '可点击“恢复参数”继续创作' : '支持下载与再次生成')}</small></div>}
+          <div className="video-card-heading"><div><span>预览与任务</span><small>{selectedTask ? `${selectedTask.modelName || '自动模型'} · ${statusLabel(videoTaskStatus(selectedTask))}` : tasks.length ? `${tasks.length} 个本地任务` : '生成后会显示在这里'}</small></div><button className="video-quiet-button" type="button" onClick={() => void refreshTasks()}>刷新</button></div>
+          {previewTask ? <video className="video-preview-player" src={videoTaskOutputUrl(previewTask)} controls playsInline /> : <div className={`video-preview-empty ${selectedTask ? `video-preview-${videoTaskStatus(selectedTask)}` : ''}`}><div className="video-play-orb">{selectedTask && videoTaskStatus(selectedTask) === 'failed' ? '!' : selectedTask && videoTaskStatus(selectedTask) === 'cancelled' ? '—' : selectedTask && ['pending', 'running'].includes(videoTaskStatus(selectedTask)) ? '…' : '▶'}</div><span>{selectedTask && videoTaskStatus(selectedTask) === 'failed' ? '视频任务失败' : selectedTask && videoTaskStatus(selectedTask) === 'cancelled' ? '这条任务已停止跟踪' : selectedTask && ['pending', 'running'].includes(videoTaskStatus(selectedTask)) ? '正在等待服务商完成…' : selectedTask ? '任务已完成，但没有可预览的视频' : '完成的视频会自动出现在这里'}</span><small>{selectedTask?.error || (selectedTask ? '可点击“恢复参数”继续创作' : '支持下载与再次生成')}</small></div>}
         </div>
         <div className={`video-task-list ${mobilePanel === 'tasks' ? 'mobile-panel-visible' : ''}`}>
           <div className="video-task-list-heading"><div><span>最近任务</span><small>点击任务切换预览 · 列表可滚动</small></div><div className="video-task-status-filter" role="group" aria-label="筛选视频任务状态">{([['all', '全部'], ['done', '成功'], ['failed', '失败']] as const).map(([value, label]) => <button key={value} type="button" data-status={value} className={taskStatusFilter === value ? 'active' : ''} aria-pressed={taskStatusFilter === value} onClick={() => setTaskStatusFilter(value)}>{label}<b>{taskStatusCounts[value]}</b></button>)}</div></div>
           <div className="video-task-list-scroll">
             {filteredTasks.length ? filteredTasks.slice(0, 8).map((task) => {
               const selected = task.id === selectedTaskId;
-              const thumbnailUrl = task.videoUrls?.[0] || '';
-              return <article className={`video-task-card ${task.status} ${selected ? 'selected' : ''}`} key={task.id} role="button" tabIndex={0} aria-pressed={selected} onClick={() => setSelectedTaskId(task.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedTaskId(task.id); } }}>
-                {(task.status === 'pending' || task.status === 'running') && <span className="video-task-scan" aria-hidden="true" />}
-                {thumbnailUrl ? <div className="video-task-thumbnail" aria-hidden="true"><video src={thumbnailUrl} muted playsInline preload="metadata" /><span>▶</span></div> : <div className={`video-task-thumbnail video-task-thumbnail-placeholder ${task.status}`} aria-hidden="true"><span>{task.status === 'failed' ? '!' : task.status === 'done' || task.status === 'cancelled' ? '—' : '…'}</span></div>}
+              const thumbnailUrl = videoTaskOutputUrl(task);
+              const status = videoTaskStatus(task);
+              return <article className={`video-task-card ${status} ${selected ? 'selected' : ''}`} key={task.id} role="button" tabIndex={0} aria-pressed={selected} onClick={() => setSelectedTaskId(task.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedTaskId(task.id); } }}>
+                {(status === 'pending' || status === 'running') && <span className="video-task-scan" aria-hidden="true" />}
+                {thumbnailUrl ? <div className="video-task-thumbnail" aria-hidden="true"><video src={thumbnailUrl} muted playsInline preload="metadata" /><span>▶</span></div> : <div className={`video-task-thumbnail video-task-thumbnail-placeholder ${status}`} aria-hidden="true"><span>{status === 'failed' ? '!' : status === 'done' || status === 'cancelled' ? '—' : '…'}</span></div>}
                 <div className="video-task-card-content">
-                  <div className="video-task-meta"><span className="video-status-pill">{statusLabel(task.status)}</span><time>{formatTime(task.createdAt)}</time></div>
+                  <div className="video-task-meta"><span className="video-status-pill">{statusLabel(status)}</span><time>{formatTime(task.createdAt)}</time></div>
                   <div className="video-task-copy"><div className="video-task-title-row"><strong>{task.input?.prompt || '未命名视频任务'}</strong><button type="button" className="video-task-detail" onClick={(event) => { event.stopPropagation(); setTaskDetail(task); }}>详情</button></div><div className="video-task-details"><small>{task.modelName || '自动模型'} · {operationLabel(task.operation)}</small><small className="video-task-param-summary">{taskParameterSummary(task)}</small></div></div>
-                  {task.status === 'done' ? <>{task.error && <p className="video-task-error">视频已完成，但本地保存失败：{task.error}</p>}<div className="video-task-actions" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button>{task.videoUrls?.[0] && <a className="video-task-download" href={task.videoUrls[0]} download target="_blank" rel="noreferrer" title="下载已保存的视频" aria-label="下载已保存的视频"><span className="video-action-icon" aria-hidden="true">↓</span></a>}{task.error && task.remoteVideoUrls?.length ? <button type="button" title="再次保存本地视频" aria-label="再次保存本地视频" onClick={() => void saveTaskLocally(task)}><span className="video-action-icon" aria-hidden="true">↻</span><span>再次保存</span></button> : null}</div></> : task.status === 'failed' ? <><p className="video-task-error">{task.error || '视频任务失败'}</p><div className="video-task-actions" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条失败任务的生成参数" aria-label="恢复这条失败任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button></div></> : task.status === 'cancelled' ? <><small className="video-task-waiting">已停止跟踪这条任务，服务商可能仍在生成。</small><div className="video-task-actions" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button></div></> : <small className="video-task-waiting">正在等待服务商完成…</small>}
+                   {status === 'done' ? <>{task.error && <p className="video-task-error">视频已完成，但本地保存失败：{task.error}</p>}<div className="video-task-actions" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button>{thumbnailUrl && <a className="video-task-download" href={thumbnailUrl} download target="_blank" rel="noreferrer" title="下载已保存的视频" aria-label="下载已保存的视频"><span className="video-action-icon" aria-hidden="true">↓</span></a>}{task.error && task.remoteVideoUrls?.length ? <button type="button" title="再次保存本地视频" aria-label="再次保存本地视频" onClick={() => void saveTaskLocally(task)}><span className="video-action-icon" aria-hidden="true">↻</span><span>再次保存</span></button> : null}</div></> : status === 'failed' ? <><p className="video-task-error">{task.error || '视频任务失败'}</p><div className="video-task-actions" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条失败任务的生成参数" aria-label="恢复这条失败任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button></div></> : status === 'cancelled' ? <><small className="video-task-waiting">已停止跟踪这条任务，服务商可能仍在生成。</small><div className="video-task-actions" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><button type="button" className="video-task-restore" title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数" onClick={() => restoreTask(task)}><span className="video-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button></div></> : <small className="video-task-waiting">正在等待服务商完成…</small>}
                 </div>
               </article>;
             }) : <div className="video-task-list-empty">暂无任务，提交第一段视频吧。</div>}
@@ -1110,7 +1112,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     /><div className="video-prompt-dialog-foot"><small>支持换行和 @ 引用素材，关闭后内容会保留在原提示词框中。</small><button type="button" className="video-primary-button" onClick={closePromptEditor}>完成编辑</button></div></div></div>}
     {previewImage && <div className="video-media-dialog" role="dialog" aria-modal="true" aria-label={previewImage.kind === 'video' ? '查看参考视频' : '查看参考图'} onClick={() => setPreviewImage(null)}><div className="video-media-dialog-inner" onClick={(event) => event.stopPropagation()}><button type="button" className="video-media-dialog-close" aria-label="关闭预览" onClick={() => setPreviewImage(null)}>×</button>{previewImage.kind === 'video' ? <video src={previewImage.url} controls playsInline autoPlay /> : <img src={previewImage.url} alt={previewImage.name} />}<span>{previewImage.name}</span></div></div>}
     {restoreCandidate && <div className="video-task-dialog video-restore-confirm-dialog" role="dialog" aria-modal="true" aria-label="确认恢复视频参数" onClick={() => setRestoreCandidate(null)}><div className="video-task-dialog-inner" onClick={(event) => event.stopPropagation()}><div className="video-task-dialog-head"><div><span>确认恢复</span><strong>不会自动生成</strong></div><button type="button" className="video-media-dialog-close" aria-label="取消恢复" onClick={() => setRestoreCandidate(null)}>×</button></div><div className="video-task-dialog-content"><p className="video-restore-confirm-copy">恢复这条历史任务会替换左侧当前草稿，但不会自动提交或扣费。</p><div className="video-restore-confirm-actions"><button type="button" className="video-quiet-button" onClick={() => setRestoreCandidate(null)}>取消</button><button type="button" className="video-primary-button" onClick={confirmRestoreTask}>继续恢复</button></div></div></div></div>}
-    {taskDetail && <div className="video-task-dialog" role="dialog" aria-modal="true" aria-label="任务详情" onClick={() => setTaskDetail(null)}><div className="video-task-dialog-inner" onClick={(event) => event.stopPropagation()}><div className="video-task-dialog-head"><div><span>任务详情</span><strong>{statusLabel(taskDetail.status)}</strong></div><button type="button" className="video-media-dialog-close" aria-label="关闭任务详情" onClick={() => setTaskDetail(null)}>×</button></div><div className="video-task-dialog-content"><label>提示词<pre>{taskDetail.input?.prompt || '未命名视频任务'}</pre></label><div className="video-task-dialog-meta"><span>模型<b>{taskDetail.modelName || '自动模型'}</b></span><span>操作<b>{operationLabel(taskDetail.operation)}</b></span><span>参数<b>{taskParameterSummary(taskDetail)}</b></span></div>{taskDetail.error && <p className="video-task-error">{taskDetail.error}</p>}</div></div></div>}
+    {taskDetail && <div className="video-task-dialog" role="dialog" aria-modal="true" aria-label="任务详情" onClick={() => setTaskDetail(null)}><div className="video-task-dialog-inner" onClick={(event) => event.stopPropagation()}><div className="video-task-dialog-head"><div><span>任务详情</span><strong>{statusLabel(videoTaskStatus(taskDetail))}</strong></div><button type="button" className="video-media-dialog-close" aria-label="关闭任务详情" onClick={() => setTaskDetail(null)}>×</button></div><div className="video-task-dialog-content"><label>提示词<pre>{taskDetail.input?.prompt || '未命名视频任务'}</pre></label><div className="video-task-dialog-meta"><span>模型<b>{taskDetail.modelName || '自动模型'}</b></span><span>操作<b>{operationLabel(taskDetail.operation)}</b></span><span>参数<b>{taskParameterSummary(taskDetail)}</b></span></div>{taskDetail.error && <p className="video-task-error">{taskDetail.error}</p>}</div></div></div>}
   </section>;
 }
 

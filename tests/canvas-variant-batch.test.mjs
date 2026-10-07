@@ -1,24 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
-import ts from "typescript";
+import { createTsRequire } from "./ts-require.mjs";
 
-const sourceUrl = new URL("../lib/canvas/variant-batch.ts", import.meta.url);
-const source = (await readFile(sourceUrl, "utf8"))
-  .replace(/^import type \{[^}]+\} from "\.\/types";\r?\n/m, "")
-  .replace(/^import \{ canvasVariantBatchStatus \} from "\.\/variant-status";\r?\n/m, `
-function canvasVariantBatchStatus(states) {
-  if (states.some((state) => state.status === "running")) return "running";
-  if (states.some((state) => state.status === "failed")) return "failed";
-  if (states.length && states.every((state) => state.status === "completed")) return "completed";
-  return "queued";
-}
-`);
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  fileName: sourceUrl.pathname,
-}).outputText;
-const batch = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+const batch = createTsRequire(process.cwd())("./lib/canvas/variant-batch");
 
 test("patches one variant while preserving its canonical requirement and aggregate status", () => {
   const result = batch.applyCanvasVariantStatePatch(
@@ -68,6 +52,13 @@ test("normalizes pending, failed, done, and returned video task results", () => 
     progress: 100,
     url: "/video.mp4",
   });
+  assert.deepEqual(batch.canvasVideoTaskProgress({ status: "processing", remoteVideoUrls: ["https://provider.example/result.mp4"] }), {
+    hasVideoResult: true,
+    terminal: true,
+    status: "completed",
+    progress: 100,
+    url: "https://provider.example/result.mp4",
+  });
 });
 
 test("projects a submitted variant video task into stable node metadata", () => {
@@ -93,6 +84,7 @@ test("projects a submitted variant video task into stable node metadata", () => 
     processingStartedAt: undefined,
     progress: 100,
     statusLabel: "视频已完成",
+    url: "/video.mp4",
     generation: {
       kind: "video",
       prompt: "cinematic scene",
