@@ -4,6 +4,7 @@ import type { VideoTask } from "@/lib/video-task-store";
 import type { ActivityTask, ActivityTaskKind, ActivityTaskStatus } from "./types";
 import { videoTaskOutputUrls } from "../video-task-output";
 import { upscaleTaskOutputUrl, upscaleTaskStatus } from "../upscale-task-output";
+import { projectResultStatus } from "../task-result-projection";
 
 function numberOrUndefined(value: unknown) {
   const number = Number(value);
@@ -26,7 +27,8 @@ function generationStatus(status: GenerationLog["status"]): ActivityTaskStatus {
 
 export function activityTaskFromGenerationLog(log: GenerationLog): ActivityTask {
   const kind = generationKind(log);
-  const status = generationStatus(log.status);
+  const projectedStatus = projectResultStatus(log.status, [...(log.imageUrls || []), ...(log.videoUrls || [])]);
+  const status = generationStatus(projectedStatus);
   return {
     id: log.id,
     kind,

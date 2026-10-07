@@ -4,7 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 
 const sourceUrl = new URL("../lib/canvas/video-capabilities.ts", import.meta.url);
-const source = await readFile(sourceUrl, "utf8");
+const source = (await readFile(sourceUrl, "utf8")).replace(/\r\n/g, "\n");
 const compiled = ts.transpileModule(source
   .replace('import type { CanvasRuntimeState } from "./types";', '')
   .replace('import type { CanvasVideoInputCapabilities } from "./references";', '')

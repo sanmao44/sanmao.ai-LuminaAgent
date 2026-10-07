@@ -5,6 +5,7 @@ import { resolveStoredFileWithFallback } from './image-storage';
 import type { MediaKind, ReferenceImageRecord } from './types';
 import type { GenerationSource } from './generation-source';
 import { resolveLocalDataDir } from './data-paths';
+import { projectResultStatus } from './task-result-projection';
 
 export type GenerationLog = {
   id: string;
@@ -165,11 +166,8 @@ export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> 
 }
 
 function normalizeCompletedMediaLog(log: GenerationLog): GenerationLog {
-  const hasOutput = Boolean(
-    log.imageUrls?.some((url) => Boolean(String(url || '').trim()))
-      || log.videoUrls?.some((url) => Boolean(String(url || '').trim())),
-  );
-  if (hasOutput && log.mode !== 'llm' && log.taskKind !== 'llm' && log.status !== 'success') {
+  const outputUrls = [...(log.imageUrls || []), ...(log.videoUrls || [])];
+  if (log.mode !== 'llm' && log.taskKind !== 'llm' && projectResultStatus(log.status, outputUrls) === 'success' && log.status !== 'success') {
     return { ...log, status: 'success', error: undefined };
   }
   return log;

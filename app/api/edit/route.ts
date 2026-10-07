@@ -22,6 +22,10 @@ export async function POST(request: Request) {
   let aspectRatioForLog = '自动';
   let logId: string | undefined;
   let runtimeProviderId = '';
+  let storagePath = '';
+  let providerImages: Array<{ url: string; revisedPrompt?: string }> = [];
+  let providerFinishedAt = 0;
+  let downloadAuthForResult: ReturnType<typeof imageDownloadAuth> | undefined;
   const requestController = new AbortController();
   const abortFromClient = () => requestController.abort(request.signal.reason || new Error('GENERATION_CANCELLED'));
   let releaseRuntimeRequest = async () => {};
@@ -49,7 +53,7 @@ export async function POST(request: Request) {
     runtimeProviderId = runtime.provider.id;
     const sizeMode: 'system' | 'custom' | undefined = body.sizeMode === 'custom' ? 'custom' : body.sizeMode === 'system' ? 'system' : undefined;
     const publicState = await getPublicState();
-    const storagePath = publicState.settings.imageStoragePath;
+    storagePath = publicState.settings.imageStoragePath || '';
     const resolvedReferences = await Promise.all(references.map((reference) => resolveStoredImageReference(reference, storagePath)));
     const moveGuide = rawMoveGuide ? await resolveStoredImageReference(rawMoveGuide, storagePath) : undefined;
     const providerReferences = moveGuide ? [moveGuide, ...resolvedReferences.slice(1)] : resolvedReferences;
@@ -59,6 +63,7 @@ export async function POST(request: Request) {
       height: Number(body.height || 0),
       sizeMode,
     });
+    downloadAuthForResult = imageDownloadAuth(runtime.provider);
     const input: ImageEditInput = {
       prompt: generationPrompt,
       references: providerReferences,
@@ -78,7 +83,7 @@ export async function POST(request: Request) {
     promptForLog = generationPrompt;
     aspectRatioForLog = input.aspectRatio || '自动';
     logId = await startGenerationLog({ mode: 'edit', source: 'workspace', prompt: generationPrompt, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: input.aspectRatio, resolution: input.resolution, outputSize: input.width && input.height ? `${input.width}×${input.height}` : undefined, count: input.count, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
-    const providerImages = await runImageModelCandidates(
+    providerImages = await runImageModelCandidates(
       runtime,
       // Do not retry ordinary failures. A configured alternative is considered
       // only after an explicit “model unsupported/not found” rejection.
@@ -86,6 +91,7 @@ export async function POST(request: Request) {
       async (candidate) => {
         runtime = candidate;
         runtimeProviderId = candidate.provider.id;
+        downloadAuthForResult = imageDownloadAuth(candidate.provider);
         return editImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
       },
     );
@@ -97,8 +103,8 @@ export async function POST(request: Request) {
       : providerImages;
     const images = await normalizeStarApiLandscapeImages(runtime.provider, runtime.model.rawId, input, maskSafeImages, requestController.signal);
     if (requestController.signal.aborted) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
-    const providerFinishedAt = Date.now();
-    const stored = await persistGenerationResult({ images, storagePath, startedAt, providerFinishedAt, logId, downloadAuth: imageDownloadAuth(runtime.provider) });
+    providerFinishedAt = Date.now();
+    const stored = await persistGenerationResult({ images, storagePath, startedAt, providerFinishedAt, logId, downloadAuth: downloadAuthForResult });
     return Response.json({ ok: true, images: stored.images, storagePath: stored.path, model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name } });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) {
@@ -106,6 +112,18 @@ export async function POST(request: Request) {
     }
     const upstreamStatus = Number((error as Error & { providerStatus?: number; status?: number }).providerStatus || (error as Error & { status?: number }).status || 0);
     if (runtimeProviderId && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(runtimeProviderId).catch(() => undefined);
+    if (providerImages.some((image) => Boolean(String(image.url || '').trim()))) {
+      const postProcessError = error instanceof Error ? error.message : '图片后处理失败';
+      const providerResult = await persistGenerationResult({
+        images: providerImages,
+        storagePath,
+        startedAt,
+        providerFinishedAt: providerFinishedAt || Date.now(),
+        logId,
+        downloadAuth: downloadAuthForResult,
+      }).catch(() => ({ images: providerImages, path: storagePath, remoteFallbacks: [] }));
+      return Response.json({ ok: true, images: providerResult.images, storagePath: providerResult.path, warning: `图片已生成，但本地后处理未完成：${postProcessError}` });
+    }
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'GENERATION_CANCELLED');
     const message = cancelled ? '任务已取消，已停止等待服务商返回' : error instanceof Error ? error.message : '修改图片失败。';
     const failure = { status: 'error' as const, mode: 'edit' as const, source: 'workspace' as const, prompt: promptForLog, aspectRatio: aspectRatioForLog, durationMs: Date.now() - startedAt, error: message };

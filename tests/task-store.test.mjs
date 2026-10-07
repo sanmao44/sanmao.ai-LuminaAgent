@@ -8,7 +8,7 @@ import { buildLibModules } from './lib-build.mjs';
 const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-task-store-'));
 process.env.SANMAO_DATA_DIR = dataDir;
 const { load } = await buildLibModules(
-  ['lib/task-store', 'lib/repositories/task-repository', 'lib/video-task-store', 'lib/upscale-task-store'],
+  ['lib/task-store', 'lib/repositories/task-repository', 'lib/video-task-store', 'lib/upscale-task-store', 'lib/task-result-projection'],
   'task-store',
 );
 const videoStore = await load('video-task-store');
@@ -168,7 +168,7 @@ test('高清放大的云端任务也写生成记录，成功/取消/失败都收
 });
 
 test('生成记录按 id 收尾：取消后只剩下一条已取消的记录', async () => {
-  const { main: logs } = await buildLibModules(['lib/media-paths', 'lib/image-storage', 'lib/generation-log'], 'generation-log');
+  const { main: logs } = await buildLibModules(['lib/media-paths', 'lib/image-storage', 'lib/generation-log', 'lib/task-result-projection'], 'generation-log');
   const task = (await upscaleStore.createUpscaleTask({ provider: 'aliyun-viapi', model: 'aliyun-generative-super-resolution', scale: 2, sourceImageId: 'image-1', reference: '/tmp/source.png', status: 'processing', idempotencyKey: 'cancel-log-key' })).task;
   const logId = await logs.startGenerationLog({ mode: 'upscale', source: 'workspace', prompt: 'Upscale this image', modelName: '测试超分模型' }, task.id);
   const updated = await upscaleStore.updateUpscaleTask(task.id, { logId });
