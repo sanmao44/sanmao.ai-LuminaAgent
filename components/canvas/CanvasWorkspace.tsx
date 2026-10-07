@@ -319,6 +319,12 @@ import { normalizeVideoEditorState } from "@/lib/canvas/video-editor";
 import { syncCanvasVideoEditorReferences } from "@/lib/canvas/video-editor-sync";
 import { canvasNodesPositionOnly } from "@/lib/canvas/document-diff";
 import {
+  defaultCanvasVideoInputRole,
+  updateCanvasVideoMode,
+  updateCanvasVideoModeAuto,
+  videoParamsForCanvasNode,
+} from "@/lib/canvas/video-mode";
+import {
   syncCanvasEditorDraftInputModes,
   type CanvasEditorDraft,
 } from "@/lib/canvas/editor-draft-sync";
@@ -693,41 +699,6 @@ type CanvasConnectionResult = {
   reason?: string;
 };
 
-function videoParamsForCanvasNode(node: CanvasNode, runtime: CanvasRuntimeState | null) {
-  const currentParams =
-    node.data.params && typeof node.data.params === "object"
-      ? node.data.params
-      : node.data.generation?.params;
-  return normalizeCreationSettings("video", currentParams, runtime);
-}
-
-function updateCanvasVideoMode(
-  document: CanvasDocument,
-  targetId: string,
-  inputMode: CanvasVideoInputMode,
-  runtime: CanvasRuntimeState | null = null,
-) {
-  return {
-    ...document,
-    nodes: document.nodes.map((node) => {
-      if (node.id !== targetId || (node.type !== "media" && node.type !== "generator")) return node;
-      if (node.data.kind !== "video") return node;
-      const params = videoParamsForCanvasNode(node, runtime);
-      const nextParams = { ...params, inputMode } as VideoCreationSettings;
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          params: nextParams,
-          generation: node.data.generation
-            ? { ...node.data.generation, params: nextParams }
-            : node.data.generation,
-        },
-      };
-    }),
-  };
-}
-
 function connectCanvasNodesInDocument(
   document: CanvasDocument,
   sourceId: string,
@@ -974,24 +945,6 @@ function connectCanvasNodesInDocument(
   return { ok: true, document: synchronized, inputRole, videoMode: connectedMode };
 }
 
-function updateCanvasVideoModeAuto(document: CanvasDocument, targetId: string, automatic: boolean) {
-  return {
-    ...document,
-    nodes: document.nodes.map((node) =>
-      node.id === targetId && (node.type === "media" || node.type === "generator") && node.data.kind === "video"
-        ? {
-            ...node,
-            data: {
-              ...node.data,
-              videoInputModeAuto: automatic,
-              videoInputModeLocked: !automatic,
-            },
-          }
-        : node,
-    ),
-  };
-}
-
 function generationKey(source: {
   node?: CanvasNode | null;
   target?: CanvasNode | null;
@@ -1100,18 +1053,6 @@ function rectanglesOverlap(
     a.y < b.y + b.h + gap &&
     a.y + a.h + gap > b.y
   );
-}
-
-function defaultCanvasVideoInputRole(
-  node: CanvasNode,
-  inputMode: CanvasVideoInputMode,
-  imagePosition: number,
-): CanvasInputRole | undefined {
-  if (node.data.kind === "audio") return "audio";
-  if (node.data.kind === "video") return "video";
-  if (inputMode === "frames") return imagePosition === 0 ? "first-frame" : imagePosition === 1 ? "last-frame" : "reference-image";
-  if (inputMode === "first-frame") return imagePosition === 0 ? "first-frame" : "reference-image";
-  return "reference-image";
 }
 
 function sameCanvasIdOrder(value: unknown, expected: readonly string[]) {

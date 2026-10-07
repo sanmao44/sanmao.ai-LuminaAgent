@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
+import { createTsRequire } from "./ts-require.mjs";
+
+const videoMode = createTsRequire(process.cwd())("./lib/canvas/video-mode");
 
 const component = (await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
@@ -91,18 +94,39 @@ test("video metadata persists both intrinsic size and duration on media nodes", 
 test("video canvas input mode supports automatic locking and restoration", () => {
   assert.match(types, /videoInputModeAuto\?: boolean/);
   assert.match(types, /videoInputModeLocked\?: boolean/);
-  assert.match(component, /videoInputModeAuto !== false/);
-  assert.match(component, /videoInputModeAuto: automatic/);
-  assert.match(component, /videoInputModeLocked: !automatic/);
   assert.match(component, /恢复自动/);
   assert.match(component, /preferredCanvasVideoInputModeForImageCount/);
   assert.match(component, /syncCanvasVideoReferences/);
   assert.doesNotMatch(component, /const lockVideoMode =/);
+  const node = {
+    id: "video-1",
+    type: "media",
+    x: 0,
+    y: 0,
+    data: { kind: "video", videoInputModeAuto: true, videoInputModeLocked: false },
+  };
+  const document = { version: "1", nodes: [node], groups: [], edges: [], camera: { x: 0, y: 0, zoom: 1 } };
+  const locked = videoMode.updateCanvasVideoModeAuto(document, "video-1", false);
+  assert.equal(locked.nodes[0].data.videoInputModeAuto, false);
+  assert.equal(locked.nodes[0].data.videoInputModeLocked, true);
+  assert.equal(document.nodes[0].data.videoInputModeAuto, true);
+
+  const restored = videoMode.updateCanvasVideoModeAuto(locked, "video-1", true);
+  assert.equal(restored.nodes[0].data.videoInputModeAuto, true);
+  assert.equal(restored.nodes[0].data.videoInputModeLocked, false);
 });
 
 test("video reference synchronization hydrates legacy generation params", () => {
-  assert.match(component, /function videoParamsForCanvasNode\(node: CanvasNode, runtime: CanvasRuntimeState \| null\)/);
-  assert.match(component, /node\.data\.generation\?\.params/);
+  const node = {
+    id: "video-1",
+    type: "media",
+    x: 0,
+    y: 0,
+    data: { kind: "video", generation: { params: { kind: "video", inputMode: "frames" } } },
+  };
+  assert.equal(videoMode.videoParamsForCanvasNode(node, null).inputMode, "frames");
+  const document = { version: "1", nodes: [node], groups: [], edges: [], camera: { x: 0, y: 0, zoom: 1 } };
+  assert.equal(videoMode.updateCanvasVideoMode(document, "video-1", "reference", null).nodes[0].data.params.inputMode, "reference");
   assert.doesNotMatch(component, /target\.data\.kind !== "video" \|\|[\s\S]{0,160}!target\.data\.params/);
   assert.match(component, /!hasTopLevelVideoParams/);
   assert.match(component, /updateCanvasVideoMode\(next, target\.id, inputMode, runtime\)/);

@@ -2281,3 +2281,23 @@ hardening work when the trigger applies.
 - Existing behavior coverage for activity and asset panels was updated to follow the extracted boundary; the context-menu and canvas interaction suites continue to cover adjacent panel opening and closing flows.
 - Validation: focused panel, activity, asset, and context-menu tests passed (24/24); `npm run typecheck` passed. Full `npm run check`, production build, and `git diff --check` are required before commit.
 - Remaining risk: panel data and action preparation still live in Workspace by design; moving API or CanvasCore ownership into the panel layer would violate the current dependency direction.
+
+### Stage 6 canvas video mode projection checkpoint (2026-10-07)
+
+- `lib/canvas/video-mode.ts` now owns pure video parameter hydration, input-mode
+  updates, automatic-mode lock/restoration projection, and default input-role
+  selection for Canvas video nodes.
+- `CanvasWorkspace.tsx` retains connection orchestration, capability checks,
+  CanvasCore document updates, and user-facing actions; it delegates the pure
+  projection functions without introducing a second document or video-mode
+  authority.
+- Behavior tests now execute the extracted module directly, including legacy
+  `generation.params` hydration, immutable input-mode updates, and automatic
+  lock/restoration. Source-location assertions were removed where they described
+  the old implementation boundary.
+- Validation: focused canvas/video/one-take tests passed (84/84); typecheck
+  passed. Full `npm run check`, production build, and `git diff --check` are
+  required before committing this slice.
+- Remaining risk: `connectCanvasNodesInDocument` still combines capability
+  resolution, edge mutation, video-mode selection, and CanvasCore synchronization;
+  it remains intact until a stable command contract can cover the whole flow.

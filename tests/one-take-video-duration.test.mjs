@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
+import { createTsRequire } from "./ts-require.mjs";
 
 async function importTypeScript(relativePath, replacements = []) {
   const sourceUrl = new URL(relativePath, import.meta.url);
@@ -15,6 +16,7 @@ async function importTypeScript(relativePath, replacements = []) {
 }
 
 const duration = await importTypeScript("../lib/one-take-video-duration.ts");
+const videoMode = createTsRequire(process.cwd())("./lib/canvas/video-mode");
 const prompt = await importTypeScript("../lib/one-take-video-prompt.ts", [[
   'import { normalizeOneTakeDuration } from "./one-take-video-duration";',
   `const ONE_TAKE_MIN_DURATION = 1;\nconst ONE_TAKE_MAX_DURATION = 60;\nconst ONE_TAKE_DEFAULT_DURATION = 15;\nconst isValidOneTakeDuration = ${duration.isValidOneTakeDuration.toString()};\nconst normalizeOneTakeDuration = ${duration.normalizeOneTakeDuration.toString()};`,
@@ -59,7 +61,22 @@ test("wires duration selection through both one-take entry points", async () => 
   assert.match(page, /durationSeconds/);
   assert.match(page, /pushTextToVideo\(message\.content, true, message\.durationSeconds\)/);
   assert.match(canvas, /OneTakeDurationPicker/);
-  assert.match(canvas, /params: nextParams/);
+  const document = {
+    version: "1",
+    nodes: [{
+      id: "video-1",
+      type: "media",
+      x: 0,
+      y: 0,
+      data: { kind: "video", generation: { params: { kind: "video", duration: 15 } } },
+    }],
+    groups: [],
+    edges: [],
+    camera: { x: 0, y: 0, zoom: 1 },
+  };
+  const updated = videoMode.updateCanvasVideoMode(document, "video-1", "text");
+  assert.equal(updated.nodes[0].data.params.inputMode, "text");
+  assert.equal(updated.nodes[0].data.generation.params.inputMode, "text");
   assert.match(agent, /durationSeconds/);
   assert.match(client, /durationSeconds\?: number/);
 });
