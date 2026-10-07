@@ -2497,3 +2497,23 @@ hardening work when the trigger applies.
 - Remaining risk: the provider editor, image editor, outpaint flow, and full
   page orchestration remain in `app/page.tsx` because they combine stateful
   API lifecycles and browser resources without a safe standalone contract.
+
+### Stage 6 variant generation input boundary checkpoint (2026-10-07)
+
+- `lib/canvas/variant-generation.ts` now owns the read-only preparation of a
+  variant batch: incoming reference projection, natural-language reference
+  normalization, mention selection, image reference projection, and per-variant
+  prompt preparation.
+- `CanvasWorkspace.tsx` retains generation-key ownership, variant state
+  transitions, API requests, video input capability validation, polling,
+  result node creation, history recording, grouping, notifications, and all
+  CanvasCore mutations. The old inline input-preparation implementation was
+  removed rather than duplicated.
+- The new contract returns fresh candidate, linked, context, reference, and
+  prompt arrays. It does not mutate the document, generator, or requirements.
+- Behavior coverage was added in `tests/canvas-variant-generation.test.mjs`;
+  the focused test passed and typecheck passed. Full `npm run check`, build,
+  and `git diff --check` are required before committing this slice.
+- Remaining risk: generation task lifecycle and provider/API orchestration are
+  intentionally still in Workspace because they cross CanvasCore history,
+  task polling, provider capability limits, and UI notifications.

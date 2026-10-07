@@ -402,6 +402,7 @@ import {
   canvasVariantVideoNodeData,
   prepareCanvasVariantBatch,
 } from "@/lib/canvas/variant-batch";
+import { prepareCanvasVariantGeneration } from "@/lib/canvas/variant-generation";
 import { canvasAngleReference } from "@/lib/canvas/angle-reference";
 import {
   mentionedCanvasMedia,
@@ -4944,21 +4945,14 @@ export default function SuperCanvas() {
         });
         return { ...value, nodes: nextNodes };
       };
-      const incoming = incomingContext(canvasCoreRef.current.document(), generatorId);
-      const candidateNodes = (mentionCandidates.length ? mentionCandidates : incoming)
-        .filter((node) => node.id !== generatorId && isCanvasMentionableNode(node));
-      const candidateReferences = candidateNodes
-        .map((node) => createCanvasReferenceDraft(node))
-        .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
-      const commonPrompt = String(generator.data.prompt || "").trim();
-      const naturalCommonPrompt = replaceNaturalReferenceLabels(commonPrompt, candidateReferences);
-      const naturalRequirements = requirements.map((requirement) => replaceNaturalReferenceLabels(requirement, candidateReferences));
-      const selection = selectCreativeReferences(
-        [naturalCommonPrompt.value, ...naturalRequirements.map((result) => result.value)].join("\n"),
-        candidateReferences,
-      );
-      if (selection.invalidNumbers.length) {
-        const invalid = selection.invalidNumbers.map((number) => `@${number}`);
+      const prepared = prepareCanvasVariantGeneration({
+        document: canvasCoreRef.current.document(),
+        generator,
+        requirements,
+        mentionCandidates,
+      });
+      if (prepared.invalidNumbers.length) {
+        const invalid = prepared.invalidNumbers.map((number) => `@${number}`);
         const message = `引用编号无效：${invalid.join("、")}`;
         requested.forEach((index) => {
           updateDoc((value) => updateVariantState(value, index, {
@@ -4969,25 +4963,8 @@ export default function SuperCanvas() {
         notify(message, "error");
         return;
       }
-      const selectedNodeIds = new Set(selection.references.map((reference) => reference.nodeId || reference.id));
-      const inputNodes = selection.hasMentions
-        ? candidateNodes.filter((node) => selectedNodeIds.has(node.id))
-        : incoming;
-      const linked = [
-        ...new Map(
-          inputNodes
-            .filter((node) => isCanvasReferenceableNode(node))
-            .map((node) => [node.id, node]),
-        ).values(),
-      ];
-      const context = inputNodes.filter((node) => node.type === "prompt");
-      const refs = linked
-        .filter((node) => node.data.kind === "image")
-        .map((node) => ({
-          url: String(node.data.url || ""),
-          name: String(node.data.name || "参考素材"),
-        }))
-        .filter((item) => item.url);
+      const linked = prepared.linkedNodes;
+      const refs = prepared.imageReferences;
       const batchName = `${kind === "video" ? "视频" : "图片"}变体批次`;
       const attachBatchGroup = (
         value: CanvasDocument,
@@ -5024,21 +5001,7 @@ export default function SuperCanvas() {
             }
           : next;
       };
-      const promptFor = (index: number) => {
-        const instruction = naturalRequirements[index]?.value || requirements[index];
-        return smartPrompt(
-          resolveCanvasMentionTokens(
-            [
-              naturalCommonPrompt.value,
-              instruction ? `变体要求：${instruction}` : "",
-            ]
-              .filter(Boolean)
-              .join("\n"),
-            candidateNodes,
-          ),
-          context,
-        );
-      };
+      const promptFor = (index: number) => prepared.prompts[index] || "";
       let nextResultPlacement = canvasCoreRef.current.document().nodes.filter(
         (node) =>
           node.type === "media" &&
