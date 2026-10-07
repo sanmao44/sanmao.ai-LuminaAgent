@@ -7,6 +7,24 @@ Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
 
+### Stage 5 canvas input-role projection checkpoint (2026-10-07)
+
+- `lib/canvas/input-roles.ts` now owns the pure projection from incoming
+  persisted reference edges to the input-role map used by video requests.
+- The projection preserves stored reference order, explicit single-source edge
+  roles, legacy role inference, grouped-source expansion, and generated /
+  variant / lineage filtering.
+- `CanvasWorkspace.tsx` retains video mode selection, capability validation,
+  edge role/order writes, CanvasCore transactions, and video/editor
+  synchronization. No new store, API, provider path, task runtime, type source,
+  compatibility layer, or duplicate authority was introduced.
+- Focused reference/editor/video tests (78 passed), `npm run typecheck`, full
+  `npm run check` (1875 passed, 2 skipped, production build success), and
+  `git diff --check` passed.
+- Remaining risk: video mode selection and role persistence still share the
+  Workspace transaction boundary; extracting them together would move mutation
+  ownership and remains deferred.
+
 ### Stage 4 canvas local-edit prompt projection checkpoint (2026-10-07)
 
 - `lib/canvas/local-edit-prompt.ts` now owns the pure selection of persisted

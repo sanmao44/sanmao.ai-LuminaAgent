@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
+import { createTsRequire } from "./ts-require.mjs";
 
 async function loadReferences() {
   const sourceUrl = new URL("../lib/canvas/references.ts", import.meta.url);
@@ -25,6 +26,7 @@ async function loadVideoInputValidation() {
 
 const references = await loadReferences();
 const videoInputValidation = await loadVideoInputValidation();
+const inputRoles = createTsRequire(process.cwd())("./lib/canvas/input-roles");
 
 function node(id, type, kind, value) {
   return {
@@ -118,6 +120,39 @@ test("selects reference mode before first-frame mode and infers typed edge roles
   assert.equal(references.inferCanvasInputRole(source, target, "frames", 0), "first-frame");
   assert.equal(references.inferCanvasInputRole(source, target, "frames", 1), "last-frame");
   assert.equal(references.inferCanvasInputRole(source, target, "reference", 0), "reference-image");
+});
+
+test("projects persisted canvas edge roles using stored reference order", () => {
+  const first = node("first", "media", "image");
+  const second = node("second", "media", "image");
+  const target = {
+    id: "target",
+    type: "media",
+    x: 0,
+    y: 0,
+    data: {
+      kind: "video",
+      url: "video:target",
+      params: { kind: "video", inputMode: "frames" },
+      referenceOrder: [second.id, first.id],
+    },
+  };
+  const document = {
+    version: "1",
+    nodes: [first, second, target],
+    groups: [],
+    edges: [
+      { id: "generated", source: first.id, target: target.id, kind: "generated" },
+      { id: "second-edge", source: second.id, target: target.id },
+      { id: "first-edge", source: first.id, target: target.id, inputRole: "reference-image", order: 1 },
+    ],
+    camera: { x: 0, y: 0, zoom: 1 },
+  };
+
+  const roles = inputRoles.canvasInputRolesForTarget(document, target.id);
+  assert.equal(roles.get(second.id), "first-frame");
+  assert.equal(roles.get(first.id), "reference-image");
+  assert.equal(roles.has("generated"), false);
 });
 
 test("automatically selects video mode from connected image count with capability fallback", () => {

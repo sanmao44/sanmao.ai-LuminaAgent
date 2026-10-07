@@ -329,6 +329,7 @@ import {
   referenceEdgesForCanvasTarget,
   referenceNodesForCanvasEdge,
 } from "@/lib/canvas/reference-edges";
+import { canvasInputRolesForTarget } from "@/lib/canvas/input-roles";
 import { renderCanvasVideoEditor } from "@/lib/canvas/video-export";
 import {
   renderCanvasImageGrid,
@@ -699,53 +700,6 @@ type CanvasConnectionResult = {
   videoMode?: CanvasVideoInputMode;
   reason?: string;
 };
-
-function canvasInputRolesForTarget(document: CanvasDocument, targetId: string) {
-  const target = nodeById(document, targetId);
-  const roles = new Map<string, CanvasInputRole | undefined>();
-  const sourceNodes = document.edges
-    .filter((edge) => edge.target === targetId && !["generated", "variant", "lineage"].includes(edge.kind || ""))
-    .flatMap((edge) => referenceNodesForCanvasEdge(document, edge));
-  const directIds = new Set(sourceNodes.map((node) => node.id));
-  const storedOrder = target?.data.referenceOrder?.length
-    ? target.data.referenceOrder
-    : target?.data.generation?.referenceIds || [];
-  const orderedIds = [
-    ...storedOrder.filter((id) => directIds.has(id)),
-    ...sourceNodes.map((node) => node.id).filter((id, index, values) => !storedOrder.includes(id) && values.indexOf(id) === index),
-  ];
-  const imagePosition = new Map<string, number>();
-  orderedIds.forEach((id) => {
-    const node = nodeById(document, id);
-    if (!node || node.data.kind !== "image") return;
-    imagePosition.set(id, imagePosition.size);
-  });
-  document.edges
-    .filter((edge) => edge.target === targetId && !["generated", "variant", "lineage"].includes(edge.kind || ""))
-    .sort((left, right) => {
-      const leftOrder = Number(left.order);
-      const rightOrder = Number(right.order);
-      if (Number.isFinite(leftOrder) && Number.isFinite(rightOrder)) return leftOrder - rightOrder;
-      if (Number.isFinite(leftOrder) !== Number.isFinite(rightOrder)) return Number.isFinite(leftOrder) ? -1 : 1;
-      return 0;
-    })
-    .forEach((edge) => {
-      const sources = referenceNodesForCanvasEdge(document, edge);
-      if (!sources.length) return;
-      sources.forEach((source) => {
-        const current = imagePosition.get(source.id) || 0;
-        roles.set(
-          source.id,
-          sources.length === 1 && edge.inputRole
-            ? edge.inputRole
-            : target
-              ? inferCanvasInputRole(source, target, target.data.params && "inputMode" in target.data.params ? target.data.params.inputMode as CanvasVideoInputMode : undefined, current)
-              : undefined,
-        );
-      });
-    });
-  return roles;
-}
 
 function videoParamsForCanvasNode(node: CanvasNode, runtime: CanvasRuntimeState | null) {
   const currentParams =
