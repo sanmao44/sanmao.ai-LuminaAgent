@@ -418,6 +418,7 @@ import {
   defaultCanvasGenerationParams,
   defaultMediaParams,
 } from "@/lib/canvas/generation-params";
+import { findCanvasNodePlacement } from "@/lib/canvas/node-placement";
 import {
   CANVAS_ALIGNMENT_OPTIONS,
   CANVAS_ARRANGE_MODE_OPTIONS,
@@ -962,19 +963,6 @@ function isCanvasWheelIsolatedTargetWithOptions(
     if (vertical || horizontal) return true;
   }
   return false;
-}
-
-function rectanglesOverlap(
-  a: { x: number; y: number; w: number; h: number },
-  b: { x: number; y: number; w: number; h: number },
-  gap = 28,
-) {
-  return (
-    a.x < b.x + b.w + gap &&
-    a.x + a.w + gap > b.x &&
-    a.y < b.y + b.h + gap &&
-    a.y + a.h + gap > b.y
-  );
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -2541,43 +2529,10 @@ export default function SuperCanvas() {
     };
   }, [cancelReferencePicker, referencePicker]);
   const openNodePosition = useCallback((position: Point, node: CanvasNode, extraOccupied: CanvasNode[] = []) => {
-    const size = nodeSize(node);
-    const candidates: Point[] = [{ x: position.x, y: position.y }];
-    const directions = [
-      { x: 1, y: 0 },
-      { x: -1, y: 0 },
-      { x: 0, y: 1 },
-      { x: 0, y: -1 },
-      { x: 1, y: 1 },
-      { x: -1, y: 1 },
-      { x: 1, y: -1 },
-      { x: -1, y: -1 },
-    ];
-    for (let ring = 1; ring <= 32; ring += 1) {
-      const distance = 70 + ring * 30;
-      directions.forEach((direction) =>
-        candidates.push({
-          x: position.x + direction.x * distance,
-          y: position.y + direction.y * distance,
-        }),
-      );
-    }
-    const occupied = [...canvasCoreRef.current.document().nodes, ...extraOccupied].map((item) => {
-      const metric = nodeSize(item);
-      return { x: item.x, y: item.y, w: metric.w, h: metric.h };
-    });
-    return (
-      candidates.find(
-        (candidate) =>
-          !rectanglesOverlap(
-            { ...candidate, w: size.w, h: size.h },
-            occupied[0] || { x: Infinity, y: Infinity, w: 0, h: 0 },
-          ) &&
-          occupied.every(
-            (item) =>
-              !rectanglesOverlap({ ...candidate, w: size.w, h: size.h }, item),
-          ),
-      ) || position
+    return findCanvasNodePlacement(
+      position,
+      node,
+      [...canvasCoreRef.current.document().nodes, ...extraOccupied],
     );
   }, []);
   const applyPanoramaView = useCallback(async (sourceNodeId: string, snapshot: PanoramaSnapshot) => {

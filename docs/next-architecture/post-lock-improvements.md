@@ -2397,3 +2397,23 @@ hardening work when the trigger applies.
 - Remaining risk: arrangement action construction still stays in Workspace
   because it crosses selection state, CanvasCore mutation, history, and camera
   preservation.
+
+### Stage 6 canvas node placement projection checkpoint (2026-10-07)
+
+- `lib/canvas/node-placement.ts` now owns candidate-ring generation, node-size
+  projection, and rectangle overlap checks for placing a new node near an
+  anchor point.
+- `CanvasWorkspace.tsx` retains the current CanvasCore document lookup,
+  extra-occupied node context, node creation, history, and all mutations; its
+  `openNodePosition` callback is now only the UI/Core adapter.
+- Behavior coverage verifies open-anchor preservation, the original first clear
+  ring point, and anchor fallback when the candidate area is occupied. No URL,
+  API, document format, persistence, provider, task, or interaction contract
+  changed.
+- Validation: focused canvas/Agent/context tests passed (73/73); `npm run
+  check` passed with 1883 tests passed, 2 skipped, 0 failed; typecheck,
+  production build, and `git diff --check` passed.
+- Remaining risk: node creation flows still call the placement adapter from
+  Workspace because they need the live CanvasCore document and transaction
+  context; moving those actions would change ownership rather than reduce
+  coupling.
