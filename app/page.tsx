@@ -48,6 +48,7 @@ import { IMAGE_QUALITY_OPTIONS } from '@/lib/creation/settings';
 import { requestPromptOptimization } from '@/lib/creation/agent';
 import { cleanupGenerationLogs, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
 import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVideoTask as patchVideoTaskRequest, saveVideoTaskLocally as saveVideoTaskLocallyRequest } from '@/lib/video-task-client';
+import { videoTaskStatus } from '@/lib/video-task-output';
 import { createManualStorageSnapshot, loadStorageMaintenance, restoreLocalStorageSnapshot } from '@/lib/storage-maintenance-client';
 import { formatStorageBytes } from '@/lib/storage-presentation';
 import {
@@ -4118,12 +4119,13 @@ export default function Page() {
         }
     }
     function askDeleteVideoTask(task) {
-        if (task.status === 'pending' || task.status === 'running') {
+        const status = videoTaskStatus(task);
+        if (status === 'pending' || status === 'running') {
             notify('视频正在生成，先取消任务再删除');
             return;
         }
         setConfirmState({
-            title: task.status === 'failed' ? '删除这条失败任务？' : '删除这段视频？',
+            title: status === 'failed' ? '删除这条失败任务？' : '删除这段视频？',
             text: '删除后会从本机创作记录中移除，已保存的视频文件会移入回收站并保留 7 天。',
             danger: true,
             confirmText: '确认删除',

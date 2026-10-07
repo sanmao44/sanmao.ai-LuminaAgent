@@ -9,7 +9,7 @@ import { cloneTaskRuntime } from '../../lib/clone/task-runtime';
 import type { CloneJob } from '../../lib/clone/types';
 import { moveMediaToTrash } from '../../lib/generation-log';
 import { saveVideoTaskLocally as saveVideoTaskService } from '../../lib/video-task-service';
-import { findVideoTask, updateVideoTask } from '../../lib/video-task-store';
+import { findVideoTask, listVideoTasks, updateVideoTask } from '../../lib/video-task-store';
 import { findUpscaleTask, updateUpscaleTask } from '../../lib/upscale-task-store';
 import { videoTaskRuntime } from '../../lib/video-task-runtime';
 import { videoTaskOutputUrls, videoTaskStatus } from '../../lib/video-task-output';
@@ -81,12 +81,16 @@ export async function removeVideoTask(id: string, observer?: RuntimeObserver) {
   return runTaskLifecycle('video', id, async () => {
     const current = await findVideoTask(id);
     if (!current) return null;
-    if (videoTaskRuntime.isActive(current.status)) throw new TaskControlConflictError('视频正在生成，请先取消任务再删除。');
+    const projectedStatus = videoTaskStatus(current);
+    if (videoTaskRuntime.isActive(projectedStatus)) throw new TaskControlConflictError('视频正在生成，请先取消任务再删除。');
     const task = await remove(id);
     if (!task) return null;
-    await Promise.all([...new Set(task.localVideoPaths || [])].map(async (file) => {
-      try { await moveMediaToTrash(file, 'videos'); } catch { /* Missing media must not prevent task record removal. */ }
-    }));
+    const remainingLocalPaths = new Set((await listVideoTasks(500)).flatMap((item) => item.localVideoPaths || []));
+    await Promise.all([...new Set(task.localVideoPaths || [])]
+      .filter((file) => !remainingLocalPaths.has(file))
+      .map(async (file) => {
+        try { await moveMediaToTrash(file, 'videos'); } catch { /* Missing media must not prevent task record removal. */ }
+      }));
     return task;
   }, observer);
 }

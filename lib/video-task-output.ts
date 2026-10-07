@@ -5,11 +5,13 @@ export type VideoTaskOutput = {
 
 export type VideoTaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
 
-/** Returns usable task outputs with locally archived URLs taking precedence. */
+/** Returns usable task outputs, preferring local archives over provider URLs. */
 export function videoTaskOutputUrls(task: VideoTaskOutput) {
-  return [...(task.videoUrls || []), ...(task.remoteVideoUrls || [])]
+  const normalize = (urls: readonly unknown[] | undefined) => (urls || [])
     .map((url) => String(url || '').trim())
-    .filter((url, index, urls) => Boolean(url) && urls.indexOf(url) === index);
+    .filter((url, index, values) => Boolean(url) && values.indexOf(url) === index);
+  const localUrls = normalize(task.videoUrls);
+  return localUrls.length ? localUrls : normalize(task.remoteVideoUrls);
 }
 
 export function videoTaskOutputUrl(task: VideoTaskOutput) {
