@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from "@/lib/creation/settings";
+import type { ImageVersionInfo } from "@/lib/canvas/media-viewer";
 
 export type MediaViewerReference = {
   id: string;
@@ -22,17 +23,7 @@ export type MediaViewerItem = {
   versionInfo?: ImageVersionInfo;
 };
 
-export type ImageVersionInfo = {
-  sourceNode?: string;
-  provider?: string;
-  model?: string;
-  dimensions?: string;
-  createdAt?: number;
-  generationDurationMs?: number;
-  prompt?: string;
-  parameters?: Array<{ label: string; value: string }>;
-  status?: string;
-};
+
 
 export type MediaViewerSurface = "workspace" | "canvas";
 

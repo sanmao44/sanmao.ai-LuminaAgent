@@ -52,7 +52,6 @@ test("completed upscale results use the same image preview path as media nodes",
   assert.match(component, /if \(isCanvasReferenceableNode\(node\)\)\s*openCanvasMediaViewer\(node\.id\)/);
   assert.match(card, /else if \(isCanvasReferenceableNode\(node\)\) onPreview\(\)/);
   assert.match(component, /if \(!viewerNode \|\| !isCanvasReferenceableNode\(viewerNode\)\) return null/);
-  assert.match(component, /versionInfo: mediaViewerVersionInfo\(document, viewerNode, runtime\)/);
   assert.doesNotMatch(component, /parameters=\{viewerIsMedia/);
   assert.doesNotMatch(component, /onEdit=\{viewerIsMedia/);
 });

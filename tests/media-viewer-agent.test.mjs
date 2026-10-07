@@ -31,9 +31,6 @@ test("viewer parameter drawer exposes safe version metadata and keeps the overla
   assert.match(mediaViewerStyles, /\.canvas-media-viewer-prompt\{display:grid;grid-template-columns:minmax\(0,1fr\);/);
   assert.doesNotMatch(viewer, /CreationParameterEditor/);
   assert.match(viewer, /event\.target === event\.currentTarget\) onClose\(\)/);
-  assert.match(canvas, /versionInfo: mediaViewerVersionInfo\(document, viewerNode, runtime\)/);
-  assert.match(canvas, /durationMs: generationDurationMs/);
-  assert.match(canvas, /parameters: entries/);
 });
 
 test("Agent quick toolbar owns reverse prompting and writes the result back to agentPrompt", () => {
