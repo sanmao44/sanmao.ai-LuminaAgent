@@ -2379,3 +2379,21 @@ hardening work when the trigger applies.
 - Remaining risk: DOM target filtering, generation-key tracking, and connection
   validation remain in Workspace because they depend on browser event ownership
   or a cross-cutting command contract.
+
+### Stage 6 canvas layout options boundary checkpoint (2026-10-07)
+
+- `lib/canvas/layout-options.ts` now owns the existing arrange-mode,
+  alignment, and distribution option descriptors plus the arrange-mode label
+  projection.
+- `CanvasWorkspace.tsx` retains arrange-mode state and persistence, CanvasCore
+  arrangement/alignment/distribution commands, notifications, and menu event
+  handling. `CanvasSelectionToolbar.tsx` continues to own presentation only.
+- The option arrays retain the existing values, labels, titles, icons, and
+  ordering; no URL, API, document format, or interaction behavior changed.
+- Behavior coverage now imports the option boundary directly and verifies the
+  complete value sets and label/title presence. `npm run check` passed with
+  1880 tests passed, 2 skipped, 0 failed; typecheck, production build, and
+  `git diff --check` passed.
+- Remaining risk: arrangement action construction still stays in Workspace
+  because it crosses selection state, CanvasCore mutation, history, and camera
+  preservation.

@@ -12,6 +12,7 @@ const editorDraftSync = createTsRequire(process.cwd())("./lib/canvas/editor-draf
 const documentDiff = createTsRequire(process.cwd())("./lib/canvas/document-diff");
 const localEditPrompt = createTsRequire(process.cwd())("./lib/canvas/local-edit-prompt");
 const generationParams = createTsRequire(process.cwd())("./lib/canvas/generation-params");
+const layoutOptions = createTsRequire(process.cwd())("./lib/canvas/layout-options");
 const connectionOverlay = await readFile(
   new URL("../components/canvas/CanvasConnectionOverlay.tsx", import.meta.url),
   "utf8",
@@ -1029,8 +1030,9 @@ test("regular editor stays below its node in the stacked main-composer layout", 
 });
 
 test("multi-select layout toolbar exposes alignment and distribution icons only for ordinary nodes", () => {
-  assert.match(component, /const CANVAS_ALIGNMENT_OPTIONS/);
-  assert.match(component, /const CANVAS_DISTRIBUTION_OPTIONS/);
+  assert.equal(layoutOptions.CANVAS_ALIGNMENT_OPTIONS.length, 6);
+  assert.equal(layoutOptions.CANVAS_DISTRIBUTION_OPTIONS.length, 2);
+  assert.equal(layoutOptions.canvasArrangeModeLabel("grid"), layoutOptions.CANVAS_ARRANGE_MODE_OPTIONS[2].label);
   assert.match(component, /alignCanvasNodes\(\s*canvasCoreRef\.current\.document\(\),\s*\[\.\.\.selectedIds\],\s*alignment,?\s*\)/);
   assert.match(component, /distributeCanvasNodes\(\s*canvasCoreRef\.current\.document\(\),\s*\[\.\.\.selectedIds\],\s*direction,?\s*\)/);
   assert.match(component, /<CanvasSelectionToolbar/);
@@ -1039,12 +1041,10 @@ test("multi-select layout toolbar exposes alignment and distribution icons only 
   assert.match(selectionToolbar, /className="canvas-selection-layout-group distribution"/);
   assert.match(selectionToolbar, /disabled=\{disabled\}/);
   assert.match(selectionToolbar, /至少选择 3 个节点后可/);
-  ["左对齐", "水平居中", "右对齐", "顶部对齐", "垂直居中", "底部对齐"].forEach((label) => {
-    assert.match(component, new RegExp(`label: "${label}"`));
-  });
-  ["水平均匀分布", "垂直均匀分布"].forEach((label) => {
-    assert.match(component, new RegExp(`label: "${label}"`));
-  });
+  assert.deepEqual(layoutOptions.CANVAS_ALIGNMENT_OPTIONS.map((option) => option.value), ["left", "center-x", "right", "top", "center-y", "bottom"]);
+  assert.deepEqual(layoutOptions.CANVAS_DISTRIBUTION_OPTIONS.map((option) => option.value), ["horizontal", "vertical"]);
+  assert.ok(layoutOptions.CANVAS_ALIGNMENT_OPTIONS.every((option) => option.label && option.title));
+  assert.ok(layoutOptions.CANVAS_DISTRIBUTION_OPTIONS.every((option) => option.label && option.title));
   assert.match(selectionToolbar, /function CanvasLayoutIcon/);
   assert.match(selectionToolbar, /title=\{option\.title\}/);
   assert.match(selectionToolbar, /aria-label=\{option\.title\}/);
