@@ -2334,3 +2334,19 @@ hardening work when the trigger applies.
 - Remaining risk: `generationKey`, `maskParamsWithoutMask`, and DOM target
   helpers remain in Workspace because they depend on async UI lifecycle or
   browser event ownership.
+
+### Stage 6 canvas image mask parameter projection checkpoint (2026-10-07)
+
+- `lib/canvas/generation-params.ts` now owns `canvasImageParamsWithoutMask`,
+  which copies and normalizes image settings through the existing creation
+  settings boundary before removing the local-edit mask for a generation
+  request.
+- `CanvasWorkspace.tsx` retains mask node mutation, editor draft cleanup, and
+  CanvasCore updates; it no longer owns the parameter copy/filter operation.
+- Behavior coverage verifies mask omission and input immutability alongside the
+  existing mask removal flow. Focused tests passed (74/74) and typecheck passed;
+  full `npm run check`, production build, and `git diff --check` are required
+  before committing this slice.
+- Remaining risk: the surrounding local-edit lifecycle intentionally stays in
+  Workspace because it coordinates editor state, mask nodes, and document
+  mutations.

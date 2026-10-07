@@ -71,3 +71,13 @@ export function copyCanvasGenerationParams(
       : defaultCanvasGenerationParams(kind, runtime);
   return normalizeCreationSettings(kind, source, runtime);
 }
+
+/** Copy image generation settings while omitting the persisted local-edit mask. */
+export function canvasImageParamsWithoutMask(
+  value: unknown,
+  runtime: CanvasRuntimeState | null,
+): ImageCreationSettings {
+  const params = copyCanvasGenerationParams(value, "image", runtime);
+  const { mask: _mask, ...withoutMask } = params;
+  return withoutMask;
+}

@@ -61,3 +61,12 @@ test("adds generation defaults only for media kinds with generation settings", (
     params: { kind: "image", runtime, source: "shared" },
   });
 });
+
+test("copies image settings without carrying the local-edit mask", () => {
+  const runtime = { models: [] };
+  const input = { kind: "image", prompt: "keep", mask: { url: "mask:url" } };
+  const result = params.canvasImageParamsWithoutMask(input, runtime);
+  assert.equal(result.value.prompt, "keep");
+  assert.equal("mask" in result, false);
+  assert.equal(input.mask.url, "mask:url");
+});

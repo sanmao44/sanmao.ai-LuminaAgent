@@ -412,6 +412,7 @@ import {
   resolveCanvasMentionTokens,
 } from "@/lib/canvas/mention-resolution";
 import {
+  canvasImageParamsWithoutMask,
   copyCanvasGenerationParams,
   defaultCanvasGenerationParams,
   defaultMediaParams,
@@ -956,12 +957,6 @@ function dataUrlFile(dataUrl: string, name: string) {
   for (let index = 0; index < bytes.length; index += 1)
     content[index] = bytes.charCodeAt(index);
   return new File([content], name, { type: mime });
-}
-
-function maskParamsWithoutMask(value: unknown, runtime: CanvasRuntimeState | null) {
-  const params = copyCanvasGenerationParams(value, "image", runtime) as ImageCreationSettings;
-  const { mask: _mask, ...withoutMask } = params;
-  return withoutMask as ImageCreationSettings;
 }
 
 function canvasConnectableId(target: EventTarget | null) {
@@ -9188,7 +9183,7 @@ export default function SuperCanvas() {
   const removeCanvasMask = useCallback(
     (node: CanvasNode) => {
       if (node.type !== "media" || node.data.kind !== "image") return;
-      const cleanedParams = maskParamsWithoutMask(
+       const cleanedParams = canvasImageParamsWithoutMask(
         editorDrafts[node.id]?.params ||
           node.data.generation?.params ||
           node.data.params,

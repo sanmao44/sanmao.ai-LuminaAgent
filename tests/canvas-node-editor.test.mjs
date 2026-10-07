@@ -11,6 +11,7 @@ const workspace = await readFile(
 const editorDraftSync = createTsRequire(process.cwd())("./lib/canvas/editor-draft-sync");
 const documentDiff = createTsRequire(process.cwd())("./lib/canvas/document-diff");
 const localEditPrompt = createTsRequire(process.cwd())("./lib/canvas/local-edit-prompt");
+const generationParams = createTsRequire(process.cwd())("./lib/canvas/generation-params");
 const connectionOverlay = await readFile(
   new URL("../components/canvas/CanvasConnectionOverlay.tsx", import.meta.url),
   "utf8",
@@ -856,7 +857,11 @@ test("image node editing persists parameters without turning uploads into genera
 });
 
 test("mask removal clears both current and persisted generation parameters", () => {
-  assert.match(component, /const \{ mask: _mask, \.\.\.withoutMask \} = params/);
+  const cleaned = generationParams.canvasImageParamsWithoutMask(
+    { kind: "image", prompt: "keep", mask: { url: "mask:url" } },
+    null,
+  );
+  assert.equal("mask" in cleaned, false);
   assert.match(component, /mask: undefined/);
   assert.match(component, /generation:\s*\{[\s\S]*params: clone\(cleanedParams\)/);
   assert.match(component, /maskUrl: imageParams\.mask\?\.url/);
