@@ -4588,8 +4588,10 @@ export default function Page() {
             setState(data);
             const selectedChat = filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>model.id === data.settings?.agentModelId && model.enabled && model.published && model.kind === 'chat') || filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>model.enabled && model.published && model.kind === 'chat');
             if (!data.settings?.webSearchConfigured && !selectedChat?.capabilities.includes('web-search')) {
-                setAgentWebSearchEnabled(false);
+                setAgentWebMode('off');
+                setAgentWebModeMenuOpen(false);
                 try {
+                    localStorage.setItem('sanmao-agent-web-mode', 'off');
                     localStorage.setItem('sanmao-agent-web-search', '0');
                 } catch  {}
             }
