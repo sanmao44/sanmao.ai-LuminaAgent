@@ -1,0 +1,361 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test, { afterEach } from 'node:test';
+import ts from 'typescript';
+import { validateUpdateManifest, validSha256 } from '../scripts/validate-update-manifest.mjs';
+
+async function loadTs(fileUrl, replacements = []) {
+  let source = await readFile(fileUrl, 'utf8');
+  for (const [from, to] of replacements) {
+    const exact = source.indexOf(from);
+    if (exact >= 0) {
+      source = `${source.slice(0, exact)}${to}${source.slice(exact + from.length)}`;
+      continue;
+    }
+    // Source files may be checked out with CRLF while the test fixture uses
+    // LF. Normalize only for the harness so the replacement cannot silently
+    // fail and leave an unresolved alias in the data URL module.
+    const normalizedSource = source.replace(/\r\n/g, '\n');
+    const normalizedFrom = from.replace(/\r\n/g, '\n');
+    const normalizedIndex = normalizedSource.indexOf(normalizedFrom);
+    if (normalizedIndex < 0) throw new Error(`loadTs replacement not found in ${fileUrl.pathname}: ${normalizedFrom.slice(0, 80)}`);
+    source = `${normalizedSource.slice(0, normalizedIndex)}${to}${normalizedSource.slice(normalizedIndex + normalizedFrom.length)}`;
+  }
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    fileName: fileUrl.pathname,
+  }).outputText;
+  return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+}
+
+const update = await loadTs(new URL('../lib/update.ts', import.meta.url), [
+  ["import packageInfo from '../package.json';", "const packageInfo = { version: '0.7.0' };"],
+]);
+const local = await loadTs(new URL('../lib/local-update.ts', import.meta.url), [
+  ["import type { UpdateStatus } from '@/lib/update';", ''],
+  ["import {\n  acquireRuntimeOperationLock,\n  beginRuntimeDrain,\n  cancelRuntimeDrain,\n  operationLockMatches,\n  removeOwnedRuntimeOperationLock,\n} from '@/lib/runtime-operation';", "const acquireRuntimeOperationLock = async () => ({ token: 'test' }); const beginRuntimeDrain = async () => ({ activeRequests: 0 }); const cancelRuntimeDrain = async () => {}; const operationLockMatches = async () => true; const removeOwnedRuntimeOperationLock = async () => true;"],
+  ["import { resolveLocalDataDir } from '@/lib/data-paths';", "const resolveLocalDataDir = (cwd = process.cwd()) => process.env.SANMAO_DATA_DIR || join(cwd, '.data');"],
+]);
+
+test('completed progress is stale after the app reaches the recorded version', () => {
+  assert.equal(local.isCompletedUpdateProgressStale({ stage: 'completed', version: '0.7.0' }, '0.7.2'), true);
+  assert.equal(local.isCompletedUpdateProgressStale({ stage: 'completed', version: '0.7.2' }, '0.7.2'), true);
+  assert.equal(local.isCompletedUpdateProgressStale({ stage: 'completed', version: '0.7.3' }, '0.7.2'), false);
+  assert.equal(local.isCompletedUpdateProgressStale({ stage: 'starting', version: '0.7.0' }, '0.7.2'), false);
+});
+
+test('progress is stale once the running app reaches the recorded version', () => {
+  // Any stage (including a failure) is irrelevant once the target is already
+  // reached; otherwise a stale "更新失败" tray would reappear forever.
+  assert.equal(local.isUpdateProgressStale({ stage: 'starting', version: '0.7.14' }, '0.7.14'), true);
+  assert.equal(local.isUpdateProgressStale({ stage: 'verifying', version: '0.7.13' }, '0.7.14'), true);
+  assert.equal(local.isUpdateProgressStale({ stage: 'failed', version: '0.7.13' }, '0.7.14'), true);
+  assert.equal(local.isUpdateProgressStale({ stage: 'failed', version: '0.7.14' }, '0.7.14'), true);
+  assert.equal(local.isUpdateProgressStale({ stage: 'completed', version: '0.7.32', message: '更新程序已启动，应用正在重启…' }, '0.7.31'), true);
+  // A target still newer than the installed version is kept, even when failed.
+  assert.equal(local.isUpdateProgressStale({ stage: 'starting', version: '0.7.15' }, '0.7.14'), false);
+  assert.equal(local.isUpdateProgressStale({ stage: 'failed', version: '0.7.15' }, '0.7.14'), false);
+});
+
+test('update archives remain the single source of installed updater code', async () => {
+  const [localUpdate, windowsUpdater, windowsUpdaterCore, windowsUpdaterBootstrap, unixUpdater, launcher, progressRoute] = await Promise.all([
+    readFile(new URL('../lib/local-update.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/apply-update.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/apply-update-core.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/apply-update-bootstrap.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/apply-update.sh', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/start.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../app/api/update/progress/route.ts', import.meta.url), 'utf8'),
+  ]);
+
+  assert.doesNotMatch(localUpdate, /local-update-runtime\.ts/);
+  assert.doesNotMatch(windowsUpdater, /local-update-runtime\.ts/);
+  assert.doesNotMatch(windowsUpdaterCore, /local-update-runtime\.ts/);
+  assert.doesNotMatch(windowsUpdaterCore, /Copy-Item\s+-LiteralPath\s+\$PSCommandPath/);
+  assert.match(windowsUpdaterCore, /function Backup-CurrentProgram/);
+  assert.match(windowsUpdaterCore, /Resolve-SanmaoProviderConfigDir/);
+  assert.match(windowsUpdaterCore, /protectedProgramEntries/);
+  assert.match(windowsUpdaterCore, /用户数据目录不能与程序目录相同/);
+  assert.match(windowsUpdaterCore, /function Restore-PreviousProgram/);
+  assert.match(windowsUpdaterCore, /Move-Item -LiteralPath \$_.FullName -Destination \$backupPath -Force/);
+  assert.match(windowsUpdaterCore, /programBackupComplete/);
+  assert.match(windowsUpdaterCore, /if \(\$destination -eq \$PSCommandPath\) \{ return \}/);
+  assert.match(windowsUpdaterCore, /Where-Object \{ \$protectedProgramEntries -notcontains \$_.Name/);
+  assert.match(windowsUpdaterCore, /RedirectStandardOutput \$launcherStdoutPath/);
+  assert.match(windowsUpdaterCore, /RedirectStandardError \$launcherStderrPath/);
+  assert.match(windowsUpdaterCore, /-ArgumentList \$launcherArguments/);
+  assert.doesNotMatch(windowsUpdaterCore, /\$launcherCommand =/);
+  assert.match(windowsUpdaterCore, /AddSeconds\(600\)/);
+  assert.match(windowsUpdaterCore, /Write-UpdateProgress 'starting'/);
+  assert.match(unixUpdater, /! -name \.agents/);
+  assert.match(unixUpdater, /resolve_provider_config_dir/);
+  assert.match(unixUpdater, /DATA_TOP_LEVEL/);
+  assert.doesNotMatch(localUpdate, /setUpdateProgress\(jobId, \{ stage: 'completed', message: '更新程序已启动/);
+  assert.match(windowsUpdater, /apply-update-core\.ps1/);
+  assert.match(windowsUpdaterBootstrap, /apply-update-core\.ps1/);
+  assert.equal(launcher.charCodeAt(0), 0xFEFF, 'Windows launcher must keep a UTF-8 BOM for Windows PowerShell');
+  assert.match(launcher, /apply-update-bootstrap\.ps1/);
+  assert.match(progressRoute, /getLatestUpdateProgress\(jobId, currentVersion\)/);
+  assert.match(progressRoute, /currentVersion,?\s*\}/);
+});
+
+const originalFetch = globalThis.fetch;
+const originalManifestUrl = process.env.SANMAO_UPDATE_MANIFEST_URL;
+const originalManifestMirrors = process.env.SANMAO_UPDATE_MANIFEST_MIRRORS;
+const originalPackageMirrors = process.env.SANMAO_UPDATE_MIRRORS;
+const originalGithubProxies = process.env.SANMAO_UPDATE_GITHUB_PROXIES;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  if (originalManifestUrl === undefined) delete process.env.SANMAO_UPDATE_MANIFEST_URL;
+  else process.env.SANMAO_UPDATE_MANIFEST_URL = originalManifestUrl;
+  if (originalManifestMirrors === undefined) delete process.env.SANMAO_UPDATE_MANIFEST_MIRRORS;
+  else process.env.SANMAO_UPDATE_MANIFEST_MIRRORS = originalManifestMirrors;
+  if (originalPackageMirrors === undefined) delete process.env.SANMAO_UPDATE_MIRRORS;
+  else process.env.SANMAO_UPDATE_MIRRORS = originalPackageMirrors;
+  if (originalGithubProxies === undefined) delete process.env.SANMAO_UPDATE_GITHUB_PROXIES;
+  else process.env.SANMAO_UPDATE_GITHUB_PROXIES = originalGithubProxies;
+});
+
+test('manifest candidates use GitHub first then no-VPN friendly mirrors by default', () => {
+  delete process.env.SANMAO_UPDATE_MANIFEST_URL;
+  delete process.env.SANMAO_UPDATE_MANIFEST_MIRRORS;
+  assert.deepEqual(update.manifestUrlCandidates(), [
+    'https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json',
+    'https://fastly.jsdelivr.net/gh/sanmao44/sanmao.ai-LuminaAgent@main/update.json',
+    'https://gcore.jsdelivr.net/gh/sanmao44/sanmao.ai-LuminaAgent@main/update.json',
+    'https://ghfast.top/https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json',
+    'https://gh-proxy.com/https://raw.githubusercontent.com/sanmao44/sanmao.ai-LuminaAgent/main/update.json',
+  ]);
+});
+
+test('strict update manifest validation rejects missing and placeholder checksums', () => {
+  const base = {
+    schemaVersion: 1,
+    latestVersion: '0.7.39',
+    releaseUrl: 'https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.39',
+    packageUrl: 'https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.39/SANMAO.AI-0.7.39.zip',
+  };
+
+  assert.equal(validSha256(''), false);
+  assert.equal(validSha256('0'.repeat(64)), false);
+  assert.match(validateUpdateManifest(base, { currentVersion: '0.7.38', strict: true }).join('\n'), /sha256/);
+  assert.deepEqual(validateUpdateManifest({ ...base, sha256: 'a'.repeat(64) }, { currentVersion: '0.7.39', strict: true }), []);
+  assert.match(validateUpdateManifest({ ...base, sha256: 'a'.repeat(64), latestVersion: '0.7.40' }, { currentVersion: '0.7.38', strict: true }).join('\n'), /package\.json/);
+  assert.match(validateUpdateManifest({ ...base, sha256: 'a'.repeat(64), packageUrl: base.packageUrl.replace('0.7.39', '0.7.38') }, { currentVersion: '0.7.39', strict: true }).join('\n'), /packageUrl/);
+});
+
+test('custom manifest URL does not derive public mirrors and keeps configured mirrors', () => {
+  process.env.SANMAO_UPDATE_MANIFEST_URL = 'https://example.com/sanmao/update.json';
+  process.env.SANMAO_UPDATE_MANIFEST_MIRRORS = 'https://mirror.example.com/sanmao/update.json,https://cdn.example.com/sanmao/update.json';
+  assert.deepEqual(update.manifestUrlCandidates(), [
+    'https://example.com/sanmao/update.json',
+    'https://mirror.example.com/sanmao/update.json',
+    'https://cdn.example.com/sanmao/update.json',
+  ]);
+});
+
+test('manifest check falls back from a failing GitHub URL to a mirror', async () => {
+  process.env.SANMAO_UPDATE_MANIFEST_URL = 'https://raw.example.test/fail.json';
+  process.env.SANMAO_UPDATE_MANIFEST_MIRRORS = 'https://cdn.example.test/ok.json';
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    calls.push(value);
+    if (value === 'https://raw.example.test/fail.json') {
+      return new Response('not found', { status: 404 });
+    }
+    if (value === 'https://cdn.example.test/ok.json') {
+      return new Response(JSON.stringify({
+        schemaVersion: 1,
+        latestVersion: '9.9.9',
+        releaseUrl: 'https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v9.9.9',
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('', { status: 404 });
+  };
+
+  const status = await update.getUpdateStatus(true);
+  assert.equal(status.latestVersion, '9.9.9');
+  assert.equal(status.hasUpdate, true);
+  assert.deepEqual(calls, ['https://raw.example.test/fail.json', 'https://cdn.example.test/ok.json']);
+});
+
+test('manifest check selects the newest successful source instead of the fastest stale mirror', async () => {
+  process.env.SANMAO_UPDATE_MANIFEST_URL = 'https://mirror.example.test/old/update.json';
+  process.env.SANMAO_UPDATE_MANIFEST_MIRRORS = 'https://mirror.example.test/new/update.json';
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    const version = value.includes('/old/') ? '0.7.18' : '0.7.20';
+    await new Promise((resolve) => setTimeout(resolve, version === '0.7.18' ? 5 : 25));
+    return new Response(JSON.stringify({
+      schemaVersion: 1,
+      latestVersion: version,
+      releaseUrl: `https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v${version}`,
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  const status = await update.getUpdateStatus(true);
+  assert.equal(status.latestVersion, '0.7.20');
+  assert.equal(status.hasUpdate, true);
+});
+
+test('manifest check prefers a complete same-version mirror over an incomplete one', async () => {
+  process.env.SANMAO_UPDATE_MANIFEST_URL = 'https://mirror.example.test/incomplete/update.json';
+  process.env.SANMAO_UPDATE_MANIFEST_MIRRORS = 'https://mirror.example.test/complete/update.json';
+  globalThis.fetch = async (url) => new Response(JSON.stringify({
+    schemaVersion: 1,
+    latestVersion: '0.7.20',
+    releaseUrl: 'https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.20',
+    ...(String(url).includes('/complete/') ? {
+      packageUrl: 'https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.20/SANMAO.AI-0.7.20.zip',
+      sha256: 'a'.repeat(64),
+    } : {}),
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+
+  const status = await update.getUpdateStatus(true);
+  assert.equal(status.latestVersion, '0.7.20');
+  assert.equal(status.canApply, true);
+  assert.equal(status.sha256, 'a'.repeat(64));
+});
+
+test('manifest check returns an error status when every source fails', async () => {
+  delete process.env.SANMAO_UPDATE_MANIFEST_URL;
+  delete process.env.SANMAO_UPDATE_MANIFEST_MIRRORS;
+  globalThis.fetch = async () => new Response('', { status: 502 });
+
+  const status = await update.getUpdateStatus(true);
+  assert.equal(status.configured, true);
+  assert.ok(status.error || typeof status.latestVersion === 'string');
+});
+
+test('package sources prefer declared mirrors and cap the candidate list', () => {
+  process.env.SANMAO_UPDATE_MIRRORS = 'https://mirror.example.com/sanmao/releases/download/v1/app.zip';
+  process.env.SANMAO_UPDATE_GITHUB_PROXIES = 'https://proxy.example/';
+  const status = {
+    packageUrl: 'https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
+    mirrorUrls: [
+      'https://gitee.com/o/r/releases/download/v1/app.zip',
+      'https://oss.example.com/sanmao-v1.zip',
+      'http://insecure.example.com/app.zip',
+      'https://user:pass@credential.example.com/app.zip',
+    ],
+  };
+
+  assert.deepEqual(local.packageSourceCandidates(status), [
+    'https://gitee.com/o/r/releases/download/v1/app.zip',
+    'https://oss.example.com/sanmao-v1.zip',
+    'https://mirror.example.com/sanmao/releases/download/v1/app.zip',
+    'https://proxy.example/https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
+    'https://proxy.example/https://github.com/o/r/archive/refs/tags/v1.zip',
+    'https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
+  ]);
+});
+
+test('package download falls back to the next source and still checks SHA-256', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sanmao-update-test-'));
+  const destination = join(directory, 'app.zip');
+  const body = 'sanmao-package-body';
+  const sha256 = createHash('sha256').update(body).digest('hex');
+  const attempts = [];
+
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    const version = value.includes('/old/') ? '0.7.18' : '0.7.20';
+    await new Promise((resolve) => setTimeout(resolve, version === '0.7.18' ? 5 : 25));
+    return new Response(JSON.stringify({
+      schemaVersion: 1,
+      latestVersion: version,
+      releaseUrl: `https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v${version}`,
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  const status = await update.getUpdateStatus(true);
+  assert.equal(status.latestVersion, '0.7.20');
+  assert.equal(status.hasUpdate, true);
+});
+
+test('manifest check returns an error status when every source fails', async () => {
+  delete process.env.SANMAO_UPDATE_MANIFEST_URL;
+  delete process.env.SANMAO_UPDATE_MANIFEST_MIRRORS;
+  globalThis.fetch = async () => new Response('', { status: 502 });
+
+  const status = await update.getUpdateStatus(true);
+  assert.equal(status.configured, true);
+  assert.ok(status.error || typeof status.latestVersion === 'string');
+});
+
+test('package sources prefer declared mirrors and cap the candidate list', () => {
+  process.env.SANMAO_UPDATE_MIRRORS = 'https://mirror.example.com/sanmao/releases/download/v1/app.zip';
+  process.env.SANMAO_UPDATE_GITHUB_PROXIES = 'https://proxy.example/';
+  const status = {
+    packageUrl: 'https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
+    mirrorUrls: [
+      'https://gitee.com/o/r/releases/download/v1/app.zip',
+      'https://oss.example.com/sanmao-v1.zip',
+      'http://insecure.example.com/app.zip',
+      'https://user:pass@credential.example.com/app.zip',
+    ],
+  };
+
+  assert.deepEqual(local.packageSourceCandidates(status), [
+    'https://gitee.com/o/r/releases/download/v1/app.zip',
+    'https://oss.example.com/sanmao-v1.zip',
+    'https://mirror.example.com/sanmao/releases/download/v1/app.zip',
+    'https://proxy.example/https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
+    'https://proxy.example/https://github.com/o/r/archive/refs/tags/v1.zip',
+    'https://codeload.github.com/o/r/zip/refs/tags/v1.zip',
+  ]);
+});
+
+test('package download falls back to the next source and still checks SHA-256', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sanmao-update-test-'));
+  const destination = join(directory, 'app.zip');
+  const body = 'sanmao-package-body';
+  const sha256 = createHash('sha256').update(body).digest('hex');
+  const attempts = [];
+
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value === 'https://bad.example.com/app.zip') return new Response('bad', { status: 403 });
+    if (value === 'https://mirror.example.com/app.zip') {
+      return new Response(body, { status: 200, headers: { 'content-length': String(body.length) } });
+    }
+    return new Response('', { status: 404 });
+  };
+
+  try {
+    const result = await local.downloadFromSources(
+      ['https://bad.example.com/app.zip', 'https://mirror.example.com/app.zip'],
+      destination,
+      sha256,
+      (index, total) => attempts.push([index, total]),
+    );
+    assert.equal(result.bytes, body.length);
+    assert.equal(result.sha256, sha256);
+    assert.ok(attempts.length >= 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('package download rejects a mirror whose bytes do not match SHA-256', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sanmao-update-test-'));
+  const destination = join(directory, 'app.zip');
+  const sha256 = createHash('sha256').update('expected-body').digest('hex');
+
+  globalThis.fetch = async () => new Response('unexpected-body', { status: 200 });
+  try {
+    await assert.rejects(
+      () => local.downloadFromSources(['https://mirror.example.com/app.zip'], destination, sha256, () => {}),
+      /SHA-256/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(directory, { recursive: true, force: true });
+  }
+});

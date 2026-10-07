@@ -1,0 +1,425 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
+
+async function loadTypeScript(path) {
+  const sourceUrl = new URL(path, import.meta.url);
+  const source = await readFile(sourceUrl, 'utf8');
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    fileName: sourceUrl.pathname,
+  }).outputText;
+  return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+}
+
+const editor = await loadTypeScript('../lib/canvas/video-editor.ts');
+const sync = createTsRequire(process.cwd())('./lib/canvas/video-editor-sync');
+const textLayout = await loadTypeScript('../lib/canvas/text-layout.ts');
+const modelSource = await readFile(new URL('../lib/canvas/model.ts', import.meta.url), 'utf8');
+const componentSource = (await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8'))
+  .concat('\n', await readFile(new URL('../components/canvas/CanvasNodeCard.tsx', import.meta.url), 'utf8'));
+const nodeSource = await readFile(new URL('../components/VideoEditorNode.tsx', import.meta.url), 'utf8');
+const connectionCommandSource = await readFile(new URL('../lib/canvas/connection-command.ts', import.meta.url), 'utf8');
+const workbenchSource = await readFile(new URL('../components/VideoEditorWorkbench.tsx', import.meta.url), 'utf8');
+const exportSource = await readFile(new URL('../lib/canvas/video-export.ts', import.meta.url), 'utf8');
+const canvasCssSource = (await readFile(new URL('../app/canvas.css', import.meta.url), 'utf8'))
+  .concat('\n', await readFile(new URL('../app/canvas-video-editor.css', import.meta.url), 'utf8'));
+const cursorCssSource = await readFile(new URL('../app/cursor.css', import.meta.url), 'utf8');
+
+test('creates default video editor clips and keeps manual edits during input sync', () => {
+  const initial = editor.createVideoEditorState([
+    { nodeId: 'image-1', kind: 'image', name: '封面' },
+    { nodeId: 'audio-1', kind: 'audio', name: '配乐' },
+  ]);
+  assert.equal(initial.clips.find((clip) => clip.sourceNodeId === 'image-1').duration, 3);
+  assert.equal(initial.clips.find((clip) => clip.sourceNodeId === 'audio-1').duration, 20);
+
+  const edited = editor.updateVideoEditorClip(initial, 'clip-image-1', { start: 4, duration: 7 });
+  const synced = editor.syncVideoEditorInputs(edited, [
+    { nodeId: 'image-1', kind: 'image', name: '封面' },
+    { nodeId: 'audio-1', kind: 'audio', name: '配乐' },
+    { nodeId: 'video-1', kind: 'video', name: '主视频', durationSeconds: 5.2 },
+  ]);
+  assert.deepEqual(
+    synced.clips.find((clip) => clip.sourceNodeId === 'image-1'),
+    edited.clips.find((clip) => clip.sourceNodeId === 'image-1'),
+  );
+  assert.equal(synced.clips.find((clip) => clip.sourceNodeId === 'video-1').duration, 5.2);
+  assert.equal(synced.clips.find((clip) => clip.sourceNodeId === 'video-1').playbackRate, 1);
+  assert.equal(synced.clips.find((clip) => clip.sourceNodeId === 'video-1').fit, 'contain');
+});
+
+test('projects connected media into video editor nodes without mutating the input document', () => {
+  const image = { id: 'image-1', type: 'media', x: 0, y: 0, data: { kind: 'image', url: '/image.png', name: '封面' } };
+  const editorNode = {
+    id: 'editor-1',
+    type: 'video-editor',
+    x: 200,
+    y: 0,
+    data: { videoEditor: undefined },
+  };
+  const document = {
+    version: '1',
+    nodes: [image, editorNode],
+    groups: [],
+    edges: [{ id: 'edge-1', source: image.id, target: editorNode.id }],
+    camera: { x: 0, y: 0, zoom: 1 },
+  };
+
+  const next = sync.syncCanvasVideoEditorReferences(document);
+  assert.equal(document.nodes[1].data.videoEditor, undefined);
+  assert.equal(next.nodes.find((node) => node.id === editorNode.id).data.videoEditor.clips[0].sourceNodeId, image.id);
+  assert.equal(next.nodes.find((node) => node.id === editorNode.id).data.videoEditor.clips[0].name, '封面');
+});
+
+test('removes disconnected source clips but preserves internal captions', () => {
+  let state = editor.createVideoEditorState([{ nodeId: 'video-1', kind: 'video' }]);
+  state = editor.addVideoEditorCaption(state, '标题', 1, 2);
+  const synced = editor.syncVideoEditorInputs(state, []);
+  assert.equal(synced.clips.some((clip) => clip.sourceNodeId === 'video-1'), false);
+  assert.equal(synced.clips.some((clip) => clip.type === 'caption'), true);
+});
+
+test('places added captions after an occupied caption range', () => {
+  let state = editor.createVideoEditorState([{ nodeId: 'video-1', kind: 'video' }]);
+  state = editor.addVideoEditorCaption(state, '第一条', 0, 3);
+  state = editor.addVideoEditorCaption(state, '第二条', 0, 3);
+  const captions = state.clips.filter((clip) => clip.track === 'caption');
+  assert.equal(captions.length, 2);
+  assert.equal(captions[1].start, 3);
+  assert.equal(editor.clipsAtTime(state, 1).filter((clip) => clip.track === 'caption').length, 1);
+  assert.equal(editor.clipsAtTime(state, 3).filter((clip) => clip.track === 'caption').length, 1);
+});
+
+test('preserves source-less effect clips during connected-input reconciliation', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 2,
+    clips: [{ id: 'flash', track: 'effect', type: 'effect', name: 'flash', effect: 'flash', start: 0.2, duration: 0.3, sourceOffset: 0 }],
+  });
+  const synced = editor.syncVideoEditorInputs(state, []);
+  assert.equal(synced.clips[0].track, 'effect');
+  assert.equal(synced.clips[0].effect, 'flash');
+});
+
+test('ducks reference ambience only while an audible A1 voice clip is active', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 5,
+    referenceAudioDucking: true,
+    mutedTracks: [],
+    clips: [
+      { id: 'voice', track: 'audio', type: 'audio', name: 'A1', start: 1, duration: 2, sourceOffset: 0, volume: 1 },
+      { id: 'ambience', track: 'reference-audio', type: 'audio', name: 'A2', start: 0, duration: 5, sourceOffset: 0, volume: 0.35 },
+    ],
+  });
+  assert.equal(editor.videoEditorAudioGain(state, state.clips[1], 0), 0.35);
+  assert.equal(editor.videoEditorAudioGain(state, state.clips[1], 1.5), 0.35 * 0.22);
+  assert.equal(editor.videoEditorAudioGain(state, state.clips[1], 3.5), 0.35);
+});
+
+test('guards split and trim boundaries and supports track reorder', () => {
+  const state = editor.createVideoEditorState([
+    { nodeId: 'a', kind: 'video', durationSeconds: 8 },
+    { nodeId: 'b', kind: 'image' },
+  ]);
+  assert.equal(editor.splitVideoEditorClip(state, 'clip-a', 0), state);
+  const split = editor.splitVideoEditorClip(state, 'clip-a', 3);
+  assert.equal(split.clips.filter((clip) => clip.sourceNodeId === 'a').length, 2);
+  const trimmed = editor.trimVideoEditorClip(state, 'clip-a', 2, 5);
+  assert.equal(trimmed.clips.find((clip) => clip.id === 'clip-a').start, 2);
+  assert.equal(trimmed.clips.find((clip) => clip.id === 'clip-a').duration, 3);
+  const reordered = editor.reorderVideoEditorClips(state, 'video', ['clip-b', 'clip-a']);
+  assert.equal(reordered.clips.find((clip) => clip.id === 'clip-b').start, 0);
+});
+
+test('speed changes preserve the source range while timeline trim and split stay in sync', () => {
+  const state = editor.createVideoEditorState([{ nodeId: 'video-1', kind: 'video', durationSeconds: 8 }]);
+  const doubled = editor.updateVideoEditorClip(state, 'clip-video-1', { playbackRate: 2 });
+  const doubledClip = doubled.clips.find((clip) => clip.id === 'clip-video-1');
+  assert.equal(doubledClip.duration, 4);
+
+  const split = editor.splitVideoEditorClip(doubled, doubledClip.id, 1.5);
+  const second = split.clips.find((clip) => clip.id.endsWith('-split-1500'));
+  assert.equal(second.sourceOffset, 3);
+  assert.equal(second.duration, 2.5);
+
+  const trimmed = editor.trimVideoEditorClip(doubled, doubledClip.id, 1, 3);
+  const trimmedClip = trimmed.clips.find((clip) => clip.id === doubledClip.id);
+  assert.equal(trimmedClip.sourceOffset, 2);
+  assert.equal(trimmedClip.duration, 2);
+});
+
+test('moves clips to timeline zero and normalizes project output settings and transforms', () => {
+  let state = editor.createVideoEditorState([{ nodeId: 'video-1', kind: 'video', durationSeconds: 8 }]);
+  state = editor.updateVideoEditorClip(state, 'clip-video-1', { start: 4, scale: 2.25, x: 0.4, y: -0.2, opacity: 0.75 });
+  state = editor.moveVideoEditorClip(state, 'clip-video-1', 0);
+  const clip = state.clips.find((item) => item.id === 'clip-video-1');
+  assert.equal(clip.start, 0);
+  assert.equal(clip.scale, 2.25);
+  assert.equal(clip.x, 0.4);
+  assert.equal(clip.y, -0.2);
+  assert.equal(clip.opacity, 0.75);
+  const normalized = editor.normalizeVideoEditorState({ ...state, aspect: '9:16', resolution: '4K' });
+  assert.equal(normalized.aspect, '9:16');
+  assert.equal(normalized.resolution, '4K');
+});
+
+test('keeps video clips sequential and free of overlaps after move and trim', () => {
+  const state = editor.createVideoEditorState([
+    { nodeId: 'video-a', kind: 'video', durationSeconds: 4 },
+    { nodeId: 'video-b', kind: 'video', durationSeconds: 5 },
+  ]);
+  const first = state.clips.find((clip) => clip.id === 'clip-video-a');
+  const second = state.clips.find((clip) => clip.id === 'clip-video-b');
+  assert.equal(second.start, first.start + first.duration);
+
+  const moved = editor.moveVideoEditorClip(state, second.id, 0);
+  assert.ok(moved.clips.find((clip) => clip.id === second.id).start >= first.start + first.duration);
+  const trimmed = editor.trimVideoEditorClip(state, first.id, 0, 99);
+  assert.ok(
+    editor.clipEnd(trimmed.clips.find((clip) => clip.id === first.id))
+      <= trimmed.clips.find((clip) => clip.id === second.id).start,
+  );
+
+  const repaired = editor.normalizeVideoEditorState({
+    ...state,
+    clips: state.clips.map((clip) => clip.id === second.id ? { ...clip, start: 1 } : clip),
+  });
+  assert.ok(repaired.clips.find((clip) => clip.id === second.id).start >= first.start + first.duration);
+});
+
+test('drags a flush clip away from its neighbour instead of freezing it', () => {
+  const state = editor.createVideoEditorState([
+    { nodeId: 'video-a', kind: 'video', durationSeconds: 4 },
+    { nodeId: 'video-b', kind: 'video', durationSeconds: 5 },
+  ]);
+  const first = state.clips.find((clip) => clip.id === 'clip-video-a');
+  const second = state.clips.find((clip) => clip.id === 'clip-video-b');
+  assert.equal(second.start, first.duration);
+
+  const moved = editor.moveVideoEditorClip(state, first.id, 2);
+  const movedFirst = moved.clips.find((clip) => clip.id === first.id);
+  const movedSecond = moved.clips.find((clip) => clip.id === second.id);
+  assert.equal(movedFirst.start, 2);
+  assert.equal(movedFirst.duration, first.duration);
+  assert.equal(movedSecond.start, 6);
+
+  const trimmed = editor.trimVideoEditorClip(state, first.id, 0, 6);
+  assert.equal(editor.clipEnd(trimmed.clips.find((clip) => clip.id === first.id)), 6);
+  assert.equal(trimmed.clips.find((clip) => clip.id === second.id).start, 6);
+
+  const shortened = editor.trimVideoEditorClip(state, second.id, 5, 9);
+  const shortenedSecond = shortened.clips.find((clip) => clip.id === second.id);
+  assert.equal(shortenedSecond.start, 5);
+  assert.equal(shortenedSecond.duration, 4);
+});
+
+test('canvas recognizes the editor as a node but not as a rendered media source', () => {
+  assert.match(modelSource, /value === "video-editor"/);
+  assert.match(modelSource, /type: "video-editor"/);
+  assert.match(componentSource, /<VideoEditorWorkbench/);
+  assert.match(connectionCommandSource, /当前只保存编辑计划，暂不输出视频素材/);
+  assert.match(componentSource, /if \(node\.type === "video-editor"\) onOpenVideoEditor\(\)/);
+  assert.match(nodeSource, /多轨剪辑、裁剪、分割和字幕/);
+});
+
+test('video editor nodes bypass the generic prompt editor while ordinary nodes keep it', () => {
+  const toggleStart = componentSource.indexOf('const toggleEditor = useCallback');
+  const toggleEnd = componentSource.indexOf('useEffect(() => {', toggleStart);
+  assert.ok(toggleStart >= 0 && toggleEnd > toggleStart, 'generic editor toggle should exist');
+  const toggle = componentSource.slice(toggleStart, toggleEnd);
+  assert.match(toggle, /if \(node\.type === "video-editor"\) \{[\s\S]*?setExpandedEditorId\(null\)[\s\S]*?return;/);
+  assert.match(toggle, /setExpandedEditorId\(node\.id\)/);
+  assert.match(componentSource, /if \(node && \(expandedEditorId !== node\.id \|\| node\.type === "video-editor"\)\) toggleEditor\(node\);/);
+  assert.match(componentSource, /if \(!editorNode \|\| editorNode\.type === "video-editor"\) return null;/);
+  assert.match(componentSource, /if \(node\.type === "video-editor"\) onOpenVideoEditor\(\)/);
+});
+
+test('workbench keeps edits as a draft and creates a separate video clip node', () => {
+  assert.match(workbenchSource, /onCreate: \(state: CanvasVideoEditorState, selectedClipId: string \| null\) => void/);
+  assert.doesNotMatch(workbenchSource, /onChange:\s*\(state: CanvasVideoEditorState/);
+  assert.match(workbenchSource, /trimVideoEditorClip/);
+  assert.match(workbenchSource, /canvas-video-editor-trim start/);
+  assert.match(workbenchSource, /创建剪辑/);
+  assert.match(workbenchSource, /<audio ref=\{audioRef\}/);
+  assert.match(workbenchSource, /setFuture/);
+  assert.match(workbenchSource, /Ctrl\+Z/);
+  assert.match(componentSource, /const createVideoEditorClip = useCallback/);
+  assert.match(componentSource, /videoClip: clip/);
+  assert.match(componentSource, /onCreate=\{\(draft, selectedClipId\) => createVideoEditorClip/);
+  assert.match(componentSource, /setVideoEditorNodeId\(null\)/);
+});
+
+test('fit mode keeps the project viewport ratio and contains the source media', () => {
+  assert.match(workbenchSource, /const projectAspect = aspectRatioFromText\(draft\.aspect\) \|\| 16 \/ 9/);
+  assert.match(workbenchSource, /const previewAspect = projectAspect/);
+  assert.match(workbenchSource, /previewContainsSource/);
+  assert.match(workbenchSource, /translate\(0px, 0px\) scale\(1\)/);
+  assert.match(workbenchSource, /objectFit: activeVideo\?\.fit \|\| "contain"/);
+  assert.match(workbenchSource, /\(currentTime - activeVideo\.start\) \* playbackRate/);
+  assert.match(workbenchSource, /\(event\.currentTarget\.currentTime - activeVideo\.sourceOffset\) \/ playbackRate/);
+  assert.match(componentSource, /sourceClip\.duration \* \(sourceClip\.playbackRate \?\? 1\)/);
+  assert.match(canvasCssSource, /canvas-workbench-head-actions>button:not\(\.canvas-video-editor-create\)/);
+  assert.match(canvasCssSource, /canvas-video-editor-create\{width:auto!important;min-width:82px/);
+  assert.match(canvasCssSource, /canvas-video-editor-preview\{[^}]*box-sizing:border-box/);
+  assert.match(canvasCssSource, /canvas-video-editor-preview img,\.canvas-video-editor-preview video\{[^}]*min-width:0;min-height:0/);
+  assert.match(workbenchSource, /项目比例/);
+  assert.match(workbenchSource, /项目分辨率/);
+  assert.match(workbenchSource, /素材缩放/);
+  assert.match(workbenchSource, /素材 X 位置/);
+  assert.match(workbenchSource, /beginMove/);
+});
+
+test('workbench follows direct-manipulation editing shortcuts and project tokens', () => {
+  assert.match(workbenchSource, /timeFromClientX/);
+  assert.match(workbenchSource, /beginScrub/);
+  assert.match(workbenchSource, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(workbenchSource, /event\.key\.toLowerCase\(\) === "s"/);
+  assert.match(workbenchSource, /event\.key === "Delete" \|\| event\.key === "Backspace"/);
+  assert.match(workbenchSource, /canvas-video-editor-timeline-actions/);
+  assert.match(workbenchSource, /timelineLabelWidth/);
+  assert.match(canvasCssSource, /canvas-video-editor-workbench\{--node-color:var\(--accent\)/);
+  assert.match(canvasCssSource, /canvas-video-editor-timeline-actions/);
+});
+
+test('editor exports the complete timeline and presents a large desktop workbench', () => {
+  assert.match(exportSource, /renderCanvasVideoEditor/);
+  assert.match(exportSource, /canvas\.captureStream/);
+  assert.match(exportSource, /MediaStreamAudioDestinationNode/);
+  assert.match(exportSource, /hasIndependentAudio/);
+  assert.match(exportSource, /videoEditorAudioGain/);
+  assert.match(exportSource, /hasIndependentAudio && item\.clip\.track === "video"/);
+  assert.match(exportSource, /drawCaption/);
+  assert.match(exportSource, /graphicsStyle/);
+  assert.match(componentSource, /renderCanvasVideoEditor\(draft, renderSources\)/);
+  assert.match(componentSource, /视频编辑成片/);
+  assert.match(componentSource, /source: editorNode\.id/);
+  assert.match(workbenchSource, /key === "j"/);
+  assert.match(workbenchSource, /key === "k"/);
+  assert.match(workbenchSource, /key === "l"/);
+  assert.match(workbenchSource, /setInPoint/);
+  assert.match(workbenchSource, /handleTimelineWheel/);
+  assert.match(canvasCssSource, /canvas-video-editor-workbench\{width:min\(1540px/);
+  assert.match(workbenchSource, /activeAudioClips\.length > 0/);
+  assert.match(workbenchSource, /入场转场/);
+  assert.match(workbenchSource, /运动路径/);
+  assert.match(exportSource, /transitionProgress/);
+  assert.match(exportSource, /videoEditorMotionTransform/);
+  assert.match(exportSource, /drawEffectOverlays/);
+  assert.match(exportSource, /clip\.track === "effect"/);
+});
+
+test('video split/delete ripple linked audio and captions with source offsets intact', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 8,
+    fps: 30,
+    aspect: '16:9',
+    mutedTracks: [],
+    disabledTracks: [],
+    clips: [
+      { id: 'video', shotIndex: 4, track: 'video', type: 'video', name: 'V1', start: 0, duration: 8, sourceOffset: 0 },
+      { id: 'voice', shotIndex: 4, track: 'audio', type: 'audio', name: 'A1', start: 0, duration: 8, sourceOffset: 1 },
+      { id: 'caption', shotIndex: 4, track: 'caption', type: 'caption', name: 'T1', start: 2, duration: 4, sourceOffset: 0, text: '字幕' },
+    ],
+  });
+  const split = editor.splitVideoEditorClip(state, 'video', 3);
+  assert.equal(split.clips.filter((clip) => clip.track === 'video').length, 2);
+  assert.equal(split.clips.filter((clip) => clip.track === 'audio').length, 2);
+  assert.equal(split.clips.filter((clip) => clip.track === 'caption').length, 2);
+  assert.equal(split.clips.find((clip) => clip.track === 'audio' && clip.start === 3).sourceOffset, 4);
+
+  const deleted = editor.removeVideoEditorClip(split, 'video');
+  assert.equal(deleted.clips.find((clip) => clip.track === 'video' && clip.start === 0).duration, 5);
+  assert.equal(deleted.clips.some((clip) => clip.track === 'video' && clip.start === 3), false);
+  assert.equal(deleted.clips.find((clip) => clip.track === 'audio' && clip.start === 0).duration, 5);
+  assert.equal(deleted.clips.some((clip) => clip.track === 'caption' && clip.start >= 3), false);
+  assert.equal(deleted.projectDuration, 5);
+});
+
+test('normalizes reference card text boxes without allowing overflow', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 2,
+    clips: [{ id: 'card', track: 'graphics', type: 'caption', name: 'card', start: 0, duration: 2, sourceOffset: 0, text: 'Title', textBox: { x: 0.9, y: 0.8, width: 0.6, height: 0.5 } }],
+  });
+  assert.deepEqual(state.clips[0].textBox, { x: 0.9, y: 0.8, width: 0.1, height: 0.2 });
+});
+
+test('shared text layout wraps mixed scripts and fits long cards inside their box', () => {
+  const measure = (value, fontSize) => [...value].reduce((total, character) => total + (/[^\x00-\xff]/u.test(character) ? fontSize : fontSize * 0.56), 0);
+  const wrapped = textLayout.wrapCanvasText('中文标题 A-very-long-word', 120, measure, 24);
+  assert.ok(wrapped.length > 1);
+  assert.equal(wrapped.join(''), '中文标题 A-very-long-word');
+  const fitted = textLayout.fitCanvasText({ text: '这是一个非常长的画面字卡标题，用于测试边界保护', fontSize: 48, minFontSize: 12, maxWidth: 180, maxHeight: 18, measure });
+  assert.ok(fitted.fontSize <= 48);
+  assert.ok(fitted.width <= 180);
+  assert.ok(fitted.height <= 18);
+  assert.ok(fitted.lines.join('').endsWith('…'));
+});
+
+test('normalizes recovered composition regions without allowing overflow', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 2,
+    clips: [{ id: 'layout', track: 'video', type: 'image', name: 'layout', start: 0, duration: 2, sourceOffset: 0, layout: {
+      mode: 'card',
+      primary: { x: 0.9, y: 0.8, width: 0.6, height: 0.5, radius: 0.8 },
+    } }],
+  });
+  assert.deepEqual(state.clips[0].layout?.primary, { x: 0.9, y: 0.8, width: 0.1, height: 0.2, radius: 0.5 });
+});
+
+test('workbench keeps timeline gestures local and exposes professional timeline controls', () => {
+  assert.match(workbenchSource, /canvas-video-editor-timeline-layout/);
+  assert.match(workbenchSource, /toggleVideoEditorTrackEnabled/);
+  assert.match(workbenchSource, /event\.altKey/);
+  assert.match(workbenchSource, /timeDisplayMode/);
+  assert.match(workbenchSource, /markedRange/);
+  assert.match(workbenchSource, /control\.blur\(\)/);
+  assert.doesNotMatch(workbenchSource, /setSelectedClipId\(clip\.id\); seek\(clip\.start\)/);
+  assert.match(exportSource, /media\.readyState < 1/);
+  assert.match(canvasCssSource, /canvas-video-editor-track-label-column/);
+  assert.match(canvasCssSource, /canvas-video-editor-mark-range/);
+  assert.match(canvasCssSource, /tool-razor/);
+  assert.match(cursorCssSource, /sanmao-razor\.svg/);
+  assert.match(workbenchSource, /backdropPointerRef/);
+  assert.match(workbenchSource, /Math\.hypot/);
+  assert.match(workbenchSource, /onClick={closeBackdropOnClick}/);
+});
+
+test('node context menu handles each exact node type once and closes the editor action', () => {
+  const source = ts.createSourceFile(
+    'SuperCanvas.tsx', componentSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX,
+  );
+  let menu;
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'contextMenuGroups') {
+      menu = node.initializer;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  assert.ok(menu && ts.isCallExpression(menu), 'node context menu memo must exist');
+  const [builder, dependencies] = menu.arguments;
+  assert.ok(ts.isArrowFunction(builder) && ts.isBlock(builder.body));
+  const branches = builder.body.statements.filter((statement) => {
+    if (!ts.isIfStatement(statement)) return false;
+    const condition = statement.expression;
+    return ts.isBinaryExpression(condition)
+      && condition.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+      && ts.isPropertyAccessExpression(condition.left)
+      && condition.left.expression.getText(source) === 'node'
+      && condition.left.name.text === 'type'
+      && ts.isStringLiteral(condition.right);
+  });
+  const types = branches.map((branch) => branch.expression.right.text);
+  assert.equal(new Set(types).size, types.length, 'duplicate type branches can become unreachable');
+  const editorBranches = branches.filter((branch) => branch.expression.right.text === 'video-editor');
+  assert.equal(editorBranches.length, 1, 'video editor must have exactly one menu branch');
+  const actions = editorBranches[0].thenStatement.getText(source);
+  assert.match(actions, /id: "open-video-editor"/);
+  assert.match(actions, /onClick: close\(\(\) => openCanvasVideoEditor\(node\.id\)\)/);
+  assert.ok(ts.isArrayLiteralExpression(dependencies));
+  const names = dependencies.elements.map((element) => element.getText(source));
+  assert.equal(names.filter((name) => name === 'openCanvasVideoEditor').length, 1);
+  assert.ok(names.includes('deleteSelection'), 'menu must track the current selection handler');
+});

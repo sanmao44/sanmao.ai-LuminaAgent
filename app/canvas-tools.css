@@ -1,0 +1,21 @@
+/* Blank-canvas tools stay compact and use one flat action list. */
+.canvas-tools-context-menu{width:min(252px,calc(100vw - 16px));padding:7px}
+.canvas-tools-context-menu .canvas-menu-title{padding:3px 5px 6px}
+.canvas-tools-context-menu .canvas-menu-title small{display:none}
+.canvas-tools-context-menu .canvas-menu-item{min-height:39px;gap:8px;padding:5px 6px;border-radius:10px}
+.canvas-tools-context-menu .canvas-menu-item+.canvas-menu-item{margin-top:2px}
+.canvas-tools-context-menu .canvas-menu-icon{width:28px;height:28px;border-radius:8px;font-size:13px}
+.canvas-tools-context-menu .canvas-menu-item-tool .canvas-menu-icon{font-size:15px}
+.canvas-tools-context-menu .canvas-menu-item-danger{color:var(--danger)}
+.canvas-tools-context-menu .canvas-menu-item-danger .canvas-menu-icon{border-color:color-mix(in srgb,var(--danger) 34%,var(--line));background:var(--danger-soft);color:var(--danger)}
+.canvas-tools-context-menu .canvas-menu-item-danger .canvas-menu-copy b{color:var(--danger)}
+.canvas-tools-context-menu .canvas-menu-item-danger:hover{border-color:color-mix(in srgb,var(--danger) 42%,var(--line));background:var(--danger-soft);box-shadow:none}
+.canvas-tools-context-menu .canvas-menu-copy{gap:0}
+.canvas-tools-context-menu .canvas-menu-copy b{font-size:10px}
+.canvas-tools-context-menu .canvas-menu-copy small{display:none}
+.canvas-tools-context-menu .canvas-menu-shortcut{flex:none;max-width:none;margin-left:auto!important;color:var(--muted);font-size:8px!important;font-weight:750;line-height:1;white-space:nowrap}
+.canvas-tools-context-menu .canvas-menu-divider{height:1px;margin:5px 6px;background:color-mix(in srgb,var(--line) 82%,transparent)}
+.canvas-tools-context-menu .canvas-menu-item:disabled{opacity:.42;cursor:not-allowed}
+.canvas-tools-context-menu .canvas-menu-item:disabled:hover{border-color:transparent;background:transparent;box-shadow:none;transform:none}
+.canvas-tools-context-menu .canvas-menu-arrow{font-size:16px}
+@media(max-width:420px){.canvas-tools-context-menu{width:calc(100vw - 16px);padding:6px}.canvas-tools-context-menu .canvas-menu-title{padding-bottom:6px}.canvas-tools-context-menu .canvas-menu-item{min-height:37px}}

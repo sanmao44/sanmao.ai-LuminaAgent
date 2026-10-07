@@ -1,0 +1,1034 @@
+"use client";
+
+/**
+ * 「一键克隆出片」弹窗：选参考图或视频 → 一句话要求 → 后台跑管线 → 放入画布。
+ * 参考素材不只转换成文字：时间结构、卡片/转场关系、原片声音和镜头节奏都会进入本地化成片流程。
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
+import ModelPicker from "@/components/ModelPicker";
+import SelectMenu from "@/components/SelectMenu";
+import { uploadCanvasAsset } from "@/lib/canvas/api";
+import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
+import {
+  CLONE_ASPECTS,
+  CLONE_DEFAULT_MAX_SECONDS,
+  CLONE_DEFAULT_MAX_SHOTS,
+  CLONE_MAX_SECONDS,
+  CLONE_MAX_SHOTS,
+  CLONE_MIN_SECONDS,
+  cloneCapabilityFlags,
+  cloneStageProgress,
+  describeCloneStage,
+} from "@/lib/clone/plan";
+import type { CloneAssetRole, CloneBlueprintVariantPlan, CloneBlueprintVariantSpec, CloneJob, CloneOptions } from "@/lib/clone/types";
+import type { RegistryModel } from "@/lib/types";
+
+export type CanvasCloneReferenceOption = {
+  nodeId: string;
+  name: string;
+  url: string;
+  seconds: number;
+  kind?: "image" | "video";
+};
+export type CanvasCloneAssetOption = {
+  nodeId?: string;
+  name: string;
+  url: string;
+  kind: "image" | "video" | "audio";
+};
+
+type CanvasCloneDialogProps = {
+  references: CanvasCloneReferenceOption[];
+  assets?: CanvasCloneAssetOption[];
+  models: RegistryModel[];
+  defaultProviderId?: string | null;
+  defaultProviderName?: string;
+  preselectedReferenceId?: string | null;
+  /** 从画布多选后进入克隆时，仅把这些非参考素材带入本次任务。 */
+  initialAssetIds?: string[];
+  notify: (message: string, tone?: "ok" | "error") => void;
+  /** 弹窗内直接导入参考素材（复用画布的导入流程，省得用户先关弹窗再去找工具栏）。 */
+  onImportReference?: () => void;
+  onAssetUploaded?: (asset: CanvasCloneAssetOption) => void;
+  onClose: () => void;
+  onApply: (job: CloneJob) => void;
+};
+
+const ASPECT_LABELS: Record<CloneOptions["aspect"], string> = {
+  "9:16": "竖屏 9:16",
+  "16:9": "横屏 16:9",
+  "1:1": "方形 1:1",
+};
+
+const VOICE_PRESETS = ["alloy", "echo", "fable", "nova", "onyx", "shimmer"];
+const TERMINAL_STAGES: CloneJob["stage"][] = ["done", "failed", "cancelled"];
+const PLAN_STAGE: CloneJob["stage"] = "planned";
+/** 失败任务只在 24 小时内自动接回：陈年失败任务否则会永远顶掉向导，每次打开弹窗都得先关掉它。 */
+const RESTORE_FAILED_WINDOW_MS = 24 * 60 * 60 * 1000;
+const SHOT_STATUS_LABELS: Record<string, string> = {
+  pending: "等待",
+  voicing: "配音",
+  imaging: "生图",
+  rendering: "生视频",
+  done: "完成",
+  failed: "失败",
+};
+
+function formatSeconds(value: number) {
+  const seconds = Math.max(0, Number(value) || 0);
+  return seconds >= 60 ? `${Math.floor(seconds / 60)} 分 ${Math.round(seconds % 60)} 秒` : `${Math.round(seconds)} 秒`;
+}
+
+/**
+ * 把这次提交的参数压成一个短键：同样的参数重复点「开始」仍会命中同一个任务（防连点），
+ * 但只要改了要求 / 镜头数 / 模型，就是一条新任务，不会静默拿回上一次的旧成片。
+ */
+function requestKey(value: string) {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) hash = ((hash << 5) + hash + value.charCodeAt(index)) | 0;
+  return (hash >>> 0).toString(36);
+}
+
+function isTransientCloneRequestError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /failed to fetch|networkerror|load failed|network request failed/i.test(message);
+}
+
+function describeCloneRequestError(error: unknown, action: string) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  if (isTransientCloneRequestError(error)) return `无法连接本地任务服务，${action}没有完成。请确认 SANMAO 服务仍在运行后重试；未确认前不会开始生成或消耗额度。`;
+  return message || `${action}失败，请重试。`;
+}
+
+function waitForCloneRetry(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+export default function CanvasCloneDialog({
+  references,
+  assets = [],
+  models,
+  defaultProviderId,
+  defaultProviderName,
+  preselectedReferenceId,
+  initialAssetIds = [],
+  notify,
+  onImportReference,
+  onAssetUploaded,
+  onClose,
+  onApply,
+}: CanvasCloneDialogProps) {
+  const [step, setStep] = useState(preselectedReferenceId ? 2 : 1);
+  const [referenceId, setReferenceId] = useState(preselectedReferenceId || "");
+  const [selectedAssets, setSelectedAssets] = useState<Record<string, CloneAssetRole | "">>({});
+  const [assetNames, setAssetNames] = useState<Record<string, string>>({});
+  const [uploadedAssets, setUploadedAssets] = useState<CanvasCloneAssetOption[]>([]);
+  const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+  const [assetQuery, setAssetQuery] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const [brief, setBrief] = useState("");
+  const [aspect, setAspect] = useState<CloneOptions["aspect"]>("9:16");
+  const [maxShots, setMaxShots] = useState(CLONE_DEFAULT_MAX_SHOTS);
+  const [maxSeconds, setMaxSeconds] = useState(CLONE_DEFAULT_MAX_SECONDS);
+  // 默认留空：OpenAI 系用默认音色，Gitee 这类没有 voice 参数的服务商也不至于被拒。
+  const [voice, setVoice] = useState("");
+  const [preserveReferenceTiming, setPreserveReferenceTiming] = useState(true);
+  const [preserveReferenceAudio, setPreserveReferenceAudio] = useState(true);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [reviewPlanBeforeGeneration, setReviewPlanBeforeGeneration] = useState(false);
+  const [selectedModels, setSelectedModels] = useState({ chat: "auto", image: "auto", video: "auto", speech: "auto" });
+  const [costConfirmed, setCostConfirmed] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [error, setError] = useState("");
+  const [job, setJob] = useState<CloneJob | null>(null);
+  const [planShots, setPlanShots] = useState<CloneJob['shots']>([]);
+  const planJobIdRef = useRef<string | null>(null);
+  const [expandedPlanShot, setExpandedPlanShot] = useState<number | null>(null);
+  // 服务端是否有本机离线配音兜底（Windows / macOS 的系统语音合成）；只在没有在线配音模型时才用得上。
+  const [offlineSpeech, setOfflineSpeech] = useState(false);
+  const [applied, setApplied] = useState(false);
+  // 打开弹窗时先看看有没有上次没跑完 / 还没放进画布的任务：有就接着显示，而不是甩个向导。
+  const [restoring, setRestoring] = useState(true);
+  const [resuming, setResuming] = useState(false);
+  const [rerendering, setRerendering] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [variantComponentId, setVariantComponentId] = useState("");
+  const [variantName, setVariantName] = useState("");
+  const [variantLine, setVariantLine] = useState("");
+  const [variantBatchText, setVariantBatchText] = useState("");
+  const [variantGraphicsText, setVariantGraphicsText] = useState("");
+  const [variantPrompt, setVariantPrompt] = useState("");
+  const [variantPlanning, setVariantPlanning] = useState(false);
+  const [variantPlans, setVariantPlans] = useState<CloneBlueprintVariantPlan[]>([]);
+  const [variantSpecs, setVariantSpecs] = useState<CloneBlueprintVariantSpec[]>([]);
+  const [variantSpec, setVariantSpec] = useState<CloneBlueprintVariantSpec | null>(null);
+  const [variantRendering, setVariantRendering] = useState(false);
+
+  const flags = useMemo(() => cloneCapabilityFlags(models), [models]);
+  const reference = references.find((item) => item.nodeId === referenceId) || null;
+  const allAssets = useMemo(() => [...assets, ...uploadedAssets], [assets, uploadedAssets]);
+  const selectedAssetOptions = useMemo(
+    () => allAssets.filter((asset) => Object.prototype.hasOwnProperty.call(selectedAssets, asset.nodeId || asset.url)),
+    [allAssets, selectedAssets],
+  );
+  const availableCanvasAssets = useMemo(() => {
+    const query = assetQuery.trim().toLocaleLowerCase();
+    return assets.filter((asset) => {
+      const key = asset.nodeId || asset.url;
+      return asset.nodeId !== referenceId
+        && !Object.prototype.hasOwnProperty.call(selectedAssets, key)
+        && (!query || asset.name.toLocaleLowerCase().includes(query));
+    });
+  }, [assetQuery, assets, referenceId, selectedAssets]);
+  const overBudget = maxShots > CLONE_DEFAULT_MAX_SHOTS || maxSeconds > CLONE_DEFAULT_MAX_SECONDS;
+  const running = Boolean(job) && !TERMINAL_STAGES.includes(job!.stage) && job!.stage !== PLAN_STAGE;
+  const planAssetOptions = useMemo(() => job?.assets.filter((asset) => asset.kind === "image" || asset.kind === "audio") || [], [job]);
+  const blueprintComponents = useMemo(() => job?.blueprint?.components || [], [job]);
+
+  useEffect(() => {
+    if (!initialAssetIds.length) return;
+    setSelectedAssets((current) => {
+      if (Object.keys(current).length) return current;
+      return Object.fromEntries(initialAssetIds.map((id) => [id, ""]));
+    });
+  }, [initialAssetIds]);
+
+  useEffect(() => {
+    let disposed = false;
+    void fetch("/api/health", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data) => { if (!disposed && data?.offlineSpeech) setOfflineSpeech(true); })
+      .catch(() => undefined);
+    return () => { disposed = true; };
+  }, []);
+
+  /**
+   * 关掉弹窗不等于任务停了：说清楚，免得用户以为白跑一趟。
+   * 重开弹窗会自动接回这条任务（见下面的恢复逻辑）。
+   */
+  function closeDialog() {
+    if (running) notify("克隆任务在后台继续跑，重开「克隆出片」可查看进度或放入画布", "ok");
+    onClose();
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeDialog();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  /**
+   * 接回最近一条「还在跑」或「出片了但没放进画布」的任务。
+   * 没有这一步，用户关掉弹窗后任务就只剩一个看不见的后台，重开还以为得从头再来。
+   */
+  useEffect(() => {
+    // 用户是从画布某条视频直接点进来的（右键 → 克隆出片）：他要的就是这条新视频，
+    // 别拿一条旧成片顶掉他刚选好的参考素材。
+    if (preselectedReferenceId) {
+      setRestoring(false);
+      return;
+    }
+    let disposed = false;
+    const restore = async () => {
+      try {
+        const listResponse = await fetch("/api/clone/jobs", { cache: "no-store" });
+        const listData = await listResponse.json().catch(() => ({}));
+        const summaries = Array.isArray(listData?.jobs) ? (listData.jobs as { id: string; stage: CloneJob["stage"]; appliedAt?: string; updatedAt?: string; createdAt?: string }[]) : [];
+        // 列表按最新在前：跳过已取消的、已经放入画布的（appliedAt = 已处理过），
+        // 失败任务只接回最近 24 小时的。
+        const pending = summaries.find((item) => {
+          if (item.appliedAt) return false;
+          if (!TERMINAL_STAGES.includes(item.stage)) return true;
+          if (item.stage === "done") return true;
+          if (item.stage !== "failed") return false;
+          const stamp = Date.parse(item.updatedAt || item.createdAt || "");
+          return Number.isFinite(stamp) && Date.now() - stamp < RESTORE_FAILED_WINDOW_MS;
+        });
+        if (!pending) return;
+        const response = await fetch(`/api/clone/jobs/${pending.id}`, { cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (disposed || !response.ok || !data?.job) return;
+        const restored = data.job as CloneJob;
+        setJob(restored);
+        setApplied(Boolean(restored.appliedAt));
+      } catch {
+        // 接不回来就走正常的向导流程，不打断用户。
+      } finally {
+        if (!disposed) setRestoring(false);
+      }
+    };
+    void restore();
+    return () => { disposed = true; };
+  }, [preselectedReferenceId]);
+
+  // 画布里只有一条视频素材时直接选中并进第二步，用户点一下「开始」就能跑（弹窗内新导入也走这条）。
+  useEffect(() => {
+    if (referenceId || job || restoring || references.length !== 1) return;
+    setReferenceId(references[0].nodeId);
+    setStep(2);
+  }, [references, referenceId, job, restoring]);
+
+  const jobId = job?.id || "";
+  const jobStage = job?.stage || "";
+  useEffect(() => {
+    if (!jobId || TERMINAL_STAGES.includes(jobStage as CloneJob["stage"])) return;
+    let disposed = false;
+    const tick = async () => {
+      try {
+        const response = await fetch(`/api/clone/jobs/${jobId}`, { cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (disposed) return;
+        if (!response.ok) throw new Error(data?.error || "读取克隆任务失败。");
+        setJob(data.job as CloneJob);
+        if ((data.job as CloneJob).stage === PLAN_STAGE && reviewPlanBeforeGeneration) setStep(3);
+      } catch (failure) {
+        if (!disposed) setError(failure instanceof Error ? failure.message : "读取克隆任务失败。");
+      }
+    };
+    const timer = window.setInterval(() => void tick(), 1500);
+    void tick();
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [jobId, jobStage, reviewPlanBeforeGeneration]);
+
+  async function start() {
+    if (!reference) {
+      setError("请先选择一条画布中的参考图或参考视频。");
+      setStep(1);
+      return;
+    }
+    if (overBudget && !costConfirmed) {
+      setError("镜头数或时长超出默认成本闸门，请先确认预计消耗。");
+      return;
+    }
+    setStarting(true);
+    setError("");
+    try {
+      const response = await fetch("/api/clone/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reference: { nodeId: reference.nodeId, name: reference.name, url: reference.url, seconds: reference.seconds, kind: reference.kind || "video" },
+          assets: selectedAssetOptions.filter((asset) => asset.nodeId !== reference.nodeId && Object.prototype.hasOwnProperty.call(selectedAssets, asset.nodeId || asset.url)).map((asset) => { const key = asset.nodeId || asset.url; return { ...(asset.nodeId ? { nodeId: asset.nodeId } : {}), name: assetNames[key]?.trim() || asset.name, url: asset.url, kind: asset.kind, ...(selectedAssets[key] ? { role: selectedAssets[key] } : {}) }; }),
+          brief: brief.trim(),
+          options: {
+            brief: brief.trim(),
+            maxShots,
+            maxSeconds,
+            aspect,
+            voice: voice.trim(),
+            preserveReferenceTiming,
+            preserveReferenceAudio,
+          },
+          chatModel: selectedModels.chat,
+          imageModel: selectedModels.image,
+          videoModel: selectedModels.video,
+          speechModel: selectedModels.speech,
+          autoConfirmPlan: !reviewPlanBeforeGeneration,
+          idempotencyKey: `canvas-clone-${reference.nodeId}-${requestKey([
+            brief.trim(), maxShots, maxSeconds, aspect, voice.trim(), preserveReferenceTiming, preserveReferenceAudio, JSON.stringify(selectedAssets),
+            selectedModels.chat, selectedModels.image, selectedModels.video, selectedModels.speech,
+          ].join("|"))}`,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "创建克隆任务失败。");
+        setJob(data.job as CloneJob);
+        if ((data.job as CloneJob).stage === PLAN_STAGE && reviewPlanBeforeGeneration) setStep(3);
+      notify(reviewPlanBeforeGeneration ? "已生成镜头计划，可检查后开始生成" : "已开始自动分析并生成完整成片", "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "创建克隆任务失败。");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function uploadAssets(files: FileList | null) {
+    if (!files?.length) return;
+    setUploading(true);
+    setError("");
+    try {
+      for (const file of Array.from(files).slice(0, 8)) {
+        if (!/^(image|video|audio)\//.test(file.type)) continue;
+        const data = await uploadCanvasAsset(file);
+        if (!data?.url) throw new Error(`上传失败：${file.name}`);
+        const nodeId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const asset = { nodeId, name: file.name, url: String(data.url), kind: data.kind as CanvasCloneAssetOption["kind"] };
+        setUploadedAssets((current) => [...current, asset]);
+        onAssetUploaded?.(asset);
+      }
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "上传素材失败");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function cancel() {
+    if (!job) return;
+    setCancelling(true);
+    try {
+      const response = await fetch(`/api/clone/jobs/${job.id}/cancel`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "取消失败。");
+      setJob(data.job as CloneJob);
+      notify("已取消克隆出片", "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "取消失败。");
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  async function confirmPlan(shotsOverride?: CloneJob['shots']) {
+    if (!job || job.stage !== PLAN_STAGE) return;
+    setStarting(true);
+    setError("");
+    try {
+      let confirmed: CloneJob | null = null;
+      let requestFailure: unknown = null;
+      for (let attempt = 0; attempt < 2 && !confirmed; attempt += 1) {
+        try {
+          const response = await fetch(`/api/clone/jobs/${job.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "confirm", shots: shotsOverride || planShots }) });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data?.error || "确认镜头计划失败");
+          confirmed = data.job as CloneJob;
+        } catch (failure) {
+          requestFailure = failure;
+          // 浏览器断开时后端可能已成功写入；读回状态可避免重复确认或误报失败。
+          try {
+            const recovery = await fetch(`/api/clone/jobs/${job.id}`, { cache: "no-store" });
+            const recovered = await recovery.json().catch(() => ({}));
+            if (recovery.ok && recovered?.job && (recovered.job as CloneJob).stage !== PLAN_STAGE) confirmed = recovered.job as CloneJob;
+          } catch {
+            // 保留原始失败原因，下面仅对临时连接问题做一次短暂重试。
+          }
+          if (!confirmed && attempt === 0 && isTransientCloneRequestError(failure)) await waitForCloneRetry(350);
+          else if (!confirmed) break;
+        }
+      }
+      if (!confirmed) throw requestFailure || new Error("确认镜头计划失败");
+      setJob(confirmed);
+      notify("已确认镜头计划，开始生成", "ok");
+    } catch (failure) {
+      setError(describeCloneRequestError(failure, "确认镜头计划"));
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  /**
+   * 标记这条任务「已处理」：放进画布，或者用户主动说不要了。
+   * 重开弹窗、画布顶栏的提示都靠它判断，免得同一条旧任务反复来问。
+   */
+  function markHandled() {
+    if (!job) return;
+    void fetch(`/api/clone/jobs/${job.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "applied" }),
+    }).catch(() => undefined);
+  }
+
+  function applyResult() {
+    if (!job) return;
+    onApply(job);
+    setApplied(true);
+    markHandled();
+  }
+
+  /** 继续任务：沿用同一条任务接着跑，已经生成好的镜头和配音会跳过，不重复计费。 */
+  async function resume() {
+    if (!job || resuming) return;
+    setResuming(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/clone/jobs/${job.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "resume" }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "继续任务失败。");
+      setJob((data.job as CloneJob) || job);
+      notify("已接着跑这条克隆任务", "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "继续任务失败。");
+    } finally {
+      setResuming(false);
+    }
+  }
+
+  async function rerender() {
+    if (!job || rerendering) return;
+    setRerendering(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/clone/jobs/${job.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "rerender" }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "重新合成失败");
+      setJob((data.job as CloneJob) || job);
+      setApplied(false);
+      notify("已载入 Blueprint，重新合成中", "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "重新合成失败");
+    } finally {
+      setRerendering(false);
+    }
+  }
+
+  async function planBlueprintVariant() {
+    if (!job?.blueprint || variantPlanning) return;
+    const componentId = variantComponentId || blueprintComponents[0]?.id;
+    if (!componentId) {
+      setError("当前 Blueprint 还没有可复用的视觉组件");
+      return;
+    }
+    const batchLines = variantBatchText.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+    const requestedLines = (batchLines.length ? batchLines : [variantLine.trim()]).slice(0, 12);
+    const override: Record<string, unknown> = { componentId };
+    if (variantLine.trim()) override.line = variantLine.trim();
+    if (variantGraphicsText.trim()) override.graphicsText = variantGraphicsText.trim();
+    if (variantPrompt.trim()) {
+      override.prompt = variantPrompt.trim();
+      override.regenerate = true;
+    }
+    if (Object.keys(override).length === 1 && !requestedLines.some(Boolean)) {
+      setError("至少填写一项变体修改");
+      return;
+    }
+    setVariantPlanning(true);
+    setError("");
+    const specs = requestedLines.map((line, index) => ({
+      id: `variant-${Date.now()}-${index + 1}`,
+      name: requestedLines.length > 1 ? `${variantName.trim() || "鏈湴鍙樹綋"} ${index + 1}` : (variantName.trim() || "鏈湴鍙樹綋"),
+      overrides: [{ ...override, ...(line ? { line } : {}) } as CloneBlueprintVariantSpec["overrides"][number]],
+    } satisfies CloneBlueprintVariantSpec));
+    try {
+      const response = await fetch(`/api/clone/jobs/${job.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "variant-plan",
+          variants: specs,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "变体计划生成失败");
+      setVariantSpecs(specs);
+      setVariantSpec(specs[0] || null);
+      setVariantPlans(Array.isArray(data?.plans) ? data.plans as CloneBlueprintVariantPlan[] : []);
+      if (data?.job) setJob(data.job as CloneJob);
+      notify("变体计划已生成，可检查需要重新生成的镜头", "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "变体计划生成失败");
+    } finally {
+      setVariantPlanning(false);
+    }
+  }
+
+  async function renderVariant(plan: CloneBlueprintVariantPlan) {
+    const spec = variantSpecs.find((item) => item.id === plan.id) || variantSpec;
+    if (!job || !spec || variantRendering) return;
+    setVariantRendering(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/clone/jobs/${job.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "variant-render", variant: spec }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "变体合成失败");
+      if (data?.job) setJob(data.job as CloneJob);
+      const renderedPlan = data?.plan as CloneBlueprintVariantPlan | undefined;
+      if (renderedPlan) setVariantPlans((current) => current.map((item) => item.id === renderedPlan.id ? renderedPlan : item));
+      notify("本地变体已合成一个完整 MP4", "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "变体合成失败");
+    } finally {
+      setVariantRendering(false);
+    }
+  }
+
+  async function renderAllVariants() {
+    if (!job || variantSpecs.length < 2 || variantRendering) return;
+    setVariantRendering(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/clone/jobs/${job.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "variant-render-batch", variants: variantSpecs }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "鍙樹綋鎵归噺鍚堟垚澶辫触");
+      if (data?.job) setJob(data.job as CloneJob);
+      if (Array.isArray(data?.plans)) setVariantPlans(data.plans as CloneBlueprintVariantPlan[]);
+      notify(`宸插畬鎴愭壒閲忓悎鎴愶細${Array.isArray(data?.plans) ? data.plans.length : variantSpecs.length}涓畬鏁碩P4`, "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "鍙樹綋鎵归噺鍚堟垚澶辫触");
+    } finally {
+      setVariantRendering(false);
+    }
+  }
+
+  function applyVariant(plan: CloneBlueprintVariantPlan) {
+    if (!job || !plan.timeline.finalVideoUrl) return;
+    onApply({
+      ...job,
+      shots: plan.shots,
+      timeline: plan.timeline,
+      blueprint: job.blueprint ? { ...job.blueprint, shots: plan.shots } : job.blueprint,
+    });
+    setApplied(true);
+    notify("已将变体完整 MP4 与时间轴放入画布", "ok");
+  }
+
+  /**
+   * 删除任务：出片了但不想要、失败或取消之后，把它从弹窗里清掉，免得每次打开都被顶到眼前。
+   * 只删任务记录，已经放进画布的素材与成片节点都不受影响。
+   */
+  async function removeJob() {
+    if (!job || deleting) return;
+    if (!window.confirm(`删除这条克隆任务？已经放进画布的素材不受影响。`)) return;
+    setDeleting(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/clone/jobs/${job.id}`, { method: "DELETE" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "删除失败。");
+      setJob(null);
+      setApplied(false);
+      notify("已删除该克隆任务", "ok");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "删除失败。");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const readyShots = job ? job.shots.filter((shot) => shot.videoUrl || shot.imageUrl).length : 0;
+  const hasFinalVideo = Boolean(job?.timeline.finalVideoUrl);
+  const progress = job ? (job.stage === "done" ? 1 : cloneStageProgress(job.stage) || job.progress) : 0;
+  const planJob = job as CloneJob | null;
+  useEffect(() => {
+    if (!job || job.stage !== PLAN_STAGE) {
+      planJobIdRef.current = null;
+      setExpandedPlanShot(null);
+      return;
+    }
+    // Polling replaces `job` every 1.5s. Do not overwrite local plan edits
+    // while the user is choosing a strategy for this same planned job.
+    if (planJobIdRef.current === job.id) return;
+    planJobIdRef.current = job.id;
+    setPlanShots(job.shots);
+    setExpandedPlanShot(null);
+  }, [job?.id, job?.stage]);
+
+  return (
+    <div
+      className="clone-backdrop"
+      role="presentation"
+      // 弹窗挂在 document.body 上，是画布 stage 在 React 树里的子节点：
+      // 不拦指针事件的话，画布的平移会接管 pointerdown 并抢走 pointer capture，
+      // 结果按钮收不到 click（和智能一键变体弹窗同一处理）。
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        if (event.target === event.currentTarget) closeDialog();
+      }}
+      onPointerMove={(event) => event.stopPropagation()}
+      onPointerUp={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
+    >
+      <section className="clone-dialog" role="dialog" aria-modal="true" aria-label="一键克隆出片">
+        <header className="clone-head">
+          <div>
+            <b>✦ 克隆出片</b>
+            <small>保留参考图/视频的结构、节奏与多轨关系，生成一个完整成片</small>
+          </div>
+          <button type="button" className="clone-close" onClick={closeDialog} aria-label="关闭">×</button>
+        </header>
+
+        {job && job.stage !== PLAN_STAGE ? (
+          <div className="clone-body">
+            <div className="clone-progress">
+              <div className="clone-progress-track"><i style={{ width: `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%` }} /></div>
+              <div className="clone-progress-copy">
+                <b>{describeCloneStage(job.stage) || job.message}</b>
+                <small>{job.message}{job.shots.length ? ` · 共 ${job.shots.length} 个镜头` : ""}</small>
+              </div>
+            </div>
+
+            {job.warnings.length > 0 && (
+              <ul className="clone-warnings">
+                {job.warnings.slice(0, 6).map((warning, index) => <li key={index}>{warning}</li>)}
+              </ul>
+            )}
+            {job.error && <p className="clone-error">{job.error}</p>}
+
+            {job.shots.length > 0 && (
+              <ol className="clone-shots">
+                {job.shots.map((shot) => (
+                  <li key={shot.index} className={shot.status}>
+                    <span className="clone-shot-index">{shot.index + 1}</span>
+                    <span className="clone-shot-copy">
+                      <b>{shot.line || shot.visual || "待生成"}</b>
+                      <small>
+                        {shot.audioSeconds ? `配音 ${shot.audioSeconds.toFixed(1)}s · ` : ""}
+                        {shot.preserveReferenceFrame ? "保留原片动态" : shot.videoUrl ? "视频镜头" : shot.imageUrl ? "生成画面" : shot.referenceFrameUrl ? "参考帧" : "待生成"} · {SHOT_STATUS_LABELS[shot.status] || shot.status}
+                      </small>
+                    </span>
+                    {(shot.imageUrl || shot.referenceFrameUrl) && (
+                      <span className="clone-shot-preview">
+                        <img className="clone-shot-thumb" src={shot.imageUrl || shot.referenceFrameUrl} alt="" />
+                        <em>{shot.imageUrl ? "生成画面" : "参考帧"}</em>
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            )}
+
+            <div className="clone-actions">
+              {running ? (
+                <button type="button" className="clone-button ghost" onClick={cancel} disabled={cancelling}>
+                  {cancelling ? "取消中…" : "取消任务"}
+                </button>
+              ) : (
+                <button type="button" className="clone-button ghost" onClick={closeDialog}>关闭</button>
+              )}
+              {/* 删除按钮靠左放：它是破坏性操作，不要和「放入画布」挤在一起让人点错。 */}
+              {!running && (
+                <button type="button" className="clone-button danger" onClick={removeJob} disabled={deleting}>
+                  {deleting ? "删除中…" : "删除任务"}
+                </button>
+              )}
+              {job.stage === "done" && (readyShots > 0 || hasFinalVideo) && (
+                <button type="button" className="clone-button primary" onClick={applyResult} disabled={applied}>
+                  {applied ? "已放入画布" : hasFinalVideo ? "放入画布（完整成片）" : `放入画布（${readyShots} 个镜头 + 成片节点）`}
+                </button>
+              )}
+              {job.stage === "done" && job.blueprint && (
+                <button type="button" className="clone-button ghost" onClick={rerender} disabled={rerendering}>
+                  {rerendering ? "重新合成中…" : "按 Blueprint 重新合成"}
+                </button>
+              )}
+              {job.stage === "failed" && (
+                <>
+                  <button
+                    type="button"
+                    className="clone-button ghost"
+                    onClick={() => { markHandled(); setJob(null); setApplied(false); setError(""); }}
+                  >
+                    重新设置
+                  </button>
+                  <button type="button" className="clone-button primary" onClick={resume} disabled={resuming}>
+                    {resuming ? "正在继续…" : "继续任务"}
+                  </button>
+                </>
+              )}
+            </div>
+            {job.stage === "done" && !applied && (
+              <p className="clone-hint">成片时长 {formatSeconds(job.timeline.duration)}，可在视频编辑节点里直接微调再导出。</p>
+            )}
+            {job.stage === "done" && job.blueprint?.components?.length ? (
+              <section className="clone-variant-panel" aria-label="Blueprint 组件变体">
+                <div className="clone-variant-heading">
+                  <div><b>Blueprint 组件变体</b><small>复用原片结构；只把真正变化的镜头标记为重新生成</small></div>
+                  <em>{job.blueprint.components.length} 个组件</em>
+                </div>
+                 <div className="clone-variant-fields">
+                   <label className="clone-field clone-variant-wide"><span>批量变体口播（每行一个，最多 12 个）</span><textarea value={variantBatchText} onChange={(event) => setVariantBatchText(event.target.value)} placeholder="例如：第一版文案\n第二版文案\n第三版文案" /></label>
+                  <label className="clone-field"><span>变体名称</span><input value={variantName} onChange={(event) => setVariantName(event.target.value)} placeholder="例如：蓝色 CTA 版" /></label>
+                  <label className="clone-field"><span>作用组件</span><SelectMenu value={variantComponentId || blueprintComponents[0]?.id || ""} ariaLabel="选择 Blueprint 组件" portalZIndex={CANVAS_Z_INDEX.modalPopover} options={blueprintComponents.map((component) => ({ value: component.id, label: `${component.label} · ${component.shotIndexes.length} 个镜头` }))} onChange={setVariantComponentId} /></label>
+                  <label className="clone-field"><span>新的口播/字幕（会提示补配音）</span><textarea value={variantLine} onChange={(event) => setVariantLine(event.target.value)} placeholder="留空表示不改旁白" /></label>
+                  <label className="clone-field"><span>画面字卡文字</span><input value={variantGraphicsText} onChange={(event) => setVariantGraphicsText(event.target.value)} placeholder="只改画面上的卡片文字" /></label>
+                  <label className="clone-field clone-variant-wide"><span>新的画面提示词（会标记重新生成）</span><textarea value={variantPrompt} onChange={(event) => setVariantPrompt(event.target.value)} placeholder="留空表示复用已有画面" /></label>
+                </div>
+                  <div className="clone-variant-actions"><small>计划阶段不会重复分析参考素材，也不会自动消耗生成额度。</small><button type="button" className="clone-button ghost" onClick={planBlueprintVariant} disabled={variantPlanning}>{variantPlanning ? "整理计划中…" : "生成变体计划"}</button></div>
+                {variantSpecs.length > 1 ? <button type="button" className="clone-button primary" onClick={() => void renderAllVariants()} disabled={variantRendering}>{variantRendering ? "批量合成中…" : `一键合成全部 ${variantSpecs.length} 个`}</button> : null}
+                {variantPlans.map((plan) => (
+                  <article className="clone-variant-result" key={plan.id}>
+                    <div><b>{plan.name}</b><small>{plan.reusedShotIndexes.length} 个镜头复用 · {plan.generationShotIndexes.length} 个镜头需重生成 · {plan.voiceShotIndexes.length} 个镜头需补配音</small></div>
+                    <p>{plan.timeline.finalVideoUrl ? "已生成完整 MP4，可预览或放入画布。" : plan.generationShotIndexes.length || plan.voiceShotIndexes.length ? "将只补生成标记的画面/配音，未变化镜头继续复用，然后合成完整 MP4。" : "这是纯本地变体，可直接合成一个完整 MP4。"}</p>
+                    {plan.timeline.finalVideoUrl ? <video className="clone-variant-video" src={plan.timeline.finalVideoUrl} controls playsInline preload="metadata" /> : null}
+                    <div className="clone-variant-result-actions">
+                      {!plan.timeline.finalVideoUrl ? <button type="button" className="clone-button ghost" onClick={() => void renderVariant(plan)} disabled={variantRendering}>{variantRendering ? "补生成并合成中…" : plan.generationShotIndexes.length || plan.voiceShotIndexes.length ? "补生成并合成完整 MP4" : "合成完整 MP4"}</button> : null}
+                      {plan.timeline.finalVideoUrl ? <button type="button" className="clone-button primary" onClick={() => applyVariant(plan)}>放入画布</button> : null}
+                    </div>
+                  </article>
+                ))}
+              </section>
+            ) : null}
+            {job.stage === "failed" && (
+              <p className="clone-hint">「继续任务」会沿用这条任务接着跑：已经生成好的配音和镜头会跳过，不会重复计费。</p>
+            )}
+          </div>
+        ) : job?.stage === PLAN_STAGE ? (
+          <div className="clone-body clone-plan-body">
+            <div className="clone-progress"><div className="clone-progress-track"><i style={{ width: `${Math.round(Math.max(0, Math.min(1, job.progress)) * 100)}%` }} /></div><div className="clone-progress-copy"><b>镜头计划已生成</b><small>分析阶段不会消耗生图、视频或配音额度</small></div></div>
+            <div className="clone-plan-preview"><div className="clone-plan-heading"><div><b>镜头计划</b><small>逐镜头检查素材和生成方式，确认后才开始生成</small></div><em>{planShots.length} 个镜头</em></div>
+              {planShots.map((shot, index) => {
+                const relevantAssets = planAssetOptions.filter((asset) => asset.kind === "image" || (asset.kind === "audio" && shot.speechMode === "talking"));
+                return <article className="clone-plan-shot" key={shot.index}>
+                  <span className="clone-shot-index">{shot.index + 1}</span>
+                  <div className="clone-plan-copy">
+                    <div className="clone-plan-copy-head"><div><b>{shot.visual || "镜头画面"}</b><p>{shot.line || "无口播文案"}</p></div><small>{shot.start.toFixed(1)}s–{shot.end.toFixed(1)}s</small></div>
+                    {(shot.imageUrl || shot.referenceFrameUrl) && <div className="clone-plan-reference"><img src={shot.imageUrl || shot.referenceFrameUrl} alt="" /><span>{shot.imageUrl ? "生成画面" : "参考素材代表帧"}</span></div>}
+                    {relevantAssets.length > 0 && <div className="clone-plan-assets" aria-label={`镜头 ${index + 1} 使用的素材`}>{relevantAssets.map((asset) => {
+                      const id = asset.nodeId || asset.url;
+                      const checked = (shot.assetIds || []).includes(id);
+                      const role = asset.kind === "audio" ? "声音" : asset.role === "person" ? "人物" : asset.role === "product" ? "产品" : asset.role === "brand" ? "品牌" : asset.role === "scene" ? "场景" : asset.role === "style" ? "风格" : "B-roll";
+                      return <label className={`clone-plan-asset ${checked ? "active" : ""}`} key={id}><input type="checkbox" checked={checked} onChange={() => setPlanShots((current) => current.map((item, position) => { if (position !== index) return item; const next = new Set(item.assetIds || []); if (next.has(id)) next.delete(id); else next.add(id); return { ...item, assetIds: [...next] }; }))} /><span>{role}</span><b>{asset.name}</b></label>;
+                    })}</div>}
+                  </div>
+                  <div className="clone-plan-controls">
+                    <div className="clone-plan-auto-summary"><span>自动方案</span><b>{shot.preserveReferenceFrame ? "保留原片动态" : shot.strategy === "reference" ? "参考图重建" : shot.strategy === "keyframe" ? "关键帧重建" : "按镜头自动生成"}</b><small>{shot.speechMode === "silent" ? "静音 B-roll" : shot.speechMode === "talking" ? "人物原声" : "旁白自动对齐"}</small></div>
+                    <button type="button" className="clone-plan-advanced-toggle" onClick={() => setExpandedPlanShot((current) => current === shot.index ? null : shot.index)}>{expandedPlanShot === shot.index ? "收起镜头调整" : "调整此镜头"}</button>
+                    {expandedPlanShot === shot.index && <div className="clone-plan-advanced-fields">
+                      <label className="clone-plan-preserve"><input type="checkbox" checked={Boolean(shot.preserveReferenceFrame)} onChange={(event) => setPlanShots((current) => current.map((item, position) => position === index ? { ...item, preserveReferenceFrame: event.target.checked } : item))} /><span>保留原片动态</span></label>
+                      <label><span>画面生成</span><SelectMenu value={shot.strategy || "text"} ariaLabel={`镜头 ${index + 1} 的画面生成方式`} portalZIndex={CANVAS_Z_INDEX.modalPopover} options={[{ value: "reference", label: "多参考图" }, { value: "keyframe", label: "关键帧首帧" }, { value: "text", label: "文生视频降级" }, { value: "static", label: "静态图降级" }]} onChange={(value) => setPlanShots((current) => current.map((item, position) => position === index ? { ...item, strategy: value as CloneJob['shots'][number]['strategy'] } : item))} /></label>
+                      <label><span>声音处理</span><SelectMenu value={shot.speechMode || "narration"} ariaLabel={`镜头 ${index + 1} 的声音方式`} portalZIndex={CANVAS_Z_INDEX.modalPopover} options={[{ value: "narration", label: "后期旁白" }, { value: "talking", label: "说话人物" }, { value: "silent", label: "静音 B-roll" }]} onChange={(value) => setPlanShots((current) => current.map((item, position) => position === index ? { ...item, speechMode: value as NonNullable<CloneJob['shots'][number]['speechMode']> } : item))} /></label>
+                    </div>}
+                  </div>
+                </article>;
+              })}
+            </div>
+            {error && <p className="clone-error">{error}</p>}
+            <div className="clone-actions clone-plan-actions"><span>确认后才会开始调用生图、视频和配音。</span><div><button type="button" className="clone-button ghost" onClick={closeDialog}>关闭</button><button type="button" className="clone-button danger" onClick={removeJob} disabled={deleting}>{deleting ? "放弃中…" : "放弃计划"}</button><button type="button" className="clone-button ghost" onClick={() => { setJob(null); setStep(2); }}>返回修改素材</button><button type="button" className="clone-button primary" onClick={() => void confirmPlan()} disabled={starting}>{starting ? "确认中…" : "确认并开始生成"}</button></div></div>
+          </div>
+        ) : restoring ? (
+          <div className="clone-body">
+            <p className="clone-empty">正在读取最近的克隆任务…</p>
+          </div>
+        ) : (
+          <div className="clone-body">
+            <ol className="clone-steps">
+              <li className={step === 1 ? "active" : "done"}><i>1</i>结构参考</li>
+              <li className={step === 2 ? "active" : step > 2 ? "done" : ""}><i>2</i>素材角色</li>
+              <li className={step === 3 ? "active" : ""}><i>3</i>镜头计划</li>
+            </ol>
+
+            {step === 1 ? (
+              references.length ? (
+                <div className="clone-reference-stack">
+                  <div className="clone-reference-grid">
+                  {references.map((option) => (
+                    <button
+                      type="button"
+                      key={option.nodeId}
+                      className={`clone-reference-card ${option.nodeId === referenceId ? "active" : ""}`}
+                      onClick={() => { setReferenceId(option.nodeId); setStep(2); }}
+                    >
+                      {option.kind === "image" ? <img src={option.url} alt="" /> : <video src={option.url} muted preload="metadata" playsInline />}
+                      <span>
+                        <b>{option.name}</b>
+                        <small>{option.seconds > 0 ? formatSeconds(option.seconds) : "时长待读取"}</small>
+                      </span>
+                    </button>
+                  ))}
+                  </div>
+                  {onImportReference && (
+                    <div className="clone-import-row">
+                      <button type="button" className="clone-button ghost" onClick={onImportReference}>＋ 导入新的参考素材</button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="clone-form">
+                  <p className="clone-empty">画布里还没有可用的参考素材。可以直接导入图片或视频（也可以用工具栏的「＋ 导入素材」）。</p>
+                  {onImportReference && (
+                    <div className="clone-import-row">
+                      <button type="button" className="clone-button primary" onClick={onImportReference}>＋ 导入参考素材</button>
+                    </div>
+                  )}
+                </div>
+              )
+            ) : step === 2 ? (
+              <div className="clone-form">
+                <div className="clone-selected">
+                  {reference ? (
+                    <>
+                      {reference.kind === "image" ? <img src={reference.url} alt="" /> : <video src={reference.url} muted preload="metadata" playsInline />}
+                      <span><b>{reference.name}</b><small>{reference.seconds > 0 ? formatSeconds(reference.seconds) : "时长待读取"}</small></span>
+                      <button type="button" onClick={() => { setStep(1); }}>换一条</button>
+                    </>
+                  ) : (
+                    <button type="button" onClick={() => setStep(1)}>重新选择参考图或视频</button>
+                  )}
+                </div>
+
+                <label className="clone-field">
+                  <span>想做成什么片子</span>
+                  <textarea
+                    value={brief}
+                    maxLength={400}
+                    placeholder="例如：把这条视频的节奏换成我家火锅店的探店口播，突出毛肚和锅底"
+                    onChange={(event) => setBrief(event.target.value)}
+                  />
+                </label>
+
+                <div className="clone-asset-toolbar">
+                  <button type="button" className="clone-button ghost" onClick={() => setAssetPickerOpen(true)}>从画布添加</button>
+                  <button type="button" className="clone-button ghost" onClick={() => uploadInputRef.current?.click()} disabled={uploading}>{uploading ? "上传中…" : "＋ 上传素材"}</button>
+                  <input ref={uploadInputRef} hidden type="file" multiple accept="image/*,video/*,audio/*" onChange={(event) => { void uploadAssets(event.target.files); event.currentTarget.value = ""; }} />
+                   <small>{advancedOpen ? "可选：为素材指定角色；不设置时由系统自动判断" : "素材角色由系统自动判断，无需逐个设置"}</small>
+                </div>
+
+                {selectedAssetOptions.length > 0 && (
+                  <div className="clone-field">
+                    <span>参考素材（可选：人物 / 产品 / 品牌 / 风格）</span>
+                    <div className="clone-asset-list">
+                      {selectedAssetOptions.map((asset) => {
+                        const key = asset.nodeId || asset.url;
+                        const role = selectedAssets[key] || "";
+                        return (
+                          <label className="clone-asset-row" key={key}>
+                            {asset.kind === "image" ? <img src={asset.url} alt="" /> : <span className="clone-asset-kind">{asset.kind === "audio" ? "♫" : "▶"}</span>}
+                            <input value={assetNames[key] ?? asset.name} aria-label="素材名称" maxLength={80} onChange={(event) => setAssetNames((current) => ({ ...current, [key]: event.target.value }))} />
+                            {advancedOpen ? <SelectMenu value={role} ariaLabel={`${asset.name}的素材角色`} portalZIndex={CANVAS_Z_INDEX.modalPopover} disabled={!Object.prototype.hasOwnProperty.call(selectedAssets, key)} options={[{ value: "", label: "自动识别" }, { value: "person", label: "人物" }, { value: "product", label: "产品" }, { value: "brand", label: "品牌" }, { value: "scene", label: "场景" }, { value: "style", label: "风格" }, { value: "broll", label: "B-roll" }, { value: "voice", label: "声音" }]} onChange={(value) => setSelectedAssets((current) => ({ ...current, [key]: value as CloneAssetRole | "" }))} /> : <span className="clone-asset-auto-role">自动识别</span>}<button type="button" className="clone-asset-remove" aria-label={`移除 ${asset.name}`} onClick={() => setSelectedAssets((current) => { const next = { ...current }; delete next[key]; return next; })}>×</button>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {!selectedAssetOptions.length && <div className="clone-assets-empty">本次还没有内容素材。可从画布添加、直接上传，或先多选人物、产品、品牌素材后再打开克隆。</div>}
+                {assetPickerOpen && <div className="clone-asset-picker" role="dialog" aria-label="从画布添加素材"><div className="clone-asset-picker-head"><b>从画布添加素材</b><button type="button" onClick={() => setAssetPickerOpen(false)}>完成</button></div><input value={assetQuery} placeholder="搜索画布素材" onChange={(event) => setAssetQuery(event.target.value)} />{availableCanvasAssets.length ? <div className="clone-asset-picker-list">{availableCanvasAssets.map((asset) => { const key = asset.nodeId || asset.url; return <button type="button" key={key} onClick={() => setSelectedAssets((current) => ({ ...current, [key]: "" }))}>{asset.kind === "image" ? <img src={asset.url} alt="" /> : <span>{asset.kind === "audio" ? "◉" : "▷"}</span>}<b>{asset.name}</b><em>添加</em></button>; })}</div> : <p>没有可添加的画布素材。</p>}</div>}
+
+                <div className="clone-field">
+                  <span>画幅</span>
+                  <div className="clone-chips">
+                    {CLONE_ASPECTS.map((value) => (
+                      <button type="button" key={value} className={aspect === value ? "active" : ""} onClick={() => setAspect(value)}>
+                        {ASPECT_LABELS[value]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="clone-row">
+                  <label className="clone-field">
+                    <span>镜头数上限</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={CLONE_MAX_SHOTS}
+                      value={maxShots}
+                      onChange={(event) => setMaxShots(Math.max(1, Math.min(CLONE_MAX_SHOTS, Math.round(Number(event.target.value) || 1))))}
+                    />
+                  </label>
+                  <label className="clone-field">
+                    <span>参考时长上限（秒）</span>
+                    <input
+                      type="number"
+                      min={CLONE_MIN_SECONDS}
+                      max={CLONE_MAX_SECONDS}
+                      value={maxSeconds}
+                      onChange={(event) => setMaxSeconds(Math.max(CLONE_MIN_SECONDS, Math.min(CLONE_MAX_SECONDS, Math.round(Number(event.target.value) || CLONE_MIN_SECONDS))))}
+                    />
+                  </label>
+                  {flags.hasSpeechModel && (
+                    <label className="clone-field">
+                      <span>配音音色</span>
+                      <input list="clone-voice-presets" value={voice} maxLength={40} placeholder="留空用服务商默认音色" onChange={(event) => setVoice(event.target.value)} />
+                      <datalist id="clone-voice-presets">
+                        {VOICE_PRESETS.map((preset) => <option key={preset} value={preset} />)}
+                      </datalist>
+                    </label>
+                  )}
+                </div>
+
+                {!flags.hasSpeechModel && offlineSpeech && (
+                  <p className="clone-hint">没有在线配音模型：本次用系统自带语音合成出声（免费、离线、不用联网、零配置），音色偏机械；想要更好听，可在「模型库」把 TTS 模型类型改成「配音」并启用。</p>
+                )}
+
+                <div className="clone-cost">
+                  <b>预计最多 {maxShots} 次生图{flags.hasVideoModel ? ` + ${maxShots} 次生视频` : ""}{flags.hasSpeechModel ? ` + ${maxShots} 次配音` : ""}</b>
+                    <small>按镜头数上限估算，实际按拆解结果决定；参考视频只分析前 {formatSeconds(maxSeconds)}，参考图按单一稳定场景进入流程，成片长度按配音实际时长排（文案写长了会略长，任务里会提示）。</small>
+                </div>
+
+                <div className="clone-confirm clone-fidelity-options">
+                  <label><input type="checkbox" checked={preserveReferenceTiming} onChange={(event) => setPreserveReferenceTiming(event.target.checked)} /><span>保留原片镜头节奏（旁白过长时延展，不压缩镜头）</span></label>
+                  <label><input type="checkbox" checked={preserveReferenceAudio} onChange={(event) => setPreserveReferenceAudio(event.target.checked)} /><span>保留原片环境音 / 音乐，并与新配音混音</span></label>
+                </div>
+
+                <div className="clone-capabilities">
+                  <span className={flags.hasVisionModel ? "ok" : "warn"}>画面拆解：{flags.hasVisionModel ? "可用" : "缺视觉对话模型（按镜头数平均分配时长）"}</span>
+                  <span className={flags.hasChatModel ? "ok" : "warn"}>文案与字幕：{flags.hasChatModel ? "可用" : "缺对话模型，成片只有画面"}</span>
+                  <span className={flags.hasImageModel ? "ok" : "warn"}>生图：{flags.hasImageModel ? "可用" : "缺少生图模型，普通镜头用参考帧静态降级"}</span>
+                  <span className={flags.hasVideoModel ? "ok" : "warn"}>图生视频：{flags.hasVideoModel ? "可用" : "没有视频模型，镜头用静态图"}</span>
+                  <span className={flags.hasSpeechModel || offlineSpeech ? "ok" : "warn"}>配音：{flags.hasSpeechModel ? "可用" : offlineSpeech ? "可用（本机离线配音，免费，音色偏机械）" : "没有配音模型，成片无声 + 字幕（到「模型库」把 TTS 模型类型改成「配音」并启用）"}</span>
+                </div>
+
+                {overBudget && (
+                  <label className="clone-confirm">
+                    <input type="checkbox" checked={costConfirmed} onChange={(event) => setCostConfirmed(event.target.checked)} />
+                    <span>超出默认成本闸门（默认 {CLONE_DEFAULT_MAX_SHOTS} 镜头 / {CLONE_DEFAULT_MAX_SECONDS} 秒），我已确认这次消耗。</span>
+                  </label>
+                )}
+
+                <button type="button" className="clone-advanced-toggle" onClick={() => setAdvancedOpen((value) => !value)}>
+                  {advancedOpen ? "收起高级设置" : "高级设置（模型选择）"}
+                </button>
+                {advancedOpen && (
+                  <div className="clone-advanced">
+                    <label className="clone-advanced-check"><input type="checkbox" checked={reviewPlanBeforeGeneration} onChange={(event) => setReviewPlanBeforeGeneration(event.target.checked)} /><span>生成前查看并调整自动镜头方案</span></label>
+                    <label><span>拆解模型（需要视觉）</span>
+                      <ModelPicker models={models} capability="vision" value={selectedModels.chat} onChange={(value) => setSelectedModels((current) => ({ ...current, chat: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} portalZIndex={CANVAS_Z_INDEX.modalPopover} dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover} />
+                    </label>
+                    <label><span>生图模型</span>
+                      <ModelPicker models={models} capability="generate" value={selectedModels.image} onChange={(value) => setSelectedModels((current) => ({ ...current, image: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} portalZIndex={CANVAS_Z_INDEX.modalPopover} dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover} />
+                    </label>
+                    <label><span>图生视频模型</span>
+                      <ModelPicker models={models} capability="video-generate" value={selectedModels.video} onChange={(value) => setSelectedModels((current) => ({ ...current, video: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} automaticMode="clone" automaticHint="克隆主要使用 Seedance；其他模型可手动选择，能力不匹配时自动回退" portalZIndex={CANVAS_Z_INDEX.modalPopover} dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover} />
+                    </label>
+                    <label><span>配音模型</span>
+                      <ModelPicker models={models} capability="speech" value={selectedModels.speech} onChange={(value) => setSelectedModels((current) => ({ ...current, speech: value }))} defaultProviderId={defaultProviderId} defaultProviderName={defaultProviderName} portalZIndex={CANVAS_Z_INDEX.modalPopover} dialogPortalZIndex={CANVAS_Z_INDEX.modalPopover} placeholder={flags.hasSpeechModel ? undefined : "未配置配音模型"} />
+                    </label>
+                  </div>
+                )}
+
+                <p className="clone-hint">本地化工作流会重建主体画面，同时保留参考片的镜头节奏、卡片/转场结构与可选原片底音；不贴脸、不换脸、不做数字人。</p>
+              </div>
+            ) : (
+              <div className="clone-plan-preview">
+                <div className="clone-plan-heading"><b>镜头计划</b><small>分析阶段不会消耗生图、视频或配音额度</small></div>
+                {planJob?.shots.map((shot) => <article className="clone-plan-shot" key={shot.index}><span className="clone-shot-index">{shot.index + 1}</span><div><b>{shot.visual || "镜头画面"}</b><p>{shot.line || "无口播文案"}</p>{(shot.imageUrl || shot.referenceFrameUrl) && <div className="clone-plan-reference"><img src={shot.imageUrl || shot.referenceFrameUrl} alt="" /><span>{shot.imageUrl ? "生成画面" : "参考素材代表帧"}</span></div>}<small>{shot.start.toFixed(1)}s–{shot.end.toFixed(1)}s · {shot.preserveReferenceFrame ? "保留原片动态" : shot.strategy === "reference" ? "多参考图" : shot.strategy === "keyframe" ? "关键帧首帧" : shot.strategy === "static" ? "静态图" : "文生视频"}</small></div></article>)}
+              </div>
+            )}
+
+            {error && <p className="clone-error">{error}</p>}
+
+            <div className="clone-actions">
+              {step === 2 && (
+                <button type="button" className="clone-button ghost" onClick={() => setStep(1)}>上一步</button>
+              )}
+              <button type="button" className="clone-button ghost" onClick={closeDialog}>取消</button>
+              {step === 3 && <button type="button" className="clone-button ghost" onClick={() => setStep(2)}>修改素材</button>}
+              {step === 2 && (
+                <button type="button" className="clone-button primary" onClick={start} disabled={starting || !reference}>
+                  {starting ? "正在创建任务…" : "开始克隆出片"}
+                </button>
+              )}
+              {step === 3 && <button type="button" className="clone-button primary" onClick={() => void confirmPlan()} disabled={starting || !planJob || planJob.stage !== PLAN_STAGE}>{starting ? "确认中…" : "确认并开始生成"}</button>}
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}

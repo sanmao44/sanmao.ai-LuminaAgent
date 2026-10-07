@@ -1,0 +1,469 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+import ts from 'typescript';
+
+const sourceUrl = new URL('../lib/angle-control.ts', import.meta.url);
+const source = await readFile(sourceUrl, 'utf8');
+const compiled = ts.transpileModule(source, {
+  compilerOptions: {
+    module: ts.ModuleKind.ESNext,
+    target: ts.ScriptTarget.ES2022,
+  },
+  fileName: sourceUrl.pathname,
+}).outputText;
+const angle = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+
+function camera(values = {}) {
+  return angle.normalizeAngleState({
+    yaw: 0,
+    pitch: 0,
+    roll: 0,
+    focal: 50,
+    distance: 2.2,
+    frameX: 0,
+    frameY: 0,
+    ...values,
+  });
+}
+
+test('compiles numeric camera state into explicit visual semantics and edit constraints', () => {
+  const target = camera({ yaw: 51.6, pitch: 22.1, focal: 62, distance: 0.9, frameX: 2.1, frameY: -47.7 });
+  const prompt = angle.compileAngleTargetPrompt('', target, {
+    hasGuideReference: true,
+    output: { width: 720, height: 1280, aspectRatio: '9:16' },
+  });
+  assert.equal(angle.relativeViewYaw(target), 51.6);
+  assert.equal(angle.angleName(target.yaw), '右前');
+  assert.match(prompt, /TASK/);
+  assert.match(prompt, /IMAGE ROLES/);
+  assert.match(prompt, /图1是 SOURCE IMAGE/);
+  assert.match(prompt, /图2是 TARGET CAMERA GUIDE/);
+  assert.match(prompt, /CAMERA MOTION/);
+  assert.match(prompt, /camera_motion: orbit_only/);
+  assert.match(prompt, /subject_motion: none/);
+  assert.match(prompt, /ONLY THE CAMERA MOVES/);
+  assert.match(prompt, /same world-space pose/);
+  assert.match(prompt, /TARGET VIEW/);
+  assert.match(prompt, /HORIZONTAL VIEW · three_quarter · strong/);
+  assert.match(prompt, /anatomical RIGHT side/);
+  assert.match(prompt, /approximately 51\.6 degrees/);
+  assert.match(prompt, /VERTICAL VIEW · low_angle · slight/);
+  assert.match(prompt, /below the SUBJECT's eye level and looks UPWARD/);
+  assert.match(prompt, /approximately 22\.1 degrees/);
+  assert.match(prompt, /approximately 62mm-equivalent/);
+  assert.match(prompt, /final camera distance 0\.9×/);
+  assert.match(prompt, /FRAMING/);
+  assert.match(prompt, /PRIORITY/);
+  assert.match(prompt, /CHANGE ONLY/);
+  assert.match(prompt, /PRESERVE/);
+  assert.match(prompt, /保持人物身份、脸部特征/);
+  assert.match(prompt, /Preserve all 3D world-space relationships/);
+  assert.match(prompt, /Do NOT preserve the original 2D projection/);
+  assert.match(prompt, /Occlusion, overlap, visible surfaces and screen position may change naturally/);
+  assert.match(prompt, /OUTPUT/);
+  assert.match(prompt, /720×1280/);
+  assert.doesNotMatch(prompt, /当前 Pitch|起始机位|相对调整为|subject-relative|RECONSTRUCTION/);
+});
+
+test('exposes stable semantic buckets for yaw, pitch, lens and distance', () => {
+  assert.match(angle.yawSemanticLabel(0), /正面/);
+  assert.match(angle.yawSemanticLabel(15), /轻微三分之四/);
+  assert.match(angle.yawSemanticLabel(35), /明显三分之四/);
+  assert.match(angle.yawSemanticLabel(60), /强三分之四/);
+  assert.match(angle.yawSemanticLabel(90), /侧面/);
+  assert.match(angle.yawSemanticLabel(125), /后方三分之四/);
+  assert.match(angle.yawSemanticLabel(180), /背面/);
+  assert.match(angle.pitchSemanticLabel(0), /平视/);
+  assert.match(angle.pitchSemanticLabel(-18), /高机位俯拍/);
+  assert.match(angle.pitchSemanticLabel(18), /低机位仰拍/);
+  assert.equal(angle.buildAngleTargetSemantic(camera({ pitch: -8 })).vertical_view.class, 'eye_level');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ pitch: 8 })).vertical_view.class, 'eye_level');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ pitch: -8.1 })).vertical_view.class, 'high_angle');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ pitch: 8.1 })).vertical_view.class, 'low_angle');
+  assert.match(angle.focalSemanticLabel(24), /广角/);
+  assert.match(angle.focalSemanticLabel(50), /自然标准透视/);
+  assert.match(angle.focalSemanticLabel(85), /轻微长焦/);
+  assert.match(angle.focalSemanticLabel(135), /长焦透视压缩/);
+  assert.match(angle.distanceSemanticLabel(0.8), /主体占画面比例很高/);
+  assert.match(angle.distanceSemanticLabel(1.4), /主体偏满画面/);
+  assert.match(angle.distanceSemanticLabel(4), /环境占比更明显/);
+});
+
+test('classifies direct, three-quarter, side and rear views on both sides', () => {
+  assert.deepEqual([
+    angle.angleName(0),
+    angle.angleName(30),
+    angle.angleName(60),
+    angle.angleName(90),
+    angle.angleName(180),
+    angle.angleName(-30),
+    angle.angleName(-60),
+    angle.angleName(-90),
+  ], ['正面', '右前', '右前', '右侧', '背面', '左前', '左前', '左侧']);
+
+  assert.match(angle.compileAngleTargetPrompt('', camera({ yaw: 0 })), /HORIZONTAL VIEW · frontal · near/);
+  assert.match(angle.compileAngleTargetPrompt('', camera({ yaw: 60 })), /strong right three-quarter view/);
+  assert.match(angle.compileAngleTargetPrompt('', camera({ yaw: 60 }), { hasGuideReference: true }), /anatomical RIGHT side/);
+  assert.match(angle.compileAngleTargetPrompt('', camera({ yaw: -90 })), /anatomical LEFT side/);
+  assert.match(angle.compileAngleTargetPrompt('', camera({ yaw: 180 })), /physically behind the stationary SUBJECT/);
+});
+
+test('uses anatomical side language and stable horizontal boundaries', () => {
+  const right = angle.compileAngleTargetPrompt('', camera({ yaw: 42 }));
+  const left = angle.compileAngleTargetPrompt('', camera({ yaw: -42 }));
+  assert.match(right, /anatomical RIGHT/);
+  assert.doesNotMatch(right, /-42/);
+  assert.match(left, /anatomical LEFT/);
+  assert.doesNotMatch(left, /-42 degrees/);
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 70 })).horizontal_view.class, 'three_quarter');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 71 })).horizontal_view.class, 'profile');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 105 })).horizontal_view.class, 'profile');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 106 })).horizontal_view.class, 'rear_three_quarter');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 150 })).horizontal_view.class, 'rear_three_quarter');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 151 })).horizontal_view.class, 'rear');
+});
+
+test('keeps screen-facing calibration explicit and reversible', () => {
+  assert.equal(angle.screenFacingDirection(60), '人物正面朝画面左侧');
+  assert.equal(angle.screenFacingDirection(-60), '人物正面朝画面右侧');
+  assert.equal(angle.screenFacingDirection(0), '画面近乎正面');
+  assert.equal(angle.flipHorizontalYaw(60), -60);
+  assert.equal(angle.flipHorizontalYaw(-42), 42);
+  assert.equal(angle.flipHorizontalYaw(0), 0);
+  assert.equal(angle.flipHorizontalYaw(180), 180);
+});
+
+test('keeps the 180-degree wrap deterministic', () => {
+  assert.equal(angle.effectiveAngle(180), 180);
+  assert.equal(angle.effectiveAngle(-180), 180);
+  assert.equal(angle.effectiveAngle(540), 180);
+  assert.equal(angle.relativeViewYaw(camera({ yaw: -180 })), 180);
+});
+
+test('records relative camera adjustments without putting them in the model prompt', () => {
+  const start = camera({ yaw: 72.9, pitch: 26.1, focal: 35, distance: 2.2, frameX: 4, frameY: -8 });
+  const target = camera({ yaw: 51.6, pitch: 22.1, focal: 62, distance: 0.9, frameX: 12, frameY: -20 });
+  assert.deepEqual(angle.deriveAngleDelta(start, target), {
+    yaw: -21.3,
+    pitch: -4,
+    roll: 0,
+    focal: 27,
+    distance: -1.3,
+    frameX: 8,
+    frameY: -12,
+  });
+  assert.equal(target.yaw, 51.6);
+  const prompt = angle.compileAngleTargetPrompt('', target, { hasGuideReference: true, cameraStart: start });
+  assert.match(prompt, /approximately 51\.6 degrees/);
+  assert.match(prompt, /approximately 62mm-equivalent/);
+  assert.match(prompt, /final camera distance 0\.9×/);
+  assert.doesNotMatch(prompt, /72\.9|26\.1|35mm|相对调整为|起始机位/);
+});
+
+test('keeps the reported 43-degree high-angle scenario free of delta conflicts', () => {
+  const start = camera({ yaw: 0, pitch: 0, focal: 50, distance: 1 });
+  const target = camera({ yaw: 43.4, pitch: -37.8, focal: 50, distance: 1.2 });
+  const prompt = angle.compileAngleTargetPrompt('', target, { hasGuideReference: true, cameraStart: start });
+  assert.match(prompt, /approximately 43\.4 degrees/);
+  assert.match(prompt, /ABOVE the SUBJECT's eye level and looks DOWNWARD toward the subject by approximately 37\.8 degrees/);
+  assert.match(prompt, /approximately 50mm-equivalent/);
+  assert.match(prompt, /final camera distance 1\.2×/);
+  assert.doesNotMatch(prompt, /0\.2×|当前 Pitch|-37\.8|相对调整为|起始机位/);
+});
+
+test('classifies re-projection difficulty without changing legacy pitch semantics', () => {
+  assert.equal(angle.angleTargetDifficulty(camera({ yaw: 0, pitch: 0 })), 'low');
+  assert.equal(angle.angleTargetDifficulty(camera({ yaw: 30, pitch: 0 })), 'medium');
+  assert.equal(angle.angleTargetDifficulty(camera({ yaw: 0, pitch: -30 })), 'high');
+  assert.equal(angle.angleTargetDifficulty(camera({ yaw: 42, pitch: -40 })), 'high');
+  assert.equal(angle.angleTargetDifficulty(camera({ yaw: -60, pitch: 0 })), 'high');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ yaw: 42, pitch: -40 })).difficulty.level, 'high');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ pitch: -18 })).vertical_view.direction, 'downward');
+  assert.equal(angle.buildAngleTargetSemantic(camera({ pitch: 18 })).vertical_view.direction, 'upward');
+});
+
+test('migrates legacy subject rotation into the final yaw once', () => {
+  const migrated = angle.normalizeAngleState({ yaw: 51.6, subjectYaw: 68, pitch: 22.1 });
+  assert.equal(migrated.yaw, -16.4);
+  assert.equal('subjectYaw' in migrated, false);
+  assert.equal(angle.normalizeAngleState(migrated).yaw, -16.4);
+});
+
+test('resets the relative camera without changing reference strategy or lighting', () => {
+  const state = angle.normalizeAngleState({
+    yaw: 84,
+    pitch: -22,
+    roll: 12,
+    focal: 85,
+    distance: 1.1,
+    frameX: 18,
+    frameY: -12,
+    compositionLock: true,
+    modelId: 'gpt-image-2',
+    viewpoint: {
+      version: 2,
+      subjectType: 'building',
+      mode: 'camera-view',
+      modeSource: 'auto',
+      changeView: true,
+      guide: true,
+      lighting: { ...angle.LIGHTING_DEFAULTS, enabled: true, azimuth: 60, temperature: 3200 },
+    },
+  });
+  const reset = angle.resetViewpointCamera(state);
+  assert.deepEqual([reset.yaw, reset.pitch, reset.roll, reset.focal, reset.distance, reset.frameX, reset.frameY], [0, 0, 0, 50, 2.2, 0, 0]);
+  assert.equal(reset.compositionLock, true);
+  assert.equal(reset.modelId, 'gpt-image-2');
+  assert.equal(reset.viewpoint.subjectType, 'building');
+  assert.equal(reset.viewpoint.mode, 'camera-view');
+  assert.equal(reset.viewpoint.lighting.azimuth, 60);
+  assert.equal(reset.viewpoint.lighting.temperature, 3200);
+});
+
+test('default parameters stay concise and optional parameters are dynamic', () => {
+  const defaultPrompt = angle.compileAngleTargetPrompt('', camera({ yaw: 30 }), { hasGuideReference: true });
+  assert.match(defaultPrompt, /clear, obvious right three-quarter view/);
+  assert.match(defaultPrompt, /approximately 50mm-equivalent/);
+  assert.match(defaultPrompt, /final camera distance 2\.2×/);
+
+  const prompt = angle.compileAngleTargetPrompt('保持原有表情', camera({ yaw: 51.6, pitch: 22.1, focal: 62, distance: 0.9, roll: 17, frameX: 2.1, frameY: -47.7 }), {
+    hasGuideReference: true,
+    output: { width: 720, height: 1280, aspectRatio: '9:16' },
+  });
+  assert.match(prompt, /最终画面由程序后处理顺时针倾斜约17°，生成阶段保持画面水平/);
+  assert.match(prompt, /OPTIONAL USER NOTE（不得覆盖上述机位和姿态约束）：保持原有表情/);
+  assert.equal(prompt.match(/保持原有表情/g)?.length, 1);
+  assert.doesNotMatch(prompt, /向右|向下|画面偏移|720x1280/);
+  assert.doesNotMatch(prompt, /recorded start|Subject yaw|relative-view change|Δ|RECONSTRUCTION REQUIREMENTS|Do not crop|当前 Pitch|相对调整为/);
+});
+
+test('compiled prompt keeps one authoritative reconstruction instruction', () => {
+  const prompt = angle.compileAngleTargetPrompt('', camera({ yaw: 51.6, pitch: 22.1, focal: 62, distance: 0.9, frameX: 2.1, frameY: -47.7 }), {
+    hasGuideReference: true,
+    output: { width: 720, height: 1280, aspectRatio: '9:16' },
+  });
+  assert.equal(prompt.match(/ONLY THE CAMERA MOVES/g)?.length, 1);
+  assert.equal(prompt.match(/CHANGE ONLY/g)?.length, 1);
+  assert.equal(prompt.match(/PRESERVE/g)?.length, 1);
+  assert.equal(prompt.match(/51\.6/g)?.length, 1);
+  assert.equal(prompt.match(/22\.1/g)?.length, 1);
+  assert.equal(prompt.match(/62mm/g)?.length, 1);
+  assert.equal(prompt.match(/0\.9×/g)?.length, 1);
+});
+
+test('builds one reusable semantic target for prompt and audit payload', () => {
+  const target = camera({ yaw: -42, pitch: -40, roll: 17, focal: 50, distance: 1.2, frameX: 3, frameY: -4 });
+  const semantic = angle.buildAngleTargetSemantic(target, { width: 720, height: 1280, aspectRatio: '9:16' });
+  assert.deepEqual({
+    camera_motion: semantic.camera_motion,
+    subject_motion: semantic.subject_motion,
+    horizontal: [semantic.horizontal_view.class, semantic.horizontal_view.strength, semantic.horizontal_view.side, semantic.horizontal_view.angle_deg],
+    vertical: [semantic.vertical_view.class, semantic.vertical_view.direction, semantic.vertical_view.angle_deg],
+    perspective: [semantic.perspective.focal_length_mm, semantic.perspective.distance_multiplier],
+    roll: [semantic.roll.generation, semantic.roll.postprocess_degrees],
+  }, {
+    camera_motion: 'orbit_only',
+    subject_motion: 'none',
+    horizontal: ['three_quarter', 'clear', 'anatomical_left', 42],
+    vertical: ['high_angle', 'downward', 40],
+    perspective: [50, 1.2],
+    roll: ['level', 17],
+  });
+  const payload = angle.buildAnglePayload(target, 'gpt-image-2', null, { width: 720, height: 1280, aspectRatio: '9:16' });
+  assert.deepEqual(payload.camera.semantic_target, semantic);
+  assert.equal(payload.camera_start, undefined);
+  assert.equal(payload.camera_delta, undefined);
+});
+
+test('camera payload contains only the final camera state', () => {
+  const payload = angle.buildAnglePayload(camera({ yaw: 51.6, pitch: 22.1, focal: 62, distance: 0.9, frameX: 2.1, frameY: -47.7 }), 'gpt-image-2-lite');
+  assert.equal(payload.camera.yaw_deg, 51.6);
+  assert.equal(payload.camera.pitch_deg, 22.1);
+  assert.equal(payload.camera.focal_length_mm, 62);
+  assert.equal(payload.camera.semantic_target.camera_motion, 'orbit_only');
+  assert.equal(payload.camera.semantic_target.subject_motion, 'none');
+  assert.equal(payload.instruction, 'final_camera_reconstruction');
+  assert.equal('subject_yaw_deg' in payload.camera, false);
+  assert.equal('change' in payload, false);
+});
+
+test('camera payload keeps recorded start and relative delta for audit', () => {
+  const start = camera({ yaw: 72.9, pitch: 26.1 });
+  const target = camera({ yaw: 51.6, pitch: 22.1, focal: 62, distance: 0.9 });
+  const payload = angle.buildAnglePayload(target, 'gpt-image-2-lite', start);
+  assert.equal(payload.camera.yaw_deg, 51.6);
+  assert.equal(payload.camera_start.yaw_deg, 72.9);
+  assert.equal(payload.camera_delta.yaw_deg, -21.3);
+  assert.equal(payload.camera_delta.pitch_deg, -4);
+  assert.equal(payload.camera_delta.focal_length_mm, 12);
+  assert.equal(payload.camera_delta.distance, -1.3);
+});
+
+test('warns only for Lite at final absolute yaw of at least 30 degrees', () => {
+  assert.equal(angle.shouldWarnLiteForAngle('gpt-image-2-lite', 29.9), false);
+  assert.equal(angle.shouldWarnLiteForAngle('gpt-image-2-lite', 30), true);
+  assert.equal(angle.shouldWarnLiteForAngle('gpt-image-2-lite', -60), true);
+  assert.equal(angle.shouldWarnLiteForAngle('gpt-image-2', 60), false);
+});
+
+test('builds reference-relative universal viewpoint prompts', () => {
+  const state = angle.normalizeAngleState({
+    yaw: 45,
+    pitch: -15,
+    focal: 50,
+    distance: 2.2,
+    viewpoint: {
+      version: 2,
+      subjectType: 'product',
+      mode: 'object-orbit',
+      modeSource: 'manual',
+      changeView: true,
+      guide: false,
+      lighting: angle.LIGHTING_DEFAULTS,
+    },
+  });
+  const prompt = angle.compileAngleTargetPrompt('放在白色背景上', state, { output: { width: 1024, height: 1024, aspectRatio: '1:1' } });
+  assert.match(prompt, /Image 1 is the ORIGINAL primary reference/);
+  assert.match(prompt, /exact same product/);
+  assert.match(prompt, /RELATIVE to the original reference camera/);
+  assert.match(prompt, /approximately 45 degrees to the RIGHT/);
+  assert.match(prompt, /approximately 15 degrees/);
+  assert.match(prompt, /Preserve the original world-space illumination/);
+  assert.match(prompt, /USER REQUEST/);
+  assert.doesNotMatch(prompt, /Image 2 is/);
+});
+
+test('builds scene-camera semantics and explicit lighting instructions', () => {
+  const state = angle.normalizeAngleState({
+    yaw: -90,
+    pitch: 20,
+    focal: 35,
+    distance: 4.4,
+    viewpoint: {
+      version: 2,
+      subjectType: 'interior',
+      mode: 'camera-view',
+      modeSource: 'manual',
+      changeView: true,
+      guide: true,
+      lighting: {
+        ...angle.LIGHTING_DEFAULTS,
+        enabled: true,
+        azimuth: -60,
+        elevation: 25,
+        softness: 0.2,
+        temperature: 3200,
+        fill: 0.15,
+      },
+    },
+  });
+  const prompt = angle.compileAngleTargetPrompt('', state, { hasGuideReference: true });
+  assert.match(prompt, /same interior/);
+  assert.match(prompt, /Move the CAMERA approximately 90 degrees to the LEFT/);
+  assert.match(prompt, /Move the camera LOWER, looking UPWARD/);
+  assert.match(prompt, /Image 2 is an OPTIONAL abstract CAMERA COMPOSITION guide only/);
+  assert.match(prompt, /RELIGHT the same content/);
+  assert.match(prompt, /approximately 60 degrees left/);
+  assert.match(prompt, /3200K/);
+  assert.match(prompt, /crisp shadow edges/);
+  assert.match(prompt, /Do not rotate the room, furniture/);
+});
+
+test('keeps camera fixed when lighting-only mode is selected', () => {
+  const state = angle.normalizeAngleState({
+    yaw: 120,
+    pitch: -20,
+    focal: 85,
+    distance: 3.1,
+    viewpoint: {
+      version: 2,
+      subjectType: 'unknown',
+      mode: 'object-orbit',
+      modeSource: 'auto',
+      changeView: false,
+      guide: true,
+      lighting: { ...angle.LIGHTING_DEFAULTS, enabled: true, azimuth: 60 },
+    },
+  });
+  const semantic = angle.buildAngleTargetSemantic(state);
+  const prompt = angle.compileAngleTargetPrompt('', state);
+  const payload = angle.buildAnglePayload(state, 'gpt-image-2');
+  assert.equal(semantic.camera_motion, 'none');
+  assert.match(prompt, /keeping its camera viewpoint, perspective, framing/);
+  assert.doesNotMatch(prompt, /CAMERA VIEWPOINT/);
+  assert.equal(payload.instruction, 'reference_viewpoint_reconstruction');
+  assert.equal(payload.camera.viewpoint.changeView, false);
+  assert.equal(payload.camera.yaw_deg, 0);
+  assert.equal(payload.camera.pitch_deg, 0);
+});
+
+test('new relative directions cover both sides without anatomical assumptions', () => {
+  for (const yaw of [-135, -90, -45, 0, 45, 90, 135, 180]) {
+    const state = angle.createViewpointCamera();
+    state.yaw = yaw;
+    const prompt = angle.compileAngleTargetPrompt('保留所有标识', state);
+    assert.match(prompt, /Zero means the reference view/);
+    if (yaw) assert.ok(prompt.includes(`${Math.abs(yaw)} degrees to the ${yaw < 0 ? 'LEFT' : 'RIGHT'}`));
+    if (Math.abs(yaw) > 90) assert.match(prompt, /Infer unseen surfaces conservatively/);
+    assert.equal(prompt.match(/保留所有标识/g).length, 1);
+  }
+});
+
+test('reference-relative controls do not claim a calibrated source camera', () => {
+  const state = angle.createViewpointCamera();
+  const prompt = angle.compileAngleTargetPrompt('', state);
+  assert.match(prompt, /approximate visual targets, not measured camera coordinates/);
+  const payload = angle.buildAnglePayload(state);
+  assert.deepEqual(payload.reference_baseline, {
+    source: 'original_image',
+    calibration: 'not_calibrated',
+    preview_role: 'direction_and_composition_proxy',
+  });
+});
+
+test('distance multiplier and focal presets agree between prompt and audit', () => {
+  for (const [distance, ratio] of [[1.43, 0.65], [2.2, 1], [4.4, 2]]) {
+    for (const focal of [24, 50, 135]) {
+      const state = angle.createViewpointCamera();
+      Object.assign(state, { distance, focal });
+      const normalized = angle.normalizeAngleState(state);
+      assert.equal(normalized.distance, distance);
+      assert.equal(angle.buildAngleTargetSemantic(normalized).perspective.distance_multiplier, ratio);
+      const prompt = angle.compileAngleTargetPrompt('', state);
+      if (focal !== 50) assert.match(prompt, new RegExp(`${focal}mm-equivalent`));
+      if (ratio !== 1) assert.match(prompt, new RegExp(`${ratio}x the reference camera distance`));
+    }
+  }
+});
+
+test('scene defaults and legacy migration keep the original-relative baseline separate', () => {
+  for (const subject of ['interior', 'building', 'landscape', 'street', 'scene']) {
+    assert.equal(angle.normalizeViewpointOptions({ subjectType: subject }).mode, 'camera-view');
+  }
+  for (const subject of ['person', 'product', 'vehicle', 'object']) {
+    assert.equal(angle.normalizeViewpointOptions({ subjectType: subject }).mode, 'object-orbit');
+  }
+  const migrated = angle.createViewpointCamera({ yaw: 135, pitch: -40, subjectYaw: 30, modelId: 'saved-model' });
+  assert.equal(migrated.yaw, 0);
+  assert.equal(migrated.pitch, 0);
+  assert.equal(migrated.modelId, 'saved-model');
+  assert.equal(migrated.viewpoint.guide, false);
+  assert.equal(migrated.viewpoint.lighting.enabled, false);
+});
+
+test('lighting directions, anchors and all presets retain coherent light and shadow constraints', () => {
+  for (const preset of angle.LIGHTING_PRESETS) {
+    const light = angle.normalizeViewpointOptions({ lighting: { ...preset, enabled: true } }).lighting;
+    const prompt = angle.buildLightingPrompt(light);
+    assert.match(prompt, /highlights, reflections, contact shadows and cast shadows/);
+    assert.ok(prompt.includes(`${preset.temperature}K`));
+    assert.ok(prompt.includes(`${Math.round(preset.fill * 100)}%`));
+  }
+  const light = { ...angle.LIGHTING_DEFAULTS, azimuth: 0, elevation: 0 };
+  assert.ok(Math.abs(angle.lightingDirection(light, 90).x - 1) < 1e-9);
+  assert.equal(angle.lightingDirection({ ...light, anchor: 'reference' }, 90).z, 1);
+  for (const [key, value] of [['temperature', 2499], ['fill', 1.1], ['softness', -0.1], ['enabled', 'yes'], ['anchor', 'world']]) {
+    assert.throws(() => angle.readViewpointOptions({ version: 2, lighting: { [key]: value } }));
+  }
+});

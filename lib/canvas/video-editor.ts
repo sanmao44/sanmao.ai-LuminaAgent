@@ -1,0 +1,660 @@
+import type {
+  CanvasVideoEditorClip,
+  CanvasVideoEditorClipType,
+  CanvasVideoEditorState,
+  CanvasVideoEditorTrack,
+  CanvasVideoEditorTransition,
+  CanvasVideoEditorMotionPath,
+  CanvasVideoEditorLayout,
+  CanvasVideoEditorLayoutMode,
+  CanvasVideoEditorWord,
+} from "./types";
+
+export type CanvasVideoEditorInput = {
+  nodeId: string;
+  kind: "image" | "video" | "audio";
+  name?: string;
+  durationSeconds?: number;
+};
+
+export const VIDEO_EDITOR_DEFAULT_FPS = 30;
+export const VIDEO_EDITOR_DEFAULT_ASPECT = "16:9";
+export const VIDEO_EDITOR_DEFAULT_RESOLUTION = "1080p" as const;
+
+const TRACK_ORDER: CanvasVideoEditorTrack[] = ["video", "audio", "reference-audio", "caption", "graphics", "broll", "effect"];
+const MIN_CLIP_DURATION = 0.05;
+
+function finite(value: unknown, fallback: number) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function safeColor(value: unknown, fallback?: string) {
+  const color = String(value || '').trim().slice(0, 48);
+  return /^#[0-9a-f]{3,8}$/iu.test(color) || /^(?:rgba?|hsla?)\([^)]{1,80}\)$/iu.test(color) || /^[a-z]{3,20}$/iu.test(color)
+    ? color
+    : fallback;
+}
+
+function normalizeLayoutRegion(value: unknown) {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const x = clamp(finite(raw.x, 0), 0, 0.99);
+  const y = clamp(finite(raw.y, 0), 0, 0.99);
+  const width = clamp(finite(raw.width, 1), 0.01, 1 - x);
+  const height = clamp(finite(raw.height, 1), 0.01, 1 - y);
+  return {
+    x: Math.round(x * 1000) / 1000,
+    y: Math.round(y * 1000) / 1000,
+    width: Math.round(width * 1000) / 1000,
+    height: Math.round(height * 1000) / 1000,
+    ...(raw.radius !== undefined ? { radius: Math.round(clamp(finite(raw.radius, 0), 0, 0.5) * 1000) / 1000 } : {}),
+  };
+}
+
+function normalizeLayout(value: unknown): CanvasVideoEditorLayout | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const modes: CanvasVideoEditorLayoutMode[] = ['full', 'split-horizontal', 'split-vertical', 'picture-in-picture', 'card'];
+  const mode = modes.includes(raw.mode as CanvasVideoEditorLayoutMode) ? raw.mode as CanvasVideoEditorLayoutMode : 'full';
+  const primary = normalizeLayoutRegion(raw.primary);
+  const secondary = normalizeLayoutRegion(raw.secondary);
+  return {
+    mode,
+    ...(safeColor(raw.backgroundColor) ? { backgroundColor: safeColor(raw.backgroundColor) } : {}),
+    ...(safeColor(raw.surfaceColor) ? { surfaceColor: safeColor(raw.surfaceColor) } : {}),
+    ...(safeColor(raw.accentColor) ? { accentColor: safeColor(raw.accentColor) } : {}),
+    ...(raw.gap !== undefined ? { gap: Math.round(clamp(finite(raw.gap, 0), 0, 0.2) * 1000) / 1000 } : {}),
+    ...(raw.padding !== undefined ? { padding: Math.round(clamp(finite(raw.padding, 0), 0, 0.2) * 1000) / 1000 } : {}),
+    ...(raw.radius !== undefined ? { radius: Math.round(clamp(finite(raw.radius, 0), 0, 0.5) * 1000) / 1000 } : {}),
+    ...(primary ? { primary } : {}),
+    ...(secondary ? { secondary } : {}),
+  };
+}
+
+function normalizeTrack(value: unknown): CanvasVideoEditorTrack {
+  return value === "audio" || value === "reference-audio" || value === "caption" || value === "graphics" || value === "broll" || value === "effect" ? value : "video";
+}
+
+function clipPlaybackRate(clip: Pick<CanvasVideoEditorClip, "playbackRate">) {
+  return clip.playbackRate === 0.5 || clip.playbackRate === 1.5 || clip.playbackRate === 2
+    ? clip.playbackRate
+    : 1;
+}
+
+function normalizeClipType(value: unknown, track: CanvasVideoEditorTrack): CanvasVideoEditorClipType {
+  if (value === "video" || value === "audio" || value === "caption") return value;
+  if (value === "image") return "image";
+  return track === "audio" || track === "reference-audio" ? "audio" : track === "caption" || track === "graphics" ? "caption" : track === "broll" ? "video" : track === "effect" ? "effect" : "video";
+}
+
+function normalizeClip(value: unknown, index: number): CanvasVideoEditorClip | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Partial<CanvasVideoEditorClip>;
+  const track = normalizeTrack(raw.track);
+  const type = normalizeClipType(raw.type, track);
+  const duration = clamp(finite(raw.duration, 1), 0.05, 24 * 60 * 60);
+  const start = Math.max(0, finite(raw.start, 0));
+  const sourceOffset = Math.max(0, finite(raw.sourceOffset, 0));
+  const clip: CanvasVideoEditorClip = {
+    id: String(raw.id || `clip-${index + 1}`),
+    ...(raw.sourceClipId ? { sourceClipId: String(raw.sourceClipId) } : {}),
+    ...(Number.isInteger(Number(raw.shotIndex)) && Number(raw.shotIndex) >= 0 ? { shotIndex: Number(raw.shotIndex) } : {}),
+    ...(raw.componentId ? { componentId: String(raw.componentId) } : {}),
+    ...(typeof raw.role === "string" && raw.role.trim() ? { role: raw.role.trim().slice(0, 48) } : {}),
+    ...(raw.sourceNodeId ? { sourceNodeId: String(raw.sourceNodeId) } : {}),
+    ...(typeof raw.url === "string" && raw.url.trim() ? { url: raw.url.trim().slice(0, 2000) } : {}),
+    ...(raw.mediaKind === "image" || raw.mediaKind === "video" ? { mediaKind: raw.mediaKind } : {}),
+    ...(raw.source === "reference-video" || raw.source === "generated-media" ? { source: raw.source } : {}),
+    ...(typeof raw.visualSystemId === "string" && raw.visualSystemId.trim() ? { visualSystemId: raw.visualSystemId.trim().slice(0, 120) } : {}),
+    ...(raw.visualSystemState === "enter" || raw.visualSystemState === "active" || raw.visualSystemState === "update" || raw.visualSystemState === "exit" ? { visualSystemState: raw.visualSystemState } : {}),
+    track,
+    type,
+    name: String(raw.name || (track === "graphics" ? "画面字卡" : type === "caption" ? "字幕" : "素材")),
+    start,
+    duration,
+    sourceOffset,
+  };
+  if (typeof raw.text === "string") clip.text = raw.text;
+  if (Array.isArray(raw.words)) {
+    const rawWords = raw.words as unknown as unknown[];
+    const words = rawWords
+      .filter((word): word is Partial<CanvasVideoEditorWord> => Boolean(word && typeof word === "object"))
+      .map((word) => ({
+        start: Math.max(0, finite(word.start, 0)),
+        end: Math.max(0, finite(word.end, 0)),
+        text: String(word.text || "").trim().slice(0, 240),
+      }))
+      .filter((word) => word.text && word.end > word.start && word.start < duration)
+      .map((word) => ({ ...word, end: Math.min(duration, Math.max(word.start, word.end)) }));
+    if (words.length) clip.words = words;
+  }
+  if (raw.textRole === "caption" || raw.textRole === "graphics") clip.textRole = raw.textRole;
+  if (typeof raw.enabled === "boolean") clip.enabled = raw.enabled;
+  if (typeof raw.graphicsStyle === "string" && raw.graphicsStyle.trim()) clip.graphicsStyle = raw.graphicsStyle.trim().slice(0, 180);
+  if (typeof raw.effect === "string" && raw.effect.trim()) clip.effect = raw.effect.trim().slice(0, 180);
+  if (typeof raw.position === "string" && raw.position.trim()) clip.position = raw.position.trim().slice(0, 120);
+  const layout = normalizeLayout(raw.layout);
+  if (layout) clip.layout = layout;
+  if (raw.textBox && typeof raw.textBox === "object") {
+    const box = raw.textBox as Partial<NonNullable<CanvasVideoEditorClip["textBox"]>>;
+    const x = clamp(finite(box.x, 0), 0, 0.99);
+    const y = clamp(finite(box.y, 0), 0, 0.99);
+    const width = clamp(finite(box.width, 1), 0.01, 1 - x);
+    const height = clamp(finite(box.height, 1), 0.01, 1 - y);
+    clip.textBox = {
+      x: Math.round(x * 1000) / 1000,
+      y: Math.round(y * 1000) / 1000,
+      width: Math.round(width * 1000) / 1000,
+      height: Math.round(height * 1000) / 1000,
+    };
+  }
+  if (raw.fontSize !== undefined) clip.fontSize = clamp(finite(raw.fontSize, 42), 12, 160);
+  if (raw.captionBackgroundOpacity !== undefined) {
+    clip.captionBackgroundOpacity = clamp(finite(raw.captionBackgroundOpacity, 0.68), 0, 1);
+  }
+  if (raw.scale !== undefined) clip.scale = clamp(finite(raw.scale, 1), 0.1, 4);
+  if (raw.opacity !== undefined) clip.opacity = clamp(finite(raw.opacity, 1), 0, 1);
+  if (raw.x !== undefined) clip.x = clamp(finite(raw.x, 0), -1, 1);
+  if (raw.y !== undefined) clip.y = clamp(finite(raw.y, 0), -1, 1);
+  if (raw.volume !== undefined) clip.volume = clamp(finite(raw.volume, 1), 0, 2);
+  if (raw.playbackRate !== undefined) {
+    const playbackRate = finite(raw.playbackRate, 1);
+    clip.playbackRate = playbackRate === 0.5 || playbackRate === 1.5 || playbackRate === 2 ? playbackRate : 1;
+  }
+  if (raw.fit !== undefined) clip.fit = raw.fit === "cover" ? "cover" : "contain";
+  if (raw.fadeIn !== undefined) clip.fadeIn = clamp(finite(raw.fadeIn, 0), 0, duration);
+  if (raw.transitionIn === "cut" || raw.transitionIn === "fade" || raw.transitionIn === "dissolve" || raw.transitionIn === "wipe" || raw.transitionIn === "slide" || raw.transitionIn === "none") clip.transitionIn = raw.transitionIn;
+  if (raw.transitionDuration !== undefined) clip.transitionDuration = clamp(finite(raw.transitionDuration, 0), 0, Math.min(duration, 3));
+  if (raw.transitionDirection === "left" || raw.transitionDirection === "right" || raw.transitionDirection === "up" || raw.transitionDirection === "down") clip.transitionDirection = raw.transitionDirection;
+  if (raw.motionPath === "none" || raw.motionPath === "pan-left" || raw.motionPath === "pan-right" || raw.motionPath === "pan-up" || raw.motionPath === "pan-down" || raw.motionPath === "zoom-in" || raw.motionPath === "zoom-out") clip.motionPath = raw.motionPath;
+  return clip;
+}
+
+export function normalizeVideoEditorState(value: unknown): CanvasVideoEditorState {
+  const raw = value && typeof value === "object" ? value as Partial<CanvasVideoEditorState> : {};
+  const clips = Array.isArray(raw.clips)
+    ? raw.clips.map(normalizeClip).filter((clip): clip is CanvasVideoEditorClip => Boolean(clip))
+    : [];
+  const mutedTracks = Array.isArray(raw.mutedTracks)
+    ? [...new Set(raw.mutedTracks.filter((track): track is CanvasVideoEditorTrack => TRACK_ORDER.includes(track as CanvasVideoEditorTrack)).map(normalizeTrack))]
+    : [];
+  const disabledTracks = Array.isArray(raw.disabledTracks)
+    ? [...new Set(raw.disabledTracks.filter((track): track is CanvasVideoEditorTrack => TRACK_ORDER.includes(track as CanvasVideoEditorTrack)).map(normalizeTrack))]
+    : [];
+  // A video track is a sequential edit lane. Repair legacy/manual overlap data
+  // on load so clips can never hide one another on the same video layer.
+  const videoPositions = new Map<string, number>();
+  let videoCursor = 0;
+  clips
+    .map((clip, index) => ({ clip, index }))
+    .filter(({ clip }) => clip.track === "video")
+    .sort((a, b) => a.clip.start - b.clip.start || a.index - b.index)
+    .forEach(({ clip }) => {
+      const start = Math.max(clip.start, videoCursor);
+      videoPositions.set(clip.id, start);
+      videoCursor = start + clip.duration;
+    });
+  const positionedClips = clips.map((clip) => {
+    const start = videoPositions.get(clip.id);
+    return start === undefined || start === clip.start ? clip : { ...clip, start };
+  });
+  const maxEnd = positionedClips.reduce((max, clip) => Math.max(max, clip.start + clip.duration), 0);
+  return {
+    version: 1,
+    projectDuration: Math.max(maxEnd, finite(raw.projectDuration, maxEnd)),
+    fps: clamp(Math.round(finite(raw.fps, VIDEO_EDITOR_DEFAULT_FPS)), 1, 120),
+    aspect: typeof raw.aspect === "string" && raw.aspect.trim() ? raw.aspect.trim() : VIDEO_EDITOR_DEFAULT_ASPECT,
+    resolution: raw.resolution === "720p" || raw.resolution === "2K" || raw.resolution === "4K" ? raw.resolution : VIDEO_EDITOR_DEFAULT_RESOLUTION,
+    clips: positionedClips,
+    mutedTracks,
+    ...(typeof raw.referenceAudioDucking === "boolean" ? { referenceAudioDucking: raw.referenceAudioDucking } : {}),
+    disabledTracks,
+  };
+}
+
+export function createVideoEditorState(
+  inputs: readonly CanvasVideoEditorInput[] = [],
+): CanvasVideoEditorState {
+  return syncVideoEditorInputs(
+    {
+      version: 1,
+      projectDuration: 0,
+      fps: VIDEO_EDITOR_DEFAULT_FPS,
+      aspect: VIDEO_EDITOR_DEFAULT_ASPECT,
+      resolution: VIDEO_EDITOR_DEFAULT_RESOLUTION,
+      clips: [],
+      mutedTracks: [],
+      disabledTracks: [],
+    },
+    inputs,
+  );
+}
+
+export function defaultVideoEditorDuration(input: Pick<CanvasVideoEditorInput, "kind" | "durationSeconds">) {
+  const sourceDuration = Number(input.durationSeconds);
+  if (Number.isFinite(sourceDuration) && sourceDuration > 0) return Math.max(0.05, sourceDuration);
+  return input.kind === "video" ? 5 : input.kind === "audio" ? 20 : 3;
+}
+
+function clipForInput(input: CanvasVideoEditorInput, start: number): CanvasVideoEditorClip {
+  const isAudio = input.kind === "audio";
+  return {
+    id: `clip-${input.nodeId}`,
+    sourceNodeId: input.nodeId,
+    track: isAudio ? "audio" : "video",
+    type: input.kind,
+    name: input.name || (isAudio ? "音频素材" : input.kind === "video" ? "视频素材" : "图片素材"),
+    start,
+    duration: defaultVideoEditorDuration(input),
+    sourceOffset: 0,
+    scale: 1,
+    opacity: 1,
+    volume: 1,
+    ...(input.kind === "video" ? { playbackRate: 1 as const, fit: "contain" as const } : {}),
+  };
+}
+
+function sameClip(a: CanvasVideoEditorClip, b: CanvasVideoEditorClip) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Reconcile connected media inputs without overwriting manual clip edits.
+ * Existing source ids retain their positions; newly connected sources append
+ * after the current track, and disconnected sources are removed.
+ */
+export function syncVideoEditorInputs(
+  value: CanvasVideoEditorState,
+  inputs: readonly CanvasVideoEditorInput[],
+): CanvasVideoEditorState {
+  const current = normalizeVideoEditorState(value);
+  const validInputs = inputs.filter((input, index, all) =>
+    input.nodeId && all.findIndex((candidate) => candidate.nodeId === input.nodeId) === index,
+  );
+  const inputIds = new Set(validInputs.map((input) => input.nodeId));
+  const retained = current.clips.filter((clip) =>
+    clip.track === "caption" || clip.track === "graphics" || clip.track === "effect" || (clip.sourceNodeId && inputIds.has(clip.sourceNodeId)),
+  );
+  const retainedBySource = new Map(
+    retained.filter((clip) => clip.sourceNodeId).map((clip) => [clip.sourceNodeId!, clip]),
+  );
+  const next = [...retained];
+  const trackEnd = (track: CanvasVideoEditorTrack) => next
+    .filter((clip) => clip.track === track)
+    .reduce((end, clip) => Math.max(end, clip.start + clip.duration), 0);
+  for (const input of validInputs) {
+    if (retainedBySource.has(input.nodeId)) continue;
+    const track = input.kind === "audio" ? "audio" : "video";
+    next.push(clipForInput(input, trackEnd(track)));
+  }
+  const projectDuration = next.reduce((max, clip) => Math.max(max, clip.start + clip.duration), 0);
+  const unchanged =
+    projectDuration === current.projectDuration &&
+    next.length === current.clips.length &&
+    next.every((clip, index) => sameClip(clip, current.clips[index]));
+  return unchanged ? current : { ...current, clips: next, projectDuration };
+}
+
+export function clipEnd(clip: Pick<CanvasVideoEditorClip, "start" | "duration">) {
+  return clip.start + clip.duration;
+}
+
+export function clipsAtTime(state: CanvasVideoEditorState, time: number) {
+  const point = Math.max(0, time);
+  return state.clips.filter((clip) =>
+    clip.enabled !== false && !state.disabledTracks?.includes(clip.track) && point >= clip.start && point < clipEnd(clip),
+  );
+}
+
+/** Keep the editable canvas mix consistent with the server-side clone mixer. */
+export function videoEditorAudioGain(
+  state: CanvasVideoEditorState,
+  clip: Pick<CanvasVideoEditorClip, "track" | "volume">,
+  time: number,
+) {
+  const authored = clamp(finite(clip.volume, 1), 0, 1);
+  if (clip.track !== "reference-audio" || state.referenceAudioDucking !== true) return authored;
+  const voiceActive = state.clips.some((candidate) =>
+    candidate.track === "audio"
+      && !state.disabledTracks?.includes("audio")
+      && !state.mutedTracks.includes("audio")
+      && (candidate.volume ?? 1) > 0
+      && time >= candidate.start
+      && time < candidate.start + candidate.duration,
+  );
+  return authored * (voiceActive ? 0.22 : 1);
+}
+
+export function videoEditorMotionTransform(
+  clip: Pick<CanvasVideoEditorClip, "motionPath" | "start" | "duration">,
+  time: number,
+) {
+  const progress = clamp((time - clip.start) / Math.max(0.05, clip.duration), 0, 1);
+  const path = clip.motionPath || "none";
+  if (path === "pan-left") return { x: 0.18 - progress * 0.36, y: 0, scale: 1 };
+  if (path === "pan-right") return { x: -0.18 + progress * 0.36, y: 0, scale: 1 };
+  if (path === "pan-up") return { x: 0, y: 0.18 - progress * 0.36, scale: 1 };
+  if (path === "pan-down") return { x: 0, y: -0.18 + progress * 0.36, scale: 1 };
+  if (path === "zoom-in") return { x: 0, y: 0, scale: 1 + progress * 0.12 };
+  if (path === "zoom-out") return { x: 0, y: 0, scale: 1.12 - progress * 0.12 };
+  return { x: 0, y: 0, scale: 1 };
+}
+
+/** Apply the inspector's nudge/scale to a recovered reference text box. */
+export function videoEditorTextBox(clip: Pick<CanvasVideoEditorClip, "textBox" | "x" | "y" | "scale">) {
+  if (!clip.textBox) return undefined;
+  const scale = clamp(finite(clip.scale, 1), 0.1, 4);
+  const width = clamp(clip.textBox.width * scale, 0.01, 1);
+  const height = clamp(clip.textBox.height * scale, 0.01, 1);
+  const centerX = clamp(clip.textBox.x + clip.textBox.width / 2 + finite(clip.x, 0) * 0.5, width / 2, 1 - width / 2);
+  const centerY = clamp(clip.textBox.y + clip.textBox.height / 2 - finite(clip.y, 0) * 0.5, height / 2, 1 - height / 2);
+  return {
+    x: Math.round((centerX - width / 2) * 1000) / 1000,
+    y: Math.round((centerY - height / 2) * 1000) / 1000,
+    width: Math.round(width * 1000) / 1000,
+    height: Math.round(height * 1000) / 1000,
+  };
+}
+
+/** Resolve a recovered layout into a safe normalized primary media region. */
+export function videoEditorLayoutRegion(layout: CanvasVideoEditorClip["layout"] | undefined) {
+  const value = layout;
+  const gap = clamp(finite(value?.gap, 0.02), 0, 0.2);
+  const padding = clamp(finite(value?.padding, 0.06), 0, 0.2);
+  if (value?.primary) {
+    const x = clamp(finite(value.primary.x, 0), 0, 0.99);
+    const y = clamp(finite(value.primary.y, 0), 0, 0.99);
+    return {
+      x,
+      y,
+      width: clamp(finite(value.primary.width, 1), 0.01, 1 - x),
+      height: clamp(finite(value.primary.height, 1), 0.01, 1 - y),
+      radius: clamp(finite(value.primary.radius, finite(value.radius, 0)), 0, 0.5),
+    };
+  }
+  if (value?.mode === "split-horizontal") return { x: 0, y: 0, width: clamp(0.5 - gap / 2, 0.01, 1), height: 1, radius: 0 };
+  if (value?.mode === "split-vertical") return { x: 0, y: 0, width: 1, height: clamp(0.5 - gap / 2, 0.01, 1), radius: 0 };
+  if (value?.mode === "card") return { x: padding, y: padding, width: 1 - padding * 2, height: 1 - padding * 2, radius: clamp(finite(value.radius, 0.06), 0, 0.5) };
+  return { x: 0, y: 0, width: 1, height: 1, radius: clamp(finite(value?.radius, 0), 0, 0.5) };
+}
+
+/** Resolve both media regions so preview/export can reproduce split and PiP layouts. */
+export function videoEditorLayoutRegions(layout: CanvasVideoEditorClip["layout"] | undefined) {
+  const primary = videoEditorLayoutRegion(layout);
+  if (!layout || layout.mode === "full" || layout.mode === "card") return { primary, secondary: undefined };
+  const gap = clamp(finite(layout.gap, 0.02), 0, 0.2);
+  const secondary = layout.secondary
+    ? {
+      x: clamp(finite(layout.secondary.x, 0), 0, 0.99),
+      y: clamp(finite(layout.secondary.y, 0), 0, 0.99),
+      width: clamp(finite(layout.secondary.width, 1), 0.01, 1 - clamp(finite(layout.secondary.x, 0), 0, 0.99)),
+      height: clamp(finite(layout.secondary.height, 1), 0.01, 1 - clamp(finite(layout.secondary.y, 0), 0, 0.99)),
+      radius: clamp(finite(layout.secondary.radius, finite(layout.radius, 0)), 0, 0.5),
+    }
+    : layout.mode === "split-horizontal"
+      ? { x: 0.5 + gap / 2, y: 0, width: clamp(0.5 - gap / 2, 0.01, 1), height: 1, radius: 0 }
+      : layout.mode === "split-vertical"
+        ? { x: 0, y: 0.5 + gap / 2, width: 1, height: clamp(0.5 - gap / 2, 0.01, 1), radius: 0 }
+        : { x: 0.64, y: 0.64, width: 0.3, height: 0.3, radius: clamp(finite(layout.radius, 0.04), 0, 0.5) };
+  return { primary, secondary };
+}
+
+function neighboringVideoClips(state: CanvasVideoEditorState, clip: CanvasVideoEditorClip) {
+  if (clip.track !== "video") return { previous: undefined, next: undefined };
+  const peers = state.clips
+    .filter((item) => item.id !== clip.id && item.track === "video")
+    .sort((a, b) => a.start - b.start);
+  return {
+    previous: peers.filter((item) => item.start < clip.start).at(-1),
+    next: peers.find((item) => item.start >= clip.start),
+  };
+}
+
+export function updateVideoEditorClip(
+  state: CanvasVideoEditorState,
+  clipId: string,
+  patch: Partial<CanvasVideoEditorClip>,
+): CanvasVideoEditorState {
+  const clips = state.clips.map((clip) => {
+    if (clip.id !== clipId) return clip;
+    const currentRate = clipPlaybackRate(clip);
+    const nextRate = clipPlaybackRate({ playbackRate: patch.playbackRate ?? currentRate });
+    // A clip duration is measured on the project timeline. When only speed
+    // changes, retain the same source range and derive its new output length.
+    const duration = clamp(
+      patch.duration === undefined
+        ? clip.duration * currentRate / nextRate
+        : finite(patch.duration, clip.duration),
+      0.05,
+      24 * 60 * 60,
+    );
+    return normalizeClip({ ...clip, ...patch, duration }, 0) || clip;
+  });
+  const projectDuration = clips.reduce((max, clip) => Math.max(max, clipEnd(clip)), 0);
+  return { ...state, clips, projectDuration };
+}
+
+/** Move a clip on its track without changing its source range or duration. */
+export function moveVideoEditorClip(
+  state: CanvasVideoEditorState,
+  clipId: string,
+  start: number,
+): CanvasVideoEditorState {
+  const clip = state.clips.find((item) => item.id === clipId);
+  if (!clip) return state;
+  const requestedStart = Math.max(0, finite(start, clip.start));
+  const moved = updateVideoEditorClip(state, clipId, { start: requestedStart });
+  // Video clips share one sequential lane, so the dragged clip lands where it
+  // was dropped and normalization pushes the follower clips to the right.
+  // Clamping the drag between its neighbours instead would freeze any clip that
+  // sits flush against the next one, which is the common case after a split.
+  return clip.track === "video" ? normalizeVideoEditorState(moved) : moved;
+}
+
+export function removeVideoEditorClip(state: CanvasVideoEditorState, clipId: string) {
+  const removed = state.clips.find((clip) => clip.id === clipId);
+  if (!removed) return state;
+  // Removing a picture edit removes a real range from the program timeline.
+  // Ripple every track together so A1/A2 and captions do not drift away from
+  // the remaining video. Removing an overlay/audio clip remains track-local.
+  if (removed.track === "video") {
+    const rangeStart = removed.start;
+    const rangeEnd = clipEnd(removed);
+    const rangeDuration = removed.duration;
+    const clips = state.clips
+      .filter((clip) => clip.id !== clipId)
+      .flatMap((clip) => subtractTimelineRange(clip, rangeStart, rangeEnd, rangeDuration));
+    return {
+      ...state,
+      clips,
+      projectDuration: clips.reduce((max, clip) => Math.max(max, clipEnd(clip)), 0),
+    };
+  }
+  const removedEnd = clipEnd(removed);
+  const clips = state.clips
+    .filter((clip) => clip.id !== clipId)
+    .map((clip) => {
+      if (clip.track !== removed.track || clip.start < removedEnd) return clip;
+      return { ...clip, start: Math.max(0, clip.start - removed.duration) };
+    });
+  return {
+    ...state,
+    clips,
+    projectDuration: clips.reduce((max, clip) => Math.max(max, clipEnd(clip)), 0),
+  };
+}
+
+function splitAtTimelinePoint(clip: CanvasVideoEditorClip, point: number) {
+  if (point <= clip.start + 0.05 || point >= clipEnd(clip) - 0.05) return [clip];
+  const leftDuration = point - clip.start;
+  const rate = clipPlaybackRate(clip);
+  const right = {
+    ...clip,
+    id: `${clip.id}-split-${Math.round(point * 1000)}`,
+    start: point,
+    duration: clip.duration - leftDuration,
+    sourceOffset: clip.sourceOffset + leftDuration * rate,
+  };
+  return [{ ...clip, duration: leftDuration }, right];
+}
+
+function subtractTimelineRange(
+  clip: CanvasVideoEditorClip,
+  rangeStart: number,
+  rangeEnd: number,
+  rangeDuration: number,
+) {
+  const clipStart = clip.start;
+  const clipEndTime = clipEnd(clip);
+  if (clipEndTime <= rangeStart) return [clip];
+  if (clipStart >= rangeEnd) return [{ ...clip, start: clip.start - rangeDuration }];
+  const rate = clipPlaybackRate(clip);
+  const result: CanvasVideoEditorClip[] = [];
+  if (clipStart < rangeStart) {
+    result.push({ ...clip, duration: rangeStart - clipStart });
+  }
+  if (clipEndTime > rangeEnd) {
+    const afterStart = Math.max(clipStart, rangeEnd);
+    const afterDuration = clipEndTime - afterStart;
+    result.push({
+      ...clip,
+      id: `${clip.id}-ripple-${Math.round(rangeStart * 1000)}`,
+      start: Math.max(0, rangeStart),
+      duration: afterDuration,
+      sourceOffset: clip.sourceOffset + (afterStart - clipStart) * rate,
+    });
+  }
+  return result;
+}
+
+export function splitVideoEditorClip(
+  state: CanvasVideoEditorState,
+  clipId: string,
+  splitAt: number,
+): CanvasVideoEditorState {
+  const clip = state.clips.find((item) => item.id === clipId);
+  if (!clip) return state;
+  const point = Number(splitAt);
+  const relative = point - clip.start;
+  if (!Number.isFinite(relative) || relative <= 0.05 || relative >= clip.duration - 0.05) return state;
+  const clips = state.clips.flatMap((item) => {
+    if (item.id === clipId) return splitAtTimelinePoint(item, point);
+    // Keep linked A1/A2 and text overlays aligned with a split video shot.
+    if (clip.track === "video" && item.shotIndex === clip.shotIndex && item.track !== "video") {
+      return splitAtTimelinePoint(item, point);
+    }
+    return [item];
+  });
+  return {
+    ...state,
+    clips,
+    projectDuration: clips.reduce((max, item) => Math.max(max, clipEnd(item)), 0),
+  };
+}
+
+export function trimVideoEditorClip(
+  state: CanvasVideoEditorState,
+  clipId: string,
+  start: number,
+  end: number,
+): CanvasVideoEditorState {
+  const clip = state.clips.find((item) => item.id === clipId);
+  if (!clip) return state;
+  const previous = neighboringVideoClips(state, clip).previous;
+  // The left edge stops at the clip before it, while the right edge may grow
+  // over a follower: normalization ripples that follower right instead of
+  // refusing the trim.
+  const minimumStart = clip.track === "video" && previous ? clipEnd(previous) : 0;
+  const nextStart = Math.max(minimumStart, Math.max(0, finite(start, clip.start)));
+  const nextEnd = Math.max(nextStart + MIN_CLIP_DURATION, finite(end, clipEnd(clip)));
+  const leftTrim = Math.max(0, nextStart - clip.start);
+  const trimmed = updateVideoEditorClip(state, clipId, {
+    start: nextStart,
+    duration: nextEnd - nextStart,
+    sourceOffset: clip.sourceOffset + leftTrim * clipPlaybackRate(clip),
+  });
+  return clip.track === "video" ? normalizeVideoEditorState(trimmed) : trimmed;
+}
+
+export function reorderVideoEditorClips(
+  state: CanvasVideoEditorState,
+  track: CanvasVideoEditorTrack,
+  orderedIds: readonly string[],
+): CanvasVideoEditorState {
+  const rank = new Map(orderedIds.map((id, index) => [id, index]));
+  const clips = state.clips.slice().sort((a, b) => {
+    if (a.track !== track || b.track !== track) return 0;
+    return (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER);
+  });
+  let cursor = 0;
+  const positioned = clips.map((clip) => {
+    if (clip.track !== track) return clip;
+    const next = { ...clip, start: cursor };
+    cursor += next.duration;
+    return next;
+  });
+  return { ...state, clips: positioned, projectDuration: positioned.reduce((max, clip) => Math.max(max, clipEnd(clip)), 0) };
+}
+
+export function addVideoEditorCaption(
+  state: CanvasVideoEditorState,
+  text = "新字幕",
+  start = 0,
+  duration = 3,
+): CanvasVideoEditorState {
+  const safeDuration = clamp(Number(duration) || 3, 0.05, 24 * 60 * 60);
+  const requestedStart = Math.max(0, Number(start) || 0);
+  const captionClips = state.clips.filter((clip) => clip.track === "caption");
+  let safeStart = requestedStart;
+  // Keep one caption track readable: when the playhead is inside an existing
+  // caption, place the new caption after the blocking range instead of
+  // stacking two clips at the same time and hiding one in preview.
+  while (captionClips.some((clip) => safeStart < clipEnd(clip) && safeStart + safeDuration > clip.start)) {
+    safeStart = captionClips
+      .filter((clip) => safeStart < clipEnd(clip) && safeStart + safeDuration > clip.start)
+      .reduce((end, clip) => Math.max(end, clipEnd(clip)), safeStart);
+  }
+  const clip: CanvasVideoEditorClip = {
+    id: `caption-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    track: "caption",
+    type: "caption",
+    name: "字幕",
+    start: safeStart,
+    duration: safeDuration,
+    sourceOffset: 0,
+    text,
+    fontSize: 42,
+    captionBackgroundOpacity: 0.68,
+    scale: 1,
+    opacity: 1,
+    x: 0,
+    y: 0.35,
+  };
+  const clips = [...state.clips, clip];
+  return { ...state, clips, projectDuration: Math.max(state.projectDuration, clipEnd(clip)) };
+}
+
+export function toggleVideoEditorTrackMute(
+  state: CanvasVideoEditorState,
+  track: CanvasVideoEditorTrack,
+) {
+  const muted = new Set(state.mutedTracks);
+  if (muted.has(track)) muted.delete(track);
+  else muted.add(track);
+  return { ...state, mutedTracks: TRACK_ORDER.filter((item) => muted.has(item)) };
+}
+
+export function toggleVideoEditorTrackEnabled(
+  state: CanvasVideoEditorState,
+  track: CanvasVideoEditorTrack,
+) {
+  const disabled = new Set(state.disabledTracks || []);
+  if (disabled.has(track)) disabled.delete(track);
+  else disabled.add(track);
+  return { ...state, disabledTracks: TRACK_ORDER.filter((item) => disabled.has(item)) };
+}

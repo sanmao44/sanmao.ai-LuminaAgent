@@ -1,0 +1,338 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import ts from "typescript";
+
+const component = (await readFile(
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
+  "utf8",
+)).concat("\n", await readFile(
+  new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url),
+  "utf8",
+), "\n", await readFile(
+  new URL("../components/canvas/CanvasContextMenuLayer.tsx", import.meta.url),
+  "utf8",
+));
+const createMenuComponent = await readFile(new URL("../components/canvas/CanvasCreateContextMenu.tsx", import.meta.url), "utf8");
+const toolsMenuComponent = await readFile(new URL("../components/canvas/CanvasToolsContextMenu.tsx", import.meta.url), "utf8");
+const contextMenuComponent = await readFile(new URL("../components/canvas/CanvasContextMenu.tsx", import.meta.url), "utf8");
+const menuActions = await readFile(new URL("../lib/canvas/menu-actions.ts", import.meta.url), "utf8");
+const quickToolbar = await readFile(new URL("../components/canvas/CanvasQuickToolbar.tsx", import.meta.url), "utf8");
+const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
+const groupLayer = await readFile(new URL("../components/canvas/CanvasGroupLayer.tsx", import.meta.url), "utf8");
+const connectionOverlay = await readFile(new URL("../components/canvas/CanvasConnectionOverlay.tsx", import.meta.url), "utf8");
+const styles = (await readFile(
+  new URL("../app/canvas.css", import.meta.url),
+  "utf8",
+)).concat("\n", await readFile(
+  new URL("../app/canvas-context-menu.css", import.meta.url),
+  "utf8",
+));
+const arrangementStyles = await readFile(
+  new URL("../app/canvas-arrangement.css", import.meta.url),
+  "utf8",
+);
+const toolsStyles = await readFile(
+  new URL("../app/canvas-tools.css", import.meta.url),
+  "utf8",
+);
+
+test("canvas arrangement menus keep their responsive styles in the arrangement sheet", () => {
+  assert.match(arrangementStyles, /\.canvas-arrange-menu\{/);
+  assert.match(arrangementStyles, /\.canvas-topbar\.collapsed \.canvas-arrange-control/);
+  assert.match(arrangementStyles, /@media\(max-width:720px\)\{\.canvas-arrange-control/);
+  assert.match(arrangementStyles, /\.canvas-group-arrange-menu\{/);
+  assert.match(arrangementStyles, /@media\(max-width:540px\)\{\.canvas-group-arrange-menu/);
+});
+
+test("node context menu has no duplicate exact type branches or stale selection handlers", () => {
+  const source = ts.createSourceFile(
+    "SuperCanvas.tsx", component, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX,
+  );
+  let menu;
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === "contextMenuGroups") {
+      menu = node.initializer;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  assert.ok(menu && ts.isCallExpression(menu), "node context menu memo must exist");
+  const [builder, dependencies] = menu.arguments;
+  assert.ok(ts.isArrowFunction(builder) && ts.isBlock(builder.body));
+  const types = builder.body.statements.flatMap((statement) => {
+    if (!ts.isIfStatement(statement)) return [];
+    const condition = statement.expression;
+    if (!ts.isBinaryExpression(condition)
+      || condition.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken
+      || !ts.isPropertyAccessExpression(condition.left)
+      || condition.left.expression.getText(source) !== "node"
+      || condition.left.name.text !== "type"
+      || !ts.isStringLiteral(condition.right)) return [];
+    return [condition.right.text];
+  });
+  assert.ok(types.length > 0, "node type branches must be checked");
+  assert.equal(new Set(types).size, types.length, "duplicate type branches can become unreachable");
+  assert.ok(ts.isArrayLiteralExpression(dependencies));
+  const names = dependencies.elements.map((element) => element.getText(source));
+  assert.equal(new Set(names).size, names.length, "memo dependencies must not be duplicated");
+  assert.ok(names.includes("deleteSelection"), "menu must track the current selection handler");
+});
+
+test("card context menus select the target and preserve selected multi-actions", () => {
+  const contextMenuStart = component.indexOf("const contextMenuGroups = useMemo");
+  const groupContextMenuStart = component.indexOf("const groupContextMenuGroups = useMemo");
+  const contextMenuEnd = groupContextMenuStart;
+  assert.ok(contextMenuStart >= 0 && contextMenuEnd > contextMenuStart, "node context menu builder should exist");
+  const contextMenu = component.slice(contextMenuStart, contextMenuEnd);
+  const groupContextMenuEnd = component.indexOf("// Below this threshold", groupContextMenuStart);
+  assert.ok(groupContextMenuStart >= 0 && groupContextMenuEnd > groupContextMenuStart, "group context menu builder should exist");
+  const groupContextMenu = component.slice(groupContextMenuStart, groupContextMenuEnd);
+  const renderedGroupMenu = contextMenu;
+  const groupQuickActionsStart = component.indexOf("const groupQuickActions = useMemo");
+  const groupQuickActions = component.slice(groupQuickActionsStart, groupContextMenuStart);
+  const audioMenuStart = contextMenu.indexOf('if (node.type === "media" && node.data.kind === "audio")');
+  const audioMenuEnd = contextMenu.indexOf('if (node.type === "media" && node.data.kind === "image")', audioMenuStart);
+  assert.ok(audioMenuStart >= 0 && audioMenuEnd > audioMenuStart, "audio context menu should have its own branch");
+  const audioContextMenu = contextMenu.slice(audioMenuStart, audioMenuEnd);
+  const ordinaryContextMenu = `${contextMenu.slice(0, audioMenuStart)}${contextMenu.slice(audioMenuEnd)}`;
+  const quickActionsStart = component.indexOf("const quickActions = useMemo");
+  const quickActionsEnd = component.indexOf("// Below this threshold", quickActionsStart);
+  assert.ok(quickActionsStart >= 0 && quickActionsEnd > quickActionsStart, "node quick toolbar builder should exist");
+  const quickActions = component.slice(quickActionsStart, quickActionsEnd);
+
+  assert.match(component, /type CanvasContextMenuState/);
+  assert.match(component, /menu: "node" \| "group" \| "create" \| "tools"/);
+  assert.match(component, /nodeId\?: string/);
+  assert.match(component, /groupId\?: string/);
+  assert.match(component, /if \(!selectedIds\.has\(node\.id\)\) selectNode\(node\)/);
+  assert.match(component, /<CanvasNodeContextMenu/);
+  assert.match(component, /<CanvasGroupContextMenu/);
+  assert.match(contextMenuComponent, /className="canvas-group-context-menu"/);
+  assert.match(contextMenuComponent, /className="canvas-node-context-menu"/);
+  assert.match(contextMenuComponent, /className=\{`canvas-context-menu\$\{className/);
+  assert.match(component, /label: "复制节点"/);
+  assert.match(component, /label: "创建副本"/);
+  assert.match(component, /保留组内及边界连线/);
+  assert.match(contextMenu, /label: "复制图片"/);
+  assert.match(contextMenu, /label: "图片编辑"/);
+  assert.match(contextMenu, /label: "生成新视角"/);
+  assert.match(contextMenu, /label: "继续生成 \/ 变体"/);
+  assert.match(contextMenu, /label: "下载"/);
+  assert.match(contextMenu, /label: "加入资产"/);
+  assert.match(contextMenuComponent, /groups\.filter\(\(group\) => group\.actions\.length > 0\)/);
+  assert.doesNotMatch(contextMenu, /label: "预览"/);
+  assert.doesNotMatch(contextMenu, /label: "放大查看"/);
+  assert.doesNotMatch(contextMenu, /label: "调整参数"/);
+  assert.doesNotMatch(contextMenu, /局部编辑/);
+  assert.doesNotMatch(contextMenu, /label: "作为参考"/);
+  assert.doesNotMatch(ordinaryContextMenu, /id: "delete"/);
+  assert.doesNotMatch(ordinaryContextMenu, /label: "删除"/);
+  assert.doesNotMatch(ordinaryContextMenu, /label: selectedIds\.size > 1 \? `删除/);
+  assert.match(audioContextMenu, /label: hasMedia \? "编辑 \/ 替换" : "添加音频"/);
+  assert.match(audioContextMenu, /label: "播放"/);
+  assert.match(audioContextMenu, /label: "下载"/);
+  assert.match(audioContextMenu, /label: "加入资产"/);
+  assert.match(audioContextMenu, /label: "删除"/);
+  assert.match(quickActions, /useMemo<CanvasQuickToolbarActions>/);
+  assert.match(quickActions, /id: "mask"/);
+  assert.match(quickActions, /局部编辑/);
+  assert.match(quickActions, /label: "图片编辑"/);
+  assert.match(quickActions, /id: "angle-view"/);
+  assert.match(quickActions, /label: "生成新视角"/);
+  assert.match(quickActions, /label: "作为参考"/);
+  assert.match(quickActions, /label: "下载"/);
+  assert.match(quickActions, /label: "加入资产"/);
+  assert.match(quickActions, /label: "删除"/);
+  assert.doesNotMatch(quickActions, /id: "edit"/);
+  assert.doesNotMatch(quickActions, /label: "编辑"/);
+  assert.match(quickActions, /id: "image-operations"/);
+  assert.match(quickActions, /icon: "image-operations"/);
+  assert.doesNotMatch(quickActions, /id: "more"/);
+  assert.match(quickActions, /id: "video-tools"/);
+  assert.doesNotMatch(quickActions, /label: "预览"/);
+  assert.match(quickToolbar, /aria-haspopup="menu"/);
+  assert.match(quickToolbar, /aria-controls={`canvas-quick-menu-\$\{targetId\}-\$\{group\.id\}`}/);
+  assert.match(quickToolbar, /aria-expanded=\{openGroupId === group\.id\}/);
+  assert.match(contextMenuComponent, /className="canvas-node-quick-menu"/);
+  assert.match(contextMenuComponent, /const focusFirstAction = \(\) =>/);
+  assert.match(contextMenuComponent, /window\.document\.activeElement !== action/);
+  assert.match(quickToolbar, /closeMenu\(true\)/);
+  assert.match(quickToolbar, /addEventListener\("keydown", closeOnEscape, true\)/);
+  assert.match(quickToolbar, /closest\("\.canvas-node-quick-menu"\)/);
+  assert.match(contextMenuComponent, /event\.key === "Escape"/);
+  assert.match(contextMenuComponent, /\["ArrowDown", "ArrowUp", "Home", "End"\]/);
+  assert.match(styles, /\.canvas-node-quick-menu\{width:min\(266px/);
+  assert.match(styles, /\.canvas-node-quick-menu-trigger\.open/);
+  assert.match(menuActions, /label: "复制组内容"/);
+  assert.match(menuActions, /title: "复制组到剪贴板"/);
+  assert.match(menuActions, /actions\.dangerAction/);
+  assert.match(menuActions, /label: "删除"/);
+  assert.match(menuActions, /projectCanvasGroupContextMenuGroups/);
+  assert.match(groupQuickActions, /id: "duplicate-group"[\s\S]*?label: "复制组"/);
+  assert.match(groupQuickActions, /label: "组内整理"/);
+  assert.match(groupQuickActions, /label: "宫格拼接"/);
+  assert.doesNotMatch(groupQuickActions, /一镜到底/);
+  assert.match(groupQuickActions, /label: "批量下载"/);
+  assert.match(groupQuickActions, /label: "聚焦"/);
+  assert.match(groupQuickActions, /label: "解组"/);
+  assert.match(groupQuickActions, /label: "删除组内对象"/);
+  assert.doesNotMatch(groupContextMenu, /图片编辑|局部编辑|复制图片|作为参考|继续生成/);
+  assert.match(quickToolbar, /target: CanvasQuickToolbarTarget/);
+  assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
+  // 「问 Agent」要能从每条选中路径进：节点工具栏、多选工具栏、对象组工具栏、两种右键菜单。
+  assert.match(menuActions, /export function appendCanvasAgentAction/);
+  assert.match(component, /const contextMenuGroupsWithAgent = useMemo<CanvasContextMenuGroup\[]>/);
+  assert.match(component, /nodeGroups=\{contextMenuGroupsWithAgent\}/);
+  assert.match(menuActions, /export function prependCanvasAgentContextMenuGroup/);
+  assert.match(component, /const runImageAngleGeneration = useCallback/);
+  assert.match(component, /const pendingOutput = (?:createPendingNode \? )?createMedia\("image", "", "角度控制结果"/);
+  assert.match(component, /status: "running"[\s\S]*?processingStartedAt: startedAt[\s\S]*?jobId: taskId/);
+  assert.match(component, /const pendingOutputId = pendingOutputPositioned\?\.id \|\| null/);
+  assert.match(component, /nodes: value\.nodes\.map\(\(node\) => node\.id === pendingOutputId/);
+  assert.match(component, /parentNodeId: source\.id/);
+  assert.match(component, /source: source\.id,[\s\S]*kind: "lineage"/);
+  assert.match(component, /const saveImageAngleAsNode = useCallback/);
+  assert.match(component, /setAngleNodeId\(draftNode\.id\)/);
+});
+
+test("layer actions use the shared entity stack and explain boundary no-ops", () => {
+  const reorderStart = component.indexOf("const reorderSelection = useCallback");
+  const reorderEnd = component.indexOf("const alignSelection = useCallback", reorderStart);
+  assert.ok(reorderStart >= 0 && reorderEnd > reorderStart, "layer action handler should exist");
+  const reorder = component.slice(reorderStart, reorderEnd);
+
+  assert.match(reorder, /const boundary = action === "bring-to-back" \|\| action === "lower" \? "底层" : "顶层";/);
+  assert.match(reorder, /选中的 \$\{entityIds\.length\} 个对象已在\$\{boundary\}/);
+  assert.match(groupLayer, /zIndex: canvasGroupPaintZIndex\([\s\S]*groupInteraction[\s\S]*\)/);
+  assert.match(component, /zIndex: canvasNodePaintZIndex\(document, node, dragging\)/);
+  assert.match(styles, /\.canvas-world-content>\.canvas-group-layer,\.canvas-world-content>\.canvas-node-layer\{z-index:auto\}/);
+  assert.doesNotMatch(styles, /\.canvas-world-content>\.canvas-group-layer\{z-index:var\(--canvas-z-group\)\}/);
+  assert.doesNotMatch(styles, /\.canvas-world-content>\.canvas-node-layer\{z-index:var\(--canvas-z-node\)\}/);
+});
+
+test("context paste uses the right-click world position while keyboard paste keeps its center fallback", () => {
+  const start = component.indexOf("const pasteCanvasPayload = useCallback");
+  const end = component.indexOf("const toggleAssetLibrary", start);
+  assert.ok(start >= 0 && end > start, "paste implementation should be present");
+  const paste = component.slice(start, end);
+  assert.match(paste, /position \|\| screenToWorld\(center\.x, center\.y\)/);
+  assert.match(paste, /handleFiles\(\[[\s\S]*?\], position\)/);
+  assert.match(paste, /pasteCanvasPayload\(parsed, position\)/);
+  assert.match(paste, /pasteFromClipboard = useCallback\(async \(position\?: Point\)/);
+  assert.match(paste, /const placedOrigin = openNodePosition\(desiredOrigin, probe\)/);
+  assert.match(component, /pasteFromClipboard\(contextMenu\?\.world\)/);
+});
+
+test("context menu keeps native controls isolated and remains bounded on small screens", () => {
+  assert.match(component, /button,textarea,input,select/);
+  assert.match(component, /event\.preventDefault\(\);\s+const point = stagePoint/);
+  assert.match(contextMenuComponent, /export function CanvasContextMenuFrame/);
+  assert.match(contextMenuComponent, /placeCanvasContextMenu\(/);
+  assert.match(component, /getBoundingClientRect\(\)/);
+  assert.match(contextMenuComponent, /new ResizeObserver\(schedule\)/);
+  assert.match(toolsMenuComponent, /canvas-context-menu-body/);
+  assert.doesNotMatch(component, /window\.innerHeight - 640/);
+  assert.match(styles, /\.canvas-node-context-menu\{width:min\(320px,calc\(100vw - 16px\)\)/);
+  assert.match(styles, /\.canvas-context-menu-body\{[^}]*overflow-x:hidden[^}]*overflow-y:auto/);
+  assert.match(styles, /\.canvas-context-menu-body\{[^}]*scrollbar-gutter:stable/);
+  assert.match(styles, /max-height:min\(560px,calc\(100dvh - 16px\)\)/);
+  assert.match(arrangementStyles, /\.canvas-group-arrange-menu\{[^}]*box-sizing:border-box[^}]*overflow-x:hidden/);
+  assert.match(arrangementStyles, /\.canvas-group-arrange-menu button\{[^}]*min-width:0[^}]*box-sizing:border-box/);
+  assert.match(styles, /\.canvas-node-context-menu \.canvas-menu-item-context:disabled/);
+  assert.match(styles, /@media\(max-width:420px\)\{\.canvas-node-context-menu/);
+  const nodeMenuStart = contextMenuComponent.indexOf("export function CanvasNodeContextMenu");
+  const nodeMenuEnd = contextMenuComponent.length;
+  assert.ok(nodeMenuStart >= 0 && nodeMenuEnd > nodeMenuStart, "node context menu renderer should exist");
+  const nodeMenu = component.slice(nodeMenuStart, nodeMenuEnd);
+  assert.doesNotMatch(nodeMenu, /canvas-menu-group-title|canvas-menu-group-mark/);
+  assert.match(styles, /\.canvas-menu-group\+\.canvas-menu-group\{[^}]*border-top:1px solid/);
+});
+
+test("blank canvas exposes compact, ungrouped canvas operations", () => {
+  assert.match(component, /menu: "create"/);
+  assert.match(component, /menu: "tools"/);
+  assert.match(createMenuComponent, /ariaLabel="创建节点菜单"/);
+  assert.match(toolsMenuComponent, /ariaLabel="画布操作菜单"/);
+  assert.match(toolsMenuComponent, /className="canvas-tools-context-menu"/);
+  assert.match(component, /pasteFromClipboard\(position\)/);
+  assert.match(toolsMenuComponent, /<b>适应视图<\/b>/);
+  const toolsMenuStart = toolsMenuComponent.indexOf('ariaLabel="画布操作菜单"');
+  const toolsMenuEnd = toolsMenuComponent.indexOf("</CanvasContextMenuFrame>", toolsMenuStart);
+  const toolsMenu = toolsMenuComponent.slice(toolsMenuStart, toolsMenuEnd);
+  assert.match(toolsMenu, /className="canvas-menu-item canvas-menu-item-create"/);
+  assert.match(toolsMenu, /<b>添加节点<\/b>/);
+  assert.match(component, /menu: "create"/);
+  assert.match(toolsMenu, /<b>撤销<\/b>/);
+  assert.match(toolsMenu, /<b>重做<\/b>/);
+  assert.match(toolsMenu, /Ctrl\/Cmd \+ Z/);
+  assert.match(toolsMenu, /Ctrl\/Cmd \+ Shift \+ Z/);
+  assert.match(toolsMenu, /Ctrl\/Cmd \+ V/);
+  assert.doesNotMatch(toolsMenu, /canvas-menu-group-title/);
+  assert.doesNotMatch(toolsMenu, /canvas-menu-group-mark/);
+  assert.doesNotMatch(toolsMenu, /<small>[^<]+<\/small>/);
+  assert.equal((toolsMenu.match(/className="canvas-menu-divider"/g) || []).length, 2);
+  assert.match(toolsMenu, /<b>上传<\/b>/);
+  assert.doesNotMatch(toolsMenu, /导入图片 \/ 视频 \/ 音频/);
+  const actionMarkers = [
+    "<b>上传</b>",
+    "<b>添加节点</b>",
+    "<b>粘贴</b>",
+    "<b>撤销</b>",
+    "<b>重做</b>",
+    "<b>一键整理</b>",
+    "<b>适应视图</b>",
+    "清理空内容（",
+  ];
+  const actionPositions = actionMarkers.map((marker) => toolsMenu.indexOf(marker));
+  assert.deepEqual(
+    actionPositions,
+    [...actionPositions].sort((a, b) => a - b),
+  );
+  assert.match(toolsStyles, /\.canvas-tools-context-menu \.canvas-menu-shortcut\{/);
+  assert.match(toolsStyles, /\.canvas-tools-context-menu \.canvas-menu-item:disabled\{/);
+  const arrangeIcon = toolsMenu.match(/<span className="canvas-menu-icon" aria-hidden="true">([^<]+)<\/span>\s*<span className="canvas-menu-copy">\s*<b>一键整理<\/b>/)?.[1];
+  const fitIcon = toolsMenu.match(/<span className="canvas-menu-icon" aria-hidden="true">([^<]+)<\/span>\s*<span className="canvas-menu-copy">\s*<b>适应视图<\/b>/)?.[1];
+  assert.equal(arrangeIcon, "⌗");
+  assert.equal(fitIcon, "⛶");
+  assert.notEqual(arrangeIcon, fitIcon);
+  assert.match(toolsMenu, /<b>清理空内容（\{emptyContentCount\}）<\/b>/);
+  assert.match(toolsMenu, /onClean/);
+  assert.match(toolsMenu, /disabled=\{!emptyContentCount\}/);
+  // 工作流 JSON 的入口在“画布设置”，画布操作菜单不再重复一遍。
+  assert.doesNotMatch(toolsMenu, /导出工作流 JSON/);
+  assert.doesNotMatch(toolsMenu, /导入工作流 JSON/);
+  assert.match(panels, /<section className="canvas-setting-section"><b>导出工作流<\/b>/);
+  assert.match(panels, /<section className="canvas-setting-section"><b>导入工作流<\/b>/);
+  assert.match(toolsMenu, /canvas-menu-item-danger/);
+  assert.match(toolsStyles, /\.canvas-tools-context-menu\{width:min\(252px,calc\(100vw - 16px\)\)/);
+  assert.match(toolsStyles, /\.canvas-tools-context-menu \.canvas-menu-item\{min-height:39px/);
+});
+
+test("create menu uses separators instead of spacious group headings", () => {
+  const createMenuStart = createMenuComponent.indexOf('ariaLabel="创建节点菜单"');
+  const createMenuEnd = createMenuComponent.indexOf("</CanvasContextMenuFrame>", createMenuStart);
+  assert.ok(createMenuStart >= 0 && createMenuEnd > createMenuStart, "create menu should be present");
+  const createMenu = createMenuComponent.slice(createMenuStart, createMenuEnd);
+  assert.equal((createMenu.match(/className="canvas-menu-group"/g) || []).length, 2);
+  assert.doesNotMatch(createMenu, /canvas-menu-group-title|canvas-menu-group-mark/);
+  assert.doesNotMatch(createMenu, /从空白开始创建|批量生成与变体/);
+  const basicNodesPosition = createMenu.indexOf('create("image")');
+  const upscalePosition = createMenu.indexOf('create("upscale")');
+  const workflowPosition = createMenu.indexOf('create("workflowImage")');
+  assert.ok(basicNodesPosition >= 0 && upscalePosition > basicNodesPosition && workflowPosition > upscalePosition, "create menu should place upscale after basic nodes");
+  assert.doesNotMatch(createMenu, /角度控制节点|addNode\("angle"/);
+  assert.match(styles, /\.canvas-create-context-menu \.canvas-menu-item-tool\{[^}]*border-top:1px solid/);
+  assert.match(styles, /\.canvas-create-context-menu \.canvas-menu-item-tool\+\.canvas-menu-group\{[^}]*border-top:1px solid/);
+});
+
+test("connection picker places upscale before image variants", () => {
+  const optionsStart = connectionOverlay.indexOf("CONNECTION_NODE_OPTIONS");
+  const optionsEnd = connectionOverlay.length;
+  assert.ok(optionsStart >= 0 && optionsEnd > optionsStart, "connection node options should be present");
+  const options = connectionOverlay.slice(optionsStart, optionsEnd);
+  const upscalePosition = options.indexOf('kind: "upscale"');
+  const imageVariantPosition = options.indexOf('kind: "workflowImage"');
+  assert.ok(upscalePosition >= 0 && imageVariantPosition > upscalePosition, "upscale should appear before image variants");
+  assert.doesNotMatch(options, /kind: "angle"/);
+});

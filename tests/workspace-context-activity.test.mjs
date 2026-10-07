@@ -1,0 +1,238 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { buildLibModules } from './lib-build.mjs';
+import { createTsRequire } from './ts-require.mjs';
+
+const { load } = await buildLibModules([
+  'lib/workspace-context',
+  'lib/task-activity/types',
+  'lib/task-result-projection',
+  'lib/task-activity/adapters',
+  'lib/video-task-output',
+  'lib/upscale-task-output',
+  'lib/agent-intent',
+  'lib/canvas/run-context',
+  'lib/provenance/types',
+  'lib/provenance/normalize',
+], 'adapters');
+const context = await load('workspace-context');
+const projection = await load('task-result-projection');
+const activity = await load('adapters');
+const runContext = await load('run-context');
+const provenance = await load('normalize');
+// Keep test loading consistent across supported Node versions. Node 24 may
+// strip TypeScript syntax automatically, while Node 22 in CI rejects a direct
+// .ts import with ERR_UNKNOWN_FILE_EXTENSION.
+const loadTs = createTsRequire(process.cwd());
+const { prepareAgentRequestContext } = loadTs('./packages/agent-core/request-context');
+
+test('workspace context keeps a stable local scope and normalizes persisted values', () => {
+  const values = new Map();
+  globalThis.window = {
+    localStorage: {
+      getItem: (key) => values.get(key) || null,
+      setItem: (key, value) => values.set(key, String(value)),
+    },
+  };
+
+  const first = context.readWorkspaceContext();
+  assert.match(first.creativeProjectId, /^creative_/);
+  assert.match(first.chatId, /^chat_/);
+  assert.deepEqual(first.selectedNodeIds, []);
+  assert.deepEqual(first.assetIds, []);
+
+  const updated = context.updateWorkspaceContext({
+    canvasId: 'canvas-1',
+    selectedNodeIds: ['node-1', 'node-1', '  node-2  ', ''],
+    assetIds: ['asset-1'],
+  });
+  const reread = context.readWorkspaceContext();
+  assert.equal(reread.creativeProjectId, first.creativeProjectId);
+  assert.equal(reread.chatId, first.chatId);
+  assert.equal(reread.canvasId, 'canvas-1');
+  assert.deepEqual(reread.selectedNodeIds, ['node-1', 'node-2']);
+  assert.deepEqual(reread.assetIds, ['asset-1']);
+  assert.ok(reread.updatedAt >= updated.updatedAt);
+
+  delete globalThis.window;
+});
+
+test('activity adapters expose one status vocabulary and preserve workspace IDs', () => {
+  const generated = activity.activityTaskFromGenerationLog({
+    id: 'log-1',
+    createdAt: '2026-09-20T10:00:00.000Z',
+    status: 'success',
+    mode: 'agent',
+    prompt: '换成东京夜景',
+    projectId: 'creative-1',
+    chatId: 'chat-1',
+    canvasId: 'canvas-1',
+    nodeId: 'node-1',
+    taskId: 'run-1',
+    durationMs: 1500,
+    imageUrls: ['/api/storage/file?name=result.png'],
+  });
+  assert.deepEqual(generated, {
+    id: 'log-1',
+    kind: 'agent',
+    status: 'succeeded',
+    projectId: 'creative-1',
+    chatId: 'chat-1',
+    canvasId: 'canvas-1',
+    nodeId: 'node-1',
+    startedAt: Date.parse('2026-09-20T10:00:00.000Z'),
+    finishedAt: Date.parse('2026-09-20T10:00:00.000Z') + 1500,
+    canRetry: false,
+    canCancel: false,
+    outputIds: ['/api/storage/file?name=result.png'],
+    sourceId: 'run-1',
+  });
+
+  const video = activity.activityTaskFromVideoTask({
+    id: 'video-1',
+    status: 'running',
+    providerId: 'provider-1',
+    modelId: 'model-1',
+    operation: 'generate',
+    source: 'canvas',
+    idempotencyKey: 'key-1',
+    input: { prompt: 'animate' },
+    videoUrls: [],
+    remoteVideoUrls: [],
+    localVideoPaths: [],
+    createdAt: '2026-09-20T10:00:00.000Z',
+    providerProgress: 125,
+    projectId: 'creative-1',
+    canvasId: 'canvas-1',
+    nodeId: 'node-1',
+  });
+  assert.equal(video.status, 'running');
+  assert.equal(video.progress, 100);
+  assert.equal(video.canCancel, true);
+  assert.equal(video.projectId, 'creative-1');
+
+  const recoveredVideo = activity.activityTaskFromVideoTask({
+    id: 'video-recovered',
+    status: 'failed',
+    providerId: 'provider-1',
+    modelId: 'model-1',
+    operation: 'generate',
+    source: 'canvas',
+    idempotencyKey: 'key-recovered-video',
+    input: { prompt: 'recover' },
+    videoUrls: [],
+    remoteVideoUrls: ['https://provider.example/result.mp4'],
+    localVideoPaths: [],
+    createdAt: '2026-09-20T10:00:00.000Z',
+  });
+  assert.equal(recoveredVideo.status, 'succeeded');
+  assert.deepEqual(recoveredVideo.outputIds, ['https://provider.example/result.mp4']);
+
+  const recoveredUpscale = activity.activityTaskFromUpscaleTask({
+    id: 'upscale-recovered',
+    provider: 'aliyun-viapi',
+    model: 'aliyun-standard-super-resolution',
+    scale: 2,
+    sourceImageId: 'image-1',
+    status: 'failed',
+    localImageUrl: '/api/storage/file?name=recovered.png',
+    idempotencyKey: 'key-recovered-upscale',
+    pollCount: 1,
+    createdAt: '2026-09-20T10:00:00.000Z',
+    updatedAt: '2026-09-20T10:00:01.000Z',
+  });
+  assert.equal(recoveredUpscale.status, 'succeeded');
+  assert.deepEqual(recoveredUpscale.outputIds, ['/api/storage/file?name=recovered.png']);
+});
+
+test('result projection prefers a retained image or video over a stale failure', () => {
+  assert.equal(projection.projectResultStatus('error', ['/api/storage/file?name=result.png']), 'success');
+  assert.equal(projection.projectResultStatus('error', ['https://provider.example/result.mp4']), 'success');
+  assert.equal(projection.projectResultStatus('error', []), 'error');
+  assert.equal(projection.projectResultStatus('pending', [null, '  ']), 'pending');
+});
+
+test('canvas Agent run context freezes the original selection and edit sources', () => {
+  const snapshot = runContext.createCanvasAgentRunContext({
+    runId: 'run-1',
+    startedAt: 123,
+    context: {
+      schemaVersion: 1,
+      creativeProjectId: 'creative-1',
+      chatId: 'chat-1',
+      canvasId: 'canvas-1',
+      selectedNodeIds: ['node-source'],
+      assetIds: ['asset-source'],
+      updatedAt: 123,
+    },
+    references: [
+      { id: 'node-ref:node-source', nodeId: 'node-source', kind: 'image', name: '原图', url: '/source.png' },
+      { id: 'node-ref:prompt', nodeId: 'prompt', kind: 'text', name: '提示词', text: '雨夜东京' },
+    ],
+  });
+  assert.equal(snapshot.operation, 'edit');
+  assert.equal(snapshot.anchorNodeId, 'node-source');
+  assert.deepEqual(snapshot.sourceNodeIds, ['node-source']);
+  assert.equal(snapshot.runId, 'run-1');
+  assert.equal(snapshot.references[0].url, '/source.png');
+  assert.ok(Object.isFrozen(snapshot));
+  assert.ok(Object.isFrozen(snapshot.sourceNodeIds));
+});
+
+test('canvas Agent target operation distinguishes edits from analysis and questions', () => {
+  assert.equal(runContext.canvasAgentTargetOperation('改一下这段文案', 'text'), 'edit');
+  assert.equal(runContext.canvasAgentTargetOperation('把背景换成深蓝色', 'image'), 'edit');
+  for (const instruction of ['把牛变成马', '把人物改为机器人', '把主体替换为白马']) {
+    assert.equal(runContext.canvasAgentTargetOperation(instruction, 'image'), 'edit', instruction);
+  }
+  assert.equal(runContext.canvasAgentTargetOperation('分析一下这张图怎么样？', 'image'), 'generate');
+  assert.equal(runContext.canvasAgentTargetOperation('帮我生成一个新版本', 'image'), 'generate');
+});
+
+test('provenance helpers deduplicate sources and create stable edge IDs', () => {
+  const drafts = provenance.provenanceDraftsForSources(
+    ['node-a', 'node-a', '', ' node-b '],
+    'edited_from',
+    { projectId: 'creative-1', canvasId: 'canvas-1', taskId: 'run-1' },
+  );
+  assert.deepEqual(drafts.map((item) => item.fromId), ['node-a', 'node-b']);
+  const edge = provenance.createProvenanceEdge({ ...drafts[0], toId: 'node-result' });
+  assert.equal(edge.id, 'provenance:edited_from:node-a:node-result');
+  assert.equal(edge.projectId, 'creative-1');
+
+  const edges = provenance.normalizeCanvasProvenance({
+    nodes: [{ data: { generation: { provenance: [edge] } } }],
+  });
+  assert.deepEqual(edges, [edge]);
+});
+
+test('canvas lineage resolves persisted edges and legacy source fields per task', () => {
+  const document = {
+    nodes: [
+      { id: 'source-a', data: { kind: 'image', name: '原图' } },
+      { id: 'source-b', data: { kind: 'image', name: '参考图' } },
+      { id: 'result', data: { generation: {
+        taskId: 'run-1',
+        operation: 'edit',
+        referenceIds: ['source-a', 'missing'],
+        provenance: [{ fromId: 'source-b', toId: 'result', relation: 'edited_from', taskId: 'run-1' }],
+      } } },
+    ],
+    edges: [],
+    groups: [],
+    camera: { x: 0, y: 0, zoom: 1 },
+  };
+  const records = provenance.canvasLineageForTask(document, 'run-1');
+  assert.equal(records.length, 1);
+  assert.deepEqual(records[0].sourceNodeIds, ['source-b', 'source-a']);
+  assert.equal(records[0].edges.find((edge) => edge.fromId === 'source-a').relation, 'edited_from');
+  assert.equal(provenance.canvasLineageForTask(document, 'other').length, 0);
+});
+
+test('agent application context writes stable workspace fields into task logs', () => {
+  const result = prepareAgentRequestContext({
+    body: { context: { creativeProjectId: 'p', chatId: 'c', canvasId: 'cv', selectedNodeIds: ['n'] } },
+    runId: 'agent-run', normalizeWorkspaceContext: (value) => value, normalizeDocument: (value) => value, normalizeGenerationSource: () => 'agent',
+  });
+  assert.deepEqual(result.taskContext, { projectId: 'p', chatId: 'c', canvasId: 'cv', nodeId: 'n', taskId: 'agent-run' });
+});

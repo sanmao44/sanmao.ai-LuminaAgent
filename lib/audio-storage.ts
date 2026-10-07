@@ -1,0 +1,93 @@
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { knownMediaRoots, mediaDirectory } from './media-paths';
+import { resolveLocalDataDir } from './data-paths';
+
+const dataDir = resolveLocalDataDir();
+const MAX_AUDIO_BYTES = 1024 * 1024 * 1024;
+
+function configuredRoot() {
+  // 默认固定到用户级媒体库，换运行目录不再换掉素材。
+  return path.resolve(process.env.SANMAO_AUDIO_STORAGE_PATH || mediaDirectory('audio'));
+}
+
+export function getDefaultAudioStoragePath() { return configuredRoot(); }
+
+function extensionFromContentType(contentType: string) {
+  const mime = contentType.split(';', 1)[0].trim().toLowerCase();
+  if (mime === 'audio/mpeg') return 'mp3';
+  if (mime === 'audio/wav' || mime === 'audio/x-wav') return 'wav';
+  if (mime === 'audio/ogg' || mime === 'audio/oga') return 'ogg';
+  if (mime === 'audio/mp4' || mime === 'audio/x-m4a') return 'm4a';
+  if (mime === 'audio/aac') return 'aac';
+  if (mime === 'audio/flac') return 'flac';
+  if (mime === 'audio/webm') return 'webm';
+  return 'bin';
+}
+
+export function audioContentType(file: string) {
+  const lower = file.toLowerCase();
+  if (lower.endsWith('.wav')) return 'audio/wav';
+  if (lower.endsWith('.ogg') || lower.endsWith('.oga')) return 'audio/ogg';
+  if (lower.endsWith('.m4a')) return 'audio/mp4';
+  if (lower.endsWith('.aac')) return 'audio/aac';
+  if (lower.endsWith('.flac')) return 'audio/flac';
+  if (lower.endsWith('.opus')) return 'audio/opus';
+  if (lower.endsWith('.webm')) return 'audio/webm';
+  return 'audio/mpeg';
+}
+
+export async function persistAudioBuffer(buffer: Buffer, contentType = 'audio/mpeg', configuredPath?: string) {
+  if (!Buffer.isBuffer(buffer) || buffer.byteLength <= 0) throw new Error('没有返回有效的音频数据');
+  if (buffer.byteLength > MAX_AUDIO_BYTES) throw new Error('音频超过 1GB，无法保存');
+  const root = path.resolve(configuredPath?.trim() || configuredRoot());
+  await mkdir(root, { recursive: true });
+  const name = `${Date.now()}-${randomUUID()}.${extensionFromContentType(contentType)}`;
+  await writeFile(path.join(root, name), buffer, { flag: 'wx' });
+  return { url: `/api/storage/audio?name=${encodeURIComponent(name)}`, path: root, name, bytes: buffer.byteLength, contentType: audioContentType(name) };
+}
+
+export function getLegacyAudioStoragePath() {
+  return path.resolve(path.join(process.cwd(), '..', 'audio_generation_records'));
+}
+
+/** 主目录优先，其后是历史运行目录与注册表目录，用于继续读取迁移前导入的音频。 */
+export function getAudioStorageRoots(configuredPath?: string) {
+  const primary = path.resolve(configuredPath?.trim() || configuredRoot());
+  const roots = [primary];
+  const candidates = [getLegacyAudioStoragePath(), path.join(dataDir, 'audio'), ...knownMediaRoots('audio')];
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (!roots.includes(resolved)) roots.push(resolved);
+  }
+  return roots;
+}
+
+export function resolveStoredAudioFile(root: string, name: string) {
+  const base = path.resolve(root || configuredRoot());
+  const target = path.resolve(base, name);
+  if (target !== base && !target.startsWith(`${base}${path.sep}`)) return null;
+  return target;
+}
+
+/** 主目录找不到时回退到历史目录，命中即返回真实文件；都没有则返回主目录候选。 */
+export function resolveStoredAudioFileWithFallback(root: string, name: string) {
+  const candidates = getAudioStorageRoots(root)
+    .map((candidate) => resolveStoredAudioFile(candidate, name))
+    .filter(Boolean) as string[];
+  for (const candidate of candidates) if (existsSync(candidate)) return candidate;
+  return candidates[0] || null;
+}
+
+export function isStoredAudio(root: string, name: string) {
+  const file = resolveStoredAudioFile(root, name);
+  return Boolean(file && existsSync(file));
+}
+
+export async function readStoredAudio(root: string, name: string) {
+  const file = resolveStoredAudioFile(root, name);
+  if (!file) return null;
+  try { return { file, data: await readFile(file) }; } catch { return null; }
+}

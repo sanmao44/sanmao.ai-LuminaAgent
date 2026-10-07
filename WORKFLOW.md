@@ -1,0 +1,188 @@
+# SANMAO.AI 开发与发布流程
+
+> 本说明用于**公司 ⇄ 家里** 协作开发与发布，避免"在家更新后什么都没改"这类问题。
+
+---
+
+## 💡 给 Codex 的操作提示（每次先读这里）
+
+> **本项目的铁律：平时所有修改一律【只同步、不发布】。只有当我明确说“发布”时，才允许打包并发布。**
+
+| 你说的话 | Codex 会做 |
+|---------|-----------|
+| “同步 / 备份 / 推到 GitHub” | 只 `commit + push`，**不**升级版本号、不打 tag、不出 Release |
+| “发布 / 出个版本 / 通知用户更新” | 才升级版本号、打 tag、出 Release、上传 ZIP + DMG、更新 update.json |
+
+**平时修改 = 不打包、不发布；给出明确发布指令 = 才打包 + 发布。**
+
+---
+## 0. 一句话心法
+
+> **`git push` 只是备份代码；`git release`（打 tag + 出 Release）才是发布给用户。**
+> **凡是最终要让公司/家里拿到的改动，最后都必须出现在 `main` 分支里。**
+
+---
+
+## 1. 两个核心概念
+
+| 动作 | 做什么 | 会不会发布给用户 |
+|------|--------|------------------|
+| `git push` | 把改动上传到 GitHub（备份/同步） | ❌ 不会 |
+| 打 tag + 出 Release | 生成一个正式版本，通知用户更新 | ✅ 会 |
+
+**平时改动 = 只 push，不发布。** **想发新版 = 打 tag + 出 Release。**
+
+---
+
+## 2. 平时开发（实时改动 + 同步 GitHub，但不发布）
+
+**核心规矩：最终所有要分享的改动，必须回到 `main` 分支。**
+
+### 同步前验证
+
+- 所有改动完成后运行 `npm run check`，依次执行类型检查、全量测试和生产构建；任一步失败就停止，不同步失败的代码。
+- 开发时可先运行 `npm run typecheck` 快速检查类型，但页面能打开或单项测试通过不能代替完整验证。
+- 并行任务尽量分开修改文件；合并后重新验证。验证期间不要继续修改源码，也不要并行运行其他构建或类型生成命令。
+- 验证通过后若再次修改源码，必须重新验证；不得使用 `any`、`@ts-ignore` 或关闭构建类型检查来掩盖错误。
+- 动了 MCP 连接器（`lib/mcp/`、`components/McpManager.tsx`）时，默认测试只跑假远端；想对真实 GitHub MCP 服务验证一次，用 `npm run smoke:github`（要先设 `GITHUB_MCP_TOKEN`，没设就自动跳过，只读调用、不改 GitHub 上的任何东西）。
+
+### 方式 A（推荐，最简单）：直接在 `main` 上做
+
+```powershell
+git checkout main
+# ....改代码....
+git add .
+git commit -m "改了什么"
+git push origin main        # 同步到 GitHub（备份），不会发布
+```
+
+- 家里/公司只要 `git pull` 就能拿到。
+- **平时不改版本号，不发布。**
+
+### 同步后收尾（必须做，不许跳过）
+
+```powershell
+git fetch origin main
+git rev-parse HEAD origin/main   # 两个哈希必须一致
+git status --short               # 必须为空
+```
+
+- `git status --short` 出现“已修改”时，先用 `git diff --ignore-cr-at-eol origin/main -- <路径>` 判断：结果为空说明内容已经在远端（最常见原因：运行目录被更新包覆盖）→ 直接 `git reset --hard origin/main`；不为空则停下来问用户，不得清理。
+- 已确认进过远端的 `stash`：先 `git stash show -p --binary > 备份.patch` 再 `git stash drop`；多余的 Codex 工作树用 `git worktree remove <路径>` 清掉。
+- 目的：同步结束就对齐，不再出现“本地落后远端 / 工作区一堆已修改”。
+
+### 方式 B（想用分支隔离开发）：用分支，但**完工后必须合并回 main**
+
+```powershell
+git checkout -b feature-xxx          # 建一个功能分支
+# ....改代码....
+git add .
+git commit -m "加了某个功能"
+git push origin feature-xxx          # 先备份到 GitHub（安全，不发布）
+
+# ★ 关键：完工后务必合并回 main，别让它停在分支上 ★
+git checkout main
+git pull origin main                 # 先同步最新 main
+git merge feature-xxx
+git push origin main                 # 这样别人 pull main 才能拿到
+```
+
+> ⚠️ **如果改动只停留在 `feature-xxx` / `codex/xxx` 分支而没有合并进 `main`，那别人拉 `main` 是拿不到的。** 这就是"在家更新却什么都没变"的最常见原因。
+
+### 分支清理规则
+
+- “合并所有分支”只指最近有实际修改（存在近期新提交或相对 `main` 有差异）且已确认的分支；长期未修改的历史分支视为过期，**不自动合并**。
+- 分支合并到 `main` 并推送成功后，默认删除对应的本地分支和 GitHub 远程分支，避免以后被误认为待合并分支。
+- 删除前必须确认分支已合并；`main` 和未合并分支不得删除。用户明确要求保留时，以用户要求为准。
+
+---
+
+## 3. 想正式发布给用户时
+
+发布 = **升级版本号 + 打 tag + 出 GitHub Release**，并同时提供 ZIP 与 DMG，这时才真正通知用户。
+
+### 发布包规则：ZIP + DMG
+
+- ZIP 和 DMG 必须从同一个最新的 `main` 提交生成，不能拿旧分支或历史构建产物发布。
+- ZIP 供应用内自动更新，`update.json.packageUrl` 必须指向 ZIP；发布后必须用实际 ZIP 校验 SHA-256。
+- DMG 供 macOS 用户首次安装，作为同一个 GitHub Release 的附件与 ZIP 一起上传。
+- DMG 不提交到源码仓库；优先使用 macOS runner/CI 构建。发布前确认 DMG 内的应用拖入“应用程序”后可以独立启动。
+
+```powershell
+# 1) 确认 main 是最新、改动都在
+git checkout main
+git pull origin main
+git push origin main
+
+# 2) 升级版本号：把 package.json 与 update.json 里的版本改成 0.7.25
+#    改完后提交并推送
+git add package.json update.json
+git commit -m "bump version to 0.7.25"
+git push origin main
+
+# 3) 打 git tag（标记这个版本）并推送
+git tag v0.7.25
+git push origin v0.7.25
+
+# 4) 创建 GitHub Release，并同时上传 ZIP 和 DMG（真正发布/通知用户）
+gh release create v0.7.25 `
+  "C:\path\to\SANMAO.AI-0.7.25.zip" `
+  "C:\path\to\SANMAO.AI-0.7.25.dmg" `
+  --repo sanmao44/sanmao.ai-LuminaAgent --title "SANMAO.AI v0.7.25" --notes "本次更新说明..."
+```
+
+> 如果想**全自动**：配好 `.github/workflows` 里的 CI，之后**只要打 tag / 推分支**，GitHub 就会自动从 `main` 打包 ZIP 和 DMG 并出 Release，不用手动 `gh release create`。
+> ZIP 必须用仓库脚本生成，避免 Windows 资源管理器把中文文件名显示成乱码：
+> ```powershell
+> npm run build:release-zip -- --ref <发布源 commit 或 tag> --output "C:\path\to\SANMAO.AI-x.y.z.zip"
+> ```
+> 该脚本使用 `git archive` 并在生成后检查 ZIP 中文文件名的 UTF-8 标志；校验失败时不会保留错误压缩包。
+> **发布前必做校验（避免“SHA-256 校验失败”）：**
+> `npm run check` 和 GitHub CI 会强制检查 `update.json`：`latestVersion` 必须与 `package.json` 一致，`packageUrl`、`releaseUrl` 和非全零 SHA-256 必须完整且版本一致。未生成真实 ZIP 校验值前，不要把发布准备提交推到 `main`。
+> 上传 zip 后，在仓库根目录运行：
+> ```powershell
+> node scripts/verify-release.mjs --file "<SANMAO.AI-x.y.z.zip 的完整路径>" --repo sanmao44/sanmao.ai-LuminaAgent --tag "v0.7.26"
+> ```
+> 脚本会用**实际压缩包**计算 SHA-256，并与 `update.json` 及 GitHub Release 资产 digest 交叉比对。
+> 只要出现“✗ 校验不通过”，就说明 `update.json` 的 `sha256` 与 zip 不一致，**必须用 `--write` 修正后再提交**，
+> 否则用户端会一直提示“更新包 SHA-256 校验失败，已拒绝执行”（正是本次 v0.7.26 出现的问题）。
+
+
+---
+
+## 4. 用户端如何真正拿到全部改动？
+
+用户端（或更新脚本）的流程：
+
+1. 读取 `update.json`
+2. 发现 `latestVersion`（如 `0.7.25`）> 当前版本
+3. 去 `packageUrl` 下载新的 zip
+4. **解压覆盖整个运行目录** → 重启
+
+> **只要发布用的 zip 是从 `main` 全量代码打包出来的，用户就能 100% 拿到所有改动。DMG 只负责 macOS 首次安装，不替代 ZIP 的应用内更新职责。**
+> 如果 zip 打包不全、或 `update.json` 的下载地址/版本对不上，用户就会漏改 → 类似今晚的情况。
+
+---
+
+## 5. 常见坑（避免再踩）
+
+| 坑 | 结果 | 正确做法 |
+|----|------|----------|
+| 改动只推到 `codex/xxx` 分支，没合并进 `main` | 别人拉 `main` 拿到不到 | 完工后**合并回 main 再 push** |
+| 历史分支被误合并 | 旧改动重新进入发布内容 | 只处理本次明确指定/今晚产生的分支，合并后清理远程分支 |
+| 改了但忘了 `git commit` / `git push` | GitHub 上没有，别人拉不到 | 每次改动**提交并推送** |
+| `push` 了但没升级版本号 / 没出 Release | 代码更新了，但用户不知道、不更新 | 想发布时**打 tag + 出 Release** |
+| ZIP/DMG 不是从同一个最新 `main` 全量构建 | 用户更新后**漏改动**或安装包内容不一致 | 发布前确认构建提交和 `main` 一致 |
+| Release 只上传 ZIP 或只上传 DMG | macOS 用户缺少首次安装包或自动更新包 | 每次正式发布同时上传 ZIP + DMG |
+| 版本号与 GitHub 不一致 | 用户端检测不到新版本 | 发布时同步升级 `package.json` / `update.json` |
+| `update.json` 的 sha256 与实际 zip 不一致 | 用户端一直提示“SHA-256 校验失败”无法更新 | 用 `scripts/verify-release.mjs` 校验后再提交 |
+
+---
+
+## 6. 一分钟速查
+
+- 平时小改：`git push origin main`（不发布）
+- 想隔离开发：分支 → **合并回 main** → push（不发布）
+- 分支合并后：确认已合并 → 默认删除本地/远程分支
+- 想发一版：升级版本号 → `git tag` → 从 `main` 生成 ZIP + DMG → `gh release create`（发布）
+- 用户更新：`git pull` 或 下载 Release zip

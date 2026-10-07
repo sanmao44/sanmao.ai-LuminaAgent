@@ -1,0 +1,109 @@
+name: Build macOS DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref or commit used for the release source
+        required: true
+        type: string
+      version:
+        description: Release version without the v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-dmg:
+    runs-on: macos-latest
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Validate update manifest before packaging
+        run: node scripts/validate-update-manifest.mjs --strict
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+
+      - name: Build self-contained macOS app image
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/sanmao-dmg-stage"
+          app="$stage/SANMAO.AI.app"
+          app_root="$app/Contents/Resources/AppRoot"
+          output="$RUNNER_TEMP/SANMAO.AI-$RELEASE_VERSION.dmg"
+
+          rm -rf "$stage"
+          mkdir -p "$app_root"
+          cp -R SANMAO.AI.app/. "$app/"
+          rsync -a \
+            --exclude '.git' \
+            --exclude '.next' \
+            --exclude 'node_modules' \
+            --exclude '.data' \
+            --exclude 'SANMAO.AI.app' \
+            --exclude 'dev.log' \
+            --exclude 'temp_edit*.py' \
+            ./ "$app_root/"
+          find "$app_root" -type f \( -name '*.sh' -o -name '*.command' \) -exec perl -pi -e 's/\r$//' {} +
+          chmod +x "$app/Contents/MacOS/SANMAO.AI"
+
+          test -x "$app/Contents/MacOS/SANMAO.AI"
+          test -f "$app/Contents/Resources/AppRoot/scripts/start-macos.sh"
+          test -f "$app/Contents/Resources/AppRoot/package.json"
+          sh -n "$app/Contents/MacOS/SANMAO.AI"
+          sh -n "$app/Contents/Resources/AppRoot/scripts/start-macos.sh"
+
+          hdiutil create \
+            -volname "SANMAO.AI $RELEASE_VERSION" \
+            -srcfolder "$stage" \
+            -ov \
+            -format UDZO \
+            "$output"
+
+          hdiutil imageinfo "$output" | grep -E 'image-type|partition-scheme|size:'
+
+      - name: Verify app launches independently after copying from DMG
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/sanmao-mounted"
+          mkdir -p "$mount" "$HOME/Applications"
+          hdiutil attach "$RUNNER_TEMP/SANMAO.AI-$RELEASE_VERSION.dmg" -readonly -nobrowse -mountpoint "$mount"
+          ditto "$mount/SANMAO.AI.app" "$HOME/Applications/SANMAO.AI.app"
+          hdiutil detach "$mount"
+          app="$HOME/Applications/SANMAO.AI.app"
+          app_root="$app/Contents/Resources/AppRoot"
+          cd "$app_root"
+          npm ci
+          npm run build
+          SANMAO_NONINTERACTIVE=1 SANMAO_SKIP_BUILD=1 SANMAO_PORT=3210 "$app/Contents/MacOS/SANMAO.AI" &
+          launcher_pid=$!
+          trap 'kill "$launcher_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..90}; do
+            if curl --fail --silent http://localhost:3210/api/health > "$RUNNER_TEMP/sanmao-health.json"; then
+              cat "$RUNNER_TEMP/sanmao-health.json"
+              exit 0
+            fi
+            sleep 2
+          done
+          cat "$HOME/Library/Logs/SANMAO.AI-startup.log"
+          exit 1
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SANMAO.AI-${{ inputs.version }}-dmg
+          path: ${{ runner.temp }}/SANMAO.AI-${{ inputs.version }}.dmg
+          if-no-files-found: error

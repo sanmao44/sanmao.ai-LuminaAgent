@@ -1,0 +1,259 @@
+import { editImage, generateImage, imageDownloadAuth, imageMimeFromBytes, isProviderEndpointNotFound, ProviderImageFormatError } from '@/lib/providers';
+import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
+import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
+import { persistGenerationResult } from '@/lib/generation-persistence';
+import { buildAnglePayload, compileAngleTargetPrompt, effectiveAngle, generationCamera, normalizeAngleState, readViewpointOptions, VIEWPOINT_LIMITS } from '@/lib/angle-control';
+import { renderAngleOutput } from '@/lib/angle-image';
+import type { GeneratedImage } from '@/lib/types';
+import { isTrustedAppRequest } from '@/lib/auth';
+import { referenceRecordsForLog } from '@/lib/reference-images';
+import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
+import { enforceLocalEditMask } from '@/lib/local-edit-composite';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
+import { normalizeStarApiLandscapeImages, normalizeStarApiLandscapePrompt } from '@/lib/image-orientation';
+import { invokeMediaModelCandidates } from '@/packages/model-runtime/media';
+
+export const runtime = 'nodejs';
+export const maxDuration = 1800;
+
+const runImageModelCandidates = invokeMediaModelCandidates;
+
+function readCameraNumber(value: unknown, field: string) {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${field} must be a finite number`);
+  return value;
+}
+
+function readCamera(value: unknown, label = 'camera') {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
+  const raw = value as Record<string, unknown>;
+  const modelId = raw.modelId === undefined ? undefined : String(raw.modelId);
+  if (raw.modelId !== undefined && !modelId) throw new Error(`${label}.modelId must not be empty`);
+  const viewpoint = readViewpointOptions(raw.viewpoint);
+  if (viewpoint) {
+    for (const [key, [min, max]] of Object.entries(VIEWPOINT_LIMITS)) {
+      const number = readCameraNumber(raw[key], `${label}.${key}`);
+      if (number !== undefined && (number < min || number > max)) throw new Error(`${label}.${key} must be between ${min} and ${max}`);
+    }
+    if (raw.compositionLock !== undefined && typeof raw.compositionLock !== 'boolean') throw new Error(`${label}.compositionLock must be boolean`);
+    if (raw.subjectYaw !== undefined) throw new Error('subjectYaw is only supported for legacy camera requests');
+  }
+  return normalizeAngleState({
+    yaw: readCameraNumber(raw.yaw, `${label}.yaw`),
+    pitch: readCameraNumber(raw.pitch, `${label}.pitch`),
+    roll: readCameraNumber(raw.roll, `${label}.roll`),
+    subjectYaw: readCameraNumber(raw.subjectYaw, `${label}.subjectYaw`),
+    focal: readCameraNumber(raw.focal, `${label}.focal`),
+    distance: readCameraNumber(raw.distance, `${label}.distance`),
+    frameX: readCameraNumber(raw.frameX, `${label}.frameX`),
+    frameY: readCameraNumber(raw.frameY, `${label}.frameY`),
+    compositionLock: raw.compositionLock === undefined ? undefined : Boolean(raw.compositionLock),
+    modelId,
+    viewpoint,
+  });
+}
+
+function dataUrlBuffer(url: string) {
+  const match = url.match(/^data:([^;,]+)?(;base64)?,([\s\S]*)$/);
+  if (!match) return null;
+  return match[2] ? Buffer.from(match[3], 'base64') : Buffer.from(decodeURIComponent(match[3]), 'utf8');
+}
+
+function invalidProviderImageError() {
+  return new ProviderImageFormatError('服务商已返回生图结果，但内容不是可解码的图片。请检查服务商返回的 image_url/b64_json 是否指向真实的 PNG、JPEG 或 WebP 文件；任务可能已经提交，请先核对服务商后台状态后再重试。');
+}
+
+function ensureProviderImageBuffer(buffer: Buffer) {
+  if (!buffer.byteLength || !imageMimeFromBytes(buffer)) throw invalidProviderImageError();
+  return buffer;
+}
+
+async function generatedImageBuffer(url: string, signal?: AbortSignal) {
+  const embedded = dataUrlBuffer(url);
+  if (embedded) return ensureProviderImageBuffer(embedded);
+  if (url.startsWith('data:')) throw invalidProviderImageError();
+  const response = await fetch(url, { signal, cache: 'no-store' });
+  if (!response.ok) throw new Error(`Unable to read generated image for roll correction: HTTP ${response.status}`);
+  return ensureProviderImageBuffer(Buffer.from(await response.arrayBuffer()));
+}
+
+async function normalizeAngleOutputSize(images: GeneratedImage[], width: number, height: number, roll: number, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  const targetWidth = Math.max(1, Math.round(width));
+  const targetHeight = Math.max(1, Math.round(height));
+  return Promise.all(images.map(async (image) => {
+    const input = await generatedImageBuffer(image.url, signal);
+    let output: Buffer;
+    try {
+      output = await renderAngleOutput(input, targetWidth, targetHeight, roll);
+    } catch {
+      throw invalidProviderImageError();
+    }
+    return { ...image, url: `data:image/png;base64,${output.toString('base64')}` };
+  }));
+}
+
+export async function POST(request: Request) {
+  if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  let promptForLog = '';
+  let aspectRatioForLog = '自动';
+  let resolutionForLog: string | undefined;
+  let outputSizeForLog: string | undefined;
+  let modeForLog: 'generate' | 'edit' = 'generate';
+  let sourceForLog: GenerationSource = 'workspace';
+  let presetIdForLog: string | undefined;
+  let presetNameForLog: string | undefined;
+  let logId: string | undefined;
+  let runtimeProviderId = '';
+  const startedAt = Date.now();
+  const requestController = new AbortController();
+  const abortFromClient = () => requestController.abort(request.signal.reason || new Error('GENERATION_CANCELLED'));
+  let releaseRuntimeRequest = async () => {};
+  if (request.signal.aborted) requestController.abort(request.signal.reason || new Error('GENERATION_CANCELLED'));
+  else request.signal.addEventListener('abort', abortFromClient, { once: true });
+  try {
+    releaseRuntimeRequest = await beginRuntimeRequest('image-generate');
+    const body = await request.json();
+    sourceForLog = normalizeGenerationSource(body.source, 'workspace');
+    const prompt = String(body.prompt || '').trim();
+    const presetId = typeof body.presetId === 'string' ? body.presetId.trim().slice(0, 100) : undefined;
+    const presetName = typeof body.presetName === 'string' ? body.presetName.trim().slice(0, 100) : undefined;
+    presetIdForLog = presetId;
+    presetNameForLog = presetName;
+    let camera;
+    let cameraStart;
+    try {
+      camera = readCamera(body.camera);
+      cameraStart = readCamera(body.cameraStart, 'cameraStart');
+    }
+    catch (error) { return Response.json({ error: error instanceof Error ? error.message : 'Invalid camera parameters' }, { status: 400 }); }
+    const angleNote = typeof body.angleNote === 'string' ? body.angleNote : camera?.viewpoint ? prompt : '';
+    const hasAngleGuide = camera?.viewpoint
+      ? camera.viewpoint.guide && camera.viewpoint.changeView
+      : body.angleGuide === true;
+    if (camera?.viewpoint && (body.width !== undefined || body.height !== undefined)) {
+      if (![body.width, body.height].every(value => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 8192)) {
+        return Response.json({ error: '输出宽高必须是 1 到 8192 之间的整数。' }, { status: 400 });
+      }
+    }
+    const angleOutput = camera && Number(body.width) > 0 && Number(body.height) > 0
+      ? { aspectRatio: String(body.aspectRatio || '自动'), width: Number(body.width), height: Number(body.height) }
+      : undefined;
+    const cameraPayload = camera ? buildAnglePayload(camera, undefined, cameraStart, angleOutput) : undefined;
+    if (camera && hasAngleGuide && !angleOutput) return Response.json({ error: '构图导引必须提供有效的输出宽高。' }, { status: 400 });
+    const baseGenerationPrompt = camera
+      ? compileAngleTargetPrompt(angleNote, camera, { hasGuideReference: hasAngleGuide, output: angleOutput, cameraStart })
+      : prompt;
+    if (!baseGenerationPrompt) return Response.json({ error: '请输入生图描述。' }, { status: 400 });
+    const references = Array.isArray(body.references)
+      ? body.references.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0).slice(0, 16)
+      : [];
+    if (camera?.viewpoint && references.length !== (hasAngleGuide ? 2 : 1)) return Response.json({ error: hasAngleGuide ? '请提交原始参考图和一张构图导引，原图必须排在第一张。' : '请提交一张原始参考图。' }, { status: 400 });
+    const hasEditInput = references.length > 0 || (typeof body.mask === 'string' && body.mask.trim().length > 0) || (typeof body.moveGuide === 'string' && body.moveGuide.trim().length > 0);
+    const requestedModelId = String(body.model || 'auto');
+    let runtime = hasEditInput
+      ? await getRuntimeImageModelForCapability(requestedModelId, 'edit') || (camera && body.model && body.model !== 'auto' ? null : await getRuntimeImageModelForCapability('auto', 'edit'))
+      : await getRuntimeImageGenerationModel(requestedModelId);
+    if (!runtime) return Response.json({ error: hasEditInput ? '没有可用的改图模型，请启用带 edit 能力的图片模型' : '没有可用的生图模型。请先到“模型库”勾选一个图片模型。' }, { status: 400 });
+    runtimeProviderId = runtime.provider.id;
+    const sizeMode: 'system' | 'custom' | undefined = body.sizeMode === 'custom' ? 'custom' : body.sizeMode === 'system' ? 'system' : undefined;
+    const generationPrompt = normalizeStarApiLandscapePrompt(runtime.provider, runtime.model.rawId, baseGenerationPrompt, {
+      aspectRatio: String(body.aspectRatio || '自动'),
+      width: Number(body.width || 0),
+      height: Number(body.height || 0),
+      sizeMode,
+    });
+    promptForLog = generationPrompt;
+    const referenceRecords = referenceRecordsForLog(body.referenceImages);
+    if (camera && hasAngleGuide && references.length !== 2) return Response.json({ error: '角度控制台必须按顺序提交两张参考图：原始参考和构图导引。' }, { status: 400 });
+    const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
+    const mask = rawMask.startsWith('data:image/png') ? rawMask : undefined;
+    const rawMoveGuide = typeof body.moveGuide === 'string' ? body.moveGuide.trim() : '';
+    const moveGuide = rawMoveGuide.startsWith('data:image/') ? rawMoveGuide : undefined;
+    if (rawMask && !mask) return Response.json({ error: '局部编辑范围必须是 PNG 格式。' }, { status: 400 });
+    if (mask && !references.length) return Response.json({ error: '使用局部编辑前请先添加一张参考图。' }, { status: 400 });
+    if (rawMoveGuide && !moveGuide) return Response.json({ error: '移动引导图必须是图片数据。' }, { status: 400 });
+    if (moveGuide && (!mask || !references.length)) return Response.json({ error: '移动引导图需要同时提交原图和局部编辑范围。' }, { status: 400 });
+    // Canvas continuation is intentionally allowed to degrade to a fresh
+    // generation when the selected gateway has no edit route at all. Keep
+    // this opt-in and narrow: masks or multiple references must still fail
+    // instead of silently dropping edit semantics.
+    const allowGenerationFallbackOnEdit404 = body.source === 'canvas'
+      && body.fallbackToGenerationOnEdit404 === true
+      && references.length === 1
+      && !mask
+      && !moveGuide;
+    const providerReferences = moveGuide ? [moveGuide, ...references.slice(1)] : references;
+    const outputFormat = ['png', 'jpeg', 'webp'].includes(String(body.outputFormat || '').toLowerCase()) ? String(body.outputFormat).toLowerCase() as 'png' | 'jpeg' | 'webp' : 'png';
+    const responseFormat = ['url', 'b64_json'].includes(String(body.responseFormat || '').toLowerCase()) ? String(body.responseFormat).toLowerCase() as 'url' | 'b64_json' : undefined;
+    const background = ['transparent', 'opaque'].includes(String(body.background || '').toLowerCase()) ? String(body.background).toLowerCase() as 'transparent' | 'opaque' : undefined;
+    const input = {
+      prompt: generationPrompt,
+      aspectRatio: String(body.aspectRatio || '自动'),
+      count: Number(body.count || 1),
+      width: Number(body.width || 0),
+      height: Number(body.height || 0),
+      sizeMode,
+      quality: String(body.quality || '自动'),
+      resolution: ['1K', '2K', '3K', '4K'].includes(String(body.resolution || '').toUpperCase()) ? String(body.resolution).toUpperCase() : undefined,
+      outputFormat,
+      responseFormat,
+      background,
+    };
+    aspectRatioForLog = input.aspectRatio;
+    resolutionForLog = input.resolution;
+    outputSizeForLog = input.width && input.height ? `${input.width}×${input.height}` : undefined;
+    modeForLog = references.length ? 'edit' : 'generate';
+    logId = await startGenerationLog({ mode: modeForLog, source: sourceForLog, prompt: generationPrompt, presetId, presetName, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
+    const storagePath = (await getPublicState()).settings.imageStoragePath;
+    let usedGenerationFallback = false;
+    const providerImages = await runImageModelCandidates(
+      runtime,
+      // Explicit selections remain authoritative unless the provider returns
+      // a clear compatibility rejection; only then try configured alternatives.
+      async () => getRuntimeImageModelCandidates('auto', references.length ? 'edit' : 'generate'),
+      async (candidate) => {
+        runtime = candidate;
+        runtimeProviderId = candidate.provider.id;
+        if (!references.length) return generateImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
+        try {
+          return await editImage(candidate.provider, candidate.model.rawId, { ...input, references: providerReferences, mask, fidelity: camera?.viewpoint ? 'high' : camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal);
+        } catch (error) {
+          if (!allowGenerationFallbackOnEdit404 || !isProviderEndpointNotFound(error)) throw error;
+          usedGenerationFallback = true;
+          return generateImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
+        }
+      },
+    );
+    const maskSafeImages = mask
+      ? await enforceLocalEditMask(providerImages, references[0], mask, {
+          storagePath,
+          signal: requestController.signal,
+        })
+      : providerImages;
+    const orientationSafeImages = await normalizeStarApiLandscapeImages(runtime.provider, runtime.model.rawId, input, maskSafeImages, requestController.signal);
+    const normalizedImages = camera && angleOutput
+      ? await normalizeAngleOutputSize(orientationSafeImages, angleOutput.width, angleOutput.height, effectiveAngle(generationCamera(camera).roll), requestController.signal)
+      : orientationSafeImages;
+    if (requestController.signal.aborted && !normalizedImages.length) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
+    const providerFinishedAt = Date.now();
+    const generatedImages = normalizedImages;
+    const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId, downloadAuth: imageDownloadAuth(runtime.provider) });
+    return Response.json({ ok: true, images: stored.images, mode: usedGenerationFallback ? 'generate-fallback' : references.length ? 'reference' : 'generate', ...(usedGenerationFallback ? { warning: '当前服务商不支持图片修改接口，已按普通生图生成新图。' } : {}), model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name }, camera: cameraPayload, storagePath: stored.path });
+  } catch (error) {
+    if (error instanceof RuntimeDrainingError) {
+      return Response.json({ error: error.message, retryable: true }, { status: 409 });
+    }
+    const upstreamStatus = Number((error as Error & { providerStatus?: number; status?: number }).providerStatus || (error as Error & { status?: number }).status || 0);
+    if (runtimeProviderId && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(runtimeProviderId).catch(() => undefined);
+    const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'GENERATION_CANCELLED');
+    const providerPossiblyAccepted = !cancelled && Boolean((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask);
+    const failure = { status: providerPossiblyAccepted ? 'pending' as const : 'error' as const, mode: modeForLog, source: sourceForLog, prompt: promptForLog, presetId: presetIdForLog, presetName: presetNameForLog, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, durationMs: Date.now() - startedAt, error: providerPossiblyAccepted ? '服务商已接收任务，正在生成，请勿重复提交。' : cancelled ? '任务已取消，已停止等待服务商返回' : error instanceof Error ? error.message : '生图失败' };
+    if (logId) await finishGenerationLog(logId, failure).catch(() => undefined); else await appendGenerationLog(failure).catch(() => undefined);
+    if (providerPossiblyAccepted) return Response.json({ pending: true, taskId: logId, message: failure.error }, { status: 202 });
+    return Response.json({ error: failure.error }, { status: cancelled ? 499 : 502 });
+  } finally {
+    await releaseRuntimeRequest();
+    request.signal.removeEventListener('abort', abortFromClient);
+  }
+}

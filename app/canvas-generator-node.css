@@ -1,0 +1,113 @@
+/* Generator node card domain styles. */
+
+/* Generator cards: keep the prompt compact and make the execution queue the
+   primary readable surface. Older cards can be very tall after a manual
+   resize, so no section is allowed to consume the remaining height just to
+   create an empty block. */
+.canvas-node:has(.canvas-generator-card){--generator-accent:var(--canvas-node-image-generator);--generator-accent-text:var(--canvas-node-image-generator-text)}
+.canvas-node[data-node-kind="video"]:has(.canvas-generator-card){--generator-accent:var(--canvas-node-video-generator);--generator-accent-text:var(--canvas-node-video-generator-text)}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-card{min-height:0;gap:12px;padding:16px;overflow:auto;scrollbar-width:thin;background:linear-gradient(150deg,color-mix(in srgb,var(--generator-accent) 7%,var(--panel-2)),var(--panel-2) 34%,color-mix(in srgb,var(--panel) 80%,var(--panel-2)));border:1px solid color-mix(in srgb,var(--generator-accent) 32%,var(--line))}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-head{align-items:flex-start;gap:10px;min-height:44px;padding-bottom:11px;border-bottom:1px solid color-mix(in srgb,var(--generator-accent) 22%,var(--line))}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-head>span{width:34px;height:34px;border:1px solid color-mix(in srgb,var(--generator-accent) 30%,transparent);border-radius:11px;background:color-mix(in srgb,var(--generator-accent) 16%,var(--panel-3));color:var(--generator-accent-text);font-size:18px;line-height:1}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-head>.canvas-generator-head-copy{flex:1 1 auto;gap:5px;padding-top:1px}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-head b{color:var(--text);font-size:15px;line-height:1.25;letter-spacing:.01em}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-head small{overflow:visible;color:var(--muted);font-size:10.5px;line-height:1.4;white-space:normal}
+.canvas-node:has(.canvas-generator-card).status-running .canvas-generator-head small{color:var(--generator-accent-text)}
+.canvas-node:has(.canvas-generator-card).status-failed .canvas-generator-head small{color:var(--danger)}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-summary span{min-height:34px;display:flex;align-items:center;justify-content:center;padding:7px 8px;border:1px solid color-mix(in srgb,var(--generator-accent) 17%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--panel-3) 86%,var(--generator-accent) 4%);color:var(--text-2);font-size:10.5px;font-weight:800;line-height:1.25;white-space:normal}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-summary span:first-child{color:var(--generator-accent-text)}
+.canvas-generator-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0;margin-top:1px}
+.canvas-generator-section-heading b{color:var(--text);font-size:11.5px;font-weight:900;line-height:1.3}
+.canvas-generator-section-heading small{min-width:0;overflow:hidden;color:var(--muted);font-size:9.5px;line-height:1.3;text-overflow:ellipsis;white-space:nowrap}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-output-gallery{gap:8px;padding:0 0 3px}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-output-thumb{width:78px;height:64px;border-radius:10px;border-color:color-mix(in srgb,var(--generator-accent) 22%,var(--line))}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-output-thumb:hover{border-color:var(--generator-accent);box-shadow:0 5px 14px color-mix(in srgb,var(--generator-accent) 16%,transparent)}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-output-thumb>span{font-size:9px;line-height:1.25}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-prompt{flex:0 0 auto;min-height:88px;max-height:168px;display:grid;gap:7px;padding:12px 13px;border:1px solid color-mix(in srgb,var(--generator-accent) 27%,var(--line));border-radius:13px;background:color-mix(in srgb,var(--generator-accent) 7%,var(--panel-2));color:var(--text-2)}
+.canvas-generator-prompt-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-prompt-heading b{color:var(--generator-accent-text);font-size:11.5px}
+.canvas-generator-prompt-heading small{color:var(--muted);font-size:9.5px;white-space:nowrap}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-prompt>span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;color:var(--text-2);font-size:11.5px;line-height:1.55}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-state-list{flex:0 1 180px;min-height:36px;max-height:180px;gap:6px;padding-right:3px}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-state{min-height:36px;gap:8px;padding:7px 8px;border:1px solid color-mix(in srgb,var(--generator-accent) 14%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--panel-3) 92%,var(--generator-accent) 3%)}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-state>span{width:22px;height:22px;border-radius:7px;background:color-mix(in srgb,var(--generator-accent) 16%,var(--panel-2));color:var(--generator-accent-text);font-size:10.5px}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-state p{color:var(--text-2);font-size:11px;line-height:1.35}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-state small{color:var(--muted);font-size:9.5px;font-weight:700}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-state.running{border-color:color-mix(in srgb,var(--generator-accent) 46%,var(--line))}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-state.completed>span{background:var(--success-soft);color:var(--success)}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-state.failed{border-color:color-mix(in srgb,var(--danger) 52%,var(--line));background:color-mix(in srgb,var(--danger-soft) 32%,var(--panel-3))}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-state.failed>span,.canvas-node:has(.canvas-generator-card) .canvas-variant-state.failed small{color:var(--danger)}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-state button{min-width:44px;height:28px;padding:0 8px;border-radius:8px;font-size:9.5px;font-weight:800}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-retry-all{min-height:34px;padding:6px 9px;border-radius:10px;font-size:10.5px;font-weight:800}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-meta{flex-wrap:wrap;gap:6px;padding-top:1px}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-meta span{max-width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:9.5px;line-height:1.2}
+
+/* Keep the responsive presentation of the generator card in its domain file. */
+@media(max-width:720px){
+  .canvas-node:has(.canvas-generator-card) .canvas-generator-card{gap:10px;padding:12px}
+  .canvas-node:has(.canvas-generator-card) .canvas-generator-head b{font-size:14px}
+  .canvas-node:has(.canvas-generator-card) .canvas-generator-head small{font-size:10px}
+  .canvas-node:has(.canvas-generator-card) .canvas-generator-prompt>span{font-size:11px}
+  .canvas-node:has(.canvas-generator-card) .canvas-variant-state p{font-size:10.5px}
+}
+
+/* Generator frame polish: one calm outer frame, one restrained accent line,
+   and softer inner separators keep the card from looking double-bordered. */
+.canvas-node:has(.canvas-generator-card){
+  border:1px solid color-mix(in srgb,var(--generator-accent) 48%,var(--line-strong));
+  border-radius:22px;
+  background:color-mix(in srgb,var(--panel) 94%,var(--generator-accent) 2%);
+  box-shadow:0 14px 34px rgba(0,0,0,.18),inset 0 1px 0 color-mix(in srgb,#fff 7%,transparent);
+}
+.canvas-node:has(.canvas-generator-card)::before{
+  left:20px;
+  right:20px;
+  top:0;
+  height:2px;
+  border-radius:999px;
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--generator-accent) 90%,#fff) 22%,color-mix(in srgb,var(--generator-accent) 90%,#fff) 78%,transparent);
+  opacity:.58;
+}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-card{
+  border:0;
+  border-radius:21px;
+  background:linear-gradient(150deg,color-mix(in srgb,var(--generator-accent) 6%,var(--panel-2)),var(--panel-2) 38%,color-mix(in srgb,var(--panel) 88%,var(--panel-2)));
+}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-head{
+  position:relative;
+  border-bottom:0;
+}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-head::after{
+  content:"";
+  position:absolute;
+  left:0;
+  right:0;
+  bottom:0;
+  height:1px;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--generator-accent) 34%,transparent),color-mix(in srgb,var(--line) 90%,transparent) 58%,transparent);
+  opacity:.72;
+  pointer-events:none;
+}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-summary span{
+  border-color:color-mix(in srgb,var(--generator-accent) 12%,var(--line));
+  border-radius:11px;
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 4%,transparent);
+}
+.canvas-node:has(.canvas-generator-card) .canvas-generator-prompt{
+  border-color:color-mix(in srgb,var(--generator-accent) 19%,var(--line));
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 5%,transparent);
+}
+.canvas-node:has(.canvas-generator-card) .canvas-variant-state{
+  border-color:color-mix(in srgb,var(--generator-accent) 10%,var(--line));
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 4%,transparent);
+}
+.canvas-node:has(.canvas-generator-card).selected{
+  border-color:color-mix(in srgb,var(--generator-accent) 88%,#fff 4%);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--generator-accent) 16%,transparent),0 16px 38px color-mix(in srgb,var(--generator-accent) 18%,transparent),var(--shadow);
+}
+
+.canvas-node:has(.canvas-generator-card) .canvas-generator-head>.canvas-generator-help-popover{display:block;gap:0;padding-top:12px}
+
+/* Shared generator card primitives used by the node card only. */
+.canvas-generator-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}.canvas-generator-summary span{min-width:0;padding:5px 4px;border:1px solid var(--line);border-radius:7px;background:var(--panel-3);color:var(--muted);font-size:8px;text-align:center;white-space:nowrap}.canvas-generator-prompt{display:grid;gap:4px}.canvas-generator-prompt b{color:var(--accent-text);font-size:8px}.canvas-generator-prompt span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}.canvas-variant-retry-all{width:100%;min-height:23px;padding:3px 7px;border:1px solid color-mix(in srgb,var(--danger) 35%,var(--line));border-radius:7px;background:var(--danger-soft);color:var(--danger);font-size:8px;cursor:pointer;text-align:center}.canvas-variant-retry-all:hover{border-color:var(--danger);background:var(--danger);color:#fff}.canvas-variant-state-list{display:grid;gap:4px;max-height:88px;overflow:auto;padding-right:2px;scrollbar-width:thin}.canvas-variant-state{min-width:0;display:flex;align-items:center;gap:5px;padding:4px 5px;border:1px solid var(--line);border-radius:7px;background:var(--panel-3)}.canvas-variant-state>span{width:16px;height:16px;display:grid;place-items:center;flex:none;border-radius:5px;background:var(--accent-soft);color:var(--accent-text);font-size:8px;font-weight:900}.canvas-variant-state p{min-width:0;flex:1;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2);font-size:8px}.canvas-variant-state small{flex:none;color:var(--muted);font-size:7px}.canvas-variant-state.running{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}.canvas-variant-state.completed>span{background:var(--success-soft);color:var(--success)}.canvas-variant-state.failed{border-color:color-mix(in srgb,var(--danger) 42%,var(--line))}.canvas-variant-state.failed>span{background:var(--danger-soft);color:var(--danger)}.canvas-variant-state.failed small{color:var(--danger)}.canvas-variant-state button{height:20px;padding:0 6px;border:1px solid color-mix(in srgb,var(--danger) 36%,var(--line));border-radius:6px;background:var(--danger-soft);color:var(--danger);font-size:7px;cursor:pointer}.canvas-variant-state button:hover{border-color:var(--danger);background:var(--danger);color:#fff}

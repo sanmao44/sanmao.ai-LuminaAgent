@@ -1,0 +1,37 @@
+services:
+  sanmao-media-relay:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3210:3210"
+    environment:
+      NODE_ENV: production
+      SANMAO_RELAY_MODE: "1"
+      SANMAO_DATA_DIR: /data
+      SANMAO_RELAY_PUBLIC_BASE_URL: ${SANMAO_RELAY_PUBLIC_BASE_URL:?Set the public HTTPS relay URL}
+      SANMAO_MASTER_KEY: ${SANMAO_MASTER_KEY:?Set a long random signing secret}
+      SANMAO_MEDIA_RELAY_UPLOAD_TOKEN: ${SANMAO_MEDIA_RELAY_UPLOAD_TOKEN:-}
+      SANMAO_DISABLE_LOCAL_UPDATE: "1"
+    volumes:
+      - sanmao_media_relay_data:/data
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SANMAO_RELAY_DOMAIN: ${SANMAO_RELAY_DOMAIN:?Set the relay domain}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - sanmao-media-relay
+
+volumes:
+  sanmao_media_relay_data:
+  caddy_data:
+  caddy_config:

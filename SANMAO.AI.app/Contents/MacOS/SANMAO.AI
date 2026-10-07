@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+set -f
+
+SCRIPT_DIR=`CDPATH= cd -- "$(dirname "$0")" && pwd`
+BUNDLE_CONTENTS=`CDPATH= cd -- "$SCRIPT_DIR/.." && pwd`
+if [ -f "$BUNDLE_CONTENTS/Resources/AppRoot/scripts/start-macos.sh" ]; then
+  ROOT_DIR="$BUNDLE_CONTENTS/Resources/AppRoot"
+else
+  ROOT_DIR=`CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd`
+fi
+LOG_DIR="${HOME}/Library/Logs"
+mkdir -p "$LOG_DIR"
+
+exec /bin/sh "$ROOT_DIR/scripts/start-macos.sh" >"$LOG_DIR/SANMAO.AI-startup.log" 2>&1

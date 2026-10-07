@@ -1,0 +1,101 @@
+import type { Metadata, Viewport } from 'next';
+import './globals.css';
+import './one-take-duration.css';
+import './model-picker.css';
+import './super-canvas.css';
+import './provider-library.css';
+import './agent-upgrades.css';
+import './agent-selection-push.css';
+import './agent-orb.css';
+import './desktop-readability.css';
+import './canvas.css';
+import './canvas-feedback.css';
+import './canvas-panels.css';
+import './canvas-context-menu.css';
+import './canvas-generator-node.css';
+import './canvas-variant-editor.css';
+import './canvas-smart-variant.css';
+import './canvas-media-viewer.css';
+import './canvas-media-node.css';
+import './canvas-task-log.css';
+import './canvas-asset-collection-picker.css';
+import './canvas-asset-preview.css';
+import './canvas-asset-library.css';
+import './canvas-panorama.css';
+import './canvas-activity.css';
+import './canvas-processing.css';
+import './canvas-text-lightbox.css';
+import './canvas-arrangement.css';
+import './canvas-cinematic.css';
+import './canvas-video-clip.css';
+import './canvas-video-editor.css';
+import './canvas-angle.css';
+import './canvas-image-editor.css';
+import './canvas-audio-panel.css';
+import './canvas-marquee.css';
+import './canvas-tools.css';
+import './canvas-viewport-overlay.css';
+import './canvas-selection.css';
+import './canvas-connection.css';
+import './canvas-compose.css';
+import './runtime-service.css';
+import './shadow-tuning.css';
+import './cursor.css';
+import LocalLifecycle from '@/components/LocalLifecycle';
+import MotionPreference from '@/components/MotionPreference';
+
+export const viewport: Viewport = {
+  colorScheme: 'light dark',
+  themeColor: '#f5f6f8',
+};
+
+export const metadata: Metadata = {
+  title: 'SANMAO.AI',
+  description: '多模型 AI 生图平台与智能创作助手',
+  manifest: '/manifest.webmanifest',
+  icons: { icon: '/brand-mark.png', apple: '/brand-mark.png' },
+};
+
+const themeBootScript = `
+(function(){
+  try {
+    var saved = localStorage.getItem('sanmao-theme');
+    var theme = saved === 'dark' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    var motion = localStorage.getItem('sanmao-motion-preference');
+    document.documentElement.dataset.motion = motion === 'off' ? 'off' : 'on';
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0f1117' : '#f5f6f8');
+  } catch (e) {
+    document.documentElement.dataset.theme = 'light';
+  }
+})();
+`;
+
+// After a forced update reload the cache-busting query is only needed to make
+// the browser re-request the document once. Strip it on arrival so the shared /
+// LAN URL stays clean and the app-router never sees a stale marker parameter.
+const reloadCleanupScript = `
+(function(){
+  try {
+    var url = new URL(window.location.href);
+    if (url.searchParams.has('sanmao_reload')) {
+      url.searchParams.delete('sanmao_reload');
+      window.history.replaceState(null, '', url.toString());
+    }
+  } catch (e) {}
+})();
+`;
+
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  return (
+    <html lang="zh-CN" data-theme="light" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
+        <script dangerouslySetInnerHTML={{ __html: reloadCleanupScript }} />
+      </head>
+      <body><MotionPreference /><LocalLifecycle />{children}</body>
+    </html>
+  );
+}

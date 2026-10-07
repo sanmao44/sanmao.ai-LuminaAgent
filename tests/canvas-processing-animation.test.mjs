@@ -1,0 +1,113 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const styles = await readFile(
+  new URL("../app/canvas.css", import.meta.url),
+  "utf8",
+);
+const processingStyles = await readFile(
+  new URL("../app/canvas-processing.css", import.meta.url),
+  "utf8",
+);
+const component = await readFile(
+  new URL(
+    "../components/canvas/CanvasProcessingIndicator.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const canvas = await readFile(
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const mediaCard = await readFile(
+  new URL("../components/canvas/CanvasMediaNodeCard.tsx", import.meta.url),
+  "utf8",
+);
+const upscaleCard = await readFile(
+  new URL("../components/canvas/CanvasUpscaleNodeCard.tsx", import.meta.url),
+  "utf8",
+);
+const angleCard = await readFile(
+  new URL("../components/canvas/CanvasAngleNodeCard.tsx", import.meta.url),
+  "utf8",
+);
+const generatorCard = await readFile(
+  new URL("../components/canvas/CanvasGeneratorNodeCard.tsx", import.meta.url),
+  "utf8",
+);
+const agentCard = await readFile(
+  new URL("../components/canvas/CanvasAgentNodeCard.tsx", import.meta.url),
+  "utf8",
+);
+
+test("processing feedback uses one restrained signal animation system", () => {
+  const motionStart = processingStyles.indexOf("/* Unified processing system");
+  assert.ok(motionStart >= 0, "unified processing motion should be present");
+  const motion = processingStyles.slice(motionStart);
+
+  assert.match(motion, /canvas-processing-orbit/);
+  assert.match(motion, /canvas-processing-breathe/);
+  assert.match(motion, /canvas-processing-indeterminate/);
+  assert.match(styles, /canvas-processing-node-signal/);
+  assert.doesNotMatch(component, /canvas-processing-signal|canvas-processing-live-dot/);
+  assert.match(styles, /\.canvas-node\.status-running,\.canvas-node\.status-queued\{contain:layout style\}/);
+  assert.doesNotMatch(styles, /contain:layout style paint/);
+  assert.match(motion, /\.canvas-processing-indicator\.is-running[^}]*--processing-accent:var\(--canvas-node-running\)/);
+  assert.match(
+    styles,
+    /\.canvas-node\.status-running \.canvas-type-icon[^}]*background:color-mix\(in srgb,var\(--node-effective\) 14%,transparent\);color:var\(--node-effective\)/,
+    "running node icons should use the shared running color",
+  );
+  assert.match(
+    styles,
+    /\.canvas-node\.status-running \.canvas-upscale-card-head>span/,
+    "upscale running icons should use the shared running color",
+  );
+  assert.match(styles, /\.canvas-node\.status-running::after[^}]*inset:0/);
+  assert.ok(
+    motion.includes(".canvas-processing-indicator.compact{") &&
+      motion.includes("min-height:78px"),
+  );
+  assert.equal(
+    ((styles + processingStyles).match(/(?:^|\n)\.canvas-processing-indicator\{/g) || []).length,
+    1,
+    "processing styles should not be duplicated later in the cascade",
+  );
+  assert.match(motion, /prefers-reduced-motion:reduce/);
+  assert.match(motion, /data-zoom-tier="overview"[^}]*animation:none!important/);
+  assert.match(motion, /data-motion="off"[^}]*animation:none!important/);
+});
+
+test("all running canvas node kinds share the indicator and elapsed clock", () => {
+  for (const kind of ["image", "video", "agent", "generator", "angle", "upscale"])
+    assert.match(component, new RegExp(`\\| "${kind}"|kind === "${kind}"`));
+
+  assert.match(component, /useSyncExternalStore/);
+  assert.match(component, /visibilitychange/);
+  assert.match(component, /formatProcessingTime/);
+  assert.match(component, /className="canvas-processing-elapsed"/);
+  assert.match(component, /canvas-processing-progress.*indeterminate/);
+  assert.match(
+    canvas + mediaCard + upscaleCard + angleCard + generatorCard + agentCard,
+    /kind={processingKind}/,
+  );
+  assert.equal(
+    ((canvas.match(/<CanvasProcessingIndicator/g) || []).length
+      + (mediaCard.match(/<CanvasProcessingIndicator/g) || []).length
+      + (upscaleCard.match(/<CanvasProcessingIndicator/g) || []).length
+      + (angleCard.match(/<CanvasProcessingIndicator/g) || []).length
+      + (generatorCard.match(/<CanvasProcessingIndicator/g) || []).length
+      + (agentCard.match(/<CanvasProcessingIndicator/g) || []).length),
+    5,
+    "media, angle, upscale, Agent and generator nodes should use the shared indicator",
+  );
+});
+
+test("angle workbench hydrates legacy drafts with a relative viewpoint baseline", () => {
+  assert.match(
+    canvas,
+    /normalizeCanvasAngleParams\(angleNode\.data\.angle\)/,
+  );
+});

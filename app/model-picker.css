@@ -1,0 +1,44 @@
+/* ModelPicker tooltip interaction surface. */
+.model-picker-trigger[data-tooltip]{position:relative}
+.model-picker-trigger[data-tooltip]::after{
+  content:attr(data-tooltip);
+  position:absolute;
+  left:50%;
+  top:calc(100% + 8px);
+  z-index:160;
+  width:max-content;
+  max-width:min(360px,calc(100vw - 24px));
+  padding:8px 10px;
+  border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line-strong));
+  border-radius:9px;
+  background:color-mix(in srgb,var(--panel) 95%,#0b0c10);
+  color:var(--text);
+  box-shadow:0 12px 30px rgba(15,23,42,.20),0 0 0 1px color-mix(in srgb,var(--accent) 8%,transparent);
+  font-size:8px;
+  font-weight:800;
+  line-height:1.4;
+  white-space:normal;
+  text-align:left;
+  opacity:0;
+  visibility:hidden;
+  pointer-events:none;
+  transform:translate(-50%,-4px);
+  transition:opacity .15s ease,visibility .15s ease,transform .15s ease;
+}
+.model-picker-trigger[data-tooltip]:hover::after,
+.model-picker-trigger[data-tooltip]:focus-visible::after{
+  opacity:1;
+  visibility:visible;
+  transform:translate(-50%,0);
+}
+.model-picker-trigger.open[data-tooltip]::after{opacity:0;visibility:hidden;pointer-events:none}
+.agent-composer .model-picker-trigger[data-tooltip]::after{
+  top:auto;
+  bottom:calc(100% + 8px);
+  transform:translate(-50%,4px);
+}
+.agent-composer .model-picker-trigger[data-tooltip]:hover::after,
+.agent-composer .model-picker-trigger[data-tooltip]:focus-visible::after{
+  transform:translate(-50%,0);
+}
+

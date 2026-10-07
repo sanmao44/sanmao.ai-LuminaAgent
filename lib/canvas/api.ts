@@ -1,0 +1,1113 @@
+import type { CanvasRuntimeState } from "./types";
+import type { AngleCameraState } from "../angle-control";
+import type { AgentDeliverable } from "../agent-intent";
+import type { CanvasAgentTarget } from "./run-context";
+import type { CreativeReference } from "../creative-references";
+import type { CreativeRoute } from "@/packages/contracts/creative";
+import type { WorkspaceContext } from "../workspace-context";
+import type { CanvasDocument, CanvasNode } from "./types";
+import {
+  requestAgent,
+  type AgentExecutionMode,
+  type AgentResponse,
+  type AgentStreamEvent,
+} from "../agent-client";
+import { videoTaskOutputUrl } from "../video-task-output";
+
+export type CanvasAsset = {
+  id: string;
+  kind: "image" | "video" | "audio";
+  name: string;
+  url: string;
+  storageKey?: string;
+  sha256?: string;
+  mime: string;
+  size: number;
+  optimized?: boolean;
+  originalSize?: number;
+  uploadedSize?: number;
+};
+
+export const CANVAS_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
+export const CANVAS_IMAGE_MAX_EDGE = 6144;
+
+export type CanvasUploadPreparation = {
+  file: File;
+  changed: boolean;
+  originalSize: number;
+  uploadedSize: number;
+};
+
+export type CanvasAgentTask =
+  | "reverse_prompt"
+  | "one_take_video_prompt"
+  | "cinematic_shock_opening_director"
+  | "smart_variant_planning"
+  | "optimize_prompt";
+
+export function inferCanvasAgentTask(
+  prompt: string,
+  hasImageReferences: boolean,
+): CanvasAgentTask | undefined {
+  if (!hasImageReferences) return undefined;
+  const value = String(prompt || "").replace(/\s+/g, " ").trim();
+  if (
+    /(?:反推|提取|识别|分析).{0,24}(?:提示词|prompt)/i.test(value) ||
+    /(?:提示词|prompt).{0,24}(?:反推|提取|识别)/i.test(value)
+  )
+    return "reverse_prompt";
+  if (/(?:一镜到底|串联成一段|按顺序).{0,32}(?:视频|video|prompt|提示词)/i.test(value))
+    return "one_take_video_prompt";
+  if (/(?:优化|润色|改写|扩写).{0,24}(?:提示词|prompt)/i.test(value))
+    return "optimize_prompt";
+  return undefined;
+}
+
+function loadUploadImage(file: File) {
+  const objectUrl = URL.createObjectURL(file);
+  return new Promise<{ image: HTMLImageElement; objectUrl: string }>(
+    (resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve({ image, objectUrl });
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("读取图片尺寸失败"));
+      };
+      image.src = objectUrl;
+    },
+  );
+}
+
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type: string,
+  quality?: number,
+) {
+  return new Promise<Blob | null>((resolve) => {
+    try {
+      canvas.toBlob(resolve, type, quality);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function hasTransparentPixels(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  mime: string,
+) {
+  if (/jpe?g/i.test(mime)) return false;
+  try {
+    const pixels = context.getImageData(0, 0, width, height).data;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] < 255) return true;
+    }
+    return false;
+  } catch {
+    // If the browser cannot inspect alpha, use an alpha-capable format rather
+    // than risking a transparent source being flattened into JPEG.
+    return true;
+  }
+}
+
+function extensionForImageMime(mime: string) {
+  if (mime.includes("webp")) return "webp";
+  if (mime.includes("jpeg")) return "jpg";
+  return "png";
+}
+
+function fileNameForImageMime(name: string, mime: string) {
+  const original = name.trim() || "画布图片";
+  const dot = original.lastIndexOf(".");
+  const base = dot > 0 ? original.slice(0, dot) : original;
+  return `${base}.${extensionForImageMime(mime)}`;
+}
+
+function renderUploadCanvas(
+  image: HTMLImageElement,
+  maxEdge: number,
+) {
+  const sourceWidth = Math.max(1, image.naturalWidth || image.width);
+  const sourceHeight = Math.max(1, image.naturalHeight || image.height);
+  const sourceMaxEdge = Math.max(sourceWidth, sourceHeight);
+  const scale = Math.min(1, maxEdge / sourceMaxEdge);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+  canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("当前浏览器不支持本地图片处理");
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return { canvas, context, sourceWidth, sourceHeight, sourceMaxEdge };
+}
+
+function optimizedUploadFile(blob: Blob, original: File) {
+  const mime = blob.type || "image/png";
+  const file = new File([blob], fileNameForImageMime(original.name, mime), {
+    type: mime,
+    lastModified: original.lastModified,
+  });
+  return {
+    file,
+    changed: true,
+    originalSize: original.size,
+    uploadedSize: file.size,
+  } satisfies CanvasUploadPreparation;
+}
+
+/**
+ * Convert a chat reference to the same compact browser image used by the
+ * main Agent surface. Providers can reject a perfectly valid image_url when
+ * the original canvas asset is too large or uses an unsupported encoding.
+ */
+export async function compressReferenceDataUrl(dataUrl: string) {
+  if (!dataUrl || !/^data:image\//i.test(dataUrl)) return dataUrl;
+
+  const source = new Image();
+  await new Promise<void>((resolve, reject) => {
+    source.onload = () => resolve();
+    source.onerror = () => reject(new Error("读取参考图片尺寸失败"));
+    source.src = dataUrl;
+  });
+
+  const maxEdge = 1400;
+  let scale = Math.min(
+    1,
+    maxEdge / Math.max(source.naturalWidth, source.naturalHeight),
+  );
+  let compressed = dataUrl;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return dataUrl;
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+
+    let preserveAlpha = !/jpe?g/i.test(
+      dataUrl.slice(5, dataUrl.indexOf(";")),
+    );
+    if (preserveAlpha) {
+      try {
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        preserveAlpha = false;
+        for (let index = 3; index < pixels.length; index += 4) {
+          if (pixels[index] < 255) {
+            preserveAlpha = true;
+            break;
+          }
+        }
+      } catch {
+        preserveAlpha = true;
+      }
+    }
+
+    compressed = canvas.toDataURL(
+      preserveAlpha ? "image/webp" : "image/jpeg",
+      Math.max(0.56, 0.78 - attempt * 0.05),
+    );
+    if (compressed.length <= 900000) break;
+    scale *= 0.82;
+  }
+  return compressed;
+}
+
+/**
+ * Prepare one image for a canvas upload. Videos and images within both limits
+ * are returned unchanged; an image that needs processing is never replaced by
+ * its original file when local optimization fails.
+ */
+export async function optimizeCanvasUploadFile(
+  file: File,
+): Promise<CanvasUploadPreparation> {
+  const unchanged = {
+    file,
+    changed: false,
+    originalSize: file.size,
+    uploadedSize: file.size,
+  } satisfies CanvasUploadPreparation;
+  if (!file.type.startsWith("image/")) return unchanged;
+
+  let loaded: { image: HTMLImageElement; objectUrl: string } | null = null;
+  try {
+    loaded = await loadUploadImage(file);
+  } catch {
+    if (file.size <= CANVAS_IMAGE_MAX_BYTES)
+      return unchanged;
+    throw new Error(
+      "图片过大且浏览器无法处理，请改用 JPG/WebP 或更小的图片。",
+    );
+  }
+
+  try {
+    const sourceWidth = Math.max(
+      1,
+      loaded.image.naturalWidth || loaded.image.width,
+    );
+    const sourceHeight = Math.max(
+      1,
+      loaded.image.naturalHeight || loaded.image.height,
+    );
+    const sourceMaxEdge = Math.max(sourceWidth, sourceHeight);
+    if (
+      file.size <= CANVAS_IMAGE_MAX_BYTES &&
+      sourceMaxEdge <= CANVAS_IMAGE_MAX_EDGE
+    ) {
+      return unchanged;
+    }
+
+    let maxEdge = Math.min(CANVAS_IMAGE_MAX_EDGE, sourceMaxEdge);
+    let quality = 0.86;
+    let encodedImage = false;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const rendered = renderUploadCanvas(loaded.image, maxEdge);
+      const preserveAlpha = hasTransparentPixels(
+        rendered.context,
+        rendered.canvas.width,
+        rendered.canvas.height,
+        file.type,
+      );
+      const outputTypes = preserveAlpha
+        ? ["image/webp", "image/png"]
+        : ["image/jpeg"];
+      for (const outputType of outputTypes) {
+        const blob = await canvasToBlob(
+          rendered.canvas,
+          outputType,
+          outputType === "image/png" ? undefined : quality,
+        );
+        if (!blob) continue;
+        encodedImage = true;
+        if (blob.size <= CANVAS_IMAGE_MAX_BYTES) {
+          return optimizedUploadFile(blob, file);
+        }
+      }
+      maxEdge = Math.max(1024, Math.floor(maxEdge * 0.84));
+      quality = Math.max(0.52, quality - 0.05);
+    }
+
+    if (!encodedImage)
+      throw new Error(
+        "图片压缩失败，请改用 JPG/WebP 或更小的图片后重试。",
+      );
+    throw new Error(
+      "图片过大，自动优化后仍超过 25MB，请改用更小的图片。",
+    );
+  } finally {
+    URL.revokeObjectURL(loaded.objectUrl);
+  }
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(path, { cache: "no-store", ...options });
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (!response.ok && response.status !== 202) {
+    const message =
+      body && typeof body === "object" && ("error" in body || "message" in body)
+        ? String(
+            (body as { error?: unknown; message?: unknown }).error ||
+              (body as { message?: unknown }).message,
+          )
+        : `请求失败：${response.status}`;
+    throw new Error(message);
+  }
+  return body as T;
+}
+
+export async function loadCanvasRuntime() {
+  return request<CanvasRuntimeState>("/api/state");
+}
+
+function normalizeCanvasReferenceUrl(url: string) {
+  if (!/^https?:\/\//i.test(url)) return url;
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    const sameOrigin = typeof window !== "undefined" && parsed.origin === window.location.origin;
+    // Older canvas nodes can retain an absolute localhost URL. The image can
+    // still render in <img>, while fetching that URL from another loopback
+    // hostname is rejected by the storage route's cross-site guard.
+    if ((loopback || sameOrigin) && parsed.pathname === "/api/storage/file")
+      return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    // Keep the original URL; the caller reports the normal read failure.
+  }
+  return url;
+}
+
+function isLocalCanvasStorageUrl(url: string) {
+  return url.startsWith("/api/storage/file?");
+}
+
+/**
+ * An image already rendered on the canvas can still be available in the
+ * browser's image cache after its backing file has disappeared from local
+ * storage.  `fetch(..., { cache: "no-store" })` deliberately bypasses that
+ * cache, so use an ordinary Image load as a last browser-side recovery path.
+ */
+function readCachedCanvasImage(url: string) {
+  if (typeof Image === "undefined" || typeof document === "undefined")
+    return Promise.reject(new Error("browser image cache unavailable"));
+
+  const render = (image: HTMLImageElement) => {
+    const width = Math.max(1, image.naturalWidth || image.width);
+    const height = Math.max(1, image.naturalHeight || image.height);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("canvas context unavailable");
+    context.drawImage(image, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL("image/png");
+    if (!/^data:image\//i.test(dataUrl))
+      throw new Error("cached image conversion failed");
+    return dataUrl;
+  };
+
+  const existing = Array.from(document.images || []).find((image) => {
+    if (!image.complete || !(image.naturalWidth || image.width)) return false;
+    const current = image.currentSrc || image.src;
+    return current === url || normalizeCanvasReferenceUrl(current) === url;
+  });
+  if (existing) {
+    try {
+      return Promise.resolve(render(existing));
+    } catch {
+      // Fall through to a fresh Image load if the existing element is not drawable.
+    }
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        resolve(render(image));
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error("cached image conversion failed"));
+      }
+    };
+    image.onerror = () => reject(new Error("browser image cache miss"));
+    image.src = url;
+  });
+}
+
+export async function asDataUrl(url: string) {
+  if (!url || url.startsWith("data:")) return url;
+  const normalizedUrl = normalizeCanvasReferenceUrl(url);
+  let response: Response;
+  try {
+    response = await fetch(normalizedUrl, { cache: "no-store" });
+  } catch (error) {
+    if (isLocalCanvasStorageUrl(normalizedUrl)) {
+      try {
+        return await readCachedCanvasImage(normalizedUrl);
+      } catch {
+        // Keep the normal, actionable read error below when the cache is gone.
+      }
+    }
+    throw error;
+  }
+  if (!response.ok) {
+    if (isLocalCanvasStorageUrl(normalizedUrl)) {
+      try {
+        return await readCachedCanvasImage(normalizedUrl);
+      } catch {
+        // The backing file and the browser cache are both unavailable.
+      }
+    }
+    throw new Error(isLocalCanvasStorageUrl(normalizedUrl)
+      ? "本地图片文件已丢失，请重新导入。"
+      : "无法读取画布参考素材，请重新导入。");
+  }
+  const blob = await response.blob();
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("参考素材读取失败。"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+export const CANVAS_AGENT_REFERENCE_CACHE_LIMIT = 16;
+const canvasAgentReferenceCache = new Map<string, Promise<string>>();
+
+async function cachedCanvasAgentReference(url: string) {
+  const cached = canvasAgentReferenceCache.get(url);
+  if (cached) {
+    canvasAgentReferenceCache.delete(url);
+    canvasAgentReferenceCache.set(url, cached);
+    return cached;
+  }
+  const prepared = asDataUrl(url).then(compressReferenceDataUrl);
+  canvasAgentReferenceCache.set(url, prepared);
+  while (canvasAgentReferenceCache.size > CANVAS_AGENT_REFERENCE_CACHE_LIMIT) {
+    const oldest = canvasAgentReferenceCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    canvasAgentReferenceCache.delete(oldest);
+  }
+  try {
+    return await prepared;
+  } catch (error) {
+    if (canvasAgentReferenceCache.get(url) === prepared)
+      canvasAgentReferenceCache.delete(url);
+    throw error;
+  }
+}
+
+/**
+ * 画布文档里需要补归档的远端图片地址：本地存储/中转地址跳过，同一地址只留一次。
+ * 这些地址只活一小段时间，节点一直用它们的话，图片会挂、参考素材也会读不到。
+ */
+export function canvasRemoteMediaUrls(nodes: readonly CanvasNode[]) {
+  const urls = nodes
+    .filter((node) => node.data.kind !== "video" && node.data.kind !== "audio")
+    .map((node) => String(node.data.url || "").trim())
+    .filter((url) => /^https?:\/\//i.test(url) && !/\/api\/(?:storage|media)\//i.test(url));
+  return Array.from(new Set(urls));
+}
+
+/**
+ * 把画布节点上的远端图片补归档成本地存储地址。
+ * 服务商临时地址只活一小段时间，节点一直用它的话，图片会挂、参考素材也会读不到；
+ * 本地存储地址不会过期，画布和参考素材都能直接读。归档不到的地址不会出现在结果里。
+ */
+export async function archiveCanvasRemoteImages(urls: readonly string[]) {
+  const archived = new Map<string, string>();
+  for (const url of Array.from(new Set(urls)).slice(0, 16)) {
+    if (!/^https?:\/\//i.test(url)) continue;
+    try {
+      const response = await fetch("/api/storage/images", {
+        cache: "no-store",
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ images: [{ url }] }),
+      });
+      if (!response.ok) continue;
+      const data = (await response.json().catch(() => null)) as { images?: Array<{ url?: string }> } | null;
+      const local = String(data?.images?.[0]?.url || "");
+      if (local.startsWith("/api/storage/file?")) archived.set(url, local);
+    } catch { /* 归档失败就保持原地址，由调用方决定怎么呈现 */ }
+  }
+  return archived;
+}
+
+/* 参考素材在浏览器里读不到时的兜底：先让服务端归档一份本地副本，再按本地地址读。 */
+async function archiveRemoteCanvasReference(url: string) {
+  const archived = await archiveCanvasRemoteImages([url]);
+  const local = archived.get(url);
+  return local ? cachedCanvasAgentReference(local).catch(() => "") : "";
+}
+
+/* 说清失败原因，并顺手给出下一步；调用方只负责补上「是哪一张」。 */
+function referenceFailureReason(error: unknown, url: string) {
+  const text = error instanceof Error ? error.message.trim() : "";
+  if (/Failed to fetch|NetworkError|Load failed|network/i.test(text) && /^https?:\/\//i.test(url))
+    return "原始图片地址已失效，或不允许浏览器直接读取，请重新上传或重新生成这张图，或改用其它参考素材。";
+  if (/timeout|超时/i.test(text)) return "读取原始图片超时，请重试或改用其它参考素材。";
+  return text ? (/[。！？]$/.test(text) ? text : `${text}。`) : "图片内容无法读取，请重新导入这张图。";
+}
+
+async function canvasAgentReference(reference: { url: string; name?: string }, index: number) {
+  const url = String(reference.url || "");
+  try {
+    return await cachedCanvasAgentReference(url);
+  } catch (error) {
+    const archived = await archiveRemoteCanvasReference(url);
+    if (archived) return archived;
+    const name = reference.name || `参考图 ${index + 1}`;
+    throw new Error(`参考素材「${name}」读取失败：${referenceFailureReason(error, url)}`);
+  }
+}
+
+export async function prepareCanvasAgentReferences(
+  references: Array<{ url: string; name?: string }> = [],
+) {
+  return Promise.all(references.slice(0, 16).map(async (reference, index) => ({
+    ...reference,
+    url: await canvasAgentReference(reference, index),
+  })));
+}
+
+export async function uploadCanvasAsset(file: File) {
+  const prepared = await optimizeCanvasUploadFile(file);
+  const asset = await request<CanvasAsset>("/api/canvas/assets", {
+    method: "POST",
+    headers: {
+      "Content-Type": prepared.file.type || "application/octet-stream",
+      "X-File-Name": encodeURIComponent(prepared.file.name),
+    },
+    body: prepared.file,
+  });
+  return {
+    ...asset,
+    optimized: prepared.changed,
+    originalSize: prepared.originalSize,
+    uploadedSize: prepared.uploadedSize,
+  };
+}
+
+export async function preciselyTrimCanvasVideo(
+  file: File,
+  clip: { startTime: number; endTime: number; playbackRate: number; muted: boolean },
+) {
+  const form = new FormData();
+  form.set("file", file);
+  form.set("startTime", String(clip.startTime));
+  form.set("endTime", String(clip.endTime));
+  form.set("playbackRate", String(clip.playbackRate));
+  form.set("muted", String(clip.muted));
+  const response = await fetch("/api/canvas/video-trim", { method: "POST", body: form, cache: "no-store" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: unknown } | null;
+    throw new Error(String(body?.error || `视频精确裁剪失败：${response.status}`));
+  }
+  return response.blob();
+}
+
+async function depthVideoResponse(path: string, form: FormData, fallback: string) {
+  const response = await fetch(path, { method: "POST", body: form, cache: "no-store" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: unknown } | null;
+    throw new Error(String(body?.error || `${fallback}：${response.status}`));
+  }
+  return response;
+}
+
+export async function probeCanvasVideoFrameRate(file: File) {
+  const form = new FormData();
+  form.set("file", file);
+  const response = await depthVideoResponse("/api/canvas/video-depth/probe", form, "读取原视频帧率失败");
+  const body = await response.json() as { frameRate?: unknown };
+  const frameRate = Number(body.frameRate);
+  if (!Number.isFinite(frameRate) || frameRate < 1 || frameRate > 60) {
+    throw new Error("无法识别原视频帧率；请使用帧率不超过 60 FPS 的 MP4 或 WebM 视频。");
+  }
+  return frameRate;
+}
+
+export async function encodeCanvasDepthVideoFrameSequence(
+  archive: File,
+  frameRate: number,
+  frameCount: number,
+) {
+  const form = new FormData();
+  form.set("archive", archive);
+  form.set("frameRate", String(frameRate));
+  form.set("frameCount", String(frameCount));
+  const response = await depthVideoResponse("/api/canvas/video-depth/encode", form, "深度视频 MP4 编码失败");
+  return response.blob();
+}
+
+export async function generateCanvasImage(input: {
+  taskId?: string;
+  prompt: string;
+  presetId?: string;
+  presetName?: string;
+  model?: string;
+  count?: number;
+  aspect?: string;
+  resolution?: string;
+  quality?: string;
+  width?: number;
+  height?: number;
+  sizeMode?: "system" | "custom";
+  outputFormat?: "png" | "jpeg" | "webp";
+  background?: "transparent" | "opaque";
+  /** Optional dedicated angle-console payload; ordinary canvas image calls omit it. */
+  camera?: AngleCameraState;
+  cameraStart?: AngleCameraState | null;
+  angleNote?: string;
+  angleGuide?: boolean;
+  signal?: AbortSignal;
+  maskUrl?: string;
+  moveGuideUrl?: string;
+  references?: Array<{ url: string; name?: string }>;
+  /** Allow a single-source continuation to fall back to ordinary generation
+   * when the provider has no image-edit endpoint. */
+  fallbackToGenerationOnEdit404?: boolean;
+}) {
+  const mask = input.maskUrl ? await asDataUrl(input.maskUrl) : undefined;
+  const moveGuide = input.moveGuideUrl ? await asDataUrl(input.moveGuideUrl) : undefined;
+  const references = await Promise.all(
+    (input.references || [])
+      .slice(0, 16)
+      .map(async (item, index) => {
+        const dataUrl = await asDataUrl(item.url);
+        // The first reference is the source image for local editing. Keep it
+        // at the same dimensions as the mask; compressing only the source
+        // makes otherwise valid edit requests look like the mask was ignored.
+        return mask && index === 0 ? dataUrl : compressReferenceDataUrl(dataUrl);
+      }),
+  );
+  type CanvasImageResult = {
+    images: Array<{ url: string; revisedPrompt?: string }>;
+    pending?: boolean;
+    taskId?: string;
+    message?: string;
+    mode?: "reference" | "generate" | "generate-fallback";
+    warning?: string;
+    model?: { id?: string; name?: string; provider?: string };
+  };
+  const recoverAcceptedImageTask = async (error: unknown): Promise<CanvasImageResult | null> => {
+    const taskId = String(input.taskId || "").trim();
+    if (!taskId) return null;
+    const log = await getCanvasAgentGeneration(taskId).catch(() => null);
+    const images = canvasImageTaskOutputUrls(log);
+    if (images.length) {
+      return { images: images.map((url) => ({ url })), pending: false, taskId };
+    }
+    if (log?.status === "pending") {
+      const pendingError = new Error("服务商已接收任务，正在生成，请勿重复提交。") as Error & { generationPending?: boolean; taskId?: string };
+      pendingError.generationPending = true;
+      pendingError.taskId = taskId;
+      throw pendingError;
+    }
+    if (log?.status === "error") throw new Error(log.error || (error instanceof Error ? error.message : "图片生成失败"));
+    return null;
+  };
+  let result: CanvasImageResult;
+  try {
+    result = await request<CanvasImageResult>("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: input.signal,
+      body: JSON.stringify({
+      source: "canvas",
+      ...(input.taskId ? { taskId: input.taskId } : {}),
+      prompt: input.prompt,
+      ...(input.presetId ? { presetId: input.presetId } : {}),
+      ...(input.presetName ? { presetName: input.presetName } : {}),
+      model: input.model || "auto",
+      count: Math.max(1, Math.min(8, Number(input.count || 1))),
+      aspectRatio: input.aspect || "自动",
+      resolution: input.resolution || "自动",
+      quality: input.quality || "自动",
+      ...(input.width && input.height
+        ? { width: input.width, height: input.height }
+        : {}),
+      ...(input.sizeMode ? { sizeMode: input.sizeMode } : {}),
+      ...(input.outputFormat ? { outputFormat: input.outputFormat } : {}),
+      ...(input.background ? { background: input.background } : {}),
+      ...(input.camera ? { camera: input.camera } : {}),
+      ...(input.cameraStart !== undefined ? { cameraStart: input.cameraStart } : {}),
+      ...(input.angleNote !== undefined ? { angleNote: input.angleNote } : {}),
+      ...(input.angleGuide !== undefined ? { angleGuide: input.angleGuide } : {}),
+      ...(mask ? { mask } : {}),
+      ...(moveGuide ? { moveGuide } : {}),
+      ...(input.fallbackToGenerationOnEdit404 ? { fallbackToGenerationOnEdit404: true } : {}),
+      references,
+      referenceImages: (input.references || [])
+        .slice(0, 16)
+        .map((item, index) => ({
+          name: item.name || `参考图 ${index + 1}`,
+          url: item.url,
+        })),
+      }),
+    });
+  } catch (error) {
+    const recovered = await recoverAcceptedImageTask(error);
+    if (!recovered) throw error;
+    result = recovered;
+  }
+  if (!result.pending) return result;
+  const taskId = String(result.taskId || input.taskId || '').trim();
+  if (!taskId) throw new Error(result.message || '服务商已接收任务，正在生成，请勿重复提交。');
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (Date.now() < deadline) {
+    if (input.signal?.aborted) throw input.signal.reason || new Error('GENERATION_CANCELLED');
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(resolve, 2000);
+      input.signal?.addEventListener('abort', () => { window.clearTimeout(timer); reject(input.signal?.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
+    });
+    let status: { log?: { status?: string; imageUrls?: string[]; error?: string } | null };
+    try {
+      status = await request<{ log?: { status?: string; imageUrls?: string[]; error?: string } | null }>(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`);
+    } catch (error) {
+      const recovered = await recoverAcceptedImageTask(error);
+      if (recovered?.images?.length) return { ...result, pending: false, images: recovered.images };
+      throw error;
+    }
+    const log = status.log;
+    const images = canvasImageTaskOutputUrls(log);
+    if (images.length) return { ...result, pending: false, images: images.map((url) => ({ url })) };
+    if (log?.status === 'error') throw new Error(log.error || '生图失败');
+  }
+  const pendingError = new Error(result.message || '服务商仍在生成，任务已保留，请勿重复提交。') as Error & { generationPending?: boolean; taskId?: string };
+  pendingError.generationPending = true;
+  pendingError.taskId = taskId;
+  throw pendingError;
+}
+
+export async function generateCanvasVideo(input: {
+  prompt: string;
+  model?: string;
+  modelRawId?: string;
+  operation?: "generate" | "edit" | "extend";
+  inputMode?: "text" | "first-frame" | "frames" | "reference";
+  duration?: number;
+  aspect?: string;
+  resolution?: string;
+  references?: Array<{ url: string; name?: string }>;
+  referenceVideos?: Array<{ url: string; name?: string }>;
+  /** Explicit frame slots supplied by the canvas resolver. */
+  firstFrame?: string;
+  lastFrame?: string;
+  referenceVideo?: string;
+  audio?: boolean;
+  agnesWidth?: number;
+  agnesHeight?: number;
+  agnesNumFrames?: number;
+  agnesFrameRate?: number;
+  /** Reference audio files supplied by the canvas connection resolver. */
+  audios?: Array<{ url: string; name?: string }>;
+}) {
+  const referenceData = await Promise.all(
+    (input.references || [])
+      .slice(0, 16)
+      .map(async (item) => compressReferenceDataUrl(await asDataUrl(item.url))),
+  );
+  const firstFrame =
+    input.inputMode === "first-frame" || input.inputMode === "frames"
+      ? input.firstFrame
+        ? await compressReferenceDataUrl(await asDataUrl(input.firstFrame))
+        : referenceData[0]
+      : undefined;
+  const lastFrame =
+    input.inputMode === "frames"
+      ? input.lastFrame
+        ? await compressReferenceDataUrl(await asDataUrl(input.lastFrame))
+        : referenceData[1]
+      : undefined;
+  const audioData = await Promise.all(
+    (input.audios || []).slice(0, 10).map(async (item) => ({
+      ...item,
+      url: await asDataUrl(item.url),
+    })),
+  );
+  if (input.inputMode === "first-frame" && !firstFrame) {
+    throw new Error("首帧模式请先添加首帧图片。");
+  }
+  if (input.inputMode === "frames" && (!firstFrame || !lastFrame)) {
+    throw new Error("首尾帧模式请先添加首帧和尾帧图片。");
+  }
+  const videoMode = input.inputMode === "reference"
+    ? "reference"
+    : input.inputMode === "frames"
+      ? "keyframe"
+        : input.inputMode === "text"
+          ? "text"
+          : undefined;
+  const usesAgnesV20 = /agnes(?:-video| video)?[- ]?(?:v2\.0|v20)/i.test(
+    `${input.modelRawId || ""} ${input.model || ""}`,
+  );
+  const referenceVideo = input.inputMode === "reference" || input.operation === "edit" || input.operation === "extend"
+    ? input.referenceVideo
+    : undefined;
+  const result = await request<{
+    task: {
+      id: string;
+      status: string;
+      progress?: number;
+      videoUrls?: string[];
+      remoteVideoUrls?: string[];
+      error?: string;
+      modelId?: string;
+    };
+  }>("/api/video/generate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify({
+      source: "canvas",
+      model: input.model || "auto",
+      operation: input.operation || "generate",
+      input: {
+        prompt: input.prompt,
+        ...(input.operation ? { operation: input.operation } : {}),
+        ...(videoMode ? { videoMode } : {}),
+        ...(!usesAgnesV20
+          ? {
+              seconds: Number(input.duration || 5),
+              aspectRatio: input.aspect || "16:9",
+              resolution: input.resolution || "720p",
+            }
+          : {}),
+        ...(usesAgnesV20
+          ? {
+              width: input.agnesWidth ?? 1152,
+              height: input.agnesHeight ?? 768,
+              numFrames: input.agnesNumFrames ?? 81,
+              frameRate: input.agnesFrameRate ?? 24,
+            }
+          : {}),
+        ...(firstFrame ? { firstFrame } : {}),
+        ...(lastFrame ? { lastFrame } : {}),
+        referenceImages:
+          input.inputMode === "reference"
+            ? referenceData
+            : input.inputMode
+              ? []
+              : referenceData,
+        ...(referenceVideo
+          ? { referenceVideo }
+          : {}),
+        ...(input.referenceVideos?.length
+          ? {
+              referenceVideos: input.referenceVideos.slice(0, 10).map((item) => item.url),
+              referenceVideo: referenceVideo || input.referenceVideos[0]?.url,
+            }
+          : {}),
+        ...(audioData.length
+          ? { audios: audioData.map((item) => item.url), audio: audioData[0].url }
+          : {}),
+      },
+    }),
+  });
+  return result.task;
+}
+
+export async function generateCanvasUpscale(input: {
+  taskId?: string;
+  sourceImageId?: string;
+  prompt?: string;
+  model?: string;
+  referenceUrl: string;
+  scale: number;
+  size?: string;
+  seed?: number;
+  colorCorrection?: string;
+  resizeMethod?: string;
+  cloud?: boolean;
+  outputFormat?: "png" | "jpg" | "bmp";
+  outputQuality?: number;
+}) {
+  const reference = await asDataUrl(input.referenceUrl);
+  return request<{
+    images: Array<{ url: string; revisedPrompt?: string }>;
+    model?: { id?: string; name?: string; provider?: string };
+    taskId?: string;
+    status?: "queued" | "processing" | "succeeded" | "failed";
+    sourceImageId?: string;
+  }>("/api/upscale", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "canvas",
+      ...(input.taskId ? { taskId: input.taskId } : {}),
+      prompt: input.prompt || "Upscale this image",
+      model: input.model || "auto",
+      reference,
+      referenceImages: [{ name: "超分原图", url: input.referenceUrl }],
+      ...(input.sourceImageId ? { sourceImageId: input.sourceImageId } : {}),
+      scale: Math.max(1, Math.min(4, Number(input.scale || 2))),
+      ...(input.cloud ? {
+        ...(input.outputFormat ? { outputFormat: input.outputFormat } : {}),
+        ...(input.outputFormat === "jpg" ? { outputQuality: Math.max(30, Math.min(100, Math.round(Number(input.outputQuality) || 95))) } : {}),
+      } : {
+        size: input.size || "1024x1024",
+        seed: Math.max(0, Number(input.seed || 0)),
+        colorCorrection: input.colorCorrection || "wavelet",
+        resizeMethod: input.resizeMethod || "lanczos",
+      }),
+    }),
+  });
+}
+
+export async function getCanvasUpscaleTask(taskId: string) {
+  return request<{
+    task: { id: string; status: "queued" | "processing" | "succeeded" | "failed" | "cancelled"; error?: string; errorCode?: string; sourceImageId?: string };
+    images: Array<{ url: string; revisedPrompt?: string }>;
+    model?: { id?: string; name?: string; provider?: string };
+  }>(`/api/upscale/tasks/${encodeURIComponent(taskId)}`, { cache: "no-store" });
+}
+
+export type CanvasAgentResponse = AgentResponse;
+export type CanvasAgentStreamEvent = AgentStreamEvent;
+
+export const CANVAS_AGENT_MAX_WAIT_MS = 5 * 60 * 1000;
+
+export async function getCanvasAgentGeneration(taskId: string) {
+  const response = await fetch(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`, { cache: "no-store" });
+  if (!response.ok) return null;
+  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; imageUrls?: string[]; error?: string } | null } | null;
+  return body?.log || null;
+}
+
+export function canvasImageTaskOutputUrls(log: { imageUrls?: readonly unknown[] } | null | undefined) {
+  return (log?.imageUrls || [])
+    .map((url) => String(url || '').trim())
+    .filter((url, index, urls) => Boolean(url) && urls.indexOf(url) === index);
+}
+
+export async function waitForCanvasAgentGeneration(taskId: string, maxWaitMs = 30_000) {
+  const deadline = Date.now() + Math.max(0, maxWaitMs);
+  while (Date.now() < deadline) {
+    const log = await getCanvasAgentGeneration(taskId).catch(() => null);
+    if (log?.status === "success" || log?.status === "error") return log;
+    await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+  }
+  return getCanvasAgentGeneration(taskId).catch(() => null);
+}
+
+export async function generateCanvasAgent(
+  input: {
+    messages: Array<{ role: "user" | "assistant"; content: string; references?: Array<Pick<CreativeReference, "id" | "kind" | "name" | "url" | "text" | "mimeType" | "nodeId">> }>;
+    memory?: string;
+    model?: string;
+    imageModelId?: string;
+    webMode?: "off" | "auto" | "always";
+    executionMode?: AgentExecutionMode;
+    references?: Array<Pick<CreativeReference, "id" | "kind" | "name" | "url" | "text" | "mimeType" | "nodeId">>;
+    task?: CanvasAgentTask;
+    durationSeconds?: number;
+    deliverable?: AgentDeliverable;
+    intentReason?: string;
+    creativeRoute?: CreativeRoute;
+    intentText?: string;
+    runId?: string;
+    context?: WorkspaceContext;
+    canvasDocument?: CanvasDocument;
+    canvasTarget?: CanvasAgentTarget;
+    signal?: AbortSignal;
+  },
+  onEvent?: (event: CanvasAgentStreamEvent) => void,
+): Promise<AgentResponse> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort(input.signal?.reason);
+  if (input.signal?.aborted) abortFromCaller();
+  else input.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new Error("Agent 请求超时，请重试。"));
+  }, CANVAS_AGENT_MAX_WAIT_MS);
+  try {
+    const preparedReferences = await Promise.all((input.references || []).slice(0, 16).map(async (reference, index) => {
+      if (reference.kind === "text") {
+        return { id: reference.id || `canvas-ref-${index + 1}`, kind: "text" as const, name: reference.name || `文本 ${index + 1}`, text: reference.text || "", ...(reference.mimeType ? { mimeType: reference.mimeType } : {}), ...(reference.nodeId ? { nodeId: reference.nodeId } : {}) };
+      }
+      const url = reference.url ? await canvasAgentReference({ url: reference.url, ...(reference.name ? { name: reference.name } : {}) }, index) : "";
+      return { id: reference.id || `canvas-ref-${index + 1}`, kind: reference.kind || "image", name: reference.name || `参考图 ${index + 1}`, url, ...(reference.mimeType ? { mimeType: reference.mimeType } : {}), ...(reference.nodeId ? { nodeId: reference.nodeId } : {}) };
+    }));
+    const messages = input.messages.map((message, index, all) => ({
+      ...message,
+      references: index === all.length - 1
+        ? preparedReferences
+        : (message.references || []).map((reference) => ({ ...reference })),
+      files: [],
+    }));
+    try {
+      return await requestAgent(
+        {
+          source: "canvas",
+          ...(input.executionMode ? { executionMode: input.executionMode } : {}),
+          messages,
+          ...(input.memory ? { memory: input.memory } : {}),
+          model: input.model || "auto",
+          ...(input.imageModelId ? { imageModelId: input.imageModelId } : {}),
+          ...(input.task ? { task: input.task } : {}),
+          ...(input.durationSeconds !== undefined ? { durationSeconds: input.durationSeconds } : {}),
+          webMode: input.webMode || "off",
+          webSearch: input.webMode !== "off",
+          references: preparedReferences,
+          ...(input.deliverable ? { deliverable: input.deliverable } : {}),
+          ...(input.intentReason ? { intentReason: input.intentReason } : {}),
+          ...(input.creativeRoute ? { creativeRoute: input.creativeRoute } : {}),
+          ...(input.intentText ? { intentText: input.intentText } : {}),
+          ...(input.runId ? { runId: input.runId } : {}),
+          ...(input.context ? { context: input.context } : {}),
+          ...(input.canvasDocument ? { canvasDocument: input.canvasDocument } : {}),
+          ...(input.canvasTarget ? { canvasTarget: input.canvasTarget } : {}),
+        },
+        { signal: controller.signal, onEvent },
+      );
+    } catch (error) {
+      const pendingTaskId = String((error as { agentPending?: boolean; taskId?: unknown } | null)?.agentPending ? (error as { taskId?: unknown }).taskId || input.runId || "" : "").trim();
+      const transportPending = timedOut || /Agent 流式响应不完整|连接中断|fetch failed/i.test(String((error as Error)?.message || error));
+      let recoverTaskId = pendingTaskId || (transportPending ? String(input.runId || "").trim() : "");
+      // A non-streaming 502 can arrive after the image tool has already
+      // persisted its result. Check the media log before marking the canvas
+      // node failed; text-only Agent errors keep their original behavior.
+      if (!recoverTaskId && input.runId) {
+        const currentLog = await getCanvasAgentGeneration(input.runId).catch(() => null);
+        const isMediaLog = currentLog && currentLog.mode !== "llm" && currentLog.taskKind !== "llm";
+        if (isMediaLog) {
+          const images = canvasImageTaskOutputUrls(currentLog);
+          if (images.length) {
+            return {
+              ok: true,
+              message: "图片已生成。",
+              images: images.map((url) => ({ url })),
+              taskId: input.runId,
+              pending: false,
+            };
+          }
+          if (currentLog.status === "error") throw new Error(currentLog.error || "生图失败");
+          recoverTaskId = input.runId;
+        }
+      }
+      if (!recoverTaskId) throw error;
+      const log = await waitForCanvasAgentGeneration(recoverTaskId, 30 * 60 * 1000);
+      const images = canvasImageTaskOutputUrls(log);
+      if (images.length) {
+        return {
+          ok: true,
+          message: "图片已生成。",
+          images: images.map((url) => ({ url })),
+          taskId: recoverTaskId,
+          pending: false,
+        };
+      }
+      if (log?.status === "error") throw new Error(log.error || "生图失败");
+      const pending = new Error("任务仍在后台处理中，请勿重复提交") as Error & { generationPending?: boolean; taskId?: string };
+      pending.generationPending = true;
+      pending.taskId = recoverTaskId;
+      throw pending;
+    }
+  } catch (error) {
+    if (timedOut || /Agent 流式响应不完整|连接中断|fetch failed/i.test(String((error as Error)?.message || error))) {
+      const pending = new Error("任务仍在后台处理中，请勿重复提交") as Error & { agentPending?: boolean; taskId?: string };
+      pending.agentPending = true;
+      pending.taskId = input.runId;
+      throw pending;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    input.signal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+export async function getCanvasVideoTask(id: string) {
+  return request<{
+    task: {
+      id: string;
+      status: string;
+      progress?: number;
+      videoUrls?: string[];
+      remoteVideoUrls?: string[];
+      error?: string;
+      modelId?: string;
+    };
+  }>(`/api/video/tasks/${encodeURIComponent(id)}`);
+}
+
+/** Prefer a local archive, but never discard a provider result when archiving failed. */
+export function canvasVideoTaskOutputUrl(task: {
+  videoUrls?: readonly string[];
+  remoteVideoUrls?: readonly string[];
+}) {
+  return videoTaskOutputUrl(task);
+}

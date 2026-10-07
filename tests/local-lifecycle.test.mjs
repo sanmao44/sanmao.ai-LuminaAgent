@@ -1,0 +1,124 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher, linuxLauncher, lanLauncher, freeRelayPs, freeRelayWatchPs, freeRelaySh, readme, videoStudio, relayPolicySource] = await Promise.all([
+  readFile(new URL("../components/LocalLifecycle.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../lib/local-lifecycle.ts", import.meta.url), "utf8"),
+  readFile(new URL("../app/api/health/route.ts", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/start.ps1", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/start-macos.sh", import.meta.url), "utf8"),
+  readFile(new URL("../start-linux.sh", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/lan-launcher.ps1", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/free-relay-common.ps1", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/free-relay-watch.ps1", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/free-relay-common.sh", import.meta.url), "utf8"),
+  readFile(new URL("../README.md", import.meta.url), "utf8"),
+  readFile(new URL("../components/VideoStudio.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/media-relay-policy.mjs", import.meta.url), "utf8"),
+]);
+
+const { requiresMediaRelay } = await import('../scripts/media-relay-policy.mjs');
+
+test("local lifecycle is mounted once for both the app and canvas routes", () => {
+  assert.match(layout, /import LocalLifecycle from ['"]@\/components\/LocalLifecycle['"]/);
+  assert.match(layout, /<LocalLifecycle \/>/);
+  assert.doesNotMatch(page, /['"]\/api\/lifecycle['"]/);
+  assert.match(component, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
+  assert.match(component, /window\.addEventListener\("online", handleOnline\)/);
+});
+
+test("lifecycle client keeps refresh safe and retries transient connection failures", () => {
+  assert.match(component, /fetch\("\/api\/lifecycle", \{ cache: "no-store" \}\)/);
+  assert.match(component, /window\.setInterval\(\(\) => void heartbeat\(\), HEARTBEAT_INTERVAL_MS\)/);
+  assert.match(component, /const RETRY_DELAYS_MS = \[1_000, 2_000, 5_000, 10_000\]/);
+  assert.match(component, /scheduleStart\(\)/);
+  assert.doesNotMatch(component, /sendBeacon/);
+  assert.doesNotMatch(component, /addEventListener\("pagehide"/);
+});
+
+test("server lifecycle expires stale records without terminating the local service", () => {
+  assert.match(lifecycle, /const sessions = new Map<string, number>\(\)/);
+  assert.match(lifecycle, /const HEARTBEAT_TIMEOUT_MS = 60_000/);
+  assert.match(lifecycle, /function stopCleanupTimer\(\)/);
+  assert.doesNotMatch(lifecycle, /process\.exit\(0\)/);
+  assert.doesNotMatch(lifecycle, /scheduleShutdown/);
+});
+
+test("health and official launchers expose the intended lifecycle modes", () => {
+  assert.match(health, /lifecycleEnabled: process\.env\.SANMAO_LIFECYCLE === '1'/);
+  assert.match(windowsLauncher, /if \(\$Lan\.IsPresent\) \{[\s\S]*Remove-Item Env:SANMAO_LIFECYCLE/);
+  assert.match(windowsLauncher, /else \{[\s\S]*\$env:SANMAO_LIFECYCLE = '1'/);
+  assert.match(macLauncher, /export SANMAO_LIFECYCLE=1/);
+  assert.match(linuxLauncher, /export SANMAO_LIFECYCLE=1/);
+});
+
+test("Windows launcher waits for fresh production-build artifacts", () => {
+  assert.match(windowsLauncher, /function Clear-SanmaoBuildArtifactMarkers/);
+  assert.match(windowsLauncher, /\.next\\BUILD_ID/);
+  assert.match(windowsLauncher, /\.next\\required-server-files\.json/);
+  assert.match(windowsLauncher, /if \(-not \$needBuild -and -not \$SkipBuild\.IsPresent\)/);
+});
+
+test("Windows launcher opens the IPv4 loopback address used by the local service", () => {
+  assert.match(windowsLauncher, /function Get-SanmaoLocalUrl\(\[int\]\$Port, \[string\]\$Path = ''\)/);
+  assert.match(windowsLauncher, /return "http:\/\/127\.0\.0\.1:\$Port\$Path"/);
+  assert.match(windowsLauncher, /\$openUrl = Get-SanmaoLocalUrl -Port \$existingPort/);
+  assert.match(windowsLauncher, /\$url = Get-SanmaoLocalUrl -Port \$port/);
+});
+
+test("every existing launcher prepares the optional public media relay", () => {
+  assert.equal(freeRelayPs.charCodeAt(0), 0xfeff, "Windows PowerShell relay helper must keep a UTF-8 BOM");
+  assert.match(windowsLauncher, /FreeRelay/);
+  assert.match(lanLauncher, /FreeRelay/);
+  assert.match(macLauncher, /free-relay-common\.sh/);
+  assert.match(linuxLauncher, /free-relay-common\.sh/);
+  assert.match(freeRelayPs, /cloudflared/);
+  assert.match(freeRelayPs, /trycloudflare/);
+  assert.match(freeRelayWatchPs, /Test-SanmaoFreeRelayReachable/);
+  assert.match(freeRelayWatchPs, /Start-SanmaoFreeRelayTunnel/);
+  assert.match(freeRelaySh, /trycloudflare/);
+  assert.match(freeRelaySh, /free_relay_probe/);
+  assert.match(freeRelaySh, /free_relay_watch/);
+
+  assert.match(videoStudio, /window\.setInterval\(\(\) => void refreshMediaStatus\(\), 15_000\)/);
+});
+
+test("launchers enable free relay only for configured providers that need public media", () => {
+  assert.match(windowsLauncher, /function Test-SanmaoMediaRelayRequired/);
+  assert.match(windowsLauncher, /SANMAO_DATA_DIR/);
+  assert.match(windowsLauncher, /media-relay-policy\.mjs/);
+  assert.match(windowsLauncher, /if \(\$FreeRelay\.IsPresent -and \$script:MediaRelayRequired\)/);
+  assert.match(windowsLauncher, /elseif \(-not \$script:MediaRelayRequired\)/);
+  assert.match(windowsLauncher, /media-relay-policy\.mjs/);
+  assert.match(windowsLauncher, /Stop-SanmaoFreeRelayTunnel -Root \$root/);
+  assert.match(windowsLauncher, /free-relay-watch\.ps1/);
+  assert.match(windowsLauncher, /-OriginPort/);
+
+  assert.match(macLauncher, /media_relay_required\(\)/);
+  assert.match(macLauncher, /SANMAO_DATA_DIR/);
+  assert.match(macLauncher, /if \[ "\$MEDIA_RELAY_REQUIRED" -eq 1 \]; then/);
+  assert.match(macLauncher, /media-relay-policy\.mjs/);
+  assert.match(macLauncher, /free_relay_stop "\$ROOT_DIR"/);
+  assert.match(linuxLauncher, /MEDIA_RELAY_REQUIRED=0/);
+  assert.match(linuxLauncher, /SANMAO_DATA_DIR/);
+  assert.match(linuxLauncher, /if \[ "\$MEDIA_RELAY_REQUIRED" -eq 1 \]; then/);
+  assert.match(linuxLauncher, /media-relay-policy\.mjs/);
+  assert.match(linuxLauncher, /free_relay_stop "\$ROOT_DIR"/);
+
+  assert.match(readme, /检测到已保存并启用的视觉聊天模型/);
+  assert.match(readme, /没有此类配置时不会下载或启动中转/);
+});
+
+test('media relay policy includes enabled vision chats and keeps native video local', () => {
+  const visionProvider = { id: 'deepseek', apiKey: 'configured', videoTransport: 'auto' };
+  const visionModel = { providerId: 'deepseek', kind: 'chat', enabled: true, published: true, capabilities: ['chat', 'vision'] };
+  assert.equal(requiresMediaRelay({ providers: [visionProvider], models: [visionModel] }), true);
+  assert.equal(requiresMediaRelay({ providers: [visionProvider], models: [{ ...visionModel, enabled: false }] }), false);
+  assert.equal(requiresMediaRelay({ providers: [{ ...visionProvider, videoTransport: 'native-task' }], models: [visionModel] }), true);
+  assert.equal(requiresMediaRelay({ providers: [{ id: 'native', apiKey: 'configured', videoTransport: 'native-task' }], models: [{ providerId: 'native', kind: 'video', capabilities: ['video-generate'] }] }), false);
+  assert.equal(requiresMediaRelay({ providers: [visionProvider], models: [{ providerId: 'deepseek', kind: 'video', capabilities: ['video-generate'] }] }), true);
+  assert.match(relayPolicySource, /capabilities\.includes\('vision'\)/);
+});

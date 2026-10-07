@@ -1,0 +1,201 @@
+.platform-picker button>b.platform-logo{padding:5px;background:color-mix(in srgb,var(--panel-3) 82%,#fff 18%)}
+.platform-picker button>b.platform-logo img{display:block;width:100%;height:100%;object-fit:contain}
+.platform-picker button>b.platform-logo img[src$="/openai.svg"]{filter:invert(1)}
+.platform-picker button>b.platform-logo img[src$="/agnes.ico"]{padding:2px;border-radius:4px;background:#161616}
+
+/* Provider registry navigation stays with the provider library feature. */
+.provider-list-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 10px;padding:10px 12px;border-radius:14px}
+.provider-search-box{height:38px;min-width:260px;max-width:520px;flex:1;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--muted)}
+.provider-search-box:focus-within{border-color:var(--accent);background:var(--panel);box-shadow:0 0 0 3px var(--control-focus-ring);color:var(--accent-text)}
+.provider-search-box input{min-width:0;flex:1;border:0;background:transparent;font-size:10px}
+.provider-search-box button{width:24px;height:24px;flex:none;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:15px;line-height:1}
+.provider-search-box button:hover{background:var(--danger-soft);color:var(--danger)}
+.provider-list-toolbar>span{flex:none;color:var(--muted);font-size:9px;font-variant-numeric:tabular-nums}.provider-list-toolbar>span b{color:var(--accent-text);font-size:11px}
+.provider-search-empty{min-height:180px;display:grid;place-items:center;align-content:center;gap:8px;padding:24px;text-align:center;color:var(--muted)}
+.provider-search-empty strong{color:var(--text);font-size:13px}.provider-search-empty span{font-size:9px}.provider-search-empty button{margin-top:4px}
+@media(max-width:620px){.provider-list-toolbar{align-items:stretch;flex-direction:column}.provider-search-box{width:100%;min-width:0;max-width:none}.provider-list-toolbar>span{align-self:flex-end}}
+
+.provider-library-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 7px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.provider-library-toggle input {
+  accent-color: var(--accent);
+  width: 12px;
+  height: 12px;
+  margin: 0;
+}
+
+.provider-library-toggle:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 850;
+}
+
+.provider-library-toggle input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Provider setup is a focused workflow, so keep it above the management page. */
+.provider-editor-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 340;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--overlay);
+  backdrop-filter: blur(10px);
+  animation: provider-editor-backdrop-in .18s ease-out;
+}
+
+.provider-editor-backdrop > .provider-modal-form {
+  width: min(1080px, 100%);
+  max-height: min(900px, calc(100vh - 32px));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 0;
+  border-color: var(--line-strong);
+  border-radius: 20px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .42), 0 0 0 1px color-mix(in srgb, var(--text) 5%, transparent);
+  animation: provider-editor-modal-in .22s ease-out;
+}
+
+.provider-modal-form .form-heading {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  flex: none;
+  align-items: flex-start;
+  margin: 0;
+  padding: 22px 26px 18px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 95%, var(--accent-soft));
+  backdrop-filter: blur(16px);
+}
+
+.provider-modal-form .form-heading h2 {
+  margin-top: 11px;
+  font-size: 21px;
+}
+
+.provider-modal-form .form-heading p {
+  max-width: 760px;
+  font-size: 9.5px;
+}
+
+.provider-modal-form .form-heading .icon-button {
+  flex: none;
+}
+
+.provider-modal-form > :not(.form-heading):not(.form-actions) {
+  margin-right: 26px;
+  margin-left: 26px;
+}
+
+.provider-modal-form .platform-picker {
+  margin-top: 22px;
+}
+
+.provider-modal-form .provider-auto-note {
+  margin-bottom: 18px;
+}
+
+.provider-modal-form .provider-fields,
+.provider-modal-form .provider-video-settings {
+  margin-bottom: 18px;
+}
+
+.provider-modal-form .connection-result {
+  margin-top: 0;
+  margin-bottom: 14px;
+}
+
+.provider-modal-form .form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  flex: none;
+  margin: 0;
+  padding: 14px 26px 20px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 95%, var(--accent-soft));
+  backdrop-filter: blur(16px);
+}
+
+.provider-modal-form .form-actions .secondary-action {
+  min-width: 128px;
+}
+
+.provider-modal-form .form-actions .primary-action {
+  min-width: 154px;
+}
+
+@keyframes provider-editor-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes provider-editor-modal-in {
+  from { opacity: 0; transform: translateY(10px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 620px) {
+  .provider-editor-backdrop {
+    place-items: end center;
+    padding: 0;
+  }
+
+  .provider-editor-backdrop > .provider-modal-form {
+    width: 100%;
+    max-height: 94vh;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .provider-modal-form .form-heading {
+    padding: 18px 16px 15px;
+  }
+
+  .provider-modal-form .form-heading h2 {
+    font-size: 18px;
+  }
+
+  .provider-modal-form > :not(.form-heading):not(.form-actions) {
+    margin-right: 16px;
+    margin-left: 16px;
+  }
+
+  .provider-modal-form .platform-picker {
+    margin-top: 16px;
+  }
+
+  .provider-modal-form .form-actions {
+    padding: 12px 16px max(16px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="on"]) .provider-editor-backdrop,
+  html:not([data-motion="on"]) .provider-editor-backdrop > .provider-modal-form {
+    animation: none;
+  }
+}

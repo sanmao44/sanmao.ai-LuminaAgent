@@ -1,0 +1,336 @@
+﻿param(
+  [Parameter(Mandatory = $true)][string]$ArchivePath,
+  [Parameter(Mandatory = $true)][string]$TargetPath,
+  [Parameter(Mandatory = $true)][int]$ProcessId,
+  [Parameter(Mandatory = $true)][string]$Version,
+  [Parameter(Mandatory = $false)][string]$LogPath,
+  [Parameter(Mandatory = $false)][int]$Port = 0,
+  [Parameter(Mandatory = $false)][string]$ProgressPath,
+  [Parameter(Mandatory = $false)][string]$OperationToken = ''
+)
+
+$ErrorActionPreference = 'Stop'
+$launcherCommonPath = Join-Path $TargetPath 'scripts\launcher-common.ps1'
+if (Test-Path -LiteralPath $launcherCommonPath) { . $launcherCommonPath }
+$dataDir = if (Get-Command Resolve-SanmaoDataDir -ErrorAction SilentlyContinue) { Resolve-SanmaoDataDir -Root $TargetPath } else { Join-Path $TargetPath '.data' }
+$providerConfigDir = if (Get-Command Resolve-SanmaoProviderConfigDir -ErrorAction SilentlyContinue) { Resolve-SanmaoProviderConfigDir -Root $TargetPath } else { $dataDir }
+$targetRoot = [System.IO.Path]::GetFullPath($TargetPath).TrimEnd('\', '/')
+
+function Get-ProtectedProgramEntry([string]$Path) {
+  $candidate = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+  if ($candidate.Equals($targetRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "用户数据目录不能与程序目录相同：$candidate"
+  }
+  $targetPrefix = $targetRoot + [System.IO.Path]::DirectorySeparatorChar
+  $candidatePrefix = $candidate + [System.IO.Path]::DirectorySeparatorChar
+  if ($targetRoot.StartsWith($candidatePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "用户数据目录不能包含程序目录：$candidate"
+  }
+  if (-not $candidate.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { return '' }
+  return $candidate.Substring($targetPrefix.Length).Split([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)[0]
+}
+
+$protectedProgramEntries = @('.data', 'data', 'node_modules', '.git', '.agents')
+foreach ($candidate in @($dataDir, $providerConfigDir)) {
+  $entry = Get-ProtectedProgramEntry $candidate
+  if ($entry -and $protectedProgramEntries -notcontains $entry) { $protectedProgramEntries += $entry }
+}
+$stagingPath = Split-Path -Parent $ArchivePath
+$extractPath = Join-Path $stagingPath ("extract-" + [guid]::NewGuid().ToString('N'))
+$lockPath = Join-Path $stagingPath 'update.lock'
+$drainPath = Join-Path $dataDir 'runtime-draining.json'
+$backupSuffix = if ($OperationToken) { $OperationToken } else { [string]$PID }
+$backupPath = Join-Path $stagingPath ("previous-update-" + $backupSuffix)
+$launcherStdoutPath = Join-Path $stagingPath ("restart-launcher-" + $backupSuffix + '.out.log')
+$launcherStderrPath = Join-Path $stagingPath ("restart-launcher-" + $backupSuffix + '.err.log')
+$script:programBackedUp = $false
+$script:programBackupComplete = $false
+$script:launcherProcess = $null
+if (-not $LogPath) { $LogPath = Join-Path $stagingPath 'update.log' }
+
+function Write-UpdateLog([string]$Message) {
+  try {
+    $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')] $Message"
+    Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+  } catch {}
+}
+
+function Write-JsonFile([string]$Path, $Value) {
+  # The Node runtime reads these files as UTF-8, so never write the BOM that
+  # Windows PowerShell 5.1 adds for -Encoding UTF8.
+  $json = $Value | ConvertTo-Json -Depth 5
+  [System.IO.File]::WriteAllText($Path, $json, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Write-UpdateProgress([string]$Stage, [string]$Message, [int]$Percent) {
+  if (-not $ProgressPath) { return }
+  for ($attempt = 0; $attempt -lt 4; $attempt++) { try {
+    $progress = if (Test-Path -LiteralPath $ProgressPath) {
+      Get-Content -LiteralPath $ProgressPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } else { [pscustomobject]@{} }
+    $progress.stage = $Stage
+    $progress.message = $Message
+    $progress.percent = $Percent
+    $progress.updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    $temporaryProgressPath = "$ProgressPath.$PID.tmp"
+    Write-JsonFile -Path $temporaryProgressPath -Value $progress
+    Move-Item -LiteralPath $temporaryProgressPath -Destination $ProgressPath -Force
+      return
+    } catch {
+      Remove-Item -LiteralPath "$ProgressPath.$PID.tmp" -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Milliseconds 100
+    }
+  }
+  Write-UpdateLog "无法写入更新进度：$Stage / $Message"
+}
+
+function PowerShellLiteral([string]$Value) {
+  return "'" + $Value.Replace("'", "''") + "'"
+}
+
+function Claim-UpdateLock {
+  if (-not $OperationToken) { return }
+  if (-not (Test-Path -LiteralPath $lockPath)) { throw '更新任务锁不存在，操作已取消' }
+  $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
+  if ([string]$lock.token -ne $OperationToken) { throw '更新任务锁校验失败，操作已取消' }
+  $lock.pid = $PID
+  $temporaryLockPath = "$lockPath.$PID.tmp"
+  Write-JsonFile -Path $temporaryLockPath -Value $lock
+  Move-Item -LiteralPath $temporaryLockPath -Destination $lockPath -Force
+}
+
+function Remove-OwnedUpdateLock {
+  if (-not (Test-Path -LiteralPath $lockPath)) { return }
+  if (-not $OperationToken) {
+    Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+    return
+  }
+  try {
+    $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
+    if ([string]$lock.token -eq $OperationToken) {
+      Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+    }
+  } catch {}
+}
+
+function Backup-CurrentProgram {
+  if (Test-Path -LiteralPath $backupPath) { Remove-Item -LiteralPath $backupPath -Recurse -Force }
+  New-Item -ItemType Directory -Force -Path $backupPath | Out-Null
+  $script:programBackedUp = $true
+  $script:programBackupComplete = $false
+  try {
+    Get-ChildItem -LiteralPath $TargetPath -Force |
+      Where-Object { $protectedProgramEntries -notcontains $_.Name -and $_.Name -notlike '.env*' } |
+      ForEach-Object { Move-Item -LiteralPath $_.FullName -Destination $backupPath -Force }
+    $script:programBackupComplete = $true
+  } catch {
+    # Leave the still-unmoved old files in place. Restore-PreviousProgram has
+    # a partial-backup path that puts only the moved entries back.
+    throw
+  }
+}
+
+function Restore-PreviousProgram {
+  if (-not $script:programBackedUp -or -not (Test-Path -LiteralPath $backupPath)) { return $false }
+  if ($script:programBackupComplete) {
+    Get-ChildItem -LiteralPath $TargetPath -Force |
+      Where-Object { $protectedProgramEntries -notcontains $_.Name -and $_.Name -notlike '.env*' } |
+      Remove-Item -Recurse -Force
+  }
+  Get-ChildItem -LiteralPath $backupPath -Force | ForEach-Object {
+    Move-Item -LiteralPath $_.FullName -Destination $TargetPath -Force
+  }
+  return $true
+}
+
+function Stop-CurrentTargetService {
+  $stopScript = Join-Path $TargetPath 'scripts\stop.ps1'
+  if (-not (Test-Path -LiteralPath $stopScript)) { return }
+  try {
+    $stopArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $stopScript, '-Port', [string]$Port)
+    if ($OperationToken) { $stopArguments += @('-OperationToken', $OperationToken) }
+    & powershell.exe @stopArguments | Out-Null
+  } catch {}
+}
+
+function Start-RolledBackService {
+  $launcher = Join-Path $TargetPath 'scripts\start.ps1'
+  if (-not (Test-Path -LiteralPath $launcher)) { return $false }
+  $oldPort = $env:SANMAO_PORT
+  $oldToken = $env:SANMAO_OPERATION_TOKEN
+  try {
+    if ($Port -ge 1024 -and $Port -le 65525) { $env:SANMAO_PORT = [string]$Port }
+    if ($OperationToken) { $env:SANMAO_OPERATION_TOKEN = $OperationToken }
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $launcher, '-NonInteractive')
+    if ($OperationToken -and ((Get-Content -LiteralPath $launcher -Raw -ErrorAction SilentlyContinue) -match '\$OperationToken')) {
+      $arguments += @('-OperationToken', $OperationToken)
+    }
+    Remove-Item -LiteralPath $launcherStdoutPath, $launcherStderrPath -Force -ErrorAction SilentlyContinue
+    $script:launcherProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $TargetPath -WindowStyle Hidden -RedirectStandardOutput $launcherStdoutPath -RedirectStandardError $launcherStderrPath -PassThru
+    $ports = if ($Port -ge 1024 -and $Port -le 65525) { @($Port) } else { @(3210..3220) }
+    $deadline = (Get-Date).AddSeconds(600)
+    while ((Get-Date) -lt $deadline) {
+      foreach ($probePort in $ports) {
+        if (Test-SanmaoHealthEndpoint -Port $probePort) { return $true }
+      }
+      if ($script:launcherProcess.HasExited -and $script:launcherProcess.ExitCode -ne 0) { return $false }
+      Start-Sleep -Milliseconds 500
+    }
+    return $false
+  } catch {
+    return $false
+  } finally {
+    if ($null -eq $oldPort) { Remove-Item Env:SANMAO_PORT -ErrorAction SilentlyContinue } else { $env:SANMAO_PORT = $oldPort }
+    if ($null -eq $oldToken) { Remove-Item Env:SANMAO_OPERATION_TOKEN -ErrorAction SilentlyContinue } else { $env:SANMAO_OPERATION_TOKEN = $oldToken }
+  }
+}
+
+function Remove-UpdateDrainMarker {
+  if (-not $OperationToken -or -not (Test-Path -LiteralPath $drainPath) -or -not (Test-Path -LiteralPath $lockPath)) { return }
+  try {
+    $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
+    $drain = Get-Content -LiteralPath $drainPath -Raw | ConvertFrom-Json
+    if ([string]$lock.token -eq $OperationToken -and [string]$drain.operationId -eq [string]$lock.jobId) {
+      Remove-Item -LiteralPath $drainPath -Force -ErrorAction SilentlyContinue
+    }
+  } catch {}
+}
+
+function Stop-CurrentServer {
+  Write-UpdateLog "正在停止旧服务进程 PID $ProcessId"
+  Start-Sleep -Milliseconds 900
+  try { Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+  for ($i = 0; $i -lt 60; $i++) {
+    try {
+      Get-Process -Id $ProcessId -ErrorAction Stop | Out-Null
+      Start-Sleep -Milliseconds 250
+    } catch { return }
+  }
+  throw "旧服务进程 PID $ProcessId 未能在 15 秒内退出"
+}
+
+try {
+  Claim-UpdateLock
+  Write-UpdateLog "开始应用 SANMAO.AI $Version，目标目录：$TargetPath"
+  Write-UpdateProgress 'starting' '正在替换程序文件并准备重启…' 98
+  New-Item -ItemType Directory -Force -Path $extractPath | Out-Null
+  Expand-Archive -LiteralPath $ArchivePath -DestinationPath $extractPath -Force
+  Write-UpdateLog '更新包已解压'
+
+  $packageRoot = $extractPath
+  if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'package.json'))) {
+    $packageRoot = Get-ChildItem -LiteralPath $extractPath -Directory -Force |
+      Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'package.json') } |
+      Select-Object -First 1 -ExpandProperty FullName
+  }
+  if (-not $packageRoot -or -not (Test-Path -LiteralPath (Join-Path $packageRoot 'package.json'))) {
+    throw '更新包中没有找到有效的 SANMAO.AI 项目文件'
+  }
+
+  $package = Get-Content -LiteralPath (Join-Path $packageRoot 'package.json') -Raw | ConvertFrom-Json
+  if ([string]$package.version -ne $Version.TrimStart('v')) {
+    throw "更新包版本不匹配：期望 $Version，实际 $($package.version)"
+  }
+  Write-UpdateLog "更新包版本校验通过：$($package.version)"
+
+  Stop-CurrentServer
+
+  # 只替换程序文件；用户数据、环境变量和已安装依赖保留不动。
+  # Keep the old program outside the target so a failed build/start can restore
+  # a runnable version before releasing the shared operation lock.
+  Backup-CurrentProgram
+
+  Get-ChildItem -LiteralPath $packageRoot -Force |
+    Where-Object { $protectedProgramEntries -notcontains $_.Name } |
+    ForEach-Object {
+    $destination = Join-Path $TargetPath $_.Name
+    # Copying a file onto the process' executing script aborts PowerShell.
+    # The restarted launcher restores the tiny fixed bootstrap immediately.
+    if ($destination -eq $PSCommandPath) { return }
+    Copy-Item -LiteralPath $_.FullName -Destination $destination -Recurse -Force
+  }
+  # The verified archive is the only source of installed program files.
+  # Do not copy the running updater or any old runtime back into this version.
+  Write-UpdateLog '程序文件替换完成'
+  Write-UpdateProgress 'starting' '程序文件已替换，正在重新构建并启动…' 99
+
+    # 让启动器重新构建生产产物，并根据 package-lock.json 检查依赖。
+  Remove-Item -LiteralPath (Join-Path $TargetPath '.next') -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+  # Use the newly installed launcher helpers for the readiness probe.
+  . (Join-Path $TargetPath 'scripts\launcher-common.ps1')
+  Initialize-SanmaoLauncher -Root $TargetPath -PortStart 3210 -PortEnd 3220 -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $dataDir 'logs\launcher.log')
+
+  $launcher = Join-Path $TargetPath 'scripts\start.ps1'
+  if (-not (Test-Path -LiteralPath $launcher)) { throw '更新后找不到 Windows 启动器' }
+  $launcherArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $launcher, '-NonInteractive')
+  if ($Port -ge 1024 -and $Port -le 65525) { $launcherArguments += @('-Port', [string]$Port) }
+  if ($env:SANMAO_NETWORK_MODE -eq 'lan') { $launcherArguments += '-Lan' }
+  $launcherArguments += '-FreeRelay'
+  if ($OperationToken) { $launcherArguments += @('-OperationToken', $OperationToken) }
+  Remove-Item -LiteralPath $launcherStdoutPath, $launcherStderrPath -Force -ErrorAction SilentlyContinue
+  $launcherProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $launcherArguments -WorkingDirectory $TargetPath -WindowStyle Hidden -RedirectStandardOutput $launcherStdoutPath -RedirectStandardError $launcherStderrPath -PassThru
+  Write-UpdateLog "已启动更新后启动器 PID $($launcherProcess.Id)"
+
+  $restartPorts = @()
+  if ($Port -ge 1024 -and $Port -le 65525) {
+    $restartPorts = @($Port)
+  } else {
+    $restartPorts = 3210..3220
+  }
+  $deadline = (Get-Date).AddSeconds(600)
+  $ready = $false
+  $lastProgressAt = Get-Date
+  while ((Get-Date) -lt $deadline) {
+    foreach ($probePort in $restartPorts) {
+      if (Test-SanmaoHealthEndpoint -Port $probePort) { $ready = $true; break }
+    }
+    if ($ready) { break }
+    if ($launcherProcess.HasExited -and $launcherProcess.ExitCode -ne 0) {
+      $launcherDetails = ''
+      if (Test-Path -LiteralPath $launcherStderrPath) { $launcherDetails = (Get-Content -LiteralPath $launcherStderrPath -Tail 8 -ErrorAction SilentlyContinue) -join ' ' }
+      if ($launcherDetails) { throw "更新后启动器异常退出（退出码 $($launcherProcess.ExitCode)）：$launcherDetails" }
+      throw "更新后启动器异常退出（退出码 $($launcherProcess.ExitCode)）"
+    }
+    if (((Get-Date) - $lastProgressAt).TotalSeconds -ge 10) {
+      Write-UpdateProgress 'starting' "正在等待新服务就绪…" 99
+      $lastProgressAt = Get-Date
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  if (-not $ready) {
+    $launcherDetails = ''
+    if (Test-Path -LiteralPath $launcherStderrPath) { $launcherDetails = (Get-Content -LiteralPath $launcherStderrPath -Tail 8 -ErrorAction SilentlyContinue) -join ' ' }
+    if ($launcherDetails) { throw "更新后服务未在 10 分钟内就绪：$launcherDetails" }
+    throw '更新后服务未在 10 分钟内就绪，请查看 .data/logs/launcher.log 与更新日志后重试。'
+  }
+  Write-UpdateLog '更新流程完成，新服务已就绪'
+  if (Test-Path -LiteralPath $backupPath) { Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction SilentlyContinue }
+  Remove-UpdateDrainMarker
+  Remove-OwnedUpdateLock
+  Write-UpdateProgress 'completed' '更新完成，服务已恢复。' 100
+} catch {
+  Write-UpdateLog "更新失败：$($_.Exception.Message)"
+  $rollbackSucceeded = $false
+  if ($script:programBackedUp) {
+    try {
+      Stop-CurrentTargetService
+      if (Restore-PreviousProgram) {
+        Write-UpdateLog '新版本未能启动，正在恢复上一份程序文件'
+        $rollbackSucceeded = Start-RolledBackService
+      }
+    } catch {}
+  }
+  if ($rollbackSucceeded) {
+    Write-UpdateLog '旧版本服务已恢复'
+    Write-UpdateProgress 'failed' '更新失败，已自动恢复旧服务，可重新尝试更新。' 0
+  } else {
+    Write-UpdateProgress 'failed' '更新失败，请检查更新日志后重试' 0
+  }
+  Remove-UpdateDrainMarker
+  Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+  if (Test-Path -LiteralPath $backupPath) { Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction SilentlyContinue }
+  Remove-OwnedUpdateLock
+  throw
+}

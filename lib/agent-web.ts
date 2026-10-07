@@ -1,0 +1,491 @@
+export type AgentWebMode = 'auto' | 'always' | 'off';
+
+export type AgentWebDecisionReason =
+  | 'off'
+  | 'always'
+  | 'explicit-search'
+  | 'fact-verification'
+  | 'time-sensitive'
+  | 'recommendation'
+  | 'comparison'
+  | 'location-sensitive'
+  | 'context-follow-up'
+  | 'ordinary-chat';
+
+export type AgentWebContextMessage = { role?: 'user' | 'assistant'; content?: string };
+
+export type AgentWebDecision = {
+  shouldSearch: boolean;
+  reason: AgentWebDecisionReason;
+  query: string;
+};
+
+export type BrowserAutomationStep = 'navigate' | 'inspect' | 'search' | 'select' | 'sort' | 'download' | 'interact';
+
+export type BrowserAutomationIntent = {
+  shouldAutomate: boolean;
+  destination: string;
+  steps: BrowserAutomationStep[];
+  confidence: 'high' | 'medium' | 'low';
+  reason: string;
+};
+
+const BROWSER_NAVIGATION_PATTERN = /(?:打开|访问|进入|前往|去到|跳转到|登陆|登录)\s*(?:一下\s*)?([^，,。！？!?；;\n]+)/i;
+const BROWSER_CONTEXT_PATTERN = /(?:在|用|通过|从)[^，,。！？!?；;]{0,24}(?:浏览器|网页|网站|页面)(?:里|中|上)?|(?:浏览器|网页|网站|页面)(?:里|中|上)|当前(?:网页|页面)|这个(?:网页|页面|网站)/i;
+const LOCAL_DESTINATION_PATTERN = /(?:网络设置|设备管理器|个性化|辅助功能|控制面板|任务管理器|终端|命令提示符|文件夹|目录|项目|工作区|剪贴板|计算器|记事本|设置|应用|程序|窗口|菜单|系统|本地|桌面|文件|网络适配器|音量|蓝牙|wifi|wi-?fi|settings?|device manager|task manager|terminal|folder|workspace|clipboard)/i;
+const BROWSER_SEARCH_PATTERN = /(?:搜索|查找|检索|搜一下|搜索一下|find|search|look\s*up)/i;
+const BROWSER_SELECTION_PATTERN = /(?:第\s*[一二三四五六七八九十\d]+|第一条|第一个|最(?:多|少|高|低|新|旧)|最高|最低|下载量|排名|排序|哪个|哪一个|挑选|选择|most|highest|lowest|top\s*\d+)/i;
+const BROWSER_DOWNLOAD_ACTION_PATTERN = /(?:下载|保存|导出)(?!量|数|次数)|\b(?:download|save)\b/i;
+const BROWSER_DOWNLOAD_METRIC_PATTERN = /(?:最多下载|下载最多|下载量|下载数|下载次数)/i;
+const BROWSER_INTERACTION_PATTERN = /(?:点击|点赞|点踩|收藏|关注|评论|回复|填写|登录|提交|播放|滚动|切换|选中|发帖|购买|click|like|comment|fill|submit|play)/i;
+
+function browserDestinationFrom(text: string) {
+  const match = text.match(BROWSER_NAVIGATION_PATTERN);
+  const candidate = String(match?.[1] || '').replace(/^['"“”‘’\s]+|['"“”‘’\s]+$/g, '').trim();
+  if (!candidate || LOCAL_DESTINATION_PATTERN.test(candidate)) return '';
+  return candidate;
+}
+
+/** Classify the page task before read-only web search gets a chance to consume it. */
+export function classifyBrowserAutomation(input: string): BrowserAutomationIntent {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return { shouldAutomate: false, destination: '', steps: [], confidence: 'low', reason: 'empty-request' };
+  const destination = browserDestinationFrom(text);
+  const genericNavigation = /(?:打开|访问|进入)\s*(?:浏览器|网页|网站|页面)/i.test(text);
+  const browserContext = BROWSER_CONTEXT_PATTERN.test(text);
+  const hasSearch = BROWSER_SEARCH_PATTERN.test(text);
+  const hasSelection = BROWSER_SELECTION_PATTERN.test(text);
+  const hasDownloadAction = BROWSER_DOWNLOAD_ACTION_PATTERN.test(text) && !BROWSER_DOWNLOAD_METRIC_PATTERN.test(text);
+  const hasInteraction = BROWSER_INTERACTION_PATTERN.test(text);
+  const chained = /(?:然后|接着|之后|再|并且|并|最后|找到|筛选|按|给第|第一条|第一个)/i.test(text);
+  const steps: BrowserAutomationStep[] = [];
+  if (genericNavigation || destination) steps.push('navigate');
+
+  if (browserContext || hasSearch || hasSelection || hasDownloadAction || hasInteraction) steps.push('inspect');
+  if (hasSearch) steps.push('search');
+  if (hasSelection) steps.push('select');
+  if (hasSelection && /(?:排序|下载量|最多|最高|排名|按)/i.test(text)) steps.push('sort');
+  if (hasDownloadAction) steps.push('download');
+  if (hasInteraction) steps.push('interact');
+  const shouldAutomate = genericNavigation
+    || (Boolean(destination) && (hasSearch || hasSelection || hasDownloadAction || hasInteraction || chained || !browserContext))
+    || (browserContext && (hasSearch || hasSelection || hasDownloadAction || hasInteraction));
+  const confidence = genericNavigation || (destination && (hasSearch || hasSelection || hasDownloadAction || hasInteraction)) ? 'high' : shouldAutomate ? 'medium' : 'low';
+  const reason = genericNavigation
+    ? 'explicit-browser-navigation'
+    : destination
+      ? (steps.length > 1 ? 'external-destination-with-page-plan' : 'external-destination')
+      : browserContext
+        ? 'explicit-page-context'
+        : 'information-search-only';
+  return { shouldAutomate, destination, steps: [...new Set(steps)], confidence, reason };
+}
+
+/** Backward-compatible boolean gate used by the route planner. */
+export function likelyBrowserAutomationRequest(input: string) {
+  return classifyBrowserAutomation(input).shouldAutomate;
+}
+
+/** 识别本地文件/项目操作请求，供 MCP 工具预算排序使用。 */
+export function likelyFilesystemRequest(input: string, previousAssistant = '') {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  const target = /(?:本地文件|文件夹|目录|项目(?:文件|目录)?|代码库|本地代码|文件系统|工作区|workspace|filesystem|file system|[a-z]:[\\/]|[^\s]+\.(?:png|jpg|webp|pdf|txt|docx|xlsx|pptx))/i.test(text);
+  const action = /(?:读取|查看|列出|分析|搜索|找到|找出|发我|给我|打开|修改|编辑|创建|重命名|改名|移动|重构|运行|启动|检查|目录结构|文件内容|代码|工作|操作|处理)/i.test(text);
+  const renameReply = /(?:改名|重命名)/.test(previousAssistant) && /^(?:[^\\/\r\n]+\.[a-z0-9]{1,8}|可以|好的|就这个)[。!！]*$/i.test(text);
+  return (target && action) || renameReply || /^(?:改名|重命名)(?:可以吗|吧|一下|为|成|[?？])/.test(text);
+}
+
+const directionItemPattern = /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)(.+?)\s*$/;
+const directionHeadingPattern = /(?:下一版|下个版本|后续).{0,24}(?:可尝试|尝试方向|调整方向|方向)/i;
+const chatDirectionHeadingPattern = /(?:你还可以继续|还可以继续|接下来(?:可以|还能)|继续聊什么|进一步(?:了解|讨论|展开))/i;
+const visualTargetPattern = '(?:图|图片|图像|画面|海报|封面|风格|构图|版式|布局|光线|色彩|视觉|细节|背景|主体|文字|标题|信息层级|插画|插图|漫画|头像|壁纸|表情包|图标|logo|徽标|banner|横幅|配图|信息图|流程图|概念图|效果图|渲染图|视觉稿|主视觉|宣传图|广告图|缩略图|写真|艺术图|绘画|素描|草图|分镜)';
+const editVerbPattern = '(?:修改|调整|改图|修图|重绘|重制|重做|换|替换|做成|变成|改成|画成|转成|转为|排成|扩图|补图|抠图|上色|着色|换风格|换色|优化|强化|弱化|增加|减少|去掉|删除|保持|延续|继续|尝试)';
+const imageTargetPattern = '(?:图|图片|图像|画|画面|海报|封面|插画|插图|漫画|头像|壁纸|表情包|图标|logo|徽标|banner|横幅|配图|信息图|流程图|概念图|效果图|渲染图|视觉稿|主视觉|宣传图|广告图|缩略图|写真|艺术图|绘画|素描|草图|分镜|立绘|人设|场景图|原画|美术图|image|picture|photo|poster|cover|illustration|avatar|wallpaper|icon)';
+const drawingVerbPattern = '(?:画|绘制|画出|描绘|勾勒|涂鸦|画下|画成|临摹|创作|生成|制作|创建|设计|做成|变成|改成|排成|渲染|出图|可视化|视觉化|draw|illustrate|generate|create|make|render|visualize)';
+const imageNeedVerbPattern = '(?:给我|请给我|我要|我想要|我需要|帮我|麻烦|请|来|弄|搞|整|做|做个|做一|来个|来一|出|直接出|配|配上|配一张|配几张)';
+const imageTextArtifactPattern = '(?:提示词|prompt|文案|文稿|文档|文章|报告|总结|清单|表格|计划|方案|建议|回复|段落|故事|标题|脚本|代码|教程|步骤|方法|口号|slogan|视频|音频|音乐|文件|附件)';
+
+/**
+ * A prompt is a text artifact, even when it describes a picture or video.
+ * Keep this decision ahead of the visual keyword checks below: users often
+ * describe the scene in detail and then explicitly say they only want the
+ * prompt. Sending those requests to an image tool is the opposite of the
+ * requested output.
+ */
+function isPromptOnlyRequest(text: string) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!/(?:提示词|prompt)/i.test(value)) return false;
+
+  const asksForPrompt = /(?:写|生成|制作|创建|设计|优化|改写|润色|反推|提取|翻译|解释|给我|提供|输出|返回|整理|补全|扩写|只要|只需|仅需|只输出|仅输出|只提供|仅提供|需要的是).{0,56}(?:提示词|prompt)/i.test(value)
+    || /(?:提示词|prompt).{0,40}(?:怎么|如何|是什么|怎么写|如何写|优化|改写|润色|反推|提取|翻译|解释|输出|返回)/i.test(value);
+  if (!asksForPrompt) return false;
+
+  // A negative visual request is an explicit output constraint, not an image
+  // request. Match both "不要出图" and "图片不要" word orders.
+  const rejectsImageOutput = /(?:不要|无需|不用|不需要|别|勿|不要再).{0,32}(?:出图|生图|生成图片|生成图像|图片|图像|画图|绘图|图形)/i.test(value)
+    || /(?:出图|生图|生成图片|生成图像|图片|图像|画图|绘图|图形).{0,32}(?:不要|无需|不用|不需要|别|勿)/i.test(value);
+
+  // Preserve an intentional two-step request such as "先写提示词，再生成
+  // 图片". Without an explicit second image action, the prompt wins.
+  const explicitImageAfterPrompt = /(?:提示词|prompt).{0,48}(?:然后|之后|再|同时|并且|并|接着).{0,32}(?:画|绘制|生成|制作|创建|出图|渲染).{0,32}(?:图|图片|图像|海报|封面|插画|poster|image|picture)/i.test(value);
+  const explicitImageBeforePrompt = /(?:画|绘制|生成|制作|创建|出图|渲染).{0,32}(?:图|图片|图像|海报|封面|插画|poster|image|picture).{0,48}(?:然后|之后|再|同时|并且|并|接着).{0,48}(?:提示词|prompt)/i.test(value);
+
+  return !explicitImageAfterPrompt && !explicitImageBeforePrompt && (rejectsImageOutput || asksForPrompt);
+}
+
+/**
+ * Extract the numbered/bulleted continuation choices from an assistant caption.
+ * Returns an empty list when the model did not write its own direction section:
+ * canned suggestions repeat verbatim across unrelated turns, so the UI hides
+ * the section instead of showing generic text.
+ */
+export function extractAgentDirections(content: string) {
+  const lines = String(content || '').replace(/\r/g, '').split('\n');
+  const headingIndex = lines.findIndex((line) => directionHeadingPattern.test(line));
+  if (headingIndex >= 0) {
+    const directions: string[] = [];
+    for (let index = headingIndex + 1; index < lines.length && directions.length < 3; index += 1) {
+      const line = lines[index];
+      if (/^\s*#{1,6}\s+/.test(line)) break;
+      if (!line.trim()) continue;
+      const match = line.match(directionItemPattern);
+      if (!match) break;
+      const value = match[1].replace(/^\*\*(.+)\*\*$/, '$1').trim();
+      if (value && !/(?:我(?:来|可以|会)?帮你|请(?:你)?(?:上传|拖入|发送)|等你(?:发|传))/.test(value)) directions.push(value);
+    }
+    if (directions.length) return directions;
+  }
+  return [];
+}
+
+/** Extract clickable follow-up prompts from a normal assistant reply; empty when the model wrote none. */
+export function extractChatDirections(content: string) {
+  const lines = String(content || '').replace(/\r/g, '').split('\n');
+  const headingIndex = lines.findIndex((line) => chatDirectionHeadingPattern.test(line));
+  if (headingIndex >= 0) {
+    const directions: string[] = [];
+    for (let index = headingIndex + 1; index < lines.length && directions.length < 3; index += 1) {
+      const line = lines[index];
+      if (/^\s*#{1,6}\s+/.test(line)) break;
+      if (!line.trim()) continue;
+      const match = line.match(directionItemPattern);
+      if (!match) break;
+      const value = match[1].replace(/^\*\*(.+)\*\*$/, '$1').trim();
+      if (value && !/(?:我(?:来|可以|会)?帮你|请(?:你)?(?:上传|拖入|发送)|等你(?:发|传))/.test(value)) directions.push(value);
+    }
+    if (directions.length) return directions;
+  }
+  return [];
+}
+
+export function isChatDirectionHeading(line: string) {
+  return chatDirectionHeadingPattern.test(String(line || ''));
+}
+
+/** Hide the textual direction list when the image message already renders it as buttons. */
+export function stripAgentDirectionSection(content: string) {
+  const lines = String(content || '').replace(/\r/g, '').split('\n');
+  const headingIndex = lines.findIndex((line) => directionHeadingPattern.test(line));
+  if (headingIndex < 0) return String(content || '');
+
+  let index = headingIndex + 1;
+  let directionCount = 0;
+  for (; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim()) continue;
+    if (!directionItemPattern.test(line)) break;
+    directionCount += 1;
+  }
+  if (!directionCount) return String(content || '');
+
+  const remaining = lines.slice(index);
+  while (remaining.length && !remaining[0].trim()) remaining.shift();
+  return [...lines.slice(0, headingIndex), ...remaining].join('\n').trim();
+}
+
+/** Identify a visual edit request that should be handled by image_edit. */
+export function isImageContinuationRequest(input: string) {
+  const text = String(input || '').trim();
+  if (!text) return false;
+  const actionThenTarget = new RegExp(`${editVerbPattern}.{0,32}${visualTargetPattern}`, 'i');
+  const targetThenAction = new RegExp(`${visualTargetPattern}.{0,32}${editVerbPattern}`, 'i');
+  return actionThenTarget.test(text) || targetThenAction.test(text);
+}
+
+/** Return the last image from the most recent assistant message containing images. */
+export function latestAssistantImage(messages: Array<{ role?: string; images?: unknown[] }> = []) {
+  for (const message of [...messages].reverse()) {
+    if (message?.role !== 'assistant' || !Array.isArray(message.images) || !message.images.length) continue;
+    return message.images[message.images.length - 1];
+  }
+  return null;
+}
+
+export function buildContinuationPrompt(direction: string) {
+  const value = String(direction || '').trim();
+  return value ? `请基于这张参考图继续修改：${value}` : '请基于这张参考图继续修改，保持主体和核心构图不变。';
+}
+
+/** Convert the legacy boolean preference without changing existing users' intent. */
+export function resolveAgentWebMode(value: unknown, legacy?: unknown): AgentWebMode {
+  if (value === 'always' || value === 'off' || value === 'auto') return value;
+  return legacy === false ? 'off' : 'auto';
+}
+
+const explicitSearchPattern = /(?:联网|上网|搜索|查询|查找|检索|查证|核验|核实|找来源|给出处|官方(?:网站|公告)?|查新闻|搜一下|搜寻|找一?个|推荐几个|帮我选|值得买|哪里有).{0,32}|(?:search|look\s*up|check|verify|browse|find|recommend|compare)\b/i;
+const questionPattern = /(?:[吗呢么][。.!！?？]*$|[?？]|\b(?:who|what|when|where|which|how|why|is|are|did|does|do|can)\b|(?:谁|什么|哪个|哪些|哪里|哪家|怎么|如何|多少|几家|值得不值得|好不好|怎么样|有何).{0,20}(?:吗|呢|？|\?|$))/i;
+const timeSensitivePattern = /(?:今天|今日|刚刚|现在|当前|实时|最新|近期|本周|本月|今年|最近|目前|截至|进展|更新|新闻|快讯|突发|天气|温度|价格|报价|股价|汇率|版本|更新日志|排名|比赛|赛程|比分|政策|法规|选举|任命|发布会|上映)/i;
+const verificationPattern = /(?:去世|逝世|死亡|病逝|失踪|辞职|离任|任职|当选|获奖|发布|上映|下架|关闭|宕机|真假|真伪|属实|谣言|假消息|辟谣|是否正确|是否存在|是否还在|还活着|发生了吗|是真的吗|真的假的|对不对|准确吗)/i;
+const externalFactPattern = /(?:人物|公司|机构|组织|品牌|产品|型号|版本|政策|法规|事件|新闻|消息|天气|价格|汇率|职位|职务|总理|总统|CEO|创始人|作者|导演|演员|地点|城市|国家|学校|医院|平台|服务|接口|API|上市|召回|故障)/i;
+const recommendationPattern = /(?:推荐|建议买|值得买|适合我|帮我选|选择哪|哪个更好|哪个好|哪家好|性价比|避坑|排行榜|排名|附近|周边|攻略|路线|行程|住宿|酒店|餐厅|咖啡店|门票|活动|展览|演出|旅游|旅行|购物|购买|订票|best|recommend|where to|worth buying|nearby|itinerary|hotel|restaurant)/i;
+const comparisonPattern = /(?:对比|比较|区别|差异|优缺点|哪个好|哪个更|选哪个|vs\.?|versus|compare|comparison|difference|pros?\s*(?:and|&)\s*cons?)/i;
+const locationSensitivePattern = /(?:附近|周边|本地|当地|在我这里|到哪里|哪里可以|哪个城市|路线|天气|温度|空气质量|交通|门票|酒店|餐厅|咖啡店|活动|展览|演出|旅游|旅行|nearby|local|weather|air quality|traffic|route|hotel|restaurant)/i;
+const strongLocationPattern = /(?:附近|周边|当地|在我这里|到哪里|哪里可以|哪个城市|路线|天气|温度|空气质量|交通|门票|酒店|餐厅|咖啡店|展览|演出|旅游|旅行|nearby|near me|weather|air quality|traffic|route|hotel|restaurant)/i;
+const localDeviceResourcePattern = /(?:(?:本机|本设备|这台(?:电脑|机器|设备)|本地|local)\s*(?:的)?\s*(?:笔记|文件|文档|图片|照片|视频|音频|音乐|模型|部署|数据库|代码|项目|仓库|目录|文件夹|磁盘|硬盘|缓存|环境|应用|软件|程序|数据|资料|脚本|配置|日志|端口|主机|服务器|notes?|files?|documents?|models?|database|repo|folder)|(?:笔记|文件|文档|图片|照片|模型|数据|资料|代码|项目|数据库|缓存)[^，。！？]{0,6}(?:都|全)?(?:存|保存|存储|放)(?:在|到)?\s*(?:本机|本设备|本地))/i;
+const contextFollowUpPattern = /(?:^|[\s，。！？])(?:(?:他|她|它|其|这个人|那个人|该人物|该事件|这件事|这个消息|该消息)(?:现在|目前|后来|之后|最近)?(?:怎么样|如何|还在吗|还好吗|是否还在|的情况|的进展)?|(?:后来|之后|现在|目前|最近)(?:怎么样|如何|呢)?|结果呢|进展呢)(?:[\s，。！？]|$)/i;
+const creativeOrArtifactPattern = /(?:生图|画图|绘图|改图|修图|海报|插画|提示词|prompt|代码|编程|typescript|javascript|python|脚本|文件|附件|总结|概括|改写|润色|翻译|摘要|整理成|数学题|公式|推导|证明|教程|步骤|怎么做|如何制作|设计方案)/i;
+const conversationalPattern = /^(?:你好|嗨|哈喽|谢谢|感谢|晚安|早上好|你好吗|你是谁|你叫什么|能帮我吗|可以吗|在吗|有人吗)[。.!！?？]*$/i;
+const stableConceptPattern = /^(?:请问)?(?:什么是|何为|请解释|解释一下|如何理解).{0,80}(?:概念|原理|定义|理论|算法|语法|函数|定理|物理|化学|数学|生物|编程|代码|机制|方法|光合作用|相对论|递归|向量|概率)[。.!！?？]*$/i;
+const generalConceptPattern = /^(?:请问)?(?:什么是|何为|请解释|解释一下|如何理解)\s*[^。！？?？]{1,96}[。.!！?？]*$/i;
+const searchOptOutPattern = /(?:不要|别|无需|不用|不需要|禁止|关闭|关掉|不想|先不).{0,12}(?:联网|上网|搜索|查询|查找|检索|浏览|联网搜索)|(?:联网|上网|搜索|查询|查找|检索|浏览|联网搜索).{0,12}(?:不要|别|无需|不用|不需要|禁止|关闭|关掉)/i;
+const capabilityQuestionPattern = /^(?:(?:你|您)?\s*(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)|.*(?:能做什么|可以做什么|支持什么|有哪些能力|有什么能力|干啥|干什么|做啥|做什么|干哪些|做哪些|会什么|懂什么|能提供什么|能帮我做什么|能帮我干什么))(?:[？?。!！]*)$/i;
+// MCP 服务管理的动词/名词分开写：要同时认「接入某个服务」和「把某个服务删掉」两种语序。
+const MCP_MANAGE_VERB = '(?:接入|接个|连上|连接|添加|新增|删除|移除|删掉|断开|停用|启用|自检|查看|列出|配置|检测)';
+const MCP_MANAGE_NOUN = '(?:外部服务|远程服务|工具服务|服务|server)';
+const mcpManagementPattern = new RegExp(`mcp|model\\s+context\\s+protocol|(?:${MCP_MANAGE_VERB}[^，。！？]{0,10}${MCP_MANAGE_NOUN})|(?:${MCP_MANAGE_NOUN}[^，。！？]{0,8}${MCP_MANAGE_VERB})`, 'i');
+const githubMcpInstallPattern = /(?:安装|接入|连接|添加|导入|装上|装好|帮我).{0,80}(?:github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|GitHub\s*(?:仓库|repo))|(?:github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|GitHub\s*(?:仓库|repo)).{0,80}(?:安装|接入|连接|添加|导入|装上|装好|帮我)|^\s*https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\s*$/i;
+const githubRepositoryUrlPattern = /https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?/i;
+const githubMcpInstallVerbPattern = /(?:帮我\s*)?(?:安装|接入|连接|添加|导入|装上|装好)(?:一下|这个|该|此)?/i;
+const githubMcpShortInstallPattern = /^(?:帮我\s*)?(?:安装|接入|连接|添加|导入|装上|装好)(?:一下|这个|该|此)?[。.!！?？]?$/i;
+const githubMcpInstallHandoffPattern = /(?:github|仓库|repo).{0,120}(?:安装|接入|连接|添加|导入|装上|装好).{0,120}(?:地址|链接|url|发给我|发我|贴给我|提供给我|发过来)|(?:安装|接入|连接|添加|导入|装上|装好).{0,120}(?:github|仓库|repo).{0,120}(?:地址|链接|url|发给我|发我|贴给我|提供给我|发过来)/i;
+// 本地工具运行时（受控条目）单独认：「浏览器控制组件装了吗 / 启动浏览器运行时」也要下发管理工具，
+// 否则助手明明能查状态、能启停，却看不到入口。
+const mcpRuntimePattern = /(?:浏览器|browser|playwright|chromium)[^，。！？]{0,12}(?:运行时|组件|控制|工具|服务)|(?:运行时|浏览器控制)[^，。！？]{0,10}(?:状态|没反应|用不了|不能用|安装|启动|开启|停止|关闭)/i;
+
+function normalizeWebText(value: unknown, limit = 320) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
+}
+
+function relevantContextForQuery(input: string, context: AgentWebContextMessage[]) {
+  if (!contextFollowUpPattern.test(input)) return '';
+  const previous = context
+    .slice(-8)
+    .reverse()
+    .filter((message) => typeof message?.content === 'string' && message.content.trim())
+    .slice(0, 2)
+    .map((message) => normalizeWebText(message.content, 180));
+  return previous.join(' ');
+}
+
+/** Build a bounded query without sending the full conversation to a search provider. */
+export function buildAgentWebQuery(input: string, context: AgentWebContextMessage[] = []) {
+  const current = normalizeWebText(input);
+  const contextText = relevantContextForQuery(current, context);
+  return normalizeWebText(contextText ? `${contextText} ${current}` : current);
+}
+
+function hasConcreteTopic(text: string) {
+  if (externalFactPattern.test(text)) return true;
+  const chunks = text.match(/[\u4e00-\u9fff]{2,}/g) || [];
+  const stopWords = /^(?:请问|帮我|告诉我|想知道|是否|是不是|有没有|怎么|如何|为什么|什么|哪个|哪里|谁|何时|多少|现在|目前|这个消息|这件事|真的吗|真的假的)$/;
+  return chunks.some((chunk) => !stopWords.test(chunk));
+}
+
+/**
+ * Decide locally whether the current request needs a fresh external source.
+ * The returned query is deliberately bounded and only includes context for
+ * pronoun/ellipsis follow-ups.
+ */
+export function shouldUseAgentWebSearch(mode: AgentWebMode, input: string, context: AgentWebContextMessage[] = []): AgentWebDecision {
+  const text = normalizeWebText(input);
+  const query = buildAgentWebQuery(text, context);
+  if (mode === 'off') return { shouldSearch: false, reason: 'off', query };
+  // An explicit user opt-out wins over the automatic and "always" modes. It
+  // is safer to answer from the configured model than to silently browse when
+  // the user explicitly said not to connect or search.
+  if (searchOptOutPattern.test(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
+  // A capability question asks what the assistant can do; it is not a request
+  // for current external facts. This gate also wins in "always" mode because
+  // searching here only adds latency and produces irrelevant sources.
+  if (capabilityQuestionPattern.test(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
+  // “搜索某网站并继续点击/评论”是浏览器页面操作，不应被普通联网搜索抢先消费。
+  if (likelyBrowserAutomationRequest(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
+  if (mode === 'always') return { shouldSearch: Boolean(query), reason: 'always', query };
+  if (!text) return { shouldSearch: false, reason: 'ordinary-chat', query };
+
+  const explicit = explicitSearchPattern.test(text);
+  if (explicit) return { shouldSearch: true, reason: 'explicit-search', query };
+  if (creativeOrArtifactPattern.test(text) || conversationalPattern.test(text)) return { shouldSearch: false, reason: 'ordinary-chat', query };
+  if (stableConceptPattern.test(text) || (generalConceptPattern.test(text) && !/(?:最新|当前|现在|来源|核验|是真的吗|是否存在|官网|文档地址|版本)/i.test(text))) {
+    return { shouldSearch: false, reason: 'ordinary-chat', query };
+  }
+
+  const question = questionPattern.test(text);
+  const verification = verificationPattern.test(text);
+  const timeSensitive = timeSensitivePattern.test(text) && (question || hasConcreteTopic(text));
+  const recommendation = recommendationPattern.test(text) && hasConcreteTopic(text);
+  const comparison = comparisonPattern.test(text) && hasConcreteTopic(text);
+  const locationSensitive = locationSensitivePattern.test(text) && hasConcreteTopic(text)
+    && !(localDeviceResourcePattern.test(text) && !strongLocationPattern.test(text));
+  const contextFollowUp = contextFollowUpPattern.test(text) && relevantContextForQuery(text, context).length > 0;
+  const factQuestion = question && hasConcreteTopic(text);
+
+  if (contextFollowUp) return { shouldSearch: true, reason: 'context-follow-up', query };
+  if (verification) return { shouldSearch: true, reason: 'fact-verification', query };
+  if (recommendation) return { shouldSearch: true, reason: 'recommendation', query };
+  if (comparison) return { shouldSearch: true, reason: 'comparison', query };
+  if (locationSensitive) return { shouldSearch: true, reason: 'location-sensitive', query };
+  if (timeSensitive) return { shouldSearch: true, reason: 'time-sensitive', query };
+  if (factQuestion) return { shouldSearch: true, reason: 'fact-verification', query };
+  return { shouldSearch: false, reason: 'ordinary-chat', query };
+}
+
+/** Identify a new image request before allowing the chat model to stream text. */
+export function likelyImageGenerationRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  const fileRequest = /(?:导出|下载|保存|生成|创建|制作).{0,16}(?:文件|附件|csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|代码|脚本|报告|文档)/i;
+  if (fileRequest.test(text)) return false;
+  if (isPromptOnlyRequest(text)) return false;
+  const imageAction = new RegExp(drawingVerbPattern, 'i');
+  const imageTarget = new RegExp(imageTargetPattern, 'i');
+  const promptMention = /(?:提示词|prompt)/i.test(text);
+  const imageAfterPrompt = /(?:提示词|prompt).{0,40}(?:画|绘制|生成|制作|创建|设计|渲染|出图|visualize)/i.test(text);
+  const combinedRequest = /(?:并|同时|然后|再|以及|之后).{0,24}(?:提示词|prompt)/i.test(text);
+  const promptOnly = promptMention && !imageAfterPrompt && !combinedRequest && (
+    /(?:提示词|prompt)\s*(?:是|怎么|如何|是什么|怎么写|如何写)?\s*[：:，,。.!！?？]?\s*$/i.test(text) ||
+    new RegExp(`(?:写|生成|制作|创建|设计|优化|改写|润色|反推|提取|翻译|解释|画|绘制|做成|变成|改成).{0,36}(?:提示词|prompt)`, 'i').test(text) ||
+    /(?:提示词|prompt).{0,12}(?:怎么|如何|是什么|写|优化|改写|润色|反推|提取)/i.test(text)
+  );
+  if (promptOnly) return false;
+  if (/(?:步骤|方法|教程|技巧|软件|工具|代码|使用方法|制作方法|设计方法)\s*[。.!！?？]?\s*$/i.test(text) && !/^(?:请|帮我|给我|麻烦|我想|我要|我需要)?\s*(?:生成|制作|创建|设计|画|绘制|出图)/i.test(text)) return false;
+  if (/(?:怎么|如何|教程|步骤|方法|技巧|软件|工具|代码|使用|制作方法|设计方法).{0,24}(?:画|绘制|生成|做图|海报|图片|插画|封面)/i.test(text) && !/(?:请|帮我|给我|我要|我想要|直接|生成|制作|创建|设计)\s*(?:一张|一幅|一个|一只|几张)?/i.test(text)) return false;
+  if (/(?:画图|绘图|绘画|制图)(?:软件|工具).{0,12}(?:怎么|如何|教程|用|使用)/i.test(text)) return false;
+  if (/(?:画图|绘图|绘画|制图).{0,8}(?:软件|工具|教程|方法|技巧|代码)|(?:怎么|如何|教我|教程|步骤|方法|技巧).{0,16}(?:画|绘制|生成图片|做图)/i.test(text) && !/^(?:请|帮我|给我|麻烦|我想|我要|我需要)?\s*(?:画|绘制|画出|生成|制作|创建)/i.test(text)) return false;
+  const drawRequest = new RegExp(`^(?:请|帮我|给我|麻烦|我想|我要|我需要|能不能|可以|请你|帮忙)?\\s*(?:画|绘制|画出|描绘|勾勒|涂鸦|画下|临摹|draw|illustrate)\\s*(?:(?:一下|个|一个|只|张|幅|组|一只|一张|一幅|几张|一组)\\s*)?\\S+`, 'i');
+  const actionWithVisualTarget = new RegExp(`${drawingVerbPattern}.{0,48}${imageTargetPattern}`, 'i');
+  const visualNeed = new RegExp(`${imageNeedVerbPattern}\\s*(?:(?:一个|一只|一张|一幅|一副|几张|多张|一组|一套|个|只|张|幅)\\s*.{0,24})?${imageTargetPattern}`, 'i');
+  const quantityRequestPrefix = `(?:${imageNeedVerbPattern})\\s*(?:一张|一幅|一副|几张|多张|一组|一套|张|幅)\\s*`;
+  const quantityWithVisualTarget = new RegExp(`^${quantityRequestPrefix}.{0,20}${imageTargetPattern}`, 'i');
+  const quantityObjectRequest = new RegExp(`^${quantityRequestPrefix}(?!.*${imageTextArtifactPattern}$).+`, 'i');
+  const countedObjectGeneration = new RegExp(`^(?:请|帮我|给我|麻烦|我想|我要|我需要)?\\s*(?:生成|制作|创建|创作|渲染)\\s*(?:一只|一个|一张|一幅|一副|几张|多张|一组|一套)\\s*\\S+`, 'i');
+  const informalObjectGeneration = new RegExp(`^(?:请|帮我|给我|麻烦|我想|我要|我需要)?\\s*(?:做|弄|搞|整|来)\\s*(?:个|一个|只|一只|张|一张|幅|一幅)\\s*\\S+`, 'i');
+  const visualTransformation = new RegExp(`(?:把|将).{0,96}(?:画成|做成|变成|改成|转成|转为|排成|可视化|视觉化).{0,32}${imageTargetPattern}`, 'i');
+  const illustrationRequest = /(?:配图|配一张|配几张|配套插图|插一张|做配图|加一张图|加配图)/i.test(text) && !new RegExp(`${imageTargetPattern}\\s*(?:的|之)?\\s*${imageTextArtifactPattern}`, 'i').test(text);
+  const visualNeedRequest = visualNeed.test(text) || quantityWithVisualTarget.test(text) || quantityObjectRequest.test(text);
+  const hasVisualAction = imageAction.test(text) && (imageTarget.test(text) || /(?:出图|配图|可视化|视觉化|画猫|画狗|画人|画物|draw|illustrate)/i.test(text));
+  const nonVisualArtifact = new RegExp(`${imageTargetPattern}\\s*(?:的|之)?\\s*${imageTextArtifactPattern}`, 'i');
+  if (nonVisualArtifact.test(text) && !visualTransformation.test(text) && !drawRequest.test(text)) return false;
+  const objectGeneration = (countedObjectGeneration.test(text) || informalObjectGeneration.test(text)) && !new RegExp(imageTextArtifactPattern, 'i').test(text);
+  return drawRequest.test(text) || actionWithVisualTarget.test(text) || visualTransformation.test(text) || illustrationRequest || visualNeedRequest || hasVisualAction || objectGeneration;
+}
+
+/** Identify an explicit downloadable-file request independently of image routing. */
+export function likelyFileGenerationRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  return /(?:导出|下载|保存|生成|创建|制作|整理).{0,16}(?:文件|附件|csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|代码文件|脚本文件|报告文件|文档文件)/i.test(text)
+    || /(?:给我|提供|返回).{0,12}(?:一个|一份|可下载的)?.{0,12}(?:csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|文件|附件)/i.test(text);
+}
+
+export function likelyArtifactGenerationRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  if (/\.(?:docx|xlsx|pptx|zip)\b/i.test(text)) return true;
+  if (/打包|压缩包|\bzip\b/i.test(text)) return true;
+  // “压缩”也可能是压缩图片/视频，只有不是媒体压缩时才当成打包意图。
+  if (/压缩/.test(text)
+    && !/(?:图片|照片|图像|视频|音频|画质|图).{0,6}压缩/.test(text)
+    && !/压缩.{0,6}(?:图片|照片|图像|视频|音频|画质)/.test(text)) return true;
+  return /(?:生成|制作|导出|下载|整理|输出|保存|创建|写|做|出一份|来一份).{0,40}(?:word|docx|文档|报告|方案|合同|简历|周报|日报|月报|纪要|会议记录|报价单|排期表|计划表|预算表|申请表|邀请函|感谢信|演讲稿|发言稿|致辞|问卷|总结|汇报|论文|说明书|手册|excel|xlsx|表格|报表|台账|清单|数据表|ppt|pptx|幻灯片|演示文稿|演示|deck)/i.test(text);
+}
+
+/**
+ * 上一轮助手已经提出可以交付某个文件、本轮用户只回了“1 / 好 / 可以”这类选择时，
+ * 也要继续下发 Office 工具：否则模型手里没有工具，只会说“已生成…文件”却拿不出文件。
+ */
+export function isArtifactFollowUpRequest(previousAssistantText: string, input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length > 24) return false;
+  const picksOption = /^(?:第)?\s*(?:[1-9]|[一二三四五六七八九十])\s*(?:[.、)）:：]|号|个|选项)?$/i.test(text)
+    || /^(?:选|要|用|按)\s*(?:第)?\s*(?:[1-9]|[一二三四五六七八九十])\s*(?:号|个|选项)?$/i.test(text)
+    || /^第\s*(?:[1-9]|[一二三四五六七八九十])\s*(?:个|号|选项)$/i.test(text);
+  const confirms = /^(?:好|好的|好呀|可以|行|要|来吧|来一份|来一个|来一版|要一份|生成|做吧|做一份|就这个|就它|开始|确定|没问题|ok|okay|yes)$/i.test(text);
+  if (!picksOption && !confirms) return false;
+  const previous = String(previousAssistantText || '').replace(/\s+/g, ' ');
+  if (!previous) return false;
+  const mentionsArtifact = /(?:word|docx|excel|xlsx|ppt|pptx|文档|简历|周报|日报|月报|纪要|会议记录|报价单|排期表|计划表|预算表|申请表|邀请函|感谢信|演讲稿|发言稿|致辞|问卷|报告|方案|合同|总结|汇报|论文|说明书|手册|表格|报表|台账|清单|数据表|幻灯片|演示文稿|压缩包|打包|文件)/i.test(previous);
+  const offersArtifact = /(?:我可以|我也可以|我能|能帮你|要不要|需要我|要我|帮你|给你|生成|做一?份|做一?版|导成|导出|整理成|打包|压缩成|模板)/.test(previous);
+  return mentionsArtifact && offersArtifact;
+}
+
+/** Requests that need the model's tool planner rather than direct text streaming. */
+export function likelyAgentToolRequest(input: string, hasReferences: boolean) {
+  const text = input.trim();
+  if (isPromptOnlyRequest(text)) return false;
+  if (likelyImageGenerationRequest(text)) return true;
+  if (hasReferences && (isImageContinuationRequest(text) || /(修改|重绘|换(?:背景|场景)|保持(?:人物|主体)|参考(?:图|风格)|基于(?:这|图片|图)|反推)/i.test(text))) return true;
+  return likelyFileGenerationRequest(text);
+}
+
+/**
+ * 用户这一轮是不是在说 MCP 服务本身（接入、查看、开关、移除）。
+ *
+ * 只有命中时才把 mcp_manage 下发给模型：普通「服务/服务器连不上」这类提问不该看到它。
+ * 这里只是下发条件，删除服务和打开写入权限还要在 lib/mcp/admin.ts 里按用户原话再校验一次。
+ */
+export function likelyMcpManagementRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  return mcpManagementPattern.test(text) || mcpRuntimePattern.test(text) || githubMcpInstallPattern.test(text);
+}
+
+/**
+ * 识别明确的“GitHub 地址 + 帮我安装”请求，供路由直接执行，避免被回答成教程。
+ *
+ * 如果上一条助手消息明确要求用户把 GitHub 仓库地址发来，或者上一条用户消息
+ * 刚发过仓库地址，那么用户下一条只发送地址/“安装”也是同一个安装请求；普通
+ * 聊天里分享 GitHub 链接不能触发安装。
+ */
+export function extractGithubMcpInstallRequest(input: string, previousAssistantText = '', previousUserText = '', previousContextText = '') {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  const url = text.match(githubRepositoryUrlPattern)?.[0] || '';
+  const previousUser = String(previousUserText || '').replace(/\s+/g, ' ').trim();
+  const previousUserUrl = previousUser.match(githubRepositoryUrlPattern)?.[0] || '';
+  const previousUserIsOnlyUrl = Boolean(previousUserUrl) && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(previousUser);
+  const previousContextUrl = String(previousContextText || '').replace(/\s+/g, ' ').trim().match(githubRepositoryUrlPattern)?.[0] || '';
+  const isBareRepositoryUrl = Boolean(url)
+    && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(text);
+  const shortInstall = githubMcpShortInstallPattern.test(text);
+  if (isBareRepositoryUrl) return url;
+  if (!url && !(shortInstall && (previousUserIsOnlyUrl || previousContextUrl))) return null;
+  const isExplicitInstallRequest = githubMcpInstallVerbPattern.test(text);
+  const isInstallHandoff = /^\s*https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\s*$/i.test(text)
+    && githubMcpInstallHandoffPattern.test(String(previousAssistantText || '').replace(/\s+/g, ' ').trim());
+  const isPreviousUserHandoff = shortInstall && (previousUserIsOnlyUrl || previousContextUrl);
+  if (!isExplicitInstallRequest && !isInstallHandoff && !isPreviousUserHandoff) return null;
+  if (/(?:怎么|如何|教程|步骤|方法).{0,24}(?:安装|接入|连接|添加|导入)/i.test(text) && !/(?:直接|帮我|请).{0,12}(?:安装|接入|连接|添加|导入)/i.test(text)) return null;
+  return url || (previousUserIsOnlyUrl ? previousUserUrl : '') || previousContextUrl;
+}
+
+/**
+ * 当前消息只发送仓库地址时，判断它是不是在承接助手刚才的安装交接。
+ *
+ * 页面会先筛选历史消息再发给服务端；如果不把这条助手交接消息保留下来，
+ * 服务端看到的就只是一个普通 GitHub 链接，无法确认用户是在授权安装。
+ */
+export function isGithubMcpInstallHandoff(input: string, previousAssistantText = '') {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  const url = text.match(githubRepositoryUrlPattern)?.[0] || '';
+  if (!url || !/^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(text)) return false;
+  return githubMcpInstallHandoffPattern.test(String(previousAssistantText || '').replace(/\s+/g, ' ').trim());
+}
+
+export function extractGithubRepositoryUrl(input: unknown) {
+  return String(input || '').match(githubRepositoryUrlPattern)?.[0] || '';
+}
+
+export function isGithubMcpInstallFollowUp(input: unknown) {
+  return githubMcpShortInstallPattern.test(String(input || '').replace(/\s+/g, ' ').trim());
+}

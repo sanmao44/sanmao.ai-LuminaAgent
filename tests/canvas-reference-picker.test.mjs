@@ -1,0 +1,90 @@
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import assert from "node:assert/strict";
+
+const component = (await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8"))
+  .concat("\n", await readFile(new URL("../components/canvas/CanvasNodeEditorPopover.tsx", import.meta.url), "utf8"))
+  .concat("\n", await readFile(new URL("../components/canvas/CanvasNodeCard.tsx", import.meta.url), "utf8"))
+  .replace(/\r\n/g, "\n");
+const viewportOverlay = (await readFile(new URL("../components/canvas/CanvasViewportOverlay.tsx", import.meta.url), "utf8"))
+  .replace(/\r\n/g, "\n");
+const draftStrip = (await readFile(new URL("../components/CanvasReferenceDraftStrip.tsx", import.meta.url), "utf8"))
+  .replace(/\r\n/g, "\n");
+const nodeReferenceStrip = (await readFile(new URL("../components/canvas/CanvasNodeReferenceStrip.tsx", import.meta.url), "utf8"))
+  .replace(/\r\n/g, "\n");
+const styles = (await readFile(new URL("../app/canvas.css", import.meta.url), "utf8"))
+  .replace(/\r\n/g, "\n");
+const feedbackStyles = await readFile(new URL("../app/canvas-feedback.css", import.meta.url), "utf8");
+const overlayStyles = await readFile(new URL("../app/canvas-viewport-overlay.css", import.meta.url), "utf8");
+const cursorStyles = (await readFile(new URL("../app/cursor.css", import.meta.url), "utf8"))
+  .replace(/\r\n/g, "\n");
+
+test("reference picker supports connected targets and draft references", () => {
+  assert.match(component, /type CanvasReferencePicker = \{[\s\S]*mode: "connected" \| "draft"/);
+  assert.match(component, /const beginReferencePicker = useCallback/);
+  assert.match(component, /const pickReferenceNode = useCallback/);
+  assert.match(component, /connectCanvasNodes\([\s\S]*picker\.role/);
+  assert.match(component, /addReferenceDrafts\(current\.references, \[reference\]\)/);
+});
+
+test("canvas node pointer handling prioritizes reference picking over dragging", () => {
+  const start = component.indexOf("const startNodeDrag = useCallback");
+  const end = component.indexOf("const startGroupDrag = useCallback", start);
+  assert.ok(start >= 0 && end > start, "node drag handler should be present");
+  const handler = component.slice(start, end);
+  assert.match(handler, /if \(referencePicker\) \{[\s\S]*pickReferenceNode\(node\)/);
+  assert.match(component, /if \(referencePicker && !panIntent && event\.button === 0 && overCanvasContent\)/);
+  assert.match(component, /if \(referencePickerActive\) return;/);
+});
+
+test("reference picking keeps blank-canvas panning and restores the picker cursor", () => {
+  const finishStart = component.indexOf("const finishInteraction = useCallback");
+  const cancelStart = component.indexOf("const cancelPointerInteraction = useCallback");
+  const cancelEnd = component.indexOf("useEffect(() => {", cancelStart);
+  assert.ok(finishStart >= 0, "finish interaction handler should be present");
+  assert.ok(cancelStart > finishStart && cancelEnd > cancelStart, "cancel interaction handler should be present");
+
+  const interactionHandlers = component.slice(finishStart, cancelEnd);
+  assert.match(
+    component,
+    /if \(referencePicker && !panIntent && event\.button === 0 && overCanvasContent\) \{[\s\S]*event\.preventDefault\(\);[\s\S]*return;/,
+  );
+  assert.match(component, /if \(interactionRef\.current\?\.kind === "pan"\) moveInteraction\(event\);/);
+  assert.match(component, /clearSelectionOnClick:[\s\S]*!referencePicker,/);
+  assert.match(interactionHandlers, /setCursorTask\(referencePicker \? "referencing" : "idle"\);/);
+});
+
+test("reference controls expose canvas picking while keeping file upload available", () => {
+  assert.match(draftStrip, /onPickFromCanvas\?: \(\) => void/);
+  assert.match(draftStrip, /⌁ 画布点选/);
+  assert.match(draftStrip, /onClick=\{\(\) => inputRef\.current\?\.click\(\)\}/);
+  assert.match(component, /onPickFromCanvas\?: \(role\?: CanvasInputRole\) => void/);
+  assert.match(component, /onPickFromCanvas=\{onPickFromCanvas\}/);
+  assert.match(component, /从画布选择参考素材/);
+  assert.match(component, /上传参考素材/);
+});
+
+test("picker feedback keeps a visible instruction without blocking canvas nodes", () => {
+  assert.match(component, /cancelReferencePicker\(\)/);
+  assert.match(viewportOverlay, /className="canvas-hint canvas-reference-picker-hint"/);
+  assert.match(viewportOverlay, /正在选择参考素材/);
+  assert.match(viewportOverlay, /点击画布中的可用节点选择参考；空白处可平移，按 Esc 取消/);
+  assert.match(styles, /reference-picker-target/);
+  assert.match(styles, /reference-picker-hover/);
+  assert.match(styles, /reference-picker-flash/);
+  assert.match(cursorStyles, /is-cursor-referencing/);
+  assert.match(overlayStyles, /\.canvas-reference-picker-hint\{[^}]*pointer-events:none/);
+  assert.match(feedbackStyles, /\.canvas-hint\{[^}]*z-index:var\(--canvas-z-topbar\)/);
+});
+
+test("picker has no fixed prompt layer that can cover narrow editors", () => {
+  assert.doesNotMatch(component, /canvas-reference-picker-banner/);
+  assert.doesNotMatch(styles, /canvas-reference-picker-banner/);
+  assert.doesNotMatch(styles, /canvas-z-reference-picker/);
+});
+
+test("video frame slots forward their explicit first/last-frame roles", () => {
+  assert.match(nodeReferenceStrip, /onPickFromCanvas\?\.\(slotRole\)/);
+  assert.match(component, /onPickFromCanvas=\{\(role\) => beginReferencePicker\(/);
+  assert.match(component, /role,\n\s*\)\}/);
+});

@@ -1,0 +1,90 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const component = await readFile(
+  new URL("../components/canvas/CanvasActivityDrawer.tsx", import.meta.url),
+  "utf8",
+);
+const workspace = await readFile(
+  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const panelLayer = await readFile(
+  new URL("../components/canvas/CanvasPanelLayer.tsx", import.meta.url),
+  "utf8",
+);
+const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
+const taskLogStyles = await readFile(
+  new URL("../app/canvas-task-log.css", import.meta.url),
+  "utf8",
+);
+const activityStyles = await readFile(
+  new URL("../app/canvas-activity.css", import.meta.url),
+  "utf8",
+);
+
+test("task log detail button toggles the currently selected task", () => {
+  const drawerStart = component.indexOf("function CanvasActivityDrawer(");
+  assert.ok(drawerStart >= 0, "task log drawer should be present");
+  const drawer = component.slice(drawerStart);
+  assert.match(drawer, /selectedId === log\.id \? "收起详情" : "查看详情"/);
+  assert.match(
+    drawer,
+    /setSelectedId\(\(value\) => value === log\.id \? null : log\.id\)/,
+  );
+});
+
+test("task log exposes unified activity status and persisted canvas lineage entry points", () => {
+  assert.match(component, /activityTaskFromGenerationLog\(log\)/);
+  assert.match(component, /canvasLineageForTask\(canvasDocument, activityTask\.sourceId \|\| log\.id\)/);
+  assert.match(component, /className="canvas-task-log-detail canvas-task-log-lineage"/);
+  assert.match(component, /onFocusNode\(record\.resultNodeId/);
+  assert.match(component, /onFocusNode\(sourceId/);
+  assert.match(component, /log\.chatId/);
+});
+
+test("task log metadata keeps the important output details visually distinct", () => {
+  assert.match(component, /className="canvas-task-log-meta-count"/);
+  assert.match(component, /className="canvas-task-log-meta-duration"/);
+  assert.match(component, /className="canvas-task-log-meta-size"/);
+  assert.match(
+    taskLogStyles,
+    /\.canvas-task-log-meta span\{[^}]*min-height:22px[^}]*font-size:8px[^}]*font-weight:800/,
+  );
+  assert.match(taskLogStyles, /\.canvas-task-log-meta-count\{[^}]*color:var\(--accent-text\)/);
+  assert.match(taskLogStyles, /\.canvas-task-log-meta-duration\{[^}]*color:var\(--warning\)/);
+});
+
+test("activity drawer owns its responsive event-row presentation", () => {
+  assert.match(activityStyles, /\.canvas-activity-summary\{/);
+  assert.match(activityStyles, /\.canvas-activity-list>button\.ok \.canvas-activity-dot\{[^}]*var\(--success\)/);
+  assert.match(activityStyles, /\.canvas-activity-list>button\.error \.canvas-activity-dot\{[^}]*var\(--danger\)/);
+  assert.match(activityStyles, /@media\(max-width:720px\)\{\.canvas-activity-list>button\{grid-template-columns:56px 10px minmax\(0,1fr\)\}/);
+  assert.doesNotMatch(styles, /\.canvas-activity-summary\{|\.canvas-activity-list>button\.ok/);
+});
+
+test("task log keeps preview actions beside metadata instead of wasting a full row", () => {
+  assert.match(taskLogStyles, /\.canvas-task-log-card\{[^}]*grid-template-areas:"preview main status" "preview meta actions"/);
+  assert.match(taskLogStyles, /\.canvas-task-log-meta\{[^}]*grid-area:meta/);
+  assert.match(taskLogStyles, /\.canvas-task-log-actions\{[^}]*grid-area:actions/);
+  assert.match(workspace, /if \(lightboxReturnPanel\) setActivePanel\(lightboxReturnPanel\);/);
+});
+
+test("task log result chips return to the task log panel after the media viewer closes", () => {
+  const start = workspace.indexOf("const focusLogNode = useCallback(");
+  assert.ok(start >= 0, "task log node focus handler should exist");
+  assert.match(
+    workspace.slice(start, start + 320),
+    /focusCanvasNode\(nodeId, openMedia, openMedia && activePanel === "activity" \? "activity" : null\)/,
+  );
+  assert.match(workspace, /onFocusNode=\{focusLogNode\}/);
+});
+
+test("task log restores its scroll position after opening and closing media preview", () => {
+  assert.match(workspace, /activityPanelScrollTopRef = useRef<number \| null>\(null\)/);
+  assert.match(panelLayer, /restoreScrollTop=\{activityPanelScrollTop\}/);
+  assert.match(component, /onRememberScrollPosition/);
+  assert.match(component, /scrollBodyRef\.current\?\.scrollTo\(\{ top: restoreScrollTop, behavior: "auto" \}\)/);
+  assert.match(component, /rememberScrollBeforeMediaOpen\(openMedia\)/);
+});

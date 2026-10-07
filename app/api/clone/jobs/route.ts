@@ -1,0 +1,125 @@
+import { isTrustedAppRequest } from '@/lib/auth';
+import { OFFLINE_SPEECH_LABEL, offlineSpeechSupported } from '@/lib/clone/offline-speech';
+import { decideCapabilities, normalizeCloneOptions } from '@/lib/clone/plan';
+import type { CloneAsset, CloneReference } from '@/lib/clone/types';
+import { getRuntimeCloneVideoModel, getRuntimeImageGenerationModel, getRuntimeVisionModel } from '@/lib/store';
+import { resolveSpeechRuntime } from '@/lib/clone/speech';
+import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
+import { getVideoModelLimits } from '@/lib/video-model-limits';
+import { createCloneTask, listCloneTasks } from '@/apps/worker/clone-task';
+
+export const runtime = 'nodejs';
+export const maxDuration = 3600;
+
+/** 取用户显式选择的模型 id；「自动」和空值都不写，交给执行层按默认挑。 */
+function readModelId(value: unknown) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text && text !== 'auto' ? text : undefined;
+}
+
+function readReference(raw: unknown): CloneReference {
+  const source = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const url = String(source.url || '').trim();
+  const kind = source.kind === 'image' ? 'image' : 'video';
+  if (!url) throw new Error('请先选择一条参考图或参考视频。');
+  return {
+    ...(source.nodeId ? { nodeId: String(source.nodeId) } : {}),
+    name: String(source.name || (kind === 'image' ? '参考图' : '参考视频')).slice(0, 80),
+    url,
+    seconds: Math.max(0, Number(source.seconds) || (kind === 'image' ? 5 : 0)),
+    kind,
+  };
+}
+
+function readAssets(raw: unknown): CloneAsset[] {
+  if (!Array.isArray(raw)) return [];
+  const roles = new Set<CloneAsset['role']>(['person', 'product', 'brand', 'scene', 'style', 'broll', 'voice']);
+  const kinds = new Set<CloneAsset['kind']>(['image', 'video', 'audio']);
+  return raw.flatMap((item): CloneAsset[] => {
+    if (!item || typeof item !== 'object') return [];
+    const source = item as Record<string, unknown>;
+    const url = String(source.url || '').trim();
+    const rawRole = typeof source.role === 'string' ? source.role.trim() : '';
+    const kind = String(source.kind || 'image') as CloneAsset['kind'];
+    if (!url || !kinds.has(kind)) return [];
+    const role = (roles.has(rawRole as CloneAsset['role']) ? rawRole : kind === 'audio' ? 'voice' : 'broll') as CloneAsset['role'];
+    return [{ ...(source.nodeId ? { nodeId: String(source.nodeId) } : {}), name: String(source.name || '参考素材').slice(0, 80), url, kind, role }];
+  }).slice(0, 16);
+}
+
+export async function GET(request: Request) {
+  if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  // 画布每 5 秒拉一次这个列表：顺手把中断的任务标成失败，用户才有「继续任务」可点。
+  const jobs = await listCloneTasks(30);
+  return Response.json({ ok: true, jobs });
+}
+
+export async function POST(request: Request) {
+  if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
+  let releaseRuntimeRequest = async () => {};
+  try {
+    releaseRuntimeRequest = await beginRuntimeRequest('clone');
+    const body = await request.json();
+    const reference = readReference(body.reference);
+    const assets = readAssets(body.assets);
+    const options = normalizeCloneOptions({ ...(body.options || {}), brief: body.brief ?? body.options?.brief });
+    const [chatRuntime, imageRuntime, videoRuntime, speechRuntime] = await Promise.all([
+      // 拆解要真的看图：没显式选模型时优先带 vision 的对话模型，否则画面拆解会无谓降级。
+      getRuntimeVisionModel(body.chatModel || null),
+      getRuntimeImageGenerationModel(body.imageModel || null),
+      getRuntimeCloneVideoModel(body.videoModel || null),
+      resolveSpeechRuntime(body.speechModel || null),
+    ]);
+    const { capabilities, warnings } = decideCapabilities({
+      hasVisionModel: Boolean(chatRuntime?.model.capabilities.includes('vision')),
+      hasSpeechModel: Boolean(speechRuntime),
+      hasImageModel: Boolean(imageRuntime),
+      hasVideoModel: Boolean(videoRuntime),
+      hasReferenceImages: Boolean(videoRuntime?.model.capabilities.includes('video-reference')),
+      hasReferenceVideo: Boolean(videoRuntime && getVideoModelLimits(videoRuntime.model, videoRuntime.provider).maxReferenceVideos > 0),
+      hasFirstFrame: Boolean(videoRuntime?.model.capabilities.includes('video-first-frame')),
+      hasReferenceAudio: Boolean(videoRuntime?.model.capabilities.includes('video-audio')),
+      offlineSpeech: offlineSpeechSupported(),
+    });
+    const requestedVideo = typeof body.videoModel === 'string' ? body.videoModel.trim() : '';
+    const modelWarnings = [...warnings];
+    if ((!requestedVideo || requestedVideo === 'auto') && videoRuntime && !/seedance/iu.test(`${videoRuntime.model.id} ${videoRuntime.model.rawId} ${videoRuntime.model.displayName}`)) {
+      modelWarnings.push(`克隆自动策略未找到可用的 Seedance，已使用兼容视频模型「${videoRuntime.model.displayName}」；也可以在高级设置中手动选择其他模型。`);
+    }
+    const requestedSpeech = typeof body.speechModel === 'string' ? body.speechModel.trim() : '';
+    if (requestedSpeech && requestedSpeech !== 'auto' && !speechRuntime) {
+      return Response.json({ error: '指定的配音模型不可用：请在「模型库」把它归类为「配音」并启用，或改用自动选择。' }, { status: 400 });
+    }
+    const created = await createCloneTask({
+      reference,
+      assets,
+      options,
+      capabilities,
+      warnings: modelWarnings,
+      models: {
+        chat: chatRuntime?.model.displayName || '',
+        image: imageRuntime?.model.displayName || '',
+        video: videoRuntime?.model.displayName,
+        // 走离线兜底时没有模型名，用标签顶上，用户在任务详情里能看出这次是本地合成的。
+        speech: speechRuntime?.model.displayName || (capabilities.offlineSpeech ? OFFLINE_SPEECH_LABEL : undefined),
+      },
+      // 只存展示名不够：管线要按用户选的模型执行，否则高级设置形同虚设。
+      modelIds: {
+        chat: readModelId(body.chatModel),
+        image: readModelId(body.imageModel),
+        video: readModelId(body.videoModel),
+        speech: readModelId(body.speechModel),
+      },
+      autoConfirmPlan: body.autoConfirmPlan !== false,
+      idempotencyKey: typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim().slice(0, 80) : undefined,
+    });
+    // 后台跑，立刻把任务交给前端轮询；与生成任务的持久化后台写法一致。
+    // Worker boundary dispatches the long-running pipeline.
+    return Response.json({ ok: true, job: created.task, capabilities, warnings: modelWarnings }, { status: created.created ? 202 : 200 });
+  } catch (error) {
+    if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
+    return Response.json({ error: error instanceof Error ? error.message : '创建克隆任务失败。' }, { status: 400 });
+  } finally {
+    await releaseRuntimeRequest();
+  }
+}

@@ -1,0 +1,104 @@
+import { appendGenerationLog, finishGenerationLog } from './generation-log';
+import { persistGeneratedImages, type ImageDownloadAuth } from './image-storage';
+import type { GeneratedImage, ReferenceImageRecord } from './types';
+import type { GenerationSource } from './generation-source';
+
+type BackgroundGenerationLog = {
+  mode: 'generate' | 'edit' | 'upscale' | 'agent';
+  taskKind?: 'media';
+  source?: GenerationSource;
+  prompt: string;
+  modelId?: string;
+  modelName?: string;
+  providerName?: string;
+  resolution?: string;
+  aspectRatio?: string;
+  outputSize?: string;
+  count?: number;
+  references?: ReferenceImageRecord[];
+  projectId?: string;
+  chatId?: string;
+  canvasId?: string;
+  nodeId?: string;
+  taskId?: string;
+};
+
+type BackgroundPersistenceOptions = {
+  images: GeneratedImage[];
+  storagePath?: string;
+  startedAt: number;
+  providerFinishedAt: number;
+  logId?: string;
+  log?: BackgroundGenerationLog;
+  downloadAuth?: ImageDownloadAuth;
+};
+
+/** Persist the local copy and finalize the log before returning the image response. */
+export async function persistGenerationResult(options: BackgroundPersistenceOptions) {
+  const storageStartedAt = Date.now();
+  try {
+    const stored = await persistGeneratedImages(options.images, options.storagePath, options.downloadAuth, { preserveRemoteImages: true });
+    const patch = {
+      status: 'success' as const,
+      durationMs: Date.now() - options.startedAt,
+      providerDurationMs: options.providerFinishedAt - options.startedAt,
+      storageDurationMs: Date.now() - storageStartedAt,
+      imageCount: stored.images.length,
+      imageUrls: stored.images.map((image) => image.url),
+      storagePath: stored.path,
+      ...(stored.remoteFallbacks?.length ? {
+        storageError: `本地归档失败，已保留服务商图片地址：${stored.remoteFallbacks.map((item) => `第 ${item.index + 1} 张`).join('、')}`,
+      } : {}),
+    };
+    try {
+      if (options.logId) await finishGenerationLog(options.logId, patch);
+      else if (options.log) await appendGenerationLog({ ...options.log, ...patch });
+    } catch { /* Logging failures should not mask a saved generation. */ }
+    return stored;
+  } catch (error) {
+    const storageError = error instanceof Error ? error.message : '本地图片保存失败';
+    const remoteImages = options.images.filter((image) => Boolean(String(image.url || '').trim()));
+    if (remoteImages.length) {
+      const patch = {
+        status: 'success' as const,
+        durationMs: Date.now() - options.startedAt,
+        providerDurationMs: options.providerFinishedAt - options.startedAt,
+        storageDurationMs: Date.now() - storageStartedAt,
+        imageCount: remoteImages.length,
+        imageUrls: remoteImages.map((image) => image.url),
+        storagePath: options.storagePath,
+        storageError,
+      };
+      try {
+        if (options.logId) await finishGenerationLog(options.logId, patch);
+        else if (options.log) await appendGenerationLog({ ...options.log, ...patch });
+      } catch { /* Logging failures should not mask a provider result. */ }
+      return {
+        images: remoteImages,
+        path: options.storagePath || '',
+        remoteFallbacks: remoteImages.map((image, index) => ({ index, url: image.url, error: storageError })),
+      };
+    }
+    const patch = {
+      status: 'error' as const,
+      durationMs: options.providerFinishedAt - options.startedAt,
+      providerDurationMs: options.providerFinishedAt - options.startedAt,
+      storageDurationMs: Date.now() - storageStartedAt,
+      imageCount: options.images.length,
+      imageUrls: [],
+      storagePath: options.storagePath,
+      storageError,
+      error: storageError,
+    };
+    try {
+      if (options.logId) await finishGenerationLog(options.logId, patch);
+      else if (options.log) await appendGenerationLog({ ...options.log, ...patch });
+    } catch { /* Logging failures should not mask the storage failure. */ }
+    throw error instanceof Error ? error : new Error(storageError);
+  }
+}
+
+/** Backward-compatible fire-and-forget helper for callers that do not need canonical URLs. */
+export function persistGenerationResultInBackground(options: BackgroundPersistenceOptions) {
+  void persistGenerationResult(options).catch(() => undefined);
+}

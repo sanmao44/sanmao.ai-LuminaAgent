@@ -1,0 +1,33 @@
+import type { CreativeReference } from './creative';
+export type { CreativeReference } from './creative';
+
+export type AgentDeliverable = 'IMAGE' | 'TEXT' | 'BOTH' | 'CLARIFY' | 'OTHER';
+export type AgentRequestMode = 'execute' | 'ask' | 'discuss' | 'follow_up' | 'unknown';
+export type AgentContextNeed = 'none' | 'recent' | 'required';
+export type AgentWebMode = 'auto' | 'always' | 'off';
+export type AgentWebDecisionReason = 'off' | 'always' | 'explicit-search' | 'fact-verification' | 'time-sensitive' | 'recommendation' | 'comparison' | 'location-sensitive' | 'context-follow-up' | 'ordinary-chat';
+export type AgentWebDecision = { shouldSearch: boolean; reason: AgentWebDecisionReason; query: string };
+export type BrowserAutomationStep = 'navigate' | 'inspect' | 'search' | 'select' | 'sort' | 'download' | 'interact';
+export type AgentPlanningMessage = { role: 'user' | 'assistant'; content: string; references?: CreativeReference[] | string[]; files?: { name: string; content?: string; artifactId?: string }[] };
+export type AgentIntentContext = { messages?: AgentPlanningMessage[]; hasReferences?: boolean; hasFiles?: boolean };
+export type AgentIntentDecision = { deliverable: AgentDeliverable; mode: AgentRequestMode; label: string; summary: string; reason: string; confidence: 'high' | 'medium' | 'low'; signals: string[] };
+export type AgentArtifactKind = 'none' | 'word' | 'excel' | 'ppt' | 'archive' | 'file';
+export type AgentRequestRoute = 'chat' | 'text' | 'image' | 'both' | 'word' | 'excel' | 'ppt' | 'archive' | 'file' | 'browser' | 'filesystem' | 'web' | 'clarify';
+export type AgentWebPolicy = 'forbid' | 'allow' | 'require';
+export type AgentToolPlan = { useMcp: boolean; useBrowserMcp: boolean; useFilesystemMcp: boolean; useSkills: boolean; useNativeWeb: boolean; useNativeArtifact: boolean; reason: string };
+export type AgentRequestCandidate = { route: AgentRequestRoute; score: number; signals: string[] };
+export type AgentRequestDecision = {
+  policy: { lane: 'answer' | 'search' | 'action'; web: AgentWebPolicy; discoverMcp: boolean; allowMcp: boolean };
+  intent: AgentIntentDecision;
+  route: AgentRequestRoute;
+  artifactKind: AgentArtifactKind;
+  contextNeed: AgentContextNeed;
+  contextReason: string;
+  browserAutomation: boolean;
+  browserIntent: { shouldAutomate: boolean; destination: string; steps: BrowserAutomationStep[]; confidence: 'high' | 'medium' | 'low'; reason: string };
+  filesystem: boolean;
+  web: AgentWebDecision;
+  needsTools: boolean;
+  tools: AgentToolPlan;
+  candidates: AgentRequestCandidate[];
+};

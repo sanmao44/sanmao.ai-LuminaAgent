@@ -1,0 +1,12736 @@
+// @ts-nocheck
+'use client';
+/* __next_internal_client_entry_do_not_use__ default auto */ import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import AngleConsole from '@/components/AngleConsole';
+import ModelPicker from '@/components/ModelPicker';
+import UpdateNotice from '@/components/UpdateNotice';
+import RuntimeServiceControl from '@/components/RuntimeServiceControl';
+import { getProviderPreset, providerPresets } from '@/lib/provider-presets';
+import { agnesBillingLabel } from '@/lib/agnes';
+import AgnesConnectionGuide from '@/components/AgnesConnectionGuide';
+import { loadImageDirectoryHandle, saveImageDirectoryHandle } from '@/lib/client-history';
+import { assetRepository } from '@/lib/repositories/asset-repository';
+import Link from 'next/link';
+import LocalEditEditor from '@/components/MaskEditor';
+import VideoStudio from '@/components/VideoStudio';
+import SelectMenu from '@/components/SelectMenu';
+import JimengProviderCard from '@/components/JimengProviderCard';
+import JimengAccountSummary from '@/components/JimengAccountSummary';
+import UpscaleConnectionGuide from '@/components/UpscaleConnectionGuide';
+import VideoRecordCard from '@/components/VideoRecordCard';
+import { getFavoriteModelIds, getLastModelCall, getRecentModelIds, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
+import { selectAutomaticModel } from '@/lib/model-selection';
+import { filterModelsByActiveProviders, isProviderModelLibraryEnabled } from '@/lib/provider-availability';
+import { galleryReferences, normalizeReferenceRecords, referenceCount } from '@/lib/reference-images';
+import { createShareConversationPreview } from '@/lib/share-conversation-workflow';
+import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
+import { downloadCanvasShareImage } from '@/lib/canvas/share';
+import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, extractGithubRepositoryUrl, isGithubMcpInstallFollowUp, isGithubMcpInstallHandoff, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
+import { agentDeliverableLabel, classifyAgentDeliverable, resolveCreativeRoute } from '@/lib/agent-intent';
+import { conversationImage, conversationMessageText } from '@/lib/agent-context';
+import { pollAgentProgress, requestAgent } from '@/lib/agent-client';
+import { editConversationMemory, prepareConversationMemory, selectRelevantConversationMessages, validConversationMemory } from '@/lib/agent-memory';
+import AgentMemoryEditor from '@/components/AgentMemoryEditor';
+import AgentPersonaEditor from '@/components/AgentPersonaEditor';
+import SkillManager from '@/components/SkillManager';
+import SkillIcon from '@/components/SkillIcon';
+import McpManager from '@/components/McpManager';
+import McpIcon from '@/components/McpIcon';
+import AgentSkillMenu from '@/components/AgentSkillMenu';
+import AgentOrb from '@/components/AgentOrb';
+import SkillInlineText from '@/components/SkillInlineText';
+import { filterSkills, skillMessageValue, skillSlashQuery } from '@/lib/skill-picker';
+import { normalizeConversationPersona, personaBadgeLabel } from '@/lib/agent-persona';
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
+import { IMAGE_QUALITY_OPTIONS } from '@/lib/creation/settings';
+import { requestPromptOptimization } from '@/lib/creation/agent';
+import { cleanupGenerationLogs, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
+import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVideoTask as patchVideoTaskRequest, saveVideoTaskLocally as saveVideoTaskLocallyRequest } from '@/lib/video-task-client';
+import { videoTaskStatus } from '@/lib/video-task-output';
+import { createManualStorageSnapshot, loadStorageMaintenance, restoreLocalStorageSnapshot } from '@/lib/storage-maintenance-client';
+import { formatStorageBytes } from '@/lib/storage-presentation';
+import {
+    chatHistoryGroupLabel,
+    editorRatio,
+    exactRatioFromDimensions,
+    formatTime,
+    generationLogIsLlm,
+    generationLogSourceLabel,
+    generationLogTitle,
+    gallerySourceLabel,
+    generationMediaKind,
+    generationMediaLabel,
+    logAspectRatioLabel,
+    logDurationTone,
+    logOutputSizeLabel,
+    logResolutionLabel,
+    presetDimensions,
+    ratioDescriptions,
+    ratioFromDimensions,
+    ratioLabel,
+    ratios,
+    resolutionFromDimensions,
+    sizeTierFromDimensions,
+    sizeTiers,
+    outputDimensions,
+} from '@/lib/generation-log-presentation';
+import { compressReferenceDataUrl } from '@/lib/canvas/api';
+import { loadImageDimensions, upscaleTargetDimensions } from '@/lib/canvas/upscale';
+import { startWorkspaceSync } from '@/lib/workspace';
+import { workspaceRepository } from '@/lib/repositories/workspace-repository';
+import { conversationRepository } from '@/lib/repositories/conversation-repository';
+import { requestAdminSession } from '@/lib/admin-session';
+import { readWorkspaceContext } from '@/lib/workspace-context';
+import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
+import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
+import OneTakeDurationPicker from '@/components/OneTakeDurationPicker';
+import { appendTextReferenceContext, creativeReferenceUrl, normalizeCreativeReference, referenceMentionOptions, referencePreviewText, referenceTextBadge, reorderCreativeReferences, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
+import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from '@/lib/theme';
+import AgentApprovalCard from '@/components/AgentApprovalCard';
+import WelcomeExperience, { WELCOME_SEEN_STORAGE_KEY } from '@/components/WelcomeExperience';
+import WorkspaceShell from '@/components/WorkspaceShell';
+import MainColumn from '@/components/MainColumn';
+import WorkspaceTopbar from '@/components/WorkspaceTopbar';
+import SidebarFooterActions from '@/components/SidebarFooterActions';
+import SidebarChatHistory from '@/components/SidebarChatHistory';
+import AgentContextDock from '@/components/AgentContextDock';
+import AgentWelcome from '@/components/AgentWelcome';
+import AgentMessageSelectionBar from '@/components/AgentMessageSelectionBar';
+import AgentFollowUpCard from '@/components/AgentFollowUpCard';
+import AgentIntentClarifyCard from '@/components/AgentIntentClarifyCard';
+import AgentOrbStatus from '@/components/AgentOrbStatus';
+import AgentMcpDetailDock from '@/components/AgentMcpDetailDock';
+import AgentWebModeControl from '@/components/AgentWebModeControl';
+import AgentQuickActions from '@/components/AgentQuickActions';
+import AgentSendButton from '@/components/AgentSendButton';
+import AgentMessageAvatar from '@/components/AgentMessageAvatar';
+import AgentMessageVersionSwitch from '@/components/AgentMessageVersionSwitch';
+import AgentMessageError from '@/components/AgentMessageError';
+import AgentMessageReferences from '@/components/AgentMessageReferences';
+import AgentMessageTools from '@/components/AgentMessageTools';
+import AgentMessagePending from '@/components/AgentMessagePending';
+import AgentMessageLabel from '@/components/AgentMessageLabel';
+import AgentChatFileList from '@/components/AgentChatFileList';
+import AgentApprovalResult from '@/components/AgentApprovalResult';
+import AgentMessageImages from '@/components/AgentMessageImages';
+import AgentSelectionPush from '@/components/AgentSelectionPush';
+import SidebarNavigation from '@/components/SidebarNavigation';
+import SidebarBrandHeader from '@/components/SidebarBrandHeader';
+import ManualModelDialog from '@/components/ManualModelDialog';
+import AdminLogin from '@/components/AdminLogin';
+import ProviderList from '@/components/ProviderList';
+import ProviderPlatformPicker from '@/components/ProviderPlatformPicker';
+import ProviderListToolbar from '@/components/ProviderListToolbar';
+import ProviderPresetSummary from '@/components/ProviderPresetSummary';
+import ProviderConnectionFields from '@/components/ProviderConnectionFields';
+import ConfirmDialog from '@/components/ConfirmDialog';
+import SupportModal from '@/components/SupportModal';
+import SharePreviewModal from '@/components/SharePreviewModal';
+import MessageReferencePreviewModal from '@/components/MessageReferencePreviewModal';
+import ChatFilePreviewDialog from '@/components/ChatFilePreviewDialog';
+import CompareViewer from '@/components/CompareViewer';
+import AssistantMarkdown from '@/components/AssistantMarkdown';
+import AgentImageLoadingCard from '@/components/AgentImageLoadingCard';
+import CreativeReferenceStrip from '@/components/CreativeReferenceStrip';
+import ImageCard from '@/components/ImageCard';
+import { centeredOutpaintLayout, defaultOutpaintLayout, fitOutpaintLayoutToRule, outpaintRuleForModel, validateOutpaintLayout } from '@/lib/image-editor/outpaint-layout';
+import { renderOutpaintWhiteCanvas } from '@/lib/image-editor/outpaint-renderer';
+import { cloudUpscaleFormatOptions, isCloudUpscaleModel, qualityOptions, upscaleScales } from '@/lib/image-editor/editor-options';
+import { editorModelSelectionPatch, upscaleEditorSettingsPatch } from '@/lib/image-editor/editor-form';
+import { buildEditorRequest } from '@/lib/image-editor/editor-request';
+import { buildEditorTaskDraft } from '@/lib/image-editor/editor-task';
+import { buildEditorModelCallInput, buildEditorHistoryMeta, editorCompletionInfo } from '@/lib/image-editor/editor-result';
+import { cropSourceRect } from '@/lib/image-editor/local-image-layout';
+import { renderLocalImage } from '@/lib/image-editor/local-image-renderer';
+import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
+import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
+import { buildGalleryItems } from '@/lib/creation/gallery-items';
+import { storeImages } from '@/lib/image-storage-client';
+import { applyMessageVersion, messageVersionIndex, messageVersionsFor, normalizeAssistantImageSources, normalizeChatSession } from '@/lib/conversation/session-normalization';
+import { prepareAgentReferences } from '@/lib/agent/reference-preparation';
+import { historyArtifactFiles } from '@/lib/agent/artifact-references';
+import { chatFileToCreativeReference, createCreativeReferenceFromFile, readAgentChatFile } from '@/lib/agent/attachment-client';
+import { makeWhiteBackgroundTransparent } from '@/lib/image-editor/transparent-background';
+import { downloadChatFile } from '@/lib/agent/chat-file-download';
+import { downloadImage } from '@/lib/image-download';
+const NAV_NOTICE_STORAGE_KEY = 'sanmao-nav-notices-v1';
+const LAST_SECTION_STORAGE_KEY = 'sanmao-last-section';
+const rememberedSections = [
+    'agent',
+    'video',
+    'generate',
+    'history',
+    'logs',
+    'models',
+    'providers',
+    'settings'
+];
+function isRememberedSection(value) {
+    return value !== null && rememberedSections.includes(value);
+}
+const emptyState = {
+    providers: [],
+    models: [],
+    agentHealth: [],
+    upscaleConnections: [],
+    upscaleModels: [],
+    settings: {
+        agentModelId: null,
+        defaultImageModelId: null,
+        defaultVideoModelId: null,
+        defaultProviderId: null
+    }
+};
+const examples = [
+    '把一个简单想法变成专业生图提示词',
+    '这个主题还能怎么玩？给我 3 个视觉方向',
+    '让这个创意看起来更高级、更有质感',
+    '我只说目标，创意、模型和出图都交给你'
+];
+const HISTORY_PAGE_SIZE_OPTIONS = [
+    12,
+    24,
+    48,
+    96
+];
+const DEFAULT_HISTORY_PAGE_SIZE = 12;
+const HISTORY_PAGE_SIZE_STORAGE_KEY = 'sanmao-history-page-size';
+const PROVIDER_SETUP_DISMISSED_STORAGE_KEY = 'sanmao-provider-setup-dismissed';
+const pageSizeOptions = HISTORY_PAGE_SIZE_OPTIONS.map((value)=>({
+        value: String(value),
+        label: `每页 ${value} 项`
+    }));
+const generationLogPageSize = 16;
+function emptyProviderForm() {
+    const preset = getProviderPreset('custom');
+    return {
+        name: preset.short,
+        type: preset.type,
+        platform: preset.value,
+        baseUrl: preset.baseUrl,
+        apiKey: '',
+        modelsPath: '/models',
+        chatPath: '/chat/completions',
+        imageGenerationPath: '/images/generations',
+        imageEditPath: '/images/edits',
+        imageUpscalePath: '/images/edits',
+        imageUpscaleStatusPath: '',
+        responsesPath: '/responses',
+        videoTransport: '',
+        videoBaseUrl: '',
+        videoTaskPath: '/v1/tasks',
+        videoTaskStatusPath: '/v1/tasks/{id}',
+        videoGenerationPath: '/v1/videos',
+        videoModelsPath: '/v1/models',
+        videoPricingPath: '/v1/pricing',
+        videoApiKey: '',
+        jimengCliPath: '',
+        authHeader: 'Authorization',
+        authPrefix: 'Bearer '
+    };
+}
+function uid(prefix = 'id') {
+    return `${prefix}-${crypto.randomUUID()}`;
+}
+function clampNumber(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+function focusContentEditableToEnd(element) {
+    if (!element) return;
+    element.focus();
+    const selection = window.getSelection();
+    if (!selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+}
+function clipboardImageFiles(data) {
+    return Array.from(data.items || []).filter((item)=>item.kind === 'file' && item.type.startsWith('image/')).map((item)=>item.getAsFile()).filter((file)=>Boolean(file));
+}
+async function downloadShareImage(item) {
+    const references = galleryReferences(item).filter((reference) => reference.kind === 'image' && reference.url);
+    if (!references.length) throw new Error('这张图片没有保存参考图，无法生成分享版');
+    return downloadCanvasShareImage({
+        id: item.id,
+        url: item.url,
+        name: item.name,
+        prompt: item.prompt,
+        modelName: item.modelName,
+        createdAt: item.createdAt,
+        references,
+    });
+}
+/** 历史里助手生成过的 Office/ZIP 文件只回传元数据，服务端才能在下一轮继续引用或打包。 */
+function Icon({ name, size = 18 }) {
+    const paths = {
+        agent: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M12 3l1.1 3.1L16 7.2l-2.9 1.1L12 11.5l-1.1-3.2L8 7.2l2.9-1.1L12 3Z"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M6.5 12.5l.7 2 1.8.7-1.8.7-.7 2-.7-2-1.8-.7 1.8-.7.7-2Z"
+                                                     })
+                                                 ]
+        }),
+        image: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "3",
+                    y: "4",
+                    width: "18",
+                    height: "16",
+                    rx: "3"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "m6 16 4-4 3 3 2-2 3 3"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "8",
+                    cy: "9",
+                    r: "1.4"
+                })
+            ]
+        }),
+        file: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M6.5 3h7l4.5 4.5V21h-11.5V3Z"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M13.5 3v4.5H18"
+                })
+            ]
+        }),
+        video: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "3",
+                    y: "5",
+                    width: "13",
+                    height: "14",
+                    rx: "3"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "m16 10 5-3v10l-5-3Z"
+                })
+            ]
+        }),
+        audio: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M9 18V6l10-2v12"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "6.5",
+                    cy: "18",
+                    r: "2.5"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "16.5",
+                    cy: "16",
+                    r: "2.5"
+                })
+            ]
+        }),
+        canvas: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "3.5",
+                    y: "3.5",
+                    width: "7",
+                    height: "7",
+                    rx: "1.6"
+                }),
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "13.5",
+                    y: "3.5",
+                    width: "7",
+                    height: "7",
+                    rx: "1.6"
+                }),
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "3.5",
+                    y: "13.5",
+                    width: "7",
+                    height: "7",
+                    rx: "1.6"
+                }),
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "13.5",
+                    y: "13.5",
+                    width: "7",
+                    height: "7",
+                    rx: "1.6"
+                })
+            ]
+        }),
+        menu: /*#__PURE__*/ _jsx(_Fragment, {
+            children: /*#__PURE__*/ _jsx("path", {
+                d: "M4 7h16M4 12h16M4 17h16"
+            })
+        }),
+        history: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M4 7h10a6 6 0 1 1-5.4 8.6"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M4 7 7 4M4 7l3 3"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M14 9v4l2.5 1.5"
+                })
+            ]
+        }),
+        logs: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "5",
+                    y: "3.5",
+                    width: "14",
+                    height: "17",
+                    rx: "2"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M8.5 8h7M8.5 12h7M8.5 16h4.5"
+                })
+            ]
+        }),
+        model: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "4",
+                    y: "4",
+                    width: "6",
+                    height: "6",
+                    rx: "1.5"
+                }),
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "14",
+                    y: "4",
+                    width: "6",
+                    height: "6",
+                    rx: "1.5"
+                }),
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "4",
+                    y: "14",
+                    width: "6",
+                    height: "6",
+                    rx: "1.5"
+                }),
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "14",
+                    y: "14",
+                    width: "6",
+                    height: "6",
+                    rx: "1.5"
+                })
+            ]
+        }),
+        plug: /*#__PURE__*/ _jsx(_Fragment, {
+            children: /*#__PURE__*/ _jsx("path", {
+                d: "M8 3v5M16 3v5M6 8h12v2a6 6 0 0 1-6 6v5"
+            })
+        }),
+        plus: /*#__PURE__*/ _jsx("path", {
+            d: "M12 5v14M5 12h14"
+        }),
+        sun: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "12",
+                    cy: "12",
+                    r: "3.5"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"
+                })
+            ]
+        }),
+        moon: /*#__PURE__*/ _jsx("path", {
+            d: "M20 15.2A8.4 8.4 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z"
+        }),
+        upload: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M12 16V4M7 9l5-5 5 5"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M5 14v5h14v-5"
+                })
+            ]
+        }),
+        send: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "m4 5 16 7-16 7 3-7-3-7Z"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M7 12h13"
+                })
+            ]
+        }),
+        stop: /*#__PURE__*/ _jsx("rect", {
+            x: "7",
+            y: "7",
+            width: "10",
+            height: "10",
+            rx: "1.5"
+        }),
+        download: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M12 3v12M7 10l5 5 5-5"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M4 19h16"
+                })
+            ]
+        }),
+        share: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("circle", { cx: "18", cy: "5", r: "2.5" }),
+                /*#__PURE__*/ _jsx("circle", { cx: "6", cy: "12", r: "2.5" }),
+                /*#__PURE__*/ _jsx("circle", { cx: "18", cy: "19", r: "2.5" }),
+                /*#__PURE__*/ _jsx("path", { d: "m8.3 10.8 7.4-4.3M8.3 13.2l7.4 4.3" })
+            ]
+        }),
+        trash: /*#__PURE__*/ _jsx(_Fragment, {
+            children: /*#__PURE__*/ _jsx("path", {
+                d: "M5 7h14M9 7V4h6v3M8 10v8M12 10v8M16 10v8M6 7l1 14h10l1-14"
+            })
+        }),
+        folder: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M3.5 7.5h6l1.7 2h9.3v8.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-8.5a2 2 0 0 1 2-2Z"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M3.5 7.5v-1a2 2 0 0 1 2-2h4l1.7 2h5.3"
+                })
+            ]
+        }),
+        reuse: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M7 7h10v10H7z"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M4 14V4h10M10 20h10V10"
+                })
+            ]
+        }),
+        retry: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M20 11a8 8 0 1 0 1 4"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M20 4v7h-7"
+                })
+            ]
+        }),
+        edit: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "m4 17-.7 3.7L7 20l10.8-10.8-3-3L4 17Z"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "m13.8 7.2 3 3"
+                })
+            ]
+        }),
+        adjust: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M4 7h10M18 7h2M4 17h2M10 17h10"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "16",
+                    cy: "7",
+                    r: "2"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "8",
+                    cy: "17",
+                    r: "2"
+                })
+            ]
+        }),
+        settings: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "12",
+                    cy: "12",
+                    r: "3"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.8 1.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-2.6V20a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1-1.8-1.8.1-.1A1.7 1.7 0 0 0 8 15a1.7 1.7 0 0 0-1.6-1H6v-2.6h.4A1.7 1.7 0 0 0 8 10a1.7 1.7 0 0 0-.3-1.9l-.1-.1 1.8-1.8.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2H15V5a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1 1.8 1.8-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2V14H21a1.7 1.7 0 0 0-1.6 1Z"
+                })
+            ]
+        }),
+        wechat: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M10 4.5c-4 0-7.3 2.4-7.3 5.5 0 1.7 1 3.2 2.5 4.2l-.7 2.6 2.8-1.5c.8.2 1.7.3 2.7.3 3.9 0 7.1-2.3 7.1-5.4S14 4.5 10 4.5Z",
+                    fill: "currentColor",
+                    stroke: "none"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M14.5 9.1c3.7.2 6.4 2.3 6.4 5.1 0 1.2-.5 2.3-1.4 3.2l.5 2-2.4-1.3c-.7.2-1.4.3-2.1.3-3.3 0-5.9-1.9-6.3-4.4 2.8-.4 4.9-2.2 5.3-4.9Z",
+                    fill: "currentColor",
+                    stroke: "none"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "7.2",
+                    cy: "10",
+                    r: ".8",
+                    fill: "#16a05d",
+                    stroke: "none"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "11.9",
+                    cy: "10",
+                    r: ".8",
+                    fill: "#16a05d",
+                    stroke: "none"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "13.5",
+                    cy: "14.6",
+                    r: ".7",
+                    fill: "#16a05d",
+                    stroke: "none"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "17.6",
+                    cy: "14.6",
+                    r: ".7",
+                    fill: "#16a05d",
+                    stroke: "none"
+                })
+            ]
+        }),
+        support: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M5 5.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-8l-6 4v-13a2 2 0 0 1 2-2Z"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M9 10h6M9 13h4"
+                })
+            ]
+        }),
+        star: /*#__PURE__*/ _jsx("path", {
+            d: "m12 3 2.7 5.5 6 .9-4.4 4.2 1 6-5.3-2.8-5.3 2.8 1-6-4.4-4.2 6-.9L12 3Z"
+        }),
+        close: /*#__PURE__*/ _jsx("path", {
+            d: "M6 6l12 12M18 6 6 18"
+        }),
+        search: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "10.5",
+                    cy: "10.5",
+                    r: "6.5"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "m16 16 4.5 4.5"
+                })
+            ]
+        }),
+        globe: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "12",
+                    cy: "12",
+                    r: "8.5"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M3.5 12h17M12 3.5c2.2 2.3 3.3 5.1 3.3 8.5s-1.1 6.2-3.3 8.5c-2.2-2.3-3.3-5.1-3.3-8.5S9.8 5.8 12 3.5Z"
+                })
+            ]
+        }),
+        chevron: /*#__PURE__*/ _jsx("path", {
+            d: "m8 10 4 4 4-4"
+        }),
+        check: /*#__PURE__*/ _jsx("path", {
+            d: "m5 12 4 4L19 6"
+        }),
+        more: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "5",
+                    cy: "12",
+                    r: "1",
+                    fill: "currentColor",
+                    stroke: "none"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "12",
+                    cy: "12",
+                    r: "1",
+                    fill: "currentColor",
+                    stroke: "none"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "19",
+                    cy: "12",
+                    r: "1",
+                    fill: "currentColor",
+                    stroke: "none"
+                })
+            ]
+        }),
+        left: /*#__PURE__*/ _jsx("path", {
+            d: "m15 18-6-6 6-6"
+        }),
+        right: /*#__PURE__*/ _jsx("path", {
+            d: "m9 6 6 6-6 6"
+        }),
+        copy: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "8",
+                    y: "8",
+                    width: "11",
+                    height: "11",
+                    rx: "2"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M16 8V5H5v11h3"
+                })
+            ]
+        }),
+        full: /*#__PURE__*/ _jsx(_Fragment, {
+            children: /*#__PURE__*/ _jsx("path", {
+                d: "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"
+            })
+        }),
+        user: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("circle", { cx: "12", cy: "8", r: "3" }),
+                /*#__PURE__*/ _jsx("path", { d: "M5 20a7 7 0 0 1 14 0" })
+            ]
+        }),
+        brain: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", { d: "M9 4.5a3 3 0 0 0-3 3v.5a3.5 3.5 0 0 0 0 7v.5a3 3 0 0 0 3 3" }),
+                /*#__PURE__*/ _jsx("path", { d: "M15 4.5a3 3 0 0 1 3 3v.5a3.5 3.5 0 0 1 0 7v.5a3 3 0 0 1-3 3" }),
+                /*#__PURE__*/ _jsx("path", { d: "M9 8.5c1.5 0 2 1 3 1s1.5-1 3-1M9 15.5c1.5 0 2-1 3-1s1.5 1 3 1M12 9.5v5" })
+            ]
+        }),
+        preview: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M3.5 12s3.1-5 8.5-5 8.5 5 8.5 5-3.1 5-8.5 5-8.5-5-8.5-5Z"
+                }),
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "12",
+                    cy: "12",
+                    r: "2.5"
+                })
+            ]
+        }),
+        compare: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("rect", {
+                    x: "4",
+                    y: "4",
+                    width: "16",
+                    height: "16",
+                    rx: "2"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M12 4v16"
+                })
+            ]
+        }),
+        zoomIn: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "11",
+                    cy: "11",
+                    r: "7"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "m16 16 5 5M11 8v6M8 11h6"
+                })
+            ]
+        }),
+        zoomOut: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("circle", {
+                    cx: "11",
+                    cy: "11",
+                    r: "7"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "m16 16 5 5M8 11h6"
+                })
+            ]
+        }),
+        upscale: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M8 4H4v4M16 4h4v4M8 20H4v-4M16 20h4v-4"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "m9 15 6-6M10 9h5v5"
+                })
+            ]
+        }),
+        flip: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M12 4v16M5 7h4M5 17h4M15 7h4M15 17h4"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "m8 4-3 3 3 3M16 14l3 3-3 3"
+                })
+            ]
+        }),
+        rotate: /*#__PURE__*/ _jsxs(_Fragment, {
+            children: [
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M5 8a7 7 0 1 1 1 8"
+                }),
+                /*#__PURE__*/ _jsx("path", {
+                    d: "M5 4v4h4"
+                })
+            ]
+        })
+    };
+    return /*#__PURE__*/ _jsx("svg", {
+        width: size,
+        height: size,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: "1.8",
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        "aria-hidden": true,
+        children: paths[name] || paths.more
+    });
+}
+function Dropdown({ value, options, onChange, placeholder = '请选择', className = '' }) {
+    return /*#__PURE__*/ _jsx(SelectMenu, {
+        value,
+        options: options.map((item)=>({
+                value: item.value,
+                label: item.label,
+                description: item.meta,
+                disabled: item.disabled
+            })),
+        onChange,
+        ariaLabel: placeholder,
+        className: `custom-dropdown ${className}`
+    });
+}
+function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUpscaleModel, defaultProviderId, defaultProviderName, defaultImageModelId, upscaleSourceSize, upscaleTargetPreview, onChange, onClose, onLocalEdit, onOpenProviders, onSubmit }) {
+    const ratio = editorRatio(editor);
+    const selectedUpscaleOption = editor.mode === 'upscale' ? editor.modelId === 'auto' ? defaultUpscaleModel : upscaleModelOptions.find((model)=>model.id === editor.modelId) || defaultUpscaleModel : null;
+    const selectedUpscaleIsCloud = isCloudUpscaleModel(selectedUpscaleOption);
+    const dimensions = editor.sizeMode === 'custom' ? {
+        width: editor.customWidth,
+        height: editor.customHeight
+    } : presetDimensions(ratio === '自动' ? '1:1' : ratio, editor.sizeTier);
+    const update = (patch)=>onChange({
+            ...editor,
+            ...patch
+        });
+    return /*#__PURE__*/ _jsx("div", {
+        className: "editor-modal-backdrop",
+        onClick: onClose,
+        children: /*#__PURE__*/ _jsxs("form", {
+            className: "editor-modal",
+            onClick: (event)=>event.stopPropagation(),
+            onSubmit: (event)=>{
+                event.preventDefault();
+                event.stopPropagation();
+                onSubmit(event);
+            },
+            children: [
+                /*#__PURE__*/ _jsxs("header", {
+                    className: "editor-modal-head",
+                    children: [
+                        /*#__PURE__*/ _jsxs("div", {
+                            children: [
+                                /*#__PURE__*/ _jsx("span", {
+                                    children: editor.mode === 'upscale' ? '基于原图清晰化' : '基于原图继续'
+                                }),
+                                /*#__PURE__*/ _jsx("h2", {
+                                    children: editor.mode === 'upscale' ? '图片超分' : '修改图片'
+                                }),
+                                /*#__PURE__*/ _jsx("p", {
+                                    children: editor.mode === 'upscale' ? '提升原图清晰度，并控制目标尺寸与缩放算法。' : '描述修改内容，并像生图工作台一样调整输出参数。'
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsx("button", {
+                            type: "button",
+                            className: "icon-button",
+                            onClick: onClose,
+                            "aria-label": "关闭",
+                            children: /*#__PURE__*/ _jsx(Icon, {
+                                name: "close",
+                                size: 16
+                            })
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ _jsxs("div", {
+                    className: "editor-modal-body",
+                    children: [
+                        /*#__PURE__*/ _jsxs("aside", {
+                            className: "editor-source-panel",
+                            children: [
+                                /*#__PURE__*/ _jsx("div", {
+                                    className: "editor-source-stage",
+                                    children: /*#__PURE__*/ _jsx("img", {
+                                        src: editor.item.url,
+                                        alt: "原图"
+                                    })
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    className: "editor-source-copy",
+                                    children: [
+                                        /*#__PURE__*/ _jsx("small", {
+                                            children: "原图"
+                                        }),
+                                        /*#__PURE__*/ _jsx("strong", {
+                                            children: editor.item.prompt
+                                        }),
+                                        /*#__PURE__*/ _jsxs("span", {
+                                            children: [
+                                                editor.item.outputSize || '尺寸未记录',
+                                                " \xb7 ",
+                                                editor.item.aspectRatio || ratio
+                                                             ]
+                                                         })
+                                                     ]
+                                                 }),
+                                                 /*#__PURE__*/ _jsxs("div", {
+                                    className: "editor-size-summary",
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "当前输出"
+                                        }),
+                                        /*#__PURE__*/ _jsx("strong", {
+                                            children: editor.mode === 'upscale' && upscaleTargetPreview ? `${upscaleTargetPreview.width}×${upscaleTargetPreview.height}` : `${dimensions.width}×${dimensions.height}`
+                                        }),
+                                        /*#__PURE__*/ _jsx("small", {
+                                            children: editor.mode === 'upscale' ? `${editor.scale}× 超分目标` : `${ratio} · ${editor.sizeMode === 'custom' ? '自定义尺寸' : editor.sizeTier.toUpperCase()}`
+                                        })
+                                    ]
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsxs("section", {
+                            className: "editor-settings-panel",
+                            children: [
+                                editor.mode === 'edit' && /*#__PURE__*/ _jsxs("div", {
+                                    className: `editor-mask-control ${editor.mask ? 'active' : ''}`,
+                                    children: [
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            children: [
+                                                /*#__PURE__*/ _jsx("strong", {
+                                                    children: editor.mask ? '局部编辑范围已设置' : '局部编辑'
+                                                }),
+                                                /*#__PURE__*/ _jsx("small", {
+                                                    children: editor.mask ? '编辑范围内会生成新内容' : '指定范围后，只重新生成局部区域'
+                                                })
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "editor-mask-actions",
+                                                             children: [
+                                                             /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: "ghost-button",
+                                                    onClick: onLocalEdit,
+                                                    children: editor.mask ? '查看局部编辑' : '局部编辑'
+                                                }),
+                                                editor.mask && /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: "mask-clear",
+                                                    onClick: ()=>update({
+                                                            mask: null
+                                                        }),
+                                                    children: "移除"
+                                                })
+                                            ]
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("label", {
+                                    className: "field-block editor-prompt-field",
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: editor.mode === 'upscale' ? '可选说明' : '你想怎么修改？'
+                                        }),
+                                        /*#__PURE__*/ _jsx("textarea", {
+                                            autoFocus: editor.mode === 'edit',
+                                            value: editor.prompt,
+                                            onChange: (event)=>update({
+                                                    prompt: event.target.value
+                                                }),
+                                            placeholder: editor.mode === 'upscale' ? 'SeedVR2 超分不会根据提示词修改画面…' : '例如：保留人物和构图，把背景改成夜晚的东京街头…'
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    className: "editor-settings-grid",
+                                    children: [
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "field-block",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("span", {
+                                                    children: "图片模型"
+                                                }),
+                                                /*#__PURE__*/ _jsx(ModelPicker, {
+                                                    models: editor.mode === 'upscale' ? upscaleModelOptions : editModelOptions,
+                                                    value: editor.modelId,
+                                                    capability: editor.mode === 'upscale' ? 'upscale' : 'edit',
+                                                    defaultProviderId: defaultProviderId,
+                                                    defaultProviderName: defaultProviderName,
+                                                    defaultModelId: defaultImageModelId,
+                                                    onChange: (value)=>{
+                                                        update(editorModelSelectionPatch(editor.mode, value, editor.scale, editor.upscaleOutputFormat, upscaleModelOptions, upscaleScales));
+                                                    }
+                                                })
+                                            ]
+                                        }),
+                                        editor.mode === 'edit' ? /*#__PURE__*/ _jsxs("div", {
+                                            className: "field-block",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("span", {
+                                                    children: "质量"
+                                                }),
+                                             /*#__PURE__*/ _jsx(Dropdown, {
+                                                    value: editor.quality,
+                                                    options: qualityOptions,
+                                                    onChange: (value)=>update({
+                                                            quality: value
+                                                        })
+                                                })
+                                            ]
+                                        }) : /*#__PURE__*/ _jsxs("div", {
+                                            className: "field-block",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("span", {
+                                                    children: "放大倍率"
+                                                }),
+                                                /*#__PURE__*/ _jsx(Dropdown, {
+                                                    value: String(editor.scale),
+                                                    options: (selectedUpscaleOption?.scales || upscaleScales).map((scale)=>({
+                                                            value: String(scale),
+                                                            label: `${scale}×`
+                                                        })),
+                                                    onChange: (value)=>update({
+                                                            scale: Number(value),
+                                                            targetSize: 'auto'
+                                                        })
+                                                })
+                                            ]
+                                        })
+                                    ]
+                                }),
+                                editor.mode === 'upscale' && selectedUpscaleOption && /*#__PURE__*/ _jsxs("div", {
+                                    className: "upscale-model-note",
+                                    children: [
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            children: [
+                                                /*#__PURE__*/ _jsx("strong", {
+                                                    children: selectedUpscaleOption.description || '提升分辨率和清晰度'
+                                                }),
+                                                /*#__PURE__*/ _jsx("small", {
+                                                    children: selectedUpscaleOption.detail || selectedUpscaleOption.providerName
+                                                })
+                                            ]
+                                        }),
+                                        !selectedUpscaleOption.connected && /*#__PURE__*/ _jsx("button", {
+                                            type: "button",
+                                            className: "ghost-button",
+                                            onClick: onOpenProviders,
+                                            children: "立即接入"
+                                        }),
+                                        selectedUpscaleOption.generative && /*#__PURE__*/ _jsx("small", {
+                                            className: "warning",
+                                            children: "生成式增强可能改变部分细节，不建议用于 Logo、文字、证件或精确商品细节。"
+                                        })
+                                    ]
+                                }),
+                                editor.mode === 'edit' ? /*#__PURE__*/ _jsxs("div", {
+                                    className: "editor-parameter-card",
+                                    children: [
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "editor-parameter-head",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("strong", {
+                                                    children: "尺寸与分辨率"
+                                                }),
+                                                /*#__PURE__*/ _jsxs("small", {
+                                                    children: [
+                                                        ratio,
+                                                        " \xb7 ",
+                                                        editor.sizeMode === 'custom' ? `${editor.customWidth}×${editor.customHeight}` : editor.sizeTier.toUpperCase()
+                                                    ]
+                                                })
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "editor-parameter-block",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("span", {
+                                                    children: "输出比例"
+                                                }),
+                                                /*#__PURE__*/ _jsx("div", {
+                                                    className: "ratio-grid editor-ratios",
+                                                    children: ratios.filter((item)=>item !== '自定义').map((item)=>/*#__PURE__*/ _jsx("button", {
+                                                            type: "button",
+                                                            className: editor.ratio === item ? 'active' : '',
+                                                            onClick: ()=>update({
+                                                                    ratio: item,
+                                                                    sizeMode: 'system'
+                                                                }),
+                                                            children: item === '自动' && ratio !== '自动' ? `自动 · ${ratio}` : item
+                                                        }, item))
+                                                })
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "editor-parameter-block",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("span", {
+                                                    children: "分辨率"
+                                                }),
+                                                /*#__PURE__*/ _jsx("div", {
+                                                    className: "resolution-tiers editor-resolution-tiers",
+                                                    children: sizeTiers.map((tier)=>{
+                                                        const preset = presetDimensions(ratio === '自动' ? '1:1' : ratio, tier.value);
+                                                        return /*#__PURE__*/ _jsxs("button", {
+                                                            type: "button",
+                                                            className: editor.sizeMode === 'system' && editor.sizeTier === tier.value ? 'active' : '',
+                                                            onClick: ()=>update({
+                                                                    sizeMode: 'system',
+                                                                    sizeTier: tier.value
+                                                                }),
+                                                            children: [
+                                                                /*#__PURE__*/ _jsx("strong", {
+                                                                    children: tier.label
+                                                                }),
+                                                                /*#__PURE__*/ _jsxs("small", {
+                                                                    children: [
+                                                                        preset.width,
+                                                                        "\xd7",
+                                                                        preset.height
+                                                                    ]
+                                                                })
+                                                            ]
+                                                        }, tier.value);
+                                                    })
+                                                }),
+                                                /*#__PURE__*/ _jsxs("div", {
+                                                    className: "custom-size-card editor-custom-size",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsxs("div", {
+                                                            className: "custom-size-row",
+                                                            children: [
+                                                                /*#__PURE__*/ _jsxs("label", {
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                            children: "宽度（px）"
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsx("input", {
+                                                                            type: "number",
+                                                                            min: "1",
+                                                                            value: editor.customWidth,
+                                                                            onChange: (event)=>update({
+                                                                                    customWidth: Number(event.target.value) || 0,
+                                                                                    sizeMode: 'custom'
+                                                                                })
+                                                                        })
+                                                                    ]
+                                                                }),
+                                                                /*#__PURE__*/ _jsx("b", {
+                                                                    children: "\xd7"
+                                                                }),
+                                                                /*#__PURE__*/ _jsxs("label", {
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                            children: "高度（px）"
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsx("input", {
+                                                                            type: "number",
+                                                                            min: "1",
+                                                                            value: editor.customHeight,
+                                                                            onChange: (event)=>update({
+                                                                                    customHeight: Number(event.target.value) || 0,
+                                                                                    sizeMode: 'custom'
+                                                                                })
+                                                                        })
+                                                                    ]
+                                                             })
+                                                         ]
+                                                     }),
+                                                     /*#__PURE__*/ _jsx("small", {
+                                                            children: "输入自定义尺寸后自动切换为自定义模式。"
+                                                        })
+                                                    ]
+                                                })
+                                            ]
+                                        })
+                                    ]
+                                }) : /*#__PURE__*/ _jsxs("div", {
+                                    className: "editor-upscale-details",
+                                    children: [
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "upscale-target-readout editor-target-card",
+                                            children: [
+                                                /*#__PURE__*/ _jsxs("small", {
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx("i", {
+                                                            children: "原图"
+                                                        }),
+                                                        /*#__PURE__*/ _jsx("b", {
+                                                            children: upscaleSourceSize ? `${upscaleSourceSize.width}×${upscaleSourceSize.height}` : '读取中…'
+                                                        })
+                                                    ]
+                                                }),
+                                                /*#__PURE__*/ _jsx("em", {
+                                                    children: "→"
+                                                }),
+                                                /*#__PURE__*/ _jsxs("strong", {
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx("i", {
+                                                            children: "目标尺寸"
+                                                        }),
+                                                        /*#__PURE__*/ _jsx("b", {
+                                                            children: upscaleTargetPreview ? `${upscaleTargetPreview.width}×${upscaleTargetPreview.height}` : '计算中…'
+                                                        })
+                                                    ]
+                                                })
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "editor-settings-grid",
+                                            children: [
+                                                !selectedUpscaleIsCloud && /*#__PURE__*/ _jsxs("label", {
+                                                    className: "field-block",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx("span", {
+                                                            children: "随机种子"
+                                                        }),
+                                                        /*#__PURE__*/ _jsx("input", {
+                                                            className: "editor-seed-input",
+                                                            type: "number",
+                                                            min: "0",
+                                                            max: "2147483647",
+                                                            value: editor.seed,
+                                                            onChange: (event)=>update({
+                                                                    seed: Math.max(0, Number(event.target.value) || 0)
+                                                                })
+                                                        })
+                                                    ]
+                                                }),
+                                                !selectedUpscaleIsCloud && /*#__PURE__*/ _jsxs("div", {
+                                                    className: "field-block",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx("span", {
+                                                            children: "缩放算法"
+                                                        }),
+                                                        /*#__PURE__*/ _jsx(Dropdown, {
+                                                            value: editor.algorithm,
+                                                            options: [
+                                                                {
+                                                                    value: 'lanczos',
+                                                                    label: 'lanczos · 锐利'
+                                                                },
+                                                                {
+                                                                    value: 'bicubic',
+                                                                    label: 'bicubic · 平滑'
+                                                                },
+                                                                {
+                                                                    value: 'nearest',
+                                                                    label: 'nearest · 像素'
+                                                                }
+                                                            ],
+                                                            onChange: (value)=>update({
+                                                                    algorithm: value
+                                                                })
+                                                        })
+                                                    ]
+                                                }),
+                                                selectedUpscaleOption?.outputFormats && /*#__PURE__*/ _jsxs("div", {
+                                                    className: "field-block",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx("span", {
+                                                            children: "输出格式"
+                                                        }),
+                                                        /*#__PURE__*/ _jsx(Dropdown, {
+                                                            value: editor.upscaleOutputFormat,
+                                                            options: cloudUpscaleFormatOptions.filter((option)=>selectedUpscaleOption.outputFormats.includes(option.value)),
+                                                            onChange: (value)=>update({
+                                                                upscaleOutputFormat: value
+                                                            })
+                                                        })
+                                                    ]
+                                                }),
+                                                selectedUpscaleOption?.outputQuality && editor.upscaleOutputFormat === 'jpg' && /*#__PURE__*/ _jsxs("label", {
+                                                    className: "field-block",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx("span", {
+                                                            children: "JPG 质量"
+                                                        }),
+                                                        /*#__PURE__*/ _jsx("input", {
+                                                            type: "number",
+                                                            min: selectedUpscaleOption.outputQuality.min,
+                                                            max: selectedUpscaleOption.outputQuality.max,
+                                                            step: "1",
+                                                            value: editor.upscaleOutputQuality,
+                                                            onChange: (event)=>update({
+                                                                upscaleOutputQuality: Math.max(selectedUpscaleOption.outputQuality.min, Math.min(selectedUpscaleOption.outputQuality.max, Number(event.target.value) || selectedUpscaleOption.outputQuality.default))
+                                                            })
+                                                        })
+                                                    ]
+                                                })
+                                            ]
+                                        })
+                                    ]
+                                }),
+                                editor.mode === 'edit' && /*#__PURE__*/ _jsxs("div", {
+                                    className: "fidelity-row",
+                                    children: [
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            children: [
+                                                /*#__PURE__*/ _jsx("strong", {
+                                                    children: "参考图一致性"
+                                                }),
+                                                /*#__PURE__*/ _jsx("small", {
+                                                    children: "高：尽量保持主体；低：允许更大变化"
+                                                })
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "segmented mini",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: editor.fidelity === 'high' ? 'active' : '',
+                                                    onClick: ()=>update({
+                                                            fidelity: 'high'
+                                                        }),
+                                                    children: "高"
+                                                }),
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: editor.fidelity === 'low' ? 'active' : '',
+                                                    onClick: ()=>update({
+                                                            fidelity: 'low'
+                                                        }),
+                                                    children: "低"
+                                                })
+                                            ]
+                                        })
+                                    ]
+                                })
+                            ]
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ _jsxs("footer", {
+                    className: "editor-modal-footer",
+                    children: [
+                        /*#__PURE__*/ _jsx("small", {
+                            children: "提交后任务会在后台处理，完成后自动进入创作记录。"
+                        }),
+                        /*#__PURE__*/ _jsxs("div", {
+                            children: [
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: "secondary-action",
+                                    onClick: onClose,
+                                    children: "取消"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    className: "primary-action",
+                                    type: "submit",
+                                    disabled: editor.mode === 'edit' && (!editor.prompt.trim() || editor.sizeMode === 'custom' && (editor.customWidth < 1 || editor.customHeight < 1)),
+                                    children: editor.mode === 'upscale' ? `提交后台 ${editor.scale}× 超分` : '提交后台修改'
+                                })
+                            ]
+                        })
+                    ]
+                })
+            ]
+        })
+    });
+}
+// 引用区可选的文件类型；助手输入框额外允许 Word/Excel/PPT/PDF。
+const referenceAccept = "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1";
+const agentReferenceAccept = `${referenceAccept},.docx,.xlsx,.pptx,.pdf`;
+function OutpaintEditor({ item, model, onClose, onApply, onApplyLocal, onNotify }) {
+    const stageRef = useRef(null);
+    const [tool, setTool] = useState('outpaint');
+    const [layout, setLayout] = useState(null);
+    const [stageSize, setStageSize] = useState({
+        width: 900,
+        height: 520
+    });
+    const [drag, setDrag] = useState(null);
+    const [zoom, setZoom] = useState(1);
+    const [applying, setApplying] = useState(false);
+    const [localMode, setLocalMode] = useState('crop');
+    const [localRatio, setLocalRatio] = useState('原图');
+    const [localBackground, setLocalBackground] = useState('transparent');
+    const [localFlipX, setLocalFlipX] = useState(false);
+    const [localRotation, setLocalRotation] = useState(0);
+    const [localApplying, setLocalApplying] = useState(false);
+    const [cropRect, setCropRect] = useState(null);
+    const [cropDrag, setCropDrag] = useState(null);
+    const rule = outpaintRuleForModel(model);
+    const validation = layout ? validateOutpaintLayout(layout, rule) : null;
+    const fitPadding = 192;
+    const fitScale = layout ? Math.max(0.04, Math.min(1, Math.max(80, Math.max(280, stageSize.width) - fitPadding) / layout.canvasWidth, Math.max(80, Math.max(220, stageSize.height) - fitPadding) / layout.canvasHeight)) : 1;
+    const displayScale = layout ? Math.max(0.03, Math.min(8, fitScale * zoom)) : 1;
+    const pads = layout ? {
+        left: layout.offsetX,
+        right: layout.canvasWidth - layout.offsetX - layout.sourceWidth,
+        top: layout.offsetY,
+        bottom: layout.canvasHeight - layout.offsetY - layout.sourceHeight
+    } : {
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0
+    };
+    const localRatios = [
+        '原图',
+        '自由',
+        '1:1',
+        '4:5',
+        '16:9',
+        '9:16',
+        '4:3',
+        '3:4'
+    ];
+    const localBackgrounds = [
+        {
+            value: 'transparent',
+            label: '透明'
+        },
+        {
+            value: 'white',
+            label: '白色'
+        },
+        {
+            value: 'black',
+            label: '黑色'
+        },
+        {
+            value: 'blur',
+            label: '模糊'
+        }
+    ];
+    const [ratioWidth, ratioHeight] = localRatio === '原图' ? [
+        layout?.sourceWidth || 1,
+        layout?.sourceHeight || 1
+    ] : localRatio.split(':').map(Number);
+    const localPreviewStyle = {
+        aspectRatio: `${ratioWidth} / ${ratioHeight}`,
+        ...localBackground === 'blur' ? {
+            backgroundImage: `url("${item.url}")`
+        } : {}
+    };
+    const localPreviewScale = Math.max(0.05, Math.min((Math.max(280, stageSize.width) - 144) / ratioWidth, (Math.max(220, stageSize.height) - 112) / ratioHeight));
+    const localPreviewWidth = Math.max(1, Math.round(ratioWidth * localPreviewScale));
+    const localPreviewHeight = Math.max(1, Math.round(ratioHeight * localPreviewScale));
+    const fullCropRect = {
+        x: 0,
+        y: 0,
+        width: layout?.sourceWidth || 1,
+        height: layout?.sourceHeight || 1
+    };
+    const activeCropRect = cropRect || fullCropRect;
+    const cropDisplayScale = Math.max(0.05, Math.min((Math.max(280, stageSize.width) - 144) / fullCropRect.width, (Math.max(220, stageSize.height) - 112) / fullCropRect.height));
+    const cropDisplayWidth = Math.max(1, Math.round(fullCropRect.width * cropDisplayScale));
+    const cropDisplayHeight = Math.max(1, Math.round(fullCropRect.height * cropDisplayScale));
+    const cropFrameStyle = {
+        left: activeCropRect.x * cropDisplayScale,
+        top: activeCropRect.y * cropDisplayScale,
+        width: activeCropRect.width * cropDisplayScale,
+        height: activeCropRect.height * cropDisplayScale
+    };
+    const localImageStyle = {
+        transform: `scaleX(${localFlipX ? -1 : 1}) rotate(${localRotation}deg)`,
+        objectFit: localMode === 'canvas' ? 'contain' : 'cover'
+    };
+    const localOperations = [
+        localRatio !== '原图' ? `${localMode === 'canvas' ? '补边' : '裁剪'} ${localRatio}` : '',
+        localMode === 'canvas' && localRatio !== '原图' && localBackground !== 'transparent' ? `背景 ${localBackgrounds.find((option)=>option.value === localBackground)?.label}` : '',
+        localFlipX ? '水平镜像' : '',
+        localRotation ? `旋转 ${localRotation}°` : ''
+    ].filter(Boolean);
+    useEffect(()=>{
+        const target = stageRef.current;
+        if (!target) return;
+        let frame = 0;
+        const update = ()=>{
+            cancelAnimationFrame(frame);
+            frame = requestAnimationFrame(()=>{
+                const rect = target.getBoundingClientRect();
+                const next = {
+                    width: Math.round(rect.width) || 900,
+                    height: Math.round(rect.height) || 520
+                };
+                setStageSize((old)=>Math.abs(old.width - next.width) < 2 && Math.abs(old.height - next.height) < 2 ? old : next);
+            });
+        };
+        update();
+        const observer = new ResizeObserver(update);
+        observer.observe(target);
+        return ()=>{
+            cancelAnimationFrame(frame);
+            observer.disconnect();
+        };
+    }, []);
+    useEffect(()=>{
+        if (!drag) return;
+        const move = (event)=>{
+            const dx = Math.round((event.clientX - drag.startX) / drag.scale);
+            const dy = Math.round((event.clientY - drag.startY) / drag.scale);
+            const start = drag.layout;
+            let left = start.offsetX;
+            let right = start.canvasWidth - start.offsetX - start.sourceWidth;
+            let top = start.offsetY;
+            let bottom = start.canvasHeight - start.offsetY - start.sourceHeight;
+            if (drag.handle.includes('left')) left -= dx;
+            if (drag.handle.includes('right')) right += dx;
+            if (drag.handle.includes('top')) top -= dy;
+            if (drag.handle.includes('bottom')) bottom += dy;
+            setLayoutFromPads(start, left, right, top, bottom);
+        };
+        const end = ()=>setDrag(null);
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', end, {
+            once: true
+        });
+        window.addEventListener('pointercancel', end, {
+            once: true
+        });
+        return ()=>{
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', end);
+            window.removeEventListener('pointercancel', end);
+        };
+    }, [
+        drag
+    ]);
+    useEffect(()=>{
+        if (!cropDrag) return;
+        const move = (event)=>{
+            const dx = (event.clientX - cropDrag.startX) / cropDrag.scale;
+            const dy = (event.clientY - cropDrag.startY) / cropDrag.scale;
+            const start = cropDrag.rect;
+            const sourceWidth = fullCropRect.width;
+            const sourceHeight = fullCropRect.height;
+            const minimum = Math.min(64, Math.max(16, Math.min(sourceWidth, sourceHeight) / 2));
+            if (cropDrag.handle === 'move') {
+                setCropRect({
+                    ...start,
+                    x: clampNumber(start.x + dx, 0, sourceWidth - start.width),
+                    y: clampNumber(start.y + dy, 0, sourceHeight - start.height)
+                });
+                return;
+            }
+            const isFree = localRatio === '自由' || localRatio === '原图';
+            if (isFree) {
+                const right = start.x + start.width;
+                const bottom = start.y + start.height;
+                let left = start.x;
+                let top = start.y;
+                let nextRight = right;
+                let nextBottom = bottom;
+                if (cropDrag.handle.includes('left')) left = clampNumber(start.x + dx, 0, right - minimum);
+                if (cropDrag.handle.includes('right')) nextRight = clampNumber(right + dx, left + minimum, sourceWidth);
+                if (cropDrag.handle.includes('top')) top = clampNumber(start.y + dy, 0, bottom - minimum);
+                if (cropDrag.handle.includes('bottom')) nextBottom = clampNumber(bottom + dy, top + minimum, sourceHeight);
+                setCropRect({
+                    x: left,
+                    y: top,
+                    width: nextRight - left,
+                    height: nextBottom - top
+                });
+                if (localRatio === '原图') setLocalRatio('自由');
+                return;
+            }
+            const [rawRatioWidth, rawRatioHeight] = localRatio.split(':').map(Number);
+            const targetRatio = rawRatioWidth / rawRatioHeight;
+            const horizontal = cropDrag.handle.includes('left') || cropDrag.handle.includes('right');
+            const vertical = cropDrag.handle.includes('top') || cropDrag.handle.includes('bottom');
+            const anchorX = cropDrag.handle.includes('left') ? start.x + start.width : start.x;
+            const anchorY = cropDrag.handle.includes('top') ? start.y + start.height : start.y;
+            const maxWidth = cropDrag.handle.includes('left') ? anchorX : sourceWidth - anchorX;
+            const maxHeight = cropDrag.handle.includes('top') ? anchorY : sourceHeight - anchorY;
+            const widthFromX = cropDrag.handle.includes('left') ? start.width - dx : start.width + dx;
+            const heightFromY = cropDrag.handle.includes('top') ? start.height - dy : start.height + dy;
+            let nextWidth = horizontal && vertical ? Math.max(widthFromX, heightFromY * targetRatio) : horizontal ? widthFromX : heightFromY * targetRatio;
+            nextWidth = clampNumber(nextWidth, minimum, Math.min(maxWidth, maxHeight * targetRatio));
+            const nextHeight = nextWidth / targetRatio;
+            const nextX = cropDrag.handle.includes('left') ? anchorX - nextWidth : anchorX;
+            const nextY = cropDrag.handle.includes('top') ? anchorY - nextHeight : anchorY;
+            setCropRect({
+                x: nextX,
+                y: nextY,
+                width: nextWidth,
+                height: nextHeight
+            });
+        };
+        const end = ()=>setCropDrag(null);
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', end, {
+            once: true
+        });
+        window.addEventListener('pointercancel', end, {
+            once: true
+        });
+        return ()=>{
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', end);
+            window.removeEventListener('pointercancel', end);
+        };
+    }, [
+        cropDrag,
+        fullCropRect.height,
+        fullCropRect.width,
+        localRatio
+    ]);
+    function setLayoutFromPads(base, rawLeft, rawRight, rawTop, rawBottom) {
+        const left = Math.round(Math.max(0, rawLeft));
+        const right = Math.round(Math.max(0, rawRight));
+        const top = Math.round(Math.max(0, rawTop));
+        const bottom = Math.round(Math.max(0, rawBottom));
+        setLayout({
+            ...base,
+            canvasWidth: base.sourceWidth + left + right,
+            canvasHeight: base.sourceHeight + top + bottom,
+            offsetX: left,
+            offsetY: top
+        });
+    }
+    function adjustPadding(side, amount) {
+        if (!layout) return;
+        setLayoutFromPads(layout, pads.left + (side === 'left' ? amount : 0), pads.right + (side === 'right' ? amount : 0), pads.top + (side === 'top' ? amount : 0), pads.bottom + (side === 'bottom' ? amount : 0));
+    }
+    function applyRatio(target) {
+        if (!layout) return;
+        const [rawWidth, rawHeight] = target.split(':').map(Number);
+        const targetRatio = rawWidth / rawHeight;
+        let canvasWidth = layout.sourceWidth;
+        let canvasHeight = layout.sourceHeight;
+        if (layout.sourceWidth / layout.sourceHeight > targetRatio) canvasHeight = Math.max(layout.sourceHeight, Math.round(layout.sourceWidth / targetRatio));
+        else canvasWidth = Math.max(layout.sourceWidth, Math.round(layout.sourceHeight * targetRatio));
+        setLayout(centeredOutpaintLayout(layout.sourceWidth, layout.sourceHeight, canvasWidth, canvasHeight));
+    }
+    function resetLayout() {
+        if (!layout) return;
+        setLayout(defaultOutpaintLayout(layout.sourceWidth, layout.sourceHeight));
+        setZoom(1);
+    }
+    function resetLocal() {
+        setLocalMode('crop');
+        setLocalRatio('原图');
+        setLocalBackground('transparent');
+        setLocalFlipX(false);
+        setLocalRotation(0);
+        setCropRect(fullCropRect);
+    }
+    function selectLocalMode(nextMode) {
+        setLocalMode(nextMode);
+        if (nextMode === 'canvas' && localRatio === '自由') {
+            setLocalRatio('原图');
+            setCropRect(fullCropRect);
+        }
+    }
+    function selectLocalRatio(nextRatio) {
+        setLocalRatio(nextRatio);
+        if (nextRatio === '自由') return;
+        if (!layout) return;
+        setCropRect(cropSourceRect(layout.sourceWidth, layout.sourceHeight, nextRatio));
+    }
+    function fitToRule() {
+        if (!layout || rule.family === 'unknown') return;
+        setLayout(fitOutpaintLayoutToRule(layout, rule));
+        setZoom(1);
+    }
+    function handleStageWheel(event) {
+        if (!layout || tool !== 'outpaint') return;
+        event.preventDefault();
+        const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+        setZoom((value)=>Math.max(0.18, Math.min(5, Math.round(value * factor * 100) / 100)));
+    }
+    async function applyOutpaint() {
+        if (!layout) return;
+        const currentValidation = validateOutpaintLayout(layout, rule);
+        if (!currentValidation.valid) {
+            onNotify(currentValidation.messages[0] || '当前画布尺寸不适合所选模型');
+            return;
+        }
+        setApplying(true);
+        try {
+            const rendered = await renderOutpaintWhiteCanvas(item.url, layout);
+            await onApply(rendered);
+        } catch (error) {
+            onNotify(error instanceof Error ? error.message : '扩图处理失败');
+        } finally{
+            setApplying(false);
+        }
+    }
+    async function applyLocal() {
+        setLocalApplying(true);
+        try {
+            const rendered = await renderLocalImage(item.url, localMode, localRatio, localBackground, localFlipX, localRotation, localMode === 'crop' ? activeCropRect : undefined);
+            await onApplyLocal(rendered, localOperations);
+        } catch (error) {
+            onNotify(error instanceof Error ? error.message : '本地图片处理失败');
+        } finally{
+            setLocalApplying(false);
+        }
+    }
+    const rotateLocal = (step)=>setLocalRotation((value)=>(value + step + 360) % 360);
+    const startCropResize = (handle, event)=>{
+        if (!layout) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setCropDrag({
+            handle,
+            startX: event.clientX,
+            startY: event.clientY,
+            scale: cropDisplayScale,
+            rect: activeCropRect
+        });
+    };
+    const startResize = (handle, event)=>{
+        if (!layout) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setDrag({
+            handle,
+            startX: event.clientX,
+            startY: event.clientY,
+            scale: displayScale,
+            layout
+        });
+    };
+    return /*#__PURE__*/ _jsx("div", {
+        className: "outpaint-editor-backdrop",
+        onClick: onClose,
+        children: /*#__PURE__*/ _jsxs("section", {
+            className: "outpaint-editor surface",
+            onClick: (event)=>event.stopPropagation(),
+            children: [
+                /*#__PURE__*/ _jsxs("header", {
+                    className: "outpaint-editor-head",
+                    children: [
+                        /*#__PURE__*/ _jsxs("div", {
+                            children: [
+                                /*#__PURE__*/ _jsx("span", {
+                                    children: "图像编辑"
+                                }),
+                                /*#__PURE__*/ _jsx("h2", {
+                                    children: tool === 'outpaint' ? 'AI 扩图 / 填充' : '裁剪 / 补边 / 变换'
+                                }),
+                                /*#__PURE__*/ _jsx("small", {
+                                    children: tool === 'outpaint' ? '原图默认居中，拖动边框扩出白边；滚轮只缩放视图，不改变输出尺寸。' : '裁剪和补边均在本机完成，不消耗模型额度；原图会保留。'
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsx("button", {
+                            type: "button",
+                            className: "icon-button",
+                            onClick: onClose,
+                            children: /*#__PURE__*/ _jsx(Icon, {
+                                name: "close"
+                            })
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ _jsxs("div", {
+                    className: "outpaint-toolbar",
+                    children: [
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "image-editor-tabs",
+                            children: [
+                                /*#__PURE__*/ _jsxs("button", {
+                                    type: "button",
+                                    className: tool === 'outpaint' ? 'active' : '',
+                                    onClick: ()=>setTool('outpaint'),
+                                    children: [
+                                        /*#__PURE__*/ _jsx(Icon, {
+                                            name: "full",
+                                            size: 15
+                                        }),
+                                        "AI 扩图"
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("button", {
+                                    type: "button",
+                                    className: tool === 'local' ? 'active' : '',
+                                    onClick: ()=>setTool('local'),
+                                    children: [
+                                        /*#__PURE__*/ _jsx(Icon, {
+                                            name: "adjust",
+                                            size: 15
+                                        }),
+                                        "裁剪与变换"
+                                    ]
+                                })
+                            ]
+                        }),
+                        tool === 'outpaint' ? /*#__PURE__*/ _jsxs("div", {
+                            className: "outpaint-tool-options",
+                            children: [
+                                [
+                                    '1:1',
+                                    '4:5',
+                                    '16:9',
+                                    '9:16',
+                                    '21:9',
+                                    '4:1',
+                                    '1:4',
+                                    '8:1',
+                                    '1:8'
+                                ].map((itemRatio)=>/*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        onClick: ()=>applyRatio(itemRatio),
+                                        children: itemRatio
+                                    }, itemRatio)),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    onClick: resetLayout,
+                                    children: "还原居中"
+                                }),
+                                rule.family !== 'unknown' && /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    onClick: fitToRule,
+                                    children: "适配模型限制"
+                                }),
+                                /*#__PURE__*/ _jsx("span", {
+                                    className: `outpaint-model-hint ${validation && !validation.valid ? 'invalid' : ''}`,
+                                    children: validation && !validation.valid ? validation.messages[0] : `${rule.label} · ${rule.hint}`
+                                })
+                            ]
+                        }) : /*#__PURE__*/ _jsxs("div", {
+                            className: "local-tool-options",
+                            children: [
+                                /*#__PURE__*/ _jsxs("div", {
+                                    className: "local-tool-group",
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "方式"
+                                        }),
+                                        /*#__PURE__*/ _jsx("button", {
+                                            type: "button",
+                                            className: localMode === 'crop' ? 'active' : '',
+                                            onClick: ()=>selectLocalMode('crop'),
+                                            children: "裁剪"
+                                        }),
+                                        /*#__PURE__*/ _jsx("button", {
+                                            type: "button",
+                                            className: localMode === 'canvas' ? 'active' : '',
+                                            onClick: ()=>selectLocalMode('canvas'),
+                                            children: "补边"
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    className: "local-tool-group",
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "比例"
+                                        }),
+                                        localRatios.filter((ratio)=>localMode === 'crop' || ratio !== '自由').map((ratio)=>/*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: localRatio === ratio ? 'active' : '',
+                                                onClick: ()=>selectLocalRatio(ratio),
+                                                children: ratio
+                                            }, ratio))
+                                    ]
+                                }),
+                                localMode === 'canvas' && /*#__PURE__*/ _jsxs("div", {
+                                    className: "local-tool-group",
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "背景"
+                                        }),
+                                        localBackgrounds.map((option)=>/*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: localBackground === option.value ? `active bg-${option.value}` : `bg-${option.value}`,
+                                                onClick: ()=>setLocalBackground(option.value),
+                                                children: option.label
+                                            }, option.value))
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    className: "local-tool-group local-transform-tools",
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "变换"
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            className: localFlipX ? 'active' : '',
+                                            onClick: ()=>setLocalFlipX((value)=>!value),
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "flip",
+                                                    size: 14
+                                                }),
+                                                "镜像"
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            onClick: ()=>rotateLocal(-90),
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "rotate",
+                                                    size: 14
+                                                }),
+                                                "左转"
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            onClick: ()=>rotateLocal(90),
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "rotate",
+                                                    size: 14
+                                                }),
+                                                "右转"
+                                            ]
+                                        })
+                                    ]
+                                })
+                            ]
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ _jsxs("div", {
+                    className: `outpaint-stage ${tool === 'local' ? 'local-editor-stage' : ''}`,
+                    ref: stageRef,
+                    onWheel: handleStageWheel,
+                    children: [
+                        /*#__PURE__*/ _jsx("img", {
+                            className: "outpaint-loader",
+                            src: item.url,
+                            alt: "",
+                            onLoad: (event)=>{
+                                if (layout) return;
+                                const width = event.currentTarget.naturalWidth;
+                                const height = event.currentTarget.naturalHeight;
+                                setLayout(defaultOutpaintLayout(width, height));
+                                setCropRect({
+                                    x: 0,
+                                    y: 0,
+                                    width,
+                                    height
+                                });
+                            }
+                        }),
+                        tool === 'outpaint' ? layout ? /*#__PURE__*/ _jsx("div", {
+                            className: "outpaint-stage-inner",
+                            children: /*#__PURE__*/ _jsxs("div", {
+                                className: `outpaint-workspace ${validation && !validation.valid ? 'invalid' : ''}`,
+                                style: {
+                                    width: layout.canvasWidth * displayScale,
+                                    height: layout.canvasHeight * displayScale
+                                },
+                                children: [
+                                    /*#__PURE__*/ _jsx("img", {
+                                        className: "outpaint-image",
+                                        src: item.url,
+                                        alt: item.prompt,
+                                        style: {
+                                            left: layout.offsetX * displayScale,
+                                            top: layout.offsetY * displayScale,
+                                            width: layout.sourceWidth * displayScale,
+                                            height: layout.sourceHeight * displayScale
+                                        }
+                                    }),
+                                    /*#__PURE__*/ _jsxs("span", {
+                                        className: `outpaint-size-badge ${validation && !validation.valid ? 'invalid' : ''}`,
+                                        children: [
+                                            layout.canvasWidth,
+                                            " \xd7 ",
+                                            layout.canvasHeight
+                                        ]
+                                    }),
+                                    [
+                                        'left',
+                                        'right',
+                                        'top',
+                                        'bottom',
+                                        'top-left',
+                                        'top-right',
+                                        'bottom-left',
+                                        'bottom-right'
+                                    ].map((handle)=>/*#__PURE__*/ _jsx("button", {
+                                            type: "button",
+                                            "aria-label": `拖动 ${handle}`,
+                                            className: `outpaint-handle ${handle}`,
+                                            onPointerDown: (event)=>startResize(handle, event)
+                                        }, handle))
+                                ]
+                            })
+                        }) : /*#__PURE__*/ _jsxs("div", {
+                            className: "outpaint-loading",
+                            children: [
+                                /*#__PURE__*/ _jsx("span", {
+                                    className: "mini-loader"
+                                }),
+                                "读取图片尺寸…"
+                            ]
+                        }) : localMode === 'crop' && layout ? /*#__PURE__*/ _jsx("div", {
+                            className: "crop-editor-stage-inner",
+                            children: /*#__PURE__*/ _jsxs("div", {
+                                className: "crop-source-frame",
+                                style: {
+                                    width: cropDisplayWidth,
+                                    height: cropDisplayHeight
+                                },
+                                children: [
+                                    /*#__PURE__*/ _jsx("img", {
+                                        className: "crop-source-image",
+                                        src: item.url,
+                                        alt: item.prompt || '图片预览'
+                                    }),
+                                    /*#__PURE__*/ _jsx("span", {
+                                        className: "crop-dim-mask",
+                                        style: {
+                                            left: 0,
+                                            top: 0,
+                                            width: '100%',
+                                            height: activeCropRect.y * cropDisplayScale
+                                        }
+                                    }),
+                                    /*#__PURE__*/ _jsx("span", {
+                                        className: "crop-dim-mask",
+                                        style: {
+                                            left: 0,
+                                            top: (activeCropRect.y + activeCropRect.height) * cropDisplayScale,
+                                            width: '100%',
+                                            height: Math.max(0, (fullCropRect.height - activeCropRect.y - activeCropRect.height) * cropDisplayScale)
+                                        }
+                                    }),
+                                    /*#__PURE__*/ _jsx("span", {
+                                        className: "crop-dim-mask",
+                                        style: {
+                                            left: 0,
+                                            top: activeCropRect.y * cropDisplayScale,
+                                            width: activeCropRect.x * cropDisplayScale,
+                                            height: activeCropRect.height * cropDisplayScale
+                                        }
+                                    }),
+                                    /*#__PURE__*/ _jsx("span", {
+                                        className: "crop-dim-mask",
+                                        style: {
+                                            left: (activeCropRect.x + activeCropRect.width) * cropDisplayScale,
+                                            top: activeCropRect.y * cropDisplayScale,
+                                            width: Math.max(0, (fullCropRect.width - activeCropRect.x - activeCropRect.width) * cropDisplayScale),
+                                            height: activeCropRect.height * cropDisplayScale
+                                        }
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "crop-selection",
+                                        style: cropFrameStyle,
+                                        children: [
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "crop-move-zone",
+                                                "aria-label": "拖动裁剪框",
+                                                onPointerDown: (event)=>startCropResize('move', event)
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                className: "crop-grid"
+                                            }),
+                                            /*#__PURE__*/ _jsxs("span", {
+                                                className: "crop-size-badge",
+                                                children: [
+                                                    Math.round(activeCropRect.width),
+                                                    " \xd7 ",
+                                                    Math.round(activeCropRect.height)
+                                                ]
+                                            }),
+                                            [
+                                                'left',
+                                                'right',
+                                                'top',
+                                                'bottom',
+                                                'top-left',
+                                                'top-right',
+                                                'bottom-left',
+                                                'bottom-right'
+                                            ].map((handle)=>/*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    "aria-label": `拖动裁剪框 ${handle}`,
+                                                    className: `outpaint-handle crop-handle ${handle}`,
+                                                    onPointerDown: (event)=>startCropResize(handle, event)
+                                                }, handle))
+                                        ]
+                                    })
+                                ]
+                            })
+                        }) : /*#__PURE__*/ _jsx("div", {
+                            className: "local-editor-stage-inner",
+                            children: /*#__PURE__*/ _jsxs("div", {
+                                className: `local-editor-workspace ${localMode} bg-${localBackground}`,
+                                style: {
+                                    ...localPreviewStyle,
+                                    width: localPreviewWidth,
+                                    height: localPreviewHeight
+                                },
+                                children: [
+                                    /*#__PURE__*/ _jsx("img", {
+                                        src: item.url,
+                                        alt: item.prompt || '图片预览',
+                                        style: localImageStyle
+                                    }),
+                                    /*#__PURE__*/ _jsxs("span", {
+                                        className: "local-editor-size-badge",
+                                        children: [
+                                            "完整保留 \xb7 ",
+                                            localRatio
+                                        ]
+                                    })
+                                ]
+                            })
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ _jsxs("div", {
+                    className: "outpaint-controls",
+                    children: [
+                        tool === 'outpaint' ? /*#__PURE__*/ _jsxs("div", {
+                            className: "outpaint-pad-controls",
+                            children: [
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    onClick: ()=>layout && setLayoutFromPads(layout, pads.left + 160, pads.right + 160, pads.top + 160, pads.bottom + 160),
+                                    children: "四周 +160"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    onClick: ()=>adjustPadding('left', 160),
+                                    children: "左 +160"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    onClick: ()=>adjustPadding('right', 160),
+                                    children: "右 +160"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    onClick: ()=>adjustPadding('top', 160),
+                                    children: "上 +160"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    onClick: ()=>adjustPadding('bottom', 160),
+                                    children: "下 +160"
+                                })
+                            ]
+                        }) : /*#__PURE__*/ _jsxs("div", {
+                            className: "local-editor-summary",
+                            children: [
+                                /*#__PURE__*/ _jsx("span", {
+                                    children: localOperations.length ? localOperations.join('、') : '保持原图尺寸和方向'
+                                }),
+                                /*#__PURE__*/ _jsx("small", {
+                                    children: "本机处理 \xb7 不调用模型"
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "outpaint-actions",
+                            children: [
+                                tool === 'outpaint' ? /*#__PURE__*/ _jsxs(_Fragment, {
+                                    children: [
+                                        /*#__PURE__*/ _jsxs("span", {
+                                            className: "outpaint-zoom-readout",
+                                            children: [
+                                                "视图 ",
+                                                Math.round(zoom * 100),
+                                                "%"
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsx("button", {
+                                            type: "button",
+                                            className: "secondary-action compact",
+                                            onClick: ()=>setZoom(1),
+                                            children: "适合窗口"
+                                        })
+                                    ]
+                                }) : /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: "secondary-action compact",
+                                    onClick: resetLocal,
+                                    children: "重置变换"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: "secondary-action",
+                                    onClick: onClose,
+                                    children: "取消"
+                                }),
+                                tool === 'outpaint' ? /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: "primary-action compact",
+                                    disabled: !layout || applying || Boolean(validation && !validation.valid),
+                                    onClick: ()=>void applyOutpaint(),
+                                    children: applying ? /*#__PURE__*/ _jsxs(_Fragment, {
+                                        children: [
+                                            /*#__PURE__*/ _jsx("span", {
+                                                className: "mini-loader"
+                                            }),
+                                            "处理中…"
+                                        ]
+                                    }) : '发布到生图'
+                                }) : /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: "primary-action compact",
+                                    disabled: localApplying,
+                                    onClick: ()=>void applyLocal(),
+                                    children: localApplying ? /*#__PURE__*/ _jsxs(_Fragment, {
+                                        children: [
+                                            /*#__PURE__*/ _jsx("span", {
+                                                className: "mini-loader"
+                                            }),
+                                            "处理中…"
+                                        ]
+                                    }) : '保存处理版本'
+                                })
+                            ]
+                        })
+                    ]
+                })
+            ]
+        })
+    });
+}
+/**
+ * 生图等待卡片：从发起请求一直显示到出图，中途的阶段进度不再把它换掉。
+ * 正文开始流式输出（activity 被清空或 imageFlow 被撤销）时立刻让位给正文。
+ */
+function showAgentImageLoadingCard(message) {
+    if (!message || (!message.pending && !message.retrying)) return false;
+    const activity = message.activity || {};
+    if (activity.imageFlow === true) return true;
+    return /^(?:image|caption)/.test(String(activity.stage || ''));
+}
+/*
+ * 流式 token 不需要逐个触发 React 重渲染。保留最新文本，按一个短窗口
+ * 合并提交，既能保持实时感，也能避免 Markdown 解析、布局和滚动互相打架。
+ */
+function createStreamUpdateScheduler(apply, delay = 32) {
+    let timer = 0;
+    let pending = null;
+    const flush = ()=>{
+        if (timer) {
+            window.clearTimeout(timer);
+            timer = 0;
+        }
+        if (pending === null) return;
+        const next = pending;
+        pending = null;
+        apply(next);
+    };
+    const schedule = (value)=>{
+        pending = value;
+        if (timer) return;
+        timer = window.setTimeout(()=>{
+            timer = 0;
+            if (pending === null) return;
+            const next = pending;
+            pending = null;
+            apply(next);
+        }, delay);
+    };
+    const cancel = ()=>{
+        if (timer) window.clearTimeout(timer);
+        timer = 0;
+        pending = null;
+    };
+    return { schedule, flush, cancel };
+}
+export default function Page() {
+    // 'boot'：还不知道本次安装是否看过开屏；'welcome'：首次进入展示开屏；'workspace'：直接进工作区。
+    const [welcomeStage, setWelcomeStage] = useState('boot');
+    const [section, setSectionState] = useState('agent');
+    const [managementNavOpen, setManagementNavOpen] = useState(false);
+    const sectionRef = useRef('agent');
+    const lastNonAngleSectionRef = useRef('agent');
+    function setSection(next) {
+        const previousSection = sectionRef.current;
+        sectionRef.current = next;
+        if (previousSection === 'agent' && next !== 'agent') setSidebarOpen(false);
+        if (next === 'models' || next === 'providers' || next === 'settings') setManagementNavOpen(true);
+        if (next !== 'angle') {
+            lastNonAngleSectionRef.current = next;
+            try {
+                localStorage.setItem(LAST_SECTION_STORAGE_KEY, next);
+            } catch  {}
+        }
+        setSectionState(next);
+        if (next === 'agent' && previousSection !== 'agent') requestChatScrollAfterCommit();
+    }
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [supportOpen, setSupportOpen] = useState(false);
+    const [supportTab, setSupportTab] = useState('community');
+    useEffect(()=>{
+        if (!supportOpen) return;
+        const closeOnEscape = (event)=>{
+            if (event.key === 'Escape') setSupportOpen(false);
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return ()=>window.removeEventListener('keydown', closeOnEscape);
+    }, [
+        supportOpen
+    ]);
+    const [theme, setTheme] = useState('light');
+    const [successSoundEnabled, setSuccessSoundEnabled] = useState(false);
+    const successAudioRef = useRef(null);
+    const [state, setState] = useState(emptyState);
+    const [loadingState, setLoadingState] = useState(true);
+    const [toast, setToast] = useState('');
+    const toastTimerRef = useRef(null);
+    const [confirmState, setConfirmState] = useState(null);
+    useEffect(()=>{
+        let active = true;
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(()=>controller.abort(), 2500);
+        void (async ()=>{
+            let seen = false;
+            try {
+                seen = localStorage.getItem(WELCOME_SEEN_STORAGE_KEY) === '1';
+            } catch  {}
+            try {
+                // 以「本次安装」的服务端标记为准：新用户换浏览器、重新解压一份包都能看到开屏。
+                const res = await fetch('/api/onboarding', {
+                    cache: 'no-store',
+                    signal: controller.signal
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (typeof data?.seen === 'boolean') seen = data.seen;
+                }
+            } catch  {}
+            window.clearTimeout(timeoutId);
+            if (active) setWelcomeStage(seen ? 'workspace' : 'welcome');
+        })();
+        return ()=>{
+            active = false;
+            window.clearTimeout(timeoutId);
+            controller.abort();
+        };
+    }, []);
+    function enterWelcome() {
+        setWelcomeStage('workspace');
+        // 记到本次安装，之后换浏览器也不会重复开屏；写入失败时仍以本机标记兜底。
+        void fetch('/api/onboarding', { method: 'POST' }).catch(()=>undefined);
+    }
+    // Keep the feedback global so every send/generate entry point gets the same
+    // lightweight celebration without touching its existing submit handler.
+    useEffect(()=>{
+        const motionQuery = typeof window.matchMedia === 'function'
+            ? window.matchMedia('(prefers-reduced-motion: reduce)')
+            : { matches: false };
+        const celebrationLabels = /^(发送|提交后台|按当前机位生成|开始生成|开始\d+×超分|基于参考图生成|测试并连接|测试并保存|发布到生图|保存处理版本|应用局部编辑|重试|重新生成|用此参数再生成)/;
+        const isCelebrationButton = (button)=>{
+            if (button.matches('.send-button, .angle-submit .primary-action, .generate-submit-sticky .primary-action')) return true;
+            const label = button.textContent?.replace(/\s+/g, '').trim() || '';
+            return celebrationLabels.test(label);
+        };
+        const handleClick = (event)=>{
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            const button = target.closest('button');
+            if (!(button instanceof HTMLButtonElement) || button.disabled || !isCelebrationButton(button)) return;
+            const reducedMotion = motionQuery.matches && document.documentElement.dataset.motion !== 'on';
+            button.classList.remove('celebration-button-active');
+            void button.offsetWidth;
+            button.classList.add('celebration-button-active');
+            window.setTimeout(()=>button.classList.remove('celebration-button-active'), 560);
+            const rect = button.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+            const burst = document.createElement('span');
+            burst.className = `celebration-burst ${reducedMotion ? 'celebration-burst-reduced' : ''}`;
+            burst.setAttribute('aria-hidden', 'true');
+            burst.style.left = `${rect.left + rect.width / 2}px`;
+            burst.style.top = `${rect.top + rect.height / 2}px`;
+            const colors = [
+                '#ffcc66',
+                '#ff8f70',
+                '#78d8ff',
+                '#9ee6b8',
+                '#d8a5ff',
+                '#ffffff'
+            ];
+            const particleCount = reducedMotion ? 0 : 24;
+            for(let index = 0; index < particleCount; index += 1){
+                const particle = document.createElement('i');
+                const angle = Math.PI * 2 * index / particleCount + (Math.random() - 0.5) * 0.32;
+                const distance = 28 + Math.random() * 46;
+                particle.className = `celebration-particle ${index % 4 === 0 ? 'spark' : index % 4 === 1 ? 'dot' : 'ribbon'}`;
+                particle.style.setProperty('--burst-x', `${Math.cos(angle) * distance}px`);
+                particle.style.setProperty('--burst-y', `${Math.sin(angle) * distance - 6}px`);
+                particle.style.setProperty('--burst-rotate', `${Math.round(angle * 180 / Math.PI + 90)}deg`);
+                particle.style.setProperty('--burst-delay', `${Math.round(Math.random() * 100)}ms`);
+                particle.style.setProperty('--burst-color', colors[index % colors.length]);
+                particle.style.setProperty('--burst-scale', `${0.72 + Math.random() * 0.72}`);
+                burst.appendChild(particle);
+            }
+            document.body.appendChild(burst);
+            window.setTimeout(()=>burst.remove(), reducedMotion ? 720 : 1100);
+        };
+        document.addEventListener('click', handleClick, true);
+        return ()=>document.removeEventListener('click', handleClick, true);
+    }, []);
+    const [adminRequired, setAdminRequired] = useState(false);
+    const [isAdmin, setIsAdmin] = useState(false);
+    const [adminPassword, setAdminPassword] = useState('');
+    const [adminBusy, setAdminBusy] = useState(false);
+    const [providerEditor, setProviderEditor] = useState(false);
+    const [providerEditId, setProviderEditId] = useState(null);
+    const [providerSearch, setProviderSearch] = useState('');
+    const [providerBusy, setProviderBusy] = useState(false);
+    const [providerTestBusy, setProviderTestBusy] = useState(false);
+    const [providerTestResult, setProviderTestResult] = useState('');
+    const [providerSetupDismissed, setProviderSetupDismissed] = useState(false);
+    const providerTestResultRef = useRef(null);
+    useEffect(()=>{
+        if (!providerTestResult) return;
+        const frame = window.requestAnimationFrame(()=>{
+            const result = providerTestResultRef.current;
+            if (!result) return;
+            const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches && document.documentElement.dataset.motion !== 'on';
+            result.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center', inline: 'nearest' });
+        });
+        return ()=>window.cancelAnimationFrame(frame);
+    }, [providerTestResult]);
+    useEffect(()=>{
+        if (!providerSetupDismissed) return;
+        localStorage.setItem(PROVIDER_SETUP_DISMISSED_STORAGE_KEY, '1');
+    }, [providerSetupDismissed]);
+    const [jimengLogin, setJimengLogin] = useState({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' });
+    const [syncingId, setSyncingId] = useState(null);
+    const [providerForm, setProviderForm] = useState(emptyProviderForm);
+    const [manualModelProvider, setManualModelProvider] = useState(null);
+    const [manualModelForm, setManualModelForm] = useState({ rawId: '', displayName: '', kind: 'auto' });
+    const [manualModelBusy, setManualModelBusy] = useState(false);
+    const selectedProviderPreset = getProviderPreset(providerForm.platform);
+    const providerModalOpen = providerEditor || !state.providers.length && !providerSetupDismissed;
+    const manageableProviders = useMemo(()=>state.providers.filter((provider)=>provider.platform !== 'jimeng-cli' && provider.videoTransport !== 'jimeng-cli'), [
+        state.providers
+    ]);
+    const visibleProviders = useMemo(()=>{
+        const query = providerSearch.trim().toLowerCase();
+        if (!query) return manageableProviders;
+        return manageableProviders.filter((provider)=>`${provider.name || ''} ${providerPlatformLabel(provider.platform)} ${provider.baseUrl || ''} ${provider.type || ''}`.toLowerCase().includes(query));
+    }, [
+        manageableProviders,
+        providerSearch
+    ]);
+    const [modelSearch, setModelSearch] = useState('');
+    const [modelProviderFilter, setModelProviderFilter] = useState('all');
+    const [modelKindFilter, setModelKindFilter] = useState('all');
+    const [modelQuickFilter, setModelQuickFilter] = useState('all');
+    const [expandedModelProviders, setExpandedModelProviders] = useState(new Set());
+    const modelKindBusyRef = useRef(new Set());
+    const [modelKindBusy, setModelKindBusy] = useState(new Set());
+    const [modelFavorites, setModelFavorites] = useState([]);
+    const [modelRecent, setModelRecent] = useState([]);
+    const [messages, setMessages] = useState([]);
+    const [activeMcpMessageId, setActiveMcpMessageId] = useState(null);
+    const activeMcpMessage = messages.find((message)=>message.id === activeMcpMessageId && message.role === 'assistant' && !message.pending && message.mcpTools?.length) || null;
+    const [chatSessions, setChatSessions] = useState([]);
+    const [renamingChatId, setRenamingChatId] = useState(null);
+    const [renamingChatTitle, setRenamingChatTitle] = useState('');
+    const [activeChatId, setActiveChatId] = useState(null);
+    const [agentPersonaDraft, setAgentPersonaDraft] = useState('');
+    const agentPersonaRef = useRef('');
+    const [agentInput, setAgentInput] = useState('');
+    const [promptOptimizing, setPromptOptimizing] = useState(false);
+    const [agentInputBeforeOptimization, setAgentInputBeforeOptimization] = useState(null);
+    const [busyChatIds, setBusyChatIds] = useState([]);
+    const [agentRefs, setAgentRefs] = useState([]);
+    const [messageReferencePreview, setMessageReferencePreview] = useState(null);
+    const [chatFilePreview, setChatFilePreview] = useState(null);
+    const [sharePreview, setSharePreview] = useState(null);
+    const [shareBusy, setShareBusy] = useState(false);
+    const [shareSelectionMode, setShareSelectionMode] = useState(false);
+    const [selectedShareGroups, setSelectedShareGroups] = useState(new Set());
+    const [agentFiles, setAgentFiles] = useState([]);
+    const [agentModelId, setAgentModelId] = useState('auto');
+    const [agentImageModelId, setAgentImageModelId] = useState('auto');
+    const [agentWebMode, setAgentWebMode] = useState('auto');
+    const [agentWebModeMenuOpen, setAgentWebModeMenuOpen] = useState(false);
+    const [webSearchApiProvider, setWebSearchApiProvider] = useState('baidu-qianfan');
+    const [webSearchProviderMenuOpen, setWebSearchProviderMenuOpen] = useState(false);
+    const [webSearchApiKey, setWebSearchApiKey] = useState('');
+    const [webSearchApiBusy, setWebSearchApiBusy] = useState(false);
+    const [webSearchApiResult, setWebSearchApiResult] = useState('');
+    const webSearchProviderMenuRef = useRef(null);
+    const webSearchAnySearchSelected = webSearchApiProvider === 'anysearch';
+    const webSearchAnySearchKeyConfigured = Boolean(state.settings.webSearchAnySearchConfigured);
+    const selectedWebSearchConfigured = webSearchAnySearchSelected
+        ? true
+        : Boolean(state.settings.webSearchQianfanConfigured);
+    useEffect(()=>{
+        if (!webSearchProviderMenuOpen) return;
+        const closeMenu = (event)=>{
+            if (!webSearchProviderMenuRef.current?.contains(event.target)) setWebSearchProviderMenuOpen(false);
+        };
+        document.addEventListener('pointerdown', closeMenu);
+        return ()=>document.removeEventListener('pointerdown', closeMenu);
+    }, [webSearchProviderMenuOpen]);
+    const [chatHistorySearch, setChatHistorySearch] = useState('');
+    const [chatPersonaOnly, setChatPersonaOnly] = useState(false);
+    const [agentFollowUp, setAgentFollowUp] = useState(null);
+    const [agentMessageSelectionMode, setAgentMessageSelectionMode] = useState(false);
+    const [selectedAgentMessages, setSelectedAgentMessages] = useState(new Set());
+    const [chatSelectionMode, setChatSelectionMode] = useState(false);
+    const [selectedChatSessions, setSelectedChatSessions] = useState(new Set());
+    const [selectionPush, setSelectionPush] = useState(null);
+    const [videoPromptPrefill, setVideoPromptPrefill] = useState(null);
+    const [videoTaskPrefill, setVideoTaskPrefill] = useState(null);
+    const [videoDurationPrefill, setVideoDurationPrefill] = useState(null);
+    const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
+    const [videoReferenceQueue, setVideoReferenceQueue] = useState([]);
+    const [videoMediaPrefill, setVideoMediaPrefill] = useState(null);
+    const [videoMediaPrefillToken, setVideoMediaPrefillToken] = useState(0);
+    const [chatNearBottom, setChatNearBottom] = useState(true);
+    const chatEndRef = useRef(null);
+    const agentComposerRef = useRef(null);
+    const agentInputRef = useRef(null);
+    const [agentSkillMenuOpen, setAgentSkillMenuOpen] = useState(false);
+    const [agentSkillQuery, setAgentSkillQuery] = useState('');
+    const [agentSkillActive, setAgentSkillActive] = useState(0);
+    const [agentSkills, setAgentSkills] = useState([]);
+    const agentSkillMenuFromSlashRef = useRef(false);
+    const chatAutoFollowRef = useRef(false);
+    const chatScrollAfterCommitRef = useRef(false);
+    const chatScrollFrameRef = useRef(0);
+    const [conversationNavHoverId, setConversationNavHoverId] = useState(null);
+    const [conversationNavActiveId, setConversationNavActiveId] = useState(null);
+    const conversationNavigatorRef = useRef(null);
+    const conversationNavPreviewRef = useRef(null);
+    const conversationNavPointerRatioRef = useRef(null);
+    const conversationNavCloseTimerRef = useRef(0);
+    const conversationNavCloseAfterClickRef = useRef(false);
+    const activeChatIdRef = useRef(null);
+    const chatMemoryRef = useRef(new Map());
+    const busyChatIdsRef = useRef(new Set());
+    const pendingChatMessagesRef = useRef(new Map());
+    const agentRequestsRef = useRef(new Map());
+    const chatSaveQueuesRef = useRef(new Map());
+    useEffect(()=>{
+        if (!messageReferencePreview) return;
+        const onKeyDown = (event)=>{
+            if (event.key === 'Escape') setMessageReferencePreview(null);
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return ()=>window.removeEventListener('keydown', onKeyDown);
+    }, [
+        messageReferencePreview
+    ]);
+    useEffect(()=>{
+        if (!chatFilePreview) return;
+        const onKeyDown = (event)=>{
+            if (event.key === 'Escape') setChatFilePreview(null);
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return ()=>window.removeEventListener('keydown', onKeyDown);
+    }, [chatFilePreview]);
+    useEffect(()=>{
+        if (!sharePreview) return;
+        const onKeyDown = (event)=>{
+            if (event.key === 'Escape') setSharePreview(null);
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return ()=>{
+            window.removeEventListener('keydown', onKeyDown);
+            URL.revokeObjectURL(sharePreview.url);
+        };
+    }, [sharePreview]);
+    const [generatePrompt, setGeneratePrompt] = useState('');
+    const [generatePromptOptimizing, setGeneratePromptOptimizing] = useState(false);
+    const [generatePromptBeforeOptimization, setGeneratePromptBeforeOptimization] = useState(null);
+    const generatePromptRef = useRef(null);
+    const [generateModelId, setGenerateModelId] = useState('auto');
+    const [generateUpscaleModelId, setGenerateUpscaleModelId] = useState('auto');
+    const [generateWorkflow, setGenerateWorkflow] = useState('generate');
+    const [ratio, setRatio] = useState('1:1');
+    const [customRatioWidth, setCustomRatioWidth] = useState(16);
+    const [customRatioHeight, setCustomRatioHeight] = useState(9);
+    const [sizeMode, setSizeMode] = useState('system');
+    const [sizeDrawer, setSizeDrawer] = useState(null);
+    const [sizeMenuStyle, setSizeMenuStyle] = useState({});
+    const sizeTabsRef = useRef(null);
+    useEffect(()=>{
+        if (!sizeDrawer) return;
+        const closeOnOutsidePointer = (event)=>{
+            const target = event.target;
+            if (target instanceof Node && sizeTabsRef.current?.contains(target)) return;
+            if (target instanceof Element && target.closest('.size-drawer')) return;
+            setSizeDrawer(null);
+        };
+        document.addEventListener('pointerdown', closeOnOutsidePointer);
+        return ()=>document.removeEventListener('pointerdown', closeOnOutsidePointer);
+    }, [
+        sizeDrawer
+    ]);
+    const [sizeTier, setSizeTier] = useState('1k');
+    const [count, setCount] = useState(1);
+    const [quality, setQuality] = useState('自动');
+    const [generateAdvancedOpen, setGenerateAdvancedOpen] = useState(false);
+    const [customWidth, setCustomWidth] = useState(1024);
+    const [customHeight, setCustomHeight] = useState(1024);
+    const [generateRefs, setGenerateRefs] = useState([]);
+    const [generateAutoReferenceSize, setGenerateAutoReferenceSize] = useState(null);
+    const [generateUpscaleScale, setGenerateUpscaleScale] = useState(2);
+    const [generateUpscaleTarget, setGenerateUpscaleTarget] = useState('auto');
+    const [generateUpscaleSeed, setGenerateUpscaleSeed] = useState(42);
+    const [generateUpscaleColorCorrection, setGenerateUpscaleColorCorrection] = useState('wavelet');
+    const [generateUpscaleAlgorithm, setGenerateUpscaleAlgorithm] = useState('lanczos');
+    const [generateUpscaleOutputFormat, setGenerateUpscaleOutputFormat] = useState('png');
+    const [generateUpscaleOutputQuality, setGenerateUpscaleOutputQuality] = useState(95);
+    const [generateUpscaleSourceSize, setGenerateUpscaleSourceSize] = useState(null);
+    const [generateMask, setGenerateMask] = useState(null);
+    const [maskEditorOpen, setMaskEditorOpen] = useState(false);
+    const [editorMaskOpen, setEditorMaskOpen] = useState(false);
+    const [outputFormat, setOutputFormat] = useState('png');
+    const [backgroundMode, setBackgroundMode] = useState('auto');
+    const [generateSettingsReady, setGenerateSettingsReady] = useState(false);
+    const modelPreferencesRestoredRef = useRef(false);
+    const [generateTasks, setGenerateTasks] = useState([]);
+    const [generateTaskView, setGenerateTaskView] = useState('current');
+    const upscaleRecoveryRef = useRef(new Set());
+    const [generateTasksReady, setGenerateTasksReady] = useState(false);
+    const [generateClock, setGenerateClock] = useState(Date.now());
+    const [resultItems, setResultItems] = useState([]);
+    const [lastGenerateInfo, setLastGenerateInfo] = useState('');
+    const [angleReference, setAngleReference] = useState(null);
+    const [angleCameraSeed, setAngleCameraSeed] = useState(null);
+    const [angleNoteSeed, setAngleNoteSeed] = useState(undefined);
+    const [angleCameraStartSeed, setAngleCameraStartSeed] = useState(null);
+    const [angleResults, setAngleResults] = useState([]);
+    const [angleBusy, setAngleBusy] = useState(false);
+    const [angleOpenBusy, setAngleOpenBusy] = useState(false);
+    const angleOpenRequestRef = useRef('');
+    const [angleResultToast, setAngleResultToast] = useState(null);
+    const [angleResultOpenRequest, setAngleResultOpenRequest] = useState(null);
+    const [angleSuppressAutoOpenId, setAngleSuppressAutoOpenId] = useState(null);
+    const [gallery, setGallery] = useState([]);
+    const [videoTasks, setVideoTasks] = useState([]);
+    const [generationLogs, setGenerationLogs] = useState([]);
+    const [historyNotice, setHistoryNotice] = useState(false);
+    const [logErrorNotice, setLogErrorNotice] = useState(false);
+    const navNoticeSeenRef = useRef({
+        historySeenAt: 0,
+        logErrorSeenAt: 0
+    });
+    const navNoticeStateReadyRef = useRef(false);
+    const [logImageSpecs, setLogImageSpecs] = useState({});
+    const [logFilter, setLogFilter] = useState('all');
+    const [logSearch, setLogSearch] = useState('');
+    const [logFailureFirst, setLogFailureFirst] = useState(false);
+    const [logPage, setLogPage] = useState(1);
+    const [selectedLog, setSelectedLog] = useState(null);
+    const [localDirectoryHandle, setLocalDirectoryHandle] = useState(null);
+    const [localDirectoryName, setLocalDirectoryName] = useState('');
+    const [storagePath, setStoragePath] = useState('');
+    const [storageUsage, setStorageUsage] = useState(null);
+    const [localSnapshots, setLocalSnapshots] = useState([]);
+    const [storageBusy, setStorageBusy] = useState(false);
+    const [cleanupBusy, setCleanupBusy] = useState(false);
+    const [backupBusy, setBackupBusy] = useState(false);
+    const backupInputRef = useRef(null);
+    const [historySearch, setHistorySearch] = useState('');
+    const [historyFilter, setHistoryFilter] = useState('all');
+    const [historyMediaFilter, setHistoryMediaFilter] = useState('all');
+    const [recordTab, setRecordTab] = useState('works');
+    const [pageSize, setPageSize] = useState(DEFAULT_HISTORY_PAGE_SIZE);
+    const [page, setPage] = useState(1);
+    const [videoPage, setVideoPage] = useState(1);
+    const [videoTotal, setVideoTotal] = useState(0);
+    const [selectionMode, setSelectionMode] = useState(false);
+    const [selectedHistory, setSelectedHistory] = useState(new Set());
+    const [viewerId, setViewerId] = useState(null);
+    const [viewerZoom, setViewerZoom] = useState(1);
+    const [viewerPan, setViewerPan] = useState({
+        x: 0,
+        y: 0
+    });
+    const [viewerImageSize, setViewerImageSize] = useState({
+        width: 0,
+        height: 0
+    });
+    const [viewerStageSize, setViewerStageSize] = useState({
+        width: 0,
+        height: 0
+    });
+    const viewerStageRef = useRef(null);
+    const viewerDragRef = useRef({
+        active: false,
+        x: 0,
+        y: 0,
+        panX: 0,
+        panY: 0
+    });
+    const [viewerDragging, setViewerDragging] = useState(false);
+    const [compareState, setCompareState] = useState(null);
+    const [editor, setEditor] = useState(null);
+    const [upscaleSourceSize, setUpscaleSourceSize] = useState(null);
+    const [outpaintEditor, setOutpaintEditor] = useState(null);
+    useEffect(()=>{
+        const initial = readStoredTheme();
+        setTheme(initial);
+        applyTheme(initial);
+        return subscribeToThemeChanges(setTheme);
+    }, []);
+    useEffect(()=>{
+        if (!providerModalOpen) return;
+        const closeOnEscape = (event)=>{
+            if (event.key !== 'Escape') return;
+            closeProviderEditor();
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return ()=>window.removeEventListener('keydown', closeOnEscape);
+    }, [
+        providerModalOpen
+    ]);
+    useEffect(()=>{
+        if (!manualModelProvider) return;
+        const closeOnEscape = (event)=>{
+            if (event.key === 'Escape') setManualModelProvider(null);
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return ()=>window.removeEventListener('keydown', closeOnEscape);
+    }, [manualModelProvider]);
+    useBodyScrollLock(Boolean(supportOpen || confirmState || manualModelProvider || messageReferencePreview || chatFilePreview || sharePreview || sizeDrawer || maskEditorOpen || editorMaskOpen || selectedLog || viewerId || compareState || editor || outpaintEditor || section === 'providers' && (!adminRequired || isAdmin) && providerModalOpen));
+    const activeProviderModels = useMemo(()=>filterModelsByActiveProviders(state.models, state.providers), [
+        state.models,
+        state.providers
+    ]);
+    const availableChatModels = useMemo(()=>activeProviderModels.filter((m)=>m.enabled && m.published && m.kind === 'chat' && !m.capabilities.includes('generate') && !m.capabilities.includes('upscale')), [
+        activeProviderModels
+    ]);
+    const availableImageModels = useMemo(()=>activeProviderModels.filter((m)=>m.enabled && m.published && (m.kind === 'image' || m.capabilities.includes('generate') || m.capabilities.includes('upscale'))), [
+        activeProviderModels
+    ]);
+    const availableVideoModels = useMemo(()=>activeProviderModels.filter((m)=>m.enabled && m.published && (m.kind === 'video' || m.capabilities.some((capability)=>capability.startsWith('video-')))), [
+        activeProviderModels
+    ]);
+    const availableGenerationModels = useMemo(()=>availableImageModels.filter((m)=>m.capabilities.includes('generate')), [
+        availableImageModels
+    ]);
+    const availableEditModels = useMemo(()=>availableImageModels.filter((m)=>m.capabilities.includes('edit')), [
+        availableImageModels
+    ]);
+    const availableUpscaleModels = useMemo(()=>[
+        ...availableImageModels.filter((m)=>m.capabilities.includes('upscale')),
+        ...(state.upscaleModels || [])
+    ], [
+        availableImageModels,
+        state.upscaleModels
+    ]);
+    const agentModel = availableChatModels.find((m)=>m.id === state.settings.agentModelId) || availableChatModels[0];
+    const defaultImageModel = selectAutomaticModel(availableGenerationModels, state.settings.defaultProviderId, state.settings.defaultImageModelId);
+    const defaultUpscaleModel = (state.upscaleModels || []).find((model)=>model.connected && model.id === 'tencent-super-resolution') || (state.upscaleModels || []).find((model)=>model.connected && model.id === 'aliyun-standard-super-resolution') || selectAutomaticModel(availableUpscaleModels.filter((model)=>!model.provider || !['tencent-ci', 'aliyun-viapi'].includes(model.provider) || model.connected), state.settings.defaultProviderId);
+    const defaultProvider = state.providers.find((provider)=>provider.id === state.settings.defaultProviderId && isProviderModelLibraryEnabled(provider));
+    const selectedGenerateModel = generateModelId !== 'auto' ? activeProviderModels.find((m)=>m.id === generateModelId) : defaultImageModel;
+    const selectedUpscaleModel = generateUpscaleModelId !== 'auto' ? availableUpscaleModels.find((m)=>m.id === generateUpscaleModelId) : defaultUpscaleModel;
+    const selectedUpscaleOption = selectedUpscaleModel;
+    const selectedUpscaleIsCloud = isCloudUpscaleModel(selectedUpscaleModel);
+    function handleUpscaleModelChange(value) {
+        setGenerateUpscaleModelId(value);
+        const nextModel = value === 'auto' ? defaultUpscaleModel : availableUpscaleModels.find((model)=>model.id === value);
+        const settings = upscaleEditorSettingsPatch(generateUpscaleScale, generateUpscaleOutputFormat, nextModel, upscaleScales);
+        if (settings.scale !== generateUpscaleScale) setGenerateUpscaleScale(settings.scale);
+        if (nextModel?.outputFormats && settings.upscaleOutputFormat !== generateUpscaleOutputFormat) setGenerateUpscaleOutputFormat(settings.upscaleOutputFormat);
+    }
+    const generateUpscaleMode = generateWorkflow === 'upscale';
+    const activeAgentModelId = agentModelId !== 'auto' && availableChatModels.some((model)=>model.id === agentModelId) ? agentModelId : 'auto';
+    const activeAgentChatModel = activeAgentModelId === 'auto' ? agentModel : availableChatModels.find((model)=>model.id === activeAgentModelId);
+    const matchingModels = useMemo(()=>activeProviderModels.filter((model)=>(modelProviderFilter === 'all' || model.providerId === modelProviderFilter) && (!modelSearch.trim() || `${model.displayName} ${model.rawId}`.toLowerCase().includes(modelSearch.trim().toLowerCase()))), [
+        activeProviderModels,
+        modelProviderFilter,
+        modelSearch
+    ]);
+    const quickFilteredModels = useMemo(()=>matchingModels.filter((model)=>{
+            if (modelQuickFilter === 'enabled') return model.enabled && model.published;
+            if (modelQuickFilter === 'favorite') return modelFavorites.includes(model.id);
+            if (modelQuickFilter === 'recent') return modelRecent.includes(model.id);
+            return true;
+        }), [
+        matchingModels,
+        modelQuickFilter,
+        modelFavorites,
+        modelRecent
+    ]);
+    const visibleModels = useMemo(()=>quickFilteredModels.filter((model)=>modelKindFilter === 'all' || model.kind === modelKindFilter), [
+        quickFilteredModels,
+        modelKindFilter
+    ]);
+    const modelQuickCounts = useMemo(()=>({
+            all: matchingModels.length,
+            enabled: matchingModels.filter((model)=>model.enabled && model.published).length,
+            favorite: matchingModels.filter((model)=>modelFavorites.includes(model.id)).length,
+            recent: matchingModels.filter((model)=>modelRecent.includes(model.id)).length
+        }), [
+        matchingModels,
+        modelFavorites,
+        modelRecent
+    ]);
+    const modelKindCounts = useMemo(()=>({
+            all: quickFilteredModels.length,
+            chat: quickFilteredModels.filter((model)=>model.kind === 'chat').length,
+            image: quickFilteredModels.filter((model)=>model.kind === 'image').length,
+            video: quickFilteredModels.filter((model)=>model.kind === 'video').length,
+            audio: quickFilteredModels.filter((model)=>model.kind === 'audio').length,
+            unknown: quickFilteredModels.filter((model)=>model.kind === 'unknown').length
+        }), [
+        quickFilteredModels
+    ]);
+    const modelProviderGroups = useMemo(()=>{
+        const groups = new Map();
+        for (const model of visibleModels)groups.set(model.providerId, [
+            ...groups.get(model.providerId) || [],
+            model
+        ]);
+        return [
+            ...groups.entries()
+        ].sort(([, left], [, right])=>left[0].providerName.localeCompare(right[0].providerName, 'zh-CN'));
+    }, [
+        visibleModels
+    ]);
+    useEffect(()=>{
+        const sync = ()=>{
+            setModelFavorites(getFavoriteModelIds());
+            setModelRecent(getRecentModelIds());
+        };
+        sync();
+        return subscribeModelPreferences(sync);
+    }, []);
+    const filteredGallery = useMemo(()=>gallery.filter((item)=>{
+            const q = historySearch.trim().toLowerCase();
+            const matchSearch = !q || item.prompt.toLowerCase().includes(q) || (item.modelName || '').toLowerCase().includes(q);
+            const matchMedia = historyMediaFilter === 'all' || historyMediaFilter === 'image';
+            const matchFilter = historyFilter === 'all' || (historyFilter === 'favorite' ? item.favorite : item.source === historyFilter);
+            return matchSearch && matchMedia && matchFilter;
+        }), [
+        gallery,
+        historySearch,
+        historyFilter,
+        historyMediaFilter
+    ]);
+    const visibleVideoTasks = useMemo(()=>videoTasks.filter((task)=>{
+            const q = historySearch.trim().toLowerCase();
+            const matchSearch = !q || `${task.input?.prompt || ''} ${task.modelName || ''}`.toLowerCase().includes(q);
+            const matchMedia = historyMediaFilter === 'all' || historyMediaFilter === 'video';
+            const matchSource = historyFilter === 'all'
+                ? true
+                : historyFilter === 'canvas'
+                    ? task.source === 'canvas'
+                    : historyFilter === 'generate'
+                        ? !task.source || task.source === 'workspace'
+                        : historyFilter === 'agent'
+                            ? task.source === 'agent'
+                            : false;
+            return matchSearch && matchMedia && matchSource;
+        }), [
+        videoTasks,
+        historySearch,
+        historyMediaFilter,
+        historyFilter
+    ]);
+    const hasCreativeRecords = filteredGallery.length > 0 || videoTotal > 0;
+    const logSummary = useMemo(()=>{
+        const completed = generationLogs.filter((log)=>log.status !== 'pending');
+        const success = generationLogs.filter((log)=>log.status === 'success').length;
+        const durations = completed.map((log)=>log.durationMs).filter((value)=>typeof value === 'number' && value > 0);
+        return {
+            total: generationLogs.length,
+            pending: generationLogs.filter((log)=>log.status === 'pending').length,
+            success,
+            error: generationLogs.filter((log)=>log.status === 'error').length,
+            successRate: completed.length ? Math.round(success / completed.length * 100) : 0,
+            averageDuration: durations.length ? `${(durations.reduce((sum, value)=>sum + value, 0) / durations.length / 1000).toFixed(1)}s` : '—'
+        };
+    }, [
+        generationLogs
+    ]);
+    const filteredGenerationLogs = useMemo(()=>{
+        const query = logSearch.trim().toLowerCase();
+        const filtered = generationLogs.filter((log)=>{
+            const matchesStatus = logFilter === 'all' || log.status === logFilter;
+            const matchesMedia = historyMediaFilter === 'all' || generationMediaKind(log) === historyMediaFilter;
+            const matchesQuery = !query || `${log.prompt || ''} ${log.modelName || ''} ${log.providerName || ''} ${generationLogSourceLabel(log)}`.toLowerCase().includes(query);
+            return matchesStatus && matchesMedia && matchesQuery;
+        });
+        if (!logFailureFirst) return filtered;
+        return [...filtered].sort((left, right)=>Number(right.status === 'error') - Number(left.status === 'error'));
+    }, [
+        generationLogs,
+        logFilter,
+        logSearch,
+        historyMediaFilter,
+        logFailureFirst
+    ]);
+    const logTotalPages = Math.max(1, Math.ceil(filteredGenerationLogs.length / generationLogPageSize));
+    const pagedGenerationLogs = useMemo(()=>filteredGenerationLogs.slice((Math.min(logPage, logTotalPages) - 1) * generationLogPageSize, Math.min(logPage, logTotalPages) * generationLogPageSize), [
+        filteredGenerationLogs,
+        logPage,
+        logTotalPages
+    ]);
+    const conversationItems = useMemo(()=>messages.filter((message)=>message.role === 'user').map((message, index)=>({
+                id: message.id,
+                index: index + 1,
+                text: message.content.replace(/\s+/g, ' ').trim() || '空消息'
+            })), [
+        messages
+    ]);
+    useEffect(()=>{
+        if (conversationItems.length > 0) return;
+        if (conversationNavCloseTimerRef.current) window.clearTimeout(conversationNavCloseTimerRef.current);
+        conversationNavCloseTimerRef.current = 0;
+        conversationNavCloseAfterClickRef.current = false;
+        setConversationNavHoverId(null);
+        setConversationNavActiveId(null);
+        conversationNavPointerRatioRef.current = null;
+    }, [
+        conversationItems.length
+    ]);
+    useEffect(()=>{
+        if (section !== 'agent' || conversationItems.length === 0) {
+            setConversationNavActiveId(null);
+            return;
+        }
+        let frame = 0;
+        const updateActiveConversation = ()=>{
+            if (frame) return;
+            frame = window.requestAnimationFrame(()=>{
+                frame = 0;
+                const targetY = Math.min(180, window.innerHeight * 0.28);
+                let closestId = conversationItems[0]?.id ?? null;
+                let closestDistance = Infinity;
+                for (const item of conversationItems){
+                    const element = document.getElementById(`message-${item.id}`);
+                    if (!element) continue;
+                    const distance = Math.abs(element.getBoundingClientRect().top - targetY);
+                    if (distance < closestDistance) {
+                        closestDistance = distance;
+                        closestId = item.id;
+                    }
+                }
+                setConversationNavActiveId((currentId)=>currentId === closestId ? currentId : closestId);
+            });
+        };
+        updateActiveConversation();
+        window.addEventListener('scroll', updateActiveConversation, { passive: true });
+        window.addEventListener('resize', updateActiveConversation);
+        return ()=>{
+            window.removeEventListener('scroll', updateActiveConversation);
+            window.removeEventListener('resize', updateActiveConversation);
+            if (frame) window.cancelAnimationFrame(frame);
+        };
+    }, [conversationItems, section]);
+    const conversationNavHeight = Math.min(300, Math.max(64, Math.max(0, conversationItems.length - 1) * 18 + 20));
+    const shareGroups = useMemo(()=>buildShareConversationGroups(messages), [
+        messages
+    ]);
+    const shareGroupByMessageId = useMemo(()=>new Map(shareGroups.flatMap((group)=>group.messageIds.map((id)=>[
+                id,
+                group
+            ]))), [
+        shareGroups
+    ]);
+    const selectableShareGroups = useMemo(()=>shareGroups.filter((group)=>group.selectable), [
+        shareGroups
+    ]);
+    const selectedShareMessages = useMemo(()=>flattenSelectedShareMessages(shareGroups, selectedShareGroups), [
+        shareGroups,
+        selectedShareGroups
+    ]);
+    const allShareGroupsSelected = selectableShareGroups.length > 0 && selectableShareGroups.every((group)=>selectedShareGroups.has(group.id));
+    const personaChatCount = useMemo(()=>chatSessions.filter((session)=>normalizeConversationPersona(session.persona)).length, [
+        chatSessions
+    ]);
+    const filteredChatSessions = useMemo(()=>{
+        const query = chatHistorySearch.trim().toLowerCase();
+        return chatSessions.filter((session)=>{
+        const persona = normalizeConversationPersona(session.persona);
+        if (chatPersonaOnly && !persona) return false;
+        if (!query) return true;
+        return `${session.title} ${persona} ${session.messages.map((message)=>message.content).join(' ')}`.toLowerCase().includes(query);
+        });
+    }, [
+        chatSessions,
+        chatHistorySearch,
+        chatPersonaOnly
+    ]);
+    const selectableChatSessionIds = useMemo(()=>chatSessions.filter((session)=>!busyChatIds.includes(session.id)).map((session)=>session.id), [
+        chatSessions,
+        busyChatIds
+    ]);
+    const allChatSessionsSelected = selectableChatSessionIds.length > 0 && selectableChatSessionIds.every((id)=>selectedChatSessions.has(id));
+    const activeAgentBusy = activeChatId ? busyChatIds.includes(activeChatId) : false;
+    const agentMessageSelectionActive = agentMessageSelectionMode || shareSelectionMode;
+    /* 助手光球相位：欢迎页主视觉、输入区状态条、消息头像共用同一份判断。 */
+    const agentOrbStatus = useMemo(()=>{
+        if (promptOptimizing) return {
+            phase: 'thinking',
+            title: '正在润色提示词',
+            detail: '润色完成后即可发送。'
+        };
+        if (activeAgentBusy) {
+            const pendingMessage = messages.find((message)=>message.pending && message.role === 'assistant');
+            if (!pendingMessage) return {
+                phase: 'connecting',
+                title: '正在连接模型',
+                detail: '正在准备引用和对话上下文…'
+            };
+            const activity = pendingMessage.activity || {};
+            if (pendingMessage.content && pendingMessage.content !== activity.message) return {
+                phase: 'speaking',
+                title: '正在回答',
+                detail: '内容正在实时输出，可随时停止。'
+            };
+            if (activity.stage === 'preparing') return {
+                phase: 'connecting',
+                title: '正在准备上下文',
+                detail: activity.message || '正在准备引用和对话上下文…'
+            };
+            const imageGenerating = activity.stage === 'image' || activity.stage === 'image_generating';
+            const imaging = activity.imageFlow === true || imageGenerating || activity.stage === 'image_planning';
+            return {
+                phase: 'thinking',
+                title: imageGenerating ? '正在生成图片' : imaging ? '正在构思画面' : '正在思考',
+                detail: activity.message || '模型正在组织答案…'
+            };
+        }
+        const lastMessage = messages[messages.length - 1];
+        if (lastMessage && lastMessage.role === 'assistant' && lastMessage.agentError) return {
+            phase: 'error',
+            title: '上一轮没有成功',
+            detail: '可以重新发送，或在下方换一个模型重试。'
+        };
+        return {
+            phase: 'idle',
+            title: '',
+            detail: ''
+        };
+    }, [
+        activeAgentBusy,
+        messages,
+        promptOptimizing
+    ]);
+    const liveAgentIntent = useMemo(()=>classifyAgentDeliverable(agentInput, {
+        messages,
+        hasReferences: agentRefs.length > 0,
+        hasFiles: agentFiles.length > 0
+    }), [
+        agentInput,
+        messages,
+        agentRefs.length,
+        agentFiles.length
+    ]);
+    const activeAgentIntent = liveAgentIntent;
+    const liveCreativeRoute = useMemo(() => resolveCreativeRoute(agentInput, {
+        messages,
+        hasReferences: agentRefs.length > 0,
+        hasFiles: agentFiles.length > 0,
+    }, liveAgentIntent), [agentInput, agentFiles.length, agentRefs.length, liveAgentIntent, messages]);
+    const agentCreativeCapability = liveCreativeRoute.operation === 'edit' ? 'edit' : 'generate';
+    const availableAgentImageModels = agentCreativeCapability === 'edit' ? availableEditModels : availableGenerationModels;
+    const activeAgentImageModelId = agentImageModelId !== 'auto' && availableAgentImageModels.some((model)=>model.id === agentImageModelId)
+        ? agentImageModelId
+        : 'auto';
+    useEffect(()=>{
+        if (agentImageModelId !== 'auto' && !availableAgentImageModels.some((model)=>model.id === agentImageModelId)) setAgentImageModelId('auto');
+    }, [agentImageModelId, availableAgentImageModels]);
+    const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
+    const videoTotalPages = Math.max(1, Math.ceil(videoTotal / pageSize));
+    const visibleVideoPage = Math.min(videoPage, videoTotalPages);
+    const pagedGallery = useMemo(()=>filteredGallery.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize), [
+        filteredGallery,
+        page,
+        totalPages,
+        pageSize
+    ]);
+    const viewerItems = section === 'history' ? pagedGallery : resultItems.length ? resultItems : gallery;
+    const viewerIndex = viewerId ? viewerItems.findIndex((item)=>item.id === viewerId) : -1;
+    const viewerItem = viewerIndex >= 0 ? viewerItems[viewerIndex] : null;
+    const viewerReferences = viewerItem ? galleryReferences(viewerItem) : [];
+    const viewerComparisonSource = viewerItem ? getComparisonSource(viewerItem) : null;
+    const viewerParentItem = viewerComparisonSource?.item || null;
+    const effectiveAutoRatio = ratio === '自动' && generateRefs.length === 1 && generateAutoReferenceSize ? exactRatioFromDimensions(generateAutoReferenceSize.width, generateAutoReferenceSize.height) : '自动';
+    const selectedRatioLabel = ratioLabel(ratio === '自动' && effectiveAutoRatio !== '自动' ? effectiveAutoRatio : ratio, customRatioWidth, customRatioHeight);
+    const selectedPresetSize = useMemo(()=>presetDimensions(ratio === '自动' ? effectiveAutoRatio : ratio, sizeTier, customRatioWidth, customRatioHeight), [
+        ratio,
+        effectiveAutoRatio,
+        sizeTier,
+        customRatioWidth,
+        customRatioHeight
+    ]);
+    const generateUpscaleTargetPreview = useMemo(()=>generateUpscaleSourceSize ? upscaleTargetDimensions(generateUpscaleSourceSize, generateUpscaleScale, selectedUpscaleModel, generateUpscaleTarget) : null, [
+        generateUpscaleSourceSize,
+        generateUpscaleScale,
+        generateUpscaleTarget,
+        selectedUpscaleModel
+    ]);
+    const viewerDisplaySize = useMemo(()=>{
+        if (!viewerImageSize.width || !viewerImageSize.height || !viewerStageSize.width || !viewerStageSize.height) return {
+            width: 0,
+            height: 0
+        };
+        const fit = Math.min((viewerStageSize.width - 40) / viewerImageSize.width, (viewerStageSize.height - 40) / viewerImageSize.height, 1);
+        return {
+            width: Math.max(1, Math.round(viewerImageSize.width * fit * viewerZoom)),
+            height: Math.max(1, Math.round(viewerImageSize.height * fit * viewerZoom))
+        };
+    }, [
+        viewerImageSize,
+        viewerStageSize,
+        viewerZoom
+    ]);
+    const editorDisplayRatio = editor ? editorRatio(editor) : '1:1';
+    const editorDisplaySize = editor ? editor.sizeMode === 'custom' ? {
+        width: editor.customWidth,
+        height: editor.customHeight
+    } : presetDimensions(editorDisplayRatio, editor.sizeTier) : {
+        width: 0,
+        height: 0
+    };
+    const upscaleTargetPreview = useMemo(()=>editor?.mode === 'upscale' && upscaleSourceSize ? upscaleTargetDimensions(upscaleSourceSize, editor.scale, availableUpscaleModels.find((model)=>model.id === editor.modelId) || defaultUpscaleModel, editor.targetSize) : null, [
+        editor?.mode,
+        editor?.scale,
+        editor?.targetSize,
+        editor?.modelId,
+        upscaleSourceSize,
+        availableUpscaleModels,
+        defaultUpscaleModel
+    ]);
+    const activeGenerateTasks = useMemo(()=>generateTasks.filter((task)=>task.status === 'pending'), [
+        generateTasks
+    ]);
+    const visibleGenerateTasks = useMemo(()=>generateTaskView === 'all'
+        ? generateTasks
+        : activeGenerateTasks.length
+            ? activeGenerateTasks
+            : generateTasks.slice(0, 1), [
+        generateTasks,
+        activeGenerateTasks,
+        generateTaskView
+    ]);
+    const generateBusy = activeGenerateTasks.length > 0;
+    const agentWebSearchAvailable = Boolean(state.settings.webSearchConfigured) || Boolean(activeAgentChatModel?.capabilities.includes('web-search'));
+    const nativeWebSearchModelActive = Boolean(activeAgentChatModel?.capabilities.includes('web-search'));
+    const agentWebSearchActive = agentWebMode !== 'off' && agentWebSearchAvailable;
+    const nativeWebSearchHint = nativeWebSearchModelActive
+        ? '当前模型自带联网搜索，将优先使用模型原生能力；失败时自动回退外部搜索 API'
+        : '当前使用外部搜索 API；切换到带“原生联网”标签的模型后会优先使用模型自身搜索';
+    useEffect(()=>{
+        let cancelled = false;
+        let stopWorkspaceSync = ()=>{};
+        const start = async ()=>{
+            initializeNavNoticeState();
+            try {
+            const savedSection = localStorage.getItem(LAST_SECTION_STORAGE_KEY);
+            if (isRememberedSection(savedSection)) {
+                if (savedSection === 'logs') setRecordTab('tasks');
+                if (savedSection === 'models' || savedSection === 'providers' || savedSection === 'settings') setManagementNavOpen(true);
+                lastNonAngleSectionRef.current = savedSection;
+                sectionRef.current = savedSection;
+                setSectionState(savedSection);
+            }
+            setSuccessSoundEnabled(localStorage.getItem('sanmao-success-sound') === '1');
+            setProviderSetupDismissed(localStorage.getItem(PROVIDER_SETUP_DISMISSED_STORAGE_KEY) === '1');
+            const savedWebMode = localStorage.getItem('sanmao-agent-web-mode');
+            const savedWebSearch = localStorage.getItem('sanmao-agent-web-search');
+            if (savedWebMode === 'auto' || savedWebMode === 'always' || savedWebMode === 'off') setAgentWebMode(savedWebMode);
+            else if (savedWebSearch !== null) setAgentWebMode(savedWebSearch === '0' ? 'off' : 'auto');
+            const savedSize = Number(localStorage.getItem(HISTORY_PAGE_SIZE_STORAGE_KEY) || DEFAULT_HISTORY_PAGE_SIZE);
+            if (HISTORY_PAGE_SIZE_OPTIONS.includes(savedSize)) setPageSize(savedSize);
+            const savedGeneration = JSON.parse(localStorage.getItem('sanmao-generate-settings') || 'null');
+            if (savedGeneration) {
+                // 模型选择由提交后的统一偏好记录恢复；不能因为旧版参数缓存而覆盖“自动”模式。
+                if (typeof savedGeneration.upscaleModelId === 'string') setGenerateUpscaleModelId(savedGeneration.upscaleModelId);
+                if (typeof savedGeneration.ratio === 'string' && ratios.includes(savedGeneration.ratio)) setRatio(savedGeneration.ratio);
+                if (typeof savedGeneration.customRatioWidth === 'number' && savedGeneration.customRatioWidth > 0) setCustomRatioWidth(Math.round(savedGeneration.customRatioWidth));
+                if (typeof savedGeneration.customRatioHeight === 'number' && savedGeneration.customRatioHeight > 0) setCustomRatioHeight(Math.round(savedGeneration.customRatioHeight));
+                if (savedGeneration.sizeMode === 'system' || savedGeneration.sizeMode === 'custom') setSizeMode(savedGeneration.sizeMode);
+                if (sizeTiers.some((item)=>item.value === savedGeneration.sizeTier)) setSizeTier(savedGeneration.sizeTier);
+                if (typeof savedGeneration.count === 'number' && savedGeneration.count >= 1 && savedGeneration.count <= 8) setCount(Math.round(savedGeneration.count));
+                if (typeof savedGeneration.quality === 'string') setQuality(savedGeneration.quality);
+                if (typeof savedGeneration.customWidth === 'number' && savedGeneration.customWidth > 0) setCustomWidth(Math.round(savedGeneration.customWidth));
+                if (typeof savedGeneration.customHeight === 'number' && savedGeneration.customHeight > 0) setCustomHeight(Math.round(savedGeneration.customHeight));
+                if (savedGeneration.outputFormat === 'png' || savedGeneration.outputFormat === 'jpeg' || savedGeneration.outputFormat === 'webp') setOutputFormat(savedGeneration.outputFormat);
+                if (savedGeneration.backgroundMode === 'auto' || savedGeneration.backgroundMode === 'api-transparent' || savedGeneration.backgroundMode === 'local-transparent' || savedGeneration.backgroundMode === 'opaque') setBackgroundMode(savedGeneration.backgroundMode);
+                if ([
+                    1,
+                    2,
+                    3,
+                    4
+                ].includes(savedGeneration.upscaleScale)) setGenerateUpscaleScale(savedGeneration.upscaleScale);
+                if (savedGeneration.upscaleTarget === 'auto' || savedGeneration.upscaleTarget === '1K' || savedGeneration.upscaleTarget === '2K' || savedGeneration.upscaleTarget === '4K') setGenerateUpscaleTarget(savedGeneration.upscaleTarget);
+                if (typeof savedGeneration.upscaleSeed === 'number') setGenerateUpscaleSeed(Math.round(savedGeneration.upscaleSeed));
+                if (savedGeneration.upscaleColorCorrection === 'wavelet' || savedGeneration.upscaleColorCorrection === 'none') setGenerateUpscaleColorCorrection(savedGeneration.upscaleColorCorrection);
+                if (savedGeneration.upscaleAlgorithm === 'lanczos' || savedGeneration.upscaleAlgorithm === 'bicubic' || savedGeneration.upscaleAlgorithm === 'nearest') setGenerateUpscaleAlgorithm(savedGeneration.upscaleAlgorithm);
+                if (savedGeneration.upscaleOutputFormat === 'png' || savedGeneration.upscaleOutputFormat === 'jpg' || savedGeneration.upscaleOutputFormat === 'bmp') setGenerateUpscaleOutputFormat(savedGeneration.upscaleOutputFormat);
+                if (typeof savedGeneration.upscaleOutputQuality === 'number' && savedGeneration.upscaleOutputQuality >= 30 && savedGeneration.upscaleOutputQuality <= 100) setGenerateUpscaleOutputQuality(Math.round(savedGeneration.upscaleOutputQuality));
+            }
+            const savedTasks = JSON.parse(localStorage.getItem('sanmao-generate-tasks') || 'null');
+            if (Array.isArray(savedTasks)) {
+                const restoredAt = Date.now();
+                const tasks = savedTasks.filter((task)=>typeof task?.id === 'string' && typeof task?.prompt === 'string').slice(0, 12).map((task)=>{
+                    const pending = task.status === 'pending';
+                    return {
+                        id: task.id,
+                        status: pending ? 'error' : task.status === 'success' ? 'success' : 'error',
+                        mode: task.mode === 'edit' || task.mode === 'upscale' ? task.mode : 'generate',
+                        prompt: task.prompt,
+                        expectedCount: Math.max(1, Number(task.expectedCount) || 1),
+                        startedAt: Number(task.startedAt) || restoredAt,
+                        completedAt: pending ? restoredAt : Number(task.completedAt) || undefined,
+                        info: pending ? `${task.info || '生图任务'} · 页面刷新后已中断` : String(task.info || '生图任务'),
+                        error: pending ? '页面刷新导致本轮任务中断，已保留已经返回的图片。可恢复参数后重新提交。' : typeof task.error === 'string' ? task.error : undefined,
+                        interrupted: pending,
+                        items: [],
+                        itemIds: Array.isArray(task.itemIds) ? task.itemIds.filter((id)=>typeof id === 'string') : [],
+                        request: task.request
+                    };
+                });
+                setGenerateTasks(tasks);
+            }
+            } catch  {}
+            setGenerateSettingsReady(true);
+            setGenerateTasksReady(true);
+            void refreshState();
+            void refreshAdmin();
+            void refreshGallery();
+            void refreshChatSessions();
+            void refreshGenerationLogs();
+            void refreshVideoTasks();
+            void refreshStorageMaintenance();
+            void loadLocalDirectory();
+            // Local preferences and IndexedDB are available immediately. The
+            // server workspace is reconciled after the shell is interactive.
+            void workspaceRepository.bootstrap()
+                .then(() => {
+                    if (cancelled) return;
+                    void refreshGallery();
+                    void refreshChatSessions();
+                })
+                .catch(() => undefined)
+                .finally(() => {
+                    if (!cancelled) stopWorkspaceSync = startWorkspaceSync();
+                });
+        };
+        void start();
+        return ()=>{
+            cancelled = true;
+            stopWorkspaceSync();
+        };
+    }, []);
+    useEffect(()=>{
+        if (!generateSettingsReady) return;
+        const settings = {
+            modelId: generateModelId,
+            upscaleModelId: generateUpscaleModelId,
+            ratio,
+            customRatioWidth,
+            customRatioHeight,
+            sizeMode,
+            sizeTier,
+            count,
+            quality,
+            customWidth,
+            customHeight,
+            outputFormat,
+            backgroundMode,
+            upscaleScale: generateUpscaleScale,
+            upscaleTarget: generateUpscaleTarget,
+            upscaleSeed: generateUpscaleSeed,
+            upscaleColorCorrection: generateUpscaleColorCorrection,
+            upscaleAlgorithm: generateUpscaleAlgorithm,
+            upscaleOutputFormat: generateUpscaleOutputFormat,
+            upscaleOutputQuality: generateUpscaleOutputQuality
+        };
+        try {
+            localStorage.setItem('sanmao-generate-settings', JSON.stringify(settings));
+        } catch  {}
+    }, [
+        generateSettingsReady,
+        generateModelId,
+        generateUpscaleModelId,
+        ratio,
+        customRatioWidth,
+        customRatioHeight,
+        sizeMode,
+        sizeTier,
+        count,
+        quality,
+        customWidth,
+        customHeight,
+        outputFormat,
+        backgroundMode,
+        generateUpscaleScale,
+        generateUpscaleTarget,
+        generateUpscaleSeed,
+        generateUpscaleColorCorrection,
+        generateUpscaleAlgorithm,
+        generateUpscaleOutputFormat,
+        generateUpscaleOutputQuality
+    ]);
+    useEffect(()=>{
+        if (modelPreferencesRestoredRef.current || !state.models.length) return;
+        modelPreferencesRestoredRef.current = true;
+        const supports = (modelId, capability)=>Boolean(modelId && activeProviderModels.some((model)=>model.id === modelId && model.enabled && model.published && model.capabilities.includes(capability)));
+        const restored = [];
+        const agentCall = getLastModelCall('agent');
+        if (agentCall) {
+            setAgentModelId(agentCall.mode === 'manual' && supports(agentCall.modelId, 'chat') ? agentCall.modelId : 'auto');
+            if (agentCall.params.webMode === 'auto' || agentCall.params.webMode === 'always' || agentCall.params.webMode === 'off') setAgentWebMode(agentCall.params.webMode);
+            else if (typeof agentCall.params.webSearch === 'boolean') setAgentWebMode(agentCall.params.webSearch ? 'auto' : 'off');
+            restored.push('助手');
+        }
+        const generateCall = getLastModelCall('generate');
+        if (generateCall) {
+            setGenerateModelId(generateCall.mode === 'manual' && supports(generateCall.modelId, 'generate') ? generateCall.modelId : 'auto');
+            const params = generateCall.params;
+            if (typeof params.ratio === 'string' && ratios.includes(params.ratio)) setRatio(params.ratio);
+            if (typeof params.customRatioWidth === 'number' && params.customRatioWidth > 0) setCustomRatioWidth(Math.round(params.customRatioWidth));
+            if (typeof params.customRatioHeight === 'number' && params.customRatioHeight > 0) setCustomRatioHeight(Math.round(params.customRatioHeight));
+            if (params.sizeMode === 'system' || params.sizeMode === 'custom') setSizeMode(params.sizeMode);
+            if (sizeTiers.some((item)=>item.value === params.sizeTier)) setSizeTier(params.sizeTier);
+            if (typeof params.count === 'number' && params.count >= 1 && params.count <= 8) setCount(Math.round(params.count));
+            if (typeof params.quality === 'string') setQuality(params.quality);
+            if (typeof params.customWidth === 'number' && params.customWidth > 0) setCustomWidth(Math.round(params.customWidth));
+            if (typeof params.customHeight === 'number' && params.customHeight > 0) setCustomHeight(Math.round(params.customHeight));
+            if (params.outputFormat === 'png' || params.outputFormat === 'jpeg' || params.outputFormat === 'webp') setOutputFormat(params.outputFormat);
+            if (params.backgroundMode === 'auto' || params.backgroundMode === 'api-transparent' || params.backgroundMode === 'local-transparent' || params.backgroundMode === 'opaque') setBackgroundMode(params.backgroundMode);
+            if ([
+                1,
+                2,
+                3,
+                4
+            ].includes(params.upscaleScale)) setGenerateUpscaleScale(params.upscaleScale);
+            if (params.upscaleTarget === 'auto' || params.upscaleTarget === '1K' || params.upscaleTarget === '2K' || params.upscaleTarget === '4K') setGenerateUpscaleTarget(params.upscaleTarget);
+            if (typeof params.upscaleSeed === 'number') setGenerateUpscaleSeed(Math.round(params.upscaleSeed));
+            if (params.upscaleColorCorrection === 'wavelet' || params.upscaleColorCorrection === 'none') setGenerateUpscaleColorCorrection(params.upscaleColorCorrection);
+            if (params.upscaleAlgorithm === 'lanczos' || params.upscaleAlgorithm === 'bicubic' || params.upscaleAlgorithm === 'nearest') setGenerateUpscaleAlgorithm(params.upscaleAlgorithm);
+            if (params.upscaleOutputFormat === 'png' || params.upscaleOutputFormat === 'jpg' || params.upscaleOutputFormat === 'bmp') setGenerateUpscaleOutputFormat(params.upscaleOutputFormat);
+            if (typeof params.upscaleOutputQuality === 'number' && params.upscaleOutputQuality >= 30 && params.upscaleOutputQuality <= 100) setGenerateUpscaleOutputQuality(Math.round(params.upscaleOutputQuality));
+            restored.push('生图');
+        }
+        const upscaleCall = getLastModelCall('upscale');
+        if (upscaleCall) setGenerateUpscaleModelId(upscaleCall.mode === 'manual' && supports(upscaleCall.modelId, 'upscale') ? upscaleCall.modelId : 'auto');
+        if (restored.length) notify(`已恢复上次${restored.join('、')}设置`);
+    }, [
+        activeProviderModels,
+        notify
+    ]);
+    useEffect(()=>{
+        if (!generateTasksReady) return;
+        persistGenerateTasks(generateTasks);
+    }, [
+        generateTasksReady,
+        generateTasks
+    ]);
+    useEffect(()=>{
+        if (!generateTasksReady || !gallery.length) return;
+        const byId = new Map(gallery.map((item)=>[
+                item.id,
+                item
+            ]));
+        setGenerateTasks((old)=>old.map((task)=>{
+                if (!task.itemIds?.length) return task;
+                const items = task.itemIds.map((id)=>byId.get(id)).filter((item)=>Boolean(item));
+                if (items.length === task.items.length && items.every((item, index)=>item.id === task.items[index]?.id)) return task;
+                return {
+                    ...task,
+                    items
+                };
+            }));
+    }, [
+        generateTasksReady,
+        gallery
+    ]);
+    useEffect(()=>{
+        if (!generateTasksReady) return;
+        const pending = generateTasks.filter((task)=>task.mode === 'upscale' && task.upscaleTaskId && task.status !== 'success' && task.status !== 'error' && !upscaleRecoveryRef.current.has(task.upscaleTaskId));
+        for (const task of pending) {
+            upscaleRecoveryRef.current.add(task.upscaleTaskId);
+            void waitForUpscaleTask(task.upscaleTaskId, { taskId: task.upscaleTaskId }).then(async (data)=>{
+                if (!data.images?.length || gallery.some((item)=>item.upscaleTaskId === task.upscaleTaskId)) return;
+                const sourceImageId = task.request?.sourceImageId || task.request?.references?.[0]?.id;
+                const items = await recordImages(data.images, {
+                    prompt: task.prompt || 'Upscale this image',
+                    modelId: data.model?.id,
+                    modelName: data.model?.name,
+                    providerName: data.model?.provider,
+                    outputSize: `${task.request?.upscaleScale || 2}× 超分`,
+                    source: 'upscale',
+                    parentId: sourceImageId,
+                    sourceImageId,
+                    upscaleProvider: data.model?.provider,
+                     upscaleModel: data.model?.id,
+                     upscaleScale: task.request?.upscaleScale || 2,
+                     upscaleTaskId: task.upscaleTaskId,
+                      annotations: task.request?.mask?.annotations,
+                      mask: task.request?.mask?.dataUrl ? { dataUrl: task.request.mask.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(task.request.mask.feather) || 0))), annotations: task.request.mask.annotations, ...(task.request.mask.sourceImageDataUrl ? { sourceImageDataUrl: task.request.mask.sourceImageDataUrl } : {}) } : undefined
+                });
+                setResultItems((old)=>[...items, ...old]);
+                patchGenerateTask(task.id, { status: 'success', completedAt: Date.now(), items, itemIds: items.map((item)=>item.id), info: `${data.model?.name || '高清放大'} · 已恢复完成` });
+                notify('已恢复完成的高清放大任务。');
+            }).catch((error)=>{
+                const message = error instanceof Error ? error.message : '高清任务恢复失败';
+                const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
+                patchGenerateTask(task.id, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    error: message,
+                    ...(cancelled ? { cancelled: true } : {})
+                });
+            }).finally(()=>upscaleRecoveryRef.current.delete(task.upscaleTaskId));
+        }
+    }, [generateTasksReady, generateTasks, gallery]);
+    useEffect(()=>{
+        const updateChatScrollState = ()=>{
+            const nearBottom = isChatNearBottom();
+            const pendingScroll = chatScrollAfterCommitRef.current;
+            const nextNearBottom = nearBottom || pendingScroll;
+            setChatNearBottom((current)=>current === nextNearBottom ? current : nextNearBottom);
+            if (!nearBottom && !pendingScroll) chatAutoFollowRef.current = false;
+        };
+        updateChatScrollState();
+        window.addEventListener('scroll', updateChatScrollState, {
+            passive: true
+        });
+        window.addEventListener('resize', updateChatScrollState);
+        return ()=>{
+            window.removeEventListener('scroll', updateChatScrollState);
+            window.removeEventListener('resize', updateChatScrollState);
+        };
+    }, [
+        messages.length,
+        section
+    ]);
+    useEffect(()=>{
+        if (section !== 'agent') return;
+        const pendingScroll = chatScrollAfterCommitRef.current;
+        if (!chatAutoFollowRef.current && !pendingScroll) return;
+        if (pendingScroll) {
+            chatAutoFollowRef.current = true;
+        }
+        scheduleChatScrollToEnd();
+    }, [
+        messages,
+        section,
+        activeChatId
+    ]);
+    useEffect(()=>{
+        if (section === 'agent') return;
+        cancelScheduledChatScroll();
+        chatScrollAfterCommitRef.current = false;
+    }, [section]);
+    useEffect(()=>{
+        setPage(1);
+        setVideoPage(1);
+    }, [
+        historySearch,
+        historyFilter,
+        historyMediaFilter,
+        pageSize
+    ]);
+    useEffect(()=>{
+        if (section !== 'history' || recordTab !== 'works') return;
+        void refreshVideoTasks(1);
+    }, [
+        section,
+        recordTab,
+        historySearch,
+        historyFilter,
+        historyMediaFilter,
+        pageSize
+    ]);
+    useEffect(()=>{
+        setLogPage(1);
+    }, [
+        logFilter,
+        logSearch,
+        historyMediaFilter
+    ]);
+    useEffect(()=>{
+        const isPagedRecordsView = section === 'history' && recordTab === 'works' || section === 'logs' && recordTab === 'tasks';
+        if (!isPagedRecordsView) return;
+        scrollPaginationToTop();
+    }, [
+        section,
+        recordTab,
+        page,
+        videoPage,
+        logPage
+    ]);
+    useEffect(()=>{
+        if (logPage > logTotalPages) setLogPage(logTotalPages);
+    }, [
+        logPage,
+        logTotalPages
+    ]);
+    useEffect(()=>{
+        if (selectedLog) {
+            const latest = generationLogs.find((log)=>log.id === selectedLog.id);
+            if (latest && latest !== selectedLog) setSelectedLog(latest);
+        }
+    }, [
+        generationLogs,
+        selectedLog
+    ]);
+    useEffect(()=>{
+        if (section !== 'agent') setSelectionPush(null);
+    }, [
+        section
+    ]);
+    useEffect(()=>{
+        if (!selectionPush) return;
+        const closeOnOutsidePointer = (event)=>{
+            const target = event.target;
+            if (!(target instanceof Element) || !target.closest('.selection-push')) setSelectionPush(null);
+        };
+        const closeOnEscape = (event)=>{
+            if (event.key === 'Escape') setSelectionPush(null);
+        };
+        const closeOnViewportChange = ()=>setSelectionPush(null);
+        document.addEventListener('pointerdown', closeOnOutsidePointer);
+        document.addEventListener('keydown', closeOnEscape);
+        window.addEventListener('scroll', closeOnViewportChange, true);
+        window.addEventListener('resize', closeOnViewportChange);
+        return ()=>{
+            document.removeEventListener('pointerdown', closeOnOutsidePointer);
+            document.removeEventListener('keydown', closeOnEscape);
+            window.removeEventListener('scroll', closeOnViewportChange, true);
+            window.removeEventListener('resize', closeOnViewportChange);
+        };
+    }, [
+        selectionPush
+    ]);
+    useEffect(()=>{
+        if (section === 'history') markHistoryNoticeSeen();
+        if (section === 'logs') markLogErrorNoticeSeen();
+    }, [
+        section
+    ]);
+    useEffect(()=>{
+        if (section !== 'angle' && angleSuppressAutoOpenId) setAngleSuppressAutoOpenId(null);
+    }, [
+        section,
+        angleSuppressAutoOpenId
+    ]);
+    useEffect(()=>{
+        if (!sidebarOpen) return;
+        const closeOnEscape = (event)=>{
+            if (event.key === 'Escape') {
+                setSidebarOpen(false);
+                setRenamingChatId(null);
+                setRenamingChatTitle('');
+            }
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return ()=>window.removeEventListener('keydown', closeOnEscape);
+    }, [
+        sidebarOpen
+    ]);
+    useEffect(()=>{
+        if (section !== 'agent') {
+            setRenamingChatId(null);
+            setRenamingChatTitle('');
+        }
+    }, [
+        section
+    ]);
+    useEffect(()=>{
+        if (angleOpenBusy && (section !== 'angle' || !angleReference || !angleReference.pending)) {
+            angleOpenRequestRef.current = '';
+            setAngleOpenBusy(false);
+        }
+    }, [
+        section,
+        angleOpenBusy,
+        angleReference
+    ]);
+    useEffect(()=>{
+        const handleOutpaint = (event)=>{
+            const item = event.detail;
+            if (item?.id) openOutpaintEditor(item);
+        };
+        const handleAngle = (event)=>{
+            const item = event.detail;
+            if (item?.id) void openAngleConsole(item);
+        };
+        window.addEventListener('sanmao-outpaint', handleOutpaint);
+        window.addEventListener('sanmao-angle', handleAngle);
+        return ()=>{
+            window.removeEventListener('sanmao-outpaint', handleOutpaint);
+            window.removeEventListener('sanmao-angle', handleAngle);
+        };
+    }, []);
+    useEffect(()=>{
+        // A running reply shows a live clock, so keep resetting the clock while it waits.
+        if (!generateBusy && !activeAgentBusy && section !== 'logs') return;
+        const timer = window.setInterval(()=>{
+            setGenerateClock(Date.now());
+            if (generateBusy || section === 'logs') void refreshGenerationLogs();
+            if (section === 'logs') void refreshVideoTasks();
+        }, 1000);
+        return ()=>window.clearInterval(timer);
+    }, [
+        generateBusy,
+        activeAgentBusy,
+        section
+    ]);
+    useEffect(()=>{
+        if (!generateMask) return;
+        if (generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' || !creativeReferenceUrl(generateRefs[0])) {
+            setGenerateMask(null);
+            notify('局部编辑仅支持 1 张已准备好的图片参考，原编辑范围已清除');
+            return;
+        }
+        if (generateRefs[0]?.id !== generateMask.referenceId) {
+            setGenerateMask(null);
+            notify('第一张参考图已变化，原编辑范围已清除');
+        }
+    }, [
+        generateRefs,
+        generateMask
+    ]);
+    useEffect(()=>{
+        if (generateUpscaleMode) setGeneratePromptBeforeOptimization(null);
+    }, [
+        generateUpscaleMode
+    ]);
+    useEffect(()=>{
+        let active = true;
+        if (!generateUpscaleMode || !generateRefs[0]) {
+            setGenerateUpscaleSourceSize(null);
+            return ()=>{
+                active = false;
+            };
+        }
+        if (generateRefs[0]?.kind !== 'image') return ()=>{
+            active = false;
+        };
+        void loadImageDimensions(creativeReferenceUrl(generateRefs[0])).then((size)=>{
+            if (active) setGenerateUpscaleSourceSize(size);
+        }).catch(()=>{
+            if (active) setGenerateUpscaleSourceSize(null);
+        });
+        return ()=>{
+            active = false;
+        };
+    }, [
+        generateUpscaleMode,
+        generateRefs
+    ]);
+    useEffect(()=>{
+        let active = true;
+        if (generateRefs.length !== 1) {
+            setGenerateAutoReferenceSize(null);
+            return ()=>{
+                active = false;
+            };
+        }
+        if (generateRefs[0]?.kind !== 'image') return ()=>{
+            active = false;
+        };
+        void loadImageDimensions(creativeReferenceUrl(generateRefs[0])).then((size)=>{
+            if (active) setGenerateAutoReferenceSize(size);
+        }).catch(()=>{
+            if (active) setGenerateAutoReferenceSize(null);
+        });
+        return ()=>{
+            active = false;
+        };
+    }, [
+        generateRefs
+    ]);
+    useEffect(()=>{
+        setViewerZoom(1);
+        setViewerImageSize({
+            width: 0,
+            height: 0
+        });
+        viewerStageRef.current?.scrollTo({
+            left: 0,
+            top: 0
+        });
+    }, [
+        viewerId
+    ]);
+    useEffect(()=>{
+        if (editor?.mode !== 'upscale') {
+            setUpscaleSourceSize(null);
+            return;
+        }
+        let cancelled = false;
+        setUpscaleSourceSize(null);
+        void loadImageDimensions(editor.item.url).then((size)=>{
+            if (!cancelled) setUpscaleSourceSize(size);
+        }).catch(()=>undefined);
+        return ()=>{
+            cancelled = true;
+        };
+    }, [
+        editor?.mode,
+        editor?.item.url
+    ]);
+    useEffect(()=>{
+        if (!viewerItem || !viewerStageRef.current) return;
+        const stage = viewerStageRef.current;
+        const update = ()=>setViewerStageSize({
+                width: stage.clientWidth,
+                height: stage.clientHeight
+            });
+        update();
+        const observer = new ResizeObserver(update);
+        observer.observe(stage);
+        return ()=>observer.disconnect();
+    }, [
+        viewerItem
+    ]);
+    useEffect(()=>{
+        setViewerPan({
+            x: 0,
+            y: 0
+        });
+    }, [
+        viewerId
+    ]);
+    useEffect(()=>{
+        const input = agentInputRef.current;
+        if (!input) return;
+        const minHeight = 58;
+        const maxHeight = 320;
+        input.style.height = 'auto';
+        const nextHeight = Math.min(Math.max(input.scrollHeight, minHeight), maxHeight);
+        input.style.height = `${nextHeight}px`;
+        input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
+    }, [
+        agentInput
+    ]);
+    useEffect(()=>{
+        const composer = agentComposerRef.current;
+        if (!composer || typeof ResizeObserver === 'undefined') return;
+        const updateComposerHeight = ()=>{
+            document.documentElement.style.setProperty('--agent-composer-height', `${composer.getBoundingClientRect().height}px`);
+        };
+        updateComposerHeight();
+        const observer = new ResizeObserver(updateComposerHeight);
+        observer.observe(composer);
+        return ()=>{
+            observer.disconnect();
+            document.documentElement.style.removeProperty('--agent-composer-height');
+        };
+    }, [
+        section
+    ]);
+    function notify(text) {
+        if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+        setToast(text);
+        toastTimerRef.current = window.setTimeout(()=>{
+            setToast('');
+            toastTimerRef.current = null;
+        }, 3000);
+    }
+    function openChatFilePreview(file) {
+        if (!isPreviewableChatFile(file)) return;
+        if (isOfficeArtifactChatFile(file)) {
+            const name = file.name || '文件';
+            const label = chatFilePreviewKindLabel(file);
+            setChatFilePreview({
+                name,
+                label,
+                content: ''
+            });
+            void (async ()=>{
+                try {
+                    const query = `?preview=1&theme=${theme === 'dark' ? 'dark' : 'light'}`;
+                    const response = await fetch(`/api/artifacts/${encodeURIComponent(file.artifactId)}${query}`, {
+                        cache: 'no-store'
+                    });
+                    if (!response.ok) throw new Error(response.status === 404 ? '文件已过期或被清理，请重新生成' : '文件预览失败');
+                    const content = buildChatFilePreviewContent(await response.text());
+                    setChatFilePreview((current)=>current && current.name === name ? {
+                            name,
+                            label,
+                            content
+                        } : current);
+                } catch (error) {
+                    setChatFilePreview((current)=>current && current.name === name ? null : current);
+                    notify(error instanceof Error ? error.message : '文件预览失败');
+                }
+            })();
+            return;
+        }
+        try {
+            const content = buildChatFilePreviewContent(getChatFilePreviewContent(file));
+            if (!content.trim()) throw new Error('HTML 文件内容为空');
+            setChatFilePreview({
+                name: file.name || 'HTML 文件',
+                label: chatFilePreviewKindLabel(file),
+                content
+            });
+        } catch  {
+            notify('文件预览失败');
+        }
+    }
+    function lastChatMessageElement() {
+        const lastMessage = messages[messages.length - 1];
+        return lastMessage ? document.getElementById(`message-${lastMessage.id}`) : null;
+    }
+    function chatComposerTop() {
+        const top = agentComposerRef.current?.getBoundingClientRect().top;
+        return typeof top === 'number' && Number.isFinite(top) ? Math.min(window.innerHeight, top) : window.innerHeight;
+    }
+    function isChatNearBottom() {
+        const documentHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+        if (documentHeight - window.scrollY - window.innerHeight < 120) return true;
+        const lastMessage = lastChatMessageElement();
+        if (lastMessage) {
+            const targetBottom = Math.max(0, chatComposerTop() - 20);
+            return Math.abs(lastMessage.getBoundingClientRect().bottom - targetBottom) < 120;
+        }
+        return false;
+    }
+    function cancelScheduledChatScroll() {
+        if (chatScrollFrameRef.current) window.cancelAnimationFrame(chatScrollFrameRef.current);
+        chatScrollFrameRef.current = 0;
+    }
+    function scheduleChatScrollToEnd() {
+        if (chatScrollFrameRef.current) return;
+        chatScrollFrameRef.current = window.requestAnimationFrame(()=>{
+            chatScrollFrameRef.current = 0;
+            if ((!chatAutoFollowRef.current && !chatScrollAfterCommitRef.current) || sectionRef.current !== 'agent') return;
+            const lastMessage = lastChatMessageElement();
+            if (!lastMessage) return;
+            const overlap = lastMessage.getBoundingClientRect().bottom - (chatComposerTop() - 20);
+            if (overlap > 0) window.scrollBy({
+                top: overlap,
+                behavior: 'auto'
+            });
+            chatAutoFollowRef.current = true;
+            chatScrollAfterCommitRef.current = false;
+            const nextNearBottom = isChatNearBottom();
+            setChatNearBottom((current)=>current === nextNearBottom ? current : nextNearBottom);
+        });
+    }
+    function followChatToEnd() {
+        closeConversationNavigator();
+        chatAutoFollowRef.current = true;
+        chatScrollAfterCommitRef.current = false;
+        setChatNearBottom(true);
+        scheduleChatScrollToEnd();
+    }
+    function requestChatScrollAfterCommit() {
+        chatAutoFollowRef.current = true;
+        chatScrollAfterCommitRef.current = true;
+        setChatNearBottom(true);
+    }
+    function pauseChatAutoFollow() {
+        chatAutoFollowRef.current = false;
+        chatScrollAfterCommitRef.current = false;
+        setChatNearBottom(false);
+    }
+    function messageViewportTop(id) {
+        return document.getElementById(`message-${id}`)?.getBoundingClientRect().top ?? null;
+    }
+    function restoreMessageViewport(id, beforeTop) {
+        if (beforeTop === null) return;
+        window.requestAnimationFrame(()=>{
+            const nextTop = document.getElementById(`message-${id}`)?.getBoundingClientRect().top;
+            if (nextTop === undefined) return;
+            const delta = nextTop - beforeTop;
+            if (Math.abs(delta) > 1) window.scrollBy({
+                top: delta,
+                left: 0,
+                behavior: 'auto'
+            });
+        });
+    }
+    function jumpToMessage(id) {
+        pauseChatAutoFollow();
+        setSection('agent');
+        window.setTimeout(()=>document.getElementById(`message-${id}`)?.scrollIntoView({
+                behavior: 'smooth',
+                block: 'start'
+            }), 0);
+    }
+    function clearConversationNavCloseTimer() {
+        if (conversationNavCloseTimerRef.current) window.clearTimeout(conversationNavCloseTimerRef.current);
+        conversationNavCloseTimerRef.current = 0;
+    }
+    function closeConversationNavigator() {
+        clearConversationNavCloseTimer();
+        conversationNavCloseAfterClickRef.current = false;
+        setConversationNavHoverId(null);
+        conversationNavPointerRatioRef.current = null;
+    }
+    function setThemePreference(next) {
+        setTheme(next);
+        saveTheme(next);
+    }
+    function toggleTheme() {
+        setThemePreference(theme === 'light' ? 'dark' : 'light');
+    }
+    function setSuccessSoundPreference(enabled) {
+        setSuccessSoundEnabled(enabled);
+        try {
+            localStorage.setItem('sanmao-success-sound', enabled ? '1' : '0');
+        } catch  {}
+        if (enabled) primeSuccessSound();
+    }
+    function setAgentWebModePreference(mode) {
+        const nextMode = mode === 'always' || mode === 'off' ? mode : 'auto';
+        if (nextMode !== 'off' && !agentWebSearchAvailable) return notify('请先到设置里接入搜索 API，或选择支持联网的模型');
+        setAgentWebMode(nextMode);
+        try {
+            localStorage.setItem('sanmao-agent-web-mode', nextMode);
+            localStorage.setItem('sanmao-agent-web-search', nextMode === 'off' ? '0' : '1');
+        } catch  {}
+    }
+    function getSuccessAudioContext() {
+        if (typeof window === 'undefined' || typeof window.AudioContext === 'undefined') return null;
+        if (!successAudioRef.current) successAudioRef.current = new window.AudioContext();
+        return successAudioRef.current;
+    }
+    function primeSuccessSound() {
+        const context = getSuccessAudioContext();
+        if (context?.state === 'suspended') void context.resume();
+    }
+    function playSuccessSound() {
+        if (!successSoundEnabled) return;
+        const context = getSuccessAudioContext();
+        if (!context) return;
+        const now = context.currentTime;
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(660, now);
+        oscillator.frequency.exponentialRampToValueAtTime(990, now + 0.16);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.4);
+    }
+    function persistNavNoticeState() {
+        if (!navNoticeStateReadyRef.current) return;
+        try {
+            localStorage.setItem(NAV_NOTICE_STORAGE_KEY, JSON.stringify(navNoticeSeenRef.current));
+        } catch  {}
+    }
+    function initializeNavNoticeState() {
+        if (navNoticeStateReadyRef.current) return;
+        const now = Date.now();
+        let saved = null;
+        try {
+            saved = JSON.parse(localStorage.getItem(NAV_NOTICE_STORAGE_KEY) || 'null');
+        } catch  {}
+        navNoticeSeenRef.current = {
+            historySeenAt: typeof saved?.historySeenAt === 'number' && Number.isFinite(saved.historySeenAt) ? saved.historySeenAt : now,
+            logErrorSeenAt: typeof saved?.logErrorSeenAt === 'number' && Number.isFinite(saved.logErrorSeenAt) ? saved.logErrorSeenAt : now
+        };
+        navNoticeStateReadyRef.current = true;
+        persistNavNoticeState();
+    }
+    function latestGalleryCreatedAt(items) {
+        return items.reduce((latest, item)=>Math.max(latest, item.createdAt || 0), 0);
+    }
+    function latestLogErrorCreatedAt(logs) {
+        return logs.reduce((latest, log)=>{
+            if (log.status !== 'error') return latest;
+            const createdAt = Date.parse(log.createdAt);
+            return Number.isFinite(createdAt) ? Math.max(latest, createdAt) : latest;
+        }, 0);
+    }
+    function markHistoryNoticeSeen(at = latestGalleryCreatedAt(gallery)) {
+        initializeNavNoticeState();
+        navNoticeSeenRef.current.historySeenAt = Math.max(Date.now(), at);
+        setHistoryNotice(false);
+        persistNavNoticeState();
+    }
+    function markHistoryImageViewed(item) {
+        markHistoryNoticeSeen(item?.createdAt);
+    }
+    function markLogErrorNoticeSeen(at = latestLogErrorCreatedAt(generationLogs)) {
+        initializeNavNoticeState();
+        navNoticeSeenRef.current.logErrorSeenAt = Math.max(Date.now(), at);
+        setLogErrorNotice(false);
+        persistNavNoticeState();
+    }
+    function syncHistoryNotice(items) {
+        initializeNavNoticeState();
+        const latest = latestGalleryCreatedAt(items);
+        if (latest <= navNoticeSeenRef.current.historySeenAt) return;
+        if (section === 'history') markHistoryNoticeSeen(latest);
+        else setHistoryNotice(true);
+    }
+    function syncLogErrorNotice(logs) {
+        initializeNavNoticeState();
+        const latest = latestLogErrorCreatedAt(logs);
+        if (latest <= navNoticeSeenRef.current.logErrorSeenAt) return;
+        if (section === 'logs') markLogErrorNoticeSeen(latest);
+        else setLogErrorNotice(true);
+    }
+    function registerHistorySuccess(items, visibleNow = false) {
+        if (!items.length) return;
+        initializeNavNoticeState();
+        const latest = latestGalleryCreatedAt(items);
+        if (visibleNow || sectionRef.current === 'history') markHistoryNoticeSeen(latest);
+        else setHistoryNotice(true);
+    }
+    function registerGenerationFailure() {
+        initializeNavNoticeState();
+        if (section === 'logs') markLogErrorNoticeSeen();
+        else setLogErrorNotice(true);
+    }
+    async function refreshGallery() {
+        try {
+            const items = await assetRepository.listGallery();
+            setGallery(items);
+            syncHistoryNotice(items);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '读取历史失败');
+        }
+    }
+    function getComparisonSource(item) {
+        if (item.parentId) {
+            const parent = gallery.find((candidate)=>candidate.id === item.parentId);
+            if (parent) return {
+                item: parent,
+                kind: 'parent',
+                label: '前一版'
+            };
+        }
+        const firstReference = galleryReferences(item)[0];
+        if (firstReference?.url) {
+            return {
+                item: {
+                    id: `reference-${item.id}`,
+                    url: firstReference.url,
+                    prompt: firstReference.name || '上传参考图',
+                    source: item.source,
+                    createdAt: item.createdAt,
+                    favorite: false
+                },
+                kind: 'reference',
+                label: '参考图'
+            };
+        }
+        return null;
+    }
+    function getGalleryParent(item) {
+        return getComparisonSource(item)?.item || null;
+    }
+    function openViewer(item) {
+        if (!item) return;
+        markHistoryImageViewed(item);
+        setViewerId(item.id);
+    }
+    function openCompare(item) {
+        const source = getComparisonSource(item);
+        if (!source) return;
+        markHistoryImageViewed(item);
+        setViewerId(null);
+        setCompareState({
+            item,
+            source,
+            parent: source.item
+        });
+    }
+    async function refreshGenerationLogs() {
+        try {
+            const logs = await listGenerationLogs(200);
+            setGenerationLogs(logs);
+            syncLogErrorNotice(logs);
+        } catch {}
+    }
+    async function refreshVideoTasks(requestedPage = videoPage) {
+        try {
+            const source = historyFilter === 'canvas' ? 'canvas' : historyFilter === 'agent' ? 'agent' : historyFilter === 'generate' ? 'workspace' : historyFilter === 'all' ? 'all' : 'none';
+            const media = historyMediaFilter === 'all' || historyMediaFilter === 'video' ? 'video' : 'none';
+            const data = await listVideoTasksPage({ page: requestedPage, pageSize, source, media, search: historySearch });
+            if (!data) return;
+            setVideoTasks(data.tasks);
+            setVideoTotal(Math.max(0, data.total));
+            const nextPage = Math.max(1, data.page);
+            if (nextPage !== videoPage) setVideoPage(nextPage);
+        } catch  {}
+    }
+    async function deleteVideoTask(task) {
+        try {
+            await deleteVideoTaskRequest(task.id);
+            setVideoTasks((old)=>old.filter((item)=>item.id !== task.id));
+            setVideoTotal((total)=>Math.max(0, total - 1));
+            void refreshVideoTasks(videoPage);
+            notify(task.status === 'failed' ? '失败视频任务已删除' : '视频作品已删除');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '删除视频任务失败');
+        }
+    }
+    async function patchVideoTask(task, action) {
+        try {
+            const updatedTask = await patchVideoTaskRequest(task.id, action);
+            if (action === 'cancel') {
+                setVideoTasks((old)=>old.map((item)=>item.id === task.id ? updatedTask : item));
+                notify('已停止跟踪这条视频任务，服务商可能仍在生成');
+            } else {
+                void refreshVideoTasks(videoPage);
+                notify('已按原参数重新提交一条视频任务');
+            }
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '视频任务操作失败');
+        }
+    }
+    function askDeleteVideoTask(task) {
+        const status = videoTaskStatus(task);
+        if (status === 'pending' || status === 'running') {
+            notify('视频正在生成，先取消任务再删除');
+            return;
+        }
+        setConfirmState({
+            title: status === 'failed' ? '删除这条失败任务？' : '删除这段视频？',
+            text: '删除后会从本机创作记录中移除，已保存的视频文件会移入回收站并保留 7 天。',
+            danger: true,
+            confirmText: '确认删除',
+            action: async ()=>{ await deleteVideoTask(task); }
+        });
+    }
+    async function refreshStorageMaintenance() {
+        try {
+            const data = await loadStorageMaintenance();
+            setStorageUsage(data.usage || null);
+            setLocalSnapshots(data.snapshots);
+        } catch {}
+    }
+    async function createManualSnapshot() {
+        setBackupBusy(true);
+        try {
+            const data = await createManualStorageSnapshot();
+            setLocalSnapshots(Array.isArray(data.snapshots) ? data.snapshots : []);
+            await refreshStorageMaintenance();
+            notify('本地快照已创建');
+        } catch (error) { notify(error instanceof Error ? error.message : '创建快照失败'); }
+        finally { setBackupBusy(false); }
+    }
+    async function restoreLocalSnapshotByName(name) {
+        setBackupBusy(true);
+        try {
+            const data = await restoreLocalStorageSnapshot(name);
+            const skipped = Number(data.skippedMediaCount || 0);
+            notify(`快照恢复完成：${data.restoredImages || 0} 个图片文件${skipped ? `，${skipped} 个媒体文件未包含` : ''}，正在重新加载`);
+            window.setTimeout(()=>window.location.reload(), 700);
+        } catch (error) { notify(error instanceof Error ? error.message : '恢复快照失败'); }
+        finally { setBackupBusy(false); }
+    }
+    useEffect(()=>{
+        const pendingLogs = generationLogs.filter((log)=>!log.outputSize && log.imageUrls?.[0] && !logImageSpecs[log.id]);
+        if (!pendingLogs.length) return;
+        let cancelled = false;
+        void Promise.all(pendingLogs.map(async (log)=>{
+            try {
+                const dimensions = await loadImageDimensions(log.imageUrls[0]);
+                return [
+                    log.id,
+                    {
+                        ...dimensions,
+                        ratio: ratioFromDimensions(dimensions.width, dimensions.height),
+                        resolution: resolutionFromDimensions(dimensions.width, dimensions.height)
+                    }
+                ];
+            } catch  {
+                return null;
+            }
+        })).then((entries)=>{
+            if (cancelled) return;
+            const next = {};
+            for (const entry of entries)if (entry) next[entry[0]] = entry[1];
+            if (Object.keys(next).length) setLogImageSpecs((old)=>({
+                    ...old,
+                    ...next
+                }));
+        });
+        return ()=>{
+            cancelled = true;
+        };
+    }, [
+        generationLogs,
+        logImageSpecs
+    ]);
+    function askCleanupGenerationLogs(days, deleteImages) {
+        const scope = days ? `清理 90 天前的${deleteImages ? '日志和图片' : '日志'}` : `清空全部${deleteImages ? '日志和图片' : '日志'}`;
+        setConfirmState({
+            title: `${scope}？`,
+             text: deleteImages ? '将清理符合条件的服务端日志记录，并把日志中关联的本地图片文件移入回收站；回收站会保留 7 天。' : '只会清理服务端日志记录，生成图片会保留。此操作不可恢复。',
+            danger: true,
+            confirmText: '确认清理',
+            action: async ()=>{
+                setCleanupBusy(true);
+                try {
+                    const data = await cleanupGenerationLogs(days, deleteImages);
+                    await refreshGenerationLogs();
+                     notify(`已清理 ${data.removedLogs || 0} 条日志${deleteImages ? `，${data.deletedImages || 0} 个图片文件已移入回收站` : ''}`);
+                } catch (error) {
+                    notify(error instanceof Error ? error.message : '清理日志失败');
+                } finally{
+                    setCleanupBusy(false);
+                }
+            }
+        });
+    }
+    async function previewCleanupGenerationLogs(days, deleteImages) {
+        setCleanupBusy(true);
+        try {
+            const data = await previewGenerationLogCleanup(days, deleteImages);
+            notify(`预计清理 ${data.removedLogs || 0} 条日志${deleteImages ? `，${data.deletedImages || 0} 个图片文件将移入回收站` : ''}`);
+        } catch (error) { notify(error instanceof Error ? error.message : '预览清理失败'); }
+        finally { setCleanupBusy(false); }
+    }
+    async function exportLocalBackup(backupMode = 'content') {
+        setBackupBusy(true);
+        try {
+            const backupPassword = window.prompt('请输入备份密码（至少 12 个字符；不会保存）：');
+            if (backupPassword === null) return;
+            if (backupPassword.length < 12) throw new Error('备份密码至少需要 12 个字符');
+            const preferenceKeys = [
+                'sanmao-theme',
+                'sanmao-success-sound',
+                HISTORY_PAGE_SIZE_STORAGE_KEY,
+                'sanmao-generate-settings',
+                'sanmao-generate-tasks',
+                'sanmao-image-presets-v1',
+                PROVIDER_SETUP_DISMISSED_STORAGE_KEY
+            ];
+            const preferences = {};
+            for (const key of preferenceKeys){
+                const value = localStorage.getItem(key);
+                if (value !== null) preferences[key] = value;
+            }
+            const client = {
+                workspace: {
+                    ...(await workspaceRepository.collect()),
+                    gallery: await normalizeGalleryForBackup(await assetRepository.listGallery()),
+                    chatSessions: [...await conversationRepository.list()],
+                    preferences,
+                },
+            };
+            const res = await fetch('/api/backup/archive', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ client, backupPassword, backupMode })
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(()=>({}));
+                throw new Error(data.error || '生成完整备份失败');
+            }
+            const blob = await res.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = objectUrl;
+            anchor.download = `SANMAO-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.sanmao-backup`;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            window.setTimeout(()=>URL.revokeObjectURL(objectUrl), 1500);
+            const skillCount = Number(res.headers.get('X-SANMAO-Backup-Skills') || 0);
+            notify(`加密备份完成：${client.workspace.gallery.length} 张图片索引、${client.workspace.chatSessions.length} 段对话、${skillCount} 个技能，已包含服务端图片与技能文件`);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '导出备份失败');
+        } finally{
+            setBackupBusy(false);
+        }
+    }
+    async function restoreClientBackup(client) {
+        const canonical = client?.workspace && typeof client.workspace === 'object' ? client.workspace : client;
+        if (!canonical || !Array.isArray(canonical.gallery) || !Array.isArray(canonical.chatSessions)) throw new Error('备份缺少浏览器历史数据');
+        const preferenceKeys = [
+            'sanmao-theme',
+            'sanmao-success-sound',
+            HISTORY_PAGE_SIZE_STORAGE_KEY,
+            'sanmao-generate-settings',
+            'sanmao-generate-tasks',
+            'sanmao-image-presets-v1',
+            PROVIDER_SETUP_DISMISSED_STORAGE_KEY
+        ];
+        const previous = await workspaceRepository.collect();
+        const previousPreferences = Object.fromEntries(preferenceKeys.flatMap((key) => {
+            const value = localStorage.getItem(key);
+            return value === null ? [] : [[key, value]];
+        }));
+        const applyPreferences = (preferences) => {
+            for (const key of preferenceKeys) localStorage.removeItem(key);
+            for (const [key, value] of Object.entries(preferences || {})) {
+                if (preferenceKeys.includes(key) && typeof value === 'string') localStorage.setItem(key, value);
+            }
+        };
+        try {
+            await assetRepository.replaceGallery(canonical.gallery);
+            await conversationRepository.replaceAll(canonical.chatSessions);
+            if (client?.workspace && typeof client.workspace === 'object') await workspaceRepository.restore(canonical);
+            applyPreferences(canonical.preferences);
+        } catch (error) {
+            // Browser stores are separate IndexedDB transactions. Restore the
+            // captured repository snapshot if any later store or preference
+            // write fails, so a failed import does not leave mixed history.
+            try {
+                await workspaceRepository.restore(previous);
+                applyPreferences(previousPreferences);
+            } catch (rollbackError) {
+                console.error('[Backup] client restore rollback failed', rollbackError);
+            }
+            throw error;
+        }
+    }
+    async function prepareRestoreBackup(file) {
+        try {
+            if (/\.(?:sanmao-backup\.)?tar\.gz$/i.test(file.name) || /\.sanmao-backup$/i.test(file.name) || file.type === 'application/gzip' || file.type === 'application/octet-stream') {
+                setConfirmState({
+                    title: '恢复完整本地备份？',
+                     text: '这会覆盖当前服务端配置、日志和浏览器历史，并把备份中的图片和技能恢复到当前数据目录。新格式备份已使用独立密码加密；旧版未加密备份仍可导入。',
+                    danger: true,
+                    confirmText: '确认恢复',
+                    action: async ()=>{
+                        setBackupBusy(true);
+                        try {
+                            const backupPassword = window.prompt('请输入备份密码（至少 12 个字符）：') || '';
+                            const res = await fetch('/api/backup/archive', {
+                                method: 'PUT',
+                                headers: {
+                                    'Content-Type': 'application/octet-stream',
+                                    'X-SANMAO-Backup-Password': backupPassword
+                                },
+                                body: file
+                            });
+                            const data = await res.json();
+                            if (!res.ok) throw new Error(data.error || '恢复完整备份失败');
+                            await restoreClientBackup(data.client);
+                            notify(`${data.includesSecrets ? (data.externalMasterKey ? '完整备份恢复完成，但原备份依赖 SANMAO_MASTER_KEY；请在当前环境配置相同主密钥。' : '完整加密备份恢复完成') : '内容备份恢复完成（API Key 未包含，已保留当前设备密钥）'}：${data.restoredImages || 0} 个图片文件、${data.restoredSkills || 0} 个技能，正在重新加载`);
+                            window.setTimeout(()=>window.location.reload(), 700);
+                        } catch (error) {
+                            notify(error instanceof Error ? error.message : '恢复完整备份失败');
+                        } finally {
+                            setBackupBusy(false);
+                        }
+                    }
+                });
+                return;
+            }
+            const parsed = JSON.parse(await file.text());
+            const legacyClient = parsed?.client?.workspace && typeof parsed.client.workspace === 'object' ? parsed.client.workspace : parsed?.client;
+            if (parsed?.format !== 'sanmao-ai-local-backup' || parsed.version !== 1 || !parsed.server || !legacyClient || !Array.isArray(legacyClient.gallery) || !Array.isArray(legacyClient.chatSessions)) throw new Error('这不是有效的 SANMAO.AI 本地备份文件');
+            const keyWarning = parsed.server.externalMasterKey ? '该备份原先使用环境变量主密钥，恢复后仍需配置相同的 SANMAO_MASTER_KEY。' : '备份包含恢复接口密钥所需的本机主密钥，请妥善保存。';
+            setConfirmState({
+                title: '恢复本地备份？',
+                text: `将覆盖当前接口配置、模型选择、生成日志、图库索引、对话和界面参数。原始图片文件不会删除。${keyWarning}`,
+                danger: true,
+                confirmText: '确认恢复',
+                action: async ()=>{
+                    setBackupBusy(true);
+                    try {
+                        const res = await fetch('/api/backup', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                server: parsed.server
+                            })
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || '恢复服务端数据失败');
+                        await restoreClientBackup(parsed.client);
+                        notify('备份恢复完成，正在重新加载');
+                        window.setTimeout(()=>window.location.reload(), 700);
+                    } catch (error) {
+                        notify(error instanceof Error ? error.message : '恢复备份失败');
+                    } finally{
+                        setBackupBusy(false);
+                    }
+                }
+            });
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '读取备份文件失败');
+        } finally{
+            if (backupInputRef.current) backupInputRef.current.value = '';
+        }
+    }
+    async function loadLocalDirectory() {
+        try {
+            const handle = await loadImageDirectoryHandle();
+            if (!handle) return;
+            const permission = await handle.queryPermission?.({
+                mode: 'readwrite'
+            });
+            if (permission !== 'denied') {
+                setLocalDirectoryHandle(handle);
+                setLocalDirectoryName(handle.name);
+            }
+        } catch  {}
+    }
+    async function chooseLocalDirectory() {
+        const picker = window.showDirectoryPicker;
+        if (!picker) return notify('当前浏览器不支持选择本地目录，请使用 Edge 或 Chrome');
+        try {
+            const handle = await picker();
+            const permission = await handle.requestPermission?.({
+                mode: 'readwrite'
+            });
+            if (permission === 'denied') throw new Error('没有获得目录写入权限');
+            await saveImageDirectoryHandle(handle);
+            setLocalDirectoryHandle(handle);
+            setLocalDirectoryName(handle.name);
+            notify(`已选择本地目录：${handle.name}`);
+        } catch (error) {
+            if (error?.name !== 'AbortError') notify(error instanceof Error ? error.message : '选择目录失败');
+        }
+    }
+    async function saveImagesToLocalDirectory(images) {
+        if (!localDirectoryHandle) return;
+        try {
+            const permission = await localDirectoryHandle.queryPermission?.({
+                mode: 'readwrite'
+            });
+            if (permission !== 'granted' && await localDirectoryHandle.requestPermission?.({
+                mode: 'readwrite'
+            }) !== 'granted') throw new Error('本地目录写入权限已失效');
+            for (const [index, image] of images.entries()){
+                const response = image.url.startsWith('data:') ? await fetch(image.url) : await fetch(image.url);
+                if (!response.ok) continue;
+                const extension = response.headers.get('content-type')?.includes('jpeg') ? 'jpg' : response.headers.get('content-type')?.includes('webp') ? 'webp' : 'png';
+                const fileHandle = await localDirectoryHandle.getFileHandle(`SANMAO-${Date.now()}-${index + 1}.${extension}`, {
+                    create: true
+                });
+                const writable = await fileHandle.createWritable();
+                await writable.write(await response.blob());
+                await writable.close();
+            }
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '保存到本地目录失败');
+        }
+    }
+    async function saveStoragePath(nextPath = storagePath) {
+        setStorageBusy(true);
+        try {
+            const next = nextPath.trim();
+            const res = await fetch('/api/settings', {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    imageStoragePath: next
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '保存失败');
+            setStoragePath(next);
+            setState(data.state);
+            notify(next ? '图片存储路径已保存' : '已恢复默认存储路径');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '保存失败');
+        } finally{
+            setStorageBusy(false);
+        }
+    }
+    async function testWebSearchApiConnection() {
+        const key = webSearchApiKey.trim();
+        if (webSearchAnySearchSelected && !key && !selectedWebSearchConfigured) {
+            setWebSearchApiResult('尚未配置 ANYSEARCH_API_KEY，请在 .env.local 或系统环境变量中设置后再测试');
+            return;
+        }
+        if (!key && !selectedWebSearchConfigured) return notify('请先配置当前服务商的 API Key');
+        setWebSearchApiBusy(true);
+        setWebSearchApiResult('');
+        try {
+            const res = await fetch('/api/web-search/test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    provider: webSearchApiProvider,
+                    apiKey: key,
+                    useStored: !key
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '搜索 API 测试失败');
+            const sample = Array.isArray(data.sample) ? data.sample.map((item)=>item.title).filter(Boolean).slice(0, 2).join('、') : '';
+            const providerLabel = webSearchApiProvider === 'anysearch' ? 'AnySearch' : '百度千帆';
+            if (!webSearchAnySearchSelected && key) {
+                await saveWebSearchApi(false, {
+                    successMessage: `${providerLabel}搜索可用，测试成功，已自动保存；返回设置后仍会保持连接`,
+                    failurePrefix: `${providerLabel}搜索测试成功，但自动保存失败：`,
+                });
+                return;
+            }
+            setWebSearchApiResult(`${providerLabel}搜索可用，返回 ${data.resultCount || 0} 条结果${sample ? `：${sample}` : ''}`);
+        } catch (error) {
+            setWebSearchApiResult(error instanceof Error ? error.message : '搜索 API 测试失败');
+        } finally{
+            setWebSearchApiBusy(false);
+        }
+    }
+    async function saveWebSearchApi(clear = false, options = {}) {
+        if (webSearchAnySearchSelected) {
+            setWebSearchApiResult('AnySearch 仅通过 ANYSEARCH_API_KEY 环境变量配置，不在页面保存 Key');
+            return;
+        }
+        if (!clear && !webSearchApiKey.trim() && !selectedWebSearchConfigured) return notify('请先填写百度千帆 API Key');
+        setWebSearchApiBusy(true);
+        setWebSearchApiResult('');
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    webSearchApi: {
+                        provider: webSearchApiProvider,
+                        apiKey: webSearchApiKey.trim(),
+                        clear
+                    }
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '保存搜索 API 失败');
+            setState(data.state);
+            setWebSearchApiKey('');
+            setWebSearchApiResult(clear ? '已清除百度千帆本地配置；若设置了环境变量，仍会继续可用' : options.successMessage || '百度千帆 API 已保存；AnySearch 环境变量存在时会优先使用 AnySearch，失败后自动切换百度千帆');
+            return true;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : '保存搜索 API 失败';
+            setWebSearchApiResult(`${options.failurePrefix || ''}${message}`);
+            return false;
+        } finally{
+            setWebSearchApiBusy(false);
+        }
+    }
+    async function refreshChatSessions() {
+        try {
+            const rawSessions = await conversationRepository.list();
+            const fallbackProjectId = readWorkspaceContext().creativeProjectId;
+            const sessions = rawSessions.map((session)=>normalizeChatSession(session, fallbackProjectId));
+            chatMemoryRef.current = new Map(sessions.map((session)=>[session.id, validConversationMemory(session.memory, session.messages)]));
+            setChatSessions(sessions);
+            // Persist the one-time migration so a stale pending marker cannot
+            // return after the next reload or workspace reconciliation.
+            await Promise.all(rawSessions.map((rawSession, index) => {
+                const hadPending = rawSession.messages.some((message) => Boolean((message as unknown as { pending?: boolean }).pending));
+                return hadPending ? conversationRepository.save(sessions[index]) : Promise.resolve();
+            }));
+            if (sessions.length) {
+                activeChatIdRef.current = sessions[0].id;
+                agentPersonaRef.current = sessions[0].persona || '';
+                setActiveChatId(sessions[0].id);
+                setMessages(sessions[0].messages);
+                requestChatScrollAfterCommit();
+            }
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '读取助手历史失败');
+        }
+    }
+    async function refreshAdmin() {
+        try {
+            const session = await requestAdminSession();
+            setAdminRequired(session.required);
+            setIsAdmin(session.authenticated);
+        } catch  {}
+    }
+    async function refreshState() {
+        setLoadingState(true);
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(()=>controller.abort(), 12000);
+        try {
+            const res = await fetch('/api/state', {
+                cache: 'no-store',
+                signal: controller.signal
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '读取配置失败');
+            setState(data);
+            const selectedChat = filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>model.id === data.settings?.agentModelId && model.enabled && model.published && model.kind === 'chat') || filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>model.enabled && model.published && model.kind === 'chat');
+            if (!data.settings?.webSearchConfigured && !selectedChat?.capabilities.includes('web-search')) {
+                setAgentWebMode('off');
+                setAgentWebModeMenuOpen(false);
+                try {
+                    localStorage.setItem('sanmao-agent-web-mode', 'off');
+                    localStorage.setItem('sanmao-agent-web-search', '0');
+                } catch  {}
+            }
+            setStoragePath(data.settings?.imageStoragePath || '');
+            if (data.settings?.webSearchProvider) setWebSearchApiProvider(data.settings.webSearchProvider);
+            if (!data.providers?.length) setSection('providers');
+        } catch (error) {
+            const timedOut = error instanceof DOMException && error.name === 'AbortError';
+            notify(timedOut ? '读取本地配置超时，请检查后台服务后重试。' : error instanceof Error ? error.message : '读取配置失败');
+        } finally{
+            window.clearTimeout(timeoutId);
+            setLoadingState(false);
+        }
+    }
+    async function refreshAgentModelHealth() {
+        try {
+            const response = await fetch('/api/agent/health', { cache: 'no-store' });
+            if (!response.ok) return;
+            const data = await response.json();
+            if (Array.isArray(data.agentHealth)) setState((current)=>({ ...current, agentHealth: data.agentHealth }));
+        } catch {}
+    }
+    async function applyReturnedState(res) {
+        const contentType = res.headers.get('content-type') || '';
+        const body = await res.text();
+        let data = {};
+        try {
+            data = body.trim() ? JSON.parse(body) : {};
+        } catch {
+            const isHtml = contentType.includes('text/html') || /^\s*<!doctype\s+html|^\s*<html[\s>]/i.test(body);
+            throw new Error(isHtml ? '服务器返回了 HTML 页面，当前本地服务可能尚未重新构建，请重启应用后重试。' : '服务器返回了无法解析的响应，请重试。');
+        }
+        if (!res.ok) throw new Error(data.error || '操作失败');
+        if (data.state) setState(data.state);
+        return data;
+    }
+    function toggleLocalUpscaleMode() {
+        if (generateUpscaleMode) {
+            setGenerateWorkflow('generate');
+            notify('已返回普通生图模式');
+            return;
+        }
+        if (generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' || !creativeReferenceUrl(generateRefs[0])) return notify('本地超分需要恰好 1 张已准备好的图片参考');
+        if (generateRefs.some((reference)=>reference.pending)) return notify('参考图正在准备，请稍候片刻再超分');
+        if (!availableUpscaleModels.length) return notify('还没有可用的超分模型。请到模型库重新读取并启用 SeedVR2-7B。');
+        const lastCall = getLastModelCall('upscale');
+        const rememberedModel = lastCall?.mode === 'manual' && lastCall.modelId && availableUpscaleModels.some((model)=>model.id === lastCall.modelId) ? lastCall.modelId : 'auto';
+        setGenerateUpscaleModelId(rememberedModel);
+        setGeneratePromptBeforeOptimization(null);
+        setGenerateWorkflow('upscale');
+        notify(lastCall ? '已进入本地图片超分模式，并恢复上次设置' : '已进入本地图片超分模式');
+    }
+    async function addReferences(files, target) {
+        try {
+            const current = target === 'agent' ? agentRefs : target === 'generate' ? generateRefs : angleReference ? [
+                angleReference
+            ] : [];
+            const room = Math.max(0, target === 'angle' ? 1 : 16 - current.length);
+            const refs = await Promise.all(Array.from(files).slice(0, room).map((file)=>createCreativeReferenceFromFile(file, {
+                    createId: uid,
+                    compressForChat: true,
+                    target
+                })));
+            if (target === 'agent') setAgentRefs((old)=>[
+                    ...old,
+                    ...refs
+                ].slice(0, 16));
+            else if (target === 'generate') setGenerateRefs((old)=>[
+                    ...old,
+                    ...refs
+                ].slice(0, 16));
+            else if (refs[0]) {
+                setAngleReference(refs[0]);
+                setAngleCameraSeed(null);
+                setAngleCameraStartSeed(null);
+                setAngleResults([]);
+            }
+            const noticeParts = [];
+            const optimizedCount = refs.filter((reference)=>reference.optimized).length;
+            if (optimizedCount) noticeParts.push(`已自动优化 ${optimizedCount} 张图片后添加`);
+            if (Array.from(files).length > room) noticeParts.push(target === 'angle' ? '角度控制台只使用一张参考图' : '最多保留 16 个引用素材');
+            if (noticeParts.length) notify(noticeParts.join('；'));
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '读取引用素材失败');
+        }
+    }
+    async function addAgentAttachments(files) {
+        const incoming = Array.from(files);
+        const media = incoming.filter((file)=>file.type.startsWith('image/') || file.type.startsWith('video/'));
+        const documents = incoming.filter((file)=>!file.type.startsWith('image/') && !file.type.startsWith('video/'));
+        if (media.length) await addReferences(media, 'agent');
+        if (!documents.length) return;
+        try {
+            const room = Math.max(0, 8 - agentFiles.length);
+            // 逐个解析：Office/PDF 要走服务端，并发解析几个大文件容易把内存顶满。
+            const parsed = [];
+            for (const file of documents.slice(0, room)) parsed.push(await readAgentChatFile(file, uid));
+            const totalBytes = [
+                ...agentFiles,
+                ...parsed
+            ].reduce((total, file)=>total + (file.size || new TextEncoder().encode(file.content).length), 0);
+            if (totalBytes > 4 * 1024 * 1024) throw new Error('本轮文本文件总大小不能超过 4MB，请减少文件数量或拆分后上传');
+            setAgentFiles((old)=>[
+                    ...old,
+                    ...parsed
+                ].slice(0, 8));
+            setAgentRefs((old)=>[
+                    ...old,
+                    ...parsed.map((file) => chatFileToCreativeReference(file, uid))
+                ].slice(0, 16));
+            const notices = documents.length > room ? ['最多同时分析 8 个文件'] : [];
+            const truncated = parsed.filter((file)=>file.truncated).map((file)=>file.name);
+            if (truncated.length === 1) notices.push(`${truncated[0]} 内容较长，只取得了前面的部分`);
+            else if (truncated.length > 1) notices.push(`${truncated.length} 个文件内容较长，只取得了前面的部分`);
+            if (notices.length) notify(notices.join('；'));
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '读取附件失败');
+        }
+    }
+    async function pasteClipboardImages(target) {
+        try {
+            if (!navigator.clipboard?.read) throw new Error('当前浏览器不支持一键读取剪贴板，请在参考图区按 Ctrl+V');
+            const clipboardItems = await navigator.clipboard.read();
+            const files = [];
+            for (const item of clipboardItems){
+                const type = item.types.find((value)=>value.startsWith('image/'));
+                if (!type) continue;
+                const blob = await item.getType(type);
+                files.push(new File([
+                    blob
+                ], `clipboard-${Date.now()}-${files.length + 1}.${type.includes('jpeg') ? 'jpg' : type.includes('webp') ? 'webp' : 'png'}`, {
+                    type
+                }));
+            }
+            if (!files.length) throw new Error('剪贴板里没有图片');
+            await addReferences(files, target);
+            notify(`已从剪贴板添加 ${files.length} 张参考图`);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '读取剪贴板失败');
+        }
+    }
+    async function loginAdmin(e) {
+        e.preventDefault();
+        setAdminBusy(true);
+        try {
+            const res = await fetch('/api/admin/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    password: adminPassword
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '登录失败');
+            setAdminPassword('');
+            await refreshAdmin();
+            notify('管理员已登录');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '登录失败');
+        } finally{
+            setAdminBusy(false);
+        }
+    }
+    async function logoutAdmin() {
+        await fetch('/api/admin/logout', {
+            method: 'POST'
+        }).catch(()=>undefined);
+        await refreshAdmin();
+        notify('已退出管理模式');
+    }
+    function closeProviderEditor() {
+        setProviderEditor(false);
+        setProviderEditId(null);
+        if (!state.providers.length) setProviderSetupDismissed(true);
+    }
+    function openAddProvider() {
+        setProviderEditId(null);
+        setProviderTestResult('');
+        setJimengLogin({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' });
+        setProviderForm(emptyProviderForm());
+        setProviderEditor(true);
+    }
+    function openEditProvider(provider) {
+        setProviderEditId(provider.id);
+        setProviderTestResult('');
+        setJimengLogin({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' });
+        setProviderForm({
+            name: provider.name,
+            type: provider.type,
+            platform: provider.platform || (provider.type === 'google-gemini' ? 'google-gemini' : 'custom'),
+            baseUrl: provider.baseUrl,
+            apiKey: '',
+            modelsPath: provider.modelsPath || '/models',
+            chatPath: provider.chatPath || '/chat/completions',
+            imageGenerationPath: provider.imageGenerationPath || '/images/generations',
+            imageEditPath: provider.imageEditPath || '/images/edits',
+            imageUpscalePath: provider.imageUpscalePath || provider.imageEditPath || '/images/edits',
+            imageUpscaleStatusPath: provider.imageUpscaleStatusPath || '',
+            responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? '/beta/responses' : '/responses'),
+            videoTransport: provider.videoTransport || '',
+            videoBaseUrl: provider.videoBaseUrl || '',
+            videoTaskPath: provider.videoTaskPath || '/v1/tasks',
+            videoTaskStatusPath: provider.videoTaskStatusPath || '/v1/tasks/{id}',
+            videoGenerationPath: provider.videoGenerationPath || '/v1/videos',
+            videoModelsPath: provider.videoModelsPath || '/v1/models',
+            videoPricingPath: provider.videoPricingPath || '/v1/pricing',
+            videoApiKey: '',
+            jimengCliPath: provider.jimengCliPath || '',
+            authHeader: provider.authHeader || 'Authorization',
+            authPrefix: provider.authPrefix ?? 'Bearer '
+        });
+        setProviderEditor(true);
+    }
+    async function saveVideoTaskLocally(task) {
+        try {
+            const updatedTask = await saveVideoTaskLocallyRequest(task.id);
+            setVideoTasks((old)=>old.map((item)=>item.id === task.id ? updatedTask : item));
+            void refreshVideoTasks(videoPage);
+            notify('已再次保存视频');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '再次保存视频失败');
+        }
+    }
+    function openManualModelDialog(provider) {
+        setManualModelProvider(provider);
+        setManualModelForm({ rawId: '', displayName: '', kind: 'auto' });
+    }
+    function applyProviderPreset(platform) {
+        const preset = getProviderPreset(platform);
+        const existingCount = state.providers.filter((provider)=>provider.platform === platform && provider.id !== providerEditId).length;
+        const suggestedName = existingCount ? `${preset.short} ${existingCount + 1}` : preset.short;
+        setProviderTestResult('');
+        setProviderForm((old)=>({
+                ...old,
+                type: preset.type,
+                platform,
+                baseUrl: preset.needsBaseUrl ? old.platform === platform ? old.baseUrl : '' : preset.baseUrl,
+                responsesPath: platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses',
+                videoTransport: preset.videoTransport || (platform === 'custom' ? old.videoTransport : ''),
+                videoBaseUrl: preset.videoBaseUrl || (platform === 'custom' ? old.videoBaseUrl : ''),
+                videoTaskPath: preset.videoTaskPath || old.videoTaskPath || '/v1/tasks',
+                videoTaskStatusPath: preset.videoTaskStatusPath || old.videoTaskStatusPath || '/v1/tasks/{id}',
+                videoGenerationPath: preset.videoGenerationPath || old.videoGenerationPath || '/v1/videos',
+                videoModelsPath: preset.videoModelsPath || old.videoModelsPath || '/v1/models',
+                videoPricingPath: preset.videoPricingPath || old.videoPricingPath || '/v1/pricing',
+                name: providerEditId ? old.name : suggestedName
+            }));
+    }
+    async function testProvider() {
+        const localCli = providerForm.videoTransport === 'jimeng-cli';
+        if ((!providerForm.baseUrl.trim() && !localCli) || (!providerForm.apiKey.trim() && !providerEditId && !localCli)) return notify('请先填写服务地址和访问密钥');
+        setProviderTestBusy(true);
+        setProviderTestResult('');
+        try {
+            const res = await fetch('/api/providers/test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    ...providerForm,
+                    providerId: providerEditId
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                const status = Number(data.providerStatus || res.status);
+                const hint = status === 401 ? '（HTTP 401：Agnes 已拒绝本次 Key；请确认国内 .cn Key 配套 https://api.agnes-ai.cn/v1，国际 .com Key 配套 https://apihub.agnes-ai.com/v1，Key 只填 sk- 开头内容，不要填 Bearer）' : '';
+                throw new Error(`${data.error || '连接测试失败'}${hint}`);
+            }
+            const names = Array.isArray(data.sample) ? data.sample.map((m)=>m.id).slice(0, 4).join('、') : '';
+            setProviderTestResult(data.message || `连接成功，发现 ${data.count} 个模型${names ? `：${names}${data.count > 4 ? '…' : ''}` : ''}`);
+            return true;
+        } catch (error) {
+            setProviderTestResult(`连接失败：${error instanceof Error ? error.message : '请求失败'}`);
+            return false;
+        } finally{
+            setProviderTestBusy(false);
+        }
+    }
+    async function jimengLoginAction(action) {
+        if (!providerEditId) return notify('请先保存即梦 CLI 服务配置，再开始登录');
+        setJimengLogin((old) => ({ ...old, status: action === 'check' ? 'checking' : action === 'inspect' ? 'inspecting' : action === 'account' || action === 'refresh-account' ? 'accounting' : 'starting', error: '', accountError: '' }));
+        try {
+            const res = await fetch('/api/video/jimeng/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ providerId: providerEditId, action, deviceCode: jimengLogin.deviceCode }) });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || '即梦 CLI 操作失败');
+            setJimengLogin((old) => ({ ...old, ...data, status: data.status || (action === 'inspect' ? data.installed ? 'ready' : 'failed' : action === 'account' || action === 'refresh-account' ? data.authorized ? 'authorized' : 'idle' : old.status), error: data.error || '' }));
+            if (data.error) notify(data.error);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : '即梦 CLI 操作失败';
+            setJimengLogin((old) => ({ ...old, status: 'failed', error: message }));
+            notify(message);
+        }
+    }
+    async function saveProvider(e) {
+        e.preventDefault();
+        const localCli = providerForm.videoTransport === 'jimeng-cli';
+        if (!providerForm.baseUrl.trim() && !localCli) return notify('请填写服务商提供的 API 地址');
+        if (!providerEditId && !providerForm.apiKey.trim() && !localCli) return notify('请填写访问密钥');
+        setProviderBusy(true);
+        try {
+            const connected = await testProvider();
+            if (!connected) return;
+            const editId = providerEditId;
+            const res = await fetch(editId ? `/api/providers/${editId}` : '/api/providers', {
+                method: editId ? 'PATCH' : 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(providerForm)
+            });
+            const data = await applyReturnedState(res);
+            const id = editId || data.id;
+            setProviderEditor(false);
+            setProviderEditId(null);
+            setProviderTestResult('');
+            notify(editId ? '连接已更新，正在重新读取模型' : '连接已保存，正在读取模型');
+            await syncProvider(id);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '保存失败');
+        } finally{
+            setProviderBusy(false);
+        }
+    }
+    async function syncProvider(id) {
+        setSyncingId(id);
+        try {
+            const previousIds = new Set(state.models.filter((model)=>model.providerId === id).map((model)=>model.rawId || model.id));
+            const res = await fetch(`/api/providers/${id}/sync`, {
+                method: 'POST'
+            });
+            const data = await applyReturnedState(res);
+            const syncedModels = data.state?.models?.filter((model)=>model.providerId === id) || [];
+            const newCount = syncedModels.filter((model)=>!previousIds.has(model.rawId || model.id)).length;
+            const enabledCount = syncedModels.filter((model)=>model.enabled && model.published).length;
+            notify(`读取完成：${data.count} 个模型${newCount ? `，新增 ${newCount} 个` : ''}，已启用 ${enabledCount} 个。`);
+            setModelProviderFilter(id);
+            setModelSearch('');
+            setExpandedModelProviders(new Set([id]));
+            setSection('models');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '读取模型失败');
+            await refreshState();
+        } finally{
+            setSyncingId(null);
+        }
+    }
+    async function addManualModel(event) {
+        event.preventDefault();
+        if (!manualModelProvider || !manualModelForm.rawId.trim()) return notify('请填写模型 ID');
+        setManualModelBusy(true);
+        try {
+            const providerId = manualModelProvider.id;
+            const res = await fetch(`/api/providers/${providerId}/models`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    rawId: manualModelForm.rawId.trim(),
+                    displayName: manualModelForm.displayName.trim(),
+                    kind: manualModelForm.kind
+                })
+            });
+            const data = await applyReturnedState(res);
+            setManualModelProvider(null);
+            setModelProviderFilter(providerId);
+            setExpandedModelProviders((current)=>new Set([...current, providerId]));
+            setSection('models');
+            notify(`已登记模型 ${data.model?.displayName || manualModelForm.rawId.trim()}，默认未启用`);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '登记模型失败');
+        } finally{
+            setManualModelBusy(false);
+        }
+    }
+    function toggleModelProviderGroup(providerId) {
+        setExpandedModelProviders((current)=>{
+            const next = new Set(current);
+            if (next.has(providerId)) next.delete(providerId);
+            else next.add(providerId);
+            return next;
+        });
+    }
+    async function toggleProviderModelLibrary(provider) {
+        try {
+            const res = await fetch(`/api/providers/${provider.id}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    modelLibraryEnabled: !isProviderModelLibraryEnabled(provider)
+                })
+            });
+            await applyReturnedState(res);
+            notify(isProviderModelLibraryEnabled(provider) ? '已从模型库隐藏该服务商' : '已将该服务商加入模型库');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '更新服务商模型库状态失败');
+        }
+    }
+    function askDeleteProvider(id) {
+        setConfirmState({
+            title: '删除接口服务？',
+            text: '该服务下同步的模型也会一起移除。此操作不会影响本地创作记录。',
+            danger: true,
+            confirmText: '删除服务',
+            action: async ()=>{
+                const res = await fetch(`/api/providers/${id}`, {
+                    method: 'DELETE'
+                });
+                await applyReturnedState(res);
+                notify('接口服务已删除');
+            }
+        });
+    }
+    async function patchModel(model, patch) {
+        try {
+            const res = await fetch(`/api/models/${model.id}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(patch)
+            });
+            return await applyReturnedState(res);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '更新模型失败');
+            return null;
+        }
+    }
+    async function setModelKind(model, kind) {
+        if (model.kind === kind) return;
+        if (modelKindBusyRef.current.has(model.id)) return;
+        modelKindBusyRef.current.add(model.id);
+        setModelKindBusy(new Set(modelKindBusyRef.current));
+        try {
+            const data = await patchModel(model, {
+                kind
+            });
+            if (data?.state) {
+                const saved = data.state.models?.find((item) => item.id === model.id);
+                notify(`已归类为${modelKindLabel(saved?.kind || kind)}`);
+            }
+        } finally {
+            modelKindBusyRef.current.delete(model.id);
+            setModelKindBusy(new Set(modelKindBusyRef.current));
+        }
+    }
+    async function patchSettings(patch) {
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(patch)
+            });
+            await applyReturnedState(res);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '保存默认模型失败');
+        }
+    }
+    async function toggleModelUse(model) {
+        if (model.kind === 'unknown') return notify('先把这个模型标记为“对话、图片、视频或配音模型”');
+        const nextUse = !(model.enabled && model.published);
+        const data = await patchModel(model, {
+            enabled: nextUse,
+            published: nextUse
+        });
+        if (!data?.state || !nextUse) return;
+        const nextState = data.state;
+        if (model.kind === 'chat' && !nextState.settings.agentModelId) await patchSettings({
+            agentModelId: model.id
+        });
+        if (model.kind === 'image' && model.capabilities.includes('generate') && !nextState.settings.defaultImageModelId) await patchSettings({
+            defaultImageModelId: model.id
+        });
+        if (model.kind === 'video' && !nextState.settings.defaultVideoModelId) await patchSettings({
+            defaultVideoModelId: model.id
+        });
+    }
+    function askDeleteManualModel(model) {
+        setConfirmState({
+            title: '删除手动登记模型？',
+            text: `将从模型库移除“${model.displayName || model.rawId}”，不会影响服务商 Key 或其他创作记录。`,
+            danger: true,
+            confirmText: '删除模型',
+            action: async ()=>{
+                const res = await fetch(`/api/models/${model.id}`, {
+                    method: 'DELETE'
+                });
+                await applyReturnedState(res);
+                notify('手动登记模型已删除');
+            }
+        });
+    }
+    async function persistReferenceImages(references) {
+        const normalized = (references || []).map((reference, index)=>normalizeCreativeReference(reference, index)).filter(Boolean);
+        const source = normalized.map((reference, index)=>({
+            reference,
+            index,
+            dataUrl: reference.kind !== 'text' ? String(reference.url || '') : ''
+        })).filter((entry)=>entry.reference.kind === 'text' || (entry.dataUrl && (/^data:(?:image|video)\//i.test(entry.dataUrl) || /^https?:\/\//i.test(entry.dataUrl) || entry.dataUrl.startsWith('/api/storage/file?') || entry.dataUrl.startsWith('/api/storage/video?')))).slice(0, 16);
+        if (!source.length) return [];
+        const textRecords = source.filter((entry)=>entry.reference.kind === 'text').map((entry)=>({
+            id: entry.reference.id,
+            kind: 'text',
+            name: entry.reference.name,
+            text: entry.reference.text || '',
+            mimeType: entry.reference.mimeType
+        }));
+        const mediaSource = source.filter((entry)=>entry.reference.kind !== 'text');
+        if (!mediaSource.length) return textRecords;
+        try {
+            const data = await storeImages(mediaSource.filter((entry)=>entry.reference.kind === 'image').map((entry)=>({ url: entry.dataUrl })));
+            const imageSource = mediaSource.filter((entry)=>entry.reference.kind === 'image');
+            if (data.ok && Array.isArray(data.images)) return [
+                ...textRecords,
+                ...mediaSource.map((entry)=>({
+                    id: entry.reference.id,
+                    kind: entry.reference.kind,
+                    name: entry.reference.name,
+                    url: entry.reference.kind === 'image'
+                        ? (typeof data.images[imageSource.indexOf(entry)]?.url === 'string' ? data.images[imageSource.indexOf(entry)].url : entry.dataUrl)
+                        : entry.dataUrl,
+                    mimeType: entry.reference.mimeType
+                }))
+            ];
+        } catch  {}
+        return [
+            ...textRecords,
+            ...mediaSource.map((entry)=>({ id: entry.reference.id, kind: entry.reference.kind, name: entry.reference.name, url: entry.dataUrl, mimeType: entry.reference.mimeType }))
+        ];
+    }
+    async function persistHistoryImage(image) {
+        if (!image?.url || (!image.url.startsWith('data:image/') && !/^https?:\/\//i.test(image.url))) return image;
+        try {
+            const data = await storeImages([image]);
+            const saved = data.images?.[0];
+            return data.ok && typeof saved?.url === 'string' ? {
+                ...image,
+                ...saved
+            } : image;
+        } catch {
+            return image;
+        }
+    }
+    async function normalizeGalleryForBackup(items) {
+        const normalized = [];
+        for (const item of items) {
+            const next = await persistHistoryImage(item);
+            const references = Array.isArray(item.references) ? await Promise.all(item.references.map(async (reference)=>{
+                const stored = await persistHistoryImage({ url: reference.url });
+                return {
+                    ...reference,
+                    url: stored.url
+                };
+            })) : [];
+            const compareReference = item.compareReferenceUrl ? await persistHistoryImage({ url: item.compareReferenceUrl }) : null;
+            normalized.push({
+                ...item,
+                url: next.url,
+                references: references.length ? references : item.references,
+                compareReferenceUrl: references[0]?.url || compareReference?.url || item.compareReferenceUrl,
+                compareReferenceName: references[0]?.name || item.compareReferenceName
+            });
+        }
+        return normalized;
+    }
+    async function recordImages(images, meta) {
+        const sourceImages = images.filter((image)=>Boolean(String(image?.url || '').trim()));
+        if (!sourceImages.length) return [];
+        const storedImages = await Promise.all(sourceImages.map(async (image)=>{
+            return persistHistoryImage(image);
+        }));
+        const now = Date.now();
+        const items = buildGalleryItems(
+            storedImages.map((image)=>({
+                url: image.url,
+                localFileName: image.localFileName,
+                revisedPrompt: image.revisedPrompt
+            })),
+            {
+                ...meta,
+                projectId: meta.projectId || readWorkspaceContext().creativeProjectId
+            },
+            {
+                createdAt: now,
+                createId: ()=>uid('img'),
+                includeCompareReference: true
+            }
+        );
+        try {
+            await assetRepository.saveGallery(items);
+        } catch (error) {
+            console.warn('[Generation] 图片已返回，但本地创作记录写入失败', error);
+        }
+        setGallery((old)=>[
+                ...items,
+                ...old
+            ]);
+        registerHistorySuccess(items, sectionRef.current === 'generate' || (meta.source === 'agent' && sectionRef.current === 'agent'));
+        void saveImagesToLocalDirectory(images);
+        return items;
+    }
+    function patchGenerateTask(id, patch) {
+        setGenerateTasks((old)=>old.map((task)=>task.id === id ? {
+                    ...task,
+                    ...patch
+                } : task));
+    }
+    function appendGenerateTaskItems(id, items) {
+        if (!items.length) return;
+        setGenerateTasks((old)=>old.map((task)=>task.id === id ? {
+                    ...task,
+                    items: [
+                        ...task.items,
+                        ...items
+                    ],
+                    itemIds: [
+                        ...task.itemIds || task.items.map((item)=>item.id),
+                        ...items.map((item)=>item.id)
+                    ]
+                } : task));
+    }
+    function restoreGenerateTask(task) {
+        const request = task.request;
+        if (!request) return notify('这轮任务没有保存完整参数，无法恢复');
+        if (request.angle) {
+            setAngleReference(request.references?.[0] || null);
+            setAngleCameraSeed(request.angle);
+            setAngleNoteSeed(request.angleNote || '');
+            setAngleCameraStartSeed(null);
+            setAngleResults(task.items || []);
+            setSection('angle');
+            notify(request.referencesOmitted ? '视角参数已恢复，但参考图较大未能随任务保存，请重新添加参考图' : request.angle.viewpoint?.version === 2 ? '已恢复这一轮的视角与光影参数' : '旧版参数无法换算相对视角，已回到原图机位');
+            return;
+        }
+        setGeneratePrompt(task.prompt === 'Upscale this image' ? '' : task.prompt);
+        setGeneratePromptBeforeOptimization(null);
+        const restoringUpscale = task.mode === 'upscale';
+        if (restoringUpscale) {
+            setGenerateWorkflow('upscale');
+            setGenerateUpscaleModelId(request.modelId && availableUpscaleModels.some((model)=>model.id === request.modelId) ? request.modelId : 'auto');
+        } else {
+            setGenerateWorkflow('generate');
+            setGenerateModelId(request.modelId && availableGenerationModels.some((model)=>model.id === request.modelId) ? request.modelId : 'auto');
+        }
+        setRatio(request.ratio || '1:1');
+        setCustomRatioWidth(Math.max(1, Math.round(request.customRatioWidth || 16)));
+        setCustomRatioHeight(Math.max(1, Math.round(request.customRatioHeight || 9)));
+        setSizeMode(request.sizeMode || 'system');
+        setSizeTier(request.sizeTier || '1k');
+        setCount(Math.max(1, Math.min(8, request.count || task.expectedCount || 1)));
+        setQuality(request.quality || '自动');
+        setCustomWidth(Math.max(1, Math.round(request.customWidth || 1024)));
+        setCustomHeight(Math.max(1, Math.round(request.customHeight || 1024)));
+        setOutputFormat(request.outputFormat || 'png');
+        setBackgroundMode(request.backgroundMode || 'auto');
+        setGenerateUpscaleScale(request.upscaleScale || 2);
+        setGenerateUpscaleTarget(request.upscaleTarget || 'auto');
+        setGenerateUpscaleSeed(Number.isFinite(request.upscaleSeed) ? request.upscaleSeed : 42);
+        setGenerateUpscaleColorCorrection(request.upscaleColorCorrection || 'wavelet');
+        setGenerateUpscaleAlgorithm(request.upscaleAlgorithm || 'lanczos');
+        if (request.upscaleOutputFormat === 'png' || request.upscaleOutputFormat === 'jpg' || request.upscaleOutputFormat === 'bmp') setGenerateUpscaleOutputFormat(request.upscaleOutputFormat);
+        if (typeof request.upscaleOutputQuality === 'number' && request.upscaleOutputQuality >= 30 && request.upscaleOutputQuality <= 100) setGenerateUpscaleOutputQuality(Math.round(request.upscaleOutputQuality));
+        setGenerateRefs(request.references || []);
+        setGenerateMask(request.mask || null);
+        setSection('generate');
+        notify(request.referencesOmitted ? '参数已恢复，但参考图较大未能随任务保存，请重新添加参考图' : '已恢复这一轮的生图参数');
+    }
+    async function retryGenerateTask(task) {
+        const request = task.request;
+        if (!request) return notify('这轮任务没有保存完整参数，无法重试');
+        if (request.referencesOmitted) return notify('这轮任务的参考图过大未保存，请先点击“恢复参数”并重新添加参考图');
+        const remainingCount = task.mode === 'generate' || task.mode === 'edit' ? Math.max(1, task.expectedCount - task.items.length) : 1;
+        const retryRequest = {
+            ...request,
+            count: remainingCount,
+            references: [
+                ...request.references
+            ],
+            mask: request.mask ? {
+                ...request.mask
+            } : null
+        };
+        await submitGenerate(undefined, {
+            prompt: task.prompt,
+            references: retryRequest.references,
+            modelId: retryRequest.modelId,
+            angle: retryRequest.angle,
+            angleStart: retryRequest.angleStart,
+            mode: task.mode,
+            request: retryRequest
+        });
+    }
+    const UPSCALE_CANCELLED_MESSAGE = '高清任务已取消。';
+    async function cancelGenerateTask(task) {
+        if (task.status !== 'pending') return notify('这条任务已经结束，无法停止跟踪');
+        if (task.mode !== 'upscale' || !task.upscaleTaskId) return notify('当前只有后台高清放大任务支持停止跟踪');
+        try {
+            const response = await fetch(`/api/upscale/tasks/${encodeURIComponent(task.upscaleTaskId)}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    action: 'cancel'
+                })
+            });
+            const data = await response.json().catch(()=>({}));
+            if (!response.ok) throw new Error(data.error || '停止跟踪失败');
+            patchGenerateTask(task.id, {
+                status: 'error',
+                cancelled: true,
+                completedAt: Date.now(),
+                error: UPSCALE_CANCELLED_MESSAGE,
+                info: `${task.info || '高清放大'} · 已停止跟踪`
+            });
+            notify('已停止跟踪这条高清任务；服务商可能仍在生成，可在创作记录里重试。');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '停止跟踪失败');
+        }
+    }
+    async function submitGenerate(e, overrides) {
+        e?.preventDefault();
+        const savedRequest = overrides?.request;
+        const isAngleGeneration = Boolean(savedRequest?.angle || overrides?.angle);
+        const submittedAngleOutput = savedRequest?.angleOutput || overrides?.angleOutput;
+        const rawSubmittedPrompt = overrides?.prompt.trim() || generatePrompt.trim();
+        const availableSubmittedRefs = savedRequest ? [
+            ...savedRequest.references
+        ] : overrides ? [
+            ...overrides.references
+        ] : [
+            ...generateRefs
+        ];
+        const naturalReferenceReplacement = replaceNaturalReferenceLabels(rawSubmittedPrompt, availableSubmittedRefs);
+        const referenceSelection = selectCreativeReferences(naturalReferenceReplacement.value, availableSubmittedRefs);
+        if (referenceSelection.invalidNumbers.length) return notify(`引用编号无效：${referenceSelection.invalidNumbers.map((number)=>`@${number}`).join('、')}，请重新选择引用`);
+        const submittedRefs = referenceSelection.references;
+        const submittedPrompt = appendTextReferenceContext(naturalReferenceReplacement.value, submittedRefs);
+        if (submittedRefs.some((reference)=>reference.kind === 'video')) return notify('图片生成不能接收视频引用；请移除视频，或切换到视频工作台。');
+        const submittedImageRefs = submittedRefs.filter((reference)=>reference.kind === 'image' && creativeReferenceUrl(reference));
+        const submittedUpscaleMode = !isAngleGeneration && (savedRequest ? overrides?.mode === 'upscale' : generateUpscaleMode);
+        const hasLocalEditMask = !isAngleGeneration && Boolean((savedRequest ? savedRequest.mask?.dataUrl : generateMask?.dataUrl) && submittedImageRefs.length === 1);
+        const submittedImageModelOptions = isAngleGeneration || hasLocalEditMask ? availableEditModels : availableGenerationModels;
+        const requestedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
+        const submittedModelId = !submittedUpscaleMode && hasLocalEditMask && requestedModelId !== 'auto' && !submittedImageModelOptions.some((model)=>model.id === requestedModelId) ? 'auto' : requestedModelId;
+        const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : submittedImageModelOptions.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : selectAutomaticModel(submittedImageModelOptions, state.settings.defaultProviderId, state.settings.defaultImageModelId);
+        const moveGuideDataUrl = !isAngleGeneration && submittedImageRefs.length === 1
+            ? (savedRequest ? savedRequest.mask?.sourceImageDataUrl : generateMask?.sourceImageDataUrl) || ''
+            : '';
+        const submittedImageReferenceUrls = submittedImageRefs.map((reference)=>creativeReferenceUrl(reference)).filter(Boolean);
+        const submittedSizeMode = savedRequest?.sizeMode || sizeMode;
+        const submittedCustomWidth = savedRequest?.customWidth || customWidth;
+        const submittedCustomHeight = savedRequest?.customHeight || customHeight;
+        if (submittedRefs.some((reference)=>reference.pending)) return notify('参考图正在准备，请稍候片刻再提交');
+        if (!submittedUpscaleMode && !submittedPrompt) return notify('先描述你想生成什么');
+        if (!submittedUpscaleMode && !isAngleGeneration && submittedSizeMode === 'custom' && (submittedCustomWidth < 1 || submittedCustomHeight < 1)) return notify('请输入有效的自定义宽高');
+        const hasAvailableModel = submittedUpscaleMode ? availableUpscaleModels.length > 0 : submittedImageModelOptions.length > 0;
+        if (!hasAvailableModel) return notify(submittedUpscaleMode ? '还没有可用的超分模型，请先到模型库启用模型' : hasLocalEditMask ? '还没有支持局部编辑的图片模型，请先到模型库启用带“修改”能力的图片模型' : '还没有可用图片模型，请先到模型库启用模型');
+        const taskId = uid('generate-task');
+        const taskPrompt = submittedPrompt || 'Upscale this image';
+        const taskRefs = submittedRefs;
+        const taskReferenceBytes = submittedImageReferenceUrls.reduce((total, reference)=>total + reference.length, 0) + (isAngleGeneration ? 0 : (savedRequest ? savedRequest.mask?.dataUrl.length || 0 : generateMask?.dataUrl.length || 0) + moveGuideDataUrl.length);
+        if (taskReferenceBytes > 7000000) return notify('参考图和局部编辑范围总大小过大，已停止提交；请减少图片数量或重新上传后再试');
+        if (submittedUpscaleMode && (submittedRefs.some((reference)=>reference.kind !== 'image') || submittedImageRefs.length !== 1)) return notify('本地超分需要恰好 1 张图片引用，文本或视频不能用于超分');
+        const taskMode = savedRequest ? overrides?.mode || (submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate') : submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate';
+        const taskCount = savedRequest ? Math.max(1, Math.min(8, savedRequest.count || 1)) : submittedUpscaleMode || isAngleGeneration ? 1 : count;
+        const taskModelId = submittedModelId;
+        const taskModel = submittedModel;
+        const requestedRatio = isAngleGeneration ? submittedAngleOutput?.aspectRatio || '自动' : savedRequest?.ratio || ratio;
+        const autoReferenceSize = requestedRatio === '自动' && submittedImageRefs.length >= 1 && (isAngleGeneration || submittedImageRefs.length === 1) ? (isAngleGeneration ? null : generateAutoReferenceSize) || await loadImageDimensions(creativeReferenceUrl(submittedImageRefs[0])).catch(()=>null) : null;
+        const taskRatio = requestedRatio === '自动' && autoReferenceSize ? exactRatioFromDimensions(autoReferenceSize.width, autoReferenceSize.height) : requestedRatio;
+        const taskCustomRatioWidth = savedRequest?.customRatioWidth || customRatioWidth;
+        const taskCustomRatioHeight = savedRequest?.customRatioHeight || customRatioHeight;
+        const taskSizeMode = isAngleGeneration ? 'custom' : savedRequest?.sizeMode || sizeMode;
+        const taskSizeTier = isAngleGeneration ? '1k' : savedRequest?.sizeTier || sizeTier;
+        const taskCustomWidth = isAngleGeneration ? submittedAngleOutput?.width || 1280 : savedRequest?.customWidth || customWidth;
+        const taskCustomHeight = isAngleGeneration ? submittedAngleOutput?.height || 1280 : savedRequest?.customHeight || customHeight;
+        const taskQuality = isAngleGeneration ? '自动' : savedRequest?.quality || quality;
+        const taskOutputFormat = isAngleGeneration ? 'png' : savedRequest?.outputFormat || outputFormat;
+        const taskBackgroundMode = isAngleGeneration ? 'auto' : savedRequest?.backgroundMode || backgroundMode;
+        const taskMaskAsset = isAngleGeneration ? null : savedRequest ? savedRequest.mask : generateMask;
+        const taskMask = taskMaskAsset?.dataUrl;
+        const taskUpscaleScale = savedRequest?.upscaleScale || generateUpscaleScale;
+        const taskUpscaleTarget = savedRequest?.upscaleTarget || generateUpscaleTarget;
+        const taskUpscaleSeed = savedRequest?.upscaleSeed ?? generateUpscaleSeed;
+        const taskUpscaleColorCorrection = savedRequest?.upscaleColorCorrection || generateUpscaleColorCorrection;
+        const taskUpscaleAlgorithm = savedRequest?.upscaleAlgorithm || generateUpscaleAlgorithm;
+        const taskUpscaleOutputFormat = savedRequest?.upscaleOutputFormat || generateUpscaleOutputFormat;
+        const taskUpscaleOutputQuality = savedRequest?.upscaleOutputQuality || generateUpscaleOutputQuality;
+        const taskRequest = savedRequest ? {
+            ...savedRequest,
+            modelId: taskModelId,
+            ratio: taskRatio,
+            customRatioWidth: taskCustomRatioWidth,
+            customRatioHeight: taskCustomRatioHeight,
+            sizeMode: taskSizeMode,
+            sizeTier: taskSizeTier,
+            count: taskCount,
+            quality: taskQuality,
+            customWidth: taskCustomWidth,
+            customHeight: taskCustomHeight,
+            outputFormat: taskOutputFormat,
+            backgroundMode: taskBackgroundMode,
+            upscaleScale: taskUpscaleScale,
+            upscaleTarget: taskUpscaleTarget,
+            upscaleSeed: taskUpscaleSeed,
+            upscaleColorCorrection: taskUpscaleColorCorrection,
+            upscaleAlgorithm: taskUpscaleAlgorithm,
+            upscaleOutputFormat: taskUpscaleOutputFormat,
+            upscaleOutputQuality: taskUpscaleOutputQuality,
+            references: taskRefs,
+            sourceImageId: submittedUpscaleMode ? taskRefs[0]?.id : undefined,
+            mask: isAngleGeneration ? null : savedRequest.mask ? {
+                ...savedRequest.mask
+            } : null,
+            angle: savedRequest.angle,
+            angleStart: savedRequest.angleStart,
+            angleNote: savedRequest.angleNote,
+            angleGuide: savedRequest.angleGuide,
+            angleOutput: savedRequest.angleOutput
+        } : {
+            modelId: taskModelId,
+            ratio: taskRatio,
+            customRatioWidth: taskCustomRatioWidth,
+            customRatioHeight: taskCustomRatioHeight,
+            sizeMode: taskSizeMode,
+            sizeTier: taskSizeTier,
+            count: taskCount,
+            quality: taskQuality,
+            customWidth: taskCustomWidth,
+            customHeight: taskCustomHeight,
+            outputFormat: taskOutputFormat,
+            backgroundMode: taskBackgroundMode,
+            upscaleScale: taskUpscaleScale,
+            upscaleTarget: taskUpscaleTarget,
+            upscaleSeed: taskUpscaleSeed,
+            upscaleColorCorrection: taskUpscaleColorCorrection,
+            upscaleAlgorithm: taskUpscaleAlgorithm,
+            upscaleOutputFormat: taskUpscaleOutputFormat,
+            upscaleOutputQuality: taskUpscaleOutputQuality,
+            references: taskRefs,
+            sourceImageId: submittedUpscaleMode ? taskRefs[0]?.id : undefined,
+            mask: isAngleGeneration ? null : generateMask ? {
+                ...generateMask
+            } : null,
+            angle: overrides?.angle,
+            angleStart: overrides?.angleStart,
+            angleNote: overrides?.angleNote,
+            angleGuide: overrides?.angleGuide,
+            angleOutput: overrides?.angleOutput
+        };
+        const preferenceContext = taskMode === 'upscale' ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate';
+        const manualImageModel = taskModelId !== 'auto' ? activeProviderModels.find((model)=>model.id === taskModelId) : undefined;
+        const recordImagePreference = (actualModelId)=>{
+            if (isAngleGeneration) return;
+            const actualModel = actualModelId ? state.models.find((model)=>model.id === actualModelId) : undefined;
+            const usedModel = manualImageModel || actualModel;
+            recordModelCall({
+                context: preferenceContext,
+                mode: manualImageModel ? 'manual' : 'auto',
+                providerId: usedModel?.providerId,
+                modelId: usedModel?.id,
+                params: {
+                    ratio: taskRatio,
+                    customRatioWidth: taskCustomRatioWidth,
+                    customRatioHeight: taskCustomRatioHeight,
+                    sizeMode: taskSizeMode,
+                    sizeTier: taskSizeTier,
+                    count: taskCount,
+                    quality: taskQuality,
+                    customWidth: taskCustomWidth,
+                    customHeight: taskCustomHeight,
+                    outputFormat: taskOutputFormat,
+                    backgroundMode: taskBackgroundMode,
+                    upscaleScale: taskUpscaleScale,
+                    upscaleTarget: taskUpscaleTarget,
+                    upscaleSeed: taskUpscaleSeed,
+                    upscaleColorCorrection: taskUpscaleColorCorrection,
+                    upscaleAlgorithm: taskUpscaleAlgorithm
+                }
+            });
+        };
+        const requestStartedAt = performance.now();
+        let completedOutputUrls: string[] = [];
+        primeSuccessSound();
+        setGenerateTasks((old)=>[
+                {
+                    id: taskId,
+                    status: 'pending',
+                    mode: taskMode,
+                    prompt: taskPrompt,
+                    expectedCount: taskCount,
+                    startedAt: Date.now(),
+                    info: `${taskModel?.displayName || '自动模型'} · ${taskMode === 'upscale' ? '图片超分' : taskMode === 'edit' ? '参考图生成' : '文本生成'}`,
+                    items: [],
+                    itemIds: [],
+                    request: taskRequest
+                },
+                ...old
+            ]);
+        setGenerateClock(Date.now());
+        setLastGenerateInfo('');
+        try {
+            const referenceRecords = await persistReferenceImages(taskRefs);
+            if (taskMode === 'upscale') {
+                if (!submittedImageRefs.length) throw new Error('SeedVR2-7B 是图片超分模型，请先添加一张图片引用，再点击生成。');
+                const sourceSize = await loadImageDimensions(creativeReferenceUrl(submittedImageRefs[0]));
+                 const targetSize = upscaleTargetDimensions(sourceSize, taskUpscaleScale, taskModel, taskUpscaleTarget);
+                 const cloudUpscale = isCloudUpscaleModel(taskModel);
+                 const taskCloudOutputFormat = cloudUpscale && taskModel?.outputFormats?.includes(taskUpscaleOutputFormat) ? taskUpscaleOutputFormat : undefined;
+                const upscaleRes = await fetch('/api/upscale', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        taskId,
+                        prompt: taskPrompt,
+                        model: taskModelId === 'auto' ? taskModel?.id : taskModelId,
+                        reference: creativeReferenceUrl(submittedImageRefs[0]),
+                        sourceImageId: taskRefs[0].id,
+                         referenceImages: referenceRecords,
+                         scale: taskUpscaleScale,
+                         ...(cloudUpscale ? {
+                            ...(taskCloudOutputFormat ? { outputFormat: taskCloudOutputFormat } : {}),
+                            ...(taskCloudOutputFormat === 'jpg' ? { outputQuality: taskUpscaleOutputQuality } : {})
+                        } : {
+                            size: `${targetSize.width}x${targetSize.height}`,
+                            seed: taskUpscaleSeed,
+                            colorCorrection: taskUpscaleColorCorrection,
+                            resizeMethod: taskUpscaleAlgorithm
+                        })
+                    })
+                });
+                let upscaleData = await upscaleRes.json();
+                if (!upscaleRes.ok) throw new Error(upscaleData.error || '图片超分失败');
+                if (upscaleData.taskId) patchGenerateTask(taskId, { upscaleTaskId: upscaleData.taskId, info: `${upscaleData.model?.name || '高清放大'} · 后台处理中` });
+                if (upscaleData.taskId && (upscaleData.status === 'queued' || upscaleData.status === 'processing')) upscaleData = await waitForUpscaleTask(upscaleData.taskId, upscaleData);
+                recordImagePreference(upscaleData.model?.id);
+                const durationMs = Math.round(performance.now() - requestStartedAt);
+                            const items = await recordImages(upscaleData.images || [], {
+                    prompt: taskPrompt,
+                    modelId: upscaleData.model?.id,
+                    modelName: upscaleData.model?.name,
+                    providerName: upscaleData.model?.provider,
+                    aspectRatio: '自动',
+                    outputSize: `${taskUpscaleScale}× 超分`,
+                    outputFormat: taskCloudOutputFormat ? taskCloudOutputFormat === 'jpg' ? 'jpeg' : taskCloudOutputFormat : 'png',
+                    generationMs: durationMs,
+                    source: 'upscale',
+                    parentId: upscaleData.sourceImageId || taskRefs[0].id,
+                    sourceImageId: upscaleData.sourceImageId || taskRefs[0].id,
+                    upscaleProvider: upscaleData.model?.provider,
+                    upscaleModel: upscaleData.model?.id,
+                    upscaleScale: taskUpscaleScale,
+                    upscaleOutputFormat: taskCloudOutputFormat,
+                    upscaleOutputQuality: taskCloudOutputFormat === 'jpg' ? taskUpscaleOutputQuality : undefined,
+                     upscaleTaskId: upscaleData.taskId,
+                     references: referenceRecords,
+                     annotations: taskMaskAsset?.annotations,
+                                mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations, ...(taskMaskAsset.sourceImageDataUrl ? { sourceImageDataUrl: taskMaskAsset.sourceImageDataUrl } : {}) } : undefined
+                });
+                completedOutputUrls = items.map((item)=>String(item.url || '').trim()).filter(Boolean);
+                const info = `${upscaleData.model?.name || '超分模型'} · ${taskUpscaleScale}× · 图片超分 · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
+                setResultItems((old)=>[
+                        ...items,
+                        ...old
+                    ]);
+                patchGenerateTask(taskId, {
+                    status: 'success',
+                    completedAt: Date.now(),
+                    info,
+                    items
+                });
+                if (items.length) playSuccessSound();
+                void refreshGenerationLogs();
+                setLastGenerateInfo(info);
+                return;
+            }
+            const requestRatio = taskSizeMode === 'custom' ? '自定义' : taskRatio;
+            const presetSize = presetDimensions(taskRatio, taskSizeTier, customRatioWidth, customRatioHeight);
+            const requestWidth = taskSizeMode === 'system' && taskRatio !== '自动' ? presetSize.width : taskSizeMode === 'custom' ? taskCustomWidth : 0;
+            const requestHeight = taskSizeMode === 'system' && taskRatio !== '自动' ? presetSize.height : taskSizeMode === 'custom' ? taskCustomHeight : 0;
+            const outputSize = requestWidth && requestHeight ? `${requestWidth}×${requestHeight}` : `${taskSizeTier.toUpperCase()} · 自动比例`;
+            if (taskCount > 1) {
+                let completedCount = 0;
+                let failedCount = 0;
+                let transparentFailures = 0;
+                let resolvedModelName = taskModel?.displayName || '图片模型';
+                const failures = [];
+                const runs = Array.from({
+                    length: taskCount
+                }, (_, index)=>(async ()=>{
+                        const childTaskId = `${taskId}-${index + 1}`;
+                        const childStartedAt = performance.now();
+                        try {
+                            const childRes = await fetch('/api/generate', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    taskId: childTaskId,
+                                    prompt: taskPrompt,
+                                    model: taskModelId,
+                                    aspectRatio: requestRatio,
+                                    resolution: taskSizeTier.toUpperCase(),
+                                    sizeMode: taskSizeMode,
+                                    count: 1,
+                                    width: requestWidth,
+                                    height: requestHeight,
+                                    quality: taskQuality,
+                                    fidelity: isAngleGeneration ? 'low' : 'high',
+                                    outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
+                                     background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
+                                     mask: taskMask,
+                                     moveGuide: moveGuideDataUrl || undefined,
+                                      references: submittedImageReferenceUrls,
+                                    referenceImages: referenceRecords,
+                                    camera: isAngleGeneration ? taskRequest.angle : undefined,
+                                    cameraStart: isAngleGeneration ? taskRequest.angleStart : undefined,
+                                    angleNote: isAngleGeneration ? taskRequest.angleNote : undefined,
+                                    angleGuide: isAngleGeneration ? taskRequest.angleGuide : undefined
+                                })
+                            });
+                            const childData = await childRes.json();
+                            if (!childRes.ok) throw new Error(childData.error || `第 ${index + 1} 张生成失败`);
+                            recordImagePreference(childData.model?.id);
+                            let returnedImages = childData.images || [];
+                            if (!returnedImages.length) throw new Error(`第 ${index + 1} 张没有返回图片`);
+                            if (taskBackgroundMode === 'local-transparent') {
+                                let failuresForImage = 0;
+                                returnedImages = await Promise.all(returnedImages.map(async (image)=>{
+                                    try {
+                                        return await makeWhiteBackgroundTransparent(image);
+                                    } catch  {
+                                        failuresForImage++;
+                                        return image;
+                                    }
+                                }));
+                                transparentFailures += failuresForImage;
+                            }
+                            const durationMs = Math.round(performance.now() - childStartedAt);
+                            const actualOutputFormat = taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat;
+                            const items = await recordImages(returnedImages, {
+                                prompt: taskPrompt,
+                                modelId: childData.model?.id,
+                                modelName: childData.model?.name,
+                                providerName: childData.model?.provider,
+                                aspectRatio: requestRatio,
+                                outputSize,
+                                outputFormat: actualOutputFormat,
+                                generationMs: durationMs,
+                                source: submittedImageRefs.length ? 'edit' : 'generate',
+                                 references: referenceRecords,
+                                 angle: taskRequest.angle,
+                  annotations: taskMaskAsset?.annotations,
+                  mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations, ...(taskMaskAsset.sourceImageDataUrl ? { sourceImageDataUrl: taskMaskAsset.sourceImageDataUrl } : {}) } : undefined
+                            });
+                            completedCount += items.length;
+                            resolvedModelName = childData.model?.name || resolvedModelName;
+                            appendGenerateTaskItems(taskId, items);
+                            setResultItems((old)=>[
+                                    ...items,
+                                    ...old
+                                ]);
+                            patchGenerateTask(taskId, {
+                                info: `${resolvedModelName} · 已返回 ${completedCount}/${taskCount} 张`
+                            });
+                            if (items.length) playSuccessSound();
+                            void refreshGenerationLogs();
+                        } catch (error) {
+                            failedCount += 1;
+                            failures.push(`第 ${index + 1} 张：${error instanceof Error ? error.message : '生成失败'}`);
+                            registerGenerationFailure();
+                            void refreshGenerationLogs();
+                        }
+                    })());
+                void refreshGenerationLogs();
+                await Promise.all(runs);
+                const durationMs = Math.round(performance.now() - requestStartedAt);
+                const info = `${resolvedModelName} · ${outputSize || '自动分辨率'} · ${submittedImageRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${completedCount}/${taskCount} 张已返回${failedCount ? `，${failedCount} 张失败` : ''}`;
+                const errorMessage = failures.length ? failures.join('；') : undefined;
+                patchGenerateTask(taskId, {
+                    status: completedCount > 0 ? 'success' : failedCount ? 'error' : 'pending',
+                    completedAt: Date.now(),
+                    info,
+                    ...(completedCount > 0 ? {} : errorMessage ? { error: errorMessage } : {})
+                });
+                if (transparentFailures) notify(`${transparentFailures} 张图片受到跨域限制，已保留原背景；可改用“API 透明”`);
+                if (failedCount) notify(`本轮已返回 ${completedCount} 张，${failedCount} 张失败`);
+                setLastGenerateInfo(info);
+                void refreshGenerationLogs();
+                return;
+            }
+            const res = await fetch('/api/generate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    taskId,
+                    prompt: taskPrompt,
+                    model: taskModelId,
+                    aspectRatio: requestRatio,
+                    resolution: taskSizeTier.toUpperCase(),
+                    sizeMode: taskSizeMode,
+                    count: taskCount,
+                    width: requestWidth,
+                    height: requestHeight,
+                    quality: taskQuality,
+                    fidelity: isAngleGeneration ? 'low' : 'high',
+                    outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
+                    background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
+                    mask: taskMask,
+                    moveGuide: moveGuideDataUrl || undefined,
+                    references: submittedImageReferenceUrls,
+                    referenceImages: referenceRecords,
+                    camera: isAngleGeneration ? taskRequest.angle : undefined,
+                    cameraStart: isAngleGeneration ? taskRequest.angleStart : undefined,
+                    angleNote: isAngleGeneration ? taskRequest.angleNote : undefined,
+                    angleGuide: isAngleGeneration ? taskRequest.angleGuide : undefined
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '生成失败');
+            recordImagePreference(data.model?.id);
+            const durationMs = Math.round(performance.now() - requestStartedAt);
+            let returnedImages = data.images || [];
+            if (taskBackgroundMode === 'local-transparent') {
+                let failures = 0;
+                returnedImages = await Promise.all(returnedImages.map(async (image)=>{
+                    try {
+                        return await makeWhiteBackgroundTransparent(image);
+                    } catch  {
+                        failures++;
+                        return image;
+                    }
+                }));
+                if (failures) notify(`${failures} 张图片受跨域限制，已保留原背景；可改用“API 透明”`);
+            }
+            const actualOutputFormat = taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat;
+            const items = await recordImages(returnedImages, {
+                prompt: taskPrompt,
+                modelId: data.model?.id,
+                modelName: data.model?.name,
+                providerName: data.model?.provider,
+                aspectRatio: requestRatio,
+                outputSize,
+                outputFormat: actualOutputFormat,
+                generationMs: durationMs,
+                source: submittedImageRefs.length ? 'edit' : 'generate',
+                 references: referenceRecords,
+                  angle: taskRequest.angle,
+                  angleNote: isAngleGeneration ? taskRequest.angleNote : undefined,
+                  annotations: taskMaskAsset?.annotations,
+                  mask: taskMaskAsset?.dataUrl ? { dataUrl: taskMaskAsset.dataUrl, feather: Math.max(0, Math.min(48, Math.round(Number(taskMaskAsset.feather) || 0))), annotations: taskMaskAsset.annotations, ...(taskMaskAsset.sourceImageDataUrl ? { sourceImageDataUrl: taskMaskAsset.sourceImageDataUrl } : {}) } : undefined
+            });
+            completedOutputUrls = items.map((item)=>String(item.url || '').trim()).filter(Boolean);
+            const info = `${data.model?.name || '图片模型'} · ${outputSize || '自动分辨率'} · ${submittedImageRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${items.length} 张`;
+            setResultItems((old)=>[
+                    ...items,
+                    ...old
+                ]);
+            patchGenerateTask(taskId, {
+                status: 'success',
+                completedAt: Date.now(),
+                info,
+                items
+            });
+            if (isAngleGeneration) {
+                setAngleResults(previous => [...items, ...previous].slice(0, 100));
+                if (items.length) {
+                    setAngleResultToast(items[0]);
+                    setAngleSuppressAutoOpenId(items[0].id);
+                }
+            }
+            if (items.length) playSuccessSound();
+            setLastGenerateInfo(info);
+            void refreshGenerationLogs();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : '生成失败';
+            if (completedOutputUrls.length) {
+                patchGenerateTask(taskId, {
+                    status: 'success',
+                    completedAt: Date.now(),
+                    info: `${taskModel?.displayName || '图片模型'} · 图片已返回，但本地收尾失败`
+                });
+                void refreshGenerationLogs();
+                notify('图片已返回，但本地收尾失败；结果仍可使用。');
+                return;
+            }
+            const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
+            patchGenerateTask(taskId, {
+                status: 'error',
+                completedAt: Date.now(),
+                error: message,
+                ...(cancelled ? { cancelled: true } : {}),
+                info: `${taskModel?.displayName || '图片模型'} · ${cancelled ? '已停止跟踪' : '生成失败'}`
+            });
+            if (!cancelled) registerGenerationFailure();
+            void refreshGenerationLogs();
+            notify(cancelled ? '已停止跟踪这条高清任务，服务商可能仍在生成。' : message);
+        }
+    }
+    async function submitAngleGeneration(input) {
+        setAngleBusy(true);
+        setAngleReference(input.reference);
+        try {
+            await submitGenerate(undefined, {
+                prompt: input.prompt,
+                references: [
+                    input.reference,
+                    ...(input.guideReference ? [input.guideReference] : [])
+                ],
+                modelId: input.camera.modelId,
+                angle: input.camera,
+                angleStart: input.cameraStart || undefined,
+                angleNote: input.note,
+                angleGuide: Boolean(input.guideReference),
+                angleOutput: input.output
+            });
+        } finally{
+            setAngleBusy(false);
+        }
+    }
+    function openAngleResultFromToast() {
+        if (!angleResultToast) return;
+        markHistoryImageViewed(angleResultToast);
+        setSection('angle');
+        setAngleResultOpenRequest(angleResultToast.id);
+        setAngleResultToast(null);
+    }
+    async function prepareAgentMemory(sessionId, context, model, signal) {
+        const previous = chatMemoryRef.current.get(sessionId);
+        let memory;
+        try {
+            memory = await prepareConversationMemory(context, previous, async (summary, transcript)=>{
+            const response = await fetch('/api/agent/memory', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal,
+                body: JSON.stringify({ summary, transcript, model })
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '整理对话记忆失败，请重试');
+            return result.summary;
+            }, signal);
+        } catch (error) {
+            if (signal.aborted) throw error;
+            const safePrevious = validConversationMemory(previous, context.filter((message)=>!message.pending));
+            console.warn('[Agent] 对话摘要失败，降级为近期消息上下文', error);
+            return safePrevious?.summary || '';
+        }
+        signal.throwIfAborted();
+        chatMemoryRef.current.set(sessionId, memory);
+        try {
+            await persistAgentSession(sessionId, pendingChatMessagesRef.current.get(sessionId) || context);
+        } catch (error) {
+            chatMemoryRef.current.set(sessionId, previous);
+            throw error;
+        }
+        return memory.summary;
+    }
+    async function saveAgentMemory(summary) {
+        const sessionId = activeChatIdRef.current;
+        if (!sessionId || busyChatIdsRef.current.has(sessionId)) throw new Error('请等待当前对话完成');
+        const currentMessages = pendingChatMessagesRef.current.get(sessionId) || messages;
+        const previous = chatMemoryRef.current.get(sessionId);
+        chatMemoryRef.current.set(sessionId, editConversationMemory(currentMessages, summary));
+        try {
+            await persistAgentSession(sessionId, currentMessages);
+        } catch (error) {
+            chatMemoryRef.current.set(sessionId, previous);
+            throw error;
+        }
+        notify(summary.trim() ? '对话记忆已保存' : '摘要已清空，最近消息仍会作为上下文');
+    }
+    async function saveAgentPersona(persona) {
+        const sessionId = activeChatIdRef.current;
+        const normalized = normalizeConversationPersona(persona);
+        agentPersonaRef.current = normalized;
+        if (!sessionId) {
+            setAgentPersonaDraft(normalized);
+            notify(normalized ? '新对话角色设定已保存，发送后生效' : '新对话角色设定已清空');
+            return;
+        }
+        if (busyChatIdsRef.current.has(sessionId)) throw new Error('请等待当前对话完成');
+        const current = chatSessions.find((session)=>session.id === sessionId);
+        if (!current) throw new Error('当前对话不存在');
+        const next = { ...current, persona: normalized, updatedAt: Date.now() };
+        await conversationRepository.save(next);
+        setChatSessions((old)=>old.map((session)=>session.id === sessionId ? next : session));
+        notify(next.persona ? '角色设定已保存' : '角色设定已清空');
+    }
+    async function persistAgentSession(id, nextMessages) {
+        const storedMessages = normalizeAssistantImageSources(nextMessages.filter((message)=>!message.pending).map(({ pending: _pending, ...message })=>message));
+        if (!storedMessages.length) return;
+        const now = Date.now();
+        const existing = chatSessions.find((session)=>session.id === id);
+        const firstUser = storedMessages.find((message)=>message.role === 'user')?.content.trim() || '新对话';
+        const session = {
+            id,
+            projectId: existing?.projectId || readWorkspaceContext().creativeProjectId,
+            title: existing?.title || firstUser.slice(0, 30),
+            createdAt: existing?.createdAt || now,
+            updatedAt: now,
+            messages: storedMessages,
+            persona: id === activeChatIdRef.current ? (agentPersonaRef.current || existing?.persona || agentPersonaDraft) : existing?.persona || '',
+            memory: validConversationMemory(chatMemoryRef.current.get(id), storedMessages)
+        };
+        const previous = chatSaveQueuesRef.current.get(id) || Promise.resolve();
+        const operation = previous.catch(()=>undefined).then(async ()=>{
+            await conversationRepository.save(session);
+            setChatSessions((old)=>[
+                    session,
+                    ...old.filter((item)=>item.id !== id)
+                ].sort((a, b)=>b.updatedAt - a.updatedAt));
+        });
+        chatSaveQueuesRef.current.set(id, operation);
+        try {
+            await operation;
+        } finally {
+            if (chatSaveQueuesRef.current.get(id) === operation) chatSaveQueuesRef.current.delete(id);
+        }
+    }
+    function setChatBusy(id, busy) {
+        const next = new Set(busyChatIdsRef.current);
+        if (busy) next.add(id);
+        else next.delete(id);
+        busyChatIdsRef.current = next;
+        setBusyChatIds([
+            ...next
+        ]);
+    }
+    function isCurrentAgentRequest(sessionId, requestId) {
+        return agentRequestsRef.current.get(sessionId)?.requestId === requestId;
+    }
+    async function finalizeStoppedAgentRequest(sessionId, request) {
+        const currentMessages = pendingChatMessagesRef.current.get(sessionId) || (activeChatIdRef.current === sessionId ? messages : []);
+        const stoppedMessages = currentMessages.map((message)=>{
+            if (message.id !== request.pendingId) return message;
+            if (request.kind === 'retry') {
+                const versions = messageVersionsFor(message).map((version)=>version.id === request.retryVersionId ? {
+                        ...version,
+                        content: request.partialText?.trim() || '本轮回答已停止。',
+                        interrupted: true
+                    } : version);
+                return applyMessageVersion({
+                    ...message,
+                    retrying: false,
+                    activity: undefined
+                }, versions, versions.findIndex((version)=>version.id === request.retryVersionId));
+            }
+            const { pending: _pending, activity: _activity, ...rest } = message;
+            return {
+                ...rest,
+                content: request.partialText?.trim() || '本轮回答已停止。',
+                interrupted: true
+            };
+        });
+        pendingChatMessagesRef.current.set(sessionId, stoppedMessages);
+        if (activeChatIdRef.current === sessionId) setMessages(stoppedMessages);
+        setChatBusy(sessionId, false);
+        await persistAgentSession(sessionId, stoppedMessages).catch(()=>undefined);
+    }
+    async function stopAgent() {
+        const sessionId = activeChatIdRef.current;
+        if (!sessionId) return;
+        const request = agentRequestsRef.current.get(sessionId);
+        if (!request) return;
+        request.stopped = true;
+        request.controller.abort(new Error('AGENT_CANCELLED'));
+        agentRequestsRef.current.delete(sessionId);
+        await finalizeStoppedAgentRequest(sessionId, request);
+    }
+    function resetMessageSelection() {
+        setAgentMessageSelectionMode(false);
+        setSelectedAgentMessages(new Set());
+    }
+    function resetShareSelection() {
+        setShareSelectionMode(false);
+        setSelectedShareGroups(new Set());
+    }
+    function beginShareSelection() {
+        if (!messages.length) return notify('当前对话还没有可分享的内容');
+        if (!selectableShareGroups.length) return notify('当前对话还没有可分享的已完成内容');
+        setShareSelectionMode(true);
+        setSelectedShareGroups(new Set());
+    }
+    function toggleShareGroupSelection(id) {
+        const group = shareGroups.find((item)=>item.id === id);
+        if (!group?.selectable) return;
+        setSelectedShareGroups((old)=>{
+            const next = new Set(old);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+    function toggleAllShareGroups() {
+        const allSelected = selectableShareGroups.length > 0 && selectableShareGroups.every((group)=>selectedShareGroups.has(group.id));
+        setSelectedShareGroups(allSelected ? new Set() : new Set(selectableShareGroups.map((group)=>group.id)));
+    }
+    function clearShareGroupSelection() {
+        setSelectedShareGroups(new Set());
+    }
+    function closeSidebarOnMobile() {
+        if (window.matchMedia('(max-width: 780px)').matches) setSidebarOpen(false);
+    }
+    function startNewChat() {
+        pauseChatAutoFollow();
+        activeChatIdRef.current = null;
+        agentPersonaRef.current = '';
+        setActiveChatId(null);
+        setMessages([]);
+        setAgentRefs([]);
+        setAgentFiles([]);
+        setAgentInput('');
+        setAgentInputBeforeOptimization(null);
+        setAgentFollowUp(null);
+        setAgentPersonaDraft('');
+        resetMessageSelection();
+        resetShareSelection();
+        setSection('agent');
+    }
+    function openChatSession(session) {
+        const normalized = normalizeChatSession(session, readWorkspaceContext().creativeProjectId);
+        activeChatIdRef.current = session.id;
+        agentPersonaRef.current = session.persona || '';
+        setActiveChatId(session.id);
+        setMessages(pendingChatMessagesRef.current.get(session.id) || normalized.messages);
+        setAgentRefs([]);
+        setAgentFiles([]);
+        setAgentInput('');
+        setAgentInputBeforeOptimization(null);
+        setAgentFollowUp(null);
+        setAgentPersonaDraft(session.persona || '');
+        resetMessageSelection();
+        resetShareSelection();
+        setSection('agent');
+        requestChatScrollAfterCommit();
+    }
+    function beginChatRename(session) {
+        if (chatSelectionMode) return;
+        setRenamingChatId(session.id);
+        setRenamingChatTitle(session.title);
+    }
+    function cancelChatRename() {
+        setRenamingChatId(null);
+        setRenamingChatTitle('');
+    }
+    async function commitChatRename(session) {
+        const title = renamingChatTitle.trim().slice(0, 48);
+        if (!title) {
+            cancelChatRename();
+            notify('对话名称不能为空');
+            return;
+        }
+        cancelChatRename();
+        const latest = chatSessions.find((item)=>item.id === session.id) || session;
+        if (latest.title === title) return;
+        const renamed = {
+            ...latest,
+            title
+        };
+        setChatSessions((old)=>old.map((item)=>item.id === session.id ? renamed : item));
+        try {
+            await conversationRepository.save(renamed);
+            notify('对话已重命名');
+        } catch (error) {
+            setChatSessions((old)=>old.map((item)=>item.id === session.id ? latest : item));
+            notify(error instanceof Error ? error.message : '重命名失败');
+        }
+    }
+    async function deleteChatSessions(ids) {
+        const selectedIds = new Set(ids.filter((id)=>!busyChatIdsRef.current.has(id)));
+        if (!selectedIds.size) return;
+        await Promise.all([
+            ...selectedIds
+        ].map((id)=>conversationRepository.remove(id)));
+        const remaining = chatSessions.filter((item)=>!selectedIds.has(item.id));
+        setChatSessions(remaining);
+        for (const id of selectedIds)pendingChatMessagesRef.current.delete(id);
+        setSelectedChatSessions((old)=>new Set([
+                ...old
+            ].filter((id)=>!selectedIds.has(id))));
+        if (activeChatIdRef.current && selectedIds.has(activeChatIdRef.current)) {
+            const next = remaining[0];
+            activeChatIdRef.current = next?.id || null;
+            setActiveChatId(next?.id || null);
+            setMessages(next?.messages || []);
+            setAgentFollowUp(null);
+            resetMessageSelection();
+        }
+    }
+    function askDeleteChatSession(session) {
+        if (busyChatIdsRef.current.has(session.id)) {
+            notify('当前对话正在回答，完成后再删除');
+            return;
+        }
+        setConfirmState({
+            title: '删除这段对话？',
+            text: `将从本机助手历史中删除“${session.title || '未命名对话'}”，此操作不可恢复。`,
+            danger: true,
+            confirmText: '确认删除',
+            action: async ()=>{
+                await deleteChatSessions([session.id]);
+                notify('对话已删除');
+            }
+        });
+    }
+    function toggleChatSelectionMode() {
+        setChatSelectionMode((old)=>!old);
+        setSelectedChatSessions(new Set());
+    }
+    function toggleChatSessionSelection(id) {
+        if (busyChatIdsRef.current.has(id)) return;
+        setSelectedChatSessions((old)=>{
+            const next = new Set(old);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+    function toggleAllChatSessionSelection() {
+        const selectableIds = chatSessions.filter((session)=>!busyChatIdsRef.current.has(session.id)).map((session)=>session.id);
+        const allSelected = selectableIds.length > 0 && selectableIds.every((id)=>selectedChatSessions.has(id));
+        setSelectedChatSessions(allSelected ? new Set() : new Set(selectableIds));
+    }
+    async function deleteSelectedChatSessions() {
+        const ids = [
+            ...selectedChatSessions
+        ].filter((id)=>!busyChatIdsRef.current.has(id));
+        if (!ids.length) return;
+        await deleteChatSessions(ids);
+        setChatSelectionMode(false);
+        setSelectedChatSessions(new Set());
+        notify(`已删除 ${ids.length} 段对话`);
+    }
+    function followUpRequestContent(question, followUp) {
+        if (!followUp?.content) return question;
+        const label = followUp.role === 'assistant' ? '助手回复' : '你的消息';
+        return `请围绕下面引用的${label}继续回答。\n\n<引用内容>\n${followUp.content}\n</引用内容>\n\n用户的追问：\n${question}`;
+    }
+    function followUpFromMessage(message) {
+        const source = message.content.trim();
+        if (!source) return notify('这条消息没有可追问的文字内容');
+        const excerpt = source.length > 6000 ? `${source.slice(0, 6000)}\n\n（内容过长，已截取前 6000 字）` : source;
+        setAgentFollowUp({
+            messageId: message.id,
+            role: message.role,
+            content: excerpt
+        });
+        requestAnimationFrame(()=>{
+            const input = agentInputRef.current;
+            if (!input) return;
+            focusContentEditableToEnd(input);
+        });
+        notify('已引用这条消息，可直接补充你的追问');
+    }
+    function beginAgentMessageSelection() {
+        if (shareSelectionMode) return notify('请先完成或取消分享选择');
+        if (messages.some((message)=>message.pending)) return notify('请等当前消息生成完成后再批量删除');
+        if (activeChatIdRef.current && busyChatIdsRef.current.has(activeChatIdRef.current)) return notify('当前对话正在回答，完成后再批量删除');
+        setAgentMessageSelectionMode(true);
+        setSelectedAgentMessages(new Set());
+    }
+    function toggleAgentMessageSelection(id) {
+        setSelectedAgentMessages((old)=>{
+            const next = new Set(old);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+    async function deleteSelectedAgentMessages() {
+        if (!selectedAgentMessages.size) return;
+        const sessionId = activeChatIdRef.current;
+        if (sessionId && busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，完成后再删除消息');
+        const nextMessages = messages.filter((item)=>!selectedAgentMessages.has(item.id));
+        if (sessionId) {
+            pendingChatMessagesRef.current.set(sessionId, nextMessages);
+            if (nextMessages.length) await persistAgentSession(sessionId, nextMessages);
+            else {
+                await conversationRepository.remove(sessionId);
+                pendingChatMessagesRef.current.delete(sessionId);
+                setChatSessions((old)=>old.filter((item)=>item.id !== sessionId));
+                if (activeChatIdRef.current === sessionId) {
+                    activeChatIdRef.current = null;
+                    setActiveChatId(null);
+                }
+            }
+        }
+        setMessages(nextMessages);
+        if (agentFollowUp && selectedAgentMessages.has(agentFollowUp.messageId)) setAgentFollowUp(null);
+        resetMessageSelection();
+        notify('已删除所选消息');
+    }
+    function switchAgentMessageVersion(message, nextIndex) {
+        if (message.retrying) return;
+        pauseChatAutoFollow();
+        const versions = messageVersionsFor(message);
+        const activeVersion = Math.min(Math.max(0, nextIndex), versions.length - 1);
+        if (activeVersion === messageVersionIndex(message)) return;
+        const beforeTop = messageViewportTop(message.id);
+        const nextMessages = messages.map((item)=>item.id === message.id ? applyMessageVersion(item, versions, activeVersion) : item);
+        setMessages(nextMessages);
+        restoreMessageViewport(message.id, beforeTop);
+        const sessionId = activeChatIdRef.current;
+        if (sessionId) {
+            pendingChatMessagesRef.current.set(sessionId, nextMessages);
+            void persistAgentSession(sessionId, nextMessages).catch(()=>notify('切换版本后保存失败'));
+        }
+    }
+    async function continueAgentFromImage(message, direction) {
+        const image = latestAssistantImage([
+            message
+        ]);
+        if (!image) return;
+        const sessionId = activeChatIdRef.current;
+        if (sessionId && busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，请等本轮完成后再续图');
+        markHistoryImageViewed(image);
+        try {
+            const reference = await galleryItemToReference(image);
+            setSection('agent');
+            await sendAgent(buildContinuationPrompt(direction), undefined, [
+                reference
+            ]);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '读取上一张生成图片失败，暂时不能续图');
+        }
+    }
+    async function continueAgentFromChat(message, direction) {
+        if (!direction?.trim()) return;
+        const sessionId = activeChatIdRef.current;
+        if (sessionId && busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，请等本轮完成后再继续');
+        setSection('agent');
+        await sendAgent(direction);
+    }
+    async function retryAgentMessage(message, modelOverride = activeAgentModelId) {
+        if (message.retrying) return;
+        pauseChatAutoFollow();
+        const sessionId = activeChatIdRef.current;
+        if (!sessionId) return notify('请先发送一条消息后再重新生成');
+        if (busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，完成后再重新生成');
+        const messageIndex = messages.findIndex((item)=>item.id === message.id);
+        if (messageIndex < 0) return;
+        const contextMessages = messages.slice(0, messageIndex).filter((item)=>!item.pending);
+        if (!contextMessages.some((item)=>item.role === 'user')) return notify('找不到这条回复对应的提问，暂时无法重新生成');
+        const originalVersions = messageVersionsFor(message);
+        const originalActiveVersion = messageVersionIndex(message);
+        const beforeTop = messageViewportTop(message.id);
+        const retryVersionId = uid('reply-version');
+        // 保留当前版本的正文，避免重试开始时内容瞬间缩短导致浏览器把页面夹到底部。
+        const retryVersion = {
+            id: retryVersionId,
+            content: message.content,
+            images: message.images,
+            files: message.files,
+            webSearch: message.webSearch,
+            webSearchDecision: message.webSearchDecision,
+            task: message.task,
+            durationSeconds: message.durationSeconds,
+            createdAt: Date.now()
+        };
+        const workingVersions = [
+            ...originalVersions,
+            retryVersion
+        ];
+        const workingVersionIndex = workingVersions.length - 1;
+        const retryStartedAt = Date.now();
+        const retryImageFlow = message.deliverable === 'IMAGE' || message.deliverable === 'BOTH';
+        const workingMessages = messages.map((item)=>item.id === message.id ? {
+            ...applyMessageVersion(item, workingVersions, workingVersionIndex, true),
+            pendingSince: retryStartedAt,
+            ...(retryImageFlow ? { activity: { stage: 'image_planning', message: '正在构思画面…', imageFlow: true } } : {})
+        } : item);
+        const requestId = uid('agent-request');
+        const requestController = new AbortController();
+        const agentRequest = { requestId, controller: requestController, pendingId: message.id, retryVersionId, kind: 'retry', partialText: '', stopped: false };
+        agentRequestsRef.current.set(sessionId, agentRequest);
+        pendingChatMessagesRef.current.set(sessionId, workingMessages);
+        setMessages(workingMessages);
+        setChatBusy(sessionId, true);
+        const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
+        let stopRetryProgress = ()=>{};
+        try {
+            var streamUpdateScheduler = null;
+            const latestUserMessage = [
+                ...contextMessages
+            ].reverse().find((item)=>item.role === 'user');
+            const latestUserId = latestUserMessage?.id;
+            const referenceSource = latestUserMessage;
+            const retryHistory = contextMessages.slice(0, contextMessages.indexOf(latestUserMessage));
+            const retryImage = !referenceSource?.references?.length ? conversationImage(latestUserMessage?.content || '', retryHistory) : null;
+            const retryReferences = retryImage ? [await galleryItemToReference(retryImage)] : referenceSource?.references || [];
+            const [referencesForRequest, referenceRecords, memory] = await Promise.all([
+                prepareAgentReferences(retryReferences, compressReferenceDataUrl),
+                persistReferenceImages(retryReferences),
+                prepareAgentMemory(sessionId, contextMessages, modelOverride, requestController.signal),
+            ]);
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
+            const selectedContextMessages = selectRelevantConversationMessages(contextMessages, latestUserMessage?.content || '', 8, 3, 11);
+            const payloadMessages = selectedContextMessages.slice(-11).map((item)=>({
+                    role: item.role,
+                    content: conversationMessageText(item),
+                    references: item.id === latestUserId ? referencesForRequest : [],
+                    files: item.id === latestUserId ? (item.files || []).map((file)=>({
+                            name: file.name,
+                            mimeType: file.mimeType,
+                            ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding } : {}),
+                            ...(file.artifactId ? { artifactId: file.artifactId } : {}),
+                            size: file.size
+                        })) : historyArtifactFiles(item)
+                }));
+            let streamedText = '';
+            /* 重新生成也可能是长任务：阶段文案挂在被重试的那条消息上（消息操作栏里显示）。 */
+            const retryRunId = uid('run');
+            const updateRetryActivity = (activity)=>{
+                if (!isCurrentRequest()) return;
+                if (agentRequest.partialText) return;
+                streamUpdateScheduler?.flush();
+                const current = pendingChatMessagesRef.current.get(sessionId) || workingMessages;
+                const updated = current.map((item)=>item.id === message.id ? {
+                        ...item,
+                        activity: activity ? { ...activity, ...(retryImageFlow && !agentRequest.partialText ? { imageFlow: true } : {}) } : activity
+                    } : item);
+                pendingChatMessagesRef.current.set(sessionId, updated);
+                if (activeChatIdRef.current === sessionId) setMessages(updated);
+            };
+            streamUpdateScheduler = createStreamUpdateScheduler((nextContent)=>{
+                if (!isCurrentRequest()) return;
+                const current = pendingChatMessagesRef.current.get(sessionId) || workingMessages;
+                const updated = current.map((item)=>{
+                    if (item.id !== message.id) return item;
+                    const versions = messageVersionsFor(item).map((version)=>version.id === retryVersionId ? { ...version, content: nextContent } : version);
+                    return {
+                        ...applyMessageVersion(item, versions, workingVersionIndex, true),
+                        ...(item.activity ? { activity: { ...item.activity, imageFlow: false } } : {})
+                    };
+                });
+                pendingChatMessagesRef.current.set(sessionId, updated);
+                if (activeChatIdRef.current === sessionId) setMessages(updated);
+            });
+            const updateRetryContent = (nextContent)=>{
+                agentRequest.partialText = nextContent;
+                streamUpdateScheduler.schedule(nextContent);
+            };
+            stopRetryProgress = pollAgentProgress(retryRunId, {
+                signal: requestController.signal,
+                isSettled: ()=>Boolean(streamedText),
+                onProgress: (progress)=>updateRetryActivity({
+                        stage: progress.stage,
+                        message: progress.message
+                    })
+            });
+            const retryImageModelId = latestUserMessage?.imageModelId || activeAgentImageModelId;
+            const data = await requestAgent({
+                    messages: payloadMessages,
+                    memory,
+                    persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
+                    referenceImages: referenceRecords,
+                    model: modelOverride,
+                    imageModelId: retryImageModelId,
+                    ...(message.task === 'one_take_video_prompt' && message.durationSeconds !== undefined ? { task: message.task, durationSeconds: message.durationSeconds } : {}),
+                    webMode: agentWebMode,
+                    webSearch: agentWebMode !== 'off',
+                    deliverable: message.deliverable,
+                    intentReason: '按原问题和原交付形式重新生成完整答复',
+                    runId: retryRunId
+                }, {
+                signal: requestController.signal,
+                onEvent: (event)=>{
+                    if (event.type === 'status') updateRetryActivity({
+                        stage: event.stage || 'answering',
+                        message: event.message || '正在处理…',
+                        model: event.model,
+                        mode: event.mode,
+                        count: event.count
+                    });
+                    if (event.type === 'delta') {
+                        streamedText += String(event.text || '');
+                        /* 正文开始输出就让位：扫光卡片只负责“还没出图”的等待。 */
+                        updateRetryContent(streamedText);
+                    }
+                    if (event.type === 'error') throw new Error(event.message || '助手流式响应失败');
+                }
+            });
+            streamUpdateScheduler.flush();
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
+            void refreshGenerationLogs();
+            void refreshAgentModelHealth();
+            let images = [];
+            if (Array.isArray(data.images) && data.images.length) {
+                const generation = Array.isArray(data.generations) ? data.generations[0] : null;
+                images = await recordImages(data.images, {
+                    prompt: generation?.prompt || message.content,
+                    modelId: generation?.modelId,
+                    modelName: generation?.modelName,
+                    providerName: generation?.providerName,
+                    aspectRatio: generation?.aspectRatio || '自动',
+                    source: 'agent',
+                    references: referenceRecords
+                });
+                if (images.length) playSuccessSound();
+            }
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
+            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string')).map((file)=>({
+                    id: uid('file'),
+                    name: file.name,
+                    mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
+                    ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' } : {}),
+                    ...(typeof file.artifactId === 'string' ? { artifactId: file.artifactId, downloadUrl: typeof file.downloadUrl === 'string' ? file.downloadUrl : `/api/artifacts/${file.artifactId}` } : {}),
+                    size: typeof file.size === 'number' ? file.size : undefined
+                })) : [];
+            const completedMessages = (pendingChatMessagesRef.current.get(sessionId) || workingMessages).map((item)=>{
+                if (item.id !== message.id) return item;
+                const versions = messageVersionsFor(item).map((version)=>version.id === retryVersionId ? {
+                        ...version,
+                        content: data.message || '已完成。',
+                        images,
+                        files,
+                        webSearch: data.webSearch || undefined,
+                        webSearchDecision: data.webSearchDecision || undefined,
+                        skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
+                        mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined,
+                        approval: data.approval || undefined,
+                        deliverable: data.deliverable || 'TEXT',
+                        ...(message.task === 'one_take_video_prompt' ? { task: message.task, durationSeconds: data.durationSeconds || message.durationSeconds } : {})
+                    } : version);
+                const completedItem = applyMessageVersion({ ...item, activity: undefined }, versions, versions.findIndex((version)=>version.id === retryVersionId));
+                // A successful retry replaces the failed turn. Do not carry
+                // the old error badge into the newly completed version.
+                const { agentError: _agentError, agentErrorModelId: _agentErrorModelId, ...cleanItem } = completedItem;
+                return { ...cleanItem, pendingSince: undefined };
+            });
+            if (!isCurrentRequest()) return;
+            pendingChatMessagesRef.current.delete(sessionId);
+            if (activeChatIdRef.current === sessionId) {
+                setMessages(completedMessages);
+                restoreMessageViewport(message.id, beforeTop);
+            }
+            agentRequestsRef.current.delete(sessionId);
+            setChatBusy(sessionId, false);
+            await persistAgentSession(sessionId, completedMessages);
+            notify(`已生成第 ${workingVersions.length} 个文本版本`);
+        } catch (error) {
+            const errorName = error instanceof Error ? error.name : '';
+            const errorMessage = error instanceof Error ? error.message : '';
+            const cancelled = agentRequest.stopped || requestController.signal.aborted || errorName === 'AbortError' || errorMessage === 'AGENT_CANCELLED';
+            if (cancelled) {
+                if (isCurrentRequest()) {
+                    agentRequest.stopped = true;
+                    agentRequestsRef.current.delete(sessionId);
+                    await finalizeStoppedAgentRequest(sessionId, agentRequest);
+                }
+                return;
+            }
+            if (!isCurrentRequest()) return;
+            const restoredMessages = messages.map((item)=>item.id === message.id ? applyMessageVersion(item, originalVersions, originalActiveVersion) : item);
+            pendingChatMessagesRef.current.delete(sessionId);
+            if (activeChatIdRef.current === sessionId) setMessages(restoredMessages);
+            notify(error instanceof Error ? error.message : '重新生成失败');
+            void refreshGenerationLogs();
+            void refreshAgentModelHealth();
+        } finally{
+            stopRetryProgress();
+            streamUpdateScheduler?.cancel();
+            if (isCurrentRequest()) {
+                agentRequestsRef.current.delete(sessionId);
+                setChatBusy(sessionId, false);
+            }
+        }
+    }
+    async function sendAgent(text = agentInput, task, overrideRefs, deliverableOverride, durationSeconds) {
+        closeAgentSkillMenu();
+        if (agentMessageSelectionMode) return notify('请先完成或取消删除选择');
+        if (shareSelectionMode) return notify('请先完成或取消分享选择');
+        const rawContent = text.trim();
+        if (!rawContent && !agentFiles.length && !agentRefs.length) return;
+        if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
+        const sessionId = activeChatId || uid('chat');
+        if (busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，可点击左侧“新对话”并行进行');
+        const currentSessionMessages = pendingChatMessagesRef.current.get(sessionId) || messages;
+        const availableReferences = overrideRefs ? [...overrideRefs] : [...agentRefs];
+        const naturalReferenceReplacement = overrideRefs
+            ? { value: rawContent, unresolved: [] }
+            : replaceNaturalReferenceLabels(rawContent, availableReferences);
+        const content = naturalReferenceReplacement.value;
+        const selection = overrideRefs ? { references: availableReferences, invalidNumbers: [], hasMentions: false } : selectCreativeReferences(content, availableReferences);
+        if (selection.invalidNumbers.length) return notify(`引用编号无效：${selection.invalidNumbers.map((number)=>`@${number}`).join('、')}，请重新选择引用`);
+        let refs = selection.references;
+        if (!overrideRefs && !refs.length && !task) {
+            const previousImage = conversationImage(content, currentSessionMessages);
+            if (previousImage) {
+                try {
+                    refs = [
+                        await galleryItemToReference(previousImage)
+                    ];
+                } catch (error) {
+                    return notify(error instanceof Error ? error.message : '无法读取上一张生成图片，暂时不能续图');
+                }
+            }
+        }
+        if (refs.some((reference)=>reference.pending)) return notify('引用素材正在准备，请稍候片刻再发送');
+        const files = overrideRefs ? [] : agentFiles.filter((file)=>refs.some((reference)=>reference.id === file.id && reference.kind !== 'text'));
+        const oneTakeDuration = task === 'one_take_video_prompt'
+            ? normalizeOneTakeDuration(durationSeconds)
+            : undefined;
+        const followUp = overrideRefs ? null : agentFollowUp;
+            const requestContent = content || '请分析我上传的文件和参考图';
+            const previousGithubInstallAssistant = [...currentSessionMessages].reverse().find((message)=>message.role === 'assistant')?.content || '';
+            const githubInstallHandoff = isGithubMcpInstallHandoff(requestContent, previousGithubInstallAssistant);
+            const githubInstallRepo = isGithubMcpInstallFollowUp(requestContent)
+                ? [...currentSessionMessages].reverse().find((message)=>message.role === 'user' && extractGithubRepositoryUrl(message.content))
+                : null;
+            const githubInstallWireHint = githubInstallRepo ? extractGithubRepositoryUrl(githubInstallRepo.content) : '';
+            const requestIntent = classifyAgentDeliverable(requestContent, {
+            messages: currentSessionMessages,
+            hasReferences: refs.length > 0,
+            hasFiles: files.length > 0
+        });
+        const selectedDeliverable = deliverableOverride || requestIntent.deliverable;
+            const creativeRoute = resolveCreativeRoute(requestContent, {
+                messages: currentSessionMessages,
+                hasReferences: refs.length > 0,
+                hasFiles: files.length > 0,
+                ...(task ? { task } : {}),
+            }, requestIntent);
+        const likelyImageRequest = !task && (selectedDeliverable === 'IMAGE' || selectedDeliverable === 'BOTH');
+        const user = {
+            id: uid('msg'),
+            role: 'user',
+            content: requestContent,
+            imageModelId: activeAgentImageModelId,
+            references: refs,
+            files,
+            followUp: followUp || undefined
+        };
+        const pendingId = uid('msg');
+        const pending = {
+            id: pendingId,
+            role: 'assistant',
+            content: likelyImageRequest ? '正在构思画面…' : '正在准备回答…',
+            pending: true,
+            pendingSince: Date.now(),
+            activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…', imageFlow: true } : { stage: 'answering', message: '正在准备回答…' }
+        };
+        const requestId = uid('agent-request');
+        const requestController = new AbortController();
+        const agentRequest = { requestId, controller: requestController, pendingId, partialText: '', stopped: false };
+        agentRequestsRef.current.set(sessionId, agentRequest);
+        primeSuccessSound();
+        const nextMessages = [
+            ...currentSessionMessages.filter((message)=>!message.pending),
+            user
+        ];
+        activeChatIdRef.current = sessionId;
+        pendingChatMessagesRef.current.set(sessionId, [
+            ...nextMessages,
+            pending
+        ]);
+        setActiveChatId(sessionId);
+        setMessages([
+            ...nextMessages,
+            pending
+        ]);
+        requestChatScrollAfterCommit();
+        setAgentInput('');
+        setAgentInputBeforeOptimization(null);
+        setAgentRefs([]);
+        setAgentFiles([]);
+        setAgentFollowUp(null);
+        setChatBusy(sessionId, true);
+        const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
+        void persistAgentSession(sessionId, nextMessages).catch(()=>undefined);
+        if (requestController.signal.aborted || !isCurrentRequest()) return;
+        let stopAgentProgress = ()=>{};
+        try {
+            var streamUpdateScheduler = null;
+            const updatePendingMessage = (patch)=>{
+                if (!isCurrentRequest()) return;
+                const current = pendingChatMessagesRef.current.get(sessionId) || [
+                    ...nextMessages,
+                    pending
+                ];
+                const updated = current.map((message)=>message.id === pendingId ? {
+                            ...message,
+                            ...patch
+                        } : message);
+                pendingChatMessagesRef.current.set(sessionId, updated);
+                if (activeChatIdRef.current === sessionId) setMessages(updated);
+            };
+            streamUpdateScheduler = createStreamUpdateScheduler((nextContent)=>{
+                updatePendingMessage({ content: nextContent, activity: undefined });
+            });
+            const updatePendingContent = (nextContent)=>{
+                agentRequest.partialText = nextContent;
+                /* 正文开始流式输出 → 不再属于“等出图”，扫光卡片立刻让位。 */
+                streamUpdateScheduler.schedule(nextContent);
+            };
+            const updatePendingActivity = (activity)=>{
+                if (agentRequest.partialText) return;
+                streamUpdateScheduler.flush();
+                updatePendingMessage({
+                    content: activity?.message,
+                    activity: activity ? { ...activity, ...(likelyImageRequest && !agentRequest.partialText ? { imageFlow: true } : {}) } : activity
+                });
+            };
+            const latestUserMessage = [
+                ...nextMessages
+            ].reverse().find((message)=>message.role === 'user');
+            const latestUserId = latestUserMessage?.id;
+            const referenceSource = latestUserMessage;
+            updatePendingActivity({ stage: 'preparing', message: '正在准备引用和对话上下文…' });
+            const [referencesForRequest, referenceRecords, memory] = await Promise.all([
+                prepareAgentReferences(referenceSource?.references || [], compressReferenceDataUrl),
+                persistReferenceImages(referenceSource?.references || []),
+                prepareAgentMemory(sessionId, nextMessages, activeAgentModelId, requestController.signal),
+            ]);
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
+            const selectedContextMessages = selectRelevantConversationMessages(nextMessages, requestContent);
+            const githubInstallContextMessage = isGithubMcpInstallFollowUp(requestContent)
+                ? [...nextMessages].slice(0, -1).reverse().find((message)=>message.role === 'user' && extractGithubRepositoryUrl(message.content))
+                : null;
+            const githubInstallHandoffMessage = githubInstallHandoff
+                ? [...nextMessages].slice(0, -1).reverse().find((message)=>message.role === 'assistant' && isGithubMcpInstallHandoff(requestContent, message.content))
+                : null;
+            const githubInstallContextMessages = [githubInstallContextMessage, githubInstallHandoffMessage]
+                .filter((message, index, items): message is (typeof githubInstallContextMessage) => Boolean(message) && items.findIndex((candidate)=>candidate?.id === message.id) === index);
+            const contextWithGithubInstall = githubInstallContextMessages.length
+                ? [...selectedContextMessages, ...githubInstallContextMessages]
+                    .filter((message, index, items)=>items.findIndex((candidate)=>candidate.id === message.id) === index)
+                    .sort((left, right)=>nextMessages.indexOf(left) - nextMessages.indexOf(right))
+                : selectedContextMessages;
+            const payloadMessages = contextWithGithubInstall.map((m)=>({
+                    role: m.role,
+                    content: m.id === latestUserId
+                        ? `${followUpRequestContent(m.content, m.followUp)}${githubInstallWireHint ? `\n[本轮安装目标仓库：${githubInstallWireHint}]` : ''}`
+                        : conversationMessageText(m),
+                    references: m.id === latestUserId ? referencesForRequest : [],
+                    files: m.id === latestUserId ? (m.files || []).map((file)=>({
+                            name: file.name,
+                            mimeType: file.mimeType,
+                            ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding } : {}),
+                            ...(file.artifactId ? { artifactId: file.artifactId } : {}),
+                            size: file.size
+                        })) : historyArtifactFiles(m)
+                }));
+            updatePendingActivity(likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…' } : { stage: 'answering', message: '正在准备回答…' });
+            let streamedText = '';
+            /*
+             * 长任务进度：主管线在工具轮里写快照（app/api/agent/progress），这里按 runId 轮询。
+             * 正文一开始流式返回就停：那时候用户看的是字，不该再被阶段文案顶掉。
+             * 单次模型调用可能很久，所以同一步骤超过 3 秒会带上秒表（见 lib/agent-client）。
+             */
+            const progressRunId = uid('run');
+            stopAgentProgress = pollAgentProgress(progressRunId, {
+                signal: requestController.signal,
+                isSettled: ()=>Boolean(streamedText),
+                onProgress: (progress)=>updatePendingActivity({
+                        stage: progress.stage,
+                        message: progress.message
+                    })
+            });
+            const data = await requestAgent({
+                    messages: payloadMessages,
+                    memory,
+                    persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
+                    referenceImages: referenceRecords,
+                    model: activeAgentModelId,
+                    imageModelId: activeAgentImageModelId,
+                    task,
+                    ...(oneTakeDuration !== undefined ? { durationSeconds: oneTakeDuration } : {}),
+                    webMode: agentWebMode,
+                    webSearch: agentWebMode !== 'off',
+                    deliverable: selectedDeliverable,
+                    intentReason: requestIntent.reason,
+                    creativeRoute,
+                    runId: progressRunId
+                }, {
+                signal: requestController.signal,
+                onEvent: (event)=>{
+                    if (event.type === 'status') updatePendingActivity({
+                        stage: event.stage || 'answering',
+                        message: event.message || '正在处理…',
+                        model: event.model,
+                        mode: event.mode,
+                        count: event.count
+                    });
+                    if (event.type === 'delta') {
+                        streamedText += String(event.text || '');
+                        updatePendingContent(streamedText);
+                    }
+                    if (event.type === 'error') throw new Error(event.message || '助手流式响应失败');
+                }
+            });
+            streamUpdateScheduler.flush();
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
+            void refreshGenerationLogs();
+            void refreshAgentModelHealth();
+            const submittedChatModel = activeAgentModelId !== 'auto' ? availableChatModels.find((model)=>model.id === activeAgentModelId) : undefined;
+            const actualChatModelId = submittedChatModel?.id || data.modelId || (Array.isArray(data.generations) ? data.generations[0]?.modelId : undefined);
+            const actualChatModel = actualChatModelId ? state.models.find((model)=>model.id === actualChatModelId) : undefined;
+            const usedChatModel = submittedChatModel || actualChatModel || (activeAgentModelId === 'auto' ? activeAgentChatModel : undefined);
+            recordModelCall({
+                context: 'agent',
+                mode: submittedChatModel ? 'manual' : 'auto',
+                providerId: usedChatModel?.providerId,
+                modelId: usedChatModel?.id,
+                params: {
+                    webMode: agentWebMode,
+                    webSearch: agentWebMode !== 'off'
+                }
+            });
+            let items = [];
+            if (Array.isArray(data.images) && data.images.length) {
+                const gen = Array.isArray(data.generations) ? data.generations[0] : null;
+                items = await recordImages(data.images, {
+                    prompt: gen?.prompt || requestContent,
+                    modelId: gen?.modelId,
+                    modelName: gen?.modelName,
+                    providerName: gen?.providerName,
+                    aspectRatio: gen?.aspectRatio || '自动',
+                    source: 'agent',
+                    references: referenceRecords
+                });
+                if (items.length) playSuccessSound();
+            }
+            if (requestController.signal.aborted || !isCurrentRequest()) return;
+            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string')).map((file)=>({
+                    id: uid('file'),
+                    name: file.name,
+                    mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
+                    ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' } : {}),
+                    ...(typeof file.artifactId === 'string' ? { artifactId: file.artifactId, downloadUrl: typeof file.downloadUrl === 'string' ? file.downloadUrl : `/api/artifacts/${file.artifactId}` } : {}),
+                    size: typeof file.size === 'number' ? file.size : undefined
+                })) : [];
+            const completed = [
+                ...nextMessages,
+                {
+                    id: pendingId,
+                    role: 'assistant',
+                    content: data.message || '已完成。',
+                    images: items,
+                    files,
+                    webSearch: data.webSearch || undefined,
+                    webSearchDecision: data.webSearchDecision || undefined,
+                    skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
+                    mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined,
+                    fallbackFrom: data.fallbackFrom || undefined,
+                    approval: data.approval || undefined,
+                    deliverable: data.deliverable || selectedDeliverable,
+                    ...(task === 'one_take_video_prompt' ? { task, durationSeconds: data.durationSeconds || oneTakeDuration } : {})
+                }
+            ];
+            if (!isCurrentRequest()) return;
+            pendingChatMessagesRef.current.delete(sessionId);
+            if (activeChatIdRef.current === sessionId) setMessages(completed);
+            agentRequestsRef.current.delete(sessionId);
+            setChatBusy(sessionId, false);
+            await persistAgentSession(sessionId, completed);
+        } catch (error) {
+            const errorName = error instanceof Error ? error.name : '';
+            const errorMessage = error instanceof Error ? error.message : '';
+            const cancelled = agentRequest.stopped || requestController.signal.aborted || errorName === 'AbortError' || errorMessage === 'AGENT_CANCELLED';
+            if (cancelled) {
+                if (isCurrentRequest()) {
+                    agentRequest.stopped = true;
+                    agentRequestsRef.current.delete(sessionId);
+                    await finalizeStoppedAgentRequest(sessionId, agentRequest);
+                }
+                return;
+            }
+            if (!isCurrentRequest()) return;
+            const failed = [
+                ...nextMessages,
+                {
+                    id: pendingId,
+                    role: 'assistant',
+                    content: `请求失败：${error instanceof Error ? error.message : '未知错误'}`,
+                    agentError: true,
+                    agentErrorModelId: activeAgentModelId
+                }
+            ];
+            pendingChatMessagesRef.current.delete(sessionId);
+            if (activeChatIdRef.current === sessionId) setMessages(failed);
+            await persistAgentSession(sessionId, failed).catch(()=>undefined);
+            void refreshGenerationLogs();
+            void refreshAgentModelHealth();
+        } finally{
+            stopAgentProgress();
+            streamUpdateScheduler?.cancel();
+            if (isCurrentRequest()) {
+                agentRequestsRef.current.delete(sessionId);
+                setChatBusy(sessionId, false);
+            }
+        }
+    }
+    async function resolveAgentApprovalMessage(messageId, outcome) {
+        const activeId = activeChatIdRef.current;
+        const source = pendingChatMessagesRef.current.get(activeId) || messages;
+        const next = source.map((item)=>item.id === messageId ? {
+                ...item,
+                approval: undefined,
+                approvalResult: String(outcome && outcome.message ? outcome.message : (outcome && outcome.rejected ? '已取消这一步操作，没有执行。' : '已执行完成。')),
+                mcpTools: Array.isArray(outcome && outcome.mcpTools) && outcome.mcpTools.length ? [
+                    ...(item.mcpTools || []),
+                    ...outcome.mcpTools
+                ] : item.mcpTools
+            } : item);
+        if (activeChatIdRef.current === activeId) setMessages(next);
+        await persistAgentSession(activeId, next).catch(()=>undefined);
+    }
+    async function toggleFavorite(item) {
+        await assetRepository.patchGallery(item.id, {
+            favorite: !item.favorite
+        });
+        setGallery((old)=>old.map((x)=>x.id === item.id ? {
+                    ...x,
+                    favorite: !x.favorite
+                } : x));
+        setResultItems((old)=>old.map((x)=>x.id === item.id ? {
+                    ...x,
+                    favorite: !x.favorite
+                } : x));
+        setGenerateTasks((old)=>old.map((task)=>({
+                    ...task,
+                    items: task.items.map((x)=>x.id === item.id ? {
+                            ...x,
+                            favorite: !x.favorite
+                        } : x)
+                })));
+    }
+    async function reversePrompt(item) {
+        if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
+        markHistoryImageViewed(item);
+        try {
+            let ref;
+            if (item.url.startsWith('data:image/')) ref = {
+                id: uid('ref'),
+                name: `历史-${item.id.slice(-6)}`,
+                dataUrl: item.url
+            };
+            else {
+                const response = await fetch(item.url);
+                if (!response.ok) throw new Error('无法读取历史图片');
+                const blob = await response.blob();
+                ref = await createCreativeReferenceFromFile(new File([
+                    blob
+                ], `历史-${item.id.slice(-6)}.png`, {
+                    type: blob.type || 'image/png'
+                }), {
+                    compressForChat: true,
+                    createId: uid,
+                });
+            }
+            setSection('agent');
+            await sendAgent('请根据这张图片反推提示词', 'reverse_prompt', [
+                ref
+            ]);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '反推提示词失败');
+        }
+    }
+    async function reversePromptFromReferences(durationSeconds = ONE_TAKE_DEFAULT_DURATION) {
+        if (!agentRefs.length) return notify('请先上传一张参考图');
+        if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
+        if (agentRefs.length === 1) {
+            await sendAgent('请根据我上传的参考图反推提示词', 'reverse_prompt', agentRefs);
+            return;
+        }
+        const duration = normalizeOneTakeDuration(durationSeconds);
+        await sendAgent(buildOneTakeVideoRequest(duration), 'one_take_video_prompt', agentRefs, undefined, duration);
+    }
+    async function refreshAgentSkills() {
+        try {
+            const response = await fetch('/api/skills', { cache: 'no-store' });
+            const data = await response.json();
+            setAgentSkills(Array.isArray(data?.skills) ? data.skills.filter((skill)=>skill && skill.enabled) : []);
+        } catch {}
+    }
+    function closeAgentSkillMenu() {
+        agentSkillMenuFromSlashRef.current = false;
+        setAgentSkillMenuOpen(false);
+        setAgentSkillQuery('');
+    }
+    function openAgentSkillMenu(query) {
+        setAgentSkillQuery(query || '');
+        setAgentSkillActive(0);
+        setAgentSkillMenuOpen(true);
+        void refreshAgentSkills();
+    }
+    function applyAgentSkill(skill) {
+        setAgentInput(skillMessageValue(agentInput, skill.name));
+        setAgentInputBeforeOptimization(null);
+        closeAgentSkillMenu();
+        window.setTimeout(()=>focusContentEditableToEnd(agentInputRef.current), 0);
+    }
+    async function optimizeAgentPrompt() {
+        const original = agentInput;
+        const source = original.trim();
+        if (!source) return notify('请先在输入框写下想润色的文字');
+        if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
+        if (promptOptimizing) return;
+        setPromptOptimizing(true);
+        try {
+            const optimized = await requestPromptOptimization(source, [], activeAgentModelId, 'polish_text');
+            setAgentInputBeforeOptimization(original);
+            setAgentInput(optimized);
+            requestAnimationFrame(()=>{
+                focusContentEditableToEnd(agentInputRef.current);
+            });
+            notify('已完成 AI 润色，可继续修改后发送；也可以撤销');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : 'AI 润色失败');
+        } finally{
+            setPromptOptimizing(false);
+        }
+    }
+    function undoAgentPromptOptimization() {
+        if (agentInputBeforeOptimization === null) return;
+        setAgentInput(agentInputBeforeOptimization);
+        setAgentInputBeforeOptimization(null);
+        window.setTimeout(()=>focusContentEditableToEnd(agentInputRef.current), 0);
+        notify('已撤销 AI 润色');
+    }
+    async function optimizeGeneratePrompt() {
+        const source = generatePrompt.trim();
+        if (!source) return notify('请先在提示词框写下想润色的文字');
+        if (generateUpscaleMode) return notify('图片超分模式不需要 AI 润色');
+        if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
+        if (generatePromptOptimizing) return;
+        setGeneratePromptOptimizing(true);
+        try {
+            const optimized = await requestPromptOptimization(source, [], activeAgentModelId, 'polish_text');
+            setGeneratePromptBeforeOptimization(generatePrompt);
+            setGeneratePrompt(optimized);
+            requestAnimationFrame(()=>{
+                focusContentEditableToEnd(generatePromptRef.current);
+            });
+            notify('已完成 AI 润色，可继续修改后生成；也可以撤销');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : 'AI 润色失败');
+        } finally{
+            setGeneratePromptOptimizing(false);
+        }
+    }
+    function undoGeneratePromptOptimization() {
+        if (generatePromptBeforeOptimization === null) return;
+        setGeneratePrompt(generatePromptBeforeOptimization);
+        setGeneratePromptBeforeOptimization(null);
+        window.setTimeout(()=>generatePromptRef.current?.focus(), 0);
+        notify('已撤销 AI 优化');
+    }
+    function reuseItem(item) {
+        setGeneratePrompt(item.prompt);
+        setGeneratePromptBeforeOptimization(null);
+        setGenerateWorkflow('generate');
+        setGenerateModelId(item.modelId && availableGenerationModels.some((m)=>m.id === item.modelId) ? item.modelId : 'auto');
+        setRatio(item.aspectRatio === '自定义' ? '1:1' : item.aspectRatio || '自动');
+        setGenerateRefs([]);
+        const dimensions = item.outputSize?.split('×').map(Number);
+        if (dimensions?.length === 2 && dimensions.every((value)=>value > 0)) {
+            const longEdge = Math.max(dimensions[0], dimensions[1]);
+            const tier = sizeTiers.find((option)=>option.longEdge === longEdge);
+            if (tier) {
+                setSizeMode('system');
+                setSizeTier(tier.value);
+            } else {
+                setSizeMode('custom');
+                setCustomWidth(dimensions[0]);
+                setCustomHeight(dimensions[1]);
+            }
+        } else {
+            const storedTier = sizeTiers.find((option)=>item.outputSize?.toUpperCase().startsWith(option.label));
+            if (storedTier) setSizeTier(storedTier.value);
+            setSizeMode(item.aspectRatio === '自定义' ? 'custom' : 'system');
+        }
+        setSection('generate');
+        notify('已带入原图参数，可修改后重新生成');
+    }
+    async function galleryItemToReference(item) {
+        if (item.url.startsWith('data:image/')) return {
+            id: uid('ref'),
+            name: `历史-${item.id.slice(-6)}`,
+            dataUrl: item.url
+        };
+        let sourceUrl = item.url;
+        if (/^https?:\/\//i.test(sourceUrl)) {
+            const cacheData = await storeImages([{ url: sourceUrl }]);
+            const cachedUrl = cacheData?.images?.[0]?.url;
+            if (!cacheData.ok || typeof cachedUrl !== 'string' || cachedUrl === sourceUrl) throw new Error('服务端无法读取这张远程图片，可能是图片链接已失效');
+            sourceUrl = cachedUrl;
+        }
+        const response = await fetch(sourceUrl);
+        if (!response.ok) throw new Error('无法读取历史图片');
+        const blob = await response.blob();
+        return createCreativeReferenceFromFile(new File([
+            blob
+        ], `历史-${item.id.slice(-6)}.png`, {
+            type: blob.type || 'image/png'
+        }), {
+            compressForChat: true,
+            createId: uid,
+        });
+    }
+    async function openAngleConsole(item) {
+        markHistoryImageViewed(item);
+        const originalUrl = item.angle ? item.references?.[0]?.url : item.url;
+        if (!originalUrl) return notify('这张结果没有保存原始参考图，请重新添加原图后调整视角');
+        const sourceItem = { ...item, url: originalUrl };
+        const requestId = uid('angle-open');
+        const hasImmediateImage = originalUrl.startsWith('data:image/');
+        const optimisticRef = {
+            id: uid('ref'),
+            name: `历史-${item.id.slice(-6)}`,
+            dataUrl: originalUrl,
+            pending: true
+        };
+        angleOpenRequestRef.current = requestId;
+        setAngleReference(optimisticRef);
+        setAngleCameraSeed(item.angle || null);
+        setAngleNoteSeed(item.angleNote || '');
+        setAngleCameraStartSeed(null);
+        setAngleResults([]);
+        setAngleOpenBusy(true);
+        setSection('angle');
+        notify('正在打开角度控制台，正在准备参考图…');
+        if (hasImmediateImage) {
+            window.setTimeout(()=>{
+                if (angleOpenRequestRef.current !== requestId) return;
+                setAngleReference((current)=>current?.id === optimisticRef.id ? {
+                        ...current,
+                        pending: false
+                    } : current);
+                setAngleOpenBusy(false);
+                notify('已将历史图片带入角度控制台');
+            }, 450);
+            return;
+        }
+        try {
+            const ref = await galleryItemToReference(sourceItem);
+            if (angleOpenRequestRef.current !== requestId) return;
+            setAngleReference({
+                ...ref,
+                id: optimisticRef.id,
+                pending: false
+            });
+            setAngleOpenBusy(false);
+            notify('已将历史图片带入角度控制台');
+        } catch (error) {
+            if (angleOpenRequestRef.current === requestId) {
+                setAngleOpenBusy(false);
+                setAngleReference(null);
+                notify(error instanceof Error ? error.message : '读取历史图片失败');
+            }
+        }
+    }
+    async function useAsReference(item, target = 'generate') {
+        markHistoryImageViewed(item);
+        const optimisticRef = {
+            id: uid('ref'),
+            name: `历史-${item.id.slice(-6)}.png`,
+            dataUrl: item.url,
+            pending: true
+        };
+        const updateRefs = target === 'agent' ? setAgentRefs : setGenerateRefs;
+        updateRefs((old)=>[
+                optimisticRef,
+                ...old
+            ].slice(0, 16));
+        setSection(target);
+        notify(target === 'agent' ? '已加入助手参考图，正在后台准备…' : '已加入生图参考图，正在后台准备…');
+        void galleryItemToReference(item).then((preparedRef)=>{
+            updateRefs((old)=>old.map((ref)=>ref.id === optimisticRef.id ? {
+                        ...preparedRef,
+                        id: optimisticRef.id,
+                        pending: false
+                    } : ref));
+        }).catch((error)=>{
+            updateRefs((old)=>old.filter((ref)=>ref.id !== optimisticRef.id));
+            notify(error instanceof Error ? error.message : '读取历史图片失败');
+        });
+    }
+    function editorDefaults() {
+        return {
+            sizeMode: 'system',
+            sizeTier: '1k',
+            customWidth: 1024,
+            customHeight: 1024,
+            targetSize: 'auto',
+            seed: 42,
+            colorCorrection: 'wavelet',
+            algorithm: 'lanczos',
+            upscaleOutputFormat: 'png',
+            upscaleOutputQuality: 95,
+            mask: null
+        };
+    }
+    function openEdit(item) {
+        setEditorMaskOpen(false);
+        if (!availableEditModels.length) return notify('还没有支持图片修改的模型，请先到模型库启用带“修改”能力的图片模型。');
+        markHistoryImageViewed(item);
+        const lastCall = getLastModelCall('edit');
+        const saved = lastCall?.params || {};
+        const legacySavedMask = item?.params?.mask || item?.mask;
+        const restoredMask = typeof legacySavedMask === 'string' ? legacySavedMask : legacySavedMask?.dataUrl || legacySavedMask?.url || null;
+        const restoredAnnotations = Array.isArray(item?.annotations) ? item.annotations : Array.isArray(legacySavedMask?.annotations) ? legacySavedMask.annotations : [];
+        const restoredFeather = Number.isFinite(Number(item?.feather ?? legacySavedMask?.feather)) ? Math.max(0, Math.min(48, Math.round(Number(item?.feather ?? legacySavedMask?.feather)))) : 0;
+        const restoredLegacySource = typeof legacySavedMask === 'object' && legacySavedMask
+            ? legacySavedMask.sourceImageDataUrl || legacySavedMask.sourceUrl
+            : undefined;
+        const dimensions = outputDimensions(item.outputSize);
+        const ratio = item.aspectRatio || (dimensions ? exactRatioFromDimensions(dimensions.width, dimensions.height) : '自动');
+        const tier = dimensions ? sizeTierFromDimensions(dimensions.width, dimensions.height) : '1k';
+        const preset = presetDimensions(ratio === '自动' ? '1:1' : ratio, tier);
+        const useCustomSize = Boolean(dimensions && (dimensions.width !== preset.width || dimensions.height !== preset.height));
+        const rememberedModel = lastCall?.mode === 'manual' && lastCall.modelId && availableEditModels.some((model)=>model.id === lastCall.modelId) ? lastCall.modelId : 'auto';
+        const rememberedRatio = typeof saved.ratio === 'string' && ratios.includes(saved.ratio) ? saved.ratio : ratio;
+        const rememberedSizeMode = saved.sizeMode === 'system' || saved.sizeMode === 'custom' ? saved.sizeMode : useCustomSize ? 'custom' : 'system';
+        const rememberedTier = sizeTiers.some((entry)=>entry.value === saved.sizeTier) ? saved.sizeTier : tier;
+        setEditor({
+            mode: 'edit',
+            item,
+            prompt: '',
+            modelId: rememberedModel,
+            ratio: rememberedRatio,
+            count: typeof saved.count === 'number' ? Math.max(1, Math.min(8, Math.round(saved.count))) : 1,
+            quality: typeof saved.quality === 'string' ? saved.quality : '自动',
+            fidelity: saved.fidelity === 'low' ? 'low' : 'high',
+            scale: 2,
+            ...editorDefaults(),
+            sizeMode: rememberedSizeMode,
+            sizeTier: rememberedTier,
+            customWidth: typeof saved.customWidth === 'number' && saved.customWidth > 0 ? Math.round(saved.customWidth) : dimensions?.width || preset.width,
+            customHeight: typeof saved.customHeight === 'number' && saved.customHeight > 0 ? Math.round(saved.customHeight) : dimensions?.height || preset.height,
+            mask: restoredMask,
+            annotations: restoredAnnotations,
+            feather: restoredFeather,
+            ...(typeof restoredLegacySource === 'string' && restoredLegacySource ? { sourceImageDataUrl: restoredLegacySource } : {})
+        });
+        if (lastCall) notify('已恢复上次图片修改设置');
+    }
+    function openUpscale(item) {
+        setEditorMaskOpen(false);
+        setViewerId(null);
+        if (!availableUpscaleModels.length) return notify('还没有可用的超分模型。请到模型库重新读取并启用 SeedVR2-7B。');
+        markHistoryImageViewed(item);
+        const lastCall = getLastModelCall('upscale');
+        const saved = lastCall?.params || {};
+        const rememberedModel = lastCall?.mode === 'manual' && lastCall.modelId && availableUpscaleModels.some((model)=>model.id === lastCall.modelId) ? lastCall.modelId : 'auto';
+        const dimensions = outputDimensions(item.outputSize);
+        const ratio = item.aspectRatio || (dimensions ? exactRatioFromDimensions(dimensions.width, dimensions.height) : '自动');
+        setEditor({
+            mode: 'upscale',
+            item,
+            prompt: '',
+            modelId: rememberedModel,
+            ratio,
+            count: 1,
+            quality: 'high',
+            fidelity: 'high',
+            scale: [
+                1,
+                2,
+                3,
+                4
+            ].includes(saved.upscaleScale) ? saved.upscaleScale : 2,
+            ...editorDefaults(),
+            sizeMode: 'system',
+            sizeTier: dimensions ? sizeTierFromDimensions(dimensions.width, dimensions.height) : '1k',
+            customWidth: dimensions?.width || 1024,
+            customHeight: dimensions?.height || 1024,
+            targetSize: saved.upscaleTarget === 'auto' || saved.upscaleTarget === '1K' || saved.upscaleTarget === '2K' || saved.upscaleTarget === '4K' ? saved.upscaleTarget : 'auto',
+            seed: typeof saved.upscaleSeed === 'number' ? Math.max(0, Math.round(saved.upscaleSeed)) : 42,
+            colorCorrection: saved.upscaleColorCorrection === 'none' ? 'none' : 'wavelet',
+            algorithm: saved.upscaleAlgorithm === 'bicubic' || saved.upscaleAlgorithm === 'nearest' ? saved.upscaleAlgorithm : 'lanczos',
+            upscaleOutputFormat: saved.upscaleOutputFormat === 'jpg' || saved.upscaleOutputFormat === 'bmp' ? saved.upscaleOutputFormat : 'png',
+            upscaleOutputQuality: typeof saved.upscaleOutputQuality === 'number' && saved.upscaleOutputQuality >= 30 && saved.upscaleOutputQuality <= 100 ? Math.round(saved.upscaleOutputQuality) : 95
+        });
+        if (lastCall) notify('已恢复上次图片超分设置');
+    }
+    function openOutpaintEditor(item) {
+        markHistoryImageViewed(item);
+        setViewerId(null);
+        setOutpaintEditor({
+            item
+        });
+    }
+    async function publishOutpaintReference(result) {
+        if (!outpaintEditor) return;
+        const item = outpaintEditor.item;
+        const ref = {
+            id: uid('ref'),
+            name: `扩图白底-${item.id.slice(-6)}.png`,
+            dataUrl: result.dataUrl
+        };
+        setGenerateRefs((old)=>[
+                ref,
+                ...old.filter((existing)=>existing.id !== ref.id)
+            ].slice(0, 16));
+        setGenerateWorkflow('generate');
+        setGeneratePrompt('Remove white area and fill the scene');
+        setGeneratePromptBeforeOptimization(null);
+        setSizeMode('custom');
+        setCustomWidth(result.width);
+        setCustomHeight(result.height);
+        setRatio(ratioFromDimensions(result.width, result.height));
+        setGenerateMask(null);
+        const preferredGenerateModelId = availableGenerationModels.find((model)=>model.id === generateModelId)?.id || availableGenerationModels[0]?.id || 'auto';
+        if (generateModelId !== preferredGenerateModelId) setGenerateModelId(preferredGenerateModelId);
+        setOutpaintEditor(null);
+        setSection('generate');
+        window.setTimeout(()=>generatePromptRef.current?.focus(), 0);
+        notify('已发布到生图参考图，并填入扩图提示词');
+    }
+    async function saveLocalImageEdit(result, operations) {
+        if (!outpaintEditor) return;
+        const item = outpaintEditor.item;
+        const label = operations.length ? `本地处理：${operations.join('、')}` : '本地处理：导出副本';
+        const items = await recordImages([
+            {
+                url: result.dataUrl,
+                revisedPrompt: label
+            }
+        ], {
+            prompt: item.prompt,
+            modelName: '本地图片工具',
+            providerName: '本地处理',
+            aspectRatio: ratioFromDimensions(result.width, result.height),
+            outputSize: `${result.width}×${result.height}`,
+            outputFormat: 'png',
+            source: 'edit',
+            parentId: item.id
+        });
+        setResultItems((old)=>[
+                ...items,
+                ...old
+            ]);
+        setOutpaintEditor(null);
+        setSection('generate');
+        notify(`已生成本地处理版本${operations.length ? `：${operations.join('、')}` : ''}`);
+    }
+    function runEditor(e) {
+        e.preventDefault();
+        const currentEditor = editor;
+        if (!currentEditor) return;
+        if (currentEditor.mode !== 'upscale' && !currentEditor.prompt.trim()) return notify(currentEditor.mode === 'edit' ? '请描述要怎么修改' : '提示词不能为空');
+        const taskId = uid('edit-task');
+        const taskDraft = buildEditorTaskDraft(currentEditor, taskId, Date.now());
+        setGenerateTasks((old)=>[
+                taskDraft,
+                ...old
+            ]);
+        setGenerateClock(Date.now());
+        setEditorMaskOpen(false);
+        setEditor(null);
+        notify('已提交后台任务，可以关闭修改窗口或继续修改下一张；完成后会自动进入创作记录。');
+        void processEditorTask(currentEditor, taskId);
+    }
+    async function waitForUpscaleTask(taskId, initialData = {}) {
+        let lastData = initialData;
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+            await new Promise((resolve)=>window.setTimeout(resolve, attempt === 0 ? 800 : 2000));
+            const response = await fetch(`/api/upscale/tasks/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+            const data = await response.json().catch(()=>({}));
+            if (!response.ok) throw new Error(data.error || '读取高清任务状态失败');
+            lastData = { ...lastData, ...data, taskId, status: data.task?.status || data.status, images: data.images || lastData.images };
+            if (lastData.images?.length) return { ...lastData, status: 'succeeded' };
+            if (lastData.status === 'succeeded') return lastData;
+            if (lastData.status === 'cancelled') throw new Error(UPSCALE_CANCELLED_MESSAGE);
+            if (lastData.status === 'failed') throw new Error(data.task?.error || '高清处理失败');
+        }
+        throw new Error('高清处理时间较长，请稍后重试。');
+    }
+    async function processEditorTask(currentEditor, taskId) {
+        const requestStartedAt = performance.now();
+        let completedOutputUrls: string[] = [];
+        try {
+            const sourceSize = currentEditor.mode === 'upscale' ? await loadImageDimensions(currentEditor.item.url) : null;
+            const editorUpscaleModel = currentEditor.mode === 'upscale' ? availableUpscaleModels.find((model)=>model.id === currentEditor.modelId) || defaultUpscaleModel : null;
+            const { endpoint, body, editorReference, ratio: editRatio, cloudUpscale, cloudOutputFormat: editorCloudOutputFormat } = buildEditorRequest(currentEditor, taskId, sourceSize, editorUpscaleModel);
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body)
+            });
+            let data = await res.json();
+            if (!res.ok) throw new Error(data.error || '处理失败');
+            if (currentEditor.mode === 'upscale' && data.taskId) patchGenerateTask(taskId, { upscaleTaskId: data.taskId, info: `${data.model?.name || '高清放大'} · 后台处理中` });
+            if (currentEditor.mode === 'upscale' && data.taskId && (data.status === 'queued' || data.status === 'processing')) data = await waitForUpscaleTask(data.taskId, data);
+            const knownUpscaleModels = [...state.models, ...(state.upscaleModels || [])];
+            recordModelCall(buildEditorModelCallInput(currentEditor, data, knownUpscaleModels, cloudUpscale, editorCloudOutputFormat));
+            const durationMs = Math.round(performance.now() - requestStartedAt);
+            const items = await recordImages(data.images || [], buildEditorHistoryMeta(currentEditor, data, durationMs, editorReference, editorCloudOutputFormat));
+            completedOutputUrls = items.map((item)=>String(item.url || '').trim()).filter(Boolean);
+            const info = editorCompletionInfo(currentEditor, data, durationMs, items.length);
+            setResultItems((old)=>[
+                    ...items,
+                    ...old
+                ]);
+            patchGenerateTask(taskId, {
+                status: 'success',
+                completedAt: Date.now(),
+                info,
+                items,
+                itemIds: items.map((item)=>item.id)
+            });
+            if (items.length) playSuccessSound();
+            void refreshGenerationLogs();
+            notify(currentEditor.mode === 'upscale' ? '后台超分已完成，结果已返回创作记录。' : '后台图片修改已完成，结果已返回创作记录。');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : '处理失败';
+            if (completedOutputUrls.length) {
+                patchGenerateTask(taskId, {
+                    status: 'success',
+                    completedAt: Date.now(),
+                    info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · 图片已返回，但本地收尾失败`
+                });
+                void refreshGenerationLogs();
+                notify('图片已返回，但本地收尾失败；结果仍可使用。');
+                return;
+            }
+            const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
+            patchGenerateTask(taskId, {
+                status: 'error',
+                completedAt: Date.now(),
+                error: message,
+                ...(cancelled ? { cancelled: true } : {}),
+                info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${cancelled ? '已停止跟踪' : '处理失败'}`
+            });
+            void refreshGenerationLogs();
+            notify(cancelled ? '已停止跟踪这条高清任务，服务商可能仍在生成。' : `后台${currentEditor.mode === 'upscale' ? '超分' : '图片修改'}失败：${message}`);
+        }
+    }
+    function askDeleteItems(ids) {
+        if (!ids.length) return;
+        setConfirmState({
+            title: ids.length > 1 ? `删除 ${ids.length} 张图片？` : '删除这张图片？',
+            text: '删除后会从本机历史记录中移除，不会影响第三方服务商。',
+            danger: true,
+            confirmText: '确认删除',
+            action: async ()=>{
+                await assetRepository.removeGallery(ids);
+                setGallery((old)=>old.filter((x)=>!ids.includes(x.id)));
+                setResultItems((old)=>old.filter((x)=>!ids.includes(x.id)));
+                setGenerateTasks((old)=>old.map((task)=>({
+                            ...task,
+                            items: task.items.filter((x)=>!ids.includes(x.id)),
+                            itemIds: task.itemIds?.filter((id)=>!ids.includes(id))
+                        })));
+                setSelectedHistory(new Set());
+                if (viewerId && ids.includes(viewerId)) setViewerId(null);
+                notify('已删除');
+            }
+        });
+    }
+    async function copyPrompt(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            notify('提示词已复制');
+        } catch  {
+            notify('复制失败');
+        }
+    }
+    async function copyMessage(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            notify('消息已复制');
+        } catch  {
+            notify('复制失败');
+        }
+    }
+    async function shareConversation() {
+        if (shareBusy) return;
+        if (!selectedShareMessages.length) return notify('请至少选择一组已完成的问答内容');
+        if (activeAgentBusy || selectedShareMessages.some((message)=>message.pending)) return notify('请等待当前回答完成后再分享');
+        setShareBusy(true);
+        try {
+            const result = await createShareConversationPreview(selectedShareMessages);
+            const url = URL.createObjectURL(result.blob);
+            setSharePreview({
+                url,
+                width: result.width,
+                height: result.height,
+                filename: `SANMAO-对话分享-${new Date().toISOString().slice(0, 10)}.png`
+            });
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '分享长图生成失败');
+        } finally {
+            setShareBusy(false);
+        }
+    }
+    function downloadSharePreview() {
+        if (!sharePreview) return;
+        const anchor = document.createElement('a');
+        anchor.href = sharePreview.url;
+        anchor.download = sharePreview.filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        notify('分享长图已下载');
+    }
+    async function copyAuthorWechat() {
+        try {
+            await navigator.clipboard.writeText('wcsanmao');
+            notify('微信号已复制：wcsanmao');
+        } catch  {
+            notify('微信号：wcsanmao');
+        }
+    }
+    function captureMessageSelection(container) {
+        const selection = window.getSelection();
+        const text = selection?.toString().trim() || '';
+        if (!selection || selection.isCollapsed || !text || !selection.anchorNode || !selection.focusNode || !selection.rangeCount || !container.contains(selection.anchorNode) || !container.contains(selection.focusNode)) return setSelectionPush(null);
+        const rect = selection.getRangeAt(0).getBoundingClientRect();
+        const toolbarWidth = Math.min(360, Math.max(280, window.innerWidth - 24));
+        const toolbarHeight = window.innerWidth <= 520 ? 146 : 126;
+        const gap = 12;
+        const showBelow = rect.top < toolbarHeight + gap + 18 && window.innerHeight - rect.bottom > rect.top;
+        const selectionCenter = rect.left + rect.width / 2;
+        const halfCard = toolbarWidth / 2;
+        const x = Math.min(window.innerWidth - halfCard - 12, Math.max(halfCard + 12, selectionCenter));
+        setSelectionPush({
+            text,
+            x,
+            y: showBelow ? Math.min(window.innerHeight - gap, rect.bottom + gap) : Math.max(gap, rect.top - gap),
+            placement: showBelow ? 'below' : 'above'
+        });
+    }
+    function pushTextToGenerate(text, navigate = true) {
+        const nextText = text.trim();
+        if (!nextText) return;
+        setGeneratePromptBeforeOptimization(null);
+        setGeneratePrompt((current)=>{
+            const existing = current.trimEnd();
+            return existing ? `${existing}\n${nextText}` : nextText;
+        });
+        setSelectionPush(null);
+        window.getSelection()?.removeAllRanges();
+        if (navigate) {
+            setSection('generate');
+            window.setTimeout(()=>generatePromptRef.current?.focus(), 0);
+            notify('已追加到生图提示词，并已跳转');
+        } else {
+            notify('已追加到生图提示词，可继续选择内容');
+        }
+    }
+    function pushTextToVideo(text, navigate = true, durationSeconds) {
+        const nextText = text.trim();
+        if (!nextText) return;
+        if (!availableVideoModels.length) {
+            setSelectionPush(null);
+            notify('请先在模型库启用视频模型');
+            return;
+        }
+        setVideoPromptPrefill((current)=>{
+            const existing = current?.trimEnd() || '';
+            return existing ? `${existing}\n${nextText}` : nextText;
+        });
+        setVideoDurationPrefill(durationSeconds === undefined ? null : normalizeOneTakeDuration(durationSeconds));
+        setSelectionPush(null);
+        window.getSelection()?.removeAllRanges();
+        if (navigate) {
+            setSection('video');
+            notify('已追加到视频提示词，并已跳转');
+        } else {
+            notify('已追加到视频提示词，可继续选择内容');
+        }
+    }
+    function restoreVideoTask(task) {
+        setVideoTaskPrefill(task);
+        setSection('video');
+    }
+    function resetViewerView() {
+        setViewerZoom(1);
+        setViewerPan({
+            x: 0,
+            y: 0
+        });
+    }
+    const VIDEO_QUEUE_MAX = 20;
+
+    function pushVideoQueueItem(item) {
+        if (!availableVideoModels.length) {
+            notify('请先在模型库启用视频模型');
+            return false;
+        }
+        if (videoReferenceQueue.some((queued)=>queued.id === item.id)) {
+            notify('该图片已在视频队列');
+            return false;
+        }
+        if (videoReferenceQueue.length >= VIDEO_QUEUE_MAX) {
+            notify('视频参考队列最多 ' + VIDEO_QUEUE_MAX + ' 张，请先清理');
+            return false;
+        }
+        markHistoryImageViewed(item);
+        setVideoReferenceQueue((current)=>[
+            ...current,
+            {
+                id: item.id,
+                url: item.url
+            }
+        ]);
+        notify('已加入视频参考，可继续选择图片');
+        return true;
+    }
+    function pushToVideo(item) {
+        void pushVideoQueueItem(item);
+    }
+    function pushSelectedToVideo() {
+        if (!availableVideoModels.length) {
+            notify('请先在模型库启用视频模型');
+            return;
+        }
+        const queuedIds = new Set(videoReferenceQueue.map((queued)=>queued.id));
+        const additions = [];
+        let duplicateCount = 0;
+        for (const id of selectedHistory) {
+            const item = gallery.find((entry)=>entry.id === id);
+            if (!item) continue;
+            if (queuedIds.has(item.id)) {
+                duplicateCount++;
+                continue;
+            }
+            if (videoReferenceQueue.length + additions.length >= VIDEO_QUEUE_MAX) break;
+            queuedIds.add(item.id);
+            additions.push({
+                id: item.id,
+                url: item.url
+            });
+        }
+        if (!additions.length) {
+            notify(duplicateCount ? '所选图片都已在视频队列' : '没有可推送的作品');
+            return;
+        }
+        setVideoReferenceQueue((current)=>[
+            ...current,
+            ...additions
+        ]);
+        notify('已加入 ' + additions.length + ' 张到视频参考');
+    }
+    function clearVideoQueue() {
+        setVideoReferenceQueue([]);
+    }
+    async function goVideoFromQueue() {
+        if (!videoReferenceQueue.length) return;
+        const queueSnapshot = videoReferenceQueue;
+        const results = await Promise.allSettled(queueSnapshot.map(async (queued)=>{
+            const item = gallery.find((entry)=>entry.id === queued.id) || gallery.find((entry)=>entry.url === queued.url);
+            if (!item) throw new Error('找不到对应作品');
+            const prepared = await galleryItemToReference(item);
+            return {
+                name: prepared.name,
+                url: prepared.dataUrl,
+                kind: 'image'
+            };
+        }));
+        const resolved = [];
+        let failedCount = 0;
+        for (const result of results) {
+            if (result.status === 'fulfilled') resolved.push(result.value);
+            else failedCount++;
+        }
+        if (!resolved.length) {
+            notify('没有可用的图片，请重试');
+            return;
+        }
+        if (failedCount) notify('有 ' + failedCount + ' 张图片无法读取，已跳过');
+        const capped = resolved.slice(0, VIDEO_QUEUE_MAX);
+        setVideoMediaPrefill(capped);
+        setVideoMediaPrefillToken((token)=>token + 1);
+        setVideoReferenceQueue([]);
+        setSection('video');
+        if (!failedCount) notify('已带入 ' + capped.length + ' 张参考图到视频');
+    }
+    function adjustViewerZoom(next) {
+        const value = Math.min(10, Math.max(0.25, Math.round(next * 20) / 20));
+        setViewerZoom(value);
+        if (value <= 1) setViewerPan({
+            x: 0,
+            y: 0
+        });
+    }
+    function handleViewerWheel(event) {
+        event.preventDefault();
+        adjustViewerZoom(viewerZoom + (event.deltaY < 0 ? 0.1 : -0.1));
+    }
+    function handleViewerPointerDown(event) {
+        if (viewerZoom <= 1 || event.target.closest('button')) return;
+        const stage = event.currentTarget;
+        viewerDragRef.current = {
+            active: true,
+            x: event.clientX,
+            y: event.clientY,
+            panX: viewerPan.x,
+            panY: viewerPan.y
+        };
+        stage.setPointerCapture(event.pointerId);
+        setViewerDragging(true);
+        event.preventDefault();
+    }
+    function handleViewerPointerMove(event) {
+        const drag = viewerDragRef.current;
+        if (!drag.active) return;
+        setViewerPan({
+            x: drag.panX + event.clientX - drag.x,
+            y: drag.panY + event.clientY - drag.y
+        });
+    }
+    function handleViewerPointerUp(event) {
+        if (!viewerDragRef.current.active) return;
+        viewerDragRef.current.active = false;
+        setViewerDragging(false);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    function scrollModelLibrary(position) {
+        if (typeof window === 'undefined') return;
+        window.scrollTo({
+            top: position === 'bottom' ? document.documentElement.scrollHeight : 0,
+            behavior: 'smooth'
+        });
+    }
+    function scrollPaginationToTop() {
+        if (typeof window === 'undefined') return;
+        window.scrollTo({
+            top: 0,
+            left: 0,
+            behavior: 'auto'
+        });
+    }
+    function renderModelCard(model) {
+        const inUse = model.enabled && model.published;
+        const favorite = modelFavorites.includes(model.id);
+        const capabilityLabel = (cap)=>cap === 'chat' ? '对话' : cap === 'vision' ? '识图' : cap === 'edit' ? '改图' : cap === 'reference' ? '参考图' : cap === 'typography' ? '文字' : cap === 'generate' ? '生图' : cap === 'upscale' ? '超分' : cap === 'web-search' ? '原生联网' : cap === 'video-generate' ? '视频生成' : cap === 'video-edit' ? '视频编辑' : cap === 'video-extend' ? '视频扩展' : cap === 'video-first-frame' ? '首帧' : cap === 'video-reference' ? '多图参考' : cap === 'video-audio' ? '音频' : cap === 'speech' ? '配音' : cap;
+        return /*#__PURE__*/ _jsxs("article", {
+            className: `model-card surface ${inUse ? 'in-use' : ''}`,
+            children: [
+                /*#__PURE__*/ _jsx("button", {
+                    className: `use-check ${inUse ? 'checked' : ''}`,
+                    onClick: ()=>void toggleModelUse(model),
+                    title: inUse ? '停止使用' : '使用这个模型',
+                    children: inUse && /*#__PURE__*/ _jsx(Icon, {
+                        name: "check",
+                        size: 15
+                    })
+                }),
+                /*#__PURE__*/ _jsx("button", {
+                    type: "button",
+                    className: `model-card-favorite ${favorite ? 'active' : ''}`,
+                    onClick: ()=>setModelFavorite(model.id, !favorite),
+                    title: favorite ? '取消收藏' : '收藏模型',
+                    children: "★"
+                }),
+                model.source === 'manual' && /*#__PURE__*/ _jsx("button", {
+                    type: "button",
+                    className: "model-card-delete",
+                    onClick: ()=>askDeleteManualModel(model),
+                    title: "删除手动登记模型",
+                    "aria-label": "删除手动登记模型",
+                    children: /*#__PURE__*/ _jsx(Icon, {
+                        name: "trash",
+                        size: 14
+                    })
+                }),
+                /*#__PURE__*/ _jsxs("div", {
+                    className: "model-card-main",
+                    children: [
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "model-card-title",
+                            children: [
+                                /*#__PURE__*/ _jsx("strong", {
+                                    children: model.displayName
+                                }),
+                                /*#__PURE__*/ _jsx("span", {
+                                className: `kind-badge ${model.kind}`,
+                                    children: modelKindLabel(model.kind)
+                                }),
+                                model.source === 'manual' && /*#__PURE__*/ _jsx("span", {
+                                    className: "model-source-badge",
+                                    children: "手动"
+                                }),
+                                model.billing && /*#__PURE__*/ _jsx("span", {
+                                    className: `billing-badge ${model.billing}`,
+                                    children: agnesBillingLabel(model.billing)
+                                }),
+                                inUse && /*#__PURE__*/ _jsx("span", {
+                                    children: "使用中"
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsx("p", {
+                            children: model.providerName
+                        }),
+                        /*#__PURE__*/ _jsx("small", {
+                            title: model.rawId,
+                            children: model.rawId
+                        })
+                    ]
+                }),
+                /*#__PURE__*/ _jsxs("div", {
+                    className: "model-type-control",
+                    children: [
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "model-type-control-label",
+                            children: [
+                                /*#__PURE__*/ _jsx("span", {
+                                    children: "模型分类"
+                                }),
+                                /*#__PURE__*/ _jsx("em", {
+                                    className: `model-kind-status ${model.kind}`,
+                                    children: model.kind === 'unknown' ? '待分类' : modelKindLabel(model.kind).replace('模型', '')
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "segmented mini model-kind-segmented",
+                            "aria-label": "模型分类",
+                            children: [
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: `model-kind-option chat ${model.kind === 'chat' ? 'active' : ''}`,
+                                    disabled: modelKindBusy.has(model.id),
+                                    onClick: ()=>void setModelKind(model, 'chat'),
+                                    children: "对话"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: `model-kind-option image ${model.kind === 'image' ? 'active' : ''}`,
+                                    disabled: modelKindBusy.has(model.id),
+                                    onClick: ()=>void setModelKind(model, 'image'),
+                                    children: "图片"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: `model-kind-option video ${model.kind === 'video' ? 'active' : ''}`,
+                                    disabled: modelKindBusy.has(model.id),
+                                    onClick: ()=>void setModelKind(model, 'video'),
+                                    children: "视频"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: `model-kind-option audio ${model.kind === 'audio' ? 'active' : ''}`,
+                                    disabled: modelKindBusy.has(model.id),
+                                    onClick: ()=>void setModelKind(model, 'audio'),
+                                    children: "配音"
+                                })
+                            ]
+                        })
+                    ]
+                }),
+                 /*#__PURE__*/ _jsx("div", {
+                     className: "capability-tags",
+                     children: model.capabilities.slice(0, 5).map((cap)=>/*#__PURE__*/ _jsx("span", {
+                             className: `capability-tag-${cap}`,
+                             children: capabilityLabel(cap)
+                         }, cap))
+                 }),
+            ]
+        }, model.id);
+    }
+    const imageModeActive = section === 'generate' || section === 'angle';
+    if (welcomeStage === 'boot') {
+        return /*#__PURE__*/ _jsxs("div", {
+            className: "welcome-boot",
+            children: [
+                /*#__PURE__*/ _jsx("span", {
+                    className: "loader"
+                }),
+                /*#__PURE__*/ _jsx("p", {
+                    children: "正在读取本地配置…"
+                })
+            ]
+        });
+    }
+    if (welcomeStage === 'welcome') {
+        return /*#__PURE__*/ _jsx(WelcomeExperience, {
+            theme,
+            onEnter: ()=>enterWelcome()
+        });
+    }
+    return /*#__PURE__*/ _jsxs(WorkspaceShell, {
+        section: section,
+        sidebarOpen: sidebarOpen,
+        children: [
+            /*#__PURE__*/ _jsx(UpdateNotice, {}),
+            /*#__PURE__*/ _jsxs("aside", {
+                className: `sidebar ${sidebarOpen ? 'expanded' : ''} ${section === 'agent' ? 'agent-context' : ''}`,
+                "aria-label": "侧边导航",
+                children: [
+                    /*#__PURE__*/ _jsx(SidebarBrandHeader, {
+                        sidebarOpen: sidebarOpen,
+                        Icon: Icon,
+                        onToggle: ()=>setSidebarOpen((open)=>!open),
+                        onBrandClick: ()=>{
+                            setSection('agent');
+                            closeSidebarOnMobile();
+                        }
+                    }),
+                    section === 'agent' && /*#__PURE__*/ _jsxs("button", {
+                        className: "new-chat",
+                        "data-tooltip": "新对话",
+                        onClick: ()=>{
+                            startNewChat();
+                            closeSidebarOnMobile();
+                        },
+                        children: [
+                            /*#__PURE__*/ _jsx(Icon, {
+                                name: "plus",
+                                size: 17
+                            }),
+                            /*#__PURE__*/ _jsx("span", {
+                                children: "新对话"
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ _jsx(SidebarChatHistory, {
+                        visible: sidebarOpen && section === 'agent',
+                        sessions: chatSessions,
+                        filteredSessions: filteredChatSessions,
+                        personaChatCount: personaChatCount,
+                        personaOnly: chatPersonaOnly,
+                        search: chatHistorySearch,
+                        selectionMode: chatSelectionMode,
+                        selectedIds: selectedChatSessions,
+                        allSelected: allChatSessionsSelected,
+                        activeChatId: activeChatId,
+                        busyChatIds: busyChatIds,
+                        renamingChatId: renamingChatId,
+                        renamingChatTitle: renamingChatTitle,
+                        Icon: Icon,
+                        formatTime: formatTime,
+                        historyGroupLabel: chatHistoryGroupLabel,
+                        personaBadgeLabel: personaBadgeLabel,
+                        onTogglePersonaFilter: ()=>setChatPersonaOnly((prev)=>!prev),
+                        onSearchChange: (event)=>setChatHistorySearch(event.target.value),
+                        onClearSearch: ()=>setChatHistorySearch(''),
+                        onToggleSelectionMode: toggleChatSelectionMode,
+                        onOpenSession: (session)=>{
+                            openChatSession(session);
+                            closeSidebarOnMobile();
+                        },
+                        onBeginRename: beginChatRename,
+                        onRenameTitleChange: (event)=>setRenamingChatTitle(event.target.value),
+                        onCommitRename: commitChatRename,
+                        onCancelRename: cancelChatRename,
+                        onToggleSessionSelection: toggleChatSessionSelection,
+                        onDeleteSession: askDeleteChatSession,
+                        onToggleAll: toggleAllChatSessionSelection,
+                        onDeleteSelected: deleteSelectedChatSessions
+                    }),
+                    /*#__PURE__*/ _jsx(SidebarNavigation, {
+                        section: section,
+                        sidebarOpen: sidebarOpen,
+                        managementNavOpen: managementNavOpen,
+                        historyNotice: historyNotice,
+                        logErrorNotice: logErrorNotice,
+                        Icon: Icon,
+                        onSection: (nextSection)=>{
+                            setSection(nextSection);
+                            closeSidebarOnMobile();
+                        },
+                        onRecordClick: ()=>{
+                            markHistoryNoticeSeen();
+                            const nextRecordTab = logErrorNotice ? 'tasks' : 'works';
+                            setRecordTab(nextRecordTab);
+                            setSection(nextRecordTab === 'tasks' ? 'logs' : 'history');
+                            closeSidebarOnMobile();
+                        },
+                        onToggleManagement: ()=>setManagementNavOpen((open)=>!open)
+                    }),
+                    /*#__PURE__*/ _jsx("div", {
+                        className: "sidebar-fill"
+                    }),
+                    /*#__PURE__*/ _jsx(SidebarFooterActions, {
+                        sidebarOpen: sidebarOpen,
+                        imageModelCount: availableImageModels.length,
+                        chatModelCount: availableChatModels.length,
+                        videoModelCount: availableVideoModels.length,
+                        Icon: Icon,
+                        onOpenModels: ()=>{
+                            setManagementNavOpen(true);
+                            setSection('models');
+                            closeSidebarOnMobile();
+                        },
+                        onOpenSupport: ()=>{
+                            setSupportTab('community');
+                            setSupportOpen(true);
+                        }
+                    })
+                ]
+            }),
+            /*#__PURE__*/ _jsxs(MainColumn, {
+                children: [
+                    /*#__PURE__*/ _jsx(WorkspaceTopbar, {
+                        section: section,
+                        sidebarOpen: sidebarOpen,
+                        theme: theme,
+                        Icon: Icon,
+                        onOpenSidebar: ()=>setSidebarOpen(true),
+                        onGoAgent: ()=>setSection('agent'),
+                        onGoGenerate: ()=>{
+                            setSection('generate');
+                            closeSidebarOnMobile();
+                        },
+                        onGoVideo: ()=>{
+                            setSection('video');
+                            closeSidebarOnMobile();
+                        },
+                        onToggleTheme: toggleTheme,
+                        onCanvasClick: closeSidebarOnMobile
+                    }),
+                    loadingState ? /*#__PURE__*/ _jsxs("div", {
+                        className: "page-loading",
+                        children: [
+                            /*#__PURE__*/ _jsx("span", {
+                                className: "loader"
+                            }),
+                            /*#__PURE__*/ _jsx("p", {
+                                children: "正在读取本地配置…"
+                            })
+                        ]
+                    }) : /*#__PURE__*/ _jsxs(_Fragment, {
+                        children: [
+                            section === 'agent' && /*#__PURE__*/ _jsxs("section", {
+                                className: "agent-page",
+                                onDragOver: (e)=>e.preventDefault(),
+                                onDrop: (e)=>{
+                                    e.preventDefault();
+                                    if (e.dataTransfer.files?.length) void addAgentAttachments(e.dataTransfer.files);
+                                },
+                                children: [
+                                    !messages.length ? /*#__PURE__*/ _jsx(AgentWelcome, {
+                                        orbState: agentOrbStatus.phase,
+                                        examples: examples,
+                                        onSelectExample: (example)=>setAgentInput(example)
+                                    }) : /*#__PURE__*/ _jsxs(_Fragment, {
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "message-list",
+                                                children: [
+                                            messages.map((message)=>/*#__PURE__*/ _jsxs("article", {
+                                                    id: `message-${message.id}`,
+                                                    className: `message ${message.role} ${message.interrupted ? 'interrupted' : ''} ${conversationNavActiveId === message.id ? 'conversation-nav-highlight' : ''} ${agentMessageSelectionActive ? 'selecting' : ''} ${shareSelectionMode && selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id) ? 'share-selected' : ''}`,
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx(AgentMessageAvatar, {
+                                                            role: message.role,
+                                                            pending: message.pending,
+                                                            orbState: agentOrbStatus.phase
+                                                        }),
+                                                        /*#__PURE__*/ _jsxs("div", {
+                                                            className: `message-body ${agentMessageSelectionActive ? 'selecting' : ''}`,
+                                                            onMouseUp: (e)=>captureMessageSelection(e.currentTarget),
+                                                            children: [
+                                                                agentMessageSelectionMode && /*#__PURE__*/ _jsxs("label", {
+                                                                    className: "message-selection-toggle",
+                                                                    title: "选择这条消息",
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("input", {
+                                                                            type: "checkbox",
+                                                                            checked: selectedAgentMessages.has(message.id),
+                                                                            disabled: message.pending,
+                                                                            onChange: ()=>toggleAgentMessageSelection(message.id)
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsx("span", {})
+                                                                    ]
+                                                                }),
+                                                                shareSelectionMode && shareGroupByMessageId.get(message.id)?.messageIds[0] === message.id && /*#__PURE__*/ _jsxs("label", {
+                                                                    className: "message-selection-toggle share-selection-toggle",
+                                                                    title: shareGroupByMessageId.get(message.id)?.label || '选择问答组',
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("input", {
+                                                                            type: "checkbox",
+                                                                            checked: selectedShareGroups.has(shareGroupByMessageId.get(message.id)?.id),
+                                                                            disabled: !shareGroupByMessageId.get(message.id)?.selectable,
+                                                                            onChange: ()=>toggleShareGroupSelection(shareGroupByMessageId.get(message.id)?.id)
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsx("span", {})
+                                                                    ]
+                                                                }),
+                                                                /*#__PURE__*/ _jsxs(AgentMessageLabel, {
+                                                                    className: "message-label",
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                            children: message.role === 'user' ? '你' : 'SANMAO.AI'
+                                                                        }),
+                                                                         message.role === 'assistant' && !message.pending && /*#__PURE__*/ _jsx("small", {
+                                                                             children: "选中文字可一键推送生图或下载文件"
+                                                                         }),
+                                                                         message.role === 'assistant' && message.interrupted && /*#__PURE__*/ _jsx("small", {
+                                                                             className: "message-interrupted-badge",
+                                                                             children: "已停止"
+                                                                         }),
+                                                                         message.role === 'assistant' && !message.pending && (message.webSearch || message.webSearchDecision) && /*#__PURE__*/ _jsxs("small", {
+                                                                             className: "message-web-badge",
+                                                                             children: [
+                                                                                 message.webSearchDecision?.status === 'disabled' ? '联网已关闭' : message.webSearchDecision?.status === 'failed' ? '联网搜索失败，已如实回答' : message.webSearch ? message.webSearch.source === 'native' ? '模型原生联网' : message.webSearch.fallbackFrom === 'native' ? '外部搜索 API（原生搜索失败后回退）' : '外部搜索 API' : '智能联网：本轮未触发',
+                                                                                 message.webSearchDecision?.status === 'failed' ? ' · 未获得可靠来源' : message.webSearch?.resultCount ? ` · ${message.webSearch.resultCount} 条来源` : ''
+                                                                             ]
+                                                                         }),
+                                                                        message.role === 'assistant' && !message.pending && message.fallbackFrom && /*#__PURE__*/ _jsx("small", {
+                                                                            className: "message-model-fallback-badge",
+                                                                            children: `模型异常，已切换：${message.fallbackFrom}`
+                                                                        }),
+                                                                        message.role === 'assistant' && !message.pending && message.skills?.length && /*#__PURE__*/ _jsx("small", {
+                                                                            className: "message-skill-badge",
+                                                                            children: `技能：${message.skills.map((skill)=>skill.name).join('、')}`
+                                                                        }),
+                                                                        message.role === 'assistant' && !message.pending && message.mcpTools?.length && /*#__PURE__*/ _jsx("button", {
+                                                                            type: "button",
+                                                                            className: "message-mcp-detail",
+                                                                            title: "查看本轮 MCP 服务、工具及执行结果",
+                                                                            "aria-expanded": activeMcpMessageId === message.id,
+                                                                            onClick: (event)=>{
+                                                                                event.stopPropagation();
+                                                                                setActiveMcpMessageId((current)=>current === message.id ? null : message.id);
+                                                                            },
+                                                                            children: /*#__PURE__*/ _jsx("small", {
+                                                                                className: "message-mcp-badge",
+                                                                                children: `MCP：${message.mcpTools.map((tool)=>`${tool.server} · ${tool.name}（${tool.ok ? '成功' : '失败'}）`).join('、')}`
+                                                                            })
+                                                                        }),
+                                                                         message.role === 'assistant' && !message.pending && message.deliverable && /*#__PURE__*/ _jsx("small", {
+                                                                             className: `message-deliverable-badge ${String(message.deliverable).toLowerCase()}`,
+                                                                             children: `交付：${agentDeliverableLabel(message.deliverable)}`
+                                                                         }),
+                                                                        message.role === 'assistant' && !message.pending && messageVersionsFor(message).length > 1 && /*#__PURE__*/ _jsx(AgentMessageVersionSwitch, {
+                                                                            index: messageVersionIndex(message),
+                                                                            total: messageVersionsFor(message).length,
+                                                                            retrying: message.retrying,
+                                                                            Icon: Icon,
+                                                                            onPrevious: ()=>switchAgentMessageVersion(message, messageVersionIndex(message) - 1),
+                                                                            onNext: ()=>switchAgentMessageVersion(message, messageVersionIndex(message) + 1)
+                                                                        })
+                                                                    ]
+                                                                }),
+                                                                message.role === 'assistant' && !message.pending && message.approval && /*#__PURE__*/ _jsx(AgentApprovalCard, {
+                                                                    approval: message.approval,
+                                                                    onResolved: (outcome)=>resolveAgentApprovalMessage(message.id, outcome)
+                                                                }),
+                                                                message.role === 'assistant' && !message.pending && message.approvalResult && /*#__PURE__*/ _jsx(AgentApprovalResult, {
+                                                                    message: message.approvalResult
+                                                                }),
+                                                                message.references?.length ? /*#__PURE__*/ _jsx(AgentMessageReferences, {
+                                                                    references: message.references,
+                                                                    resolveUrl: creativeReferenceUrl,
+                                                                    onPreview: setMessageReferencePreview
+                                                                }) : null,
+                                                                message.images?.length ? /*#__PURE__*/ _jsx(AgentMessageImages, {
+                                                                    images: message.images,
+                                                                    renderImage: (item)=>/*#__PURE__*/ _jsx(ImageCard, {
+                                                                            Icon,
+                                                                            sourceLabel: gallerySourceLabel,
+                                                                            item: item,
+                                                                            onOpenAngle: ()=>void openAngleConsole(item),
+                                                                            onOpenOutpaint: ()=>openOutpaintEditor(item),
+                                                                            previousItem: getGalleryParent(item),
+                                                                            onPreview: ()=>openViewer(item),
+                                                                            onEdit: ()=>openEdit(item),
+                                                                            onUpscale: ()=>openUpscale(item),
+                                                                            onReuse: ()=>reuseItem(item),
+                                                                            onReference: ()=>useAsReference(item, 'agent'),
+                                                                            onCompare: ()=>openCompare(item),
+                                                                            onReversePrompt: ()=>reversePrompt(item),
+                                                                            onFavorite: ()=>void toggleFavorite(item),
+                                                                            onDownload: ()=>void downloadImage(item.url, `SANMAO-${item.id}.png`),
+                                                                            onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
+                                                                            onDelete: ()=>askDeleteItems([
+                                                                                    item.id
+                                                                                ])
+                                                                        }, item.id)
+                                                                }) : null,
+                                                                showAgentImageLoadingCard(message) ? /*#__PURE__*/ _jsx(AgentImageLoadingCard, {
+                                                                    activity: message.activity
+                                                                }) : message.role === 'assistant' && !message.pending ? message.agentError ? /*#__PURE__*/ _jsx(AgentMessageError, {
+                                                                    message: message.content,
+                                                                    onRetryAutomatic: ()=>{
+                                                                        setAgentModelId('auto');
+                                                                        void retryAgentMessage(message, 'auto');
+                                                                    },
+                                                                    onRetryCurrent: ()=>void retryAgentMessage(message)
+                                                                }) : /*#__PURE__*/ _jsx(AssistantMarkdown, {
+                                                                    content: message.content,
+                                                                    Icon,
+                                                                    onNotify: notify,
+                                                                    directionPicker: message.images?.length ? {
+                                                                        kind: 'image',
+                                                                        directions: extractAgentDirections(message.content),
+                                                                         disabled: activeAgentBusy || agentMessageSelectionActive || message.retrying,
+                                                                        onSelect: (direction)=>void continueAgentFromImage(message, direction)
+                                                                    } : {
+                                                                        kind: 'chat',
+                                                                        directions: extractChatDirections(message.content),
+                                                                         disabled: activeAgentBusy || agentMessageSelectionActive || message.retrying,
+                                                                        onSelect: (direction)=>void continueAgentFromChat(message, direction)
+                                                                    }
+                                                                }) : message.role === 'assistant' && message.pending ? /*#__PURE__*/ _jsx(AgentMessagePending, {
+                                                                    content: message.content,
+                                                                    elapsedSeconds: message.pendingSince ? Math.max(1, Math.round((generateClock - message.pendingSince) / 1000)) : undefined
+                                                                 }) : /*#__PURE__*/ _jsx(SkillInlineText, {
+                                                                    className: message.pending ? 'pending' : '',
+                                                                    text: message.content
+                                                                }),
+                                                                 message.files?.length ? /*#__PURE__*/ _jsx(AgentChatFileList, {
+                                                                     files: message.files,
+                                                                     Icon,
+                                                                     onDownload: (file)=>{
+                                                                         void downloadChatFile(file).catch(()=>notify('文件下载失败'));
+                                                                     },
+                                                                     onPreview: message.role === 'assistant' ? openChatFilePreview : undefined,
+                                                                     isPreviewable: isPreviewableChatFile,
+                                                                     fileTypeLabel: chatFileTypeLabel,
+                                                                     formatSize: formatFileSize
+                                                                 }) : null,
+                                                                  !message.pending && !agentMessageSelectionActive && /*#__PURE__*/ _jsx(AgentMessageTools, {
+                                                                    role: message.role,
+                                                                    retrying: Boolean(message.retrying),
+                                                                    retryLabel: message.retrying ? '重新生成中…' : message.images?.length ? '重新生成图片' : '重新生成文本',
+                                                                    retryTitle: message.images?.length ? '在新的图片生成窗口中重新生成' : '在当前对话中生成一个新版本',
+                                                                    retryActivity: message.retrying && !showAgentImageLoadingCard(message) ? message.activity?.message : undefined,
+                                                                    videoPushTitle: message.task === 'one_take_video_prompt' && message.durationSeconds ? `按 ${message.durationSeconds} 秒推送到视频面板` : undefined,
+                                                                    Icon: Icon,
+                                                                    onCopy: ()=>void copyMessage(message.content),
+                                                                    onFollowUp: ()=>followUpFromMessage(message),
+                                                                    onRetry: ()=>void retryAgentMessage(message),
+                                                                    onPushImage: ()=>pushTextToGenerate(message.content),
+                                                                    onPushVideo: ()=>pushTextToVideo(message.content, true, message.durationSeconds),
+                                                                    onDelete: beginAgentMessageSelection
+                                                                })
+                                                            ]
+                                                        })
+                                                    ]
+                                                }, message.id)),
+                                             /*#__PURE__*/ _jsx("div", {
+                                                 ref: chatEndRef
+                                             })
+                                         ]
+                                     }),
+                                     conversationItems.length > 0 && /*#__PURE__*/ _jsxs("div", {
+                                         ref: conversationNavigatorRef,
+                                          className: "conversation-navigator",
+                                         style: { '--conversation-nav-height': `${conversationNavHeight}px` },
+                                         onPointerLeave: closeConversationNavigator,
+                                        onBlurCapture: (event)=>{
+                                            const nextTarget = event.relatedTarget;
+                                             if (!(nextTarget instanceof Node && event.currentTarget.contains(nextTarget))) closeConversationNavigator();
+                                        },
+                                        children: [
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "conversation-nav-rail",
+                                                role: "button",
+                                                tabIndex: 0,
+                                                "aria-label": "打开本次对话导航",
+                                                onPointerLeave: closeConversationNavigator,
+                                                onClick: (event)=>{
+                                                    const rail = event.currentTarget.getBoundingClientRect();
+                                                    const trackHeight = Math.max(1, rail.height - 20);
+                                                    const ratio = Math.min(1, Math.max(0, (event.clientY - rail.top - 10) / trackHeight));
+                                                    const item = conversationItems[Math.round(ratio * Math.max(0, conversationItems.length - 1))];
+                                                    if (!item) return;
+                                                    setConversationNavActiveId(item.id);
+                                                    jumpToMessage(item.id);
+                                                    closeConversationNavigator();
+                                                },
+                                                onKeyDown: (event)=>{
+                                                    if (event.key === 'Enter' || event.key === ' ') {
+                                                        event.preventDefault();
+                                                        const item = conversationItems.find((entry)=>entry.id === conversationNavHoverId) || conversationItems[0];
+                                                        if (!item) return;
+                                                        setConversationNavActiveId(item.id);
+                                                        jumpToMessage(item.id);
+                                                        closeConversationNavigator();
+                                                    }
+                                                },
+                                                onPointerMove: (event)=>{
+                                                    const rail = event.currentTarget.getBoundingClientRect();
+                                                    const trackHeight = Math.max(1, rail.height - 20);
+                                                    const ratio = Math.min(1, Math.max(0, (event.clientY - rail.top - 10) / trackHeight));
+                                                    const item = conversationItems[Math.round(ratio * Math.max(0, conversationItems.length - 1))];
+                                                    conversationNavPointerRatioRef.current = ratio;
+                                                    conversationNavPreviewRef.current?.style.setProperty('--conversation-nav-preview-top', `${ratio * 100}%`);
+                                                    if (item) {
+                                                        setConversationNavHoverId(item.id);
+                                                        setConversationNavActiveId(item.id);
+                                                    }
+                                                },
+                                                children: /*#__PURE__*/ _jsx("div", {
+                                                    className: "conversation-nav-track",
+                                                    "aria-hidden": "true",
+                                                    children: conversationItems.map((item)=>/*#__PURE__*/ _jsx("i", {
+                                                        className: `${conversationNavHoverId === item.id ? 'is-active ' : ''}${conversationNavActiveId === item.id ? 'is-current' : ''}`.trim(),
+                                                        style: { top: `${conversationItems.length > 1 ? (item.index - 1) / (conversationItems.length - 1) * 100 : 50}%` },
+                                                        onPointerEnter: ()=>{
+                                                            setConversationNavHoverId(item.id);
+                                                            setConversationNavActiveId(item.id);
+                                                        },
+                                                    "aria-label": `第 ${item.index} 个提问`,
+                                                    }, item.id))
+                                                })
+                                            }),
+                                             conversationNavHoverId && /*#__PURE__*/ (()=>{
+                                                 const item = conversationItems.find((entry)=>entry.id === conversationNavHoverId);
+                                                 const previewPosition = conversationNavPointerRatioRef.current === null
+                                                     ? (item ? (item.index / (conversationItems.length + 1)) * 100 : 50)
+                                                     : conversationNavPointerRatioRef.current * 100;
+                                                 return item ? /*#__PURE__*/ _jsx("button", {
+                                                     type: "button",
+                                                     className: "conversation-nav-preview",
+                                                     ref: conversationNavPreviewRef,
+                                                     style: { '--conversation-nav-preview-top': `${previewPosition}%` },
+                                                     children: /*#__PURE__*/ _jsx("span", {
+                                                         className: "conversation-nav-preview-copy",
+                                                         children: item.text
+                                                     }, item.id)
+                                                 }) : null;
+                                             })(),
+                                            !chatNearBottom && /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "conversation-nav-bottom",
+                                                onPointerDown: closeConversationNavigator,
+                                                onClick: followChatToEnd,
+                                                "data-tooltip": "跳到对话底部",
+                                                "aria-label": "跳到对话底部",
+                                                children: /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "chevron",
+                                                    size: 15
+                                                })
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "conversation-nav-popover",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "conversation-nav-title",
+                                                        children: [
+                                                            "本次对话 \xb7 ",
+                                                            conversationItems.length,
+                                                            " 个提问"
+                                                        ]
+                                                    }),
+                                                    conversationItems.map((item)=>/*#__PURE__*/ _jsx("button", {
+                                                            type: "button",
+                                                            className: conversationNavActiveId === item.id ? 'is-current' : '',
+                                                            onClick: ()=>{
+                                                                jumpToMessage(item.id);
+                                                                closeConversationNavigator();
+                                                            },
+                                                            title: item.text,
+                                                            children: item.text
+                                                        }, item.id))
+                                                ]
+                                     }),
+                                 ]
+                             })
+                             ]
+                              }),
+                              section === 'angle' && /*#__PURE__*/ _jsx(AngleConsole, {
+                                    }),
+                                    /*#__PURE__*/ _jsx("div", {
+                                        ref: agentComposerRef,
+                                        className: "agent-composer-wrap",
+                                        children: /*#__PURE__*/ _jsxs("div", {
+                                            className: "agent-composer",
+                                            children: [
+                                                agentMessageSelectionMode && /*#__PURE__*/ _jsx(AgentMessageSelectionBar, {
+                                                    selectedCount: selectedAgentMessages.size,
+                                                    Icon: Icon,
+                                                    onCancel: resetMessageSelection,
+                                                    onDeleteSelected: ()=>void deleteSelectedAgentMessages()
+                                                }),
+                                                agentRefs.length > 0 && /*#__PURE__*/ _jsx(CreativeReferenceStrip, {
+                                                    refs: agentRefs,
+                                                    Icon,
+                                                    onAdd: (files)=>void addReferences(files, 'agent'),
+                                                    onRemove: (id)=>{
+                                                        setAgentRefs((old)=>old.filter((x)=>x.id !== id));
+                                                        setAgentFiles((old)=>old.filter((file)=>file.id !== id));
+                                                    },
+                                                    onReorder: (fromIndex, toIndex)=>setAgentRefs((old)=>reorderCreativeReferences(old, fromIndex, toIndex)),
+                                                    onClear: ()=>{
+                                                        setAgentRefs([]);
+                                                        setAgentFiles([]);
+                                                    },
+                                                    label: agentRefs.some((ref)=>ref.kind === 'text') ? "本轮引用" : "本轮参考图",
+                                                    hint: "支持图片 / 视频 / 文档",
+                                                    accept: agentReferenceAccept
+                                                }),
+                                                agentFiles.length > 0 && /*#__PURE__*/ _jsx(AgentChatFileList, {
+                                                    files: agentFiles,
+                                                    Icon,
+                                                    onDownload: (file)=>{
+                                                        void downloadChatFile(file).catch(()=>notify('文件下载失败'));
+                                                    },
+                                                    isPreviewable: isPreviewableChatFile,
+                                                    fileTypeLabel: chatFileTypeLabel,
+                                                    formatSize: formatFileSize,
+                                                    onRemove: (file)=>{
+                                                        setAgentFiles((old)=>old.filter((item)=>item.id !== file.id));
+                                                        setAgentRefs((old)=>old.filter((reference)=>reference.id !== file.id));
+                                                    }
+                                                }),
+                                                agentFollowUp && /*#__PURE__*/ _jsx(AgentFollowUpCard, {
+                                                    role: agentFollowUp.role,
+                                                    content: agentFollowUp.content,
+                                                    Icon: Icon,
+                                                    onClear: ()=>setAgentFollowUp(null)
+                                                }),
+                                                activeAgentIntent.deliverable === 'CLARIFY' && agentInput.trim() && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsx(AgentIntentClarifyCard, {
+                                                    summary: activeAgentIntent.summary,
+                                                    onChoose: (value)=>void sendAgent(agentInput, undefined, undefined, value)
+                                                }),
+                                                /*#__PURE__*/ _jsxs("div", {
+                                                    className: "agent-textarea-wrap",
+                                                    children: [
+                                                /*#__PURE__*/ _jsx(ReferenceMentionEditor, {
+                                                    ref: agentInputRef,
+                                                    value: agentInput,
+                                                    references: referenceMentionOptions(agentRefs),
+                                                    readOnly: agentMessageSelectionActive || promptOptimizing,
+                                                    placeholder: "输入问题、任务或创作要求；可上传图片/文件，也可引用本轮素材。",
+                                                    className: "agent-prompt-mention-editor",
+                                                    menuClassName: "agent-mention-menu",
+                                                    ariaLabel: "Agent 输入",
+                                                    onChange: (value)=>{
+                                                        setAgentInput(value);
+                                                        setAgentInputBeforeOptimization(null);
+                                                        const slashQuery = skillSlashQuery(value);
+                                                        if (slashQuery !== null) {
+                                                            agentSkillMenuFromSlashRef.current = true;
+                                                            if (!agentSkillMenuOpen) void refreshAgentSkills();
+                                                            setAgentSkillQuery(slashQuery);
+                                                            setAgentSkillActive(0);
+                                                            setAgentSkillMenuOpen(true);
+                                                        } else if (agentSkillMenuFromSlashRef.current) {
+                                                            closeAgentSkillMenu();
+                                                        }
+                                                    },
+                                                    transformPastedText: (value)=>replaceNaturalReferenceLabels(value, agentRefs).value,
+                                                    onPaste: (event)=>{
+                                                        const files = Array.from(event.clipboardData.files || []);
+                                                        if (files.some((file)=>file.type.startsWith('image/') || file.type.startsWith('video/'))) {
+                                                            event.preventDefault();
+                                                            void addReferences(files, 'agent');
+                                                        }
+                                                    },
+                                                    onKeyDown: (event)=>{
+                                                        if (agentSkillMenuOpen) {
+                                                            const visibleSkills = filterSkills(agentSkills, agentSkillQuery);
+                                                            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                                                event.preventDefault();
+                                                                if (visibleSkills.length) setAgentSkillActive((current)=>{
+                                                                    const next = event.key === 'ArrowDown' ? current + 1 : current - 1;
+                                                                    return (next + visibleSkills.length) % visibleSkills.length;
+                                                                });
+                                                                return;
+                                                            }
+                                                            if (event.key === 'Escape') {
+                                                                event.preventDefault();
+                                                                closeAgentSkillMenu();
+                                                                return;
+                                                            }
+                                                            if (agentSkillMenuFromSlashRef.current && (event.key === 'Enter' || event.key === 'Tab') && visibleSkills.length) {
+                                                                event.preventDefault();
+                                                                applyAgentSkill(visibleSkills[Math.min(Math.max(agentSkillActive, 0), visibleSkills.length - 1)]);
+                                                                return;
+                                                            }
+                                                        }
+                                                        if (event.key === 'Enter' && !event.shiftKey) {
+                                                            // While an IME is composing, Enter confirms the candidate instead of sending.
+                                                            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                                                            event.preventDefault();
+                                                            if (!activeAgentBusy) void sendAgent();
+                                                        }
+                                                    }
+                                                }),
+                                                /*#__PURE__*/ _jsx(AgentSkillMenu, {
+                                                    open: agentSkillMenuOpen,
+                                                    skills: agentSkills,
+                                                    query: agentSkillQuery,
+                                                    activeIndex: agentSkillActive,
+                                                    onActiveIndexChange: setAgentSkillActive,
+                                                    onSelect: applyAgentSkill,
+                                                    onClose: closeAgentSkillMenu
+                                                }),
+                                                agentInput && !agentMessageSelectionActive && !promptOptimizing && /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: "agent-input-clear",
+                                                    title: "清空输入内容",
+                                                    onClick: ()=>{
+                                                        setAgentInput('');
+                                                        setAgentInputBeforeOptimization(null);
+                                                    },
+                                                    children: "清空"
+                                                }),
+                                                    ]
+                                                }),
+                                                /*#__PURE__*/ _jsxs("div", {
+                                                    className: "composer-footer",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsxs("div", {
+                                                            className: "composer-left",
+                                                            children: [
+                                                                /*#__PURE__*/ _jsxs("label", {
+                                                                    className: "icon-upload",
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("input", {
+                                                                            type: "file",
+                                                                            hidden: true,
+                                                                            accept: agentReferenceAccept,
+                                                                            multiple: true,
+                                                                            onChange: (e)=>{
+                                                                                if (e.target.files) void addAgentAttachments(e.target.files);
+                                                                                e.currentTarget.value = '';
+                                                                            }
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsx(Icon, {
+                                                                            name: "upload",
+                                                                            size: 16
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                            children: "图片 / 文件"
+                                                                        })
+                                                                    ]
+                                                                }),
+                                                                 /*#__PURE__*/ _jsx(ModelPicker, {
+                                                                     models: availableChatModels,
+                                                                     value: activeAgentModelId,
+                                                                     capability: "chat",
+                                                                     health: state.agentHealth || [],
+                                                                     defaultProviderId: state.settings.defaultProviderId,
+                                                                     defaultProviderName: defaultProvider?.name,
+                                                                     defaultModelId: state.settings.agentModelId,
+                                                                     onChange: setAgentModelId,
+                                                                     className: "model-dropdown compact"
+                                                                 }),
+                                                                 /*#__PURE__*/ _jsx(ModelPicker, {
+                                                                     models: availableAgentImageModels,
+                                                                     value: activeAgentImageModelId,
+                                                                     capability: agentCreativeCapability,
+                                                                     health: state.agentHealth || [],
+                                                                     defaultProviderId: state.settings.defaultProviderId,
+                                                                     defaultProviderName: defaultProvider?.name,
+                                                                     defaultModelId: state.settings.defaultImageModelId,
+                                                                     automaticHint: agentCreativeCapability === 'edit' ? '根据当前改图任务自动选择支持 edit 的模型' : '根据当前生图任务自动选择支持 generate 的模型',
+                                                                     triggerPrefix: "创作",
+                                                                     placeholder: "选择创作模型",
+                                                                     onChange: setAgentImageModelId,
+                                                                     className: "model-dropdown compact"
+                                                                 }),
+                                                                 /*#__PURE__*/ _jsx(AgentWebModeControl, {
+                                                                    mode: agentWebMode,
+                                                                    menuOpen: agentWebModeMenuOpen,
+                                                                    nativeSearchActive: nativeWebSearchModelActive,
+                                                                    nativeSearchHint: nativeWebSearchHint,
+                                                                    Icon: Icon,
+                                                                    onToggleMenu: ()=>setAgentWebModeMenuOpen((open)=>!open),
+                                                                    onChange: (mode)=>{
+                                                                        setAgentWebModePreference(mode);
+                                                                        setAgentWebModeMenuOpen(false);
+                                                                    }
+                                                                }),
+                                                                /*#__PURE__*/ _jsx(AgentQuickActions, {
+                                                                    hasReferences: agentRefs.length > 0,
+                                                                    referenceCount: agentRefs.length,
+                                                                    referencesPending: agentRefs.some((ref)=>ref.pending),
+                                                                    hasInput: Boolean(agentInput.trim()),
+                                                                    promptCanUndo: agentInputBeforeOptimization !== null,
+                                                                    busy: activeAgentBusy,
+                                                                    selectionActive: agentMessageSelectionActive,
+                                                                    promptOptimizing: promptOptimizing,
+                                                                    skillMenuOpen: agentSkillMenuOpen,
+                                                                    oneTakeDurationOpen: oneTakeDurationOpen,
+                                                                    Icon: Icon,
+                                                                    SkillIcon: SkillIcon,
+                                                                    onToggleSkillMenu: ()=>agentSkillMenuOpen ? closeAgentSkillMenu() : openAgentSkillMenu(''),
+                                                                    onReversePrompt: ()=>void reversePromptFromReferences(),
+                                                                    onOpenOneTake: ()=>setOneTakeDurationOpen(true),
+                                                                    onConfirmOneTake: (duration)=>{
+                                                                        setOneTakeDurationOpen(false);
+                                                                        void reversePromptFromReferences(duration);
+                                                                    },
+                                                                    onCancelOneTake: ()=>setOneTakeDurationOpen(false),
+                                                                    onUndoPrompt: undoAgentPromptOptimization,
+                                                                    onOptimizePrompt: ()=>void optimizeAgentPrompt()
+                                                                })
+                                                            ]
+                                                        }),
+                                                        (activeAgentBusy || agentOrbStatus.phase === 'error') && /*#__PURE__*/ _jsx(AgentOrbStatus, {
+                                                            phase: agentOrbStatus.phase,
+                                                            title: agentOrbStatus.title,
+                                                            detail: agentOrbStatus.detail
+                                                        }),
+                                                        /*#__PURE__*/ _jsx(AgentSendButton, {
+                                                                    busy: activeAgentBusy,
+                                                                    disabled: activeAgentBusy ? false : !agentInput.trim() && !agentFiles.length && !agentRefs.length || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending),
+                                                                    title: activeAgentBusy ? '停止当前回答' : agentMessageSelectionMode ? '请先完成或取消删除选择' : shareSelectionMode ? '请先完成或取消分享选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : '发送',
+                                                                    Icon: Icon,
+                                                                    onSend: ()=>void sendAgent(),
+                                                                    onStop: ()=>void stopAgent()
+                                                        })
+                                                    ]
+                                                }),
+                                                activeMcpMessage && /*#__PURE__*/ _jsx(AgentMcpDetailDock, {
+                                                    tools: activeMcpMessage.mcpTools,
+                                                    Icon: Icon,
+                                                    onClose: ()=>setActiveMcpMessageId(null)
+                                                })
+                                            ]
+                                        })
+                                    })
+                                ]
+                            }),
+                            section === 'agent' && /*#__PURE__*/ _jsx(AgentContextDock, {
+                                activeChatId: activeChatId,
+                                activeAgentBusy: activeAgentBusy,
+                                memorySummary: validConversationMemory(chatMemoryRef.current.get(activeChatId), messages)?.summary || '',
+                                persona: activeChatId ? (chatSessions.find((session)=>session.id === activeChatId)?.persona || '') : '',
+                                agentPersonaDraft: agentPersonaDraft,
+                                hasMessages: messages.length > 0,
+                                shareSelectionMode: shareSelectionMode,
+                                shareBusy: shareBusy,
+                                selectedShareGroups: selectedShareGroups.size,
+                                selectableShareGroups: selectableShareGroups.length,
+                                allShareGroupsSelected: allShareGroupsSelected,
+                                selectedShareMessages: selectedShareMessages.length,
+                                hasPendingMessages: messages.some((message)=>message.pending),
+                                Icon: Icon,
+                                onSaveMemory: saveAgentMemory,
+                                onSavePersona: saveAgentPersona,
+                                onBeginShareSelection: beginShareSelection,
+                                onToggleAllShareGroups: toggleAllShareGroups,
+                                onClearShareGroupSelection: clearShareGroupSelection,
+                                onResetShareSelection: resetShareSelection,
+                                onShareConversation: ()=>void shareConversation()
+                            }),
+                            section === 'angle' && /*#__PURE__*/ _jsx(AngleConsole, {
+                                theme: theme,
+                                reference: angleReference,
+                                initialCamera: angleCameraSeed,
+                                initialNote: angleNoteSeed,
+                                initialCameraStart: angleCameraStartSeed,
+                                models: availableEditModels,
+                                defaultProviderId: state.settings.defaultProviderId,
+                                defaultProviderName: defaultProvider?.name,
+                                defaultModelId: state.settings.defaultImageModelId,
+                                results: angleResults,
+                                busy: angleBusy,
+                                openResultId: angleResultOpenRequest,
+                                suppressAutoOpenId: angleSuppressAutoOpenId,
+                                onResultOpened: (id)=>{
+                                    markHistoryNoticeSeen();
+                                    setAngleResultOpenRequest(null);
+                                    setAngleResultToast((current)=>current?.id === id ? null : current);
+                                },
+                                onReferenceFiles: (files)=>{
+                                    void addReferences(files, 'angle');
+                                },
+                                onExit: ()=>{
+                                    setAngleSuppressAutoOpenId(null);
+                                    setSection(lastNonAngleSectionRef.current);
+                                },
+                                onRemoveReference: ()=>{
+                                    setAngleReference(null);
+                                    setAngleCameraSeed(null);
+                                    setAngleCameraStartSeed(null);
+                                    setAngleResults([]);
+                                    setAngleSuppressAutoOpenId(null);
+                                },
+                                onBrowseHistory: ()=>{ setRecordTab('works'); setSection('history'); },
+                                onGenerate: submitAngleGeneration,
+                                onOpenResult: (item)=>openViewer(item),
+                                onDownloadResult: (item)=>downloadImage(item.url, `SANMAO-${item.id}.png`),
+                                onDownloadShare: (item)=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
+                                onNotify: notify
+                            }),
+                            section === 'video' && /*#__PURE__*/ _jsx(VideoStudio, {
+                                models: availableVideoModels,
+                                providers: state.providers,
+                                defaultModelId: state.settings.defaultVideoModelId,
+                                promptPrefill: videoPromptPrefill,
+                                onPromptPrefillConsumed: ()=>setVideoPromptPrefill(null),
+                                taskPrefill: videoTaskPrefill,
+                                onTaskPrefillConsumed: ()=>setVideoTaskPrefill(null),
+                                durationPrefill: videoDurationPrefill,
+                                onDurationPrefillConsumed: ()=>setVideoDurationPrefill(null),
+                                mediaPrefill: videoMediaPrefill,
+                                mediaPrefillToken: videoMediaPrefillToken,
+                                onMediaPrefillConsumed: ()=>setVideoMediaPrefill(null),
+                                agentAvailable: availableChatModels.length > 0,
+                                agentModelId: activeAgentModelId,
+                                onOpenModels: ()=>setSection('models'),
+                                onOpenProviders: ()=>setSection('providers'),
+                                onNotify: notify
+                            }),
+                            section === 'generate' && /*#__PURE__*/ _jsxs("section", {
+                                className: "generate-page",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("form", {
+                                        className: `generate-panel surface ${generateUpscaleMode ? 'upscale-mode' : ''}`,
+                                        onSubmit: submitGenerate,
+                                        onPaste: (e)=>{
+                                            const files = clipboardImageFiles(e.clipboardData);
+                                            if (files.length) {
+                                                e.preventDefault();
+                                                void addReferences(files, 'generate');
+                                                notify(`已从剪贴板添加 ${files.length} 张参考图`);
+                                            }
+                                        },
+                                        onDragOver: (e)=>e.preventDefault(),
+                                        onDrop: (e)=>{
+                                            e.preventDefault();
+                                            if (e.dataTransfer.files?.length) void addReferences(e.dataTransfer.files, 'generate');
+                                        },
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "panel-title",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                children: "创作设置"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("small", {
+                                                                children: "添加参考图时会自动尝试图片编辑/参考图接口"
+                                                            })
+                                                        ]
+                                                    }),
+                                                    generateUpscaleMode ? /*#__PURE__*/ _jsx("span", {
+                                                        className: "mode-badge",
+                                                        children: "图片超分"
+                                                    }) : generateRefs.length ? /*#__PURE__*/ _jsx("span", {
+                                                        className: "mode-badge",
+                                                        children: "参考图模式"
+                                                    }) : /*#__PURE__*/ _jsx("span", {
+                                                        className: "mode-badge neutral",
+                                                        children: "文本生图"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "field-block prompt-field",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "prompt-field-head",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                className: "prompt-field-label",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: generateUpscaleMode ? '可选说明' : '提示词'
+                                                                    }),
+                                                                    !generateUpscaleMode && generatePromptBeforeOptimization !== null && /*#__PURE__*/ _jsx("small", {
+                                                                        children: "已保留原文"
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            !generateUpscaleMode && /*#__PURE__*/ _jsxs("div", {
+                                                                className: "prompt-field-actions",
+                                                                children: [
+                                                                    generatePromptBeforeOptimization !== null && /*#__PURE__*/ _jsx("button", {
+                                                                        type: "button",
+                                                                        className: "prompt-undo",
+                                                                        onClick: undoGeneratePromptOptimization,
+                                                                        children: "撤销"
+                                                                    }),
+                                                                    generatePrompt.trim() && /*#__PURE__*/ _jsxs("button", {
+                                                                        type: "button",
+                                                                        className: "prompt-optimize",
+                                                                        "aria-busy": generatePromptOptimizing,
+                                                                        disabled: generatePromptOptimizing,
+                                                                        onClick: ()=>void optimizeGeneratePrompt(),
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                                name: "agent",
+                                                                                size: 13
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsx("span", {
+                                                                                children: generatePromptOptimizing ? '润色中…' : 'AI 润色'
+                                                                            })
+                                                                        ]
+                                                                    })
+                                                                ]
+                                                            })
+                                                        ]
+                                                    }),
+                                                     /*#__PURE__*/ _jsx(ReferenceMentionEditor, {
+                                                         ref: generatePromptRef,
+                                                         value: generatePrompt,
+                                                         references: referenceMentionOptions(generateRefs),
+                                                         readOnly: generatePromptOptimizing,
+                                                         placeholder: generateUpscaleMode ? 'SeedVR2 超分不会根据提示词修改画面…' : '详细描述主体、场景、构图、光线、风格和需要避免的内容…',
+                                                         className: "generate-prompt-mention-editor",
+                                                         menuClassName: "generate-mention-menu",
+                                                         ariaLabel: "生图提示词",
+                                                         onChange: (value)=>{
+                                                             setGeneratePrompt(value);
+                                                             setGeneratePromptBeforeOptimization(null);
+                                                         },
+                                                         transformPastedText: (value)=>replaceNaturalReferenceLabels(value, generateRefs).value
+                                                     }),
+                                                    generatePrompt && /*#__PURE__*/ _jsx("button", {
+                                                        type: "button",
+                                                        className: "prompt-clear",
+                                                        title: "清空提示词",
+                                                        onClick: ()=>{
+                                                            setGeneratePrompt('');
+                                                            setGeneratePromptBeforeOptimization(null);
+                                                        },
+                                                        children: "清空"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsx(CreativeReferenceStrip, {
+                                                refs: generateRefs,
+                                                Icon,
+                                                onAdd: (files)=>void addReferences(files, 'generate'),
+                                                onPasteClick: ()=>void pasteClipboardImages('generate'),
+                                                onLocalUpscale: toggleLocalUpscaleMode,
+                                                localUpscaleActive: generateUpscaleMode,
+                                                onRemove: (id)=>{
+                                                    setGenerateRefs((old)=>old.filter((x)=>x.id !== id));
+                                                    if (generateMask?.referenceId === id) setGenerateMask(null);
+                                                },
+                                                onReorder: (fromIndex, toIndex)=>setGenerateRefs((old)=>reorderCreativeReferences(old, fromIndex, toIndex)),
+                                                onClear: ()=>{
+                                                    setGenerateRefs([]);
+                                                    setGenerateMask(null);
+                                                }
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "reference-tools",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("button", {
+                                                        type: "button",
+                                                        className: `ghost-button mask-button ${generateMask ? 'active' : ''}`,
+                                disabled: generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' || !creativeReferenceUrl(generateRefs[0]) || generateRefs.some((ref)=>ref.pending),
+                                title: generateRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能使用局部编辑' : generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '局部编辑仅支持 1 张图片参考' : undefined,
+                                onClick: ()=>generateRefs.length === 1 && generateRefs[0]?.kind === 'image' && creativeReferenceUrl(generateRefs[0]) && !generateRefs[0]?.pending ? setMaskEditorOpen(true) : notify(generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '局部编辑仅支持 1 张图片参考' : '参考图正在准备，请稍候片刻'),
+                                                        children: [
+                                                            "▧ ",
+                                                            generateMask ? '局部编辑范围已设置' : '局部编辑',
+                                                            generateMask && /*#__PURE__*/ _jsx("i", {})
+                                                        ]
+                                                    }),
+                                                    generateMask && /*#__PURE__*/ _jsx("button", {
+                                                        type: "button",
+                                                        className: "mask-remove",
+                                                        onClick: ()=>{
+                                                            setGenerateMask(null);
+                                                            notify('局部编辑范围已移除');
+                                                        },
+                                                        children: "移除"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        className: generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? 'mask-hint warning' : '',
+                                                        children: generateRefs.some((ref)=>ref.pending) ? '参考图正在准备，完成后即可提交' : generateRefs.length !== 1 || generateRefs[0]?.kind !== 'image' ? '局部编辑仅支持 1 张图片参考' : generateMask ? '编辑范围内会生成新内容' : '可选：指定只修改参考图的局部区域'
+                                                    })
+                                                ]
+                                            }),
+                                            generateUpscaleMode && /*#__PURE__*/ _jsxs("div", {
+                                                className: "upscale-workbench",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "upscale-workbench-head",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("strong", {
+                                                                children: "图片超分参数"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("small", {
+                                                                children: `${selectedUpscaleModel?.displayName || '超分模型'} 将使用第一张本地图片作为输入。`
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-grid upscale-settings-grid",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                className: "field-block",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "模型"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx(ModelPicker, {
+                                                                        models: availableUpscaleModels,
+                                                                        value: generateUpscaleModelId,
+                                                                        capability: "upscale",
+                                                                        defaultProviderId: state.settings.defaultProviderId,
+                                                                        defaultProviderName: defaultProvider?.name,
+                                                                        onChange: handleUpscaleModelChange
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                className: "field-block",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "放大倍率"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx(Dropdown, {
+                                                                        value: String(generateUpscaleScale),
+                                                                        options: (selectedUpscaleModel?.scales || upscaleScales).map((scale)=>({
+                                                                                value: String(scale),
+                                                                                label: `${scale}×`
+                                                                            })),
+                                                                        onChange: (value)=>{
+                                                                            setGenerateUpscaleScale(Number(value));
+                                                                            setGenerateUpscaleTarget('auto');
+                                                                        }
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                className: "field-block",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "目标尺寸"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsxs("div", {
+                                                                        className: "upscale-target-readout",
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsxs("small", {
+                                                                                children: [
+                                                                                    /*#__PURE__*/ _jsx("i", {
+                                                                                        children: "原图"
+                                                                                    }),
+                                                                                    /*#__PURE__*/ _jsx("b", {
+                                                                                        children: generateUpscaleSourceSize ? `${generateUpscaleSourceSize.width}×${generateUpscaleSourceSize.height}` : '读取中…'
+                                                                                    })
+                                                                                ]
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsx("em", {
+                                                                                children: "→"
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsxs("strong", {
+                                                                                children: [
+                                                                                    /*#__PURE__*/ _jsx("i", {
+                                                                        children: "输出"
+                                                                                    }),
+                                                                                    /*#__PURE__*/ _jsx("b", {
+                                                                                        children: generateUpscaleTargetPreview ? `${generateUpscaleTargetPreview.width}×${generateUpscaleTargetPreview.height}` : '计算中…'
+                                                                                    })
+                                                                                ]
+                                                                            })
+                                                                        ]
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            !selectedUpscaleIsCloud && /*#__PURE__*/ _jsxs("label", {
+                                                                className: "field-block",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "随机种子"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("input", {
+                                                                        type: "number",
+                                                                        min: "0",
+                                                                        max: "2147483647",
+                                                                        value: generateUpscaleSeed,
+                                                                        onChange: (e)=>setGenerateUpscaleSeed(Math.max(0, Number(e.target.value) || 0))
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            !selectedUpscaleIsCloud && /*#__PURE__*/ _jsxs("div", {
+                                                                className: "field-block",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "颜色校正"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx(Dropdown, {
+                                                                        value: generateUpscaleColorCorrection,
+                                                                        options: [
+                                                                            {
+                                                                                value: 'wavelet',
+                                                                                label: 'wavelet · 接近原图'
+                                                                            },
+                                                                            {
+                                                                                value: 'none',
+                                                                                label: '关闭'
+                                                                            }
+                                                                        ],
+                                                                        onChange: (value)=>setGenerateUpscaleColorCorrection(value)
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            !selectedUpscaleIsCloud && /*#__PURE__*/ _jsxs("div", {
+                                                                className: "field-block",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "缩放算法"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx(Dropdown, {
+                                                                        value: generateUpscaleAlgorithm,
+                                                                        options: [
+                                                                            {
+                                                                                value: 'lanczos',
+                                                                                label: 'lanczos · 锐利'
+                                                                            },
+                                                                            {
+                                                                                value: 'bicubic',
+                                                                                label: 'bicubic · 平滑'
+                                                                            },
+                                                                            {
+                                                                                value: 'nearest',
+                                                                                label: 'nearest · 像素'
+                                                                            }
+                                                                        ],
+                                                                        onChange: (value)=>setGenerateUpscaleAlgorithm(value)
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            selectedUpscaleOption?.outputFormats && /*#__PURE__*/ _jsxs("div", {
+                                                                className: "field-block",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "输出格式"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx(Dropdown, {
+                                                                        value: generateUpscaleOutputFormat,
+                                                                        options: cloudUpscaleFormatOptions.filter((option)=>selectedUpscaleOption.outputFormats.includes(option.value)),
+                                                                        onChange: (value)=>setGenerateUpscaleOutputFormat(value)
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            selectedUpscaleOption?.outputQuality && generateUpscaleOutputFormat === 'jpg' && /*#__PURE__*/ _jsxs("label", {
+                                                                className: "field-block",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "JPG 质量"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("input", {
+                                                                        type: "number",
+                                                                        min: selectedUpscaleOption.outputQuality.min,
+                                                                        max: selectedUpscaleOption.outputQuality.max,
+                                                                        step: "1",
+                                                                        value: generateUpscaleOutputQuality,
+                                                                        onChange: (e)=>setGenerateUpscaleOutputQuality(Math.max(selectedUpscaleOption.outputQuality.min, Math.min(selectedUpscaleOption.outputQuality.max, Number(e.target.value) || selectedUpscaleOption.outputQuality.default)))
+                                                                    })
+                                                                ]
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "upscale-reference-note",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "image",
+                                                                size: 15
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                children: generateRefs.length ? '已上传本地图片；超分时使用第 1 张参考图。' : '请先在上方上传一张本地图片。'
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: `settings-grid generate-primary-settings ${generateAdvancedOpen ? 'advanced-open' : 'advanced-closed'}`,
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "field-block",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                children: "图片模型"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx(ModelPicker, {
+                                                                models: generateMask && availableEditModels.length ? availableEditModels : availableGenerationModels,
+                                                                value: generateModelId,
+                                                                capability: generateMask && availableEditModels.length ? "edit" : "generate",
+                                                                defaultProviderId: state.settings.defaultProviderId,
+                                                                defaultProviderName: defaultProvider?.name,
+                                                                defaultModelId: state.settings.defaultImageModelId,
+                                                                onChange: setGenerateModelId
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "field-block",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                children: "质量"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx(Dropdown, {
+                                                                value: quality,
+                                                                options: qualityOptions,
+                                                                onChange: (v)=>setQuality(v)
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "field-block",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                children: "出图格式"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx(Dropdown, {
+                                                                value: outputFormat,
+                                                                options: [
+                                                                    {
+                                                                        value: 'png',
+                                                                        label: 'PNG · 无损'
+                                                                    },
+                                                                    {
+                                                                        value: 'jpeg',
+                                                                        label: 'JPEG · 体积更小'
+                                                                    },
+                                                                    {
+                                                                        value: 'webp',
+                                                                        label: 'WebP · 适合网页'
+                                                                    }
+                                                                ],
+                                                                onChange: (v)=>setOutputFormat(v)
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "field-block",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                children: "背景限制"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx(Dropdown, {
+                                                                value: backgroundMode,
+                                                                options: [
+                                                                    {
+                                                                        value: 'auto',
+                                                                        label: '自动'
+                                                                    },
+                                                                    {
+                                                                        value: 'api-transparent',
+                                                                        label: 'API 透明',
+                                                                        meta: '不支持 Image 2 系列'
+                                                                    },
+                                                                    {
+                                                                        value: 'local-transparent',
+                                                                        label: '本地透明',
+                                                                        meta: '自动去白底，输出 PNG'
+                                                                    },
+                                                                    {
+                                                                        value: 'opaque',
+                                                                        label: '不透明'
+                                                                    }
+                                                                ],
+                                                                onChange: (v)=>{
+                                                                    const next = v;
+                                                                    setBackgroundMode(next);
+                                                                    if (next === 'api-transparent' || next === 'local-transparent') setOutputFormat('png');
+                                                                }
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("button", {
+                                                type: "button",
+                                                className: `advanced-settings-toggle ${generateAdvancedOpen ? 'active' : ''}`,
+                                                "aria-expanded": generateAdvancedOpen,
+                                                onClick: ()=>setGenerateAdvancedOpen((value)=>!value),
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: generateAdvancedOpen ? '收起更多参数' : '更多参数'
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: generateAdvancedOpen ? '质量、格式、背景限制' : '质量、格式、背景限制'
+                                                    }),
+                                                    /*#__PURE__*/ _jsx(Icon, {
+                                                        name: "chevron",
+                                                        size: 14
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "field-block resolution-field",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "尺寸与分辨率"
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        ref: sizeTabsRef,
+                                                        className: "size-mode-tabs",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("button", {
+                                                                type: "button",
+                                                                className: sizeDrawer === 'ratio' ? 'active' : '',
+                                                                onClick: ()=>{
+                                                                    const rect = sizeTabsRef.current?.getBoundingClientRect();
+                                                                    if (rect) setSizeMenuStyle({
+                                                                        left: rect.left,
+                                                                        width: rect.width,
+                                                                        bottom: Math.max(8, window.innerHeight - rect.top + 6)
+                                                                    });
+                                                                    setSizeDrawer(sizeDrawer === 'ratio' ? null : 'ratio');
+                                                                },
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("strong", {
+                                                                        children: "比例"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("small", {
+                                                                        children: selectedRatioLabel
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("button", {
+                                                                type: "button",
+                                                                className: sizeDrawer === 'resolution' ? 'active' : '',
+                                                                onClick: ()=>{
+                                                                    const rect = sizeTabsRef.current?.getBoundingClientRect();
+                                                                    if (rect) setSizeMenuStyle({
+                                                                        left: rect.left,
+                                                                        width: rect.width,
+                                                                        bottom: Math.max(8, window.innerHeight - rect.top + 6)
+                                                                    });
+                                                                    setSizeDrawer(sizeDrawer === 'resolution' ? null : 'resolution');
+                                                                },
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("strong", {
+                                                                        children: "分辨率"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("small", {
+                                                                        children: sizeMode === 'custom' ? `${customWidth}×${customHeight}` : sizeTier.toUpperCase()
+                                                                    })
+                                                                ]
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            sizeDrawer && /*#__PURE__*/ _jsx("div", {
+                                                className: "size-drawer-backdrop",
+                                                style: sizeMenuStyle,
+                                                children: /*#__PURE__*/ _jsxs("div", {
+                                                    className: "size-drawer",
+                                                    onClick: (e)=>e.stopPropagation(),
+                                                    children: [
+                                                        /*#__PURE__*/ _jsxs("div", {
+                                                            className: "size-drawer-head",
+                                                            children: [
+                                                                /*#__PURE__*/ _jsxs("div", {
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                            children: sizeDrawer === 'ratio' ? '画布比例' : '输出分辨率'
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsx("strong", {
+                                                                            children: sizeDrawer === 'ratio' ? selectedRatioLabel : sizeMode === 'custom' ? `${customWidth}×${customHeight}` : sizeTier.toUpperCase()
+                                                                        })
+                                                                    ]
+                                                                }),
+                                                                /*#__PURE__*/ _jsx("button", {
+                                                                    type: "button",
+                                                                    className: "icon-button",
+                                                                    onClick: ()=>setSizeDrawer(null),
+                                                                    children: /*#__PURE__*/ _jsx(Icon, {
+                                                                        name: "close",
+                                                                        size: 16
+                                                                    })
+                                                                })
+                                                            ]
+                                                        }),
+                                                        sizeDrawer === 'ratio' ? /*#__PURE__*/ _jsxs("div", {
+                                                            className: "dimension-ratios drawer-options",
+                                                            children: [
+                                                                /*#__PURE__*/ _jsx("span", {
+                                                                    children: "选择比例"
+                                                                }),
+                                                                ratios.map((item)=>/*#__PURE__*/ _jsxs("button", {
+                                                                        type: "button",
+                                                                        className: ratio === item ? 'active' : '',
+                                                                        onClick: ()=>{
+                                                                            setRatio(item);
+                                                                            setSizeMode('system');
+                                                                            if (item !== '自定义') setSizeDrawer(null);
+                                                                        },
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsx("strong", {
+                                                                                children: item === '自动' && effectiveAutoRatio !== '自动' ? `自动 · ${effectiveAutoRatio}` : item
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsx("small", {
+                                                                                children: item === '自动' && effectiveAutoRatio !== '自动' ? '按第 1 张参考图匹配' : ratioDescriptions[item] || '模型自选'
+                                                                            })
+                                                                        ]
+                                                                    }, item)),
+                                                                ratio === '自定义' && /*#__PURE__*/ _jsxs("div", {
+                                                                    className: "custom-ratio-card drawer-custom-size",
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsxs("div", {
+                                                                            className: "custom-size-row",
+                                                                            children: [
+                                                                                /*#__PURE__*/ _jsxs("label", {
+                                                                                    children: [
+                                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                                            children: "比例宽"
+                                                                                        }),
+                                                                                        /*#__PURE__*/ _jsx("input", {
+                                                                                            type: "number",
+                                                                                            min: "1",
+                                                                                            value: customRatioWidth,
+                                                                                            inputMode: "numeric",
+                                                                                            onChange: (e)=>setCustomRatioWidth(Math.max(1, Number(e.target.value) || 1))
+                                                                                        })
+                                                                                    ]
+                                                                                }),
+                                                                                /*#__PURE__*/ _jsx("b", {
+                                                                                    children: ":"
+                                                                                }),
+                                                                                /*#__PURE__*/ _jsxs("label", {
+                                                                                    children: [
+                                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                                            children: "比例高"
+                                                                                        }),
+                                                                                        /*#__PURE__*/ _jsx("input", {
+                                                                                            type: "number",
+                                                                                            min: "1",
+                                                                                            value: customRatioHeight,
+                                                                                            inputMode: "numeric",
+                                                                                            onChange: (e)=>setCustomRatioHeight(Math.max(1, Number(e.target.value) || 1))
+                                                                                        })
+                                                                                    ]
+                                                                                }),
+                                                                                /*#__PURE__*/ _jsx("small", {
+                                                                                    children: "1K / 2K / 4K 会按此比例自动计算尺寸。"
+                                                                                })
+                                                                            ]
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsxs("button", {
+                                                                            type: "button",
+                                                                            className: "primary-small custom-size-confirm",
+                                                                            onClick: ()=>{
+                                                                                setSizeMode('system');
+                                                                                setSizeDrawer(null);
+                                                                            },
+                                                                            children: [
+                                                                                "使用 ",
+                                                                                customRatioWidth,
+                                                                                ":",
+                                                                                customRatioHeight
+                                                                            ]
+                                                                        })
+                                                                    ]
+                                                                })
+                                                            ]
+                                                        }) : /*#__PURE__*/ _jsxs("div", {
+                                                            className: "resolution-drawer-content",
+                                                            children: [
+                                                                /*#__PURE__*/ _jsxs("div", {
+                                                                    className: "resolution-tiers drawer-options",
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                            children: "预设分辨率"
+                                                                        }),
+                                                                        sizeTiers.map((item)=>{
+                                                                            const resolvedRatio = ratio === '自动' ? effectiveAutoRatio : ratio;
+                                                                            const dimensions = presetDimensions(resolvedRatio, item.value, customRatioWidth, customRatioHeight);
+                                                                            return /*#__PURE__*/ _jsxs("button", {
+                                                                                type: "button",
+                                                                                className: sizeMode === 'system' && sizeTier === item.value ? 'active' : '',
+                                                                                onClick: ()=>{
+                                                                                    setSizeTier(item.value);
+                                                                                    setSizeMode('system');
+                                                                                    setSizeDrawer(null);
+                                                                                },
+                                                                                children: [
+                                                                                    /*#__PURE__*/ _jsx("strong", {
+                                                                                        children: item.label
+                                                                                    }),
+                                                                                    /*#__PURE__*/ _jsx("small", {
+                                                                                        children: resolvedRatio === '自动' ? `自动比例 · 长边约 ${item.longEdge}` : `${dimensions.width}×${dimensions.height}`
+                                                                                    })
+                                                                                ]
+                                                                            }, item.value);
+                                                                        })
+                                                                    ]
+                                                                }),
+                                                                /*#__PURE__*/ _jsxs("div", {
+                                                                    className: "custom-size-card drawer-custom-size",
+                                                                    children: [
+                                                                        /*#__PURE__*/ _jsxs("div", {
+                                                                            className: "custom-size-row",
+                                                                            children: [
+                                                                                /*#__PURE__*/ _jsxs("label", {
+                                                                                    children: [
+                                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                                            children: "宽度（px）"
+                                                                                        }),
+                                                                                        /*#__PURE__*/ _jsx("input", {
+                                                                                            type: "number",
+                                                                                            min: "1",
+                                                                                            value: customWidth,
+                                                                                            inputMode: "numeric",
+                                                                                            onChange: (e)=>setCustomWidth(Number(e.target.value) || 0)
+                                                                                        })
+                                                                                    ]
+                                                                                }),
+                                                                                /*#__PURE__*/ _jsx("b", {
+                                                                                    children: "\xd7"
+                                                                                }),
+                                                                                /*#__PURE__*/ _jsxs("label", {
+                                                                                    children: [
+                                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                                            children: "高度（px）"
+                                                                                        }),
+                                                                                        /*#__PURE__*/ _jsx("input", {
+                                                                                            type: "number",
+                                                                                            min: "1",
+                                                                                            value: customHeight,
+                                                                                            inputMode: "numeric",
+                                                                                            onChange: (e)=>setCustomHeight(Number(e.target.value) || 0)
+                                                                                        })
+                                                                                    ]
+                                                                                }),
+                                                                                /*#__PURE__*/ _jsx("small", {
+                                                                                    children: "可输入任意正整数尺寸，不再限制固定倍数。"
+                                                                                })
+                                                                            ]
+                                                                        }),
+                                                                        /*#__PURE__*/ _jsx("button", {
+                                                                            type: "button",
+                                                                            className: "primary-small custom-size-confirm",
+                                                                            disabled: customWidth < 1 || customHeight < 1,
+                                                                            onClick: ()=>{
+                                                                                setSizeMode('custom');
+                                                                                setSizeDrawer(null);
+                                                                            },
+                                                                            children: "使用自定义尺寸"
+                                                                        })
+                                                                    ]
+                                                                })
+                                                            ]
+                                                        })
+                                                    ]
+                                                })
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "count-row",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                children: "生成数量"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("small", {
+                                                                children: "一次最多 8 张，并行生成，哪张先完成就先显示"
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "stepper",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                onClick: ()=>setCount((v)=>Math.max(1, v - 1)),
+                                                                children: "−"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("strong", {
+                                                                children: count
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                onClick: ()=>setCount((v)=>Math.min(8, v + 1)),
+                                                                children: "＋"
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "generate-submit-sticky",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "primary-action",
+                                                        disabled: !generateUpscaleMode && !generatePrompt.trim() || !availableImageModels.length || generateRefs.some((ref)=>ref.pending),
+                                                        children: generateBusy ? /*#__PURE__*/ _jsxs(_Fragment, {
+                                                            children: [
+                                                                /*#__PURE__*/ _jsx(Icon, {
+                                                                    name: "plus",
+                                                                    size: 17
+                                                                }),
+                                                                "继续生成 \xb7 ",
+                                                                activeGenerateTasks.length,
+                                                                " 个进行中"
+                                                            ]
+                                                        }) : /*#__PURE__*/ _jsxs(_Fragment, {
+                                                            children: [
+                                                                /*#__PURE__*/ _jsx(Icon, {
+                                                                    name: "image",
+                                                                    size: 17
+                                                                }),
+                                                                generateRefs.some((ref)=>ref.pending) ? '参考图准备中…' : generateUpscaleMode ? `开始 ${generateUpscaleScale}× 超分` : generateRefs.length ? '基于参考图生成' : '开始生成'
+                                                            ]
+                                                        })
+                                                    }),
+                                                    generateBusy ? /*#__PURE__*/ _jsx("small", {
+                                                        className: "generate-timing active",
+                                                        children: "无需等待，可继续修改参数并提交下一轮"
+                                                    }) : generateRefs.some((ref)=>ref.pending) ? /*#__PURE__*/ _jsx("small", {
+                                                        className: "generate-timing active",
+                                                        children: "图片已显示，正在完成提交前的格式准备"
+                                                    }) : lastGenerateInfo && /*#__PURE__*/ _jsx("small", {
+                                                        className: "generate-timing",
+                                                        children: lastGenerateInfo
+                                                    }),
+                                                    !availableImageModels.length && /*#__PURE__*/ _jsx("button", {
+                                                        type: "button",
+                                                        className: "inline-link",
+                                                        onClick: ()=>setSection('models'),
+                                                        children: "还没有图片模型，去模型库选择 →"
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("section", {
+                                        className: "result-panel surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "panel-title",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        children: [
+                                                             /*#__PURE__*/ _jsx("span", {
+                                                                 children: activeGenerateTasks.length ? "当前创作" : "最近结果"
+                                                             }),
+                                                             /*#__PURE__*/ _jsx("small", {
+                                                                 children: generateTasks.length ? `${generateTasks.length} 轮任务 · ${activeGenerateTasks.length} 个进行中 · ${generateTaskView === 'all' ? '显示全部轮次' : activeGenerateTasks.length ? '优先显示进行中' : '显示最新一轮'}` : lastGenerateInfo || '生成后会自动保存到“创作记录”'
+                                                            })
+                                                        ]
+                                                    }),
+                                                     (resultItems.length > 0 || generateTasks.length > 0) && /*#__PURE__*/ _jsxs("div", {
+                                                         className: "panel-title-actions",
+                                                         children: [
+                                                             generateTasks.length > 1 && /*#__PURE__*/ _jsxs("div", {
+                                                                 className: "generation-view-switch",
+                                                                 "aria-label": "结果轮次范围",
+                                                                 children: [
+                                                                     /*#__PURE__*/ _jsx("button", {
+                                                                         type: "button",
+                                                                         className: generateTaskView === 'current' ? 'active' : '',
+                                                                         "aria-pressed": generateTaskView === 'current',
+                                                                         onClick: ()=>setGenerateTaskView('current'),
+                                                                         children: activeGenerateTasks.length ? `正在创作 ${activeGenerateTasks.length}` : '最新一轮'
+                                                                     }),
+                                                                     /*#__PURE__*/ _jsx("button", {
+                                                                         type: "button",
+                                                                         className: generateTaskView === 'all' ? 'active' : '',
+                                                                         "aria-pressed": generateTaskView === 'all',
+                                                                         onClick: ()=>setGenerateTaskView('all'),
+                                                                         children: `全部 ${generateTasks.length}`
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsx("button", {
+                                                                className: "ghost-button",
+                                                                onClick: ()=>{
+                                                                    setGenerateTasks([]);
+                                                                    setResultItems([]);
+                                                                    setLastGenerateInfo('');
+                                                                },
+                                                                children: "清空结果"
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("button", {
+                                                                className: "ghost-button",
+                                                                onClick: ()=>{ setRecordTab('works'); setSection('history'); },
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx(Icon, {
+                                                                        name: "history",
+                                                                        size: 15
+                                                                    }),
+                                                                    "查看全部历史"
+                                                                ]
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                             generateTasks.length ? /*#__PURE__*/ _jsx("div", {
+                                                 className: "generation-task-list",
+                                                 children: visibleGenerateTasks.map((task)=>{
+                                                     const taskIndex = generateTasks.findIndex((candidate)=>candidate.id === task.id);
+                                                     return /*#__PURE__*/ _jsxs("section", {
+                                                         className: `generation-task-group ${task.status} tone-${taskIndex % 6}`,
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("header", {
+                                                                className: "generation-task-head",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsxs("div", {
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsxs("b", {
+                                                                                children: [
+                                                                                    "第 ",
+                                                                                     generateTasks.length - taskIndex,
+                                                                                    " 轮"
+                                                                                ]
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsx("strong", {
+                                                                                children: task.prompt
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsx("small", {
+                                                                                children: task.info
+                                                                            })
+                                                                        ]
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsxs("div", {
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsx("span", {
+                                                                                className: `generation-task-status ${task.status}`,
+                                                                                children: task.status === 'pending' ? /*#__PURE__*/ _jsxs(_Fragment, {
+                                                                                    children: [
+                                                                                        /*#__PURE__*/ _jsx("i", {
+                                                                                            className: "mini-loader"
+                                                                                        }),
+                                                                                        "进行中"
+                                                                                    ]
+                                                                                }) : task.status === 'success' ? '已完成' : task.cancelled ? '已取消' : task.interrupted ? '已中断' : '部分失败'
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsx("time", {
+                                                                                children: ((task.status === 'pending' ? generateClock : task.completedAt || generateClock) - task.startedAt) / 1000 < 0.1 ? '0.1s' : `${(((task.status === 'pending' ? generateClock : task.completedAt || generateClock) - task.startedAt) / 1000).toFixed(1)}s`
+                                                                            }),
+                                                                            task.request && /*#__PURE__*/ _jsx("button", {
+                                                                                type: "button",
+                                                                                className: "task-restore-button",
+                                                                                onClick: ()=>restoreGenerateTask(task),
+                                                                                children: "恢复参数"
+                                                                            }),
+                                                                            task.status === 'pending' && task.mode === 'upscale' && task.upscaleTaskId && /*#__PURE__*/ _jsx("button", {
+                                                                                type: "button",
+                                                                                className: "task-cancel-button",
+                                                                                title: "停止跟踪这条任务",
+                                                                                onClick: ()=>void cancelGenerateTask(task),
+                                                                                children: "停止跟踪"
+                                                                            }),
+                                                                            task.request && task.status === 'error' && /*#__PURE__*/ _jsxs("button", {
+                                                                                type: "button",
+                                                                                className: "task-retry-button",
+                                                                                onClick: ()=>void retryGenerateTask(task),
+                                                                                children: [
+                                                                                    "重试",
+                                                                                    task.items.length > 0 && task.items.length < task.expectedCount ? `剩余 ${task.expectedCount - task.items.length} 张` : '本轮'
+                                                                                ]
+                                                                            })
+                                                                        ]
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                className: `result-grid ${task.status === 'pending' ? 'task-loading-results' : 'task-result-grid'}`,
+                                                                children: [
+                                                                    task.items.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
+                                                                            Icon,
+                                                                            sourceLabel: gallerySourceLabel,
+                                                                            item: item,
+                                                                            onOpenAngle: ()=>void openAngleConsole(item),
+                                                                            onOpenOutpaint: ()=>openOutpaintEditor(item),
+                                                                            previousItem: getGalleryParent(item),
+                                                                            onPreview: ()=>openViewer(item),
+                                                                            onEdit: ()=>openEdit(item),
+                                                                            onUpscale: ()=>openUpscale(item),
+                                                                            onReuse: ()=>reuseItem(item),
+                                                                            onReference: ()=>useAsReference(item),
+                                                                            onPushVideo: ()=>pushToVideo(item),
+                                                                            onCompare: ()=>openCompare(item),
+                                                                            onReversePrompt: ()=>reversePrompt(item),
+                                                                            onFavorite: ()=>void toggleFavorite(item),
+                                                                            onDownload: ()=>void downloadImage(item.url, `SANMAO-${item.id}.png`),
+                                                                            onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
+                                                                            onDelete: ()=>askDeleteItems([
+                                                                                    item.id
+                                                                                ])
+                                                                        }, item.id)),
+                                                                    task.status === 'pending' && Array.from({
+                                                                        length: Math.max(0, task.expectedCount - task.items.length)
+                                                                    }, (_, imageIndex)=>/*#__PURE__*/ _jsxs("article", {
+                                                                            className: "loading-card",
+                                                                            children: [
+                                                                                /*#__PURE__*/ _jsxs("div", {
+                                                                                    className: "loading-stage",
+                                                                                    children: [
+                                                                                        /*#__PURE__*/ _jsx("span", {
+                                                                                            className: "loading-orb"
+                                                                                        }),
+                                                                                        /*#__PURE__*/ _jsxs("small", {
+                                                                                            children: [
+                                                                                                "等待第 ",
+                                                                                                task.items.length + imageIndex + 1,
+                                                                                                " / ",
+                                                                                                task.expectedCount,
+                                                                                                " 张返回"
+                                                                                            ]
+                                                                                        })
+                                                                                    ]
+                                                                                }),
+                                                                                /*#__PURE__*/ _jsxs("div", {
+                                                                                    className: "loading-card-body",
+                                                                                    children: [
+                                                                                        /*#__PURE__*/ _jsx("strong", {
+                                                                                            children: "正在生成图片"
+                                                                                        }),
+                                                                                        /*#__PURE__*/ _jsx("small", {
+                                                                                            children: "哪张先完成就先显示"
+                                                                                        })
+                                                                                    ]
+                                                                                })
+                                                                            ]
+                                                                        }, `loading-${imageIndex}`))
+                                                                ]
+                                                            }),
+                                                            task.status === 'error' && /*#__PURE__*/ _jsxs("div", {
+                                                                className: "generation-task-error",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx(Icon, {
+                                                                        name: "close",
+                                                                        size: 18
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsxs("div", {
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsx("strong", {
+                                                                                children: task.cancelled ? '本轮任务已取消' : task.interrupted ? '本轮任务已中断' : '本轮部分生成失败'
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsx("small", {
+                                                                                children: task.cancelled ? '任务已停止，已返回的图片仍会保留。' : task.interrupted ? '页面状态中断，可恢复参数后重新提交。' : task.items.length ? `${task.items.length} / ${task.expectedCount} 张已完成，可重试失败部分。` : '未收到可用图片，请检查模型连接或稍后重试。'
+                                                                            }),
+                                                                            task.error && /*#__PURE__*/ _jsxs("details", {
+                                                                                className: "generation-error-details",
+                                                                                children: [
+                                                                                    /*#__PURE__*/ _jsx("summary", {
+                                                                                        children: "查看技术详情"
+                                                                                    }),
+                                                                                    /*#__PURE__*/ _jsx("p", {
+                                                                                        children: task.error
+                                                                                    })
+                                                                                ]
+                                                                            })
+                                                                        ]
+                                                                    })
+                                                                ]
+                                                            })
+                                                        ]
+                                                     }, task.id);
+                                                 })
+                                             }) : resultItems.length ? /*#__PURE__*/ _jsx("div", {
+                                                className: `result-grid ${resultItems.length === 1 ? 'featured-results' : ''}`,
+                                                children: resultItems.map((item)=>/*#__PURE__*/ _jsx(ImageCard, {
+                                                        Icon,
+                                                        sourceLabel: gallerySourceLabel,
+                                                        item: item,
+                                                        onOpenAngle: ()=>void openAngleConsole(item),
+                                                        onOpenOutpaint: ()=>openOutpaintEditor(item),
+                                                        previousItem: getGalleryParent(item),
+                                                        onPreview: ()=>openViewer(item),
+                                                        onEdit: ()=>openEdit(item),
+                                                        onUpscale: ()=>openUpscale(item),
+                                                        onReuse: ()=>reuseItem(item),
+                                                        onReference: ()=>useAsReference(item),
+                                                        onPushVideo: ()=>pushToVideo(item),
+                                                        onCompare: ()=>openCompare(item),
+                                                        onReversePrompt: ()=>reversePrompt(item),
+                                                        onFavorite: ()=>void toggleFavorite(item),
+                                                        onDownload: ()=>void downloadImage(item.url, `SANMAO-${item.id}.png`),
+                                                        onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
+                                                        onDelete: ()=>askDeleteItems([
+                                                                item.id
+                                                            ])
+                                                    }, item.id))
+                                            }) : /*#__PURE__*/ _jsxs("div", {
+                                                className: "empty-result",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("div", {
+                                                        className: "empty-icon",
+                                                        children: /*#__PURE__*/ _jsx(Icon, {
+                                                            name: "image",
+                                                            size: 28
+                                                        })
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("h2", {
+                                                        children: "生成结果会出现在这里"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", {
+                                                        children: "你可以连续提交多轮任务，不必等待上一轮完成。每轮结果会按不同颜色分组，并自动保存到创作记录。"
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }),
+                            maskEditorOpen && generateRefs[0] && /*#__PURE__*/ _jsx(LocalEditEditor, {
+                                imageUrl: creativeReferenceUrl(generateRefs[0]),
+                                initialMaskDataUrl: generateMask?.referenceId === generateRefs[0].id ? generateMask.dataUrl : undefined,
+                                initialPrompt: generatePrompt,
+                                initialAnnotations: generateMask?.referenceId === generateRefs[0].id ? generateMask.annotations || [] : [],
+                                initialFeather: generateMask?.referenceId === generateRefs[0].id ? generateMask.feather || 0 : 0,
+                                onCancel: ()=>setMaskEditorOpen(false),
+                                onApply: (dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl)=>{
+                                    setGenerateMask({
+                                        referenceId: generateRefs[0].id,
+                                        dataUrl,
+                                        coverage,
+                                        annotations,
+                                        feather,
+                                        ...(moveGuideDataUrl ? { sourceImageDataUrl: moveGuideDataUrl } : {})
+                                    });
+                                    setGenerateModelId((current)=>current === 'auto' || availableEditModels.some((model)=>model.id === current) ? current : 'auto');
+                                    setGeneratePrompt(prompt);
+                                    setMaskEditorOpen(false);
+                                    notify(`局部编辑范围已设置（覆盖 ${Math.round(coverage * 100)}%），生成时会一并提交给服务商`);
+                                }
+                            }),
+                            section === 'history' && recordTab === 'works' && /*#__PURE__*/ _jsxs("section", {
+                                className: "history-page",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "history-toolbar surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "record-tab-switcher",
+                                                role: "tablist",
+                                                "aria-label": "创作记录视图",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'works', className: recordTab === 'works' ? 'active' : '', onClick: ()=>{ setRecordTab('works'); setSection('history'); void refreshGallery(); void refreshVideoTasks(); }, children: "作品" }),
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); markLogErrorNoticeSeen(); void refreshGenerationLogs(); void refreshVideoTasks(); }, children: "任务" })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "search-box",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx(Icon, {
+                                                        name: "search",
+                                                        size: 17
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("input", {
+                                                        value: historySearch,
+                                                        onChange: (e)=>setHistorySearch(e.target.value),
+                                                        placeholder: "搜索提示词或模型…"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "media-filter-chips",
+                                                children: [
+                                                    ['all', '全部作品'],
+                                                    ['image', '图片'],
+                                                    ['video', '视频'],
+                                                    ['audio', '音频 · 即将上线']
+                                                ].map(([value, label])=>/*#__PURE__*/ _jsx("button", { type: "button", disabled: value === 'audio', className: historyMediaFilter === value ? 'active' : '', onClick: ()=>setHistoryMediaFilter(value), children: label }, value))
+                                            }),
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "filter-chips",
+                                                children: [
+                                                    [
+                                                        'all',
+                                                        '全部'
+                                                    ],
+                                                    [
+                                                        'favorite',
+                                                        '收藏'
+                                                    ],
+                                                    [
+                                                        'generate',
+                                                        '直接生成'
+                                                    ],
+                                                    [
+                                                        'agent',
+                                                        '助手生成'
+                                                    ],
+                                                    [
+                                                        'edit',
+                                                        '图片修改'
+                                                    ],
+                                                    [
+                                                        'canvas',
+                                                        '画布生成'
+                                                    ],
+                                                    [
+                                                        'upscale',
+                                                        '高清放大'
+                                                    ]
+                                                ].map(([value, label])=>/*#__PURE__*/ _jsx("button", {
+                                                        className: historyFilter === value ? 'active' : '',
+                                                        onClick: ()=>setHistoryFilter(value),
+                                                        children: label
+                                                    }, value))
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "history-controls",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: selectionMode ? 'ghost-button active' : 'ghost-button',
+                                                        onClick: ()=>{
+                                                            setSelectionMode((v)=>!v);
+                                                            setSelectedHistory(new Set());
+                                                        },
+                                                        children: selectionMode ? '退出多选' : '批量选择'
+                                                    }),
+                                                    /*#__PURE__*/ _jsx(Dropdown, {
+                                                        value: String(pageSize),
+                                                        options: pageSizeOptions,
+                                                        onChange: (v)=>{
+                                                            const n = Number(v);
+                                                            setPageSize(n);
+                                                            try {
+                                                                localStorage.setItem(HISTORY_PAGE_SIZE_STORAGE_KEY, v);
+                                                            } catch  {}
+                                                        },
+                                                        className: "page-size-dropdown"
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    selectionMode && /*#__PURE__*/ _jsxs("div", {
+                                        className: "batch-bar",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("span", {
+                                                children: [
+                                                    "已选择 ",
+                                                    selectedHistory.size,
+                                                    " 张"
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("button", {
+                                                        disabled: !selectedHistory.size,
+                                                        onClick: ()=>{
+                                                            for (const id of selectedHistory){
+                                                                const item = gallery.find((x)=>x.id === id);
+                                                                if (item) void downloadImage(item.url, `SANMAO-${item.id}.png`);
+                                                            }
+                                                        },
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "download",
+                                                                size: 15
+                                                            }),
+                                                            "逐张下载"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("button", {
+                                                        className: "push-video-batch",
+                                                        disabled: !selectedHistory.size,
+                                                        onClick: ()=>pushSelectedToVideo(),
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "video",
+                                                                size: 15
+                                                            }),
+                                                            "推送到视频"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("button", {
+                                                        className: "danger",
+                                                        disabled: !selectedHistory.size,
+                                                        onClick: ()=>askDeleteItems([
+                                                                ...selectedHistory
+                                                            ]),
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "trash",
+                                                                size: 15
+                                                            }),
+                                                            "删除所选"
+                                                        ]
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    videoTotal > 0 && /*#__PURE__*/ _jsxs("section", {
+                                        className: "creative-record-group",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", { className: "creative-record-group-heading", children: [
+                                                /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: `已完成的视频会自动保存在这里 · 每页 ${pageSize} 项` })] }),
+                                                /*#__PURE__*/ _jsx("span", { children: `${videoTotal} 段` })
+                                            ] }),
+                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task), onSaveLocally: ()=>saveVideoTaskLocally(task), onCancel: ()=>patchVideoTask(task, 'cancel'), onRetry: ()=>patchVideoTask(task, 'retry') }, task.id)) }),
+                                            /*#__PURE__*/ _jsxs("div", { className: "pagination creative-video-pagination", children: [
+                                                /*#__PURE__*/ _jsxs("span", { children: ["共 ", videoTotal, " 段 · 第 ", visibleVideoPage, " / ", videoTotalPages, " 页"] }),
+                                                /*#__PURE__*/ _jsxs("div", { children: [
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", disabled: visibleVideoPage <= 1, "aria-label": "上一页视频作品", onClick: ()=>{ const next = Math.max(1, visibleVideoPage - 1); setVideoPage(next); void refreshVideoTasks(next); }, children: /*#__PURE__*/ _jsx(Icon, { name: "left", size: 16 }) }),
+                                                    Array.from({ length: Math.min(5, videoTotalPages) }, (_, i)=>{
+                                                        const start = Math.max(1, Math.min(visibleVideoPage - 2, videoTotalPages - 4));
+                                                        const p = start + i;
+                                                        return p <= videoTotalPages ? /*#__PURE__*/ _jsx("button", { type: "button", className: visibleVideoPage === p ? 'active' : '', "aria-label": `第 ${p} 页视频作品`, onClick: ()=>{ setVideoPage(p); void refreshVideoTasks(p); }, children: p }, p) : null;
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", disabled: visibleVideoPage >= videoTotalPages, "aria-label": "下一页视频作品", onClick: ()=>{ const next = Math.min(videoTotalPages, visibleVideoPage + 1); setVideoPage(next); void refreshVideoTasks(next); }, children: /*#__PURE__*/ _jsx(Icon, { name: "right", size: 16 }) })
+                                                ] })
+                                            ] })
+                                        ]
+                                    }),
+                                    filteredGallery.length ? /*#__PURE__*/ _jsxs(_Fragment, {
+                                        children: [
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "history-grid",
+                                                children: pagedGallery.map((item, index)=>/*#__PURE__*/ _jsx(ImageCard, {
+                                                        Icon,
+                                                        sourceLabel: gallerySourceLabel,
+                                                        item: item,
+                                                        onOpenAngle: ()=>void openAngleConsole(item),
+                                                        onOpenOutpaint: ()=>openOutpaintEditor(item),
+                                                        priority: index < 4,
+                                                        previousItem: getGalleryParent(item),
+                                                        selectionMode: selectionMode,
+                                                        selected: selectedHistory.has(item.id),
+                                                        onSelect: ()=>setSelectedHistory((old)=>{
+                                                                const next = new Set(old);
+                                                                if (next.has(item.id)) next.delete(item.id);
+                                                                else next.add(item.id);
+                                                                return next;
+                                                            }),
+                                                        onPreview: ()=>openViewer(item),
+                                                        onEdit: ()=>openEdit(item),
+                                                        onUpscale: ()=>openUpscale(item),
+                                                        onReuse: ()=>reuseItem(item),
+                                                        onReference: ()=>useAsReference(item),
+                                                        onPushVideo: ()=>pushToVideo(item),
+                                                        onCompare: ()=>openCompare(item),
+                                                        onReversePrompt: ()=>reversePrompt(item),
+                                                        onFavorite: ()=>void toggleFavorite(item),
+                                                        onDownload: ()=>void downloadImage(item.url, `SANMAO-${item.id}.png`),
+                                                        onDownloadShare: ()=>downloadShareImage(item).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
+                                                        onDelete: ()=>askDeleteItems([
+                                                                item.id
+                                                            ])
+                                                    }, item.id))
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "pagination",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("span", {
+                                                        children: [
+                                                            "共 ",
+                                                            filteredGallery.length,
+                                                            " 张 \xb7 第 ",
+                                                            Math.min(page, totalPages),
+                                                            " / ",
+                                                            totalPages,
+                                                            " 页"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                disabled: page <= 1,
+                                                                onClick: ()=>setPage((v)=>Math.max(1, v - 1)),
+                                                                children: /*#__PURE__*/ _jsx(Icon, {
+                                                                    name: "left",
+                                                                    size: 16
+                                                                })
+                                                            }),
+                                                            Array.from({
+                                                                length: Math.min(5, totalPages)
+                                                            }, (_, i)=>{
+                                                                const start = Math.max(1, Math.min(page - 2, totalPages - 4));
+                                                                const p = start + i;
+                                                                return p <= totalPages ? /*#__PURE__*/ _jsx("button", {
+                                                                    className: page === p ? 'active' : '',
+                                                                    onClick: ()=>setPage(p),
+                                                                    children: p
+                                                                }, p) : null;
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                disabled: page >= totalPages,
+                                                                onClick: ()=>setPage((v)=>Math.min(totalPages, v + 1)),
+                                                                children: /*#__PURE__*/ _jsx(Icon, {
+                                                                    name: "right",
+                                                                    size: 16
+                                                                })
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }) : hasCreativeRecords ? null : /*#__PURE__*/ _jsxs("div", {
+                                        className: "history-empty",
+                                        children: [
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "empty-icon",
+                                                children: /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "history",
+                                                    size: 28
+                                                })
+                                            }),
+                                            /*#__PURE__*/ _jsx("h2", {
+                                                children: gallery.length || videoTasks.length ? '没有符合条件的作品' : '还没有创作记录'
+                                            }),
+                                            /*#__PURE__*/ _jsx("p", {
+                                                    children: gallery.length ? '换个关键词或筛选条件试试。' : '每次生图、助手生成、画布生成、图片修改和高清放大都会自动保存在这个浏览器里。'
+                                            }),
+                                            !gallery.length && /*#__PURE__*/ _jsxs("div", {
+                                                className: "history-empty-actions",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "primary-action compact",
+                                                        onClick: ()=>setSection('agent'),
+                                                        children: "让助手帮我生成"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "secondary-action",
+                                                        onClick: ()=>setSection('generate'),
+                                                        children: "直接开始生图"
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }),
+                            videoReferenceQueue.length > 0 && (section === 'generate' || (section === 'history' && recordTab === 'works')) && /*#__PURE__*/ _jsxs("div", {
+                                className: "video-reference-dock",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "video-reference-dock-thumbs",
+                                        children: [
+                                            videoReferenceQueue.slice(0, 4).map((queued, index)=>/*#__PURE__*/ _jsx("img", {
+                                                src: queued.url,
+                                                alt: "参考图 " + (index + 1)
+                                            }, queued.id)),
+                                            videoReferenceQueue.length > 4 && /*#__PURE__*/ _jsx("span", {
+                                                className: "video-reference-dock-label",
+                                                children: "+" + (videoReferenceQueue.length - 4)
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "video-reference-dock-meta",
+                                        children: [
+                                            /*#__PURE__*/ _jsx("strong", {
+                                                children: videoReferenceQueue.length + " 张"
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "视频参考"
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("button", {
+                                        className: "video-reference-dock-go",
+                                        onClick: ()=>{
+                                            void goVideoFromQueue();
+                                        },
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "video",
+                                                size: 14
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "去视频生成"
+                                            }),
+                                            /*#__PURE__*/ _jsxs("b", {
+                                                children: [
+                                                    videoReferenceQueue.length,
+                                                    " 张"
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        className: "video-reference-dock-clear",
+                                        onClick: clearVideoQueue,
+                                        title: "清空已添加的视频参考图",
+                                        "aria-label": "清空已添加的视频参考图",
+                                        children: /*#__PURE__*/ _jsx("span", {
+                                            "aria-hidden": "true",
+                                            children: "×"
+                                        })
+                                    })
+                                ]
+                            }),
+                            section === 'logs' && recordTab === 'tasks' && /*#__PURE__*/ _jsxs("section", {
+                                className: "history-page logs-page",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "history-toolbar surface logs-toolbar",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "record-tab-switcher",
+                                                role: "tablist",
+                                                "aria-label": "创作记录视图",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'works', className: recordTab === 'works' ? 'active' : '', onClick: ()=>{ setRecordTab('works'); setSection('history'); void refreshGallery(); void refreshVideoTasks(); }, children: "作品" }),
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); void refreshGenerationLogs(); void refreshVideoTasks(); }, children: "任务" })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-toolbar-copy",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        className: "log-eyebrow",
+                                                        children: "RUN MONITOR"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                        children: "任务日志"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: "同步展示 LLM、图片、视频任务的进行中、成功和失败状态"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-toolbar-controls",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("label", {
+                                                        className: "log-search-box",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "search",
+                                                                size: 14
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("input", {
+                                                                value: logSearch,
+                                                                onChange: (e)=>setLogSearch(e.target.value),
+                                                                placeholder: "搜索提示词、模型、服务商或任务类型",
+                                                                "aria-label": "搜索任务日志"
+                                                            }),
+                                                            logSearch && /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "log-search-clear",
+                                                                onClick: ()=>setLogSearch(''),
+                                                                "aria-label": "清除搜索",
+                                                                children: "×"
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("div", {
+                                                        className: "media-filter-chips compact",
+                                                        children: [
+                                                            ['all', '全部'],
+                                                            ['image', '图片'],
+                                                            ['video', '视频'],
+                                                            ['audio', '音频 · 即将上线'],
+                                                            ['llm', 'LLM']
+                                                        ].map(([value, label])=>/*#__PURE__*/ _jsx("button", { type: "button", disabled: value === 'audio', className: historyMediaFilter === value ? 'active' : '', onClick: ()=>setHistoryMediaFilter(value), children: label }, value))
+                                                    }),
+                                                     /*#__PURE__*/ _jsx("div", {
+                                                         className: "filter-chips log-filters",
+                                                        children: [
+                                                            [
+                                                                'all',
+                                                                '全部'
+                                                            ],
+                                                            [
+                                                                'pending',
+                                                                '进行中'
+                                                            ],
+                                                            [
+                                                                'success',
+                                                                '成功'
+                                                            ],
+                                                            [
+                                                                'error',
+                                                                '失败'
+                                                            ]
+                                                        ].map(([value, label])=>/*#__PURE__*/ _jsxs("button", {
+                                                                className: logFilter === value ? 'active' : '',
+                                                                onClick: ()=>setLogFilter(value),
+                                                                children: [
+                                                                    label,
+                                                                    /*#__PURE__*/ _jsx("b", {
+                                                                        children: value === 'all' ? generationLogs.length : generationLogs.filter((log)=>log.status === value).length
+                                                                    })
+                                                                ]
+                                                             }, value))
+                                                     }),
+                                                     /*#__PURE__*/ _jsx("button", {
+                                                         type: "button",
+                                                         className: `ghost-button log-failure-first ${logFailureFirst ? 'active' : ''}`,
+                                                         "aria-pressed": logFailureFirst,
+                                                         onClick: ()=>setLogFailureFirst((value)=>!value),
+                                                         children: "失败优先"
+                                                     }),
+                                                     /*#__PURE__*/ _jsx("button", {
+                                                        className: "ghost-button log-refresh-button",
+                                                        onClick: ()=>void refreshGenerationLogs(),
+                                                        children: "刷新"
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "log-summary-grid",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-summary-card total",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "全部任务"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                        children: logSummary.total
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: "服务端日志"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-summary-card pending",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "进行中"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                        children: logSummary.pending
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: logSummary.pending ? "后台持续生成" : "当前队列为空"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-summary-card success",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "成功率"
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("strong", {
+                                                        children: [
+                                                            logSummary.successRate,
+                                                            "%"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("small", {
+                                                        children: [
+                                                            logSummary.success,
+                                                            " 次成功"
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-summary-card duration",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "平均耗时"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                        children: logSummary.averageDuration
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: "已完成任务"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-summary-card error",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "失败"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                        children: logSummary.error
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: logSummary.error ? "建议检查详情" : "状态很稳定"
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "storage-settings surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                        children: "图片存储路径"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: "默认保存到 .data/images；旧版本项目同级的 image_generation_records 会保留读取兼容。修改并保存后，后续图片都会使用新路径。"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "storage-row",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("input", {
+                                                        value: storagePath,
+                                                        onChange: (e)=>setStoragePath(e.target.value),
+                                                        placeholder: "默认路径：.data/images"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "ghost-button",
+                                                        disabled: storageBusy,
+                                                        onClick: ()=>void saveStoragePath(''),
+                                                        children: "使用默认路径"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "primary-small",
+                                                        disabled: storageBusy,
+                                                        onClick: ()=>void saveStoragePath(),
+                                                        children: storageBusy ? '保存中…' : '保存路径'
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "primary-small open-storage-button",
+                                                        disabled: storageBusy,
+                                                        onClick: async ()=>{
+                                                            const res = await fetch('/api/storage/open', {
+                                                                method: 'POST'
+                                                            });
+                                                            const data = await res.json();
+                                                            if (!res.ok) notify(data.error || '打开目录失败');
+                                                        },
+                                                        children: "↗ 一键打开保存目录"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "ghost-button local-folder-button",
+                                                        onClick: ()=>void chooseLocalDirectory(),
+                                                        children: "选择本地目录"
+                                                    }),
+                                                    localDirectoryName && /*#__PURE__*/ _jsxs("span", {
+                                                        className: "local-folder-name",
+                                                        children: [
+                                                            "已选择：",
+                                                            localDirectoryName
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "log-cleanup-row",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("strong", {
+                                                                children: "日志清理"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("small", {
+                                                                children: "建议保留最近 90 天；只清理日志不会删除图片。"
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "log-cleanup-actions",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                className: "ghost-button",
+                                                                disabled: cleanupBusy,
+                                                                onClick: ()=>askCleanupGenerationLogs(90, false),
+                                                                children: "清理 90 天前日志"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                className: "ghost-button",
+                                                                disabled: cleanupBusy,
+                                                                onClick: ()=>askCleanupGenerationLogs(90, true),
+                                                                children: "清理日志及图片"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                className: "ghost-button danger-text-button",
+                                                                disabled: cleanupBusy,
+                                                                onClick: ()=>askCleanupGenerationLogs(undefined, false),
+                                                                children: "清空全部日志"
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    !filteredGenerationLogs.length ? /*#__PURE__*/ _jsxs("div", {
+                                        className: "history-empty",
+                                        children: [
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "empty-icon",
+                                                children: /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "history",
+                                                    size: 28
+                                                })
+                                            }),
+                                            /*#__PURE__*/ _jsx("h2", {
+                                                children: generationLogs.length ? '没有符合条件的任务' : '还没有生成任务'
+                                            }),
+                                            /*#__PURE__*/ _jsx("p", {
+                                                children: generationLogs.length ? '切换媒体类型或状态筛选后查看其他任务。' : '任务提交后会立即显示在这里。'
+                                            })
+                                        ]
+                                    }) : /*#__PURE__*/ _jsxs(_Fragment, {
+                                        children: [
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "log-list",
+                                                children: pagedGenerationLogs.map((log)=>/*#__PURE__*/ _jsxs("article", {
+                                                        className: `log-row surface ${log.status}`,
+                                                        children: [
+                                                            generationMediaKind(log) === 'video' && log.videoUrls?.length ? /*#__PURE__*/ _jsx("div", {
+                                                                className: "log-preview log-video-preview",
+                                                                children: /*#__PURE__*/ _jsx("video", { src: log.videoUrls[0], controls: true, playsInline: true, preload: "metadata" })
+                                                            }) : log.imageUrls?.length ? /*#__PURE__*/ _jsx("div", {
+                                                                className: "log-preview",
+                                                                children: log.imageUrls.slice(0, 3).map((url, index)=>/*#__PURE__*/ _jsx("a", {
+                                                                        href: url,
+                                                                        target: "_blank",
+                                                                        rel: "noreferrer",
+                                                                        onClick: ()=>markHistoryNoticeSeen(),
+                                                                        children: /*#__PURE__*/ _jsx("img", {
+                                                                            src: url,
+                                                                            alt: `生成结果 ${index + 1}`
+                                                                        })
+                                                                    }, `${url}-${index}`))
+                                                                }) : /*#__PURE__*/ _jsx("div", {
+                                                                className: "log-preview-placeholder",
+                                                                children: log.status === 'pending' ? /*#__PURE__*/ _jsx("span", {
+                                                                    className: "loading-orb log-loading-orb"
+                                                                }) : /*#__PURE__*/ _jsx(Icon, {
+                                                                    name: generationMediaKind(log) === 'video' ? 'video' : generationMediaKind(log) === 'audio' ? 'audio' : generationMediaKind(log) === 'llm' ? 'agent' : 'image',
+                                                                    size: 18
+                                                                })
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("div", {
+                                                                className: "log-status",
+                                                                children: log.status === 'pending' ? '进行中' : log.status === 'success' ? '成功' : '失败'
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                className: "log-main",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("strong", {
+                                                                        children: generationLogTitle(log)
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsxs("small", {
+                                                                        children: [
+                                                                            generationLogSourceLabel(log),
+                                                                            " \xb7 ",
+                                                                            log.modelName || '自动选择模型',
+                                                                            " \xb7 ",
+                                                                            log.providerName || '等待服务商响应'
+                                                                        ]
+                                                                    }),
+                                                                    log.status === 'pending' && /*#__PURE__*/ _jsx("small", {
+                                                                        className: "log-pending-note",
+                                                                        children: "任务正在后台生成，可继续提交其他任务"
+                                                                    }),
+                                                                    log.error && /*#__PURE__*/ _jsx("small", {
+                                                                        className: "log-error",
+                                                                        children: "生成失败 · 查看详情了解原因"
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                className: "log-meta",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsxs("span", {
+                                                                        className: "log-meta-chip log-count-chip",
+                                                                        children: [
+                                                                            generationMediaKind(log) === 'llm' ? (log.llmCallCount || 0) : generationMediaKind(log) === 'video' ? (log.videoUrls?.length || (log.status === 'pending' ? 1 : 0)) : generationMediaKind(log) === 'audio' ? 1 : log.status === 'pending' ? log.count ?? 1 : log.imageCount ?? 0,
+                                                                            generationMediaKind(log) === 'llm' ? ' 次调用' : generationMediaKind(log) === 'video' ? ' 段视频' : generationMediaKind(log) === 'audio' ? ' 段音频' : log.references?.length ? ` 张 · 参考图 ${log.references.length}` : " 张"
+                                                                        ]
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsxs("span", {
+                                                                        className: `log-meta-chip log-duration-chip ${log.status === 'pending' ? 'pending' : logDurationTone(log.durationMs)}`,
+                                                                        children: [
+                                                                            "⏱ ",
+                                                                            log.status === 'pending' ? `${Math.max(.1, (generateClock - new Date(log.createdAt).getTime()) / 1000).toFixed(1)}s` : log.durationMs ? `${(log.durationMs / 1000).toFixed(1)}s` : '—'
+                                                                        ]
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsxs("span", {
+                                                                        className: "log-meta-chip log-size-chip",
+                                                                        children: [
+                                                                            generationMediaKind(log) === 'llm' ? `任务 · ${log.task || '普通对话'} · 联网 ${log.webSearchStatus || '未检索'}` : generationMediaKind(log) === 'video' ? `${log.operation === 'edit' ? '编辑' : log.operation === 'extend' ? '扩展' : '生成'} · ${log.resolution || '自动分辨率'}` : generationMediaKind(log) === 'audio' ? '音频 · 参数详情' : logResolutionLabel(log, logImageSpecs[log.id]),
+                                                                            generationMediaKind(log) === 'image' && " · ",
+                                                                            generationMediaKind(log) === 'image' && logOutputSizeLabel(log, logImageSpecs[log.id]),
+                                                                            generationMediaKind(log) === 'image' && " · ",
+                                                                            generationMediaKind(log) === 'image' && logAspectRatioLabel(log, logImageSpecs[log.id])
+                                                                        ]
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("time", {
+                                                                        children: new Date(log.createdAt).toLocaleString('zh-CN', {
+                                                                            hour12: false
+                                                                        })
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("button", {
+                                                                        className: "log-detail-button",
+                                                                        onClick: ()=>setSelectedLog(log),
+                                                                        children: "查看详情"
+                                                                    })
+                                                                ]
+                                                            })
+                                                        ]
+                                                    }, log.id))
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "pagination",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("span", {
+                                                        children: [
+                                                            "共 ",
+                                                            filteredGenerationLogs.length,
+                                                            " 条 \xb7 第 ",
+                                                            Math.min(logPage, logTotalPages),
+                                                            " / ",
+                                                            logTotalPages,
+                                                            " 页"
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                disabled: logPage <= 1,
+                                                                onClick: ()=>setLogPage((value)=>Math.max(1, value - 1)),
+                                                                children: /*#__PURE__*/ _jsx(Icon, {
+                                                                    name: "left",
+                                                                    size: 16
+                                                                })
+                                                            }),
+                                                            Array.from({
+                                                                length: Math.min(5, logTotalPages)
+                                                            }, (_, index)=>{
+                                                                const start = Math.max(1, Math.min(logPage - 2, logTotalPages - 4));
+                                                                const pageNumber = start + index;
+                                                                return pageNumber <= logTotalPages ? /*#__PURE__*/ _jsx("button", {
+                                                                    className: logPage === pageNumber ? 'active' : '',
+                                                                    onClick: ()=>setLogPage(pageNumber),
+                                                                    children: pageNumber
+                                                                }, pageNumber) : null;
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                disabled: logPage >= logTotalPages,
+                                                                onClick: ()=>setLogPage((value)=>Math.min(logTotalPages, value + 1)),
+                                                                children: /*#__PURE__*/ _jsx(Icon, {
+                                                                    name: "right",
+                                                                    size: 16
+                                                                })
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }),
+                            section === 'settings' && /*#__PURE__*/ _jsxs("section", {
+                                className: "settings-page",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "settings-intro",
+                                        children: [
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "settings-intro-icon",
+                                                children: /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "settings",
+                                                    size: 22
+                                                })
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("h1", {
+                                                        children: "设置"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", {
+                                                        children: "把界面偏好、通知、图片存储和日志管理集中放在这里。后续新增功能也会优先归档到设置页。"
+                                                    })
+                                                ]
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ _jsxs("nav", {
+                                className: "settings-section-nav",
+                                "aria-label": "设置分组",
+                                children: [
+                                    /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        onClick: ()=>document.getElementById('settings-appearance')?.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'start'
+                                            }),
+                                        children: "偏好"
+                                    }),
+                                    /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        onClick: ()=>document.getElementById('settings-search')?.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'start'
+                                            }),
+                                        children: "联网"
+                                    }),
+                                    /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        onClick: ()=>document.getElementById('settings-storage')?.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'start'
+                                            }),
+                                        children: "存储"
+                                    }),
+                                    /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        onClick: ()=>document.getElementById('settings-backup')?.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'start'
+                                            }),
+                                        children: "备份"
+                                    }),
+                                    /*#__PURE__*/ _jsx("button", {
+                                        type: "button",
+                                        onClick: ()=>document.getElementById('settings-maintenance')?.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'start'
+                                            }),
+                                        children: "维护"
+                                    })
+                                ]
+                            }),
+                            /*#__PURE__*/ _jsxs("div", {
+                                className: "settings-layout",
+                                 children: [
+                                     /*#__PURE__*/ _jsx(RuntimeServiceControl, {}),
+                                     /*#__PURE__*/ _jsxs("section", {
+                                        id: "settings-appearance",
+                                        className: "settings-card surface",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-card-head",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "界面外观"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("h2", {
+                                                                        children: "主题模式"
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: theme === 'light' ? 'sun' : 'moon',
+                                                                size: 18
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", {
+                                                        className: "settings-card-note",
+                                                        children: "选择适合当前工作环境的界面颜色。"
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-theme-options",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("button", {
+                                                                type: "button",
+                                                                className: theme === 'light' ? 'active' : '',
+                                                                onClick: ()=>setThemePreference('light'),
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx(Icon, {
+                                                                        name: "sun",
+                                                                        size: 17
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "浅色"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("small", {
+                                                                        children: "明亮清晰"
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("button", {
+                                                                type: "button",
+                                                                className: theme === 'dark' ? 'active' : '',
+                                                                onClick: ()=>setThemePreference('dark'),
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx(Icon, {
+                                                                        name: "moon",
+                                                                        size: 17
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "深色"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("small", {
+                                                                        children: "适合夜间"
+                                                                    })
+                                                                ]
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("section", {
+                                                className: "settings-card surface",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-card-head",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "通知"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("h2", {
+                                                                        children: "出图成功音效"
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("label", {
+                                                                className: `settings-switch ${successSoundEnabled ? 'on' : ''}`,
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("input", {
+                                                                        type: "checkbox",
+                                                                        checked: successSoundEnabled,
+                                                                        onChange: (e)=>setSuccessSoundPreference(e.target.checked)
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("span", {})
+                                                                ]
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", {
+                                                        className: "settings-card-note",
+                                                        children: "图片生成、超分或智能助手成功生成图片后播放一声短提示音。默认关闭，不会影响失败提示。"
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-option-row",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                className: successSoundEnabled ? 'settings-state on' : 'settings-state',
+                                                                children: successSoundEnabled ? '已开启' : '已关闭'
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "ghost-button",
+                                                                onClick: ()=>successSoundEnabled ? playSuccessSound() : notify('请先打开出图成功音效'),
+                                                                children: "试听音效"
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("section", {
+                                                id: "settings-search",
+                                                className: "settings-card surface settings-search-api",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-card-head",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "联网搜索"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("h2", {
+                                                                        children: "搜索API"
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "globe",
+                                                                size: 18
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", {
+                                                        className: "settings-card-note",
+                                                         children: "联网搜索支持模型原生搜索、AnySearch 和百度千帆。当前模型带“原生联网”能力时会优先调用模型自身搜索；原生搜索失败、限流或无结果时自动回退外部搜索 API。没有原生搜索能力的模型直接使用 AnySearch/百度千帆。AnySearch 默认可使用匿名免费额度，配置 ANYSEARCH_API_KEY 后可获得更高额度；百度千帆 Key 会加密保存在本机服务端，也可使用 QIANFAN_API_KEY。"
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-api-grid",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("label", {
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "服务商"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsxs("div", {
+                                                                        className: `settings-provider-select ${webSearchProviderMenuOpen ? 'open' : ''}`,
+                                                                        ref: webSearchProviderMenuRef,
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsxs("button", {
+                                                                                type: "button",
+                                                                                className: "settings-provider-trigger",
+                                                                                "aria-haspopup": "listbox",
+                                                                                "aria-expanded": webSearchProviderMenuOpen,
+                                                                                onClick: ()=>setWebSearchProviderMenuOpen((value)=>!value),
+                                                                                children: [
+                                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                                        className: "settings-provider-logo",
+                                                                                        children: webSearchAnySearchSelected ? "A" : "百"
+                                                                                    }),
+                                                                                    /*#__PURE__*/ _jsxs("span", {
+                                                                                        className: "settings-provider-copy",
+                                                                                        children: [
+                                                                                            /*#__PURE__*/ _jsx("strong", {
+                                                                                                children: webSearchAnySearchSelected ? "AnySearch" : "百度千帆"
+                                                                                            }),
+                                                                                            /*#__PURE__*/ _jsx("small", {
+                                                                                                children: webSearchAnySearchSelected ? webSearchAnySearchKeyConfigured ? "环境变量 Key" : "匿名免费额度" : "Key 可加密保存"
+                                                                                            })
+                                                                                        ]
+                                                                                    }),
+                                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                                        className: "settings-provider-chevron",
+                                                                                        children: "⌄"
+                                                                                    })
+                                                                                ]
+                                                                            }),
+                                                                            webSearchProviderMenuOpen && /*#__PURE__*/ _jsxs("div", {
+                                                                                className: "settings-provider-menu",
+                                                                                role: "listbox",
+                                                                                children: [
+                                                                                    /*#__PURE__*/ _jsxs("button", {
+                                                                                        type: "button",
+                                                                                        role: "option",
+                                                                                        "aria-selected": webSearchAnySearchSelected,
+                                                                                        className: `settings-provider-option ${webSearchAnySearchSelected ? 'selected' : ''}`,
+                                                                                        onClick: ()=>{
+                                                                                            setWebSearchApiProvider('anysearch');
+                                                                                            setWebSearchApiKey('');
+                                                                                            setWebSearchApiResult('');
+                                                                                            setWebSearchProviderMenuOpen(false);
+                                                                                        },
+                                                                                        children: [
+                                                                                            /*#__PURE__*/ _jsx("span", {
+                                                                                                className: "settings-provider-logo anysearch",
+                                                                                                children: "A"
+                                                                                            }),
+                                                                                            /*#__PURE__*/ _jsxs("span", {
+                                                                                                className: "settings-provider-option-copy",
+                                                                                                children: [
+                                                                                                    /*#__PURE__*/ _jsx("strong", {
+                                                                                                        children: "AnySearch"
+                                                                                                    }),
+                                                                                                    /*#__PURE__*/ _jsx("small", {
+                                                                                                        children: "主源 · Key 可选"
+                                                                                                    })
+                                                                                                ]
+                                                                                            }),
+                                                                                            webSearchAnySearchSelected && /*#__PURE__*/ _jsx("span", {
+                                                                                                className: "settings-provider-check",
+                                                                                                children: "✓"
+                                                                                            })
+                                                                                        ]
+                                                                                    }),
+                                                                                    /*#__PURE__*/ _jsxs("button", {
+                                                                                        type: "button",
+                                                                                        role: "option",
+                                                                                        "aria-selected": !webSearchAnySearchSelected,
+                                                                                        className: `settings-provider-option ${!webSearchAnySearchSelected ? 'selected' : ''}`,
+                                                                                        onClick: ()=>{
+                                                                                            setWebSearchApiProvider('baidu-qianfan');
+                                                                                            setWebSearchApiKey('');
+                                                                                            setWebSearchApiResult('');
+                                                                                            setWebSearchProviderMenuOpen(false);
+                                                                                        },
+                                                                                        children: [
+                                                                                            /*#__PURE__*/ _jsx("span", {
+                                                                                                className: "settings-provider-logo qianfan",
+                                                                                                children: "百"
+                                                                                            }),
+                                                                                            /*#__PURE__*/ _jsxs("span", {
+                                                                                                className: "settings-provider-option-copy",
+                                                                                                children: [
+                                                                                                    /*#__PURE__*/ _jsx("strong", {
+                                                                                                        children: "百度千帆"
+                                                                                                    }),
+                                                                                                    /*#__PURE__*/ _jsx("small", {
+                                                                                                        children: "备用源 · 可页面保存 Key"
+                                                                                                    })
+                                                                                                ]
+                                                                                            }),
+                                                                                            !webSearchAnySearchSelected && /*#__PURE__*/ _jsx("span", {
+                                                                                                className: "settings-provider-check",
+                                                                                                children: "✓"
+                                                                                            })
+                                                                                        ]
+                                                                                    })
+                                                                                ]
+                                                                            })
+                                                                        ]
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("label", {
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "API Key"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("input", {
+                                                                        type: "password",
+                                                                        autoComplete: "off",
+                                                                        disabled: webSearchAnySearchSelected,
+                                                                        value: webSearchAnySearchSelected ? '' : webSearchApiKey,
+                                                                        onChange: (e)=>{
+                                                                            setWebSearchApiKey(e.target.value);
+                                                                            setWebSearchApiResult('');
+                                                                        },
+                                                                        placeholder: webSearchAnySearchSelected
+                                                                            ? webSearchAnySearchKeyConfigured ? '已配置 ANYSEARCH_API_KEY · 页面不显示 Key' : '未配置 Key，将使用匿名免费额度（可选配置 ANYSEARCH_API_KEY）'
+                                                                        : selectedWebSearchConfigured ? `已配置 ${state.settings.webSearchKeyMasked || '••••••••'}，留空保持不变` : '粘贴百度千帆控制台 API Key（通常以 bce-v3/ 开头）'
+                                                                    })
+                                                                ]
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-api-actions",
+                                                        children: [
+                                                            !webSearchAnySearchSelected && /*#__PURE__*/ _jsx("a", {
+                                                                className: "primary-small settings-api-apply",
+                                                                href: "https://console.bce.baidu.com/qianfan/ais/console/apiKey",
+                                                                target: "_blank",
+                                                                rel: "noreferrer",
+                                                                children: "↗ 申请百度千帆 Key"
+                                                            }),
+                                                            webSearchAnySearchSelected && /*#__PURE__*/ _jsx("span", {
+                                                                className: "settings-api-env-hint",
+                                                                children: webSearchAnySearchKeyConfigured ? "AnySearch Key 已从环境变量读取" : "AnySearch 使用匿名免费额度，可选配置 Key"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "secondary-action compact",
+                                                                disabled: webSearchApiBusy || !webSearchApiKey.trim() && !selectedWebSearchConfigured,
+                                                                onClick: ()=>void testWebSearchApiConnection(),
+                                                                children: webSearchApiBusy ? '测试中…' : webSearchAnySearchSelected ? '测试 AnySearch' : '测试百度千帆'
+                                                            }),
+                                                            !webSearchAnySearchSelected && /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "primary-small",
+                                                                disabled: webSearchApiBusy || !webSearchApiKey.trim(),
+                                                                onClick: ()=>void saveWebSearchApi(),
+                                                                children: webSearchApiBusy ? '保存中…' : '保存百度千帆'
+                                                            }),
+                                                            !webSearchAnySearchSelected && state.settings.webSearchQianfanConfigured && /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "ghost-button",
+                                                                disabled: webSearchApiBusy,
+                                                                onClick: ()=>void saveWebSearchApi(true),
+                                                                children: "清除 API"
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("div", {
+                                                        className: `settings-api-status ${webSearchApiResult.includes('可用') || webSearchApiResult.includes('已保存') ? 'ok' : ''}`,
+                                                        children: webSearchApiResult || (webSearchAnySearchSelected
+                                                            ? webSearchAnySearchKeyConfigured ? 'AnySearch 已配置，将作为主源；失败、限流或无结果时自动切换百度千帆' : 'AnySearch 将使用匿名免费额度作为主源；失败、限流或无结果时自动切换百度千帆'
+                                                            : selectedWebSearchConfigured ? '百度千帆已配置，将作为备用源；AnySearch 环境变量存在时会优先使用 AnySearch' : '当前未配置百度千帆，请粘贴 Key 保存，或设置 QIANFAN_API_KEY')
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("section", {
+                                                id: "settings-storage",
+                                                className: "settings-card surface",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-card-head",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "图片与文件"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("h2", {
+                                                                        children: "图片存储路径"
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "folder",
+                                                                size: 18
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", {
+                                                        className: "settings-card-note",
+                                                        children: "默认保存到 .data/images；旧版本项目同级的 image_generation_records 会保留读取兼容。修改并保存后，后续图片都会使用新路径。"
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "storage-row settings-storage-row",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("input", {
+                                                                value: storagePath,
+                                                                onChange: (e)=>setStoragePath(e.target.value),
+                                                                placeholder: "默认路径：.data/images"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                className: "ghost-button",
+                                                                disabled: storageBusy,
+                                                                onClick: ()=>void saveStoragePath(''),
+                                                                children: "使用默认路径"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                className: "primary-small",
+                                                                disabled: storageBusy,
+                                                                onClick: ()=>void saveStoragePath(),
+                                                                children: storageBusy ? '保存中…' : '保存路径'
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                className: "primary-small open-storage-button",
+                                                                disabled: storageBusy,
+                                                                onClick: async ()=>{
+                                                                    const res = await fetch('/api/storage/open', {
+                                                                        method: 'POST'
+                                                                    });
+                                                                    const data = await res.json();
+                                                                    if (!res.ok) notify(data.error || '打开目录失败');
+                                                                },
+                                                                children: "↗ 一键打开保存目录"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                className: "ghost-button local-folder-button",
+                                                                onClick: ()=>void chooseLocalDirectory(),
+                                                                children: "选择本地目录"
+                                                            }),
+                                                            localDirectoryName && /*#__PURE__*/ _jsxs("span", {
+                                                                className: "local-folder-name",
+                                                                children: [
+                                                                    "已选择：",
+                                                                    localDirectoryName
+                                                                ]
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("section", {
+                                                id: "settings-backup",
+                                                className: "settings-card surface settings-backup",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-card-head",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "本地数据"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("h2", {
+                                                                        children: "备份与恢复"
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "folder",
+                                                                size: 18
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", {
+                                                        className: "settings-card-note",
+                                                         children: "完整备份包含接口配置、加密密钥、日志、图库索引、助手对话、界面参数、服务端图片/视频/音频、任务队列、MCP 配置和已安装技能，并使用独立密码加密；自动快照覆盖同样的配置与素材，但不含已安装技能和附件。密码不会保存，请务必妥善保管。"
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-backup-summary",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("span", {
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("b", {
+                                                                        children: gallery.length
+                                                                    }),
+                                                                    " 张历史索引"
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("span", {
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("b", {
+                                                                        children: chatSessions.length
+                                                                    }),
+                                                                    " 段对话"
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("span", {
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("b", {
+                                                                        children: generationLogs.length
+                                                                    }),
+                                                                    " 条近期日志"
+                                                                ]
+                                                            })
+                                                        ]
+                                                    }),
+                                                     /*#__PURE__*/ _jsxs("div", {
+                                                         className: "settings-backup-summary",
+                                                         children: [
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "图片 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(storageUsage?.images?.bytes)
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "视频 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(storageUsage?.videos?.bytes)
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "音频 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(storageUsage?.audio?.bytes)
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "日志 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(storageUsage?.logs?.bytes)
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "自动快照 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: localSnapshots.length
+                                                                     }),
+                                                                     " 份"
+                                                                 ]
+                                                             }),
+                                                             /*#__PURE__*/ _jsxs("span", {
+                                                                 children: [
+                                                                     "快照占用 ",
+                                                                     /*#__PURE__*/ _jsx("b", {
+                                                                         children: formatStorageBytes(localSnapshots.reduce((sum, item)=>sum + Number(item.bytes || 0), 0))
+                                                                     })
+                                                                 ]
+                                                             }),
+                                                         ]
+                                                     }),
+                                                     /*#__PURE__*/ _jsx("small", {
+                                                         className: "settings-backup-latest",
+                                                         children: localSnapshots[0] ? `最近快照 ${new Date(localSnapshots[0].createdAt).toLocaleString()} · ${formatStorageBytes(localSnapshots[0].bytes)}` : '尚无自动快照'
+                                                     }),
+                                                     localSnapshots[0]?.skippedMediaCount ? /*#__PURE__*/ _jsx("small", {
+                                                         className: "settings-backup-warning",
+                                                         children: `最近快照跳过了 ${localSnapshots[0].skippedMediaCount} 个媒体文件；如需完整恢复，请使用完整备份。`
+                                                     }) : null,
+                                                     /*#__PURE__*/ _jsxs("div", {
+                                                         className: "settings-backup-actions",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "primary-small",
+                                                                disabled: backupBusy,
+                                                                onClick: ()=>void exportLocalBackup('content'),
+                                                                children: backupBusy ? '处理中…' : '导出内容备份'
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "ghost-button",
+                                                                disabled: backupBusy,
+                                                                onClick: ()=>{
+                                                                    if (window.confirm('完整加密备份会包含可迁移的 API Key 主密钥。请确认你会安全保存备份文件和密码。')) void exportLocalBackup('complete');
+                                                                },
+                                                                children: '导出完整加密备份'
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                className: "ghost-button",
+                                                                disabled: backupBusy,
+                                                                onClick: ()=>backupInputRef.current?.click(),
+                                                             children: "从备份恢复"
+                                                             }),
+                                                             /*#__PURE__*/ _jsx("button", {
+                                                                 type: "button",
+                                                                 className: "ghost-button",
+                                                                 disabled: backupBusy,
+                                                                 onClick: ()=>void createManualSnapshot(),
+                                                                 children: "立即创建快照"
+                                                             }),
+                                                             /*#__PURE__*/ _jsx("button", {
+                                                                 type: "button",
+                                                                 className: "ghost-button",
+                                                                 disabled: backupBusy || !localSnapshots.length,
+                                                                 onClick: ()=>{
+                                                                     const latest = localSnapshots[0];
+                                                                     if (!latest) return;
+                                                                     setConfirmState({
+                                                                         title: '恢复最近自动快照？',
+                                                                         text: '当前服务端配置和日志会被快照覆盖；快照中未包含的媒体不会被自动删除。快照若显示跳过了媒体文件，它不等同于完整灾难恢复备份。恢复前会再创建一个保护快照。',
+                                                                         danger: true,
+                                                                         confirmText: '确认恢复',
+                                                                         action: ()=>restoreLocalSnapshotByName(latest.name)
+                                                                     });
+                                                                 },
+                                                                 children: "恢复最近快照"
+                                                             }),
+                                                             /*#__PURE__*/ _jsx("input", {
+                                                                hidden: true,
+                                                                ref: backupInputRef,
+                                                                type: "file",
+                                                                 accept: ".json,.sanmao.json,.tar.gz,.sanmao-backup.tar.gz,.sanmao-backup,application/json,application/gzip,application/octet-stream",
+                                                                onChange: (event)=>{
+                                                                    const file = event.target.files?.[0];
+                                                                    if (file) void prepareRestoreBackup(file);
+                                                                }
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        className: "settings-backup-warning",
+                                                         children: "内容备份不包含 API Key；完整加密备份会在明确确认后包含可迁移密钥。两种备份都使用独立密码加密，请妥善保存备份文件和密码。"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("section", {
+                                                id: "settings-maintenance",
+                                                className: "settings-card surface settings-danger",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "settings-card-head",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", {
+                                                                        children: "本地数据"
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsx("h2", {
+                                                                        children: "日志管理"
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "trash",
+                                                                size: 18
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", {
+                                                        className: "settings-card-note",
+                                                         children: "建议定期清理长期不用的服务端日志；只清理日志不会删除图片，选择删除图片时会先移入本地回收站并保留 7 天。"
+                                                    }),
+                                                     /*#__PURE__*/ _jsxs("div", {
+                                                         className: "settings-cleanup-actions",
+                                                         children: [
+                                                             /*#__PURE__*/ _jsx("button", {
+                                                                 className: "ghost-button",
+                                                                 disabled: cleanupBusy,
+                                                                 onClick: ()=>void previewCleanupGenerationLogs(90, true),
+                                                                 children: "预览清理占用"
+                                                             }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                className: "ghost-button",
+                                                                disabled: cleanupBusy,
+                                                                onClick: ()=>askCleanupGenerationLogs(90, false),
+                                                                children: "清理 90 天前日志"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                className: "ghost-button",
+                                                                disabled: cleanupBusy,
+                                                                onClick: ()=>askCleanupGenerationLogs(90, true),
+                                                                children: "清理日志及图片"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                className: "ghost-button danger-text-button",
+                                                                disabled: cleanupBusy,
+                                                                onClick: ()=>askCleanupGenerationLogs(undefined, false),
+                                                                children: "清空全部日志"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                className: "primary-small",
+                                                                onClick: ()=>{
+                                                                    setRecordTab('tasks');
+                                                                    setSection('logs');
+                                                                    void refreshGenerationLogs();
+                                                                },
+                                                                children: "查看生成任务"
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }),
+                            section === 'providers' && (adminRequired && !isAdmin ? /*#__PURE__*/ _jsx(AdminLogin, {
+                                password: adminPassword,
+                                busy: adminBusy,
+                                Icon: Icon,
+                                onPasswordChange: setAdminPassword,
+                                onSubmit: loginAdmin
+                            }) : /*#__PURE__*/ _jsxs("section", {
+                                className: "management-page",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "management-head",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("h1", {
+                                                        children: "接口服务商"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", {
+                                                        children: "选择你使用的平台，填写密钥后直接测试连接。协议、接口路径和鉴权方式都由 SANMAO.AI 自动适配，不需要手动调整。"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "management-actions",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("button", {
+                                                        className: "primary-small",
+                                                        onClick: openAddProvider,
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "plus",
+                                                                size: 15
+                                                            }),
+                                                            "添加接口服务"
+                                                        ]
+                                                    }),
+                                                    adminRequired && /*#__PURE__*/ _jsx("button", {
+                                                        className: "ghost-button",
+                                                        onClick: ()=>void logoutAdmin(),
+                                                        children: "退出管理"
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsx(JimengProviderCard, {
+                                        providers: state.providers,
+                                        onStateChanged: setState,
+                                        onNotify: notify
+                                    }),
+                                    /*#__PURE__*/ _jsx(UpscaleConnectionGuide, {
+                                        connections: state.upscaleConnections || [],
+                                        onStateChanged: setState,
+                                        onNotify: notify
+                                    }),
+                                    providerModalOpen && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx("div", {
+                                        className: "provider-editor-backdrop",
+                                        onMouseDown: (event)=>{
+                                            if (event.target === event.currentTarget) closeProviderEditor();
+                                        },
+                                        children: /*#__PURE__*/ _jsxs("form", {
+                                        role: "dialog",
+                                        "aria-modal": true,
+                                        "aria-labelledby": "provider-editor-title",
+                                        className: "provider-form surface provider-simple-form provider-modal-form",
+                                        onSubmit: saveProvider,
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "form-heading",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                className: providerEditId ? 'editing-form-label' : '',
+                                                                children: providerEditId ? `正在编辑 · ${providerForm.name}` : state.providers.length ? '新增连接' : '快速接入'
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("h2", {
+                                                                id: "provider-editor-title",
+                                                                children: providerEditId ? `${providerForm.name} 的服务配置` : '选择平台并连接'
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("p", {
+                                                                children: "你只需要选择服务商、粘贴必要信息并点击连接，系统会自动测试接口和读取模型。"
+                                                            })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        type: "button",
+                                                        className: "icon-button",
+                                                        onClick: closeProviderEditor,
+                                                        children: /*#__PURE__*/ _jsx(Icon, {
+                                                            name: "close",
+                                                            size: 16
+                                                        })
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsx(ProviderPlatformPicker, {
+                                                presets: providerPresets.filter((preset)=>preset.showInPicker !== false),
+                                                selectedPlatform: providerForm.platform,
+                                                Icon: Icon,
+                                                onSelect: applyProviderPreset
+                                            }),
+
+                                            /*#__PURE__*/ _jsx(ProviderPresetSummary, {
+                                                preset: selectedProviderPreset,
+                                                Icon: Icon
+                                            }),
+
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "provider-fields provider-simple-fields",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx(ProviderConnectionFields, {
+                                                        name: providerForm.name,
+                                                        baseUrl: providerForm.baseUrl,
+                                                        apiKey: providerForm.apiKey,
+                                                        platform: providerForm.platform,
+                                                        needsBaseUrl: selectedProviderPreset.needsBaseUrl,
+                                                        presetBaseUrl: selectedProviderPreset.baseUrl,
+                                                        editing: Boolean(providerEditId),
+                                                        videoBaseUrl: providerForm.videoBaseUrl,
+                                                        savedBaseUrl: state.providers.find((provider)=>provider.id === providerEditId)?.baseUrl || '',
+                                                        savedVideoBaseUrl: state.providers.find((provider)=>provider.id === providerEditId)?.videoBaseUrl || '',
+                                                        savedKeyMasked: state.providers.find((provider)=>provider.id === providerEditId)?.maskedKey || '',
+                                                        testResult: providerTestResult,
+                                                        onNameChange: (value)=>setProviderForm((old)=>({ ...old, name: value })),
+                                                        onBaseUrlChange: (value)=>{
+                                                            setProviderTestResult('');
+                                                            setProviderForm((old)=>({ ...old, baseUrl: value }));
+                                                        },
+                                                        onApiKeyChange: (value)=>{
+                                                            setProviderTestResult('');
+                                                            setProviderForm((old)=>({ ...old, apiKey: value }));
+                                                        },
+                                                        onUseDomesticEndpoint: ()=>applyProviderPreset('agnes')
+                                                    }),
+                                                     false && /*#__PURE__*/ _jsxs("div", {
+                                                        className: "wide provider-video-settings",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                className: "provider-video-settings-head",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsx("span", { children: "视频接口（可选）" }),
+                                                                    /*#__PURE__*/ _jsx("small", { children: "图片和 Agent 配置不受影响；65535 可直接使用原生任务接口。" })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                className: "provider-video-fields",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsxs("label", { children: [
+                                                                        /*#__PURE__*/ _jsx("span", { children: "传输方式" }),
+                                                                        /*#__PURE__*/ _jsx(SelectMenu, { value: providerForm.videoTransport || '', onChange: (value)=>setProviderForm({ ...providerForm, videoTransport: value }), options: [
+                                                                            { value: '', label: "未启用视频", description: "暂不启用视频生成" },
+                                                                            { value: "native-task", label: "原生异步任务 · 65535", description: "适用于 /v1/tasks 异步接口" },
+                                                                            { value: "openai-videos", label: "OpenAI 兼容 · /v1/videos", description: "适用于兼容视频任务接口" },
+                                                                            { value: "jimeng-cli", label: "即梦 CLI · 本地调用", description: "使用本机 dreamina CLI" }
+                                                                        ], ariaLabel: "视频传输方式" })
+                                                                    ] }),
+                                                                    /*#__PURE__*/ _jsxs("label", { children: [
+                                                                        /*#__PURE__*/ _jsx("span", { children: "独立视频 Key（可选）" }),
+                                                                        /*#__PURE__*/ _jsx("input", { type: "password", autoComplete: "off", value: providerForm.videoApiKey || '', onChange: (e)=>setProviderForm({ ...providerForm, videoApiKey: e.target.value }), placeholder: "留空复用主 API Key" })
+                                                                    ] }),
+                                                                     /*#__PURE__*/ _jsxs("label", { children: [
+                                                                         /*#__PURE__*/ _jsx("span", { children: "视频 API 地址（可选）" }),
+                                                                         /*#__PURE__*/ _jsx("input", { value: providerForm.videoBaseUrl || '', onChange: (e)=>setProviderForm({ ...providerForm, videoBaseUrl: e.target.value }), placeholder: "65535 会自动使用 task-api 地址" })
+                                                                     ] }),
+                                                                     /*#__PURE__*/ _jsxs("label", { children: [
+                                                                         /*#__PURE__*/ _jsx("span", { children: "生成路径（可选）" }),
+                                                                         /*#__PURE__*/ _jsx("input", { value: providerForm.videoGenerationPath || '', onChange: (e)=>setProviderForm({ ...providerForm, videoGenerationPath: e.target.value }), placeholder: "/v1/videos" })
+                                                                     ] }),
+                                                                     /*#__PURE__*/ _jsxs("label", { children: [
+                                                                         /*#__PURE__*/ _jsx("span", { children: "任务状态路径（可选）" }),
+                                                                         /*#__PURE__*/ _jsx("input", { value: providerForm.videoTaskStatusPath || '', onChange: (e)=>setProviderForm({ ...providerForm, videoTaskStatusPath: e.target.value }), placeholder: "/v1/videos/{id} 或 /v1/tasks/{id}" })
+                                                                     ] }),
+                                                                     /*#__PURE__*/ _jsxs("label", { children: [
+                                                                         /*#__PURE__*/ _jsx("span", { children: "任务提交路径（可选）" }),
+                                                                         /*#__PURE__*/ _jsx("input", { value: providerForm.videoTaskPath || '', onChange: (e)=>setProviderForm({ ...providerForm, videoTaskPath: e.target.value }), placeholder: "/v1/tasks" })
+                                                                     ] }),
+                                                                     /*#__PURE__*/ _jsxs("label", { children: [
+                                                                         /*#__PURE__*/ _jsx("span", { children: "视频模型路径（可选）" }),
+                                                                         /*#__PURE__*/ _jsx("input", { value: providerForm.videoModelsPath || '', onChange: (e)=>setProviderForm({ ...providerForm, videoModelsPath: e.target.value }), placeholder: "/v1/models" })
+                                                                     ] }),
+                                                                     /*#__PURE__*/ _jsxs("label", { children: [
+                                                                         /*#__PURE__*/ _jsx("span", { children: "即梦 CLI 路径（可选）" }),
+                                                                        /*#__PURE__*/ _jsx("input", { value: providerForm.jimengCliPath || '', onChange: (e)=>setProviderForm({ ...providerForm, jimengCliPath: e.target.value }), placeholder: "dreamina.cmd 或 dreamina" })
+                                                                    ] })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("small", { className: "provider-video-hint", children: "即梦 CLI 需要先在网页端完成一次视频生成授权；应用不会自动执行远程安装脚本。" }),
+                                                            providerForm.videoTransport === 'jimeng-cli' && /*#__PURE__*/ _jsxs("div", {
+                                                                className: "jimeng-login-panel",
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsxs("div", {
+                                                                        className: "jimeng-login-head",
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsxs("div", { children: [
+                                                                                /*#__PURE__*/ _jsx("strong", { children: "即梦 CLI 登录" }),
+                                                                                /*#__PURE__*/ _jsx("small", { children: providerEditId ? "无需把账号密码交给应用，使用官方设备授权登录。" : "先保存服务配置，再开始设备授权登录。" })
+                                                                            ] }),
+                                                                            /*#__PURE__*/ _jsx("a", { href: "https://bytedance.larkoffice.com/wiki/FVTwwm0bGiishxkKOoScdHR2nsg", target: "_blank", rel: "noreferrer", children: "官方安装与登录说明 ↗" })
+                                                                        ]
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsxs("div", {
+                                                                        className: "jimeng-login-actions",
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsx("button", { type: "button", className: "secondary-action", disabled: !providerEditId || jimengLogin.status === 'inspecting', onClick: () => void jimengLoginAction('inspect'), children: jimengLogin.status === 'inspecting' ? "检测中…" : "检测 CLI" }),
+                                                                            /*#__PURE__*/ _jsx("button", { type: "button", className: "secondary-action", disabled: !providerEditId || jimengLogin.status === 'starting', onClick: () => void jimengLoginAction('start'), children: jimengLogin.status === 'starting' ? "获取授权码…" : "开始即梦登录" })
+                                                                        ]
+                                                                    }),
+                                                                    jimengLogin.version && /*#__PURE__*/ _jsx("small", { className: "jimeng-login-note success", children: `已检测到 ${jimengLogin.version}` }),
+                                                                    jimengLogin.verificationUri && /*#__PURE__*/ _jsxs("div", { className: "jimeng-login-code-card", children: [
+                                                                        /*#__PURE__*/ _jsxs("div", { children: [
+                                                                            /*#__PURE__*/ _jsx("span", { children: "1 · 打开授权页面" }),
+                                                                            /*#__PURE__*/ _jsx("a", { href: jimengLogin.verificationUri, target: "_blank", rel: "noreferrer", children: jimengLogin.verificationUri })
+                                                                        ] }),
+                                                                        /*#__PURE__*/ _jsxs("div", { children: [
+                                                                            /*#__PURE__*/ _jsx("span", { children: "2 · 输入授权码" }),
+                                                                            /*#__PURE__*/ _jsx("b", { children: jimengLogin.userCode || "—" })
+                                                                        ] }),
+                                                                        /*#__PURE__*/ _jsx("button", { type: "button", className: "primary-action compact", disabled: jimengLogin.status === 'checking', onClick: () => void jimengLoginAction('check'), children: jimengLogin.status === 'checking' ? "检查中…" : "检查授权" })
+                                                                    ] }),
+                                                                     jimengLogin.message && /*#__PURE__*/ _jsx("small", { className: `jimeng-login-note ${jimengLogin.status === 'authorized' ? 'success' : ''}`, children: jimengLogin.message }),
+                                                                     /*#__PURE__*/ _jsx(JimengAccountSummary, { account: jimengLogin.account, checkedAt: jimengLogin.accountCheckedAt, error: jimengLogin.accountError, loading: jimengLogin.status === 'accounting', onRefresh: providerEditId ? () => void jimengLoginAction('refresh-account') : undefined }),
+                                                                     jimengLogin.error && /*#__PURE__*/ _jsx("small", { className: "jimeng-login-note error", children: jimengLogin.error })
+                                                                ]
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }),
+                                            providerTestResult && /*#__PURE__*/ _jsx("div", {
+                                                ref: providerTestResultRef,
+                                                className: `connection-result ${providerTestResult.startsWith('连接成功') ? 'success' : 'error'}`,
+                                                children: providerTestResult
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "form-actions provider-simple-actions",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        type: "button",
+                                                        className: "secondary-action",
+                                                        disabled: providerBusy || providerTestBusy || providerForm.videoTransport !== 'jimeng-cli' && (!providerForm.baseUrl.trim() || !providerForm.apiKey.trim() && !providerEditId),
+                                                        onClick: ()=>void testProvider(),
+                                                        children: providerTestBusy ? '正在测试…' : '只测试连接'
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        className: "primary-action compact",
+                                                        disabled: providerBusy || providerTestBusy || providerForm.videoTransport !== 'jimeng-cli' && (!providerForm.baseUrl.trim() || !providerForm.apiKey.trim() && !providerEditId),
+                                                        children: providerBusy ? '正在测试并连接…' : providerEditId ? '测试并保存' : '测试并连接'
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    })
+                                    }), document.body),
+                                    /*#__PURE__*/ _jsx(ProviderListToolbar, {
+                                        search: providerSearch,
+                                        visibleCount: visibleProviders.length,
+                                        totalCount: manageableProviders.length,
+                                        Icon: Icon,
+                                        onSearchChange: setProviderSearch
+                                    }),
+                                    visibleProviders.length ? /*#__PURE__*/ _jsx(ProviderList, {
+                                        providers: visibleProviders,
+                                        editingProviderId: providerEditId,
+                                        syncingProviderId: syncingId,
+                                        Icon: Icon,
+                                        onToggleModelLibrary: toggleProviderModelLibrary,
+                                        onOpenManualModelDialog: openManualModelDialog,
+                                        onOpenEdit: openEditProvider,
+                                        onSync: syncProvider,
+                                        onDelete: askDeleteProvider
+                                    }) : !manageableProviders.length ? /*#__PURE__*/ _jsxs("div", {
+                                        className: "provider-search-empty surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "plus",
+                                                size: 22
+                                            }),
+                                            /*#__PURE__*/ _jsx("strong", {
+                                                children: "还没有添加接口服务商"
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "添加并测试连接后，即可读取它提供的模型。"
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "ghost-button",
+                                                onClick: openAddProvider,
+                                                children: "添加接口服务"
+                                            })
+                                        ]
+                                    }) : /*#__PURE__*/ _jsxs("div", {
+                                        className: "provider-search-empty surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsx(Icon, {
+                                                name: "search",
+                                                size: 22
+                                            }),
+                                            /*#__PURE__*/ _jsx("strong", {
+                                                children: "没有找到匹配的接口服务商"
+                                            }),
+                                            /*#__PURE__*/ _jsx("span", {
+                                                children: "可尝试搜索服务商名称、平台或接口地址。"
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                type: "button",
+                                                className: "ghost-button",
+                                                onClick: ()=>setProviderSearch(''),
+                                                children: "清空搜索"
+                                            })
+                                        ]
+                                    })
+                                ]
+                            })),
+                            section === 'models' && (adminRequired && !isAdmin ? /*#__PURE__*/ _jsx(AdminLogin, {
+                                password: adminPassword,
+                                busy: adminBusy,
+                                Icon: Icon,
+                                onPasswordChange: setAdminPassword,
+                                onSubmit: loginAdmin
+                            }) : /*#__PURE__*/ _jsxs("section", {
+                                className: "management-page models-page",
+                                children: [
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "management-head",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("h1", {
+                                                        children: "模型库"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", {
+                                                        children: "模型读取回来后，不需要“启用 + 发布”两步。直接勾选“使用”，它就会出现在助手或生图页面的模型下拉菜单里。"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "management-actions",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("button", {
+                                                        className: "ghost-button",
+                                                        onClick: ()=>setSection('providers'),
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx(Icon, {
+                                                                name: "plug",
+                                                                size: 15
+                                                            }),
+                                                            "管理接口服务"
+                                                        ]
+                                                    }),
+                                                    adminRequired && /*#__PURE__*/ _jsx("button", {
+                                                        className: "ghost-button",
+                                                        onClick: ()=>void logoutAdmin(),
+                                                        children: "退出管理"
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "default-models surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "默认助手模型"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx(Dropdown, {
+                                                        value: state.settings.agentModelId || '',
+                                                        options: availableChatModels.map((m)=>({
+                                                                value: m.id,
+                                                                label: m.displayName,
+                                                                meta: m.providerName
+                                                            })),
+                                                        onChange: (v)=>void patchSettings({
+                                                                agentModelId: v
+                                                            }),
+                                                        placeholder: "选择对话模型"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "默认图片模型"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx(Dropdown, {
+                                                        value: state.settings.defaultImageModelId || '',
+                                                        options: availableGenerationModels.map((m)=>({
+                                                                value: m.id,
+                                                                label: m.displayName,
+                                                                meta: m.providerName
+                                                            })),
+                                                        onChange: (v)=>void patchSettings({
+                                                                defaultImageModelId: v
+                                                            }),
+                                                        placeholder: "选择生图模型"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", { children: "默认视频模型" }),
+                                                    /*#__PURE__*/ _jsx(Dropdown, {
+                                                        value: state.settings.defaultVideoModelId || '',
+                                                        options: availableVideoModels.map((m)=>( { value: m.id, label: m.displayName, meta: m.providerName } )),
+                                                        onChange: (v)=>void patchSettings({ defaultVideoModelId: v }),
+                                                        placeholder: "选择视频模型"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "model-library-default-provider",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "默认厂商"
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx(Dropdown, {
+                                                                value: state.settings.defaultProviderId || '',
+                                                                options: [
+                                                                    {
+                                                                        value: '',
+                                                                        label: '自动 · 不指定厂商',
+                                                                        meta: '按可用模型自动回退'
+                                                                    },
+...state.providers.filter((provider)=>isProviderModelLibraryEnabled(provider)).map((provider)=>({
+                                                                            value: provider.id,
+                                                                            label: provider.name,
+meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id && model.enabled && model.published).length} 个可用模型`
+                                                                        }))
+                                                                ],
+                                                                onChange: (value)=>void patchSettings({
+                                                                        defaultProviderId: value || null
+                                                                    }),
+                                                                placeholder: "自动 \xb7 不指定厂商"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("small", {
+                                                                children: "自动模式优先使用这里指定的厂商；手动选择模型时不受影响。"
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "model-toolbar surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "search-box",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx(Icon, {
+                                                        name: "search",
+                                                        size: 17
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("input", {
+                                                        value: modelSearch,
+                                                        onChange: (e)=>setModelSearch(e.target.value),
+                                                        placeholder: "搜索模型名称…"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsx(Dropdown, {
+                                                value: modelProviderFilter,
+                                                options: [
+                                                    {
+                                                        value: 'all',
+                                                        label: '全部接口服务'
+                                                    },
+                                                     ...state.providers.filter((p)=>isProviderModelLibraryEnabled(p)).map((p)=>({
+                                                             value: p.id,
+                                                             label: p.name,
+                                                             meta: `${activeProviderModels.filter((m)=>m.providerId === p.id).length} 个模型`
+                                                         }))
+                                                ],
+                                                onChange: setModelProviderFilter,
+                                                 className: "provider-filter"
+                                             }),
+                                             /*#__PURE__*/ _jsx("div", {
+                                                 className: "model-quick-filters",
+                                                 "aria-label": "模型快捷筛选",
+                                                 children: [
+                                                     ['all', '全部'],
+                                                     ['enabled', '已启用'],
+                                                     ['favorite', '收藏'],
+                                                     ['recent', '最近使用']
+                                                 ].map(([value, label])=>/*#__PURE__*/ _jsxs("button", {
+                                                         type: "button",
+                                                         className: modelQuickFilter === value ? 'active' : '',
+                                                         "aria-pressed": modelQuickFilter === value,
+                                                         onClick: ()=>setModelQuickFilter(value),
+                                                         children: [
+                                                             label,
+                                                             /*#__PURE__*/ _jsx("b", { children: modelQuickCounts[value] })
+                                                         ]
+                                                     }, value))
+                                             }),
+                                             /*#__PURE__*/ _jsxs("div", {
+                                                className: "model-count",
+                                                children: [
+                                                    "已选择 ",
+                                                    /*#__PURE__*/ _jsx("strong", {
+                                                    children: availableChatModels.length + availableImageModels.length + availableVideoModels.length
+                                                    }),
+                                                    " / ",
+                                                     activeProviderModels.length
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    !activeProviderModels.length ? /*#__PURE__*/ _jsxs("div", {
+                                        className: "history-empty",
+                                        children: [
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "empty-icon",
+                                                children: /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "model",
+                                                    size: 28
+                                                })
+                                            }),
+                                            /*#__PURE__*/ _jsx("h2", {
+                                                 children: state.models.length ? "还没有加入模型库的模型" : "还没有读取模型"
+                                            }),
+                                            /*#__PURE__*/ _jsx("p", {
+                                                 children: state.models.length ? "请先在接口服务中勾选要加入模型库的服务商。" : "先添加接口服务，再读取它提供的模型列表。"
+                                            }),
+                                            /*#__PURE__*/ _jsx("button", {
+                                                className: "primary-action compact",
+                                                onClick: ()=>setSection('providers'),
+                                                children: "去添加接口服务"
+                                            })
+                                        ]
+                                    }) : /*#__PURE__*/ _jsxs(_Fragment, {
+                                        children: [
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "model-kind-tabs surface",
+                                                children: [
+                                                    [
+                                                        'all',
+                                                        '全部模型'
+                                                    ],
+                                                    [
+                                                        'chat',
+                                                        '对话模型'
+                                                    ],
+                                                    [
+                                                        'image',
+                                                        '图片模型'
+                                                    ],
+                                                    [
+                                                        'video',
+                                                        '视频模型'
+                                                    ],
+                                                    [
+                                                        'audio',
+                                                        '配音模型'
+                                                    ],
+                                                    [
+                                                        'unknown',
+                                                        '未分类'
+                                                    ]
+                                                ].map(([kind, label])=>/*#__PURE__*/ _jsxs("button", {
+                                                        className: modelKindFilter === kind ? 'active' : '',
+                                                        onClick: ()=>setModelKindFilter(kind),
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                children: label
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("b", {
+                                                                children: modelKindCounts[kind]
+                                                            })
+                                                        ]
+                                                    }, kind))
+                                            }),
+                                            !visibleModels.length ? /*#__PURE__*/ _jsxs("div", {
+                                                className: "history-empty compact-empty",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("div", {
+                                                        className: "empty-icon",
+                                                        children: /*#__PURE__*/ _jsx(Icon, {
+                                                            name: "search",
+                                                            size: 25
+                                                        })
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("h2", {
+                                                        children: "没有符合条件的模型"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", {
+                                                        children: "换个服务商、关键词或分类试试。"
+                                                    })
+                                                ]
+                                            }) : /*#__PURE__*/ _jsx("div", {
+                                                className: "model-groups",
+                                                children: modelProviderGroups.map(([providerId, group])=>{
+                                                    const expanded = Boolean(modelSearch.trim()) || modelQuickFilter !== 'all' || modelProviderFilter !== 'all' || expandedModelProviders.has(providerId);
+                                                    return /*#__PURE__*/ _jsxs("section", {
+                                                        className: `model-group ${expanded ? 'expanded' : ''}`,
+                                                        children: [
+                                                            /*#__PURE__*/ _jsxs("div", {
+                                                                className: "model-group-head",
+                                                                role: "button",
+                                                                tabIndex: 0,
+                                                                "aria-expanded": expanded,
+                                                                onClick: ()=>toggleModelProviderGroup(providerId),
+                                                                onKeyDown: (event)=>{
+                                                                    if (event.key === 'Enter' || event.key === ' ') {
+                                                                        event.preventDefault();
+                                                                        toggleModelProviderGroup(providerId);
+                                                                    }
+                                                                },
+                                                                children: [
+                                                                    /*#__PURE__*/ _jsxs("div", {
+                                                                        children: [
+                                                                            /*#__PURE__*/ _jsx("h2", {
+                                                                                children: group[0].providerName
+                                                                            }),
+                                                                            /*#__PURE__*/ _jsxs("p", {
+                                                                                children: [
+                                                                                    group.filter((model)=>model.kind === 'chat').length ? '对话' : '',
+                                                                                    group.filter((model)=>model.kind === 'chat').length && group.filter((model)=>model.kind === 'image').length ? ' · ' : '',
+                                                                                    group.filter((model)=>model.kind === 'image').length ? '图片' : '',
+                                                                                    group.filter((model)=>model.kind === 'video').length ? ' · 视频' : '',
+                                                                                    group.some((model)=>model.kind === 'unknown') ? ' · 待归类' : ''
+                                                                                ]
+                                                                            })
+                                                                        ]
+                                                                    }),
+                                                                    /*#__PURE__*/ _jsxs("span", {
+                                                                        children: [
+                                                                            group.length,
+                                                                            " 个 \xb7 ",
+                                                                            group.filter((model)=>model.enabled && model.published).length,
+                                                                            " 个已启用"
+                                                                        ]
+                                                                    })
+                                                                ]
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("div", {
+                                                                className: "model-cards",
+                                                                children: expanded && group.map(renderModelCard)
+                                                            })
+                                                        ]
+                                                    }, providerId);
+                                                })
+                                            })
+                                        ]
+                                    }),
+                                    activeProviderModels.length > 0 && /*#__PURE__*/ _jsxs("nav", {
+                                        className: "model-page-scroll-nav",
+                                        "aria-label": "模型库页面导航",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("button", {
+                                                type: "button",
+                                                onClick: ()=>scrollModelLibrary('top'),
+                                                title: "跳到顶部",
+                                                "aria-label": "跳到模型库顶部",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("b", {
+                                                        "aria-hidden": "true",
+                                                        children: "↑"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "顶部"
+                                                    })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("button", {
+                                                type: "button",
+                                                onClick: ()=>scrollModelLibrary('bottom'),
+                                                title: "跳到底部",
+                                                "aria-label": "跳到模型库底部",
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("b", {
+                                                        "aria-hidden": "true",
+                                                        children: "↓"
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("span", {
+                                                        children: "底部"
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    })
+                                ]
+                            }))
+                        ]
+                    })
+                ]
+            }),
+            selectedLog && /*#__PURE__*/ _jsx("div", {
+                className: "log-detail-backdrop",
+                onClick: ()=>setSelectedLog(null),
+                children: /*#__PURE__*/ _jsxs("aside", {
+                    className: "log-detail-panel",
+                    onClick: (e)=>e.stopPropagation(),
+                    children: [
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "log-detail-head",
+                            children: [
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("span", {
+                                            children: "生成任务详情"
+                                        }),
+                                        /*#__PURE__*/ _jsx("h2", {
+                                                        children: selectedLog.status === 'pending' ? (generationLogIsLlm(selectedLog) ? 'LLM 处理中' : '正在生成') : selectedLog.status === 'success' ? (generationLogIsLlm(selectedLog) ? 'LLM 完成' : '生成成功') : (generationLogIsLlm(selectedLog) ? 'LLM 失败' : '生成失败')
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    className: "icon-button",
+                                    onClick: ()=>setSelectedLog(null),
+                                    children: /*#__PURE__*/ _jsx(Icon, {
+                                        name: "close"
+                                    })
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "log-detail-status",
+                            children: [
+                                /*#__PURE__*/ _jsx("b", {
+                                    className: selectedLog.status,
+                                    children: selectedLog.status === 'pending' ? '进行中' : selectedLog.status === 'success' ? '成功' : '失败'
+                                }),
+                                /*#__PURE__*/ _jsx("span", {
+                                    children: new Date(selectedLog.createdAt).toLocaleString('zh-CN', {
+                                        hour12: false
+                                    })
+                                })
+                            ]
+                        }),
+                        generationMediaKind(selectedLog) === 'video' && selectedLog.videoUrls?.length ? /*#__PURE__*/ _jsx("div", {
+                            className: "log-detail-video",
+                            children: /*#__PURE__*/ _jsx("video", { src: selectedLog.videoUrls[0], controls: true, playsInline: true, preload: "metadata" })
+                        }) : selectedLog.imageUrls?.length ? /*#__PURE__*/ _jsx("div", {
+                            className: "log-detail-images",
+                            children: selectedLog.imageUrls.map((url, index)=>/*#__PURE__*/ _jsx("a", {
+                                    href: url,
+                                    target: "_blank",
+                                    rel: "noreferrer",
+                                    onClick: ()=>markHistoryNoticeSeen(),
+                                    children: /*#__PURE__*/ _jsx("img", {
+                                        src: url,
+                                        alt: `生成结果 ${index + 1}`
+                                    })
+                                }, `${url}-${index}`))
+                        }) : /*#__PURE__*/ _jsxs("div", {
+                            className: `log-detail-empty ${selectedLog.status === 'pending' ? 'pending' : ''}`,
+                            children: [
+                                selectedLog.status === 'pending' ? /*#__PURE__*/ _jsx("span", {
+                                    className: "loading-orb"
+                                }) : /*#__PURE__*/ _jsx(Icon, {
+                                    name: generationMediaKind(selectedLog) === 'video' ? 'video' : generationMediaKind(selectedLog) === 'audio' ? 'audio' : generationMediaKind(selectedLog) === 'llm' ? 'agent' : 'image',
+                                    size: 24
+                                }),
+                                /*#__PURE__*/ _jsx("span", {
+                                    children: selectedLog.status === 'pending' ? `${generationMediaLabel(generationMediaKind(selectedLog))}${generationMediaKind(selectedLog) === 'llm' ? '处理中' : '生成中'}，完成后会自动更新` : `没有可预览的${generationMediaLabel(generationMediaKind(selectedLog))}`
+                                })
+                            ]
+                        }),
+                        selectedLog.references?.length ? /*#__PURE__*/ _jsxs("section", {
+                            className: "log-detail-references",
+                            children: [
+                                /*#__PURE__*/ _jsx("h3", {
+                                    children: `本次参考图（按提交顺序 · ${selectedLog.references.length} 张）`
+                                }),
+                                /*#__PURE__*/ _jsx("div", {
+                                    className: "log-reference-list",
+                                    children: selectedLog.references.map((reference, index)=>/*#__PURE__*/ _jsxs("a", {
+                                        href: reference.url || undefined,
+                                        target: reference.url ? "_blank" : undefined,
+                                        rel: reference.url ? "noreferrer" : undefined,
+                                        className: reference.url ? '' : 'unavailable',
+                                        children: [
+                                            reference.url ? /*#__PURE__*/ _jsx("img", {
+                                                src: reference.url,
+                                                alt: `参考图 ${index + 1}`
+                                            }) : /*#__PURE__*/ _jsx("span", {
+                                                className: "log-reference-placeholder",
+                                                children: "—"
+                                            }),
+                                            /*#__PURE__*/ _jsxs("span", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("b", {
+                                                        children: `图 ${index + 1}`
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("small", {
+                                                        children: reference.name
+                                                    })
+                                                ]
+                                            })
+                                        ]
+                                    }, `${reference.url}-${index}`))
+                                })
+                            ]
+                        }) : null,
+                        /*#__PURE__*/ _jsxs("dl", {
+                            className: "log-detail-fields",
+                            children: [
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", {
+                                            children: "提示词"
+                                        }),
+                                        /*#__PURE__*/ _jsxs("dd", {
+                                            className: "log-detail-prompt",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("span", {
+                                                    children: selectedLog.prompt || '未填写'
+                                                }),
+                                                /*#__PURE__*/ _jsxs("button", {
+                                                    type: "button",
+                                                    className: "log-copy-prompt",
+                                                    disabled: !selectedLog.prompt,
+                                                    onClick: ()=>void copyPrompt(selectedLog.prompt),
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx(Icon, {
+                                                            name: "copy",
+                                                            size: 14
+                                                        }),
+                                                        "复制提示词"
+                                                    ]
+                                                })
+                                            ]
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", {
+                                            children: "模型"
+                                        }),
+                                        /*#__PURE__*/ _jsx("dd", {
+                                            children: selectedLog.modelName || (selectedLog.status === 'pending' ? '自动选择中' : '未指定')
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", {
+                                            children: "服务商"
+                                        }),
+                                        /*#__PURE__*/ _jsx("dd", {
+                                            children: selectedLog.providerName || (selectedLog.status === 'pending' ? '等待响应' : '未指定')
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", {
+                                            children: "类型"
+                                        }),
+                                        /*#__PURE__*/ _jsx("dd", {
+                                            children: generationLogSourceLabel(selectedLog)
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", {
+                                            children: "耗时"
+                                        }),
+                                        /*#__PURE__*/ _jsx("dd", {
+                                            children: selectedLog.status === 'pending' ? `${Math.max(.1, (generateClock - new Date(selectedLog.createdAt).getTime()) / 1000).toFixed(1)} 秒（进行中）` : selectedLog.durationMs ? `${(selectedLog.durationMs / 1000).toFixed(1)} 秒` : '—'
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", {
+                                            children: generationMediaKind(selectedLog) === 'llm' ? "模型调用" : generationMediaKind(selectedLog) === 'video' ? "视频数量" : generationMediaKind(selectedLog) === 'audio' ? "音频数量" : "图片数量"
+                                        }),
+                                        /*#__PURE__*/ _jsx("dd", {
+                                            children: generationMediaKind(selectedLog) === 'llm' ? `${selectedLog.llmCallCount || 0} 次 · ${selectedLog.responseChars || 0} 字响应` : generationMediaKind(selectedLog) === 'video' ? `${selectedLog.videoUrls?.length || (selectedLog.status === 'pending' ? 1 : 0)} 段` : generationMediaKind(selectedLog) === 'audio' ? '1 段' : selectedLog.status === 'pending' ? `预计 ${selectedLog.count ?? 1} 张` : `${selectedLog.imageCount ?? 0} 张`
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", {
+                                            children: "分辨率"
+                                        }),
+                                        /*#__PURE__*/ _jsx("dd", {
+                                            children: generationMediaKind(selectedLog) === 'llm' ? `任务：${selectedLog.task || '普通对话'} · 联网：${selectedLog.webSearchStatus || '未检索'}` : generationMediaKind(selectedLog) === 'video' ? (selectedLog.resolution || '自动') : generationMediaKind(selectedLog) === 'audio' ? '音频参数见任务输入' : logResolutionLabel(selectedLog, logImageSpecs[selectedLog.id])
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", {
+                                            children: generationMediaKind(selectedLog) === 'llm' ? "LLM 任务类型"
+                                                : generationMediaKind(selectedLog) === 'video' ? "视频比例"
+                                                : generationMediaKind(selectedLog) === 'audio' ? "音频时长" : "图片尺寸"
+                                        }),
+                                        /*#__PURE__*/ _jsx("dd", {
+                                            children: generationMediaKind(selectedLog) === 'llm' ? generationLogSourceLabel(selectedLog) : generationMediaKind(selectedLog) === 'video' ? (selectedLog.aspectRatio || '自动') : generationMediaKind(selectedLog) === 'audio' ? (selectedLog.durationMs ? `${(selectedLog.durationMs / 1000).toFixed(1)} 秒` : '—') : logOutputSizeLabel(selectedLog, logImageSpecs[selectedLog.id])
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", {
+                                            children: generationMediaKind(selectedLog) === 'llm' ? "联网状态" : generationMediaKind(selectedLog) === 'video' ? "视频操作" : generationMediaKind(selectedLog) === 'audio' ? "音频格式" : "图片比例"
+                                        }),
+                                        /*#__PURE__*/ _jsx("dd", {
+                                            children: generationMediaKind(selectedLog) === 'llm' ? (selectedLog.webSearchStatus || '未检索') : generationMediaKind(selectedLog) === 'video' ? (selectedLog.operation === 'edit' ? '编辑' : selectedLog.operation === 'extend' ? '扩展' : '生成') : generationMediaKind(selectedLog) === 'audio' ? '—' : logAspectRatioLabel(selectedLog, logImageSpecs[selectedLog.id])
+                                        })
+                                    ]
+                                }),
+                                selectedLog.storagePath && /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", {
+                                            children: "存储路径"
+                                        }),
+                                        /*#__PURE__*/ _jsx("dd", {
+                                            children: selectedLog.storagePath
+                                        })
+                                    ]
+                                }),
+                                selectedLog.providerTaskId && /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", { children: "服务商任务 ID" }),
+                                        /*#__PURE__*/ _jsx("dd", { children: selectedLog.providerTaskId })
+                                    ]
+                                }),
+                                typeof selectedLog.costUsd === 'number' && /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", { children: "费用" }),
+                                        /*#__PURE__*/ _jsx("dd", { children: `$${selectedLog.costUsd.toFixed(4)}` })
+                                    ]
+                                }),
+                                selectedLog.error && /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", {
+                                            children: "错误信息"
+                                        }),
+                                        /*#__PURE__*/ _jsx("dd", {
+                                            className: "log-error",
+                                            children: selectedLog.error
+                                        })
+                                    ]
+                                })
+                            ]
+                        })
+                    ]
+                })
+            }),
+            viewerItem && /*#__PURE__*/ _jsx("div", {
+                className: "viewer-backdrop",
+                onClick: ()=>setViewerId(null),
+                children: /*#__PURE__*/ _jsxs("div", {
+                    className: "viewer",
+                    onClick: (e)=>e.stopPropagation(),
+                    children: [
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "viewer-top",
+                            children: [
+                                /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("strong", {
+                                            children: viewerItem.modelName || '生成图片'
+                                        }),
+                                        /*#__PURE__*/ _jsxs("small", {
+                                            children: [
+                                                viewerItem.localFileName ? '本地图片' : gallerySourceLabel(viewerItem.source),
+                                                " \xb7 ",
+                                                viewerItem.outputSize || viewerItem.aspectRatio || '自动',
+                                                " \xb7 ",
+                                                formatTime(viewerItem.createdAt)
+                                            ]
+                                        })
+                                    ]
+                                }),
+                                /*#__PURE__*/ _jsxs("div", {
+                                    className: "viewer-top-actions",
+                                    children: [
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "zoom-controls",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    title: "缩小",
+                                                    onClick: ()=>adjustViewerZoom(viewerZoom - 0.1),
+                                                    children: /*#__PURE__*/ _jsx(Icon, {
+                                                        name: "zoomOut",
+                                                        size: 16
+                                                    })
+                                                }),
+                                                /*#__PURE__*/ _jsxs("span", {
+                                                    className: "zoom-readout",
+                                                    children: [
+                                                        Math.round(viewerZoom * 100),
+                                                        "%"
+                                                    ]
+                                                }),
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    className: "zoom-reset",
+                                                    title: "恢复原比例",
+                                                    onClick: resetViewerView,
+                                                    children: "原比例"
+                                                }),
+                                                /*#__PURE__*/ _jsx("button", {
+                                                    title: "放大",
+                                                    onClick: ()=>adjustViewerZoom(viewerZoom + 0.1),
+                                                    children: /*#__PURE__*/ _jsx(Icon, {
+                                                        name: "zoomIn",
+                                                        size: 16
+                                                    })
+                                                })
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsx("button", {
+                                            className: "icon-button",
+                                            onClick: ()=>setViewerId(null),
+                                            children: /*#__PURE__*/ _jsx(Icon, {
+                                                name: "close"
+                                            })
+                                        })
+                                    ]
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "viewer-stage-wrap",
+                            children: [
+                                /*#__PURE__*/ _jsxs("div", {
+                                    className: `viewer-stage ${viewerZoom > 1 ? 'can-drag' : ''} ${viewerDragging ? 'dragging' : ''}`,
+                                    ref: viewerStageRef,
+                                    onWheel: handleViewerWheel,
+                                    onPointerDown: handleViewerPointerDown,
+                                    onPointerMove: handleViewerPointerMove,
+                                    onPointerUp: handleViewerPointerUp,
+                                    onPointerCancel: handleViewerPointerUp,
+                                    children: [
+                                        /*#__PURE__*/ _jsx("div", {
+                                            className: "viewer-canvas",
+                                            children: /*#__PURE__*/ _jsx("img", {
+                                                draggable: false,
+                                                src: viewerItem.url,
+                                                alt: viewerItem.prompt,
+                                                onLoad: (e)=>setViewerImageSize({
+                                                        width: e.currentTarget.naturalWidth,
+                                                        height: e.currentTarget.naturalHeight
+                                                    }),
+                                                style: viewerDisplaySize.width ? {
+                                                    width: viewerDisplaySize.width,
+                                                    height: viewerDisplaySize.height,
+                                                    transform: `translate3d(${viewerPan.x}px, ${viewerPan.y}px, 0)`
+                                                } : undefined
+                                            })
+                                        }),
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "wheel-tip",
+                                            children: [
+                                                "滚轮缩放",
+                                                viewerZoom > 1 ? ' · 按住图片拖动查看' : '',
+                                                " \xb7 点击百分比恢复完整画面"
+                                            ]
+                                        })
+                                    ]
+                                }),
+                                viewerItems.length > 1 && /*#__PURE__*/ _jsxs(_Fragment, {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("button", {
+                                            className: "viewer-nav prev",
+                                            disabled: viewerIndex <= 0,
+                                            onClick: ()=>openViewer(viewerItems[Math.max(0, viewerIndex - 1)] || viewerItem),
+                                            children: /*#__PURE__*/ _jsx(Icon, {
+                                                name: "left"
+                                            })
+                                        }),
+                                        /*#__PURE__*/ _jsx("button", {
+                                            className: "viewer-nav next",
+                                            disabled: viewerIndex >= viewerItems.length - 1,
+                                            onClick: ()=>openViewer(viewerItems[Math.min(viewerItems.length - 1, viewerIndex + 1)] || viewerItem),
+                                            children: /*#__PURE__*/ _jsx(Icon, {
+                                                name: "right"
+                                            })
+                                        })
+                                    ]
+                                })
+                            ]
+                        }),
+                        /*#__PURE__*/ _jsxs("div", {
+                            className: "viewer-info",
+                            children: [
+                                /*#__PURE__*/ _jsx("p", {
+                                    children: viewerItem.prompt
+                                }),
+                                viewerItem.revisedPrompt && viewerItem.revisedPrompt !== viewerItem.prompt && /*#__PURE__*/ _jsxs("details", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("summary", {
+                                            children: "查看模型改写后的提示词"
+                                        }),
+                                        /*#__PURE__*/ _jsx("p", {
+                                            children: viewerItem.revisedPrompt
+                                        })
+                                    ]
+                                }),
+                                viewerReferences.length ? /*#__PURE__*/ _jsxs("section", {
+                                    className: "viewer-reference-panel",
+                                    children: [
+                                        /*#__PURE__*/ _jsxs("div", {
+                                            className: "viewer-reference-head",
+                                            children: [
+                                                /*#__PURE__*/ _jsx("strong", {
+                                                    children: `参考图（按提交顺序 · ${viewerReferences.length} 张）`
+                                                }),
+                                                /*#__PURE__*/ _jsx("small", {
+                                                    children: "分享版会包含全部参考图"
+                                                })
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsx("div", {
+                                            className: "viewer-reference-list",
+                                            children: viewerReferences.map((reference, index)=>/*#__PURE__*/ _jsxs("a", {
+                                                href: reference.url,
+                                                target: "_blank",
+                                                rel: "noreferrer",
+                                                title: reference.name,
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("img", {
+                                                        src: reference.url,
+                                                        alt: `参考图 ${index + 1}`
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("span", {
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("b", {
+                                                                children: `图 ${index + 1}`
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("small", {
+                                                                children: reference.name
+                                                            })
+                                                        ]
+                                                    })
+                                                ]
+                                            }, `${reference.url}-${index}`))
+                                        })
+                                    ]
+                                }) : null,
+                                /*#__PURE__*/ _jsxs("div", {
+                                    className: "viewer-actions",
+                                    children: [
+                                        viewerParentItem && /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            className: "compare-primary",
+                                            onClick: ()=>openCompare(viewerItem),
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "compare",
+                                                    size: 15
+                                                }),
+                                                "前后对比"
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            className: "angle-viewer-action",
+                                            onClick: ()=>{
+                                                void openAngleConsole(viewerItem);
+                                                setViewerId(null);
+                                            },
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "adjust",
+                                                    size: 15
+                                                }),
+                                                "调整角度"
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            onClick: (event)=>{
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                openEdit(viewerItem);
+                                            },
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "edit",
+                                                    size: 15
+                                                }),
+                                                "修改"
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            className: "upscale-primary",
+                                            onClick: (event)=>{
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                openUpscale(viewerItem);
+                                            },
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "upscale",
+                                                    size: 15
+                                                }),
+                                                "高清放大"
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            className: "reference-primary",
+                                            onClick: ()=>useAsReference(viewerItem),
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "image",
+                                                    size: 15
+                                                }),
+                                                "作为参考图"
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            onClick: (event)=>{
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                reuseItem(viewerItem);
+                                            },
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "reuse",
+                                                    size: 15
+                                                }),
+                                                "用此参数再生成"
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            className: "copy-prompt-primary",
+                                            disabled: !viewerItem.prompt?.trim(),
+                                            onClick: ()=>void copyPrompt(viewerItem.prompt || ''),
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "copy",
+                                                    size: 15
+                                                }),
+                                                "复制提示词"
+                                            ]
+                                        }),
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            className: "download-primary",
+                                            onClick: ()=>void downloadImage(viewerItem.url, `SANMAO-${viewerItem.id}.png`),
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "download",
+                                                    size: 15
+                                                }),
+                                                "下载原图"
+                                            ]
+                                        }),
+                                        viewerReferences.length ? /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            className: "download-share-primary",
+                                            onClick: ()=>void downloadShareImage(viewerItem).catch((error)=>notify(error instanceof Error ? error.message : '分享版下载失败')),
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "download",
+                                                    size: 15
+                                                }),
+                                                "下载分享版"
+                                            ]
+                                        }) : null,
+                                        /*#__PURE__*/ _jsxs("button", {
+                                            type: "button",
+                                            className: "danger",
+                                            onClick: ()=>askDeleteItems([
+                                                    viewerItem.id
+                                                ]),
+                                            children: [
+                                                /*#__PURE__*/ _jsx(Icon, {
+                                                    name: "trash",
+                                                    size: 15
+                                                }),
+                                                "删除"
+                                            ]
+                                        })
+                                    ]
+                                })
+                            ]
+                        })
+                    ]
+                })
+            }),
+            compareState && /*#__PURE__*/ _jsx(CompareViewer, {
+                item: compareState.item,
+                source: compareState.source,
+                parent: compareState.parent,
+                Icon,
+                onClose: ()=>setCompareState(null)
+            }),
+            editor && /*#__PURE__*/ _jsx(EditorModal, {
+                editor: editor,
+                editModelOptions: availableEditModels,
+                upscaleModelOptions: availableUpscaleModels,
+                defaultUpscaleModel: defaultUpscaleModel,
+                defaultProviderId: state.settings.defaultProviderId,
+                defaultProviderName: defaultProvider?.name,
+                defaultImageModelId: state.settings.defaultImageModelId,
+                upscaleSourceSize: upscaleSourceSize,
+                upscaleTargetPreview: upscaleTargetPreview,
+                onChange: (next)=>setEditor(next),
+                onClose: ()=>{
+                    setEditorMaskOpen(false);
+                    setEditor(null);
+                },
+                onLocalEdit: ()=>setEditorMaskOpen(true),
+                onOpenProviders: ()=>{
+                    setEditorMaskOpen(false);
+                    setEditor(null);
+                    setSection('providers');
+                },
+                onSubmit: runEditor
+            }),
+            editorMaskOpen && editor?.mode === 'edit' && /*#__PURE__*/ _jsx(LocalEditEditor, {
+                imageUrl: editor.item.url,
+                initialMaskDataUrl: editor.mask || undefined,
+                initialPrompt: editor.prompt,
+                initialAnnotations: editor.annotations || [],
+                initialFeather: editor.feather || 0,
+                onCancel: ()=>setEditorMaskOpen(false),
+                onApply: (dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl)=>{
+                    setEditor((current)=>current ? {
+                            ...current,
+                            mask: dataUrl,
+                            prompt,
+                            annotations,
+                            feather,
+                            sourceImageDataUrl: moveGuideDataUrl || undefined,
+                            sourceUrl: undefined
+                        } : current);
+                    setEditorMaskOpen(false);
+                    notify(`局部编辑范围已设置${coverage ? `（覆盖 ${Math.round(coverage * 100)}%）` : ''}，提交修改时会一并发送`);
+                }
+            }),
+            selectionPush && section === 'agent' && /*#__PURE__*/ _jsx(AgentSelectionPush, {
+                selection: selectionPush,
+                availableVideoModelCount: availableVideoModels.length,
+                Icon: Icon,
+                onPushImage: (navigate)=>pushTextToGenerate(selectionPush.text, navigate),
+                onPushVideo: (navigate)=>pushTextToVideo(selectionPush.text, navigate)
+            }),
+            supportOpen && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(SupportModal, {
+                tab: supportTab,
+                Icon: Icon,
+                onTabChange: setSupportTab,
+                onClose: ()=>setSupportOpen(false),
+                onCopyGroup: async ()=>{
+                    try {
+                        await navigator.clipboard.writeText('1104660815');
+                        notify('QQ群号已复制：1104660815');
+                    } catch {
+                        notify('QQ群：1104660815');
+                    }
+                },
+                onCopyWechat: copyAuthorWechat
+            }), document.body),
+            sharePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(SharePreviewModal, {
+                preview: sharePreview,
+                Icon: Icon,
+                onClose: ()=>setSharePreview(null),
+                onDownload: downloadSharePreview
+            }), document.body),
+            manualModelProvider && /*#__PURE__*/ _jsx(ManualModelDialog, {
+                providerName: manualModelProvider.name,
+                form: manualModelForm,
+                busy: manualModelBusy,
+                Icon: Icon,
+                onChange: (patch)=>setManualModelForm((current)=>({ ...current, ...patch })),
+                onClose: ()=>setManualModelProvider(null),
+                onSubmit: addManualModel
+            }),
+            confirmState && /*#__PURE__*/ _jsx(ConfirmDialog, {
+                state: confirmState,
+                Icon: Icon,
+                onClose: ()=>setConfirmState(null),
+                onConfirm: async ()=>{
+                    const action = confirmState.action;
+                    setConfirmState(null);
+                    await action();
+                }
+            }),
+             outpaintEditor && /*#__PURE__*/ _jsx(OutpaintEditor, {
+                 item: outpaintEditor.item,
+                 model: selectedGenerateModel?.capabilities.includes('generate') ? selectedGenerateModel : defaultImageModel || availableGenerationModels[0] || null,
+                 onClose: ()=>setOutpaintEditor(null),
+                 onApply: publishOutpaintReference,
+                 onApplyLocal: saveLocalImageEdit,
+                 onNotify: notify
+             }),
+             chatFilePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(ChatFilePreviewDialog, {
+                 file: chatFilePreview,
+                 Icon,
+                 onClose: ()=>setChatFilePreview(null)
+             }), document.body),
+             messageReferencePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(MessageReferencePreviewModal, {
+                preview: {
+                    ...messageReferencePreview,
+                    url: creativeReferenceUrl(messageReferencePreview)
+                },
+                Icon,
+                onClose: ()=>setMessageReferencePreview(null)
+            }), document.body),
+            angleOpenBusy && /*#__PURE__*/ _jsxs("div", {
+                className: "angle-open-loading",
+                role: "status",
+                "aria-live": "polite",
+                children: [
+                    /*#__PURE__*/ _jsx("span", {
+                        className: "mini-loader"
+                    }),
+                    /*#__PURE__*/ _jsxs("div", {
+                        children: [
+                            /*#__PURE__*/ _jsx("strong", {
+                                children: "正在打开角度控制台"
+                            }),
+                            /*#__PURE__*/ _jsx("small", {
+                                children: "正在准备参考图，请稍候…"
+                            })
+                        ]
+                    })
+                ]
+            }),
+            angleResultToast && /*#__PURE__*/ _jsxs("div", {
+                className: "angle-result-toast",
+                role: "status",
+                "aria-live": "polite",
+                children: [
+                    /*#__PURE__*/ _jsx("span", {
+                        className: "angle-result-toast-mark",
+                        children: "✓"
+                    }),
+                    /*#__PURE__*/ _jsxs("div", {
+                        children: [
+                            /*#__PURE__*/ _jsx("strong", {
+                                children: "角度结果已生成"
+                            }),
+                            /*#__PURE__*/ _jsx("small", {
+                                children: "你的图已经生好了，可继续调整或查看结果。"
+                            })
+                        ]
+                    }),
+                    /*#__PURE__*/ _jsx("button", {
+                        type: "button",
+                        onClick: openAngleResultFromToast,
+                        children: "查看结果"
+                    }),
+                    /*#__PURE__*/ _jsx("button", {
+                        type: "button",
+                        className: "angle-result-toast-close",
+                        onClick: ()=>setAngleResultToast(null),
+                        "aria-label": "关闭提醒",
+                        children: "\xd7"
+                    })
+                ]
+            }),
+            toast && /*#__PURE__*/ _jsx("div", {
+                className: "toast",
+                children: toast
+            })
+        ]
+    });
+}

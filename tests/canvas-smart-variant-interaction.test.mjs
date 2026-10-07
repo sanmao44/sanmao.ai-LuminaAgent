@@ -1,0 +1,47 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const source = readFileSync(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
+const dialog = readFileSync(new URL("../components/canvas/CanvasSmartVariantDialog.tsx", import.meta.url), "utf8");
+const planningSource = readFileSync(new URL("../lib/canvas/smart-variant.ts", import.meta.url), "utf8");
+
+test("smart variant portal isolates native control events from canvas gestures", () => {
+  const portal = dialog;
+  for (const event of ["PointerDown", "PointerMove", "PointerUp", "Click", "DoubleClick", "Wheel"]) {
+    assert.ok(portal.includes(`on${event}={(event) => event.stopPropagation()}`));
+  }
+  assert.ok(source.includes("if (!event.currentTarget.contains(event.target as Node)) return;"));
+  assert.ok(portal.includes("sources.map"));
+  assert.ok(portal.includes("<article key={index}>"));
+});
+
+test("smart variant apply uses the session target instead of current selection", () => {
+  const apply = source.slice(source.indexOf("const applySmartVariant ="), source.indexOf("const groupQuickActions ="));
+  assert.ok(apply.includes('smartVariantSession.current?.nodeId'));
+  assert.ok(apply.includes("node.id !== target.id"));
+  assert.ok(!apply.includes("selectedSingle"));
+});
+
+test("smart variant planning locks one output to each source unit and retries invalid mappings", () => {
+  const planning = planningSource;
+  const open = source.slice(source.indexOf("const openSmartVariant ="), source.indexOf("const applySmartVariant ="));
+  assert.ok(planning.includes("每个 sourceId 恰好生成一条变体"));
+  assert.ok(planning.includes("禁止拆分一段为多条、合并多段为一条、遗漏或编造段落"));
+  assert.ok(planning.includes("variants.length !== sourceUnits.length"));
+  assert.ok(planning.includes("new Set(sourceIds).size !== sourceUnits.length"));
+  assert.ok(open.includes('source.id !== "shared-prompt"'));
+  assert.ok(open.includes("smartVariantPlanningPrompt(sourceUnits, sharedPrompt, repairReason)"));
+});
+
+test("smart variant analysis has a bounded, cancellable request path", () => {
+  const open = source.slice(source.indexOf("const cancelSmartVariant ="), source.indexOf("const applySmartVariant ="));
+  const portal = dialog;
+  assert.ok(planningSource.includes("export const SMART_VARIANT_MAX_WAIT_MS = 75_000"));
+  assert.ok(open.includes("const controller = new AbortController()"));
+  assert.ok(open.includes("window.setTimeout"));
+  assert.ok(open.includes("generateCanvasAgent({"));
+  assert.ok(open.includes("signal: controller.signal"));
+  assert.ok(portal.includes("停止分析"));
+  assert.ok(portal.includes("onClose"));
+});

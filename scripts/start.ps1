@@ -1,0 +1,1383 @@
+﻿param(
+  [int]$Port = 0,
+  [switch]$NonInteractive = $false,
+  [switch]$Lan = $false,
+  [switch]$ForceRestart = $false,
+  [switch]$FreeRelay = $false,
+  [switch]$ForceBuild = $false,
+  [switch]$SkipBuild = $false,
+  [string]$OperationToken = ''
+)
+
+$ErrorActionPreference = 'Stop'
+# Load the Windows security cmdlets explicitly before reading the DPAPI-backed
+# LAN password. Prefer the inbox Windows PowerShell module by absolute path:
+# Codex can add a PowerShell 7 compatibility module to PSModulePath, and that
+# module conflicts with the Windows PowerShell type data during auto-loading.
+$securityModulePath = Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
+if (Test-Path -LiteralPath $securityModulePath) {
+  Import-Module -Name $securityModulePath -ErrorAction Stop
+} else {
+  Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+}
+$script:NonInteractive = $NonInteractive.IsPresent
+try { $Host.UI.RawUI.WindowTitle = 'SANMAO.AI 启动器' } catch {}
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
+$root = Split-Path -Parent $PSScriptRoot
+Set-Location $root
+$launcherCommonPath = Join-Path $PSScriptRoot 'launcher-common.ps1'
+. $launcherCommonPath
+$dataDir = Resolve-SanmaoDataDir -Root $root
+$script:MediaRelayRequired = $false
+$requestedPort = 0
+if ($Port -ge 1024 -and $Port -le 65525) {
+  $requestedPort = $Port
+} elseif ($env:SANMAO_PORT -match '^\d+$') {
+  $requestedPort = [int]$env:SANMAO_PORT
+}
+$portStart = if ($requestedPort -ge 1024 -and $requestedPort -le 65525) { $requestedPort } else { 3210 }
+$portEnd = $portStart + 10
+$portRange = $portStart..$portEnd
+$legacyPortRange = 3000..3010
+$networkMode = if ($Lan.IsPresent) { 'lan' } else { 'local' }
+$bindHost = if ($Lan.IsPresent) { '0.0.0.0' } else { '127.0.0.1' }
+$lanPasswordPath = Join-Path $dataDir 'lan-password'
+$legacyMarkerPath = Join-Path $env:TEMP 'sanmao-ai-studio-instance.lock'
+$script:serverProcess = $null
+$serverStdoutPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.out.log'
+$serverStderrPath = Join-Path $env:TEMP 'sanmao-ai-studio-server.err.log'
+
+. (Join-Path $PSScriptRoot 'free-relay-common.ps1')
+# SANMAO_DATA_DIR remains the explicit all-data override; otherwise only the
+# provider configuration follows a linked worktree back to the primary checkout.
+$env:SANMAO_PROVIDER_CONFIG_DIR = Resolve-SanmaoProviderConfigDir -Root $root
+Initialize-SanmaoLauncher -Root $root -PortStart $portStart -PortEnd $portEnd -LegacyPortStart 3000 -LegacyPortEnd 3010 -LogPath (Join-Path $dataDir 'logs\launcher.log')
+
+$operationLockPath = Join-Path $dataDir 'update-staging\update.lock'
+function Assert-SanmaoOperationLock {
+  if (-not (Test-Path -LiteralPath $operationLockPath)) { return }
+  try {
+    $lock = Get-Content -LiteralPath $operationLockPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    $lockToken = [string]$lock.token
+    if ($OperationToken -and $lockToken -and $OperationToken -eq $lockToken) { return }
+    $ownerPid = [int]$lock.pid
+    $ownerAlive = $ownerPid -gt 0 -and (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)
+    $ageMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - ([DateTimeOffset]$lock.startedAt).ToUnixTimeMilliseconds()
+    if (-not $ownerAlive -and $ageMs -gt 10 * 60 * 1000) {
+      Remove-Item -LiteralPath $operationLockPath -Force -ErrorAction SilentlyContinue
+      return
+    }
+  } catch {
+    if (Test-SanmaoOperationLockStale -Path $operationLockPath) {
+      Remove-Item -LiteralPath $operationLockPath -Force -ErrorAction SilentlyContinue
+      return
+    }
+  }
+  if (Test-SanmaoOperationLockStale -Path $operationLockPath) {
+    Remove-Item -LiteralPath $operationLockPath -Force -ErrorAction SilentlyContinue
+    return
+  }
+  Fail '已有更新或重启任务正在进行，请稍候再试。'
+}
+
+function Get-SanmaoSha256([string]$Path) {
+  $sha256 = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+      return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-', '')
+    } finally {
+      $stream.Dispose()
+    }
+  } finally {
+    $sha256.Dispose()
+  }
+}
+function Get-SanmaoDependencyFingerprint {
+  # package-lock.json carries the app version in its root entry, so every release
+  # rewrote it and forced a full node_modules wipe even when no dependency moved.
+  # Hash the declared dependency specifiers instead.
+  $packageJsonPath = Join-Path $root 'package.json'
+  if (-not (Test-Path -LiteralPath $packageJsonPath -PathType Leaf)) { return '' }
+  try {
+    $package = Get-Content -LiteralPath $packageJsonPath -Raw -ErrorAction Stop | ConvertFrom-Json
+  } catch {
+    return ''
+  }
+  $entries = [System.Collections.Generic.List[string]]::new()
+  foreach ($section in @('dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies')) {
+    $dependencies = $package.$section
+    if ($null -eq $dependencies) { continue }
+    # Sort ordinal (not culture aware) so the fingerprint stays identical across
+    # machines, and matches the ordering Node uses for the same package.json.
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($property in $dependencies.PSObject.Properties) { $names.Add($property.Name) }
+    $names.Sort([System.StringComparer]::Ordinal)
+    foreach ($name in $names) {
+      [void]$entries.Add(('{0}/{1}@{2}' -f $section, $name, [string]$dependencies.$name))
+    }
+  }
+  $sha256 = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $payload = [System.Text.Encoding]::UTF8.GetBytes(($entries -join "`n"))
+    return ([System.BitConverter]::ToString($sha256.ComputeHash($payload))).Replace('-', '')
+  } finally {
+    $sha256.Dispose()
+  }
+}
+
+function Test-SanmaoFfmpegBinary([string]$Path) {
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+  $previousPreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $Path -version 1>$null 2>$null
+    return $LASTEXITCODE -eq 0
+  } catch {
+    return $false
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+}
+
+function Get-SanmaoFfmpegAsset {
+  # Mirrors ffmpeg-static's own resolution (release tag, base name, override URL)
+  # so the launcher fetches exactly the archive the package expects.
+  $releaseTag = 'b6.0'
+  $executableBaseName = 'ffmpeg'
+  $binariesBaseUrl = 'https://github.com/eugeneware/ffmpeg-static/releases/download'
+  # GitHub Release 在国内网络经常连接超时；主地址失败后自动改用公共镜像。
+  $fallbackBaseUrl = 'https://registry.npmmirror.com/-/binary/ffmpeg-static'
+  $customBaseUrl = ''
+  $packageJsonPath = Join-Path $root 'node_modules\ffmpeg-static\package.json'
+  if (Test-Path -LiteralPath $packageJsonPath -PathType Leaf) {
+    try {
+      $config = (Get-Content -LiteralPath $packageJsonPath -Raw -ErrorAction Stop | ConvertFrom-Json).'ffmpeg-static'
+      if ($config) {
+        if ($config.'binary-release-tag') { $releaseTag = [string]$config.'binary-release-tag' }
+        if ($config.'executable-base-name') { $executableBaseName = [string]$config.'executable-base-name' }
+        $urlEnvName = [string]$config.'binaries-url-env-var'
+        if ($urlEnvName) {
+          $urlEnvItem = Get-Item -LiteralPath "env:$urlEnvName" -ErrorAction SilentlyContinue
+          if ($urlEnvItem -and $urlEnvItem.Value) { $customBaseUrl = [string]$urlEnvItem.Value }
+        }
+      }
+    } catch {}
+  }
+  $architecture = switch ($env:PROCESSOR_ARCHITECTURE) {
+    'ARM64' { 'arm64' }
+    'x86' { 'ia32' }
+    default { 'x64' }
+  }
+  $fileName = '{0}-win32-{1}.gz' -f $executableBaseName, $architecture
+  if ($customBaseUrl) {
+    # 用户显式指定了下载源，就只用它，不再回退到其他公共源。
+    $binariesBaseUrl = $customBaseUrl
+    $fallbackBaseUrl = ''
+  }
+  $urls = [System.Collections.Generic.List[string]]::new()
+  foreach ($baseUrl in @($binariesBaseUrl, $fallbackBaseUrl)) {
+    if ($baseUrl) { $urls.Add(('{0}/{1}/{2}' -f $baseUrl.TrimEnd('/'), $releaseTag, $fileName)) }
+  }
+  return [pscustomobject]@{
+    Release = $releaseTag
+    FileName = $fileName
+    Urls = $urls.ToArray()
+  }
+}
+
+function Get-SanmaoFileSize([string]$Path) {
+  if (Test-Path -LiteralPath $Path -PathType Leaf) { return [long](Get-Item -LiteralPath $Path).Length }
+  return 0
+}
+
+function Get-SanmaoFfmpegArchivePath([object]$Asset) {
+  return Join-Path $env:TEMP ('sanmao-{0}-{1}' -f $Asset.Release, $Asset.FileName)
+}
+
+function New-SanmaoFfmpegRequest([object]$Asset, [string]$Url) {
+  $request = [System.Net.HttpWebRequest]::Create($Url)
+  $proxyUrl = $env:HTTPS_PROXY
+  if (-not $proxyUrl) { $proxyUrl = $env:HTTP_PROXY }
+  if ($proxyUrl) {
+    if ($proxyUrl -notmatch '^[a-z]+://') { $proxyUrl = 'http://' + $proxyUrl }
+    $request.Proxy = New-Object System.Net.WebProxy($proxyUrl)
+  } else {
+    $request.Proxy = [System.Net.WebRequest]::DefaultWebProxy
+  }
+  # 连接/读取都设上限，主地址不通时尽快让出位置给备用镜像。
+  $request.Timeout = 15000
+  $request.ReadWriteTimeout = 45000
+  return $request
+}
+
+function Test-SanmaoFfmpegArchiveComplete([object]$Asset, [string]$ArchivePath) {
+  $cachedSize = Get-SanmaoFileSize $ArchivePath
+  if ($cachedSize -le 0) { return $false }
+  foreach ($url in $Asset.Urls) {
+    try {
+      $request = New-SanmaoFfmpegRequest -Asset $Asset -Url $url
+      $request.Method = 'HEAD'
+      $response = $request.GetResponse()
+      try {
+        if ([long]$response.ContentLength -eq $cachedSize) { return $true }
+      } finally {
+        $response.Dispose()
+      }
+    } catch {
+    }
+  }
+  return $false
+}
+
+function Add-SanmaoFfmpegArchive([object]$Asset, [string]$Url, [string]$ArchivePath, [switch]$IsLastSource) {
+  # Download the rest of the archive, resuming from the bytes already on disk.
+  # Unstable links (a dropped proxy stream) then cost seconds instead of the
+  # whole 29 MB again. The caller already ruled out a complete local archive.
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    $downloaded = Get-SanmaoFileSize $ArchivePath
+    try {
+      $request = New-SanmaoFfmpegRequest -Asset $Asset -Url $Url
+      if ($downloaded -gt 0) { $request.AddRange([long]$downloaded) }
+      $response = $request.GetResponse()
+      try {
+        $resume = ($downloaded -gt 0) -and ([int]$response.StatusCode -eq 206)
+        if (-not $resume) { $downloaded = 0 }
+        $expectedTotal = $downloaded + [long]$response.ContentLength
+        $mode = if ($resume) { [System.IO.FileMode]::Append } else { [System.IO.FileMode]::Create }
+        $input = $response.GetResponseStream()
+        try {
+          $output = [System.IO.File]::Open($ArchivePath, $mode, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+          try {
+            $buffer = New-Object byte[] 262144
+            $written = $downloaded
+            $lastReport = Get-Date
+            while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
+              $output.Write($buffer, 0, $read)
+              $written += $read
+              if (((Get-Date) - $lastReport).TotalSeconds -ge 2) {
+                $lastReport = Get-Date
+                Write-Host -NoNewline ("`r  已下载 {0:N1}/{1:N1} MB   " -f ($written / 1MB), ($expectedTotal / 1MB))
+              }
+            }
+          } finally {
+            $output.Dispose()
+          }
+        } finally {
+          $input.Dispose()
+        }
+      } finally {
+        $response.Dispose()
+      }
+      Write-Host ''
+      if ((Get-SanmaoFileSize $ArchivePath) -ge $expectedTotal) { return $true }
+      Write-Host ('FFmpeg 组件下载未完成（{0:N1} MB），正在重试…' -f ((Get-SanmaoFileSize $ArchivePath) / 1MB)) -ForegroundColor Yellow
+    } catch {
+      Write-Host ''
+      $failed = $_.Exception
+      if ($failed.InnerException) { $failed = $failed.InnerException }
+      # 416 means the local archive is already at least as long as the remote one,
+      # so let the caller try to decompress it instead of downloading it again.
+      if ($failed -is [System.Net.WebException] -and $failed.Response -and [int]$failed.Response.StatusCode -eq 416) { return $true }
+      Write-Host ('FFmpeg 组件下载中断：{0}' -f $failed.Message) -ForegroundColor Yellow
+      if ((-not $IsLastSource) -and ((Get-SanmaoFileSize $ArchivePath) -le 0)) {
+        # 完全连不上的下载源重试没有意义，直接交给下一个候选地址。
+        break
+      }
+    }
+  }
+  return $false
+}
+
+function Save-SanmaoFfmpegArchive([object]$Asset, [string]$ArchivePath) {
+  # 本地已有完整归档就直接复用，不再请求网络。
+  if (Test-SanmaoFfmpegArchiveComplete -Asset $Asset -ArchivePath $ArchivePath) { return $true }
+  # 依次尝试主地址和备用镜像；两个源是同一份 release 资产，切换时重新下载，
+  # 避免把不同来源的字节拼在同一个归档里。
+  $urls = @($Asset.Urls)
+  for ($index = 0; $index -lt $urls.Count; $index++) {
+    $url = $urls[$index]
+    if ($index -gt 0) {
+      Write-Host ('主下载地址不可用，改用备用镜像 {0} 继续。' -f ([uri]$url).Host) -ForegroundColor Yellow
+      Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue
+    }
+    if (Add-SanmaoFfmpegArchive -Asset $Asset -Url $url -ArchivePath $ArchivePath -IsLastSource:($index -eq ($urls.Count - 1))) { return $true }
+  }
+  return $false
+}
+
+function Install-SanmaoFfmpegBinary([string]$TargetPath) {
+  # ffmpeg-static's own installer streams the archive through a pipeline that is
+  # far slower than a plain request on some networks. Fetch the archive here and
+  # decompress it, so npm skips its download because the binary already exists.
+  $asset = Get-SanmaoFfmpegAsset
+  $targetDirectory = Split-Path -Parent $TargetPath
+  if (-not (Test-Path -LiteralPath $targetDirectory)) { New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null }
+  $archivePath = Get-SanmaoFfmpegArchivePath $asset
+  Write-Host ('正在获取 FFmpeg 组件（{0}，约 29 MB）…' -f $asset.Release) -ForegroundColor Yellow
+  if (-not (Save-SanmaoFfmpegArchive -Asset $asset -ArchivePath $archivePath)) { return $false }
+  # Keep a .exe extension on the temporary file: PowerShell only executes files
+  # it recognizes, so validation would silently pass/fail on any other extension.
+  $executableName = [System.IO.Path]::GetFileNameWithoutExtension($TargetPath)
+  Get-ChildItem -LiteralPath $targetDirectory -Filter ('{0}.partial-*.exe' -f $executableName) -File -Force -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+  $temporaryPath = Join-Path $targetDirectory ('{0}.partial-{1}.exe' -f $executableName, $PID)
+  $startedAt = Get-Date
+  Write-Host '正在解压 FFmpeg 组件…' -ForegroundColor Yellow
+  try {
+    $archiveStream = [System.IO.File]::OpenRead($archivePath)
+    try {
+      $gzip = New-Object System.IO.Compression.GZipStream($archiveStream, [System.IO.Compression.CompressionMode]::Decompress)
+      try {
+        $output = [System.IO.File]::Create($temporaryPath)
+        try {
+          $gzip.CopyTo($output)
+        } finally {
+          $output.Dispose()
+        }
+      } finally {
+        $gzip.Dispose()
+      }
+    } finally {
+      $archiveStream.Dispose()
+    }
+  } catch {
+    Write-Host ('FFmpeg 组件解压失败：{0}' -f $_.Exception.Message) -ForegroundColor Yellow
+    Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  if (-not (Test-SanmaoFfmpegBinary $temporaryPath)) {
+    Write-Host 'FFmpeg 组件安装结果不可用，改用 npm 自带方式安装。' -ForegroundColor Yellow
+    Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  Move-Item -LiteralPath $temporaryPath -Destination $TargetPath -Force
+  Write-Host ('FFmpeg 已就绪（用时 {0:N0} 秒）。' -f ((Get-Date) - $startedAt).TotalSeconds) -ForegroundColor Green
+  return $true
+}
+
+
+function Get-SanmaoSourceFingerprint {
+  $files = @()
+  foreach ($directory in @('app', 'components', 'lib', 'public')) {
+    $path = Join-Path $root $directory
+    if (Test-Path -LiteralPath $path) { $files += Get-ChildItem -LiteralPath $path -Recurse -File -Force -ErrorAction SilentlyContinue }
+  }
+  foreach ($fileName in @('next.config.ts', 'next.config.js', 'tsconfig.json', 'package.json', 'package-lock.json')) {
+    $path = Join-Path $root $fileName
+    if (Test-Path -LiteralPath $path -PathType Leaf) { $files += Get-Item -LiteralPath $path }
+  }
+  $files += Get-ChildItem -LiteralPath $root -Filter '.env*' -File -Force -ErrorAction SilentlyContinue
+  $hash = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    # Sort by full path using an ordinal (case-sensitive) comparer so the ordering
+    # exactly matches the Node runtime's default Array.prototype.sort() ordering.
+    $fullPaths = [System.Collections.Generic.List[string]]::new()
+    foreach ($file in $files) { [void]$fullPaths.Add($file.FullName) }
+    $fullPaths.Sort([System.Collections.Generic.Comparer[string]]::Create([System.Comparison[string]]{ param($a,$b) [string]::CompareOrdinal($a,$b) }))
+    foreach ($fullPath in $fullPaths) {
+      $relative = $fullPath.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/'
+      $pathBytes = [System.Text.Encoding]::UTF8.GetBytes($relative)
+      $nullBytes = [byte[]](0)
+      $contentBytes = [System.IO.File]::ReadAllBytes($fullPath)
+      [void]$hash.TransformBlock($pathBytes, 0, $pathBytes.Length, $pathBytes, 0)
+      [void]$hash.TransformBlock($nullBytes, 0, 1, $nullBytes, 0)
+      if ($contentBytes.Length -gt 0) { [void]$hash.TransformBlock($contentBytes, 0, $contentBytes.Length, $contentBytes, 0) }
+      [void]$hash.TransformBlock($nullBytes, 0, 1, $nullBytes, 0)
+    }
+    [void]$hash.TransformFinalBlock([byte[]]@(), 0, 0)
+    return ([System.BitConverter]::ToString($hash.Hash)).Replace('-', '').ToLowerInvariant()
+  } finally { $hash.Dispose() }
+}
+
+# Releases before 0.7.5 overwrote apply-update.ps1 with their running updater
+# after copying a new archive. Restore the versioned bootstrap from the new
+# archive as soon as the restarted launcher runs, so the following update uses
+# the fixed core updater instead of the legacy one.
+try {
+  $updaterBootstrap = Join-Path $PSScriptRoot 'apply-update-bootstrap.ps1'
+  $updaterEntry = Join-Path $PSScriptRoot 'apply-update.ps1'
+  if (Test-Path -LiteralPath $updaterBootstrap) {
+    $bootstrapHash = Get-SanmaoSha256 $updaterBootstrap
+    $entryHash = if (Test-Path -LiteralPath $updaterEntry) { Get-SanmaoSha256 $updaterEntry } else { '' }
+    if ($bootstrapHash -ne $entryHash) {
+      Copy-Item -LiteralPath $updaterBootstrap -Destination $updaterEntry -Force
+      Write-SanmaoLauncherLog '已恢复当前版本的更新器入口。' 'INFO'
+    }
+  }
+} catch {
+  Write-SanmaoLauncherLog "恢复更新器入口失败：$($_.Exception.Message)" 'WARN'
+}
+Write-SanmaoLauncherLog "启动器开始运行，根目录：$root，端口范围：$portStart..$portEnd" 'INFO'
+
+try {
+  $selfProcess = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID) -ErrorAction Stop
+  $parentId = [int]$selfProcess.ParentProcessId
+  $parentProcess = if ($parentId -gt 0) { Get-CimInstance Win32_Process -Filter ('ProcessId=' + $parentId) -ErrorAction SilentlyContinue } else { $null }
+  $switchList = @()
+  if ($Lan.IsPresent) { $switchList += '-Lan' }
+  if ($FreeRelay.IsPresent) { $switchList += '-FreeRelay' }
+  if ($NonInteractive.IsPresent) { $switchList += '-NonInteractive' }
+  if ($ForceBuild.IsPresent) { $switchList += '-ForceBuild' }
+  if ($SkipBuild.IsPresent) { $switchList += '-SkipBuild' }
+  if ($ForceRestart.IsPresent) { $switchList += '-ForceRestart' }
+  $switchText = if ($switchList.Count -gt 0) { $switchList -join ' ' } else { '(none)' }
+  if ($parentProcess) {
+    $parentCommand = ([string]$parentProcess.CommandLine) -replace '[\r\n]+', ' '
+    if ($parentCommand.Length -gt 300) { $parentCommand = $parentCommand.Substring(0, 300) }
+    $parentText = $parentProcess.Name + ' PID ' + $parentId + ' cmd=' + $parentCommand
+  } else {
+    $parentText = 'PID ' + $parentId + ' exited'
+  }
+  Write-SanmaoLauncherLog ('本次入参：' + $switchText + '；发起进程：' + $parentText) 'INFO'
+} catch {}
+
+function Test-SanmaoServerAtPort([int]$port) {
+  return Test-SanmaoHealthEndpoint -Port $port
+}
+
+function Test-SanmaoMediaRelayRequired {
+  $dataRoot = Resolve-SanmaoProviderConfigDir -Root $root
+  $statePath = Join-Path $dataRoot 'state.json'
+  if (-not (Test-Path -LiteralPath $statePath)) { return $false }
+  $policyPath = Join-Path $PSScriptRoot 'media-relay-policy.mjs'
+  if (-not (Test-Path -LiteralPath $policyPath -PathType Leaf)) { return $false }
+  try { & node $policyPath $statePath; return $LASTEXITCODE -eq 0 } catch { return $false }
+}
+
+$script:MediaRelayRequired = Test-SanmaoMediaRelayRequired
+
+function Get-SanmaoServerInfo([int]$port) {
+  $health = Invoke-SanmaoLocalHttp -Port $port -Path '/api/health' -TimeoutMs 1000
+  if (-not $health.Ok -or $health.StatusCode -lt 200 -or $health.StatusCode -ge 500) { return $null }
+  try {
+    $data = $health.Content | ConvertFrom-Json
+    if ($data.service -ne 'sanmao-ai-studio') { return $null }
+    $relayMode = 'unknown'
+    $relay = Invoke-SanmaoLocalHttp -Port $port -Path '/api/relay/status' -TimeoutMs 1000
+    if ($relay.Ok -and $relay.StatusCode -ge 200 -and $relay.StatusCode -lt 300) {
+      try {
+        $relayData = $relay.Content | ConvertFrom-Json
+        if ($relayData.mode -in @('relay', 'self-hosted', 'unavailable')) { $relayMode = [string]$relayData.mode }
+      } catch {}
+    }
+    return [pscustomobject]@{
+      Port = $port
+      NetworkMode = if ($data.networkMode -eq 'lan') { 'lan' } else { 'local' }
+      LifecycleEnabled = [bool]$data.lifecycleEnabled
+      MediaRelayMode = $relayMode
+    }
+  } catch { return $null }
+}
+
+function Get-SanmaoLanAddresses {
+  $values = @()
+  try {
+    if (Get-Command Get-NetIPAddress -ErrorAction SilentlyContinue) {
+      $values = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Select-Object -ExpandProperty IPAddress)
+    }
+  } catch {}
+  if ($values.Count -eq 0) {
+    try {
+      $values = @([System.Net.Dns]::GetHostEntry([System.Net.Dns]::GetHostName()).AddressList |
+        Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork } |
+        ForEach-Object { $_.IPAddressToString })
+    } catch {}
+  }
+  return @($values |
+    Where-Object { $_ -match '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' } |
+    Sort-Object -Unique)
+}
+
+function Test-SanmaoPrivateFirewallRule([int]$port) {
+  try {
+    if (-not (Get-Command Get-NetFirewallRule -ErrorAction SilentlyContinue)) { return $null }
+    $rules = @(Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow -Profile Private -ErrorAction Stop)
+    foreach ($rule in $rules) {
+      $filters = @(Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule -ErrorAction SilentlyContinue)
+      foreach ($filter in $filters) {
+        $localPort = [string]$filter.LocalPort
+        if ($localPort -eq 'Any' -or @($localPort -split ',' | Where-Object { $_.Trim() -eq [string]$port }).Count -gt 0) { return $true }
+      }
+    }
+    return $false
+  } catch { return $null }
+}
+
+function Show-SanmaoLanAccess([int]$port) {
+  $addresses = @(Get-SanmaoLanAddresses)
+  if ($addresses.Count -eq 0) {
+    Write-Host '没有检测到私有局域网 IPv4 地址，请确认主机已连接 WiFi 或网线。' -ForegroundColor Yellow
+  } else {
+    Write-Host '其他电脑请访问以下局域网画布地址：' -ForegroundColor Green
+    foreach ($address in $addresses) { Write-Host "  http://$address`:$port/canvas" -ForegroundColor White }
+  }
+  $firewall = Test-SanmaoPrivateFirewallRule $port
+  if ($firewall -eq $false) {
+    Write-Host 'Windows 防火墙可能尚未允许此端口。若其他电脑打不开，请在“管理员 PowerShell”执行：' -ForegroundColor Yellow
+    Write-Host "New-NetFirewallRule -DisplayName 'SANMAO.AI LAN $port' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -Profile Private" -ForegroundColor DarkGray
+  } elseif ($null -eq $firewall) {
+    Write-Host '如其他电脑打不开，请确认 Windows 防火墙已允许此端口的“专用网络”入站访问。' -ForegroundColor Yellow
+  }
+  Write-Host '局域网模式仅建议在可信网络使用，不要将端口转发到公网。' -ForegroundColor DarkGray
+}
+
+function Test-LocalPortOpen([int]$port) {
+  try {
+    $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+    return [bool]($listeners | Where-Object { $_.Port -eq $port })
+  } catch {
+    try {
+      $client = New-Object System.Net.Sockets.TcpClient
+      $task = $client.ConnectAsync('127.0.0.1', $port)
+      if ($task.Wait(180)) {
+        $open = $client.Connected
+        $client.Dispose()
+        return $open
+      }
+      $client.Dispose()
+    } catch {}
+    return $false
+  }
+}
+
+function Get-ListeningPortSnapshot {
+  try {
+    $ports = @([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | ForEach-Object { [int]$_.Port })
+    if ($ports.Count -eq 0) { return -1 }
+    return $ports
+  } catch {
+    return $null
+  }
+}
+
+function Get-SanmaoNextProcessesAtPort([int]$port) {
+  return @(Get-SanmaoOwnedServerProcesses -Ports @($port))
+}
+
+function Test-SanmaoProcessAtPort([int]$port) {
+  return @((Get-SanmaoNextProcessesAtPort $port)).Count -gt 0
+}
+
+function Stop-SanmaoProcessAtPort([int]$port) {
+  foreach ($processItem in @(Get-SanmaoNextProcessesAtPort $port)) {
+    Stop-SanmaoOwnedProcess -Process $processItem | Out-Null
+  }
+}
+
+function Wait-SanmaoPortReleased([int]$port) {
+  return Wait-SanmaoPortsReleased -Ports @($port) -TimeoutMs 10000
+}
+
+function Test-SanmaoBuildStale {
+  if ($env:SANMAO_FORCE_BUILD -eq '1') { return $true }
+  $buildIdPath = Join-Path $root '.next\BUILD_ID'
+  if (-not (Test-Path -LiteralPath $buildIdPath)) { return $true }
+  $fingerprintPath = Join-Path $root '.next\.sanmao-source-fingerprint'
+  if (-not (Test-Path -LiteralPath $fingerprintPath -PathType Leaf)) { return $true }
+  try {
+    $builtFingerprint = (Get-Content -LiteralPath $fingerprintPath -Raw -ErrorAction Stop).Trim().ToLowerInvariant()
+    if (-not $builtFingerprint -or $builtFingerprint -ne (Get-SanmaoSourceFingerprint)) { return $true }
+    return $false
+  } catch { return $true }
+}
+
+function Get-SanmaoBuildId {
+  $buildIdPath = Join-Path $root '.next\BUILD_ID'
+  if (-not (Test-Path -LiteralPath $buildIdPath -PathType Leaf)) { return '' }
+  try { return (Get-Content -LiteralPath $buildIdPath -Raw -ErrorAction Stop).Trim() } catch { return '' }
+}
+
+function Test-SanmaoServedBuildStale {
+  $buildId = Get-SanmaoBuildId
+  $servedBuildIdPath = Join-Path $root '.next\.sanmao-running-build-id'
+  if ([string]::IsNullOrWhiteSpace($buildId) -or -not (Test-Path -LiteralPath $servedBuildIdPath -PathType Leaf)) { return $true }
+  try {
+    $servedBuildId = (Get-Content -LiteralPath $servedBuildIdPath -Raw -ErrorAction Stop).Trim()
+    if ($servedBuildId -ne $buildId) { return $true }
+    $servedSourcePath = Join-Path $root '.next\.sanmao-running-source-fingerprint'
+    $builtSourcePath = Join-Path $root '.next\.sanmao-source-fingerprint'
+    if (-not (Test-Path -LiteralPath $servedSourcePath -PathType Leaf) -or -not (Test-Path -LiteralPath $builtSourcePath -PathType Leaf)) { return $true }
+    return (Get-Content -LiteralPath $servedSourcePath -Raw -ErrorAction Stop).Trim() -ne (Get-Content -LiteralPath $builtSourcePath -Raw -ErrorAction Stop).Trim()
+  } catch { return $true }
+}
+
+function Test-SanmaoBuildArtifacts {
+  $requiredPaths = @(
+    (Join-Path $root '.next\BUILD_ID'),
+    (Join-Path $root '.next\prerender-manifest.json'),
+    (Join-Path $root '.next\routes-manifest.json'),
+    (Join-Path $root '.next\required-server-files.json')
+  )
+  foreach ($path in $requiredPaths) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+  }
+
+  # next start can report Ready and then exit if a manifest is still being
+  # written. Read both JSON files so the launcher never starts against a
+  # partially materialized production build.
+  foreach ($path in $requiredPaths[1..3]) {
+    try {
+      $content = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+      if ([string]::IsNullOrWhiteSpace($content)) { return $false }
+      $null = $content | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+      return $false
+    }
+  }
+  return $true
+}
+
+function Clear-SanmaoBuildArtifactMarkers {
+  # Clear the markers before a rebuild so a previous build cannot make the
+  # readiness check pass while Next.js is still replacing .next in the
+  # background.
+  foreach ($path in @(
+      (Join-Path $root '.next\BUILD_ID'),
+      (Join-Path $root '.next\prerender-manifest.json'),
+      (Join-Path $root '.next\routes-manifest.json'),
+      (Join-Path $root '.next\required-server-files.json')
+    )) {
+    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Remove-SanmaoStaleNextBuildLock {
+  # Next.js leaves .next/lock behind when a build is interrupted. Do not
+  # blindly delete it: an active build owns the file and must be allowed to
+  # finish. Opening it without sharing probes for a live owner; only an
+  # unowned lock is safe to remove.
+  $lockPath = Join-Path $root '.next\lock'
+  if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { return $true }
+  $stream = $null
+  try {
+    $stream = [System.IO.File]::Open(
+      $lockPath,
+      [System.IO.FileMode]::Open,
+      [System.IO.FileAccess]::ReadWrite,
+      [System.IO.FileShare]::None
+    )
+    $stream.Dispose()
+    $stream = $null
+    Remove-Item -LiteralPath $lockPath -Force -ErrorAction Stop
+    Write-SanmaoLauncherLog '已清理上次异常退出遗留的 Next.js 构建锁。' 'WARN'
+    return $true
+  } catch {
+    if ($stream) { try { $stream.Dispose() } catch {} }
+    return $false
+  }
+}
+
+function Wait-SanmaoNextBuildLock([int]$TimeoutMinutes = 30) {
+  $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+  $reported = $false
+  while (-not (Remove-SanmaoStaleNextBuildLock)) {
+    if (-not $reported) {
+      Write-Host '检测到另一个网页构建仍在运行，正在等待它完成。' -ForegroundColor Yellow
+      Write-SanmaoLauncherLog '检测到另一个 Next.js 构建持有 .next/lock，等待其完成。' 'WARN'
+      $reported = $true
+    }
+    if ((Get-Date) -ge $deadline) {
+      Fail "等待另一个网页构建超过 $TimeoutMinutes 分钟。请关闭占用此项目的其他构建窗口后重试。"
+    }
+    Start-Sleep -Seconds 2
+  }
+  if ($reported) { Start-Sleep -Milliseconds 500 }
+}
+
+function Wait-SanmaoBuildArtifacts([int]$TimeoutMs = 15000) {
+  $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+  do {
+    if (Test-SanmaoBuildArtifacts) { return $true }
+    Start-Sleep -Milliseconds 100
+  } while ((Get-Date) -lt $deadline)
+  return $false
+}
+
+# The running service itself is the source of truth. There is deliberately no
+# lock file for service lifetime: a stale launcher PID must not prevent a later
+# launch. The preflight mutex below only serializes setup and startup.
+function Find-ExistingServer {
+  $listeningPorts = Get-ListeningPortSnapshot
+  for ($port = $portStart; $port -le $portEnd; $port++) {
+    if ($null -ne $listeningPorts) {
+      if ($listeningPorts -notcontains $port) { continue }
+    } elseif (-not (Test-LocalPortOpen $port)) {
+      continue
+    }
+    $info = Get-SanmaoServerInfo $port
+    if ((Test-SanmaoProcessAtPort $port) -and $info) { return $info }
+  }
+  return 0
+}
+
+function Write-Step([string]$text) {
+  Write-Host ""
+  Write-Host "==> $text" -ForegroundColor Cyan
+}
+
+# The service binds to IPv4 loopback. Some Windows browsers/WebViews resolve
+# localhost to IPv6 ::1 first, which leaves the page unable to connect.
+function Get-SanmaoLocalUrl([int]$Port, [string]$Path = '') {
+  return "http://127.0.0.1:$Port$Path"
+}
+# 首次安装依赖时官方 npm 源在国内网络下常常只有几十 KB/s（首次要下载约 800 MB），
+# 用户会以为程序卡住了。这里做一次很短的探测，官方源慢就整体切到国内镜像；依赖仍由
+# package-lock.json 校验完整性。可用 SANMAO_NO_MIRROR=1 完全禁用镜像，用
+# SANMAO_NPM_REGISTRY 指定自定义源。
+function Test-SanmaoRemoteSourceFast([string]$Url, [double]$TimeoutSeconds) {
+  try {
+    $request = [System.Net.HttpWebRequest]::Create($Url)
+    $proxyUrl = $env:HTTPS_PROXY
+    if (-not $proxyUrl) { $proxyUrl = $env:HTTP_PROXY }
+    if ($proxyUrl) {
+      if ($proxyUrl -notmatch '^[a-z]+://') { $proxyUrl = 'http://' + $proxyUrl }
+      $request.Proxy = New-Object System.Net.WebProxy($proxyUrl)
+    } else {
+      $request.Proxy = [System.Net.WebRequest]::DefaultWebProxy
+    }
+    $request.Method = 'HEAD'
+    $request.Timeout = [int]($TimeoutSeconds * 1000)
+    $request.AllowAutoRedirect = $true
+    $request.UserAgent = 'SANMAO.AI-Launcher'
+    $response = $request.GetResponse()
+    $response.Close()
+    return $true
+  } catch [System.Net.WebException] {
+    # 能拿到响应（例如 404）说明网络本身是通的，只是路径不同。
+    if ($_.Exception.Response) { return $true }
+    return $false
+  } catch { return $false }
+}
+
+function Get-SanmaoNpmRegistry {
+  # 返回空字符串表示继续使用 npm 自身的默认源。
+  if ($env:SANMAO_NO_MIRROR -eq '1') { return '' }
+  if ($env:SANMAO_NPM_REGISTRY) { return $env:SANMAO_NPM_REGISTRY }
+  if (Test-SanmaoRemoteSourceFast 'https://registry.npmjs.org/-/ping' 1.2) { return '' }
+  Write-Host '官方 npm 源响应很慢，本次改用国内镜像 registry.npmmirror.com 下载依赖。' -ForegroundColor Yellow
+  Write-Host '依赖仍按 package-lock.json 校验完整性；如需只用官方源，可先设置环境变量 SANMAO_NO_MIRROR=1。' -ForegroundColor DarkGray
+  return 'https://registry.npmmirror.com'
+}
+function Format-SanmaoDuration([TimeSpan]$Span) {
+  if ($Span.TotalHours -ge 1) { return ('{0} 小时 {1} 分' -f [int]$Span.TotalHours, $Span.Minutes) }
+  if ($Span.TotalMinutes -ge 1) { return ('{0} 分 {1} 秒' -f [int]$Span.TotalMinutes, $Span.Seconds) }
+  return ('{0} 秒' -f [int]$Span.TotalSeconds)
+}
+
+function Get-SanmaoFolderSizeMB([string]$Path) {
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return 0 }
+  try {
+    $sum = (Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Measure-Object -Property Length -Sum).Sum
+    if (-not $sum) { return 0 }
+    return [int][math]::Round($sum / 1MB)
+  } catch { return 0 }
+}
+
+function Read-SanmaoLogLines([string]$Path, [int]$Tail = 0) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
+  try {
+    # 子进程还在写这个日志，必须用共享读方式打开，否则会报“文件被占用”。
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+      $reader = New-Object System.IO.StreamReader($stream)
+      $rawText = $reader.ReadToEnd()
+    } finally { $stream.Dispose() }
+  } catch { return @() }
+  $result = @($rawText -split "\r?\n" | Where-Object { $_.Trim() })
+  if ($Tail -gt 0 -and $result.Count -gt $Tail) { $result = $result[($result.Count - $Tail)..($result.Count - 1)] }
+  return $result
+}
+
+function Format-SanmaoLogLine([string]$Line, [int]$MaxLength = 64) {
+  $clean = ($Line -replace ([string][char]27 + '\[[0-9;?]*[a-zA-Z]'), '').Trim()
+  if ($clean.Length -gt $MaxLength) { $clean = $clean.Substring(0, $MaxLength) + '…' }
+  return $clean
+}
+
+function Show-SanmaoLogTail([string]$Path, [int]$TailLines = 20) {
+  $tail = @(Read-SanmaoLogLines -Path $Path -Tail $TailLines)
+  if ($tail.Count -eq 0) { return }
+  Write-Host ''
+  Write-Host "最后几行输出（完整日志：$Path）：" -ForegroundColor Yellow
+  foreach ($line in $tail) { Write-Host ('   ' + (Format-SanmaoLogLine $line -MaxLength 200)) -ForegroundColor DarkGray }
+}
+# 进度提示：长耗时步骤（npm 安装等）在后台执行并把输出写进日志，前台每隔几秒打印
+# “已用时间 + 目录体积 + 最近一行输出”，让用户能确认程序仍在下载，而不是卡死。
+# 这些步骤没有 TTY，npm 自己不打印进度，所以必须由启动器心跳兜底。
+function Invoke-SanmaoProgressStep {
+  param(
+    [Parameter(Mandatory)][string]$CommandLine,
+    [Parameter(Mandatory)][string]$LogPath,
+    [string]$SizePath = '',
+    [string]$SizeLabel = '已写入',
+    [string]$QuietHint = '',
+    [int]$IntervalSeconds = 8
+  )
+
+  $logDir = Split-Path -Parent $LogPath
+  if ($logDir) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+  Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
+
+  $comSpec = if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $comSpec
+  $startInfo.Arguments = '/d /s /c "' + $CommandLine + ' > "' + $LogPath + '" 2>&1"'
+  $startInfo.WorkingDirectory = $root
+  $startInfo.UseShellExecute = $false
+  $startInfo.CreateNoWindow = $true
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $startInfo
+  [void]$process.Start()
+
+  $started = Get-Date
+  $ticks = 0
+  while (-not $process.HasExited) {
+    Start-Sleep -Seconds $IntervalSeconds
+    $process.Refresh()
+    if ($process.HasExited) { break }
+    $ticks++
+    $message = '   已用 ' + (Format-SanmaoDuration ((Get-Date) - $started))
+    if ($SizePath) { $message += ' ｜ ' + $SizeLabel + ' ' + (Get-SanmaoFolderSizeMB $SizePath) + ' MB' }
+    $logLines = @(Read-SanmaoLogLines -Path $LogPath)
+    if ($logLines.Count -gt 0) { $message += ' ｜ ' + (Format-SanmaoLogLine $logLines[-1]) }
+    Write-Host $message -ForegroundColor DarkGray
+    if ($QuietHint -and ($ticks % 8) -eq 0) { Write-Host ('   提示：' + $QuietHint) -ForegroundColor DarkGray }
+  }
+  $process.WaitForExit()
+  return $process.ExitCode
+}
+function Stop-StartedServer {
+  if ($script:serverProcess -and -not $script:serverProcess.HasExited) {
+    Stop-Process -Id $script:serverProcess.Id -Force -ErrorAction SilentlyContinue
+  }
+}
+function Fail([string]$text) {
+  Stop-StartedServer
+  Stop-SanmaoFreeRelayTunnel -Root $root
+  Write-SanmaoLauncherLog "启动失败：$text" 'ERROR'
+  Write-Host ""
+  Write-Host "启动失败：$text" -ForegroundColor Red
+  if (Test-Path -LiteralPath $serverStderrPath) {
+    $details = Get-Content -LiteralPath $serverStderrPath -Tail 12 -ErrorAction SilentlyContinue
+    if ($details) {
+      Write-Host ""
+      Write-Host '服务端最后的错误：' -ForegroundColor Yellow
+      $details | Write-Host
+    }
+  }
+  Write-Host "服务端日志：$serverStderrPath" -ForegroundColor DarkGray
+  if (-not $script:NonInteractive) {
+    Write-Host ""
+    Read-Host '按回车键关闭窗口'
+  }
+  exit 1
+}
+
+Assert-SanmaoOperationLock
+
+function Read-SanmaoSecret {
+  $secure = Read-Host -AsSecureString
+  $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
+  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+}
+
+function Load-SanmaoLanPassword {
+  if (Test-Path -LiteralPath $lanPasswordPath) {
+    try {
+      $encrypted = (Get-Content -LiteralPath $lanPasswordPath -Raw -ErrorAction Stop).Trim()
+      if (-not $encrypted) { return }
+      $secure = ConvertTo-SecureString -String $encrypted -ErrorAction Stop
+      $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+      try { $env:SANMAO_ADMIN_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
+      finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+    } catch {
+      Write-SanmaoLauncherLog '读取局域网管理员密码密文失败，将重新要求输入。' 'WARN'
+    }
+  }
+}
+
+function Save-SanmaoLanPassword([string]$password) {
+  try {
+    $secure = ConvertTo-SecureString -String $password -AsPlainText -Force
+    $encrypted = ConvertFrom-SecureString -SecureString $secure
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lanPasswordPath) | Out-Null
+    Set-Content -LiteralPath $lanPasswordPath -Value $encrypted -Encoding ASCII
+  } catch {
+    Write-SanmaoLauncherLog '保存局域网管理员密码密文失败，后续启动可能需要再次输入。' 'WARN'
+  }
+}
+
+function Ensure-SanmaoLanPassword {
+  Load-SanmaoLanPassword
+  $configured = $env:SANMAO_ADMIN_PASSWORD
+  if ($configured -and $configured.Trim().Length -ge 8) {
+    $env:SANMAO_ADMIN_PASSWORD = $configured.Trim()
+    return
+  }
+  if ($configured) {
+    Fail '局域网模式要求 SANMAO_ADMIN_PASSWORD 至少 8 位。'
+  }
+  if ($script:NonInteractive) {
+    Fail '局域网模式需要管理员密码。请设置 SANMAO_ADMIN_PASSWORD 后重试，或直接双击局域网启动器。'
+  }
+  Write-Host '局域网模式需要设置管理员密码（至少 8 位，仅用于本次服务，不会写入项目文件）。' -ForegroundColor Yellow
+  Write-Host '请输入管理员密码：' -ForegroundColor Yellow
+  $first = Read-SanmaoSecret
+  if (-not $first -or $first.Length -lt 8) { Fail '管理员密码至少需要 8 位。' }
+  Write-Host '请再次输入管理员密码：' -ForegroundColor Yellow
+  $second = Read-SanmaoSecret
+  if ($first -ne $second) { Fail '两次输入的管理员密码不一致。' }
+  $env:SANMAO_ADMIN_PASSWORD = $first
+  Save-SanmaoLanPassword $first
+}
+
+function Release-LauncherMutex {
+  if ($script:LauncherMutex) {
+    try { $script:LauncherMutex.ReleaseMutex() } catch {}
+    try { $script:LauncherMutex.Dispose() } catch {}
+    $script:LauncherMutex = $null
+  }
+}
+
+# Serialize preflight only. If a previous hidden updater launcher is still
+# building/starting, a second double-click waits and then reuses the service.
+$script:LauncherMutex = New-Object System.Threading.Mutex($false, 'SanmaoAILauncherPreflight')
+$acquired = $false
+try {
+  $acquired = $script:LauncherMutex.WaitOne(90000)
+} catch {
+  # An abandoned mutex is still acquired by the current process.
+  $acquired = $true
+}
+if (-not $acquired) {
+  Fail '另一个启动器正在运行，请稍候再试。'
+}
+
+
+$existing = Find-ExistingServer
+if ($existing) {
+  $existingPort = [int]$existing.Port
+  $modeMismatch = $existing.NetworkMode -ne $networkMode
+  $lifecycleMismatch = $existing.LifecycleEnabled -ne (-not $Lan.IsPresent)
+  $buildStale = (Test-SanmaoBuildStale -or Test-SanmaoServedBuildStale)
+  if (($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
+  $freeRelayMismatch =
+    ($FreeRelay.IsPresent -and $script:MediaRelayRequired -and (
+      $existing.MediaRelayMode -in @('unknown', 'unavailable') -or
+      ($existing.MediaRelayMode -eq 'relay' -and (
+        -not (Test-SanmaoFreeRelayTunnel -Root $root) -or
+        -not (Test-SanmaoFreeRelayReachable -Root $root)
+      ))
+    )) -or
+    (-not $script:MediaRelayRequired -and $existing.MediaRelayMode -eq 'relay')
+  if ($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent -or $freeRelayMismatch) {
+    $reason = if ($freeRelayMismatch -and $script:MediaRelayRequired) { '正在准备免费媒体中转通道' } elseif ($freeRelayMismatch) { '正在关闭不需要的临时通道' } elseif ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换网络共享模式' } elseif ($lifecycleMismatch) { '正在更新本地服务生命周期设置' } else { '检测到源码比当前构建更新' }
+    Write-Host "$reason，正在重启旧服务：http://localhost:$existingPort" -ForegroundColor Yellow
+    Stop-SanmaoProcessAtPort $existingPort
+    if (-not (Wait-SanmaoPortReleased $existingPort)) {
+      Fail "旧服务仍占用端口 $existingPort，已停止启动以避免继续使用旧页面。请运行停止 SANMAO.AI - Windows.cmd 后重试。"
+    }
+  } else {
+    if ($existing.NetworkMode -eq 'lan') {
+      Write-Host "SANMAO.AI 局域网共享已在运行（本机：http://localhost:$existingPort）" -ForegroundColor Green
+      Show-SanmaoLanAccess $existingPort
+      $openUrl = Get-SanmaoLocalUrl -Port $existingPort -Path '/canvas'
+    } else {
+      Write-Host "SANMAO.AI 已在运行：http://localhost:$existingPort" -ForegroundColor Green
+      $openUrl = Get-SanmaoLocalUrl -Port $existingPort
+    }
+    Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
+    Release-LauncherMutex
+    if (-not $script:NonInteractive) { Start-Process $openUrl }
+    exit 0
+  }
+}
+Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
+
+if ($Lan.IsPresent) { Ensure-SanmaoLanPassword }
+
+# Clean stale project-owned Next services before dependency install and again
+# before choosing a port. This reclaims hung/legacy/relative-path servers that
+# used to make the port range look occupied.
+if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
+  Write-SanmaoLauncherLog '部分旧服务端口未能释放，将继续使用可用端口。' 'WARN'
+}
+
+$launcherVersion = 'unknown'
+try {
+  $launcherPackage = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw -ErrorAction Stop | ConvertFrom-Json
+  if ($launcherPackage.version) { $launcherVersion = [string]$launcherPackage.version }
+} catch {}
+Write-Host '========================================' -ForegroundColor DarkGray
+Write-Host "        SANMAO.AI 一键启动器 $launcherVersion" -ForegroundColor White
+Write-Host '========================================' -ForegroundColor DarkGray
+
+# 1. Check Node.js
+Write-Step '检查 Node.js'
+try {
+  $nodeVersionText = (& node --version 2>$null).Trim()
+} catch {
+  Fail '没有检测到 Node.js。请先安装 Node.js 22.13.0 或更高版本，然后重新双击启动。'
+}
+if (-not $nodeVersionText) {
+  Fail '没有检测到 Node.js。请先安装 Node.js 22.13.0 或更高版本。'
+}
+$ver = $nodeVersionText.TrimStart('v').Split('.')
+$major = [int]$ver[0]
+$minor = if ($ver.Length -gt 1) { [int]$ver[1] } else { 0 }
+if (($major -lt 22) -or ($major -eq 22 -and $minor -lt 13)) {
+  Fail "当前 Node.js 是 $nodeVersionText，SANMAO.AI 需要 Node.js 22.13.0 或更高版本。"
+}
+Write-Host "Node.js：$nodeVersionText" -ForegroundColor Green
+
+# Node.js 默认不读取 Windows“Internet 选项”的静态代理；部分网络下会因此让
+# 服务端接口请求超时。Node 22+ 支持读取 HTTP(S)_PROXY，启动时自动补齐即可。
+function Enable-NodeSystemProxy {
+  if ($major -lt 22) { return }
+  if (-not $env:NODE_USE_ENV_PROXY) { $env:NODE_USE_ENV_PROXY = '1' }
+  if ($env:HTTPS_PROXY -or $env:HTTP_PROXY) { return }
+  try {
+    $settings = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop
+    if (-not $settings.ProxyEnable -or -not $settings.ProxyServer) { return }
+    $proxyMap = @{}
+    foreach ($part in ([string]$settings.ProxyServer -split ';')) {
+      $item = $part.Trim()
+      if (-not $item) { continue }
+      if ($item -match '^(?<scheme>https?|socks)=(?<address>.+)$') { $proxyMap[$Matches.scheme] = $Matches.address.Trim(); continue }
+      if (-not $proxyMap.default) { $proxyMap.default = $item }
+    }
+    $httpProxy = $proxyMap.http
+    if (-not $httpProxy) { $httpProxy = $proxyMap.default }
+    if (-not $httpProxy) { $httpProxy = $proxyMap.https }
+    $httpsProxy = $proxyMap.https
+    if (-not $httpsProxy) { $httpsProxy = $proxyMap.default }
+    if (-not $httpsProxy) { $httpsProxy = $proxyMap.http }
+    if ($httpProxy) {
+      $env:HTTP_PROXY = $httpProxy
+      if ($httpProxy -notmatch '^[a-z]+://') { $env:HTTP_PROXY = "http://$httpProxy" }
+    }
+    if ($httpsProxy) {
+      $env:HTTPS_PROXY = $httpsProxy
+      if ($httpsProxy -notmatch '^[a-z]+://') { $env:HTTPS_PROXY = "http://$httpsProxy" }
+    }
+    if ($env:HTTPS_PROXY -or $env:HTTP_PROXY) { Write-Host '已启用系统代理，服务端接口请求会使用当前网络设置。' -ForegroundColor Green }
+  } catch {}
+}
+Enable-NodeSystemProxy
+
+try {
+  $npmVersion = (& npm --version 2>$null).Trim()
+} catch {
+  Fail '没有检测到 npm。请重新安装 Node.js，并确保安装程序勾选 npm。'
+}
+Write-Host "npm：$npmVersion" -ForegroundColor Green
+
+# 2. Install/repair dependencies
+Write-Step '检查并安装程序依赖'
+if ($SkipBuild.IsPresent) {
+  if (-not (Test-Path '.\node_modules\.bin\next.cmd')) {
+    Fail '回滚启动需要已有的 Next.js 依赖，但当前依赖不完整。请重新运行普通启动器。'
+  }
+  Write-Host '回滚模式：保留当前依赖，不执行 npm install。' -ForegroundColor Yellow
+} else {
+  $requiredNext = '16.2.12'
+  $installedNext = ''
+  if (Test-Path '.\node_modules\next\package.json') {
+    try { $installedNext = (& node -p "require('./node_modules/next/package.json').version").Trim() } catch { $installedNext = '' }
+  }
+  $nextCmdExists = Test-Path '.\node_modules\.bin\next.cmd'
+  $typescriptExists = Test-Path '.\node_modules\typescript\package.json'
+  $nodeTypesExists = Test-Path '.\node_modules\@types\node\package.json'
+  $reactTypesExists = Test-Path '.\node_modules\@types\react\package.json'
+  $reactDomTypesExists = Test-Path '.\node_modules\@types\react-dom\package.json'
+  $ffmpegBinaryPath = Join-Path $root 'node_modules\ffmpeg-static\ffmpeg.exe'
+  $ffmpegExists = Test-Path -LiteralPath $ffmpegBinaryPath
+  $depsMarkerPath = '.\node_modules\.sanmao-deps.sha256'
+  $installedDepsFingerprint = ''
+  if (Test-Path -LiteralPath $depsMarkerPath) {
+    try { $installedDepsFingerprint = (Get-Content -LiteralPath $depsMarkerPath -Raw -ErrorAction Stop).Trim() } catch { $installedDepsFingerprint = '' }
+  }
+  # Only a real dependency change needs an install. Every release rewrites
+  # package-lock.json (its root entry carries the app version), so comparing the
+  # lock file used to trigger a full node_modules wipe for version-only bumps.
+  $depsFingerprint = Get-SanmaoDependencyFingerprint
+  $dependenciesReady = ($installedNext -eq $requiredNext) -and $nextCmdExists -and $typescriptExists -and $nodeTypesExists -and $reactTypesExists -and $reactDomTypesExists -and $ffmpegExists
+  $dependenciesChanged = (-not $depsFingerprint) -or ($installedDepsFingerprint -ne $depsFingerprint)
+  if ((-not $dependenciesReady) -or $dependenciesChanged) {
+    if ($dependenciesReady) {
+      Write-Host '依赖清单有变化，正在增量同步依赖（保留已安装文件，优先使用本地缓存）。' -ForegroundColor Yellow
+    } else {
+      Write-Host '首次运行或依赖不完整，正在安装依赖。' -ForegroundColor Yellow
+      Write-Host '首次要下载约 800 MB 依赖（其中 FFmpeg 约 29 MB），网速较慢时可能要十几分钟甚至更久。' -ForegroundColor Yellow
+      Write-Host '安装期间会持续显示进度；下载阶段没有输出属正常现象，请不要关闭窗口。' -ForegroundColor Yellow
+    }
+    foreach ($repairPort in $portRange) {
+      if (Test-SanmaoProcessAtPort $repairPort) { Stop-SanmaoProcessAtPort $repairPort }
+    }
+    Start-Sleep -Milliseconds 500
+    $npmOptions = @('--include=dev', '--no-audit', '--no-fund', '--prefer-offline')
+    $npmOptionArgs = $npmOptions -join ' '
+    $npmLogPath = Join-Path $dataDir 'logs\npm-install.log'
+    $npmMirrorLogPath = Join-Path $dataDir 'logs\npm-install-mirror.log'
+    $npmSizePath = Join-Path $root 'node_modules'
+    $npmSizeLabel = '依赖目录'
+    $npmQuietHint = '依赖下载阶段通常没有输出，属正常现象；请保持窗口打开。'
+    Write-Host '正在检测下载源速度…' -ForegroundColor DarkGray
+    $npmRegistry = Get-SanmaoNpmRegistry
+    $npmRegistryArg = if ($npmRegistry) { ' --registry=' + $npmRegistry } else { '' }
+    $npmExit = 0
+    if ((-not (Test-Path -LiteralPath '.\node_modules')) -and (Test-Path -LiteralPath '.\package-lock.json')) {
+      # Clean install: add the packages without running their install scripts,
+      # place the FFmpeg binary ourselves, then run the deferred scripts. npm's
+      # own FFmpeg downloader is an order of magnitude slower on some networks.
+      # In a redirected, non-TTY process npm prints nothing while downloading, so
+      # the launcher heartbeat below is the only progress the user can see.
+      $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm ci' + $npmRegistryArg + ' ' + $npmOptionArgs + ' --ignore-scripts') -LogPath $npmLogPath -SizePath $npmSizePath -SizeLabel $npmSizeLabel -QuietHint $npmQuietHint
+      if ($npmExit -eq 0) {
+        [void](Install-SanmaoFfmpegBinary -TargetPath $ffmpegBinaryPath)
+        $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm rebuild --no-audit --no-fund' + $npmRegistryArg) -LogPath $npmLogPath -SizePath '' -SizeLabel '' -QuietHint ''
+      }
+    } else {
+      # Reconcile the existing tree instead of wiping it: npm ci deletes
+      # node_modules, which also threw the downloaded FFmpeg binary away.
+      $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm install' + $npmRegistryArg + ' ' + $npmOptionArgs) -LogPath $npmLogPath -SizePath $npmSizePath -SizeLabel $npmSizeLabel -QuietHint $npmQuietHint
+    }
+    if ($npmExit -ne 0 -and -not $npmRegistry -and $env:SANMAO_NO_MIRROR -ne '1') {
+      Write-Host '官方源安装失败，正在改用国内镜像重试。' -ForegroundColor Yellow
+      $npmLogPath = $npmMirrorLogPath
+      $npmExit = Invoke-SanmaoProgressStep -CommandLine ('npm install ' + $npmOptionArgs + ' --registry=https://registry.npmmirror.com') -LogPath $npmLogPath -SizePath $npmSizePath -SizeLabel $npmSizeLabel -QuietHint $npmQuietHint
+    }
+    if ($npmExit -ne 0) {
+      Write-Host ''
+      Write-Host 'npm 安装失败。常见原因是网络或 npm 源不可用。' -ForegroundColor Yellow
+      Write-Host '你可以先在命令行运行：npm config get registry' -ForegroundColor Yellow
+      Show-SanmaoLogTail -Path $npmLogPath
+      Fail '依赖安装失败，请检查网络后再次运行启动器。'
+    }
+    if (-not (Test-SanmaoFfmpegBinary $ffmpegBinaryPath)) {
+      [void](Install-SanmaoFfmpegBinary -TargetPath $ffmpegBinaryPath)
+    }
+    # Only record success once FFmpeg is usable, so an interrupted or incomplete
+    # install is retried (and repaired) on the next launch.
+    if ($depsFingerprint -and (Test-SanmaoFfmpegBinary $ffmpegBinaryPath)) {
+      $depsFingerprint | Set-Content -LiteralPath $depsMarkerPath -Encoding ASCII
+    }
+    Remove-Item -LiteralPath '.\node_modules\.sanmao-package-lock.sha256' -Force -ErrorAction SilentlyContinue
+  } else {
+    Write-Host "依赖已安装，Next.js：$installedNext" -ForegroundColor Green
+  }
+
+  if (-not (Test-Path '.\node_modules\.bin\next.cmd')) {
+    Fail '依赖安装完成后仍找不到 Next.js。请删除 node_modules 文件夹后重新运行启动器。'
+  }
+  if (-not (Test-Path -LiteralPath $ffmpegBinaryPath)) {
+    Fail '依赖安装完成后仍找不到 FFmpeg。请删除 node_modules 文件夹后重新运行启动器。'
+  if (-not (Test-SanmaoFfmpegBinary $ffmpegBinaryPath)) {
+    Write-Host '警告：FFmpeg 组件不完整，视频裁剪/深度功能可能不可用；再次运行启动器会自动重装。' -ForegroundColor Yellow
+  }
+  }
+}
+
+# 3. Build production bundle（智能构建：代码没变就跳过，固定使用 webpack）
+Write-Step '检查构建产物是否最新'
+
+$nextCmd = Join-Path $root 'node_modules\.bin\next.cmd'
+$buildIdPath = Join-Path $root '.next\BUILD_ID'
+
+$needBuild = (-not $SkipBuild.IsPresent) -and (($ForceBuild.IsPresent) -or ($env:SANMAO_FORCE_BUILD -eq '1') -or (-not (Test-SanmaoBuildArtifacts)))
+if (-not $needBuild -and -not $SkipBuild.IsPresent) {
+  $buildTime = (Get-Item -LiteralPath $buildIdPath).LastWriteTimeUtc
+  $files = @()
+  foreach ($d in @('app', 'components', 'lib', 'public')) {
+    $dir = Join-Path $root $d
+    if (Test-Path -LiteralPath $dir) { $files += Get-ChildItem -LiteralPath $dir -Recurse -File -Force -ErrorAction SilentlyContinue }
+  }
+  foreach ($f in @('next.config.ts', 'next.config.js', 'tsconfig.json', 'package.json', 'package-lock.json')) {
+    $p = Join-Path $root $f
+    if (Test-Path -LiteralPath $p) { $files += Get-Item -LiteralPath $p }
+  }
+  $files += Get-ChildItem -LiteralPath $root -Filter '.env*' -File -Force -ErrorAction SilentlyContinue
+  $newest = $files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+  $needBuild = $true
+  if ($newest -and $newest.LastWriteTimeUtc -lt $buildTime) { $needBuild = $false }
+}
+
+if ($SkipBuild.IsPresent) {
+  if (-not (Test-SanmaoBuildArtifacts)) { Fail '回滚构建产物不完整，无法安全启动旧服务。' }
+  Write-Host '回滚模式：使用上一个已验证的构建产物。' -ForegroundColor Yellow
+} elseif ($needBuild) {
+  Wait-SanmaoNextBuildLock
+  $buildSourceFingerprint = Get-SanmaoSourceFingerprint
+  $builtSourceFingerprintPath = Join-Path $root '.next\.sanmao-source-fingerprint'
+  $anotherBuildCompletedCurrentSource = $false
+  if (-not $ForceBuild.IsPresent -and $env:SANMAO_FORCE_BUILD -ne '1' -and (Test-SanmaoBuildArtifacts) -and (Test-Path -LiteralPath $builtSourceFingerprintPath -PathType Leaf)) {
+    try {
+      $builtFingerprint = (Get-Content -LiteralPath $builtSourceFingerprintPath -Raw -ErrorAction Stop).Trim().ToLowerInvariant()
+      $anotherBuildCompletedCurrentSource = $builtFingerprint -and $builtFingerprint -eq $buildSourceFingerprint
+    } catch {}
+  }
+  if ($anotherBuildCompletedCurrentSource) {
+    Write-Host '等待期间另一个启动器已构建当前代码，复用其构建产物。' -ForegroundColor Green
+  } else {
+  Write-Host '需要重新构建（首次运行或代码有更新）。只需等这一次，之后启动会直接跳过构建。' -ForegroundColor Yellow
+  Write-Host '使用 webpack 构建，避免 Turbopack 在中文内容中的字符边界崩溃。' -ForegroundColor Yellow
+  Remove-Item -LiteralPath $serverStdoutPath, $serverStderrPath -Force -ErrorAction SilentlyContinue
+  Clear-SanmaoBuildArtifactMarkers
+  & $nextCmd build --webpack
+  if ($LASTEXITCODE -ne 0) {
+    Fail '网页构建失败。请把本窗口中“构建失败”上方的报错截图发给我。'
+  }
+  if (-not (Wait-SanmaoBuildArtifacts)) {
+    Fail '网页构建完成但构建产物不完整，请再次运行启动器。'
+  }
+  Set-Content -LiteralPath (Join-Path $root '.next\.sanmao-source-fingerprint') -Value $buildSourceFingerprint -Encoding ASCII
+  Write-Host '构建完成。' -ForegroundColor Green
+  }
+} else {
+  if (-not (Wait-SanmaoBuildArtifacts)) {
+    Fail '检测到网页构建产物不完整，请再次运行启动器。'
+  }
+  Write-Host '构建产物已是最新，跳过构建，直接启动。' -ForegroundColor Green
+}
+
+# 4. Choose a free port after reclaiming any owned stale listeners again.
+Write-Step '启动 SANMAO.AI'
+if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
+  Write-SanmaoLauncherLog '启动前仍有旧服务端口未释放。' 'WARN'
+}
+function Test-Port([int]$port) {
+  return Test-LocalPortOpen $port
+}
+
+$port = $portStart
+while (($port -le $portEnd) -and (Test-Port $port)) { $port++ }
+if ($port -gt $portEnd) {
+  $details = @()
+  foreach ($p in $portRange) {
+    $pids = @(Get-SanmaoOwningPidsByPort -Port $p)
+    if ($pids.Count -gt 0) {
+      $details += "端口 $p：PID $($pids -join ', ')"
+    }
+  }
+  if ($details.Count -gt 0) {
+    Fail ("$($portStart)～$($portEnd) 端口都被占用。" + ($details -join '；') + '。请关闭对应进程后重试。')
+  } else {
+    Fail "$($portStart)～$($portEnd) 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。"
+  }
+}
+
+$freeRelayRequested = $FreeRelay.IsPresent -and $script:MediaRelayRequired
+if ($FreeRelay.IsPresent -and $script:MediaRelayRequired) {
+  # Set relay mode before the Next process starts. The tunnel itself is
+  # created after the local health endpoint is ready; otherwise cloudflared
+  # can publish an address that points at a service which is not listening yet.
+  Remove-Item Env:SANMAO_RELAY_MODE, Env:SANMAO_RELAY_PUBLIC_BASE_URL -ErrorAction SilentlyContinue
+  $env:SANMAO_RELAY_MODE = '1'
+  if ($env:SANMAO_MEDIA_RELAY_URL -match '^https://[a-z0-9-]+\.trycloudflare\.com/?$') {
+    Remove-Item Env:SANMAO_MEDIA_RELAY_URL -ErrorAction SilentlyContinue
+  }
+} elseif (-not $script:MediaRelayRequired) {
+  Remove-Item Env:SANMAO_RELAY_MODE, Env:SANMAO_RELAY_PUBLIC_BASE_URL -ErrorAction SilentlyContinue
+  if ($env:SANMAO_MEDIA_RELAY_URL -match '^https://[a-z0-9-]+\.trycloudflare\.com/?$') {
+    Remove-Item Env:SANMAO_MEDIA_RELAY_URL -ErrorAction SilentlyContinue
+  }
+  Stop-SanmaoFreeRelayTunnel -Root $root
+}
+
+if ($Lan.IsPresent) {
+  Remove-Item Env:SANMAO_LIFECYCLE -ErrorAction SilentlyContinue
+} else {
+  $env:SANMAO_LIFECYCLE = '1'
+}
+$env:SANMAO_NETWORK_MODE = $networkMode
+$env:SANMAO_RUNTIME_INSTANCE_ID = [guid]::NewGuid().ToString()
+Remove-Item -LiteralPath $serverStdoutPath, $serverStderrPath -Force -ErrorAction SilentlyContinue
+$nodePath = (Get-Command node.exe -ErrorAction Stop).Source
+$nextCliPath = Join-Path $root 'node_modules\next\dist\bin\next'
+$script:serverProcess = Start-Process `
+  -FilePath $nodePath `
+  -ArgumentList @($nextCliPath, 'start', '-H', $bindHost, '-p', "$port") `
+  -WorkingDirectory $root `
+  -WindowStyle Hidden `
+  -RedirectStandardOutput $serverStdoutPath `
+  -RedirectStandardError $serverStderrPath `
+  -PassThru
+
+Write-Host "正在等待 http://localhost:$port 启动..." -ForegroundColor Yellow
+Write-SanmaoLauncherLog "已启动服务进程 PID $($script:serverProcess.Id)，等待端口 $port 就绪。" 'INFO'
+$ready = $false
+for ($i = 0; $i -lt 150; $i++) {
+  Start-Sleep -Milliseconds 200
+  if ($script:serverProcess.HasExited) { break }
+  if (-not (Test-LocalPortOpen $port)) { continue }
+  $serverInfo = Get-SanmaoServerInfo $port
+  if ($serverInfo -and $serverInfo.NetworkMode -eq $networkMode) { $ready = $true; break }
+}
+
+if (-not $ready) {
+  Fail '服务器没有在预期时间内启动。'
+}
+
+$runningBuildId = Get-SanmaoBuildId
+if ($runningBuildId) {
+  Set-Content -LiteralPath (Join-Path $root '.next\.sanmao-running-build-id') -Value $runningBuildId -Encoding ASCII
+}
+$runningSourceFingerprintPath = Join-Path $root '.next\.sanmao-running-source-fingerprint'
+$builtSourceFingerprintPath = Join-Path $root '.next\.sanmao-source-fingerprint'
+if (Test-Path -LiteralPath $builtSourceFingerprintPath -PathType Leaf) {
+  Copy-Item -LiteralPath $builtSourceFingerprintPath -Destination $runningSourceFingerprintPath -Force
+}
+
+if ($freeRelayRequested) {
+  Write-Host '正在准备免费媒体中转通道…' -ForegroundColor Yellow
+  $freeRelayInfo = Start-SanmaoFreeRelayTunnel -Root $root -OriginPort $port
+  if ($freeRelayInfo) {
+    # The server reads the current URL from public-url.txt on each upload, so
+    # recovery does not require restarting the Next process.
+    $env:SANMAO_RELAY_MODE = '1'
+    $env:SANMAO_RELAY_PUBLIC_BASE_URL = $freeRelayInfo.PublicUrl
+    $env:SANMAO_MEDIA_RELAY_URL = $freeRelayInfo.PublicUrl
+    Write-SanmaoLauncherLog "已启动免费临时通道：$($freeRelayInfo.PublicUrl)" 'INFO'
+  } else {
+    Write-SanmaoLauncherLog '免费临时通道首次启动失败，监视器将自动重试。' 'WARN'
+  }
+  try {
+    $watchScript = Join-Path $PSScriptRoot 'free-relay-watch.ps1'
+    # The long-lived relay watchdog must not inherit this process's stdout/stderr
+    # handles, otherwise a parent that pipes this script's output (e.g. restart.ps1's
+    # Invoke-SanmaoScript) can block forever waiting for EOF. Redirect it to its own
+    # dedicated log files instead.
+    $watchOutPath = Join-Path $dataDir ('logs\free-relay-watch-' + [guid]::NewGuid().ToString('N') + '.out.log')
+    $watchErrPath = Join-Path $dataDir ('logs\free-relay-watch-' + [guid]::NewGuid().ToString('N') + '.err.log')
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $watchOutPath) | Out-Null
+    Start-Process -FilePath 'powershell.exe' `
+      -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchScript, '-Root', $root, '-TargetProcessId', [string]$script:serverProcess.Id, '-OriginPort', [string]$port) `
+      -WorkingDirectory $root `
+      -WindowStyle Hidden `
+      -RedirectStandardOutput $watchOutPath `
+      -RedirectStandardError $watchErrPath | Out-Null
+  } catch {
+    Write-SanmaoLauncherLog "免费临时通道自动清理监视器启动失败：$($_.Exception.Message)" 'WARN'
+  }
+}
+
+$url = Get-SanmaoLocalUrl -Port $port
+if ($Lan.IsPresent) {
+  Write-Host "SANMAO.AI 局域网共享已启动（本机：$url）" -ForegroundColor Green
+  Show-SanmaoLanAccess $port
+  $openUrl = "$url/canvas"
+} else {
+  Write-Host "SANMAO.AI 已启动：$url" -ForegroundColor Green
+  $openUrl = $url
+}
+Write-Host '本地服务会保持运行，下一次启动会直接打开已有服务。' -ForegroundColor DarkGray
+Write-SanmaoLauncherLog "服务已就绪：http://localhost:$port，网络模式：$networkMode" 'INFO'
+Release-LauncherMutex
+if (-not $script:NonInteractive) { Start-Process $openUrl }
+Start-Sleep -Milliseconds 300
