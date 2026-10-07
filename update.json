@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.81",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.81",
+  "latestVersion": "0.7.82",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.82",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.81/SANMAO.AI-0.7.81.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.82/SANMAO.AI-0.7.82.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.81/SANMAO.AI-0.7.81.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.81/SANMAO.AI-0.7.81.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.81/SANMAO.AI-0.7.81.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.82/SANMAO.AI-0.7.82.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.82/SANMAO.AI-0.7.82.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.82/SANMAO.AI-0.7.82.zip"
   ],
   "sha256": "2d0a06e07bb31b6292ec5e2dbace2779396c489862fe5fca55ead6eaecdb5f42",
-  "publishedAt": "2026-10-06T08:48:00.000Z",
+  "publishedAt": "2026-10-07T04:50:38.432Z",
   "notes": [
-    "前端复杂度分阶段重构：画布节点展示、引用、预设和超分设置边界收敛。",
-    "页面纯转换逻辑收敛到图片布局、Provider 展示、引用排序和超分尺寸领域模块。",
+    "前端复杂度重构继续收敛：变体生成输入准备独立到 Canvas 领域边界。",
+    "保持现有 URL、API、数据格式、任务生命周期与用户交互兼容。",
     "SQLite 本地数据库切换：业务数据通过 Repository 边界统一读写，保留迁移与回滚路径。",
     "备份与恢复改为分阶段、可回滚的事务流程，导出与归档使用流式处理。",
     "MCP 配置、Provider、Workspace 与资产存储进一步收敛到 Repository。",
