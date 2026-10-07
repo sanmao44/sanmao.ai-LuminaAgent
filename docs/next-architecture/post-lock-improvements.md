@@ -2154,3 +2154,12 @@ hardening work when the trigger applies.
 - Generation parameters, source-node labels, runtime provider/model fallback, dimensions, status, prompt, comparison provenance, and reference filtering remain behavior-compatible. No API, persistence, task, provider, or compatibility path changed.
 - Behavior coverage in `tests/canvas-media-viewer.test.mjs` exercises metadata fallbacks plus item/reference projection; historical viewer tests no longer depend on the Workspace helper's source location.
 - Remaining risk: the media viewer action lifecycle still crosses CanvasCore, downloads, local edit, angle, and asset actions; those remain in Workspace until a broader action contract is covered.
+
+### Stage 6 canvas reference draft projection checkpoint (2026-10-07)
+
+- `lib/canvas/reference-drafts.ts` now owns the default referenceability predicate, node-to-draft projection, record projection, and reference-picker candidate rule used by Canvas interactions.
+- `CanvasWorkspace.tsx` keeps reference selection, reuse orchestration, CanvasCore access, and mutations; it no longer defines a second local projection or picker-candidate predicate.
+- The existing predicate injection remains supported for focused domain tests, while production call sites use the existing `lib/canvas/model.ts` authority. No duplicate store, API, persistence, provider, or compatibility path was added.
+- Behavior coverage verifies draft and record shape, default picker candidates, deduplication, and invalid-node handling. The test loader supplies the existing model predicate as a test runtime stub because the test intentionally executes the isolated TypeScript module through a `data:` URL.
+- Validation: focused canvas reuse/reference/media/model tests passed; `npm run typecheck` passed; full `npm run check`, production build, and `git diff --check` are required before commit.
+- Remaining risk: reference draft projection still serves both reuse and generation call sites; splitting those consumers further would risk creating duplicate reference semantics without a broader contract migration.

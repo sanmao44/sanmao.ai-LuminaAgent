@@ -1,5 +1,6 @@
 import type { CanvasNode } from "./types";
 import type { CanvasReferenceDraft } from "./reuse";
+import { isCanvasReferenceableNode } from "./model";
 
 export type CanvasReferenceableNodePredicate = (
   node: CanvasNode | undefined,
@@ -7,7 +8,7 @@ export type CanvasReferenceableNodePredicate = (
 
 export function createCanvasReferenceDraft(
   node: CanvasNode,
-  isReferenceableNode: CanvasReferenceableNodePredicate,
+  isReferenceableNode: CanvasReferenceableNodePredicate = isCanvasReferenceableNode,
 ): CanvasReferenceDraft | null {
   if (node.type === "prompt") {
     const text = String(node.data.agentResponse || node.data.text || "").trim();
@@ -49,7 +50,7 @@ export function createCanvasReferenceDraft(
 
 export function createCanvasReferenceRecords(
   nodes: CanvasNode[],
-  isReferenceableNode: CanvasReferenceableNodePredicate,
+  isReferenceableNode: CanvasReferenceableNodePredicate = isCanvasReferenceableNode,
 ) {
   const seen = new Set<string>();
   return nodes
@@ -67,4 +68,13 @@ export function createCanvasReferenceRecords(
       };
     })
     .filter((reference): reference is NonNullable<typeof reference> => Boolean(reference));
+}
+
+export function isCanvasReferencePickerCandidate(node: CanvasNode | undefined) {
+  return Boolean(
+    node &&
+      (node.type === "prompt" ||
+        node.type === "generator" ||
+        isCanvasReferenceableNode(node)),
+  );
 }

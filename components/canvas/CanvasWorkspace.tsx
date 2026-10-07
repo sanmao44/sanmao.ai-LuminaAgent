@@ -365,6 +365,7 @@ import {
 import {
   createCanvasReferenceDraft,
   createCanvasReferenceRecords,
+  isCanvasReferencePickerCandidate,
 } from "@/lib/canvas/reference-drafts";
 import {
   snapCanvasNodePositions,
@@ -1425,21 +1426,6 @@ function syncCanvasVideoEditorReferences(document: CanvasDocument) {
   return next;
 }
 
-const canvasReferenceDraftFromNode = (node: CanvasNode) =>
-  createCanvasReferenceDraft(node, isCanvasReferenceableNode);
-
-function isCanvasReferencePickerCandidate(node: CanvasNode | undefined) {
-  return Boolean(
-    node &&
-      (node.type === "prompt" ||
-        node.type === "generator" ||
-        isCanvasReferenceableNode(node)),
-  );
-}
-
-const canvasReferenceRecordsFromNodes = (nodes: CanvasNode[]) =>
-  createCanvasReferenceRecords(nodes, isCanvasReferenceableNode);
-
 function compiledCanvasLocalEditPrompt(
   node: CanvasNode,
   prompt: string,
@@ -2026,7 +2012,7 @@ export default function SuperCanvas() {
       agentDockContext.nodeIds
         .map((id) => nodeById(document, id))
         .filter((node): node is CanvasNode => Boolean(node))
-        .map((node) => canvasReferenceDraftFromNode(node))
+        .map((node) => createCanvasReferenceDraft(node))
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference))
         .flatMap((reference) =>
           reference.kind === "audio"
@@ -2341,7 +2327,7 @@ export default function SuperCanvas() {
 
       let accepted = false;
       if (picker.mode === "draft") {
-        const reference = canvasReferenceDraftFromNode(node);
+        const reference = createCanvasReferenceDraft(node);
         const current = reuseDraft;
         if (!reference || !current || current.sourceNodeId !== picker.targetId) {
           notify("这个节点没有可用的参考内容。", "error");
@@ -5531,7 +5517,7 @@ export default function SuperCanvas() {
         }
         const targetKind = target.data.kind === "video" ? "video" : "image";
         const references = incomingReferences(canvasCoreRef.current.document(), target.id)
-          .map(canvasReferenceDraftFromNode)
+          .map((node) => createCanvasReferenceDraft(node))
           .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
         const draft = reuseDraftFromNode(
           target,
@@ -5792,7 +5778,7 @@ export default function SuperCanvas() {
       const candidateNodes = (mentionCandidates.length ? mentionCandidates : incoming)
         .filter((node) => node.id !== generatorId && isCanvasMentionableNode(node));
       const candidateReferences = candidateNodes
-        .map(canvasReferenceDraftFromNode)
+        .map((node) => createCanvasReferenceDraft(node))
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
       const commonPrompt = String(generator.data.prompt || "").trim();
       const naturalCommonPrompt = replaceNaturalReferenceLabels(commonPrompt, candidateReferences);
@@ -6029,7 +6015,7 @@ export default function SuperCanvas() {
                     : imageParams.resolution,
                  outputFormat: imageParams.outputFormat,
                  parentId: generatorId,
-                 references: canvasReferenceRecordsFromNodes(linked),
+                 references: createCanvasReferenceRecords(linked),
                   annotations: imageParams.mask?.annotations,
                   mask: canvasHistoryMask(imageParams.mask),
               }).catch(() => addLog("图片变体已生成，但写入历史失败"));
@@ -6211,7 +6197,7 @@ export default function SuperCanvas() {
         return;
       }
       const linkedReferences = incomingReferences(canvasCoreRef.current.document(), source.id)
-        .map(canvasReferenceDraftFromNode)
+        .map((node) => createCanvasReferenceDraft(node))
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
       const draft = reuseDraftFromNode(
         source,
@@ -6227,7 +6213,7 @@ export default function SuperCanvas() {
         return;
       }
       const sourceReference = options?.includeSourceReference
-        ? canvasReferenceDraftFromNode(source)
+        ? createCanvasReferenceDraft(source)
         : null;
       const references = sourceReference
         ? addReferenceDrafts(draft.references, [sourceReference]).references
@@ -6360,7 +6346,7 @@ export default function SuperCanvas() {
   }, []);
 
   const addCurrentNodeToReuse = useCallback((node: CanvasNode) => {
-    const reference = canvasReferenceDraftFromNode(node);
+    const reference = createCanvasReferenceDraft(node);
     if (!reference) return;
     if (reuseDraft?.sourceNodeId === node.id) addReuseReferences([reference]);
     else openReuseDraft(node, { includeSourceReference: true });
@@ -6370,7 +6356,7 @@ export default function SuperCanvas() {
   const addReuseReferenceNode = useCallback(
     (nodeId: string) => {
       const node = nodeById(canvasCoreRef.current.document(), nodeId);
-      const reference = node ? canvasReferenceDraftFromNode(node) : null;
+      const reference = node ? createCanvasReferenceDraft(node) : null;
       if (reference) addReuseReferences([reference]);
     },
     [addReuseReferences],
@@ -6851,7 +6837,7 @@ export default function SuperCanvas() {
         outputSize: params.sizeMode === "custom" ? `${params.width}x${params.height}` : params.resolution,
          outputFormat: params.outputFormat,
          parentId: source.id,
-         references: canvasReferenceRecordsFromNodes(usedReferenceNodes),
+         references: createCanvasReferenceRecords(usedReferenceNodes),
           annotations: params.mask?.annotations,
           mask: canvasHistoryMask(params.mask),
       }).then(() => setAssetRefresh((value) => value + 1)).catch(() => addLog("图片续生成完成，但写入主界面历史失败"));
@@ -7141,7 +7127,7 @@ export default function SuperCanvas() {
       }
       const targetKind = selectedMediaTarget.data.kind === "video" ? "video" : "image";
       const references = incomingReferences(canvasCoreRef.current.document(), selectedMediaTarget.id)
-        .map(canvasReferenceDraftFromNode)
+        .map((node) => createCanvasReferenceDraft(node))
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
       const draft = reuseDraftFromNode(
         selectedMediaTarget,
@@ -7204,7 +7190,7 @@ export default function SuperCanvas() {
       const candidateNodes = mentionCandidates.length ? mentionCandidates : incoming;
       const candidateReferences = candidateNodes
         .filter((node) => node.id !== source.node?.id && isCanvasMentionableNode(node))
-        .map(canvasReferenceDraftFromNode)
+        .map((node) => createCanvasReferenceDraft(node))
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
       const naturalReferenceReplacement = replaceNaturalReferenceLabels(rawPrompt, candidateReferences);
       const selection = selectCreativeReferences(naturalReferenceReplacement.value, candidateReferences);
@@ -7448,7 +7434,7 @@ export default function SuperCanvas() {
             outputSize: imageSettings.resolution,
              outputFormat: imageSettings.outputFormat,
              parentId: inputId,
-             references: canvasReferenceRecordsFromNodes(referenceNodes),
+             references: createCanvasReferenceRecords(referenceNodes),
               annotations: imageSettings.mask?.annotations,
               mask: canvasHistoryMask(imageSettings.mask),
           });
@@ -7875,7 +7861,7 @@ export default function SuperCanvas() {
               : imageParams.resolution,
           outputFormat: imageParams.outputFormat,
           parentId: sourceTarget?.data.url ? sourceTarget.id : undefined,
-          references: canvasReferenceRecordsFromNodes(linked),
+          references: createCanvasReferenceRecords(linked),
           annotations: imageParams.mask?.annotations,
           mask: canvasHistoryMask(imageParams.mask),
         })
@@ -9480,7 +9466,7 @@ export default function SuperCanvas() {
             : reuseDraftFromNode(
                 node,
                 incomingReferences(canvasCoreRef.current.document(), node.id)
-                  .map(canvasReferenceDraftFromNode)
+                  .map((node) => createCanvasReferenceDraft(node))
                   .filter(
                     (reference): reference is CanvasReferenceDraft =>
                       Boolean(reference),

@@ -19,7 +19,10 @@ async function loadReferenceDrafts() {
   const compiled = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: sourceUrl.pathname,
-  }).outputText;
+  }).outputText.replace(
+    /^import \{ isCanvasReferenceableNode \} from [^\n]+;\s*$/m,
+    'const isCanvasReferenceableNode = (node) => Boolean(node && (node.type === "media" || node.type === "upscale") && node.data?.kind && node.data?.url);',
+  );
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 }
 
@@ -171,6 +174,10 @@ test("projects prompt, generator, and media nodes into one reference contract", 
   assert.equal(referenceDrafts.createCanvasReferenceDraft(generator, isReferenceable).text, "变体提示");
   assert.equal(referenceDrafts.createCanvasReferenceDraft(image, isReferenceable).url, "/image.png");
   assert.equal(referenceDrafts.createCanvasReferenceDraft(audio, isReferenceable).kind, "audio");
+  assert.equal(referenceDrafts.isCanvasReferencePickerCandidate(prompt), true);
+  assert.equal(referenceDrafts.isCanvasReferencePickerCandidate(image), true);
+  assert.equal(referenceDrafts.isCanvasReferencePickerCandidate(audio), true);
+  assert.equal(referenceDrafts.isCanvasReferencePickerCandidate({ id: "empty", type: "media", data: { kind: "image" } }), false);
   assert.deepEqual(referenceDrafts.createCanvasReferenceRecords([image, image, audio, prompt], isReferenceable), [
     { id: "image-1", kind: "image", name: "原图", url: "/image.png", mimeType: "image/png" },
     { id: "prompt-1", kind: "text", name: "Agent 回复", url: "", text: "上下文", mimeType: "text/plain;charset=utf-8" },
