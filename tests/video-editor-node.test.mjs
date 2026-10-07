@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
 async function loadTypeScript(path) {
   const sourceUrl = new URL(path, import.meta.url);
@@ -14,6 +15,7 @@ async function loadTypeScript(path) {
 }
 
 const editor = await loadTypeScript('../lib/canvas/video-editor.ts');
+const sync = createTsRequire(process.cwd())('./lib/canvas/video-editor-sync');
 const textLayout = await loadTypeScript('../lib/canvas/text-layout.ts');
 const modelSource = await readFile(new URL('../lib/canvas/model.ts', import.meta.url), 'utf8');
 const componentSource = (await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8'))
@@ -46,6 +48,29 @@ test('creates default video editor clips and keeps manual edits during input syn
   assert.equal(synced.clips.find((clip) => clip.sourceNodeId === 'video-1').duration, 5.2);
   assert.equal(synced.clips.find((clip) => clip.sourceNodeId === 'video-1').playbackRate, 1);
   assert.equal(synced.clips.find((clip) => clip.sourceNodeId === 'video-1').fit, 'contain');
+});
+
+test('projects connected media into video editor nodes without mutating the input document', () => {
+  const image = { id: 'image-1', type: 'media', x: 0, y: 0, data: { kind: 'image', url: '/image.png', name: '封面' } };
+  const editorNode = {
+    id: 'editor-1',
+    type: 'video-editor',
+    x: 200,
+    y: 0,
+    data: { videoEditor: undefined },
+  };
+  const document = {
+    version: '1',
+    nodes: [image, editorNode],
+    groups: [],
+    edges: [{ id: 'edge-1', source: image.id, target: editorNode.id }],
+    camera: { x: 0, y: 0, zoom: 1 },
+  };
+
+  const next = sync.syncCanvasVideoEditorReferences(document);
+  assert.equal(document.nodes[1].data.videoEditor, undefined);
+  assert.equal(next.nodes.find((node) => node.id === editorNode.id).data.videoEditor.clips[0].sourceNodeId, image.id);
+  assert.equal(next.nodes.find((node) => node.id === editorNode.id).data.videoEditor.clips[0].name, '封面');
 });
 
 test('removes disconnected source clips but preserves internal captions', () => {

@@ -7,6 +7,24 @@ Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
 
+### Stage 6 canvas video-editor input projection checkpoint (2026-10-07)
+
+- `lib/canvas/video-editor-sync.ts` now owns the pure document projection that
+  reconciles incoming referenceable media into video-editor timeline inputs.
+- The projection reuses `incomingContext`, the existing referenceable-node
+  predicate, `normalizeVideoEditorState`, and `syncVideoEditorInputs`; it does
+  not create a second timeline model or persistence path.
+- `CanvasWorkspace.tsx` retains when synchronization runs and owns all
+  CanvasCore/document commits. No URL, API, provider, task runtime, or UI
+  interaction changed.
+- Behavior coverage verifies connected media projection and input-document
+  immutability. Focused video/model tests (108 passed), `npm run typecheck`,
+  full `npm run check` (1876 passed, 2 skipped, production build success), and
+  `git diff --check` passed.
+- Remaining risk: video-editor synchronization still runs alongside the larger
+  Canvas document synchronization pipeline; separating those transaction
+  triggers would require a broader runtime boundary.
+
 ### Stage 5 canvas input-role projection checkpoint (2026-10-07)
 
 - `lib/canvas/input-roles.ts` now owns the pure projection from incoming
