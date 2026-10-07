@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createTsRequire } from "./ts-require.mjs";
 
 const canvas = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
@@ -22,6 +23,7 @@ const panoramaStyles = await readFile(
   new URL("../app/canvas-panorama.css", import.meta.url),
   "utf8",
 );
+const fileInput = createTsRequire(process.cwd())("./lib/canvas/file-input");
 
 test("completed image viewer exposes the panorama entry point", () => {
   assert.match(viewer, /onAngle\?: \(\) => void/);
@@ -51,13 +53,23 @@ test("panorama viewer applies the current local view without image generation", 
   assert.doesNotMatch(workbench, /AngleGenerationInput|generateCanvasImage|应用此角度/);
   assert.doesNotMatch(canvas, /runImageAngleGeneration\(panoramaNode\.id/);
   assert.match(canvas, /const applyPanoramaView = useCallback/);
-  assert.match(canvas, /dataUrlFile\(snapshot\.dataUrl/);
+  assert.match(canvas, /canvasFileFromDataUrl\(snapshot\.dataUrl/);
   assert.match(canvas, /role: "全景平面视图"/);
   assert.match(canvas, /已应用为平面图片/);
   assert.match(workbench, /普通图片以正面贴图显示/);
   assert.match(workbench, /背面没有可用图像/);
   assert.match(workbench, /滚轮缩放 · 回到原始比例/);
   assert.match(workbench, /if \(!isEquirectangular\) return;/);
+});
+
+test("canvas data URLs become named files with their encoded media type", async () => {
+  const file = fileInput.canvasFileFromDataUrl(
+    "data:image/webp;base64,aGVsbG8=",
+    "panorama.webp",
+  );
+  assert.equal(file.name, "panorama.webp");
+  assert.equal(file.type, "image/webp");
+  assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [104, 101, 108, 108, 111]);
 });
 
 test("panorama viewer has bounded desktop and mobile layouts", () => {

@@ -390,6 +390,7 @@ import { canvasVideoInputCapabilities } from "@/lib/canvas/video-capabilities";
 import { syncCanvasVideoReferences } from "@/lib/canvas/video-reference-sync";
 import { canvasHistoryMask } from "@/lib/canvas/history-mask";
 import {
+  canvasFileFromDataUrl,
   hasExternalFileTransfer,
   isCanvasAudioFile,
   isCanvasTextReferenceFile,
@@ -943,16 +944,6 @@ function generationKey(source: {
   kind: Mode;
 }) {
   return source.node?.id || source.target?.id || `draft:${source.kind}`;
-}
-
-function dataUrlFile(dataUrl: string, name: string) {
-  const [header, encoded = ""] = dataUrl.split(",");
-  const mime = header.match(/^data:([^;]+)/)?.[1] || "image/png";
-  const bytes = atob(encoded);
-  const content = new Uint8Array(bytes.length);
-  for (let index = 0; index < bytes.length; index += 1)
-    content[index] = bytes.charCodeAt(index);
-  return new File([content], name, { type: mime });
 }
 
 function canvasConnectableId(target: EventTarget | null) {
@@ -2654,7 +2645,7 @@ export default function SuperCanvas() {
     const sourceName = String(source.data.name || "全景图片");
     const viewLabel = `${snapshot.yaw}°`;
     const asset = await uploadCanvasAsset(
-      dataUrlFile(snapshot.dataUrl, `${sourceName}-全景视图-${snapshot.yaw}deg.png`),
+      canvasFileFromDataUrl(snapshot.dataUrl, `${sourceName}-全景视图-${snapshot.yaw}deg.png`),
     );
     if (asset.kind !== "image") throw new Error("当前视角未能保存为图片素材，请重试。");
 
@@ -9077,10 +9068,10 @@ export default function SuperCanvas() {
         if (!existingDraft)
           throw new Error("当前节点没有完整生成参数，无法使用局部编辑。");
         const uploaded = await uploadCanvasAsset(
-          dataUrlFile(maskDataUrl, `mask-${node.id}.png`),
+          canvasFileFromDataUrl(maskDataUrl, `mask-${node.id}.png`),
         );
         const moveGuide = moveGuideDataUrl
-          ? await uploadCanvasAsset(dataUrlFile(moveGuideDataUrl, `move-guide-${node.id}.png`))
+          ? await uploadCanvasAsset(canvasFileFromDataUrl(moveGuideDataUrl, `move-guide-${node.id}.png`))
           : undefined;
         const liveDraft = editorDrafts[node.id];
         const settings = copyCanvasGenerationParams(

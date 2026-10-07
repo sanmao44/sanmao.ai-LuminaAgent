@@ -13,6 +13,17 @@ export function hasExternalFileTransfer(
   );
 }
 
+export function canvasFileFromDataUrl(dataUrl: string, name: string) {
+  const [header, encoded = ""] = dataUrl.split(",");
+  const mime = header.match(/^data:([^;]+)/)?.[1] || "image/png";
+  const bytes = atob(encoded);
+  const content = new Uint8Array(bytes.length);
+  for (let index = 0; index < bytes.length; index += 1) {
+    content[index] = bytes.charCodeAt(index);
+  }
+  return new File([content], name, { type: mime });
+}
+
 export function isCanvasTextReferenceFile(
   file: Pick<File, "name" | "type">,
 ) {

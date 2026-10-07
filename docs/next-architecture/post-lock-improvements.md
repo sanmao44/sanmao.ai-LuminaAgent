@@ -2362,3 +2362,20 @@ hardening work when the trigger applies.
 - Focused canvas and creative-reference tests passed (74/74), and typecheck
   passed. Full `npm run check`, production build, and `git diff --check` are
   required before committing this slice.
+
+### Stage 6 canvas data URL file adapter checkpoint (2026-10-07)
+
+- `lib/canvas/file-input.ts` now owns the browser-side conversion from a data
+  URL to a named `File`, including the encoded media type and binary payload.
+- `CanvasWorkspace.tsx` retains panorama, mask, and move-guide lifecycle
+  orchestration, uploads, and CanvasCore mutations; it delegates only the
+  pure file conversion and no longer carries a duplicate local helper.
+- Behavior coverage verifies filename, MIME type, and decoded bytes. No URL,
+  API, data format, persistence, provider, task, or interaction contract
+  changed.
+- Validation: focused canvas tests 69/69 passed; `npm run check` passed with
+  1880 tests passed, 2 skipped, 0 failed; production build and typecheck
+  passed; `git diff --check` passed.
+- Remaining risk: DOM target filtering, generation-key tracking, and connection
+  validation remain in Workspace because they depend on browser event ownership
+  or a cross-cutting command contract.
