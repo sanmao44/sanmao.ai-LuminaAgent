@@ -8,6 +8,7 @@ const workspace = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const editorDraftSync = createTsRequire(process.cwd())("./lib/canvas/editor-draft-sync");
 const localEditPrompt = createTsRequire(process.cwd())("./lib/canvas/local-edit-prompt");
 const connectionOverlay = await readFile(
   new URL("../components/canvas/CanvasConnectionOverlay.tsx", import.meta.url),
@@ -286,8 +287,28 @@ test("editor generation resolves its current draft without waiting for selection
 });
 
 test("open editor drafts follow externally synchronized video input modes", () => {
-  assert.match(component, /function syncCanvasEditorDraftInputModes\(/);
-  assert.match(component, /params: \{ \.\.\.draft\.params, inputMode: params\.inputMode \}/);
+  const drafts = {
+    "video-1": {
+      prompt: "video",
+      params: { kind: "video", inputMode: "text" },
+    },
+  };
+  const document = {
+    version: "1",
+    nodes: [{
+      id: "video-1",
+      type: "media",
+      x: 0,
+      y: 0,
+      data: { kind: "video", url: "/video.mp4", params: { kind: "video", inputMode: "frames" } },
+    }],
+    groups: [],
+    edges: [],
+    camera: { x: 0, y: 0, zoom: 1 },
+  };
+  const next = editorDraftSync.syncCanvasEditorDraftInputModes(drafts, document, null);
+  assert.equal(next["video-1"].params.inputMode, "frames");
+  assert.equal(drafts["video-1"].params.inputMode, "text");
   assert.match(component, /setEditorDrafts\(\(current\) => syncCanvasEditorDraftInputModes\(current, normalized, runtime\)\)/);
 });
 

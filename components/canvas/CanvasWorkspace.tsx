@@ -318,6 +318,10 @@ import type { CloneJob } from "@/lib/clone/types";
 import { normalizeVideoEditorState } from "@/lib/canvas/video-editor";
 import { syncCanvasVideoEditorReferences } from "@/lib/canvas/video-editor-sync";
 import {
+  syncCanvasEditorDraftInputModes,
+  type CanvasEditorDraft,
+} from "@/lib/canvas/editor-draft-sync";
+import {
   normalizeCanvasVideoClipState,
   videoClipDurationSeconds,
 } from "@/lib/canvas/video-clip";
@@ -507,16 +511,6 @@ type CanvasDeckSource =
   | { kind: "text"; prompt: string; params: AgentCreationSettings; node: CanvasNode | null; target: CanvasNode | null }
   | { kind: "image"; prompt: string; params: ImageCreationSettings; node: CanvasNode | null; target: CanvasNode | null }
   | { kind: "video"; prompt: string; params: VideoCreationSettings; node: CanvasNode | null; target: CanvasNode | null };
-type CanvasEditorDraft = {
-  prompt: string;
-  params?: CanvasGenerationParams;
-  presetId?: string;
-  presetName?: string;
-  sourceNodeId?: string;
-  references?: CanvasReferenceDraft[];
-  operation?: "generate" | "edit" | "extend";
-  dirty?: boolean;
-};
 type CanvasGenerationRequest = {
   nodeId?: string;
   prompt?: string;
@@ -731,28 +725,6 @@ function updateCanvasVideoMode(
       };
     }),
   };
-}
-
-/** Keep an already-open editor draft aligned with externally synchronized node modes. */
-function syncCanvasEditorDraftInputModes(
-  drafts: Record<string, CanvasEditorDraft>,
-  document: CanvasDocument,
-  runtime: CanvasRuntimeState | null,
-) {
-  let next = drafts;
-  Object.entries(drafts).forEach(([nodeId, draft]) => {
-    if (!draft.params || draft.params.kind !== "video") return;
-    const node = nodeById(document, nodeId);
-    if (!node || node.data.kind !== "video") return;
-    const params = videoParamsForCanvasNode(node, runtime);
-    if (draft.params.inputMode === params.inputMode) return;
-    if (next === drafts) next = { ...drafts };
-    next[nodeId] = {
-      ...draft,
-      params: { ...draft.params, inputMode: params.inputMode },
-    };
-  });
-  return next;
 }
 
 function connectCanvasNodesInDocument(

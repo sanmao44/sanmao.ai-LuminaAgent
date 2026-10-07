@@ -7,6 +7,23 @@ Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
 
+### Stage 7 canvas editor-draft input projection checkpoint (2026-10-07)
+
+- `lib/canvas/editor-draft-sync.ts` now owns the pure projection that keeps
+  open video editor drafts aligned with synchronized node input modes.
+- It reuses the existing Canvas creation-settings normalization and Canvas
+  node/document types; the returned draft map is immutable and preserves
+  untouched draft object identity.
+- `CanvasWorkspace.tsx` retains editor-draft state ownership, CanvasCore
+  synchronization, and all video mode mutation paths. No new store, API,
+  provider path, compatibility layer, or duplicate type source was added.
+- Focused canvas/editor/video tests (91 passed), `npm run typecheck`, full
+  `npm run check` (1876 passed, 2 skipped, production build success), and
+  `git diff --check` passed.
+- Remaining risk: `connectCanvasNodesInDocument` still combines validation,
+  capability selection, edge mutation, and synchronization and remains a
+  high-risk boundary for a future dedicated contract.
+
 ### Stage 6 canvas video-editor input projection checkpoint (2026-10-07)
 
 - `lib/canvas/video-editor-sync.ts` now owns the pure document projection that
