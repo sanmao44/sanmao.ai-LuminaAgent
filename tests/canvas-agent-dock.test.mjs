@@ -15,6 +15,8 @@ const nodeEditor = await readFile(new URL("../components/canvas/CanvasNodeEditor
 const workspaceHeader = await readFile(new URL("../components/canvas/CanvasWorkspaceHeader.tsx", import.meta.url), "utf8");
 const viewportOverlay = await readFile(new URL("../components/canvas/CanvasViewportOverlay.tsx", import.meta.url), "utf8");
 const toolsMenuSource = await readFile(new URL("../components/canvas/CanvasToolsContextMenu.tsx", import.meta.url), "utf8");
+const interactionTargets = createTsRequire(process.cwd())("./lib/canvas/interaction-targets");
+const interactionTargetsSource = await readFile(new URL("../lib/canvas/interaction-targets.ts", import.meta.url), "utf8");
 
 const [component, canvasSource, styles, context, canvasApi, markdown] = await Promise.all([
   readFile(new URL("../components/CanvasAgentDock.tsx", import.meta.url), "utf8"),
@@ -213,13 +215,10 @@ test("the dock never deletes canvas content on its own", () => {
 });
 
 test("the stage keeps the dock interactive so the panel never clears the selection", () => {
-  const registered = canvas.match(/\.canvas-minimap,\.canvas-agent-dock,\.canvas-agent-dock-rail,/g) || [];
-  assert.ok(
-    registered.length >= 5,
-    `the dock belongs in every stage interaction list (found ${registered.length})`,
-  );
+  assert.match(interactionTargets.CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR, /\.canvas-agent-dock/);
+  assert.match(interactionTargets.CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR, /\.canvas-agent-dock-rail/);
   assert.match(
-    canvas,
+    interactionTargetsSource,
     /"\.canvas-agent-dock",\s*\n\s*"\.canvas-agent-dock-rail",\s*\n\s*"\.canvas-workbench",/,
   );
   assert.match(canvas, /\.canvas-node-editor-popover\.is-prompt-expanded,\.canvas-agent-dock",/);

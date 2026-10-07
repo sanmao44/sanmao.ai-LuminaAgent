@@ -2417,3 +2417,23 @@ hardening work when the trigger applies.
   Workspace because they need the live CanvasCore document and transaction
   context; moving those actions would change ownership rather than reduce
   coupling.
+
+### Stage 6 canvas interaction target boundary checkpoint (2026-10-07)
+
+- `lib/canvas/interaction-targets.ts` now owns the stateless DOM target
+  projections used by the canvas: connectable id lookup, interactive create
+  menu selector, wheel isolation, and editable-target detection.
+- `CanvasWorkspace.tsx` retains browser event lifecycle, pointer/keyboard
+  handlers, CanvasCore coordination, and all business actions. It no longer
+  defines duplicate DOM classification helpers.
+- Behavior coverage verifies connectable ids, editable controls, node and
+  overlay wheel isolation, and the interactive selector. No URL, API,
+  document format, persistence, provider, task, or interaction contract
+  changed.
+- Validation: focused interaction/editor/local-edit/Agent dock tests passed
+  (146/146); full `npm run check` passed with 1887 tests passed, 2 skipped,
+  0 failed; typecheck, production build, and `git diff --check` passed.
+- Remaining risk: connection validation and edge mutation still stay in
+  Workspace because they cross capability checks, source grouping, video mode,
+  and CanvasCore synchronization; generation/API orchestration and large CSS
+  boundaries remain intentionally untouched.

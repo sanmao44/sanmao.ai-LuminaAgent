@@ -420,6 +420,13 @@ import {
 } from "@/lib/canvas/generation-params";
 import { findCanvasNodePlacement } from "@/lib/canvas/node-placement";
 import {
+  CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR,
+  canvasConnectableId,
+  isCanvasWheelIsolatedTarget,
+  isCanvasWheelIsolatedTargetWithOptions,
+  isEditableTarget,
+} from "@/lib/canvas/interaction-targets";
+import {
   CANVAS_ALIGNMENT_OPTIONS,
   CANVAS_ARRANGE_MODE_OPTIONS,
   CANVAS_DISTRIBUTION_OPTIONS,
@@ -892,12 +899,6 @@ function generationKey(source: {
   return source.node?.id || source.target?.id || `draft:${source.kind}`;
 }
 
-function canvasConnectableId(target: EventTarget | null) {
-  return (target as HTMLElement | null)
-    ?.closest<HTMLElement>("[data-canvas-connectable-id]")
-    ?.dataset.canvasConnectableId;
-}
-
 async function waitForCanvasUpscaleTask(taskId: string) {
   for (let attempt = 0; attempt < 120; attempt += 1) {
     await new Promise<void>((resolve) => window.setTimeout(resolve, attempt === 0 ? 800 : 2000));
@@ -911,65 +912,6 @@ async function waitForCanvasUpscaleTask(taskId: string) {
 
 function isGenerationPendingError(error: unknown): error is Error & { generationPending?: boolean } {
   return Boolean(error && typeof error === "object" && (error as { generationPending?: unknown }).generationPending === true);
-}
-
-const CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR =
-  "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node,.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop";
-
-// Wheel gestures inside a node or an overlay belong to that control. Keep
-// them out of the stage zoom handler so native text/list scrolling can work
-// without moving the whole canvas underneath it.
-function isCanvasWheelIsolatedTarget(target: EventTarget | null) {
-  return isCanvasWheelIsolatedTargetWithOptions(target, false);
-}
-
-function isCanvasWheelIsolatedTargetWithOptions(
-  target: EventTarget | null,
-  allowNodeSurface: boolean,
-) {
-  if (!(target instanceof Element)) return false;
-  const selector = [
-    "textarea",
-    "input",
-    "select",
-    "[contenteditable=\"true\"]",
-    !allowNodeSurface ? ".canvas-node" : "",
-    ".canvas-node-editor-popover",
-    ".canvas-node-quick-toolbar",
-    ".canvas-minimap",
-    ".canvas-agent-dock",
-    ".canvas-agent-dock-rail",
-    ".canvas-workbench",
-    ".canvas-context-menu",
-    ".canvas-modal-backdrop",
-    "[data-canvas-wheel-isolate]",
-  ].filter(Boolean).join(", ");
-  if (target.closest(selector)) return true;
-
-  // Keep future native scroll containers safe without requiring every new
-  // panel to add a separate wheel handler. Only treat an element as a scroll
-  // target when it can actually scroll in the wheel direction's axis.
-  for (let element: HTMLElement | null =
-    target instanceof HTMLElement ? target : target.parentElement;
-    element && element !== document.body;
-    element = element.parentElement) {
-    const style = window.getComputedStyle(element);
-    const vertical =
-      /(auto|scroll|overlay)/.test(style.overflowY) &&
-      element.scrollHeight > element.clientHeight + 1;
-    const horizontal =
-      /(auto|scroll|overlay)/.test(style.overflowX) &&
-      element.scrollWidth > element.clientWidth + 1;
-    if (vertical || horizontal) return true;
-  }
-  return false;
-}
-
-function isEditableTarget(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    Boolean(target.closest('input,textarea,select,[contenteditable="true"]'))
-  );
 }
 
 export default function SuperCanvas() {

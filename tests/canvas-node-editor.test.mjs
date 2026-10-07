@@ -13,6 +13,7 @@ const documentDiff = createTsRequire(process.cwd())("./lib/canvas/document-diff"
 const localEditPrompt = createTsRequire(process.cwd())("./lib/canvas/local-edit-prompt");
 const generationParams = createTsRequire(process.cwd())("./lib/canvas/generation-params");
 const layoutOptions = createTsRequire(process.cwd())("./lib/canvas/layout-options");
+const interactionTargets = createTsRequire(process.cwd())("./lib/canvas/interaction-targets");
 const connectionOverlay = await readFile(
   new URL("../components/canvas/CanvasConnectionOverlay.tsx", import.meta.url),
   "utf8",
@@ -803,8 +804,8 @@ test("canvas edges reveal one small red removal control at the pointer without a
 });
 
 test("nested node scrolling does not trigger canvas zoom", () => {
-  assert.match(component, /function isCanvasWheelIsolatedTarget\(target: EventTarget \| null\)/);
-  assert.match(component, /target\.closest\(selector\)/);
+  assert.equal(typeof interactionTargets.isCanvasWheelIsolatedTarget, "function");
+  assert.equal(typeof interactionTargets.isCanvasWheelIsolatedTargetWithOptions, "function");
   assert.match(component, /onWheel=\{\(event\) => event\.stopPropagation\(\)\}/);
   assert.match(component, /if \(isCanvasWheelIsolatedTargetWithOptions\(event\.target, true\)\)/);
   assert.doesNotMatch(component, /onWheel=\{\(event\) => event\.stopPropagation\(\)\}\s*onDoubleClick/);

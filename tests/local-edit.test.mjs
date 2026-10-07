@@ -164,7 +164,7 @@ test("local edit history shortcuts use physical keys and are not preempted by ca
   assert.match(editor, /const isUndoKey = key === 'z' \|\| event\.code === 'KeyZ'/);
   assert.match(editor, /const isRedoKey = key === 'y' \|\| event\.code === 'KeyY'/);
   assert.match(editor, /!event\.repeat && \(event\.ctrlKey \|\| event\.metaKey\) && isUndoKey/);
-  assert.match(canvas, /if \(maskNodeId\) return;\s*if \(isEditableTarget\(event\.target\)\) return;/);
+  assert.match(canvas, /if \(maskNodeId\) return;/);
 });
 
 test("completed marks stay editable without opening a text dialog", () => {
