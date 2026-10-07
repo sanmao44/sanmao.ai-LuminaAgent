@@ -2350,3 +2350,15 @@ hardening work when the trigger applies.
 - Remaining risk: the surrounding local-edit lifecycle intentionally stays in
   Workspace because it coordinates editor state, mask nodes, and document
   mutations.
+
+### Stage 6 canvas mention projection convergence checkpoint (2026-10-07)
+
+- Removed the local `mentionStateForValue` wrapper from `CanvasWorkspace.tsx`;
+  mention range detection now calls the existing `creativeReferenceMentionRange`
+  domain function directly at each input boundary.
+- No new module, type, state owner, or compatibility layer was introduced. The
+  existing creative-reference implementation remains the single source of
+  mention parsing behavior.
+- Focused canvas and creative-reference tests passed (74/74), and typecheck
+  passed. Full `npm run check`, production build, and `git diff --check` are
+  required before committing this slice.

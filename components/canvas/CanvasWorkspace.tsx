@@ -508,10 +508,6 @@ type CanvasContextMenuState = {
 };
 type MentionState = { start: number; end: number; query: string } | null;
 
-function mentionStateForValue(value: string, cursor: number): MentionState {
-  return creativeReferenceMentionRange(value, cursor);
-}
-
 type CanvasDrafts = {
   image: { prompt: string; params: ImageCreationSettings };
   video: { prompt: string; params: VideoCreationSettings };
@@ -11489,7 +11485,7 @@ export default function SuperCanvas() {
       if (reuseDraft) {
         setReuseDraft((current) => current ? { ...current, prompt: value, dirty: true } : current);
         setReusePromptBeforeOptimization(null);
-        setMentionState(mentionStateForValue(value, cursor));
+        setMentionState(creativeReferenceMentionRange(value, cursor));
         return;
       }
       setDeckPromptBeforeOptimization(null);
@@ -11499,11 +11495,11 @@ export default function SuperCanvas() {
           canvasVideoTargetHasImageReference(canvasCoreRef.current.document(), selectedSingle)
         ) updatePrompt(value);
         else openReuseDraft(selectedSingle, { prompt: value });
-        setMentionState(mentionStateForValue(value, cursor));
+        setMentionState(creativeReferenceMentionRange(value, cursor));
         return;
       }
       updatePrompt(value);
-      setMentionState(mentionStateForValue(value, cursor));
+      setMentionState(creativeReferenceMentionRange(value, cursor));
     },
     [openReuseDraft, reuseDraft, selectedSingle, updatePrompt],
   );
