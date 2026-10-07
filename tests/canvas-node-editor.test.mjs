@@ -9,6 +9,7 @@ const workspace = await readFile(
   "utf8",
 );
 const editorDraftSync = createTsRequire(process.cwd())("./lib/canvas/editor-draft-sync");
+const documentDiff = createTsRequire(process.cwd())("./lib/canvas/document-diff");
 const localEditPrompt = createTsRequire(process.cwd())("./lib/canvas/local-edit-prompt");
 const connectionOverlay = await readFile(
   new URL("../components/canvas/CanvasConnectionOverlay.tsx", import.meta.url),
@@ -310,6 +311,26 @@ test("open editor drafts follow externally synchronized video input modes", () =
   assert.equal(next["video-1"].params.inputMode, "frames");
   assert.equal(drafts["video-1"].params.inputMode, "text");
   assert.match(component, /setEditorDrafts\(\(current\) => syncCanvasEditorDraftInputModes\(current, normalized, runtime\)\)/);
+});
+
+test("position-only canvas updates keep data identity and skip document reconciliation", () => {
+  const data = { kind: "image", url: "/image.png" };
+  const previous = {
+    version: "1",
+    nodes: [{ id: "node-1", type: "media", x: 0, y: 0, data }],
+    groups: [],
+    edges: [],
+    camera: { x: 0, y: 0, zoom: 1 },
+  };
+  const next = {
+    ...previous,
+    nodes: [{ ...previous.nodes[0], x: 40, y: 80 }],
+  };
+  assert.equal(documentDiff.canvasNodesPositionOnly(previous, next), true);
+  assert.equal(documentDiff.canvasNodesPositionOnly(previous, {
+    ...next,
+    nodes: [{ ...next.nodes[0], data: { ...data, url: "/other.png" } }],
+  }), false);
 });
 
 test("upscale runs in place and keeps a visible processing state on the node", () => {

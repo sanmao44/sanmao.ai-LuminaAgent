@@ -317,6 +317,7 @@ import type { AngleGenerationInput } from "@/lib/angle-control";
 import type { CloneJob } from "@/lib/clone/types";
 import { normalizeVideoEditorState } from "@/lib/canvas/video-editor";
 import { syncCanvasVideoEditorReferences } from "@/lib/canvas/video-editor-sync";
+import { canvasNodesPositionOnly } from "@/lib/canvas/document-diff";
 import {
   syncCanvasEditorDraftInputModes,
   type CanvasEditorDraft,
@@ -1111,31 +1112,6 @@ function defaultCanvasVideoInputRole(
   if (inputMode === "frames") return imagePosition === 0 ? "first-frame" : imagePosition === 1 ? "last-frame" : "reference-image";
   if (inputMode === "first-frame") return imagePosition === 0 ? "first-frame" : "reference-image";
   return "reference-image";
-}
-
-// A drag/resize update only rewrites x/y (and possibly w/h) on a subset of
-// nodes while keeping every node's identity, data and group membership intact.
-// Detecting this lets the hot setDoc path skip the video-reference sync and
-// editor-draft reconcile that would otherwise run on every pointermove frame.
-function canvasNodesPositionOnly(
-  previous: CanvasDocument,
-  next: CanvasDocument,
-) {
-  if (next.nodes.length !== previous.nodes.length) return false;
-  for (let index = 0; index < next.nodes.length; index++) {
-    const before = previous.nodes[index];
-    const after = next.nodes[index];
-    if (before === after) continue;
-    if (
-      before.id !== after.id ||
-      before.type !== after.type ||
-      before.groupId !== after.groupId ||
-      before.data !== after.data
-    ) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function sameCanvasIdOrder(value: unknown, expected: readonly string[]) {

@@ -7,6 +7,23 @@ Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
 
+### Stage 8 canvas position-only diff checkpoint (2026-10-07)
+
+- `lib/canvas/document-diff.ts` now owns the pure identity check used by the
+  high-frequency drag/resize path to recognize node position/size-only updates.
+- The check preserves the previous node array ordering and compares node id,
+  type, group membership, and data identity before allowing reconciliation to
+  be skipped. No CanvasCore or history behavior changed.
+- `CanvasWorkspace.tsx` keeps the setDoc fast-path policy and all document
+  synchronization ownership. No new store, API, provider path, compatibility
+  layer, or duplicate type source was introduced.
+- Focused canvas tests (149 passed), `npm run typecheck`, full `npm run check`
+  (1877 passed, 2 skipped, production build success), and `git diff --check`
+  passed.
+- Remaining risk: the surrounding setDoc policy still combines camera, node,
+  edge, group, and runtime synchronization decisions and is intentionally kept
+  in Workspace until a stable command boundary exists.
+
 ### Stage 7 canvas editor-draft input projection checkpoint (2026-10-07)
 
 - `lib/canvas/editor-draft-sync.ts` now owns the pure projection that keeps
