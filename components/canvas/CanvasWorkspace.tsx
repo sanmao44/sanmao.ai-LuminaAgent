@@ -414,6 +414,7 @@ import {
 import {
   copyCanvasGenerationParams,
   defaultCanvasGenerationParams,
+  defaultMediaParams,
 } from "@/lib/canvas/generation-params";
 import { copyCanvasImageToClipboard } from "@/lib/canvas/clipboard";
 import {
@@ -683,13 +684,6 @@ function clamp(value: number, min: number, max: number) {
 }
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
-}
-
-function defaultMediaParams(
-  kind: CanvasMediaKind,
-  runtime: CanvasRuntimeState | null,
-): { params?: CanvasGenerationParams } {
-  return kind === "audio" ? {} : { params: defaultCanvasGenerationParams(kind, runtime) };
 }
 
 type CanvasConnectionResult = {

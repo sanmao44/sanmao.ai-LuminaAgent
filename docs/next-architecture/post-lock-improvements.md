@@ -2320,3 +2320,17 @@ hardening work when the trigger applies.
 - Remaining risk: connection validation and edge mutation still share one
   Workspace function because their command contract crosses capability checks,
   source grouping, and CanvasCore synchronization.
+
+### Stage 6 canvas media defaults checkpoint (2026-10-07)
+
+- `lib/canvas/generation-params.ts` now also owns the `defaultMediaParams`
+  projection used when materializing canvas assets and reference nodes.
+- Audio remains parameter-free; image and video media continue to use the
+  existing shared creation-settings defaults. No new settings source or media
+  type was introduced.
+- `CanvasWorkspace.tsx` no longer carries this local projection. Focused
+  generation, node-editor, and video tests passed (73/73), including an explicit
+  behavior assertion for audio versus generated media defaults.
+- Remaining risk: `generationKey`, `maskParamsWithoutMask`, and DOM target
+  helpers remain in Workspace because they depend on async UI lifecycle or
+  browser event ownership.

@@ -1,5 +1,5 @@
 import { clone } from "./model";
-import type { CanvasRuntimeState, CanvasGenerationParams } from "./types";
+import type { CanvasRuntimeState, CanvasGenerationParams, CanvasMediaKind } from "./types";
 import {
   normalizeCreationSettings,
   readSharedCreationSettings,
@@ -9,6 +9,13 @@ import {
 } from "../creation/settings";
 
 type CanvasGenerationMode = CanvasGenerationParams["kind"];
+
+export function defaultMediaParams(
+  kind: CanvasMediaKind,
+  runtime: CanvasRuntimeState | null,
+): { params?: CanvasGenerationParams } {
+  return kind === "audio" ? {} : { params: defaultCanvasGenerationParams(kind, runtime) };
+}
 
 export function defaultCanvasGenerationParams(
   kind: "image",

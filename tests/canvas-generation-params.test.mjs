@@ -53,3 +53,11 @@ test("falls back to shared defaults when supplied params are not objects", () =>
     value: { kind: "video", runtime: null, source: "shared" },
   });
 });
+
+test("adds generation defaults only for media kinds with generation settings", () => {
+  const runtime = { models: [] };
+  assert.deepEqual(params.defaultMediaParams("audio", runtime), {});
+  assert.deepEqual(params.defaultMediaParams("image", runtime), {
+    params: { kind: "image", runtime, source: "shared" },
+  });
+});
