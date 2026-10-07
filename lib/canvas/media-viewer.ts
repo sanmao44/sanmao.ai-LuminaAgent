@@ -1,4 +1,4 @@
-import { nodeById } from "@/lib/canvas/model";
+import { comparisonReferences, isCanvasReferenceableNode, nodeById } from "@/lib/canvas/model";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
 import type { CanvasDocument, CanvasNode, CanvasRuntimeState } from "@/lib/canvas/types";
 
@@ -102,6 +102,58 @@ function mediaViewerVersionInfo(
     parameters: entries,
     status,
   };
+}
+
+
+export type MediaViewerReference = {
+  id: string;
+  kind: "image" | "video" | "audio";
+  url: string;
+  name: string;
+};
+
+export type MediaViewerItem = {
+  id: string;
+  kind: "image" | "video" | "audio";
+  url: string;
+  name: string;
+  prompt?: string;
+  revisedPrompt?: string;
+  width?: number;
+  height?: number;
+  versionInfo?: ImageVersionInfo;
+};
+
+export function mediaViewerItemForCanvasNode(
+  document: CanvasDocument,
+  node: CanvasNode,
+  runtime: CanvasRuntimeState | null,
+): MediaViewerItem | null {
+  if (!isCanvasReferenceableNode(node)) return null;
+  return {
+    id: node.id,
+    kind: node.data.kind || "image",
+    url: String(node.data.url),
+    name: String(node.data.name || (node.type === "upscale" ? "超分结果" : "画布素材")),
+    prompt: String(node.data.generation?.prompt || node.data.prompt || ""),
+    width: Number(node.data.nativeWidth) || undefined,
+    height: Number(node.data.nativeHeight) || undefined,
+    versionInfo: mediaViewerVersionInfo(document, node, runtime),
+  };
+}
+
+export function mediaViewerReferencesForCanvasNode(
+  document: CanvasDocument,
+  nodeId: string,
+): MediaViewerReference[] {
+  return comparisonReferences(document, nodeId)
+    .map((reference) => ({
+      id: reference.id,
+      kind: reference.data.kind || "image",
+      url: String(reference.data.url || ""),
+      name: String(reference.data.name || "参考素材"),
+    }))
+    .filter((reference) => Boolean(reference.url));
 }
 
 export { mediaViewerVersionInfo };

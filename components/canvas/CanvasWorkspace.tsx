@@ -51,7 +51,6 @@ import {
   isCanvasMentionableNode,
   incomingContext,
   incomingReferences,
-  comparisonReferences,
   isCanvasEdgeVisible,
   isCanvasGridComposeLineageEdge,
   normalizeVariantRequirements,
@@ -272,10 +271,7 @@ import { canvasMentionOption } from "@/components/canvas/mention-options";
 import CanvasReferenceMentionMenu from "@/components/canvas/CanvasReferenceMentionMenu";
 import CanvasUpscaleNodeCard from "@/components/canvas/CanvasUpscaleNodeCard";
 import CanvasGroupLayer from "@/components/canvas/CanvasGroupLayer";
-import MediaViewer, {
-  type MediaViewerItem,
-  type MediaViewerReference,
-} from "@/components/MediaViewer";
+import MediaViewer from "@/components/MediaViewer";
 import LocalEditEditor from "@/components/MaskEditor";
 import CanvasImageEditorWorkbench, {
   type CanvasImageEditorSaveRequest,
@@ -351,7 +347,10 @@ import {
   type CanvasViewportPoint,
 } from "@/lib/canvas/viewport";
 import { canvasUpscaleSize, loadImageDimensions, seedVrTargetSize } from "@/lib/canvas/upscale";
-import { mediaViewerVersionInfo } from "@/lib/canvas/media-viewer";
+import {
+  mediaViewerItemForCanvasNode,
+  mediaViewerReferencesForCanvasNode,
+} from "@/lib/canvas/media-viewer";
 import {
   CANVAS_MAX_REFERENCES,
   addReferenceDrafts,
@@ -14317,22 +14316,9 @@ export default function SuperCanvas() {
       {lightbox && (() => {
         const viewerNode = nodeById(document, lightbox.nodeId);
         if (!viewerNode || !isCanvasReferenceableNode(viewerNode)) return null;
-        const viewerItem: MediaViewerItem = {
-          id: viewerNode.id,
-          kind: viewerNode.data.kind || "image",
-          url: String(viewerNode.data.url),
-          name: String(viewerNode.data.name || (viewerNode.type === "upscale" ? "超分结果" : "画布素材")),
-          prompt: String(viewerNode.data.generation?.prompt || viewerNode.data.prompt || ""),
-          width: Number(viewerNode.data.nativeWidth) || undefined,
-          height: Number(viewerNode.data.nativeHeight) || undefined,
-          versionInfo: mediaViewerVersionInfo(document, viewerNode, runtime),
-        };
-        const viewerReferences: MediaViewerReference[] = comparisonReferences(document, viewerNode.id).map((reference) => ({
-          id: reference.id,
-          kind: reference.data.kind || "image",
-          url: String(reference.data.url || ""),
-          name: String(reference.data.name || "参考素材"),
-        })).filter((reference) => Boolean(reference.url));
+        const viewerItem = mediaViewerItemForCanvasNode(document, viewerNode, runtime);
+        if (!viewerItem) return null;
+        const viewerReferences = mediaViewerReferencesForCanvasNode(document, viewerNode.id);
         return <MediaViewer
           item={viewerItem}
           references={viewerReferences}

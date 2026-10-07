@@ -6,7 +6,7 @@ import ts from "typescript";
 const sourceUrl = new URL("../lib/canvas/media-viewer.ts", import.meta.url);
 let source = await readFile(sourceUrl, "utf8");
 source = source
-  .replace(/import \{ nodeById \} from [^\n]+;\r?\n/, "const nodeById = (document, id) => document.nodes.find((node) => node.id === id);\n")
+  .replace(/import \{ comparisonReferences, isCanvasReferenceableNode, nodeById \} from [^\n]+;\r?\n/, "const comparisonReferences = (document, entityId) => document.nodes.filter((node) => node.id !== entityId && node.type === \"media\" && node.data?.kind === \"image\" && node.data?.url); const isCanvasReferenceableNode = (node) => Boolean(node && (node.type === \"media\" || node.type === \"upscale\") && node.data?.kind && node.data?.url); const nodeById = (document, id) => document.nodes.find((node) => node.id === id);\n")
   .replace(/import \{ nodeLabel \} from [^\n]+;\r?\n/, "const nodeLabel = (node) => `node:${node.id}`;\n");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -86,6 +86,23 @@ test("media viewer metadata projects generation, source and runtime model detail
     { label: "参考", value: "1 项" },
     { label: "局部编辑", value: "已启用" },
   ]);
+});
+
+test("canvas node projection keeps the existing viewer item and comparison reference shape", () => {
+  const sourceImage = { id: "source-image", type: "media", x: 0, y: 0, data: { kind: "image", url: "/source.png", name: "Source image" } };
+  const output = node({ data: { ...node().data, generation: { ...node().data.generation, parentNodeId: "source-image" } } });
+  const projectionDocument = { nodes: [sourceImage, output], groups: [], edges: [] };
+  const item = mediaViewer.mediaViewerItemForCanvasNode(projectionDocument, output, null);
+  assert.equal(item.id, "output-1");
+  assert.equal(item.kind, "image");
+  assert.equal(item.url, "https://example.test/output.png");
+  assert.equal(item.name, "画布素材");
+  assert.equal(item.width, 1024);
+  assert.equal(item.height, 768);
+  assert.deepEqual(mediaViewer.mediaViewerReferencesForCanvasNode(projectionDocument, output.id), [
+    { id: "source-image", kind: "image", url: "/source.png", name: "Source image" },
+  ]);
+  assert.equal(mediaViewer.mediaViewerItemForCanvasNode(projectionDocument, { id: "draft", type: "prompt", x: 0, y: 0, data: {} }, null), null);
 });
 
 test("media viewer metadata falls back to node params and safe defaults", () => {

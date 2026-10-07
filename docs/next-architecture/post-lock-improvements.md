@@ -2147,10 +2147,10 @@ hardening work when the trigger applies.
   interleaved with later theme and responsive overrides; moving them as one
   block would change cascade order.
 
-### Stage 6 canvas media viewer metadata projection checkpoint (2026-10-07)
+### Stage 6 canvas media viewer metadata and item projection checkpoint (2026-10-07)
 
-- `lib/canvas/media-viewer.ts` now owns the pure projection from a Canvas node/document/runtime snapshot to the existing `ImageVersionInfo` contract used by the media viewer.
-- `CanvasWorkspace.tsx` retains viewer selection, navigation, actions, and CanvasCore access; it now delegates only the metadata projection. `MediaViewer.tsx` consumes the shared type without defining a second contract.
-- Generation parameters, source-node labels, runtime provider/model fallback, dimensions, status, prompt, reference count, and duration formatting inputs remain behavior-compatible. No API, persistence, task, provider, or compatibility path changed.
-- Behavior coverage in `tests/canvas-media-viewer.test.mjs` exercises generation metadata and fallback/default handling; historical viewer tests no longer depend on the Workspace helper's source location.
-- Remaining risk: the media viewer action lifecycle and the Workspace's viewer item assembly still cross CanvasCore, downloads, local edit, angle, and asset actions; those remain in Workspace until a broader action contract is covered.
+- `lib/canvas/media-viewer.ts` now owns the pure projection from a Canvas node/document/runtime snapshot to the existing `ImageVersionInfo`, `MediaViewerItem`, and `MediaViewerReference` contracts used by the media viewer.
+- `CanvasWorkspace.tsx` retains lightbox state, selection, navigation, actions, and CanvasCore access; it now delegates node item and comparison-reference assembly. `MediaViewer.tsx` consumes the shared contracts without defining a second type source.
+- Generation parameters, source-node labels, runtime provider/model fallback, dimensions, status, prompt, comparison provenance, and reference filtering remain behavior-compatible. No API, persistence, task, provider, or compatibility path changed.
+- Behavior coverage in `tests/canvas-media-viewer.test.mjs` exercises metadata fallbacks plus item/reference projection; historical viewer tests no longer depend on the Workspace helper's source location.
+- Remaining risk: the media viewer action lifecycle still crosses CanvasCore, downloads, local edit, angle, and asset actions; those remain in Workspace until a broader action contract is covered.

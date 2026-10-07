@@ -2,28 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from "@/lib/creation/settings";
-import type { ImageVersionInfo } from "@/lib/canvas/media-viewer";
-
-export type MediaViewerReference = {
-  id: string;
-  kind: "image" | "video" | "audio";
-  url: string;
-  name: string;
-};
-
-export type MediaViewerItem = {
-  id: string;
-  kind: "image" | "video" | "audio";
-  url: string;
-  name: string;
-  prompt?: string;
-  revisedPrompt?: string;
-  width?: number;
-  height?: number;
-  versionInfo?: ImageVersionInfo;
-};
-
-
+import type { ImageVersionInfo, MediaViewerItem, MediaViewerReference } from "@/lib/canvas/media-viewer";
 
 export type MediaViewerSurface = "workspace" | "canvas";
 
