@@ -99,8 +99,9 @@ test('keeps image description requests as text when a reference image is attache
 });
 
 test('routes an explicit edit of an attached reference to image editing', () => {
-  for (const input of ['把背景换成黑色', '优化构图', '去掉画面中的文字']) {
+  for (const input of ['把背景换成黑色', '优化构图', '去掉画面中的文字', '把牛变成马', '把背景变为夜晚', '把人物改为机器人', '把主体替换为白马']) {
     assert.equal(intent.classifyAgentDeliverable(input, { hasReferences: true }).deliverable, 'IMAGE', input);
+    assert.equal(intent.resolveCreativeRoute(input, { hasReferences: true }).operation, 'edit', input);
   }
   assert.notEqual(intent.classifyAgentDeliverable('分析一下如何把背景换成黑色', { hasReferences: true }).deliverable, 'IMAGE');
 });

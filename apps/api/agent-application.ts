@@ -25,7 +25,7 @@ import { agentToolProgress, beginAgentRun, finishAgentRun, reportAgentProgress, 
 import { appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, normalizeMcpApprovalPolicy, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
-import { agentInstructionText, classifyAgentDeliverable, needsSemanticIntent, parseSemanticIntent, resolveCreativeRoute, type AgentDeliverable } from '@/lib/agent-intent';
+import { agentInstructionText, classifyAgentDeliverable, isImageEditRequest, needsSemanticIntent, parseSemanticIntent, resolveCreativeRoute, type AgentDeliverable } from '@/lib/agent-intent';
 import type { CreativeRoute } from '@/packages/contracts/creative';
 import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
 import { contextualImagePrompt, isBareImageExecution } from '@/lib/agent-context';
@@ -754,7 +754,8 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     // sheets and other new-image batches use the configured generation model;
     // only explicit image-change language selects the edit capability.
     const explicitImageEditRequest = (canvasTargetKind === 'image' && canvasTargetOperation === 'edit')
-      || /(?:修改|调整|改成|换成|替换|重绘|重制|修图|换背景|去掉|加上|增加|减少|保持主体|局部编辑|扩图|抠图|延续原图|基于原图修改|在原图上|继续修改|再来一版)/i.test(latestInstruction);
+      || isImageEditRequest(latestInstruction)
+      || /(?:局部编辑|扩图|抠图|延续原图|基于原图修改|在原图上|继续修改|再来一版)/i.test(latestInstruction);
     const requestedImageCapability = latestReferenceImageCount && explicitImageEditRequest ? 'edit' : 'generate';
     const imageModelState = imageGenerationRequest ? await ensurePublicState() : null;
     const imageModels = imageGenerationRequest

@@ -362,6 +362,38 @@ test('canvas image edit target overrides vague wording and reaches the edit capa
   assert.equal(data.images.length, 1);
 });
 
+test('attached image plus colloquial replacement instruction reaches edit fallback', async () => {
+  const agent = harness({ imageCapabilities: ['generate', 'edit'] });
+  const data = await agent.post([{
+    role: 'user',
+    content: '把牛变成马',
+    references: [{ id: 'cow', kind: 'image', name: '牛的参考图', url: 'data:image/png;base64,dGVzdA==' }],
+  }]);
+  assert.equal(agent.images.length, 1);
+  assert.equal(agent.images[0].mode, 'edit');
+  assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
+  assert.match(agent.images[0].prompt, /牛变成马/);
+  assert.equal(data.images.length, 1);
+});
+
+test('canvas Agent treats a first-turn replacement instruction as an image edit', async () => {
+  const agent = harness({ imageCapabilities: ['generate', 'edit'] });
+  const data = await agent.post([{
+    role: 'user',
+    content: '把牛变成马',
+    references: [{ id: 'cow', nodeId: 'cow', kind: 'image', name: '选中的牛图片', url: 'data:image/png;base64,dGVzdA==' }],
+  }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['cow'], assetIds: [] },
+    canvasTarget: { nodeIds: ['cow'], kind: 'image', operation: 'edit' },
+  });
+  assert.equal(agent.images.length, 1);
+  assert.equal(agent.images[0].mode, 'edit');
+  assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
+  assert.equal(data.images.length, 1);
+});
+
 test('client image model selection reaches Agent generation explicitly', async () => {
   const agent = harness({ reply: (payload) => payload.tools
     ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"客户端旧参数测试","modelId":"stale-client-model"}}</tool_call>' }
