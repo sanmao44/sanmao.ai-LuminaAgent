@@ -32,3 +32,16 @@ test("world to stage projection preserves the camera transform", () => {
   assert.deepEqual(stage, { x: 20, y: 162 });
   assert.deepEqual(viewport.canvasStageToWorldPoint(stage, camera), world);
 });
+
+test("zoom keeps the anchored world point stable and clamps the zoom", () => {
+  const camera = { x: 20, y: -10, zoom: 1 };
+  const anchor = { x: 240, y: 180 };
+  const next = viewport.canvasZoomCameraAtPoint(anchor, camera, 2);
+  assert.deepEqual(next, { x: -200, y: -200, zoom: 2 });
+  assert.deepEqual(
+    viewport.canvasStageToWorldPoint(anchor, next),
+    viewport.canvasStageToWorldPoint(anchor, camera),
+  );
+  assert.equal(viewport.canvasZoomCameraAtPoint(anchor, camera, 100).zoom, 3);
+  assert.equal(viewport.canvasZoomCameraAtPoint(anchor, camera, 0).zoom, 0.12);
+});

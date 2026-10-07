@@ -2112,3 +2112,13 @@ hardening work when the trigger applies.
 - Validation: focused viewport/gesture/context-menu/file-drop tests passed
   (19/19); full `npm run check` passed (1865 passed, 2 skipped; production
   build succeeded); and `git diff --check` passed.
+
+### Stage 6 canvas zoom projection checkpoint (2026-10-07)
+
+- `lib/canvas/viewport.ts` now also owns the pure anchored-zoom camera
+  calculation, including the existing `0.12..3` zoom limits.
+- `CanvasWorkspace.tsx` retains zoom gesture state, animation-frame batching,
+  busy feedback, and CanvasCore document updates; it no longer recomputes the
+  anchored camera inline.
+- The zoom contract is covered by inverse projection and clamp behavior tests;
+  no URL, API, data format, or interaction contract changed.

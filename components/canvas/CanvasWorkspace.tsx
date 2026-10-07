@@ -346,6 +346,7 @@ import {
 import {
   canvasClientToStagePoint,
   canvasStageToWorldPoint,
+  canvasZoomCameraAtPoint,
   canvasWorldToStagePoint,
   type CanvasViewportPoint,
 } from "@/lib/canvas/viewport";
@@ -4188,13 +4189,7 @@ export default function SuperCanvas() {
       // next frame) instead of a stale render closure, then commit once per
       // animation frame.
       const currentCamera = pendingZoomCameraRef.current || canvasCoreRef.current.document().camera;
-      const before = canvasStageToWorldPoint(point, currentCamera);
-      const zoom = clamp(currentCamera.zoom * factor, 0.12, 3);
-      pendingZoomCameraRef.current = {
-        x: point.x - before.x * zoom,
-        y: point.y - before.y * zoom,
-        zoom,
-      };
+      pendingZoomCameraRef.current = canvasZoomCameraAtPoint(point, currentCamera, factor);
       if (zoomFrameRef.current !== null) return;
       zoomFrameRef.current = window.requestAnimationFrame(() => {
         zoomFrameRef.current = null;

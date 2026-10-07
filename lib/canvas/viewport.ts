@@ -35,3 +35,20 @@ export function canvasWorldToStagePoint(
     y: point.y * camera.zoom + camera.y,
   };
 }
+
+/** Compute a zoomed camera while keeping the world point under the anchor fixed. */
+export function canvasZoomCameraAtPoint(
+  stagePoint: CanvasViewportPoint,
+  camera: CanvasCamera,
+  factor: number,
+  minZoom = 0.12,
+  maxZoom = 3,
+): CanvasCamera {
+  const worldPoint = canvasStageToWorldPoint(stagePoint, camera);
+  const zoom = Math.max(minZoom, Math.min(maxZoom, camera.zoom * factor));
+  return {
+    x: stagePoint.x - worldPoint.x * zoom,
+    y: stagePoint.y - worldPoint.y * zoom,
+    zoom,
+  };
+}
