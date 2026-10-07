@@ -224,7 +224,6 @@ import CanvasReferenceDraftStrip from "@/components/CanvasReferenceDraftStrip";
 import type { CanvasProcessingKind } from "@/components/canvas/CanvasProcessingIndicator";
 import CanvasEdgeLayer from "@/components/canvas/CanvasEdgeLayer";
 import CanvasTextLightbox from "@/components/canvas/CanvasTextLightbox";
-import CanvasActivityDrawer from "@/components/canvas/CanvasActivityDrawer";
 import CanvasQuickToolbar from "@/components/canvas/CanvasQuickToolbar";
 import CanvasSelectionToolbar from "@/components/canvas/CanvasSelectionToolbar";
 import { appendCanvasAgentAction, prependCanvasAgentContextMenuGroup, projectCanvasGroupContextMenuGroups, type CanvasContextMenuGroup, type CanvasQuickAction, type CanvasQuickToolbarActions } from "@/components/canvas/CanvasContextMenu";
@@ -243,14 +242,13 @@ import { smartVariantSourceUnits } from "@/lib/canvas/model";
 import { canvasPromptOrbState } from "@/components/canvas/CanvasContextMenu";
 import CanvasNodeEditorPopover from "@/components/canvas/CanvasNodeEditorPopover";
 import CanvasAssetCollectionPicker from "@/components/canvas/CanvasAssetCollectionPicker";
-import CanvasAssetDrawer from "@/components/canvas/CanvasAssetDrawer";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
-import CanvasWorkspaceHeader from "@/components/canvas/CanvasWorkspaceHeader";
+import CanvasWorkspaceHeader, { type CanvasPanel } from "@/components/canvas/CanvasWorkspaceHeader";
 import CanvasViewport, { CanvasWorld } from "@/components/canvas/CanvasViewport";
 import CanvasViewportOverlay from "@/components/canvas/CanvasViewportOverlay";
 import CanvasConnectionOverlay, { type CanvasConnectionNodePicker } from "@/components/canvas/CanvasConnectionOverlay";
 import CanvasMarquee, { type CanvasMarqueeState } from "@/components/canvas/CanvasMarquee";
-import { CanvasSettingsPanel, CanvasShortcutsPanel, CONNECTION_STYLE_OPTIONS } from "@/components/canvas/CanvasPanels";
+import { CONNECTION_STYLE_OPTIONS } from "@/components/canvas/CanvasPanels";
 import { CanvasGeneratorHelp, CanvasVariantRequirementsEditor } from "@/components/canvas/CanvasVariantEditors";
 import CanvasMinimap from "@/components/canvas/CanvasMinimap";
 import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStrip";
@@ -258,6 +256,7 @@ import CanvasNodeLayer from "@/components/canvas/CanvasNodeLayer";
 import CanvasDeck, { type CanvasDeckMode } from "@/components/canvas/CanvasDeck";
 import CanvasSmartVariantDialog from "@/components/canvas/CanvasSmartVariantDialog";
 import CanvasContextMenuLayer from "@/components/canvas/CanvasContextMenuLayer";
+import CanvasPanelLayer from "@/components/canvas/CanvasPanelLayer";
 import CanvasMediaNodeCard from "@/components/canvas/CanvasMediaNodeCard";
 import CanvasAngleNodeCard from "@/components/canvas/CanvasAngleNodeCard";
 import CanvasGeneratorNodeCard from "@/components/canvas/CanvasGeneratorNodeCard";
@@ -490,7 +489,6 @@ type CanvasContextMenuState = {
   groupId?: string;
 };
 type MentionState = { start: number; end: number; query: string } | null;
-type CanvasPanel = "assets" | "activity" | "settings" | "shortcuts";
 
 function mentionStateForValue(value: string, cursor: number): MentionState {
   return creativeReferenceMentionRange(value, cursor);
@@ -14399,52 +14397,42 @@ export default function SuperCanvas() {
           />
         );
       })()}
-      {activePanel === "assets" && (
-        <CanvasAssetDrawer
-          extraAssets={canvasAssets}
-          refresh={assetRefresh}
-          collectionSelection={assetLibraryCollectionId}
-          onCollectionSelectionChange={setAssetLibraryCollectionId}
-          canReference={Boolean(selectedGroupId || selectedSingle)}
-          onAdd={addAssetToCanvas}
-          onReference={addAssetAsReference}
-          onLocate={locateAsset}
-          onAddNodeToCollection={addNodeToCollection}
-          onClose={() => setActivePanel(null)}
-          onOpenWorkbench={() => { setActivePanel(null); notify("工作流整理、导入导出已移至画布操作菜单。", "ok"); }}
-          onNotify={notify}
-        />
-      )}
-      {activePanel === "activity" && (
-        <CanvasActivityDrawer
-          taskLogs={generationLogs}
-          activityLogs={logs}
-          canvasDocument={document}
-          loading={generationLogsLoading}
-          onRefresh={() => void refreshGenerationLogs()}
-          onFocusTask={focusGenerationLog}
-          onFocusNode={focusLogNode}
-          onRetryTask={retryGenerationLog}
-          onClose={() => setActivePanel(null)}
-          onNotify={notify}
-          restoreScrollTop={activityPanelScrollTopRef.current}
-          onRememberScrollPosition={(scrollTop) => {
-            activityPanelScrollTopRef.current = scrollTop;
-          }}
-        />
-      )}
-      {activePanel === "settings" && (
-        <CanvasSettingsPanel
-          theme={theme}
-          connectionStyle={connectionStyle}
-          onTheme={toggleTheme}
-          onConnectionStyleChange={setConnectionStyle}
-          onExportWorkflow={exportWorkflow}
-          onImportWorkflow={() => workflowInputRef.current?.click()}
-          onClose={() => setActivePanel(null)}
-        />
-      )}
-      {activePanel === "shortcuts" && <CanvasShortcutsPanel onClose={() => setActivePanel(null)} />}
+      <CanvasPanelLayer
+        activePanel={activePanel}
+        canvasAssets={canvasAssets}
+        assetRefresh={assetRefresh}
+        assetLibraryCollectionId={assetLibraryCollectionId}
+        canReferenceAssets={Boolean(selectedGroupId || selectedSingle)}
+        generationLogs={generationLogs}
+        activityLogs={logs}
+        canvasDocument={document}
+        generationLogsLoading={generationLogsLoading}
+        theme={theme}
+        connectionStyle={connectionStyle}
+        activityPanelScrollTop={activityPanelScrollTopRef.current}
+        onCollectionSelectionChange={setAssetLibraryCollectionId}
+        onAddAsset={addAssetToCanvas}
+        onReferenceAsset={addAssetAsReference}
+        onLocateAsset={locateAsset}
+        onAddNodeToCollection={addNodeToCollection}
+        onRefreshGenerationLogs={() => void refreshGenerationLogs()}
+        onFocusTask={focusGenerationLog}
+        onFocusNode={focusLogNode}
+        onRetryTask={retryGenerationLog}
+        onRememberActivityScroll={(scrollTop) => {
+          activityPanelScrollTopRef.current = scrollTop;
+        }}
+        onNotify={notify}
+        onClose={() => setActivePanel(null)}
+        onOpenAssetWorkbench={() => {
+          setActivePanel(null);
+          notify("工作流整理、导入导出已移至画布操作菜单。", "ok");
+        }}
+        onTheme={toggleTheme}
+        onConnectionStyleChange={setConnectionStyle}
+        onExportWorkflow={exportWorkflow}
+        onImportWorkflow={() => workflowInputRef.current?.click()}
+      />
       {notice && (
         <div
           className={`canvas-toast ${notice.kind === "error" ? "error" : ""}`}

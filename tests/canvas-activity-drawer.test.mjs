@@ -10,6 +10,10 @@ const workspace = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const panelLayer = await readFile(
+  new URL("../components/canvas/CanvasPanelLayer.tsx", import.meta.url),
+  "utf8",
+);
 const styles = await readFile(new URL("../app/canvas.css", import.meta.url), "utf8");
 const taskLogStyles = await readFile(
   new URL("../app/canvas-task-log.css", import.meta.url),
@@ -79,7 +83,7 @@ test("task log result chips return to the task log panel after the media viewer 
 
 test("task log restores its scroll position after opening and closing media preview", () => {
   assert.match(workspace, /activityPanelScrollTopRef = useRef<number \| null>\(null\)/);
-  assert.match(workspace, /restoreScrollTop=\{activityPanelScrollTopRef\.current\}/);
+  assert.match(panelLayer, /restoreScrollTop=\{activityPanelScrollTop\}/);
   assert.match(component, /onRememberScrollPosition/);
   assert.match(component, /scrollBodyRef\.current\?\.scrollTo\(\{ top: restoreScrollTop, behavior: "auto" \}\)/);
   assert.match(component, /rememberScrollBeforeMediaOpen\(openMedia\)/);

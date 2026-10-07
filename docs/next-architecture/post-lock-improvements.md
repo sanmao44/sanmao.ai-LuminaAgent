@@ -2163,3 +2163,12 @@ hardening work when the trigger applies.
 - Behavior coverage verifies draft and record shape, default picker candidates, deduplication, and invalid-node handling. The test loader supplies the existing model predicate as a test runtime stub because the test intentionally executes the isolated TypeScript module through a `data:` URL.
 - Validation: focused canvas reuse/reference/media/model tests passed; `npm run typecheck` passed; full `npm run check`, production build, and `git diff --check` are required before commit.
 - Remaining risk: reference draft projection still serves both reuse and generation call sites; splitting those consumers further would risk creating duplicate reference semantics without a broader contract migration.
+
+### Stage 6 canvas side-panel composition checkpoint (2026-10-07)
+
+- `components/canvas/CanvasPanelLayer.tsx` now owns the presentation dispatch for the existing assets, activity, settings, and shortcuts panels.
+- `CanvasWorkspace.tsx` retains `activePanel`, panel data preparation, scroll restoration, CanvasCore actions, asset mutations, generation-log actions, theme/settings actions, and file-picker wiring. It now supplies one explicit callback/data contract to the layer instead of embedding four panel branches.
+- The new layer has no React state, API calls, storage access, provider access, task runtime, or duplicate domain types. Existing panel components remain the single owners of their own local UI state and behavior.
+- Existing behavior coverage for activity and asset panels was updated to follow the extracted boundary; the context-menu and canvas interaction suites continue to cover adjacent panel opening and closing flows.
+- Validation: focused panel, activity, asset, and context-menu tests passed (24/24); `npm run typecheck` passed. Full `npm run check`, production build, and `git diff --check` are required before commit.
+- Remaining risk: panel data and action preparation still live in Workspace by design; moving API or CanvasCore ownership into the panel layer would violate the current dependency direction.

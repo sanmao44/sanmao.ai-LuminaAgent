@@ -6,6 +6,10 @@ const workspace = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const panelLayer = await readFile(
+  new URL("../components/canvas/CanvasPanelLayer.tsx", import.meta.url),
+  "utf8",
+);
 const picker = await readFile(
   new URL("../components/canvas/CanvasAssetCollectionPicker.tsx", import.meta.url),
   "utf8",
@@ -42,7 +46,7 @@ test("all canvas asset actions open the collection picker before writing", () =>
   assert.doesNotMatch(workspace, /onAddToAssets=\{/);
   assert.match(workspace, /preferredCollectionId=\{assetLibraryCollectionId\}/);
   assert.match(workspace, /const success = await addViewerAsset\(pickerNode, collectionId\)/);
-  assert.match(workspace, /collectionSelection=\{assetLibraryCollectionId\}/);
+  assert.match(panelLayer, /collectionSelection=\{assetLibraryCollectionId\}/);
   assert.match(workspace, /onCollectionSelectionChange=\{setAssetLibraryCollectionId\}/);
   assert.match(workspace, /setAssetCollectionPickerNodeId\(null\)/);
   assert.match(workspace, /assetCollectionPickerNodeId\);/);
