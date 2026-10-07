@@ -7,6 +7,24 @@ Architecture Lock. None of these items is an ownership blocker; none of them
 requires a new architecture migration phase. Pick them up as normal product or
 hardening work when the trigger applies.
 
+### Stage 4 canvas local-edit prompt projection checkpoint (2026-10-07)
+
+- `lib/canvas/local-edit-prompt.ts` now owns the pure selection of persisted
+  local-edit annotations and compilation through the existing
+  `compileLocalEditPrompt` domain function.
+- `CanvasWorkspace.tsx` keeps editor drafts, mask application, generation
+  requests, CanvasCore/document writes, and the direct apply-time prompt
+  compilation; it delegates only the display/generation prompt projection.
+- Mask precedence and the plain-prompt fallback are unchanged. No new type,
+  API, provider path, store, compatibility layer, or duplicate local-edit
+  compiler was introduced.
+- Focused node-editor/API tests, `npm run typecheck`, full `npm run check`
+  (1874 passed, 2 skipped, production build success), and `git diff --check`
+  passed.
+- Remaining risk: the apply callback still compiles annotations inline because
+  it owns the mutation-specific prompt and mask transaction; moving that path
+  would require a broader editor behavior boundary.
+
 ### Stage 3 canvas reference edge projection checkpoint (2026-10-07)
 
 - `lib/canvas/reference-edges.ts` now owns the pure projection from persisted

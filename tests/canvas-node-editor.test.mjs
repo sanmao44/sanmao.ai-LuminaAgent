@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
+import { createTsRequire } from "./ts-require.mjs";
 
 const workspace = await readFile(
   new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const localEditPrompt = createTsRequire(process.cwd())("./lib/canvas/local-edit-prompt");
 const connectionOverlay = await readFile(
   new URL("../components/canvas/CanvasConnectionOverlay.tsx", import.meta.url),
   "utf8",
@@ -849,9 +851,29 @@ test("applying a local edit closes both editors instead of reopening the node pr
 });
 
 test("canvas reuses the compiled local-edit prompt for legacy masks, display, and generation", () => {
-  assert.match(component, /function compiledCanvasLocalEditPrompt\(/);
-  assert.match(component, /node\.data\.mask,[\s\S]*draftParams as ImageCreationSettings/);
-  assert.match(component, /return annotations \? compileLocalEditPrompt\(prompt, annotations\) : prompt/);
+  const node = {
+    id: "image-1",
+    type: "media",
+    x: 0,
+    y: 0,
+    data: {
+      kind: "image",
+      url: "/image.png",
+      mask: {
+        annotations: [{
+          id: "annotation-1",
+          kind: "rectangle",
+          description: "只修改天空",
+          geometry: { kind: "rectangle", x: 0, y: 0, width: 1, height: 0.4 },
+          createdAt: 1,
+        }],
+      },
+    },
+  };
+  const compiled = localEditPrompt.compiledCanvasLocalEditPrompt(node, "保留主体");
+  assert.match(compiled, /保留主体/);
+  assert.match(compiled, /只修改天空/);
+  assert.equal(localEditPrompt.compiledCanvasLocalEditPrompt({ ...node, data: { ...node.data, mask: undefined } }, "普通提示"), "普通提示");
   const promptStart = component.indexOf("const editorPromptFor = useCallback");
   const promptEnd = component.indexOf("const openImageEditor = useCallback", promptStart);
   const editorPrompt = component.slice(promptStart, promptEnd);

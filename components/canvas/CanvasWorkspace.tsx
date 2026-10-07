@@ -177,6 +177,7 @@ import {
   compileLocalEditPrompt,
   type LocalEditAnnotation,
 } from "@/lib/local-edit";
+import { compiledCanvasLocalEditPrompt } from "@/lib/canvas/local-edit-prompt";
 import {
   requestPromptOptimization,
   runReversePrompt,
@@ -1382,24 +1383,6 @@ function syncCanvasVideoEditorReferences(document: CanvasDocument) {
   }
   return next;
 }
-
-function compiledCanvasLocalEditPrompt(
-  node: CanvasNode,
-  prompt: string,
-  draftParams?: CanvasGenerationParams,
-) {
-  const masks = [
-    node.data.mask,
-    (draftParams as ImageCreationSettings | undefined)?.mask,
-    (node.data.generation?.params as ImageCreationSettings | undefined)?.mask,
-    (node.data.params as ImageCreationSettings | undefined)?.mask,
-  ];
-  const annotations = masks
-    .map((mask) => mask?.annotations)
-    .find((items): items is LocalEditAnnotation[] => Boolean(items?.length));
-  return annotations ? compileLocalEditPrompt(prompt, annotations) : prompt;
-}
-
 
 function isEditableTarget(target: EventTarget | null) {
   return (
