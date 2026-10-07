@@ -2483,3 +2483,17 @@ hardening work when the trigger applies.
 - Remaining risk: the command still depends on the existing Canvas model and
   capability projections by design; generation/API orchestration and page/CSS
   migration remain separate phases.
+
+### Stage 6 page share workflow boundary checkpoint (2026-10-07)
+
+- `lib/share-conversation-workflow.ts` now owns the existing share-image
+  renderer call and stable preview filename projection.
+- `app/page.tsx` retains share selection state, busy/error notifications,
+  object URL lifecycle, preview modal composition, and browser download action;
+  it no longer owns the render request and filename construction.
+- Behavior coverage verifies renderer dimensions, Blob output, and the stable
+  date-based filename. URL, image format, share selection, preview, and
+  download behavior remain unchanged.
+- Remaining risk: the provider editor, image editor, outpaint flow, and full
+  page orchestration remain in `app/page.tsx` because they combine stateful
+  API lifecycles and browser resources without a safe standalone contract.

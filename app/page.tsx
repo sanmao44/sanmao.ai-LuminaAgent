@@ -24,7 +24,7 @@ import { getFavoriteModelIds, getLastModelCall, getRecentModelIds, recordModelCa
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { filterModelsByActiveProviders, isProviderModelLibraryEnabled } from '@/lib/provider-availability';
 import { galleryReferences, normalizeReferenceRecords, referenceCount } from '@/lib/reference-images';
-import { renderShareConversationImage } from '@/lib/share-conversation-renderer';
+import { createShareConversationPreview } from '@/lib/share-conversation-workflow';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
 import { downloadCanvasShareImage } from '@/lib/canvas/share';
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, extractGithubRepositoryUrl, isGithubMcpInstallFollowUp, isGithubMcpInstallHandoff, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
@@ -7349,7 +7349,7 @@ export default function Page() {
         if (activeAgentBusy || selectedShareMessages.some((message)=>message.pending)) return notify('请等待当前回答完成后再分享');
         setShareBusy(true);
         try {
-            const result = await renderShareConversationImage(selectedShareMessages);
+            const result = await createShareConversationPreview(selectedShareMessages);
             const url = URL.createObjectURL(result.blob);
             setSharePreview({
                 url,
