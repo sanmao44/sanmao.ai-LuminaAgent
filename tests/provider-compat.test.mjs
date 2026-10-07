@@ -400,6 +400,31 @@ test('does not retry image requests after ambiguous upstream failures', () => {
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422 }), true);
 });
 
+test('treats an HTTP provider error as terminal instead of accepted background work', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'provider rejected request' } }), {
+    status: 500,
+    headers: { 'content-type': 'application/json' },
+  });
+  try {
+    await assert.rejects(
+      () => providers.generateImage({
+        type: 'openai-compatible',
+        platform: 'custom',
+        baseUrl: 'https://provider.example/v1',
+        apiKey: 'test-key',
+      }, 'image-model', { prompt: 'terminal provider error' }),
+      (error) => {
+        assert.match(error.message, /provider rejected request/);
+        assert.equal(error.providerPossiblyAccepted, undefined);
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('polls ModelScope image tasks and normalizes output_images', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
@@ -440,6 +465,44 @@ test('polls ModelScope image tasks and normalizes output_images', async () => {
     assert.equal(requestBody.image_url, 'data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA');
     assert.equal(calls[1].url, 'https://api-inference.modelscope.cn/v1/tasks/modelscope-task-1');
     assert.equal(calls[1].init.headers['X-ModelScope-Task-Type'], 'image_generation');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('keeps an explicit ModelScope image task failure terminal', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/images/generations')) {
+      return new Response(JSON.stringify({ task_id: 'modelscope-failed-1', task_status: 'PENDING' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ task_id: 'modelscope-failed-1', task_status: 'FAILED', error: { message: 'quota exceeded' } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    await assert.rejects(
+      () => providers.editImage({
+        type: 'openai-compatible',
+        platform: 'modelscope',
+        baseUrl: 'https://api-inference.modelscope.cn/v1',
+        apiKey: 'test-key',
+      }, 'Qwen/Qwen-Image-Edit', {
+        prompt: 'failed edit',
+        references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
+        count: 1,
+      }),
+      (error) => {
+        assert.match(error.message, /quota exceeded/);
+        assert.equal(error.providerAcceptedTask, undefined);
+        assert.equal(error.providerPossiblyAccepted, undefined);
+        return true;
+      },
+    );
   } finally {
     globalThis.fetch = previousFetch;
   }

@@ -759,11 +759,10 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const requestedImageCapability = latestReferenceImageCount && explicitImageEditRequest ? 'edit' : 'generate';
     const imageModelState = imageGenerationRequest ? await ensurePublicState() : null;
     const imageModels = imageGenerationRequest
-      ? filterModelsByActiveProviders(imageModelState!.models, imageModelState!.providers)
-        .filter((m) => m.kind === 'image'
-          && m.enabled
-          && m.published
-          && m.capabilities.includes(requestedImageCapability))
+      ? filterModelsByActiveProviders(imageModelState!.models, imageModelState!.providers, {
+        kind: 'image',
+        capability: requestedImageCapability,
+      })
       : [];
     // Image model choice is independent from the chat model. `auto` keeps the
     // capability-aware default and compatibility fallback policy; an explicit

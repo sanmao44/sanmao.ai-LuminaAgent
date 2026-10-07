@@ -45,3 +45,14 @@ test('reenabling a provider restores its existing model records and checked stat
   assert.equal(visible[2].enabled, true);
   assert.equal(visible[2].published, true);
 });
+
+test('capability filtering matches the executable image-model gate', () => {
+  const imageModels = [
+    { id: 'ready-image', providerId: 'enabled', kind: 'image', enabled: true, published: true, capabilities: ['generate'] },
+    { id: 'hidden-image', providerId: 'hidden', kind: 'image', enabled: true, published: true, capabilities: ['generate'] },
+    { id: 'chat-model', providerId: 'enabled', kind: 'chat', enabled: true, published: true, capabilities: ['generate'] },
+    { id: 'draft-image', providerId: 'enabled', kind: 'image', enabled: false, published: true, capabilities: ['generate'] },
+  ];
+  const visible = availability.filterModelsByActiveProviders(imageModels, providers, { kind: 'image', capability: 'generate' });
+  assert.deepEqual(visible.map((model) => model.id), ['ready-image']);
+});

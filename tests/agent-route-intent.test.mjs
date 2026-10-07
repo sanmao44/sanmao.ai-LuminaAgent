@@ -418,6 +418,27 @@ test('承接上一轮编号生图方案时直接批量执行，不只回复生�
   assert.equal(data.images.length, 3);
 });
 
+test('图片生成后的自动建议不会被当成批量生图计划', async () => {
+  const agent = harness({ reply: () => ({ content: '开始生成图' }) });
+  const data = await agent.post([
+    { role: 'user', content: '画一只羊跟猪打架，拟人化，戏剧性' },
+    { role: 'assistant', content: [
+      '本版已按你确认的创作方向生成。',
+      '',
+      '### 下一版可尝试方向',
+      '',
+      '1. 调整人物姿态与手部动作，让冲突更有张力',
+      '2. 强化戏剧性光线和背景氛围',
+      '3. 优化主体比例与画面构图',
+    ].join('\n') },
+    { role: 'user', content: '直接出图' },
+  ]);
+  assert.equal(agent.images.length, 1);
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.images[0].count, 1);
+  assert.equal('prompts' in agent.images[0], false);
+});
+
 test('empty provider output never returns a successful-looking image caption', async () => {
   const agent = harness({ emptyImages: true });
   const data = await agent.post([{ role: 'user', content: '画一张书房图' }]);

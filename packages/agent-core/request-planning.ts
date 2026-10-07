@@ -42,6 +42,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   const latestInstruction = ports.agentInstructionText(body.intentText, latest?.content || '');
   const previousImagePlan = [...messages.slice(0, -1)].reverse().find((message) => message.role === 'assistant'
     && /(?:^|\n)\s*1[\.\u3002\u3001)]/.test(message.content)
+    && isExplicitImageBatchPlan(message.content)
     && extractBatchPrompts(message.content).length >= 2);
   const selectedTextBatchPlan = latestRefs
     .filter((reference) => reference.kind === 'text' && typeof reference.text === 'string')
@@ -109,4 +110,10 @@ function extractBatchPrompts(content: string): string[] {
     .filter((prompt) => prompt.length >= 8)
     .slice(0, 20);
   return prompts.length >= 2 ? prompts : [];
+}
+
+function isExplicitImageBatchPlan(content: string): boolean {
+  const text = content.replace(/\s+/g, ' ').trim();
+  if (!text || /(?:下一版可尝试方向|你还可以继续|继续尝试方向)/i.test(text)) return false;
+  return /(?:批量(?:生图|出图|生成)?|套图|详情图|一套图|一组图|系列图|多张图|组图|(?:一次|共|分成).{0,8}\d+\s*张|\d+\s*张(?:图|图片))/i.test(text);
 }

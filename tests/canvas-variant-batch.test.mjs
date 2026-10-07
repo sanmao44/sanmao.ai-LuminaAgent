@@ -61,6 +61,15 @@ test("normalizes pending, failed, done, and returned video task results", () => 
   });
 });
 
+test("treats provider failure spellings as terminal failures", () => {
+  for (const status of ["ERROR", "FAILURE", "REJECTED", "CANCELED", "expired"]) {
+    const result = batch.canvasVideoTaskProgress({ status });
+    assert.equal(result.terminal, true, status);
+    assert.equal(result.status, "failed", status);
+  }
+  assert.equal(batch.canvasVideoTaskProgress({ status: "SUCCESS" }).status, "completed");
+});
+
 test("projects a submitted variant video task into stable node metadata", () => {
   const params = { kind: "video", model: "video-model", duration: 5 };
   const completed = batch.canvasVariantVideoNodeData({

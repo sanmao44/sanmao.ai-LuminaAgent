@@ -420,6 +420,41 @@ test('does not relay public Agnes image URLs and gives a recoverable error when 
   }
 });
 
+test('reuses the signed relay URL for repeated identical local images', async () => {
+  const previous = {
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+  };
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://cache-relay.example';
+  delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  let uploadCalls = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/relay/media')) {
+      uploadCalls += 1;
+      return new Response(JSON.stringify({ ok: true, url: 'https://cache-relay.example/api/relay/media/cache-token', expiresAt: '2099-01-01T00:00:00.000Z' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    throw new Error('unexpected provider request');
+  };
+  try {
+    const input = 'data:image/png;base64,AAECAw==';
+    const [first, second] = await Promise.all([
+      signed.prepareAgnesMediaUrl(input, 'image'),
+      signed.prepareAgnesMediaUrl(input, 'image'),
+    ]);
+    assert.equal(first, 'https://cache-relay.example/api/relay/media/cache-token');
+    assert.equal(second, first);
+    assert.equal(uploadCalls, 1);
+    assert.equal(await signed.prepareAgnesMediaUrl(input, 'image'), first);
+    assert.equal(uploadCalls, 1);
+  } finally {
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+  }
+});
+
 test('does not contact the media relay for Agnes text-to-video', async () => {
   const previous = process.env.SANMAO_MEDIA_RELAY_URL;
   process.env.SANMAO_MEDIA_RELAY_URL = 'https://relay.example';

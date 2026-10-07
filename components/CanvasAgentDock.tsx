@@ -44,6 +44,7 @@ import type { PublicState } from "@/lib/types";
 import type { WorkspaceContext } from "@/lib/workspace-context";
 import type { CanvasDocument } from "@/lib/canvas/types";
 import type { CanvasPatch } from "@/lib/canvas/patch";
+import { filterModelsByActiveProviders } from "@/lib/provider-availability";
 import { memoryContextMessage } from "@/lib/agent-memory";
 import {
   canvasAgentDockSessionKey,
@@ -772,10 +773,11 @@ export default function CanvasAgentDock({
   }), [draftImages.length, input, messages, orderedReferences.length]);
   const liveCreativeCapability = liveCreativeRoute.operation === "edit" ? "edit" : "generate";
   const availableCreativeModels = useMemo(
-    () => (runtime?.models || []).filter((candidate) => candidate.enabled && candidate.published
-      && (candidate.kind === "image" || candidate.capabilities.includes("generate"))
-      && candidate.capabilities.includes(liveCreativeCapability)),
-    [liveCreativeCapability, runtime?.models],
+    () => filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
+      kind: "image",
+      capability: liveCreativeCapability,
+    }),
+    [liveCreativeCapability, runtime?.models, runtime?.providers],
   );
   useEffect(() => {
     if (imageModelId !== "auto" && !availableCreativeModels.some((candidate) => candidate.id === imageModelId)) setImageModelId("auto");
@@ -1082,8 +1084,10 @@ export default function CanvasAgentDock({
       });
       const creativeModelCapability = creativeRoute.operation === "edit" ? "edit" : "generate";
       const selectedCreativeModel = imageModelId !== "auto"
-        && (runtime?.models || []).some((candidate) => candidate.id === imageModelId
-          && candidate.enabled && candidate.published && candidate.capabilities.includes(creativeModelCapability))
+        && filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
+          kind: "image",
+          capability: creativeModelCapability,
+        }).some((candidate) => candidate.id === imageModelId)
         ? imageModelId
         : "auto";
       const requestCreativeModel = options.retry && sourceMessage?.imageModelId
@@ -1402,7 +1406,7 @@ export default function CanvasAgentDock({
         setProgressDetail("");
       }
     },
-    [autoApply, busy, canvasDocument, closeSkillMenu, context, contextBlock, draftImages, editingMessageId, imageModelId, input, messages, model, notify, onApplyCanvasPatch, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, runtime?.models, selectedTotal, uploadingPastedImages, webMode],
+    [autoApply, busy, canvasDocument, closeSkillMenu, context, contextBlock, draftImages, editingMessageId, imageModelId, input, messages, model, notify, onApplyCanvasPatch, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, runtime?.models, runtime?.providers, selectedTotal, uploadingPastedImages, webMode],
   );
 
   const retryFailedBatchItems = useCallback((message: CanvasAgentDockMessage) => {

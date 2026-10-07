@@ -86,10 +86,14 @@ export function canvasVideoTaskProgress(task: {
 }) {
   const url = videoTaskOutputUrl(task);
   const hasVideoResult = Boolean(url);
-  const terminal = hasVideoResult || ["done", "failed", "cancelled", "canceled"].includes(task.status);
-  const status = hasVideoResult || task.status === "done"
+  const rawStatus = String(task.status || "").trim().toLowerCase();
+  const failedStatus = /^(?:failed?|failure|error|rejected?|cancelled?|canceled|expired|aborted|blocked|denied)$/.test(rawStatus)
+    || /(?:fail|error|reject|cancel|expire|abort|deny)/.test(rawStatus);
+  const completedStatus = /^(?:done|success(?:ful)?|succeed(?:ed)?|completed?|finished|ready)$/.test(rawStatus);
+  const terminal = hasVideoResult || failedStatus || completedStatus;
+  const status = hasVideoResult || completedStatus
     ? ("completed" as const)
-    : terminal
+      : terminal
       ? ("failed" as const)
       : ("running" as const);
   return {

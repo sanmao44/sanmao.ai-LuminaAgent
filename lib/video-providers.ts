@@ -190,10 +190,6 @@ async function requestJson(url: string, init: RequestInit, signal?: AbortSignal)
     throw new VideoProviderError(errorFrom(data, `视频服务商返回 HTTP ${response.status}`), {
       status: response.status,
       retryAfterMs: retryAfter > 0 ? retryAfter * 1000 : undefined,
-      // A gateway error after a POST does not prove that the provider rejected
-      // the task. Reconcile it through the idempotency key instead of showing
-      // a terminal failure immediately.
-      possiblyAccepted: String(init.method || 'GET').toUpperCase() === 'POST' && response.status >= 500,
     });
   }
   if (/^video\//i.test(contentType) && bytes.byteLength <= 64 * 1024 * 1024) return { data: `data:${contentType.split(';', 1)[0]};base64,${Buffer.from(bytes).toString('base64')}` };

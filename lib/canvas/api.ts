@@ -750,6 +750,7 @@ export async function generateCanvasImage(input: {
 
 export async function generateCanvasVideo(input: {
   prompt: string;
+  idempotencyKey?: string;
   model?: string;
   modelRawId?: string;
   operation?: "generate" | "edit" | "extend";
@@ -813,7 +814,8 @@ export async function generateCanvasVideo(input: {
   const referenceVideo = input.inputMode === "reference" || input.operation === "edit" || input.operation === "extend"
     ? input.referenceVideo
     : undefined;
-  const result = await request<{
+  const idempotencyKey = input.idempotencyKey || crypto.randomUUID();
+  const submit = () => request<{
     task: {
       id: string;
       status: string;
@@ -827,7 +829,7 @@ export async function generateCanvasVideo(input: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Idempotency-Key": crypto.randomUUID(),
+      "Idempotency-Key": idempotencyKey,
     },
     body: JSON.stringify({
       source: "canvas",
@@ -875,7 +877,15 @@ export async function generateCanvasVideo(input: {
       },
     }),
   });
-  return result.task;
+  try {
+    return (await submit()).task;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    if (!/fetch failed|network|timeout|timed out|connection|ECONNRESET|ETIMEDOUT/i.test(message)) throw error;
+    // The provider request may have reached the server even when the browser
+    // lost the response. Reusing the key makes this retry idempotent.
+    return (await submit()).task;
+  }
 }
 
 export async function generateCanvasUpscale(input: {
