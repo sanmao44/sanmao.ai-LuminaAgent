@@ -2132,3 +2132,17 @@ hardening work when the trigger applies.
   fitted camera inline.
 - Empty-canvas centering and inset behavior are covered by viewport tests. No
   document shape, URL, API, or user interaction changed.
+
+### Stage 6 canvas minimap geometry checkpoint (2026-10-07)
+
+- `lib/canvas/minimap-layout.ts` now owns pure minimap geometry: world/map
+  scaling, rectangle projection, viewport clipping, client-to-world mapping,
+  and offscreen direction detection.
+- `CanvasMinimap.tsx` retains DOM measurement, local collapsed state, pointer
+  capture, node movement, viewport navigation, and CanvasCore callback wiring.
+- The module consumes existing canvas camera/bounds values and introduces no
+  store, API, persistence, or duplicate canvas authority.
+- Behavior coverage verifies rectangle round-tripping, clipping, and direction
+  indicators. CSS remains in `app/canvas.css` because its minimap selectors are
+  interleaved with later theme and responsive overrides; moving them as one
+  block would change cascade order.

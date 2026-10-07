@@ -24,6 +24,14 @@ import type {
   CanvasDocument,
   CanvasNode,
 } from "@/lib/canvas/types";
+import {
+  canvasMinimapClipAxis,
+  canvasMinimapOffscreenDirection,
+  canvasMinimapPointFromClient,
+  canvasMinimapRect,
+  canvasMinimapVisibleWorld,
+  createCanvasMinimapMap,
+} from "@/lib/canvas/minimap-layout";
 
 type Point = { x: number; y: number };
 
@@ -102,30 +110,16 @@ export default function CanvasMinimap({
       }
       return next;
     });
-  const zoom = Math.max(0.12, document.camera.zoom || 1);
   // A uniform scale keeps nodes, edges and the viewport in the same world space.
-  const mapAspect = 16 / 10;
-  const mapWidth = mapAspect * 100;
-  const mapHeight = 100;
-  const mapScale = Math.min(
-    mapWidth / Math.max(1, bounds.w),
-    mapHeight / Math.max(1, bounds.h),
-  );
-  const mapOffsetX = (mapWidth - bounds.w * mapScale) / 2;
-  const mapOffsetY = (mapHeight - bounds.h * mapScale) / 2;
-  const mapRect = (rect: { x: number; y: number; w: number; h: number }) => ({
-    left: ((mapOffsetX + (rect.x - bounds.x) * mapScale) / mapWidth) * 100,
-    top: ((mapOffsetY + (rect.y - bounds.y) * mapScale) / mapHeight) * 100,
-    width: ((rect.w * mapScale) / mapWidth) * 100,
-    height: ((rect.h * mapScale) / mapHeight) * 100,
-  });
+  const map = createCanvasMinimapMap(bounds);
+  const zoom = Math.max(0.12, document.camera.zoom || 1);
   const mapStyle = (rect: {
     x: number;
     y: number;
     w: number;
     h: number;
   }): CSSProperties => {
-    const mapped = mapRect(rect);
+    const mapped = canvasMinimapRect(rect, bounds, map);
     return {
       left: `${mapped.left}%`,
       top: `${mapped.top}%`,
@@ -134,8 +128,8 @@ export default function CanvasMinimap({
     };
   };
   const mapPosition = (x: number, y: number) => ({
-    x: mapOffsetX + (x - bounds.x) * mapScale,
-    y: mapOffsetY + (y - bounds.y) * mapScale,
+    x: map.mapOffsetX + (x - bounds.x) * map.mapScale,
+    y: map.mapOffsetY + (y - bounds.y) * map.mapScale,
   });
   const nodeStyle = (node: CanvasNode): CSSProperties =>
     mapStyle({
@@ -144,62 +138,26 @@ export default function CanvasMinimap({
       w: nodeSize(node).w,
       h: nodeSize(node).h,
     });
-  const visible = {
-    x: -document.camera.x / zoom,
-    y: -document.camera.y / zoom,
-    w: stageSize.width / zoom,
-    h: stageSize.height / zoom,
-  };
-  const rawViewport = mapRect(visible);
-  const clipAxis = (start: number, size: number) => {
-    const end = start + size;
-    if (end <= 0) return { start: 0, size: 3 };
-    if (start >= 100) return { start: 97, size: 3 };
-    const clippedStart = clamp(start, 0, 100);
-    const clippedEnd = clamp(end, 0, 100);
-    const clippedSize = Math.max(3, clippedEnd - clippedStart);
-    return {
-      start: Math.min(clippedStart, 100 - clippedSize),
-      size: clippedSize,
-    };
-  };
-  const viewportX = clipAxis(rawViewport.left, rawViewport.width);
-  const viewportY = clipAxis(rawViewport.top, rawViewport.height);
+  const visible = canvasMinimapVisibleWorld(document.camera, stageSize);
+  const rawViewport = canvasMinimapRect(visible, bounds, map);
+  const viewportX = canvasMinimapClipAxis(rawViewport.left, rawViewport.width);
+  const viewportY = canvasMinimapClipAxis(rawViewport.top, rawViewport.height);
   const viewportStyle: CSSProperties = {
     left: `${viewportX.start}%`,
     top: `${viewportY.start}%`,
     width: `${viewportX.size}%`,
     height: `${viewportY.size}%`,
   };
-  const visibleCenter = {
-    x: visible.x + visible.w / 2,
-    y: visible.y + visible.h / 2,
-  };
-  const offscreenDirection = {
-    left: visibleCenter.x > bounds.x + bounds.w,
-    right: visibleCenter.x < bounds.x,
-    top: visibleCenter.y > bounds.y + bounds.h,
-    bottom: visibleCenter.y < bounds.y,
-  };
+  const offscreenDirection = canvasMinimapOffscreenDirection(visible, bounds);
   const mapPoint = (clientX: number, clientY: number): Point => {
     const rect = minimapStageRef.current?.getBoundingClientRect();
     if (!rect) return { x: bounds.x, y: bounds.y };
-    const px =
-      clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1) * mapWidth;
-    const py =
-      clamp((clientY - rect.top) / Math.max(1, rect.height), 0, 1) * mapHeight;
-    return {
-      x: clamp(
-        bounds.x + (px - mapOffsetX) / mapScale,
-        bounds.x,
-        bounds.x + bounds.w,
-      ),
-      y: clamp(
-        bounds.y + (py - mapOffsetY) / mapScale,
-        bounds.y,
-        bounds.y + bounds.h,
-      ),
-    };
+    return canvasMinimapPointFromClient(
+      { x: clientX, y: clientY },
+      rect,
+      bounds,
+      map,
+    );
   };
   const capture = (pointerId: number) => {
     minimapStageRef.current?.setPointerCapture(pointerId);
@@ -406,7 +364,7 @@ export default function CanvasMinimap({
       >
         <svg
           className="canvas-minimap-edges"
-          viewBox={`0 0 ${mapWidth} ${mapHeight}`}
+          viewBox={`0 0 ${map.mapWidth} ${map.mapHeight}`}
           preserveAspectRatio="none"
           aria-hidden="true"
         >
@@ -443,7 +401,7 @@ export default function CanvasMinimap({
                   connectionStyle,
                   sourcePort,
                   targetPort,
-                  mapScale,
+                  map.mapScale,
                   edgeRouteLaneOffset(document, edge),
                 )}
               />
