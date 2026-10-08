@@ -5,6 +5,7 @@ import { resolveStoredFileWithFallback } from './image-storage';
 import type { MediaKind, ReferenceImageRecord } from './types';
 import type { GenerationSource } from './generation-source';
 import { resolveLocalDataDir } from './data-paths';
+import { projectResultStatus } from './task-result-projection';
 
 export type GenerationLog = {
   id: string;
@@ -143,7 +144,7 @@ export async function finishGenerationLog(id: string, patch: Partial<Omit<Genera
 }
 
 export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> {
-  const logs = await readAllGenerationLogs();
+  const logs = (await readAllGenerationLogs()).map(normalizeCompletedMediaLog);
   const now = Date.now();
   const staleLogs = logs.filter((log) => log.status === 'pending' && now - new Date(log.createdAt).getTime() > STALE_PENDING_MS);
   if (staleLogs.length) {
@@ -162,6 +163,14 @@ export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> 
     } : log).reverse().slice(0, limit);
   }
   return logs.reverse().slice(0, limit);
+}
+
+function normalizeCompletedMediaLog(log: GenerationLog): GenerationLog {
+  const outputUrls = [...(log.imageUrls || []), ...(log.videoUrls || [])];
+  if (log.mode !== 'llm' && log.taskKind !== 'llm' && projectResultStatus(log.status, outputUrls) === 'success' && log.status !== 'success') {
+    return { ...log, status: 'success', error: undefined };
+  }
+  return log;
 }
 
 /** Find the current record for a client task or provider task. */

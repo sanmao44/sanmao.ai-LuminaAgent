@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.82",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.82",
+  "latestVersion": "0.7.83",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.83",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.82/SANMAO.AI-0.7.82.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.83/SANMAO.AI-0.7.83.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.82/SANMAO.AI-0.7.82.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.82/SANMAO.AI-0.7.82.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.82/SANMAO.AI-0.7.82.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.83/SANMAO.AI-0.7.83.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.83/SANMAO.AI-0.7.83.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.83/SANMAO.AI-0.7.83.zip"
   ],
   "sha256": "104528fe0025d467710b1a5d19d4d754ef26caa9f0dff557ab0539a009b066cc",
-  "publishedAt": "2026-10-07T04:50:38.432Z",
+  "publishedAt": "2026-10-07T00:00:00.000Z",
   "notes": [
+    "修复图片和视频任务服务商已返回结果但本地节点仍显示失败或生成中的假失败，统一以最终结果同步任务状态。",
+    "统一处理服务商已接受的异步媒体任务，确保成功结果、失败结果和画布节点状态保持一致。",
+    "完善媒体结果归档与任务收尾，避免一端成功、一端失败或任务长期停留在生成中。",
     "前端复杂度重构继续收敛：变体生成输入准备独立到 Canvas 领域边界。",
     "保持现有 URL、API、数据格式、任务生命周期与用户交互兼容。",
     "SQLite 本地数据库切换：业务数据通过 Repository 边界统一读写，保留迁移与回滚路径。",

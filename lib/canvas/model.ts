@@ -445,6 +445,16 @@ function normalizeNode(value: unknown): CanvasNode | null {
   }
   if (type === "media" && data.kind === "video")
     data.params = normalizeVideoNodeParams(data);
+  if ((type === "media" || type === "upscale") && data.url && data.status === "failed") {
+    data.status = "completed";
+    data.statusLabel = type === "upscale"
+      ? "超分节点生成的结果"
+      : data.kind === "video"
+        ? "视频已完成"
+        : "图片已完成";
+    data.progress = 100;
+    data.processingStartedAt = undefined;
+  }
   if (type === "prompt")
     data.params = normalizeCreationSettings("text", data.params);
   if (type === "upscale") {

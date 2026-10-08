@@ -2826,7 +2826,7 @@ html[data-theme="dark"] .agent-page{
 .composer-footer{margin-top:8px;padding-top:8px;border-top:1px solid var(--agent-composer-divider);align-items:flex-end}.composer-left{gap:7px;min-width:0;flex-wrap:nowrap;overflow:hidden}
 .icon-upload{height:34px;border-color:var(--agent-composer-border);background:var(--agent-composer-inner);color:var(--text-2);border-radius:10px;font-size:9px}.icon-upload:hover{border-color:color-mix(in srgb,var(--accent) 55%,var(--agent-composer-border));background:var(--accent-soft);color:var(--accent-text)}
 .model-dropdown.compact{width:clamp(120px,18vw,230px);min-width:0;flex:1 1 0}.model-dropdown.compact .model-picker-trigger{min-width:0;height:34px;border-color:var(--agent-composer-border);background:var(--agent-composer-inner)}.model-dropdown.compact .model-picker-trigger-copy{min-width:0}.model-dropdown.compact .model-picker-trigger:hover,.model-dropdown.compact .model-picker-trigger.open{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--agent-composer-inner))}
-.agent-web-mode-trigger{height:34px;border-color:var(--agent-composer-border);background:var(--agent-composer-inner);color:var(--text-2)}.agent-web-mode-trigger:hover,.agent-web-mode-trigger:focus-visible{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}.agent-web-mode-trigger.always{border-color:color-mix(in srgb,#2e9b68 55%,var(--agent-composer-border));background:color-mix(in srgb,#2e9b68 9%,var(--agent-composer-inner));color:#2f946b}.agent-web-mode-menu{bottom:calc(100% + 11px);border-color:color-mix(in srgb,var(--accent) 32%,var(--agent-composer-border));background:var(--agent-composer-bg);box-shadow:var(--agent-composer-shadow)}
+.agent-web-mode-trigger{height:34px;min-width:112px;flex:none;white-space:nowrap;border-color:var(--agent-composer-border);background:var(--agent-composer-inner);color:var(--text-2)}.agent-web-mode-trigger>span{display:block;min-width:max-content;white-space:nowrap}.agent-web-mode-trigger:hover,.agent-web-mode-trigger:focus-visible{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}.agent-web-mode-trigger.always{border-color:color-mix(in srgb,#2e9b68 55%,var(--agent-composer-border));background:color-mix(in srgb,#2e9b68 9%,var(--agent-composer-inner));color:#2f946b}.agent-web-mode-menu{bottom:calc(100% + 11px);border-color:color-mix(in srgb,var(--accent) 32%,var(--agent-composer-border));background:var(--agent-composer-bg);box-shadow:var(--agent-composer-shadow)}.agent-web-mode-menu button{white-space:nowrap}.agent-web-mode-menu button strong,.agent-web-mode-menu button small{white-space:nowrap}
 .agent-skill-button.active{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:var(--accent-soft);color:var(--accent-text)}
 .agent-skill-menu{gap:2px}
 .agent-skill-menu button{align-items:flex-start;min-height:46px}
@@ -3944,3 +3944,11 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .agent-skill-menu-head{display:flex;align-items:center;gap:6px;min-width:0}
 .agent-skill-menu-head strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .agent-skill-menu-count{flex:none;padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent-text);font-size:8px;font-style:normal;font-weight:700}
+
+/* Keep the web-mode menu clickable inside the composer and keep its labels on one line. */
+.agent-web-mode-trigger{min-width:112px;flex:none;white-space:nowrap}
+.agent-web-mode-trigger>span{min-width:max-content;white-space:nowrap}
+.agent-web-mode-menu{z-index:220}
+.agent-web-mode-menu button,.agent-web-mode-menu strong,.agent-web-mode-menu small{white-space:nowrap}
+.composer-left:has(.agent-web-mode-menu){overflow:visible}
+.composer-left>.agent-web-toggle-wrap{min-width:112px;flex:0 0 auto;position:relative;z-index:30}

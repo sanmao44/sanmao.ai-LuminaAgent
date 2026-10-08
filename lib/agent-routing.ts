@@ -1,5 +1,7 @@
 import { classifyAgentDeliverable, inferAgentRequestMode, isCapabilityQuestion, type AgentDeliverable, type AgentIntentContext, type AgentIntentDecision, type AgentIntentMessage } from '@/lib/agent-intent';
 import { classifyBrowserAutomation, likelyArtifactGenerationRequest, likelyFileGenerationRequest, likelyFilesystemRequest, likelyMcpManagementRequest, shouldUseAgentWebSearch, type AgentWebDecision, type AgentWebMode, type BrowserAutomationIntent } from '@/lib/agent-web';
+import { classifyAgentInformationSource } from '@/packages/agent-core/information-routing';
+import type { AgentInformationDecision } from '@/packages/contracts/planning';
 
 export type AgentArtifactKind = 'none' | 'word' | 'excel' | 'ppt' | 'archive' | 'file';
 export type AgentContextNeed = 'none' | 'recent' | 'required';
@@ -37,6 +39,7 @@ export type AgentRequestDecision = {
   browserIntent: BrowserAutomationIntent;
   filesystem: boolean;
   web: AgentWebDecision;
+  information: AgentInformationDecision;
   needsTools: boolean;
   tools: AgentToolPlan;
   candidates: AgentRouteCandidate[];
@@ -51,7 +54,24 @@ const filePattern = /(?:文件|附件|csv|tsv|json|markdown|\.md\b|\.txt\b|\.htm
 const contextReferencePattern = /(?:刚才|上一条|上面|之前|此前|继续|再来|再写|再做|基于|按照|按刚才|这个|这张|这份|该|它|他|她|同上|沿用|保持|换成|改成|第[一二三四五六七八九十\d]+张)/i;
 const selfContainedPattern = /(?:只根据这句话|只看本句|不要结合上下文|无需上下文|独立回答|不参考历史|不用参考之前)/i;
 const skillNeedPattern = /(?:技能|skill|工作流|流程|规范|指南|模板|调试|排查|报错|bug|修复|部署|发布|重构|测试|代码库)/i;
+// The skill picker writes this prefix into the user message. It is an
+// explicit routing directive, so it must win over automatic web-search
+// heuristics even when the rest of the request is phrased as a question.
+const explicitSkillPattern = /(?:^|\s)(?:用|使用|请用|请使用)\s*(?:「([^「」\n]{1,80})」|([^\s，。！？!?：:]{1,80}))\s*技能\s*[:：]?/i;
 const externalServiceActionPattern = /(?:mcp|model context protocol|接入|连接|调用|同步|提交|发送|发到|创建|更新|删除|读取|查看|列出|搜索|查询).{0,24}(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器|api)|(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器).{0,24}(?:接入|连接|调用|同步|提交|发送|创建|更新|删除|读取|查看|列出|搜索|查询)/i;
+const githubRepositoryEntityPattern = /(?:github(?:\.com)?|仓库|repo|pull request|\bpr\b|issue|commit|提交|分支|branch|release)/i;
+const githubRepositoryQueryActionPattern = /(?:我的|当前|这个|该|本|上述|上面|最近|最新|多少|几个|哪些|列表|列出|查看|看看|查询|搜索|状态|详情|有|谁|合并)/i;
+
+function isGithubRepositoryQuery(text: string, messages: AgentIntentMessage[]) {
+  if (!githubRepositoryEntityPattern.test(text) || !githubRepositoryQueryActionPattern.test(text)) return false;
+  const hasRepositoryEntity = /(?:仓库|repo|pull request|\bpr\b|issue|commit|提交|分支|branch|release)/i.test(text);
+  if (/github(?:\.com)?/i.test(text)) return hasRepositoryEntity;
+  // “这个仓库最近的 PR/Issue”常见于用户先给出 GitHub 地址、下一轮再追问。
+  // 只有明确的远端 PR/Issue 等实体才在没有当前轮 GitHub 字样时沿用该上下文，
+  // 避免把普通本地项目问题误发给 GitHub MCP。
+  if (/(?:pull request|\bpr\b|issue|commit|提交|分支|branch|release)/i.test(text)) return true;
+  return messages.some((message) => /github(?:\.com)?/i.test(String(message.content || '')));
+}
 function artifactKindFor(text: string) {
   if (!creationVerbPattern.test(text)) return 'none' as const;
   if (archivePattern.test(text)) return 'archive' as const;
@@ -103,18 +123,34 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // execute/ask distinction so questions such as "今天有什么新闻？" can
   // search without becoming an MCP operation.
   const capabilityQuestion = isCapabilityQuestion(text);
-  const web = capabilityQuestion
+  const explicitSkill = explicitSkillPattern.test(text);
+  const githubRepositoryQuery = isGithubRepositoryQuery(text, messages);
+  const suggestedWeb = explicitSkill
     ? { shouldSearch: false, reason: 'ordinary-chat' as const, query: text }
     : shouldUseAgentWebSearch(options.webMode || 'auto', text, webContext);
   const explicitExternalAction = executable && externalServiceActionPattern.test(text)
     && /(?:mcp|连接|接入|调用|同步|提交|发送|创建|更新|删除)/i.test(text);
-  const connectorAction = executable && (browserAutomation || filesystem || likelyMcpManagementRequest(text) || explicitExternalAction);
+  // GitHub repository/PR/Issue queries are read-only actions even when written
+  // as a question. They need MCP discovery and tool execution, but do not
+  // grant any write permission.
+  const connectorAction = executable && (browserAutomation || filesystem || likelyMcpManagementRequest(text) || explicitExternalAction)
+    || githubRepositoryQuery;
+  const information = classifyAgentInformationSource(text, {
+    capabilityQuestion,
+    browserAutomation,
+    filesystem,
+    externalAction: connectorAction,
+    webShouldSearch: suggestedWeb.shouldSearch && !connectorAction,
+  });
+  const web = information.source === 'internal-capability' || explicitSkill
+    ? { shouldSearch: false, reason: 'ordinary-chat' as const, query: text }
+    : suggestedWeb;
   if (web.shouldSearch && !connectorAction && artifactKind === 'none' && !['IMAGE', 'BOTH'].includes(intent.deliverable)) {
     return {
       policy: { lane: 'search', web: 'require', discoverMcp: false, allowMcp: false },
       intent, route: 'web', artifactKind: 'none',
       contextNeed: contextInfo.need, contextReason: contextInfo.reason,
-      browserAutomation: false, browserIntent, filesystem: false, web, needsTools: true,
+      browserAutomation: false, browserIntent, filesystem: false, web, information, needsTools: true,
       tools: { useMcp: false, useBrowserMcp: false, useFilesystemMcp: false, useSkills: false, useNativeWeb: true, useNativeArtifact: false, reason: 'Read-only external information request.' },
       candidates: [candidate('web', 120, web.reason)],
     };
@@ -122,7 +158,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // Non-execution modes never enter an executable candidate route. This is a
   // shared side-effect gate for capability questions, discussions and unclear
   // turns; feature words alone cannot activate image/file/web/MCP/Skill work.
-  if (!executable && !web.shouldSearch) {
+  if (!executable && !web.shouldSearch && !explicitSkill && !githubRepositoryQuery) {
     return {
       policy: { lane: 'answer', web: 'forbid', discoverMcp: false, allowMcp: false },
       intent,
@@ -134,6 +170,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
       browserIntent,
       filesystem: false,
       web,
+      information,
       needsTools: false,
       tools: {
         useMcp: false,
@@ -155,6 +192,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   if (intent.deliverable === 'BOTH') candidates.push(candidate('both', intent.confidence === 'high' ? 106 : 76, ...intent.signals));
   if (intent.deliverable === 'TEXT') candidates.push(candidate('text', intent.confidence === 'high' ? 104 : 72, ...intent.signals));
   if (web.shouldSearch && !browserAutomation && !filesystem) candidates.push(candidate('web', 102, web.reason));
+  if (githubRepositoryQuery) candidates.push(candidate('chat', 116, 'GitHub 仓库数据查询'));
   if (intent.deliverable === 'CLARIFY') candidates.push(candidate('clarify', 80, '交付形式不明确'));
   if (!candidates.length) candidates.push(candidate('chat', 60, '普通对话或问答'));
   candidates.sort((a, b) => b.score - a.score);
@@ -163,10 +201,11 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // 资料" belongs to the normal web path. MCP is reserved for explicit
   // connector/service actions or local/browser execution.
   const useMcp = connectorAction;
-  const needsTools = useMcp || ['image', 'both', 'word', 'excel', 'ppt', 'archive', 'file', 'browser', 'filesystem'].includes(route);
+  const needsTools = useMcp || explicitSkill || ['image', 'both', 'word', 'excel', 'ppt', 'archive', 'file', 'browser', 'filesystem'].includes(route);
   const useBrowserMcp = browserAutomation;
   const useFilesystemMcp = filesystem;
-  const useSkills = !browserAutomation && !filesystem && !intent.deliverable.toString().match(/^(IMAGE|BOTH)$/) && skillNeedPattern.test(text) && !/^(?:什么是|解释|介绍|为什么|如何理解)/i.test(text);
+  const useSkills = !browserAutomation && !filesystem && !intent.deliverable.toString().match(/^(IMAGE|BOTH)$/)
+    && (explicitSkill || (skillNeedPattern.test(text) && !/^(?:什么是|解释|介绍|为什么|如何理解)/i.test(text)));
   const useNativeWeb = web.shouldSearch && !browserAutomation && !filesystem && route === 'web';
   const useNativeArtifact = artifactRouteIsGenerated(route) || likelyFileGenerationRequest(text) || likelyArtifactGenerationRequest(text);
   const reason = useMcp ? '检测到外部服务或本地执行动作，优先使用受控 MCP。'
@@ -175,9 +214,9 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
         : useNativeArtifact ? '检测到明确文件交付，调用对应内置工具。' : '普通回答不加载额外工具。';
   // Capability discovery is an execution resource. Do not probe every enabled
   // connector for an otherwise ordinary or ambiguous conversation turn.
-  const discoverMcp = executable && (useMcp || (route === 'chat' && intent.mode === 'execute'));
+  const discoverMcp = (executable || githubRepositoryQuery) && (useMcp || (route === 'chat' && intent.mode === 'execute'));
   const webPolicy: AgentWebPolicy = useNativeWeb ? 'require' : 'forbid';
-  return { policy: { lane: 'action', web: webPolicy, discoverMcp, allowMcp: useMcp || discoverMcp }, intent, route, artifactKind, contextNeed: contextInfo.need, contextReason: contextInfo.reason, browserAutomation, browserIntent, filesystem, web, needsTools, tools: { useMcp, useBrowserMcp, useFilesystemMcp, useSkills, useNativeWeb, useNativeArtifact, reason }, candidates };
+  return { policy: { lane: 'action', web: webPolicy, discoverMcp, allowMcp: useMcp || discoverMcp }, intent, route, artifactKind, contextNeed: contextInfo.need, contextReason: contextInfo.reason, browserAutomation, browserIntent, filesystem, web, information, needsTools, tools: { useMcp, useBrowserMcp, useFilesystemMcp, useSkills, useNativeWeb, useNativeArtifact, reason }, candidates };
 }
 
 /** Keep enough recent context for continuity while dropping stale turns. */
@@ -279,6 +318,7 @@ export function routeToolSummary(decision: AgentRequestDecision) {
     artifactKind: decision.artifactKind,
     contextNeed: decision.contextNeed,
     shouldSearch: decision.web.shouldSearch,
+    information: decision.information,
     browserAutomation: decision.browserAutomation,
     browserIntent: decision.browserIntent,
     filesystem: decision.filesystem,

@@ -1,5 +1,7 @@
 import type { WorkspaceContext } from "@/lib/workspace-context";
 
+import { isImageEditRequest } from "../agent-intent";
+
 export const CANVAS_AGENT_RUN_CONTEXT_SCHEMA_VERSION = 1 as const;
 
 /** Structured selection target sent with a SuperCanvas Agent dock run. */
@@ -43,9 +45,9 @@ export function canvasAgentTargetOperation(instruction: string, kind: CanvasAgen
   if (!text || kind === "none" || kind === "mixed" || kind === "video") return "generate";
   if (/(?:为什么|怎么|如何|能不能|可不可以|是否|请问|解释|分析|评价|觉得|怎么样)/.test(text) && /[？?]?$/.test(text)) return "generate";
   const editRequest = kind === "image"
-    ? /(?:修改|改一下|改成|换成|替换|重绘|修图|换背景|去掉|加上|增加|减少|保持主体|局部编辑|扩图|抠图|继续修改|再来一版|调整一下)/
-    : /(?:修改|改写|改一下|改成|换成|替换|重写|润色|优化|扩写|缩写|精简|调整一下|翻译|更新内容)/;
-  return editRequest.test(text) ? "edit" : "generate";
+    ? isImageEditRequest(text) || /(?:局部编辑|扩图|抠图|继续修改|再来一版|调整一下)/.test(text)
+    : /(?:修改|改写|改一下|改成|换成|替换|重写|润色|优化|扩写|缩写|精简|调整一下|翻译|更新内容)/.test(text);
+  return editRequest ? "edit" : "generate";
 }
 
 function cleanIds(value: unknown) {

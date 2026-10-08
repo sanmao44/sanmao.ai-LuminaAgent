@@ -208,6 +208,21 @@ test('surfaces 429 and retry-after for exponential backoff', async () => {
   });
 });
 
+test('does not mark an HTTP video provider error as possibly accepted', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'video rejected' } }), {
+    status: 500,
+    headers: { 'content-type': 'application/json' },
+  });
+  await assert.rejects(
+    () => video.submitRemoteVideo(provider(), 'video-model', { prompt: 'terminal error', seconds: 5 }, 'idem-terminal-error'),
+    (error) => {
+      assert.match(error.message, /video rejected/);
+      assert.equal(error.possiblyAccepted, undefined);
+      return true;
+    },
+  );
+});
+
 test('maps Dreamina image and frame inputs to their official flags', () => {
   assert.deepEqual(video.buildJimengCliArgs({ prompt: 'single image', firstFrame: 'first.png', seconds: 5, resolution: '720p' }), [
     'image2video', '--image', 'first.png', '--prompt', 'single image', '--duration', '5', '--video_resolution', '720p',

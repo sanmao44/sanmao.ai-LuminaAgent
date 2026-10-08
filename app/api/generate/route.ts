@@ -105,6 +105,10 @@ export async function POST(request: Request) {
   let presetNameForLog: string | undefined;
   let logId: string | undefined;
   let runtimeProviderId = '';
+  let storagePath = '';
+  let providerImages: GeneratedImage[] = [];
+  let providerFinishedAt = 0;
+  let downloadAuthForResult: ReturnType<typeof imageDownloadAuth> | undefined;
   const startedAt = Date.now();
   const requestController = new AbortController();
   const abortFromClient = () => requestController.abort(request.signal.reason || new Error('GENERATION_CANCELLED'));
@@ -205,9 +209,10 @@ export async function POST(request: Request) {
     outputSizeForLog = input.width && input.height ? `${input.width}×${input.height}` : undefined;
     modeForLog = references.length ? 'edit' : 'generate';
     logId = await startGenerationLog({ mode: modeForLog, source: sourceForLog, prompt: generationPrompt, presetId, presetName, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
-    const storagePath = (await getPublicState()).settings.imageStoragePath;
+    storagePath = (await getPublicState()).settings.imageStoragePath || '';
+    downloadAuthForResult = imageDownloadAuth(runtime.provider);
     let usedGenerationFallback = false;
-    const providerImages = await runImageModelCandidates(
+    providerImages = await runImageModelCandidates(
       runtime,
       // Explicit selections remain authoritative unless the provider returns
       // a clear compatibility rejection; only then try configured alternatives.
@@ -215,6 +220,7 @@ export async function POST(request: Request) {
       async (candidate) => {
         runtime = candidate;
         runtimeProviderId = candidate.provider.id;
+        downloadAuthForResult = imageDownloadAuth(candidate.provider);
         if (!references.length) return generateImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
         try {
           return await editImage(candidate.provider, candidate.model.rawId, { ...input, references: providerReferences, mask, fidelity: camera?.viewpoint ? 'high' : camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal);
@@ -236,9 +242,9 @@ export async function POST(request: Request) {
       ? await normalizeAngleOutputSize(orientationSafeImages, angleOutput.width, angleOutput.height, effectiveAngle(generationCamera(camera).roll), requestController.signal)
       : orientationSafeImages;
     if (requestController.signal.aborted && !normalizedImages.length) throw requestController.signal.reason || new Error('GENERATION_CANCELLED');
-    const providerFinishedAt = Date.now();
+    providerFinishedAt = Date.now();
     const generatedImages = normalizedImages;
-    const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId, downloadAuth: imageDownloadAuth(runtime.provider) });
+    const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId, downloadAuth: downloadAuthForResult });
     return Response.json({ ok: true, images: stored.images, mode: usedGenerationFallback ? 'generate-fallback' : references.length ? 'reference' : 'generate', ...(usedGenerationFallback ? { warning: '当前服务商不支持图片修改接口，已按普通生图生成新图。' } : {}), model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name }, camera: cameraPayload, storagePath: stored.path });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) {
@@ -246,6 +252,18 @@ export async function POST(request: Request) {
     }
     const upstreamStatus = Number((error as Error & { providerStatus?: number; status?: number }).providerStatus || (error as Error & { status?: number }).status || 0);
     if (runtimeProviderId && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(runtimeProviderId).catch(() => undefined);
+    if (providerImages.some((image) => Boolean(String(image.url || '').trim()))) {
+      const postProcessError = error instanceof Error ? error.message : '图片后处理失败';
+      const providerResult = await persistGenerationResult({
+        images: providerImages,
+        storagePath,
+        startedAt,
+        providerFinishedAt: providerFinishedAt || Date.now(),
+        logId,
+        downloadAuth: downloadAuthForResult,
+      }).catch(() => ({ images: providerImages, path: storagePath, remoteFallbacks: [] }));
+      return Response.json({ ok: true, images: providerResult.images, storagePath: providerResult.path, warning: `图片已生成，但本地后处理未完成：${postProcessError}` });
+    }
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'GENERATION_CANCELLED');
     const providerPossiblyAccepted = !cancelled && Boolean((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask);
     const failure = { status: providerPossiblyAccepted ? 'pending' as const : 'error' as const, mode: modeForLog, source: sourceForLog, prompt: promptForLog, presetId: presetIdForLog, presetName: presetNameForLog, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, durationMs: Date.now() - startedAt, error: providerPossiblyAccepted ? '服务商已接收任务，正在生成，请勿重复提交。' : cancelled ? '任务已取消，已停止等待服务商返回' : error instanceof Error ? error.message : '生图失败' };

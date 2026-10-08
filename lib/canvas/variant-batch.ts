@@ -1,6 +1,7 @@
 import type { CanvasNodeData, CanvasVariantState } from "./types";
 import type { ImageCreationSettings, VideoCreationSettings } from "../creation/settings";
 import { canvasVariantBatchStatus } from "./variant-status";
+import { videoTaskOutputUrl } from "../video-task-output";
 
 export type CanvasVariantBatchMode = "all" | "failed" | "pending";
 
@@ -80,13 +81,19 @@ export function canvasVideoTaskProgress(task: {
   status: string;
   progress?: number;
   videoUrls?: readonly string[];
+  remoteVideoUrls?: readonly string[];
   error?: string;
 }) {
-  const hasVideoResult = Array.isArray(task.videoUrls) && task.videoUrls.some(Boolean);
-  const terminal = hasVideoResult || ["done", "failed", "cancelled", "canceled"].includes(task.status);
-  const status = hasVideoResult || task.status === "done"
+  const url = videoTaskOutputUrl(task);
+  const hasVideoResult = Boolean(url);
+  const rawStatus = String(task.status || "").trim().toLowerCase();
+  const failedStatus = /^(?:failed?|failure|error|rejected?|cancelled?|canceled|expired|aborted|blocked|denied)$/.test(rawStatus)
+    || /(?:fail|error|reject|cancel|expire|abort|deny)/.test(rawStatus);
+  const completedStatus = /^(?:done|success(?:ful)?|succeed(?:ed)?|completed?|finished|ready)$/.test(rawStatus);
+  const terminal = hasVideoResult || failedStatus || completedStatus;
+  const status = hasVideoResult || completedStatus
     ? ("completed" as const)
-    : terminal
+      : terminal
       ? ("failed" as const)
       : ("running" as const);
   return {
@@ -94,7 +101,7 @@ export function canvasVideoTaskProgress(task: {
     terminal,
     status,
     progress: Number(task.progress || (status === "completed" ? 100 : 0)),
-    url: task.videoUrls?.[0],
+    url: url || undefined,
   };
 }
 
@@ -105,6 +112,7 @@ export function canvasVariantVideoTaskData(
     status: string;
     progress?: number;
     videoUrls?: readonly string[];
+    remoteVideoUrls?: readonly string[];
     error?: string;
   },
   now: number,
@@ -137,6 +145,7 @@ export function canvasVariantVideoNodeData(input: {
     status: string;
     progress?: number;
     videoUrls?: readonly string[];
+    remoteVideoUrls?: readonly string[];
     error?: string;
     modelId?: string;
   };
@@ -150,18 +159,19 @@ export function canvasVariantVideoNodeData(input: {
   generationStartedAt: number;
   now: number;
 }): CanvasNodeData {
-  const completed = input.task.status === "done";
-  const generationDurationMs = completed
+  const progress = canvasVideoTaskProgress(input.task);
+  const generationDurationMs = progress.terminal
     ? Math.max(0, input.now - input.generationStartedAt)
     : undefined;
   return {
     role: "变体结果",
     model: input.task.modelId || input.params.model,
     jobId: input.task.id,
-    status: completed ? "completed" : "running",
-    processingStartedAt: completed ? undefined : input.now,
-    progress: Number(input.task.progress || (completed ? 100 : 0)),
-    statusLabel: completed ? "视频已完成" : "视频生成中",
+    status: progress.status,
+    processingStartedAt: progress.status === "running" ? input.now : undefined,
+    progress: progress.progress,
+    statusLabel: progress.status === "completed" ? "视频已完成" : input.task.error || (progress.status === "failed" ? "视频任务已中断" : "视频生成中"),
+    ...(progress.url ? { url: progress.url } : {}),
     generation: {
       kind: "video",
       prompt: input.prompt,

@@ -56,7 +56,10 @@ function harness(options = {}) {
     },
     '@/lib/image-orientation': {
       normalizeStarApiLandscapePrompt: (_provider, _model, prompt) => prompt,
-      normalizeStarApiLandscapeImages: async (_provider, _model, _input, images) => images,
+      normalizeStarApiLandscapeImages: async (_provider, _model, _input, images) => {
+        if (options.normalizeError) throw options.normalizeError;
+        return images;
+      },
     },
     '@/packages/model-runtime/media': {
       invokeMediaModelCandidates: async (initial, _loadFallbacks, operation) => operation(initial),
@@ -160,6 +163,84 @@ test('legacy camera and ordinary generation keep their existing paths', async ()
   assert.equal((await ordinary.post({ prompt: 'A landscape' })).status, 200);
   assert.equal(ordinary.calls.generations.length, 1);
   assert.equal(ordinary.calls.edits.length, 0);
+});
+
+test('provider image remains successful when local post-processing fails', async () => {
+  const api = harness({
+    generationImages: [{ url: 'https://provider.example/result.png' }],
+    normalizeError: new Error('本地方向处理失败'),
+  });
+  const response = await api.post({ prompt: 'A landscape' });
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.deepEqual(body.images, [{ url: 'https://provider.example/result.png' }]);
+  assert.match(body.warning, /图片已生成/);
+});
+
+test('image edit keeps a provider image successful when local post-processing fails', async () => {
+  const providerImage = { url: 'https://provider.example/edited.png' };
+  const persisted = [];
+  const editSource = await readFile(new URL('../app/api/edit/route.ts', import.meta.url), 'utf8');
+  const editCompiled = ts.transpileModule(editSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const editModule = { exports: {} };
+  const editRuntime = {
+    provider: { id: 'provider', name: 'Provider' },
+    model: { id: 'edit-model', rawId: 'edit-model', displayName: 'Edit model' },
+  };
+  new Function('require', 'module', 'exports', editCompiled)(name => {
+    const dependencies = {
+      '@/lib/providers': {
+        editImage: async () => [providerImage],
+        imageDownloadAuth: () => undefined,
+      },
+      '@/lib/image-storage': { resolveStoredImageReference: async value => value },
+      '@/lib/generation-log': {
+        startGenerationLog: async () => 'edit-result-recovery',
+        finishGenerationLog: async () => {},
+        appendGenerationLog: async () => {},
+      },
+      '@/lib/generation-persistence': {
+        persistGenerationResult: async input => {
+          persisted.push(input);
+          return { images: input.images, path: input.storagePath || '' };
+        },
+      },
+      '@/lib/store': {
+        getPublicState: async () => ({ settings: {} }),
+        getRuntimeImageModelForCapability: async () => editRuntime,
+        getRuntimeImageModelCandidates: async () => [],
+        markProviderCredentialFailure: async () => {},
+      },
+      '@/lib/auth': { isTrustedAppRequest: () => true },
+      '@/lib/reference-images': { referenceRecordsForLog: () => [] },
+      '@/lib/local-edit-composite': { enforceLocalEditMask: async images => images },
+      '@/lib/runtime-operation': {
+        beginRuntimeRequest: async () => async () => {},
+        RuntimeDrainingError: class extends Error {},
+      },
+      '@/lib/image-orientation': {
+        normalizeStarApiLandscapePrompt: (_provider, _model, prompt) => prompt,
+        normalizeStarApiLandscapeImages: async () => { throw new Error('本地后处理失败'); },
+      },
+      '@/packages/model-runtime/media': {
+        invokeMediaModelCandidates: async (initial, _loadFallbacks, operation) => operation(initial),
+      },
+    };
+    assert.ok(name in dependencies, `Unexpected dependency ${name}`);
+    return dependencies[name];
+  }, editModule, editModule.exports);
+  const response = await editModule.exports.POST(new Request('http://localhost/api/edit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: '把背景换成夜晚', references: ['data:image/png;base64,dGVzdA=='] }),
+  }));
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.deepEqual(body.images, [providerImage]);
+  assert.match(body.warning, /图片已生成/);
+  assert.deepEqual(persisted.map(item => item.images), [[providerImage]]);
 });
 
 test('canvas single-source continuation falls back to generation when the edit route is missing', async () => {

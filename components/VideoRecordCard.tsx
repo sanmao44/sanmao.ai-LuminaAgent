@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { VideoTask } from '@/lib/video-task-store';
+import { videoTaskOutputUrl, videoTaskStatus } from '@/lib/video-task-output';
 
 type Props = {
   task: VideoTask;
@@ -40,11 +41,12 @@ function durationLabel(input: VideoTask['input']) {
 
 export default function VideoRecordCard({ task, onNotify, onDelete, onRestore, onSaveLocally, onCancel, onRetry }: Props) {
   const [parametersOpen, setParametersOpen] = useState(false);
-  const url = task.videoUrls?.[0] || '';
-  const canDelete = task.status === 'done' || task.status === 'failed' || task.status === 'cancelled';
-  const canRestore = task.status === 'done' || task.status === 'failed' || task.status === 'cancelled';
-  const canCancel = task.status === 'pending' || task.status === 'running';
-  const canRetry = task.status === 'failed' || task.status === 'cancelled';
+  const url = videoTaskOutputUrl(task);
+  const status = videoTaskStatus(task);
+  const canDelete = status === 'done' || status === 'failed' || status === 'cancelled';
+  const canRestore = status === 'done' || status === 'failed' || status === 'cancelled';
+  const canCancel = status === 'pending' || status === 'running';
+  const canRetry = status === 'failed' || status === 'cancelled';
   const input = task.input;
 
   useEffect(() => {
@@ -71,13 +73,13 @@ export default function VideoRecordCard({ task, onNotify, onDelete, onRestore, o
     }
     void onDelete();
   };
-  return <article className={`creative-video-card ${task.status}`}>
+  return <article className={`creative-video-card ${status}`}>
     <div className="creative-video-preview">
-      {url ? <video src={url} controls playsInline preload="metadata" /> : <div className="creative-video-placeholder"><span>▶</span><small>{task.status === 'failed' ? '视频生成失败' : task.status === 'cancelled' ? '已取消生成' : task.status === 'done' ? task.error ? '等待本地保存' : '视频已完成' : '视频生成中'}</small></div>}
+      {url ? <video src={url} controls playsInline preload="metadata" /> : <div className="creative-video-placeholder"><span>▶</span><small>{status === 'failed' ? '视频生成失败' : status === 'cancelled' ? '已取消生成' : status === 'done' ? task.error ? '等待本地保存' : '视频已完成' : '视频生成中'}</small></div>}
       <span className="creative-media-badge">视频</span>
     </div>
     <div className="creative-video-body">
-      <div className="creative-video-meta"><span className={`creative-status-pill ${task.status}`}>{statusLabel(task.status)}</span><time>{new Date(task.createdAt).toLocaleString('zh-CN', { hour12: false })}</time></div>
+      <div className="creative-video-meta"><span className={`creative-status-pill ${status}`}>{statusLabel(status)}</span><time>{new Date(task.createdAt).toLocaleString('zh-CN', { hour12: false })}</time></div>
       <strong>{task.input?.prompt || '未命名视频任务'}</strong>
       <small>{operationLabel(task.operation)} · {task.modelName || '自动选择模型'}{typeof task.costUsd === 'number' ? ` · $${task.costUsd.toFixed(4)}` : ''}</small>
       {task.error && <p className="creative-video-error">{task.error}</p>}
@@ -91,6 +93,6 @@ export default function VideoRecordCard({ task, onNotify, onDelete, onRestore, o
         <button type="button" className="creative-video-delete" onClick={handleDelete} title={canDelete ? '删除视频任务' : '先生成结束或取消任务再删除'} aria-label="删除视频任务"><span className="creative-action-icon" aria-hidden="true">⌫</span><span>删除</span></button>
       </div>
     </div>
-    {parametersOpen && <div className="video-task-dialog creative-video-parameters-dialog" role="dialog" aria-modal="true" aria-label="视频参数" onClick={() => setParametersOpen(false)}><div className="video-task-dialog-inner" onClick={(event) => event.stopPropagation()}><div className="video-task-dialog-head"><div><span>视频参数</span><strong>{statusLabel(task.status)}</strong></div><button type="button" className="video-media-dialog-close" aria-label="关闭视频参数" onClick={() => setParametersOpen(false)}>×</button></div><div className="video-task-dialog-content"><label>提示词<pre>{input?.prompt || '未命名视频任务'}</pre></label><div className="video-task-dialog-meta creative-video-parameter-grid"><span>模型<b>{task.modelName || '自动选择模型'}</b></span><span>操作<b>{operationLabel(task.operation)}</b></span><span>输入方式<b>{inputModeLabel(input)}</b></span><span>时长<b>{durationLabel(input)}</b></span><span>比例<b>{input?.aspectRatio || 'Auto'}</b></span><span>分辨率<b>{input?.resolution || input?.videoSize || '默认清晰度'}</b></span><span>参考素材<b>{inputModeLabel(input)}</b></span>{input?.width && input?.height && <span>尺寸<b>{input.width} × {input.height}</b></span>}</div>{task.error && <p className="creative-video-error">{task.error}</p>}</div></div></div>}
+    {parametersOpen && <div className="video-task-dialog creative-video-parameters-dialog" role="dialog" aria-modal="true" aria-label="视频参数" onClick={() => setParametersOpen(false)}><div className="video-task-dialog-inner" onClick={(event) => event.stopPropagation()}><div className="video-task-dialog-head"><div><span>视频参数</span><strong>{statusLabel(status)}</strong></div><button type="button" className="video-media-dialog-close" aria-label="关闭视频参数" onClick={() => setParametersOpen(false)}>×</button></div><div className="video-task-dialog-content"><label>提示词<pre>{input?.prompt || '未命名视频任务'}</pre></label><div className="video-task-dialog-meta creative-video-parameter-grid"><span>模型<b>{task.modelName || '自动选择模型'}</b></span><span>操作<b>{operationLabel(task.operation)}</b></span><span>输入方式<b>{inputModeLabel(input)}</b></span><span>时长<b>{durationLabel(input)}</b></span><span>比例<b>{input?.aspectRatio || 'Auto'}</b></span><span>分辨率<b>{input?.resolution || input?.videoSize || '默认清晰度'}</b></span><span>参考素材<b>{inputModeLabel(input)}</b></span>{input?.width && input?.height && <span>尺寸<b>{input.width} × {input.height}</b></span>}</div>{task.error && <p className="creative-video-error">{task.error}</p>}</div></div></div>}
   </article>;
 }

@@ -1,4 +1,4 @@
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -27,6 +27,17 @@ export const PUBLIC_MEDIA_TTL_MS = AGNES_MEDIA_TTL_MS;
 const MEDIA_KINDS = new Set(['image', 'video', 'audio']);
 const MIME_PATTERN = /^(image|video|audio)\/[a-z0-9.+-]+$/i;
 let manifestMutationChain: Promise<unknown> = Promise.resolve();
+const RELAY_CACHE_SKEW_MS = 15_000;
+const RELAY_UPLOAD_CACHE_MAX = 128;
+
+type RelayUploadResult = { url: string; expiresAt?: string };
+type RelayUploadCacheEntry = { url: string; expiresAt: number };
+
+// One user action can send the same local image to the vision model and then
+// to the video model. Reuse the signed URL and coalesce concurrent uploads so
+// those internal steps do not consume one relay quota slot each.
+const relayUploadCache = new Map<string, RelayUploadCacheEntry>();
+const relayUploadInFlight = new Map<string, Promise<RelayUploadResult>>();
 
 type MediaManifestEntry = {
   id: string;
@@ -300,9 +311,31 @@ export async function storeSignedMedia(data: Buffer, mime: string, kind: 'image'
 
 export const storeSignedAgnesMedia = storeSignedMedia;
 
-async function uploadToPublicMediaRelay(data: Buffer, mime: string, kind: 'image' | 'video' | 'audio') {
-  const relay = mediaRelayUrl();
-  if (!relay) return null;
+function relayUploadDigest(data: Buffer, mime: string, kind: 'image' | 'video' | 'audio') {
+  return `${kind}:${cleanMime(mime)}:${createHash('sha256').update(data).digest('hex')}`;
+}
+
+function relayUploadCacheKey(relay: string, digest: string) {
+  return `${relay}|${digest}`;
+}
+
+function relayUploadExpiry(result: RelayUploadResult) {
+  if (!result.expiresAt) return Date.now() + PUBLIC_MEDIA_TTL_MS;
+  const parsed = Date.parse(result.expiresAt);
+  return Number.isFinite(parsed) && parsed > Date.now() + RELAY_CACHE_SKEW_MS ? parsed : null;
+}
+
+function cacheRelayUpload(key: string, entry: RelayUploadCacheEntry) {
+  relayUploadCache.delete(key);
+  relayUploadCache.set(key, entry);
+  while (relayUploadCache.size > RELAY_UPLOAD_CACHE_MAX) {
+    const oldest = relayUploadCache.keys().next().value;
+    if (oldest === undefined) break;
+    relayUploadCache.delete(oldest);
+  }
+}
+
+async function uploadToPublicMediaRelayUncached(data: Buffer, mime: string, kind: 'image' | 'video' | 'audio', relay: string): Promise<RelayUploadResult> {
   const uploadToken = String(process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN || '').trim();
   // A watcher may replace the tunnel while an upload is in flight. Re-read
   // public-url.txt for each retry so the request follows the recovered URL.
@@ -361,6 +394,40 @@ async function uploadToPublicMediaRelay(data: Buffer, mime: string, kind: 'image
     }
   }
   throw new PublicMediaError('图片暂时无法提交：自动中转服务不可用，请稍后重试；也可以在高级设置中配置自己的公网图片地址。', MEDIA_RELAY_UNAVAILABLE);
+}
+
+async function uploadToPublicMediaRelay(data: Buffer, mime: string, kind: 'image' | 'video' | 'audio') {
+  const relay = mediaRelayUrl();
+  if (!relay) return null;
+
+  const digest = relayUploadDigest(data, mime, kind);
+  const cacheKey = relayUploadCacheKey(relay, digest);
+  const now = Date.now();
+  for (const [key, entry] of relayUploadCache) {
+    if (entry.expiresAt <= now + RELAY_CACHE_SKEW_MS) relayUploadCache.delete(key);
+  }
+  const cached = relayUploadCache.get(cacheKey);
+  if (cached && cached.expiresAt > now + RELAY_CACHE_SKEW_MS) {
+    return { url: cached.url, expiresAt: new Date(cached.expiresAt).toISOString() };
+  }
+
+  const existing = relayUploadInFlight.get(cacheKey);
+  if (existing) return existing;
+
+  const pending = uploadToPublicMediaRelayUncached(data, mime, kind, relay)
+    .then((result) => {
+      const expiresAt = relayUploadExpiry(result);
+      if (!expiresAt) return result;
+      const entry = { url: result.url, expiresAt };
+      cacheRelayUpload(cacheKey, entry);
+      try {
+        cacheRelayUpload(relayUploadCacheKey(new URL(result.url).origin, digest), entry);
+      } catch {}
+      return { url: result.url, expiresAt: new Date(expiresAt).toISOString() };
+    })
+    .finally(() => relayUploadInFlight.delete(cacheKey));
+  relayUploadInFlight.set(cacheKey, pending);
+  return pending;
 }
 
 export function getPublicMediaTransportStatus() {

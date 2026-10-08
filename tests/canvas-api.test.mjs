@@ -20,6 +20,16 @@ async function loadTypeScript(path) {
     const dependencyDataUrl = `data:text/javascript;base64,${Buffer.from(dependencyCompiled).toString('base64')}`;
     compiled = compiled.replace('from "../agent-client"', `from "${dependencyDataUrl}"`);
   }
+  if (compiled.includes('from "../video-task-output"')) {
+    const dependencyUrl = new URL('../lib/video-task-output.ts', import.meta.url);
+    const dependencySource = await readFile(dependencyUrl, 'utf8');
+    const dependencyCompiled = ts.transpileModule(dependencySource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: dependencyUrl.pathname,
+    }).outputText;
+    const dependencyDataUrl = `data:text/javascript;base64,${Buffer.from(dependencyCompiled).toString('base64')}`;
+    compiled = compiled.replace('from "../video-task-output"', `from "${dependencyDataUrl}"`);
+  }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
 
@@ -257,6 +267,22 @@ test('canvas video generation creates a task without leaking boolean audio', asy
   assert.equal(payload.model, 'video-model');
   assert.deepEqual(payload.input, { prompt: '镜头推进', seconds: 8, aspectRatio: '16:9', resolution: '720p', referenceImages: [] });
   assert.equal('audio' in payload.input, false);
+});
+
+test('canvas video generation retries a lost response with the same idempotency key', async () => {
+  const requests = [];
+  let attempt = 0;
+  const task = await withFetch(async (input, options) => {
+    requests.push({ input, key: options.headers['Idempotency-Key'] });
+    attempt += 1;
+    if (attempt === 1) throw new TypeError('fetch failed');
+    return jsonResponse({ task: { id: 'video-recovered', status: 'pending' } });
+  }, () => api.generateCanvasVideo({ prompt: '断流后继续生成', model: 'video-model' }));
+
+  assert.deepEqual(task, { id: 'video-recovered', status: 'pending' });
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].input, '/api/video/generate');
+  assert.equal(requests[0].key, requests[1].key);
 });
 
 test('canvas image generation compresses reference images before submitting', async () => {

@@ -2,6 +2,9 @@ import type { GenerationLog } from "@/lib/generation-log";
 import type { UpscaleTask } from "@/lib/upscale-task-store";
 import type { VideoTask } from "@/lib/video-task-store";
 import type { ActivityTask, ActivityTaskKind, ActivityTaskStatus } from "./types";
+import { videoTaskOutputUrls } from "../video-task-output";
+import { upscaleTaskOutputUrl, upscaleTaskStatus } from "../upscale-task-output";
+import { projectResultStatus } from "../task-result-projection";
 
 function numberOrUndefined(value: unknown) {
   const number = Number(value);
@@ -24,7 +27,8 @@ function generationStatus(status: GenerationLog["status"]): ActivityTaskStatus {
 
 export function activityTaskFromGenerationLog(log: GenerationLog): ActivityTask {
   const kind = generationKind(log);
-  const status = generationStatus(log.status);
+  const projectedStatus = projectResultStatus(log.status, [...(log.imageUrls || []), ...(log.videoUrls || [])]);
+  const status = generationStatus(projectedStatus);
   return {
     id: log.id,
     kind,
@@ -45,7 +49,8 @@ export function activityTaskFromGenerationLog(log: GenerationLog): ActivityTask 
   };
 }
 
-function videoStatus(status: VideoTask["status"]): ActivityTaskStatus {
+function videoStatus(task: VideoTask): ActivityTaskStatus {
+  const status = videoTaskOutputUrls(task).length ? "done" : task.status;
   if (status === "pending") return "queued";
   if (status === "running") return "running";
   if (status === "done") return "succeeded";
@@ -54,7 +59,7 @@ function videoStatus(status: VideoTask["status"]): ActivityTaskStatus {
 }
 
 export function activityTaskFromVideoTask(task: VideoTask): ActivityTask {
-  const status = videoStatus(task.status);
+  const status = videoStatus(task);
   return {
     id: task.id,
     kind: "video",
@@ -71,12 +76,13 @@ export function activityTaskFromVideoTask(task: VideoTask): ActivityTask {
     ...(task.providerStatus ? { stage: task.providerStatus } : {}),
     canRetry: status === "failed",
     canCancel: status === "queued" || status === "running",
-    ...(task.videoUrls.length ? { outputIds: task.videoUrls } : {}),
+    ...(videoTaskOutputUrls(task).length ? { outputIds: videoTaskOutputUrls(task) } : {}),
     ...(task.error ? { error: { ...(task.errorCode ? { code: task.errorCode } : {}), message: task.error } } : {}),
   };
 }
 
-function upscaleStatus(status: UpscaleTask["status"]): ActivityTaskStatus {
+function upscaleStatus(task: UpscaleTask): ActivityTaskStatus {
+  const status = upscaleTaskStatus(task);
   if (status === "queued") return "queued";
   if (status === "processing") return "running";
   if (status === "succeeded") return "succeeded";
@@ -85,7 +91,7 @@ function upscaleStatus(status: UpscaleTask["status"]): ActivityTaskStatus {
 }
 
 export function activityTaskFromUpscaleTask(task: UpscaleTask): ActivityTask {
-  const status = upscaleStatus(task.status);
+  const status = upscaleStatus(task);
   return {
     id: task.id,
     kind: "upscale",
@@ -98,7 +104,7 @@ export function activityTaskFromUpscaleTask(task: UpscaleTask): ActivityTask {
     model: task.model,
     ...(task.createdAt ? { startedAt: Date.parse(task.createdAt) || undefined } : {}),
     ...(task.completedAt ? { finishedAt: Date.parse(task.completedAt) || undefined } : {}),
-    ...(task.localImageUrl ? { outputIds: [task.localImageUrl] } : {}),
+    ...(upscaleTaskOutputUrl(task) ? { outputIds: [upscaleTaskOutputUrl(task)] } : {}),
     canRetry: status === "failed",
     canCancel: status === "queued" || status === "running",
     ...(task.error ? { error: { ...(task.errorCode ? { code: task.errorCode } : {}), message: task.error } } : {}),

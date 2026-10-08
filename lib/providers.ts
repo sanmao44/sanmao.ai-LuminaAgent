@@ -346,8 +346,6 @@ function providerResponseError(status: number, data: any, text: string, requestI
     status,
     providerStatus: status,
     providerRequestId: requestId,
-    // A 5xx can be emitted after a gateway has already charged its upstream.
-    providerPossiblyAccepted: status >= 500,
   });
 }
 
@@ -969,14 +967,22 @@ function taskStatusEndpoint(provider: RuntimeProvider, taskId: string, initial: 
   return '';
 }
 
-function acceptedProviderTaskError(error: unknown, taskId: string): Error & { providerAcceptedTask: true; providerPossiblyAccepted: true; providerTaskId: string } {
+function acceptedProviderTaskError(error: unknown, taskId: string): Error & { providerAcceptedTask?: true; providerPossiblyAccepted?: true; providerTaskId?: string; providerTaskTerminalFailure?: true } {
   const failure = error instanceof Error ? error : new Error(String(error || '服务商任务查询失败'));
+  if ((failure as Error & { providerTaskTerminalFailure?: boolean }).providerTaskTerminalFailure) return failure;
   Object.assign(failure, { providerAcceptedTask: true, providerPossiblyAccepted: true, providerTaskId: taskId });
   return failure as Error & { providerAcceptedTask: true; providerPossiblyAccepted: true; providerTaskId: string };
 }
 
+function terminalProviderTaskError(message: string) {
+  const failure = new Error(message) as Error & { providerTaskTerminalFailure: true };
+  failure.providerTaskTerminalFailure = true;
+  return failure;
+}
+
 function isAcceptedProviderTask(error: unknown) {
-  const value = error as { providerAcceptedTask?: boolean; providerPossiblyAccepted?: boolean } | null;
+  const value = error as { providerAcceptedTask?: boolean; providerPossiblyAccepted?: boolean; providerTaskTerminalFailure?: boolean } | null;
+  if (value?.providerTaskTerminalFailure) return false;
   return Boolean(value?.providerAcceptedTask || value?.providerPossiblyAccepted);
 }
 
@@ -1006,7 +1012,7 @@ async function waitForImageTask(provider: RuntimeProvider, initial: any, signal?
     if (images.length) return normalizeImages(data);
     const status = taskStatusFrom(data);
     if (/(fail|error|cancel|reject|expired)/.test(status)) {
-      throw new Error(String(data?.error?.message || data?.error_message || data?.error || data?.message || `图片任务失败：${status}`));
+      throw terminalProviderTaskError(String(data?.error?.message || data?.error_message || data?.error || data?.message || `图片任务失败：${status}`));
     }
   }
   throw acceptedProviderTaskError(new Error(`图片任务 ${taskId} 等待超时，请稍后到服务商控制台查看任务状态`), taskId);
@@ -1034,7 +1040,7 @@ async function waitForApimartTask(provider: RuntimeProvider, initial: any, signa
     const images = extractImages(data);
     if (images.length) return normalizeImages(data);
     const status = taskStatusFrom(data);
-    if (/(fail|error|cancel|reject)/.test(status)) throw new Error(String(data?.error?.message || data?.error_message || data?.error || data?.message || `APIMart 图片任务失败：${status}`));
+    if (/(fail|error|cancel|reject)/.test(status)) throw terminalProviderTaskError(String(data?.error?.message || data?.error_message || data?.error || data?.message || `APIMart 图片任务失败：${status}`));
   }
   throw acceptedProviderTaskError(new Error('APIMart 图片任务等待超时，请稍后到服务商后台查看任务状态'), taskId);
 }
@@ -1104,7 +1110,7 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
       if (images.length) return normalizeImages(data);
       if (taskIdFrom(data)) {
         try { return await waitForImageTask(provider, data, signal); }
-        catch (error) { Object.assign(error as object, { providerAcceptedTask: true, providerPossiblyAccepted: true }); throw error; }
+        catch (error) { throw acceptedProviderTaskError(error, taskIdFrom(data)); }
       }
       return normalizeImages(data);
     }
@@ -1212,7 +1218,7 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
     if (images.length) return normalizeImages(data);
     if (taskIdFrom(data)) {
       try { return await waitForImageTask(provider, data, signal); }
-      catch (error) { Object.assign(error as object, { providerAcceptedTask: true, providerPossiblyAccepted: true }); throw error; }
+      catch (error) { throw acceptedProviderTaskError(error, taskIdFrom(data)); }
     }
     return normalizeImages(data);
   }
@@ -1227,7 +1233,7 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
     if (images.length) return normalizeImages(data);
     if (taskIdFrom(data)) {
       try { return await waitForImageTask(provider, data, signal); }
-      catch (error) { Object.assign(error as object, { providerAcceptedTask: true, providerPossiblyAccepted: true }); throw error; }
+      catch (error) { throw acceptedProviderTaskError(error, taskIdFrom(data)); }
     }
     return normalizeImages(data);
   } catch (jsonError) {
@@ -1262,7 +1268,7 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
       const images = extractImages(data);
       if (!images.length && taskIdFrom(data)) {
         try { return await waitForImageTask(provider, data, signal); }
-        catch (error) { Object.assign(error as object, { providerAcceptedTask: true, providerPossiblyAccepted: true }); throw error; }
+        catch (error) { throw acceptedProviderTaskError(error, taskIdFrom(data)); }
       }
       return normalizeImages(data);
     } catch (multipartError) {

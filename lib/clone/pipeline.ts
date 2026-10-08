@@ -22,6 +22,7 @@ import { getPublicState, getRuntimeCloneVideoModel, getRuntimeImageGenerationMod
 import type { VideoGenerationInput } from '../types';
 import { getPublicMediaTransportStatusLive } from '../signed-media';
 import { persistVideoBuffer, resolveStoredVideoFileWithFallback } from '../video-storage';
+import { videoTaskOutputUrl } from '../video-task-output';
 import { getVideoModelLimits } from '../video-model-limits';
 import { requiresPublicMediaRelay } from '../video-platform';
 import { runVideoGeneration, refreshVideoTask } from '@/apps/worker/video-task';
@@ -905,7 +906,7 @@ async function generateShotVideo(runtime: VideoRuntime, job: CloneJob, shot: Clo
     }
   }
   if (current.status !== 'done') throw new Error(current.error || '视频任务未完成。');
-  const url = current.videoUrls[0];
+  const url = videoTaskOutputUrl(current);
   if (!url) throw new Error('视频任务完成但没有可用的本地地址。');
   return url;
 }

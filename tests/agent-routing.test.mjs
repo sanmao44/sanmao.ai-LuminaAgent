@@ -13,14 +13,17 @@ const compiled = ts.transpileModule(source, {
 // dependencies into one test module so this remains a fast unit test.
 const intentSource = await readFile(new URL('../lib/agent-intent.ts', import.meta.url), 'utf8');
 const webSource = await readFile(new URL('../lib/agent-web.ts', import.meta.url), 'utf8');
+const informationSource = await readFile(new URL('../packages/agent-core/information-routing.ts', import.meta.url), 'utf8');
 const intentCompiled = ts.transpileModule(intentSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const webCompiled = ts.transpileModule(webSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-const modules = { intent: { exports: {} }, web: { exports: {} } };
+const informationCompiled = ts.transpileModule(informationSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const modules = { intent: { exports: {} }, web: { exports: {} }, information: { exports: {} } };
 new Function('require', 'module', 'exports', intentCompiled)((id) => { if (id === '@/lib/agent-intent') return modules.intent.exports; throw new Error(id); }, modules.intent, modules.intent.exports);
 new Function('require', 'module', 'exports', webCompiled)((id) => { if (id === '@/lib/agent-web') return modules.web.exports; throw new Error(id); }, modules.web, modules.web.exports);
+new Function('require', 'module', 'exports', informationCompiled)((id) => { if (id === '../contracts/planning') return {}; throw new Error(id); }, modules.information, modules.information.exports);
 const routingCompiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const routingModule = { exports: {} };
-new Function('require', 'module', 'exports', routingCompiled)((id) => id === '@/lib/agent-intent' ? modules.intent.exports : modules.web.exports, routingModule, routingModule.exports);
+new Function('require', 'module', 'exports', routingCompiled)((id) => id === '@/lib/agent-intent' ? modules.intent.exports : id === '@/lib/agent-web' ? modules.web.exports : modules.information.exports, routingModule, routingModule.exports);
 const routing = routingModule.exports;
 
 test('discovery resolution preserves policy while activating selected desktop tools', () => {
@@ -119,6 +122,47 @@ test('gates MCP, skills and native web by the bounded route plan', () => {
   assert.equal(skill.tools.useSkills, true);
 });
 
+test('GitHub repository data questions use read-only MCP instead of chat or native web', () => {
+  for (const input of [
+    '我的 GitHub 仓库有几个项目',
+    '列出我的 GitHub 仓库',
+    '看看这个仓库最近的 PR',
+    '这个仓库最近有哪些 issue',
+    '查看最近的 commit 和分支',
+  ]) {
+    const decision = routing.classifyAgentRequest(input, {}, { webMode: 'auto' });
+    assert.equal(decision.tools.useMcp, true, input);
+    assert.equal(decision.policy.allowMcp, true, input);
+    assert.equal(decision.policy.discoverMcp, true, input);
+    assert.equal(decision.tools.useNativeWeb, false, input);
+  }
+
+  const currentInfo = routing.classifyAgentRequest('搜索 GitHub 最新资料', {}, { webMode: 'auto' });
+  assert.equal(currentInfo.tools.useMcp, false);
+  assert.equal(currentInfo.tools.useNativeWeb, true);
+});
+
+test('explicit skill selection takes priority over automatic web search', () => {
+  for (const input of [
+    '用「luxun-voice」技能：秋天到了，如果鲁迅在海南，他会怎么说',
+    '用 luxun-voice 技能：秋天到了，如果鲁迅在海南，他会怎么说',
+    '使用 luxun-voice 技能完成这段仿写',
+  ]) {
+    const decision = routing.classifyAgentRequest(input, {}, { webMode: 'always' });
+    assert.equal(decision.route, 'chat', input);
+    assert.equal(decision.tools.useSkills, true, input);
+    assert.equal(decision.needsTools, true, input);
+    assert.equal(decision.tools.useNativeWeb, false, input);
+    assert.equal(decision.web.shouldSearch, false, input);
+    assert.equal(decision.policy.web, 'forbid', input);
+  }
+
+  const ordinaryQuestion = routing.classifyAgentRequest('秋天到了，如果鲁迅在海南，他会怎么说', {}, { webMode: 'auto' });
+  assert.equal(ordinaryQuestion.route, 'web');
+  assert.equal(ordinaryQuestion.tools.useSkills, false);
+  assert.equal(ordinaryQuestion.tools.useNativeWeb, true);
+});
+
 test('未知站点的多步搜索和排序任务进入浏览器 MCP 路由', () => {
   const decision = routing.classifyAgentRequest('帮我打开光厂，搜索银河系，找到最多下载的哪个', {}, { webMode: 'auto' });
   assert.equal(decision.route, 'browser');
@@ -201,4 +245,21 @@ test('keeps colloquial capability questions out of search in every web mode', ()
     assert.equal(decision.web.shouldSearch, false, input);
     assert.equal(decision.policy.web, 'forbid', input);
   }
+});
+
+test('distinguishes internal capability freshness from external web freshness', () => {
+  const capability = routing.classifyAgentRequest('你目前PPT创作能力如何？', {}, { webMode: 'always' });
+  assert.equal(capability.information.source, 'internal-capability');
+  assert.equal(capability.information.needsExternalWeb, false);
+  assert.equal(capability.web.shouldSearch, false);
+  assert.equal(capability.tools.useNativeWeb, false);
+
+  const currentNews = routing.classifyAgentRequest('今天 AI 行业有什么新闻？', {}, { webMode: 'auto' });
+  assert.equal(currentNews.information.source, 'external-web');
+  assert.equal(currentNews.information.needsExternalWeb, true);
+  assert.equal(currentNews.tools.useNativeWeb, true);
+
+  const stableConcept = routing.classifyAgentRequest('什么是 MCP？', {}, { webMode: 'auto' });
+  assert.equal(stableConcept.information.source, 'model-knowledge');
+  assert.equal(stableConcept.web.shouldSearch, false);
 });

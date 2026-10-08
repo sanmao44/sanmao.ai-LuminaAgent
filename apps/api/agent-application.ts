@@ -7,7 +7,7 @@ import { isValidOneTakeDuration, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURA
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { referenceRecordsForLog } from '@/lib/reference-images';
 import { extractGithubMcpInstallRequest, isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFilesystemRequest, likelyFileGenerationRequest, likelyMcpManagementRequest, resolveAgentWebMode, type AgentWebDecision } from '@/lib/agent-web';
-import { isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor } from '@/lib/tools';
+import { getToolDefinition, isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor } from '@/lib/tools';
 import { resolveToolPolicy } from '@/lib/tools/policy';
 import { tabbitBrowserTool } from '@/lib/tools';
 import { parseToolArguments } from '@/lib/tools/call-arguments';
@@ -25,7 +25,7 @@ import { agentToolProgress, beginAgentRun, finishAgentRun, reportAgentProgress, 
 import { appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, normalizeMcpApprovalPolicy, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
-import { agentInstructionText, classifyAgentDeliverable, needsSemanticIntent, parseSemanticIntent, resolveCreativeRoute, type AgentDeliverable } from '@/lib/agent-intent';
+import { agentInstructionText, classifyAgentDeliverable, isImageEditRequest, needsSemanticIntent, parseSemanticIntent, resolveCreativeRoute, type AgentDeliverable } from '@/lib/agent-intent';
 import type { CreativeRoute } from '@/packages/contracts/creative';
 import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
 import { contextualImagePrompt, isBareImageExecution } from '@/lib/agent-context';
@@ -46,6 +46,7 @@ import { planAgentRequest } from '@/packages/agent-core/request-planning';
 import { runCapabilityFollowups, runMcpCapabilityFollowup } from '@/apps/api/agent-execution';
 import type { AgentHttpInput } from '@/apps/api/agent-http-contract';
 import { applicationJson } from '@/apps/api/agent-application-contract';
+import { formatAgentCapabilitySnapshot } from '@/packages/agent-core/capability-snapshot';
 
 async function safeDiscoverMcpForRequest(discover: AgentMcpDiscovery, options: Parameters<AgentMcpDiscovery>[0]) {
   try {
@@ -656,6 +657,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       && requestRoute.contextNeed === 'required'
       && needsSemanticIntent(latestInstruction, intentDecision);
     const shouldUseSemanticPlanner = !requestRoute.tools.useMcp
+      && !requestRoute.tools.useSkills
       && (requestRoute.policy.lane === 'action' && requestRoute.needsTools || needsContextualSemanticPlanner);
     if (shouldUseSemanticPlanner && !body.task && !isModelIdentityQuestion(latestInstruction) && !isCanvasSource
       && (requestedDeliverable === 'OTHER' || requestedDeliverable === 'CLARIFY')
@@ -754,15 +756,15 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     // sheets and other new-image batches use the configured generation model;
     // only explicit image-change language selects the edit capability.
     const explicitImageEditRequest = (canvasTargetKind === 'image' && canvasTargetOperation === 'edit')
-      || /(?:修改|调整|改成|换成|替换|重绘|重制|修图|换背景|去掉|加上|增加|减少|保持主体|局部编辑|扩图|抠图|延续原图|基于原图修改|在原图上|继续修改|再来一版)/i.test(latestInstruction);
+      || isImageEditRequest(latestInstruction)
+      || /(?:局部编辑|扩图|抠图|延续原图|基于原图修改|在原图上|继续修改|再来一版)/i.test(latestInstruction);
     const requestedImageCapability = latestReferenceImageCount && explicitImageEditRequest ? 'edit' : 'generate';
     const imageModelState = imageGenerationRequest ? await ensurePublicState() : null;
     const imageModels = imageGenerationRequest
-      ? filterModelsByActiveProviders(imageModelState!.models, imageModelState!.providers)
-        .filter((m) => m.kind === 'image'
-          && m.enabled
-          && m.published
-          && m.capabilities.includes(requestedImageCapability))
+      ? filterModelsByActiveProviders(imageModelState!.models, imageModelState!.providers, {
+        kind: 'image',
+        capability: requestedImageCapability,
+      })
       : [];
     // Image model choice is independent from the chat model. `auto` keeps the
     // capability-aware default and compatibility fallback policy; an explicit
@@ -773,6 +775,33 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const imageModelText = imageModels.length
       ? imageModels.map((m) => `- ${m.displayName}（modelId=${m.id}，服务=${m.providerName}）`).join('\n')
       : `- 当前没有可用${requestedImageCapability === 'edit' ? '改图' : '生图'}模型（需要已启用、已发布且声明 ${requestedImageCapability} 能力的图片模型）`;
+    const capabilityQuestion = requestRoute.information.source === 'internal-capability';
+    const capabilityState = capabilityQuestion ? await ensurePublicState() : null;
+    const capabilityToolAvailable = (name: string) => getToolDefinition(name)?.enabled !== false;
+    const capabilitySnapshot = capabilityQuestion && capabilityState
+      ? formatAgentCapabilitySnapshot({
+        currentModel: {
+          displayName: agentRuntime.model.displayName,
+          providerName: agentRuntime.provider.name,
+          nativeWebSearch,
+        },
+        web: {
+          mode: webMode,
+          externalSearchConfigured: Boolean(capabilityState.settings.webSearchAnySearchConfigured || capabilityState.settings.webSearchQianfanConfigured),
+        },
+        tools: {
+          word: capabilityToolAvailable('document_generate'),
+          excel: capabilityToolAvailable('spreadsheet_generate'),
+          ppt: capabilityToolAvailable('presentation_generate'),
+          archive: capabilityToolAvailable('archive_generate'),
+          file: capabilityToolAvailable('file_generate'),
+        },
+        images: {
+          generateModels: filterModelsByActiveProviders(capabilityState.models, capabilityState.providers, { kind: 'image', capability: 'generate' }).length,
+          editModels: filterModelsByActiveProviders(capabilityState.models, capabilityState.providers, { kind: 'image', capability: 'edit' }).length,
+        },
+      })
+      : '';
     if (imageGenerationRequest && !latestReferenceImageCount
       && /(?:这张图|这幅图|原图|参考图|第[一二三四五六七八九十\d]+张|这几张|这些图)/.test(latestInstruction)
       && !/(?:不参考|不用|不要用).{0,8}(?:原图|上.{0,2}图|参考图)/.test(latestInstruction)) {
@@ -882,10 +911,11 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       /(?:新增|添加|修改|更新|连接|删除|移除|移动|排列|布局|对齐|复制|分组).{0,24}(?:画布|节点|选中)|(?:画布|节点|选中).{0,24}(?:新增|添加|修改|更新|连接|删除|移除|移动|排列|布局|对齐|复制|分组)/.test(latestInstruction);
     let discoveredMcpIds: string[] = [];
     if ((requestRoute.tools.useMcp || (requestRoute.route === 'chat' && intentDecision.mode === 'execute'))
-      && needsMcpCapabilityDiscovery(intentDecision.mode, latestInstruction,
+      && (needsMcpCapabilityDiscovery(intentDecision.mode, latestInstruction,
       isCanvasSource || Boolean(body.task) || imageGenerationRequest || identityQuestion
       || isTextPolishTask || isPromptOptimizationTask || isReversePromptTask
       || isOneTakeVideoPromptTask || isCinematicDirectorTask || isSmartVariantPlanningTask)
+        || (requestRoute.tools.useMcp && requestRoute.policy.discoverMcp))
       && requestRoute.policy.discoverMcp) {
       const discoveryServers = listMcpServers().filter((server) => server.enabled);
       if (discoveryServers.length) {
@@ -946,6 +976,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       if (!imageGenerationRequest) system = system.replace(/\n当前可用生图模型：[\s\S]*$/u, '');
       system += `\n\n本地请求路由：${JSON.stringify(routeSummary)}。路由只提供候选信息，用户最新消息优先；若路由为文件交付，必须调用对应文件工具，若路由为浏览器/文件系统，必须真实执行并核验结果。`;
     }
+    if (capabilitySnapshot) system += capabilitySnapshot;
     const executionInstructions = '\n\n执行规则：只使用当前对话的消息、记忆和素材，不猜测其他对话。理解“出图/继续/这张图/改名”等省略时，优先采用本对话最近确认的目标和实际产物；新指令优先，历史建议不是用户授权。要求操作时必须真实调用工具并核验结果，不能用创作说明代替图片、用承诺代替执行。仅缺少关键对象或权限不足时询问一个必要问题。修改或重命名文件后重新读取目标信息确认，不得仅凭计划说成功。本地图片用 read_media_file 读取，应用会保存并展示图片，不要要求用户手动拖入已能读取的图片。工具调用只使用原生结构，不写进正文。';
     const canvasNodeExecutionInstructions = isCanvasNodeExecution
       ? '\n\n左侧画布 Agent 节点模式：本轮只生成文案、分析或可复制的提示词。禁止调用图片、视频、文件、画布修改、浏览器、文件系统和其他外部执行工具；不要声称已经完成实施。若用户要求实施，只需说明应将结果交给右侧 Agent 助手执行。'

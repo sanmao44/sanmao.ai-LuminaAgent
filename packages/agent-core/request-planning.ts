@@ -42,6 +42,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   const latestInstruction = ports.agentInstructionText(body.intentText, latest?.content || '');
   const previousImagePlan = [...messages.slice(0, -1)].reverse().find((message) => message.role === 'assistant'
     && /(?:^|\n)\s*1[\.\u3002\u3001)]/.test(message.content)
+    && isExplicitImageBatchPlan(message.content)
     && extractBatchPrompts(message.content).length >= 2);
   const selectedTextBatchPlan = latestRefs
     .filter((reference) => reference.kind === 'text' && typeof reference.text === 'string')
@@ -78,6 +79,13 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     hasReferences: latestRefs.length > 0,
     hasFiles: Boolean(latest?.files?.length),
   }, { webMode: isCanvasNodeExecution ? 'off' : webMode, previousAssistant: previousAssistantForRouting, intent: intentDecision });
+  // Read-only GitHub repository queries are intentionally classified from a
+  // question-shaped sentence, but they still need the normal MCP discovery
+  // and execution path. This does not authorize writes; the MCP approval and
+  // catalog policy remain the final side-effect gates.
+  if (requestRoute.tools.useMcp && requestRoute.route === 'chat' && requestRoute.policy.discoverMcp) {
+    requestModeAllowsExecution = true;
+  }
   const routerMs = Date.now() - routingStartedAt;
   const latestMessage = messages[messages.length - 1]!;
   const modelContextMessages = [
@@ -86,7 +94,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   ];
   const routeSummary = requestRoute.needsTools || ports.routeNeedsSemanticReview(requestRoute)
     ? ports.routeToolSummary(requestRoute)
-    : { route: requestRoute.route, contextNeed: requestRoute.contextNeed, shouldSearch: requestRoute.web.shouldSearch };
+    : { route: requestRoute.route, contextNeed: requestRoute.contextNeed, shouldSearch: requestRoute.web.shouldSearch, information: requestRoute.information };
   const hasExplicitDeliverable = ['IMAGE', 'TEXT', 'BOTH', 'CLARIFY', 'OTHER'].includes(String(body.deliverable));
   let requestedDeliverable: AgentDeliverable = requestModeAllowsExecution && hasExplicitDeliverable
     ? body.deliverable as AgentDeliverable
@@ -109,4 +117,10 @@ function extractBatchPrompts(content: string): string[] {
     .filter((prompt) => prompt.length >= 8)
     .slice(0, 20);
   return prompts.length >= 2 ? prompts : [];
+}
+
+function isExplicitImageBatchPlan(content: string): boolean {
+  const text = content.replace(/\s+/g, ' ').trim();
+  if (!text || /(?:下一版可尝试方向|你还可以继续|继续尝试方向)/i.test(text)) return false;
+  return /(?:批量(?:生图|出图|生成)?|套图|详情图|一套图|一组图|系列图|多张图|组图|(?:一次|共|分成).{0,8}\d+\s*张|\d+\s*张(?:图|图片))/i.test(text);
 }

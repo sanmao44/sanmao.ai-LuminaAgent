@@ -11,10 +11,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const task = await getUpscaleTask(id);
   if (!task) return Response.json({ error: '高清任务不存在。' }, { status: 404 });
   const model = getUpscaleCatalogModel(task.model);
+  const publicTask = publicUpscaleTask(task);
   return Response.json({
-    task: publicUpscaleTask(task),
+    task: publicTask,
     model: model ? { id: model.id, name: model.displayName, provider: model.providerName } : undefined,
-    images: task.localImageUrl ? [{ url: task.localImageUrl }] : [],
+    images: publicTask?.localImageUrl ? [{ url: publicTask.localImageUrl }] : [],
   }, { headers: { 'Cache-Control': 'no-store' } });
 }
 

@@ -37,7 +37,7 @@ const otherLabel = '通用对话';
 const imageActionPattern = /(?:画(?!面|布|板|框|纸|册|廊)|绘制|描绘|涂鸦|出图|生图|生成图片|生成图像|制作海报|做海报|做封面图|做宣传图|生成海报|生成封面|生成插画|生成效果图|改图|修图|重绘|换背景|扩图|抠图|配图|配(?:一|两|几|\d+)?张|渲染|可视化|视觉化|image|picture|poster|illustration|render|visualize)/i;
 const imageBatchPattern = /(?:套图|详情图|商品详情(?:页)?图|批量生图|批量出图|一套图|一组图|系列图|多张图|多张图片|组图|batch)/i;
 const imageTargetPattern = /(?:图片|图像|画面|海报|封面图|封面|插画|插图|漫画|头像|壁纸|表情包|图标|logo|banner|配图|信息图|概念图|效果图|宣传图|广告图|主视觉|场景图|吉祥物|IP形象|设计稿|设计图|mascot|image|picture|poster|cover|illustration|avatar|wallpaper|icon)/i;
-const imageEditPattern = /(?:修改|调整|改一下|改成|换成|替换|重绘|重制|修图|换背景|去掉|加上|增加|减少|保持主体|延续|继续|再来|更高级|更年轻|更简洁|优化构图|强化光线|调整色彩)/i;
+const imageEditPattern = /(?:修改|调整|改一下|改成|改为|换成|替换为|替换|变成|变为|变作|重绘|重制|修图|换背景|去掉|加上|增加|减少|保持主体|延续|继续|再来|更高级|更年轻|更简洁|优化构图|强化光线|调整色彩)/i;
 const textArtifactPattern = /(?:文案|标题|正文|文章|脚本|口播|广告语|宣传语|配文|简介|描述|提示词|prompt|代码|程序|报告|方案|清单|表格|摘要|总结|翻译|邮件|回复|文字|方向|创意|灵感|思路|markdown|json|csv|html|css)/i;
 // Office / 可下载文档类交付物。出现这些词时用户要的是一份文档，而不是一张图：
 // 「做一个 word 简历模板」这类说法会命中下面的“做一个…”弱信号，必须让文档交付优先。
@@ -60,7 +60,7 @@ const vagueFollowUpPattern = /^(?:继续|再来一个|再来一版|再来几版|
 // 先判断用户的“请求模式”，再判断交付物。这里识别的是句子的言语行为
 // （询问、讨论、执行、承接上一轮），而不是把某个功能词直接映射到工具。
 // 这层是图片、文件、联网、MCP 和 Skill 路由共用的安全闸门。
-const capabilityQuestionPattern = /^(?:(?:你|您)?\s*(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)|.*(?:能做什么|可以做什么|支持什么|有哪些能力|有什么能力|干啥|干什么|做啥|做什么|干哪些|做哪些|会什么|懂什么|能提供什么|能帮我做什么|能帮我干什么))(?:[？?。!！]*)$/i;
+const capabilityQuestionPattern = /^(?:(?:你|您)?\s*(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)|.*(?:能做什么|可以做什么|支持什么|有哪些能力|有什么能力|干啥|干什么|做啥|做什么|干哪些|做哪些|会什么|懂什么|能提供什么|能帮我做什么|能帮我干什么)|(?:(?:你|您|助手|系统)\s*)?(?:目前|当前|现在|现阶段)?\s*(?:(?:能否|能不能|能|可以|支持|会不会|会)\s*)?(?:生成|制作|创建|做|创作)?\s*(?:pptx?|幻灯片|演示文稿|word|excel|表格|文档|文件|图片|生图|改图|联网|搜索|浏览器|mcp|技能|画布|模型|视频|音频|代码|zip|压缩包).{0,40}(?:能力|创作能力|支持|可用|能生成|吗|么|呢|如何|怎么样|怎样))(?:[？?。!！]*)$/i;
 const taskLeadPattern = /^(?:请(?!问)|麻烦(?!问)|帮我|给我|给我们|替我|为我|我想(?:要|让你|生成|制作|创建|写|改写|润色|总结|翻译|分析|描述|搜索|打开|执行)|我(?:要|需要)(?!了解|知道|确认|咨询|问|弄清楚)|需要你|直接|开始|继续|再来|按照刚才|基于这个|把它|将其)/i;
 const taskVerbPattern = /(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|安装|接入|连接|导入|生图|出图)/i;
 const questionShapePattern = /^(?:为什么|怎么(?:做|办)|如何|什么是|是什么|能否|能不能|是否|可以吗|支持吗|请问|告诉我|解释一下|分析一下|比较一下|建议一下|你觉得).*[？?]?$|[？?]$/i;
@@ -83,7 +83,7 @@ export function isCapabilityQuestion(input: string) {
  * no request frame, so it cannot authorize a side effect.
  */
 const directTaskLeadPattern = /^(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|优化|改|换|去掉|安装|接入|连接|导入|生图|出图|做|出(?:个|一张|张)?|来(?:个|一张|张)?|画)(?=\s|[一二三四五六七八九十百千万\d个只条张幅份位篇猫狗鱼鸟图画字构背景文字\u4e00-\u9fff])/i;
-const contextualTaskPattern = /^(?:根据|按照|基于|用|按|把|将).{0,80}(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|生图|出图|改成|换成)/i;
+const contextualTaskPattern = /^(?:根据|按照|基于|用|按|把|将).{0,80}(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|生图|出图|改成|改为|换成|替换为|变成|变为)/i;
 const delegatedTaskPattern = /^我(?:只(?:说|提供|给你|告诉你)|仅(?:说|提供|给你|告诉你)).{0,32}(?:目标|要求|想法|描述).{0,32}(?:交给你|由你|你来)/i;
 const declarativeStatePattern = /^(?:(?:我|我的|当前|默认|系统|助手|模型|他|她|它|刚才|上一轮|这次)[^！？?!]{0,96}(?:已经|已|正在|尚未|还没|没有|没|并未|并没有|不需要|不该|误|错误地|居然|竟然|自动|擅自|设置|配置|启用|接入|连接|开启|关闭|完成|失败|报错|生效|调用了|使用了|生成了|生图了|出图了)[^！？?!]{0,96})$/i;
 const unwantedActionReportPattern = /^(?:我(?:没有|没|并未|并没有)[^！？?!]{0,40}(?:生图|出图|生成图片|图片需求)|(?:他|她|它|系统|助手|模型|刚才|上一轮)[^！？?!]{0,60}(?:误|错误地|居然|竟然|自动|擅自|给我|替我|帮我)[^！？?!]{0,80}(?:生图|出图|生成图片|调用|执行))/i;
@@ -129,6 +129,11 @@ export function inferAgentRequestMode(input: string): AgentRequestMode {
 
 function clean(value: unknown) {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+/** Shared visual-edit signal for UI routing and server capability selection. */
+export function isImageEditRequest(input: string) {
+  return imageEditPattern.test(clean(input));
 }
 
 function latestMessageWithImages(messages: AgentIntentMessage[]) {
@@ -201,7 +206,7 @@ function classifyAgentDeliverableCore(input: string, context: AgentIntentContext
   const asksForSeparateCopy = separateCopyPattern.test(text) || /(?:图片|海报|封面|宣传图).{0,30}(?:另外|再|同时|并且|以及).{0,30}(?:文案|标题|配文)/i.test(text);
   const textInsideImage = embeddedTextPattern.test(text) && (asksForImage || asksForImageWithoutTarget);
   const asksToEditReference = hasReferences
-    && imageEditPattern.test(text)
+    && isImageEditRequest(text)
     && !asksForText
     && !questionOrAnalysisPattern.test(text)
     && !/(?:描述|分析|解释|总结|提取|识别|比较|建议)/i.test(text);
@@ -229,7 +234,7 @@ function classifyAgentDeliverableCore(input: string, context: AgentIntentContext
     return result('BOTH', '同时检测到图片动作和“另外提供文案”的独立交付要求。', 'high', ['图片动作', '独立文案']);
   }
   if ((asksForImage || asksForImageWithoutTarget) && !asksHowToCreateImage) {
-    return result('IMAGE', textInsideImage ? '文字属于图片内部设计，最终交付物仍然是图片。' : hasReferences && imageEditPattern.test(text) ? '检测到参考图和编辑动作，会优先沿用当前视觉上下文。' : '检测到明确的视觉创作动作和目标。', 'high', [textInsideImage ? '图内文字' : '图片动作', hasReferences ? '参考图' : '']);
+    return result('IMAGE', textInsideImage ? '文字属于图片内部设计，最终交付物仍然是图片。' : hasReferences && isImageEditRequest(text) ? '检测到参考图和编辑动作，会优先沿用当前视觉上下文。' : '检测到明确的视觉创作动作和目标。', 'high', [textInsideImage ? '图内文字' : '图片动作', hasReferences ? '参考图' : '']);
   }
   if (asksForText) {
     return result('TEXT', '检测到文字创作或文字处理动作，不会因为出现“图片/海报”就切换到生图。', 'high', ['文字动作']);
@@ -285,7 +290,7 @@ export function resolveCreativeRoute(
   const promptRequest = /(?:提示词|prompt|反推|提取提示|优化.*(?:提示词|prompt)|只要.*(?:提示词|prompt))/i.test(text)
     || context.task === 'optimize_prompt'
     || context.task === 'reverse_prompt';
-  const editRequest = hasReference && /(?:修改|调整|改成|换成|替换|去掉|加上|保留|重绘|重做|继续改|再来一版|基于.*(?:图|图片|图像)|背景.*(?:换|改)|衣服.*(?:换|改))/i.test(text);
+  const editRequest = hasReference && (isImageEditRequest(text) || /(?:重做|继续改|再来一版|基于.*(?:图|图片|图像)|背景.*(?:换|改)|衣服.*(?:换|改))/i.test(text));
   const followUpEdit = hasReference && /^(?:继续|再来一版|再来一个|换一个|更亮|更暗|更简洁|更复杂)/i.test(text);
   if (decision.deliverable === 'CLARIFY') {
     return { lane: 'clarify', operation: 'none', execution: 'none', confidence: decision.confidence, reason: decision.reason, requiresReference: false };

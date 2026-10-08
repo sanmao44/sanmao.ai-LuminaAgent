@@ -6,12 +6,17 @@ import { createTsRequire } from './ts-require.mjs';
 const { load } = await buildLibModules([
   'lib/workspace-context',
   'lib/task-activity/types',
+  'lib/task-result-projection',
   'lib/task-activity/adapters',
+  'lib/video-task-output',
+  'lib/upscale-task-output',
+  'lib/agent-intent',
   'lib/canvas/run-context',
   'lib/provenance/types',
   'lib/provenance/normalize',
 ], 'adapters');
 const context = await load('workspace-context');
+const projection = await load('task-result-projection');
 const activity = await load('adapters');
 const runContext = await load('run-context');
 const provenance = await load('normalize');
@@ -105,6 +110,46 @@ test('activity adapters expose one status vocabulary and preserve workspace IDs'
   assert.equal(video.progress, 100);
   assert.equal(video.canCancel, true);
   assert.equal(video.projectId, 'creative-1');
+
+  const recoveredVideo = activity.activityTaskFromVideoTask({
+    id: 'video-recovered',
+    status: 'failed',
+    providerId: 'provider-1',
+    modelId: 'model-1',
+    operation: 'generate',
+    source: 'canvas',
+    idempotencyKey: 'key-recovered-video',
+    input: { prompt: 'recover' },
+    videoUrls: [],
+    remoteVideoUrls: ['https://provider.example/result.mp4'],
+    localVideoPaths: [],
+    createdAt: '2026-09-20T10:00:00.000Z',
+  });
+  assert.equal(recoveredVideo.status, 'succeeded');
+  assert.deepEqual(recoveredVideo.outputIds, ['https://provider.example/result.mp4']);
+
+  const recoveredUpscale = activity.activityTaskFromUpscaleTask({
+    id: 'upscale-recovered',
+    provider: 'aliyun-viapi',
+    model: 'aliyun-standard-super-resolution',
+    scale: 2,
+    sourceImageId: 'image-1',
+    status: 'failed',
+    localImageUrl: '/api/storage/file?name=recovered.png',
+    idempotencyKey: 'key-recovered-upscale',
+    pollCount: 1,
+    createdAt: '2026-09-20T10:00:00.000Z',
+    updatedAt: '2026-09-20T10:00:01.000Z',
+  });
+  assert.equal(recoveredUpscale.status, 'succeeded');
+  assert.deepEqual(recoveredUpscale.outputIds, ['/api/storage/file?name=recovered.png']);
+});
+
+test('result projection prefers a retained image or video over a stale failure', () => {
+  assert.equal(projection.projectResultStatus('error', ['/api/storage/file?name=result.png']), 'success');
+  assert.equal(projection.projectResultStatus('error', ['https://provider.example/result.mp4']), 'success');
+  assert.equal(projection.projectResultStatus('error', []), 'error');
+  assert.equal(projection.projectResultStatus('pending', [null, '  ']), 'pending');
 });
 
 test('canvas Agent run context freezes the original selection and edit sources', () => {
@@ -137,6 +182,9 @@ test('canvas Agent run context freezes the original selection and edit sources',
 test('canvas Agent target operation distinguishes edits from analysis and questions', () => {
   assert.equal(runContext.canvasAgentTargetOperation('改一下这段文案', 'text'), 'edit');
   assert.equal(runContext.canvasAgentTargetOperation('把背景换成深蓝色', 'image'), 'edit');
+  for (const instruction of ['把牛变成马', '把人物改为机器人', '把主体替换为白马']) {
+    assert.equal(runContext.canvasAgentTargetOperation(instruction, 'image'), 'edit', instruction);
+  }
   assert.equal(runContext.canvasAgentTargetOperation('分析一下这张图怎么样？', 'image'), 'generate');
   assert.equal(runContext.canvasAgentTargetOperation('帮我生成一个新版本', 'image'), 'generate');
 });

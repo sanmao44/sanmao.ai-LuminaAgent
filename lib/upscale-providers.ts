@@ -44,6 +44,8 @@ export type UpscaleBinaryResult = {
   model: UpscaleModelId;
   buffer: Buffer;
   mime: string;
+  /** Provider result URL when the provider exposes one. */
+  remoteImageUrl?: string;
   providerTaskId?: string;
   requestId?: string;
 };
@@ -168,7 +170,7 @@ async function downloadImage(url: string, provider: UpscaleProviderId, signal?: 
   if (contentLength > 100 * 1024 * 1024) throw new UpscaleProviderError('高清图片超过 100MB，无法保存。', 'IMAGE_TOO_LARGE');
   const buffer = Buffer.from(await response.arrayBuffer());
   if (!buffer.length || buffer.byteLength > 100 * 1024 * 1024) throw new UpscaleProviderError('高清图片超过 100MB，无法保存。', 'IMAGE_TOO_LARGE');
-  return { buffer, mime };
+  return { buffer, mime, remoteImageUrl: url };
 }
 
 function aliyunOutputParams(input: UpscaleInput, defaultFormat: UpscaleOutputFormat) {

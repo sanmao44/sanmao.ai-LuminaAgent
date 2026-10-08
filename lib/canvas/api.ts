@@ -12,6 +12,7 @@ import {
   type AgentResponse,
   type AgentStreamEvent,
 } from "../agent-client";
+import { videoTaskOutputUrl } from "../video-task-output";
 
 export type CanvasAsset = {
   id: string;
@@ -661,8 +662,9 @@ export async function generateCanvasImage(input: {
     const taskId = String(input.taskId || "").trim();
     if (!taskId) return null;
     const log = await getCanvasAgentGeneration(taskId).catch(() => null);
-    if (log?.status === "success" && log.imageUrls?.length) {
-      return { images: log.imageUrls.map((url) => ({ url })), pending: false, taskId };
+    const images = canvasImageTaskOutputUrls(log);
+    if (images.length) {
+      return { images: images.map((url) => ({ url })), pending: false, taskId };
     }
     if (log?.status === "pending") {
       const pendingError = new Error("服务商已接收任务，正在生成，请勿重复提交。") as Error & { generationPending?: boolean; taskId?: string };
@@ -736,7 +738,8 @@ export async function generateCanvasImage(input: {
       throw error;
     }
     const log = status.log;
-    if (log?.status === 'success' && log.imageUrls?.length) return { ...result, pending: false, images: log.imageUrls.map((url) => ({ url })) };
+    const images = canvasImageTaskOutputUrls(log);
+    if (images.length) return { ...result, pending: false, images: images.map((url) => ({ url })) };
     if (log?.status === 'error') throw new Error(log.error || '生图失败');
   }
   const pendingError = new Error(result.message || '服务商仍在生成，任务已保留，请勿重复提交。') as Error & { generationPending?: boolean; taskId?: string };
@@ -747,6 +750,7 @@ export async function generateCanvasImage(input: {
 
 export async function generateCanvasVideo(input: {
   prompt: string;
+  idempotencyKey?: string;
   model?: string;
   modelRawId?: string;
   operation?: "generate" | "edit" | "extend";
@@ -810,12 +814,14 @@ export async function generateCanvasVideo(input: {
   const referenceVideo = input.inputMode === "reference" || input.operation === "edit" || input.operation === "extend"
     ? input.referenceVideo
     : undefined;
-  const result = await request<{
+  const idempotencyKey = input.idempotencyKey || crypto.randomUUID();
+  const submit = () => request<{
     task: {
       id: string;
       status: string;
       progress?: number;
       videoUrls?: string[];
+      remoteVideoUrls?: string[];
       error?: string;
       modelId?: string;
     };
@@ -823,7 +829,7 @@ export async function generateCanvasVideo(input: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Idempotency-Key": crypto.randomUUID(),
+      "Idempotency-Key": idempotencyKey,
     },
     body: JSON.stringify({
       source: "canvas",
@@ -871,7 +877,15 @@ export async function generateCanvasVideo(input: {
       },
     }),
   });
-  return result.task;
+  try {
+    return (await submit()).task;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    if (!/fetch failed|network|timeout|timed out|connection|ECONNRESET|ETIMEDOUT/i.test(message)) throw error;
+    // The provider request may have reached the server even when the browser
+    // lost the response. Reusing the key makes this retry idempotent.
+    return (await submit()).task;
+  }
 }
 
 export async function generateCanvasUpscale(input: {
@@ -939,6 +953,12 @@ export async function getCanvasAgentGeneration(taskId: string) {
   if (!response.ok) return null;
   const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; imageUrls?: string[]; error?: string } | null } | null;
   return body?.log || null;
+}
+
+export function canvasImageTaskOutputUrls(log: { imageUrls?: readonly unknown[] } | null | undefined) {
+  return (log?.imageUrls || [])
+    .map((url) => String(url || '').trim())
+    .filter((url, index, urls) => Boolean(url) && urls.indexOf(url) === index);
 }
 
 export async function waitForCanvasAgentGeneration(taskId: string, maxWaitMs = 30_000) {
@@ -1034,11 +1054,12 @@ export async function generateCanvasAgent(
         const currentLog = await getCanvasAgentGeneration(input.runId).catch(() => null);
         const isMediaLog = currentLog && currentLog.mode !== "llm" && currentLog.taskKind !== "llm";
         if (isMediaLog) {
-          if (currentLog.status === "success" && currentLog.imageUrls?.length) {
+          const images = canvasImageTaskOutputUrls(currentLog);
+          if (images.length) {
             return {
               ok: true,
               message: "图片已生成。",
-              images: currentLog.imageUrls.map((url) => ({ url })),
+              images: images.map((url) => ({ url })),
               taskId: input.runId,
               pending: false,
             };
@@ -1049,11 +1070,12 @@ export async function generateCanvasAgent(
       }
       if (!recoverTaskId) throw error;
       const log = await waitForCanvasAgentGeneration(recoverTaskId, 30 * 60 * 1000);
-      if (log?.status === "success" && log.imageUrls?.length) {
+      const images = canvasImageTaskOutputUrls(log);
+      if (images.length) {
         return {
           ok: true,
           message: "图片已生成。",
-          images: log.imageUrls.map((url) => ({ url })),
+          images: images.map((url) => ({ url })),
           taskId: recoverTaskId,
           pending: false,
         };
@@ -1085,8 +1107,17 @@ export async function getCanvasVideoTask(id: string) {
       status: string;
       progress?: number;
       videoUrls?: string[];
+      remoteVideoUrls?: string[];
       error?: string;
       modelId?: string;
     };
   }>(`/api/video/tasks/${encodeURIComponent(id)}`);
+}
+
+/** Prefer a local archive, but never discard a provider result when archiving failed. */
+export function canvasVideoTaskOutputUrl(task: {
+  videoUrls?: readonly string[];
+  remoteVideoUrls?: readonly string[];
+}) {
+  return videoTaskOutputUrl(task);
 }

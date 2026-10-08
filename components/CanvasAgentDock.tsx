@@ -10,7 +10,6 @@ import AgentSkillMenu from "@/components/AgentSkillMenu";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 import AgentMarkdown from "@/components/AgentMarkdown";
 import AgentOrb, { busyOrbState } from "@/components/AgentOrb";
-import AgentMemoryEditor from "@/components/AgentMemoryEditor";
 import type { ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import { invalidReferenceMentionNumbers, replaceNaturalReferenceLabels } from "@/lib/creative-references";
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
@@ -45,10 +44,10 @@ import type { PublicState } from "@/lib/types";
 import type { WorkspaceContext } from "@/lib/workspace-context";
 import type { CanvasDocument } from "@/lib/canvas/types";
 import type { CanvasPatch } from "@/lib/canvas/patch";
+import { filterModelsByActiveProviders } from "@/lib/provider-availability";
 import { memoryContextMessage } from "@/lib/agent-memory";
 import {
   canvasAgentDockSessionKey,
-  editCanvasAgentDockMemory,
   prepareCanvasAgentDockMemory,
   pruneCanvasAgentDockMessages,
   selectCanvasAgentDockContext,
@@ -150,7 +149,6 @@ type Props = {
   onPreviewImages: (images: Array<{ url: string; revisedPrompt?: string }>, index: number) => void;
   /* 画布上点「问 Agent」时递增：面板展开后要直接把光标放进输入框。 */
   focusSignal?: number;
-  onSaveMemory?: (summary: string, memory: CanvasAgentDockMemory) => Promise<void>;
 };
 
 const MESSAGE_LIMIT = 40;
@@ -595,7 +593,6 @@ export default function CanvasAgentDock({
   onBusyChange,
   onPreviewImages,
   focusSignal,
-  onSaveMemory,
 }: Props) {
   const [messages, setMessages] = useState<CanvasAgentDockMessage[]>([]);
   const [input, setInput] = useState("");
@@ -776,10 +773,11 @@ export default function CanvasAgentDock({
   }), [draftImages.length, input, messages, orderedReferences.length]);
   const liveCreativeCapability = liveCreativeRoute.operation === "edit" ? "edit" : "generate";
   const availableCreativeModels = useMemo(
-    () => (runtime?.models || []).filter((candidate) => candidate.enabled && candidate.published
-      && (candidate.kind === "image" || candidate.capabilities.includes("generate"))
-      && candidate.capabilities.includes(liveCreativeCapability)),
-    [liveCreativeCapability, runtime?.models],
+    () => filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
+      kind: "image",
+      capability: liveCreativeCapability,
+    }),
+    [liveCreativeCapability, runtime?.models, runtime?.providers],
   );
   useEffect(() => {
     if (imageModelId !== "auto" && !availableCreativeModels.some((candidate) => candidate.id === imageModelId)) setImageModelId("auto");
@@ -1086,8 +1084,10 @@ export default function CanvasAgentDock({
       });
       const creativeModelCapability = creativeRoute.operation === "edit" ? "edit" : "generate";
       const selectedCreativeModel = imageModelId !== "auto"
-        && (runtime?.models || []).some((candidate) => candidate.id === imageModelId
-          && candidate.enabled && candidate.published && candidate.capabilities.includes(creativeModelCapability))
+        && filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
+          kind: "image",
+          capability: creativeModelCapability,
+        }).some((candidate) => candidate.id === imageModelId)
         ? imageModelId
         : "auto";
       const requestCreativeModel = options.retry && sourceMessage?.imageModelId
@@ -1406,7 +1406,7 @@ export default function CanvasAgentDock({
         setProgressDetail("");
       }
     },
-    [autoApply, busy, canvasDocument, closeSkillMenu, context, contextBlock, draftImages, editingMessageId, imageModelId, input, messages, model, notify, onApplyCanvasPatch, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, runtime?.models, selectedTotal, uploadingPastedImages, webMode],
+    [autoApply, busy, canvasDocument, closeSkillMenu, context, contextBlock, draftImages, editingMessageId, imageModelId, input, messages, model, notify, onApplyCanvasPatch, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, runtime?.models, runtime?.providers, selectedTotal, uploadingPastedImages, webMode],
   );
 
   const retryFailedBatchItems = useCallback((message: CanvasAgentDockMessage) => {
@@ -1716,26 +1716,6 @@ export default function CanvasAgentDock({
         </div>
         <div className="canvas-agent-dock-head-actions">
           <SkillManager disabled={busy} icon={<SkillIcon size={14} />} />
-          <AgentMemoryEditor
-            summary={memory?.summary || ""}
-            disabled={busy}
-            icon={(
-              <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 4.8a5.2 5.2 0 0 1 6 0 4.8 4.8 0 0 1 1.5 7.6c-.9.9-1.5 1.6-1.5 3.1H9c0-1.5-.6-2.2-1.5-3.1A4.8 4.8 0 0 1 9 4.8Z" />
-                <path d="M9.5 18h5M10 21h4M7.5 8.5a2.8 2.8 0 0 0-.2 3" />
-              </svg>
-            )}
-            onSave={async (summary) => {
-              const next = editCanvasAgentDockMemory(
-                messages.map((message) => ({ id: message.id, role: message.role, content: message.content })),
-                summary,
-                memory,
-              );
-              setMemory(next);
-              await onSaveMemory?.(summary, next);
-              notify(summary.trim() ? "画布对话记忆已保存" : "画布对话记忆已清空");
-            }}
-          />
           <button
             type="button"
             className={helpOpen ? "is-active" : ""}

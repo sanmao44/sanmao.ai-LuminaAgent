@@ -57,6 +57,28 @@ export async function persistGenerationResult(options: BackgroundPersistenceOpti
     return stored;
   } catch (error) {
     const storageError = error instanceof Error ? error.message : '本地图片保存失败';
+    const remoteImages = options.images.filter((image) => Boolean(String(image.url || '').trim()));
+    if (remoteImages.length) {
+      const patch = {
+        status: 'success' as const,
+        durationMs: Date.now() - options.startedAt,
+        providerDurationMs: options.providerFinishedAt - options.startedAt,
+        storageDurationMs: Date.now() - storageStartedAt,
+        imageCount: remoteImages.length,
+        imageUrls: remoteImages.map((image) => image.url),
+        storagePath: options.storagePath,
+        storageError,
+      };
+      try {
+        if (options.logId) await finishGenerationLog(options.logId, patch);
+        else if (options.log) await appendGenerationLog({ ...options.log, ...patch });
+      } catch { /* Logging failures should not mask a provider result. */ }
+      return {
+        images: remoteImages,
+        path: options.storagePath || '',
+        remoteFallbacks: remoteImages.map((image, index) => ({ index, url: image.url, error: storageError })),
+      };
+    }
     const patch = {
       status: 'error' as const,
       durationMs: options.providerFinishedAt - options.startedAt,

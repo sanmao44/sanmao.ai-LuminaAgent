@@ -7,8 +7,10 @@ const requireTs = createTsRequire(fileURLToPath(new URL('../lib', import.meta.ur
 const realSkills = requireTs('./skills');
 function harness(options = {}) {
   const calls = [];
+  const mcpCalls = [];
   const discoveryCalls = [];
   const manageCalls = [];
+  const runtimeLoads = [];
   const images = [];
   const imageRuntimeRequests = [];
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: [], kind: 'chat' };
@@ -74,7 +76,11 @@ function harness(options = {}) {
             searchWeb: async () => ({ query: '', intent: { entities: [] }, results: [], status: 'empty', resultCount: 0, rounds: 0 }),
           },
           mcp: {
-            callMcpTool: async () => ({ ok: false, error: 'test MCP tool unavailable' }),
+            callMcpTool: async (server, toolName, args) => {
+              mcpCalls.push({ server: server?.id, toolName, args });
+              if (typeof options.callMcpTool === 'function') return options.callMcpTool(server, toolName, args);
+              return { isError: true, text: 'test MCP tool unavailable' };
+            },
             MCP_CALL_TIMEOUT_MS: 30_000,
             MCP_TOOL_MAX_CALLS_PER_TURN: 8,
             MCP_TURN_TIME_BUDGET_MS: 120_000,
@@ -89,7 +95,7 @@ function harness(options = {}) {
             browserExternalBlocker: () => '',
             browserTextNeedsContinuation: () => false,
             browserTextSubmissionGap: () => '',
-            guardMcpServerCall: (_meta, args) => ({ ok: true, args }),
+            guardMcpServerCall: (_server, _toolName, args) => ({ ok: true, args }),
             importBrowserArtifacts: async () => [],
             shouldImportBrowserArtifacts: () => false,
             noteRemoteCatalogCallFailure: () => {},
@@ -193,7 +199,7 @@ function harness(options = {}) {
     '@/lib/native-web-search': { nativeSearchIsEnabled: () => false },
     '@/lib/mcp/store': { listMcpServers: () => options.mcpServers || [] },
     '@/lib/mcp/discovery': { discoverMcpForRequest: async () => { discoveryCalls.push(true); return { serverIds: (options.mcpServers || []).map((server) => server.id), unavailable: [] }; } },
-    '@/lib/mcp/tools': { mcpServersForTurn: (servers) => servers, loadMcpToolRuntime: async () => ({ servers: options.mcpServers || [], tools: options.mcpTools || [] }), lazyMcpGroupKeywords: () => ({}) },
+    '@/lib/mcp/tools': { mcpServersForTurn: (servers) => servers, loadMcpToolRuntime: async (input) => { runtimeLoads.push(input); return { servers: options.mcpServers || [], tools: options.mcpTools || [] }; }, lazyMcpGroupKeywords: () => ({}) },
     '@/lib/mcp/client': {},
     '@/lib/mcp/audit': {},
     '@/lib/mcp/filesystem-policy': {},
@@ -207,7 +213,11 @@ function harness(options = {}) {
       },
     },
     '@/lib/mcp/runtime-admin': {},
-    '@/lib/agent/approval': { toolApprovalPolicy: () => 'ask', assessToolApproval: () => ({ required: false, blocked: false }) },
+    '@/lib/agent/approval': {
+      toolApprovalPolicy: () => 'ask',
+      assessToolApproval: () => ({ required: false, blocked: false }),
+      appendPageContext: (current, source, text) => `${current || ''}\n${source}: ${text}`.trim(),
+    },
     '@/lib/skills': { ...realSkills, buildAgentSkillContext: () => ({ settings: { enabled: false }, skills: [], indexSection: '', toolHint: '' }) },
     '@/lib/skill-archive': {},
     '@/lib/data-paths': { resolveLocalDataDir: () => '/unused-test-data' },
@@ -217,7 +227,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-    calls, discoveryCalls, manageCalls, images, imageRuntimeRequests,
+    calls, mcpCalls, discoveryCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -240,6 +250,27 @@ test('普通问答绕过语义规划和 MCP 能力发现', async () => {
   assert.equal(agent.calls.length, 1);
   assert.equal(data.message, '已经完成。');
   assert.ok(agent.calls.every((call) => !String(call.messages?.[0]?.content || '').includes('只判断当前用户')));
+});
+
+test('GitHub 仓库只读查询会发现并下发 MCP 工具', async () => {
+  const agent = harness({
+    mcpServers: [{ id: 'github', name: 'GitHub', enabled: true, allowWrite: false, catalogId: 'github' }],
+    mcpTools: [{
+      id: 'mcp:github:list_repositories', name: 'github__list_repositories', source: 'mcp',
+      description: 'List repositories', schema: { type: 'object', properties: {} }, tags: ['mcp'], risk: 'read',
+      gating: () => true,
+      mcp: { serverId: 'github', serverName: 'GitHub', toolName: 'list_repositories', readOnly: true, blocked: false },
+    }],
+    callMcpTool: async () => ({ isError: false, text: JSON.stringify({ repositories: [{ name: 'sanmao-ai' }] }) }),
+    reply: (_payload, count) => count === 1
+      ? { content: null, tool_calls: [{ id: 'github-call', type: 'function', function: { name: 'github__list_repositories', arguments: '{}' } }] }
+      : { content: '已成功读取仓库列表。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '我的 GitHub 仓库有几个项目' }]);
+  assert.equal(data.message, '已成功读取仓库列表。');
+  assert.ok(agent.discoveryCalls.length > 0);
+  assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'github__list_repositories')));
+  assert.deepEqual(agent.mcpCalls, [{ server: 'github', toolName: 'list_repositories', args: {} }]);
 });
 
 test('纯问候仍调用当前选择的模型，不返回固定本地文案', async () => {
@@ -362,6 +393,38 @@ test('canvas image edit target overrides vague wording and reaches the edit capa
   assert.equal(data.images.length, 1);
 });
 
+test('attached image plus colloquial replacement instruction reaches edit fallback', async () => {
+  const agent = harness({ imageCapabilities: ['generate', 'edit'] });
+  const data = await agent.post([{
+    role: 'user',
+    content: '把牛变成马',
+    references: [{ id: 'cow', kind: 'image', name: '牛的参考图', url: 'data:image/png;base64,dGVzdA==' }],
+  }]);
+  assert.equal(agent.images.length, 1);
+  assert.equal(agent.images[0].mode, 'edit');
+  assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
+  assert.match(agent.images[0].prompt, /牛变成马/);
+  assert.equal(data.images.length, 1);
+});
+
+test('canvas Agent treats a first-turn replacement instruction as an image edit', async () => {
+  const agent = harness({ imageCapabilities: ['generate', 'edit'] });
+  const data = await agent.post([{
+    role: 'user',
+    content: '把牛变成马',
+    references: [{ id: 'cow', nodeId: 'cow', kind: 'image', name: '选中的牛图片', url: 'data:image/png;base64,dGVzdA==' }],
+  }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['cow'], assetIds: [] },
+    canvasTarget: { nodeIds: ['cow'], kind: 'image', operation: 'edit' },
+  });
+  assert.equal(agent.images.length, 1);
+  assert.equal(agent.images[0].mode, 'edit');
+  assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
+  assert.equal(data.images.length, 1);
+});
+
 test('client image model selection reaches Agent generation explicitly', async () => {
   const agent = harness({ reply: (payload) => payload.tools
     ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"客户端旧参数测试","modelId":"stale-client-model"}}</tool_call>' }
@@ -384,6 +447,27 @@ test('承接上一轮编号生图方案时直接批量执行，不只回复生�
     'SUV 内部座舱展示，科技感与舒适氛围',
   ]);
   assert.equal(data.images.length, 3);
+});
+
+test('图片生成后的自动建议不会被当成批量生图计划', async () => {
+  const agent = harness({ reply: () => ({ content: '开始生成图' }) });
+  const data = await agent.post([
+    { role: 'user', content: '画一只羊跟猪打架，拟人化，戏剧性' },
+    { role: 'assistant', content: [
+      '本版已按你确认的创作方向生成。',
+      '',
+      '### 下一版可尝试方向',
+      '',
+      '1. 调整人物姿态与手部动作，让冲突更有张力',
+      '2. 强化戏剧性光线和背景氛围',
+      '3. 优化主体比例与画面构图',
+    ].join('\n') },
+    { role: 'user', content: '直接出图' },
+  ]);
+  assert.equal(agent.images.length, 1);
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.images[0].count, 1);
+  assert.equal('prompts' in agent.images[0], false);
 });
 
 test('empty provider output never returns a successful-looking image caption', async () => {
