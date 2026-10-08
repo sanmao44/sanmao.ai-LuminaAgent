@@ -1,7 +1,6 @@
 import type { SkillRouteCandidate, SkillRouteDecision, SkillRouteOptions } from '../contracts/skill';
 
 const EXPLICIT_SKILL_PATTERN = /(?:^|\s)(?:用|使用|请用|请使用)\s*(?:「([^「」\n]{1,80})」|([^\s，。！？!?：:]{1,80}))\s*技能\s*[:：]?/i;
-const QUESTION_PATTERN = /(?:为什么|怎么|如何|什么是|是否|能不能|可以吗|吗[？?]?$|[？?]$)/i;
 const CREATIVE_REQUEST_PATTERN = /(?:用|使用|请用|请使用|按照|按|以|模仿|采用|遵循|帮我|给我|我要|写|撰写|改写|润色|仿写|生成|创作|评论|回答|描述|赞美|批评|排查|调试|修复|部署|实现|制作|执行|完成|整理|分析|翻译|总结)/i;
 const GENERIC_WORDS = new Set(['用', '使用', '请用', '请使用', '技能', '这个', '那个', '内容', '进行', '一下', '帮我', '给我']);
 
@@ -57,9 +56,9 @@ function none(reason: string, explicit = false): SkillRouteDecision {
 /**
  * Select an installed skill from metadata only.
  *
- * Explicit picker directives always win. Automatic matching requires both a
- * meaningful metadata hit and an execution-shaped request; a bare question
- * such as “鲁迅会怎么说” therefore does not silently activate a skill.
+ * Explicit picker directives always win. Automatic matching uses the shared
+ * Agent speech-act classification when available; Skill routing must not keep
+ * a second, conflicting question-versus-execution classifier.
  */
 export function routeSkillRequest(input: string, candidates: readonly SkillRouteCandidate[], options: SkillRouteOptions = {}): SkillRouteDecision {
   const text = clean(input);
@@ -82,7 +81,9 @@ export function routeSkillRequest(input: string, candidates: readonly SkillRoute
     return { enabled: true, matched: false, explicit: true, confidence: 'high', skillId: explicit, skillName: explicit, reason: `用户显式指定技能“${explicit}”，交由技能工具进一步解析。` };
   }
 
-  if (QUESTION_PATTERN.test(text) || !CREATIVE_REQUEST_PATTERN.test(text)) return none('当前请求不是明确的技能执行请求。');
+  const requestMode = options.requestMode;
+  if (requestMode && !['execute', 'follow_up'].includes(requestMode)) return none('当前请求不是技能执行请求。');
+  if (!requestMode && !CREATIVE_REQUEST_PATTERN.test(text)) return none('当前请求不是明确的技能执行请求。');
   const ranked = available
     .map((candidate) => ({ candidate, ...scoreCandidate(text, candidate) }))
     .filter((row) => row.score >= 7 && row.matchedTerms > 0)

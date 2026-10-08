@@ -176,7 +176,7 @@ export type AgentApplicationInfrastructure = {
   filesystem: { persistImageBuffer: typeof persistImageBuffer; importLocalImage: typeof importLocalImage; isLocalImageRead: typeof isLocalImageRead; verifyFilesystemMove: typeof verifyFilesystemMove };
   skills: {
     buildAgentSkillContext: typeof buildAgentSkillContext;
-    routeSkillRequest: (input: string, options?: { dataDir?: string; explicitSkillId?: string }) => SkillRouteDecision;
+    routeSkillRequest: (input: string, options?: { dataDir?: string } & SkillRouteOptions) => SkillRouteDecision;
     createCapabilityPorts: (dataDir?: string) => SkillCapabilityPorts;
     SKILL_TOOL_MAX_CALLS: typeof SKILL_TOOL_MAX_CALLS;
     stripToolCallMarkup: typeof stripToolCallMarkup;
@@ -187,8 +187,11 @@ export type AgentApplicationInfrastructure = {
 };
 
 export function createAgentApplicationInfrastructure(): AgentApplicationInfrastructure {
-  const routeSkillRequest = (input: string, options: { dataDir?: string; explicitSkillId?: string } = {}) => {
-    const routeOptions: SkillRouteOptions = options.explicitSkillId ? { explicitSkillId: options.explicitSkillId } : {};
+  const routeSkillRequest = (input: string, options: { dataDir?: string } & SkillRouteOptions = {}) => {
+    const routeOptions: SkillRouteOptions = {
+      ...(options.explicitSkillId ? { explicitSkillId: options.explicitSkillId } : {}),
+      ...(options.requestMode ? { requestMode: options.requestMode } : {}),
+    };
     return routeSkillRequestFromMetadata(input, listSkills({ dataDir: options.dataDir, pending: false }), routeOptions);
   };
   const createSkillCapabilityPorts = (dataDir?: string): SkillCapabilityPorts => ({

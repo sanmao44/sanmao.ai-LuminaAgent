@@ -1,3 +1,5 @@
+import type { AgentRequestMode } from './planning';
+
 export type SkillSettings = { enabled: boolean; autoApprove: boolean };
 export type SkillFileRecord = { path: string; bytes: number };
 export type SkillRecord = {
@@ -29,6 +31,8 @@ export type SkillRouteDecision = {
 export type SkillRouteOptions = {
   /** Structured picker selection. This takes precedence over message text. */
   explicitSkillId?: string;
+  /** Shared speech-act classification from the Agent intent boundary. */
+  requestMode?: AgentRequestMode;
 };
 export type SkillContext = {
   settings: SkillSettings;

@@ -20,6 +20,16 @@ test('routes explicit visual requests to an image deliverable', () => {
   assert.notEqual(intent.classifyAgentDeliverable('怎么画只猫').deliverable, 'IMAGE');
 });
 
+test('treats perspective and role-voice questions as creative execution', () => {
+  for (const input of [
+    '如果鲁迅能抽上电子烟他会怎么说',
+    '鲁迅看到这张图会怎么说？',
+    '鲁迅会如何评论这件事',
+  ]) {
+    assert.equal(intent.inferAgentRequestMode(input), 'execute', input);
+  }
+});
+
 test('routes batch image commands to image delivery', () => {
   for (const input of ['套图', '详情图', '批量生图', '生成一套商品详情图']) {
     assert.equal(intent.classifyAgentDeliverable(input).deliverable, 'IMAGE', input);

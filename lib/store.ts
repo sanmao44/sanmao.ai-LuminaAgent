@@ -819,7 +819,7 @@ export async function getRuntimeImageModelForCapability(id: string | null | unde
   if (!model || !model.enabled || !model.published || model.kind !== 'image' || !model.capabilities.includes(capability)) return null;
   const provider = state.providers.find((item) => item.id === model!.providerId);
   if (!provider) return null;
-  return { model, provider: { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey) } };
+  return { model, provider: { ...provider, imageStoragePath: state.settings.imageStoragePath, apiKey: await decryptSecret(provider.encryptedApiKey) } };
 }
 
 export async function getRuntimeImageGenerationModel(id: string | null | undefined) {
@@ -834,7 +834,7 @@ export async function getRuntimeImageGenerationModel(id: string | null | undefin
   if (!model || !model.enabled || !model.published || model.kind !== 'image' || !model.capabilities.includes('generate')) return null;
   const provider = state.providers.find((item) => item.id === model.providerId);
   if (!provider) return null;
-  return { model, provider: { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey) } };
+  return { model, provider: { ...provider, imageStoragePath: state.settings.imageStoragePath, apiKey: await decryptSecret(provider.encryptedApiKey) } };
 }
 
 /**
@@ -861,7 +861,7 @@ export async function getRuntimeImageModelCandidates(id: string | null | undefin
   const runtimes = await Promise.all(ordered.map(async (model) => {
     const provider = state.providers.find((item) => item.id === model.providerId);
     if (!provider) return null;
-    return { model, provider: { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey) } };
+    return { model, provider: { ...provider, imageStoragePath: state.settings.imageStoragePath, apiKey: await decryptSecret(provider.encryptedApiKey) } };
   }));
   return runtimes.filter((runtime): runtime is NonNullable<typeof runtime> => Boolean(runtime));
 }

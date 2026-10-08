@@ -64,6 +64,11 @@ const capabilityQuestionPattern = /^(?:(?:你|您)?\s*(?:能否|能不能|能|�
 const taskLeadPattern = /^(?:请(?!问)|麻烦(?!问)|帮我|给我|给我们|替我|为我|我想(?:要|让你|生成|制作|创建|写|改写|润色|总结|翻译|分析|描述|搜索|打开|执行)|我(?:要|需要)(?!了解|知道|确认|咨询|问|弄清楚)|需要你|直接|开始|继续|再来|按照刚才|基于这个|把它|将其)/i;
 const taskVerbPattern = /(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|安装|接入|连接|导入|生图|出图)/i;
 const questionShapePattern = /^(?:为什么|怎么(?:做|办)|如何|什么是|是什么|能否|能不能|是否|可以吗|支持吗|请问|告诉我|解释一下|分析一下|比较一下|建议一下|你觉得).*[？?]?$|[？?]$/i;
+// A perspective question can be a creative execution request: its grammar is
+// interrogative, but it asks the assistant to perform a voice or viewpoint.
+// Keep this speech-act rule in the shared intent boundary so Skill and web
+// routing do not grow separate keyword exceptions.
+const creativeSimulationPattern = /^(?:(?:如果|假如|倘若|要是).{0,96}(?:会怎么说|会如何说|会怎样说|会怎么写|会如何评论|会怎样评论|会如何回应|会怎么看|会如何看).{0,48}|.{0,96}(?:会怎么说|会如何说|会怎样说|会怎么写|会如何评论|会怎样评论|会如何回应|会怎么看|会如何看).{0,48})[？?]?$/i;
 
 /**
  * Capability questions are a speech act, not an execution request. Keep the
@@ -120,6 +125,7 @@ export function inferAgentRequestMode(input: string): AgentRequestMode {
   // “你能帮我打开网页吗？” must not become a browser command. An imperative
   // lead such as “请帮我打开网页，可以吗？” is the explicit exception.
   if (capabilityQuestion) return 'ask';
+  if (creativeSimulationPattern.test(text)) return 'execute';
   if (genericQuestion && !explicitTask && !taskLeadPattern.test(text)) return 'ask';
 
   if (explicitTask) return 'execute';

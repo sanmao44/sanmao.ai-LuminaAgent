@@ -36,6 +36,7 @@ export type RuntimeProvider = {
   jimengCliPollSeconds?: number;
   authHeader?: string;
   authPrefix?: string;
+  imageStoragePath?: string;
 };
 
 export type DiscoveredModel = {
@@ -514,6 +515,127 @@ export function imageDownloadAuth(provider: RuntimeProvider): ImageDownloadAuth 
 
 function isApimartProvider(provider: RuntimeProvider) {
   return provider.platform === 'apimart' || /(^|\.)api\.apimart\.ai$/i.test(new URL(runtimeBaseUrl(provider)).hostname);
+}
+
+const PROVIDER_IMAGE_INPUT_MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * 65535/APIMart image_urls inputs are URL transports: the
+ * upstream service fetches the reference instead of receiving a multipart
+ * file. Keep that contract explicit so a local storage path or an expired
+ * provider URL never reaches the upstream image loader unchecked.
+ */
+function requiresPublicImageInput(provider: RuntimeProvider) {
+  return is65535Provider(provider) || isApimartProvider(provider);
+}
+
+function isStoredImageReference(value: string) {
+  return /^\/?api\/storage\/file\?/i.test(String(value || '').trim());
+}
+
+function imageDataUrlBytes(value: string) {
+  const match = value.match(/^data:([^;,]+)(;base64)?,([\s\S]*)$/i);
+  if (!match || !/^image\//i.test(match[1])) return null;
+  try {
+    const bytes = match[2]
+      ? Buffer.from(match[3], 'base64')
+      : Buffer.from(decodeURIComponent(match[3]), 'utf8');
+    const mime = imageMimeFromBytes(bytes);
+    return mime ? { bytes, mime } : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPrivateImageReferenceUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
+    const host = parsed.hostname.toLowerCase();
+    return parsed.username.length > 0 || parsed.password.length > 0
+      || host === 'localhost' || host === '::1' || host === '0.0.0.0'
+      || host === '169.254.169.254' || /^127\./.test(host)
+      || /^10\./.test(host) || /^192\.168\./.test(host)
+      || /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+      || host.endsWith('.local');
+  } catch {
+    return true;
+  }
+}
+
+function providerImageInputError(detail: string) {
+  const error = new Error(`参考图尚未准备好，图片请求未提交：${detail}`);
+  return decorateProviderFailure(error, { providerFailureKind: 'http', providerStatus: 422, providerResponse: true });
+}
+
+async function fetchProviderImageDataUrl(value: string, signal?: AbortSignal) {
+  if (isPrivateImageReferenceUrl(value)) throw providerImageInputError('图片地址不是可安全读取的 HTTPS/HTTP 地址，请重新上传图片。');
+  let response: Response;
+  try {
+    response = await fetch(value, {
+      cache: 'no-store',
+      redirect: 'error',
+      signal: combineSignals(signal, 30_000),
+    });
+  } catch (error) {
+    const detail = error instanceof Error && /timed out|timeout/i.test(error.message)
+      ? '读取图片地址超时，请重新上传图片或检查图片地址。'
+      : '读取图片地址失败，请重新上传图片或检查图片地址。';
+    throw providerImageInputError(detail);
+  }
+  if (!response.ok) throw providerImageInputError(`读取图片地址返回 HTTP ${response.status}，请重新上传图片。`);
+  const declaredLength = Number(response.headers.get('content-length') || 0);
+  if (declaredLength > PROVIDER_IMAGE_INPUT_MAX_BYTES) throw providerImageInputError('图片超过 25 MiB，请先压缩后重试。');
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > PROVIDER_IMAGE_INPUT_MAX_BYTES) throw providerImageInputError('图片超过 25 MiB 或内容为空，请先压缩后重试。');
+  const mime = imageMimeFromBytes(bytes);
+  if (!mime) throw providerImageInputError('地址返回的内容不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片。');
+  return `data:${mime};base64,${bytes.toString('base64')}`;
+}
+
+async function materializeProviderImageInput(provider: RuntimeProvider, value: string, signal?: AbortSignal, depth = 0): Promise<string> {
+  if (depth > 2) throw providerImageInputError('图片引用嵌套层级过深，请重新上传图片。');
+  const raw = String(value || '').trim();
+  if (isStoredImageReference(raw)) {
+    try {
+      const { resolveStoredImageReference } = await import('./image-storage');
+      const storageReference = raw.startsWith('/') ? raw : `/${raw}`;
+      const resolved = await resolveStoredImageReference(storageReference, provider.imageStoragePath);
+      if (resolved === raw) throw new Error('storage reference was not resolved');
+      return materializeProviderImageInput(provider, resolved, signal, depth + 1);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('参考图尚未准备好')) throw error;
+      throw providerImageInputError('本地图片文件已不存在，请重新上传图片。');
+    }
+  }
+  const input = normalizeReference(raw);
+  if (!input) throw providerImageInputError('图片地址为空，请重新上传图片。');
+  if (/^data:/i.test(input)) {
+    if (!requiresPublicImageInput(provider)) return input;
+    const parsed = imageDataUrlBytes(input);
+    if (!parsed || parsed.bytes.length > PROVIDER_IMAGE_INPUT_MAX_BYTES) throw providerImageInputError('内嵌内容不是有效图片或超过 25 MiB，请重新上传图片。');
+    return `data:${parsed.mime};base64,${parsed.bytes.toString('base64')}`;
+  }
+  if (/^https?:\/\//i.test(input)) {
+    if (!requiresPublicImageInput(provider)) return input;
+    return fetchProviderImageDataUrl(input, signal);
+  }
+  throw providerImageInputError('无法识别图片引用，请重新上传图片。');
+}
+
+async function prepareProviderImageInput(provider: RuntimeProvider, value: string, signal?: AbortSignal) {
+  const dataUrl = await materializeProviderImageInput(provider, value, signal);
+  if (!requiresPublicImageInput(provider)) return dataUrl;
+  try {
+    return await (await import('./signed-media')).preparePublicMediaUrl(dataUrl, 'image');
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('参考图尚未准备好')) throw error;
+    throw providerImageInputError('当前服务商需要可公开访问的图片地址，但应用的媒体中转尚未可用。请稍后重试或在高级设置中配置公网媒体地址。');
+  }
+}
+
+async function prepareProviderImageInputs(provider: RuntimeProvider, values: string[], signal?: AbortSignal) {
+  return Promise.all(values.map((value) => prepareProviderImageInput(provider, value, signal)));
 }
 
 /**
@@ -1078,6 +1200,7 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
   if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
+  const providerReferences = references.length ? await prepareProviderImageInputs(provider, references, signal) : [];
   const body: Record<string, unknown> = {
     model: rawModelId,
     prompt: input.prompt,
@@ -1090,10 +1213,10 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
   if (input.outputFormat) body.output_format = input.outputFormat;
   if (input.background) body.background = input.background;
   if (provider.type === 'google-gemini') body.response_format = 'b64_json';
-  if (references.length) {
-    if (isModelScopeProvider(provider)) body.image_url = references.length === 1 ? references[0] : references;
-    else if (is65535Provider(provider) || isApimartProvider(provider)) body.image_urls = references;
-    else body.images = references.map((image_url) => ({ image_url }));
+  if (providerReferences.length) {
+    if (isModelScopeProvider(provider)) body.image_url = providerReferences.length === 1 ? providerReferences[0] : providerReferences;
+    else if (is65535Provider(provider) || isApimartProvider(provider)) body.image_urls = providerReferences;
+    else body.images = providerReferences.map((image_url) => ({ image_url }));
   }
   const endpoint = providerEndpoint(provider, provider.imageGenerationPath, '/images/generations');
   const request = (payload: Record<string, unknown>) => fetchJson(endpoint, {
@@ -1146,7 +1269,7 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
 }
 
 function normalizeReference(ref: string) {
-  if (/^https?:\/\//i.test(ref) || ref.startsWith('data:image/')) return ref;
+  if (/^https?:\/\//i.test(ref) || isStoredImageReference(ref) || ref.startsWith('data:image/')) return ref;
   return `data:image/png;base64,${ref}`;
 }
 
@@ -1186,17 +1309,24 @@ export function buildImageEditRequestBody(provider: RuntimeProvider, rawModelId:
   return jsonBody;
 }
 
-export async function editImage(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, signal?: AbortSignal): Promise<GeneratedImage[]> {
+async function editImageFromProvider(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, signal?: AbortSignal): Promise<GeneratedImage[]> {
   // Agnes can consume the local storage URL through the signed-media bridge;
   // other providers keep the historical data-URL normalization path.
   const references = (isAgnesProvider(provider) ? input.references : input.references.map(normalizeReference)).slice(0, 16);
   if (!references.length) throw new Error('修改图片至少需要一张参考图');
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
+  const providerReferences = await prepareProviderImageInputs(provider, references, signal);
+  const providerMask = input.mask ? await prepareProviderImageInput(provider, input.mask, signal) : undefined;
+  const providerInput = providerMask ? { ...input, mask: providerMask } : input;
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
+  // Gateways occasionally ignore `n` and return more images than requested.
+  // Keep the application contract authoritative: one requested output must
+  // never fan out into multiple Canvas nodes.
+  const limitImages = (images: GeneratedImage[]) => images.slice(0, count);
   const size = mapImageRequestSize(provider, rawModelId, input.aspectRatio || '自动', input.width, input.height);
   const sendInputFidelity = input.fidelity && shouldSendInputFidelity(provider, rawModelId);
-  const jsonBody = buildImageEditRequestBody(provider, rawModelId, input, references, count, size);
+  const jsonBody = buildImageEditRequestBody(provider, rawModelId, providerInput, providerReferences, count, size);
 
   // ModelScope's Qwen-Image-Edit is exposed as an asynchronous image
   // generation task, not through the OpenAI-compatible /images/edits route.
@@ -1209,18 +1339,18 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
       body: JSON.stringify({
         model: rawModelId,
         prompt: input.prompt,
-        image_url: references.length === 1 ? references[0] : references,
+        image_url: providerReferences.length === 1 ? providerReferences[0] : providerReferences,
         ...(size !== 'auto' ? { size } : {}),
         ...(count > 1 ? { n: count } : {}),
       }),
     }, IMAGE_REQUEST_TIMEOUT, signal);
     const images = extractImages(data);
-    if (images.length) return normalizeImages(data);
+    if (images.length) return limitImages(normalizeImages(data));
     if (taskIdFrom(data)) {
-      try { return await waitForImageTask(provider, data, signal); }
+      try { return limitImages(await waitForImageTask(provider, data, signal)); }
       catch (error) { throw acceptedProviderTaskError(error, taskIdFrom(data)); }
     }
-    return normalizeImages(data);
+    return limitImages(normalizeImages(data));
   }
 
   // 新版 Images API 支持 JSON image_url/data URL；优先使用，兼容远程 URL 和多图。
@@ -1228,20 +1358,23 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
     const data = await fetchJson(providerEndpoint(provider, provider.imageEditPath, '/images/edits'), {
       method: 'POST', headers: { ...authHeaders(provider), ...modelScopeImageHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody),
     }, IMAGE_REQUEST_TIMEOUT, signal);
-    if (isApimartProvider(provider)) return waitForApimartTask(provider, data, signal);
+    if (isApimartProvider(provider)) return limitImages(await waitForApimartTask(provider, data, signal));
     const images = extractImages(data);
-    if (images.length) return normalizeImages(data);
+    if (images.length) return limitImages(normalizeImages(data));
     if (taskIdFrom(data)) {
-      try { return await waitForImageTask(provider, data, signal); }
+      try { return limitImages(await waitForImageTask(provider, data, signal)); }
       catch (error) { throw acceptedProviderTaskError(error, taskIdFrom(data)); }
     }
-    return normalizeImages(data);
+    return limitImages(normalizeImages(data));
   } catch (jsonError) {
     if (signal?.aborted && !isAcceptedProviderTask(jsonError)) throw signal.reason || jsonError;
     // A successful JSON response with malformed image data is not a request
     // compatibility failure. Falling back to multipart here would submit a
     // second paid job after the provider has already accepted the first one.
     if (jsonError instanceof ProviderImageFormatError) throw jsonError;
+    // 65535/APIMart expose image_urls as their input contract. Multipart is
+    // not a compatible fallback and would only hide the actionable JSON error.
+    if (requiresPublicImageInput(provider)) throw jsonError;
     // 一些 OpenAI 兼容中转仍只接受 multipart/form-data，自动回退。
     try {
       const form = new FormData();
@@ -1253,12 +1386,12 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
       if (sendInputFidelity) form.append('input_fidelity', input.fidelity!);
       if (input.outputFormat) form.append('output_format', input.outputFormat);
       if (input.background) form.append('background', input.background);
-      for (let i = 0; i < references.length; i++) {
-        const { blob, filename } = await refToBlob(references[i], i);
+      for (let i = 0; i < providerReferences.length; i++) {
+        const { blob, filename } = await refToBlob(providerReferences[i], i);
         form.append('image', blob, filename);
       }
-      if (input.mask) {
-        const { blob } = await refToBlob(input.mask, 0);
+      if (providerInput.mask) {
+        const { blob } = await refToBlob(providerInput.mask, 0);
         form.append('mask', blob, 'mask.png');
       }
       const response = await fetch(providerEndpoint(provider, provider.imageEditPath, '/images/edits'), {
@@ -1267,10 +1400,10 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
       const data = await parseResponse(response);
       const images = extractImages(data);
       if (!images.length && taskIdFrom(data)) {
-        try { return await waitForImageTask(provider, data, signal); }
+        try { return limitImages(await waitForImageTask(provider, data, signal)); }
         catch (error) { throw acceptedProviderTaskError(error, taskIdFrom(data)); }
       }
-      return normalizeImages(data);
+      return limitImages(normalizeImages(data));
     } catch (multipartError) {
       const a = jsonError instanceof Error ? jsonError.message : 'JSON 编辑接口失败';
       const b = multipartError instanceof Error ? multipartError.message : '表单编辑接口失败';
@@ -1295,6 +1428,12 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
       throw error;
     }
   }
+}
+
+export async function editImage(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  const images = await editImageFromProvider(provider, rawModelId, input, signal);
+  const count = Math.max(1, Math.min(8, Number(input.count || 1)));
+  return images.slice(0, count);
 }
 
 export async function upscaleImage(provider: RuntimeProvider, rawModelId: string, input: { reference: string; size: string; prompt?: string; seed?: number; colorCorrection?: string; resizeMethod?: string }, signal?: AbortSignal): Promise<GeneratedImage[]> {

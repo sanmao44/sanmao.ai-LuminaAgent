@@ -511,7 +511,11 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         routeToolSummary,
         selectAgentContextMessages: (items, need) => selectAgentContextMessages(items, need),
         normalizeCreativeReferences,
-        routeSkillRequest: (instruction, options) => skillInfrastructure.routeSkillRequest(instruction, { dataDir: skillDataDir, explicitSkillId: options?.explicitSkillId }),
+        routeSkillRequest: (instruction, options) => skillInfrastructure.routeSkillRequest(instruction, {
+          dataDir: skillDataDir,
+          explicitSkillId: options?.explicitSkillId,
+          requestMode: options?.requestMode,
+        }),
       },
     });
     const { latestInstruction, previousImagePlan, batchPlanContent, intentDecision, previousAssistantForRouting, directGithubMcpRepo, webMode, requestRoute, routerMs, modelContextMessages, routeSummary, requestedDeliverable: plannedDeliverable, requestedIntentReason: plannedIntentReason } = planning;

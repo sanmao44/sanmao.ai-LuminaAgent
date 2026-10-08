@@ -343,6 +343,41 @@ test('does not submit a second edit job after malformed JSON image output', asyn
   }
 });
 
+test('image edits return only the requested number when one provider request contains extra results', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ data: [
+      { url: 'https://cdn.example.test/first.png' },
+      { url: 'https://cdn.example.test/second.png' },
+    ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const provider = {
+      type: 'openai-compatible',
+      platform: 'custom',
+      baseUrl: 'https://images.example.test/v1',
+      apiKey: 'test-key',
+    };
+    const input = {
+      prompt: 'change the color',
+      references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
+    };
+    assert.deepEqual(await providers.editImage(provider, 'gpt-image-2.5', { ...input, count: 1 }), [
+      { url: 'https://cdn.example.test/first.png' },
+    ]);
+    assert.deepEqual(await providers.editImage(provider, 'gpt-image-2.5', { ...input, count: 2 }), [
+      { url: 'https://cdn.example.test/first.png' },
+      { url: 'https://cdn.example.test/second.png' },
+    ]);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls.map((call) => JSON.parse(call.init.body).n), [1, 2]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('rejects a binary-looking image response before local persistence', async () => {
   const previousFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(Buffer.from('not an image'), {
@@ -439,7 +474,7 @@ test('polls ModelScope image tasks and normalizes output_images', async () => {
     return new Response(JSON.stringify({
       task_id: 'modelscope-task-1',
       task_status: 'SUCCEED',
-      output_images: ['https://cdn.example.test/modelscope-result.png'],
+      output_images: ['https://cdn.example.test/modelscope-result.png', 'https://cdn.example.test/extra-result.png'],
     }), {
       status: 200,
       headers: { 'content-type': 'application/json' },

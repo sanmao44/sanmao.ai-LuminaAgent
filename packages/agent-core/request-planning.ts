@@ -77,7 +77,10 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   const webMode = isCanvasNodeExecution ? 'off' : ports.resolveAgentWebMode(body.webMode, body.webSearch);
   const routingStartedAt = Date.now();
   const explicitSkillId = typeof body.skillId === 'string' ? body.skillId.trim() : '';
-  const skillRoute = ports.routeSkillRequest?.(latestInstruction, explicitSkillId ? { explicitSkillId } : undefined) || {
+  const skillRoute = ports.routeSkillRequest?.(latestInstruction, {
+    ...(explicitSkillId ? { explicitSkillId } : {}),
+    requestMode: intentDecision.mode,
+  }) || {
     enabled: false,
     matched: false,
     explicit: false,

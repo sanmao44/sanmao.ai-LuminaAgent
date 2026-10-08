@@ -47,6 +47,22 @@ test('discovery resolution preserves policy while activating selected desktop to
   }
 });
 
+test('shared request mode lets role-voice questions activate the matching skill', () => {
+  for (const input of [
+    '如果鲁迅能抽上电子烟他会怎么说',
+    '鲁迅看到这张图会怎么说？',
+  ]) {
+    const requestMode = modules.intent.exports.inferAgentRequestMode(input);
+    assert.equal(requestMode, 'execute', input);
+    const route = skillRouting.routeSkillRequest(input, [luxunSkill], { requestMode });
+    assert.equal(route.matched, true, input);
+    assert.equal(route.skillId, 'luxun-voice', input);
+  }
+
+  const ordinaryQuestion = skillRouting.routeSkillRequest('今天有什么新闻？', [luxunSkill], { requestMode: 'ask' });
+  assert.equal(ordinaryQuestion.matched, false);
+});
+
 test('capability discovery is not limited to a list of application names', () => {
   for (const input of ['打开设备管理器', '打开辅助功能', '帮我启动陌生应用', '把音量调低', '查询仓库库存', '读取剪贴板']) {
     const decision = routing.classifyAgentRequest(input);
