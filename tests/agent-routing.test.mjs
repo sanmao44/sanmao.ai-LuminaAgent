@@ -26,6 +26,14 @@ const routingModule = { exports: {} };
 new Function('require', 'module', 'exports', routingCompiled)((id) => id === '@/lib/agent-intent' ? modules.intent.exports : id === '@/lib/agent-web' ? modules.web.exports : modules.information.exports, routingModule, routingModule.exports);
 const routing = routingModule.exports;
 
+const skillRoutingSource = await readFile(new URL('../packages/agent-core/skill-routing.ts', import.meta.url), 'utf8');
+const skillRoutingCompiled = ts.transpileModule(skillRoutingSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const skillRoutingModule = { exports: {} };
+new Function('require', 'module', 'exports', skillRoutingCompiled)(() => ({}), skillRoutingModule, skillRoutingModule.exports);
+const skillRouting = skillRoutingModule.exports;
+
+const luxunSkill = { id: 'luxun-voice', name: 'luxun-voice', description: '用鲁迅口吻和鲁迅风格写作', tags: ['鲁迅', '口吻', '风格', '模仿'], enabled: true };
+
 test('discovery resolution preserves policy while activating selected desktop tools', () => {
   for (const input of ['打开个性化', '打开网络设置', '打开设备管理器']) {
     const plan = routing.classifyAgentRequest(input);
@@ -118,8 +126,18 @@ test('gates MCP, skills and native web by the bounded route plan', () => {
   assert.equal(browser.tools.useBrowserMcp, true);
   assert.equal(browser.tools.useNativeWeb, false);
 
-  const skill = routing.classifyAgentRequest('按项目规范排查这个部署报错');
+  const skill = routing.classifyAgentRequest('按项目规范排查这个部署报错', {}, { skillRoute: { enabled: true, matched: true, explicit: false, confidence: 'high', skillId: 'project-debug', skillName: '项目调试', reason: 'test' } });
   assert.equal(skill.tools.useSkills, true);
+});
+
+test('技能路由按已安装技能元数据匹配自然语言，而不是依赖全局关键词', () => {
+  const route = skillRouting.routeSkillRequest('用鲁迅的口吻赞美一位女生', [luxunSkill]);
+  assert.equal(route.matched, true);
+  assert.equal(route.skillId, 'luxun-voice');
+  assert.equal(route.confidence, 'high');
+
+  const ordinaryQuestion = skillRouting.routeSkillRequest('鲁迅看到这张图会怎么说？', [luxunSkill]);
+  assert.equal(ordinaryQuestion.matched, false);
 });
 
 test('GitHub repository data questions use read-only MCP instead of chat or native web', () => {
@@ -148,7 +166,7 @@ test('explicit skill selection takes priority over automatic web search', () => 
     '用 luxun-voice 技能：秋天到了，如果鲁迅在海南，他会怎么说',
     '使用 luxun-voice 技能完成这段仿写',
   ]) {
-    const decision = routing.classifyAgentRequest(input, {}, { webMode: 'always' });
+    const decision = routing.classifyAgentRequest(input, {}, { webMode: 'always', skillRoute: { enabled: true, matched: false, explicit: true, confidence: 'high', skillId: 'luxun-voice', skillName: 'luxun-voice', reason: 'test explicit selection' } });
     assert.equal(decision.route, 'chat', input);
     assert.equal(decision.tools.useSkills, true, input);
     assert.equal(decision.needsTools, true, input);

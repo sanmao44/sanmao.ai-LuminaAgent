@@ -10,6 +10,22 @@ export type SkillRecord = {
   files?: SkillFileRecord[];
   body?: string;
 };
+
+/**
+ * 技能路由只需要公开元数据，不把技能正文带进路由层。
+ *正文仍只能通过 skill_read 渐进读取。
+ */
+export type SkillRouteCandidate = Pick<SkillRecord, 'id' | 'name' | 'description' | 'tags' | 'enabled'>;
+
+export type SkillRouteDecision = {
+  enabled: boolean;
+  matched: boolean;
+  explicit: boolean;
+  confidence: 'high' | 'medium' | 'none';
+  skillId: string;
+  skillName: string;
+  reason: string;
+};
 export type SkillContext = {
   settings: SkillSettings;
   skills: SkillRecord[];

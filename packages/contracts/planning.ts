@@ -1,4 +1,5 @@
 import type { CreativeReference } from './creative';
+import type { SkillRouteDecision } from './skill';
 export type { CreativeReference } from './creative';
 
 export type AgentDeliverable = 'IMAGE' | 'TEXT' | 'BOTH' | 'CLARIFY' | 'OTHER';
@@ -37,5 +38,6 @@ export type AgentRequestDecision = {
   information: AgentInformationDecision;
   needsTools: boolean;
   tools: AgentToolPlan;
+  skillRoute: SkillRouteDecision;
   candidates: AgentRequestCandidate[];
 };

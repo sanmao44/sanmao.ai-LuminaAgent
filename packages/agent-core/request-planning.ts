@@ -8,6 +8,7 @@ import type {
   AgentWebMode,
   CreativeReference,
 } from '../contracts/planning';
+import type { SkillRouteDecision } from '../contracts/skill';
 
 export type { AgentPlanningMessage } from '../contracts/planning';
 
@@ -17,7 +18,8 @@ export type AgentPlanningPorts = {
   agentInstructionText: (intentText: unknown, fallback: unknown) => string;
   classifyAgentDeliverable: (input: string, context?: AgentIntentContext) => AgentIntentDecision;
   isBareImageExecution: (input: string) => boolean;
-  classifyAgentRequest: (input: string, context?: AgentIntentContext, options?: { webMode?: AgentWebMode; previousAssistant?: string; intent?: AgentIntentDecision }) => AgentRequestDecision;
+  classifyAgentRequest: (input: string, context?: AgentIntentContext, options?: { webMode?: AgentWebMode; previousAssistant?: string; intent?: AgentIntentDecision; skillRoute?: SkillRouteDecision }) => AgentRequestDecision;
+  routeSkillRequest?: (input: string) => SkillRouteDecision;
   routeNeedsSemanticReview: (decision: AgentRequestDecision) => boolean;
   routeToolSummary: (decision: AgentRequestDecision) => Record<string, unknown>;
   selectAgentContextMessages: (messages: AgentPlanningMessage[], need: AgentContextNeed) => AgentPlanningMessage[];
@@ -74,11 +76,21 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     || canvasTargetExecution;
   const webMode = isCanvasNodeExecution ? 'off' : ports.resolveAgentWebMode(body.webMode, body.webSearch);
   const routingStartedAt = Date.now();
+  const skillRoute = ports.routeSkillRequest?.(latestInstruction) || {
+    enabled: false,
+    matched: false,
+    explicit: false,
+    confidence: 'none' as const,
+    skillId: '',
+    skillName: '',
+    reason: '未执行技能路由。',
+  };
   const requestRoute = ports.classifyAgentRequest(latestInstruction, {
     messages: messages.slice(0, -1),
     hasReferences: latestRefs.length > 0,
     hasFiles: Boolean(latest?.files?.length),
-  }, { webMode: isCanvasNodeExecution ? 'off' : webMode, previousAssistant: previousAssistantForRouting, intent: intentDecision });
+  }, { webMode: isCanvasNodeExecution ? 'off' : webMode, previousAssistant: previousAssistantForRouting, intent: intentDecision, skillRoute });
+  if (requestRoute.tools.useSkills && requestRoute.skillRoute.matched) requestModeAllowsExecution = true;
   // Read-only GitHub repository queries are intentionally classified from a
   // question-shaped sentence, but they still need the normal MCP discovery
   // and execution path. This does not authorize writes; the MCP approval and

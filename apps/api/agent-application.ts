@@ -511,6 +511,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         routeToolSummary,
         selectAgentContextMessages: (items, need) => selectAgentContextMessages(items, need),
         normalizeCreativeReferences,
+        routeSkillRequest: (instruction) => skillInfrastructure.routeSkillRequest(instruction, { dataDir: skillDataDir }),
       },
     });
     const { latestInstruction, previousImagePlan, batchPlanContent, intentDecision, previousAssistantForRouting, directGithubMcpRepo, webMode, requestRoute, routerMs, modelContextMessages, routeSummary, requestedDeliverable: plannedDeliverable, requestedIntentReason: plannedIntentReason } = planning;
@@ -747,6 +748,17 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       && canvasTargetKind === 'image'
       && canvasTargetOperation === 'edit'
       && Boolean(latestInstruction.trim());
+    if (canvasImageEditRequest) {
+      requestedDeliverable = 'IMAGE';
+      requestedIntentReason = '当前选中的画布图片是本轮修改目标。';
+      creativeRoute = {
+        ...creativeRoute,
+        lane: 'image',
+        operation: 'edit',
+        execution: 'run',
+        requiresReference: true,
+      };
+    }
     const imageGenerationRequest = requestModeAllowsExecution && creativeRoute.lane === 'image' && creativeRoute.execution === 'run' && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion
       && (canvasImageEditRequest
         || requestedDeliverable === 'IMAGE'
@@ -907,6 +919,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       && !isCanvasSource
       && !imageGenerationRequest;
     const skillPromptSection = skillsAvailableThisTurn ? skillContext.indexSection + skillContext.toolHint : '';
+    const forcedSkillRead = skillsAvailableThisTurn && requestRoute.skillRoute.matched && requestRoute.skillRoute.skillId
+      ? { id: `skill-read-${requestRoute.skillRoute.skillId}`, function: { name: 'skill_read', arguments: JSON.stringify({ id: requestRoute.skillRoute.skillId }) } }
+      : null;
     const canvasPatchRequest = !isCanvasNodeExecution && isCanvasSource && Boolean(canvasDocument) && !imageGenerationRequest &&
       /(?:新增|添加|修改|更新|连接|删除|移除|移动|排列|布局|对齐|复制|分组).{0,24}(?:画布|节点|选中)|(?:画布|节点|选中).{0,24}(?:新增|添加|修改|更新|连接|删除|移除|移动|排列|布局|对齐|复制|分组)/.test(latestInstruction);
     let discoveredMcpIds: string[] = [];
@@ -1571,6 +1586,10 @@ const auditMcpCall = (
         mode: requestedImageCapability,
         batchContent: batchPlanContent,
       })];
+    }
+    if (forcedSkillRead && !toolCalls.some((call: any) => call?.function?.name === 'skill_read')) {
+      toolCalls = [forcedSkillRead, ...toolCalls];
+      toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
     }
     // 模型偶尔把工具调用写成文本标记（例如 DSML、“<archive_generate …”），这一轮其实
     // 没有真的生成文件，直接返回只会让用户看到“已完成/已生成”的空话和一个残缺的“<”。

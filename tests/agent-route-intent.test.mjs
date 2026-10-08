@@ -17,6 +17,16 @@ function harness(options = {}) {
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
   const runtime = { model, provider };
+  const routedSkill = options.skill || {
+    id: 'luxun-voice',
+    name: 'luxun-voice',
+    description: '用鲁迅口吻写作',
+    tags: ['鲁迅', '口吻', '风格'],
+    enabled: true,
+    pending: false,
+    body: '保持冷峻、克制、文白夹杂的语气。',
+    files: [],
+  };
   const reply = (message) => ({ choices: [{ message }] });
   const noOp = async () => {};
   const mocks = {
@@ -121,11 +131,14 @@ function harness(options = {}) {
           },
           skills: {
             buildAgentSkillContext: skillsApi.buildAgentSkillContext,
+            routeSkillRequest: options.routeSkillRequest || ((input) => options.skillRoute
+              ? { enabled: true, matched: true, explicit: false, confidence: 'high', skillId: routedSkill.id, skillName: routedSkill.name, reason: 'test metadata match' }
+              : { enabled: false, matched: false, explicit: false, confidence: 'none', skillId: '', skillName: '', reason: 'test ordinary turn' }),
             createCapabilityPorts: (dataDir) => ({
               maxCalls: skillsApi.SKILL_TOOL_MAX_CALLS,
               maxInstalls: skillsApi.SKILL_INSTALL_MAX_PER_REQUEST,
               searchSkills: (query, skills, limit) => skillsApi.searchSkills(query, [...skills], limit),
-              readSkill: (id, options = {}) => skillsApi.readSkill(id, { ...options, dataDir }),
+              readSkill: (id, readOptions = {}) => id === routedSkill.id ? routedSkill : skillsApi.readSkill(id, { ...readOptions, dataDir }),
               readSkillFile: (id, file, options = {}) => skillsApi.readSkillFile(id, file, { ...options, dataDir }),
               recordSkillUsage: (id, options = {}) => { skillsApi.recordSkillUsage(id, { ...options, dataDir }); },
               buildSkillToolContent: (skill, file, offset) => skillsApi.buildSkillToolContent(skill, file, offset),
@@ -218,7 +231,15 @@ function harness(options = {}) {
       assessToolApproval: () => ({ required: false, blocked: false }),
       appendPageContext: (current, source, text) => `${current || ''}\n${source}: ${text}`.trim(),
     },
-    '@/lib/skills': { ...realSkills, buildAgentSkillContext: () => ({ settings: { enabled: false }, skills: [], indexSection: '', toolHint: '' }) },
+    '@/lib/skills': {
+      ...realSkills,
+      routeSkillRequest: options.routeSkillRequest || ((input) => options.skillRoute
+        ? { enabled: true, matched: true, explicit: false, confidence: 'high', skillId: routedSkill.id, skillName: routedSkill.name, reason: 'test metadata match' }
+        : { enabled: false, matched: false, explicit: false, confidence: 'none', skillId: '', skillName: '', reason: 'test ordinary turn' }),
+      buildAgentSkillContext: () => options.skillRoute
+        ? { settings: { enabled: true, autoApprove: false }, skills: [routedSkill], pending: [], indexSection: '技能：luxun-voice', toolHint: '使用 skill_read 读取技能正文。' }
+        : { settings: { enabled: false }, skills: [], indexSection: '', toolHint: '' },
+    },
     '@/lib/skill-archive': {},
     '@/lib/data-paths': { resolveLocalDataDir: () => '/unused-test-data' },
     '@/lib/image-storage': {},
@@ -250,6 +271,19 @@ test('普通问答绕过语义规划和 MCP 能力发现', async () => {
   assert.equal(agent.calls.length, 1);
   assert.equal(data.message, '已经完成。');
   assert.ok(agent.calls.every((call) => !String(call.messages?.[0]?.content || '').includes('只判断当前用户')));
+});
+
+test('自然语言命中已安装技能后会强制读取技能正文并回传真实使用记录', async () => {
+  const agent = harness({
+    skillRoute: true,
+    reply: (payload, callNumber) => callNumber === 1
+      ? { content: '先读取已匹配的技能。' }
+      : { content: '大抵是赞美的；不过赞美若太热闹，也未免像广告。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '用鲁迅的口吻赞美一位女生' }]);
+  assert.equal(data.message, '大抵是赞美的；不过赞美若太热闹，也未免像广告。');
+  assert.deepEqual(data.skills, [{ id: 'luxun-voice', name: 'luxun-voice' }]);
+  assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function?.name === 'skill_read')));
 });
 
 test('GitHub 仓库只读查询会发现并下发 MCP 工具', async () => {
@@ -382,6 +416,24 @@ test('canvas image edit target overrides vague wording and reaches the edit capa
     ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"背景换成深蓝色"}}</tool_call>' }
     : { content: '修改完成。' } });
   const data = await agent.post([{ role: 'user', content: '改一下，背景换成深蓝色', references: [{ id: 'image-1', nodeId: 'image-1', kind: 'image', name: '当前选中图片', url: 'data:image/png;base64,dGVzdA==' }] }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['image-1'], assetIds: [] },
+    canvasTarget: { nodeIds: ['image-1'], kind: 'image', operation: 'edit' },
+  });
+  assert.equal(agent.images.length, 1);
+  assert.equal(agent.images[0].mode, 'edit');
+  assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
+  assert.equal(data.images.length, 1);
+});
+
+test('canvas image edit target activates image routing for colloquial changes', async () => {
+  const agent = harness({ imageCapabilities: ['generate', 'edit'] });
+  const data = await agent.post([{
+    role: 'user',
+    content: '换个美女角色，换个色调',
+    references: [{ id: 'image-1', nodeId: 'image-1', kind: 'image', name: '当前选中图片', url: 'data:image/png;base64,dGVzdA==' }],
+  }], {
     source: 'canvas',
     executionMode: 'agent-dock',
     context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['image-1'], assetIds: [] },

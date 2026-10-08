@@ -68,11 +68,14 @@ import {
   readSkillFile,
   recordSkillUsage,
   searchSkills,
+  listSkills,
   SKILL_INSTALL_MAX_PER_REQUEST,
   SKILL_TOOL_MAX_CALLS,
   type SkillRecord as LegacySkillRecord,
 } from '@/lib/skills';
 import { fetchSkillFilesFromGithub } from '@/lib/skill-archive';
+import { routeSkillRequest as routeSkillRequestFromMetadata } from '@/packages/agent-core/skill-routing';
+import type { SkillRouteDecision } from '@/packages/contracts/skill';
 
 export type AgentCompositionRuntime = ProviderRuntime & {
   provider: Parameters<typeof chatCompletion>[0];
@@ -173,6 +176,7 @@ export type AgentApplicationInfrastructure = {
   filesystem: { persistImageBuffer: typeof persistImageBuffer; importLocalImage: typeof importLocalImage; isLocalImageRead: typeof isLocalImageRead; verifyFilesystemMove: typeof verifyFilesystemMove };
   skills: {
     buildAgentSkillContext: typeof buildAgentSkillContext;
+    routeSkillRequest: (input: string, options?: { dataDir?: string }) => SkillRouteDecision;
     createCapabilityPorts: (dataDir?: string) => SkillCapabilityPorts;
     SKILL_TOOL_MAX_CALLS: typeof SKILL_TOOL_MAX_CALLS;
     stripToolCallMarkup: typeof stripToolCallMarkup;
@@ -183,6 +187,7 @@ export type AgentApplicationInfrastructure = {
 };
 
 export function createAgentApplicationInfrastructure(): AgentApplicationInfrastructure {
+  const routeSkillRequest = (input: string, options: { dataDir?: string } = {}) => routeSkillRequestFromMetadata(input, listSkills({ dataDir: options.dataDir, pending: false }));
   const createSkillCapabilityPorts = (dataDir?: string): SkillCapabilityPorts => ({
     maxCalls: SKILL_TOOL_MAX_CALLS,
     maxInstalls: SKILL_INSTALL_MAX_PER_REQUEST,
@@ -206,7 +211,7 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
     mcp: { callMcpTool, MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime, mcpServersForTurn, listMcpServers, BROWSER_TOOL_GUIDE, TABBIT_BROWSER_TOOL_GUIDE, BROWSER_EXECUTION_LIMITS, browserExternalBlocker, browserTextNeedsContinuation, browserTextSubmissionGap, guardMcpServerCall, importBrowserArtifacts, shouldImportBrowserArtifacts, noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess, listFilesystemRoots, listFilesystemWriteRoots, recordMcpCall, summarizeMcpAuditText, runMcpManageAction, isMcpRuntimeAction, runMcpRuntimeAction, discoverMcpForRequest },
     browser: { isTabbitCliAvailable, runTabbitBrowserAction },
     filesystem: { persistImageBuffer, importLocalImage, isLocalImageRead, verifyFilesystemMove },
-    skills: { buildAgentSkillContext, createCapabilityPorts: createSkillCapabilityPorts, SKILL_TOOL_MAX_CALLS, stripToolCallMarkup },
+    skills: { buildAgentSkillContext, routeSkillRequest, createCapabilityPorts: createSkillCapabilityPorts, SKILL_TOOL_MAX_CALLS, stripToolCallMarkup },
     search: { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess },
     data: { resolveLocalDataDir },
     health: { orderAgentModelCandidates, noteAgentModelSuccess, noteAgentModelFailure },

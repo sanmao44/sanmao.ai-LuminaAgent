@@ -7,10 +7,14 @@ import ts from 'typescript';
 
 const source = await readFile(new URL('../lib/skills.ts', import.meta.url), 'utf8');
 const dataPathsSource = await readFile(new URL('../lib/data-paths.ts', import.meta.url), 'utf8');
+const skillRoutingSource = await readFile(new URL('../packages/agent-core/skill-routing.ts', import.meta.url), 'utf8');
 const dataPathsCompiled = ts.transpileModule(dataPathsSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const skillRoutingCompiled = ts.transpileModule(skillRoutingSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const dataPathsUrl = `data:text/javascript;base64,${Buffer.from(dataPathsCompiled).toString('base64')}`;
-const compiled = ts.transpileModule(source.replace("from './data-paths'", `from '${dataPathsUrl}'`), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const skillRoutingUrl = `data:text/javascript;base64,${Buffer.from(skillRoutingCompiled).toString('base64')}`;
+const compiled = ts.transpileModule(source.replace("from './data-paths'", `from '${dataPathsUrl}'`).replace("from '../packages/agent-core/skill-routing'", `from '${skillRoutingUrl}'`), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const skills = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const skillRouting = await import(`data:text/javascript;base64,${Buffer.from(skillRoutingCompiled).toString('base64')}`);
 
 async function tempStore() {
   const dir = await mkdtemp(path.join(tmpdir(), 'sanmao-skills-'));
@@ -140,6 +144,18 @@ test('Agent 技能上下文包含索引与工具说明', async () => {
     assert.equal(disabled.indexSection, '');
     assert.equal(disabled.toolHint, '');
     assert.equal(disabled.skills.length, 0);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('已安装技能通过元数据路由到自然语言请求', async () => {
+  const { store, cleanup } = await tempStore();
+  try {
+    skills.installSkill({ id: 'luxun-voice', name: 'luxun-voice', description: '用鲁迅口吻写作', tags: ['鲁迅', '口吻', '风格'], body: '正文' }, store);
+    const route = skillRouting.routeSkillRequest('用鲁迅的口吻赞美一位女生', skills.listSkills({ dataDir: store.dataDir, pending: false }));
+    assert.equal(route.matched, true);
+    assert.equal(route.skillId, 'luxun-voice');
   } finally {
     await cleanup();
   }
