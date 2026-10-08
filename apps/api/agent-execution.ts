@@ -32,6 +32,25 @@ export type CapabilityFollowupResult = {
   trace: ToolLoopTraceStep[];
 };
 
+function modelToolName(tool: unknown) {
+  if (!tool || typeof tool !== 'object') return '';
+  const functionValue = (tool as { function?: unknown }).function;
+  if (!functionValue || typeof functionValue !== 'object') return '';
+  const name = (functionValue as { name?: unknown }).name;
+  return typeof name === 'string' ? name : '';
+}
+
+function rejectedToolResult(call: ToolLoopCall): ToolLoopMessage {
+  return {
+    role: 'tool',
+    tool_call_id: String(call.id || ''),
+    content: JSON.stringify({
+      ok: false,
+      error: '本轮续轮只允许调用当前下发的工具；请不要调用文件、图片或其他未提供的工具，直接根据已有结果继续回答用户。',
+    }),
+  };
+}
+
 export type McpCapabilityFollowupOptions = {
   messages: ChatMessage[];
   contextMaxChars: number;
@@ -72,14 +91,18 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
   let artifactText = '';
   let skillToolCalls = options.skillToolCalls;
 
-  const runCalls = async (calls: ToolLoopCall[]) => {
-    const runtimeCalls = calls.filter((call): call is ToolRuntimeCall => Boolean(call?.function?.name));
-    const execution = await options.toolRuntime.executeCalls(runtimeCalls);
+  const runCalls = async (calls: ToolLoopCall[], allowedTools: readonly unknown[]) => {
+    const allowedNames = new Set(allowedTools.map(modelToolName).filter(Boolean));
+    const runtimeCalls = calls.filter((call): call is ToolRuntimeCall => Boolean(call?.function?.name) && allowedNames.has(String(call.function?.name || '')));
+    const rejectedCalls = calls.filter((call) => Boolean(call?.function?.name) && !allowedNames.has(String(call.function?.name || '')));
+    const execution = runtimeCalls.length
+      ? await options.toolRuntime.executeCalls(runtimeCalls)
+      : { results: [], deferredCalls: [], stalled: false };
     if (runtimeCalls.length && runtimeCalls.every((call) => String(call.function.name).startsWith('skill_'))) {
       skillToolCalls += runtimeCalls.length;
     }
     if (execution.deferredCalls.length) options.setDeferredCalls?.(execution.deferredCalls);
-    return execution.results;
+    return [...rejectedCalls.map(rejectedToolResult), ...execution.results];
   };
 
   if (options.skillToolCalls > 0 && options.skillTools.length && !options.hasGenerated && !options.hasGeneratedFiles && !options.hasWebSearch) {
@@ -91,7 +114,7 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
       maxSteps: 2,
       signal: options.signal,
       callModel: async ({ step, messages }) => options.callModel({ step, messages: messages as ChatMessage[], tools: [...options.skillTools] }),
-      runCalls: async (calls) => runCalls(calls),
+      runCalls: async (calls) => runCalls(calls, options.skillTools),
       shouldContinue: () => skillToolCalls < SKILL_TOOL_MAX_CALLS,
       finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
     });
@@ -108,7 +131,7 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
       maxSteps: 2,
       signal: options.signal,
       callModel: async ({ step, messages }) => options.callModel({ step, messages: messages as ChatMessage[], tools: [...options.artifactTools] }),
-      runCalls: async (calls) => runCalls(calls),
+      runCalls: async (calls) => runCalls(calls, options.artifactTools),
       orderCalls: (calls) => [...calls].sort((left, right) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right))),
       finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
     });

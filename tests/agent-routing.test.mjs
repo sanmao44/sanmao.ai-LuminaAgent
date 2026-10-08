@@ -140,6 +140,13 @@ test('技能路由按已安装技能元数据匹配自然语言，而不是依�
   assert.equal(ordinaryQuestion.matched, false);
 });
 
+test('结构化技能选择优先于可见文本，不依赖前缀正则', () => {
+  const route = skillRouting.routeSkillRequest('写段离职申请', [luxunSkill], { explicitSkillId: 'luxun-voice' });
+  assert.equal(route.matched, true);
+  assert.equal(route.explicit, true);
+  assert.equal(route.skillId, 'luxun-voice');
+});
+
 test('GitHub repository data questions use read-only MCP instead of chat or native web', () => {
   for (const input of [
     '我的 GitHub 仓库有几个项目',

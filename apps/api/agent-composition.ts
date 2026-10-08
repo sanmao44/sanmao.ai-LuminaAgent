@@ -75,7 +75,7 @@ import {
 } from '@/lib/skills';
 import { fetchSkillFilesFromGithub } from '@/lib/skill-archive';
 import { routeSkillRequest as routeSkillRequestFromMetadata } from '@/packages/agent-core/skill-routing';
-import type { SkillRouteDecision } from '@/packages/contracts/skill';
+import type { SkillRouteDecision, SkillRouteOptions } from '@/packages/contracts/skill';
 
 export type AgentCompositionRuntime = ProviderRuntime & {
   provider: Parameters<typeof chatCompletion>[0];
@@ -176,7 +176,7 @@ export type AgentApplicationInfrastructure = {
   filesystem: { persistImageBuffer: typeof persistImageBuffer; importLocalImage: typeof importLocalImage; isLocalImageRead: typeof isLocalImageRead; verifyFilesystemMove: typeof verifyFilesystemMove };
   skills: {
     buildAgentSkillContext: typeof buildAgentSkillContext;
-    routeSkillRequest: (input: string, options?: { dataDir?: string }) => SkillRouteDecision;
+    routeSkillRequest: (input: string, options?: { dataDir?: string; explicitSkillId?: string }) => SkillRouteDecision;
     createCapabilityPorts: (dataDir?: string) => SkillCapabilityPorts;
     SKILL_TOOL_MAX_CALLS: typeof SKILL_TOOL_MAX_CALLS;
     stripToolCallMarkup: typeof stripToolCallMarkup;
@@ -187,7 +187,10 @@ export type AgentApplicationInfrastructure = {
 };
 
 export function createAgentApplicationInfrastructure(): AgentApplicationInfrastructure {
-  const routeSkillRequest = (input: string, options: { dataDir?: string } = {}) => routeSkillRequestFromMetadata(input, listSkills({ dataDir: options.dataDir, pending: false }));
+  const routeSkillRequest = (input: string, options: { dataDir?: string; explicitSkillId?: string } = {}) => {
+    const routeOptions: SkillRouteOptions = options.explicitSkillId ? { explicitSkillId: options.explicitSkillId } : {};
+    return routeSkillRequestFromMetadata(input, listSkills({ dataDir: options.dataDir, pending: false }), routeOptions);
+  };
   const createSkillCapabilityPorts = (dataDir?: string): SkillCapabilityPorts => ({
     maxCalls: SKILL_TOOL_MAX_CALLS,
     maxInstalls: SKILL_INSTALL_MAX_PER_REQUEST,

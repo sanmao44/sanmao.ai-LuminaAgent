@@ -19,6 +19,11 @@ const fail = (call: ToolCall, error: string): ChatMessage => ({
   content: JSON.stringify({ ok: false, error }),
 });
 
+function isRootSkillDocumentPath(value: string) {
+  const normalized = value.replace(/\\/g, '/').trim().toLowerCase();
+  return normalized === 'skill.md' || normalized === './skill.md';
+}
+
 export async function executeSkillCapability(input: SkillCapabilityInput): Promise<ChatMessage> {
   const { state, call, skillContext, signal, installer, skillPorts } = input;
   if (!skillPorts) return fail(call, '技能运行时未配置。');
@@ -45,7 +50,11 @@ export async function executeSkillCapability(input: SkillCapabilityInput): Promi
         return fail(call, waiting ? `技能“${waiting.name}”还在等待用户确认，确认后才能使用。` : '技能不存在或尚未启用。');
       }
       if (!skill.enabled) return fail(call, `技能“${skill.name}”当前未启用。`);
-      const filePath = typeof args.file === 'string' ? args.file.trim() : '';
+      const requestedFilePath = typeof args.file === 'string' ? args.file.trim() : '';
+      // SKILL.md is the canonical document, not an attachment. Some models
+      // spell out the document name after reading the skill index; normalize
+      // only the root-level canonical path and keep nested paths blocked.
+      const filePath = requestedFilePath && !isRootSkillDocumentPath(requestedFilePath) ? requestedFilePath : '';
       const offsetValue = Math.trunc(Number(args.offset));
       const offset = Number.isFinite(offsetValue) && offsetValue > 0 ? offsetValue : 0;
       const file = filePath ? skillPorts.readSkillFile(skill.id, filePath, { pending: false, offset }) : null;

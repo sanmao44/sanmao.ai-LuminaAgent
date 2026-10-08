@@ -474,9 +474,13 @@ test('Skill capability uses injected ports for search, read and install', async 
   const read = await executeSkillCapability({ state, call: { id: 'read-1', function: { name: 'skill_read' } }, args: { id: 'demo' }, skillContext: context, skillPorts: ports, signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
   assert.equal(JSON.parse(read.content).content, 'instructions');
   assert.deepEqual(calls, [['usage', 'demo']]);
+  const canonicalDocument = await executeSkillCapability({ state, call: { id: 'read-2', function: { name: 'skill_read' } }, args: { id: 'demo', file: 'SKILL.md' }, skillContext: context, skillPorts: ports, signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
+  assert.equal(JSON.parse(canonicalDocument.content).content, 'instructions', '根级 SKILL.md 应读取技能正文，不应当作附件');
+  const nestedDocument = await executeSkillCapability({ state, call: { id: 'read-3', function: { name: 'skill_read' } }, args: { id: 'demo', file: 'references/SKILL.md' }, skillContext: context, skillPorts: ports, signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
+  assert.match(JSON.parse(nestedDocument.content).error, /没有这个附件/);
   const installed = await executeSkillCapability({ state, call: { id: 'install-1', function: { name: 'skill_install' } }, args: { name: 'New skill', body: 'new instructions' }, skillContext: context, skillPorts: ports, signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
   assert.equal(JSON.parse(installed.content).id, 'installed');
-  assert.equal(state.skillToolCalls, 3);
+  assert.equal(state.skillToolCalls, 5);
   assert.equal(state.skillInstalls, 1);
 });
 

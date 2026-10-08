@@ -83,6 +83,38 @@ test('Agent execution boundary owns bounded skill and artifact follow-ups', asyn
   assert.equal(result.trace.length, 2);
 });
 
+test('Skill follow-up rejects a tool that was not offered without executing it', async () => {
+  const { runCapabilityFollowups } = load('./apps/api/agent-execution');
+  const executed = [];
+  const toolRuntime = {
+    async runLoop(options) {
+      const reply = await options.callModel({ step: 0, messages: options.messages });
+      const requested = Array.isArray(reply?.tool_calls) ? reply.tool_calls : [];
+      const results = await options.runCalls(requested, { step: 0 });
+      assert.match(String(results[0]?.content || ''), /只允许调用当前下发的工具/);
+      return { text: '根据技能正文完成回答。', trace: [{ step: 0, calls: ['file_generate'], durationMs: 1, continued: false }] };
+    },
+    async executeCalls(calls) { executed.push(...calls); return { results: [], deferredCalls: [], stalled: false }; },
+  };
+  const result = await runCapabilityFollowups({
+    messages: [{ role: 'user', content: '写段离职申请' }],
+    contextMaxChars: 4000,
+    signal: new AbortController().signal,
+    toolRuntime,
+    callModel: async () => ({ tool_calls: [{ id: 'file-1', function: { name: 'file_generate', arguments: '{}' } }] }),
+    skillTools: [{ function: { name: 'skill_read' } }],
+    artifactTools: [],
+    skillToolCalls: 1,
+    artifactRequested: false,
+    initialToolCalls: [{ id: 'skill-1', function: { name: 'skill_read' } }],
+    hasGenerated: false,
+    hasGeneratedFiles: false,
+    hasWebSearch: false,
+  });
+  assert.equal(result.skillText, '根据技能正文完成回答。');
+  assert.deepEqual(executed, []);
+});
+
 test('Agent execution boundary owns MCP continuation lifecycle', async () => {
   const { runMcpCapabilityFollowup } = load('./apps/api/agent-execution');
   const calls = [];

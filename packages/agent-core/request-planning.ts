@@ -8,7 +8,7 @@ import type {
   AgentWebMode,
   CreativeReference,
 } from '../contracts/planning';
-import type { SkillRouteDecision } from '../contracts/skill';
+import type { SkillRouteDecision, SkillRouteOptions } from '../contracts/skill';
 
 export type { AgentPlanningMessage } from '../contracts/planning';
 
@@ -19,7 +19,7 @@ export type AgentPlanningPorts = {
   classifyAgentDeliverable: (input: string, context?: AgentIntentContext) => AgentIntentDecision;
   isBareImageExecution: (input: string) => boolean;
   classifyAgentRequest: (input: string, context?: AgentIntentContext, options?: { webMode?: AgentWebMode; previousAssistant?: string; intent?: AgentIntentDecision; skillRoute?: SkillRouteDecision }) => AgentRequestDecision;
-  routeSkillRequest?: (input: string) => SkillRouteDecision;
+  routeSkillRequest?: (input: string, options?: SkillRouteOptions) => SkillRouteDecision;
   routeNeedsSemanticReview: (decision: AgentRequestDecision) => boolean;
   routeToolSummary: (decision: AgentRequestDecision) => Record<string, unknown>;
   selectAgentContextMessages: (messages: AgentPlanningMessage[], need: AgentContextNeed) => AgentPlanningMessage[];
@@ -76,7 +76,8 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     || canvasTargetExecution;
   const webMode = isCanvasNodeExecution ? 'off' : ports.resolveAgentWebMode(body.webMode, body.webSearch);
   const routingStartedAt = Date.now();
-  const skillRoute = ports.routeSkillRequest?.(latestInstruction) || {
+  const explicitSkillId = typeof body.skillId === 'string' ? body.skillId.trim() : '';
+  const skillRoute = ports.routeSkillRequest?.(latestInstruction, explicitSkillId ? { explicitSkillId } : undefined) || {
     enabled: false,
     matched: false,
     explicit: false,

@@ -52,6 +52,8 @@ export type AgentRequestPayload = {
   intentReason?: string;
   /** 用户原话。画布等调用方会把系统上下文拼进 messages，意图判断只认这段文字。 */
   intentText?: string;
+  /** 技能选择器的结构化选择；服务端优先按已启用技能 ID 路由。 */
+  skillId?: string;
   /** Shared creative routing decision shown by the composer and rechecked server-side. */
   creativeRoute?: CreativeRoute;
   /** 长任务进度 id：服务端按它记录阶段快照，前端轮询 /api/agent/progress 读取。 */

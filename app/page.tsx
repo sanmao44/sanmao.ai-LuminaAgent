@@ -2529,6 +2529,7 @@ export default function Page() {
     const [agentSkillQuery, setAgentSkillQuery] = useState('');
     const [agentSkillActive, setAgentSkillActive] = useState(0);
     const [agentSkills, setAgentSkills] = useState([]);
+    const [agentSkillId, setAgentSkillId] = useState('');
     const agentSkillMenuFromSlashRef = useRef(false);
     const chatAutoFollowRef = useRef(false);
     const chatScrollAfterCommitRef = useRef(false);
@@ -6001,6 +6002,7 @@ export default function Page() {
         setMessages([]);
         setAgentRefs([]);
         setAgentFiles([]);
+        setAgentSkillId('');
         setAgentInput('');
         setAgentInputBeforeOptimization(null);
         setAgentFollowUp(null);
@@ -6017,6 +6019,7 @@ export default function Page() {
         setMessages(pendingChatMessagesRef.current.get(session.id) || normalized.messages);
         setAgentRefs([]);
         setAgentFiles([]);
+        setAgentSkillId('');
         setAgentInput('');
         setAgentInputBeforeOptimization(null);
         setAgentFollowUp(null);
@@ -6460,6 +6463,7 @@ export default function Page() {
     }
     async function sendAgent(text = agentInput, task, overrideRefs, deliverableOverride, durationSeconds) {
         closeAgentSkillMenu();
+        const explicitSkillId = agentSkillId.trim();
         if (agentMessageSelectionMode) return notify('请先完成或取消删除选择');
         if (shareSelectionMode) return notify('请先完成或取消分享选择');
         const rawContent = text.trim();
@@ -6553,6 +6557,7 @@ export default function Page() {
         ]);
         requestChatScrollAfterCommit();
         setAgentInput('');
+        setAgentSkillId('');
         setAgentInputBeforeOptimization(null);
         setAgentRefs([]);
         setAgentFiles([]);
@@ -6662,6 +6667,7 @@ export default function Page() {
                     webSearch: agentWebMode !== 'off',
                     deliverable: selectedDeliverable,
                     intentReason: requestIntent.reason,
+                    ...(explicitSkillId ? { skillId: explicitSkillId } : {}),
                     creativeRoute,
                     runId: progressRunId
                 }, {
@@ -6879,6 +6885,7 @@ export default function Page() {
     }
     function applyAgentSkill(skill) {
         setAgentInput(skillMessageValue(agentInput, skill.name));
+        setAgentSkillId(skill.id);
         setAgentInputBeforeOptimization(null);
         closeAgentSkillMenu();
         window.setTimeout(()=>focusContentEditableToEnd(agentInputRef.current), 0);
@@ -8363,6 +8370,7 @@ export default function Page() {
                                                     title: "清空输入内容",
                                                     onClick: ()=>{
                                                         setAgentInput('');
+                                                        setAgentSkillId('');
                                                         setAgentInputBeforeOptimization(null);
                                                     },
                                                     children: "清空"

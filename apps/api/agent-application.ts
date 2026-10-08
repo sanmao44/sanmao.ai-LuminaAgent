@@ -511,7 +511,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         routeToolSummary,
         selectAgentContextMessages: (items, need) => selectAgentContextMessages(items, need),
         normalizeCreativeReferences,
-        routeSkillRequest: (instruction) => skillInfrastructure.routeSkillRequest(instruction, { dataDir: skillDataDir }),
+        routeSkillRequest: (instruction, options) => skillInfrastructure.routeSkillRequest(instruction, { dataDir: skillDataDir, explicitSkillId: options?.explicitSkillId }),
       },
     });
     const { latestInstruction, previousImagePlan, batchPlanContent, intentDecision, previousAssistantForRouting, directGithubMcpRepo, webMode, requestRoute, routerMs, modelContextMessages, routeSummary, requestedDeliverable: plannedDeliverable, requestedIntentReason: plannedIntentReason } = planning;
@@ -1572,9 +1572,16 @@ const auditMcpCall = (
     const inlineToolCalls = rawToolCalls.length ? [] : parseInlineToolCalls(messageContent, callableTools);
     let toolCallMessage = message;
     const blockedImageToolCall = !imageToolsAllowed && rawToolCalls.some(isImageToolCall);
+    const offeredToolNames = new Set(callableTools.map((tool) => tool.function.name).filter(Boolean));
+    const blockedUnlistedToolCall = rawToolCalls.some((call: any) => {
+      const name = String(call?.function?.name || '');
+      return Boolean(name) && !offeredToolNames.has(name) && !getToolDefinition(name)?.acceptUnlisted;
+    });
     // Some upstream models still emit a tool call that was not offered. Strip
     // image calls before any execution or follow-up request reaches the model.
-    let toolCalls = imageToolsAllowed ? rawToolCalls : rawToolCalls.filter((call: any) => !isImageToolCall(call));
+    let toolCalls = rawToolCalls
+      .filter((call: any) => offeredToolNames.has(String(call?.function?.name || '')) || Boolean(getToolDefinition(call?.function?.name)?.acceptUnlisted))
+      .filter((call: any) => imageToolsAllowed || !isImageToolCall(call));
     if (inlineToolCalls.length) {
       toolCalls = inlineToolCalls.slice(0, 1);
       toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
@@ -1590,6 +1597,9 @@ const auditMcpCall = (
     if (forcedSkillRead && !toolCalls.some((call: any) => call?.function?.name === 'skill_read')) {
       toolCalls = [forcedSkillRead, ...toolCalls];
       toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
+    }
+    if (!inlineToolCalls.length && !forcedSkillRead && toolCalls.length !== rawToolCalls.length) {
+      toolCallMessage = { ...message, content: toolCalls.length ? null : message?.content || null, tool_calls: toolCalls };
     }
     // 模型偶尔把工具调用写成文本标记（例如 DSML、“<archive_generate …”），这一轮其实
     // 没有真的生成文件，直接返回只会让用户看到“已完成/已生成”的空话和一个残缺的“<”。
@@ -1615,9 +1625,11 @@ const auditMcpCall = (
       let plainMessage = typeof message?.content === 'string' ? message.content : '';
       // If the model returned only an invalid image call, ask it once more for
       // the requested text answer instead of showing an empty/generic reply.
-      if (!plainMessage && blockedImageToolCall) {
+      if (!plainMessage && (blockedImageToolCall || blockedUnlistedToolCall) && !forcedSkillRead) {
         const textOnlyMessages: ChatMessage[] = [
-          { role: 'system', content: '本轮只需要文字回答。图片工具调用已被拦截，请直接根据用户提供的参考图回答用户问题，不要生成、修改或返回图片。' },
+          { role: 'system', content: blockedImageToolCall
+            ? '本轮只需要文字回答。图片工具调用已被拦截，请直接根据用户提供的参考图回答用户问题，不要生成、修改或返回图片。'
+            : '本轮没有下发模型刚才请求的工具。请不要继续调用未提供的文件、图片或其他工具，直接用文字回答用户当前请求。' },
           ...llmMessages,
         ];
         if (wantsStream) {
@@ -1641,7 +1653,7 @@ const auditMcpCall = (
         toolCalls = fallbackInlineToolCalls.slice(0, 1);
         toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
       }
-      if (!toolCalls.length && (filesystemActionRequest || browserAutomationRequest || mcpExecutionRequest || hasInlineToolCallMarkup(plainMessage) || !cleanedMessage) && callableTools.length) {
+      if (!toolCalls.length && !blockedUnlistedToolCall && (filesystemActionRequest || browserAutomationRequest || mcpExecutionRequest || hasInlineToolCallMarkup(plainMessage) || !cleanedMessage) && callableTools.length) {
         try {
           const retry = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
             messages: [...llmMessages, { role: 'user', content: '刚才的工具调用被写成了普通文字，没有执行。请使用当前提供的原生工具调用完成用户命令，不要输出 to=functions...、<function=...> 或其他工具调用文本标记。' }],

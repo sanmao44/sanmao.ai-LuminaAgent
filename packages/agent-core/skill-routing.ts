@@ -1,4 +1,4 @@
-import type { SkillRouteCandidate, SkillRouteDecision } from '../contracts/skill';
+import type { SkillRouteCandidate, SkillRouteDecision, SkillRouteOptions } from '../contracts/skill';
 
 const EXPLICIT_SKILL_PATTERN = /(?:^|\s)(?:用|使用|请用|请使用)\s*(?:「([^「」\n]{1,80})」|([^\s，。！？!?：:]{1,80}))\s*技能\s*[:：]?/i;
 const QUESTION_PATTERN = /(?:为什么|怎么|如何|什么是|是否|能不能|可以吗|吗[？?]?$|[？?]$)/i;
@@ -61,11 +61,19 @@ function none(reason: string, explicit = false): SkillRouteDecision {
  * meaningful metadata hit and an execution-shaped request; a bare question
  * such as “鲁迅会怎么说” therefore does not silently activate a skill.
  */
-export function routeSkillRequest(input: string, candidates: readonly SkillRouteCandidate[]): SkillRouteDecision {
+export function routeSkillRequest(input: string, candidates: readonly SkillRouteCandidate[], options: SkillRouteOptions = {}): SkillRouteDecision {
   const text = clean(input);
-  if (!text) return none('请求为空。');
   const available = candidates.filter((candidate) => candidate.enabled !== false);
   if (!available.length) return none('没有已启用的技能。');
+
+  const explicitSkillId = clean(options.explicitSkillId);
+  if (explicitSkillId) {
+    const exact = available.find((candidate) => clean(candidate.id) === explicitSkillId);
+    if (exact) return { enabled: true, matched: true, explicit: true, confidence: 'high', skillId: exact.id, skillName: exact.name, reason: `用户通过技能选择器指定了“${exact.name}”。` };
+    return { enabled: true, matched: false, explicit: true, confidence: 'high', skillId: explicitSkillId, skillName: explicitSkillId, reason: `用户选择的技能“${explicitSkillId}”当前不可用，交由技能工具进一步解析。` };
+  }
+
+  if (!text) return none('请求为空。');
 
   const explicit = explicitSkillName(input);
   if (explicit) {

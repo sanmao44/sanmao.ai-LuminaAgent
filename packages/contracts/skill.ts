@@ -26,6 +26,10 @@ export type SkillRouteDecision = {
   skillName: string;
   reason: string;
 };
+export type SkillRouteOptions = {
+  /** Structured picker selection. This takes precedence over message text. */
+  explicitSkillId?: string;
+};
 export type SkillContext = {
   settings: SkillSettings;
   skills: SkillRecord[];
