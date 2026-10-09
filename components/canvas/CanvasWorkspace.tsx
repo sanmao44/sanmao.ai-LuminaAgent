@@ -11435,7 +11435,7 @@ export default function SuperCanvas() {
         updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === output.id ? { ...node, data: { ...node.data, status: "running" as const, progress: progress.progress, statusLabel: progress.message } } : node) }));
       }, Number.isFinite(knownDurationMs) && knownDurationMs > 0 ? knownDurationMs / 1000 : undefined, { quality: depthQuality });
       updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === output.id ? { ...node, data: { ...node.data, url: asset.url, name: asset.name || `${String(source.data.name || "视频")} · 深度图`, status: "completed" as const, statusLabel: "深度图已完成", nativeWidth: source.data.nativeWidth, nativeHeight: source.data.nativeHeight, depthVideo: { ...node.data.depthVideo, fps: asset.fps, frameCount: asset.frameCount, completedAt: Date.now() } } } : node) }));
-      notify("深度图视频已生成");
+      notify(asset.inferenceMode === "fallback" ? "深度图视频已生成（本地兼容模式）" : "深度图视频已生成");
       addLog("视频深度图生成完成");
     } catch (error) {
       const message = error instanceof Error ? error.message : "深度图生成失败";

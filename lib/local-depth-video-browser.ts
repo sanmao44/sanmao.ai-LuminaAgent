@@ -3,6 +3,7 @@
 import { zipSync } from "fflate";
 import { encodeCanvasDepthVideoFrameSequence, probeCanvasVideoFrameRate, uploadCanvasAsset } from "./canvas/api";
 import { depthQualityProfile, type DepthQuality, type DepthQualityProfile } from "./canvas/depth-settings";
+import { applyFallbackDepthPixels } from "./canvas/depth-fallback";
 
 export type LocalDepthVideoProgress = {
   phase: "loading" | "processing" | "encoding";
@@ -21,9 +22,28 @@ export type LocalDepthVideoOptions = {
 
 type DepthPipeline = ((image: unknown) => Promise<{ depth: { toCanvas: () => HTMLCanvasElement } }>) & {
   dispose?: () => Promise<void>;
+  mode?: "model" | "fallback";
 };
 
 let pipelinePromise: Promise<DepthPipeline> | null = null;
+
+function createFallbackPipeline(): DepthPipeline {
+  const fallback: DepthPipeline = async (image: unknown) => {
+    if (!(image instanceof HTMLCanvasElement)) throw new Error("Invalid depth input");
+    const depthCanvas = document.createElement("canvas");
+    depthCanvas.width = image.width;
+    depthCanvas.height = image.height;
+    const context = depthCanvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("Depth processing is unavailable in this browser");
+    context.drawImage(image, 0, 0);
+    const frame = context.getImageData(0, 0, image.width, image.height);
+    applyFallbackDepthPixels(frame.data);
+    context.putImageData(frame, 0, 0);
+    return { depth: { toCanvas: () => depthCanvas } };
+  };
+  fallback.mode = "fallback";
+  return fallback;
+}
 
 function emitProgress(onProgress: ((progress: LocalDepthVideoProgress) => void) | undefined, value: LocalDepthVideoProgress) {
   onProgress?.({ ...value, progress: Math.max(0, Math.min(100, value.progress)) });
@@ -40,7 +60,7 @@ async function loadPipeline(onProgress?: (progress: LocalDepthVideoProgress) => 
       env.cacheKey = CACHE_NAME;
       const device = typeof navigator !== "undefined" && "gpu" in navigator ? "webgpu" : "wasm";
       try {
-        return await transformers.pipeline("depth-estimation", MODEL_ID, {
+        const loaded = await transformers.pipeline("depth-estimation", MODEL_ID, {
           device,
           dtype: device === "webgpu" ? "fp16" : "q8",
           progress_callback: (info: unknown) => {
@@ -49,17 +69,28 @@ async function loadPipeline(onProgress?: (progress: LocalDepthVideoProgress) => 
             }
           },
         }) as unknown as DepthPipeline;
+        loaded.mode = "model";
+        return loaded;
       } catch (error) {
-        if (device !== "webgpu") throw error;
-        return await transformers.pipeline("depth-estimation", MODEL_ID, {
-          device: "wasm",
-          dtype: "q8",
-          progress_callback: (info: unknown) => {
-            if (info && typeof info === "object" && "progress" in info) {
-              emitProgress(onProgress, { phase: "loading", progress: Number((info as { progress?: number }).progress) || 0, message: "正在准备 CPU 模型…" });
-            }
-          },
-        }) as unknown as DepthPipeline;
+        if (device === "webgpu") {
+          try {
+            const loaded = await transformers.pipeline("depth-estimation", MODEL_ID, {
+              device: "wasm",
+              dtype: "q8",
+              progress_callback: (info: unknown) => {
+                if (info && typeof info === "object" && "progress" in info) {
+                  emitProgress(onProgress, { phase: "loading", progress: Number((info as { progress?: number }).progress) || 0, message: "正在准备 CPU 模型…" });
+                }
+              },
+            }) as unknown as DepthPipeline;
+            loaded.mode = "model";
+            return loaded;
+          } catch {
+            // Fall through to the browser-only compatibility path below.
+          }
+        }
+        emitProgress(onProgress, { phase: "loading", progress: 8, message: "深度模型不可达，正在切换本地兼容模式" });
+        return createFallbackPipeline();
       }
     })();
     pipelinePromise.catch(() => { pipelinePromise = null; });
@@ -166,7 +197,7 @@ export async function generateLocalDepthVideo(
     frames.length,
   );
   const asset = await uploadCanvasAsset(new File([mp4Blob], `${base}-depth.mp4`, { type: "video/mp4" }));
-  return { ...asset, fps, frameCount };
+  return { ...asset, fps, frameCount, inferenceMode: estimator.mode || "model" };
 }
 
 export function localDepthModelInfo() {
