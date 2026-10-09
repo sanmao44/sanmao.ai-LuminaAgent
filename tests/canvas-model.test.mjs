@@ -278,6 +278,25 @@ test('recovers interrupted local canvas work while preserving remote video tasks
   assert.equal(result.document.nodes.find((node) => node.id === 'video-1').data.status, 'running');
 });
 
+test('recovers a browser depth video with a depth-specific retry state', () => {
+  const document = model.normalizeDocument({
+    nodes: [
+      { id: 'source-video', type: 'media', x: 0, y: 0, data: { kind: 'video', url: '/source.mp4', status: 'completed' } },
+      { id: 'depth-video', type: 'media', x: 200, y: 0, data: { kind: 'video', status: 'running', processingStartedAt: 99, depthVideo: { sourceNodeId: 'source-video', mode: 'grayscale', startedAt: 99 } } },
+    ],
+    edges: [{ id: 'source-to-depth', source: 'source-video', target: 'depth-video', kind: 'manual' }],
+  });
+
+  const result = model.recoverInterruptedCanvasDocument(document, 123);
+  const depth = result.document.nodes.find((node) => node.id === 'depth-video');
+  assert.equal(result.recoveredCount, 1);
+  assert.equal(depth.data.status, 'failed');
+  assert.equal(depth.data.statusLabel, '上次本机深度图处理被页面中断，请从原视频节点重新生成');
+  assert.equal(depth.data.processingStartedAt, undefined);
+  assert.equal(depth.data.depthVideo.sourceNodeId, 'source-video');
+  assert.equal(result.document.nodes.find((node) => node.id === 'source-video').data.status, 'completed');
+});
+
 test('hydrates legacy video media params from generation params', () => {
   const result = model.normalizeDocument({
     nodes: [

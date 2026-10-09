@@ -38,6 +38,14 @@ const imageActionPattern = /(?:画(?!面|布|板|框|纸|册|廊)|绘制|描绘|
 const imageBatchPattern = /(?:套图|详情图|商品详情(?:页)?图|批量生图|批量出图|一套图|一组图|系列图|多张图|多张图片|组图|batch)/i;
 const imageTargetPattern = /(?:图片|图像|画面|海报|封面图|封面|插画|插图|漫画|头像|壁纸|表情包|图标|logo|banner|配图|信息图|概念图|效果图|宣传图|广告图|主视觉|场景图|吉祥物|IP形象|设计稿|设计图|mascot|image|picture|poster|cover|illustration|avatar|wallpaper|icon)/i;
 const imageEditPattern = /(?:修改|调整|改一下|改成|改为|换成|替换为|替换|变成|变为|变作|重绘|重制|修图|换背景|去掉|加上|增加|减少|保持主体|延续|继续|再来|更高级|更年轻|更简洁|优化构图|强化光线|调整色彩)/i;
+/*
+ * Colloquial visual edits often omit the verb-object grammar used by the
+ * formal commands above: “换个美女角色，换个色调”. Keep this as one shared
+ * speech-act rule so the Canvas dock and the server choose the same image
+ * capability. Requiring a visual target avoids treating a bare “换个” as an
+ * edit request.
+ */
+const colloquialImageEditPattern = /(?:换(?:个|一个|一位|一套)|改(?:个|一个)|换用)[^，。！？?!]{0,20}(?:角色|人物|主体|色调|色彩|颜色|配色|风格|背景|构图|姿势|动作|服装|衣服|发型|场景|镜头|光线|氛围|材质|布局)/i;
 const textArtifactPattern = /(?:文案|标题|正文|文章|脚本|口播|广告语|宣传语|配文|简介|描述|提示词|prompt|代码|程序|报告|方案|清单|表格|摘要|总结|翻译|邮件|回复|文字|方向|创意|灵感|思路|markdown|json|csv|html|css)/i;
 // Office / 可下载文档类交付物。出现这些词时用户要的是一份文档，而不是一张图：
 // 「做一个 word 简历模板」这类说法会命中下面的“做一个…”弱信号，必须让文档交付优先。
@@ -139,7 +147,8 @@ function clean(value: unknown) {
 
 /** Shared visual-edit signal for UI routing and server capability selection. */
 export function isImageEditRequest(input: string) {
-  return imageEditPattern.test(clean(input));
+  const text = clean(input);
+  return imageEditPattern.test(text) || colloquialImageEditPattern.test(text);
 }
 
 function latestMessageWithImages(messages: AgentIntentMessage[]) {
@@ -350,9 +359,16 @@ export function parseSemanticIntent(content: unknown): AgentIntentDecision | nul
     const parsed = JSON.parse(content.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')) as Record<string, unknown>;
     if (!['IMAGE', 'TEXT', 'BOTH', 'CLARIFY', 'OTHER'].includes(String(parsed.deliverable))) return null;
     if (parsed.confidence !== 'high') return null;
-    const mode = ['execute', 'ask', 'discuss', 'follow_up', 'unknown'].includes(String(parsed.mode))
-      ? String(parsed.mode) as AgentRequestMode
-      : (parsed.deliverable === 'OTHER' || parsed.deliverable === 'CLARIFY' ? 'unknown' : 'execute');
+    // A missing mode is tolerated for backwards-compatible classifier output,
+    // but an explicitly invalid mode is rejected. Never turn malformed model
+    // output into an execution authorization.
+    const rawMode = parsed.mode;
+    const mode = rawMode === undefined
+      ? (parsed.deliverable === 'OTHER' || parsed.deliverable === 'CLARIFY' ? 'unknown' : 'execute')
+      : ['execute', 'ask', 'discuss', 'follow_up', 'unknown'].includes(String(rawMode))
+        ? String(rawMode) as AgentRequestMode
+        : null;
+    if (!mode) return null;
     return result(parsed.deliverable as AgentDeliverable, String(parsed.reason || '结合当前对话理解用户要求。').slice(0, 240), 'high', ['上下文语义判断'], mode);
   } catch { return null; }
 }

@@ -3,6 +3,7 @@
 import type { AssetRecord } from "@/lib/assets";
 import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
 import type { CanvasConnectionStyle, CanvasDocument } from "@/lib/canvas/types";
+import type { DepthQuality } from "@/lib/canvas/depth-settings";
 import type { GenerationLog } from "@/lib/generation-log";
 import CanvasActivityDrawer from "@/components/canvas/CanvasActivityDrawer";
 import CanvasAssetDrawer from "@/components/canvas/CanvasAssetDrawer";
@@ -21,6 +22,7 @@ export type CanvasPanelLayerProps = {
   generationLogsLoading: boolean;
   theme: "light" | "dark";
   connectionStyle: CanvasConnectionStyle;
+  depthQuality: DepthQuality;
   activityPanelScrollTop: number | null;
   onCollectionSelectionChange: (collectionId: string) => void;
   onAddAsset: (asset: AssetRecord) => void;
@@ -37,6 +39,7 @@ export type CanvasPanelLayerProps = {
   onOpenAssetWorkbench: () => void;
   onTheme: () => void;
   onConnectionStyleChange: (value: CanvasConnectionStyle) => void;
+  onDepthQualityChange: (value: DepthQuality) => void;
   onExportWorkflow: () => void;
   onImportWorkflow: () => void;
 };
@@ -54,6 +57,7 @@ export default function CanvasPanelLayer({
   generationLogsLoading,
   theme,
   connectionStyle,
+  depthQuality,
   activityPanelScrollTop,
   onCollectionSelectionChange,
   onAddAsset,
@@ -70,6 +74,7 @@ export default function CanvasPanelLayer({
   onOpenAssetWorkbench,
   onTheme,
   onConnectionStyleChange,
+  onDepthQualityChange,
   onExportWorkflow,
   onImportWorkflow,
 }: CanvasPanelLayerProps) {
@@ -116,8 +121,10 @@ export default function CanvasPanelLayer({
       <CanvasSettingsPanel
         theme={theme}
         connectionStyle={connectionStyle}
+        depthQuality={depthQuality}
         onTheme={onTheme}
         onConnectionStyleChange={onConnectionStyleChange}
+        onDepthQualityChange={onDepthQualityChange}
         onExportWorkflow={onExportWorkflow}
         onImportWorkflow={onImportWorkflow}
         onClose={onClose}

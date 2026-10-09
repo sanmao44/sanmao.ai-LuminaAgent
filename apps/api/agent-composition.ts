@@ -25,6 +25,7 @@ import {
   getRuntimeImageModelForCapability,
   getRuntimeModel,
   getRuntimeModelCandidates,
+  getRuntimeIntentClassifierModel,
 } from '@/lib/store';
 import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { getProviderPreset } from '@/lib/provider-presets';
@@ -132,6 +133,7 @@ export type AgentApplicationInfrastructure = {
     getRuntimeImageModelForCapability: typeof getRuntimeImageModelForCapability;
     getRuntimeModel: typeof getRuntimeModel;
     getRuntimeModelCandidates: typeof getRuntimeModelCandidates;
+    getRuntimeIntentClassifierModel?: typeof getRuntimeIntentClassifierModel;
     filterModelsByActiveProviders: typeof filterModelsByActiveProviders;
     getProviderPreset: typeof getProviderPreset;
   };
@@ -211,7 +213,7 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
   return {
     provider: { chatCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth },
     artifacts: { collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact, isValidArtifactId, artifactDownloadUrl, getStorageRoots },
-    models: { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, getRuntimeModel, getRuntimeModelCandidates, filterModelsByActiveProviders, getProviderPreset },
+    models: { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, getRuntimeModel, getRuntimeModelCandidates, getRuntimeIntentClassifierModel, filterModelsByActiveProviders, getProviderPreset },
     persistence: { appendGenerationLog, finishGenerationLog, startGenerationLog, persistGenerationResult },
     web: { planSearch, searchWeb },
     mcp: { callMcpTool, MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime, mcpServersForTurn, listMcpServers, BROWSER_TOOL_GUIDE, TABBIT_BROWSER_TOOL_GUIDE, BROWSER_EXECUTION_LIMITS, browserExternalBlocker, browserTextNeedsContinuation, browserTextSubmissionGap, guardMcpServerCall, importBrowserArtifacts, shouldImportBrowserArtifacts, noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess, listFilesystemRoots, listFilesystemWriteRoots, recordMcpCall, summarizeMcpAuditText, runMcpManageAction, isMcpRuntimeAction, runMcpRuntimeAction, discoverMcpForRequest },

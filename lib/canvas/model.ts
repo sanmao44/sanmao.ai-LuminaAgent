@@ -1071,6 +1071,9 @@ export function recoverInterruptedCanvasDocument(
     }
 
     if (node.type === "media") {
+      if (node.data.kind === "video" && node.data.depthVideo) {
+        return interrupted(node, "上次本机深度图处理被页面中断，请从原视频节点重新生成");
+      }
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "");
       if (taskId && (node.data.kind === "video" || node.data.kind === "image")) {
         return {

@@ -97,6 +97,7 @@ test('real conversation scene commands generate images while commentary remains 
   assert.equal(intent.parseSemanticIntent('{"deliverable":"IMAGE","confidence":"high"}')?.deliverable, 'IMAGE');
   assert.equal(intent.parseSemanticIntent('{"mode":"ask","deliverable":"IMAGE","confidence":"high"}')?.mode, 'ask');
   assert.equal(intent.parseSemanticIntent('{"mode":"ask","deliverable":"IMAGE","confidence":"high"}')?.deliverable, 'IMAGE');
+  assert.equal(intent.parseSemanticIntent('{"mode":"malicious","deliverable":"IMAGE","confidence":"high"}'), null);
 });
 
 test('routes prompt and copy requests to text without being fooled by visual nouns', () => {
@@ -117,7 +118,7 @@ test('keeps image description requests as text when a reference image is attache
 });
 
 test('routes an explicit edit of an attached reference to image editing', () => {
-  for (const input of ['把背景换成黑色', '优化构图', '去掉画面中的文字', '把牛变成马', '把背景变为夜晚', '把人物改为机器人', '把主体替换为白马']) {
+  for (const input of ['把背景换成黑色', '优化构图', '去掉画面中的文字', '把牛变成马', '把背景变为夜晚', '把人物改为机器人', '把主体替换为白马', '换个美女角色，换个色调']) {
     assert.equal(intent.classifyAgentDeliverable(input, { hasReferences: true }).deliverable, 'IMAGE', input);
     assert.equal(intent.resolveCreativeRoute(input, { hasReferences: true }).operation, 'edit', input);
   }

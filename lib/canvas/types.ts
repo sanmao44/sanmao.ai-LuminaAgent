@@ -419,6 +419,10 @@ export type CanvasNodeData = {
     sourceNodeId?: string;
     model?: string;
     mode?: "grayscale";
+    quality?: "low" | "medium" | "high";
+    inferenceSide?: number;
+    exportSide?: number;
+    frameQuality?: number;
     fps?: number;
     frameCount?: number;
     startedAt?: number;

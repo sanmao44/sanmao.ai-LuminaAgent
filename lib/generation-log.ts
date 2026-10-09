@@ -55,6 +55,9 @@ export type GenerationLog = {
   /** Agent routing timing, kept separate from provider duration for diagnosis. */
   routeLane?: 'answer' | 'search' | 'action';
   routerMs?: number;
+  intentClassifierModelId?: string;
+  intentClassifierMs?: number;
+  intentClassifierStatus?: 'used' | 'fallback' | 'unavailable';
   searchMs?: number;
   /** Browser-only execution counters; page content and tool arguments are excluded. */
   browserToolCallCount?: number;

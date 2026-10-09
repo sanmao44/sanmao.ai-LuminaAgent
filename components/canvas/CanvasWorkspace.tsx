@@ -446,6 +446,7 @@ import {
   type CanvasClipboardPayload,
 } from "@/lib/canvas/clipboard-payload";
 import { generateLocalDepthVideo } from "@/lib/local-depth-video-browser";
+import { DEFAULT_DEPTH_QUALITY, depthQualityProfile, normalizeDepthQuality, type DepthQuality } from "@/lib/canvas/depth-settings";
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from "@/lib/theme";
 import { insertReferenceMention as insertCreativeMention, referenceMentionNumbers, referenceMentionRange as creativeReferenceMentionRange, appendTextReferenceContext, replaceNaturalReferenceLabels, selectCreativeReferences } from "@/lib/creative-references";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
@@ -890,6 +891,7 @@ export default function SuperCanvas() {
   const [deckHeight, setDeckHeight] = useState(0);
   const [connectionStyle, setConnectionStyle] =
     useState<ConnectionStyle>("curve");
+  const [depthQuality, setDepthQuality] = useState<DepthQuality>(DEFAULT_DEPTH_QUALITY);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [theme, setTheme] = useState<CanvasTheme>(readStoredTheme);
   const [mentionState, setMentionState] = useState<MentionState>(null);
@@ -1885,6 +1887,7 @@ export default function SuperCanvas() {
       ) as {
         connectionStyle?: unknown;
         snapEnabled?: unknown;
+        depthQuality?: unknown;
       } | null;
       if (
         CONNECTION_STYLE_OPTIONS.some(
@@ -1893,6 +1896,7 @@ export default function SuperCanvas() {
       )
         setConnectionStyle(raw!.connectionStyle as ConnectionStyle);
       if (typeof raw?.snapEnabled === "boolean") setSnapEnabled(raw.snapEnabled);
+      setDepthQuality(normalizeDepthQuality(raw?.depthQuality));
     } catch {
       /* 使用默认设置 */
     }
@@ -1903,12 +1907,12 @@ export default function SuperCanvas() {
     try {
       window.localStorage.setItem(
         CANVAS_SETTINGS_KEY,
-        JSON.stringify({ connectionStyle, snapEnabled }),
+        JSON.stringify({ connectionStyle, snapEnabled, depthQuality }),
       );
     } catch {
       /* 设置保存失败不应阻断画布 */
     }
-  }, [connectionStyle, ready, snapEnabled]);
+  }, [connectionStyle, depthQuality, ready, snapEnabled]);
 
   useEffect(() => {
     if (!ready || !activeProjectId) return;
@@ -6628,10 +6632,23 @@ export default function SuperCanvas() {
           const currentNode = nodeById(canvasCoreRef.current.document(), inputId);
           const currentJobId = String(currentNode?.data.jobId || currentNode?.data.generation?.taskId || "");
           if (currentNode?.data.status === "completed" || (currentJobId && currentJobId !== agentRunId)) return;
+          const pendingTaskId = String((error as { taskId?: unknown }).taskId || "").trim();
+          const recoveryTaskId = pendingTaskId || currentJobId || agentRunId;
           updateDoc((value) => ({
             ...value,
             nodes: value.nodes.map((node) => node.id === inputId
-              ? { ...node, data: { ...node.data, status: "running" as const, statusLabel: "任务仍在后台处理中，请勿重复提交" } }
+              ? {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    ...(recoveryTaskId ? { jobId: recoveryTaskId } : {}),
+                    ...(recoveryTaskId && node.data.generation
+                      ? { generation: { ...node.data.generation, taskId: recoveryTaskId } }
+                      : {}),
+                    status: "running" as const,
+                    statusLabel: "任务仍在后台处理中，请勿重复提交",
+                  },
+                }
               : node),
           }));
           notify("任务仍在后台处理中，请勿重复提交");
@@ -11388,12 +11405,23 @@ export default function SuperCanvas() {
       return;
     }
     const position = { x: source.x + nodeSize(source).w + 90, y: source.y };
+    const depthProfile = depthQualityProfile(depthQuality);
     const output = createMedia("video", "", `${String(source.data.name || "视频")} · 深度图`, position, {
       role: "本地深度图",
       status: "queued",
       statusLabel: "正在准备深度模型…",
       processingStartedAt: Date.now(),
-      depthVideo: { sourceNodeId: source.id, model: "Depth Anything V2 Small", mode: "grayscale", fps: 12, startedAt: Date.now() },
+      depthVideo: {
+        sourceNodeId: source.id,
+        model: "Depth Anything V2 Small",
+        mode: "grayscale",
+        quality: depthProfile.quality,
+        inferenceSide: depthProfile.inferenceSide,
+        exportSide: depthProfile.exportSide,
+        frameQuality: depthProfile.frameQuality,
+        fps: 12,
+        startedAt: Date.now(),
+      },
     });
     const connected = addEdge({ ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, output] }, source.id, output.id, "right", "left", "manual", "video");
     commit(() => connected);
@@ -11405,7 +11433,7 @@ export default function SuperCanvas() {
       const knownDurationMs = Number(source.data.durationMs || source.data.sourceDurationMs);
       const asset = await generateLocalDepthVideo(String(source.data.url), String(source.data.name || "video"), (progress) => {
         updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === output.id ? { ...node, data: { ...node.data, status: "running" as const, progress: progress.progress, statusLabel: progress.message } } : node) }));
-      }, Number.isFinite(knownDurationMs) && knownDurationMs > 0 ? knownDurationMs / 1000 : undefined);
+      }, Number.isFinite(knownDurationMs) && knownDurationMs > 0 ? knownDurationMs / 1000 : undefined, { quality: depthQuality });
       updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === output.id ? { ...node, data: { ...node.data, url: asset.url, name: asset.name || `${String(source.data.name || "视频")} · 深度图`, status: "completed" as const, statusLabel: "深度图已完成", nativeWidth: source.data.nativeWidth, nativeHeight: source.data.nativeHeight, depthVideo: { ...node.data.depthVideo, fps: asset.fps, frameCount: asset.frameCount, completedAt: Date.now() } } } : node) }));
       notify("深度图视频已生成");
       addLog("视频深度图生成完成");
@@ -11418,7 +11446,7 @@ export default function SuperCanvas() {
       generationKeysRef.current.delete(activeKey);
       setGenerationKeys(new Set(generationKeysRef.current));
     }
-  }, [addLog, commit, notify, updateDoc]);
+  }, [addLog, commit, depthQuality, notify, updateDoc]);
   const quickActions = useMemo<CanvasQuickToolbarActions>(() => {
     const node = selectedSingle;
     if (!node || selectedGroupId || selectedNodes.length !== 1) return { primaryActions: [], menuGroups: [] };
@@ -13576,6 +13604,7 @@ export default function SuperCanvas() {
         generationLogsLoading={generationLogsLoading}
         theme={theme}
         connectionStyle={connectionStyle}
+        depthQuality={depthQuality}
         activityPanelScrollTop={activityPanelScrollTopRef.current}
         onCollectionSelectionChange={setAssetLibraryCollectionId}
         onAddAsset={addAssetToCanvas}
@@ -13597,6 +13626,7 @@ export default function SuperCanvas() {
         }}
         onTheme={toggleTheme}
         onConnectionStyleChange={setConnectionStyle}
+        onDepthQualityChange={setDepthQuality}
         onExportWorkflow={exportWorkflow}
         onImportWorkflow={() => workflowInputRef.current?.click()}
       />

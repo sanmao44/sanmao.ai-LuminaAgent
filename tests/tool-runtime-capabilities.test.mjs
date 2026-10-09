@@ -80,6 +80,58 @@ test('image capability normalizes ordered prompt batches at the runtime boundary
   assert.equal(result.count, 1);
 });
 
+test('image capability returns the durable media log id when a provider accepts an async task', async () => {
+  const image = load('./packages/tool-runtime/image-capability');
+  const accepted = Object.assign(new Error('provider accepted'), {
+    providerPossiblyAccepted: true,
+    providerTaskId: 'provider-task-1',
+  });
+  const finished = [];
+  const result = await image.executeImageCapability({
+    state: { generated: [], batchItems: [], generations: [] },
+    call: { id: 'image-pending-1', function: { name: 'image_generate' } },
+    args: { prompt: 'a test image' },
+    results: [],
+    ports: {
+      requestController: new AbortController(),
+      imageToolsAllowed: true,
+      isBareImageExecution: () => false,
+      extractBatchPrompts: () => [],
+      fallbackImagePrompt: 'fallback',
+      requestedImageCapability: 'generate',
+      latestRefs: [],
+      trackedChatCompletion: async () => ({ choices: [{ message: { content: '' } }] }),
+      agentRuntime: { provider: { name: 'chat' }, model: { rawId: 'chat-model' } },
+      requestedAgentImageModelId: 'auto',
+      imageModels: [{ id: 'image-model', capabilities: ['generate'] }],
+      getRuntimeImageGenerationModel: async () => ({ provider: { name: 'image-provider' }, model: { id: 'image-model', rawId: 'image-raw', displayName: 'Image' } }),
+      getRuntimeImageModelForCapability: async () => null,
+      appendGenerationLog: async () => {},
+      sourceForLog: 'canvas',
+      taskContext: { taskId: 'agent-run-1' },
+      startGenerationLog: async () => 'media-log-1',
+      referenceRecords: [],
+      getRuntimeImageModelCandidates: () => [],
+      editImage: async () => [],
+      generateImage: async () => { throw accepted; },
+      persistGenerationResult: async () => ({ images: [] }),
+      imageDownloadAuth: () => undefined,
+      finishGenerationLog: async (id, patch) => { finished.push({ id, patch }); },
+      latestInstruction: 'a test image',
+      agentRunId: 'agent-run-1',
+      skipCaption: true,
+      executionPublicState: { settings: {} },
+    },
+  });
+  const payload = JSON.parse(String(result.results[0].content));
+  assert.equal(payload.pending, true);
+  assert.equal(payload.generationTaskId, 'media-log-1');
+  assert.equal(payload.mediaLogId, 'media-log-1');
+  assert.equal(finished[0].id, 'media-log-1');
+  assert.equal(finished[0].patch.providerTaskId, 'provider-task-1');
+  assert.equal(finished[0].patch.taskId, 'agent-run-1');
+});
+
 
 test('artifact capability executes through its runtime port and returns metadata only', async () => {
   const { executeArtifactCapability } = load('./packages/tool-runtime/artifact-capability');

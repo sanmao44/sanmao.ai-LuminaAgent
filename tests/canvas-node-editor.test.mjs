@@ -1165,13 +1165,13 @@ test("quick-action menus never expose a horizontal scrollbar", () => {
 });
 
 test("local depth video balances inference quality with higher-resolution export", () => {
-  assert.match(localDepthVideo, /const MAX_INFERENCE_SIDE = 1024/);
-  assert.match(localDepthVideo, /const MAX_EXPORT_SIDE = 1920/);
-  assert.match(localDepthVideo, /inferenceScale = Math\.min\(1, MAX_INFERENCE_SIDE/);
-  assert.match(localDepthVideo, /exportScale = Math\.min\(1, MAX_EXPORT_SIDE/);
+  assert.match(localDepthVideo, /depthQualityProfile\(options\.quality\)/);
+  assert.match(localDepthVideo, /inferenceScale = Math\.min\(1, profile\.inferenceSide/);
+  assert.match(localDepthVideo, /exportScale = Math\.min\(1, profile\.exportSide/);
   assert.match(localDepthVideo, /sourceCanvas\.width = inferenceWidth/);
   assert.match(localDepthVideo, /canvas\.width = exportWidth/);
   assert.match(localDepthVideo, /context\.drawImage\(depthCanvas, 0, 0, exportWidth, exportHeight\)/);
+  assert.match(localDepthVideo, /canvasBlob\(canvas, "image\/webp", profile\.frameQuality\)/);
 });
 
 test("local depth video follows source FPS and produces an editor-compatible MP4", () => {

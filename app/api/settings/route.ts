@@ -11,6 +11,7 @@ export async function PATCH(request: Request) {
     const body = await request.json();
     await patchSettings({
       ...('agentModelId' in body ? { agentModelId: body.agentModelId || null } : {}),
+      ...('intentClassifierModelId' in body ? { intentClassifierModelId: body.intentClassifierModelId || null } : {}),
       ...('defaultImageModelId' in body ? { defaultImageModelId: body.defaultImageModelId || null } : {}),
       ...('defaultVideoModelId' in body ? { defaultVideoModelId: body.defaultVideoModelId || null } : {}),
       ...('defaultProviderId' in body ? { defaultProviderId: body.defaultProviderId || null } : {}),

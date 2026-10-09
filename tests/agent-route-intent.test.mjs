@@ -13,6 +13,7 @@ function harness(options = {}) {
   const runtimeLoads = [];
   const images = [];
   const imageRuntimeRequests = [];
+  const modelCalls = [];
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: [], kind: 'chat' };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
@@ -71,6 +72,7 @@ function harness(options = {}) {
             getRuntimeImageModelCandidates: storeApi.getRuntimeImageModelCandidates,
             getRuntimeImageModelForCapability: storeApi.getRuntimeImageModelForCapability,
             getRuntimeModel: storeApi.getRuntimeModel,
+            getRuntimeIntentClassifierModel: options.intentClassifierRuntime ? async () => options.intentClassifierRuntime : async () => null,
             getRuntimeModelCandidates: async () => [runtime],
             filterModelsByActiveProviders: (models) => models,
             getProviderPreset: () => ({ label: 'Test' }),
@@ -187,11 +189,16 @@ function harness(options = {}) {
     '@/lib/providers': {
       chatCompletion: async (_provider, _model, payload) => {
         calls.push(payload);
-        return reply(options.reply?.(payload, calls.length) || { content: '已经完成。' });
+        modelCalls.push({ model: _model, payload });
+        return reply(options.reply?.(payload, calls.length, _model) || { content: '已经完成。' });
       },
       chatCompletionStream: async () => { throw new Error('unexpected direct stream'); },
       describeProviderFailure: () => 'provider failure',
-      generateImage: async (_provider, _model, args) => { images.push({ mode: 'generate', ...args }); return options.emptyImages ? [] : [{ url: '/test.png' }]; },
+      generateImage: async (_provider, _model, args) => {
+        images.push({ mode: 'generate', ...args });
+        if (options.pendingImage) throw Object.assign(new Error('provider accepted'), { providerPossiblyAccepted: true, providerTaskId: 'provider-task-1' });
+        return options.emptyImages ? [] : [{ url: '/test.png' }];
+      },
       editImage: async (_provider, _model, args) => { images.push({ mode: 'edit', ...args }); return [{ url: '/test.png' }]; },
       imageDownloadAuth: () => undefined,
     },
@@ -204,9 +211,9 @@ function harness(options = {}) {
     },
     '@/lib/auth': { isTrustedAppRequest: () => true },
     '@/lib/runtime-operation': { beginRuntimeRequest: async () => noOp, RuntimeDrainingError: class extends Error {} },
-    '@/lib/generation-log': { startGenerationLog: async () => 'test', finishGenerationLog: noOp, appendGenerationLog: noOp },
+    '@/lib/generation-log': { startGenerationLog: async () => options.mediaLogId || 'test', finishGenerationLog: noOp, appendGenerationLog: noOp },
     '@/lib/generation-persistence': { persistGenerationResult: async ({ images: result }) => ({ images: result }) },
-    '@/lib/agent/progress': { beginAgentRun: async () => null, finishAgentRun: noOp, reportAgentProgress: noOp, agentToolProgress: () => null },
+    '@/lib/agent/progress': { beginAgentRun: async (runId) => runId ? { runId: String(runId) } : null, finishAgentRun: noOp, reportAgentProgress: noOp, agentToolProgress: () => null },
     '@/lib/reference-images': { referenceRecordsForLog: () => [] },
     '@/lib/web-search': { planSearch: () => ({ intent: { entities: [] }, queries: [] }) },
     '@/lib/native-web-search': { nativeSearchIsEnabled: () => false },
@@ -248,7 +255,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-    calls, mcpCalls, discoveryCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests,
+    calls, modelCalls, mcpCalls, discoveryCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -400,6 +407,22 @@ test('valid inline tool calls are executed once with their original prompt', asy
   assert.doesNotMatch(data.message, /tool_call/);
 });
 
+test('accepted image generation returns the durable media task id for recovery', async () => {
+  const agent = harness({
+    pendingImage: true,
+    mediaLogId: 'media-log-1',
+    reply: (payload) => payload.tools
+      ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"异步出图测试"}}</tool_call>' }
+      : { content: '图片正在生成。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '生成一张异步测试图' }], { runId: 'agent-run-1' });
+  assert.equal(data.pending, true);
+  assert.equal(data.taskId, 'media-log-1');
+  assert.equal(data.generationTaskId, 'media-log-1');
+  assert.equal(data.mediaLogId, 'media-log-1');
+  assert.equal(data.agentRunId, 'agent-run-1');
+});
+
 test('language model cannot override the system default image model through tool arguments', async () => {
   const agent = harness({ reply: (payload) => payload.tools
     ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"系统默认模型测试","modelId":"language-model-picked"}}</tool_call>' }
@@ -425,6 +448,7 @@ test('canvas image edit target overrides vague wording and reaches the edit capa
   assert.equal(agent.images[0].mode, 'edit');
   assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
   assert.equal(data.images.length, 1);
+  assert.equal(agent.calls.length, 0, 'Canvas edit should execute the image capability without a preliminary chat completion');
 });
 
 test('canvas image edit target activates image routing for colloquial changes', async () => {
@@ -556,6 +580,61 @@ test('an accepted image plan is resolved semantically within this conversation',
   assert.equal(data.images.length, 1);
   assert.match(agent.images[0].prompt, /太空书店/);
   assert.equal(agent.images[0].aspectRatio, '9:16');
+});
+
+test('configured JEV classifies an ambiguous confirmation before image execution', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"用户确认上一轮海报方案"}' }
+      : { content: '已经完成。' },
+  });
+  const data = await agent.post([
+    { role: 'user', content: '先构思一个太空书店的海报，9:16' },
+    { role: 'assistant', content: '海报画面是月球书店，是否按这个生成？' },
+    { role: 'user', content: '好的' },
+  ]);
+  const classifierCalls = agent.modelCalls.filter((call) => call.model === 'jev-1.13');
+  assert.equal(classifierCalls.length, 1);
+  assert.equal(classifierCalls[0].payload.tool_choice, 'none');
+  assert.equal('tools' in classifierCalls[0].payload, false);
+  assert.equal(agent.images.length, 1);
+  assert.equal(data.images.length, 1);
+});
+
+test('invalid JEV output falls back to the selected chat model semantic planner', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: 'not-json' }
+      : { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"主模型回退确认"}' },
+  });
+  const data = await agent.post([
+    { role: 'user', content: '先构思一个太空书店的海报，9:16' },
+    { role: 'assistant', content: '海报画面是月球书店，是否按这个生成？' },
+    { role: 'user', content: '好的' },
+  ]);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.ok(agent.modelCalls.filter((call) => call.model === 'test-chat').length >= 1);
+  assert.equal(data.images.length, 1);
+});
+
+test('configured JEV is skipped for a clear ordinary conversation turn', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({ intentClassifierRuntime: classifierRuntime });
+  await agent.post([{ role: 'user', content: '你好，你能做什么？' }]);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 0);
 });
 
 test('asking about an image does not grant permission to generate another one', async () => {

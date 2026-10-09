@@ -10,6 +10,7 @@ import { selectAutomaticModel } from '@/lib/model-selection';
 import { MODEL_PICKER_QUICK_LIMIT, modelPickerMatches, takeUniqueModelSlice } from '@/lib/model-picker';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
+import { isIntentClassifierModel } from '@/lib/intent-classifier';
 
 type ModelPickerProps = {
   models: RegistryModel[];
@@ -92,6 +93,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   useBodyScrollLock(dialogOpen);
 
   const availableModels = useMemo(() => models.filter((model) => {
+    if (isIntentClassifierModel(model)) return false;
     if (!model.enabled || !model.published) return false;
     // A clone job can only execute video-generation models. Do not let a
     // video-edit/extend model appear selectable and then silently fall back.

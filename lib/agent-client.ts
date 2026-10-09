@@ -160,6 +160,11 @@ export type AgentResponse = {
   error?: string;
   pending?: boolean;
   taskId?: string;
+  /** Durable media generation log id when an Agent image tool is pending. */
+  generationTaskId?: string;
+  mediaLogId?: string;
+  /** Agent run lifecycle id kept separately from the media task id. */
+  agentRunId?: string;
   cancelled?: boolean;
   canvasPatch?: CanvasPatch;
   [key: string]: unknown;

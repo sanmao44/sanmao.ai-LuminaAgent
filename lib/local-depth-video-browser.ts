@@ -2,6 +2,7 @@
 
 import { zipSync } from "fflate";
 import { encodeCanvasDepthVideoFrameSequence, probeCanvasVideoFrameRate, uploadCanvasAsset } from "./canvas/api";
+import { depthQualityProfile, type DepthQuality, type DepthQualityProfile } from "./canvas/depth-settings";
 
 export type LocalDepthVideoProgress = {
   phase: "loading" | "processing" | "encoding";
@@ -11,11 +12,12 @@ export type LocalDepthVideoProgress = {
 
 const MODEL_ID = "onnx-community/depth-anything-v2-small";
 const CACHE_NAME = "sanmao-local-depth-v1";
-// Keep inference high enough for meaningful contours, but avoid 4K WebGPU/WASM stalls.
-const MAX_INFERENCE_SIDE = 1024;
-// Re-expand the inferred depth map for export without making a browser-sized 4K video.
-const MAX_EXPORT_SIDE = 1920;
 const MAX_DURATION_SECONDS = 30;
+
+export type LocalDepthVideoOptions = {
+  quality?: DepthQuality;
+  profile?: Partial<DepthQualityProfile>;
+};
 
 type DepthPipeline = ((image: unknown) => Promise<{ depth: { toCanvas: () => HTMLCanvasElement } }>) & {
   dispose?: () => Promise<void>;
@@ -96,6 +98,7 @@ export async function generateLocalDepthVideo(
   sourceName = "video",
   onProgress?: (progress: LocalDepthVideoProgress) => void,
   knownDurationSeconds?: number,
+  options: LocalDepthVideoOptions = {},
 ) {
   if (!sourceUrl) throw new Error("缺少视频输入");
   const video = document.createElement("video");
@@ -114,6 +117,10 @@ export async function generateLocalDepthVideo(
     : fallbackDuration;
   if (!Number.isFinite(duration) || duration <= 0) throw new Error("无法读取视频时长，请重新导入视频后重试");
   if (duration > MAX_DURATION_SECONDS) throw new Error(`为保证本机稳定处理，深度图节点暂支持 30 秒以内的视频；请先在视频剪辑中裁剪后再试`);
+  const profile = {
+    ...depthQualityProfile(options.quality),
+    ...(options.profile || {}),
+  };
   const sourceResponse = await fetch(sourceUrl, { cache: "no-store" });
   if (!sourceResponse.ok) throw new Error(`无法读取原视频：HTTP ${sourceResponse.status}`);
   const sourceBlob = await sourceResponse.blob();
@@ -124,10 +131,10 @@ export async function generateLocalDepthVideo(
   const frameCount = Math.max(1, Math.round(duration * fps));
   const sourceWidth = Math.max(2, video.videoWidth);
   const sourceHeight = Math.max(2, video.videoHeight);
-  const inferenceScale = Math.min(1, MAX_INFERENCE_SIDE / Math.max(sourceWidth, sourceHeight));
+  const inferenceScale = Math.min(1, profile.inferenceSide / Math.max(sourceWidth, sourceHeight));
   const inferenceWidth = Math.max(2, Math.round(sourceWidth * inferenceScale));
   const inferenceHeight = Math.max(2, Math.round(sourceHeight * inferenceScale));
-  const exportScale = Math.min(1, MAX_EXPORT_SIDE / Math.max(sourceWidth, sourceHeight));
+  const exportScale = Math.min(1, profile.exportSide / Math.max(sourceWidth, sourceHeight));
   const exportWidth = Math.max(2, Math.round(sourceWidth * exportScale));
   const exportHeight = Math.max(2, Math.round(sourceHeight * exportScale));
   const sourceCanvas = document.createElement("canvas");
@@ -146,7 +153,7 @@ export async function generateLocalDepthVideo(
     const depthCanvas = result.depth.toCanvas() as HTMLCanvasElement;
     context.clearRect(0, 0, exportWidth, exportHeight);
     context.drawImage(depthCanvas, 0, 0, exportWidth, exportHeight);
-    frames.push(await canvasBlob(canvas, "image/webp", 0.88));
+    frames.push(await canvasBlob(canvas, "image/webp", profile.frameQuality));
     emitProgress(onProgress, { phase: "processing", progress: ((index + 1) / frameCount) * 100, message: `正在处理第 ${index + 1}/${frameCount} 帧…` });
   }
   const base = sourceName.replace(/\.[^.]+$/, "") || "video";
