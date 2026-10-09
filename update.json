@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.83",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.83",
+  "latestVersion": "0.7.84",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.84",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.83/SANMAO.AI-0.7.83.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.84/SANMAO.AI-0.7.84.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.83/SANMAO.AI-0.7.83.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.83/SANMAO.AI-0.7.83.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.83/SANMAO.AI-0.7.83.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.84/SANMAO.AI-0.7.84.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.84/SANMAO.AI-0.7.84.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.84/SANMAO.AI-0.7.84.zip"
   ],
   "sha256": "f4bead29cb317f7675e26e9cf559de47c6714d0e26c351e84b2eb839965851eb",
-  "publishedAt": "2026-10-07T00:00:00.000Z",
+  "publishedAt": "2026-10-09T00:00:00.000Z",
   "notes": [
+    "修复本机深度图节点在页面恢复后被误判为普通视频失败的问题。",
+    "新增低档、中档、高档三档深度图性能设置，默认中档并持久化到画布设置。",
+    "完善深度图任务中断提示、档位参数记录与行为回归测试。",
     "修复图片和视频任务服务商已返回结果但本地节点仍显示失败或生成中的假失败，统一以最终结果同步任务状态。",
     "统一处理服务商已接受的异步媒体任务，确保成功结果、失败结果和画布节点状态保持一致。",
     "完善媒体结果归档与任务收尾，避免一端成功、一端失败或任务长期停留在生成中。",
