@@ -174,6 +174,37 @@ test('OpenAI-compatible chat keeps inline data URLs without a relay conversion',
   assert.equal(requests[0].messages[0].content[1].image_url.url, inline);
 });
 
+test('JEV intent classification uses System One and normalizes its choice answers', async () => {
+  const previousFetch = globalThis.fetch;
+  let requestUrl = '';
+  let requestBody;
+  globalThis.fetch = async (url, init) => {
+    requestUrl = String(url);
+    requestBody = JSON.parse(init.body);
+    return new Response(JSON.stringify({
+      model: 'jev-1.13.0',
+      answers: {
+        mode: { type: 'choice', choice: 'follow_up', confidence: 0.97 },
+        deliverable: { type: 'choice', choice: 'image', confidence: 0.93 },
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const response = await providers.intentClassificationCompletion({
+      id: 'jev', name: '65535', type: 'openai-compatible', platform: '65535',
+      baseUrl: 'https://api2-cn.65535.space/v1', apiKey: 'test-key',
+    }, 'jev-1.13', { messages: [{ role: 'user', content: '按刚才的做' }] });
+    assert.equal(requestUrl, 'https://api2.65535.space/v1/systemone');
+    assert.equal(requestBody.model, 'jev-1.13');
+    assert.match(requestBody.state, /user: 按刚才的做/);
+    assert.equal(response.choices[0].message.content, JSON.stringify({
+      mode: 'follow_up', deliverable: 'IMAGE', confidence: 'high', reason: 'JEV System One 判定：mode=follow_up，deliverable=IMAGE',
+    }));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('uses the OpenAI video task status default for a custom compatible provider', () => {
   const config = presets.resolveProviderConfiguration({
     platform: 'custom',

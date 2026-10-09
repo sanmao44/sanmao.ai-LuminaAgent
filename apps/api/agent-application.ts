@@ -689,7 +689,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
           if (classifierRuntime) {
             intentClassifierModelId = classifierRuntime.model.id;
             const planned = await withAgentOperationDeadline(requestController.signal, 2_000, 'intent classification',
-              (classifierSignal) => composition.invokeSpecificChatModel(classifierRuntime, semanticPayload, classifierSignal));
+              (classifierSignal) => (composition.invokeIntentClassifier || composition.invokeSpecificChatModel)(classifierRuntime, semanticPayload, classifierSignal));
             recordLlmUsage(planned);
             decision = parseSemanticIntent(planned?.choices?.[0]?.message?.content);
             intentClassifierStatus = decision ? 'used' : 'fallback';

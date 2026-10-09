@@ -654,6 +654,77 @@ function unwrapProviderData(provider: RuntimeProvider, data: any) {
   return isApimartProvider(provider) && data && typeof data === 'object' && 'data' in data ? data.data : data;
 }
 
+function isJevModelId(rawId: string) {
+  const value = String(rawId || '').trim().toLowerCase();
+  return value === 'jev-1.13' || value.endsWith('/jev-1.13');
+}
+
+function jevSystemOneEndpoint(provider: RuntimeProvider) {
+  // 65535 exposes JEV's System One channel on the international API host.
+  // The mainland chat host advertises the model but does not expose this route.
+  if (is65535Provider(provider)) return 'https://api2.65535.space/v1/systemone';
+  return providerEndpoint(provider, undefined, '/systemone');
+}
+
+function intentState(messages: ChatMessage[]) {
+  return messages.map((message) => {
+    const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content || '');
+    return `${message.role}: ${content}`;
+  }).join('\n');
+}
+
+function choiceValue(answer: IntentChoiceAnswer | undefined) {
+  const value = String(answer?.choice || '').trim().toLowerCase();
+  return value;
+}
+
+function choiceConfidence(answer: IntentChoiceAnswer | undefined) {
+  const value = Number(answer?.confidence);
+  if (Number.isFinite(value)) return value >= 0.8 ? 'high' : 'low';
+  return String(answer?.confidence || '').trim().toLowerCase() === 'high' ? 'high' : 'low';
+}
+
+function normalizeJevIntentResponse(data: IntentSystemOneResponse, rawModelId: string) {
+  const mode = choiceValue(data.answers?.mode);
+  const deliverable = choiceValue(data.answers?.deliverable);
+  const validMode = ['execute', 'ask', 'discuss', 'follow_up', 'unknown'].includes(mode) ? mode : 'unknown';
+  const validDeliverable = ['image', 'text', 'both', 'clarify', 'other'].includes(deliverable)
+    ? deliverable.toUpperCase()
+    : 'OTHER';
+  const confidence = choiceConfidence(data.answers?.mode) === 'high' && choiceConfidence(data.answers?.deliverable) === 'high' ? 'high' : 'low';
+  const reason = `JEV System One 判定：mode=${validMode}，deliverable=${validDeliverable}`;
+  return {
+    model: String(data.model || rawModelId),
+    choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify({ mode: validMode, deliverable: validDeliverable, confidence, reason }) }, finish_reason: 'stop' }],
+  };
+}
+
+export async function intentClassificationCompletion(provider: RuntimeProvider, rawModelId: string, payload: IntentClassificationPayload, signal?: AbortSignal) {
+  if (!isJevModelId(rawModelId)) throw new Error('intent classification requires the JEV model');
+  const state = intentState(payload.messages);
+  const data = await fetchJson(jevSystemOneEndpoint(provider), {
+    method: 'POST',
+    headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: rawModelId,
+      state,
+      questions: {
+        mode: {
+          type: 'choice',
+          instructions: '当前请求模式是什么？',
+          criteria: { execute: '明确要求执行', ask: '提问或需要澄清', discuss: '讨论或咨询', follow_up: '承接上一轮任务', unknown: '无法判断' },
+        },
+        deliverable: {
+          type: 'choice',
+          instructions: '当前请求的主要交付物是什么？',
+          criteria: { image: '需要生成或编辑图片', text: '需要文字、提示词或文案', both: '同时需要图片和文字', clarify: '需要先澄清交付物', other: '普通问答、分析或工具请求' },
+        },
+      },
+    }),
+  }, 120000, signal) as IntentSystemOneResponse;
+  return normalizeJevIntentResponse(data, rawModelId);
+}
+
 const apimartModelCatalog = [
   'gpt-5', 'gpt-5.1', 'gpt-5-chat-latest', 'gpt-5-mini',
   'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5-20251101',
@@ -1504,6 +1575,26 @@ export type ChatMessage = {
   content: string | ChatContentPart[] | null;
   tool_call_id?: string;
   tool_calls?: any[];
+};
+
+export type IntentClassificationPayload = {
+  messages: ChatMessage[];
+  tools?: unknown[];
+  tool_choice?: 'auto' | 'none';
+};
+
+type IntentChoiceAnswer = {
+  choice?: unknown;
+  confidence?: unknown;
+  probabilities?: Record<string, unknown>;
+};
+
+type IntentSystemOneResponse = {
+  model?: unknown;
+  answers?: {
+    mode?: IntentChoiceAnswer;
+    deliverable?: IntentChoiceAnswer;
+  };
 };
 
 function agnesUsage(usage: any) {
