@@ -41,7 +41,16 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   const { body, messages, isCanvasSource, isCanvasNodeExecution, canvasTargetNodeIds, canvasTargetOperation, ports } = input;
   const latest = [...messages].reverse().find((message) => message.role === 'user');
   const latestRefs = ports.normalizeCreativeReferences(latest?.references, 16);
-  const latestInstruction = ports.agentInstructionText(body.intentText, latest?.content || '');
+  const rawLatestInstruction = ports.agentInstructionText(body.intentText, latest?.content || '');
+  // A short follow-up such as “下载” is still an actionable request when the
+  // immediately preceding user turn supplied the public video URL. Preserve
+  // that URL in the effective instruction so routing and the model tool call
+  // receive the same explicit source without reaching back into older turns.
+  const previousUser = [...messages.slice(0, -1)].reverse().find((message) => message.role === 'user');
+  const previousVideoUrl = previousUser ? extractHttpUrl(previousUser.content) : '';
+  const latestInstruction = previousVideoUrl && isVideoDownloadFollowUp(rawLatestInstruction)
+    ? `${rawLatestInstruction} ${previousVideoUrl}`
+    : rawLatestInstruction;
   const previousImagePlan = [...messages.slice(0, -1)].reverse().find((message) => message.role === 'assistant'
     && /(?:^|\n)\s*1[\.\u3002\u3001)]/.test(message.content)
     && isExplicitImageBatchPlan(message.content)
@@ -104,9 +113,12 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   }
   const routerMs = Date.now() - routingStartedAt;
   const latestMessage = messages[messages.length - 1]!;
+  const effectiveLatestMessage = latestInstruction === rawLatestInstruction
+    ? latestMessage
+    : { ...latestMessage, content: latestInstruction };
   const modelContextMessages = [
     ...ports.selectAgentContextMessages(messages.slice(0, -1), requestRoute.contextNeed),
-    latestMessage,
+    effectiveLatestMessage,
   ];
   const routeSummary = requestRoute.needsTools || ports.routeNeedsSemanticReview(requestRoute)
     ? ports.routeToolSummary(requestRoute)
@@ -124,6 +136,20 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     requestedIntentReason = 'canvas node execution is text-only; side effects belong to the Agent dock';
   }
   return { latest, latestRefs, latestInstruction, latestReferenceImageCount: latestRefs.filter((reference) => reference.kind !== 'text').length, previousImagePlan, batchPlanContent, previousAssistantForRouting, directGithubMcpRepo, intentDecision, requestModeAllowsExecution, setRequestModeAllowsExecution(value: boolean) { requestModeAllowsExecution = value; }, webMode, requestRoute, routerMs, modelContextMessages, routeSummary, requestedDeliverable, setRequestedDeliverable(value: AgentDeliverable) { requestedDeliverable = value; }, requestedIntentReason, setRequestedIntentReason(value: string) { requestedIntentReason = value; } };
+}
+
+function extractHttpUrl(input: string): string {
+  const match = String(input || '').match(/https?:\/\/[^\s<>"'`]+/i);
+  return String(match?.[0] || '').replace(/[),.;!?，。！？；：】）》]+$/u, '');
+}
+
+function isVideoDownloadFollowUp(input: string): boolean {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length > 32 || /https?:\/\//i.test(text)) return false;
+  if (!/(?:下载|保存|提取|抓取|转存|download|save)/i.test(text)) return false;
+  // Keep questions, explanations, and unrelated file requests conversational.
+  if (/[?？]$/.test(text) && !/^(?:下载|保存|提取|抓取|转存)(?:一下|这个|该视频)?[?？]$/i.test(text)) return false;
+  return /^(?:(?:帮我|请|麻烦)?(?:下载|保存|提取|抓取|转存)(?:一下|这个|该视频|视频)?|(?:再|重新)?下载(?:一下|这个|该视频|视频)?|(?:download|save)(?: this)?)(?:[。.!！])?$/i.test(text);
 }
 
 function extractBatchPrompts(content: string): string[] {

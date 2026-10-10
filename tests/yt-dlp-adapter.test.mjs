@@ -54,6 +54,20 @@ test('probe reports a mocked installed version', async () => {
   assert.deepEqual(result, { available: true, command: 'yt-dlp-test', version: '2026.01.01' });
 });
 
+test('probe honors the configured executable path without requiring PATH', async () => {
+  const previous = process.env.SANMAO_YTDLP_PATH;
+  process.env.SANMAO_YTDLP_PATH = process.execPath;
+  try {
+    const result = await adapter.probeYtDlp();
+    assert.equal(result.available, true);
+    assert.equal(result.command, process.execPath);
+    assert.match(result.version || '', /^v?\d+\.\d+/);
+  } finally {
+    if (previous === undefined) delete process.env.SANMAO_YTDLP_PATH;
+    else process.env.SANMAO_YTDLP_PATH = previous;
+  }
+});
+
 test('download accepts only a file printed inside the requested output directory', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-'));
   try {

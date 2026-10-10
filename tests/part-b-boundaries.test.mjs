@@ -49,6 +49,33 @@ test('Agent planning boundary produces a stable execution plan without transport
   assert.equal(plan.webMode, 'off');
 });
 
+test('Agent planning carries a public video URL into a short download follow-up', () => {
+  const { planAgentRequest } = load('./packages/agent-core/request-planning');
+  const planningPorts = {
+    ...load('./lib/agent-web'),
+    ...load('./lib/agent-intent'),
+    ...load('./lib/agent-context'),
+    ...load('./lib/agent-routing'),
+    ...load('./lib/creative-references'),
+  };
+  const plan = planAgentRequest({
+    body: { webMode: 'off' },
+    messages: [
+      { role: 'user', content: 'https://www.youtube.com/watch?v=example123' },
+      { role: 'assistant', content: '我收到这个链接了。' },
+      { role: 'user', content: '下载' },
+    ],
+    isCanvasSource: false,
+    isCanvasNodeExecution: false,
+    canvasTargetNodeIds: [],
+    canvasTargetKind: 'none',
+    canvasTargetOperation: 'generate',
+    ports: planningPorts,
+  });
+  assert.match(plan.latestInstruction, /下载\s+https:\/\/www\.youtube\.com\/watch\?v=example123/);
+  assert.equal(plan.modelContextMessages.at(-1).content, plan.latestInstruction);
+});
+
 test('Agent execution boundary owns bounded skill and artifact follow-ups', async () => {
   const { runCapabilityFollowups } = load('./apps/api/agent-execution');
   const messages = [{ role: 'user', content: 'prepare delivery' }];

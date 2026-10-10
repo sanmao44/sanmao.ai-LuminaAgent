@@ -389,12 +389,40 @@ export function likelyFileGenerationRequest(input: string) {
     || /(?:给我|提供|返回).{0,12}(?:一个|一份|可下载的)?.{0,12}(?:csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|文件|附件)/i.test(text);
 }
 
-/** Identify an explicit public-video download request. */
-export function likelyVideoDownloadRequest(input: string) {
+type VideoDownloadContextMessage = { role?: string; content?: unknown };
+
+/** Return the URL belonging to the current public-video download request. */
+export function videoDownloadUrl(input: string, context: readonly VideoDownloadContextMessage[] = []) {
+  const current = String(input || '').match(/https?:\/\/\S+/i)?.[0];
+  if (current) return current.replace(/[\]\)>,.;!?]+$/g, '');
+  const previous = [...context].reverse().find((message) => message.role === 'user');
+  if (!previous || !/https?:\/\/\S+/i.test(String(previous.content || ''))) return '';
+  return String(previous?.content || '').match(/https?:\/\/\S+/i)?.[0]?.replace(/[\]\)>,.;!?]+$/g, '') || '';
+}
+
+/** Identify an explicit public-video download request.
+ *
+ * A common chat flow puts the URL in one turn and the confirmation in the
+ * next turn (for example: "https://..." followed by "下载"). Keep that
+ * follow-up actionable by looking only at the nearest preceding user URL;
+ * callers still decide whether the request is allowed to execute.
+ */
+export function likelyVideoDownloadRequest(input: string, context: readonly VideoDownloadContextMessage[] = []) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
-  if (!text || !/https?:\/\/\S+/i.test(text)) return false;
+  if (!text) return false;
   if (!/(?:下载|保存|提取|抓取|转存|download|save)/i.test(text)) return false;
-  return /(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|抖音|快手|douyin|vimeo)/i.test(text);
+  const hasVideoSignal = /(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|抖音|快手|douyin|vimeo)/i.test(text);
+  if (hasVideoSignal && /https?:\/\/\S+/i.test(text)) return true;
+  if (hasVideoSignal && !context.length) return false;
+  // Only inherit a URL for a short follow-up. A fresh sentence containing a
+  // different topic must not accidentally reuse an old media URL.
+  if (text.length > 32 || !context.length) return false;
+  const previousUserUrl = [...context].reverse().find((message) => message.role === 'user');
+  if (!previousUserUrl) return false;
+  const previousContent = String(previousUserUrl.content || '');
+  if (!/https?:\/\/\S+/i.test(previousContent)) return false;
+  return /(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|抖音|快手|douyin|vimeo)/i.test(previousContent)
+    || /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be|bilibili\.com|douyin\.com|vimeo\.com)\//i.test(previousContent);
 }
 
 export function likelyArtifactGenerationRequest(input: string) {

@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
 import { mkdir, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 
@@ -73,9 +75,48 @@ const MEDIA_EXTENSIONS = new Set(['.avi', '.flv', '.m4v', '.mkv', '.mov', '.mp4'
 const BLOCKED_HOSTS = new Set(['localhost', 'metadata', 'metadata.google.internal', 'metadata.goog', 'instance-data', 'host.docker.internal']);
 const BLOCKED_SUFFIXES = ['.local', '.internal', '.localhost', '.home.arpa', '.lan'];
 
+function windowsUserYtDlpCommand() {
+  const roots = [...new Set([
+    process.env.APPDATA,
+    process.env.LOCALAPPDATA,
+    process.env.USERPROFILE,
+    homedir(),
+  ].filter((value): value is string => Boolean(value && value.trim())))];
+  const candidates: string[] = [];
+  const addCandidate = (value: string) => {
+    if (value && !candidates.includes(value)) candidates.push(value);
+  };
+  const scanPythonDirectory = (directory: string) => {
+    try {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isDirectory() && /^Python\d+$/i.test(entry.name)) {
+          addCandidate(path.join(directory, entry.name, 'Scripts', 'yt-dlp.exe'));
+        }
+      }
+    } catch {
+      // User-level Python installations are optional; continue with the next root.
+    }
+  };
+  for (const root of roots) {
+    for (const directory of [
+      path.join(root, 'Python'),
+      path.join(root, 'Programs', 'Python'),
+      path.join(root, 'AppData', 'Roaming', 'Python'),
+      path.join(root, 'AppData', 'Local', 'Programs', 'Python'),
+    ]) scanPythonDirectory(directory);
+    addCandidate(path.join(root, 'bin', 'yt-dlp.exe'));
+    addCandidate(path.join(root, '.local', 'bin', 'yt-dlp.exe'));
+  }
+  return candidates.find((candidate) => existsSync(candidate)) || '';
+}
+
 function configuredCommand(explicit?: string) {
   const configured = String(explicit || process.env.SANMAO_YTDLP_PATH || process.env.YT_DLP_PATH || '').trim();
   if (configured) return configured;
+  if (process.platform === 'win32') {
+    const discovered = windowsUserYtDlpCommand();
+    if (discovered) return discovered;
+  }
   return process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
 }
 

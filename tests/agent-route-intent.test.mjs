@@ -160,7 +160,7 @@ function harness(options = {}) {
           },
           data: { resolveLocalDataDir: () => '/unused-test-data' },
           video: {
-            downloadWithYtDlp: async () => { throw new Error('test video downloader unavailable'); },
+            downloadWithYtDlp: options.downloadWithYtDlp || (async () => { throw new Error('test video downloader unavailable'); }),
             getDefaultVideoStoragePath: () => '/unused-test-video-data',
           },
           health: {
@@ -639,6 +639,77 @@ test('configured JEV is skipped for a clear ordinary conversation turn', async (
   const agent = harness({ intentClassifierRuntime: classifierRuntime });
   await agent.post([{ role: 'user', content: '你好，你能做什么？' }]);
   assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 0);
+});
+
+test('video download uses JEV before exposing the native downloader', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const downloaded = [];
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async (request) => {
+      downloaded.push(request);
+      return { filePath: 'C:\\media\\example.mp4', bytes: 1234 };
+    },
+    reply: (payload, _callCount, rawModel) => {
+      if (rawModel === 'jev-1.13') return { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"用户明确要求下载视频"}' };
+      if (payload.messages.some((message) => message.role === 'tool')) return { content: '已完成下载。' };
+      if (payload.tools?.some((tool) => tool.function.name === 'video_download')) {
+        return { content: null, tool_calls: [{ id: 'video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4' }) } }] };
+      }
+      return { content: '未执行下载。' };
+    },
+  });
+  const data = await agent.post([
+    { role: 'user', content: 'https://www.youtube.com/watch?v=example123' },
+    { role: 'assistant', content: '我收到这个链接了。' },
+    { role: 'user', content: '下载' },
+  ]);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'video_download')));
+  assert.deepEqual(downloaded.map((request) => request.url), ['https://www.youtube.com/watch?v=example123']);
+  assert.match(data.message, /完成下载/);
+});
+
+test('video download falls back to the canonical native call when the model returns prose', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const downloaded = [];
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async (request) => {
+      downloaded.push(request);
+      return { filePath: 'C:\\media\\fallback.mp4', bytes: 4567 };
+    },
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"明确下载请求"}' }
+      : { content: '我会帮你下载。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '下载 https://www.youtube.com/watch?v=fallback123' }]);
+  assert.deepEqual(downloaded.map((request) => request.url), ['https://www.youtube.com/watch?v=fallback123']);
+  assert.match(data.message, /已经|完成|下载/);
+});
+
+test('JEV can reject a video-shaped question without running the downloader', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  let downloads = 0;
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async () => { downloads += 1; return { filePath: 'C:\\media\\never.mp4', bytes: 1 }; },
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"ask","deliverable":"OTHER","confidence":"high","reason":"用户是在询问是否支持下载"}' }
+      : { content: '支持下载公开视频，但这句话是在询问能力。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '能下载这个视频吗？ https://www.youtube.com/watch?v=question123' }]);
+  assert.equal(downloads, 0);
+  assert.match(data.message, /支持下载/);
 });
 
 test('asking about an image does not grant permission to generate another one', async () => {
