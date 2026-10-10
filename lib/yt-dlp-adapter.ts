@@ -56,7 +56,6 @@ export class YtDlpUnavailableError extends Error {
     this.name = 'YtDlpUnavailableError';
   }
 }
-
 export class YtDlpDownloadError extends Error {
   readonly exitCode: number | null;
   readonly stderr: string;
