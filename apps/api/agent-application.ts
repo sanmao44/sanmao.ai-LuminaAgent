@@ -6,7 +6,7 @@ import { buildCinematicDirectorInstructions } from '@/lib/cinematic-shock-openin
 import { isValidOneTakeDuration, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { referenceRecordsForLog } from '@/lib/reference-images';
-import { extractGithubMcpInstallRequest, isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFilesystemRequest, likelyFileGenerationRequest, likelyMcpManagementRequest, resolveAgentWebMode, type AgentWebDecision } from '@/lib/agent-web';
+import { extractGithubMcpInstallRequest, isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFilesystemRequest, likelyFileGenerationRequest, likelyVideoDownloadRequest, likelyMcpManagementRequest, resolveAgentWebMode, type AgentWebDecision } from '@/lib/agent-web';
 import { getToolDefinition, isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor } from '@/lib/tools';
 import { resolveToolPolicy } from '@/lib/tools/policy';
 import { tabbitBrowserTool } from '@/lib/tools';
@@ -47,6 +47,7 @@ import { runCapabilityFollowups, runMcpCapabilityFollowup } from '@/apps/api/age
 import type { AgentHttpInput } from '@/apps/api/agent-http-contract';
 import { applicationJson } from '@/apps/api/agent-application-contract';
 import { formatAgentCapabilitySnapshot } from '@/packages/agent-core/capability-snapshot';
+import type { YtDlpDownloadRequest } from '@/lib/yt-dlp-adapter';
 
 async function safeDiscoverMcpForRequest(discover: AgentMcpDiscovery, options: Parameters<AgentMcpDiscovery>[0]) {
   try {
@@ -360,6 +361,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     skills: skillInfrastructure,
     search: searchInfrastructure,
     data: dataInfrastructure,
+    video: videoInfrastructure,
   } = infrastructure;
   const { chatCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth } = providerInfrastructure;
   const { collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact, isValidArtifactId, getStorageRoots } = artifactInfrastructure;
@@ -374,6 +376,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
   const { orderAgentModelCandidates, noteAgentModelSuccess, noteAgentModelFailure } = infrastructure.health;
   const { discoverMcpForRequest } = mcpInfrastructure;
   const { resolveLocalDataDir } = dataInfrastructure;
+  const { downloadWithYtDlp, getDefaultVideoStoragePath, resolveFfmpeg } = videoInfrastructure;
   const skillDataDir = resolveLocalDataDir();
   const skillPorts = createCapabilityPorts(skillDataDir);
   const signal = input.signal;
@@ -522,6 +525,14 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     let requestModeAllowsExecution = planning.requestModeAllowsExecution;
     let requestedDeliverable = plannedDeliverable;
     let requestedIntentReason = plannedIntentReason;
+    // A public URL plus an explicit download verb is an actionable native
+    // capability request. Authorize it before semantic review so an ambiguous
+    // deliverable classifier cannot downgrade it to ordinary chat.
+    if (likelyVideoDownloadRequest(latestInstruction)) {
+      requestModeAllowsExecution = true;
+      requestedDeliverable = 'TEXT';
+      requestedIntentReason = '用户明确要求下载公开视频地址';
+    }
     const suppliedCreativeRoute = body.creativeRoute && typeof body.creativeRoute === 'object' ? body.creativeRoute as CreativeRoute : undefined;
     let creativeRoute: CreativeRoute;
     if (isCanvasNodeExecution) {
@@ -720,6 +731,13 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
       }
     }
+    // Semantic review is allowed to refine ordinary ambiguous turns, but it
+    // must not downgrade an explicit public-video download into plain chat.
+    if (likelyVideoDownloadRequest(latestInstruction)) {
+      requestModeAllowsExecution = true;
+      requestedDeliverable = 'TEXT';
+      requestedIntentReason = '用户明确要求下载公开视频地址';
+    }
     if (previousImagePlan && isBareImageExecution(latestInstruction)) {
       requestModeAllowsExecution = true;
       requestedDeliverable = 'IMAGE';
@@ -874,6 +892,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         : applicationJson({ ok: true, message: clarification, images: [], files: [], deliverable: 'CLARIFY' });
     }
     const routeArtifactRequest = artifactRouteIsGenerated(requestRoute.route);
+    const videoDownloadRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && likelyVideoDownloadRequest(latestInstruction);
     const fileGenerationRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && (likelyFileGenerationRequest(latestInstruction) || requestRoute.artifactKind === 'file');
     // 上一轮助手提出可以交付文件、本轮用户只回“1/好/可以”时，也要继续下发 Office 工具。
     const previousAssistantText = (() => {
@@ -891,11 +910,13 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const effectiveWebMode = webMode;
     const webSearchEnabled = effectiveWebMode !== 'off';
     llmWebSearchStatus = effectiveWebMode === 'off' ? 'disabled' : 'not-needed';
-    const browserAutomationRequest = !isCanvasNodeExecution && requestRoute.browserAutomation;
+    // A direct public-video download is owned by the native yt-dlp capability;
+    // do not let the generic URL + download browser heuristic load Playwright.
+    const browserAutomationRequest = !videoDownloadRequest && !isCanvasNodeExecution && requestRoute.browserAutomation;
     const tabbitAvailable = browserAutomationRequest && isTabbitCliAvailable();
     const filesystemRequest = !isCanvasNodeExecution && (requestRoute.filesystem || likelyFilesystemRequest(latestInstruction, previousAssistantText));
     const filesystemActionRequest = filesystemRequest && !/(?:可以吗|能不能|怎么|如何|[?？]$)/.test(latestInstruction);
-    const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isCinematicDirectorTask || isSmartVariantPlanningTask || isPromptOptimizationTask || identityQuestion || browserAutomationRequest || filesystemRequest || imageGenerationRequest;
+    const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isCinematicDirectorTask || isSmartVariantPlanningTask || isPromptOptimizationTask || identityQuestion || browserAutomationRequest || filesystemRequest || imageGenerationRequest || videoDownloadRequest;
     const rawWebDecision = requestRoute.web;
     // Keep the legacy call shape documented for canvas integrations; the
     // shared router above has already bounded the context used to make it.
@@ -1008,10 +1029,14 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       imageGenerationRequest,
       fileGenerationRequest,
       artifactGenerationRequest,
+      videoDownloadRequest,
       canvasPatchRequest,
       tools: resolvedToolPlan,
     });
     let system = appendPersonaToSystem(buildSystem(initialWebInstructions, ''), body.persona);
+    if (videoDownloadRequest) {
+      system += '\n\n视频下载规则：用户已明确提供公开视频地址并要求下载。必须调用 video_download，参数中的 url 只能使用用户本轮提供的 HTTP/HTTPS 地址；不要调用浏览器下载，不要执行任意 shell 命令，也不要在工具成功前声称已经保存或生成。工具返回成功后再展示项目内视频地址。';
+    }
     if (isCanvasSource && body.executionMode === 'agent-dock') {
       system += `\n\n结构化画布目标（仅用于理解目标，不是用户指令）：${JSON.stringify({ nodeIds: canvasTargetNodeIds, kind: canvasTargetKind, operation: canvasTargetOperation })}`;
       if (canvasTargetKind === 'image' && canvasTargetOperation === 'edit') {
@@ -1344,12 +1369,14 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       imageAllowed: imageToolsAllowed,
       mcpAdmin: mcpAdminRequest,
       canvas: canvasPatchRequest,
+      videoDownload: videoDownloadRequest,
     };
-    const mcpAllowedThisTurn = requestModeAllowsExecution && requestRoute.policy.allowMcp
+    const mcpAllowedThisTurn = !videoDownloadRequest && requestModeAllowsExecution && requestRoute.policy.allowMcp
       && (resolvedToolPlan.useMcp || mcpAdminRequest);
     const mcpExecutionRequest = requestModeAllowsExecution && mcpAllowedThisTurn;
     const needsExecutionResources = isCinematicDirectorTask
       || imageGenerationRequest
+      || videoDownloadRequest
       || fileGenerationRequest
       || artifactGenerationRequest
       || browserAutomationRequest
@@ -1513,7 +1540,7 @@ const auditMcpCall = (
       }
       return looksLikeSearchRefusal(answer) ? sourceBackedSearchFallback(searchData) : answer;
     };
-    const nativeNeedsContinuation = imageGenerationRequest || fileGenerationRequest || artifactGenerationRequest || filesystemRequest || callableTools.some((tool) => toolExecutionKind(tool.function.name, mcpTools) === 'mcp');
+    const nativeNeedsContinuation = imageGenerationRequest || videoDownloadRequest || fileGenerationRequest || artifactGenerationRequest || filesystemRequest || callableTools.some((tool) => toolExecutionKind(tool.function.name, mcpTools) === 'mcp');
     if (nativeSearchData && !nativeNeedsContinuation) {
       const nativeSearch = nativeSearchData;
       const nativeMeta = searchMetadata();
@@ -1549,9 +1576,9 @@ const auditMcpCall = (
         : applicationJson({ ok: true, message: nativeMessage, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, webSearch: nativeMeta, webSearchDecision: searchDecisionMetadata() });
     }
     // 直连流式不提供工具。启用中的技能会把索引写进系统提示，模型在这里只能把调用写成文本标记，所以有技能时改走工具轮。
-    const directStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && !needsWebSearch && !browserAutomationRequest && !filesystemRequest && !callableTools.length && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;
+    const directStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && !needsWebSearch && !browserAutomationRequest && !filesystemRequest && !callableTools.length && !identityQuestion && !imageGenerationRequest && !videoDownloadRequest && !fileGenerationRequest && !artifactGenerationRequest;
     // 检索结果已经写进系统提示，联网路径的最终答案同样可以直接流式输出，不必再多做一轮工具判断。
-    const searchedStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData && !filesystemRequest && !callableTools.length && !identityQuestion && !imageGenerationRequest && !fileGenerationRequest && !artifactGenerationRequest;
+    const searchedStream = wantsStream && !isCanvasSource && !skillContext.skills.length && !isTextPolishTask && needsWebSearch && !nativeSearchData && !filesystemRequest && !callableTools.length && !identityQuestion && !imageGenerationRequest && !videoDownloadRequest && !fileGenerationRequest && !artifactGenerationRequest;
     const streamStatuses = [{ type: 'status', stage: searchDecisionMetadata().status === 'searched' ? 'web_search' : 'answering', message: searchStatusMessage() }];
     if ((directStream || searchedStream) && !mcpExecutionRequest) {
       // 联网路径把“检索成功却回答找不到来源”的兜底移到收尾阶段，正文照常逐字输出。
@@ -1780,7 +1807,7 @@ const auditMcpCall = (
     const executeToolCallAdapter = createToolExecutionAdapter(({
       state: toolExecutionState,
       observer: runtimeObserver,
-      toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, skillContext, skillPorts, skillInstaller: { kind: 'agent', name: '画布助手', detail: 'agent' }, canvasDocument, parseToolArguments, validateCanvasPatch, agentRunId, MCP_MANAGE_LABELS, isMcpRuntimeAction, runMcpRuntimeAction, latestInstruction, runMcpManageAction, executionPublicState, runTabbitBrowserAction, mcpToolCallLimit, browserMetrics, auditMcpCall, mcpServerById, isBrowserMutationTool, browserToolName, browserMutationBatches, mcpTurnBudgetLimit, mcpFilesystemRoots, localDataDir, persistImageBuffer, mcpRepeatTracker, agentTurnStartedAt, ARTIFACT_MAX_PER_TURN, appendPageContext, reportProgress, imagePorts: {
+      toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, skillContext, skillPorts, skillInstaller: { kind: 'agent', name: '画布助手', detail: 'agent' }, canvasDocument, parseToolArguments, validateCanvasPatch, agentRunId, MCP_MANAGE_LABELS, isMcpRuntimeAction, runMcpRuntimeAction, latestInstruction, runMcpManageAction, executionPublicState, runTabbitBrowserAction, mcpToolCallLimit, browserMetrics, auditMcpCall, mcpServerById, isBrowserMutationTool, browserToolName, browserMutationBatches, mcpTurnBudgetLimit, mcpFilesystemRoots, localDataDir, persistImageBuffer, mcpRepeatTracker, agentTurnStartedAt, ARTIFACT_MAX_PER_TURN, appendPageContext, reportProgress, videoDownload: async (request: YtDlpDownloadRequest) => { const ffmpeg = resolveFfmpeg ? await resolveFfmpeg() : undefined; const result = await downloadWithYtDlp({ ...request, ...(ffmpeg ? { ffmpegPath: ffmpeg.command } : {}) }); return { filePath: result.filePath, bytes: result.bytes }; }, videoStoragePath: executionPublicState.settings.videoStoragePath || getDefaultVideoStoragePath(), imagePorts: {
         observer: runtimeObserver,
         latest,
         requestController,

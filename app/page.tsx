@@ -6395,12 +6395,13 @@ export default function Page() {
                 if (images.length) playSuccessSound();
             }
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string')).map((file)=>({
+            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string' || typeof file.url === 'string' || typeof file.downloadUrl === 'string')).map((file)=>({
                     id: uid('file'),
                     name: file.name,
                     mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
                     ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' } : {}),
                     ...(typeof file.artifactId === 'string' ? { artifactId: file.artifactId, downloadUrl: typeof file.downloadUrl === 'string' ? file.downloadUrl : `/api/artifacts/${file.artifactId}` } : {}),
+                    ...(typeof file.url === 'string' ? { downloadUrl: file.url } : {}),
                     size: typeof file.size === 'number' ? file.size : undefined
                 })) : [];
             const completedMessages = (pendingChatMessagesRef.current.get(sessionId) || workingMessages).map((item)=>{
@@ -6721,12 +6722,13 @@ export default function Page() {
                 if (items.length) playSuccessSound();
             }
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string')).map((file)=>({
+            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string' || typeof file.url === 'string' || typeof file.downloadUrl === 'string')).map((file)=>({
                     id: uid('file'),
                     name: file.name,
                     mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
                     ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' } : {}),
                     ...(typeof file.artifactId === 'string' ? { artifactId: file.artifactId, downloadUrl: typeof file.downloadUrl === 'string' ? file.downloadUrl : `/api/artifacts/${file.artifactId}` } : {}),
+                    ...(typeof file.url === 'string' ? { downloadUrl: file.url } : {}),
                     size: typeof file.size === 'number' ? file.size : undefined
                 })) : [];
             const completed = [

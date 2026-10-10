@@ -8,6 +8,7 @@ import { webSearchTool } from './web';
 import { kindForTool, type ToolExecutionKind } from './executor';
 import { selectToolsForTurn } from './selector';
 import { canvasPatchTool } from './canvas';
+import { videoDownloadTool } from './video';
 
 export * from './registry';
 export * from './executor';
@@ -30,6 +31,7 @@ export const TOOL_REGISTRY: readonly ToolDefinition[] = [
   skillInstallTool,
   mcpManageTool,
   canvasPatchTool,
+  videoDownloadTool,
 ];
 
 const TOOL_BY_NAME = new Map(TOOL_REGISTRY.map((tool) => [tool.name, tool]));

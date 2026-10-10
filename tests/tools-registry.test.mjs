@@ -10,7 +10,7 @@ test('注册表登记全部内置工具，且每个工具都声明了 schema / �
   assert.deepEqual(tools.TOOL_REGISTRY.map((tool) => tool.name), [
     'document_generate', 'spreadsheet_generate', 'presentation_generate', 'image_generate', 'image_edit',
     'file_generate', 'archive_generate', 'web_search', 'skill_search', 'skill_read', 'skill_install',
-    'mcp_manage', 'canvas_patch',
+    'mcp_manage', 'canvas_patch', 'video_download',
   ]);
   assert.equal(new Set(tools.TOOL_REGISTRY.map((tool) => tool.name)).size, tools.TOOL_REGISTRY.length);
   for (const tool of tools.TOOL_REGISTRY) {
@@ -34,6 +34,7 @@ test('门控由注册表统一决定：普通对话不下发任何工具', () =>
   assert.deepEqual(namesFor({ ...NONE, deliveryRequest: true }), ['document_generate', 'spreadsheet_generate', 'presentation_generate', 'file_generate', 'archive_generate']);
   assert.deepEqual(namesFor({ ...NONE, mcpAdmin: true }), ['mcp_manage']);
   assert.deepEqual(namesFor({ ...NONE, canvas: true }), ['canvas_patch']);
+  assert.deepEqual(namesFor({ ...NONE, videoDownload: true }), ['video_download']);
   assert.ok(!namesFor({ ...NONE, fileGeneration: true, deliveryRequest: true, skillsEnabled: true, imageAllowed: true }).includes('web_search'));
 });
 
@@ -54,6 +55,7 @@ test('能力标签支撑执行类别和调用判断', () => {
   assert.equal(tools.toolExecutionKind('image_edit'), 'image');
   assert.equal(tools.toolExecutionKind('skill_read'), 'skill');
   assert.equal(tools.toolExecutionKind('canvas_patch'), 'canvas');
+  assert.equal(tools.toolExecutionKind('video_download'), 'video-download');
   assert.equal(tools.toolExecutionKind('unknown_tool'), null);
   assert.ok(tools.isArtifactToolCall({ function: { name: 'archive_generate' } }));
   assert.ok(tools.isImageToolCall({ function: { name: 'image_edit' } }));
@@ -63,7 +65,7 @@ test('能力标签支撑执行类别和调用判断', () => {
 });
 
 test('每个注册表标签都能推导出稳定执行类别', () => {
-  const mapping = { artifact: 'artifact', archive: 'artifact', image: 'image', skill: 'skill', file: 'file', web: 'web', 'mcp-admin': 'mcp-manage', canvas: 'canvas' };
+  const mapping = { artifact: 'artifact', archive: 'artifact', image: 'image', skill: 'skill', file: 'file', video: 'video-download', web: 'web', 'mcp-admin': 'mcp-manage', canvas: 'canvas' };
   for (const tag of new Set(tools.TOOL_REGISTRY.flatMap((tool) => [...tool.tags]))) {
     assert.ok(mapping[tag], `${tag} 需要类别映射`);
     const owner = tools.TOOL_REGISTRY.find((tool) => tool.tags.includes(tag));

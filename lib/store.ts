@@ -12,6 +12,7 @@ import { resolveProviderConfigDir } from './data-paths';
 import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
 import { providerStateRepository } from './repositories/server-provider-repository';
 import { isIntentClassifierModel } from './intent-classifier';
+import { isRetiredAgnesModel } from './agnes';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -112,17 +113,31 @@ async function readState(): Promise<StoreData> {
     if (!parsed || typeof parsed !== 'object' || (!Array.isArray(parsed.providers) && parsed.providers !== undefined) || (!Array.isArray(parsed.models) && parsed.models !== undefined) || (parsed.settings !== undefined && (!parsed.settings || typeof parsed.settings !== 'object'))) {
       throw new Error('state.json 数据结构无效');
     }
+    const parsedModels = Array.isArray(parsed.models) ? parsed.models : [];
+    const models = parsedModels.filter((model) => !isRetiredAgnesModel((model as RegistryModel).rawId));
+    const settings = { ...emptyState.settings, ...(parsed.settings || {}) };
+    const retiredModelIds = new Set(parsedModels
+      .filter((model) => isRetiredAgnesModel((model as RegistryModel).rawId))
+      .map((model) => (model as RegistryModel).id));
+    let settingsChanged = false;
+    for (const key of ['agentModelId', 'intentClassifierModelId', 'defaultImageModelId', 'defaultVideoModelId'] as const) {
+      const selectedId = settings[key];
+      if (selectedId && retiredModelIds.has(selectedId)) {
+        settings[key] = null;
+        settingsChanged = true;
+      }
+    }
     const nextState: StoreData = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       providers: Array.isArray(parsed.providers) ? parsed.providers : [],
-      models: Array.isArray(parsed.models) ? parsed.models : [],
-      settings: { ...emptyState.settings, ...(parsed.settings || {}) },
+      models,
+      settings,
       upscaleConnections: Array.isArray(parsed.upscaleConnections) ? parsed.upscaleConnections.filter((item): item is StoredUpscaleConnection => Boolean(item && typeof item === 'object' && (item as StoredUpscaleConnection).provider && ['tencent-ci', 'aliyun-viapi'].includes((item as StoredUpscaleConnection).provider))) : [],
       webSearch: parsed.webSearch && typeof parsed.webSearch === 'object' && parsed.webSearch.encryptedApiKey && parsed.webSearch.provider === 'baidu-qianfan'
         ? { provider: 'baidu-qianfan', encryptedApiKey: parsed.webSearch.encryptedApiKey }
         : undefined,
     };
-    if (parsed.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(parsed.upscaleConnections)) {
+    if (parsed.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(parsed.upscaleConnections) || models.length !== parsedModels.length || settingsChanged) {
       await writeStateDirect(nextState);
     }
     return nextState;

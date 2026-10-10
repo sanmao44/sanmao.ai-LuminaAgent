@@ -279,6 +279,38 @@ function isRetryableVideoProviderError(error: unknown) {
   return /timeout|timed out|network|fetch failed|connection|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(message);
 }
 
+function isRetryableVideoSubmissionFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /队列已满|queue\s*(?:is\s*)?full|限流|rate limit|too many requests|稍后再试|稍后重试/i.test(message);
+}
+
+function retryableVideoErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '视频服务商暂时不可用，请稍后重试');
+  return /任务已保留，将自动重试/.test(message) ? message : `${message}（任务已保留，将自动重试）`;
+}
+
+function submissionRetryDelayMs(task: Pick<VideoTask, 'pollCount'>, error: unknown) {
+  const providerError = error instanceof VideoProviderError ? error : undefined;
+  if (providerError?.retryAfterMs && Number.isFinite(providerError.retryAfterMs)) {
+    return Math.min(15 * 60_000, Math.max(30_000, providerError.retryAfterMs));
+  }
+  const attempt = Math.min(4, Math.max(0, Number(task.pollCount) || 0));
+  return Math.min(5 * 60_000, 30_000 * (2 ** attempt));
+}
+
+async function keepVideoSubmissionPending(task: VideoTask, error: unknown, providerStatus?: string, providerResponse?: unknown) {
+  const providerError = error instanceof VideoProviderError ? error : undefined;
+  return updateVideoTask(task.id, {
+    status: 'pending',
+    pollCount: task.pollCount + 1,
+    nextPollAt: Date.now() + submissionRetryDelayMs(task, error),
+    providerStatus: providerStatus || (providerError?.status ? `HTTP ${providerError.status}` : 'submission_retry'),
+    error: retryableVideoErrorMessage(error),
+    ...(providerResponse !== undefined ? { providerResponse } : {}),
+    completedAt: undefined,
+  });
+}
+
 export async function createVideoGeneration(options: { modelId?: string; input: VideoGenerationInput; idempotencyKey?: string; source?: GenerationSource }) {
   const runtime = await getRuntimeVideoModel(options.modelId || 'auto');
   if (!runtime) throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
@@ -321,7 +353,10 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
   try {
     const result = await callSubmit(runtime, input, key);
     if (result.status === 'done' && result.videos.length) return persistResult({ ...task, providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId }, result);
-    if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
+    if (result.status === 'failed') {
+      if (isRetryableVideoSubmissionFailure(result.error)) return keepVideoSubmissionPending(task, result.error, result.providerStatus, result.raw);
+      return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
+    }
     if (result.status === 'done') return failTask(task, '服务商已完成任务，但没有返回可下载的视频地址', 'VIDEO_RESULT_MISSING');
     const updated = await updateVideoTask(task.id, { status: result.status === 'running' ? 'running' : 'pending', providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, startedAt: new Date().toISOString(), nextPollAt: Date.now() + (isAgnesProvider(runtime.provider) ? 1500 : 2000), costUsd: result.costUsd });
     return updated;
@@ -358,6 +393,9 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
           nextPollAt: Date.now() + 15_000,
         });
       }
+    }
+    if (isRetryableVideoProviderError(error) || isRetryableVideoSubmissionFailure(error)) {
+      return keepVideoSubmissionPending(task, error);
     }
     return failTask(task, error, error instanceof VideoProviderError ? error.code : typeof (error as any)?.code === 'string' ? (error as any).code : undefined);
   }
@@ -398,6 +436,10 @@ async function refreshVideoTaskOnce(id: string) {
   const task = await findVideoTask(id);
   if (!task) return null;
   if (!videoTaskRuntime.isActive(task.status)) return task;
+  // Submission retries use the same task and idempotency key. Respect the
+  // persisted backoff before attempting another upstream POST, otherwise the
+  // UI polling interval would turn a full provider queue into a retry storm.
+  if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
   if (!task.providerTaskId) {
     const runtime = await getRuntimeVideoModel(task.modelId);
     if (!runtime) return failTask(task, '视频服务商配置已删除', 'PROVIDER_NOT_FOUND');
@@ -406,7 +448,10 @@ async function refreshVideoTaskOnce(id: string) {
       if (result.status === 'done' && result.videos.length) {
         return persistResult({ ...task, providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId }, result);
       }
-      if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
+      if (result.status === 'failed') {
+        if (isRetryableVideoSubmissionFailure(result.error)) return keepVideoSubmissionPending(task, result.error, result.providerStatus, result.raw);
+        return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
+      }
       if (result.status === 'done') return failTask(task, result.error || '服务商已完成任务，但没有返回可下载的视频地址', result.errorCode || 'VIDEO_RESULT_MISSING', result.raw);
       return updateVideoTask(id, {
         status: result.status === 'running' ? 'running' : 'pending',
@@ -431,10 +476,10 @@ async function refreshVideoTaskOnce(id: string) {
           error: undefined,
         });
       }
+      if (isRetryableVideoSubmissionFailure(error)) return keepVideoSubmissionPending(task, error);
       return failTask(task, error, error instanceof VideoProviderError ? error.code : undefined);
     }
   }
-  if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
   const quickProvider = await getProviderWithKey(task.providerId);
   if ((isAgnesProvider(quickProvider || undefined) || quickProvider?.videoTransport === 'agnes-videos') && Date.now() - new Date(task.createdAt).getTime() > 30 * 60 * 1000) {
     // A local polling deadline is not a provider failure. Keep reconciling the

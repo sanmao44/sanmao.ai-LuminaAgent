@@ -1171,7 +1171,10 @@ export function githubArchiveUrls(target: GithubSkillTarget) {
   return refs.map((ref) => 'https://codeload.github.com/' + target.owner + '/' + target.repo + '/zip/' + ref);
 }
 export function localAgentSkillDirs(cwd = process.cwd(), home = process.env.USERPROFILE || process.env.HOME || '') {
-  const dirs = [path.join(cwd, '.agents', 'skills')];
+  // A repository may ship reviewable Skill templates under `skills/`. They are
+  // offered by the import endpoint, but are not loaded into the runtime until
+  // the user explicitly installs them into the durable data directory.
+  const dirs = [path.join(cwd, '.agents', 'skills'), path.join(cwd, 'skills')];
   if (home) {
     dirs.push(path.join(home, '.agents', 'skills'));
     dirs.push(path.join(home, '.codex', 'skills'));

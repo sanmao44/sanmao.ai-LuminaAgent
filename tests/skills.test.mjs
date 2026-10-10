@@ -217,6 +217,31 @@ test('本机技能目录按标识去重', async () => {
   }
 });
 
+test('repo skills directory can be explicitly imported into the runtime store', async () => {
+  const dirs = skills.localAgentSkillDirs(process.cwd(), '');
+  assert.ok(dirs.includes(path.join(process.cwd(), 'skills')));
+  const found = skills.listLocalAgentSkills({ dirs: [path.join(process.cwd(), 'skills')] });
+  const candidate = found.find((item) => item.id === 'video-download');
+  assert.ok(candidate);
+  const { store, cleanup } = await tempStore();
+  try {
+    assert.equal(skills.readSkill(candidate.id, store), null, 'repo template should need explicit import');
+    const installed = skills.installSkillFromDocument({
+      text: skills.readLocalSkillDocument(candidate.dir),
+      id: candidate.id,
+      files: skills.skillFilesFromDirectory(candidate.dir),
+      source: 'local',
+    }, store);
+    assert.equal(installed.id, 'video-download');
+    assert.equal(installed.source, 'local');
+    assert.ok(installed.tools.includes('video_download'));
+    assert.ok(skills.readSkill('video-download', store)?.body.includes('video_download'));
+    assert.ok(skills.listSkills({ ...store, pending: false }).some((item) => item.id === 'video-download'));
+  } finally {
+    await cleanup();
+  }
+});
+
 test('GitHub 目标解析与归档地址', () => {
   assert.deepEqual(skills.parseGithubSkillTarget('owner/repo'), { owner: 'owner', repo: 'repo', ref: '', dir: '' });
   assert.deepEqual(skills.parseGithubSkillTarget('https://github.com/owner/repo'), { owner: 'owner', repo: 'repo', ref: '', dir: '' });

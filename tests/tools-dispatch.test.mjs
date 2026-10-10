@@ -6,7 +6,7 @@ const tools = await buildToolsModule();
 const mcp = await buildMcpModule();
 const policy = await buildToolPolicyModule();
 const loop = await buildToolLoopModule();
-const GATING = { fileGeneration: false, deliveryRequest: false, skillsEnabled: false, imageAllowed: false };
+const GATING = { fileGeneration: false, deliveryRequest: false, skillsEnabled: false, imageAllowed: false, videoDownload: false };
 
 test('执行类别由注册表标签推导，MCP 按来源归类', () => {
   assert.equal(tools.toolExecutionKind('web_search'), 'web');

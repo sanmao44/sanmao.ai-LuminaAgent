@@ -6,7 +6,7 @@ import type { ToolPolicyDecision } from '../contracts/tool';
 import type { ToolRuntimeCall } from './runtime';
 import type { RuntimeObserver } from '../contracts/observability';
 import type { ToolRuntimeState, ToolCall, GeneratedFile } from './capability-state';
-import { executeCanvasCapability, executeFileCapability, executeWebCapability } from './native-capabilities';
+import { executeCanvasCapability, executeFileCapability, executeVideoDownloadCapability, executeWebCapability } from './native-capabilities';
 import { executeImageCapability, type ImageCapabilityPorts } from './image-capability';
 import { executeSkillCapability } from './skill-capability';
 import { executeArtifactCapability, type ArtifactCapabilityInfrastructure } from './artifact-capability';
@@ -33,11 +33,13 @@ export interface ToolExecutionAdapterBindings {
   validateCanvasPatch(document: unknown, patch: CanvasPatch): { ok: true } | { ok: false; error: string; operationIndex?: number };
   agentRunId?: string | null;
   executionPublicState: { settings: { imageStoragePath?: string } };
+  videoDownload?: (input: { url: string; outputDirectory: string; format?: 'best' | 'bestvideo+bestaudio/best'; signal: AbortSignal; onProgress?: (line: string) => void }) => Promise<{ filePath: string; bytes: number }>;
+  videoStoragePath?: string;
 }
 export type ToolCallRun = { results: ChatMessage[]; deferred?: true; stalled?: true };
 export type ToolExecutionAdapterDependencies = ToolExecutionAdapterBindings & { state: ToolRuntimeState };
 export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDependencies) {
-  const { state, observer, toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, skillContext, skillPorts, skillInstaller, canvasDocument, parseToolArguments, validateCanvasPatch, imagePorts, mcpPorts, artifactInfrastructure, agentRunId, executionPublicState } = dependencies;
+  const { state, observer, toolExecutionKind, mcpTools, reportToolProgress, agentToolProgress, webDecision, latest, requestController, searchWeb, formatWebSearchContext, normalizeGeneratedFile, skillContext, skillPorts, skillInstaller, canvasDocument, parseToolArguments, validateCanvasPatch, imagePorts, mcpPorts, artifactInfrastructure, agentRunId, executionPublicState, videoDownload, videoStoragePath } = dependencies;
   return async (input: { call: ToolRuntimeCall; policy: ToolPolicyDecision; args: Record<string, unknown>; executionContext?: unknown }): Promise<ToolCallRun> => {
     const { call, policy, args } = input;
     const executionContext = input.executionContext as { stepCalls: readonly ToolCall[]; callIndex: number } | undefined;
@@ -68,6 +70,19 @@ export function createToolExecutionAdapter(dependencies: ToolExecutionAdapterDep
           args,
           signal: requestController.signal,
           normalizeGeneratedFile,
+        });
+        if (execution.files?.length) generatedFiles.push(...execution.files);
+        results.push(execution.message);
+        return { results };
+      }
+      if (kind === 'video-download') {
+        const execution = await executeVideoDownloadCapability({
+          callId: call.id,
+          args,
+          signal: requestController.signal,
+          videoDownload,
+          videoStoragePath,
+          onProgress: (line) => reportToolProgress(agentToolProgress('video-download', line.slice(0, 160))),
         });
         if (execution.files?.length) generatedFiles.push(...execution.files);
         results.push(execution.message);

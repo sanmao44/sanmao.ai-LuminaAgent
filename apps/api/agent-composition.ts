@@ -77,6 +77,9 @@ import {
 } from '@/lib/skills';
 import { fetchSkillFilesFromGithub } from '@/lib/skill-archive';
 import { isIntentClassifierModel } from '@/lib/intent-classifier';
+import { downloadWithYtDlp } from '@/lib/yt-dlp-adapter';
+import { getDefaultVideoStoragePath } from '@/lib/video-storage';
+import { resolveFfmpeg } from '@/lib/video-trim-service';
 import { routeSkillRequest as routeSkillRequestFromMetadata } from '@/packages/agent-core/skill-routing';
 import type { SkillRouteDecision, SkillRouteOptions } from '@/packages/contracts/skill';
 
@@ -188,6 +191,11 @@ export type AgentApplicationInfrastructure = {
   };
   search: { nativeSearchIsEnabled: typeof nativeSearchIsEnabled; runNativeWebSearch: typeof runNativeWebSearch; stripNativeSearchProcess: typeof stripNativeSearchProcess };
   data: { resolveLocalDataDir: typeof resolveLocalDataDir };
+  video: {
+    downloadWithYtDlp: typeof downloadWithYtDlp;
+    getDefaultVideoStoragePath: typeof getDefaultVideoStoragePath;
+    resolveFfmpeg?: typeof resolveFfmpeg;
+  };
   health: { orderAgentModelCandidates: typeof orderAgentModelCandidates; noteAgentModelSuccess: typeof noteAgentModelSuccess; noteAgentModelFailure: typeof noteAgentModelFailure };
 };
 
@@ -225,6 +233,7 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
     skills: { buildAgentSkillContext, routeSkillRequest, createCapabilityPorts: createSkillCapabilityPorts, SKILL_TOOL_MAX_CALLS, stripToolCallMarkup },
     search: { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess },
     data: { resolveLocalDataDir },
+    video: { downloadWithYtDlp, getDefaultVideoStoragePath, resolveFfmpeg },
     health: { orderAgentModelCandidates, noteAgentModelSuccess, noteAgentModelFailure },
   };
 }

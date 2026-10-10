@@ -57,6 +57,7 @@ test('内置工具的风险分级固定，改级别必须是有意为之', () =>
       skill_install: 'write',
       mcp_manage: 'dangerous',
       canvas_patch: 'write',
+      video_download: 'write',
     },
   );
   assert.equal(tools.toolRisk('web_search'), 'read');

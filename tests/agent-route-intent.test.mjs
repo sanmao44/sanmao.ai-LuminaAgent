@@ -159,6 +159,10 @@ function harness(options = {}) {
             stripNativeSearchProcess: (text) => String(text || ''),
           },
           data: { resolveLocalDataDir: () => '/unused-test-data' },
+          video: {
+            downloadWithYtDlp: async () => { throw new Error('test video downloader unavailable'); },
+            getDefaultVideoStoragePath: () => '/unused-test-video-data',
+          },
           health: {
             orderAgentModelCandidates: (candidates) => candidates,
             noteAgentModelSuccess: () => {},

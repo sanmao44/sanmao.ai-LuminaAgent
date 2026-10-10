@@ -389,6 +389,14 @@ export function likelyFileGenerationRequest(input: string) {
     || /(?:给我|提供|返回).{0,12}(?:一个|一份|可下载的)?.{0,12}(?:csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|文件|附件)/i.test(text);
 }
 
+/** Identify an explicit public-video download request. */
+export function likelyVideoDownloadRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text || !/https?:\/\/\S+/i.test(text)) return false;
+  if (!/(?:下载|保存|提取|抓取|转存|download|save)/i.test(text)) return false;
+  return /(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|抖音|快手|douyin|vimeo)/i.test(text);
+}
+
 export function likelyArtifactGenerationRequest(input: string) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;

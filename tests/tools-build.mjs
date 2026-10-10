@@ -37,6 +37,7 @@ const MODULES = [
   'lib/tools/call-arguments',
   'lib/tools/mcp-admin',
   'lib/tools/canvas',
+  'lib/tools/video',
   'lib/tools/index',
   'lib/mcp/types',
   'lib/mcp/protocol',

@@ -259,6 +259,7 @@ export type CompactPlainTurnInput = {
   imageGenerationRequest: boolean;
   fileGenerationRequest: boolean;
   artifactGenerationRequest: boolean;
+  videoDownloadRequest?: boolean;
   canvasPatchRequest: boolean;
   tools: AgentToolPlan;
 };
@@ -286,6 +287,7 @@ export function canUseCompactPlainTurn(input: CompactPlainTurnInput) {
     && !input.imageGenerationRequest
     && !input.fileGenerationRequest
     && !input.artifactGenerationRequest
+    && !input.videoDownloadRequest
     && !input.canvasPatchRequest;
 }
 

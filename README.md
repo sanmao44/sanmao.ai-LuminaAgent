@@ -56,6 +56,30 @@ npm start
 
 `http://localhost:3210`
 
+### 视频下载技能（可选）
+
+仓库内的 [video-download 技能文档](skills/video-download/SKILL.md) 可在设置的技能管理器中作为本地技能导入。仓库 `skills/` 目录只是模板来源；导入后保存在 `.data/skills`，才会进入 Agent 的技能索引和读取流程。
+
+聊天中明确发送一个公开视频地址并要求“下载”时，Agent 会通过项目内置的
+`video_download` 工具调用 `yt-dlp`，将结果保存到项目视频目录，并返回可播放的
+项目地址。技能正文只描述流程，下载命令由服务端受控适配器组装，不会执行用户提供的
+Shell 或 PowerShell 文本。
+
+先安装 [yt-dlp](https://github.com/yt-dlp/yt-dlp)：
+
+```bash
+# macOS / Linux
+python3 -m pip install --user yt-dlp
+
+# Windows（PowerShell）
+py -3 -m pip install --user yt-dlp
+```
+
+安装后确保 `yt-dlp`（Windows 为 `yt-dlp.exe`）在服务进程的 `PATH` 中；也可以在
+`.env.local` 设置 `SANMAO_YTDLP_PATH` 或 `YT_DLP_PATH` 指向可执行文件。项目已经随
+`ffmpeg-static` 提供 FFmpeg，通常不需要额外安装 FFmpeg。未配置 yt-dlp 时，技能会明确
+返回“yt-dlp 不可用”，不会伪造下载结果。
+
 ## 启动器说明
 
 - 快捷方式只在本机生成，不会把当前电脑的绝对路径提交到 GitHub。

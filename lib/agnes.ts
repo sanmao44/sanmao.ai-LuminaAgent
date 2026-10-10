@@ -24,7 +24,6 @@ export type AgnesModelDefinition = {
 const textModels: AgnesModelDefinition[] = [
   // Agnes 3.0 Flash is published as a text model with image-URL input.
   { id: 'agnes-3.0-flash', name: 'Agnes 3.0 Flash', kind: 'chat', billing: 'free', enabledByDefault: true, capabilities: ['chat', 'vision'] },
-  { id: 'agnes-2.0-flash', name: 'Agnes 2.0 Flash', kind: 'chat', billing: 'free', enabledByDefault: true, capabilities: ['chat', 'vision'], contextWindow: 512_000, maxOutputTokens: 65_536 },
   { id: 'agnes-2.5-flash', name: 'Agnes 2.5 Flash', kind: 'chat', billing: 'free', enabledByDefault: true, capabilities: ['chat', 'vision'], contextWindow: 512_000, maxOutputTokens: 65_536 },
   { id: 'agnes-2.5-pro-alpha', name: 'Agnes 2.5 Pro Alpha', kind: 'chat', billing: 'paid', enabledByDefault: false, capabilities: ['chat', 'vision'], contextWindow: 1_000_000, maxOutputTokens: 65_536 },
   { id: 'agnes-2.5-pro-beta', name: 'Agnes 2.5 Pro Beta', kind: 'chat', billing: 'paid', enabledByDefault: false, capabilities: ['chat', 'vision'], contextWindow: 1_000_000, maxOutputTokens: 65_536 },
@@ -37,12 +36,17 @@ const imageModels: AgnesModelDefinition[] = [
 ];
 
 const videoModels: AgnesModelDefinition[] = [
-  { id: 'agnes-video-v2.0', name: 'Agnes Video V2.0', kind: 'video', billing: 'free', enabledByDefault: true, capabilities: ['video-generate', 'video-first-frame', 'video-reference'] },
   { id: 'agnes-video-2.5', name: 'Agnes Video 2.5', kind: 'video', billing: 'paid', enabledByDefault: false, capabilities: ['video-generate', 'video-first-frame', 'video-reference', 'video-audio'] },
   { id: 'agnes-video-2.5-flash', name: 'Agnes Video 2.5 Flash', kind: 'video', billing: 'temporary-free', enabledByDefault: true, capabilities: ['video-generate', 'video-first-frame', 'video-reference', 'video-audio'] },
 ];
 
 export const agnesModelDefinitions = [...textModels, ...imageModels, ...videoModels];
+
+const retiredAgnesModelIds = new Set(['agnes-2.0-flash', 'agnes-video-v2.0']);
+
+export function isRetiredAgnesModel(rawId?: string) {
+  return retiredAgnesModelIds.has(String(rawId || '').trim().toLowerCase());
+}
 
 export const agnesModelCatalog: DiscoveredModel[] = agnesModelDefinitions.map((model) => ({
   id: model.id,

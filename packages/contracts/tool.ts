@@ -2,7 +2,7 @@ import type { McpToolMeta } from './mcp';
 
 export type ToolPermissions = 'network' | 'artifact:read' | 'artifact:write' | 'fs:read' | 'fs:write' | 'external:write' | 'process';
 export type ToolSource = 'native' | 'mcp' | 'plugin';
-export type ToolTag = 'artifact' | 'archive' | 'image' | 'file' | 'web' | 'skill' | 'tabbit' | 'mcp' | 'mcp-admin' | 'canvas';
+export type ToolTag = 'artifact' | 'archive' | 'image' | 'file' | 'video' | 'web' | 'skill' | 'tabbit' | 'mcp' | 'mcp-admin' | 'canvas';
 export type ToolRisk = 'read' | 'write' | 'external_side_effect' | 'dangerous';
 
 export type ToolGatingContext = {
@@ -12,6 +12,8 @@ export type ToolGatingContext = {
   imageAllowed: boolean;
   mcpAdmin: boolean;
   canvas: boolean;
+  /** The current request explicitly asks to download a public video URL. */
+  videoDownload?: boolean;
 };
 
 export type ToolDefinition = {
