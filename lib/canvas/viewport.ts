@@ -9,6 +9,40 @@ export type CanvasViewportBounds = {
   h: number;
 };
 
+/**
+ * Resolve the world-space rectangle currently covered by the stage.
+ *
+ * Overscan is expressed in screen pixels so the number of prefetched world
+ * units stays consistent at every zoom level. Keeping this calculation in the
+ * canvas boundary lets render layers share one cheap, pure visibility rule.
+ */
+export function canvasViewportWorldBounds(
+  camera: CanvasCamera,
+  stage: { width: number; height: number },
+  overscan = 480,
+): CanvasViewportBounds {
+  const zoom = Math.max(camera.zoom, 0.0001);
+  return {
+    x: (-overscan - camera.x) / zoom,
+    y: (-overscan - camera.y) / zoom,
+    w: (stage.width + overscan * 2) / zoom,
+    h: (stage.height + overscan * 2) / zoom,
+  };
+}
+
+/** Return whether two world-space rectangles overlap. */
+export function canvasBoundsIntersect(
+  bounds: CanvasViewportBounds,
+  viewport: CanvasViewportBounds,
+): boolean {
+  return (
+    bounds.x < viewport.x + viewport.w &&
+    bounds.x + bounds.w > viewport.x &&
+    bounds.y < viewport.y + viewport.h &&
+    bounds.y + bounds.h > viewport.y
+  );
+}
+
 /** Convert browser client coordinates into coordinates relative to the stage. */
 export function canvasClientToStagePoint(
   client: CanvasViewportPoint,

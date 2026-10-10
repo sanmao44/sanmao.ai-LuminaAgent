@@ -1156,6 +1156,7 @@ test("completed video nodes offer a guarded local depth-video action in more too
   assert.match(videoActions, /disabled: !hasMedia \|\| generationKeys\.has\(`depth:\$\{node\.id\}`\)/);
   assert.match(component, /const createDepthVideoFromNode = useCallback/);
   assert.match(component, /generateLocalDepthVideo/);
+  assert.match(component, /mode: "model"/);
 });
 
 test("quick-action menus never expose a horizontal scrollbar", () => {
@@ -1166,6 +1167,8 @@ test("quick-action menus never expose a horizontal scrollbar", () => {
 
 test("local depth video balances inference quality with higher-resolution export", () => {
   assert.match(localDepthVideo, /depthQualityProfile\(options\.quality\)/);
+  assert.match(localDepthVideo, /runDepthInference\(estimator, sourceCanvas, profile\.inferenceSide\)/);
+  assert.match(localDepthVideo, /imageProcessor\.size = \{ width: normalizedSide, height: normalizedSide \}/);
   assert.match(localDepthVideo, /inferenceScale = Math\.min\(1, profile\.inferenceSide/);
   assert.match(localDepthVideo, /exportScale = Math\.min\(1, profile\.exportSide/);
   assert.match(localDepthVideo, /sourceCanvas\.width = inferenceWidth/);

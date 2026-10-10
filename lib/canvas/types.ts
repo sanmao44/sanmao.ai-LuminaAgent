@@ -418,7 +418,8 @@ export type CanvasNodeData = {
   depthVideo?: {
     sourceNodeId?: string;
     model?: string;
-    mode?: "grayscale";
+    /** Current output mode; grayscale is retained for legacy persisted nodes. */
+    mode?: "model" | "grayscale";
     quality?: "low" | "medium" | "high";
     inferenceSide?: number;
     exportSide?: number;

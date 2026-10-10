@@ -1,12 +1,13 @@
 "use client";
 
-import type { PointerEvent as ReactPointerEvent } from "react";
+import { useMemo, type PointerEvent as ReactPointerEvent } from "react";
 import { groupBounds, isCanvasReferenceableNode, nodeById } from "@/lib/canvas/model";
 import { canvasGroupPaintZIndex } from "@/lib/canvas/layers";
 import type { CanvasDocument, CanvasGroup } from "@/lib/canvas/types";
 
 type CanvasGroupLayerProps = {
   document: CanvasDocument;
+  groups?: readonly CanvasGroup[];
   selectedGroupId: string | null;
   draggingNodeIds: ReadonlySet<string>;
   cursorTask: string;
@@ -26,6 +27,7 @@ type CanvasGroupLayerProps = {
 
 export default function CanvasGroupLayer({
   document,
+  groups = document.groups,
   selectedGroupId,
   draggingNodeIds,
   cursorTask,
@@ -38,19 +40,32 @@ export default function CanvasGroupLayer({
   onStartConnection,
   onComposeGroup,
 }: CanvasGroupLayerProps) {
+  const groupMetrics = useMemo(() => {
+    const metrics = new Map<string, { bounds: ReturnType<typeof groupBounds>; availableImageCount: number }>();
+    for (const group of document.groups) {
+      const availableImageCount = group.nodeIds.filter((id) => {
+        const node = nodeById(document, id);
+        return Boolean(
+          node &&
+            isCanvasReferenceableNode(node) &&
+            node.data.kind === "image" &&
+            node.data.url,
+        );
+      }).length;
+      metrics.set(group.id, {
+        bounds: groupBounds(document, group.id),
+        availableImageCount,
+      });
+    }
+    return metrics;
+  }, [document.nodes, document.groups]);
+
   return (
     <div className="canvas-group-layer">
-      {document.groups.map((group) => {
-        const bounds = groupBounds(document, group.id);
-        const availableImageCount = group.nodeIds.filter((id) => {
-          const node = nodeById(document, id);
-          return Boolean(
-            node &&
-              isCanvasReferenceableNode(node) &&
-              node.data.kind === "image" &&
-              node.data.url,
-          );
-        }).length;
+      {groups.map((group) => {
+        const metrics = groupMetrics.get(group.id);
+        if (!metrics) return null;
+        const { bounds, availableImageCount } = metrics;
         const composing = composingGroupId === group.id;
         const groupInteraction =
           selectedGroupId === group.id &&

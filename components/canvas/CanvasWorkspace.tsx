@@ -425,6 +425,10 @@ import {
   visibleCanvasEdgeProjection,
 } from "@/lib/canvas/edge-projection";
 import {
+  visibleCanvasGroupProjection,
+  visibleCanvasNodeProjection,
+} from "@/lib/canvas/visibility";
+import {
   CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR,
   canvasConnectableId,
   isCanvasWheelIsolatedTarget,
@@ -706,6 +710,7 @@ export default function SuperCanvas() {
   const runGenerationRef = useRef<
     ((request?: CanvasGenerationRequest) => Promise<void>) | null
   >(null);
+  const toggleEditorRef = useRef<((node: CanvasNode) => void) | null>(null);
   const runUpscaleNodeRef = useRef<((node: CanvasNode) => Promise<void>) | null>(null);
   const mountedRef = useRef(true);
   const generationKeysRef = useRef<Set<string>>(new Set());
@@ -819,9 +824,6 @@ export default function SuperCanvas() {
     setSnapGuides([]);
     const interaction = interactionRef.current;
     if (interaction?.kind === "drag") interaction.snapGuides = [];
-  }, []);
-  const cancelPendingNodeClick = useCallback(() => {
-    setPendingClickNodeId(null);
   }, []);
   const [contextMenu, setContextMenu] = useState<CanvasContextMenuState | null>(null);
   const [lightbox, setLightbox] = useState<{
@@ -1280,14 +1282,35 @@ export default function SuperCanvas() {
     () => sortCanvasNodesByLayer(document.nodes),
     [document.nodes],
   );
+  const renderedCanvasNodes = useMemo(
+    () => visibleCanvasNodeProjection(
+      document,
+      visibleCanvasNodes,
+      stageSize,
+      selectedIds,
+      draggingNodeIds,
+    ),
+    [document.camera, document.nodes, visibleCanvasNodes, stageSize, selectedIds, draggingNodeIds],
+  );
+  const visibleCanvasGroups = useMemo(
+    () => visibleCanvasGroupProjection(
+      document,
+      document.groups,
+      stageSize,
+      selectedGroupId,
+      selectedIds,
+      draggingNodeIds,
+    ),
+    [document, stageSize, selectedGroupId, selectedIds, draggingNodeIds],
+  );
   // Node ids and their paint order never change when a drag/resize only rewrites
   // x/y/w/h, so derive the id set from a value-stable signature. The signature
   // string recomputes cheaply each frame but compares equal across position-only
   // updates, keeping the edge-visibility Set (and thus the whole edge filter)
   // out of the per-pointermove path while still updating on add/remove/reorder.
   const visibleCanvasNodeIdKey = useMemo(
-    () => JSON.stringify(visibleCanvasNodes.map((node) => node.id)),
-    [visibleCanvasNodes],
+    () => JSON.stringify(renderedCanvasNodes.map((node) => node.id)),
+    [renderedCanvasNodes],
   );
   const visibleCanvasNodeIds = useMemo(
     () => new Set(JSON.parse(visibleCanvasNodeIdKey) as string[]),
@@ -2388,16 +2411,62 @@ export default function SuperCanvas() {
       const interactiveTarget =
         target?.closest(CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR) ||
         pointTarget?.closest(CANVAS_CREATE_MENU_INTERACTIVE_SELECTOR);
+      const nodeTarget =
+        target?.closest<HTMLElement>("[data-canvas-node-id]") ||
+        pointTarget?.closest<HTMLElement>("[data-canvas-node-id]");
+      const nodeId = nodeTarget?.dataset.canvasNodeId;
+      const recentNodeId = lastNodePressRef.current?.nodeId;
+      const node = nodeById(
+        canvasCoreRef.current.document(),
+        nodeId || recentNodeId,
+      );
+      const nodeControlTarget =
+        target?.closest(
+          "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-parameters,.canvas-node-quick-toolbar",
+        ) ||
+        pointTarget?.closest(
+          "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-parameters,.canvas-node-quick-toolbar",
+        );
+      const now = Date.now();
+      const repeatedNodePress = Boolean(
+        node &&
+          lastNodePressRef.current?.nodeId === node.id &&
+          now - lastNodePressRef.current.at < 320,
+      );
+      const nodeSurfaceTarget =
+        target?.closest(".canvas-node,.canvas-node-editor-popover") ||
+        pointTarget?.closest(".canvas-node,.canvas-node-editor-popover");
+      if (
+        repeatedNodePress &&
+        node &&
+        isCanvasReferenceableNode(node) &&
+        nodeSurfaceTarget &&
+        !nodeControlTarget
+      ) {
+        // The first click may have opened the inline editor, which can become
+        // the event target before the browser emits dblclick. Resolve the
+        // second press here so the full media viewer wins deterministically.
+        event.preventDefault();
+        event.stopPropagation();
+        lastNodePressRef.current = null;
+        setPendingClickNodeId(null);
+        setQuickToolbarNodeId(null);
+        openCanvasMediaViewer(node.id);
+        return;
+      }
       canvasPointerDownRef.current = {
         pointerId: event.pointerId,
         interactive: Boolean(interactiveTarget),
       };
+      // A second press or an action in a node toolbar confirms that the first
+      // press was not a single-click edit. Clear the delayed editor before the
+      // child interaction can take over the pointer sequence.
       if (target?.closest(".canvas-context-menu") || pointTarget?.closest(".canvas-context-menu")) return;
       // A click in a node or editor should dismiss an already-open create menu
       // even when the child intentionally stops the bubbling pointer event.
       setContextMenu(null);
     },
-    [],
+    [openCanvasMediaViewer],
   );
   const handleStagePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -2430,7 +2499,6 @@ export default function SuperCanvas() {
       setConnectionNodePicker(null);
       setDraggingNodeIds(new Set());
       setQuickToolbarNodeId(null);
-      cancelPendingNodeClick();
       if (
         event.button === 0 &&
         !spaceHeldRef.current &&
@@ -2458,7 +2526,6 @@ export default function SuperCanvas() {
     [
       capture,
       document.camera,
-      cancelPendingNodeClick,
       referencePicker,
       startMarquee,
     ],
@@ -2486,7 +2553,6 @@ export default function SuperCanvas() {
       if (event.ctrlKey || event.metaKey) return startMarquee(event);
       event.preventDefault();
       event.stopPropagation();
-      cancelPendingNodeClick();
       setCursorTask("dragging");
       setNodeGestureActive(true);
       setQuickToolbarNodeId(null);
@@ -2545,7 +2611,6 @@ export default function SuperCanvas() {
     },
     [
       capture,
-      cancelPendingNodeClick,
       focusCanvasStage,
       selectNode,
       setNodeGestureActive,
@@ -3007,7 +3072,6 @@ export default function SuperCanvas() {
         const node = nodeById(canvasCoreRef.current.document(), interaction.nodeId);
         if (node) {
           if (interaction.doubleClick) {
-            cancelPendingNodeClick();
             setQuickToolbarNodeId(null);
             setExpandedEditorId(null);
             if (reuseDraft?.sourceNodeId === node.id) setReuseDraft(null);
@@ -3025,9 +3089,12 @@ export default function SuperCanvas() {
           } else if (!interaction.shiftKey) {
             // A click is confirmed on pointer-up. Dragging has already been
             // promoted to `drag` in moveInteraction, so it cannot open the
-            // editor accidentally.
+            // editor accidentally. Open through the ref in this same event;
+            // waiting for an effect made the editor feel one frame late.
             setQuickToolbarNodeId(node.id);
             setPendingClickNodeId(node.id);
+            if (expandedEditorId !== node.id || node.type === "video-editor") toggleEditorRef.current?.(node);
+            setPendingClickNodeId(null);
           }
         }
       }
@@ -3191,8 +3258,8 @@ export default function SuperCanvas() {
       connectionTargetId,
       clearSelection,
       notify,
-      cancelPendingNodeClick,
       openCanvasVideoEditor,
+      expandedEditorId,
       referencePicker,
       reuseDraft,
       stagePoint,
@@ -7648,6 +7715,7 @@ export default function SuperCanvas() {
     },
     [editorParamsFor, editorPromptFor, expandedEditorId, openCanvasAudioPanel, openImageEditor, openReuseDraft, reuseDraft],
   );
+  toggleEditorRef.current = toggleEditor;
 
   useEffect(() => {
     if (!pendingClickNodeId) return;
@@ -11263,16 +11331,13 @@ export default function SuperCanvas() {
     return canvasEdgeGeometryKeysByEntityId(document.nodes, document.groups);
   }, [document.nodes, document.groups]);
 
-  // Group visibility is a pure id set, so build it once per group collection
-  // change instead of scanning document.groups for every edge on every filter
-  // pass (O(E*G) -> O(E)).
-  const canvasGroupIdSet = useMemo(
-    () => new Set(document.groups.map((group) => group.id)),
-    [document.groups],
+  const visibleCanvasGroupIds = useMemo(
+    () => new Set(visibleCanvasGroups.map((group) => group.id)),
+    [visibleCanvasGroups],
   );
   const visibleCanvasEdges = useMemo(
-    () => visibleCanvasEdgeProjection(document, visibleCanvasNodeIds, canvasGroupIdSet),
-    [document.edges, document.nodes, canvasGroupIdSet, visibleCanvasNodeIds],
+    () => visibleCanvasEdgeProjection(document, visibleCanvasNodeIds, visibleCanvasGroupIds),
+    [document.edges, document.nodes, visibleCanvasGroupIds, visibleCanvasNodeIds],
   );
   // The flow/dash animation is the main paint cost at scale. Keep it only when
   // the user is at rest (no drag/pan/marquee/resize/connect and not zooming);
@@ -11414,7 +11479,7 @@ export default function SuperCanvas() {
       depthVideo: {
         sourceNodeId: source.id,
         model: "Depth Anything V2 Small",
-        mode: "grayscale",
+        mode: "model",
         quality: depthProfile.quality,
         inferenceSide: depthProfile.inferenceSide,
         exportSide: depthProfile.exportSide,
@@ -11435,7 +11500,7 @@ export default function SuperCanvas() {
         updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === output.id ? { ...node, data: { ...node.data, status: "running" as const, progress: progress.progress, statusLabel: progress.message } } : node) }));
       }, Number.isFinite(knownDurationMs) && knownDurationMs > 0 ? knownDurationMs / 1000 : undefined, { quality: depthQuality });
       updateDoc((value) => ({ ...value, nodes: value.nodes.map((node) => node.id === output.id ? { ...node, data: { ...node.data, url: asset.url, name: asset.name || `${String(source.data.name || "视频")} · 深度图`, status: "completed" as const, statusLabel: "深度图已完成", nativeWidth: source.data.nativeWidth, nativeHeight: source.data.nativeHeight, depthVideo: { ...node.data.depthVideo, fps: asset.fps, frameCount: asset.frameCount, completedAt: Date.now() } } } : node) }));
-      notify(asset.inferenceMode === "fallback" ? "深度图视频已生成（本地兼容模式）" : "深度图视频已生成");
+      notify("深度图视频已生成");
       addLog("视频深度图生成完成");
     } catch (error) {
       const message = error instanceof Error ? error.message : "深度图生成失败";
@@ -12689,10 +12754,8 @@ export default function SuperCanvas() {
           const nodeId = hit?.getAttribute("data-canvas-node-id");
           const node = nodeId ? nodeById(canvasCoreRef.current.document(), nodeId) : undefined;
           if (node && isCanvasReferenceableNode(node)) {
-            cancelPendingNodeClick();
             openCanvasMediaViewer(node.id);
           } else if (node?.type === "prompt") {
-            cancelPendingNodeClick();
             setEditingNodeId(node.id);
           } else if (node) {
             event.preventDefault();
@@ -12849,6 +12912,7 @@ export default function SuperCanvas() {
             />
             <CanvasGroupLayer
               document={document}
+              groups={visibleCanvasGroups}
               selectedGroupId={selectedGroupId}
               draggingNodeIds={draggingNodeIds}
               cursorTask={cursorTask}
@@ -12862,7 +12926,7 @@ export default function SuperCanvas() {
               onComposeGroup={openComposeDialog}
             />
             <CanvasNodeLayer
-              nodes={visibleCanvasNodes}
+              nodes={renderedCanvasNodes}
               document={document}
               selectedIds={selectedIds}
               draggingNodeIds={draggingNodeIds}
@@ -13175,7 +13239,6 @@ export default function SuperCanvas() {
               onTextPreview={(context) => openCanvasTextViewer(context.id)}
               mentionCandidates={mentionCandidates}
               onOutputPreview={(output) => {
-                cancelPendingNodeClick();
                 openCanvasMediaViewer(output.id);
               }}
               upscaleParams={editorNode.type === "upscale" ? editorNode.data.params as CanvasUpscaleParams : undefined}
