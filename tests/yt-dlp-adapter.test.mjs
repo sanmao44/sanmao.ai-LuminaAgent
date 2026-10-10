@@ -31,6 +31,7 @@ test('builds a fixed, shell-free yt-dlp argument list', () => {
   assert.equal(args.at(-1), 'https://video.example/watch?id=123');
   assert.equal(args.includes('--exec'), false);
 });
+
 test('rejects non-http URLs before invoking a process', () => {
   assert.throws(() => adapter.buildYtDlpArguments({ url: 'file:///tmp/video.mp4', outputDirectory: path.join(os.tmpdir(), 'out') }), /HTTP 或 HTTPS/);
 });
