@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.85/SANMAO.AI-0.7.85.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.85/SANMAO.AI-0.7.85.zip"
   ],
-  "sha256": "17c24483315bd254d8d552d60db8904f37a6ba89714a00179b9eed7c103aa057",
+  "sha256": "6a3fc648131afc2ce099a6c46653aded3efb782086068944e19a752da761b5bc",
   "publishedAt": "2026-10-10T00:00:00.000Z",
   "notes": [
     "修复本机深度图节点在页面恢复后被误判为普通视频失败的问题。",
