@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.88/SANMAO.AI-0.7.88.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.88/SANMAO.AI-0.7.88.zip"
   ],
-  "sha256": "b3ec8a9708750f5fa0408d73636bae20c7d023d19ab86f66288733a4cc4526cb",
+  "sha256": "8219249039bd469bae350094f715e7cafe26f898685c972a7c5ea4045a2de9b7",
   "publishedAt": "2026-10-11T17:42:20.000Z",
   "notes": [
     "新增 Windows 桌面控制 MCP 预设，默认只读，桌面操作需单独授权。",
