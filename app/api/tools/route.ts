@@ -113,7 +113,7 @@ function snapshot() {
       needsRoots: isStdioCatalogEntry(entry) && entry.requiresRoots === true,
       state: catalogEntryState(entry, { runtime, roots }),
       /** 状态之外的「还差什么」：面板直接显示这句话，不让用户去猜为什么点不动。 */
-      blockedReason: isStdioCatalogEntry(entry) && !entry.platforms?.includes(process.platform)
+      blockedReason: isStdioCatalogEntry(entry) && Boolean(entry.platforms?.length && !entry.platforms.includes(process.platform))
         ? '不适用于当前系统'
         : isStdioCatalogEntry(entry) && entry.requiresRoots && !roots.length ? '先在下面添加一个授权文件夹，这个服务才知道能读哪里' : '',
       connecting: isCatalogEntryConnecting(entry.id),
