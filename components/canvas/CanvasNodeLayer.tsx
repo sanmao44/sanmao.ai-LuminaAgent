@@ -19,6 +19,7 @@ import type { CanvasNodeCardProps } from "@/components/canvas/CanvasNodeCardCont
 export type CanvasNodeLayerProps = {
   nodes: readonly CanvasNode[];
   document: CanvasDocument;
+  zoom: number;
   selectedIds: ReadonlySet<string>;
   draggingNodeIds: ReadonlySet<string>;
   referencePickerActive: boolean;
@@ -106,6 +107,7 @@ function areCanvasNodeLayerItemPropsEqual(
     previous.editingNodeId === next.editingNodeId &&
     previous.expandedEditorId === next.expandedEditorId &&
     previous.renamingNodeId === next.renamingNodeId &&
+    (previous.node.type !== "prompt" || previous.zoom === next.zoom) &&
     previous.document.nodes === next.document.nodes &&
     previous.document.edges === next.document.edges &&
     previous.document.groups === next.document.groups &&
@@ -127,6 +129,7 @@ function CanvasNodeLayerItem({ node, ...props }: MemoizedCanvasNodeLayerItemProp
       referencePickerHoverNodeId={props.referencePickerHoverNodeId}
       referencePickerFlashNodeId={props.referencePickerFlashNodeId}
       document={props.document}
+      zoom={props.zoom}
       onPointerDown={(event, target) => props.callbacksRef.current.onPointerDown(event, target)}
       onResize={(event, target) => props.callbacksRef.current.onResize(event, target)}
       onConnect={(event, targetId, port) => props.callbacksRef.current.onConnect(event, targetId, port)}
@@ -186,6 +189,7 @@ const MemoizedCanvasNodeLayerItem = memo(
 export default function CanvasNodeLayer({
   nodes,
   document,
+  zoom,
   selectedIds,
   draggingNodeIds,
   referencePickerActive,
@@ -304,6 +308,7 @@ export default function CanvasNodeLayer({
             node={node}
             callbacksRef={callbacksRef}
             document={document}
+            zoom={zoom}
             selectedIds={selectedIds}
             draggingNodeIds={draggingNodeIds}
             referencePickerActive={referencePickerActive}

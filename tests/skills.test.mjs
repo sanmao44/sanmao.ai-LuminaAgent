@@ -242,6 +242,33 @@ test('repo skills directory can be explicitly imported into the runtime store', 
   }
 });
 
+test('known executable repositories use the reviewed bundled integration Skill', async () => {
+  const { store, cleanup } = await tempStore();
+  try {
+    const installed = skills.installBundledSkillForGithub({
+      owner: 'yt-dlp',
+      repo: 'yt-dlp',
+      sourceUrl: 'https://github.com/yt-dlp/yt-dlp',
+      pending: false,
+    }, store);
+    assert.ok(installed);
+    assert.equal(installed.id, 'video-download');
+    assert.equal(installed.source, 'local');
+    assert.equal(installed.sourceUrl, 'https://github.com/yt-dlp/yt-dlp');
+    assert.ok(installed.tools.includes('video_download'));
+    assert.match(installed.body, /video_download/);
+    const repeated = skills.installBundledSkillForGithub({ owner: 'yt-dlp', repo: 'yt-dlp', pending: true }, store);
+    assert.equal(repeated.id, installed.id);
+    assert.equal(repeated.pending, false);
+    assert.equal(repeated.enabled, true);
+    assert.equal(repeated.updatedAt, installed.updatedAt);
+    assert.equal(skills.readSkill('video-download', { ...store, pending: true }), null);
+    assert.equal(skills.installBundledSkillForGithub({ owner: 'yt-dlp', repo: 'yt-dlp', dir: 'other' }, store), null);
+  } finally {
+    await cleanup();
+  }
+});
+
 test('GitHub 目标解析与归档地址', () => {
   assert.deepEqual(skills.parseGithubSkillTarget('owner/repo'), { owner: 'owner', repo: 'repo', ref: '', dir: '' });
   assert.deepEqual(skills.parseGithubSkillTarget('https://github.com/owner/repo'), { owner: 'owner', repo: 'repo', ref: '', dir: '' });
@@ -509,6 +536,42 @@ test('Skill capability uses injected ports for search, read and install', async 
   assert.equal(state.skillInstalls, 1);
 });
 
+test('skill_install uses a bundled integration before fetching executable GitHub repositories', async () => {
+  const { createTsRequire } = await import('./ts-require.mjs');
+  const { executeSkillCapability } = createTsRequire(process.cwd())('./packages/tool-runtime/skill-capability');
+  const state = { skillToolCalls: 0, skillInstalls: 0, usedSkills: [] };
+  const calls = [];
+  const bundled = { id: 'video-download', name: 'video-download', description: 'download', tags: ['视频'], enabled: true, pending: false, body: 'video_download' };
+  const ports = {
+    maxCalls: 6,
+    maxInstalls: 2,
+    searchSkills: () => [],
+    readSkill: () => null,
+    readSkillFile: () => null,
+    recordSkillUsage: () => {},
+    buildSkillToolContent: () => '{}',
+    installSkill: () => null,
+    installSkillFromDocument: () => { throw new Error('should not fetch executable repository'); },
+    installBundledSkill: (input) => { calls.push(input); return bundled; },
+    fetchSkillText: async () => { throw new Error('should not fetch URL'); },
+    parseGithubSkillTarget: () => ({ owner: 'yt-dlp', repo: 'yt-dlp', ref: '', dir: '' }),
+    fetchSkillFilesFromGithub: async () => { throw new Error('should not fetch repository'); },
+  };
+  const result = await executeSkillCapability({
+    state,
+    call: { id: 'install-bundled', function: { name: 'skill_install' } },
+    args: { url: 'https://github.com/yt-dlp/yt-dlp' },
+    skillContext: { settings: { enabled: true, autoApprove: true }, skills: [], pending: [], indexSection: '', toolHint: '' },
+    skillPorts: ports,
+    signal: new AbortController().signal,
+    installer: { kind: 'agent', name: 'test', detail: 'test' },
+    parseToolArguments: () => ({}),
+  });
+  assert.equal(JSON.parse(result.content).id, 'video-download');
+  assert.deepEqual(calls.map((input) => ({ owner: input.owner, repo: input.repo, dir: input.dir })), [{ owner: 'yt-dlp', repo: 'yt-dlp', dir: '' }]);
+  assert.equal(state.skillInstalls, 1);
+});
+
 test('技能接口覆盖列表、导入、待确认与设置', async () => {
   const list = await readFile(new URL('../app/api/skills/route.ts', import.meta.url), 'utf8');
   const detail = await readFile(new URL('../app/api/skills/[id]/route.ts', import.meta.url), 'utf8');
@@ -525,6 +588,7 @@ test('技能接口覆盖列表、导入、待确认与设置', async () => {
   assert.match(detail, /updateSkill\(decode\(id\), patch\)/);
   assert.match(importRoute, /skillFilesFromArchive\(buffer\)/);
   assert.match(importRoute, /fetchSkillFilesFromGithub\(target\)/);
+  assert.match(importRoute, /installBundledSkillForGithub\(/);
   assert.match(importRoute, /listLocalAgentSkills\(\)\.find/);
   assert.match(importRoute, /readSelectionDirs\(/);
   assert.match(importRoute, /parsed\.roots\.length > 1/);

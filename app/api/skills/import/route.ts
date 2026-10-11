@@ -2,6 +2,7 @@ import { isAdminRequest } from '@/lib/auth';
 import { archiveRootMatches, fetchSkillFilesFromGithub, skillFilesFromArchive } from '@/lib/skill-archive';
 import {
   fetchSkillText,
+  installBundledSkillForGithub,
   installSkillFromDocument,
   listLocalAgentSkills,
   parseGithubSkillTarget,
@@ -156,6 +157,15 @@ export async function POST(request: Request) {
       if (target) {
         const dirs = readSelectionDirs(data.dirs);
         if (dirs.length) return selectionResponse(await installGithubSelection(target, raw, dirs, overwrite));
+        const bundled = installBundledSkillForGithub({
+          owner: target.owner,
+          repo: target.repo,
+          dir: target.dir,
+          sourceUrl: raw,
+          installer: { kind: 'import', detail: 'GitHub：' + target.owner + '/' + target.repo },
+          overwrite,
+        });
+        if (bundled) return Response.json({ ok: true, skill: skillSummary(bundled), warnings: bundled.warnings, ...skillsSnapshot() });
         const parsed = await fetchSkillFilesFromGithub(target);
         if (parsed.roots.length > 1) return Response.json({ ok: true, choices: parsed.candidates, ...skillsSnapshot() });
         const skill = installSkillFromDocument({

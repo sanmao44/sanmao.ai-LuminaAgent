@@ -919,10 +919,11 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       return '';
     })();
     const artifactFollowUpRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && isArtifactFollowUpRequest(previousAssistantText, latestInstruction);
-    const artifactGenerationRequest = fileGenerationRequest
+    const skillInstallationRequest = requestRoute.tools.useSkills && !requestRoute.skillRoute.matched && !requestRoute.skillRoute.explicit;
+    const artifactGenerationRequest = !skillInstallationRequest && (fileGenerationRequest
       || routeArtifactRequest
       || artifactFollowUpRequest
-      || (requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && likelyArtifactGenerationRequest(latestInstruction));
+      || (requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && likelyArtifactGenerationRequest(latestInstruction)));
     const effectiveWebMode = webMode;
     const webSearchEnabled = effectiveWebMode !== 'off';
     llmWebSearchStatus = effectiveWebMode === 'off' ? 'disabled' : 'not-needed';

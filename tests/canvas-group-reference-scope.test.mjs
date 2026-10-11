@@ -126,6 +126,13 @@ test("light theme group boundaries stay visible without overpowering cards", () 
   assert.match(styles, /html\[data-theme="light"\] \.canvas-group-label\{/);
 });
 
+test("world group labels counteract camera zoom above their member cards", () => {
+  assert.match(styles, /\.canvas-group-label-layer\{z-index:auto\}/);
+  assert.match(styles, /\.canvas-group-label-layer>\.canvas-group-world-label\{[^}]*transform:scale\(var\(--canvas-name-inverse-zoom,1\)\)/);
+  assert.match(styles, /\.canvas-group-label-layer>\.canvas-group-world-label\{[^}]*pointer-events:auto/);
+  assert.match(styles, /\.canvas-group-label-layer>\.canvas-group-world-label \.canvas-group-name\{[^}]*white-space:nowrap/);
+});
+
 test("group arrangement preserves the current canvas camera", () => {
   const start = component.indexOf("const arrangeCanvasAction = useCallback");
   const end = component.indexOf("const chooseGroupArrangeMode", start);

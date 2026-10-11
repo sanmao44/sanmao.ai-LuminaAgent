@@ -85,6 +85,33 @@ test("keeps a group toolbar within the horizontal stage margins", () => {
   );
 });
 
+test("keeps the group color popover visible inside narrow and near-edge viewports", () => {
+  assert.deepEqual(
+    layout.placeCanvasActionPopover(
+      { left: 4, top: 680, width: 28, height: 30 },
+      { width: 320, height: 720 },
+      { width: 196, height: 172 },
+    ),
+    { left: 12, top: 500, width: 196 },
+  );
+  assert.deepEqual(
+    layout.placeCanvasActionPopover(
+      { left: 360, top: 80, width: 32, height: 30 },
+      { width: 390, height: 844 },
+      { width: 196, height: 172 },
+    ),
+    { left: 182, top: 118, width: 196 },
+  );
+  assert.deepEqual(
+    layout.placeCanvasActionPopover(
+      { left: 145, top: 80, width: 30, height: 30 },
+      { width: 180, height: 160 },
+      { width: 196, height: 172 },
+    ),
+    { left: 12, top: 12, width: 156 },
+  );
+});
+
 test("fits a tall editor below its node without moving it across the anchor", () => {
   const anchor = { left: 300, top: 180, width: 380, height: 260 };
   const stage = { width: 1280, height: 720 };

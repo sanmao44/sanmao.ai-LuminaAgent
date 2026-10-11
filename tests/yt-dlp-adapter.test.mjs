@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, truncate, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -27,9 +27,20 @@ test('builds a fixed, shell-free yt-dlp argument list', () => {
     assert.ok(args.includes(option), `missing ${option}`);
   }
   assert.ok(args.includes('--ffmpeg-location'));
+  assert.equal(args[args.indexOf('--js-runtimes') + 1], `node:${process.execPath}`);
+  assert.match(args[args.indexOf('--format') + 1], /bestvideo\[filesize<900M\]\+bestaudio\[filesize<100M\]/);
   assert.equal(args.at(-2), '--');
   assert.equal(args.at(-1), 'https://video.example/watch?id=123');
   assert.equal(args.includes('--exec'), false);
+});
+
+test('explicit format preference remains available', () => {
+  const args = adapter.buildYtDlpArguments({
+    url: 'https://video.example/watch?id=123',
+    outputDirectory: path.join(os.tmpdir(), 'sanmao-ytdlp-output'),
+    format: 'best',
+  });
+  assert.equal(args[args.indexOf('--format') + 1], 'best');
 });
 
 test('rejects non-http URLs before invoking a process', () => {
@@ -97,6 +108,47 @@ test('download converts a missing executable into an actionable unavailable erro
       }),
       (error) => error instanceof adapter.YtDlpUnavailableError,
     );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('download rejects and removes a merged artifact over the 1 GiB limit', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-'));
+  try {
+    const file = path.join(directory, 'large.mp4');
+    await assert.rejects(
+      () => adapter.downloadWithYtDlp({ url: 'https://video.example/watch/large', outputDirectory: directory }, {
+        command: 'yt-dlp-test',
+        run: async () => {
+          await writeFile(file, Buffer.from('sparse'));
+          await truncate(file, adapter.YTDLP_MAX_FILE_BYTES + 1);
+          assert.equal((await stat(file)).size, adapter.YTDLP_MAX_FILE_BYTES + 1);
+          return { exitCode: 0, signal: null, stdout: `${file}\n`, stderr: '' };
+        },
+      }),
+      (error) => error instanceof adapter.YtDlpDownloadError && /1 GiB/.test(error.message),
+    );
+    await assert.rejects(() => stat(file), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('download never removes a pre-existing oversized file', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-'));
+  try {
+    const file = path.join(directory, 'large.mp4');
+    await writeFile(file, Buffer.from('sparse'));
+    await truncate(file, adapter.YTDLP_MAX_FILE_BYTES + 1);
+    await assert.rejects(
+      () => adapter.downloadWithYtDlp({ url: 'https://video.example/watch/large', outputDirectory: directory }, {
+        command: 'yt-dlp-test',
+        run: async () => ({ exitCode: 0, signal: null, stdout: `${file}\n`, stderr: '' }),
+      }),
+      (error) => error instanceof adapter.YtDlpDownloadError && /1 GiB/.test(error.message),
+    );
+    assert.equal((await stat(file)).size, adapter.YTDLP_MAX_FILE_BYTES + 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

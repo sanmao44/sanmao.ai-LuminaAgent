@@ -24,6 +24,7 @@ type CanvasGroupLayerProps = {
     port: "left" | "right",
   ) => void;
   onComposeGroup: (groupId: string) => void;
+  renderLabels?: boolean;
   renamingGroupId?: string | null;
   onRename?: (group: CanvasGroup, name: string) => void;
   onRenamingChange?: (group: CanvasGroup, editing: boolean) => void;
@@ -43,6 +44,7 @@ export default function CanvasGroupLayer({
   onGroupResize,
   onStartConnection,
   onComposeGroup,
+  renderLabels = true,
   renamingGroupId,
   onRename,
   onRenamingChange,
@@ -121,7 +123,7 @@ export default function CanvasGroupLayer({
               aria-label="调整对象组大小"
               onPointerDown={(event) => onGroupResize(event, group)}
             />
-            <div
+            {renderLabels && <div
               className="canvas-group-label"
               style={{ "--canvas-group-label-scale": groupLabelScale } as CSSProperties}
             >
@@ -160,7 +162,7 @@ export default function CanvasGroupLayer({
                 inputClassName="canvas-group-name-input"
               />
               <small>{group.nodeIds.length} 个对象</small>
-            </div>
+            </div>}
           </div>
         );
       })}

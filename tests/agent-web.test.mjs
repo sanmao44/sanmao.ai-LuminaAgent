@@ -294,6 +294,25 @@ test('recognizes Office and ZIP delivery requests without firing on ordinary cha
   }
 });
 
+test('does not route GitHub Skill repositories to video download', () => {
+  const request = '帮我把这个开源工具 https://github.com/yt-dlp/yt-dlp 打包成一个 Skill，后续给出视频链接就下载视频';
+  assert.equal(web.likelyVideoDownloadRequest(request), false);
+  assert.equal(web.videoDownloadUrl(request), 'https://github.com/yt-dlp/yt-dlp');
+  assert.equal(web.extractGithubMcpInstallRequest('安装 https://github.com/yt-dlp/yt-dlp 作为 Skill'), null);
+  assert.equal(web.extractGithubMcpInstallRequest('把 https://github.com/yt-dlp/yt-dlp 做成技能'), null);
+  assert.equal(web.extractGithubMcpInstallRequest('安装', '请把这个 GitHub 仓库做成 Skill', 'https://github.com/yt-dlp/yt-dlp'), null);
+});
+
+test('bare video URL continues an explicit earlier download-on-link instruction', () => {
+  const url = 'https://www.youtube.com/watch?v=plN7JMbadRg';
+  const instruction = '把 https://github.com/yt-dlp/yt-dlp 做成 Skill，以后给视频链接就下载';
+  assert.equal(web.likelyVideoDownloadRequest(url, [{ role: 'user', content: instruction }, { role: 'assistant', content: '请发视频链接。' }]), true);
+  assert.equal(web.likelyVideoDownloadRequest(url), false);
+  assert.equal(web.likelyVideoDownloadRequest(url, [{ role: 'assistant', content: '以后给视频链接就下载' }]), false);
+  assert.equal(web.likelyVideoDownloadRequest(url, [{ role: 'user', content: instruction }, { role: 'user', content: '今天天气怎么样？' }]), false);
+  assert.equal(web.likelyVideoDownloadRequest('https://github.com/yt-dlp/yt-dlp', [{ role: 'user', content: instruction }]), false);
+});
+
 test('上一轮提出可交付文件、本轮只回“1/好/可以”时仍然下发 Office 工具', () => {
   assert.equal(typeof web.isArtifactFollowUpRequest, 'function');
   const offer = '1. 通用求职简历模板 2. 应届生简历模板 3. 有经验社招简历模板\n如果暂时没有偏好，我也可以先按“通用求职简历模板”生成。';

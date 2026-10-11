@@ -28,7 +28,7 @@ export const skillInstallTool = defineTool({
   id: nativeToolId('skill_install'),
   risk: 'write',
   name: 'skill_install',
-  description: '安装技能：用户要求把某个链接、GitHub 仓库上的技能装进来，或你判断某套可复用流程值得沉淀成技能时调用。安装后需要用户在技能面板确认才会生效。',
+  description: '安装技能：用户要求把某个链接、GitHub 仓库上的技能装进来，或把开源工具做成可复用技能时调用。yt-dlp/yt-dlp 使用项目内置 video-download 技能。安装后根据返回状态说明是否需要用户在技能面板确认。',
   permissions: ['network', 'fs:write'],
   tags: ['skill'],
   source: 'native',

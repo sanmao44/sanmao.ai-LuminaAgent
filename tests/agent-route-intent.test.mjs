@@ -14,6 +14,7 @@ function harness(options = {}) {
   const images = [];
   const imageRuntimeRequests = [];
   const modelCalls = [];
+  const bundledSkillInstalls = [];
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: [], kind: 'chat' };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
@@ -146,6 +147,10 @@ function harness(options = {}) {
               buildSkillToolContent: (skill, file, offset) => skillsApi.buildSkillToolContent(skill, file, offset),
               installSkill: (input) => skillsApi.installSkill(input, { dataDir }),
               installSkillFromDocument: (input) => skillsApi.installSkillFromDocument(input, { dataDir }),
+              installBundledSkill: (input) => {
+                bundledSkillInstalls.push(input);
+                return { id: 'video-download', name: 'video-download', description: 'download', tags: ['视频'], enabled: false, pending: true, files: [], body: 'video_download' };
+              },
               fetchSkillText: (source, options) => skillsApi.fetchSkillText(source, options),
               parseGithubSkillTarget: (source) => skillsApi.parseGithubSkillTarget(source),
               fetchSkillFilesFromGithub: async () => { throw new Error('test GitHub skill adapter unavailable'); },
@@ -249,6 +254,8 @@ function harness(options = {}) {
         : { enabled: false, matched: false, explicit: false, confidence: 'none', skillId: '', skillName: '', reason: 'test ordinary turn' }),
       buildAgentSkillContext: () => options.skillRoute
         ? { settings: { enabled: true, autoApprove: false }, skills: [routedSkill], pending: [], indexSection: '技能：luxun-voice', toolHint: '使用 skill_read 读取技能正文。' }
+        : options.skillInstall
+          ? { settings: { enabled: true, autoApprove: false }, skills: [], pending: [], indexSection: '', toolHint: '使用 skill_install 安装技能。' }
         : { settings: { enabled: false }, skills: [], indexSection: '', toolHint: '' },
     },
     '@/lib/skill-archive': {},
@@ -259,7 +266,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-    calls, modelCalls, mcpCalls, discoveryCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests,
+    calls, modelCalls, mcpCalls, discoveryCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -671,6 +678,52 @@ test('video download uses JEV before exposing the native downloader', async () =
   assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'video_download')));
   assert.deepEqual(downloaded.map((request) => request.url), ['https://www.youtube.com/watch?v=example123']);
   assert.match(data.message, /完成下载/);
+});
+
+test('a bare video URL follows the prior download-on-link instruction through JEV and the native tool', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const downloaded = [];
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async (request) => {
+      downloaded.push(request);
+      return { filePath: 'C:\\media\\follow-up.mp4', bytes: 1234 };
+    },
+    reply: (payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"follow_up","deliverable":"OTHER","confidence":"high","reason":"承接用户此前给视频链接就下载的要求"}' }
+      : payload.messages.some((message) => message.role === 'tool')
+        ? { content: '已完成下载。' }
+        : { content: '我无法下载这个链接。' },
+  });
+  const url = 'https://www.youtube.com/watch?v=plN7JMbadRg';
+  const data = await agent.post([
+    { role: 'user', content: '把 https://github.com/yt-dlp/yt-dlp 做成 Skill，以后给视频链接就下载' },
+    { role: 'assistant', content: '视频下载能力已接入，发视频链接即可下载。' },
+    { role: 'user', content: url },
+  ]);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'video_download')));
+  assert.deepEqual(downloaded.map((request) => request.url), [url]);
+  assert.match(data.message, /完成下载/);
+});
+
+test('GitHub executable project can be installed as the bundled Skill without MCP or archive tools', async () => {
+  const agent = harness({
+    skillInstall: true,
+    reply: (payload) => {
+      if (payload.messages.some((message) => message.role === 'tool')) return { content: '技能待确认。' };
+      return { content: null, tool_calls: [{ id: 'skill-install', type: 'function', function: { name: 'skill_install', arguments: JSON.stringify({ url: 'https://github.com/yt-dlp/yt-dlp' }) } }] };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '把 https://github.com/yt-dlp/yt-dlp 做成 Skill，以后给视频链接就下载' }]);
+  assert.equal(agent.manageCalls.length, 0);
+  assert.equal(agent.bundledSkillInstalls.length, 1);
+  assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'skill_install')));
+  assert.ok(agent.calls.every((call) => !call.tools?.some((tool) => tool.function.name === 'archive_generate')));
+  assert.match(data.message, /待确认/);
 });
 
 test('video download falls back to the canonical native call when the model returns prose', async () => {

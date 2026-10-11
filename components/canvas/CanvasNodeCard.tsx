@@ -83,6 +83,7 @@ function CanvasNodeCard({
   onRename,
   renaming,
   onRenamingChange,
+  zoom = 1,
 }: CanvasNodeCardProps) {
   const size = nodeSize(node);
   const data = node.data;
@@ -384,6 +385,7 @@ function CanvasNodeCard({
           onRename={onRename}
           renaming={renaming}
           onRenamingChange={onRenamingChange}
+          labelScale={1 / Math.max(zoom, 0.04)}
         />
       )}
       {node.type === "generator" && (

@@ -272,6 +272,7 @@ import CanvasReferenceMentionMenu from "@/components/canvas/CanvasReferenceMenti
 import CanvasUpscaleNodeCard from "@/components/canvas/CanvasUpscaleNodeCard";
 import CanvasGroupLayer from "@/components/canvas/CanvasGroupLayer";
 import CanvasGroupColorPopover from "@/components/canvas/CanvasGroupColorPopover";
+import CanvasGroupLabelLayer from "@/components/canvas/CanvasGroupLabelLayer";
 import MediaViewer from "@/components/MediaViewer";
 import LocalEditEditor from "@/components/MaskEditor";
 import CanvasImageEditorWorkbench, {
@@ -2502,14 +2503,17 @@ export default function SuperCanvas() {
       setContextMenu(null);
       const panIntent = event.button === 1 || spaceHeldRef.current;
       const overCanvasContent = target.closest(
-        ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck",
+        ".canvas-node,.canvas-group,.canvas-group-label,.canvas-floating,.canvas-deck",
       );
       const overUiOverlay = target.closest(
         ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-node-quick-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-status-chip,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
       // A blank-canvas press is the shared escape hatch for inline naming. The
       // marquee handler stops propagation, so this belongs at the stage edge.
+      // Move focus first so the editor's native blur commits its draft before
+      // the controlled editor is removed from the tree.
       if (event.button === 0 && !overCanvasContent && !overUiOverlay) {
+        focusCanvasStage();
         setRenamingNodeId(null);
         setRenamingGroupId(null);
         setGroupColorPopoverId(null);
@@ -4891,6 +4895,7 @@ export default function SuperCanvas() {
                         : progress.terminal
                           ? "视频任务已中断"
                           : "视频生成中"),
+                    ...(progress.terminal ? { processingStartedAt: undefined } : {}),
                     ...(generationDurationMs !== undefined && node.data.generation
                       ? { generation: { ...node.data.generation, durationMs: generationDurationMs } }
                       : {}),
@@ -10746,7 +10751,7 @@ export default function SuperCanvas() {
       const node = nodeId ? nodeById(canvasCoreRef.current.document(), nodeId) : undefined;
       const groupElement = element?.closest<HTMLElement>("[data-canvas-group-id]");
       const isolatedTarget = element?.closest(
-        "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        "button,textarea,input,select,[contenteditable=\"true\"],.canvas-group-label,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
       if (groupElement && !node && !isolatedTarget) {
         event.preventDefault();
@@ -12803,10 +12808,10 @@ export default function SuperCanvas() {
           const isolatedTarget =
             canvasPointerDownRef.current?.interactive ||
             target?.closest(
-              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-group-label,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
             ) ||
             pointTarget?.closest(
-              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+              "button,textarea,input,select,[contenteditable=\"true\"],.canvas-node-asset-drag-handle,.canvas-node-resize,.canvas-node-editor,.canvas-node-editor-popover,.canvas-node-parameters,.canvas-node-quick-toolbar,.canvas-group,.canvas-group-label,.canvas-edge-layer,.canvas-floating,.canvas-deck,.canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
             );
           if (isolatedTarget) return;
           const hit = target?.closest("[data-canvas-node-id]") ||
@@ -12984,6 +12989,7 @@ export default function SuperCanvas() {
               onGroupResize={startGroupResize}
               onStartConnection={startConnection}
               onComposeGroup={openComposeDialog}
+              renderLabels={false}
               renamingGroupId={renamingGroupId}
               onRename={(group, name) => renameGroup(group.id, name)}
               onRenamingChange={(group, editing) => setRenamingGroupId(editing ? group.id : null)}
@@ -12991,6 +12997,7 @@ export default function SuperCanvas() {
             <CanvasNodeLayer
               nodes={renderedCanvasNodes}
               document={document}
+              zoom={document.camera.zoom}
               selectedIds={selectedIds}
               draggingNodeIds={draggingNodeIds}
               referencePickerActive={Boolean(referencePicker)}
@@ -13050,6 +13057,20 @@ export default function SuperCanvas() {
               onReferenceRemove={removeNodeReference}
               onReferenceDrop={addNodeReference}
               onAddReferenceFiles={addEditorReferenceFiles}
+            />
+            <CanvasGroupLabelLayer
+              document={document}
+              groups={visibleCanvasGroups}
+              zoom={document.camera.zoom}
+              selectedGroupId={selectedGroupId}
+              draggingNodeIds={draggingNodeIds}
+              cursorTask={cursorTask}
+              composingGroupId={composingGroupId}
+              onGroupPointerDown={startGroupDrag}
+              onComposeGroup={openComposeDialog}
+              renamingGroupId={renamingGroupId}
+              onRename={(group, name) => renameGroup(group.id, name)}
+              onRenamingChange={(group, editing) => setRenamingGroupId(editing ? group.id : null)}
             />
         </CanvasWorld>
         {selectedSingle &&
@@ -13368,6 +13389,19 @@ export default function SuperCanvas() {
               stageRef={stageRef}
               actions={groupQuickActionsWithAgent}
               menuSubtitle="组操作"
+              actionPopoverRenderer={(action, position) =>
+                action.id === "color-group" && groupColorPopoverId === selectedGroup.id ? (
+                  <CanvasGroupColorPopover
+                    key={`${selectedGroup.id}-color-popover`}
+                    value={selectedGroup.color}
+                    position={position}
+                    onChange={(color) => {
+                      changeGroupColor(selectedGroup.id, color);
+                    }}
+                    onClose={() => setGroupColorPopoverId(null)}
+                  />
+                ) : null
+              }
               actionRenderer={(action, button) =>
                 action.id === "color-group" ? (
                   <div
@@ -13375,24 +13409,13 @@ export default function SuperCanvas() {
                     key={action.id}
                     onPointerDown={(event) => {
                       event.stopPropagation();
-                      if (event.button === 0) {
-                        setSelectedGroupId(selectedGroup.id);
-                        setGroupColorPopoverId(selectedGroup.id);
-                      }
                     }}
-                    onClick={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
                   >
                     {button}
-                    {groupColorPopoverId === selectedGroup.id && (
-                      <CanvasGroupColorPopover
-                        value={selectedGroup.color}
-                        onChange={(color) => {
-                          changeGroupColor(selectedGroup.id, color);
-                          setGroupColorPopoverId(null);
-                        }}
-                        onClose={() => setGroupColorPopoverId(null)}
-                      />
-                    )}
                   </div>
                 ) : action.id === "arrange-group" ? (
                   <div className="canvas-group-arrange-control" key={action.id} onPointerDown={(event) => event.stopPropagation()}>

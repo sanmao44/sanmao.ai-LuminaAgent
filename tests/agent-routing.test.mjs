@@ -146,6 +146,17 @@ test('gates MCP, skills and native web by the bounded route plan', () => {
   assert.equal(skill.tools.useSkills, true);
 });
 
+test('new GitHub-to-Skill requests expose Skill installation without MCP or archive tools', () => {
+  const request = '帮我把 https://github.com/yt-dlp/yt-dlp 做成 Skill，以后给视频链接就下载';
+  const route = routing.classifyAgentRequest(request, {}, { webMode: 'auto' });
+  assert.equal(route.tools.useSkills, true);
+  assert.equal(route.tools.useMcp, false);
+  assert.equal(route.tools.useBrowserMcp, false);
+  assert.equal(route.tools.useNativeArtifact, false);
+  assert.equal(route.policy.discoverMcp, false);
+  assert.equal(route.needsTools, true);
+});
+
 test('技能路由按已安装技能元数据匹配自然语言，而不是依赖全局关键词', () => {
   const route = skillRouting.routeSkillRequest('用鲁迅的口吻赞美一位女生', [luxunSkill]);
   assert.equal(route.matched, true);

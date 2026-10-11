@@ -83,10 +83,13 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   const intent = options.intent || classifyAgentDeliverable(text, context);
   const requestMode = intent.mode || inferAgentRequestMode(text);
   const executable = requestMode === 'execute' || requestMode === 'follow_up';
-  const artifactKind = artifactKindFor(text);
+  const artifactKindCandidate = artifactKindFor(text);
   const browserIntent = classifyBrowserAutomation(text);
-  const browserAutomation = executable && browserIntent.shouldAutomate;
-  const filesystem = executable && likelyFilesystemRequest(text, options.previousAssistant || '');
+  const skillInstallation = executable && !/[?？]\s*$/.test(text) && /(?:skill|技能)/i.test(text)
+    && /(?:安装|导入|创建|制作|做成|打包成|生成|沉淀|install|import|create|build)/i.test(text);
+  const artifactKind = skillInstallation ? 'none' as const : artifactKindCandidate;
+  const browserAutomation = executable && !skillInstallation && browserIntent.shouldAutomate;
+  const filesystem = executable && !skillInstallation && likelyFilesystemRequest(text, options.previousAssistant || '');
   const contextInfo = contextDecision(text, messages);
   // `context.messages` is the prior conversation for callers from the Agent
   // route, so do not drop its newest item a second time. That item is often
@@ -102,7 +105,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   const skillRoute = options.skillRoute || { enabled: false, matched: false, explicit: false, confidence: 'none', skillId: '', skillName: '', reason: '未执行技能路由。' } satisfies SkillRouteDecision;
   const skillActivation = skillRoute.enabled && (skillRoute.matched || skillRoute.explicit);
   const githubRepositoryQuery = isGithubRepositoryQuery(text, messages);
-  const suggestedWeb = skillActivation
+  const suggestedWeb = skillActivation || skillInstallation
     ? { shouldSearch: false, reason: 'ordinary-chat' as const, query: text }
     : shouldUseAgentWebSearch(options.webMode || 'auto', text, webContext);
   const explicitExternalAction = executable && externalServiceActionPattern.test(text)
@@ -110,7 +113,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // GitHub repository/PR/Issue queries are read-only actions even when written
   // as a question. They need MCP discovery and tool execution, but do not
   // grant any write permission.
-  const connectorAction = executable && (browserAutomation || filesystem || likelyMcpManagementRequest(text) || explicitExternalAction)
+  const connectorAction = !skillInstallation && executable && (browserAutomation || filesystem || likelyMcpManagementRequest(text) || explicitExternalAction)
     || githubRepositoryQuery;
   const information = classifyAgentInformationSource(text, {
     capabilityQuestion,
@@ -119,7 +122,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
     externalAction: connectorAction,
     webShouldSearch: suggestedWeb.shouldSearch && !connectorAction,
   });
-  const web = information.source === 'internal-capability' || skillActivation
+  const web = information.source === 'internal-capability' || skillActivation || skillInstallation
     ? { shouldSearch: false, reason: 'ordinary-chat' as const, query: text }
     : suggestedWeb;
   if (web.shouldSearch && !connectorAction && artifactKind === 'none' && !['IMAGE', 'BOTH'].includes(intent.deliverable)) {
@@ -180,19 +183,19 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // 资料" belongs to the normal web path. MCP is reserved for explicit
   // connector/service actions or local/browser execution.
   const useMcp = connectorAction;
-  const needsTools = useMcp || skillActivation || ['image', 'both', 'word', 'excel', 'ppt', 'archive', 'file', 'browser', 'filesystem'].includes(route);
+  const needsTools = useMcp || skillActivation || skillInstallation || ['image', 'both', 'word', 'excel', 'ppt', 'archive', 'file', 'browser', 'filesystem'].includes(route);
   const useBrowserMcp = browserAutomation;
   const useFilesystemMcp = filesystem;
-  const useSkills = !browserAutomation && !filesystem && !intent.deliverable.toString().match(/^(IMAGE|BOTH)$/) && skillActivation;
+  const useSkills = !browserAutomation && !filesystem && !intent.deliverable.toString().match(/^(IMAGE|BOTH)$/) && (skillActivation || skillInstallation);
   const useNativeWeb = web.shouldSearch && !browserAutomation && !filesystem && route === 'web';
-  const useNativeArtifact = artifactRouteIsGenerated(route) || likelyFileGenerationRequest(text) || likelyArtifactGenerationRequest(text);
+  const useNativeArtifact = !skillInstallation && (artifactRouteIsGenerated(route) || likelyFileGenerationRequest(text) || likelyArtifactGenerationRequest(text));
   const reason = useMcp ? '检测到外部服务或本地执行动作，优先使用受控 MCP。'
     : useSkills ? '检测到流程/模板/规范需求，先按需检索技能。'
       : useNativeWeb ? '检测到需要外部事实，先联网再回答。'
         : useNativeArtifact ? '检测到明确文件交付，调用对应内置工具。' : '普通回答不加载额外工具。';
   // Capability discovery is an execution resource. Do not probe every enabled
   // connector for an otherwise ordinary or ambiguous conversation turn.
-  const discoverMcp = (executable || githubRepositoryQuery) && (useMcp || (route === 'chat' && intent.mode === 'execute'));
+  const discoverMcp = !skillInstallation && (executable || githubRepositoryQuery) && (useMcp || (route === 'chat' && intent.mode === 'execute'));
   const webPolicy: AgentWebPolicy = useNativeWeb ? 'require' : 'forbid';
   return { policy: { lane: 'action', web: webPolicy, discoverMcp, allowMcp: useMcp || discoverMcp }, intent, route, artifactKind, contextNeed: contextInfo.need, contextReason: contextInfo.reason, browserAutomation, browserIntent, filesystem, web, information, needsTools, tools: { useMcp, useBrowserMcp, useFilesystemMcp, useSkills, useNativeWeb, useNativeArtifact, reason }, skillRoute, candidates };
 }

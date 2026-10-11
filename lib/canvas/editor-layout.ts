@@ -24,6 +24,10 @@ export type CanvasGroupToolbarPlacement = CanvasOverlayPosition & {
   placement: "above" | "inside";
 };
 
+export type CanvasPopoverPosition = CanvasOverlayPosition & {
+  width: number;
+};
+
 export type CanvasOverlayFit = CanvasOverlayPosition & {
   maxHeight: number;
 };
@@ -52,6 +56,31 @@ export function placeCanvasContextMenu(
   return {
     left: Math.min(Math.max(fitsRight ? right : left, margin), maxLeft),
     top: Math.min(Math.max(fitsBelow ? below : above, margin), maxTop),
+  };
+}
+
+/** Places a small anchored popover in the viewport and flips it above as needed. */
+export function placeCanvasActionPopover(
+  anchor: CanvasOverlayAnchor,
+  viewport: CanvasOverlayStage,
+  size: CanvasOverlaySize,
+  gap = 8,
+  margin = 12,
+): CanvasPopoverPosition {
+  const width = Math.min(size.width, Math.max(1, viewport.width - margin * 2));
+  const left = Math.min(
+    Math.max(anchor.left + anchor.width / 2 - width / 2, margin),
+    Math.max(margin, viewport.width - width - margin),
+  );
+  const below = anchor.top + anchor.height + gap;
+  const above = anchor.top - size.height - gap;
+  const maxTop = Math.max(margin, viewport.height - size.height - margin);
+  return {
+    left,
+    top: below + size.height <= viewport.height - margin
+      ? below
+      : Math.min(Math.max(above, margin), maxTop),
+    width,
   };
 }
 

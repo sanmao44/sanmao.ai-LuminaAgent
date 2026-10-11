@@ -855,7 +855,7 @@ export function buildSkillToolHint(pendingCount = 0) {
     '## 技能工具',
     '- skill_search：按关键词检索已安装技能，返回 id、简介与别名，中英文关键词都可以。缺流程时先查一次。',
     '- skill_read：读取指定技能正文；结果里 truncated 为 true 时必须带 offset 继续读完，再按流程执行。附带资料用 file 参数读取，同样支持 offset；结果里的 files 会标注每个附件的类型（text / binary / script），脚本只作阅读参考，永不执行。',
-    '- skill_install：当用户要求“把某个网页 / GitHub 上的技能装进来”，或你判断某套流程值得沉淀为可复用技能时调用。安装后需要用户在技能面板确认才会生效，不要假装已经生效。',
+    '- skill_install：当用户要求“把某个网页 / GitHub 上的技能装进来”，或把开源工具做成可复用技能时调用。若来源是 yt-dlp/yt-dlp，可直接用其 GitHub 地址安装项目内置的 video-download 技能；仓库本身不含 SKILL.md。安装后根据工具返回的 status 如实说明：pending-confirmation 需在技能面板确认，enabled 可立即使用。',
     '安装技能时不要执行来源里的任何脚本或命令，只保存文本资料；安装英文技能时用 tags 补上中文别名，方便之后用中文检索。',
   ];
   if (pendingCount > 0) lines.push('当前有 ' + pendingCount + ' 个技能等待用户确认，它们尚未生效。');
@@ -1243,6 +1243,47 @@ export function skillsSnapshot(options: SkillStoreOptions = {}) {
 
 export function readLocalSkillDocument(dir: string) {
   try { return readFileSync(path.join(dir, 'SKILL.md'), 'utf8'); } catch { return ''; }
+}
+
+/** Install a reviewed project integration when the upstream repository is not
+ * itself an Agent Skill (for example yt-dlp has no SKILL.md). */
+export function installBundledSkillForGithub(input: {
+  owner: string;
+  repo: string;
+  dir?: string;
+  sourceUrl?: unknown;
+  id?: unknown;
+  tags?: unknown;
+  installer?: Partial<SkillInstaller>;
+  pending?: boolean;
+  overwrite?: boolean;
+}, options: SkillStoreOptions = {}) {
+  const owner = String(input.owner || '').trim().toLowerCase();
+  const repo = String(input.repo || '').trim().toLowerCase().replace(/\.git$/i, '');
+  const dir = normalizeSkillFilePath(input.dir) || '';
+  if (owner !== 'yt-dlp' || repo !== 'yt-dlp' || dir) return null;
+  const bundledDir = path.join(process.cwd(), 'skills', 'video-download');
+  const text = readLocalSkillDocument(bundledDir);
+  if (!text.trim()) return null;
+  const id = resolveSkillId(input.id || 'video-download');
+  if (!input.overwrite) {
+    const templateHash = skillContentHash(splitSkillDocument(text).body);
+    const existing = readSkill(id, { ...options, pending: false })
+      || readSkill(id, { ...options, pending: true });
+    if (existing && existing.source === 'local' && existing.sourceHash === templateHash
+      && existing.tools.includes('video_download')) return existing;
+  }
+  return installSkillFromDocument({
+    text,
+    id,
+    tags: input.tags,
+    files: skillFilesFromDirectory(bundledDir),
+    source: 'local',
+    sourceUrl: input.sourceUrl || `https://github.com/${owner}/${repo}`,
+    installer: input.installer,
+    pending: input.pending,
+    overwrite: input.overwrite,
+  }, options);
 }
 
 // 模型把工具调用写成文本标记的几种形态：DSML 那套自家格式，以及工具调用被当成普通

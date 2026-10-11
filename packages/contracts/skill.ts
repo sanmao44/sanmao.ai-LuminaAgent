@@ -60,6 +60,7 @@ export type SkillCapabilityPorts = {
   buildSkillToolContent: (skill: SkillRecord, file: SkillFileReadResult | null, offset: number) => string;
   installSkill: (input: Record<string, unknown>) => SkillRecord | null;
   installSkillFromDocument: (input: Record<string, unknown>) => SkillRecord | null;
+  installBundledSkill?: (input: Record<string, unknown>) => SkillRecord | null;
   fetchSkillText: (source: string, options: { signal: AbortSignal }) => Promise<{ text: string; url: string }>;
   parseGithubSkillTarget: (source: string) => { owner: string; repo: string; ref?: string; dir?: string } | null;
   fetchSkillFilesFromGithub: (target: { owner: string; repo: string; ref?: string; dir?: string }, options: { signal: AbortSignal }) => Promise<GithubSkillArchive>;

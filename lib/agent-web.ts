@@ -410,9 +410,36 @@ export function videoDownloadUrl(input: string, context: readonly VideoDownloadC
 export function likelyVideoDownloadRequest(input: string, context: readonly VideoDownloadContextMessage[] = []) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
+  // A bare video URL is an execution follow-up only when the nearest prior
+  // user turn explicitly established "send a video link later and download it".
+  // The assistant's prose cannot grant this action, and JEV still reviews the
+  // resulting candidate before the native downloader is exposed.
+  if (/^https?:\/\/\S+$/i.test(text) && context.length) {
+    let hostname = '';
+    try { hostname = new URL(text).hostname.toLowerCase(); } catch { /* Keep the normal request path. */ }
+    const knownVideoHost = hostname === 'youtu.be'
+      || /^(?:www\.)?youtube\.com$/.test(hostname)
+      || /^(?:www\.|m\.)?bilibili\.com$/.test(hostname)
+      || /^(?:www\.)?douyin\.com$/.test(hostname)
+      || /^(?:www\.)?vimeo\.com$/.test(hostname);
+    const previousUser = [...context].reverse().find((message) => message.role === 'user');
+    const previousInstruction = String(previousUser?.content || '').replace(/\s+/g, ' ');
+    const hasDownloadOnLinkInstruction = /(?:以后|后续|之后|下次|later|next time).{0,40}(?:视频链接|视频地址|video link|链接|地址).{0,24}(?:下载|保存|download|save)/i.test(previousInstruction);
+    const isQuestionOrRejection = /[?？]$/.test(previousInstruction)
+      || /(?:能不能|是否|可以吗|能否|不要|别|不需要).{0,16}(?:下载|保存|download|save)/i.test(previousInstruction);
+    if (knownVideoHost && hasDownloadOnLinkInstruction && !isQuestionOrRejection) return true;
+  }
   if (!/(?:下载|保存|提取|抓取|转存|download|save)/i.test(text)) return false;
+  // GitHub repository links mentioned while asking for a Skill are source
+  // repositories, not media URLs. Keep them out of the yt-dlp path even when
+  // the same sentence also says “download video”.
+  if (/https?:\/\/(?:www\.)?github\.com\//i.test(text)
+    && /(?:skill|repo)/i.test(text)) return false;
   const hasVideoSignal = /(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|抖音|快手|douyin|vimeo)/i.test(text);
-  if (hasVideoSignal && /https?:\/\/\S+/i.test(text)) return true;
+  if (hasVideoSignal && /https?:\/\/\S+/i.test(text)) {
+    if (/https?:\/\/(?:www\.)?github\.com\//i.test(text)) return false;
+    return true;
+  }
   if (hasVideoSignal && !context.length) return false;
   // Only inherit a URL for a short follow-up. A fresh sentence containing a
   // different topic must not accidentally reuse an old media URL.
@@ -486,6 +513,13 @@ export function likelyMcpManagementRequest(input: string) {
  */
 export function extractGithubMcpInstallRequest(input: string, previousAssistantText = '', previousUserText = '', previousContextText = '') {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
+  // A repository named as the source for an Agent Skill is not an MCP
+  // server.  Keep the direct MCP installer from pre-empting skill_install.
+  const skillContext = [text, previousAssistantText, previousUserText, previousContextText]
+    .map((value) => String(value || '').replace(/\s+/g, ' '))
+    .some((value) => /(?:skill|技能)/i.test(value)
+      && /(?:github\.com\/|yt-dlp|仓库|repo)/i.test(value));
+  if (skillContext) return null;
   const url = text.match(githubRepositoryUrlPattern)?.[0] || '';
   const previousUser = String(previousUserText || '').replace(/\s+/g, ' ').trim();
   const previousUserUrl = previousUser.match(githubRepositoryUrlPattern)?.[0] || '';

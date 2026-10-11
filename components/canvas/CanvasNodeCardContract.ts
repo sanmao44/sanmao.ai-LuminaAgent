@@ -65,6 +65,7 @@ export type CanvasNodeCardProps = {
   onRename?: (value: string) => void;
   renaming?: boolean;
   onRenamingChange?: (editing: boolean) => void;
+  zoom?: number;
 };
 
 /**
@@ -125,6 +126,7 @@ export function areCanvasNodeCardPropsEqual(
     previous.onEdit === next.onEdit &&
     previous.onRename === next.onRename &&
     previous.renaming === next.renaming &&
-    previous.onRenamingChange === next.onRenamingChange
+    previous.onRenamingChange === next.onRenamingChange &&
+    (previous.node.type !== "prompt" || previous.zoom === next.zoom)
   );
 }

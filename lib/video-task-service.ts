@@ -8,7 +8,7 @@ import { getVideoModelLimits, VIDEO_INPUT_SAFETY_LIMITS } from './video-model-li
 import { is65535Provider, isJimengProvider, isAgnesProvider } from './video-platform';
 import { prepareVideoInputMedia } from './video-input-media';
 import type { GenerationSource } from './generation-source';
-import { canRetryVideoTask, videoTaskRuntime } from './video-task-runtime';
+import { canRetryVideoTask, isStaleVideoTask, videoTaskRuntime } from './video-task-runtime';
 import { BufferedRuntimeObserver, type RuntimeObserver } from '@/packages/contracts/observability';
 
 function cleanInput(input: VideoGenerationInput, defaultSeconds = 5): VideoGenerationInput {
@@ -436,6 +436,9 @@ async function refreshVideoTaskOnce(id: string) {
   const task = await findVideoTask(id);
   if (!task) return null;
   if (!videoTaskRuntime.isActive(task.status)) return task;
+  if (isStaleVideoTask(task)) {
+    return failTask(task, '任务超时或服务中断，未收到服务商完成回执', 'VIDEO_TASK_TIMEOUT');
+  }
   // Submission retries use the same task and idempotency key. Respect the
   // persisted backoff before attempting another upstream POST, otherwise the
   // UI polling interval would turn a full provider queue into a retry storm.
@@ -479,15 +482,6 @@ async function refreshVideoTaskOnce(id: string) {
       if (isRetryableVideoSubmissionFailure(error)) return keepVideoSubmissionPending(task, error);
       return failTask(task, error, error instanceof VideoProviderError ? error.code : undefined);
     }
-  }
-  const quickProvider = await getProviderWithKey(task.providerId);
-  if ((isAgnesProvider(quickProvider || undefined) || quickProvider?.videoTransport === 'agnes-videos') && Date.now() - new Date(task.createdAt).getTime() > 30 * 60 * 1000) {
-    // A local polling deadline is not a provider failure. Keep reconciling the
-    // task in the background until the provider reports a terminal state.
-    return updateVideoTask(id, {
-      nextPollAt: Date.now() + 15_000,
-      providerStatus: 'polling_longer_than_expected',
-    });
   }
   const provider = await getProviderWithKey(task.providerId);
   if (!provider) return failTask(task, '视频服务商配置已删除', 'PROVIDER_NOT_FOUND');

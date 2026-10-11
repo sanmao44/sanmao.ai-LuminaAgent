@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
@@ -72,6 +72,18 @@ export class YtDlpDownloadError extends Error {
 }
 
 const MEDIA_EXTENSIONS = new Set(['.avi', '.flv', '.m4v', '.mkv', '.mov', '.mp4', '.ogv', '.webm']);
+/** Keep the downloader and video storage adapter on the same per-file limit. */
+export const YTDLP_MAX_FILE_BYTES = 1024 * 1024 * 1024;
+const SIZE_AWARE_DEFAULT_FORMAT = [
+  'bestvideo[filesize<900M]+bestaudio[filesize<100M]',
+  'bestvideo[filesize_approx<900M]+bestaudio[filesize_approx<100M]',
+  'best[filesize<1G]',
+  'best[filesize_approx<1G]',
+  'bestvideo[height<=720]+bestaudio',
+  'best[height<=720]',
+  'bestvideo+bestaudio',
+  'best',
+].join('/');
 const BLOCKED_HOSTS = new Set(['localhost', 'metadata', 'metadata.google.internal', 'metadata.goog', 'instance-data', 'host.docker.internal']);
 const BLOCKED_SUFFIXES = ['.local', '.internal', '.localhost', '.home.arpa', '.lan'];
 
@@ -167,6 +179,18 @@ function outputTemplate(outputDirectory: string) {
   return path.join(outputDirectory, '%(id)s.%(ext)s');
 }
 
+/** Remove only partial artifacts created during this invocation. */
+async function removeNewPartialFiles(outputDirectory: string, existingNames: ReadonlySet<string>) {
+  let entries: string[];
+  try {
+    entries = readdirSync(outputDirectory);
+  } catch {
+    return;
+  }
+  const partials = entries.filter((name) => !existingNames.has(name) && /\.part(?:-Frag\d+)?$|\.ytdl$/i.test(name));
+  await Promise.all(partials.map((name) => rm(path.join(outputDirectory, name), { force: true }).catch(() => undefined)));
+}
+
 /** Build the complete fixed argument list used for every download. */
 export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 'outputDirectory' | 'format' | 'ffmpegPath'>) {
   const url = assertHttpUrl(request.url);
@@ -177,6 +201,9 @@ export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 
   const args: string[] = [
     '--no-playlist',
     '--playlist-items', '1',
+    // yt-dlp disables Node by default. The application already runs on Node,
+    // so provide that runtime explicitly for current YouTube extraction.
+    '--js-runtimes', `node:${process.execPath}`,
     '--max-filesize', '1G',
     '--no-cache-dir',
     '--restrict-filenames',
@@ -189,7 +216,10 @@ export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 
     '--no-simulate',
     '--print', 'after_move:filepath',
     '--output', outputTemplate(outputDirectory),
-    '--format', request.format || 'bestvideo+bestaudio/best',
+    // Favor a source combination that fits the storage limit. Some sites do
+    // not report stream sizes; the height/standard fallbacks remain available
+    // and the actual merged artifact is checked after download.
+    '--format', request.format || SIZE_AWARE_DEFAULT_FORMAT,
     '--merge-output-format', 'mp4',
   ];
   const ffmpegPath = String(request.ffmpegPath || '').trim();
@@ -276,6 +306,7 @@ async function findPrintedFile(stdout: string, outputDirectory: string) {
 export async function downloadWithYtDlp(request: YtDlpDownloadRequest, dependencies: { command?: string; run?: YtDlpProcessRunner } = {}): Promise<YtDlpDownloadResult> {
   const outputDirectory = resolveOutputDirectory(request.outputDirectory);
   await mkdir(outputDirectory, { recursive: true });
+  const existingNames = new Set(readdirSync(outputDirectory));
   const command = configuredCommand(dependencies.command);
   const args = buildYtDlpArguments({ ...request, outputDirectory });
   const run = dependencies.run || spawnYtDlp;
@@ -283,18 +314,36 @@ export async function downloadWithYtDlp(request: YtDlpDownloadRequest, dependenc
   try {
     processResult = await run({ command, args, cwd: outputDirectory, signal: request.signal, onOutput: request.onProgress });
   } catch (error) {
+    await removeNewPartialFiles(outputDirectory, existingNames);
     if (request.signal?.aborted) throw request.signal.reason || new Error('yt-dlp 下载已取消。');
     const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code || '') : '';
     if (code === 'ENOENT') throw new YtDlpUnavailableError();
     throw error;
   }
-  if (request.signal?.aborted) throw request.signal.reason || new Error('yt-dlp 下载已取消。');
+  if (request.signal?.aborted) {
+    await removeNewPartialFiles(outputDirectory, existingNames);
+    throw request.signal.reason || new Error('yt-dlp 下载已取消。');
+  }
   if (processResult.exitCode !== 0) {
+    await removeNewPartialFiles(outputDirectory, existingNames);
     const detail = lines(processResult.stderr).slice(-3).join(' ');
     throw new YtDlpDownloadError(detail || 'yt-dlp 下载失败。', { exitCode: processResult.exitCode, stderr: processResult.stderr });
   }
   const file = await findPrintedFile(processResult.stdout, outputDirectory);
-  if (!file) throw new YtDlpDownloadError('yt-dlp 已结束，但没有找到输出视频文件。', { exitCode: processResult.exitCode, stderr: processResult.stderr });
+  if (!file) {
+    await removeNewPartialFiles(outputDirectory, existingNames);
+    throw new YtDlpDownloadError('yt-dlp 已结束，但没有找到输出视频文件。', { exitCode: processResult.exitCode, stderr: processResult.stderr });
+  }
+  // `--max-filesize` is evaluated by yt-dlp while selecting/downloading a
+  // source. A video and audio stream can still exceed the limit after ffmpeg
+  // merges them, so enforce the limit on the actual returned artifact before
+  // exposing it through the storage route.
+  if (file.bytes > YTDLP_MAX_FILE_BYTES) {
+    // `--no-overwrites` may return an existing file. Do not remove media that
+    // was already in the library before this download began.
+    if (!existingNames.has(path.basename(file.filePath))) await rm(file.filePath, { force: true });
+    throw new YtDlpDownloadError('视频超过 1 GiB 限制，未保存为下载结果。', { exitCode: processResult.exitCode, stderr: processResult.stderr });
+  }
   return { ...file, command, args };
 }
 

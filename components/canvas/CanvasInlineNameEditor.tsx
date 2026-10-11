@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 
 export type CanvasInlineNameEditorProps = {
   value?: string;
@@ -10,6 +10,7 @@ export type CanvasInlineNameEditorProps = {
   editing?: boolean;
   onEditingChange?: (editing: boolean) => void;
   className?: string;
+  style?: CSSProperties;
   inputClassName?: string;
   placeholder?: string;
 };
@@ -22,6 +23,7 @@ export default function CanvasInlineNameEditor({
   editing: controlledEditing,
   onEditingChange,
   className,
+  style,
   inputClassName,
   placeholder,
 }: CanvasInlineNameEditorProps) {
@@ -116,6 +118,7 @@ export default function CanvasInlineNameEditor({
   return (
     <span
       className={className || "canvas-inline-name-editor"}
+      style={style}
       role={onCommit ? "button" : undefined}
       tabIndex={onCommit ? 0 : undefined}
       aria-label={ariaLabel}
