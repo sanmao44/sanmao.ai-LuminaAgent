@@ -412,7 +412,7 @@ export default function CanvasMinimap({
           <button
             type="button"
             key={node.id}
-            aria-label={`${nodeLabel(node)}：${node.data.name || "未命名节点"}`}
+            aria-label={nodeLabel(node)}
             title={`${nodeLabel(node)} · 点击定位，拖动移动`}
             className={`canvas-minimap-node node-color-${canvasNodeColorKey(node)} type-${node.type} kind-${node.data.kind || "text"} status-${node.data.status || "idle"} ${node.groupId ? "grouped" : ""} ${selectedIds.has(node.id) ? "active" : ""}`}
             data-node-color={canvasNodeColorKey(node)}

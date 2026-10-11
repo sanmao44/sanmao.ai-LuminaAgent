@@ -47,6 +47,9 @@ export type CanvasNodeLayerProps = {
   onRetryVariant: (nodeId: string, variantIndex: number) => void;
   onRetryFailedVariants: (nodeId: string) => void;
   onEdit: (node: CanvasNode, editing: boolean) => void;
+  onRename?: (node: CanvasNode, name: string) => void;
+  renamingNodeId?: string | null;
+  onRenamingChange?: (node: CanvasNode, editing: boolean) => void;
   onNaturalSize: CanvasNodeCardProps["onNaturalSize"];
   onPromptChange: (node: CanvasNode, value: string) => void;
   onEditorPromptChange: CanvasNodeCardProps["onEditorPromptChange"];
@@ -102,6 +105,7 @@ function areCanvasNodeLayerItemPropsEqual(
     previous.referencePickerFlashNodeId === next.referencePickerFlashNodeId &&
     previous.editingNodeId === next.editingNodeId &&
     previous.expandedEditorId === next.expandedEditorId &&
+    previous.renamingNodeId === next.renamingNodeId &&
     previous.document.nodes === next.document.nodes &&
     previous.document.edges === next.document.edges &&
     previous.document.groups === next.document.groups &&
@@ -141,6 +145,9 @@ function CanvasNodeLayerItem({ node, ...props }: MemoizedCanvasNodeLayerItemProp
       onRetryFailedVariants={() => props.callbacksRef.current.onRetryFailedVariants(node.id)}
       editing={props.editingNodeId === node.id}
       onEdit={(editing) => props.callbacksRef.current.onEdit(node, editing)}
+      onRename={props.callbacksRef.current.onRename ? (name) => props.callbacksRef.current.onRename?.(node, name) : undefined}
+      renaming={props.renamingNodeId === undefined ? undefined : props.renamingNodeId === node.id}
+      onRenamingChange={props.callbacksRef.current.onRenamingChange ? (editing) => props.callbacksRef.current.onRenamingChange?.(node, editing) : undefined}
       onNaturalSize={(nodeId, width, height, durationSeconds) => props.callbacksRef.current.onNaturalSize(nodeId, width, height, durationSeconds)}
       onPromptChange={(value) => props.callbacksRef.current.onPromptChange(node, value)}
       onEditorPromptChange={(target, value) => props.callbacksRef.current.onEditorPromptChange(target, value)}
@@ -207,6 +214,9 @@ export default function CanvasNodeLayer({
   onRetryVariant,
   onRetryFailedVariants,
   onEdit,
+  onRename,
+  renamingNodeId,
+  onRenamingChange,
   onNaturalSize,
   onPromptChange,
   onEditorPromptChange,
@@ -238,6 +248,8 @@ export default function CanvasNodeLayer({
     onRetryVariant,
     onRetryFailedVariants,
     onEdit,
+    onRename,
+    onRenamingChange,
     onNaturalSize,
     onPromptChange,
     onEditorPromptChange,
@@ -269,6 +281,8 @@ export default function CanvasNodeLayer({
     onRetryVariant,
     onRetryFailedVariants,
     onEdit,
+    onRename,
+    onRenamingChange,
     onNaturalSize,
     onPromptChange,
     onEditorPromptChange,
@@ -297,6 +311,7 @@ export default function CanvasNodeLayer({
             referencePickerHoverNodeId={referencePickerHoverNodeId}
             referencePickerFlashNodeId={referencePickerFlashNodeId}
             editingNodeId={editingNodeId}
+            renamingNodeId={renamingNodeId}
             expandedEditorId={expandedEditorId}
             runtime={runtime}
             editorPromptFor={editorPromptFor}

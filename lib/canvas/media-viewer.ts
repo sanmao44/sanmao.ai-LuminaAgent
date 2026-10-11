@@ -72,8 +72,9 @@ function mediaViewerVersionInfo(
     : displayModel || modelId;
   const sourceNodeId = generation?.parentNodeId || generation?.reuseSourceNodeId || generation?.sourceGeneratorId;
   const sourceNode = sourceNodeId ? nodeById(document, sourceNodeId) : undefined;
+  const sourceNodeName = sourceNode && typeof sourceNode.data.name === "string" ? sourceNode.data.name.trim() : "";
   const sourceNodeLabel = sourceNode
-    ? `${nodeLabel(sourceNode)}${sourceNode.data.name ? ` · ${String(sourceNode.data.name)}` : ""}`
+    ? `${nodeLabel(sourceNode)}${sourceNodeName && nodeLabel(sourceNode) !== sourceNodeName ? ` · ${sourceNodeName}` : ""}`
     : sourceNodeId || "直接生成";
   const width = Number(node.data.nativeWidth);
   const height = Number(node.data.nativeHeight);

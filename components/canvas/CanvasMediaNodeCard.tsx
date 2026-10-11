@@ -12,6 +12,7 @@ import CanvasProcessingIndicator, {
   type CanvasProcessingKind,
 } from "@/components/canvas/CanvasProcessingIndicator";
 import { useCanvasMediaPlayback } from "@/components/canvas/useCanvasMediaPlayback";
+import CanvasInlineNameEditor from "@/components/canvas/CanvasInlineNameEditor";
 
 export type CanvasMediaNodeCardProps = {
   node: CanvasNode;
@@ -33,6 +34,9 @@ export type CanvasMediaNodeCardProps = {
     durationSeconds?: number,
   ) => void;
   onLocalEdit: () => void;
+  onRename?: (value: string) => void;
+  renaming?: boolean;
+  onRenamingChange?: (editing: boolean) => void;
 };
 
 export default function CanvasMediaNodeCard({
@@ -50,6 +54,9 @@ export default function CanvasMediaNodeCard({
   maskState,
   onNaturalSize,
   onLocalEdit,
+  onRename,
+  renaming,
+  onRenamingChange,
 }: CanvasMediaNodeCardProps) {
   const data = node.data;
   const {
@@ -276,7 +283,15 @@ export default function CanvasMediaNodeCard({
               {data.kind === "video" ? "▶" : data.kind === "audio" ? "♫" : "▣"}
             </span>
             <span className="canvas-node-title">
-              <b>{data.name || (data.kind === "video" ? "视频素材" : data.kind === "audio" ? "音频素材" : "素材")}</b>
+              <CanvasInlineNameEditor
+                value={data.name}
+                fallback={data.kind === "video" ? "视频素材" : data.kind === "audio" ? "音频素材" : "素材"}
+                ariaLabel="节点名称"
+                onCommit={onRename}
+                editing={renaming}
+                onEditingChange={onRenamingChange}
+                className="canvas-inline-name-editor canvas-node-name"
+              />
               <small>{data.model || (data.kind === "video" ? "视频" : data.kind === "audio" ? `${data.mimeType || "音频"}${data.durationMs ? ` · ${formatCanvasAudioDuration(data.durationMs)}` : ""}` : mediaFooterStatus)}</small>
             </span>
             <em className={data.kind === "video" ? "video-status" : data.kind === "audio" ? "audio-status" : undefined}>

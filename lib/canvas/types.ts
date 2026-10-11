@@ -473,6 +473,8 @@ export type CanvasGroup = {
   id: string;
   name: string;
   nodeIds: string[];
+  /** Persisted user-selected accent used to identify the group. */
+  color?: string;
   /** Persisted top-level paint order shared with ungrouped nodes. */
   zIndex?: number;
 };

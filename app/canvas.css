@@ -56,10 +56,10 @@
 
 /* Light canvas groups need a quiet but definite boundary against the dotted
    stage. Keep the accent restrained so the cards remain the visual focus. */
-html[data-theme="light"] .canvas-group{border-color:color-mix(in srgb,var(--accent) 42%,var(--line-strong));background:linear-gradient(135deg,color-mix(in srgb,var(--accent-soft) 26%,transparent),color-mix(in srgb,var(--panel) 92%,transparent));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 10%,transparent),0 9px 25px rgba(78,67,199,.08),inset 0 1px 0 rgba(255,255,255,.86);transition:border-color .16s,background .16s,box-shadow .16s}
-html[data-theme="light"] .canvas-group:hover{border-color:color-mix(in srgb,var(--accent) 62%,var(--line-strong));box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 12%,transparent),0 12px 28px rgba(78,67,199,.12),inset 0 1px 0 rgba(255,255,255,.92)}
-html[data-theme="light"] .canvas-group.selected{border-color:var(--accent);background:linear-gradient(135deg,color-mix(in srgb,var(--accent-soft) 48%,transparent),color-mix(in srgb,var(--panel) 88%,transparent));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent),0 13px 32px rgba(78,67,199,.16),inset 0 1px 0 rgba(255,255,255,.95)}
-html[data-theme="light"] .canvas-group-label{border-color:color-mix(in srgb,var(--accent) 34%,var(--line-strong));background:color-mix(in srgb,#fff 94%,var(--accent-soft));box-shadow:0 3px 10px rgba(78,67,199,.12),inset 0 1px 0 #fff}
+html[data-theme="light"] .canvas-group{border-color:color-mix(in srgb,var(--group-color,var(--accent)) 42%,var(--line-strong));background:linear-gradient(135deg,color-mix(in srgb,var(--group-color,var(--accent)) 13%,transparent),color-mix(in srgb,var(--panel) 92%,transparent));box-shadow:0 0 0 1px color-mix(in srgb,var(--group-color,var(--accent)) 10%,transparent),0 9px 25px rgba(78,67,199,.08),inset 0 1px 0 rgba(255,255,255,.86);transition:border-color .16s,background .16s,box-shadow .16s}
+html[data-theme="light"] .canvas-group:hover{border-color:color-mix(in srgb,var(--group-color,var(--accent)) 62%,var(--line-strong));box-shadow:0 0 0 2px color-mix(in srgb,var(--group-color,var(--accent)) 12%,transparent),0 12px 28px rgba(78,67,199,.12),inset 0 1px 0 rgba(255,255,255,.92)}
+html[data-theme="light"] .canvas-group.selected{border-color:var(--group-color,var(--accent));background:linear-gradient(135deg,color-mix(in srgb,var(--group-color,var(--accent)) 22%,transparent),color-mix(in srgb,var(--panel) 88%,transparent));box-shadow:0 0 0 3px color-mix(in srgb,var(--group-color,var(--accent)) 18%,transparent),0 13px 32px rgba(78,67,199,.16),inset 0 1px 0 rgba(255,255,255,.95)}
+html[data-theme="light"] .canvas-group-label{border-color:color-mix(in srgb,var(--group-color,var(--accent)) 34%,var(--line-strong));background:color-mix(in srgb,#fff 94%,color-mix(in srgb,var(--group-color,var(--accent)) 8%,transparent));box-shadow:0 3px 10px rgba(78,67,199,.12),inset 0 1px 0 #fff}
 
 /* The arrangement choice belongs to the selected group toolbar, not the global top bar. */
 
@@ -164,6 +164,7 @@ html[data-motion="off"] :is(.canvas-edge.related,.canvas-edge-flow-stroke){anima
 .canvas-stage.is-cursor-resizing,.canvas-stage.is-cursor-resizing *{cursor:nwse-resize!important}
 .canvas-stage.is-cursor-copying,.canvas-stage.is-cursor-copying *{cursor:copy!important}
 .canvas-stage .canvas-group-resize,.canvas-stage .canvas-node-resize{cursor:nwse-resize}
+.canvas-group{--group-color:var(--canvas-group-color,var(--accent));border-color:color-mix(in srgb,var(--group-color) 52%,var(--line));background:color-mix(in srgb,var(--group-color) 10%,transparent)}.canvas-group.selected{border-color:var(--group-color);background:color-mix(in srgb,var(--group-color) 18%,transparent)}.canvas-group-label{pointer-events:auto;border-color:color-mix(in srgb,var(--group-color) 42%,var(--line));background:color-mix(in srgb,var(--group-color) 7%,var(--panel))}.canvas-group-color-mark{width:7px;height:7px;flex:none;border-radius:50%;background:var(--group-color);box-shadow:0 0 0 2px color-mix(in srgb,var(--group-color) 18%,transparent)}.canvas-group-name{max-width:150px;color:var(--text);font-size:9px;font-weight:800}.canvas-group-name-input{width:150px}.canvas-group-color-popover{position:absolute;z-index:var(--canvas-z-local-floating);left:0;top:calc(100% + 8px);width:188px;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--shadow);pointer-events:auto}.canvas-group-color-popover-head{display:flex;justify-content:space-between;margin-bottom:8px}.canvas-group-color-swatches{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}.canvas-group-color-swatches button{width:22px;height:22px;border:2px solid transparent;border-radius:7px;background:var(--swatch-color)}.canvas-group-color-swatches button.selected{border-color:var(--text)}.canvas-group-color-swatches button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.canvas-group-color-custom{display:flex;justify-content:space-between;margin-top:10px}.canvas-group-color-reset{width:100%;margin-top:9px}
 .canvas-minimap-stage{height:auto;aspect-ratio:16 / 9}
 .canvas-minimap-stage{border:0;box-shadow:inset 0 0 0 1px var(--line)}
 .canvas-node.selected{outline:2px solid var(--accent);outline-offset:3px;box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 15%,transparent),0 0 26px color-mix(in srgb,var(--accent) 22%,transparent),var(--shadow)}
@@ -1653,6 +1654,9 @@ html[data-motion="off"] .canvas-node-aura{display:none}
 
 /* Grouped quick actions keep the rail compact while leaving a stable home for
    future image operations such as outpainting. */
+.canvas-group-color-control,.canvas-group-arrange-control{position:relative;display:inline-flex;align-items:center}
+.canvas-group-color-popover{left:50%;transform:translateX(-50%);max-width:calc(100vw - 24px)}
+.canvas-node-quick-toolbar:has(.canvas-group-color-popover){overflow:visible}
 
 /* Media viewer chrome: keep utility controls quiet and make downloads one
    obvious split action instead of two unrelated buttons. */

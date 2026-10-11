@@ -243,6 +243,26 @@ test('normalizes NOVA-compatible documents and drops invalid graph references', 
   assert.equal(result.camera.zoom, 3);
 });
 
+test('normalizes custom names and group colors immutably', () => {
+  const source = model.normalizeDocument({
+    nodes: [
+      { id: 'node-1', type: 'prompt', x: 0, y: 0, data: { text: 'x', name: '  My\nNode  ' } },
+      { id: 'node-2', type: 'media', x: 1, y: 1, data: { kind: 'image', url: '/x' } },
+    ],
+    groups: [{ id: 'group-1', name: '  Work\tGroup ', color: '#AABBCC', nodeIds: ['node-1', 'node-2'] }],
+  });
+  const renamed = model.renameCanvasNode(source, 'node-1', '  Renamed\nNode  ');
+  assert.equal(renamed.nodes[0].data.name, 'Renamed Node');
+  assert.equal(source.nodes[0].data.name, 'My Node');
+  assert.equal(model.renameCanvasNode(renamed, 'node-1', '  ').nodes[0].data.name, undefined);
+  const longName = model.renameCanvasNode(source, 'node-1', 'x'.repeat(80));
+  assert.equal(longName.nodes[0].data.name.length, 48);
+  const recolored = model.setCanvasGroupColor(source, 'group-1', '#12ABef');
+  assert.equal(recolored.groups[0].color, '#12abef');
+  assert.equal(model.setCanvasGroupColor(recolored, 'group-1', 'invalid').groups[0].color, undefined);
+  assert.equal(model.renameCanvasGroup(source, 'group-1', '').groups[0].name, '对象组 1');
+});
+
 test('angle node drafts preserve a relative viewpoint baseline', () => {
   const created = model.createAngleNode({ x: 0, y: 0 });
   assert.equal(created.data.angle.camera.viewpoint.version, 2);

@@ -58,6 +58,9 @@ import {
   nodeById,
   nodeSize,
   normalizeCanvasAngleParams,
+  renameCanvasNode,
+  renameCanvasGroup,
+  setCanvasGroupColor,
   normalizeDocument,
   recoverInterruptedCanvasDocument,
   removeCanvasReference,
@@ -268,6 +271,7 @@ import { canvasMentionOption } from "@/components/canvas/mention-options";
 import CanvasReferenceMentionMenu from "@/components/canvas/CanvasReferenceMentionMenu";
 import CanvasUpscaleNodeCard from "@/components/canvas/CanvasUpscaleNodeCard";
 import CanvasGroupLayer from "@/components/canvas/CanvasGroupLayer";
+import CanvasGroupColorPopover from "@/components/canvas/CanvasGroupColorPopover";
 import MediaViewer from "@/components/MediaViewer";
 import LocalEditEditor from "@/components/MaskEditor";
 import CanvasImageEditorWorkbench, {
@@ -889,6 +893,9 @@ export default function SuperCanvas() {
     }
   });
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
+  const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
+  const [groupColorPopoverId, setGroupColorPopoverId] = useState<string | null>(null);
   const [stageSize, setStageSize] = useState({ width: 1200, height: 760 });
   const [deckHeight, setDeckHeight] = useState(0);
   const [connectionStyle, setConnectionStyle] =
@@ -1407,6 +1414,26 @@ export default function SuperCanvas() {
     },
     [setDoc],
   );
+  const renameNode = useCallback((nodeId: string, name: string) => {
+    commit((value) => renameCanvasNode(value, nodeId, name));
+    setRenamingNodeId(null);
+  }, [commit]);
+  const renameGroup = useCallback((groupId: string, name: string) => {
+    commit((value) => renameCanvasGroup(value, groupId, name));
+    setRenamingGroupId(null);
+  }, [commit]);
+  const changeGroupColor = useCallback((groupId: string, color?: string) => {
+    commit((value) => setCanvasGroupColor(value, groupId, color));
+  }, [commit]);
+  const requestNodeRename = useCallback((nodeId: string) => {
+    setRenamingNodeId(nodeId);
+    setQuickToolbarNodeId(nodeId);
+  }, []);
+  const requestGroupRename = useCallback((groupId: string) => {
+    setRenamingGroupId(groupId);
+    setQuickToolbarNodeId(null);
+    setGroupColorPopoverId(null);
+  }, []);
   const recordHistory = useCallback(() => {
     canvasCoreRef.current.record();
     setHistoryVersion((value) => value + 1);
@@ -11974,6 +12001,23 @@ export default function SuperCanvas() {
     return {
       primaryActions: [
         {
+          id: "rename-group",
+          icon: "edit",
+          label: "重命名",
+          title: "修改对象组名称",
+          onClick: () => requestGroupRename(group.id),
+        },
+        {
+          id: "color-group",
+          icon: "palette",
+          label: "组颜色",
+          title: "设置对象组颜色",
+          onClick: () => {
+            setSelectedGroupId(group.id);
+            setGroupColorPopoverId(group.id);
+          },
+        },
+        {
           id: "arrange-group",
           icon: "arrange",
           label: "组内整理",
@@ -12060,6 +12104,8 @@ export default function SuperCanvas() {
     reorderSelection,
     contextGroup,
     selectedGroup,
+    requestGroupRename,
+    setSelectedGroupId,
     selectedImageDownloads.length,
   ]);
   /* 对象组也要能整组交给 Agent：组工具栏和组右键菜单共用同一条入口。 */
@@ -12081,6 +12127,13 @@ export default function SuperCanvas() {
       action();
     };
     const canvasActions: CanvasQuickAction[] = [
+      {
+        id: "rename",
+        icon: "edit",
+        label: "重命名",
+        title: "修改节点显示名称",
+        onClick: close(() => requestNodeRename(node.id)),
+      },
       {
         id: "copy-nodes",
         icon: "⧉",
@@ -12924,6 +12977,9 @@ export default function SuperCanvas() {
               onGroupResize={startGroupResize}
               onStartConnection={startConnection}
               onComposeGroup={openComposeDialog}
+              renamingGroupId={renamingGroupId}
+              onRename={(group, name) => renameGroup(group.id, name)}
+              onRenamingChange={(group, editing) => setRenamingGroupId(editing ? group.id : null)}
             />
             <CanvasNodeLayer
               nodes={renderedCanvasNodes}
@@ -12935,6 +12991,7 @@ export default function SuperCanvas() {
               referencePickerHoverNodeId={referencePickerHoverNodeId}
               referencePickerFlashNodeId={referencePickerFlashNodeId}
               editingNodeId={editingNodeId}
+              renamingNodeId={renamingNodeId}
               expandedEditorId={expandedEditorId}
               runtime={runtime}
               editorPromptFor={editorPromptFor}
@@ -12956,6 +13013,8 @@ export default function SuperCanvas() {
               onRetryVariant={retryVariant}
               onRetryFailedVariants={retryFailedVariants}
               onEdit={(node, editing) => setEditingNodeId(editing ? node.id : null)}
+              onRename={(node, name) => renameNode(node.id, name)}
+              onRenamingChange={(node, editing) => setRenamingNodeId(editing ? node.id : null)}
               onNaturalSize={setMediaNaturalSize}
               onPromptChange={updateEditorPrompt}
               onEditorPromptChange={updateEditorPrompt}
@@ -13303,7 +13362,21 @@ export default function SuperCanvas() {
               actions={groupQuickActionsWithAgent}
               menuSubtitle="组操作"
               actionRenderer={(action, button) =>
-                action.id === "arrange-group" ? (
+                action.id === "color-group" ? (
+                  <div className="canvas-group-color-control" key={action.id} onPointerDown={(event) => event.stopPropagation()}>
+                    {button}
+                    {groupColorPopoverId === selectedGroup.id && (
+                      <CanvasGroupColorPopover
+                        value={selectedGroup.color}
+                        onChange={(color) => {
+                          changeGroupColor(selectedGroup.id, color);
+                          setGroupColorPopoverId(null);
+                        }}
+                        onClose={() => setGroupColorPopoverId(null)}
+                      />
+                    )}
+                  </div>
+                ) : action.id === "arrange-group" ? (
                   <div className="canvas-group-arrange-control" key={action.id} onPointerDown={(event) => event.stopPropagation()}>
                     {button}
                     {arrangeGroupMenuOpen && (

@@ -80,6 +80,9 @@ function CanvasNodeCard({
   onOutputPreview,
   editing,
   onEdit,
+  onRename,
+  renaming,
+  onRenamingChange,
 }: CanvasNodeCardProps) {
   const size = nodeSize(node);
   const data = node.data;
@@ -298,6 +301,9 @@ function CanvasNodeCard({
           state={data.videoEditor}
           inputs={incomingContext(document, node.id).filter(isCanvasReferenceableNode)}
           onOpen={onOpenVideoEditor}
+          onRename={onRename}
+          renaming={renaming}
+          onRenamingChange={onRenamingChange}
         />
       ) : node.type === "angle" ? (
         <CanvasAngleNodeCard
@@ -312,6 +318,10 @@ function CanvasNodeCard({
           processingStartedAt={data.processingStartedAt}
           onOpenAngle={onOpenAngle}
           onCancelAngle={onCancelAngle}
+          node={node}
+          onRename={onRename}
+          renaming={renaming}
+          onRenamingChange={onRenamingChange}
         />
       ) : node.type === "media" ? (
         <CanvasMediaNodeCard
@@ -329,6 +339,9 @@ function CanvasNodeCard({
           maskState={maskState}
           onNaturalSize={onNaturalSize}
           onLocalEdit={onLocalEdit}
+          onRename={onRename}
+          renaming={renaming}
+          onRenamingChange={onRenamingChange}
         />
       ) : null}
       {node.type === "upscale" && (
@@ -342,6 +355,9 @@ function CanvasNodeCard({
           imageResolution={imageResolution}
           sourceConnected={Boolean(canvasUpscaleSource(document, node.id))}
           onNaturalSize={onNaturalSize}
+          onRename={onRename}
+          renaming={renaming}
+          onRenamingChange={onRenamingChange}
         />
       )}
       {node.type === "prompt" && (
@@ -365,6 +381,9 @@ function CanvasNodeCard({
           onEdit={onEdit}
           onUseAsImagePrompt={onUseAsImagePrompt}
           onTextPreview={onTextPreview}
+          onRename={onRename}
+          renaming={renaming}
+          onRenamingChange={onRenamingChange}
         />
       )}
       {node.type === "generator" && (
@@ -391,6 +410,9 @@ function CanvasNodeCard({
           onRetryVariant={onRetryVariant}
           onRetryFailedVariants={onRetryFailedVariants}
           onOutputPreview={onOutputPreview}
+          onRename={onRename}
+          renaming={renaming}
+          onRenamingChange={onRenamingChange}
         />
       )}
       <button

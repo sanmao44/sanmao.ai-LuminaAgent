@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, type PointerEvent as ReactPointerEvent } from "react";
+import { useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { groupBounds, isCanvasReferenceableNode, nodeById } from "@/lib/canvas/model";
 import { canvasGroupPaintZIndex } from "@/lib/canvas/layers";
 import type { CanvasDocument, CanvasGroup } from "@/lib/canvas/types";
+import CanvasInlineNameEditor from "@/components/canvas/CanvasInlineNameEditor";
 
 type CanvasGroupLayerProps = {
   document: CanvasDocument;
@@ -23,6 +24,9 @@ type CanvasGroupLayerProps = {
     port: "left" | "right",
   ) => void;
   onComposeGroup: (groupId: string) => void;
+  renamingGroupId?: string | null;
+  onRename?: (group: CanvasGroup, name: string) => void;
+  onRenamingChange?: (group: CanvasGroup, editing: boolean) => void;
 };
 
 export default function CanvasGroupLayer({
@@ -39,6 +43,9 @@ export default function CanvasGroupLayer({
   onGroupResize,
   onStartConnection,
   onComposeGroup,
+  renamingGroupId,
+  onRename,
+  onRenamingChange,
 }: CanvasGroupLayerProps) {
   const groupMetrics = useMemo(() => {
     const metrics = new Map<string, { bounds: ReturnType<typeof groupBounds>; availableImageCount: number }>();
@@ -86,7 +93,8 @@ export default function CanvasGroupLayer({
               width: bounds.w,
               height: bounds.h,
               zIndex: canvasGroupPaintZIndex(document, group, groupInteraction),
-            }}
+              "--canvas-group-color": group.color || "var(--accent)",
+            } as CSSProperties}
             onPointerDown={(event) => onGroupPointerDown(event, group)}
           >
             <button
@@ -132,8 +140,18 @@ export default function CanvasGroupLayer({
               >
                 {composing ? "…" : "▦"}
               </button>
-              <span>⌘</span>
-              <b>{group.name}</b>
+              <span className="canvas-group-color-mark" aria-hidden="true" title={group.color ? `组颜色 ${group.color}` : "主题默认组颜色"} />
+              <span aria-hidden="true">⌘</span>
+              <CanvasInlineNameEditor
+                value={group.name}
+                fallback={group.name}
+                ariaLabel={`对象组名称`}
+                editing={renamingGroupId === group.id}
+                onEditingChange={(editing) => onRenamingChange?.(group, editing)}
+                onCommit={(name) => onRename?.(group, name)}
+                className="canvas-group-name"
+                inputClassName="canvas-group-name-input"
+              />
               <small>{group.nodeIds.length} 个对象</small>
             </div>
           </div>

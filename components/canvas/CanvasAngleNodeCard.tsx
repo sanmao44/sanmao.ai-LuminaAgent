@@ -7,6 +7,7 @@ import CanvasProcessingIndicator, {
   type CanvasProcessingKind,
 } from "@/components/canvas/CanvasProcessingIndicator";
 import { canvasAngleCardStateLabel } from "@/components/canvas/angle-card-state";
+import CanvasInlineNameEditor from "@/components/canvas/CanvasInlineNameEditor";
 
 export type CanvasAngleNodeCardProps = {
   angleReference?: CanvasNode;
@@ -20,6 +21,10 @@ export type CanvasAngleNodeCardProps = {
   processingStartedAt?: number;
   onOpenAngle: () => void;
   onCancelAngle: () => void;
+  node?: CanvasNode;
+  onRename?: (value: string) => void;
+  renaming?: boolean;
+  onRenamingChange?: (editing: boolean) => void;
 };
 
 export default function CanvasAngleNodeCard({
@@ -34,13 +39,17 @@ export default function CanvasAngleNodeCard({
   processingStartedAt,
   onOpenAngle,
   onCancelAngle,
+  node,
+  onRename,
+  renaming,
+  onRenamingChange,
 }: CanvasAngleNodeCardProps) {
   const hasReference = Boolean(angleReference);
   return (
     <div className="canvas-angle-card">
       <div className="canvas-angle-card-head">
         <span className="canvas-angle-card-icon" aria-hidden="true">◈</span>
-        <div><b>角度控制</b><small>相机视角 · 主体 · 光影</small></div>
+        <div><CanvasInlineNameEditor value={node?.data.name} fallback="角度控制" ariaLabel="角度节点名称" onCommit={onRename} editing={renaming} onEditingChange={onRenamingChange} className="canvas-inline-name-editor canvas-node-name" /><small>相机视角 · 主体 · 光影</small></div>
         <span className={`canvas-angle-card-state ${status}`}>
           {canvasAngleCardStateLabel(status, pending, hasReference)}
         </span>
