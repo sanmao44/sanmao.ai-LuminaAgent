@@ -33,6 +33,24 @@ test('data profiles preserve development defaults and support explicit modes', a
   }
 });
 
+test('installed data follows XDG_DATA_HOME on Unix', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-installed-profile-'));
+  const configuredDataHome = path.join(root, 'xdg-data');
+  try {
+    const profile = paths.resolveDataProfile(root, {
+      SANMAO_INSTALL_MODE: 'installed',
+      XDG_DATA_HOME: configuredDataHome,
+    });
+    if (process.platform === 'win32') {
+      assert.notEqual(profile.dataDir, path.join(configuredDataHome, 'SANMAO.AI'));
+    } else {
+      assert.equal(profile.dataDir, path.join(configuredDataHome, 'SANMAO.AI'));
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('initial manifest starts unknown components at legacy versions', () => {
   const value = manifest.initialDataManifest('development', '2026-09-23T00:00:00.000Z');
   assert.equal(value.activeGeneration, 'legacy');

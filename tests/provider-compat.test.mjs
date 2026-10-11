@@ -174,6 +174,38 @@ test('OpenAI-compatible chat keeps inline data URLs without a relay conversion',
   assert.equal(requests[0].messages[0].content[1].image_url.url, inline);
 });
 
+test('normalizes assistant tool calls before replaying a tool follow-up', async () => {
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url: String(url), body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'done' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const provider = {
+    id: '65535', name: '65535', type: 'openai-compatible', platform: '65535',
+    baseUrl: 'https://api2.65535.space/v1', apiKey: 'test-key',
+  };
+  try {
+    await providers.chatCompletion(provider, 'deepseek-v4-flash', {
+      messages: [
+        { role: 'assistant', content: null, tool_calls: [{ id: 'call-1', function: { name: 'video_download', arguments: { url: 'https://example.test/video' } } }] },
+        { role: 'tool', tool_call_id: 'call-1', content: '{"ok":true}' },
+      ],
+      tool_choice: 'none',
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  const call = requests[0].body.messages[0].tool_calls[0];
+  assert.equal(call.id, 'call-1');
+  assert.equal(call.type, 'function');
+  assert.equal(call.function.name, 'video_download');
+  assert.equal(call.function.arguments, '{"url":"https://example.test/video"}');
+});
+
 test('JEV intent classification uses System One and normalizes its choice answers', async () => {
   const previousFetch = globalThis.fetch;
   let requestUrl = '';

@@ -4,6 +4,7 @@ import { mkdir, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
+import { resolveLocalDataDir } from './data-paths';
 
 /**
  * The yt-dlp adapter is deliberately narrower than a general process runner.
@@ -53,7 +54,7 @@ export type YtDlpProbeResult = {
 };
 
 export class YtDlpUnavailableError extends Error {
-  constructor(message = 'yt-dlp 不可用，请先安装 yt-dlp 并将其加入 PATH。') {
+  constructor(message = '视频下载技能已启用，但本机下载器未就绪。启动器会自动准备 yt-dlp；请重新启动 SANMAO.AI 后再试。') {
     super(message);
     this.name = 'YtDlpUnavailableError';
   }
@@ -122,11 +123,72 @@ function windowsUserYtDlpCommand() {
   return candidates.find((candidate) => existsSync(candidate)) || '';
 }
 
+function unixUserYtDlpCommand() {
+  const home = homedir();
+  const candidates = [
+    path.join(home, '.local', 'bin', 'yt-dlp'),
+    path.join(home, 'bin', 'yt-dlp'),
+    path.join(home, 'Library', 'Python', '3.13', 'bin', 'yt-dlp'),
+    path.join(home, 'Library', 'Python', '3.12', 'bin', 'yt-dlp'),
+    path.join(home, 'Library', 'Python', '3.11', 'bin', 'yt-dlp'),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) || '';
+}
+
+/**
+ * A release can carry yt-dlp inside its durable data directory.  Keeping the
+ * executable next to the app's data makes a copied/portable installation work
+ * on another computer without relying on that computer's user PATH.
+ */
+function bundledYtDlpCommand() {
+  const binary = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+  const dataDir = resolveLocalDataDir();
+  const roots = [
+    path.join(dataDir, 'tools'),
+    path.join(process.cwd(), 'tools'),
+    path.join(process.cwd(), 'bin'),
+  ];
+  const candidates = roots.flatMap((root) => [path.join(root, binary), path.join(root, 'yt-dlp', binary)]);
+  return candidates.find((candidate) => existsSync(candidate)) || '';
+}
+
+function bundledYtDlpPath() {
+  const binary = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+  return path.join(resolveLocalDataDir(), 'tools', binary);
+}
+
+async function prepareBundledYtDlp() {
+  const script = path.join(process.cwd(), 'scripts', 'ensure-ytdlp.mjs');
+  if (!existsSync(script)) return false;
+  try {
+    const result = await spawnYtDlp({ command: process.execPath, args: [script, '--quiet'], cwd: process.cwd() });
+    if (result.exitCode !== 0) return false;
+    if (existsSync(bundledYtDlpPath())) return true;
+    // The bootstrapper can fall back to an existing per-user Python install.
+    // Verify that discovered command before treating that fallback as ready;
+    // this keeps the runtime path independent from the current shell PATH.
+    const discovered = configuredCommand();
+    const probe = await spawnYtDlp({ command: discovered, args: ['--version'], cwd: process.cwd() });
+    return probe.exitCode === 0 && /\d{4}\.\d+/m.test(probe.stdout);
+  } catch {
+    return false;
+  }
+}
+
 function configuredCommand(explicit?: string) {
   const configured = String(explicit || process.env.SANMAO_YTDLP_PATH || process.env.YT_DLP_PATH || '').trim();
-  if (configured) return configured;
+  // An absolute path may have belonged to the previous computer.  Treat a
+  // missing configured file as stale and continue with the bundled/PATH
+  // discovery below; command names such as `yt-dlp` still intentionally rely
+  // on PATH resolution.
+  if (configured && (!path.isAbsolute(configured) || existsSync(configured))) return configured;
+  const bundled = bundledYtDlpCommand();
+  if (bundled) return bundled;
   if (process.platform === 'win32') {
     const discovered = windowsUserYtDlpCommand();
+    if (discovered) return discovered;
+  } else {
+    const discovered = unixUserYtDlpCommand();
     if (discovered) return discovered;
   }
   return process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
@@ -317,8 +379,19 @@ export async function downloadWithYtDlp(request: YtDlpDownloadRequest, dependenc
     await removeNewPartialFiles(outputDirectory, existingNames);
     if (request.signal?.aborted) throw request.signal.reason || new Error('yt-dlp 下载已取消。');
     const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code || '') : '';
-    if (code === 'ENOENT') throw new YtDlpUnavailableError();
-    throw error;
+    if (code === 'ENOENT' && !dependencies.command) {
+      const prepared = await prepareBundledYtDlp();
+      if (prepared) {
+        const preparedCommand = bundledYtDlpCommand() || configuredCommand();
+        processResult = await run({ command: preparedCommand, args, cwd: outputDirectory, signal: request.signal, onOutput: request.onProgress });
+      } else {
+        throw new YtDlpUnavailableError('视频下载技能已启用，但自动准备 yt-dlp 失败。请检查网络后重新启动 SANMAO.AI，或将 yt-dlp.exe 放入 .data/tools/。');
+      }
+    } else if (code === 'ENOENT') {
+      throw new YtDlpUnavailableError();
+    } else {
+      throw error;
+    }
   }
   if (request.signal?.aborted) {
     await removeNewPartialFiles(outputDirectory, existingNames);

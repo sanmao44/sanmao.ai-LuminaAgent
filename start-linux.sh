@@ -5,6 +5,24 @@ ROOT_DIR=$SCRIPT_DIR
 cd "$ROOT_DIR"
 . "$SCRIPT_DIR/scripts/launcher-common.sh"
 . "$SCRIPT_DIR/scripts/free-relay-common.sh"
+if [ -z "${SANMAO_DATA_DIR:-}" ] && [ -z "${SANMAO_INSTALL_MODE:-}" ] && [ -z "${SANMAO_INSTALLED:-}" ] && [ ! -e "$ROOT_DIR/.git" ]; then
+  SANMAO_INSTALL_MODE=installed
+  export SANMAO_INSTALL_MODE
+fi
+NODE_RUNTIME_BIN=`sanmao_data_dir "$ROOT_DIR"`
+if [ -f "$SCRIPT_DIR/scripts/ensure-node-runtime.sh" ]; then
+  if ! NODE_RUNTIME_BIN=`sh "$SCRIPT_DIR/scripts/ensure-node-runtime.sh" --data-dir "$NODE_RUNTIME_BIN" --print-bin 2>/dev/null`; then
+    printf '%s\n' '没有可用的 Node.js，应用内 Node.js 自动准备失败。请检查网络后重新启动。' >&2
+    exit 1
+  fi
+  if [ -n "$NODE_RUNTIME_BIN" ] && [ -x "$NODE_RUNTIME_BIN/node" ]; then
+    PATH="$NODE_RUNTIME_BIN:$PATH"
+    export PATH
+  else
+    printf '%s\n' 'Node.js 运行时路径无效，无法启动 SANMAO.AI。' >&2
+    exit 1
+  fi
+fi
 DEPENDENCY_FINGERPRINT=`node -e 'const fs=require("fs");const crypto=require("crypto");const p=JSON.parse(fs.readFileSync("package.json","utf8"));const lines=[];for(const s of ["dependencies","optionalDependencies","peerDependencies","devDependencies"]){const d=p[s]||{};for(const n of Object.keys(d).sort())lines.push(s+"/"+n+"@"+d[n]);}process.stdout.write(crypto.createHash("sha256").update(lines.join("\n")).digest("hex").toUpperCase());' 2>/dev/null || true`
 STORED_DEPENDENCY_FINGERPRINT=`cat node_modules/.sanmao-deps.sha256 2>/dev/null | tr -d '\r\n' || true`
 if [ ! -x node_modules/.bin/next ] || [ ! -x node_modules/ffmpeg-static/ffmpeg ] || [ ! -f node_modules/typescript/package.json ] || [ ! -f node_modules/@types/node/package.json ] || [ ! -f node_modules/@types/react/package.json ] || [ ! -f node_modules/@types/react-dom/package.json ] || [ -z "$DEPENDENCY_FINGERPRINT" ] || [ "$STORED_DEPENDENCY_FINGERPRINT" != "$DEPENDENCY_FINGERPRINT" ]; then
@@ -13,6 +31,10 @@ if [ ! -x node_modules/.bin/next ] || [ ! -x node_modules/ffmpeg-static/ffmpeg ]
   printf '%s' "$DEPENDENCY_FINGERPRINT" > node_modules/.sanmao-deps.sha256
 fi
 if [ ! -f .next/BUILD_ID ]; then npm run build; fi
+if [ -f "$SCRIPT_DIR/scripts/ensure-ytdlp.mjs" ]; then
+  printf '%s\n' '准备视频下载依赖…'
+  node "$SCRIPT_DIR/scripts/ensure-ytdlp.mjs" --data-dir "$(sanmao_data_dir "$ROOT_DIR")" || printf '%s\n' '视频下载依赖暂未准备好；应用仍会启动，下载时会再次自动尝试。'
+fi
 PORT="${SANMAO_PORT:-3210}"
 case "$PORT" in
   ''|*[!0-9]*) PORT=3210 ;;

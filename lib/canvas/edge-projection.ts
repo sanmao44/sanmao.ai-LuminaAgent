@@ -58,10 +58,18 @@ export function visibleCanvasEdgeProjection(
   document: CanvasDocument,
   visibleNodeIds: ReadonlySet<string>,
   groupIds: ReadonlySet<string>,
+  pinnedEdgeIds?: ReadonlySet<string>,
 ) {
   return document.edges.filter((edge) => {
+    if (isCanvasGridComposeLineageEdge(document, edge)) return false;
+    // When the caller supplies a pinned set it is the complete projection
+    // contract for hidden-edge mode. Do not fall back to the normal viewport
+    // endpoint filter, otherwise every edge whose two endpoints happen to be
+    // rendered would remain visible.
+    if (pinnedEdgeIds) return pinnedEdgeIds.has(edge.id);
     const sourceVisible = visibleNodeIds.has(edge.source) || groupIds.has(edge.source);
     const targetVisible = visibleNodeIds.has(edge.target) || groupIds.has(edge.target);
-    return sourceVisible && targetVisible && !isCanvasGridComposeLineageEdge(document, edge);
+    if (!sourceVisible || !targetVisible) return false;
+    return true;
   });
 }

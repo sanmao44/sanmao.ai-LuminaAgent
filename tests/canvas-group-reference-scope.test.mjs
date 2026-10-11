@@ -106,7 +106,8 @@ test("group headers expose an accessible grid compose action", () => {
   assert.match(component, /sourceNodeIds: sourceIds/);
   assert.match(component, /kind: "lineage"/);
   assert.match(edgeProjection, /isCanvasGridComposeLineageEdge\(document, edge\)/);
-  assert.match(edgeProjection, /sourceVisible && targetVisible && !isCanvasGridComposeLineageEdge/);
+  assert.match(edgeProjection, /isCanvasGridComposeLineageEdge\(document, edge\)/);
+  assert.match(edgeProjection, /if \(!sourceVisible \|\| !targetVisible\) return false/);
   assert.match(styles, /\.canvas-group-label \.canvas-group-compose/);
   assert.match(styles, /\.canvas-group-label \.canvas-group-compose:disabled/);
   assert.match(styles, /\.canvas-group-label \.canvas-group-compose:hover/);

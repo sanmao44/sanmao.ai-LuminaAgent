@@ -901,6 +901,7 @@ export default function SuperCanvas() {
   const [deckHeight, setDeckHeight] = useState(0);
   const [connectionStyle, setConnectionStyle] =
     useState<ConnectionStyle>("curve");
+  const [edgesVisible, setEdgesVisible] = useState(true);
   const [depthQuality, setDepthQuality] = useState<DepthQuality>(DEFAULT_DEPTH_QUALITY);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [theme, setTheme] = useState<CanvasTheme>(readStoredTheme);
@@ -1937,6 +1938,7 @@ export default function SuperCanvas() {
         window.localStorage.getItem(CANVAS_SETTINGS_KEY) || "null",
       ) as {
         connectionStyle?: unknown;
+        edgesVisible?: unknown;
         snapEnabled?: unknown;
         depthQuality?: unknown;
       } | null;
@@ -1947,6 +1949,7 @@ export default function SuperCanvas() {
       )
         setConnectionStyle(raw!.connectionStyle as ConnectionStyle);
       if (typeof raw?.snapEnabled === "boolean") setSnapEnabled(raw.snapEnabled);
+      if (typeof raw?.edgesVisible === "boolean") setEdgesVisible(raw.edgesVisible);
       setDepthQuality(normalizeDepthQuality(raw?.depthQuality));
     } catch {
       /* 使用默认设置 */
@@ -1958,12 +1961,12 @@ export default function SuperCanvas() {
     try {
       window.localStorage.setItem(
         CANVAS_SETTINGS_KEY,
-        JSON.stringify({ connectionStyle, snapEnabled, depthQuality }),
+        JSON.stringify({ connectionStyle, edgesVisible, snapEnabled, depthQuality }),
       );
     } catch {
       /* 设置保存失败不应阻断画布 */
     }
-  }, [connectionStyle, depthQuality, ready, snapEnabled]);
+  }, [connectionStyle, depthQuality, edgesVisible, ready, snapEnabled]);
 
   useEffect(() => {
     if (!ready || !activeProjectId) return;
@@ -11375,8 +11378,13 @@ export default function SuperCanvas() {
     [visibleCanvasGroups],
   );
   const visibleCanvasEdges = useMemo(
-    () => visibleCanvasEdgeProjection(document, visibleCanvasNodeIds, visibleCanvasGroupIds),
-    [document.edges, document.nodes, visibleCanvasGroupIds, visibleCanvasNodeIds],
+    () => visibleCanvasEdgeProjection(
+      document,
+      visibleCanvasNodeIds,
+      visibleCanvasGroupIds,
+      edgesVisible ? undefined : relatedConnectionEdgeIds,
+    ),
+    [document.edges, document.nodes, edgesVisible, relatedConnectionEdgeIds, visibleCanvasGroupIds, visibleCanvasNodeIds],
   );
   // The flow/dash animation is the main paint cost at scale. Keep it only when
   // the user is at rest (no drag/pan/marquee/resize/connect and not zooming);
@@ -13567,6 +13575,8 @@ export default function SuperCanvas() {
         <CanvasMinimap
           document={document}
           connectionStyle={connectionStyle}
+          edgesVisible={edgesVisible}
+          relatedEdgeIds={relatedConnectionEdgeIds}
           selectedIds={selectedIds}
           bounds={minimapBounds}
           stageSize={stageSize}
@@ -13780,6 +13790,7 @@ export default function SuperCanvas() {
         generationLogsLoading={generationLogsLoading}
         theme={theme}
         connectionStyle={connectionStyle}
+        edgesVisible={edgesVisible}
         depthQuality={depthQuality}
         activityPanelScrollTop={activityPanelScrollTopRef.current}
         onCollectionSelectionChange={setAssetLibraryCollectionId}
@@ -13802,6 +13813,7 @@ export default function SuperCanvas() {
         }}
         onTheme={toggleTheme}
         onConnectionStyleChange={setConnectionStyle}
+        onEdgesVisibleChange={setEdgesVisible}
         onDepthQualityChange={setDepthQuality}
         onExportWorkflow={exportWorkflow}
         onImportWorkflow={() => workflowInputRef.current?.click()}

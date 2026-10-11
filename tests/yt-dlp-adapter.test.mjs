@@ -79,6 +79,61 @@ test('probe honors the configured executable path without requiring PATH', async
   }
 });
 
+test('probe discovers the bundled executable from the durable data directory', async () => {
+  const previousDataDir = process.env.SANMAO_DATA_DIR;
+  const previousYtDlpPath = process.env.SANMAO_YTDLP_PATH;
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-data-'));
+  const binary = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+  const bundled = path.join(dataDir, 'tools', binary);
+  await mkdir(path.dirname(bundled), { recursive: true });
+  await writeFile(bundled, 'placeholder');
+  delete process.env.SANMAO_YTDLP_PATH;
+  process.env.SANMAO_DATA_DIR = dataDir;
+  try {
+    const result = await adapter.probeYtDlp({
+      run: async ({ command, args }) => {
+        assert.equal(command, bundled);
+        assert.deepEqual(args, ['--version']);
+        return { exitCode: 0, signal: null, stdout: '2026.02.01\n', stderr: '' };
+      },
+    });
+    assert.deepEqual(result, { available: true, command: bundled, version: '2026.02.01' });
+  } finally {
+    if (previousDataDir === undefined) delete process.env.SANMAO_DATA_DIR;
+    else process.env.SANMAO_DATA_DIR = previousDataDir;
+    if (previousYtDlpPath === undefined) delete process.env.SANMAO_YTDLP_PATH;
+    else process.env.SANMAO_YTDLP_PATH = previousYtDlpPath;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('probe ignores a stale absolute path from another computer', async () => {
+  const previousDataDir = process.env.SANMAO_DATA_DIR;
+  const previousYtDlpPath = process.env.SANMAO_YTDLP_PATH;
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-data-'));
+  const binary = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+  const bundled = path.join(dataDir, 'tools', binary);
+  await mkdir(path.dirname(bundled), { recursive: true });
+  await writeFile(bundled, 'placeholder');
+  process.env.SANMAO_YTDLP_PATH = path.join(dataDir, 'old-computer', binary);
+  process.env.SANMAO_DATA_DIR = dataDir;
+  try {
+    const result = await adapter.probeYtDlp({
+      run: async ({ command }) => {
+        assert.equal(command, bundled);
+        return { exitCode: 0, signal: null, stdout: '2026.02.01\n', stderr: '' };
+      },
+    });
+    assert.equal(result.command, bundled);
+  } finally {
+    if (previousDataDir === undefined) delete process.env.SANMAO_DATA_DIR;
+    else process.env.SANMAO_DATA_DIR = previousDataDir;
+    if (previousYtDlpPath === undefined) delete process.env.SANMAO_YTDLP_PATH;
+    else process.env.SANMAO_YTDLP_PATH = previousYtDlpPath;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('download accepts only a file printed inside the requested output directory', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-'));
   try {

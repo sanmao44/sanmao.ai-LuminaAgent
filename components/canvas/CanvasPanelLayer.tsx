@@ -22,6 +22,7 @@ export type CanvasPanelLayerProps = {
   generationLogsLoading: boolean;
   theme: "light" | "dark";
   connectionStyle: CanvasConnectionStyle;
+  edgesVisible: boolean;
   depthQuality: DepthQuality;
   activityPanelScrollTop: number | null;
   onCollectionSelectionChange: (collectionId: string) => void;
@@ -39,6 +40,7 @@ export type CanvasPanelLayerProps = {
   onOpenAssetWorkbench: () => void;
   onTheme: () => void;
   onConnectionStyleChange: (value: CanvasConnectionStyle) => void;
+  onEdgesVisibleChange: (value: boolean) => void;
   onDepthQualityChange: (value: DepthQuality) => void;
   onExportWorkflow: () => void;
   onImportWorkflow: () => void;
@@ -57,6 +59,7 @@ export default function CanvasPanelLayer({
   generationLogsLoading,
   theme,
   connectionStyle,
+  edgesVisible,
   depthQuality,
   activityPanelScrollTop,
   onCollectionSelectionChange,
@@ -74,6 +77,7 @@ export default function CanvasPanelLayer({
   onOpenAssetWorkbench,
   onTheme,
   onConnectionStyleChange,
+  onEdgesVisibleChange,
   onDepthQualityChange,
   onExportWorkflow,
   onImportWorkflow,
@@ -121,9 +125,11 @@ export default function CanvasPanelLayer({
       <CanvasSettingsPanel
         theme={theme}
         connectionStyle={connectionStyle}
+        edgesVisible={edgesVisible}
         depthQuality={depthQuality}
         onTheme={onTheme}
         onConnectionStyleChange={onConnectionStyleChange}
+        onEdgesVisibleChange={onEdgesVisibleChange}
         onDepthQualityChange={onDepthQualityChange}
         onExportWorkflow={onExportWorkflow}
         onImportWorkflow={onImportWorkflow}

@@ -52,7 +52,7 @@ export default function CanvasGroupLabelLayer({
         return (
           <div
             key={group.id}
-            className="canvas-group-label canvas-group-world-label"
+            className={`canvas-group-label canvas-group-world-label${selectedGroupId === group.id ? " is-selected" : ""}${zoom < 0.62 ? " is-far" : ""}`}
             data-canvas-group-label="true"
             data-canvas-group-id={group.id}
             data-canvas-group-label-id={group.id}

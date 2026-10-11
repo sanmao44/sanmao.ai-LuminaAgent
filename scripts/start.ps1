@@ -28,7 +28,33 @@ $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $launcherCommonPath = Join-Path $PSScriptRoot 'launcher-common.ps1'
 . $launcherCommonPath
+# A release archive has no .git directory and may be installed under a
+# read-only application folder. Keep its mutable data (including the bundled
+# Node and yt-dlp runtimes) in the per-user data directory automatically;
+# source checkouts retain the historical local .data layout.
+if ([string]::IsNullOrWhiteSpace($env:SANMAO_DATA_DIR) -and
+    [string]::IsNullOrWhiteSpace($env:SANMAO_INSTALL_MODE) -and
+    [string]::IsNullOrWhiteSpace($env:SANMAO_INSTALLED) -and
+    -not (Test-Path -LiteralPath (Join-Path $root '.git'))) {
+  $env:SANMAO_INSTALL_MODE = 'installed'
+}
 $dataDir = Resolve-SanmaoDataDir -Root $root
+
+# Prefer a system Node.js 22.13+, but bootstrap an app-owned runtime when a
+# newly installed computer has no Node.js/PATH yet. The runtime lives under
+# the durable data directory and is never added to the system installation.
+$nodeBootstrap = Join-Path $PSScriptRoot 'ensure-node-runtime.ps1'
+if (Test-Path -LiteralPath $nodeBootstrap -PathType Leaf) {
+  $nodeRuntimeOutput = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $nodeBootstrap -DataDir $dataDir -PrintBin 2>$null)
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error '没有可用的 Node.js，且应用内 Node.js 自动准备失败。请检查网络后重新启动。'
+    exit 1
+  }
+  $nodeBin = [string]($nodeRuntimeOutput | Select-Object -Last 1)
+  if ($nodeBin -and (Test-Path -LiteralPath (Join-Path $nodeBin 'node.exe'))) {
+    $env:PATH = "$nodeBin;$env:PATH"
+  }
+}
 $script:MediaRelayRequired = $false
 $requestedPort = 0
 if ($Port -ge 1024 -and $Port -le 65525) {
@@ -1181,6 +1207,19 @@ if ($SkipBuild.IsPresent) {
   if (-not (Test-SanmaoFfmpegBinary $ffmpegBinaryPath)) {
     Write-Host '警告：FFmpeg 组件不完整，视频裁剪/深度功能可能不可用；再次运行启动器会自动重装。' -ForegroundColor Yellow
   }
+  }
+}
+
+# Video downloads use the app-owned yt-dlp runtime. Prepare it on first launch
+# so a fresh computer does not require Python or a manually edited PATH.
+Write-Step '准备视频下载依赖'
+$ytDlpPrepare = Join-Path $root 'scripts\ensure-ytdlp.mjs'
+if (Test-Path -LiteralPath $ytDlpPrepare -PathType Leaf) {
+  & node $ytDlpPrepare --data-dir $dataDir
+  if ($LASTEXITCODE -eq 0) {
+    Write-Host '视频下载依赖已就绪。' -ForegroundColor Green
+  } else {
+    Write-Host '视频下载依赖暂未准备好；应用仍会启动，下载时会再次自动尝试。' -ForegroundColor Yellow
   }
 }
 

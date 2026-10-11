@@ -3,10 +3,31 @@ set -eu
 set -f
 IFS=
 
-SCRIPT_DIR=`dirname $0`
-ROOT_DIR=`CDPATH= cd -- $SCRIPT_DIR/.. && pwd`
-cd $ROOT_DIR
+SCRIPT_DIR=`CDPATH= cd -- "$(dirname "$0")" && pwd`
+ROOT_DIR=`CDPATH= cd -- "$SCRIPT_DIR/.." && pwd`
+cd "$ROOT_DIR"
 . "$SCRIPT_DIR/launcher-common.sh"
+if [ -z "${SANMAO_DATA_DIR:-}" ] && [ -z "${SANMAO_INSTALL_MODE:-}" ] && [ -z "${SANMAO_INSTALLED:-}" ] && [ ! -e "$ROOT_DIR/.git" ]; then
+  SANMAO_INSTALL_MODE=installed
+  export SANMAO_INSTALL_MODE
+fi
+
+# Prefer a system Node.js 22.13+, but bootstrap an app-owned runtime when a
+# newly installed computer has no Node.js/PATH yet.
+NODE_RUNTIME_BIN=`sanmao_data_dir "$ROOT_DIR"`
+if [ -f "$SCRIPT_DIR/ensure-node-runtime.sh" ]; then
+  if ! NODE_RUNTIME_BIN=`sh "$SCRIPT_DIR/ensure-node-runtime.sh" --data-dir "$NODE_RUNTIME_BIN" --print-bin 2>/dev/null`; then
+    printf '%s\n' '没有可用的 Node.js，应用内 Node.js 自动准备失败。请检查网络后重新启动。' >&2
+    exit 1
+  fi
+  if [ -n "$NODE_RUNTIME_BIN" ] && [ -x "$NODE_RUNTIME_BIN/node" ]; then
+    PATH="$NODE_RUNTIME_BIN:$PATH"
+    export PATH
+  else
+    printf '%s\n' 'Node.js 运行时路径无效，无法启动 SANMAO.AI。' >&2
+    exit 1
+  fi
+fi
 
 NON_INTERACTIVE=${SANMAO_NONINTERACTIVE:-0}
 DETACH_SERVER=${SANMAO_DETACH_SERVER:-0}
@@ -500,6 +521,17 @@ if [ "$NEED_INSTALL" -eq 1 ]; then
   rm -f node_modules/.sanmao-package-lock.sha256
 else
   printf '%s\n' '依赖已安装。'
+fi
+
+# Video downloads use the app-owned yt-dlp runtime. Prepare it on first launch
+# so a fresh computer does not require Python or a manually edited PATH.
+if [ -f "$SCRIPT_DIR/ensure-ytdlp.mjs" ]; then
+  printf '%s\n' '准备视频下载依赖…'
+  if node "$SCRIPT_DIR/ensure-ytdlp.mjs" --data-dir "$(sanmao_data_dir "$ROOT_DIR")"; then
+    printf '%s\n' '视频下载依赖已就绪。'
+  else
+    printf '%s\n' '视频下载依赖暂未准备好；应用仍会启动，下载时会再次自动尝试。'
+  fi
 fi
 
 if [ ! -x node_modules/.bin/next ]; then

@@ -53,6 +53,8 @@ export default function CanvasMinimap({
   onNavigate,
   onMoveNodes,
   nodeLabel,
+  edgesVisible = true,
+  relatedEdgeIds = new Set<string>(),
 }: {
   document: CanvasDocument;
   connectionStyle: CanvasConnectionStyle;
@@ -64,6 +66,8 @@ export default function CanvasMinimap({
   onNavigate: (x: number, y: number) => void;
   onMoveNodes: (positions: Record<string, Point>, recordHistory: boolean) => void;
   nodeLabel: (node: CanvasNode) => string;
+  edgesVisible?: boolean;
+  relatedEdgeIds?: ReadonlySet<string>;
 }) {
   type MinimapInteraction =
     | {
@@ -368,7 +372,7 @@ export default function CanvasMinimap({
           preserveAspectRatio="none"
           aria-hidden="true"
         >
-          {document.edges.filter((edge) => isCanvasEdgeVisible(document, edge)).map((edge) => {
+          {document.edges.filter((edge) => isCanvasEdgeVisible(document, edge) && (edgesVisible || relatedEdgeIds.has(edge.id))).map((edge) => {
             const source = nodeById(document, edge.source);
             const target = nodeById(document, edge.target);
             const sourceGroup = groupById(document, edge.source);

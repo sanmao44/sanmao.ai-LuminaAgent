@@ -76,8 +76,9 @@ export async function prepareProviderChatMessages<T extends { content: unknown }
   options: { prepareDataUrls?: boolean } = { prepareDataUrls: true },
 ) {
   return Promise.all(messages.map(async (message) => {
-    if (!Array.isArray(message.content)) return message;
-    const content = await Promise.all(message.content.map(async (part: any) => {
+    const normalizedMessage = normalizeProviderToolCalls(message);
+    if (!Array.isArray(normalizedMessage.content)) return normalizedMessage;
+    const content = await Promise.all(normalizedMessage.content.map(async (part: any) => {
       if (part?.type === 'image_url' && typeof part?.image_url?.url === 'string') {
         const value = String(part.image_url.url).trim();
         const url = !value || (/^https?:\/\//i.test(value) && !isLocalProviderMediaUrl(value))
@@ -96,8 +97,40 @@ export async function prepareProviderChatMessages<T extends { content: unknown }
       }
       return part;
     }));
-    return { ...message, content };
+    return { ...normalizedMessage, content };
   }));
+}
+
+/**
+ * Keep assistant tool calls provider-valid when an OpenAI-compatible model
+ * omits fields that are optional in its response but required in the next
+ * request. Several gateways return a function call without `type`; replaying
+ * it verbatim makes the follow-up fail with `messages[2]: missing field type`.
+ */
+function normalizeProviderToolCalls<T extends { content: unknown }>(message: T): T {
+  const role = (message as { role?: unknown }).role;
+  const rawToolCalls = (message as { tool_calls?: unknown }).tool_calls;
+  if (role !== 'assistant' || !Array.isArray(rawToolCalls)) return message;
+  const toolCalls = rawToolCalls.map((rawCall) => {
+    if (!rawCall || typeof rawCall !== 'object' || Array.isArray(rawCall)) return rawCall;
+    const call = rawCall as Record<string, unknown>;
+    const rawFunction = call.function;
+    if (!rawFunction || typeof rawFunction !== 'object' || Array.isArray(rawFunction)) return rawCall;
+    const functionValue = rawFunction as Record<string, unknown>;
+    const rawArguments = functionValue.arguments;
+    const serializedArguments = typeof rawArguments === 'string'
+      ? rawArguments
+      : JSON.stringify(rawArguments && typeof rawArguments === 'object' && !Array.isArray(rawArguments) ? rawArguments : {});
+    return {
+      ...call,
+      type: 'function',
+      function: {
+        ...functionValue,
+        arguments: serializedArguments,
+      },
+    };
+  });
+  return { ...message, tool_calls: toolCalls } as T;
 }
 
 function jimengCommand(explicit?: string) {
