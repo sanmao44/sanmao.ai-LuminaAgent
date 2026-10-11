@@ -206,8 +206,12 @@ export function mcpServersForTurn(
   });
 }
 
-type McpToolCacheEntry = { at: number; tools: ToolDefinition[] };
+type McpToolCacheEntry = { at: number; signature: string; tools: ToolDefinition[] };
 const toolCache = new Map<string, McpToolCacheEntry>();
+
+function toolCacheKey(server: McpServerConfig) {
+  return JSON.stringify([server.transport || 'http', server.url, server.command || '', server.args || [], server.cwd || '']);
+}
 
 type McpLoadOptions = {
   servers?: readonly McpServerConfig[];
@@ -233,8 +237,11 @@ function orderMcpServers(servers: readonly McpServerConfig[], priorityServerIds:
 }
 
 export function clearMcpToolCache(serverId?: string) {
-  if (serverId) toolCache.delete(serverId);
-  else toolCache.clear();
+  if (!serverId) {
+    toolCache.clear();
+    return;
+  }
+  toolCache.delete(serverId);
 }
 
 /**
@@ -247,12 +254,14 @@ async function loadForServers(servers: readonly McpServerConfig[], options: McpL
   const cacheable = options.cache !== false;
   const definitions: ToolDefinition[] = [];
   const settled = await Promise.all(servers.map(async (server) => {
+    const signature = toolCacheKey(server);
     const cached = cacheable ? toolCache.get(server.id) : undefined;
-    if (cached && now() - cached.at < MCP_TOOL_CACHE_TTL_MS) return cached.tools;
+    if (cached && cached.signature !== signature) toolCache.delete(server.id);
+    if (cached && cached.signature === signature && now() - cached.at < MCP_TOOL_CACHE_TTL_MS) return cached.tools;
     try {
       const tools = await listMcpServerTools(server, { fetchImpl: options.fetchImpl, now: options.now, timeouts: options.timeouts, signal: options.signal });
       const built = mcpToolDefinitions(server, tools, { dataDir: options.dataDir });
-      if (cacheable) toolCache.set(server.id, { at: now(), tools: built });
+      if (cacheable) toolCache.set(server.id, { at: now(), signature, tools: built });
       return built;
     } catch {
       return [] as ToolDefinition[];

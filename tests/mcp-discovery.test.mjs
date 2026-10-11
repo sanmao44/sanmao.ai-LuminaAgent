@@ -42,6 +42,23 @@ test('discovers every enabled lazy server by actual capabilities without executi
   assert.equal(tools[0].mcp.blocked, true, 'discovery must not grant write permission');
 });
 
+test('capability discovery schedules managed repository checks without waiting for them', async () => {
+  let checkedServers = [];
+  await discoverMcpForRequest({
+    servers: [
+      { ...servers[0], transport: 'stdio', managedRepo: { owner: 'demo', repo: 'desktop', ref: 'main', url: 'https://github.com/demo/desktop' } },
+      servers[2],
+    ],
+    load,
+    scheduleUpdates: (selected) => {
+      checkedServers = selected.map((server) => server.id);
+      return [];
+    },
+    select: async () => ['custom-a'],
+  });
+  assert.deepEqual(checkedServers, ['custom-a']);
+});
+
 test('selection validates IDs, empty selection, and unavailable services', async () => {
   for (const result of [['disabled'], ['invented'], 'custom-a', [1]]) {
     await assert.rejects(discoverMcpForRequest({ servers, load, select: async () => result }), /无效/);

@@ -1,4 +1,5 @@
 import { loadMcpToolRuntime } from './tools';
+import { scheduleManagedGithubMcpUpdates } from './update-manager';
 import type { McpServerConfig } from './types';
 
 export type McpCapability = {
@@ -30,8 +31,10 @@ export async function discoverMcpForRequest(options: {
   signal?: AbortSignal;
   select: (capabilities: McpCapability[]) => Promise<unknown>;
   load?: typeof loadMcpToolRuntime;
+  scheduleUpdates?: typeof scheduleManagedGithubMcpUpdates;
 }) {
   const servers = options.servers.filter((server) => server.enabled);
+  (options.scheduleUpdates || scheduleManagedGithubMcpUpdates)(servers);
   const load = options.load || loadMcpToolRuntime;
   type McpRuntime = Awaited<ReturnType<typeof loadMcpToolRuntime>>;
   const runtimes = await Promise.all(servers.map(async (server): Promise<McpRuntime> => {

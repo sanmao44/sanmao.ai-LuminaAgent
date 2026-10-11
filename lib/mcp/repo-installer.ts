@@ -5,15 +5,17 @@
  * 禁用 lifecycle scripts，启动时只执行解析出的入口文件；不读取 README 命令，
  * 也不把用户输入拼成 shell 命令。
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { unzipSync, type UnzipFileInfo } from 'fflate';
 import { fetchSkillBytes, githubArchiveUrls, parseGithubSkillTarget, type GithubSkillTarget } from '@/lib/skills';
 import { resolveLocalDataDir } from '@/lib/data-paths';
 import { resolveNpmCliPath } from './npm-cli';
 import { listMcpServers, normalizeMcpServerId, saveMcpServers } from './store';
+import { probeMcpServer } from './client';
+import { closeStdioServer } from './stdio';
 import type { McpServerConfig } from './types';
 
 const REPO_ARCHIVE_MAX_BYTES = 64 * 1024 * 1024;
@@ -33,6 +35,13 @@ export type GithubMcpInstallResult = {
   entry: string;
 };
 
+export type GithubMcpUpdateResult = {
+  server: McpServerConfig;
+  updated: boolean;
+  latestCommit: string;
+  checkedAt: number;
+};
+
 type ArchiveFile = { path: string; data: Uint8Array };
 type ExtractedRepo = {
   kind: 'node' | 'python';
@@ -41,6 +50,7 @@ type ExtractedRepo = {
   packageJson?: Record<string, unknown>;
   pythonEntry?: string;
   projectName?: string;
+  packageVersion?: string;
 };
 
 function safeArchivePath(value: string) {
@@ -85,10 +95,11 @@ function parsePythonProject(data: Uint8Array) {
   if (!/\bmcp\b|model-context-protocol/i.test(text)) return null;
   const projectBlock = text.match(/\[project\]([\s\S]*?)(?:\n\s*\[|$)/i)?.[1] || '';
   const projectName = projectBlock.match(/^\s*name\s*=\s*["']([^"']+)["']/im)?.[1]?.trim() || '';
+  const packageVersion = projectBlock.match(/^\s*version\s*=\s*["']([^"']+)["']/im)?.[1]?.trim() || '';
   const scriptsBlock = text.match(/\[project\.scripts\]([\s\S]*?)(?:\n\s*\[|$)/i)?.[1] || '';
   const pythonEntry = scriptsBlock.match(/^\s*([A-Za-z0-9_.-]+)\s*=\s*["']/m)?.[1]?.trim() || '';
   if (!projectName || !pythonEntry) return null;
-  return { projectName, pythonEntry };
+  return { projectName, pythonEntry, packageVersion };
 }
 
 function uvVersionOf(value: unknown) {
@@ -185,7 +196,7 @@ export function extractMcpRepoArchive(data: Uint8Array) {
   const files: ArchiveFile[] = [];
   let total = 0;
   const nodeCandidates: Array<{ path: string; data: Uint8Array; depth: number }> = [];
-  const pythonCandidates: Array<{ path: string; data: Uint8Array; depth: number; projectName: string; pythonEntry: string }> = [];
+  const pythonCandidates: Array<{ path: string; data: Uint8Array; depth: number; projectName: string; pythonEntry: string; packageVersion: string }> = [];
   const unzipped = unzipSync(data, {
     filter: (file: UnzipFileInfo) => {
       if (file.name.endsWith('/')) return false;
@@ -224,15 +235,18 @@ export function extractMcpRepoArchive(data: Uint8Array) {
       packageRoot,
       pythonEntry: selectedPython.pythonEntry,
       projectName: selectedPython.projectName,
+      packageVersion: selectedPython.packageVersion,
       files: files.filter((file) => file.path.startsWith(prefix)).map((file) => ({ path: prefix ? file.path.slice(prefix.length) : file.path, data: file.data })),
     } satisfies ExtractedRepo;
   }
   const packageRoot = selected.path.slice(0, -'package.json'.length).replace(/\/$/, '');
   const prefix = packageRoot ? `${packageRoot}/` : '';
+  const packageJson = parseJsonFile(selected.data, selected.path);
   return {
     kind: 'node',
-    packageJson: parseJsonFile(selected.data, selected.path),
+    packageJson,
     packageRoot,
+    packageVersion: typeof packageJson.version === 'string' ? packageJson.version : '',
     files: files.filter((file) => file.path.startsWith(prefix)).map((file) => ({ path: prefix ? file.path.slice(prefix.length) : file.path, data: file.data })),
   } satisfies ExtractedRepo;
 }
@@ -249,6 +263,52 @@ async function downloadGithubArchive(target: GithubSkillTarget, signal?: AbortSi
     }
   }
   throw lastError instanceof Error ? lastError : new Error('GitHub 仓库下载失败');
+}
+
+type GithubCommit = { sha: string; ref: string };
+
+async function githubJson(url: string, signal?: AbortSignal, fetchImpl: typeof fetch = fetch): Promise<unknown> {
+  const timeout = AbortSignal.timeout(15_000);
+  const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  const response = await fetchImpl(url, {
+    signal: requestSignal,
+    headers: { accept: 'application/vnd.github+json', 'user-agent': 'SANMAO.AI-MCP-Updater/1.0' },
+  });
+  if (!response.ok) throw new Error(`GitHub 版本检查失败（HTTP ${response.status}）`);
+  return response.json();
+}
+
+async function resolveLatestGithubCommit(
+  owner: string,
+  repo: string,
+  ref: string,
+  options: { signal?: AbortSignal; fetchImpl?: typeof fetch } = {},
+): Promise<GithubCommit> {
+  if (!/^[A-Za-z0-9_.-]{1,100}$/.test(owner) || !/^[A-Za-z0-9_.-]{1,100}$/.test(repo)) {
+    throw new Error('GitHub 仓库来源记录无效，已停止更新');
+  }
+  const base = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const repository = await githubJson(base, options.signal, options.fetchImpl) as { full_name?: unknown; default_branch?: unknown };
+  if (String(repository.full_name || '').toLowerCase() !== `${owner}/${repo}`.toLowerCase()) {
+    throw new Error('GitHub 返回的仓库身份与已安装来源不一致，已停止更新');
+  }
+  const branch = ref.trim() || String(repository.default_branch || '').trim();
+  if (!branch || branch.length > 200 || /[\r\n]/.test(branch)) throw new Error('GitHub 仓库没有可用的默认分支');
+  const query = new URLSearchParams({ sha: branch, per_page: '1' });
+  const commits = await githubJson(`${base}/commits?${query}`, options.signal, options.fetchImpl);
+  const sha = Array.isArray(commits) ? String((commits[0] as { sha?: unknown } | undefined)?.sha || '') : '';
+  if (!/^[a-f0-9]{40,64}$/i.test(sha)) throw new Error('GitHub 没有返回有效的提交版本');
+  return { sha: sha.toLowerCase(), ref: branch };
+}
+
+async function downloadGithubCommitArchive(target: GithubSkillTarget, commit: string, signal?: AbortSignal) {
+  const url = `https://codeload.github.com/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/zip/${commit}`;
+  return fetchSkillBytes(url, {
+    maxBytes: REPO_ARCHIVE_MAX_BYTES,
+    accept: 'application/zip, application/octet-stream;q=0.9, */*;q=0.5',
+    signal,
+    timeoutMs: 180_000,
+  });
 }
 
 function writeArchiveFiles(root: string, files: ArchiveFile[]) {
@@ -312,9 +372,11 @@ function runUvSync(uvPath: string, projectRoot: string, dataDir: string) {
 
 /** 下载、安装并生成受控 stdio 配置；不会执行 README 或 package scripts。 */
 export async function installGithubMcpFromRepo(value: unknown, options: { dataDir?: string; signal?: AbortSignal } = {}): Promise<GithubMcpInstallResult> {
-  const target = parseGithubSkillTarget(value);
-  if (!target) throw new Error('请提供 GitHub 仓库地址，例如 https://github.com/owner/repo');
-  const archive = await downloadGithubArchive(target, options.signal);
+  const parsedTarget = parseGithubSkillTarget(value);
+  if (!parsedTarget) throw new Error('请提供 GitHub 仓库地址，例如 https://github.com/owner/repo');
+  const latest = await resolveLatestGithubCommit(parsedTarget.owner, parsedTarget.repo, parsedTarget.ref, { signal: options.signal });
+  const target = { ...parsedTarget, ref: latest.ref };
+  const archive = await downloadGithubCommitArchive(target, latest.sha, options.signal);
   const extracted = extractMcpRepoArchive(archive.data);
   const dataDir = options.dataDir || resolveLocalDataDir();
   const used = new Set(listMcpServers({ dataDir }).map((server) => server.id));
@@ -357,10 +419,202 @@ export async function installGithubMcpFromRepo(value: unknown, options: { dataDi
     command,
     args,
     cwd: projectRoot,
-    managedRepo: { owner: target.owner, repo: target.repo, ref: target.ref, url: String(value || '') },
+    managedRepo: {
+      owner: target.owner,
+      repo: target.repo,
+      ref: target.ref,
+      url: String(value || ''),
+      kind: extracted.kind,
+      packageName: extracted.kind === 'node' ? String(extracted.packageJson?.name || '') : String(extracted.projectName || ''),
+      packageVersion: extracted.packageVersion || '',
+      commit: latest.sha,
+      archiveSha256: createHash('sha256').update(archive.data).digest('hex'),
+      installedAt: Date.now(),
+      lastCheckedAt: Date.now(),
+      lastUpdatedAt: Date.now(),
+      autoUpdate: true,
+    },
   };
   const saved = saveMcpServers([...listMcpServers({ dataDir }).filter((item) => item.id !== id), server], { dataDir });
   return { server: saved.find((item) => item.id === id) || server, target, projectRoot, entry };
+}
+
+const MCP_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
+const managedUpdates = new Map<string, Promise<GithubMcpUpdateResult>>();
+
+function managedPackageIdentity(server: McpServerConfig) {
+  if (!server.cwd || !server.managedRepo) throw new Error('缺少已安装的 MCP 项目目录，无法安全更新');
+  let identity: { kind: 'node' | 'python'; packageName: string; packageVersion: string };
+  const packageFile = path.join(server.cwd, 'package.json');
+  if (existsSync(packageFile)) {
+    const pkg = readManagedMcpPackage(server);
+    if (typeof pkg?.name !== 'string' || !pkg.name.trim()) throw new Error('已安装的 Node MCP 缺少 package.json name，无法安全更新');
+    identity = { kind: 'node', packageName: pkg.name.trim(), packageVersion: String(pkg.version || '') };
+  } else {
+    const projectFile = path.join(server.cwd, 'pyproject.toml');
+    if (!existsSync(projectFile)) throw new Error('已安装的 MCP 项目清单无法识别，无法安全更新');
+    const parsed = parsePythonProject(new Uint8Array(readFileSync(projectFile)));
+    if (!parsed) throw new Error('已安装的 Python MCP 缺少可识别的项目名或启动入口，无法安全更新');
+    identity = { kind: 'python', packageName: parsed.projectName, packageVersion: parsed.packageVersion };
+  }
+  if (server.managedRepo.kind && server.managedRepo.kind !== identity.kind) throw new Error('本地 MCP 运行时类型与来源记录不一致，已停止更新');
+  if (server.managedRepo.packageName && normalizePackageName(server.managedRepo.packageName) !== normalizePackageName(identity.packageName)) {
+    throw new Error('本地 MCP 包名与来源记录不一致，已停止更新');
+  }
+  return identity;
+}
+
+function normalizePackageName(value: string) {
+  return value.trim().toLowerCase().replace(/[-_.]+/g, '-');
+}
+
+function packageIdentityMatches(expected: { kind: string; packageName: string }, extracted: ExtractedRepo) {
+  if (expected.kind !== extracted.kind) return false;
+  const actual = extracted.kind === 'node' ? String(extracted.packageJson?.name || '') : String(extracted.projectName || '');
+  return normalizePackageName(actual) === normalizePackageName(expected.packageName);
+}
+
+function sameManagedSource(left: NonNullable<McpServerConfig['managedRepo']>, right: NonNullable<McpServerConfig['managedRepo']>) {
+  return left.owner.toLowerCase() === right.owner.toLowerCase()
+    && left.repo.toLowerCase() === right.repo.toLowerCase()
+    && String(left.commit || '').toLowerCase() === String(right.commit || '').toLowerCase();
+}
+
+function saveManagedRepoMetadata(
+  server: McpServerConfig,
+  expectedSource: NonNullable<McpServerConfig['managedRepo']>,
+  patch: Partial<NonNullable<McpServerConfig['managedRepo']>>,
+  options: { dataDir?: string },
+) {
+  const servers = listMcpServers(options);
+  const index = servers.findIndex((item) => item.id === server.id);
+  if (index < 0) throw new Error(`找不到本地 MCP「${server.id}」，更新结果未应用`);
+  const current = servers[index];
+  if (!current.managedRepo || !sameManagedSource(current.managedRepo, expectedSource)) throw new Error('MCP 来源在更新期间发生变化，更新结果未应用');
+  const saved = { ...current, managedRepo: { ...current.managedRepo, ...patch } };
+  saveMcpServers(servers.map((item, position) => position === index ? saved : item), options);
+  return saved;
+}
+
+export type GithubMcpUpdateDependencies = {
+  downloadArchive?: (target: GithubSkillTarget, commit: string, signal?: AbortSignal) => Promise<{ data: Uint8Array }>;
+  installNode?: (projectRoot: string) => Promise<void>;
+  installPython?: (projectRoot: string, dataDir: string, signal?: AbortSignal) => Promise<string>;
+  probe?: typeof probeMcpServer;
+};
+
+async function updateManagedGithubMcp(
+  server: McpServerConfig,
+  options: { dataDir?: string; signal?: AbortSignal; fetchImpl?: typeof fetch; force?: boolean; dependencies?: GithubMcpUpdateDependencies } = {},
+): Promise<GithubMcpUpdateResult> {
+  const installedSource = server.managedRepo;
+  if (server.transport !== 'stdio' || !installedSource) throw new Error('这个 MCP 没有受控的 GitHub 仓库来源，不能自动更新');
+  if (installedSource.autoUpdate === false && options.force !== true) {
+    return { server, updated: false, latestCommit: installedSource.commit || '', checkedAt: installedSource.lastCheckedAt || 0 };
+  }
+  const dataDir = options.dataDir || resolveLocalDataDir();
+  const now = Date.now();
+  if (options.force !== true && now - (installedSource.lastCheckedAt || 0) < MCP_UPDATE_CHECK_INTERVAL_MS) {
+    return { server, updated: false, latestCommit: installedSource.commit || '', checkedAt: installedSource.lastCheckedAt || 0 };
+  }
+  const checkedAt = Date.now();
+  const versionRoot = path.join(dataDir, 'mcp', 'repos', server.id);
+  let stagingRoot = '';
+  try {
+    if (!server.cwd || !isInside(versionRoot, server.cwd)) throw new Error('MCP 安装目录与 GitHub 来源记录不匹配，已停止更新');
+    const identity = managedPackageIdentity(server);
+    const latest = await resolveLatestGithubCommit(installedSource.owner, installedSource.repo, installedSource.ref, {
+      signal: options.signal,
+      fetchImpl: options.fetchImpl,
+    });
+    if (latest.sha === String(installedSource.commit || '').toLowerCase()) {
+      const saved = saveManagedRepoMetadata(server, installedSource, { ref: latest.ref, lastCheckedAt: checkedAt, lastUpdateError: '' }, { dataDir });
+      return { server: saved, updated: false, latestCommit: latest.sha, checkedAt };
+    }
+
+    const target: GithubSkillTarget = { owner: installedSource.owner, repo: installedSource.repo, ref: latest.ref, dir: '' };
+    const archive = await (options.dependencies?.downloadArchive || downloadGithubCommitArchive)(target, latest.sha, options.signal);
+    const extracted = extractMcpRepoArchive(archive.data);
+    if (!packageIdentityMatches(identity, extracted)) throw new Error('GitHub 最新提交的 MCP 包名或运行时类型与当前安装不一致，已保留旧版本');
+
+    stagingRoot = path.join(versionRoot, 'versions', `${latest.sha}-${randomUUID()}`);
+    const projectRoot = path.resolve(stagingRoot, extracted.packageRoot);
+    if (!isInside(stagingRoot, projectRoot)) throw new Error('GitHub 更新包的项目目录无效');
+    mkdirSync(projectRoot, { recursive: true });
+    writeArchiveFiles(projectRoot, extracted.files);
+    let command = '';
+    let args: string[] = [];
+    if (extracted.kind === 'node') {
+      const entryPath = path.resolve(projectRoot, packageEntry(extracted.packageJson || {}));
+      if (!isInside(projectRoot, entryPath)) throw new Error('GitHub MCP 启动入口超出项目目录');
+      await (options.dependencies?.installNode || ((root: string) => runNpmInstall(root)))(projectRoot);
+      if (!existsSync(entryPath)) throw new Error('GitHub MCP 更新缺少启动入口，已保留旧版本');
+      command = process.execPath;
+      args = [entryPath];
+    } else {
+      const uv = await (options.dependencies?.installPython || (async (root, targetDataDir, signal) => {
+        const executable = await ensureUvPath(targetDataDir, signal);
+        await runUvSync(executable, root, targetDataDir);
+        return executable;
+      }))(projectRoot, dataDir, options.signal);
+      command = uv;
+      args = ['--directory', projectRoot, 'run', extracted.pythonEntry || 'mcp', 'serve'];
+    }
+    const probeId = `mcp-update-${randomUUID()}`;
+    const candidate: McpServerConfig = { ...server, id: probeId, command, args, cwd: projectRoot };
+    let probe: Awaited<ReturnType<typeof probeMcpServer>>;
+    try {
+      probe = await (options.dependencies?.probe || probeMcpServer)(candidate, { retry: true, signal: options.signal });
+    } finally {
+      closeStdioServer(probeId);
+    }
+    if (!probe.tools.length) throw new Error('GitHub MCP 更新后没有公布可用工具，已保留旧版本');
+    const current = listMcpServers({ dataDir }).find((item) => item.id === server.id);
+    if (!current?.managedRepo || !sameManagedSource(current.managedRepo, installedSource)
+      || current.cwd !== server.cwd || current.command !== server.command
+      || JSON.stringify(current.args) !== JSON.stringify(server.args)) {
+      throw new Error('MCP 配置在更新期间发生变化，更新结果未应用');
+    }
+    const nextSource = {
+      ...current.managedRepo,
+      ref: latest.ref,
+      kind: extracted.kind,
+      packageName: identity.packageName,
+      packageVersion: extracted.packageVersion || '',
+      commit: latest.sha,
+      archiveSha256: createHash('sha256').update(archive.data).digest('hex'),
+      lastCheckedAt: checkedAt,
+      lastUpdatedAt: checkedAt,
+      lastUpdateError: '',
+    } satisfies NonNullable<McpServerConfig['managedRepo']>;
+    const activated: McpServerConfig = {
+      ...current,
+      command,
+      args,
+      cwd: projectRoot,
+      managedRepo: nextSource,
+    };
+    const servers = listMcpServers({ dataDir });
+    saveMcpServers(servers.map((item) => item.id === server.id ? activated : item), { dataDir });
+    return { server: activated, updated: true, latestCommit: latest.sha, checkedAt };
+  } catch (error) {
+    const message = error instanceof Error ? error.message.slice(0, 500) : 'GitHub MCP 更新失败';
+    if (stagingRoot) rmSync(stagingRoot, { recursive: true, force: true });
+    try { saveManagedRepoMetadata(server, installedSource, { lastCheckedAt: checkedAt, lastUpdateError: message }, { dataDir }); } catch {}
+    throw error instanceof Error ? error : new Error(message);
+  }
+}
+
+export function updateGithubMcpFromRepo(
+  server: McpServerConfig,
+  options: { dataDir?: string; signal?: AbortSignal; fetchImpl?: typeof fetch; force?: boolean; dependencies?: GithubMcpUpdateDependencies } = {},
+): Promise<GithubMcpUpdateResult> {
+  const key = `${options.dataDir || ''}\u0000${server.id}`;
+  const current = managedUpdates.get(key);
+  if (current) return current;
+  const pending = updateManagedGithubMcp(server, options).finally(() => managedUpdates.delete(key));
+  managedUpdates.set(key, pending);
+  return pending;
 }
 
 export function readManagedMcpPackage(server: McpServerConfig) {

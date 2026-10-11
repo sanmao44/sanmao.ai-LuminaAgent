@@ -64,6 +64,7 @@ const MODULES = [
   'lib/mcp/admin',
   'lib/mcp/npm-cli',
   'lib/mcp/repo-installer',
+  'lib/mcp/update-manager',
   'lib/mcp/runtime-admin',
   'lib/mcp/index',
   'lib/tabbit-cli',

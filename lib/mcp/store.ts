@@ -11,7 +11,7 @@ export const MCP_MAX_HEADERS = 12;
 export const MCP_MAX_HEADER_CHARS = 2000;
 export const MCP_MAX_TOOLS_PER_SERVER = 60;
 
-type McpStoreOptions = { dataDir?: string; /** 只有目录条目自己的连接流程能写 catalogId，接口层不接受用户传这个字段。 */ allowCatalogId?: boolean; /** Filesystem 条目的授权目录；不传就用本地存的授权清单。 */ roots?: readonly string[] };
+type McpStoreOptions = { dataDir?: string; /** 只有目录条目自己的连接流程能写 catalogId，接口层不接受用户传这个字段。 */ allowCatalogId?: boolean; /** 仅从本机持久配置恢复已安装的仓库元数据。 */ allowManagedRepo?: boolean; /** Filesystem 条目的授权目录；不传就用本地存的授权清单。 */ roots?: readonly string[] };
 
 /** 服务 id 命不命中目录条目：面板据此认出「这条是官方连接器」。 */
 function catalogIdOf(value: unknown, options: { allowCatalogId?: boolean } = {}) {
@@ -109,7 +109,7 @@ export function normalizeMcpServerUrl(value: unknown) {
 }
 
 /** 校验并归一化一条服务配置；非法输入抛错，避免半截配置写进文件。 */
-export function normalizeMcpServerInput(raw: unknown, options: { existingId?: string; usedIds?: Set<string>; allowCatalogId?: boolean } = {}): McpServerConfig {
+export function normalizeMcpServerInput(raw: unknown, options: { existingId?: string; usedIds?: Set<string>; allowCatalogId?: boolean; allowManagedRepo?: boolean } = {}): McpServerConfig {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('MCP 服务配置必须是对象');
   const input = raw as Record<string, unknown>;
   const name = String(input.name ?? '').trim().slice(0, 60);
@@ -121,7 +121,7 @@ export function normalizeMcpServerInput(raw: unknown, options: { existingId?: st
   const headers = normalizeHeaders(input.headers);
   const enabledTools = normalizeEnabledTools(input.enabledTools);
   const catalogId = catalogIdOf(input.catalogId, options);
-  const managedRepo = input.managedRepo && typeof input.managedRepo === 'object' && !Array.isArray(input.managedRepo)
+  const managedRepo = options.allowManagedRepo && input.managedRepo && typeof input.managedRepo === 'object' && !Array.isArray(input.managedRepo)
     ? input.managedRepo as Record<string, unknown>
     : null;
   const managedStdio = Boolean(managedRepo);
@@ -142,11 +142,21 @@ export function normalizeMcpServerInput(raw: unknown, options: { existingId?: st
     ...(input.lazy === true ? { lazy: true } : {}),
     ...(catalogId ? { catalogId } : {}),
     ...(transport ? { transport, command, args, cwd } : {}),
-    ...(managedStdio ? { managedRepo: {
+    ...(managedRepo ? { managedRepo: {
       owner: String(managedRepo?.owner || '').slice(0, 100),
       repo: String(managedRepo?.repo || '').slice(0, 100),
       ref: String(managedRepo?.ref || '').slice(0, 200),
       url: String(managedRepo?.url || '').slice(0, 500),
+      ...(managedRepo?.kind === 'node' || managedRepo?.kind === 'python' ? { kind: managedRepo.kind } : {}),
+      ...(typeof managedRepo?.packageName === 'string' ? { packageName: managedRepo.packageName.slice(0, 200) } : {}),
+      ...(typeof managedRepo?.packageVersion === 'string' ? { packageVersion: managedRepo.packageVersion.slice(0, 80) } : {}),
+      ...(typeof managedRepo?.commit === 'string' ? { commit: managedRepo.commit.slice(0, 64) } : {}),
+      ...(typeof managedRepo?.archiveSha256 === 'string' ? { archiveSha256: managedRepo.archiveSha256.slice(0, 64) } : {}),
+      ...(Number.isFinite(Number(managedRepo?.installedAt)) ? { installedAt: Number(managedRepo.installedAt) } : {}),
+      ...(Number.isFinite(Number(managedRepo?.lastCheckedAt)) ? { lastCheckedAt: Number(managedRepo.lastCheckedAt) } : {}),
+      ...(Number.isFinite(Number(managedRepo?.lastUpdatedAt)) ? { lastUpdatedAt: Number(managedRepo.lastUpdatedAt) } : {}),
+      ...(typeof managedRepo?.lastUpdateError === 'string' ? { lastUpdateError: managedRepo.lastUpdateError.slice(0, 500) } : {}),
+      ...(typeof managedRepo?.autoUpdate === 'boolean' ? { autoUpdate: managedRepo.autoUpdate } : {}),
     } } : {}),
   };
 }
@@ -165,7 +175,20 @@ export function redactMcpServer(config: McpServerConfig) {
     lazy: config.lazy === true,
     /** 官方连接器 id：面板用它把条目和普通服务区分开（不是凭据，可以外传）。 */
     catalogId: config.catalogId || '',
-    managedRepo: config.managedRepo ? { owner: config.managedRepo.owner, repo: config.managedRepo.repo } : undefined,
+    managedRepo: config.managedRepo ? {
+      owner: config.managedRepo.owner,
+      repo: config.managedRepo.repo,
+      ref: config.managedRepo.ref,
+      kind: config.managedRepo.kind,
+      packageName: config.managedRepo.packageName,
+      packageVersion: config.managedRepo.packageVersion,
+      commit: config.managedRepo.commit,
+      installedAt: config.managedRepo.installedAt,
+      lastCheckedAt: config.managedRepo.lastCheckedAt,
+      lastUpdatedAt: config.managedRepo.lastUpdatedAt,
+      lastUpdateError: config.managedRepo.lastUpdateError,
+      autoUpdate: config.managedRepo.autoUpdate !== false,
+    } : undefined,
   };
 }
 
@@ -210,7 +233,7 @@ function readUserMcpServers(options: McpStoreOptions = {}): McpServerConfig[] {
         try {
           // 读自己的配置文件时可以带回 catalogId：写入侧（app/api/mcp）不接受这个字段，
           // 所以只有目录条目自己的连接流程（lib/mcp/catalog-remote.ts）能写进来。
-          return normalizeMcpServerInput(item, { existingId: (item as { id?: string })?.id, allowCatalogId: true });
+          return normalizeMcpServerInput(item, { existingId: (item as { id?: string })?.id, allowCatalogId: true, allowManagedRepo: true });
         } catch {
           return null;
         }
@@ -245,7 +268,7 @@ export function removeMcpServer(id: unknown, options: McpStoreOptions = {}) {
   return true;
 }
 
-export function patchMcpServer(id: unknown, patch: { enabled?: boolean; allowWrite?: boolean; enabledTools?: unknown; lazy?: boolean }, options: McpStoreOptions = {}) {
+export function patchMcpServer(id: unknown, patch: { enabled?: boolean; allowWrite?: boolean; enabledTools?: unknown; lazy?: boolean; autoUpdate?: boolean }, options: McpStoreOptions = {}) {
   const target = normalizeMcpServerId(id);
   const servers = listMcpServers(options);
   const index = servers.findIndex((server) => server.id === target);
@@ -262,6 +285,9 @@ export function patchMcpServer(id: unknown, patch: { enabled?: boolean; allowWri
   if (typeof patch.lazy === 'boolean') {
     if (patch.lazy) next.lazy = true;
     else delete next.lazy;
+  }
+  if (typeof patch.autoUpdate === 'boolean' && next.managedRepo) {
+    next.managedRepo = { ...next.managedRepo, autoUpdate: patch.autoUpdate };
   }
   const updated = next;
   saveMcpServers(servers.map((server, position) => (position === index ? updated : server)), options);
