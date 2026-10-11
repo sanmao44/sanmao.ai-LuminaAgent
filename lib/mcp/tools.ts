@@ -65,12 +65,20 @@ export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpR
   // 远端连接器（GitHub 等）白名单为空，表示「不限制」，仍然沿用用户勾选的那份清单。
   const catalogWhitelist = server.catalogId ? (findCatalogEntry(server.catalogId)?.allowedTools || []) : [];
   const allowed = new Set(catalogWhitelist.length ? catalogWhitelist : server.enabledTools || []);
+  const catalogEntry = server.catalogId ? findCatalogEntry(server.catalogId) : null;
+  const readOnlyAllowlist = !server.allowWrite && catalogEntry?.readOnlyTools?.length
+    ? new Set(catalogEntry.readOnlyTools)
+    : null;
   // 写操作策略一次读盘、按需取：没有写权限分项的条目根本不会去读配置。
   let writePolicy: ReturnType<typeof catalogWritePolicy> | undefined;
   const selected = tools
     // 名字要能直接当 function name 下发：上游只接受 [A-Za-z0-9_-]，服务公布怪名字就直接跳过，
     // 否则这一轮整个工具表都会被服务商判成非法请求。
-    .filter((tool) => !MCP_FORBIDDEN_TOOLS.has(tool.name) && (!allowed.size || allowed.has(tool.name)) && !isMcpToolSchemaTooLarge(tool) && isValidToolName(mcpToolId(server.id, tool.name)))
+    .filter((tool) => !MCP_FORBIDDEN_TOOLS.has(tool.name)
+      && (!allowed.size || allowed.has(tool.name))
+      && (!readOnlyAllowlist || readOnlyAllowlist.has(tool.name))
+      && !isMcpToolSchemaTooLarge(tool)
+      && isValidToolName(mcpToolId(server.id, tool.name)))
     .slice(0, MCP_MAX_TOOLS_PER_SERVER);
   return selected.map((tool) => {
     const readOnly = isMcpReadOnlyTool(tool);

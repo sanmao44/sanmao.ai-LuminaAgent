@@ -43,7 +43,7 @@ type RuntimeView = {
   summary: string;
   version: string;
   installNote: string;
-  state: 'not_installed' | 'installing' | 'installed' | 'running' | 'error';
+  state: 'unavailable' | 'not_installed' | 'installing' | 'installed' | 'running' | 'error';
   installed: boolean;
   installing: boolean;
   running: boolean;
@@ -195,6 +195,7 @@ const PERMISSION_LABELS: Record<string, string> = {
 };
 
 const RUNTIME_STATE_LABELS: Record<string, string> = {
+  unavailable: '不适用于当前系统',
   not_installed: '未安装',
   installing: '安装中',
   installed: '已安装',

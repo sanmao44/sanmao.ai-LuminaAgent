@@ -129,8 +129,8 @@ function resolveUvPath() {
   }) || null;
 }
 
-async function ensureUvPath(dataDir: string, signal?: AbortSignal) {
-  const installed = resolveUvPath();
+export async function ensureUvPath(dataDir: string, signal?: AbortSignal, options: { preferBundled?: boolean } = {}) {
+  const installed = options.preferBundled ? null : resolveUvPath();
   if (installed) return installed;
   if (process.platform !== 'win32') throw new Error('这个 Windows MCP 只能在 Windows 上安装');
   const runtimeDir = path.join(dataDir, 'runtime', 'uv');

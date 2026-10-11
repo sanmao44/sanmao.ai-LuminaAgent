@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import type {
   CanvasDocument,
   CanvasNode,
@@ -32,6 +32,7 @@ type VideoEditorWorkbenchProps = {
   node: CanvasNode;
   document: CanvasDocument;
   onClose: () => void;
+  onChange?: (state: CanvasVideoEditorState) => void;
   onCreate: (state: CanvasVideoEditorState, selectedClipId: string | null) => void | Promise<void>;
 };
 
@@ -139,7 +140,7 @@ function graphicsPreviewPresentation(clip: CanvasVideoEditorClip, previewFontSiz
   };
 }
 
-export default function VideoEditorWorkbench({ node, document, onClose, onCreate }: VideoEditorWorkbenchProps) {
+export default function VideoEditorWorkbench({ node, document, onClose, onChange, onCreate }: VideoEditorWorkbenchProps) {
   const persistedState = useMemo(() => normalizeVideoEditorState(node.data.videoEditor), [node.data.videoEditor]);
   const [draft, setDraft] = useState(persistedState);
   const [currentTime, setCurrentTime] = useState(0);
@@ -166,10 +167,11 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
   const draftRef = useRef(persistedState);
+  const localDraftSignatureRef = useRef<string | null>(null);
+  const workbenchNodeIdRef = useRef(node.id);
   const previewColumnRef = useRef<HTMLDivElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const videoLaneRef = useRef<HTMLDivElement | null>(null);
-  const backdropPointerRef = useRef<{ x: number; y: number } | null>(null);
   const suppressNextClipClickRef = useRef(false);
   const duration = Math.max(1, draft.projectDuration);
   const selectedClip = draft.clips.find((clip) => clip.id === selectedClipId) || null;
@@ -208,6 +210,22 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
   }, []);
 
   useEffect(() => {
+    const persistedSignature = JSON.stringify(persistedState);
+    const draftSignature = JSON.stringify(draftRef.current);
+    const nodeChanged = workbenchNodeIdRef.current !== node.id;
+    // A local drag can update the draft before pointer-up commits it. Keep it
+    // authoritative while the parent document catches up, otherwise a sibling
+    // canvas update would unexpectedly restore the old timeline.
+    if (!nodeChanged && localDraftSignatureRef.current !== null) {
+      if (persistedSignature === localDraftSignatureRef.current) {
+        localDraftSignatureRef.current = null;
+      }
+      return;
+    }
+    if (!nodeChanged && persistedSignature === draftSignature) return;
+
+    workbenchNodeIdRef.current = node.id;
+    localDraftSignatureRef.current = null;
     setDraft(persistedState);
     draftRef.current = persistedState;
     setHistory([]);
@@ -348,7 +366,13 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
   const applyDraft = (next: CanvasVideoEditorState) => {
     const normalized = normalizeVideoEditorState(next);
     draftRef.current = normalized;
+    localDraftSignatureRef.current = JSON.stringify(normalized);
     setDraft(normalized);
+  };
+  const persistDraft = (next: CanvasVideoEditorState) => {
+    const normalized = normalizeVideoEditorState(next);
+    localDraftSignatureRef.current = JSON.stringify(normalized);
+    onChange?.(normalized);
   };
   const commitHistory = (previous: CanvasVideoEditorState, next: CanvasVideoEditorState) => {
     if (sameDraft(previous, next)) return;
@@ -360,6 +384,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
     if (sameDraft(draftRef.current, normalized)) return;
     commitHistory(draftRef.current, normalized);
     applyDraft(normalized);
+    persistDraft(normalized);
   };
   const undo = () => {
     const previous = history.at(-1);
@@ -368,6 +393,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
     setHistory((stack) => stack.slice(0, -1));
     setFuture((stack) => [current, ...stack].slice(0, 50));
     applyDraft(previous);
+    persistDraft(previous);
   };
   const redo = () => {
     const next = future[0];
@@ -376,6 +402,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
     setFuture((stack) => stack.slice(1));
     setHistory((stack) => [...stack, current].slice(-50));
     applyDraft(next);
+    persistDraft(next);
   };
   const visibleTracks = TRACKS.filter((track) => track.id === "video" || draft.clips.some((clip) => clip.track === track.id));
   const visibleTrackIds = new Set<CanvasVideoEditorTrack>([
@@ -716,6 +743,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
     const handlePointerUp = () => {
       const current = draftRef.current;
       if (trim) commitHistory(trim.before, current);
+      persistDraft(current);
       setTrim(null);
     };
     return watchPointerDrag(handlePointerMove, handlePointerUp);
@@ -727,6 +755,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
     const handlePointerUp = () => {
       const current = draftRef.current;
       commitHistory(move.before, current);
+      persistDraft(current);
       setMove(null);
     };
     return watchPointerDrag(handlePointerMove, handlePointerUp);
@@ -738,6 +767,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
     const handlePointerUp = () => {
       const current = draftRef.current;
       commitHistory(previewMove.before, current);
+      persistDraft(current);
       setPreviewMove(null);
     };
     return watchPointerDrag(handlePointerMove, handlePointerUp);
@@ -840,27 +870,12 @@ export default function VideoEditorWorkbench({ node, document, onClose, onCreate
     setInPoint(null);
     setOutPoint(null);
   };
-  const beginBackdropPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.stopPropagation();
-    backdropPointerRef.current = event.target === event.currentTarget
-      ? { x: event.clientX, y: event.clientY }
-      : null;
-  };
-  const closeBackdropOnClick = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget) {
-      backdropPointerRef.current = null;
-      return;
-    }
-    const origin = backdropPointerRef.current;
-    backdropPointerRef.current = null;
-    if (!origin || Math.hypot(event.clientX - origin.x, event.clientY - origin.y) < 5) onClose();
-  };
   const markedRange = inPoint !== null && outPoint !== null && outPoint > inPoint
     ? { left: inPoint * timelineZoom, width: (outPoint - inPoint) * timelineZoom }
     : null;
 
   return (
-    <div className="canvas-modal-backdrop canvas-video-editor-backdrop" onClick={closeBackdropOnClick} onPointerDown={beginBackdropPointer} onPointerMove={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onContextMenu={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+    <div className="canvas-modal-backdrop canvas-video-editor-backdrop" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onPointerMove={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onContextMenu={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
       <section className={`canvas-workbench canvas-video-editor-workbench tool-${toolMode}`} role="dialog" aria-modal="true" aria-labelledby="canvas-video-editor-title" onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()} onClick={(event) => { const control = event.target instanceof Element ? event.target.closest("button, select") : null; if (control instanceof HTMLElement) control.blur(); }}>
         <header className="canvas-workbench-head">
           <div className="canvas-workbench-title"><span className="canvas-video-editor-icon" aria-hidden="true">✂</span><div><b id="canvas-video-editor-title">视频剪辑工作台</b><small>{String(node.data.name || "视频编辑节点")} · 草稿不会修改原视频</small></div></div>

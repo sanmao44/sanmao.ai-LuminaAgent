@@ -88,6 +88,9 @@
 .canvas-video-clip-rate button:hover,.canvas-video-clip-fit button:hover,.canvas-video-clip-rate button.active,.canvas-video-clip-fit button.active{border-color:var(--accent)!important;background:var(--accent-soft)!important;color:var(--accent-text)!important}
 .canvas-video-clip-footer button{min-width:70px;border-radius:8px!important;background:var(--panel-2)!important;color:var(--text-2)!important}
 .canvas-video-clip-footer button.primary{border-color:var(--accent)!important;background:var(--accent-soft)!important;color:var(--accent-text)!important}
+.canvas-video-clip-footer .canvas-video-clip-capture{border-color:color-mix(in srgb,var(--accent) 34%,var(--line))!important;background:var(--accent-soft)!important;color:var(--accent-text)!important}
+.canvas-video-clip-footer .canvas-video-clip-capture:hover:not(:disabled){border-color:var(--accent)!important;background:color-mix(in srgb,var(--accent) 16%,var(--panel))!important}
+.canvas-video-clip-capture-error{color:var(--danger)!important}
 .canvas-video-clip-preview .canvas-video-clip-media.fit-contain{display:block!important;width:100%!important;height:100%!important;max-width:100%!important;max-height:100%!important;object-fit:contain!important;object-position:center!important}
 .canvas-video-clip-preview>video.canvas-video-clip-media.fit-contain{display:block!important;width:100%!important;height:100%!important;max-width:100%!important;max-height:100%!important;object-fit:contain!important;object-position:center center!important;background:var(--panel-3)!important}
 .canvas-video-clip-timeline{touch-action:none;cursor:grab}

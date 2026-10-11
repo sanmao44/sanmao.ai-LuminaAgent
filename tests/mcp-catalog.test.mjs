@@ -26,7 +26,7 @@ async function fakeInstall(dataDir, id = 'playwright') {
 
 test('目录里只有写死的条目，版本固定不用 latest', () => {
   const ids = mcp.MCP_CATALOG_ENTRIES.map((entry) => entry.id);
-  assert.deepEqual(ids, ['playwright', 'filesystem', 'github', 'context7']);
+  assert.deepEqual(ids, ['windows-mcp', 'playwright', 'filesystem', 'github', 'context7']);
   for (const entry of mcp.MCP_CATALOG_ENTRIES) {
     assert.ok(entry.name.length > 0, '面板要有中文名');
     assert.ok(entry.publisher.length > 0, '要写清楚是谁维护的');
@@ -50,6 +50,41 @@ test('目录里只有写死的条目，版本固定不用 latest', () => {
   assert.equal(github.setup.requiresAuth, true);
   assert.equal(github.defaultReadOnly, true, 'GitHub 第一版默认只读');
   assert.ok(mcp.findCatalogEntry('context7').auth.optional, 'Context7 允许匿名连接');
+});
+
+test('Windows-MCP 目录项固定版本、平台和安全白名单', async () => {
+  const entry = mcp.findCatalogEntry('windows-mcp');
+  assert.equal(entry.installMode, 'optional-uv');
+  assert.equal(entry.pkg, 'windows-mcp');
+  assert.equal(entry.version, '0.8.8');
+  assert.deepEqual(entry.platforms, ['win32']);
+  assert.equal(entry.defaultReadOnly, true);
+  assert.ok(entry.allowedTools.includes('Screenshot'));
+  assert.ok(!entry.allowedTools.includes('PowerShell'));
+  assert.ok(!entry.allowedTools.includes('Registry'));
+  assert.equal(mcp.catalogEntryAvailable(entry, 'linux'), false);
+  assert.equal(mcp.catalogEntryAvailable(entry, 'win32'), true);
+  await withDataDir(async (dataDir) => {
+    const server = mcp.catalogServerConfig(entry, { dataDir, enabled: true });
+    assert.equal(server.transport, 'stdio');
+    assert.equal(server.command, mcp.resolveCatalogUvExecutable(dataDir));
+    assert.deepEqual(server.args, ['--directory', path.join(dataDir, 'mcp', 'windows-mcp'), 'run', '--no-project', '--python', path.join(dataDir, 'mcp', 'windows-mcp', '.venv', 'Scripts', 'python.exe'), 'windows-mcp', 'serve']);
+    assert.equal(server.cwd, mcp.resolveCatalogWorkspace('windows-mcp', { dataDir }));
+    const definitions = mcp.mcpToolDefinitions(server, [
+      { name: 'Screenshot', annotations: { readOnlyHint: true } },
+      { name: 'Click', annotations: { readOnlyHint: false } },
+      { name: 'PowerShell', annotations: { readOnlyHint: false } },
+    ]);
+    assert.deepEqual(definitions.map((tool) => tool.mcp.toolName), ['Screenshot']);
+    const writable = { ...server, allowWrite: true };
+    const writableDefinitions = mcp.mcpToolDefinitions(writable, [
+      { name: 'Screenshot', annotations: { readOnlyHint: true } },
+      { name: 'Click', annotations: { readOnlyHint: false } },
+      { name: 'PowerShell', annotations: { readOnlyHint: false } },
+      { name: 'Registry', annotations: { readOnlyHint: false } },
+    ]);
+    assert.deepEqual(writableDefinitions.map((tool) => tool.mcp.toolName), ['Screenshot', 'Click']);
+  });
 });
 
 test('启动参数是固定形态：独立 profile、受控输出目录、不开高权限 caps', async () => {

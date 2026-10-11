@@ -1,29 +1,41 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createTsRequire } from "./ts-require.mjs";
 
-const component = await readFile(
-  new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url),
-  "utf8",
-);
+const loadCanvas = createTsRequire(new URL("../lib/canvas", import.meta.url).pathname);
+const loadCanvasCore = createTsRequire(new URL("../packages/canvas-core", import.meta.url).pathname);
+const { canvasGroupShortcutAction, canvasGroupShortcutTarget } = loadCanvas("./group-shortcut.ts");
+const { CanvasCore } = loadCanvasCore("./runtime.ts");
 
-function sliceBetween(startMarker, endMarker) {
-  const start = component.indexOf(startMarker);
-  const end = component.indexOf(endMarker);
-  assert.notEqual(start, -1, `找不到 ${startMarker}`);
-  assert.notEqual(end, -1, `找不到 ${endMarker}`);
-  return component.slice(start, end);
+function makeCore() {
+  return new CanvasCore({
+    version: "test",
+    nodes: [{ id: "a" }, { id: "b" }, { id: "c" }],
+    edges: [],
+    groups: [
+      { id: "group-1", nodeIds: ["a", "b"] },
+      { id: "group-2", nodeIds: ["c"] },
+    ],
+    camera: { x: 0, y: 0, zoom: 1 },
+  });
 }
 
-test("Ctrl+Shift+G dissolves the group behind the current selection", () => {
-  const breakGroup = sliceBetween(
-    "const breakGroup = useCallback",
-    "const removeNodeFromGroup = useCallback",
-  );
+test("Ctrl+Shift+G maps the physical G key and runs once per press", () => {
+  assert.equal(canvasGroupShortcutAction({ key: "G", code: "KeyG", ctrlKey: true, metaKey: false, shiftKey: true, repeat: false }), "ungroup");
+  assert.equal(canvasGroupShortcutAction({ key: "ğ", code: "KeyG", ctrlKey: true, metaKey: false, shiftKey: true, repeat: false }), "ungroup");
+  assert.equal(canvasGroupShortcutAction({ key: "g", code: "KeyG", ctrlKey: true, metaKey: false, shiftKey: false, repeat: false }), "group");
+  assert.equal(canvasGroupShortcutAction({ key: "g", code: "KeyG", ctrlKey: true, metaKey: false, shiftKey: true, repeat: true }), null);
+  assert.equal(canvasGroupShortcutAction({ key: "g", code: "KeyG", ctrlKey: false, metaKey: false, shiftKey: true, repeat: false }), null);
+});
 
-  // 框选 / Shift 追加选择会清空 selectedGroupId，所以解组必须能按选中范围反推分组。
-  assert.match(breakGroup, /groupsInSelection\.size === 1/);
-  // 没有可解散的分组时给出提示，而不是静默什么都不做。
-  assert.match(breakGroup, /notify\("请先选中一个对象组再解散。", "error"\)/);
-  assert.match(breakGroup, /\[clearSelection, commit, notify, selectedGroupId, selectedIds\]/);
+test("ungroup target reads the current CanvasCore selection", () => {
+  const core = makeCore();
+  core.setSelection({ nodeIds: ["a", "b"] });
+  assert.equal(canvasGroupShortcutTarget(core.document(), core.selection()), "group-1");
+
+  core.setSelection({ nodeIds: ["a", "c"] });
+  assert.equal(canvasGroupShortcutTarget(core.document(), core.selection()), null);
+
+  core.setSelection({ nodeIds: ["c"], groupId: "group-2" });
+  assert.equal(canvasGroupShortcutTarget(core.document(), core.selection()), "group-2");
 });

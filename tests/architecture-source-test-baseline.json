@@ -51,7 +51,6 @@
   "canvas-file-drop.test.mjs",
   "canvas-group-compose-dialog.test.mjs",
   "canvas-group-reference-scope.test.mjs",
-  "canvas-group-shortcut.test.mjs",
   "canvas-image-editor.test.mjs",
   "canvas-media-archive.test.mjs",
   "canvas-model.test.mjs",

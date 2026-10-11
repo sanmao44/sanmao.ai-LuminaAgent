@@ -153,6 +153,8 @@ export type CanvasVideoEditorState = {
   resolution?: "720p" | "1080p" | "2K" | "4K";
   clips: CanvasVideoEditorClip[];
   mutedTracks: CanvasVideoEditorTrack[];
+  /** Source media the user intentionally removed from the editable timeline. */
+  excludedSourceNodeIds?: string[];
   /** Lower reference ambience/music while the clone voice track is speaking. */
   referenceAudioDucking?: boolean;
   /** Tracks hidden from preview and export. Missing means every track is enabled. */

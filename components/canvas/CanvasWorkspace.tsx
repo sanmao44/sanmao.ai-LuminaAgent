@@ -423,6 +423,10 @@ import {
 } from "@/lib/canvas/generation-params";
 import { findCanvasNodePlacement } from "@/lib/canvas/node-placement";
 import { canvasGenerationKey } from "@/lib/canvas/generation-key";
+import {
+  canvasGroupShortcutAction,
+  canvasGroupShortcutTarget,
+} from "@/lib/canvas/group-shortcut";
 import { connectCanvasNodesInDocument } from "@/lib/canvas/connection-command";
 import {
   canvasEdgeColorKeysByEntityId,
@@ -1416,6 +1420,15 @@ export default function SuperCanvas() {
     },
     [setDoc],
   );
+  const updateVideoEditorDraft = useCallback((nodeId: string, state: CanvasVideoEditorState) => {
+    const normalized = normalizeVideoEditorState(state);
+    commit((value) => ({
+      ...value,
+      nodes: value.nodes.map((node) => node.id === nodeId && node.type === "video-editor"
+        ? { ...node, data: { ...node.data, videoEditor: normalized } }
+        : node),
+    }));
+  }, [commit]);
   const renameNode = useCallback((nodeId: string, name: string) => {
     commit((value) => renameCanvasNode(value, nodeId, name));
     setRenamingNodeId(null);
@@ -3864,19 +3877,13 @@ export default function SuperCanvas() {
     notify("已创建对象组");
   }, [commit, notify, selectedIds]);
   const breakGroup = useCallback(() => {
-    // 框选与 Shift 追加选择都会清空 selectedGroupId（见 selectNode、finishInteraction），
-    // 只认这个字段会让 Ctrl+Shift+G 时灵时不灵；这里按当前选中范围反推出要解散的分组。
-    const groupsInSelection = new Set<string>();
-    for (const nodeId of selectedIds) {
-      const group = groupForNode(canvasCoreRef.current.document(), nodeId);
-      if (group) groupsInSelection.add(group.id);
-    }
-    const id =
-      [
-        selectedGroupId,
-        groupsInSelection.size === 1 ? [...groupsInSelection][0] : null,
-      ].find((candidate) => candidate && groupById(canvasCoreRef.current.document(), candidate)) ||
-      null;
+    // Read the authoritative selection directly so a keydown immediately after
+    // a click cannot observe a stale React projection.
+    const selection = canvasCoreRef.current.selection();
+    const id = canvasGroupShortcutTarget(
+      canvasCoreRef.current.document(),
+      selection,
+    );
     if (!id) {
       notify("请先选中一个对象组再解散。", "error");
       return;
@@ -3899,7 +3906,7 @@ export default function SuperCanvas() {
     });
     clearSelection();
     notify("已解散对象组");
-  }, [clearSelection, commit, notify, selectedGroupId, selectedIds]);
+  }, [clearSelection, commit, notify]);
   const removeNodeFromGroup = useCallback(
     (nodeId: string) => {
       const node = nodeById(canvasCoreRef.current.document(), nodeId);
@@ -10035,6 +10042,64 @@ export default function SuperCanvas() {
     notify("已创建视频剪辑节点");
     addLog(`视频剪辑已创建：${sourceName}`);
   }, [addLog, commit, notify, openNodePosition, runtime, videoClipEditorNodeId]);
+  const captureVideoFrame = useCallback(async (capture: { dataUrl: string; width: number; height: number; time: number }): Promise<boolean> => {
+    const source = videoClipEditorNodeId
+      ? nodeById(canvasCoreRef.current.document(), videoClipEditorNodeId)
+      : undefined;
+    if (!source || source.type !== "media" || source.data.kind !== "video" || !source.data.url) {
+      notify("当前视频节点已不存在，请重新打开剪辑", "error");
+      return false;
+    }
+    if (!capture.dataUrl || capture.width < 1 || capture.height < 1) {
+      notify("当前帧没有可保存的画面", "error");
+      return false;
+    }
+    try {
+      const sourceName = String(source.data.name || "视频");
+      const asset = await uploadCanvasAsset(canvasFileFromDataUrl(capture.dataUrl, `${sourceName}-帧-${Math.round(capture.time * 10) / 10}s.png`));
+      if (asset.kind !== "image") throw new Error("当前帧未能保存为图片素材");
+      const createdAt = Date.now();
+      const sourceParams = source.data.generation?.params || source.data.params || defaultCanvasGenerationParams("image", runtime);
+      const frameNode = createMedia("image", asset.url, `${sourceName} · 当前帧`, {
+        x: source.x + nodeSize(source).w + 90,
+        y: source.y + nodeSize(source).h + 50,
+      }, {
+        role: "视频当前帧",
+        status: "completed",
+        statusLabel: "已从视频截取当前帧",
+        assetId: asset.id,
+        sourceAssetId: source.data.sourceAssetId || source.data.assetId,
+        mimeType: asset.mime || "image/png",
+        autoFit: true,
+        nativeWidth: capture.width,
+        nativeHeight: capture.height,
+        params: clone(sourceParams),
+        generation: {
+          kind: "image",
+          prompt: `从视频 ${Math.round(capture.time * 10) / 10}s 截取当前帧`,
+          params: clone(sourceParams),
+          operation: "edit",
+          referenceIds: [source.id],
+          parentNodeId: source.id,
+          createdAt,
+        },
+      });
+      const positioned = { ...frameNode, ...openNodePosition({ x: frameNode.x, y: frameNode.y }, frameNode) };
+      commit((value) => ({
+        ...value,
+        nodes: [...value.nodes, positioned],
+        edges: [...value.edges, { id: uid("edge"), source: source.id, target: positioned.id, sourcePort: "right", targetPort: "left", kind: "lineage" }],
+      }));
+      setSelectedIds(new Set([positioned.id]));
+      setSelectedGroupId(null);
+      notify("已从当前帧创建图片节点");
+      addLog(`已从视频截取当前帧：${sourceName}`);
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "截取当前帧失败，请重试", "error");
+      return false;
+    }
+  }, [addLog, commit, notify, openNodePosition, runtime, videoClipEditorNodeId]);
 
   const createVideoEditorClip = useCallback((
     editorNodeId: string,
@@ -10647,6 +10712,7 @@ export default function SuperCanvas() {
       if (isEditableTarget(event.target)) return;
       const modifier = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
+      const groupShortcut = canvasGroupShortcutAction(event);
       const isKeyZ = key === "z" || event.code === "KeyZ";
       const isKeyA = key === "a" || event.code === "KeyA";
       const stageRect = stageRef.current?.getBoundingClientRect();
@@ -10667,9 +10733,10 @@ export default function SuperCanvas() {
       } else if (!event.repeat && modifier && key === "d") {
         event.preventDefault();
         duplicateSelection();
-      } else if (!event.repeat && modifier && key === "g") {
+      } else if (groupShortcut) {
         event.preventDefault();
-        event.shiftKey ? breakGroup() : makeGroup();
+        event.stopPropagation();
+        groupShortcut === "ungroup" ? breakGroup() : makeGroup();
       } else if (!event.repeat && modifier && key === "k") {
         /* 画布上一键把 Agent 叫出来：选中的节点自动成为上下文。 */
         event.preventDefault();
@@ -13145,6 +13212,7 @@ export default function SuperCanvas() {
               node={videoClipNode}
               onClose={() => setVideoClipEditorNodeId(null)}
               onCreate={createVideoClip}
+              onCaptureFrame={captureVideoFrame}
             />
           );
         })()}
@@ -13156,6 +13224,7 @@ export default function SuperCanvas() {
               node={videoEditorNode}
               document={document}
               onClose={() => setVideoEditorNodeId(null)}
+              onChange={(state) => updateVideoEditorDraft(videoEditorNode.id, state)}
               onCreate={(draft, selectedClipId) => createVideoEditorClip(videoEditorNode.id, draft, selectedClipId)}
             />
           );

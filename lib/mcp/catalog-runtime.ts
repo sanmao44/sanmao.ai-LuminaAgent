@@ -20,18 +20,21 @@ import {
   requireStdioCatalogEntry,
   isCatalogInstalled,
   resolveCatalogInstallRoot,
+  resolveCatalogUvExecutable,
+  catalogEntryAvailable,
   setCatalogEntryEnabled,
   type McpCatalogBrowser,
   type McpCatalogBrowserMode,
   type McpStdioCatalogEntry,
 } from './catalog';
+import { ensureUvPath } from './repo-installer';
 import type { McpBrowserExtensionBridge } from './browser-extension';
 
 export const MCP_CATALOG_INSTALL_TIMEOUT_MS = 10 * 60_000;
 const LOG_TAIL_CHARS = 4000;
 const NPM_MIRROR = 'https://registry.npmmirror.com';
 
-export type McpCatalogRuntimeState = 'not_installed' | 'installing' | 'installed' | 'running' | 'error';
+export type McpCatalogRuntimeState = 'unavailable' | 'not_installed' | 'installing' | 'installed' | 'running' | 'error';
 
 export type McpCatalogRuntimeStatus = {
   id: string;
@@ -126,6 +129,40 @@ function npmInstallArgs(entry: McpStdioCatalogEntry, installRoot: string, regist
   ];
 }
 
+function runUvCatalogInstall(entry: McpStdioCatalogEntry, options: { dataDir?: string }): Promise<void> {
+  const dataDir = catalogDataDir(options);
+  const installRoot = resolveCatalogInstallRoot(entry.id, options);
+  const uv = resolveCatalogUvExecutable(dataDir);
+  mkdirSync(installRoot, { recursive: true });
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(uv, [
+      'venv', '--python', entry.runtime?.python || '3.14', path.join(installRoot, '.venv'),
+    ], { shell: false, windowsHide: true, cwd: installRoot, stdio: ['ignore', 'pipe', 'pipe'] });
+    const job = installs.get(entry.id);
+    if (job) job.child = child;
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => appendLog(entry, chunk, options));
+    child.stderr.on('data', (chunk: string) => appendLog(entry, chunk, options));
+    const timer = setTimeout(() => { try { child.kill(); } catch {} reject(new Error('uv 环境创建超时')); }, MCP_CATALOG_INSTALL_TIMEOUT_MS);
+    timer.unref?.();
+    child.on('error', (error) => { clearTimeout(timer); reject(new Error(`uv 环境创建失败：${error.message}`)); });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) { reject(new Error(`uv 环境创建失败（退出码 ${code ?? 'null'}）`)); return; }
+      const install = spawn(uv, ['pip', 'install', '--python', path.join(installRoot, '.venv', 'Scripts', 'python.exe'), `${entry.pkg}@${entry.version}`], {
+        shell: false, windowsHide: true, cwd: installRoot, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      if (job) job.child = install;
+      install.stdout.setEncoding('utf8'); install.stderr.setEncoding('utf8');
+      install.stdout.on('data', (chunk: string) => appendLog(entry, chunk, options));
+      install.stderr.on('data', (chunk: string) => appendLog(entry, chunk, options));
+      install.on('error', (error) => reject(new Error(`uv 包安装失败：${error.message}`)));
+      install.on('exit', (installCode) => installCode === 0 && isCatalogInstalled(entry, options)
+        ? resolve() : reject(new Error(`uv 包安装失败（退出码 ${installCode ?? 'null'}）`)));
+    });
+  });
+}
+
 function runNpmInstall(
   entry: McpStdioCatalogEntry,
   options: { dataDir?: string },
@@ -182,7 +219,13 @@ export async function installCatalogServer(id: unknown, options: { dataDir?: str
   installs.set(entry.id, { child: null, log: '', error: null, finished: false });
   let failure: Error | null = null;
   try {
-    await runNpmInstall(entry, options);
+    if (entry.installMode === 'optional-uv') {
+      if (!catalogEntryAvailable(entry)) throw new Error('这个 Windows MCP 只适用于 Windows');
+      await ensureUvPath(catalogDataDir(options), undefined, { preferBundled: true });
+      await runUvCatalogInstall(entry, options);
+    } else {
+      await runNpmInstall(entry, options);
+    }
   } catch (error) {
     failure = error instanceof Error ? error : new Error('安装失败');
     const log = installs.get(entry.id)?.log || '';
@@ -239,7 +282,9 @@ export function catalogRuntimeStatus(id: unknown, options: { dataDir?: string; r
   } catch {
     currentArgs = [];
   }
-  const state: McpCatalogRuntimeState = installing
+  const state: McpCatalogRuntimeState = !catalogEntryAvailable(entry)
+    ? 'unavailable'
+    : installing
     ? 'installing'
     : error && !installed
       ? 'error'
@@ -281,6 +326,7 @@ export function catalogRuntimeStatus(id: unknown, options: { dataDir?: string; r
  */
 export async function startCatalogServer(id: unknown, options: { dataDir?: string; roots?: readonly string[] } = {}): Promise<McpCatalogRuntimeStatus> {
   const entry = requireStdioCatalogEntry(id);
+  if (!catalogEntryAvailable(entry)) throw new Error('这个服务不适用于当前系统');
   if (!isCatalogInstalled(entry, options)) throw new Error('这个服务还没安装完成');
   const browser = detectSystemBrowser();
   const browserMode = catalogEntryBrowserMode(entry.id, options);
