@@ -1844,6 +1844,7 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 html[data-theme="light"] .canvas-group-label-layer>.canvas-group-world-label{border-color:color-mix(in srgb,var(--group-color) 38%,var(--line-strong));background:color-mix(in srgb,#fff 94%,var(--group-color));box-shadow:0 4px 12px color-mix(in srgb,var(--group-color) 16%,transparent),0 2px 8px rgba(40,35,80,.08)}
 .canvas-node-kicker>.canvas-agent-node-name{display:block;flex:1 1 0%;width:0;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:12px;font-weight:800;line-height:1.2;transform:none}
 .canvas-node-kicker>.canvas-agent-node-name-input{box-sizing:border-box;flex:1 1 0%;width:0;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:800;transform:none}
+.canvas-node .canvas-node-kicker>.canvas-inline-name-editor{display:block;width:0;min-width:0;max-width:100%;height:auto;flex:1 1 0%;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;color:var(--text);font:inherit;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .canvas-node-kicker>span:first-child{flex:none}
 .canvas-node-kicker{position:relative;z-index:var(--canvas-z-local-content);width:100%;min-width:0;box-sizing:border-box;overflow:hidden}
 .canvas-prompt-card{overflow:visible}
