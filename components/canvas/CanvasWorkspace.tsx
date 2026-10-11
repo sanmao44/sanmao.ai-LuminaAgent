@@ -12997,7 +12997,6 @@ export default function SuperCanvas() {
             <CanvasNodeLayer
               nodes={renderedCanvasNodes}
               document={document}
-              zoom={document.camera.zoom}
               selectedIds={selectedIds}
               draggingNodeIds={draggingNodeIds}
               referencePickerActive={Boolean(referencePicker)}

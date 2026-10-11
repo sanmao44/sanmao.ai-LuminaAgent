@@ -1,4 +1,4 @@
-import type { ClipboardEvent as ReactClipboardEvent, CSSProperties, FocusEvent, PointerEvent } from "react";
+import type { ClipboardEvent as ReactClipboardEvent, FocusEvent, PointerEvent } from "react";
 import type { CanvasGenerationStatus, CanvasNode } from "@/lib/canvas/types";
 import AgentOrb from "@/components/AgentOrb";
 import CanvasProcessingIndicator, {
@@ -32,7 +32,6 @@ export type CanvasAgentNodeCardProps = {
   onRename?: (value: string) => void;
   renaming?: boolean;
   onRenamingChange?: (editing: boolean) => void;
-  labelScale?: number;
 };
 
 export default function CanvasAgentNodeCard({
@@ -58,7 +57,6 @@ export default function CanvasAgentNodeCard({
   onRename,
   renaming,
   onRenamingChange,
-  labelScale = 1,
 }: CanvasAgentNodeCardProps) {
   return (
     <div className="canvas-prompt-card">
@@ -73,10 +71,6 @@ export default function CanvasAgentNodeCard({
           onEditingChange={onRenamingChange}
           className="canvas-inline-name-editor canvas-agent-node-name"
           inputClassName="canvas-inline-name-editor-input canvas-agent-node-name-input"
-          style={{
-            "--canvas-agent-name-inverse-zoom": labelScale,
-            "--canvas-agent-name-max-width": `${600 * labelScale}px`,
-          } as CSSProperties}
         />
       </div>
       <small className="canvas-agent-node-kind-label">{String(role || "Agent 节点")}{model ? ` · ${String(model)}` : ""}</small>

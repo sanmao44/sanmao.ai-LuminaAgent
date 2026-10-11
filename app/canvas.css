@@ -1842,10 +1842,10 @@ div.canvas-deck.legacy-deck-hidden{display:none!important}
 .canvas-group-label-layer>.canvas-group-world-label .canvas-group-name-input{width:220px;font-size:12px}
 .canvas-group-label-layer>.canvas-group-world-label small{flex:none;color:var(--text-2);font-size:10px}
 html[data-theme="light"] .canvas-group-label-layer>.canvas-group-world-label{border-color:color-mix(in srgb,var(--group-color) 38%,var(--line-strong));background:color-mix(in srgb,#fff 94%,var(--group-color));box-shadow:0 4px 12px color-mix(in srgb,var(--group-color) 16%,transparent),0 2px 8px rgba(40,35,80,.08)}
-.canvas-node-kicker>.canvas-agent-node-name{display:block;width:max-content;max-width:var(--canvas-agent-name-max-width,600px);flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:12px;font-weight:800;line-height:1.2;transform:scale(var(--canvas-agent-name-inverse-zoom,1));transform-origin:left center}
-.canvas-node-kicker>.canvas-agent-node-name-input{width:var(--canvas-agent-name-max-width,600px);max-width:var(--canvas-agent-name-max-width,600px);flex:none;font-size:12px;font-weight:800;transform:scale(var(--canvas-agent-name-inverse-zoom,1));transform-origin:left center}
+.canvas-node-kicker>.canvas-agent-node-name{display:block;flex:1 1 0%;width:0;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:12px;font-weight:800;line-height:1.2;transform:none}
+.canvas-node-kicker>.canvas-agent-node-name-input{box-sizing:border-box;flex:1 1 0%;width:0;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:800;transform:none}
 .canvas-node-kicker>span:first-child{flex:none}
-.canvas-node-kicker{position:relative;z-index:var(--canvas-z-local-content);overflow:visible}
+.canvas-node-kicker{position:relative;z-index:var(--canvas-z-local-content);width:100%;min-width:0;box-sizing:border-box;overflow:hidden}
 .canvas-prompt-card{overflow:visible}
 .canvas-agent-node-kind-label{position:relative;z-index:var(--canvas-z-local-underlay);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)!important;font-size:9px!important}
 .canvas-group-color-reset{min-height:32px;padding:0 10px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:9px;background:color-mix(in srgb,var(--accent-soft) 46%,var(--panel-2));color:var(--accent-text);font:inherit;font-size:10px;font-weight:750;cursor:pointer;transition:border-color .14s ease,background .14s ease,box-shadow .14s ease}
