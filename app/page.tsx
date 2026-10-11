@@ -147,7 +147,7 @@ import { buildEditorModelCallInput, buildEditorHistoryMeta, editorCompletionInfo
 import { cropSourceRect } from '@/lib/image-editor/local-image-layout';
 import { renderLocalImage } from '@/lib/image-editor/local-image-renderer';
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
-import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
+import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile, isVideoChatFile } from '@/lib/chat-file-preview';
 import { buildGalleryItems } from '@/lib/creation/gallery-items';
 import { storeImages } from '@/lib/image-storage-client';
 import { applyMessageVersion, messageVersionIndex, messageVersionsFor, normalizeAssistantImageSources, normalizeChatSession } from '@/lib/conversation/session-normalization';
@@ -3770,6 +3770,19 @@ export default function Page() {
     }
     function openChatFilePreview(file) {
         if (!isPreviewableChatFile(file)) return;
+        if (isVideoChatFile(file)) {
+            if (!file.downloadUrl) {
+                notify('视频地址已失效，请重新下载');
+                return;
+            }
+            setChatFilePreview({
+                ...file,
+                name: file.name || '视频文件',
+                label: chatFilePreviewKindLabel(file),
+                content: ''
+            });
+            return;
+        }
         if (isOfficeArtifactChatFile(file)) {
             const name = file.name || '文件';
             const label = chatFilePreviewKindLabel(file);
@@ -12643,6 +12656,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
              chatFilePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(ChatFilePreviewDialog, {
                  file: chatFilePreview,
                  Icon,
+                 kind: isVideoChatFile(chatFilePreview) ? 'video' : 'html',
                  onClose: ()=>setChatFilePreview(null)
              }), document.body),
              messageReferencePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(MessageReferencePreviewModal, {
