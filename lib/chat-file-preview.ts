@@ -1,11 +1,19 @@
 import type { ChatFile } from "./client-history";
 
 const OFFICE_ARTIFACT_PATTERN = /\.(docx|xlsx|pptx|zip)$/;
+const VIDEO_EXTENSION_PATTERN = /\.(mp4|webm|mov|m4v|ogv)$/;
+
+export function isVideoChatFile(file: ChatFile | null | undefined) {
+  const mimeType = String(file?.mimeType || "").split(";", 1)[0].trim().toLowerCase();
+  const name = String(file?.name || "").trim().toLowerCase();
+  return mimeType.startsWith("video/") || VIDEO_EXTENSION_PATTERN.test(name);
+}
 
 export function isPreviewableChatFile(file: ChatFile | null | undefined) {
   const mimeType = String(file?.mimeType || "").split(";", 1)[0].trim().toLowerCase();
   const name = String(file?.name || "").trim().toLowerCase();
   if (mimeType === "text/html" || mimeType === "application/xhtml+xml" || name.endsWith(".html") || name.endsWith(".htm")) return true;
+  if (isVideoChatFile(file)) return Boolean(file?.downloadUrl || file?.content);
   return isOfficeArtifactChatFile(file);
 }
 
@@ -15,6 +23,7 @@ export function chatFilePreviewKindLabel(file: ChatFile | null | undefined) {
   if (name.endsWith(".xlsx")) return "Excel 预览";
   if (name.endsWith(".pptx")) return "PPT 预览";
   if (name.endsWith(".zip")) return "压缩包预览";
+  if (isVideoChatFile(file)) return "视频预览";
   return "HTML 预览";
 }
 
@@ -56,6 +65,7 @@ export function formatFileSize(size?: number) {
 }
 
 export function chatFileTypeLabel(file: ChatFile | null | undefined) {
-  const match = String(file?.name || "").toLowerCase().match(/\.(docx|xlsx|pptx|pdf|zip)$/);
-  return match ? `${match[1].toUpperCase()} 文件 ` : "";
+  const match = String(file?.name || "").toLowerCase().match(/\.(docx|xlsx|pptx|pdf|zip|mp4|webm|mov|m4v|ogv)$/);
+  if (!match) return "";
+  return isVideoChatFile(file) ? `${match[1].toUpperCase()} 视频 ` : `${match[1].toUpperCase()} 文件 `;
 }

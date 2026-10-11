@@ -9,12 +9,16 @@ type ChatFilePreviewDialogProps = {
   file: ChatFilePreview;
   Icon: ComponentType<{ name: string; size?: number }>;
   onClose: () => void;
+  /** The page owns file classification; keep the dialog presentation-only. */
+  kind?: "video" | "html";
 };
 
-export default function ChatFilePreviewDialog({ file, Icon, onClose }: ChatFilePreviewDialogProps) {
+export default function ChatFilePreviewDialog({ file, Icon, onClose, kind = "html" }: ChatFilePreviewDialogProps) {
   const [previewUrl, setPreviewUrl] = useState("");
+  const video = kind === "video";
 
   useEffect(() => {
+    if (video) return;
     let url = "";
     try {
       if (typeof URL !== "undefined" && typeof Blob !== "undefined") {
@@ -27,7 +31,7 @@ export default function ChatFilePreviewDialog({ file, Icon, onClose }: ChatFileP
     return () => {
       if (url) URL.revokeObjectURL(url);
     };
-  }, [file.content]);
+  }, [file.content, video]);
 
   return (
     <div
@@ -40,7 +44,7 @@ export default function ChatFilePreviewDialog({ file, Icon, onClose }: ChatFileP
       <section className="chat-file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="chat-file-preview-title">
         <header className="chat-file-preview-head">
           <div>
-            <small>{file.label || "HTML 预览"}</small>
+            <small>{file.label || (video ? "视频预览" : "HTML 预览")}</small>
             <h2 id="chat-file-preview-title" title={file.name}>{file.name}</h2>
           </div>
           <button type="button" className="chat-file-preview-close" onClick={onClose} aria-label="关闭预览" title="关闭预览">
@@ -48,7 +52,16 @@ export default function ChatFilePreviewDialog({ file, Icon, onClose }: ChatFileP
           </button>
         </header>
         <div className="chat-file-preview-stage">
-          {file.content ? (
+          {video && file.downloadUrl ? (
+            <video
+              className="chat-file-preview-video"
+              src={file.downloadUrl}
+              controls
+              playsInline
+              preload="metadata"
+              aria-label={`${file.name} 视频预览`}
+            />
+          ) : file.content ? (
             <iframe
               className="chat-file-preview-frame"
               title={`${file.name} 预览`}

@@ -20,6 +20,21 @@ test("recognizes only the requested HTML preview types", () => {
   assert.equal(preview.isPreviewableChatFile({ name: "notes.txt", mimeType: "text/plain" }), false);
 });
 
+test("recognizes playable video files and renders them with native controls", () => {
+  assert.equal(preview.isVideoChatFile({ name: "clip.mp4", mimeType: "application/octet-stream" }), true);
+  assert.equal(preview.isPreviewableChatFile({ name: "clip.mp4", mimeType: "video/mp4", downloadUrl: "/api/storage/video?id=clip" }), true);
+  const markup = renderToStaticMarkup(createElement(ChatFilePreviewDialog, {
+    file: { id: "video-1", name: "clip.mp4", mimeType: "video/mp4", downloadUrl: "/api/storage/video?id=clip" },
+    kind: "video",
+    Icon: ({ name }) => createElement("i", { "data-icon": name }),
+    onClose: () => {},
+  }));
+  assert.match(markup, /<video/);
+  assert.match(markup, /controls/);
+  assert.match(markup, /playsInline/);
+  assert.match(markup, /src="\/api\/storage\/video\?id=clip"/);
+});
+
 test("adds preview only when ChatFileList receives a preview handler", () => {
   assert.match(page, /_jsx\(AgentChatFileList, \{/);
   assert.match(page, /isPreviewable: isPreviewableChatFile/);
