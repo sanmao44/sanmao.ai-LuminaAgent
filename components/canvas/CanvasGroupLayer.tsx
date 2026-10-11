@@ -74,6 +74,10 @@ export default function CanvasGroupLayer({
         if (!metrics) return null;
         const { bounds, availableImageCount } = metrics;
         const composing = composingGroupId === group.id;
+        const groupLabelScale = Math.min(
+          8,
+          Math.max(1, 1.2 / Math.max(0.12, document.camera.zoom || 1)),
+        );
         const groupInteraction =
           selectedGroupId === group.id &&
           group.nodeIds.length > 0 &&
@@ -117,7 +121,10 @@ export default function CanvasGroupLayer({
               aria-label="调整对象组大小"
               onPointerDown={(event) => onGroupResize(event, group)}
             />
-            <div className="canvas-group-label">
+            <div
+              className="canvas-group-label"
+              style={{ "--canvas-group-label-scale": groupLabelScale } as CSSProperties}
+            >
               <button
                 type="button"
                 className={`canvas-group-compose ${composing ? "composing" : ""}`}

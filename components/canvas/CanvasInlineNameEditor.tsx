@@ -58,6 +58,10 @@ export default function CanvasInlineNameEditor({
   const finish = useCallback((nextValue: string) => {
     if (committedRef.current || cancelledRef.current) return;
     committedRef.current = true;
+    // Release the native input before the controlled editor unmounts. This
+    // prevents a stale browser focus ring and returns the next interaction to
+    // the canvas surface.
+    inputRef.current?.blur();
     changeEditing(false);
     onCommit?.(nextValue);
   }, [changeEditing, onCommit]);
@@ -74,6 +78,7 @@ export default function CanvasInlineNameEditor({
     cancelledRef.current = true;
     committedRef.current = true;
     setDraft(String(value || ""));
+    inputRef.current?.blur();
     changeEditing(false);
   }, [changeEditing, value]);
 

@@ -2505,8 +2505,15 @@ export default function SuperCanvas() {
         ".canvas-node,.canvas-group,.canvas-floating,.canvas-deck",
       );
       const overUiOverlay = target.closest(
-        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-status-chip,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-node-quick-toolbar,.canvas-minimap,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-status-chip,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
+      // A blank-canvas press is the shared escape hatch for inline naming. The
+      // marquee handler stops propagation, so this belongs at the stage edge.
+      if (event.button === 0 && !overCanvasContent && !overUiOverlay) {
+        setRenamingNodeId(null);
+        setRenamingGroupId(null);
+        setGroupColorPopoverId(null);
+      }
       // During reference picking, node clicks stay reserved for selecting a
       // reference. Blank canvas clicks must still be able to pan the viewport.
       if (referencePicker && !panIntent && event.button === 0 && overCanvasContent) {
@@ -13363,7 +13370,18 @@ export default function SuperCanvas() {
               menuSubtitle="组操作"
               actionRenderer={(action, button) =>
                 action.id === "color-group" ? (
-                  <div className="canvas-group-color-control" key={action.id} onPointerDown={(event) => event.stopPropagation()}>
+                  <div
+                    className="canvas-group-color-control"
+                    key={action.id}
+                    onPointerDown={(event) => {
+                      event.stopPropagation();
+                      if (event.button === 0) {
+                        setSelectedGroupId(selectedGroup.id);
+                        setGroupColorPopoverId(selectedGroup.id);
+                      }
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     {button}
                     {groupColorPopoverId === selectedGroup.id && (
                       <CanvasGroupColorPopover
