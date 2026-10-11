@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.86/SANMAO.AI-0.7.86.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.86/SANMAO.AI-0.7.86.zip"
   ],
-  "sha256": "6a3fc648131afc2ce099a6c46653aded3efb782086068944e19a752da761b5bc",
+  "sha256": "2e4a2d52b27eefa4427dce9dc3d3d26af62813be09a74eafded59fd67336a216",
   "publishedAt": "2026-10-11T00:00:00.000Z",
   "notes": [
     "新增视频链接下载能力，支持通过 Agent 识别下载意图并调用本地 yt-dlp。",
