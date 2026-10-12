@@ -1,17 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.89",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.89",
+  "latestVersion": "0.7.90",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.90",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.89/SANMAO.AI-0.7.89.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.90/SANMAO.AI-0.7.90.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.89/SANMAO.AI-0.7.89.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.89/SANMAO.AI-0.7.89.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.89/SANMAO.AI-0.7.89.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.90/SANMAO.AI-0.7.90.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.90/SANMAO.AI-0.7.90.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.90/SANMAO.AI-0.7.90.zip"
   ],
   "sha256": "e7253993a19f7acc8d6ae39b5c4bd3eebc1caa0a6714a00916f6698df68141cd",
-  "publishedAt": "2026-10-12T02:46:52.967Z",
+  "publishedAt": "2026-10-12T03:26:02.000Z",
   "notes": [
+    "修复 Windows-MCP 打开设备管理器时将 .msc 管理单元误当作可执行文件，并增加安全启动提示和按需路由。",
+    "Windows-MCP 的 USER_CONTROL 状态仅触发桌面控制交接处理；其他 MCP 不受影响。",
     "修复 Windows-MCP 安装中断后的恢复，并在用户接管桌面时立即停止本轮操作。",
     "Windows-MCP 禁止下发 PowerShell、Registry 等原始系统工具。",
     "新增 Windows 桌面控制 MCP 预设，默认只读，桌面操作需单独授权。",
