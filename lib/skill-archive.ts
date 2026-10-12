@@ -277,6 +277,7 @@ export async function fetchSkillFilesFromGithub(target: GithubSkillTarget, optio
   /* dir 覆盖：用户在候选列表里指定了具体技能目录时，后续所有通道都按这个目录找。 */
   const wantedDir = typeof options.dir === 'string' && options.dir ? options.dir : target.dir;
   const searchTarget: GithubSkillTarget = wantedDir === target.dir ? target : { ...target, dir: wantedDir };
+  let rawError: unknown = null;
   for (const url of githubRawSkillUrls(searchTarget)) {
     try {
       const fetched = await fetchSkillBytes(url, { maxBytes: SKILL_FILE_MAX_BYTES, signal: options.signal, timeoutMs: SKILL_FETCH_TIMEOUT_MS });
@@ -291,7 +292,10 @@ export async function fetchSkillFilesFromGithub(target: GithubSkillTarget, optio
         sourceUrl: fetched.url,
       };
     } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('HTTP 404')) throw error;
+      if (options.signal?.aborted) throw options.signal.reason || error;
+      if (error instanceof Error && error.message.includes('HTTP 404')) continue;
+      rawError = error;
+      break;
     }
   }
 
@@ -325,9 +329,12 @@ export async function fetchSkillFilesFromGithub(target: GithubSkillTarget, optio
     }
   }
   if (!data) {
-    const archiveMessage = lastError instanceof Error ? lastError.message : '仓库下载失败';
-    if (apiError instanceof Error) throw new Error(archiveMessage + '；GitHub 接口通道也不可用：' + apiError.message.slice(0, 120));
-    throw lastError instanceof Error ? lastError : new Error('仓库下载失败');
+    const failures = [
+      rawError instanceof Error ? 'GitHub 文件直链不可用：' + rawError.message.slice(0, 120) : '',
+      apiError instanceof Error ? 'GitHub API 不可用：' + apiError.message.slice(0, 120) : '',
+      lastError instanceof Error ? 'GitHub 压缩包下载失败：' + lastError.message.slice(0, 120) : '',
+    ].filter(Boolean);
+    throw new Error(failures.join('；') || '仓库下载失败');
   }
   const parsed = skillFilesFromArchive(data, { dir: searchTarget.dir });
   return { ...parsed, sourceUrl };
