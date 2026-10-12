@@ -134,7 +134,7 @@ test('Windows-MCP uv 安装会复用已有 Python 并补装固定包', { skip: p
     assert.equal(status.installed, true);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].command, mcp.resolveCatalogUvExecutable(dataDir));
-    assert.deepEqual(calls[0].args, ['pip', 'install', '--python', pythonPath, 'windows-mcp@0.8.8']);
+    assert.deepEqual(calls[0].args, ['pip', 'install', '--python', pythonPath, 'windows-mcp==0.8.8']);
     assert.equal(calls[0].options.cwd, installRoot);
     assert.equal(calls[0].options.shell, false);
   });
@@ -164,7 +164,7 @@ test('Windows-MCP uv 安装会清理并重建缺少 Python 的半成品环境', 
     assert.equal(calls.length, 2);
     assert.deepEqual(calls[0].args.slice(0, 4), ['venv', '--clear', '--python', '3.14']);
     assert.equal(calls[0].options.shell, false);
-    assert.equal(calls[1].args.at(-1), 'windows-mcp@0.8.8');
+    assert.equal(calls[1].args.at(-1), 'windows-mcp==0.8.8');
     assert.ok(calls.every((call) => call.options.cwd === installRoot));
   });
 });
