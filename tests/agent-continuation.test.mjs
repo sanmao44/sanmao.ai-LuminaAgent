@@ -1,15 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
-const sourceUrl = new URL('../lib/agent-web.ts', import.meta.url);
-const source = await readFile(sourceUrl, 'utf8');
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  fileName: sourceUrl.pathname,
-}).outputText;
-const continuation = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const continuation = createTsRequire(process.cwd())('./lib/agent-web');
 
 test('extracts numbered continuation directions and caps them at three', () => {
   const directions = continuation.extractAgentDirections([

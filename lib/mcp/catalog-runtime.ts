@@ -153,7 +153,7 @@ export function uvCatalogInstallPlan(entry: McpStdioCatalogEntry, options: { dat
       entry.runtime?.python || '3.14',
       venvRoot,
     ],
-    packageArgs: ['pip', 'install', '--python', pythonPath, `${entry.pkg}@${entry.version}`],
+    packageArgs: ['pip', 'install', '--python', pythonPath, `${entry.pkg}==${entry.version}`],
   };
 }
 

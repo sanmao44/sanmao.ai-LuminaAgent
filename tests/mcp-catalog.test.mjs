@@ -134,7 +134,7 @@ test('Windows-MCP uv 安装会复用已有 Python 并补装固定包', { skip: p
     assert.equal(status.installed, true);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].command, mcp.resolveCatalogUvExecutable(dataDir));
-    assert.deepEqual(calls[0].args, ['pip', 'install', '--python', pythonPath, 'windows-mcp@0.8.8']);
+    assert.deepEqual(calls[0].args, ['pip', 'install', '--python', pythonPath, 'windows-mcp==0.8.8']);
     assert.equal(calls[0].options.cwd, installRoot);
     assert.equal(calls[0].options.shell, false);
   });
@@ -164,7 +164,7 @@ test('Windows-MCP uv 安装会清理并重建缺少 Python 的半成品环境', 
     assert.equal(calls.length, 2);
     assert.deepEqual(calls[0].args.slice(0, 4), ['venv', '--clear', '--python', '3.14']);
     assert.equal(calls[0].options.shell, false);
-    assert.equal(calls[1].args.at(-1), 'windows-mcp@0.8.8');
+    assert.equal(calls[1].args.at(-1), 'windows-mcp==0.8.8');
     assert.ok(calls.every((call) => call.options.cwd === installRoot));
   });
 });
@@ -299,6 +299,23 @@ test('手动 MCP 连接也永远不下发 PowerShell 或 Registry 原始系统�
   const unrelatedServer = { ...server, id: 'registry-reference', name: 'Reference MCP' };
   const unrelated = mcp.mcpToolDefinitions(unrelatedServer, [{ name: 'Registry', annotations: { readOnlyHint: true } }]);
   assert.deepEqual(unrelated.map((tool) => tool.mcp.toolName), ['Registry']);
+});
+
+test('Windows-MCP routes Device Manager requests and documents the safe App launch mode', () => {
+  const server = {
+    id: 'windows-mcp', name: 'Windows Desktop', catalogId: 'windows-mcp',
+    url: 'stdio://windows-mcp', enabled: true, allowWrite: true, lazy: true, enabledTools: ['App'],
+  };
+  assert.deepEqual(mcp.mcpServersForTurn([server], '打开设备管理器'), [server]);
+  assert.deepEqual(mcp.mcpServersForTurn([server], '今天天气怎么样'), []);
+
+  const [app] = mcp.mcpToolDefinitions(server, [{
+    name: 'App', description: 'Open/start/launch applications and manage windows.',
+    inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: false },
+  }]);
+  assert.match(app.description, /mode="launch"/);
+  assert.match(app.description, /\.msc and \.cpl files are not executable paths/);
+  assert.match(app.description, /Device Manager/);
 });
 
 test('开关是分开存的：读不到、写坏了都不影响用户自己配的服务', async () => {

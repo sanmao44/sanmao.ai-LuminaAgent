@@ -1,3 +1,5 @@
+import { isVideoDownloadBrowserSession, type VideoDownloadBrowserSession } from '../packages/contracts/video-download';
+
 export type AgentWebMode = 'auto' | 'always' | 'off';
 
 export type AgentWebDecisionReason =
@@ -390,6 +392,57 @@ export function likelyFileGenerationRequest(input: string) {
 }
 
 type VideoDownloadContextMessage = { role?: string; content?: unknown };
+type VideoDownloadBrowserSessionAuthorization = { browser: VideoDownloadBrowserSession; url: string };
+
+const VIDEO_DOWNLOAD_BROWSER_PATTERN = /\b(?:brave|chrome|chromium|edge|firefox|opera|safari|vivaldi|whale)\b/i;
+
+export function videoDownloadBrowserSessionAuthorization(input: string, context: readonly VideoDownloadContextMessage[] = []): VideoDownloadBrowserSessionAuthorization | undefined {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  const namesBrowser = VIDEO_DOWNLOAD_BROWSER_PATTERN.test(text);
+  const namesSession = /cookies?|cookie|browser\s+session|login\s+session|浏览器会话|登录态|登录会话/i.test(text);
+  const declinesSession = /(?:不要|不用|不使用|不需要|无需|拒绝|取消|don't|do not|without|not use)/i.test(text);
+  const asksInsteadOfSelecting = /[?？]|(?:能不能|是否|可以吗|should i|can i|not sure)/i.test(text);
+  const explicitlySelectsSession = /(?:使用|用|读取|授权|允许|\buse\b|\bread\b|\bauthorize\b|\ballow\b|\bwith\b|\bvia\b)/i.test(text);
+  if (!namesBrowser || !namesSession || declinesSession || asksInsteadOfSelecting || !explicitlySelectsSession) return undefined;
+  if (!videoDownloadUrl(text)) {
+    const previous = context.at(-1);
+    const previousText = previous?.role === 'assistant' ? String(previous.content || '') : '';
+    const askedForSessionConsent = /cookies?|cookie|browser\s+session|login\s+session|浏览器会话|登录态|登录会话/i.test(previousText)
+      && (/[?？]/.test(previousText) || /(?:should i|would you like|do you want|是否|可以吗|要不要|需不需要)/i.test(previousText));
+    if (!askedForSessionConsent) return undefined;
+  }
+
+  const recentUsers = context.filter((message) => message.role === 'user').slice(-3);
+  const recentText = [...recentUsers.map((message) => String(message.content || '')), text].join(' ');
+  const recentUrls = [...recentUsers.map((message) => String(message.content || '')).join(' '), text]
+    .flatMap((value) => value.match(/https?:\/\/\S+/ig) || []);
+  const knownVideoHost = recentUrls.some((value) => {
+    try {
+      return /(?:^|\.)(?:youtube\.com|youtu\.be|bilibili\.com|douyin\.com|vimeo\.com|xinpianchang\.com)$/i.test(new URL(value).hostname);
+    } catch {
+      return false;
+    }
+  });
+  const hasVideoDownloadIntent = /(?:下载|download)/i.test(recentText)
+    && (/(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|douyin|vimeo|xinpianchang)/i.test(recentText) || knownVideoHost);
+  if (!hasVideoDownloadIntent) return undefined;
+
+  const url = videoDownloadUrl(text, recentUsers);
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+    const browser = text.match(VIDEO_DOWNLOAD_BROWSER_PATTERN)?.[0].toLowerCase();
+    if (!isVideoDownloadBrowserSession(browser)) return undefined;
+    return { browser, url: parsed.toString() };
+  } catch {
+    return undefined;
+  }
+}
+
+function isAuthorizedBrowserSessionFollowUp(text: string, context: readonly VideoDownloadContextMessage[]) {
+  return Boolean(videoDownloadBrowserSessionAuthorization(text, context));
+}
 
 /** Return the URL belonging to the current public-video download request. */
 export function videoDownloadUrl(input: string, context: readonly VideoDownloadContextMessage[] = []) {
@@ -410,6 +463,7 @@ export function videoDownloadUrl(input: string, context: readonly VideoDownloadC
 export function likelyVideoDownloadRequest(input: string, context: readonly VideoDownloadContextMessage[] = []) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
+  if (isAuthorizedBrowserSessionFollowUp(text, context)) return true;
   // A bare video URL is an execution follow-up only when the nearest prior
   // user turn explicitly established "send a video link later and download it".
   // The assistant's prose cannot grant this action, and JEV still reviews the
@@ -421,7 +475,8 @@ export function likelyVideoDownloadRequest(input: string, context: readonly Vide
       || /^(?:www\.)?youtube\.com$/.test(hostname)
       || /^(?:www\.|m\.)?bilibili\.com$/.test(hostname)
       || /^(?:www\.)?douyin\.com$/.test(hostname)
-      || /^(?:www\.)?vimeo\.com$/.test(hostname);
+      || /^(?:www\.)?vimeo\.com$/.test(hostname)
+      || /^(?:www\.)?xinpianchang\.com$/.test(hostname);
     const previousUser = [...context].reverse().find((message) => message.role === 'user');
     const previousInstruction = String(previousUser?.content || '').replace(/\s+/g, ' ');
     const hasDownloadOnLinkInstruction = /(?:以后|后续|之后|下次|later|next time).{0,40}(?:视频链接|视频地址|video link|链接|地址).{0,24}(?:下载|保存|download|save)/i.test(previousInstruction);
@@ -435,7 +490,7 @@ export function likelyVideoDownloadRequest(input: string, context: readonly Vide
   // the same sentence also says “download video”.
   if (/https?:\/\/(?:www\.)?github\.com\//i.test(text)
     && /(?:skill|repo)/i.test(text)) return false;
-  const hasVideoSignal = /(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|抖音|快手|douyin|vimeo)/i.test(text);
+  const hasVideoSignal = /(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|抖音|快手|douyin|vimeo|xinpianchang)/i.test(text);
   if (hasVideoSignal && /https?:\/\/\S+/i.test(text)) {
     if (/https?:\/\/(?:www\.)?github\.com\//i.test(text)) return false;
     return true;

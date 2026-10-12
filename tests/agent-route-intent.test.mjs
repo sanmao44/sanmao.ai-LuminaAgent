@@ -664,7 +664,7 @@ test('video download uses JEV before exposing the native downloader', async () =
       if (rawModel === 'jev-1.13') return { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"用户明确要求下载视频"}' };
       if (payload.messages.some((message) => message.role === 'tool')) return { content: '已完成下载。' };
       if (payload.tools?.some((tool) => tool.function.name === 'video_download')) {
-        return { content: null, tool_calls: [{ id: 'video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4' }) } }] };
+        return { content: null, tool_calls: [{ id: 'video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4', cookiesFromBrowser: 'chrome' }) } }] };
       }
       return { content: '未执行下载。' };
     },
@@ -677,7 +677,41 @@ test('video download uses JEV before exposing the native downloader', async () =
   assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
   assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'video_download')));
   assert.deepEqual(downloaded.map((request) => request.url), ['https://www.youtube.com/watch?v=example123']);
+  assert.equal(downloaded[0].cookiesFromBrowser, undefined);
   assert.match(data.message, /完成下载/);
+});
+
+test('browser cookies are passed only after the user authorizes the matching video URL and browser', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const downloaded = [];
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async (request) => {
+      downloaded.push(request);
+      return { filePath: 'C:\\media\\authorized.mp4', bytes: 1234 };
+    },
+    reply: (payload, _callCount, rawModel) => {
+      if (rawModel === 'jev-1.13') return { content: '{"mode":"follow_up","deliverable":"OTHER","confidence":"high","reason":"用户明确授权本次浏览器会话"}' };
+      if (payload.messages.some((message) => message.role === 'tool')) return { content: 'Download completed.' };
+      if (payload.tools?.some((tool) => tool.function.name === 'video_download')) {
+        return { content: null, tool_calls: [{ id: 'authorized-video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4', cookiesFromBrowser: 'firefox' }) } }] };
+      }
+      return { content: 'Download was not executed.' };
+    },
+  });
+  const url = 'https://www.xinpianchang.com/a13727498';
+  await agent.post([
+    { role: 'user', content: `Download this video ${url}` },
+    { role: 'assistant', content: 'HTTP 403. Should I use your Chrome browser session?' },
+    { role: 'user', content: 'Use Chrome browser session to retry the download.' },
+  ]);
+
+  assert.equal(downloaded.length, 1);
+  assert.equal(downloaded[0].url, url);
+  assert.equal(downloaded[0].cookiesFromBrowser, 'chrome');
 });
 
 test('a bare video URL follows the prior download-on-link instruction through JEV and the native tool', async () => {

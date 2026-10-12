@@ -1,15 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
-const sourceUrl = new URL('../lib/agent-web.ts', import.meta.url);
-const source = await readFile(sourceUrl, 'utf8');
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  fileName: sourceUrl.pathname,
-}).outputText;
-const web = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const web = createTsRequire(process.cwd())('./lib/agent-web');
 
 test('only offers the MCP manager when the turn is about MCP services', () => {
   for (const input of ['帮我接入 GitHub 的 MCP 服务', '看看我现在接了哪些 MCP', '添加一个远程服务', '把 stub-notes 服务删掉', '给这个服务自检一下', '停用这个 server']) {
@@ -311,6 +304,27 @@ test('bare video URL continues an explicit earlier download-on-link instruction'
   assert.equal(web.likelyVideoDownloadRequest(url, [{ role: 'assistant', content: '以后给视频链接就下载' }]), false);
   assert.equal(web.likelyVideoDownloadRequest(url, [{ role: 'user', content: instruction }, { role: 'user', content: '今天天气怎么样？' }]), false);
   assert.equal(web.likelyVideoDownloadRequest('https://github.com/yt-dlp/yt-dlp', [{ role: 'user', content: instruction }]), false);
+});
+
+test('explicit browser-session consent continues only a recent video download', () => {
+  const url = 'https://www.xinpianchang.com/a13727498';
+  const context = [
+    { role: 'user', content: `下载这个视频 ${url}` },
+    { role: 'assistant', content: '站点返回 403。是否授权使用浏览器登录态重试？' },
+  ];
+
+  assert.equal(web.likelyVideoDownloadRequest('使用 Chrome 登录态重试', context), true);
+  assert.equal(web.likelyVideoDownloadRequest('不要使用 Chrome 登录态重试', context), false);
+  assert.equal(web.likelyVideoDownloadRequest('使用 Chrome 登录态重试', [{ role: 'assistant', content: `下载视频 ${url}` }]), false);
+  assert.equal(web.likelyVideoDownloadRequest('使用 Chrome 登录态重试', [
+    { role: 'user', content: `下载这个视频 ${url}` },
+    { role: 'assistant', content: '视频最高支持 1080p。' },
+  ]), false);
+  assert.equal(web.likelyVideoDownloadRequest('使用 Chrome 登录态重试', [
+    { role: 'user', content: `下载这个视频 ${url}` },
+    { role: 'assistant', content: '站点返回 403。是否授权使用浏览器登录态重试？' },
+    { role: 'user', content: '今天天气怎么样？' },
+  ]), false);
 });
 
 test('上一轮提出可交付文件、本轮只回“1/好/可以”时仍然下发 Office 工具', () => {

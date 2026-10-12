@@ -1,5 +1,6 @@
 import type { CanvasPatch } from '../contracts/canvas';
 import type { ChatMessage } from '../contracts/chat';
+import { isVideoDownloadBrowserSession, type VideoDownloadBrowserSession } from '../contracts/video-download';
 
 export type NativeCapabilityResult = {
   message: ChatMessage;
@@ -23,7 +24,7 @@ type NativeCapabilityInput = {
   validateCanvasPatch?: (document: unknown, patch: CanvasPatch) => { ok: true } | { ok: false; error: string; operationIndex?: number };
   runId?: string;
   onProgress?: (line: string) => void;
-  videoDownload?: (input: { url: string; outputDirectory: string; format?: 'best' | 'bestvideo+bestaudio/best'; signal: AbortSignal; onProgress?: (line: string) => void }) => Promise<{ filePath: string; bytes: number }>;
+  videoDownload?: (input: { url: string; outputDirectory: string; format?: 'best' | 'bestvideo+bestaudio/best'; cookiesFromBrowser?: VideoDownloadBrowserSession; signal: AbortSignal; onProgress?: (line: string) => void }) => Promise<{ filePath: string; bytes: number }>;
   videoStoragePath?: string;
 };
 
@@ -98,10 +99,15 @@ export async function executeVideoDownloadCapability(input: NativeCapabilityInpu
   }
   try {
     const format = input.args.format === 'best' || input.args.format === 'bestvideo+bestaudio/best' ? input.args.format : undefined;
+    const browserValue = input.args.cookiesFromBrowser;
+    if (browserValue !== undefined && !isVideoDownloadBrowserSession(browserValue)) {
+      return { message: toolMessage(input.callId, { ok: false, error: 'Unsupported browser session for video download.' }) };
+    }
     const result = await input.videoDownload({
       url,
       outputDirectory: input.videoStoragePath,
       ...(format ? { format } : {}),
+      ...(browserValue ? { cookiesFromBrowser: browserValue } : {}),
       signal: input.signal,
       onProgress: (line) => input.onProgress?.(line),
     });

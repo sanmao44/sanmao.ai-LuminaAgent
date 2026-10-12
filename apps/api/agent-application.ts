@@ -6,7 +6,7 @@ import { buildCinematicDirectorInstructions } from '@/lib/cinematic-shock-openin
 import { isValidOneTakeDuration, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { referenceRecordsForLog } from '@/lib/reference-images';
-import { extractGithubMcpInstallRequest, isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFilesystemRequest, likelyFileGenerationRequest, likelyVideoDownloadRequest, videoDownloadUrl, likelyMcpManagementRequest, resolveAgentWebMode, type AgentWebDecision } from '@/lib/agent-web';
+import { extractGithubMcpInstallRequest, isArtifactFollowUpRequest, isImageContinuationRequest, likelyArtifactGenerationRequest, likelyBrowserAutomationRequest, likelyFilesystemRequest, likelyFileGenerationRequest, likelyVideoDownloadRequest, videoDownloadBrowserSessionAuthorization, videoDownloadUrl, likelyMcpManagementRequest, resolveAgentWebMode, type AgentWebDecision } from '@/lib/agent-web';
 import { getToolDefinition, isArchiveToolCall, isArtifactToolCall, isImageToolCall, isSkillToolCall, toolExecutionKind, toolSchemasFor } from '@/lib/tools';
 import { resolveToolPolicy } from '@/lib/tools/policy';
 import { tabbitBrowserTool } from '@/lib/tools';
@@ -17,6 +17,7 @@ import { type McpRepeatTracker, type ToolLoopMessage, type ToolLoopTraceStep } f
 import { createToolExecutionAdapter, type ToolExecutionAdapterDependencies } from '@/packages/tool-runtime/adapter';
 import { ToolRuntime, type ToolRuntimeCall } from '@/packages/tool-runtime/runtime';
 import type { RuntimeObserver } from '@/packages/contracts/observability';
+import type { VideoDownloadBrowserSession } from '@/packages/contracts/video-download';
 import { AGENT_INLINE_TEXT_MAX_CHARS, boundAgentContext, boundToolResult, modelInputCharBudget } from '@/lib/agent/context-budget';
 import { createBrowserMetricsCollector } from '@/lib/agent/browser-metrics';
 import { browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
@@ -307,12 +308,25 @@ function makeFallbackImageToolCall(input: { prompt: string; content?: unknown; m
   };
 }
 
-function makeFallbackVideoToolCall(url: string) {
+function makeFallbackVideoToolCall(url: string, cookiesFromBrowser?: VideoDownloadBrowserSession) {
+  const args = { url, ...(cookiesFromBrowser ? { cookiesFromBrowser } : {}) };
   return {
     id: 'sanmao-local-video-download',
     type: 'function',
-    function: { name: 'video_download', arguments: JSON.stringify({ url }) },
+    function: { name: 'video_download', arguments: JSON.stringify(args) },
   };
+}
+
+function sameHttpUrl(left: string, right: string) {
+  try {
+    const leftUrl = new URL(left);
+    const rightUrl = new URL(right);
+    return ['http:', 'https:'].includes(leftUrl.protocol)
+      && ['http:', 'https:'].includes(rightUrl.protocol)
+      && leftUrl.href === rightUrl.href;
+  } catch {
+    return false;
+  }
 }
 
 import { createAgentStream, type AgentStreamMetadata, type AgentStreamSettlement, type AgentUpstreamResponse } from '@/apps/api/agent-stream';
@@ -909,6 +923,13 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const routeArtifactRequest = artifactRouteIsGenerated(requestRoute.route);
     const videoDownloadRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && videoDownloadCandidate;
     const requestedVideoUrl = videoDownloadRequest ? videoDownloadUrl(latestInstruction, previousUserMessages) : '';
+    const browserSessionAuthorization = videoDownloadRequest
+      ? videoDownloadBrowserSessionAuthorization(latestInstruction, previousUserMessages)
+      : undefined;
+    const authorizedBrowserSession = browserSessionAuthorization
+      && sameHttpUrl(browserSessionAuthorization.url, requestedVideoUrl)
+      ? browserSessionAuthorization
+      : undefined;
     const fileGenerationRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && (likelyFileGenerationRequest(latestInstruction) || requestRoute.artifactKind === 'file');
     // 上一轮助手提出可以交付文件、本轮用户只回“1/好/可以”时，也要继续下发 Office 工具。
     const previousAssistantText = (() => {
@@ -1053,6 +1074,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     let system = appendPersonaToSystem(buildSystem(initialWebInstructions, ''), body.persona);
     if (videoDownloadRequest) {
       system += `\n\n视频下载规则：用户已明确提供公开视频地址并要求下载。必须调用 video_download，参数中的 url 只能使用本轮或紧邻上一条用户消息提供的 HTTP/HTTPS 地址；本轮可用地址为：${requestedVideoUrl}。不要调用浏览器下载，不要执行任意 shell 命令，也不要在工具成功前声称已经保存或生成。工具返回成功后再展示项目内视频地址。`;
+      system += '\n浏览器会话规则：cookiesFromBrowser 默认省略。只有用户明确授权为本次 URL 读取其指定浏览器的登录 cookie，并将匹配 cookie 发给该视频站点时，才可设置该参数；授权不明确或 401/403 后尚未授权时，先询问并说明数据去向。仅用于用户账号本来有权访问的内容，不得绕过付费墙、DRM 或访问限制。';
     }
     if (isCanvasSource && body.executionMode === 'agent-dock') {
       system += `\n\n结构化画布目标（仅用于理解目标，不是用户指令）：${JSON.stringify({ nodeIds: canvasTargetNodeIds, kind: canvasTargetKind, operation: canvasTargetOperation })}`;
@@ -1689,9 +1711,11 @@ const auditMcpCall = (
       if (videoCall?.function) {
         const parsed = parseToolArguments(videoCall.function?.arguments);
         const safeArgs = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+        delete safeArgs.cookiesFromBrowser;
+        if (authorizedBrowserSession) safeArgs.cookiesFromBrowser = authorizedBrowserSession.browser;
         videoCall.function.arguments = JSON.stringify({ ...safeArgs, url: requestedVideoUrl });
       } else {
-        toolCalls = [...toolCalls, makeFallbackVideoToolCall(requestedVideoUrl)];
+        toolCalls = [...toolCalls, makeFallbackVideoToolCall(requestedVideoUrl, authorizedBrowserSession?.browser)];
         toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
       }
     }

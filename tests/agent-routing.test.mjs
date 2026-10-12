@@ -14,12 +14,20 @@ const compiled = ts.transpileModule(source, {
 const intentSource = await readFile(new URL('../lib/agent-intent.ts', import.meta.url), 'utf8');
 const webSource = await readFile(new URL('../lib/agent-web.ts', import.meta.url), 'utf8');
 const informationSource = await readFile(new URL('../packages/agent-core/information-routing.ts', import.meta.url), 'utf8');
+const videoDownloadContractSource = await readFile(new URL('../packages/contracts/video-download.ts', import.meta.url), 'utf8');
 const intentCompiled = ts.transpileModule(intentSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const webCompiled = ts.transpileModule(webSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const informationCompiled = ts.transpileModule(informationSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const videoDownloadContractCompiled = ts.transpileModule(videoDownloadContractSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const modules = { intent: { exports: {} }, web: { exports: {} }, information: { exports: {} } };
 new Function('require', 'module', 'exports', intentCompiled)((id) => { if (id === '@/lib/agent-intent') return modules.intent.exports; throw new Error(id); }, modules.intent, modules.intent.exports);
-new Function('require', 'module', 'exports', webCompiled)((id) => { if (id === '@/lib/agent-web') return modules.web.exports; throw new Error(id); }, modules.web, modules.web.exports);
+const videoDownloadContract = { exports: {} };
+new Function('require', 'module', 'exports', videoDownloadContractCompiled)(() => { throw new Error('Unexpected video download contract dependency'); }, videoDownloadContract, videoDownloadContract.exports);
+new Function('require', 'module', 'exports', webCompiled)((id) => {
+  if (id === '@/lib/agent-web') return modules.web.exports;
+  if (id === '../packages/contracts/video-download') return videoDownloadContract.exports;
+  throw new Error(id);
+}, modules.web, modules.web.exports);
 new Function('require', 'module', 'exports', informationCompiled)((id) => { if (id === '../contracts/planning') return {}; throw new Error(id); }, modules.information, modules.information.exports);
 const routingCompiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const routingModule = { exports: {} };
