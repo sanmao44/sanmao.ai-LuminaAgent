@@ -35,6 +35,8 @@ const filePattern = /(?:文件|附件|csv|tsv|json|markdown|\.md\b|\.txt\b|\.htm
 const contextReferencePattern = /(?:刚才|上一条|上面|之前|此前|继续|再来|再写|再做|基于|按照|按刚才|这个|这张|这份|该|它|他|她|同上|沿用|保持|换成|改成|第[一二三四五六七八九十\d]+张)/i;
 const selfContainedPattern = /(?:只根据这句话|只看本句|不要结合上下文|无需上下文|独立回答|不参考历史|不用参考之前)/i;
 const externalServiceActionPattern = /(?:mcp|model context protocol|接入|连接|调用|同步|提交|发送|发到|创建|更新|删除|读取|查看|列出|搜索|查询).{0,24}(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器|api)|(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器).{0,24}(?:接入|连接|调用|同步|提交|发送|创建|更新|删除|读取|查看|列出|搜索|查询)/i;
+const desktopTargetPattern = /(?:windows|电脑|桌面|窗口|本地(?:软件|应用|程序)|软件|应用程序|记事本|计算器|设备管理器)/i;
+const desktopActionPattern = /(?:打开|启动|切换|点击|输入|打字|滚动|截图|截屏|操作|控制|按键|关闭|launch|open|click|type|scroll|screenshot)/i;
 const githubRepositoryEntityPattern = /(?:github(?:\.com)?|仓库|repo|pull request|\bpr\b|issue|commit|提交|分支|branch|release)/i;
 const githubRepositoryQueryActionPattern = /(?:我的|当前|这个|该|本|上述|上面|最近|最新|多少|几个|哪些|列表|列出|查看|看看|查询|搜索|状态|详情|有|谁|合并)/i;
 
@@ -110,10 +112,11 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
     : shouldUseAgentWebSearch(options.webMode || 'auto', text, webContext);
   const explicitExternalAction = executable && externalServiceActionPattern.test(text)
     && /(?:mcp|连接|接入|调用|同步|提交|发送|创建|更新|删除)/i.test(text);
+  const desktopAutomation = executable && desktopTargetPattern.test(text) && desktopActionPattern.test(text);
   // GitHub repository/PR/Issue queries are read-only actions even when written
   // as a question. They need MCP discovery and tool execution, but do not
   // grant any write permission.
-  const connectorAction = !skillInstallation && executable && (browserAutomation || filesystem || likelyMcpManagementRequest(text) || explicitExternalAction)
+  const connectorAction = !skillInstallation && executable && (browserAutomation || filesystem || desktopAutomation || likelyMcpManagementRequest(text) || explicitExternalAction)
     || githubRepositoryQuery;
   const information = classifyAgentInformationSource(text, {
     capabilityQuestion,

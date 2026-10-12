@@ -318,6 +318,8 @@ test('Windows-MCP routes Device Manager requests and documents the safe App laun
   assert.match(app.description, /mmc\.exe/);
   assert.match(app.description, /devmgmt\.msc/);
   assert.match(app.description, /Device Manager/);
+  const [type] = mcp.mcpToolDefinitions({ ...server, enabledTools: ['Type'] }, [{ name: 'Type', description: 'Type text into an application.', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: false } }]);
+  assert.match(type.description, /requires text and either loc=\[x,y\] or label from a fresh Snapshot/);
 });
 
 test('旧版 Windows-MCP 手动副本不会与内置连接器并行运行', async () => {

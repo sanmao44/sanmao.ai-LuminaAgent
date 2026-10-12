@@ -351,6 +351,38 @@ test('discovered desktop tools reach the model instead of the compact no-tools p
   }
 });
 
+test('desktop Agent keeps calling tools after launch until typing and a fresh snapshot are verified', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:windows-test:${name}`, name: `windows-test__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+  const steps = [
+    { name: 'App', args: { mode: 'launch_executable', executable: 'C:\\Windows\\System32\\notepad.exe' } },
+    { name: 'Snapshot', args: {} },
+    { name: 'Type', args: { text: 'SANMAO_MCP_AGENT_CHECK', loc: [10, 20] } },
+    { name: 'Snapshot', args: {} },
+  ];
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [tool('App', false), tool('Snapshot', true), tool('Type', false)],
+    callMcpTool: async (_server, name) => ({ isError: false, text: name === 'Snapshot' ? 'Notepad editor SANMAO_MCP_AGENT_CHECK' : `${name} ok` }),
+    reply: (_payload, count) => {
+      const step = steps[count - 1];
+      return step
+        ? { content: null, tool_calls: [{ id: `desktop-${count}`, type: 'function', function: { name: `windows-test__${step.name}`, arguments: JSON.stringify(step.args) } }] }
+        : { content: 'Verified the text in the latest Notepad snapshot.' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '请打开Windows桌面的记事本，在窗口输入SANMAO_MCP_AGENT_CHECK，然后截图核验' }]);
+  assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App', 'Snapshot', 'Type', 'Snapshot']);
+  assert.match(data.message, /Verified the text/);
+  assert.ok(agent.calls.length >= 5);
+  assert.match(agent.calls[0].messages[0].content, /Type 必须传入.*loc=\[x,y\] 或 label/);
+});
+
 test('smart variant planning uses the isolated JSON-only route without tools', async () => {
   const agent = harness({ reply: () => ({ content: '{"categories":[],"variants":[]}' }) });
   const data = await agent.post([{ role: 'user', content: '按 sourceId 整理变体' }], {

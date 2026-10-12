@@ -46,13 +46,22 @@ test('discovery resolution preserves policy while activating selected desktop to
   for (const input of ['打开个性化', '打开网络设置', '打开设备管理器']) {
     const plan = routing.classifyAgentRequest(input);
     assert.equal(routing.resolveAgentToolPlan(plan, ['windows-test']).useMcp, true, input);
-    assert.equal(routing.resolveAgentToolPlan(plan, []).useMcp, false, input);
-    assert.equal(plan.tools.useMcp, false, 'resolution must not mutate the original plan');
+    assert.equal(routing.resolveAgentToolPlan(plan, []).useMcp, /设备管理器/.test(input), input);
+    assert.equal(plan.tools.useMcp, /设备管理器/.test(input), 'explicit desktop targets activate MCP without mutating the resolved plan');
   }
   for (const input of ['推送今日AI新闻', '今天有什么新闻？', '怎么打开网络设置？', '你能打开辅助功能吗？']) {
     const plan = routing.classifyAgentRequest(input);
     assert.equal(routing.resolveAgentToolPlan(plan, ['windows-test']).useMcp, false, input);
   }
+});
+
+test('explicit multi-step desktop command activates MCP but a capability question does not', () => {
+  const command = routing.classifyAgentRequest('请打开记事本，在窗口里输入测试文字，然后截图核验');
+  assert.equal(command.tools.useMcp, true);
+  assert.equal(command.policy.allowMcp, true);
+  const question = routing.classifyAgentRequest('你能在记事本里输入文字吗？');
+  assert.equal(question.tools.useMcp, false);
+  assert.equal(question.policy.allowMcp, false);
 });
 
 test('shared request mode lets role-voice questions activate the matching skill', () => {

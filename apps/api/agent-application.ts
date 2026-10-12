@@ -163,6 +163,7 @@ const MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN = AGENT_BROWSER_EXECUTION_LIMITS.maxCa
 const MCP_BROWSER_TURN_TIME_BUDGET_MS = AGENT_BROWSER_EXECUTION_LIMITS.toolTimeMs;
 /** 自然语言中途状态也要回到工具循环，最多允许几次恢复提示，避免过早停在半截。 */
 const MCP_BROWSER_RECOVERY_PROMPT_MAX = AGENT_BROWSER_EXECUTION_LIMITS.recoveryPrompts;
+const MCP_DESKTOP_RECOVERY_PROMPT_MAX = 2;
 
 
 function formatFileSizeLabel(size: number) {
@@ -1480,6 +1481,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     //   ...(priorityServerIds.length ? { priorityServerIds } : {}),
     // }).catch(() => ({ servers: [], tools: [] }));
     const mcpTools = tabbitAvailable ? [...mcpRuntime.tools, tabbitBrowserTool] : mcpRuntime.tools;
+    const desktopAutomationRequest = mcpExecutionRequest && mcpRuntime.servers.some((server) => server.catalogId === 'windows-mcp');
     const mcpServerById = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
 // 授权目录与数据目录在整轮里只读一次：中途用户在面板改授权，下一轮才生效。
 const mcpFilesystemRoots = mcpAllowedThisTurn ? listFilesystemRoots() : [];
@@ -1537,6 +1539,11 @@ const auditMcpCall = (
     }
     if (agentSystemPromptInUse && tabbitBrowserToolAvailable) {
       system += `\n\n${TABBIT_BROWSER_TOOL_GUIDE}`;
+      llmMessages[0] = { role: 'system', content: system };
+      llmMessages = boundAgentContext(llmMessages, contextMaxChars);
+    }
+    if (agentSystemPromptInUse && desktopAutomationRequest) {
+      system += '\n\nWindows 桌面任务必须按顺序执行并核验：打开应用后获取新的 Snapshot，确认目标窗口，再点击或输入，最后重新获取 Snapshot 或 WaitFor 核对结果。Type 必须传入来自最新 Snapshot 的 loc=[x,y] 或 label，不能只传 text。任何工具错误或控制器不可用都表示任务未完成；不要把已打开窗口当作全部任务完成。';
       llmMessages[0] = { role: 'system', content: system };
       llmMessages = boundAgentContext(llmMessages, contextMaxChars);
     }
@@ -1821,9 +1828,10 @@ const auditMcpCall = (
     let skillInstalls = 0;
     let generatedArtifactCount = 0;
     let mcpToolCallCount = 0;
-    const mcpTurnBudgetLimit = browserAutomationRequest ? MCP_BROWSER_TURN_TIME_BUDGET_MS : MCP_TURN_TIME_BUDGET_MS;
-    const mcpToolCallLimit = browserAutomationRequest ? MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN : MCP_TOOL_MAX_CALLS_PER_TURN;
-    const mcpFollowupMaxRounds = browserAutomationRequest ? MCP_BROWSER_TOOL_FOLLOWUP_MAX_ROUNDS : MCP_TOOL_FOLLOWUP_MAX_ROUNDS;
+    const extendedMcpRequest = browserAutomationRequest || desktopAutomationRequest;
+    const mcpTurnBudgetLimit = extendedMcpRequest ? MCP_BROWSER_TURN_TIME_BUDGET_MS : MCP_TURN_TIME_BUDGET_MS;
+    const mcpToolCallLimit = extendedMcpRequest ? MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN : MCP_TOOL_MAX_CALLS_PER_TURN;
+    const mcpFollowupMaxRounds = extendedMcpRequest ? MCP_BROWSER_TOOL_FOLLOWUP_MAX_ROUNDS : MCP_TOOL_FOLLOWUP_MAX_ROUNDS;
     let mcpTurnBudget = mcpTurnBudgetLimit;
 
     const executionCalls = [...toolCalls].sort((left: any, right: any) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right)));
@@ -1832,6 +1840,7 @@ const auditMcpCall = (
     let deferredCalls: any[] = [];
     let browserRecoveryNeeded = false;
     let browserCompletionPrompts = 0;
+    let desktopCompletionPrompts = 0;
     const browserUses: BrowserToolUse[] = [];
     // 同一个调用原地打转的检测表：同 server + 工具 + 参数连续拿到同样的结果就该停了。
     const mcpRepeatTracker: McpRepeatTracker = new Map();
@@ -2162,6 +2171,7 @@ const auditMcpCall = (
       toolTrace.push(...followups.trace);
     }
     let mcpFollowupText = '';
+    let mcpFollowupFailure = '';
     const mcpFollowupTools = callableTools.filter((tool: any) => ['mcp', 'tabbit'].includes(toolExecutionKind(tool?.function?.name, mcpTools) || ''));
     /** 只有生成工具产出的文件才算这一轮已经收尾；浏览器下载出来的文件不该挡住后面的操作。 */
     const generatedDeliveryCount = generatedFiles.length - browserDownloadCount;
@@ -2177,7 +2187,7 @@ const auditMcpCall = (
         mcpTools: mcpFollowupTools,
         maxSteps: mcpFollowupMaxRounds,
         maxCalls: Math.max(1, mcpToolCallLimit - mcpToolCallCount),
-        deadlineMs: browserAutomationRequest ? AGENT_BROWSER_EXECUTION_LIMITS.deadlineMs : undefined,
+        deadlineMs: extendedMcpRequest ? AGENT_BROWSER_EXECUTION_LIMITS.deadlineMs : undefined,
         signal: requestController.signal,
         callModel: async (messages) => {
           const reply = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
@@ -2186,6 +2196,7 @@ const auditMcpCall = (
             tool_choice: 'auto',
           }, requestController.signal).catch((error) => {
             if (requestController.signal.aborted) throw requestController.signal.reason || error;
+            if (desktopAutomationRequest) mcpFollowupFailure = error instanceof Error ? error.message : String(error);
             return null;
           });
           const rawReply = reply?.choices?.[0]?.message || null;
@@ -2198,6 +2209,11 @@ const auditMcpCall = (
         },
         shouldContinue: () => !deferredCalls.length && !stalledMcpReason && mcpToolCallCount < mcpToolCallLimit && mcpTurnBudget > 0,
         continueOnEmpty: () => {
+          if (desktopAutomationRequest) {
+            if (stalledMcpReason || desktopCompletionPrompts >= MCP_DESKTOP_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
+            desktopCompletionPrompts += 1;
+            return '桌面操作仍需核验。请获取当前 Snapshot，逐项核对用户命令，并继续执行尚未完成的动作；不要猜测成功。';
+          }
           if (!browserAutomationRequest || browserExternalBlocker(browserUses) || browserCompletionPrompts >= MCP_BROWSER_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
           browserCompletionPrompts += 1;
           const recovery = browserRecoveryNeeded;
@@ -2205,6 +2221,11 @@ const auditMcpCall = (
           return browserContinuationPrompt(recovery);
         },
         continueOnText: ({ text }) => {
+          if (desktopAutomationRequest && /(?:尚未|未完成|无法|失败|继续|正在|还需)/.test(text)) {
+            if (stalledMcpReason || desktopCompletionPrompts >= MCP_DESKTOP_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
+            desktopCompletionPrompts += 1;
+            return '请重新观察当前桌面状态，继续执行用户命令中尚未完成的步骤；全部验证成功后再回答。';
+          }
           if (!browserAutomationRequest || browserExternalBlocker(browserUses) || browserCompletionPrompts >= MCP_BROWSER_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
           const submissionGap = browserTextSubmissionGap(latestInstruction, browserUses);
           if (!browserTextNeedsContinuation(text) && !submissionGap && !hasInlineToolCallMarkup(text)) return false;
@@ -2218,6 +2239,20 @@ const auditMcpCall = (
       const { stepMessages, stepReply } = mcpLoop;
       mcpFollowupText = mcpLoop.text;
       toolTrace.push(...mcpLoop.trace);
+      if (desktopAutomationRequest && !deferredCalls.length) {
+        const stopReasons: Record<string, string> = {
+          deadline: '桌面操作达到总时长上限',
+          max_steps: '桌面操作达到规划轮数上限',
+          max_calls: '桌面操作达到工具调用次数上限',
+          signal: '桌面操作已取消',
+          stopped: '桌面操作达到调用或耗时上限',
+        };
+        const failedDesktopTool = usedMcpTools.some((tool) => tool.server === mcpRuntime.servers.find((server) => server.catalogId === 'windows-mcp')?.name && !tool.ok);
+        const reason = stalledMcpReason || mcpFollowupFailure || stopReasons[mcpLoop.stopReason]
+          || (failedDesktopTool ? '桌面工具调用失败，结果尚未核验' : '')
+          || (!mcpLoop.text ? '模型未能继续或核验剩余桌面操作' : '');
+        if (reason) mcpFollowupText = `${reason}。任务未完成；已执行 ${usedMcpTools.filter((tool) => tool.ok).length} 次桌面工具调用，剩余步骤尚未确认。`;
+      }
       if (browserAutomationRequest && !deferredCalls.length) {
         const blocker = browserExternalBlocker(browserUses);
         const gap = browserTextSubmissionGap(latestInstruction, browserUses);

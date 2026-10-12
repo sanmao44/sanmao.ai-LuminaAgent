@@ -40,7 +40,9 @@ function mcpToolDescription(server: McpServerConfig, tool: McpRemoteTool) {
   const isWindowsMcp = serverIdentity.includes('windowsmcp');
   const guidance = isWindowsMcp && tool.name === 'App'
     ? 'Windows-MCP App: for a known absolute .exe, prefer mode="launch_executable" with executable set to that file and args as a string array. The executable must exist and be a real application; never pass PowerShell, a shell command, or a relative path. .msc and .cpl files are not executable paths: launch them through C:\\Windows\\System32\\mmc.exe with the file as an argument. Device Manager example: executable="C:\\Windows\\System32\\mmc.exe", args=["C:\\Windows\\System32\\devmgmt.msc"]. Use mode="launch" with a Start Menu name only when no executable path is known. Verify with a fresh Snapshot or WaitFor before claiming success. '
-    : '';
+    : isWindowsMcp && tool.name === 'Type'
+      ? 'Windows-MCP Type requires text and either loc=[x,y] or label from a fresh Snapshot. It cannot type into the focused window without a target. Refresh Snapshot after changing windows, then choose the editor target before typing. '
+      : '';
   return `[MCP · ${server.name}] ${guidance}${upstream}`.slice(0, MCP_MAX_TOOL_DESCRIPTION_CHARS);
 }
 
