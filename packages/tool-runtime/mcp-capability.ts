@@ -75,6 +75,16 @@ export type McpCapabilityPorts = Omit<
 
 const toolMessage = (callId: string | undefined, payload: unknown): ChatMessage => ({ role: 'tool', tool_call_id: callId, content: JSON.stringify(payload) });
 
+export function windowsMcpUserControlWaitSeconds(text: string): number | null {
+  const hasControlMarker = text.replace(/[^a-z0-9]/gi, '').toLowerCase().includes('usercontrol')
+    || /["']state["']\s*:\s*["']user["']/i.test(text);
+  if (!hasControlMarker) return null;
+  const match = text.match(/["']?wait[_\s-]*seconds["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i);
+  if (!match) return 10;
+  const seconds = Number(match[1]);
+  return Number.isFinite(seconds) ? Math.min(120, Math.ceil(seconds)) : 10;
+}
+
 export async function executeMcpManageCapability(input: McpCapabilityDependencies): Promise<ToolCallRun> {
   const { state, call, args } = input;
   const action = String(args?.action || 'list');
@@ -160,6 +170,16 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
     const result = { isError: !mcpExecution.ok, text: mcpExecution.text };
     state.mcpTurnBudget -= Date.now() - mcpStartedAt;
     state.usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
+    const userControlWaitSeconds = windowsMcpUserControlWaitSeconds(result.text);
+    if (userControlWaitSeconds !== null) {
+      const wait = userControlWaitSeconds > 0
+        ? `请停止鼠标和键盘操作，等待约 ${userControlWaitSeconds} 秒后重新发起请求。`
+        : '请停止鼠标和键盘操作，等桌面控制释放后重新发起请求。';
+      state.stalledMcpReason = `Windows 桌面控制已交还给你。${wait}本轮已停止，不会自动继续。`;
+      const results: ChatMessage[] = [toolMessage(call.id, { ok: false, error: state.stalledMcpReason })];
+      for (const rest of input.stepCalls.slice(input.callIndex + 1)) results.push(toolMessage(rest.id, { ok: false, error: '桌面控制已交还给用户，本轮剩余调用没有执行。' }));
+      return { results, stalled: true };
+    }
     if (server.catalogId === 'playwright' && !meta.readOnly && !result.isError) input.mcpRepeatTracker.clear();
     const repeats = trackMcpRepeat(input.mcpRepeatTracker, mcpCallSignature(meta.serverId, meta.toolName, args), result.text);
     if (repeats >= TOOL_LOOP_MCP_REPEAT_LIMIT) {

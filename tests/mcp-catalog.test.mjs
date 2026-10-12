@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { buildMcpModule } from './tools-build.mjs';
 
@@ -22,6 +24,33 @@ async function fakeInstall(dataDir, id = 'playwright') {
   await mkdir(path.dirname(bin), { recursive: true });
   await writeFile(bin, '// fake\n');
   return bin;
+}
+
+function fakeUvSpawn(runCommand) {
+  const calls = [];
+  const spawnProcess = (command, args, options) => {
+    calls.push({ command, args: [...args], options });
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = () => {};
+    queueMicrotask(async () => {
+      try {
+        const result = await runCommand({ command, args, options });
+        if (result?.stdout) child.stdout.write(result.stdout);
+        if (result?.stderr) child.stderr.write(result.stderr);
+        child.stdout.end();
+        child.stderr.end();
+        child.emit('exit', result?.code ?? 0);
+      } catch (error) {
+        child.stderr.end(error instanceof Error ? error.message : String(error));
+        child.stdout.end();
+        child.emit('exit', 1);
+      }
+    });
+    return child;
+  };
+  return { calls, spawnProcess };
 }
 
 test('目录里只有写死的条目，版本固定不用 latest', () => {
@@ -84,6 +113,79 @@ test('Windows-MCP 目录项固定版本、平台和安全白名单', async () =>
       { name: 'Registry', annotations: { readOnlyHint: false } },
     ]);
     assert.deepEqual(writableDefinitions.map((tool) => tool.mcp.toolName), ['Screenshot', 'Click']);
+  });
+});
+
+test('Windows-MCP uv 安装会复用已有 Python 并补装固定包', { skip: process.platform !== 'win32' }, async () => {
+  await withDataDir(async (dataDir) => {
+    const entry = mcp.findCatalogEntry('windows-mcp');
+    const installRoot = mcp.resolveCatalogInstallRoot(entry.id, { dataDir });
+    const pythonPath = path.join(installRoot, '.venv', 'Scripts', 'python.exe');
+    await mkdir(path.dirname(pythonPath), { recursive: true });
+    await writeFile(pythonPath, 'python');
+    const { calls, spawnProcess } = fakeUvSpawn(async ({ args }) => {
+      assert.equal(args[0], 'pip', '已有 Python 环境不应再次运行 uv venv');
+      const executable = path.join(installRoot, '.venv', 'Scripts', 'windows-mcp.exe');
+      await writeFile(executable, 'entry point');
+      return {};
+    });
+
+    const status = await mcp.installCatalogServer(entry.id, { dataDir }, { prepareUv: async () => {}, spawnProcess });
+    assert.equal(status.installed, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, mcp.resolveCatalogUvExecutable(dataDir));
+    assert.deepEqual(calls[0].args, ['pip', 'install', '--python', pythonPath, 'windows-mcp@0.8.8']);
+    assert.equal(calls[0].options.cwd, installRoot);
+    assert.equal(calls[0].options.shell, false);
+  });
+});
+
+test('Windows-MCP uv 安装会清理并重建缺少 Python 的半成品环境', { skip: process.platform !== 'win32' }, async () => {
+  await withDataDir(async (dataDir) => {
+    const entry = mcp.findCatalogEntry('windows-mcp');
+    const installRoot = mcp.resolveCatalogInstallRoot(entry.id, { dataDir });
+    const venvRoot = path.join(installRoot, '.venv');
+    await mkdir(venvRoot, { recursive: true });
+    const { calls, spawnProcess } = fakeUvSpawn(async ({ args }) => {
+      if (args[0] === 'venv') {
+        assert.ok(args.includes('--clear'));
+        const pythonPath = path.join(venvRoot, 'Scripts', 'python.exe');
+        await mkdir(path.dirname(pythonPath), { recursive: true });
+        await writeFile(pythonPath, 'python');
+        return {};
+      }
+      const executable = path.join(venvRoot, 'Scripts', 'windows-mcp.exe');
+      await writeFile(executable, 'entry point');
+      return {};
+    });
+
+    const status = await mcp.installCatalogServer(entry.id, { dataDir }, { prepareUv: async () => {}, spawnProcess });
+    assert.equal(status.installed, true);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0].args.slice(0, 4), ['venv', '--clear', '--python', '3.14']);
+    assert.equal(calls[0].options.shell, false);
+    assert.equal(calls[1].args.at(-1), 'windows-mcp@0.8.8');
+    assert.ok(calls.every((call) => call.options.cwd === installRoot));
+  });
+});
+
+test('Windows-MCP uv 安装失败会保留可读错误状态和日志', { skip: process.platform !== 'win32' }, async () => {
+  await withDataDir(async (dataDir) => {
+    const entry = mcp.findCatalogEntry('windows-mcp');
+    const installRoot = mcp.resolveCatalogInstallRoot(entry.id, { dataDir });
+    const pythonPath = path.join(installRoot, '.venv', 'Scripts', 'python.exe');
+    await mkdir(path.dirname(pythonPath), { recursive: true });
+    await writeFile(pythonPath, 'python');
+    const { spawnProcess } = fakeUvSpawn(async () => ({ code: 1, stderr: 'No matching distribution found' }));
+
+    await assert.rejects(
+      () => mcp.installCatalogServer(entry.id, { dataDir }, { prepareUv: async () => {}, spawnProcess }),
+      /uv 包安装失败（退出码 1）/,
+    );
+    const status = mcp.catalogRuntimeStatus(entry.id, { dataDir });
+    assert.equal(status.state, 'error');
+    assert.match(status.error, /uv 包安装失败（退出码 1）/);
+    assert.match(status.logTail, /No matching distribution found/);
   });
 });
 
@@ -177,6 +279,26 @@ test('白名单挡掉在服务进程里跑任意代码的工具', async () => {
     ]);
     assert.deepEqual(definitions.map((tool) => tool.name), ['playwright__browser_click']);
   });
+});
+
+test('手动 MCP 连接也永远不下发 PowerShell 或 Registry 原始系统工具', () => {
+  const server = {
+    id: 'cursortouch-windows-mcp',
+    name: 'Windows MCP',
+    url: 'http://127.0.0.1:8080',
+    enabled: true,
+    allowWrite: true,
+    enabledTools: ['Screenshot', 'Click', 'PowerShell', 'Run_PowerShell', 'Registry', 'read_registry_key'],
+  };
+  const definitions = mcp.mcpToolDefinitions(server, server.enabledTools.map((name) => ({
+    name,
+    annotations: { readOnlyHint: name === 'Screenshot' },
+  })));
+  assert.deepEqual(definitions.map((tool) => tool.mcp.toolName), ['Screenshot', 'Click']);
+
+  const unrelatedServer = { ...server, id: 'registry-reference', name: 'Reference MCP' };
+  const unrelated = mcp.mcpToolDefinitions(unrelatedServer, [{ name: 'Registry', annotations: { readOnlyHint: true } }]);
+  assert.deepEqual(unrelated.map((tool) => tool.mcp.toolName), ['Registry']);
 });
 
 test('开关是分开存的：读不到、写坏了都不影响用户自己配的服务', async () => {

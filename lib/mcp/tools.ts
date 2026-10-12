@@ -21,11 +21,18 @@ export function mcpToolId(serverId: string, toolName: string) {
 /**
  * 任何来源都不下发的工具。
  *
- * browser_run_code_unsafe 在 MCP 服务进程里跑任意 JS：等于把整台机器交给模型，
- * 而且它不在 --caps 后面，光靠启动参数关不掉。目录白名单已经排除了它，
- * 这里再兜一道，免得用户配置里的旧清单又把它放回来。
+ * browser_run_code_unsafe 可以在 MCP 服务进程里跑任意 JS；PowerShell 和 Registry
+ * 则提供原始系统访问。即使旧的手动连接器把这些名称放进白名单，也不能下发给模型。
  */
 export const MCP_FORBIDDEN_TOOLS: ReadonlySet<string> = new Set(['browser_run_code_unsafe']);
+
+function isForbiddenMcpTool(server: McpServerConfig, name: string) {
+  if (MCP_FORBIDDEN_TOOLS.has(name)) return true;
+  const serverIdentity = `${server.catalogId || ''} ${server.id} ${server.name}`.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  if (!serverIdentity.includes('windowsmcp') && !serverIdentity.includes('cursortouch')) return false;
+  const normalized = name.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return normalized.includes('powershell') || normalized.includes('registry');
+}
 
 /** 注册表里的运行时 id，和模型看到的名字分开记：名字是给人看的，id 给审计用。 */
 export function mcpRuntimeToolId(serverId: string, toolName: string) {
@@ -74,7 +81,7 @@ export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpR
   const selected = tools
     // 名字要能直接当 function name 下发：上游只接受 [A-Za-z0-9_-]，服务公布怪名字就直接跳过，
     // 否则这一轮整个工具表都会被服务商判成非法请求。
-    .filter((tool) => !MCP_FORBIDDEN_TOOLS.has(tool.name)
+    .filter((tool) => !isForbiddenMcpTool(server, tool.name)
       && (!allowed.size || allowed.has(tool.name))
       && (!readOnlyAllowlist || readOnlyAllowlist.has(tool.name))
       && !isMcpToolSchemaTooLarge(tool)

@@ -129,38 +129,100 @@ function npmInstallArgs(entry: McpStdioCatalogEntry, installRoot: string, regist
   ];
 }
 
-function runUvCatalogInstall(entry: McpStdioCatalogEntry, options: { dataDir?: string }): Promise<void> {
+type UvCatalogInstallPlan = {
+  installRoot: string;
+  pythonPath: string;
+  venvArgs: string[] | null;
+  packageArgs: string[];
+};
+
+export function uvCatalogInstallPlan(entry: McpStdioCatalogEntry, options: { dataDir?: string } = {}): UvCatalogInstallPlan {
   const dataDir = catalogDataDir(options);
   const installRoot = resolveCatalogInstallRoot(entry.id, options);
-  const uv = resolveCatalogUvExecutable(dataDir);
-  mkdirSync(installRoot, { recursive: true });
+  const venvRoot = path.join(installRoot, '.venv');
+  const pythonPath = path.join(venvRoot, 'Scripts', 'python.exe');
+  const venvExists = existsSync(venvRoot);
+  const pythonExists = existsSync(pythonPath);
+  return {
+    installRoot,
+    pythonPath,
+    venvArgs: pythonExists ? null : [
+      'venv',
+      ...(venvExists ? ['--clear'] : []),
+      '--python',
+      entry.runtime?.python || '3.14',
+      venvRoot,
+    ],
+    packageArgs: ['pip', 'install', '--python', pythonPath, `${entry.pkg}@${entry.version}`],
+  };
+}
+
+type CatalogRuntimeDependencies = {
+  spawnProcess?: typeof spawn;
+  prepareUv?: (dataDir: string) => Promise<unknown>;
+};
+
+function runUvCommand(
+  entry: McpStdioCatalogEntry,
+  args: readonly string[],
+  installRoot: string,
+  options: { dataDir?: string },
+  spawnProcess: typeof spawn,
+  label: string,
+): Promise<void> {
+  const uv = resolveCatalogUvExecutable(catalogDataDir(options));
   return new Promise<void>((resolve, reject) => {
-    const child = spawn(uv, [
-      'venv', '--python', entry.runtime?.python || '3.14', path.join(installRoot, '.venv'),
-    ], { shell: false, windowsHide: true, cwd: installRoot, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnProcess(uv, [...args], {
+      shell: false,
+      windowsHide: true,
+      cwd: installRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     const job = installs.get(entry.id);
     if (job) job.child = child;
-    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => appendLog(entry, chunk, options));
     child.stderr.on('data', (chunk: string) => appendLog(entry, chunk, options));
-    const timer = setTimeout(() => { try { child.kill(); } catch {} reject(new Error('uv 环境创建超时')); }, MCP_CATALOG_INSTALL_TIMEOUT_MS);
-    timer.unref?.();
-    child.on('error', (error) => { clearTimeout(timer); reject(new Error(`uv 环境创建失败：${error.message}`)); });
-    child.on('exit', (code) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      if (code !== 0) { reject(new Error(`uv 环境创建失败（退出码 ${code ?? 'null'}）`)); return; }
-      const install = spawn(uv, ['pip', 'install', '--python', path.join(installRoot, '.venv', 'Scripts', 'python.exe'), `${entry.pkg}@${entry.version}`], {
-        shell: false, windowsHide: true, cwd: installRoot, stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      if (job) job.child = install;
-      install.stdout.setEncoding('utf8'); install.stderr.setEncoding('utf8');
-      install.stdout.on('data', (chunk: string) => appendLog(entry, chunk, options));
-      install.stderr.on('data', (chunk: string) => appendLog(entry, chunk, options));
-      install.on('error', (error) => reject(new Error(`uv 包安装失败：${error.message}`)));
-      install.on('exit', (installCode) => installCode === 0 && isCatalogInstalled(entry, options)
-        ? resolve() : reject(new Error(`uv 包安装失败（退出码 ${installCode ?? 'null'}）`)));
-    });
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      finish(new Error(`${label}超时（10 分钟），请检查网络后重试`));
+    }, MCP_CATALOG_INSTALL_TIMEOUT_MS);
+    timer.unref?.();
+    child.on('error', (error) => finish(new Error(`${label}：${error.message}`)));
+    child.on('exit', (code) => code === 0
+      ? finish()
+      : finish(new Error(`${label}（退出码 ${code ?? 'null'}）`)));
   });
+}
+
+async function runUvCatalogInstall(
+  entry: McpStdioCatalogEntry,
+  options: { dataDir?: string },
+  spawnProcess: typeof spawn,
+): Promise<void> {
+  const plan = uvCatalogInstallPlan(entry, options);
+  mkdirSync(plan.installRoot, { recursive: true });
+  if (plan.venvArgs) {
+    appendLog(entry, plan.venvArgs.includes('--clear')
+      ? '[安装器] 检测到未完成的 Python 环境，正在清理并重建。\n'
+      : '[安装器] 正在创建 Python 环境。\n', options);
+    await runUvCommand(entry, plan.venvArgs, plan.installRoot, options, spawnProcess, 'uv 环境创建失败');
+  } else {
+    appendLog(entry, '[安装器] 复用已有 Python 环境，继续安装固定版本包。\n', options);
+  }
+  await runUvCommand(entry, plan.packageArgs, plan.installRoot, options, spawnProcess, 'uv 包安装失败');
+  if (!isCatalogInstalled(entry, options)) {
+    throw new Error('uv 包安装完成，但没有找到 Windows-MCP 启动文件');
+  }
 }
 
 function runNpmInstall(
@@ -211,7 +273,11 @@ function runNpmInstall(
  * 安装目录服务。幂等：装好了就直接返回，不会重复下载。
  * 首次失败且看起来是网络问题时，用国内镜像再试一次——项目启动器也是这个策略。
  */
-export async function installCatalogServer(id: unknown, options: { dataDir?: string } = {}): Promise<McpCatalogRuntimeStatus> {
+export async function installCatalogServer(
+  id: unknown,
+  options: { dataDir?: string } = {},
+  dependencies: CatalogRuntimeDependencies = {},
+): Promise<McpCatalogRuntimeStatus> {
   const entry = requireStdioCatalogEntry(id);
   if (isCatalogInstalled(entry, options)) return catalogRuntimeStatus(entry.id, options);
   const current = installs.get(entry.id);
@@ -221,8 +287,9 @@ export async function installCatalogServer(id: unknown, options: { dataDir?: str
   try {
     if (entry.installMode === 'optional-uv') {
       if (!catalogEntryAvailable(entry)) throw new Error('这个 Windows MCP 只适用于 Windows');
-      await ensureUvPath(catalogDataDir(options), undefined, { preferBundled: true });
-      await runUvCatalogInstall(entry, options);
+      const dataDir = catalogDataDir(options);
+      await (dependencies.prepareUv || ((root) => ensureUvPath(root, undefined, { preferBundled: true })))(dataDir);
+      await runUvCatalogInstall(entry, options, dependencies.spawnProcess || spawn);
     } else {
       await runNpmInstall(entry, options);
     }
