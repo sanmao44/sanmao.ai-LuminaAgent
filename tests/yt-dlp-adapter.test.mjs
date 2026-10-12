@@ -43,6 +43,21 @@ test('explicit format preference remains available', () => {
   assert.equal(args[args.indexOf('--format') + 1], 'best');
 });
 
+test('browser cookies are omitted by default and included only for a selected supported browser', () => {
+  const base = {
+    url: 'https://video.example/watch?id=123',
+    outputDirectory: path.join(os.tmpdir(), 'sanmao-ytdlp-output'),
+  };
+  const defaultArgs = adapter.buildYtDlpArguments(base);
+  assert.equal(defaultArgs.includes('--cookies-from-browser'), false);
+
+  const authorizedArgs = adapter.buildYtDlpArguments({ ...base, cookiesFromBrowser: 'chrome' });
+  const cookieIndex = authorizedArgs.indexOf('--cookies-from-browser');
+  assert.deepEqual(authorizedArgs.slice(cookieIndex, cookieIndex + 2), ['--cookies-from-browser', 'chrome']);
+
+  assert.throws(() => adapter.buildYtDlpArguments({ ...base, cookiesFromBrowser: 'unknown' }), /browser session/i);
+});
+
 test('rejects non-http URLs before invoking a process', () => {
   assert.throws(() => adapter.buildYtDlpArguments({ url: 'file:///tmp/video.mp4', outputDirectory: path.join(os.tmpdir(), 'out') }), /HTTP 或 HTTPS/);
 });

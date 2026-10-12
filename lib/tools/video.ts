@@ -1,4 +1,5 @@
 import { defineTool, nativeToolId, TOOL_GATE } from './registry';
+import { VIDEO_DOWNLOAD_BROWSER_SESSIONS } from '@/packages/contracts/video-download';
 
 /** Download one public video URL through the server-side yt-dlp adapter. */
 export const videoDownloadTool = defineTool({
@@ -15,6 +16,11 @@ export const videoDownloadTool = defineTool({
     properties: {
       url: { type: 'string', format: 'uri', description: '公开 HTTP 或 HTTPS 视频地址' },
       format: { type: 'string', enum: ['best', 'bestvideo+bestaudio/best'], description: '可选格式偏好；默认使用最佳可用音视频' },
+      cookiesFromBrowser: {
+        type: 'string',
+        enum: [...VIDEO_DOWNLOAD_BROWSER_SESSIONS],
+        description: 'Optional explicit authorization: read cookies from this browser on the machine running SANMAO.AI and send matching cookies to the video site for this download. Set only when the user explicitly authorizes this for the current URL. Never use to bypass a paywall, DRM, or access restriction.',
+      },
     },
     required: ['url'],
     additionalProperties: false,

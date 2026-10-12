@@ -1,9 +1,12 @@
 #!/usr/bin/env node
-import { chmod, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 function flag(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -84,18 +87,59 @@ function run(command, args, timeoutMs = 15000) {
   });
 }
 
-async function isUsableBinary(target) {
+async function binaryVersion(target, runProcess = run) {
   try {
     const details = await stat(target);
-    if (!details.isFile() || details.size <= 1024 * 1024) return false;
-    const result = await run(target, ['--version'], 10000);
-    return result.exitCode === 0 && /^\d{4}\.\d+/m.test(result.stdout);
+    if (!details.isFile() || details.size <= 1024 * 1024) return '';
+    const result = await runProcess(target, ['--version'], 10000);
+    return result.exitCode === 0 ? result.stdout.match(/^\d{4}\.\d+(?:\.\d+)?/m)?.[0] || '' : '';
   } catch {
-    return false;
+    return '';
   }
 }
 
-async function installFromPython() {
+async function readUpdateCheckTime(filePath) {
+  try {
+    const metadata = JSON.parse(await readFile(filePath, 'utf8'));
+    return Number.isFinite(metadata.checkedAt) ? metadata.checkedAt : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function recordUpdateCheck(filePath, checkedAt) {
+  try {
+    await writeFile(filePath, JSON.stringify({ checkedAt }), 'utf8');
+  } catch {
+    // A cache write must not make an existing downloader unavailable.
+  }
+}
+
+async function updateInstalledBinary(target, toolsDirectory, currentVersion, options) {
+  const checkFile = path.join(toolsDirectory, 'yt-dlp-update-check.json');
+  const now = options.now();
+  const lastCheckedAt = await readUpdateCheckTime(checkFile);
+  const checkIsRecent = Number.isFinite(lastCheckedAt)
+    && lastCheckedAt <= now
+    && now - lastCheckedAt < options.updateIntervalMs;
+  if (checkIsRecent && !options.forceUpdate) return currentVersion;
+
+  try {
+    await options.runProcess(target, ['-U'], 30000);
+  } catch {
+    // A network or updater failure should leave a working local binary usable.
+  }
+  await recordUpdateCheck(checkFile, now);
+
+  const updatedVersion = await binaryVersion(target, options.runProcess);
+  if (!updatedVersion) return '';
+  if (updatedVersion !== currentVersion && !options.quiet) {
+    console.log(`yt-dlp 已从 ${currentVersion} 更新到 ${updatedVersion}`);
+  }
+  return updatedVersion;
+}
+
+async function installFromPython(runProcess = run) {
   // A Python installation is optional, but using it as a last-resort fallback
   // makes first launch work on networks that block GitHub. The adapter already
   // knows the per-user Scripts/bin locations used by these commands.
@@ -104,10 +148,10 @@ async function installFromPython() {
     : [['python3', ['-m', 'pip', 'install', '--user', '--disable-pip-version-check', '-U', 'yt-dlp']], ['python', ['-m', 'pip', 'install', '--user', '--disable-pip-version-check', '-U', 'yt-dlp']]];
   for (const [command, args] of candidates) {
     try {
-      const result = await run(command, args, 120000);
+      const result = await runProcess(command, args, 120000);
       if (result.exitCode === 0) {
         const versionArgs = command === 'py' ? ['-3', '-m', 'yt_dlp', '--version'] : ['-m', 'yt_dlp', '--version'];
-        const version = await run(command, versionArgs, 15000).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+        const version = await runProcess(command, versionArgs, 15000).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
         if (version.exitCode === 0 && /^\d{4}\.\d+/m.test(version.stdout)) return true;
       }
     } catch {
@@ -118,12 +162,28 @@ async function installFromPython() {
   return false;
 }
 
-async function main() {
-  const quiet = process.argv.includes('--quiet');
-  const target = path.join(resolveDataDir(), 'tools', asset().name);
-  if (existsSync(target) && await isUsableBinary(target)) {
-    if (!quiet) console.log(`yt-dlp 已就绪：${target}`);
-    return true;
+export async function ensureYtDlp(options = {}) {
+  const dataDir = options.dataDir || resolveDataDir();
+  const quiet = options.quiet ?? process.argv.includes('--quiet');
+  const target = path.join(dataDir, 'tools', asset().name);
+  const toolsDirectory = path.dirname(target);
+  const runProcess = options.runProcess || run;
+  const now = options.now || Date.now;
+  const updateIntervalMs = options.updateIntervalMs ?? UPDATE_CHECK_INTERVAL_MS;
+  const forceUpdate = options.forceUpdate ?? process.argv.includes('--force-update');
+  const currentVersion = await binaryVersion(target, runProcess);
+  if (currentVersion) {
+    const readyVersion = await updateInstalledBinary(target, toolsDirectory, currentVersion, {
+      forceUpdate,
+      now,
+      quiet,
+      runProcess,
+      updateIntervalMs,
+    });
+    if (readyVersion) {
+      if (!quiet) console.log(`yt-dlp 已就绪：${target}`);
+      return true;
+    }
   }
   // Remove a stale or truncated app-owned binary before trying to replace it;
   // otherwise a failed bootstrap could make the adapter select the bad file on
@@ -147,7 +207,7 @@ async function main() {
           if (bytes.length < 1024 * 1024) throw new Error('下载文件过小');
           await writeFile(partial, bytes, { flag: 'w' });
           if (process.platform !== 'win32') await chmod(partial, 0o755);
-          if (!(await isUsableBinary(partial))) throw new Error('下载的 yt-dlp 文件无法运行');
+          if (!(await binaryVersion(partial, runProcess))) throw new Error('下载的 yt-dlp 文件无法运行');
           // Replace a stale/corrupt file only after the new artifact has passed
           // its version probe. This also avoids Windows rename failures when a
           // previous interrupted launch left the destination behind.
@@ -162,7 +222,7 @@ async function main() {
         }
       }
     }
-    if (await installFromPython()) {
+    if (await installFromPython(runProcess)) {
       if (!quiet) console.log('yt-dlp 已通过 Python 用户环境准备。');
       return true;
     }
@@ -175,4 +235,5 @@ async function main() {
   return false;
 }
 
-await main();
+const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : '';
+if (invokedPath && import.meta.url === invokedPath) await ensureYtDlp();

@@ -11,3 +11,4 @@ export * from './artifact';
 export * from './context';
 export * from './creative';
 export * from './planning';
+export * from './video-download';

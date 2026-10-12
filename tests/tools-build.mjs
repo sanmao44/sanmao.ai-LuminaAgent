@@ -11,6 +11,7 @@ const MODULES = [
   'packages/contracts/task',
   'packages/contracts/storage',
   'packages/contracts/tool',
+  'packages/contracts/video-download',
   'lib/skills',
   'lib/agent/context-budget',
   'lib/agent/browser-metrics',

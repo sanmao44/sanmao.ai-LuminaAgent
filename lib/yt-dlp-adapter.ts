@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { resolveLocalDataDir } from './data-paths';
+import { isVideoDownloadBrowserSession, type VideoDownloadBrowserSession } from '@/packages/contracts/video-download';
 
 /**
  * The yt-dlp adapter is deliberately narrower than a general process runner.
@@ -34,6 +35,8 @@ export type YtDlpDownloadRequest = {
   outputDirectory: string;
   /** Keep the format surface intentionally small; arbitrary CLI options stay unavailable. */
   format?: 'best' | 'bestvideo+bestaudio/best';
+  /** Set only after explicit user authorization for the current site URL. */
+  cookiesFromBrowser?: VideoDownloadBrowserSession;
   ffmpegPath?: string;
   signal?: AbortSignal;
   onProgress?: (line: string) => void;
@@ -254,7 +257,7 @@ async function removeNewPartialFiles(outputDirectory: string, existingNames: Rea
 }
 
 /** Build the complete fixed argument list used for every download. */
-export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 'outputDirectory' | 'format' | 'ffmpegPath'>) {
+export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 'outputDirectory' | 'format' | 'ffmpegPath' | 'cookiesFromBrowser'>) {
   const url = assertHttpUrl(request.url);
   const outputDirectory = resolveOutputDirectory(request.outputDirectory);
   if (request.format !== undefined && request.format !== 'best' && request.format !== 'bestvideo+bestaudio/best') {
@@ -286,6 +289,12 @@ export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 
   ];
   const ffmpegPath = String(request.ffmpegPath || '').trim();
   if (ffmpegPath) args.push('--ffmpeg-location', path.resolve(ffmpegPath));
+  if (request.cookiesFromBrowser !== undefined) {
+    if (!isVideoDownloadBrowserSession(request.cookiesFromBrowser)) {
+      throw new Error('Unsupported browser session for video download.');
+    }
+    args.push('--cookies-from-browser', request.cookiesFromBrowser);
+  }
   // Keep the URL as the final positional argument. The adapter never invokes a
   // shell, and the separator prevents a URL beginning with '-' from becoming
   // another yt-dlp option.

@@ -7,6 +7,7 @@ import type { ToolRuntimeCall } from './runtime';
 import type { RuntimeObserver } from '../contracts/observability';
 import type { ToolRuntimeState, ToolCall, GeneratedFile } from './capability-state';
 import { executeCanvasCapability, executeFileCapability, executeVideoDownloadCapability, executeWebCapability } from './native-capabilities';
+import type { VideoDownloadBrowserSession } from '../contracts/video-download';
 import { executeImageCapability, type ImageCapabilityPorts } from './image-capability';
 import { executeSkillCapability } from './skill-capability';
 import { executeArtifactCapability, type ArtifactCapabilityInfrastructure } from './artifact-capability';
@@ -33,7 +34,7 @@ export interface ToolExecutionAdapterBindings {
   validateCanvasPatch(document: unknown, patch: CanvasPatch): { ok: true } | { ok: false; error: string; operationIndex?: number };
   agentRunId?: string | null;
   executionPublicState: { settings: { imageStoragePath?: string } };
-  videoDownload?: (input: { url: string; outputDirectory: string; format?: 'best' | 'bestvideo+bestaudio/best'; signal: AbortSignal; onProgress?: (line: string) => void }) => Promise<{ filePath: string; bytes: number }>;
+  videoDownload?: (input: { url: string; outputDirectory: string; format?: 'best' | 'bestvideo+bestaudio/best'; cookiesFromBrowser?: VideoDownloadBrowserSession; signal: AbortSignal; onProgress?: (line: string) => void }) => Promise<{ filePath: string; bytes: number }>;
   videoStoragePath?: string;
 }
 export type ToolCallRun = { results: ChatMessage[]; deferred?: true; stalled?: true };
