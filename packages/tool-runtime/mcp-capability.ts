@@ -42,6 +42,7 @@ export type McpCapabilityDependencies = {
   reportProgress: (patch: unknown) => void;
   mcpCall: McpCapabilityInfrastructure['call'];
   mcpCallTimeoutMs: number;
+  waitForMcpRetry?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   importBrowserArtifacts: McpCapabilityInfrastructure['importBrowserArtifacts'];
   shouldImportBrowserArtifacts: McpCapabilityInfrastructure['shouldImportBrowserArtifacts'];
   noteRemoteCatalogCallFailure: McpCapabilityInfrastructure['noteRemoteCatalogCallFailure'];
@@ -76,13 +77,36 @@ export type McpCapabilityPorts = Omit<
 const toolMessage = (callId: string | undefined, payload: unknown): ChatMessage => ({ role: 'tool', tool_call_id: callId, content: JSON.stringify(payload) });
 
 export function windowsMcpUserControlWaitSeconds(text: string): number | null {
-  const hasControlMarker = text.replace(/[^a-z0-9]/gi, '').toLowerCase().includes('usercontrol')
+  const normalized = text.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  const isUserControl = normalized.includes('usercontrol')
     || /["']state["']\s*:\s*["']user["']/i.test(text);
+  const isTakeoverPending = normalized.includes('takeoverpending')
+    || /["']state["']\s*:\s*["']takeover_pending["']/i.test(text);
+  const hasControlMarker = isUserControl || isTakeoverPending;
   if (!hasControlMarker) return null;
   const match = text.match(/["']?wait[_\s-]*seconds["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i);
-  if (!match) return 10;
+  if (!match) return isTakeoverPending ? 1 : 10;
   const seconds = Number(match[1]);
   return Number.isFinite(seconds) ? Math.min(120, Math.ceil(seconds)) : 10;
+}
+
+function waitForWindowsMcpRetry(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason || new Error('Windows 桌面控制等待已取消'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      reject(signal.reason || new Error('Windows 桌面控制等待已取消'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function isWindowsMcpServer(server: McpServer) {
@@ -145,9 +169,10 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
     const localImage = server.catalogId === 'filesystem' && input.isLocalImageRead(meta.toolName, args)
       ? await input.importLocalImage(String(args.path), { roots: input.mcpFilesystemRoots, dataDir: input.localDataDir }, (bytes) => input.persistImageBuffer(bytes, 'image/png', input.executionPublicState.settings.imageStoragePath))
       : null;
-    const mcpExecution = await executeMcpTool({
+    let retriedWindowsControl = false;
+    const executeCall = () => executeMcpTool({
       callId: call.id, server, meta, args, signal: input.requestController.signal,
-      timeoutMs: Math.max(5_000, Math.min(input.mcpCallTimeoutMs, state.mcpTurnBudget)), decision: 'call', retry: meta.readOnly,
+      timeoutMs: Math.max(5_000, Math.min(input.mcpCallTimeoutMs, Math.max(0, state.mcpTurnBudget - (Date.now() - mcpStartedAt)))), decision: 'call', retry: meta.readOnly && !retriedWindowsControl,
       dependencies: {
         observer: input.observer,
         call: async (targetServer, toolName, callArgs, options) => localImage ? { isError: false, text: JSON.stringify({ name: localImage.name, size: localImage.size, image: localImage.url, displayed: true }) } : input.mcpCall(targetServer, toolName, callArgs, options),
@@ -172,17 +197,34 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
         },
       },
     });
+    let mcpExecution = await executeCall();
+    const controlWaitSeconds = isWindowsMcpServer(server) && mcpExecution.result?.isError
+      ? windowsMcpUserControlWaitSeconds(mcpExecution.text)
+      : null;
+    if (controlWaitSeconds !== null) {
+      const waitMilliseconds = Math.max(250, controlWaitSeconds * 1000);
+      const remainingBudget = state.mcpTurnBudget - (Date.now() - mcpStartedAt);
+      if (state.mcpToolCallCount < input.mcpToolCallLimit && remainingBudget >= waitMilliseconds + 5_000) {
+        input.reportProgress({ stage: 'mcp', message: `Windows 桌面控制正在等待键鼠空闲，约 ${Math.ceil(waitMilliseconds / 1000)} 秒后自动重试。` });
+        await (input.waitForMcpRetry || waitForWindowsMcpRetry)(waitMilliseconds, input.requestController.signal);
+        state.mcpToolCallCount += 1;
+        retriedWindowsControl = true;
+        mcpExecution = await executeCall();
+      }
+    }
     const result = { isError: !mcpExecution.ok, text: mcpExecution.text };
     state.mcpTurnBudget -= Date.now() - mcpStartedAt;
     state.usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
-    const userControlWaitSeconds = isWindowsMcpServer(server)
+    const userControlWaitSeconds = isWindowsMcpServer(server) && mcpExecution.result?.isError
       ? windowsMcpUserControlWaitSeconds(result.text)
       : null;
     if (userControlWaitSeconds !== null) {
       const wait = userControlWaitSeconds > 0
-        ? `请停止鼠标和键盘操作，等待约 ${userControlWaitSeconds} 秒后重新发起请求。`
-        : '请停止鼠标和键盘操作，等桌面控制释放后重新发起请求。';
-      state.stalledMcpReason = `Windows 桌面控制已交还给你。${wait}本轮已停止，不会自动继续。`;
+        ? `仍需约 ${userControlWaitSeconds} 秒键鼠空闲时间。`
+        : '请先松开按住的鼠标或键盘按键。';
+      state.stalledMcpReason = retriedWindowsControl
+        ? `Windows 桌面控制在自动等待并重试后仍未释放。${wait}本轮已停止。`
+        : `Windows 桌面控制暂不可用，且本轮时间不足以自动等待重试。${wait}本轮已停止。`;
       const results: ChatMessage[] = [toolMessage(call.id, { ok: false, error: state.stalledMcpReason })];
       for (const rest of input.stepCalls.slice(input.callIndex + 1)) results.push(toolMessage(rest.id, { ok: false, error: '桌面控制已交还给用户，本轮剩余调用没有执行。' }));
       return { results, stalled: true };
