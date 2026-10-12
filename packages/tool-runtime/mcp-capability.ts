@@ -9,6 +9,10 @@ type TabbitResult = { ok: boolean; response?: unknown; error?: unknown };
 type McpMeta = { serverId: string; serverName: string; toolName: string; readOnly: boolean; blocked: boolean };
 type McpServer = Parameters<typeof executeMcpTool>[0]['server'];
 
+const WINDOWS_MCP_CALL_TIMEOUT_MS = 30_000;
+const WINDOWS_MCP_TURN_TIMEOUT_MS = 30_000;
+const WINDOWS_MCP_CONTROL_STATUS_CHECK_LIMIT = 4;
+
 export type McpCapabilityDependencies = {
   state: ToolRuntimeState;
   call: ToolCall;
@@ -105,6 +109,22 @@ function windowsMcpControlState(text: string): string | null {
   }
 }
 
+function windowsMcpControlUnavailableReason(text: string): string | null {
+  let code = '';
+  try {
+    const value: unknown = JSON.parse(text);
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const root = value as Record<string, unknown>;
+      code = typeof root.code === 'string' ? root.code.toUpperCase() : '';
+    }
+  } catch {
+    const match = text.match(/["']code["']\s*:\s*["']([a-z_]+)["']/i);
+    code = match?.[1].toUpperCase() || '';
+  }
+  if (windowsMcpControlState(text) !== 'unavailable' && code !== 'CONTROL_UNAVAILABLE') return null;
+  return `Windows-MCP 控制器当前不可用${code ? `（${code}）` : ''}，这不是键鼠空闲等待状态。本轮已停止，避免继续空转；请在 MCP 管理中重新启动 Windows 桌面控制服务后重试。`;
+}
+
 function waitForWindowsMcpRetry(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
@@ -185,9 +205,17 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
       ? await input.importLocalImage(String(args.path), { roots: input.mcpFilesystemRoots, dataDir: input.localDataDir }, (bytes) => input.persistImageBuffer(bytes, 'image/png', input.executionPublicState.settings.imageStoragePath))
       : null;
     let windowsControlRetries = 0;
+    const windowsControlRetryDeadline = isWindowsMcpServer(server)
+      ? mcpStartedAt + WINDOWS_MCP_TURN_TIMEOUT_MS
+      : Number.POSITIVE_INFINITY;
     const executeCall = () => executeMcpTool({
       callId: call.id, server, meta, args, signal: input.requestController.signal,
-      timeoutMs: Math.max(5_000, Math.min(input.mcpCallTimeoutMs, Math.max(0, state.mcpTurnBudget - (Date.now() - mcpStartedAt)))), decision: 'call', retry: meta.readOnly && windowsControlRetries === 0,
+      timeoutMs: Math.max(5_000, Math.min(
+        input.mcpCallTimeoutMs,
+        isWindowsMcpServer(server) ? WINDOWS_MCP_CALL_TIMEOUT_MS : Number.POSITIVE_INFINITY,
+        Math.max(0, state.mcpTurnBudget - (Date.now() - mcpStartedAt)),
+        windowsControlRetryDeadline - Date.now(),
+      )), decision: 'call', retry: meta.readOnly && windowsControlRetries === 0,
       dependencies: {
         observer: input.observer,
         call: async (targetServer, toolName, callArgs, options) => localImage ? { isError: false, text: JSON.stringify({ name: localImage.name, size: localImage.size, image: localImage.url, displayed: true }) } : input.mcpCall(targetServer, toolName, callArgs, options),
@@ -213,26 +241,39 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
       },
     });
     let mcpExecution = await executeCall();
-    let controlWaitSeconds = isWindowsMcpServer(server) && mcpExecution.result?.isError
+    let windowsControlWaitProblem = isWindowsMcpServer(server) && mcpExecution.result?.isError
+      ? windowsMcpControlUnavailableReason(mcpExecution.text) || ''
+      : '';
+    let controlWaitSeconds = !windowsControlWaitProblem && isWindowsMcpServer(server) && mcpExecution.result?.isError
       ? windowsMcpUserControlWaitSeconds(mcpExecution.text)
       : null;
-    let windowsControlWaitProblem = '';
-    while (controlWaitSeconds !== null && windowsControlRetries < 3) {
-      const waitMilliseconds = Math.max(250, controlWaitSeconds * 1000);
+    let windowsControlStatusChecks = 0;
+    while (controlWaitSeconds !== null && windowsControlRetries < 3 && !windowsControlWaitProblem) {
+      const controlTimeRemaining = windowsControlRetryDeadline - Date.now();
+      const waitMilliseconds = Math.min(Math.max(250, controlWaitSeconds * 1000), Math.max(0, controlTimeRemaining));
       const remainingBudget = state.mcpTurnBudget - (Date.now() - mcpStartedAt);
+      if (windowsControlStatusChecks >= WINDOWS_MCP_CONTROL_STATUS_CHECK_LIMIT || controlTimeRemaining < 5_000) {
+        windowsControlWaitProblem = `Windows 桌面控制在 ${Math.round(WINDOWS_MCP_TURN_TIMEOUT_MS / 1000)} 秒总时限内仍未就绪，本轮已停止。`;
+        break;
+      }
       if (state.mcpToolCallCount >= input.mcpToolCallLimit || remainingBudget < waitMilliseconds + 10_000) break;
-      input.reportProgress({ stage: 'mcp', message: `Windows 桌面控制正在等待键鼠空闲，约 ${Math.ceil(waitMilliseconds / 1000)} 秒后检查状态。` });
+      input.reportProgress({ stage: 'mcp', message: `Windows 桌面控制正在等待键鼠空闲，约 ${Math.ceil(waitMilliseconds / 1000)} 秒后检查状态（本次调用总计最多 ${Math.round(WINDOWS_MCP_TURN_TIMEOUT_MS / 1000)} 秒）。` });
       await (input.waitForMcpRetry || waitForWindowsMcpRetry)(waitMilliseconds, input.requestController.signal);
 
+      if (windowsControlRetryDeadline - Date.now() < 5_000) {
+        windowsControlWaitProblem = `Windows 桌面控制在 ${Math.round(WINDOWS_MCP_TURN_TIMEOUT_MS / 1000)} 秒总时限内仍未就绪，本轮已停止。`;
+        break;
+      }
       if (state.mcpToolCallCount >= input.mcpToolCallLimit) break;
       state.mcpToolCallCount += 1;
+      windowsControlStatusChecks += 1;
       const statusExecution = await executeMcpTool({
         callId: `${call.id || 'windows-mcp'}-control-status-${windowsControlRetries + 1}`,
         server,
         meta: { serverId: meta.serverId, serverName: meta.serverName, toolName: 'ControlStatus', readOnly: true, blocked: false },
         args: {},
         signal: input.requestController.signal,
-        timeoutMs: Math.max(5_000, Math.min(5_000, state.mcpTurnBudget - (Date.now() - mcpStartedAt))),
+        timeoutMs: Math.max(5_000, Math.min(5_000, state.mcpTurnBudget - (Date.now() - mcpStartedAt), windowsControlRetryDeadline - Date.now())),
         decision: 'call',
         retry: true,
         dependencies: {
@@ -244,6 +285,8 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
         },
       });
       if (statusExecution.result?.isError) {
+        windowsControlWaitProblem = windowsMcpControlUnavailableReason(statusExecution.text) || '';
+        if (windowsControlWaitProblem) break;
         const statusWaitSeconds = windowsMcpUserControlWaitSeconds(statusExecution.text);
         if (statusWaitSeconds === null) {
           windowsControlWaitProblem = '无法读取 Windows 桌面控制状态。';
@@ -254,8 +297,17 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
       }
 
       const controlState = windowsMcpControlState(statusExecution.text);
+      if (controlState === 'unavailable') {
+        windowsControlWaitProblem = windowsMcpControlUnavailableReason(statusExecution.text)
+          || 'Windows-MCP 控制器当前不可用，本轮已停止；请在 MCP 管理中重新启动 Windows 桌面控制服务后重试。';
+        break;
+      }
       if (controlState === 'ready' || controlState === 'ai') {
         if (state.mcpToolCallCount >= input.mcpToolCallLimit) break;
+        if (windowsControlRetryDeadline - Date.now() < 5_000) {
+          windowsControlWaitProblem = 'Windows 桌面控制已就绪，但等待窗口不足以安全重试，本轮已停止。';
+          break;
+        }
         state.mcpToolCallCount += 1;
         windowsControlRetries += 1;
         mcpExecution = await executeCall();
@@ -266,6 +318,10 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
       }
       if (controlState === 'user' || controlState === 'takeover_pending') {
         controlWaitSeconds = windowsMcpUserControlWaitSeconds(statusExecution.text) ?? (controlState === 'takeover_pending' ? 1 : 10);
+        if (windowsControlStatusChecks >= WINDOWS_MCP_CONTROL_STATUS_CHECK_LIMIT || windowsControlRetryDeadline - Date.now() < 5_000) {
+          windowsControlWaitProblem = `Windows 桌面控制在 ${Math.round(WINDOWS_MCP_TURN_TIMEOUT_MS / 1000)} 秒总时限内仍处于用户控制，本轮已停止。`;
+          break;
+        }
         continue;
       }
       windowsControlWaitProblem = `Windows 桌面控制状态为「${controlState || '未知'}」，无法安全重试。`;
