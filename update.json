@@ -9,8 +9,8 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.89/SANMAO.AI-0.7.89.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.89/SANMAO.AI-0.7.89.zip"
   ],
-  "sha256": "8219249039bd469bae350094f715e7cafe26f898685c972a7c5ea4045a2de9b7",
-  "publishedAt": "2026-10-11T17:42:20.000Z",
+  "sha256": "e7253993a19f7acc8d6ae39b5c4bd3eebc1caa0a6714a00916f6698df68141cd",
+  "publishedAt": "2026-10-12T02:46:52.967Z",
   "notes": [
     "修复 Windows-MCP 安装中断后的恢复，并在用户接管桌面时立即停止本轮操作。",
     "Windows-MCP 禁止下发 PowerShell、Registry 等原始系统工具。",
