@@ -34,13 +34,30 @@ test('builds a fixed, shell-free yt-dlp argument list', () => {
   assert.equal(args.includes('--exec'), false);
 });
 
-test('explicit format preference remains available', () => {
+test('best preference selects a size-aware audio/video combination', () => {
+  const request = {
+    url: 'https://video.example/watch?id=123',
+    outputDirectory: path.join(os.tmpdir(), 'sanmao-ytdlp-output'),
+  };
+  const defaultArgs = adapter.buildYtDlpArguments(request);
+  const bestArgs = adapter.buildYtDlpArguments({
+    ...request,
+    format: 'best',
+  });
+  const format = bestArgs[bestArgs.indexOf('--format') + 1];
+  assert.equal(format, defaultArgs[defaultArgs.indexOf('--format') + 1]);
+  assert.match(format, /bestvideo\[filesize<900M\]\+bestaudio\[filesize<100M\]/);
+  assert.match(format, /bestvideo\+bestaudio/);
+  assert.notEqual(format, 'best');
+});
+
+test('explicit combined audio/video format remains available', () => {
   const args = adapter.buildYtDlpArguments({
     url: 'https://video.example/watch?id=123',
     outputDirectory: path.join(os.tmpdir(), 'sanmao-ytdlp-output'),
-    format: 'best',
+    format: 'bestvideo+bestaudio/best',
   });
-  assert.equal(args[args.indexOf('--format') + 1], 'best');
+  assert.equal(args[args.indexOf('--format') + 1], 'bestvideo+bestaudio/best');
 });
 
 test('rejects non-http URLs before invoking a process', () => {

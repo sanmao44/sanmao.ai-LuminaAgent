@@ -260,6 +260,9 @@ export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 
   if (request.format !== undefined && request.format !== 'best' && request.format !== 'bestvideo+bestaudio/best') {
     throw new Error('不支持的视频格式选项。');
   }
+  const format = request.format === 'best' || request.format === undefined
+    ? SIZE_AWARE_DEFAULT_FORMAT
+    : request.format;
   const args: string[] = [
     '--no-playlist',
     '--playlist-items', '1',
@@ -281,7 +284,7 @@ export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 
     // Favor a source combination that fits the storage limit. Some sites do
     // not report stream sizes; the height/standard fallbacks remain available
     // and the actual merged artifact is checked after download.
-    '--format', request.format || SIZE_AWARE_DEFAULT_FORMAT,
+    '--format', format,
     '--merge-output-format', 'mp4',
   ];
   const ffmpegPath = String(request.ffmpegPath || '').trim();
