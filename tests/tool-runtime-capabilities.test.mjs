@@ -133,7 +133,7 @@ test('image capability returns the durable media log id when a provider accepts 
   assert.equal(finished[0].patch.taskId, 'agent-run-1');
 });
 
-test('Windows-MCP user-control error waits for idle time and retries once within the same turn', async () => {
+test('Windows-MCP waits for a ready control state and recovers from repeated handoffs', async () => {
   const state = {
     generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [],
     browserRecoveryNeeded: false, generated: [], browserDownloadCount: 0, stalledMcpReason: '',
@@ -143,8 +143,9 @@ test('Windows-MCP user-control error waits for idle time and retries once within
   const server = { id: 'cursortouch-windows-mcp', name: 'Windows MCP', url: 'stdio://windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true };
   const meta = { serverId: server.id, serverName: server.name, toolName: 'App', readOnly: false, blocked: false };
   const calls = [{ id: 'desktop-current' }, { id: 'desktop-following' }];
-  let invoked = 0;
-  let waited = 0;
+  let actionCalls = 0;
+  let statusCalls = 0;
+  const waits = [];
   const progress = [];
   const result = await mcpCapabilities.executeMcpCapability({
     state,
@@ -172,13 +173,23 @@ test('Windows-MCP user-control error waits for idle time and retries once within
     agentTurnStartedAt: Date.now(),
     ARTIFACT_MAX_PER_TURN: 10,
     appendPageContext: (_current, _source, text) => text,
-    mcpCall: async () => {
-      invoked += 1;
-      return invoked === 1
-        ? { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 7 } }) }
-        : { isError: false, text: 'Device Manager launched' };
+    mcpCall: async (_targetServer, toolName) => {
+      if (toolName === 'ControlStatus') {
+        statusCalls += 1;
+        const states = [
+          { state: 'user', wait_seconds: 2 },
+          { state: 'ready', wait_seconds: 0 },
+          { state: 'user', wait_seconds: 1 },
+          { state: 'ready', wait_seconds: 0 },
+        ];
+        return { isError: false, text: JSON.stringify(states[statusCalls - 1]) };
+      }
+      actionCalls += 1;
+      if (actionCalls === 1) return { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 7 } }) };
+      if (actionCalls === 2) return { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 4 } }) };
+      return { isError: false, text: 'Device Manager launched' };
     },
-    waitForMcpRetry: async (milliseconds) => { waited = milliseconds; },
+    waitForMcpRetry: async (milliseconds) => { waits.push(milliseconds); },
     reportProgress: (patch) => progress.push(patch),
     mcpCallTimeoutMs: 10_000,
     importBrowserArtifacts: async () => ({ files: [], skipped: 0 }),
@@ -192,14 +203,15 @@ test('Windows-MCP user-control error waits for idle time and retries once within
     isBrowserMutationTool: () => false,
   });
 
-  assert.equal(invoked, 2);
-  assert.equal(waited, 7_000);
-  assert.equal(state.mcpToolCallCount, 2);
+  assert.equal(actionCalls, 3);
+  assert.equal(statusCalls, 4);
+  assert.deepEqual(waits, [7_000, 2_000, 4_000, 1_000]);
+  assert.equal(state.mcpToolCallCount, 7);
   assert.equal(state.stalledMcpReason, '');
   assert.equal(result.stalled, undefined);
   assert.equal(result.results.length, 1);
   assert.match(JSON.parse(result.results[0].content).content, /Device Manager launched/);
-  assert.ok(progress.some((patch) => /自动重试/.test(patch.message)));
+  assert.ok(progress.some((patch) => /检查状态/.test(patch.message)));
 });
 
 test('Windows-MCP user-control retry respects call and time budgets and stops further calls', async () => {
@@ -261,7 +273,7 @@ test('Windows-MCP user-control retry respects call and time budgets and stops fu
   assert.equal(invoked, 1);
   assert.equal(waited, false);
   assert.equal(result.stalled, true);
-  assert.match(state.stalledMcpReason, /时间不足以自动等待重试/);
+  assert.match(state.stalledMcpReason, /剩余时间或调用额度不足以安全等待重试/);
   assert.equal(result.results.length, 2);
   assert.equal(result.results[1].tool_call_id, 'desktop-following');
 });
