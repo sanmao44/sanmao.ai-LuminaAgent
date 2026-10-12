@@ -85,6 +85,11 @@ export function windowsMcpUserControlWaitSeconds(text: string): number | null {
   return Number.isFinite(seconds) ? Math.min(120, Math.ceil(seconds)) : 10;
 }
 
+function isWindowsMcpServer(server: McpServer) {
+  const identity = `${server.catalogId || ''} ${server.id} ${server.name}`.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return identity.includes('windowsmcp');
+}
+
 export async function executeMcpManageCapability(input: McpCapabilityDependencies): Promise<ToolCallRun> {
   const { state, call, args } = input;
   const action = String(args?.action || 'list');
@@ -170,7 +175,9 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
     const result = { isError: !mcpExecution.ok, text: mcpExecution.text };
     state.mcpTurnBudget -= Date.now() - mcpStartedAt;
     state.usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
-    const userControlWaitSeconds = windowsMcpUserControlWaitSeconds(result.text);
+    const userControlWaitSeconds = isWindowsMcpServer(server)
+      ? windowsMcpUserControlWaitSeconds(result.text)
+      : null;
     if (userControlWaitSeconds !== null) {
       const wait = userControlWaitSeconds > 0
         ? `请停止鼠标和键盘操作，等待约 ${userControlWaitSeconds} 秒后重新发起请求。`

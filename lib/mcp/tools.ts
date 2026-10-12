@@ -34,6 +34,16 @@ function isForbiddenMcpTool(server: McpServerConfig, name: string) {
   return normalized.includes('powershell') || normalized.includes('registry');
 }
 
+function mcpToolDescription(server: McpServerConfig, tool: McpRemoteTool) {
+  const upstream = String(tool.description || tool.title || tool.name).trim();
+  const serverIdentity = `${server.catalogId || ''} ${server.id} ${server.name}`.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  const isWindowsMcp = serverIdentity.includes('windowsmcp');
+  const guidance = isWindowsMcp && tool.name === 'App'
+    ? 'Windows-MCP App: launch regular apps and MMC snap-ins with mode="launch" and their Start Menu name. .msc and .cpl files are not executable paths; never pass them as executable or use launch_executable. Device Manager: use mode="launch", name="Device Manager" (or its localized Start Menu name). Verify with a fresh Snapshot before claiming success. '
+    : '';
+  return `[MCP · ${server.name}] ${guidance}${upstream}`.slice(0, MCP_MAX_TOOL_DESCRIPTION_CHARS);
+}
+
 /** 注册表里的运行时 id，和模型看到的名字分开记：名字是给人看的，id 给审计用。 */
 export function mcpRuntimeToolId(serverId: string, toolName: string) {
   return `mcp:${serverId}:${toolName}`;
@@ -102,7 +112,7 @@ export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpR
     return {
       id: mcpRuntimeToolId(server.id, tool.name),
       name: mcpToolId(server.id, tool.name),
-      description: `[MCP · ${server.name}] ${String(tool.description || tool.title || tool.name).trim().slice(0, MCP_MAX_TOOL_DESCRIPTION_CHARS)}`,
+      description: mcpToolDescription(server, tool),
       schema: inputSchemaOf(tool),
       permissions: readOnly ? ['network'] : ['network', 'external:write'],
       tags: ['mcp'],

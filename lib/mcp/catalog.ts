@@ -324,7 +324,7 @@ const GITHUB_FORBIDDEN_TOOLS: readonly string[] = [
 export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
   {
     id: 'windows-mcp',
-    intentKeywords: ['桌面', '窗口', '点击', '输入', '截图', '屏幕', '打开应用', '应用', '滚动', '剪贴板', 'desktop', 'window', 'click', 'type', 'screenshot', 'screen', 'launch app', 'clipboard'],
+    intentKeywords: ['桌面', '窗口', '点击', '输入', '截图', '屏幕', '打开应用', '应用', '滚动', '剪贴板', '设备管理器', '管理控制台', 'Device Manager', 'devmgmt.msc', 'desktop', 'window', 'click', 'type', 'screenshot', 'screen', 'launch app', 'clipboard'],
     examples: ['截一张当前桌面截图', '打开桌面上的应用并切换窗口', '在当前窗口输入文字'],
     name: 'Windows 桌面控制',
     summary: '读取 Windows 桌面状态、窗口和截图；开启桌面操作后才允许点击、输入和启动应用。',

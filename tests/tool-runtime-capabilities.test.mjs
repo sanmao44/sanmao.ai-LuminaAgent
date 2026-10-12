@@ -196,6 +196,60 @@ test('Windows-MCP user-control response immediately stalls the turn and skips re
   assert.match(JSON.parse(result.results[1].content).error, /没有执行/);
 });
 
+test('USER_CONTROL from an unrelated MCP does not trigger Windows desktop handoff behavior', async () => {
+  const state = {
+    generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [],
+    browserRecoveryNeeded: false, generated: [], browserDownloadCount: 0, stalledMcpReason: '',
+    batchItems: [], generations: [], recentPageText: '', skillToolCalls: 0, skillInstalls: 0,
+    generatedArtifactCount: 0, usedSkills: [],
+  };
+  const server = { id: 'other-mcp', name: 'Other MCP', url: 'stdio://other', catalogId: 'other', enabled: true, allowWrite: true };
+  const meta = { serverId: server.id, serverName: server.name, toolName: 'action', readOnly: false, blocked: false };
+  const result = await mcpCapabilities.executeMcpCapability({
+    state,
+    call: { id: 'other-control' },
+    policy: { tool: { mcp: meta, risk: 'write' } },
+    args: {},
+    stepCalls: [{ id: 'other-control' }],
+    callIndex: 0,
+    requestController: new AbortController(),
+    MCP_MANAGE_LABELS: {},
+    isMcpRuntimeAction: () => false,
+    runMcpRuntimeAction: async () => ({ result: {} }),
+    runMcpManageAction: async () => ({ result: {} }),
+    executionPublicState: { settings: {} },
+    runTabbitBrowserAction: async () => ({ ok: true }),
+    mcpToolCallLimit: 12,
+    mcpTurnBudgetLimit: 60_000,
+    browserMetrics: { record: () => '' },
+    auditMcpCall: () => {},
+    mcpServerById: new Map([[server.id, server]]),
+    browserMutationBatches: new WeakSet(),
+    mcpFilesystemRoots: [],
+    persistImageBuffer: async () => ({ url: '' }),
+    mcpRepeatTracker: new Map(),
+    agentTurnStartedAt: Date.now(),
+    ARTIFACT_MAX_PER_TURN: 10,
+    appendPageContext: (_current, _source, text) => text,
+    reportProgress: () => {},
+    mcpCall: async () => ({ isError: false, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 7 } }) }),
+    mcpCallTimeoutMs: 10_000,
+    importBrowserArtifacts: async () => ({ files: [], skipped: 0 }),
+    shouldImportBrowserArtifacts: () => false,
+    noteRemoteCatalogCallFailure: () => {},
+    noteRemoteCatalogCallSuccess: () => {},
+    importLocalImage: async () => ({ name: '', size: 0, url: '' }),
+    isLocalImageRead: () => false,
+    verifyFilesystemMove: async () => null,
+    browserToolName: (name) => name,
+    isBrowserMutationTool: () => false,
+  });
+
+  assert.equal(result.stalled, undefined);
+  assert.equal(state.stalledMcpReason, '');
+  assert.equal(result.results.length, 1);
+});
+
 test('Windows-MCP user-control parser accepts normalized markers and bounds wait time', () => {
   assert.equal(mcpCapabilities.windowsMcpUserControlWaitSeconds('USERCONTROL'), 10);
   assert.equal(mcpCapabilities.windowsMcpUserControlWaitSeconds('{"state":"user","wait_seconds":500}'), 120);
