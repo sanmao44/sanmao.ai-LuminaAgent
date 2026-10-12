@@ -301,7 +301,7 @@ test('手动 MCP 连接也永远不下发 PowerShell 或 Registry 原始系统�
   assert.deepEqual(unrelated.map((tool) => tool.mcp.toolName), ['Registry']);
 });
 
-test('Windows-MCP routes Device Manager requests and documents the safe App launch mode', () => {
+test('Windows-MCP routes Device Manager requests and documents the safe App launch modes', () => {
   const server = {
     id: 'windows-mcp', name: 'Windows Desktop', catalogId: 'windows-mcp',
     url: 'stdio://windows-mcp', enabled: true, allowWrite: true, lazy: true, enabledTools: ['App'],
@@ -313,9 +313,37 @@ test('Windows-MCP routes Device Manager requests and documents the safe App laun
     name: 'App', description: 'Open/start/launch applications and manage windows.',
     inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: false },
   }]);
-  assert.match(app.description, /mode="launch"/);
+  assert.match(app.description, /mode="launch_executable"/);
   assert.match(app.description, /\.msc and \.cpl files are not executable paths/);
+  assert.match(app.description, /mmc\.exe/);
+  assert.match(app.description, /devmgmt\.msc/);
   assert.match(app.description, /Device Manager/);
+});
+
+test('旧版 Windows-MCP 手动副本不会与内置连接器并行运行', async () => {
+  await withDataDir(async (dataDir) => {
+    const storeFile = path.join(dataDir, 'mcp', 'servers.json');
+    await mkdir(path.dirname(storeFile), { recursive: true });
+    await writeFile(storeFile, JSON.stringify({
+      version: 1,
+      servers: [
+        { id: 'cursortouch-windows-mcp', name: 'windows-mcp', url: 'http://127.0.0.1:8080', enabled: true, allowWrite: true },
+        { id: 'my-service', name: 'My service', url: 'https://example.com/mcp', enabled: true, allowWrite: false },
+      ],
+    }));
+    const installRoot = mcp.resolveCatalogInstallRoot('windows-mcp', { dataDir });
+    const pythonBin = path.join(installRoot, '.venv', 'Scripts', 'python.exe');
+    const windowsBin = path.join(installRoot, '.venv', 'Scripts', 'windows-mcp.exe');
+    await mkdir(path.dirname(windowsBin), { recursive: true });
+    await writeFile(pythonBin, 'fake');
+    await writeFile(windowsBin, 'fake');
+    mcp.setCatalogEntryEnabled('windows-mcp', true, { dataDir });
+
+    const servers = mcp.listMcpServers({ dataDir });
+    const expectedIds = ['my-service', ...(process.platform === 'win32' ? ['windows-mcp'] : [])];
+    assert.deepEqual(servers.map((server) => server.id), expectedIds);
+    assert.equal(servers.filter((server) => server.catalogId === 'windows-mcp').length, process.platform === 'win32' ? 1 : 0);
+  });
 });
 
 test('开关是分开存的：读不到、写坏了都不影响用户自己配的服务', async () => {

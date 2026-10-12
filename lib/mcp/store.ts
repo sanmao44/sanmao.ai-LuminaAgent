@@ -200,7 +200,9 @@ export function listMcpServers(options: McpStoreOptions = {}): McpServerConfig[]
   // 两边会同时生效：参数按旧的来、白名单也可能对不上代码（早期版本写进去的 browser_run_code_unsafe
   // 就是这么漏出来的）。这里按目录条目 id 认领：属于内置连接器的 id 只认代码这一份。
   const userServers = readUserMcpServers(options)
-    .filter((server) => !isBuiltinStdioServerId(server.id) && !isBuiltinStdioServerId(server.catalogId));
+    .filter((server) => !isBuiltinStdioServerId(server.id)
+      && !isBuiltinStdioServerId(server.catalogId)
+      && !isLegacyWindowsMcpServer(server));
   // 同一个 id 只保留第一条：用户配置里的旧副本可能和目录条目重名。
   const seen = new Set<string>();
   const merged = [...userServers, ...listCatalogServers({ ...options, roots })].filter((server) => {
@@ -220,6 +222,14 @@ export function listMcpServers(options: McpStoreOptions = {}): McpServerConfig[]
 function isBuiltinStdioServerId(value: unknown) {
   const entry = findCatalogEntry(value);
   return Boolean(entry && isStdioCatalogEntry(entry));
+}
+
+/** Keep the early hand-configured Windows-MCP copy from starting beside the curated connector. */
+function isLegacyWindowsMcpServer(server: Pick<McpServerConfig, 'id' | 'catalogId' | 'name'>) {
+  if (server.catalogId) return false;
+  const id = String(server.id || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+  const name = String(server.name || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return id === 'cursortouchwindowsmcp' && (name === '' || name === 'windowsmcp');
 }
 
 /**

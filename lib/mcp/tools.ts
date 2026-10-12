@@ -39,7 +39,7 @@ function mcpToolDescription(server: McpServerConfig, tool: McpRemoteTool) {
   const serverIdentity = `${server.catalogId || ''} ${server.id} ${server.name}`.replace(/[^a-z0-9]/gi, '').toLowerCase();
   const isWindowsMcp = serverIdentity.includes('windowsmcp');
   const guidance = isWindowsMcp && tool.name === 'App'
-    ? 'Windows-MCP App: launch regular apps and MMC snap-ins with mode="launch" and their Start Menu name. .msc and .cpl files are not executable paths; never pass them as executable or use launch_executable. Device Manager: use mode="launch", name="Device Manager" (or its localized Start Menu name). Verify with a fresh Snapshot before claiming success. '
+    ? 'Windows-MCP App: for a known absolute .exe, prefer mode="launch_executable" with executable set to that file and args as a string array. The executable must exist and be a real application; never pass PowerShell, a shell command, or a relative path. .msc and .cpl files are not executable paths: launch them through C:\\Windows\\System32\\mmc.exe with the file as an argument. Device Manager example: executable="C:\\Windows\\System32\\mmc.exe", args=["C:\\Windows\\System32\\devmgmt.msc"]. Use mode="launch" with a Start Menu name only when no executable path is known. Verify with a fresh Snapshot or WaitFor before claiming success. '
     : '';
   return `[MCP · ${server.name}] ${guidance}${upstream}`.slice(0, MCP_MAX_TOOL_DESCRIPTION_CHARS);
 }
