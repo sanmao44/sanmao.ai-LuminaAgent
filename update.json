@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.90/SANMAO.AI-0.7.90.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.90/SANMAO.AI-0.7.90.zip"
   ],
-  "sha256": "e7253993a19f7acc8d6ae39b5c4bd3eebc1caa0a6714a00916f6698df68141cd",
+  "sha256": "42807edb084963c2d8c81fef9d0138a678971e90554bf2e69e4d7f2c9b49575c",
   "publishedAt": "2026-10-12T03:26:02.000Z",
   "notes": [
     "修复 Windows-MCP 打开设备管理器时将 .msc 管理单元误当作可执行文件，并增加安全启动提示和按需路由。",
