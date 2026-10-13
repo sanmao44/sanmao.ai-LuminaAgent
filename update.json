@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.92/SANMAO.AI-0.7.92.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.92/SANMAO.AI-0.7.92.zip"
   ],
-  "sha256": "3265732584695bdd979fe87e5bea9280f5f418e94950deb9469f3a2e8f0131d4",
+  "sha256": "2e98b80e339c760450c9cc710d110cdc08ca4e2f8e02bf2628dc162a83fe45a6",
   "publishedAt": "2026-10-13T10:59:40.013Z",
   "notes": [
     "修复画布资产引用与本地存储键识别，改进视频下载平台解析与画布资产注册。",
