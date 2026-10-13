@@ -142,6 +142,16 @@ export function mergeAssetRecords(records: AssetRecord[], index: AssetIndexItem[
     if (!existing || item.createdAt >= existing.createdAt) overlays.set(key, item);
   }
   const recordIds = new Set(records.map((record) => record.id));
+  const projectedKeys = new Map<string, string>();
+  for (const record of records) {
+    if (!record.sourceAssetId || !recordIds.has(record.sourceAssetId)) continue;
+    // Keep the projected key so stale index entries created before the
+    // reference marker was introduced cannot reappear beside the source.
+    projectedKeys.set(
+      assetKey(record.kind, record.url, record.storageKey),
+      record.sourceAssetId,
+    );
+  }
   const merged = new Map<string, AssetRecord>();
   for (const record of records) {
     if (!record.url) continue;
@@ -150,6 +160,8 @@ export function mergeAssetRecords(records: AssetRecord[], index: AssetIndexItem[
     // carry sourceAssetId here and remain independent assets.
     if (record.sourceAssetId && recordIds.has(record.sourceAssetId)) continue;
     const key = assetKey(record.kind, record.url, record.storageKey);
+    const projectedSourceId = projectedKeys.get(key);
+    if (projectedSourceId && projectedSourceId !== record.id) continue;
     const overlay = overlays.get(key);
     if (overlay?.hidden) continue;
     const existing = merged.get(key);

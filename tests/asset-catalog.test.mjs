@@ -146,3 +146,47 @@ test("canvas references do not re-add their existing source asset", () => {
 
   assert.deepEqual(merged.map((asset) => asset.id), ["gallery:one"]);
 });
+
+test("canvas references hide stale indexed copies from the old registration path", () => {
+  const merged = catalog.mergeAssetRecords([
+    {
+      id: "gallery:one",
+      kind: "image",
+      url: "https://cdn.example.test/original.png",
+      name: "Original",
+      source: "history",
+      createdAt: 1,
+      favorite: false,
+      projectIds: [],
+      collectionIds: [],
+      tags: [],
+    },
+    {
+      id: "index:stale-copy",
+      kind: "image",
+      url: "/api/storage/file?name=canvas-copy.png",
+      name: "Original",
+      source: "canvas-upload",
+      createdAt: 2,
+      favorite: false,
+      projectIds: ["project-1"],
+      collectionIds: [],
+      tags: [],
+    },
+    {
+      id: "canvas:project:node",
+      sourceAssetId: "gallery:one",
+      kind: "image",
+      url: "/api/storage/file?name=canvas-copy.png",
+      name: "Original",
+      source: "canvas-upload",
+      createdAt: 3,
+      favorite: false,
+      projectIds: ["project-1"],
+      collectionIds: [],
+      tags: [],
+    },
+  ]);
+
+  assert.deepEqual(merged.map((asset) => asset.id), ["gallery:one"]);
+});
