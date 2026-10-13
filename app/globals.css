@@ -852,7 +852,9 @@ button,input,textarea{font:inherit;color:inherit} button{cursor:pointer;-webkit-
 }
 
 /* Centralized preferences page. */
-.settings-page{min-height:calc(100vh - 64px);padding:28px 24px 42px;max-width:1120px;margin:0 auto;overflow:auto}
+html:has(.settings-page){scrollbar-gutter:stable}
+body:has(.settings-page){overflow:visible}
+.settings-page{min-height:calc(100vh - 64px);padding:28px 24px 42px;max-width:1120px;margin:0 auto}
 .settings-intro{display:flex;align-items:center;gap:13px;margin-bottom:18px}
 .settings-intro-icon{width:44px;height:44px;display:grid;place-items:center;border-radius:14px;color:var(--accent-text);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line))}
 .settings-intro h1{font-size:22px;margin:0 0 4px}
