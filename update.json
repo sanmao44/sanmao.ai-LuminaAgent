@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.91/SANMAO.AI-0.7.91.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.91/SANMAO.AI-0.7.91.zip"
   ],
-  "sha256": "42807edb084963c2d8c81fef9d0138a678971e90554bf2e69e4d7f2c9b49575c",
+  "sha256": "3265732584695bdd979fe87e5bea9280f5f418e94950deb9469f3a2e8f0131d4",
   "publishedAt": "2026-10-13T06:44:29.000Z",
   "notes": [
     "修复设置分类切换时的布局位移，并改进设置导航与图片存储历史保留。",
