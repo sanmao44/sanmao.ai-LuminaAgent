@@ -70,6 +70,35 @@ test("canvas asset eligibility requires ready media nodes", () => {
   assert.equal(assetLibrary.canAddCanvasAsset({ type: "upscale", data: { kind: "image", url: "https://example.test/a.png" } }), true);
 });
 
+test("existing canvas asset references are not registered as new assets", () => {
+  const base = { type: "media", data: { kind: "image", url: "https://example.test/a.png" } };
+  assert.equal(assetLibrary.shouldRegisterCanvasAsset(base), true);
+  assert.equal(assetLibrary.shouldRegisterCanvasAsset({
+    ...base,
+    data: { ...base.data, sourceAssetId: "existing-asset" },
+  }), false);
+  assert.equal(assetLibrary.shouldRegisterCanvasAsset({
+    ...base,
+    data: { ...base.data, sourceAssetId: "source-asset", assetId: "new-output" },
+  }), true);
+  assert.equal(assetLibrary.shouldRegisterCanvasAsset({ ...base, data: { ...base.data, url: "" } }), false);
+  assert.equal(assetLibrary.shouldRegisterCanvasAsset({ type: "prompt", data: { url: base.data.url } }), false);
+});
+
+test("canvas node identity uses the same canonical storage key as the asset catalog", () => {
+  assert.equal(
+    assetLibrary.canvasNodeAssetKey({
+      type: "media",
+      data: { kind: "image", url: "/api/storage/file?name=cover.png" },
+    }),
+    assetLibrary.canvasNodeAssetKey({
+      type: "media",
+      data: { kind: "image", url: "http://localhost:3210/api/storage/file?name=cover.png" },
+    }),
+  );
+  assert.equal(assetLibrary.canvasNodeAssetKey({ type: "prompt", data: {} }), null);
+});
+
 test("canvas nodes project to the existing asset record contract", () => {
   const node = {
     id: "node-1",
@@ -117,6 +146,19 @@ test("canvas nodes project to the existing asset record contract", () => {
   }), null);
 });
 
+test("canvas asset projections preserve the explicit storage identity", () => {
+  const projected = assetLibrary.canvasNodeAssetRecord({
+    id: "node-1",
+    type: "media",
+    data: {
+      kind: "image",
+      url: "https://cdn.example.test/a.png",
+      storageKey: "images/a.png",
+    },
+  }, { activeProjectId: "active-project" });
+  assert.equal(projected?.storageKey, "images/a.png");
+});
+
 test("canvas asset collection service preserves and merges collection metadata", async () => {
   assetServiceCalls.lists.length = 0;
   assetServiceCalls.updates.length = 0;
@@ -124,7 +166,7 @@ test("canvas asset collection service preserves and merges collection metadata",
   const existing = {
     id: "asset-1",
     kind: "image",
-    url: "image.png",
+    url: "http://localhost:3210/api/storage/file?name=image.png",
     name: "Image",
     source: "canvas-upload",
     createdAt: 1,
@@ -135,7 +177,7 @@ test("canvas asset collection service preserves and merges collection metadata",
   };
 
   const updated = await assetService.addExistingCanvasAssetToCollection(
-    { kind: "image", url: "image.png" },
+    { kind: "image", url: "/api/storage/file?name=image.png" },
     "selected",
     [existing],
   );

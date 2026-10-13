@@ -89,7 +89,9 @@ import {
 import { createPortal } from "react-dom";
 import {
   canAddCanvasAsset,
+  canvasNodeAssetKey,
   canvasNodeAssetRecord,
+  shouldRegisterCanvasAsset,
 } from "@/lib/canvas/asset-library";
 import type { GenerationLog } from "@/lib/generation-log";
 import {
@@ -211,7 +213,7 @@ import {
   resolvedCinematicDuration,
   type CinematicOpeningSettings,
 } from "@/lib/cinematic-shock-opening-director";
-import { registerCanvasAsset, type AssetRecord } from "@/lib/assets";
+import { assetKey, registerCanvasAsset, type AssetRecord } from "@/lib/assets";
 import {
   addExistingCanvasAssetToCollection,
   registerCanvasAssetInCollection,
@@ -725,7 +727,7 @@ export default function SuperCanvas() {
   const generationKeysRef = useRef<Set<string>>(new Set());
   const recoveryTasksRef = useRef<Set<string>>(new Set());
   const angleAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
-  const registeredAssetUrlsRef = useRef<Set<string>>(new Set());
+  const registeredAssetKeysRef = useRef<Set<string>>(new Set());
   const spaceHeldRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [runtime, setRuntime] = useState<CanvasRuntimeState | null>(null);
@@ -2048,17 +2050,18 @@ export default function SuperCanvas() {
   useEffect(() => {
     if (!ready || !activeProjectId) return;
     const pending = document.nodes.filter(
-      (node) =>
-        node.type === "media" &&
-        node.data.url &&
-        !registeredAssetUrlsRef.current.has(
-          `${node.data.kind}:${node.data.url}`,
-        ),
+      (node) => {
+        const key = canvasNodeAssetKey(node);
+        return shouldRegisterCanvasAsset(node) &&
+          key !== null &&
+          !registeredAssetKeysRef.current.has(key);
+      },
     );
     if (!pending.length) return;
-    pending.forEach((node) =>
-      registeredAssetUrlsRef.current.add(`${node.data.kind}:${node.data.url}`),
-    );
+    const pendingKeys = pending.map((node) => canvasNodeAssetKey(node));
+    pendingKeys.forEach((key) => {
+      if (key) registeredAssetKeysRef.current.add(key);
+    });
     void Promise.all(
       pending.map((node) =>
         registerCanvasAsset({
@@ -2067,6 +2070,7 @@ export default function SuperCanvas() {
           ),
           kind: node.data.kind || "image",
           url: String(node.data.url),
+          ...(typeof node.data.storageKey === "string" ? { storageKey: node.data.storageKey } : {}),
           name: String(
             node.data.name ||
               (node.data.kind === "video" ? "画布视频" : node.data.kind === "audio" ? "画布音频" : "画布图片"),
@@ -2085,11 +2089,9 @@ export default function SuperCanvas() {
     )
       .then(() => setAssetRefresh((value) => value + 1))
       .catch(() => {
-        pending.forEach((node) =>
-          registeredAssetUrlsRef.current.delete(
-            `${node.data.kind}:${node.data.url}`,
-          ),
-        );
+        pendingKeys.forEach((key) => {
+          if (key) registeredAssetKeysRef.current.delete(key);
+        });
       });
   }, [activeProjectId, currentProject?.projectId, document.nodes, ready]);
 
@@ -10456,6 +10458,7 @@ export default function SuperCanvas() {
       const draft = createMedia(asset.kind, asset.url, asset.name, seed, {
         role: "资产中心",
         sourceAssetId: asset.id,
+        ...(asset.storageKey ? { storageKey: asset.storageKey } : {}),
         ...defaultMediaParams(asset.kind, runtime),
       });
       const targetGroup = position
@@ -10500,6 +10503,7 @@ export default function SuperCanvas() {
 
   const addAssetAsReference = useCallback(
     (asset: AssetRecord, ownerOverride?: string) => {
+      const assetIdentity = assetKey(asset.kind, asset.url, asset.storageKey);
       const ownerId = ownerOverride || selectedGroupId || selectedSingle?.id;
       if (!ownerId) {
         notify("多选内容需要先成组，或明确选中一个目标节点。", "error");
@@ -10508,8 +10512,7 @@ export default function SuperCanvas() {
       const existing = canvasCoreRef.current.document().nodes.find(
         (node) =>
           node.type === "media" &&
-          node.data.kind === asset.kind &&
-          node.data.url === asset.url,
+          canvasNodeAssetKey(node) === assetIdentity,
       );
       if (existing?.id === ownerId) {
         notify("素材不能引用自身，请选择另一个目标节点。", "error");
@@ -10523,7 +10526,12 @@ export default function SuperCanvas() {
             asset.url,
             asset.name,
             { x: ownerBounds.x - 430, y: ownerBounds.y },
-            { role: "参考素材", sourceAssetId: asset.id, ...defaultMediaParams(asset.kind, runtime) },
+            {
+              role: "参考素材",
+              sourceAssetId: asset.id,
+              ...(asset.storageKey ? { storageKey: asset.storageKey } : {}),
+              ...defaultMediaParams(asset.kind, runtime),
+            },
           );
       const sourceNode =
         existing ||
@@ -10565,11 +10573,11 @@ export default function SuperCanvas() {
 
   const locateAsset = useCallback(
     (asset: AssetRecord) => {
+      const assetIdentity = assetKey(asset.kind, asset.url, asset.storageKey);
       const matches = canvasCoreRef.current.document().nodes.filter(
         (node) =>
           node.type === "media" &&
-          node.data.kind === asset.kind &&
-          node.data.url === asset.url,
+          canvasNodeAssetKey(node) === assetIdentity,
       );
       if (!matches.length)
         return notify("这个资产还没有放入当前画布。", "error");
@@ -10586,7 +10594,11 @@ export default function SuperCanvas() {
     if (!node || node.type !== "media" || !node.data.url || !node.data.kind) return;
     try {
       const result = await addExistingCanvasAssetToCollection(
-        { kind: node.data.kind, url: String(node.data.url) },
+        {
+          kind: node.data.kind,
+          url: String(node.data.url),
+          ...(typeof node.data.storageKey === "string" ? { storageKey: node.data.storageKey } : {}),
+        },
         collectionId,
         canvasAssets,
       );

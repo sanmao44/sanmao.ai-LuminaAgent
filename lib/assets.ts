@@ -47,13 +47,13 @@ export async function registerCanvasAsset(input: Omit<AssetRecord, 'favorite' | 
 
 export async function setUnifiedAssetFavorite(asset: AssetRecord, favorite: boolean) {
   if (asset.galleryId) await assetRepository.patchGallery(asset.galleryId, { favorite });
-  await assetRepository.saveIndex({ id: assetOverlayId(asset.kind, asset.url), kind: asset.kind, url: asset.url, name: asset.name, source: 'metadata', createdAt: Date.now(), favorite, projectIds: asset.projectIds, collectionIds: asset.collectionIds, tags: asset.tags });
+  await assetRepository.saveIndex({ id: assetOverlayId(asset.kind, asset.url, asset.storageKey), kind: asset.kind, url: asset.url, storageKey: asset.storageKey, name: asset.name, source: 'metadata', createdAt: Date.now(), favorite, projectIds: asset.projectIds, collectionIds: asset.collectionIds, tags: asset.tags });
 }
 
 export async function hideUnifiedAsset(asset: AssetRecord) {
-  await assetRepository.saveIndex({ id: assetOverlayId(asset.kind, asset.url), kind: asset.kind, url: asset.url, name: asset.name, source: 'metadata', createdAt: Date.now(), favorite: asset.favorite, hidden: true, projectIds: asset.projectIds, collectionIds: asset.collectionIds, tags: asset.tags });
+  await assetRepository.saveIndex({ id: assetOverlayId(asset.kind, asset.url, asset.storageKey), kind: asset.kind, url: asset.url, storageKey: asset.storageKey, name: asset.name, source: 'metadata', createdAt: Date.now(), favorite: asset.favorite, hidden: true, projectIds: asset.projectIds, collectionIds: asset.collectionIds, tags: asset.tags });
 }
 
 export async function updateUnifiedAssetMetadata(asset: AssetRecord, patch: { collectionIds?: string[]; tags?: string[] }) {
-  await assetRepository.saveIndex({ id: assetOverlayId(asset.kind, asset.url), kind: asset.kind, url: asset.url, name: asset.name, source: 'metadata', createdAt: Date.now(), favorite: asset.favorite, projectIds: asset.projectIds, collectionIds: patch.collectionIds ?? asset.collectionIds, tags: patch.tags ?? asset.tags });
+  await assetRepository.saveIndex({ id: assetOverlayId(asset.kind, asset.url, asset.storageKey), kind: asset.kind, url: asset.url, storageKey: asset.storageKey, name: asset.name, source: 'metadata', createdAt: Date.now(), favorite: asset.favorite, projectIds: asset.projectIds, collectionIds: patch.collectionIds ?? asset.collectionIds, tags: patch.tags ?? asset.tags });
 }

@@ -376,6 +376,8 @@ export type CanvasNodeData = {
   videoInputModeLocked?: boolean;
   assetId?: string;
   sourceAssetId?: string;
+  /** Stable asset-library identity carried by references into the canvas. */
+  storageKey?: string;
   /** MIME type of an imported media asset, kept for reliable audio handling. */
   mimeType?: string;
   autoFit?: boolean;

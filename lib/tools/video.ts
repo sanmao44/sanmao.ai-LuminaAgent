@@ -5,7 +5,7 @@ import { VIDEO_DOWNLOAD_BROWSER_SESSIONS } from '@/packages/contracts/video-down
 export const videoDownloadTool = defineTool({
   id: nativeToolId('video_download'),
   name: 'video_download',
-  description: '下载用户明确提供的公开 HTTP/HTTPS 视频地址。仅下载单个视频，不下载播放列表；成功后返回项目内可访问的视频地址。需要真实执行时必须调用此工具，不能只描述命令或假造下载链接。',
+  description: '下载用户明确提供的公开 HTTP/HTTPS 视频地址。使用 yt-dlp 官方提取器覆盖抖音等支持平台；仅下载单个视频，不下载播放列表。微信视频号分享页目前没有官方提取器，但用户有权访问的直接媒体 URL 仍可按通用地址尝试。成功后返回项目内可访问的视频地址。需要真实执行时必须调用此工具，不能只描述命令或假造下载链接。',
   permissions: ['network', 'process', 'artifact:write'],
   tags: ['video'],
   source: 'native',

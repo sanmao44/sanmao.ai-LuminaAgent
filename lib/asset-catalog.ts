@@ -39,8 +39,15 @@ type VideoTaskAssetSource = {
   remoteVideoUrls?: string[];
 };
 
-export function assetKey(kind: AssetRecord['kind'], url: string) {
-  return `${kind}:${String(url || '').trim()}`;
+export function assetKey(
+  kind: AssetRecord['kind'],
+  url: string,
+  storageKey?: string,
+) {
+  const logicalStorageKey =
+    normalizeAssetStorageKey(kind, storageKey) ||
+    storageKeyFromAssetUrl(kind, url);
+  return `${kind}:${logicalStorageKey || String(url || '').trim()}`;
 }
 
 export function stableHash(value: string) {
@@ -52,8 +59,12 @@ export function stableHash(value: string) {
   return (result >>> 0).toString(36);
 }
 
-export function assetOverlayId(kind: AssetRecord['kind'], url: string) {
-  return `asset_meta_${stableHash(assetKey(kind, url))}`;
+export function assetOverlayId(
+  kind: AssetRecord['kind'],
+  url: string,
+  storageKey?: string,
+) {
+  return `asset_meta_${stableHash(assetKey(kind, url, storageKey))}`;
 }
 
 export function galleryAsset(item: GalleryItem): AssetRecord {
@@ -121,11 +132,17 @@ export function videoAssets(tasks: VideoTaskAssetSource[]) {
 }
 
 export function mergeAssetRecords(records: AssetRecord[], index: AssetIndexItem[] = []) {
-  const overlays = new Map(index.filter((item) => item.source === 'metadata').map((item) => [assetKey(item.kind, item.url), item]));
+  const overlays = new Map<string, AssetIndexItem>();
+  for (const item of index) {
+    if (item.source !== 'metadata') continue;
+    const key = assetKey(item.kind, item.url, item.storageKey);
+    const existing = overlays.get(key);
+    if (!existing || item.createdAt >= existing.createdAt) overlays.set(key, item);
+  }
   const merged = new Map<string, AssetRecord>();
   for (const record of records) {
     if (!record.url) continue;
-    const key = assetKey(record.kind, record.url);
+    const key = assetKey(record.kind, record.url, record.storageKey);
     const overlay = overlays.get(key);
     if (overlay?.hidden) continue;
     const existing = merged.get(key);
@@ -133,6 +150,8 @@ export function mergeAssetRecords(records: AssetRecord[], index: AssetIndexItem[
       ...(existing || record),
       ...record,
       id: existing?.id || record.id,
+      source: existing?.source || record.source,
+      storageKey: existing?.storageKey || record.storageKey,
       name: overlay?.name || record.name || existing?.name || '未命名资产',
       favorite: overlay ? Boolean(overlay.favorite) : Boolean(record.favorite || existing?.favorite),
       projectIds: [...new Set([...(existing?.projectIds || []), ...record.projectIds, ...(overlay?.projectIds || [])])],

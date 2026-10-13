@@ -1,4 +1,5 @@
 import type { AssetRecord, AssetSource } from "@/lib/assets";
+import { assetKey } from "@/lib/asset-catalog";
 import type { CanvasNode } from "@/lib/canvas/types";
 
 export const CANVAS_ASSET_UNCATEGORIZED_ID = "uncategorized";
@@ -90,6 +91,27 @@ export function canAddCanvasAsset(node: CanvasNode) {
   );
 }
 
+/**
+ * Existing asset references already belong to the unified asset index or
+ * another authoritative source such as gallery history. Materialized output
+ * nodes still carry assetId and must remain eligible for registration.
+ */
+export function shouldRegisterCanvasAsset(node: CanvasNode) {
+  if (node.type !== "media" || !node.data.url) return false;
+  const sourceAssetId = node.data.sourceAssetId?.trim();
+  const assetId = node.data.assetId?.trim();
+  return !sourceAssetId || Boolean(assetId);
+}
+
+export function canvasNodeAssetKey(node: CanvasNode) {
+  if (!node.data.url) return null;
+  const kind = node.data.kind || "image";
+  const storageKey = typeof node.data.storageKey === "string"
+    ? node.data.storageKey
+    : undefined;
+  return assetKey(kind, String(node.data.url), storageKey);
+}
+
 export function canvasNodeAssetRecord(
   node: CanvasNode,
   context: { activeProjectId: string; projectId?: string },
@@ -98,10 +120,15 @@ export function canvasNodeAssetRecord(
   if ((node.type !== "media" && node.type !== "upscale") || !node.data.url)
     return null;
 
+  const storageKey = typeof node.data.storageKey === "string"
+    ? node.data.storageKey
+    : undefined;
+
   return {
     id: `canvas:${context.activeProjectId}:${node.id}`,
     kind: node.data.kind || "image",
     url: String(node.data.url),
+    ...(storageKey ? { storageKey } : {}),
     name: String(node.data.name || "画布素材"),
     source: (node.data.generation ? "canvas-output" : "canvas-upload") as AssetSource,
     createdAt: Number(node.data.generation?.createdAt || fallbackCreatedAt),

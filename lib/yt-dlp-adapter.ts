@@ -9,6 +9,7 @@ import { resolveLocalDataDir } from './data-paths';
 import { resolveVideoDownloadProxy } from './video-download-network';
 import { XinpianchangPublicMediaError, isXinpianchangVideoUrl, resolveXinpianchangPublicMedia } from './xinpianchang-download';
 import { resolveVideoDownloadBrowser } from './video-download-browser';
+import { isDouyinVideoUrl, isWeixinChannelsShareUrl } from './video-download-platforms';
 import type { VideoDownloadBrowserSession } from '@/packages/contracts/video-download';
 
 /**
@@ -81,7 +82,7 @@ export class YtDlpDownloadError extends Error {
   }
 }
 
-function summarizeYtDlpFailure(stderr: string, stdout: string) {
+function summarizeYtDlpFailure(stderr: string, stdout: string, sourceUrl?: string) {
   const output = stderr + '\n' + stdout;
   if (/Could not copy .*cookie database|database is locked|unable to copy .*cookies?/i.test(output)) {
     return '无法复制默认浏览器的 Cookie 数据库，通常是浏览器仍在运行并锁定了 profile。请完全退出 Tabbit/Chrome（包括后台进程）后重试；如果仍失败，请改用 Firefox 会话或导出当前站点的 cookies.txt。';
@@ -91,6 +92,12 @@ function summarizeYtDlpFailure(stderr: string, stdout: string) {
   }
   if (/This video is unavailable|Video unavailable|This video is no longer available|视频不存在|稿件不可见/i.test(output)) {
     return '该视频已不可播放或已被站点移除，无法下载。';
+  }
+  if (sourceUrl && isDouyinVideoUrl(sourceUrl) && /Fresh cookies|fresh cookie|web detail JSON: HTTP Error 403/i.test(output)) {
+    return '站点返回 HTTP 403：抖音要求本次解析使用新鲜浏览器 Cookie（通常不要求登录）。请先在本机浏览器打开并正常播放该链接，再明确授权本次下载读取 Chrome、Edge 或 Firefox 的匹配 Cookie 后重试；项目不会绕过抖音风控。';
+  }
+  if (sourceUrl && isWeixinChannelsShareUrl(sourceUrl) && /Unsupported URL|No suitable extractor|not a valid URL|not supported/i.test(output)) {
+    return '微信视频号分享页目前没有官方 yt-dlp 提取器。GitHub 上的相关案例通常依赖微信客户端流量监听、证书安装或流量解密，项目不内置这类方式；如果你能提供自己有权访问的直接媒体 URL，仍可按通用视频地址下载。';
   }
   if (/Sign in to confirm|login required|login to view|authentication required|HTTP Error 401|HTTP Error 403|HTTP 401|HTTP 403/i.test(output)) {
     const status = /401/.test(output) ? '401' : '403';
@@ -495,7 +502,7 @@ export async function downloadWithYtDlp(request: YtDlpDownloadRequest, dependenc
   }
   if (processResult.exitCode !== 0) {
     await removeNewPartialFiles(outputDirectory, existingNames);
-    const fallbackFailure = summarizeYtDlpFailure(processResult.stderr, processResult.stdout);
+    const fallbackFailure = summarizeYtDlpFailure(processResult.stderr, processResult.stdout, url);
     const message = publicMediaFailure
       ? `公开媒体解析失败（${publicMediaFailure}）；备用下载也失败：${fallbackFailure}`
       : fallbackFailure;

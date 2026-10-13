@@ -125,6 +125,54 @@ test('download reports removed media distinctly from network and site authorizat
   }
 });
 
+test('Douyin fresh-cookie failures explain the explicit browser-session recovery', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-douyin-'));
+  try {
+    await assert.rejects(
+      () => adapter.downloadWithYtDlp({
+        url: 'https://www.douyin.com/video/7126745726494821640',
+        outputDirectory: directory,
+      }, {
+        command: 'yt-dlp-test',
+        resolveProxy: async () => undefined,
+        run: async () => ({
+          exitCode: 1,
+          signal: null,
+          stdout: '',
+          stderr: '[Douyin] 7126745726494821640: Failed to download web detail JSON: HTTP Error 403: Forbidden\nERROR: Fresh cookies (not necessarily logged in) are needed',
+        }),
+      }),
+      (error) => error instanceof adapter.YtDlpDownloadError
+        && /HTTP 403/.test(error.message)
+        && /抖音要求本次解析使用新鲜浏览器 Cookie/.test(error.message)
+        && /不会绕过抖音风控/.test(error.message),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('WeChat Channels share-page failures explain the supported boundary', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-weixin-'));
+  try {
+    await assert.rejects(
+      () => adapter.downloadWithYtDlp({
+        url: 'https://channels.weixin.qq.com/web/pages/feed',
+        outputDirectory: directory,
+      }, {
+        command: 'yt-dlp-test',
+        resolveProxy: async () => undefined,
+        run: async () => ({ exitCode: 1, signal: null, stdout: '', stderr: 'ERROR: Unsupported URL: https://channels.weixin.qq.com/web/pages/feed' }),
+      }),
+      (error) => error instanceof adapter.YtDlpDownloadError
+        && /微信视频号分享页目前没有官方 yt-dlp 提取器/.test(error.message)
+        && /直接媒体 URL/.test(error.message),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('Chrome App-Bound Encryption failure explains the supported recovery paths', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-dpapi-'));
   try {
