@@ -6,6 +6,7 @@ import {
   MEDIA_DIRECTORY_NAMES,
   MEDIA_KINDS,
   knownMediaRoots,
+  lookupOnlyMediaRoots,
   mediaDirectory,
   rememberMediaRoot,
   resolveMediaRootDir,
@@ -55,13 +56,14 @@ function uniquePaths(values: Array<string | undefined>) {
 export function mediaSourceRoots(kind: MediaKind, cwd = process.cwd()) {
   const localData = resolveLocalDataDir(cwd);
   const directory = MEDIA_DIRECTORY_NAMES[kind];
+  const lookupOnlyRoots = new Set(lookupOnlyMediaRoots(kind, cwd).map((root) => path.resolve(root)));
   return uniquePaths([
     kind === 'image' ? path.join(cwd, '..', 'image_generation_records') : '',
     process.env[ENV_STORAGE_KEYS[kind]],
     path.join(localData, directory),
     path.join(localData, 'media', directory),
     ...knownMediaRoots(kind, cwd),
-  ]);
+  ]).filter((root) => !lookupOnlyRoots.has(root));
 }
 
 async function listMediaFiles(root: string, depth = 0): Promise<string[]> {

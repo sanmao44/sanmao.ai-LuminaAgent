@@ -1,0 +1,19 @@
+.panel { gap: 14px; min-width: 0; padding: 22px; }
+.heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.heading h2, .heading h3 { margin: 0; color: var(--text); font-size: 16px; font-weight: 650; }
+.heading h3 { font-size: 15px; }
+.badge { color: var(--text-2); font-size: 11px; line-height: 1.5; }
+.note { margin: 0; max-width: 72ch; color: var(--text-2); font-size: 13px; line-height: 1.7; }
+.field { display: grid; gap: 8px; color: var(--text); font-size: 13px; }
+.field input { width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); color: var(--text); font-size: 13px; caret-color: var(--accent); }
+.saved { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.actions button { font-size: 12px; min-height: 36px; padding: 8px 13px; }
+.details { color: var(--text-2); font-size: 12px; line-height: 1.7; }
+.details summary { cursor: pointer; width: fit-content; }
+.details p { margin: 10px 0 0; max-width: 72ch; overflow-wrap: anywhere; }
+.extra { display: grid; gap: 12px; margin-top: 6px; padding-top: 22px; border-top: 1px solid var(--line); }
+.field input::placeholder { color: var(--text-2); opacity: 1; }
+.panel :is(input, button, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.panel button:disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 480px) { .panel { padding: 18px; } .actions { align-items: stretch; } .actions button { flex: 1 1 140px; } }

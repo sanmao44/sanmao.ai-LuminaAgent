@@ -1,0 +1,342 @@
+.pageHeader { margin-bottom: 26px; }
+.pageHeader h1 { margin: 0; font-size: 25px; font-weight: 750; color: var(--text); letter-spacing: -.02em; }
+
+.workspace {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: start;
+  gap: 28px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text);
+  caret-color: var(--accent);
+}
+
+.workspace ::selection {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.navigation {
+  position: sticky;
+  top: calc(var(--shell-header-height, 64px) + 18px);
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.navigationButton {
+  display: grid;
+  gap: 5px;
+  min-height: 66px;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.navigationButton > span {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.navigationButton > small {
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.navigationButton:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.navigationButton[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.navigationButton[aria-pressed='true'] > small {
+  color: var(--accent-text);
+}
+
+.navigationButton:focus-visible,
+.contents :global(button:focus-visible),
+.contents :global(a:focus-visible),
+.contents :global(summary:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.contentArea,
+.group,
+.contents {
+  min-width: 0;
+}
+
+.group {
+  display: grid;
+  gap: 20px;
+}
+
+.group[hidden] {
+  display: none;
+}
+
+.groupHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 2px 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.groupHeader > div {
+  min-width: 0;
+}
+
+.groupHeader h2 {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 750;
+  line-height: 1.35;
+  letter-spacing: -.02em;
+}
+
+.groupHeader p {
+  max-width: 66ch;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.saveHint {
+  flex: none;
+  max-width: 100%;
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.contents {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.preferences {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.contents :global(.settings-card) {
+  grid-column: auto;
+  gap: 16px;
+  min-width: 0;
+  padding: 22px;
+  border-radius: 14px;
+}
+
+.contents :global(.settings-card-head) {
+  align-items: flex-start;
+}
+
+.contents :global(.settings-card-head > div > span) {
+  display: none;
+}
+
+.contents :global(.settings-card-head h2) {
+  font-size: 17px;
+  line-height: 1.4;
+}
+
+.contents :global(.settings-card-note) {
+  max-width: 72ch;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.contents :global(.settings-help-details) {
+  max-width: 72ch;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.contents :global(.settings-help-details summary) { cursor: pointer; width: fit-content; }
+.contents :global(.settings-help-details p) { margin: 10px 0 0; }
+
+.contents :global(.settings-api-grid input::placeholder) { color: var(--text-2); opacity: 1; }
+.contents :global(.settings-theme-options button:not(.active) small) { color: var(--text-2); }
+
+.contents :global(.settings-theme-options button) {
+  min-height: 68px;
+  padding: 12px;
+}
+
+.contents :global(.settings-theme-options button span) {
+  font-size: 13px;
+}
+
+.contents :global(.settings-theme-options button small),
+.contents :global(.settings-state),
+.contents :global(.settings-api-grid label > span),
+.contents :global(.settings-provider-copy small),
+.contents :global(.settings-provider-option-copy small),
+.contents :global(.settings-api-status),
+.contents :global(.settings-backup-summary span),
+.contents :global(.settings-backup-warning),
+.contents :global(.settings-backup-latest) {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.contents :global(.settings-api-status),
+.contents :global(.settings-backup-latest) {
+  color: var(--text-2);
+}
+
+.contents :global(.settings-api-status.ok) {
+  color: var(--success);
+}
+
+.contents :global(.settings-backup-warning) {
+  color: var(--warning);
+}
+
+.contents :global(.settings-provider-copy strong),
+.contents :global(.settings-provider-option-copy strong),
+.contents :global(.settings-api-grid input),
+.contents :global(.settings-api-grid select),
+.contents :global(.storage-row input) {
+  font-size: 13px;
+}
+
+.contents :global(.settings-api-grid input),
+.contents :global(.settings-api-grid select),
+.contents :global(.settings-provider-trigger),
+.contents :global(.storage-row input) {
+  min-height: 42px;
+}
+
+.contents :global(.primary-small),
+.contents :global(.ghost-button),
+.contents :global(.secondary-action),
+.contents :global(.settings-api-actions .settings-api-env-hint) {
+  min-height: 40px;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.contents :global(.settings-api-actions .settings-api-env-hint) {
+  height: auto;
+  padding-block: 8px;
+}
+
+.contents :global(.settings-backup-summary b) {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.contents :global(.settings-switch input:focus-visible + span) {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@media (max-width: 1040px) {
+  .preferences {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace {
+    gap: 20px;
+  }
+}
+
+@media (max-width: 780px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+
+  .navigation {
+    position: static;
+    display: flex;
+    gap: 6px;
+    padding: 4px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+
+  .navigationButton {
+    flex: 0 0 auto;
+    min-width: 68px;
+    min-height: 44px;
+    padding: 11px 14px;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .navigationButton > small {
+    display: none;
+  }
+
+  .groupHeader {
+    gap: 8px;
+    padding-bottom: 16px;
+  }
+
+  .saveHint {
+    width: 100%;
+    margin: 0;
+  }
+
+  .contents :global(.settings-card) {
+    padding: 18px;
+  }
+
+  .contents :global(.primary-small),
+  .contents :global(.ghost-button),
+  .contents :global(.secondary-action) {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 420px) {
+  .contents :global(.settings-backup-summary) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .contents :global(.settings-api-actions) > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navigationButton {
+    transition: none;
+  }
+}

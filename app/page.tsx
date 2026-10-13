@@ -7,10 +7,13 @@ import AngleConsole from '@/components/AngleConsole';
 import ModelPicker from '@/components/ModelPicker';
 import UpdateNotice from '@/components/UpdateNotice';
 import RuntimeServiceControl from '@/components/RuntimeServiceControl';
+import SettingsWorkspace from '@/components/settings/SettingsWorkspace';
+import ImageStorageSettings from '@/components/settings/ImageStorageSettings';
+import { saveImagesToDirectory } from '@/lib/browser-image-directory';
 import { getProviderPreset, providerPresets } from '@/lib/provider-presets';
 import { agnesBillingLabel } from '@/lib/agnes';
 import AgnesConnectionGuide from '@/components/AgnesConnectionGuide';
-import { loadImageDirectoryHandle, saveImageDirectoryHandle } from '@/lib/client-history';
+import { loadImageDirectoryHandle, saveImageDirectoryHandle, clearImageDirectoryHandle } from '@/lib/client-history';
 import { assetRepository } from '@/lib/repositories/asset-repository';
 import Link from 'next/link';
 import LocalEditEditor from '@/components/MaskEditor';
@@ -2661,7 +2664,7 @@ export default function Page() {
     const [logFailureFirst, setLogFailureFirst] = useState(false);
     const [logPage, setLogPage] = useState(1);
     const [selectedLog, setSelectedLog] = useState(null);
-    const [localDirectoryHandle, setLocalDirectoryHandle] = useState(null);
+    const localDirectoryHandleRef = useRef(null);
     const [localDirectoryName, setLocalDirectoryName] = useState('');
     const [storagePath, setStoragePath] = useState('');
     const [storageUsage, setStorageUsage] = useState(null);
@@ -4415,7 +4418,7 @@ export default function Page() {
                 mode: 'readwrite'
             });
             if (permission !== 'denied') {
-                setLocalDirectoryHandle(handle);
+                localDirectoryHandleRef.current = handle;
                 setLocalDirectoryName(handle.name);
             }
         } catch  {}
@@ -4428,37 +4431,42 @@ export default function Page() {
             const permission = await handle.requestPermission?.({
                 mode: 'readwrite'
             });
-            if (permission === 'denied') throw new Error('没有获得目录写入权限');
+            if (permission !== 'granted') throw new Error('没有获得目录写入权限，请重新选择目录并允许写入');
             await saveImageDirectoryHandle(handle);
-            setLocalDirectoryHandle(handle);
+            localDirectoryHandleRef.current = handle;
             setLocalDirectoryName(handle.name);
             notify(`已选择本地目录：${handle.name}`);
         } catch (error) {
             if (error?.name !== 'AbortError') notify(error instanceof Error ? error.message : '选择目录失败');
         }
     }
-    async function saveImagesToLocalDirectory(images) {
-        if (!localDirectoryHandle) return;
+    async function stopLocalDirectorySave() {
         try {
-            const permission = await localDirectoryHandle.queryPermission?.({
-                mode: 'readwrite'
-            });
-            if (permission !== 'granted' && await localDirectoryHandle.requestPermission?.({
-                mode: 'readwrite'
-            }) !== 'granted') throw new Error('本地目录写入权限已失效');
-            for (const [index, image] of images.entries()){
-                const response = image.url.startsWith('data:') ? await fetch(image.url) : await fetch(image.url);
-                if (!response.ok) continue;
-                const extension = response.headers.get('content-type')?.includes('jpeg') ? 'jpg' : response.headers.get('content-type')?.includes('webp') ? 'webp' : 'png';
-                const fileHandle = await localDirectoryHandle.getFileHandle(`SANMAO-${Date.now()}-${index + 1}.${extension}`, {
-                    create: true
-                });
-                const writable = await fileHandle.createWritable();
-                await writable.write(await response.blob());
-                await writable.close();
-            }
+            await clearImageDirectoryHandle();
+            localDirectoryHandleRef.current = null;
+            setLocalDirectoryName('');
+            notify('已停止浏览器额外保存');
         } catch (error) {
-            notify(error instanceof Error ? error.message : '保存到本地目录失败');
+            notify(error instanceof Error ? error.message : '停止额外保存失败');
+        }
+    }
+    async function saveImagesToLocalDirectory(images) {
+        const handle = localDirectoryHandleRef.current;
+        if (!handle) return;
+        try {
+            await saveImagesToDirectory(handle, images);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '额外保存失败');
+        }
+    }
+    async function openImageStorageDirectory() {
+        try {
+            const res = await fetch('/api/storage/open', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '打开目录失败');
+            notify('已请求在应用所在电脑打开图片库');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '打开目录失败');
         }
     }
     async function saveStoragePath(nextPath = storagePath) {
@@ -4476,7 +4484,7 @@ export default function Page() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || '保存失败');
-            setStoragePath(next);
+            setStoragePath(data.state?.settings?.imageStoragePath || '');
             setState(data.state);
             notify(next ? '图片存储路径已保存' : '已恢复默认存储路径');
         } catch (error) {
@@ -5209,7 +5217,7 @@ export default function Page() {
                 ...old
             ]);
         registerHistorySuccess(items, sectionRef.current === 'generate' || (meta.source === 'agent' && sectionRef.current === 'agent'));
-        void saveImagesToLocalDirectory(images);
+        void saveImagesToLocalDirectory(storedImages);
         return items;
     }
     function patchGenerateTask(id, patch) {
@@ -10264,7 +10272,7 @@ export default function Page() {
                                                         children: "图片存储路径"
                                                     }),
                                                     /*#__PURE__*/ _jsx("small", {
-                                                        children: "默认保存到 .data/images；旧版本项目同级的 image_generation_records 会保留读取兼容。修改并保存后，后续图片都会使用新路径。"
+                                                        children: "保存到应用所在电脑的图片库；留空使用默认媒体库。浏览器额外保存独立于此路径，已有图片不会搬移。"
                                                     })
                                                 ]
                                             }),
@@ -10274,7 +10282,8 @@ export default function Page() {
                                                     /*#__PURE__*/ _jsx("input", {
                                                         value: storagePath,
                                                         onChange: (e)=>setStoragePath(e.target.value),
-                                                        placeholder: "默认路径：.data/images"
+                                                        placeholder: "留空使用默认图片库，或填写完整目录路径",
+                                                        "aria-label": "图片库路径"
                                                     }),
                                                     /*#__PURE__*/ _jsx("button", {
                                                         className: "ghost-button",
@@ -10298,12 +10307,12 @@ export default function Page() {
                                                             const data = await res.json();
                                                             if (!res.ok) notify(data.error || '打开目录失败');
                                                         },
-                                                        children: "↗ 一键打开保存目录"
+                                                        children: "打开已保存目录"
                                                     }),
                                                     /*#__PURE__*/ _jsx("button", {
                                                         className: "ghost-button local-folder-button",
                                                         onClick: ()=>void chooseLocalDirectory(),
-                                                        children: "选择本地目录"
+                                                        children: "选择额外保存目录"
                                                     }),
                                                     localDirectoryName && /*#__PURE__*/ _jsxs("span", {
                                                         className: "local-folder-name",
@@ -10524,82 +10533,10 @@ export default function Page() {
                                     })
                                 ]
                             }),
-                            section === 'settings' && /*#__PURE__*/ _jsxs("section", {
+                            section === 'settings' && /*#__PURE__*/ _jsx("section", {
                                 className: "settings-page",
-                                children: [
-                                    /*#__PURE__*/ _jsxs("div", {
-                                        className: "settings-intro",
-                                        children: [
-                                            /*#__PURE__*/ _jsx("div", {
-                                                className: "settings-intro-icon",
-                                                children: /*#__PURE__*/ _jsx(Icon, {
-                                                    name: "settings",
-                                                    size: 22
-                                                })
-                                            }),
-                                            /*#__PURE__*/ _jsxs("div", {
-                                                children: [
-                                                    /*#__PURE__*/ _jsx("h1", {
-                                                        children: "设置"
-                                                    }),
-                                                    /*#__PURE__*/ _jsx("p", {
-                                                        children: "把界面偏好、通知、图片存储和日志管理集中放在这里。后续新增功能也会优先归档到设置页。"
-                                                    })
-                                                ]
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("nav", {
-                                className: "settings-section-nav",
-                                "aria-label": "设置分组",
-                                children: [
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>document.getElementById('settings-appearance')?.scrollIntoView({
-                                                behavior: 'smooth',
-                                                block: 'start'
-                                            }),
-                                        children: "偏好"
-                                    }),
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>document.getElementById('settings-search')?.scrollIntoView({
-                                                behavior: 'smooth',
-                                                block: 'start'
-                                            }),
-                                        children: "联网"
-                                    }),
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>document.getElementById('settings-storage')?.scrollIntoView({
-                                                behavior: 'smooth',
-                                                block: 'start'
-                                            }),
-                                        children: "存储"
-                                    }),
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>document.getElementById('settings-backup')?.scrollIntoView({
-                                                behavior: 'smooth',
-                                                block: 'start'
-                                            }),
-                                        children: "备份"
-                                    }),
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>document.getElementById('settings-maintenance')?.scrollIntoView({
-                                                behavior: 'smooth',
-                                                block: 'start'
-                                            }),
-                                        children: "维护"
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "settings-layout",
-                                 children: [
-                                     /*#__PURE__*/ _jsx(RuntimeServiceControl, {}),
-                                     /*#__PURE__*/ _jsxs("section", {
+                                children: _jsx(SettingsWorkspace, {
+                                    preferences: _jsxs(_Fragment, { children: [_jsxs("section", {
                                         id: "settings-appearance",
                                         className: "settings-card surface",
                                                 children: [
@@ -10632,6 +10569,7 @@ export default function Page() {
                                                             /*#__PURE__*/ _jsxs("button", {
                                                                 type: "button",
                                                                 className: theme === 'light' ? 'active' : '',
+                                                                "aria-pressed": theme === 'light',
                                                                 onClick: ()=>setThemePreference('light'),
                                                                 children: [
                                                                     /*#__PURE__*/ _jsx(Icon, {
@@ -10649,6 +10587,7 @@ export default function Page() {
                                                             /*#__PURE__*/ _jsxs("button", {
                                                                 type: "button",
                                                                 className: theme === 'dark' ? 'active' : '',
+                                                                "aria-pressed": theme === 'dark',
                                                                 onClick: ()=>setThemePreference('dark'),
                                                                 children: [
                                                                     /*#__PURE__*/ _jsx(Icon, {
@@ -10666,8 +10605,7 @@ export default function Page() {
                                                         ]
                                                     })
                                                 ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("section", {
+                                            }), _jsxs("section", {
                                                 className: "settings-card surface",
                                                 children: [
                                                     /*#__PURE__*/ _jsxs("div", {
@@ -10689,6 +10627,9 @@ export default function Page() {
                                                                     /*#__PURE__*/ _jsx("input", {
                                                                         type: "checkbox",
                                                                         checked: successSoundEnabled,
+                                                                        role: "switch",
+                                                                        "aria-label": "出图成功音效",
+                                                                        "aria-checked": successSoundEnabled,
                                                                         onChange: (e)=>setSuccessSoundPreference(e.target.checked)
                                                                     }),
                                                                     /*#__PURE__*/ _jsx("span", {})
@@ -10716,8 +10657,8 @@ export default function Page() {
                                                         ]
                                                     })
                                                 ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("section", {
+                                            })] }),
+                                    network: _jsxs("section", {
                                                 id: "settings-search",
                                                 className: "settings-card surface settings-search-api",
                                                 children: [
@@ -10730,7 +10671,7 @@ export default function Page() {
                                                                         children: "联网搜索"
                                                                     }),
                                                                     /*#__PURE__*/ _jsx("h2", {
-                                                                        children: "搜索API"
+                                                                        children: "搜索服务"
                                                                     })
                                                                 ]
                                                             }),
@@ -10740,10 +10681,7 @@ export default function Page() {
                                                             })
                                                         ]
                                                     }),
-                                                    /*#__PURE__*/ _jsx("p", {
-                                                        className: "settings-card-note",
-                                                         children: "联网搜索支持模型原生搜索、AnySearch 和百度千帆。当前模型带“原生联网”能力时会优先调用模型自身搜索；原生搜索失败、限流或无结果时自动回退外部搜索 API。没有原生搜索能力的模型直接使用 AnySearch/百度千帆。AnySearch 默认可使用匿名免费额度，配置 ANYSEARCH_API_KEY 后可获得更高额度；百度千帆 Key 会加密保存在本机服务端，也可使用 QIANFAN_API_KEY。"
-                                                    }),
+                                                    /*#__PURE__*/ _jsxs(_Fragment, { children: [ _jsx("p", { className: "settings-card-note", children: "优先使用模型原生联网；不可用时自动回退到外部搜索。AnySearch 可使用匿名额度，百度千帆可配置备用 Key。" }), _jsxs("details", { className: "settings-help-details", children: [ _jsx("summary", { children: "搜索优先级与 Key 配置" }), _jsx("p", { children: "联网搜索支持模型原生搜索、AnySearch 和百度千帆。当前模型带“原生联网”能力时会优先调用模型自身搜索；原生搜索失败、限流或无结果时自动回退外部搜索 API。没有原生搜索能力的模型直接使用 AnySearch/百度千帆。AnySearch 默认可使用匿名免费额度，配置 ANYSEARCH_API_KEY 后可获得更高额度；百度千帆 Key 会加密保存在本机服务端，也可使用 QIANFAN_API_KEY。" }) ] }) ] }),
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "settings-api-grid",
                                                         children: [
@@ -10759,6 +10697,7 @@ export default function Page() {
                                                                             /*#__PURE__*/ _jsxs("button", {
                                                                                 type: "button",
                                                                                 className: "settings-provider-trigger",
+                                                                                disabled: webSearchApiBusy,
                                                                                 "aria-haspopup": "listbox",
                                                                                 "aria-expanded": webSearchProviderMenuOpen,
                                                                                 onClick: ()=>setWebSearchProviderMenuOpen((value)=>!value),
@@ -10791,6 +10730,7 @@ export default function Page() {
                                                                                     /*#__PURE__*/ _jsxs("button", {
                                                                                         type: "button",
                                                                                         role: "option",
+                                                                                        disabled: webSearchApiBusy,
                                                                                         "aria-selected": webSearchAnySearchSelected,
                                                                                         className: `settings-provider-option ${webSearchAnySearchSelected ? 'selected' : ''}`,
                                                                                         onClick: ()=>{
@@ -10824,6 +10764,7 @@ export default function Page() {
                                                                                     /*#__PURE__*/ _jsxs("button", {
                                                                                         type: "button",
                                                                                         role: "option",
+                                                                                        disabled: webSearchApiBusy,
                                                                                         "aria-selected": !webSearchAnySearchSelected,
                                                                                         className: `settings-provider-option ${!webSearchAnySearchSelected ? 'selected' : ''}`,
                                                                                         onClick: ()=>{
@@ -10868,7 +10809,7 @@ export default function Page() {
                                                                     /*#__PURE__*/ _jsx("input", {
                                                                         type: "password",
                                                                         autoComplete: "off",
-                                                                        disabled: webSearchAnySearchSelected,
+                                                                        disabled: webSearchAnySearchSelected || webSearchApiBusy,
                                                                         value: webSearchAnySearchSelected ? '' : webSearchApiKey,
                                                                         onChange: (e)=>{
                                                                             setWebSearchApiKey(e.target.value);
@@ -10901,7 +10842,7 @@ export default function Page() {
                                                                 className: "secondary-action compact",
                                                                 disabled: webSearchApiBusy || !webSearchApiKey.trim() && !selectedWebSearchConfigured,
                                                                 onClick: ()=>void testWebSearchApiConnection(),
-                                                                children: webSearchApiBusy ? '测试中…' : webSearchAnySearchSelected ? '测试 AnySearch' : '测试百度千帆'
+                                                                children: webSearchApiBusy ? '测试中…' : webSearchAnySearchSelected ? '测试 AnySearch' : webSearchApiKey.trim() ? '测试并保存百度千帆' : '测试已保存的连接'
                                                             }),
                                                             !webSearchAnySearchSelected && /*#__PURE__*/ _jsx("button", {
                                                                 type: "button",
@@ -10915,11 +10856,12 @@ export default function Page() {
                                                                 className: "ghost-button",
                                                                 disabled: webSearchApiBusy,
                                                                 onClick: ()=>void saveWebSearchApi(true),
-                                                                children: "清除 API"
+                                                                children: "清除已保存的 Key"
                                                             })
                                                         ]
                                                     }),
                                                     /*#__PURE__*/ _jsx("div", {
+                                                        role: "status",
                                                         className: `settings-api-status ${webSearchApiResult.includes('可用') || webSearchApiResult.includes('已保存') ? 'ok' : ''}`,
                                                         children: webSearchApiResult || (webSearchAnySearchSelected
                                                             ? webSearchAnySearchKeyConfigured ? 'AnySearch 已配置，将作为主源；失败、限流或无结果时自动切换百度千帆' : 'AnySearch 将使用匿名免费额度作为主源；失败、限流或无结果时自动切换百度千帆'
@@ -10927,82 +10869,18 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsxs("section", {
-                                                id: "settings-storage",
-                                                className: "settings-card surface",
-                                                children: [
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        className: "settings-card-head",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsxs("div", {
-                                                                children: [
-                                                                    /*#__PURE__*/ _jsx("span", {
-                                                                        children: "图片与文件"
-                                                                    }),
-                                                                    /*#__PURE__*/ _jsx("h2", {
-                                                                        children: "图片存储路径"
-                                                                    })
-                                                                ]
-                                                            }),
-                                                            /*#__PURE__*/ _jsx(Icon, {
-                                                                name: "folder",
-                                                                size: 18
-                                                            })
-                                                        ]
-                                                    }),
-                                                    /*#__PURE__*/ _jsx("p", {
-                                                        className: "settings-card-note",
-                                                        children: "默认保存到 .data/images；旧版本项目同级的 image_generation_records 会保留读取兼容。修改并保存后，后续图片都会使用新路径。"
-                                                    }),
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        className: "storage-row settings-storage-row",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("input", {
-                                                                value: storagePath,
-                                                                onChange: (e)=>setStoragePath(e.target.value),
-                                                                placeholder: "默认路径：.data/images"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                className: "ghost-button",
-                                                                disabled: storageBusy,
-                                                                onClick: ()=>void saveStoragePath(''),
-                                                                children: "使用默认路径"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                className: "primary-small",
-                                                                disabled: storageBusy,
-                                                                onClick: ()=>void saveStoragePath(),
-                                                                children: storageBusy ? '保存中…' : '保存路径'
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                className: "primary-small open-storage-button",
-                                                                disabled: storageBusy,
-                                                                onClick: async ()=>{
-                                                                    const res = await fetch('/api/storage/open', {
-                                                                        method: 'POST'
-                                                                    });
-                                                                    const data = await res.json();
-                                                                    if (!res.ok) notify(data.error || '打开目录失败');
-                                                                },
-                                                                children: "↗ 一键打开保存目录"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                className: "ghost-button local-folder-button",
-                                                                onClick: ()=>void chooseLocalDirectory(),
-                                                                children: "选择本地目录"
-                                                            }),
-                                                            localDirectoryName && /*#__PURE__*/ _jsxs("span", {
-                                                                className: "local-folder-name",
-                                                                children: [
-                                                                    "已选择：",
-                                                                    localDirectoryName
-                                                                ]
-                                                            })
-                                                        ]
-                                                    })
-                                                ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("section", {
+                                    storage: _jsx(ImageStorageSettings, {
+                                        path: storagePath,
+                                        savedPath: state.settings?.imageStoragePath || '',
+                                        busy: storageBusy,
+                                        directoryName: localDirectoryName,
+                                        onPathChange: setStoragePath,
+                                        onSave: saveStoragePath,
+                                        onOpen: openImageStorageDirectory,
+                                        onChooseDirectory: chooseLocalDirectory,
+                                        onClearDirectory: stopLocalDirectorySave
+                                    }),
+                                    backup: _jsxs("section", {
                                                 id: "settings-backup",
                                                 className: "settings-card surface settings-backup",
                                                 children: [
@@ -11188,7 +11066,7 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsxs("section", {
+                                    maintenance: _jsxs(_Fragment, { children: [_jsx(RuntimeServiceControl, {}), _jsxs("section", {
                                                 id: "settings-maintenance",
                                                 className: "settings-card surface settings-danger",
                                                 children: [
@@ -11254,10 +11132,8 @@ export default function Page() {
                                                         ]
                                                     })
                                                 ]
-                                            })
-                                        ]
-                                    })
-                                ]
+                                            })] })
+                                })
                             }),
                             section === 'providers' && (adminRequired && !isAdmin ? /*#__PURE__*/ _jsx(AdminLogin, {
                                 password: adminPassword,

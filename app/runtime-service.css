@@ -1,1 +1,183 @@
-.runtime-service-card{grid-column:1/-1;border-color:color-mix(in srgb,var(--accent) 30%,var(--line));background:linear-gradient(135deg,color-mix(in srgb,var(--accent-soft) 42%,var(--panel)),var(--panel))}.runtime-status-badge{display:inline-flex;align-items:center;min-height:22px;padding:0 8px;border-radius:999px;font-size:8px;font-weight:900}.runtime-status-badge.ready{color:var(--success);background:var(--success-soft)}.runtime-status-badge.working{color:var(--accent-text);background:var(--accent-soft);animation:runtime-pulse 1.4s ease-in-out infinite}.runtime-service-details{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.runtime-service-details span{display:grid;gap:3px;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--panel) 72%,transparent);color:var(--muted);font-size:8px}.runtime-service-details b{overflow:hidden;color:var(--text);font-size:10px;text-overflow:ellipsis;white-space:nowrap}.runtime-service-details b.warning{color:var(--danger)}.runtime-service-hint,.runtime-service-message{padding:9px 10px;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));border-radius:10px;background:var(--accent-soft);color:var(--accent-text);font-size:9px;line-height:1.5}.runtime-service-hint.warning{border-color:color-mix(in srgb,var(--danger) 32%,var(--line));background:var(--danger-soft);color:var(--danger)}.runtime-service-message.error{border-color:color-mix(in srgb,var(--danger) 32%,var(--line));background:var(--danger-soft);color:var(--danger)}.runtime-restart-button{justify-self:start;min-width:170px}.runtime-restart-button:disabled{opacity:.6}@keyframes runtime-pulse{50%{opacity:.55}}@media(max-width:780px){.runtime-service-details{grid-template-columns:1fr 1fr}.runtime-restart-button{width:100%}}@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .runtime-status-badge.working{animation:none}}
+.runtime-service-card {
+  grid-column: 1 / -1;
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.runtime-service-card .settings-card-note {
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.runtime-service-card .settings-card-head .runtime-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.runtime-status-badge.ready {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.runtime-status-badge.working {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  animation: runtime-pulse 1.4s ease-in-out infinite;
+}
+
+.runtime-status-badge.pending {
+  color: var(--text-2);
+  background: var(--panel-2);
+}
+
+.runtime-service-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.runtime-service-overview p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.runtime-service-overview b {
+  color: var(--text);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.runtime-service-overview b.warning {
+  color: var(--warning);
+}
+
+.runtime-service-diagnostics {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+}
+
+.runtime-service-diagnostics summary {
+  padding: 12px 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.runtime-service-diagnostics summary::marker {
+  color: var(--muted);
+}
+
+.runtime-service-diagnostics summary span {
+  margin-left: 8px;
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.runtime-service-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.runtime-service-details span {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.runtime-service-details b {
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.runtime-service-hint,
+.runtime-service-message {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.runtime-service-hint.warning {
+  border-color: color-mix(in srgb, var(--warning) 30%, var(--line));
+  background: color-mix(in srgb, var(--warning) 6%, var(--panel));
+  color: var(--warning);
+}
+
+.runtime-service-message.error {
+  border-color: color-mix(in srgb, var(--danger) 32%, var(--line));
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.runtime-service-card .runtime-restart-button {
+  justify-self: start;
+  min-height: 42px;
+  max-width: 100%;
+  font-size: 12px;
+  white-space: normal;
+}
+
+.runtime-restart-button:disabled {
+  opacity: .6;
+}
+
+.runtime-service-diagnostics summary:focus-visible,
+.runtime-service-card .runtime-restart-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@keyframes runtime-pulse {
+  50% { opacity: .7; }
+}
+
+@media (max-width: 780px) {
+  .runtime-service-card .runtime-restart-button {
+    width: 100%;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 420px) {
+  .runtime-service-details {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-service-diagnostics summary span {
+    display: block;
+    margin: 5px 0 0 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="on"]) .runtime-status-badge.working {
+    animation: none;
+  }
+}

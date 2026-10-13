@@ -13,6 +13,7 @@ import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
 import { providerStateRepository } from './repositories/server-provider-repository';
 import { isIntentClassifierModel } from './intent-classifier';
 import { isRetiredAgnesModel } from './agnes';
+import { prepareImageStoragePath } from './image-storage';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -661,7 +662,7 @@ export async function patchModel(id: string, patch: Partial<Pick<RegistryModel, 
 }
 
 export async function patchSettings(patch: Partial<AppSettings>) {
-  return mutateState((state) => {
+  return mutateState(async (state) => {
     // 兼容旧配置：历史上部分带生图能力的模型可能仍保存为 chat/unknown，
     // 但前端和运行时已经按能力把它们展示为 image。设置默认模型时必须使用同一套归类。
     state.models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
@@ -702,7 +703,7 @@ export async function patchSettings(patch: Partial<AppSettings>) {
       if (id && !state.providers.some((provider) => provider.id === id)) throw new Error('请选择已存在的默认厂商');
       state.settings.defaultProviderId = id ?? null;
     }
-    if ('imageStoragePath' in patch) state.settings.imageStoragePath = String(patch.imageStoragePath || '').trim();
+    if ('imageStoragePath' in patch) state.settings.imageStoragePath = await prepareImageStoragePath(String(patch.imageStoragePath || ''), state.settings.imageStoragePath);
     if ('videoStoragePath' in patch) state.settings.videoStoragePath = String(patch.videoStoragePath || '').trim();
     if ('skillsEnabled' in patch) state.settings.skillsEnabled = Boolean(patch.skillsEnabled);
     if ('skillsAutoApprove' in patch) state.settings.skillsAutoApprove = Boolean(patch.skillsAutoApprove);
