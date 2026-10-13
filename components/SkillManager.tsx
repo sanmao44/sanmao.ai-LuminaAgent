@@ -567,6 +567,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
             <h2 id="skill-manager-title"><i aria-hidden="true">✦</i>技能</h2>
             <button type="button" className={styles.help} aria-label="技能说明" title="技能说明" aria-expanded={helpOpen} aria-controls="skill-manager-help" onClick={() => setHelpOpen((value) => !value)}>?</button>
           </div>
+          <p className={styles.subtitle}>管理助手可复用的工作流与资料</p>
           {helpOpen && <div id="skill-manager-help" className={styles.helpPanel} role="region" aria-label="技能说明">
             <div className={styles.helpPanelHead}>
               <strong>技能说明</strong>
@@ -675,14 +676,14 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                 </div>
                 <div className={styles.rowActions}>
                   <label className={styles.check}>
-                    <input type="checkbox" checked={skill.enabled} disabled={busy} onChange={() => void toggleSkill(skill)} />
+                    <input type="checkbox" checked={skill.enabled} disabled={busy} aria-label={`${skill.name}：启用`} onChange={() => void toggleSkill(skill)} />
                     <span>启用</span>
                   </label>
-                  <button type="button" disabled={busy} onClick={() => void openEditor(skill)}>编辑</button>
-                  <button type="button" disabled={busy} onClick={() => void openPreview(skill)}>预览</button>
-                  {canCheckUpdate(skill) && <button type="button" disabled={busy || Boolean(batch)} onClick={() => void checkUpdate(skill)}>{update?.status === 'checking' ? '检查中…' : '检查更新'}</button>}
-                  <button type="button" disabled={busy} onClick={() => void exportSkill(skill)}>{skill.files.length ? '导出 zip' : '导出 md'}</button>
-                  <button type="button" disabled={busy} onClick={() => void removeSkill(skill)}>{confirming === skill.id ? '确认删除' : '删除'}</button>
+                  <button type="button" disabled={busy} aria-label={`编辑 ${skill.name}`} onClick={() => void openEditor(skill)}>编辑</button>
+                  <button type="button" disabled={busy} aria-label={`预览 ${skill.name}`} onClick={() => void openPreview(skill)}>预览</button>
+                  {canCheckUpdate(skill) && <button type="button" disabled={busy || Boolean(batch)} aria-label={`检查 ${skill.name} 的更新`} onClick={() => void checkUpdate(skill)}>{update?.status === 'checking' ? '检查中…' : '检查更新'}</button>}
+                  <button type="button" disabled={busy} aria-label={`导出 ${skill.name}`} onClick={() => void exportSkill(skill)}>{skill.files.length ? '导出 zip' : '导出 md'}</button>
+                  <button type="button" disabled={busy} aria-label={`${confirming === skill.id ? '确认删除' : '删除'} ${skill.name}`} onClick={() => void removeSkill(skill)}>{confirming === skill.id ? '确认删除' : '删除'}</button>
                 </div>
               </article>;
                   })
