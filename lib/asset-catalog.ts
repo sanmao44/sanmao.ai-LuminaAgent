@@ -6,6 +6,8 @@ export type AssetSource = 'history' | 'video-task' | 'canvas-upload' | 'canvas-o
 
 export type AssetRecord = {
   id: string;
+  /** Transient link used when a canvas projection references an existing asset. */
+  sourceAssetId?: string;
   kind: 'image' | 'video' | 'audio';
   url: string;
   storageKey?: string;
@@ -139,9 +141,14 @@ export function mergeAssetRecords(records: AssetRecord[], index: AssetIndexItem[
     const existing = overlays.get(key);
     if (!existing || item.createdAt >= existing.createdAt) overlays.set(key, item);
   }
+  const recordIds = new Set(records.map((record) => record.id));
   const merged = new Map<string, AssetRecord>();
   for (const record of records) {
     if (!record.url) continue;
+    // Canvas references are projections of an existing catalog entry, even
+    // when a storage adapter rewrites their URL. Materialized outputs do not
+    // carry sourceAssetId here and remain independent assets.
+    if (record.sourceAssetId && recordIds.has(record.sourceAssetId)) continue;
     const key = assetKey(record.kind, record.url, record.storageKey);
     const overlay = overlays.get(key);
     if (overlay?.hidden) continue;

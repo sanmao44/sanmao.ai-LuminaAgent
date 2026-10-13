@@ -129,6 +129,9 @@ export function canvasNodeAssetRecord(
     kind: node.data.kind || "image",
     url: String(node.data.url),
     ...(storageKey ? { storageKey } : {}),
+    ...(node.data.sourceAssetId?.trim() && !node.data.assetId?.trim()
+      ? { sourceAssetId: node.data.sourceAssetId.trim() }
+      : {}),
     name: String(node.data.name || "画布素材"),
     source: (node.data.generation ? "canvas-output" : "canvas-upload") as AssetSource,
     createdAt: Number(node.data.generation?.createdAt || fallbackCreatedAt),
