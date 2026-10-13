@@ -394,7 +394,7 @@ export function likelyFileGenerationRequest(input: string) {
 type VideoDownloadContextMessage = { role?: string; content?: unknown };
 type VideoDownloadBrowserSessionAuthorization = { browser: VideoDownloadBrowserSession; url: string };
 
-const VIDEO_DOWNLOAD_BROWSER_PATTERN = /\b(?:brave|chrome|chromium|edge|firefox|opera|safari|vivaldi|whale)\b/i;
+const VIDEO_DOWNLOAD_BROWSER_PATTERN = /\b(?:brave|chrome|chromium|edge|firefox|opera|safari|vivaldi|whale)\b|默认浏览器/i;
 
 function asksForVideoDownloadSessionConsent(text: string) {
   const question = text.replace(/https?:\/\/\S+/ig, ' ');
@@ -445,7 +445,8 @@ export function videoDownloadBrowserSessionAuthorization(input: string, context:
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
-    const browser = instruction.match(VIDEO_DOWNLOAD_BROWSER_PATTERN)?.[0].toLowerCase();
+    const browserMatch = instruction.match(VIDEO_DOWNLOAD_BROWSER_PATTERN)?.[0].toLowerCase();
+    const browser = browserMatch === '默认浏览器' ? 'default' : browserMatch;
     if (!isVideoDownloadBrowserSession(browser)) return undefined;
     return { browser, url: parsed.toString() };
   } catch {

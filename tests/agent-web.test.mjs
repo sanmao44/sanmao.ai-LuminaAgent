@@ -334,6 +334,7 @@ test('browser-session authorization ignores URL query syntax and requires user w
   assert.equal(web.likelyVideoDownloadRequest(request), true);
   assert.equal(web.videoDownloadBrowserSessionAuthorization(`下载这个视频 https://www.xinpianchang.com/a13727498?use=chrome&cookie=1`), undefined);
   assert.equal(web.videoDownloadBrowserSessionAuthorization(`下载这个视频 ${url} 能不能使用 Chrome 登录态重试？`), undefined);
+  assert.deepEqual(web.videoDownloadBrowserSessionAuthorization(`下载这个视频 ${url} 使用默认浏览器登录态重试`), { browser: 'default', url });
   assert.equal(web.videoDownloadBrowserSessionAuthorization('使用 Chrome 登录态重试', [
     { role: 'user', content: `下载这个视频 ${url}` },
     { role: 'assistant', content: `HTTP 403 ${url} 浏览器登录态可能缺失。` },

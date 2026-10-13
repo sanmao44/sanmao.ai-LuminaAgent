@@ -72,6 +72,13 @@ Shell 或 PowerShell 文本。
 再由 yt-dlp 下载；接口不可用时回到 yt-dlp 的站点提取路径。其他站点使用 yt-dlp 的对应提取器，
 支持范围随站点接口、下载器版本和用户当前网络变化，不能保证所有平台或所有链接均可下载。
 
+“使用默认浏览器登录态重试”会先解析系统默认浏览器，再交给 yt-dlp 的官方
+`--cookies-from-browser` 机制。Windows 新版 Chrome 的 App-Bound Encryption 可能阻止第三方读取
+Cookie；这时优先改用已登录的 Firefox 会话，或由用户用浏览器 Cookie 导出工具导出当前站点的
+Netscape cookies.txt。这个限制和排查方式记录在
+[yt-dlp issue #10927](https://github.com/yt-dlp/yt-dlp/issues/10927)。项目不会绕过浏览器加密，
+也不会自动读取未授权的浏览器会话。
+
 通过项目自带启动器运行时，会在首次启动时自动准备当前系统的
 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 下载器，并由服务端验证后调用。用户无需安装
 Python、设置 PATH 或输入命令行。下载器保存在当前安装的数据目录 `tools/` 下，换电脑后

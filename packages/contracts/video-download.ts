@@ -1,4 +1,5 @@
 export const VIDEO_DOWNLOAD_BROWSER_SESSIONS = [
+  'default',
   'brave',
   'chrome',
   'chromium',

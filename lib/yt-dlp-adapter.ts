@@ -8,7 +8,8 @@ import { BilibiliPublicMediaError, isBilibiliVideoUrl, resolveBilibiliPublicMedi
 import { resolveLocalDataDir } from './data-paths';
 import { resolveVideoDownloadProxy } from './video-download-network';
 import { XinpianchangPublicMediaError, isXinpianchangVideoUrl, resolveXinpianchangPublicMedia } from './xinpianchang-download';
-import { isVideoDownloadBrowserSession, type VideoDownloadBrowserSession } from '@/packages/contracts/video-download';
+import { resolveVideoDownloadBrowser } from './video-download-browser';
+import type { VideoDownloadBrowserSession } from '@/packages/contracts/video-download';
 
 /**
  * The yt-dlp adapter is deliberately narrower than a general process runner.
@@ -82,6 +83,12 @@ export class YtDlpDownloadError extends Error {
 
 function summarizeYtDlpFailure(stderr: string, stdout: string) {
   const output = stderr + '\n' + stdout;
+  if (/Could not copy .*cookie database|database is locked|unable to copy .*cookies?/i.test(output)) {
+    return '无法复制默认浏览器的 Cookie 数据库，通常是浏览器仍在运行并锁定了 profile。请完全退出 Tabbit/Chrome（包括后台进程）后重试；如果仍失败，请改用 Firefox 会话或导出当前站点的 cookies.txt。';
+  }
+  if (/Failed to decrypt with DPAPI|Application.?Bound Encryption|could not decrypt .*cookie/i.test(output)) {
+    return 'Chrome/Chromium 的新版应用绑定加密阻止 yt-dlp 读取这个浏览器配置的 Cookie。请改用已登录的 Firefox 会话重试，或用浏览器 Cookie 导出工具仅导出该站点的 cookies.txt 后再配置使用；项目不会绕过浏览器加密。';
+  }
   if (/This video is unavailable|Video unavailable|This video is no longer available|视频不存在|稿件不可见/i.test(output)) {
     return '该视频已不可播放或已被站点移除，无法下载。';
   }
@@ -336,10 +343,8 @@ export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 
     if (request.mediaHeaders['User-Agent']) args.push('--add-headers', `User-Agent:${request.mediaHeaders['User-Agent']}`);
   }
   if (request.cookiesFromBrowser !== undefined) {
-    if (!isVideoDownloadBrowserSession(request.cookiesFromBrowser)) {
-      throw new Error('Unsupported browser session for video download.');
-    }
-    args.push('--cookies-from-browser', request.cookiesFromBrowser);
+    const browser = resolveVideoDownloadBrowser(request.cookiesFromBrowser);
+    args.push('--cookies-from-browser', browser);
   }
   // Keep the URL as the final positional argument. The adapter never invokes a
   // shell, and the separator prevents a URL beginning with '-' from becoming

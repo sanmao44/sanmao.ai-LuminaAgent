@@ -125,6 +125,51 @@ test('download reports removed media distinctly from network and site authorizat
   }
 });
 
+test('Chrome App-Bound Encryption failure explains the supported recovery paths', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-dpapi-'));
+  try {
+    await assert.rejects(
+      () => adapter.downloadWithYtDlp({
+        url: 'https://www.xinpianchang.com/a13727498',
+        outputDirectory: directory,
+        cookiesFromBrowser: 'chrome',
+      }, {
+        command: 'yt-dlp-test',
+        resolveProxy: async () => undefined,
+        run: async () => ({ exitCode: 1, signal: null, stdout: '', stderr: 'ERROR: Failed to decrypt with DPAPI. See https://github.com/yt-dlp/yt-dlp/issues/10927' }),
+      }),
+      (error) => error instanceof adapter.YtDlpDownloadError
+        && /新版应用绑定加密/.test(error.message)
+        && /Firefox/.test(error.message)
+        && /不会绕过浏览器加密/.test(error.message),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('locked browser cookie database explains that the browser must be closed', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-cookie-lock-'));
+  try {
+    await assert.rejects(
+      () => adapter.downloadWithYtDlp({
+        url: 'https://www.xinpianchang.com/a13727498',
+        outputDirectory: directory,
+        cookiesFromBrowser: 'chrome',
+      }, {
+        command: 'yt-dlp-test',
+        resolveProxy: async () => undefined,
+        run: async () => ({ exitCode: 1, signal: null, stdout: '', stderr: 'ERROR: Could not copy Chrome cookie database. See https://github.com/yt-dlp/yt-dlp/issues/7271' }),
+      }),
+      (error) => error instanceof adapter.YtDlpDownloadError
+        && /Cookie 数据库/.test(error.message)
+        && /完全退出/.test(error.message),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('public Xinpianchang work uses its progressive URL, required headers and stable output name', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-xpc-'));
   const sourceUrl = 'https://www.xinpianchang.com/a13727498?from=feed';
