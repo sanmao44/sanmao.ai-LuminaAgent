@@ -327,6 +327,46 @@ test('explicit browser-session consent continues only a recent video download', 
   ]), false);
 });
 
+test('browser-session authorization ignores URL query syntax and requires user words outside the URL', () => {
+  const url = 'https://www.xinpianchang.com/a13727498?from=share&video=1';
+  const request = `下载这个视频 ${url} 使用 Chrome 登录态重试`;
+  assert.deepEqual(web.videoDownloadBrowserSessionAuthorization(request), { browser: 'chrome', url });
+  assert.equal(web.likelyVideoDownloadRequest(request), true);
+  assert.equal(web.videoDownloadBrowserSessionAuthorization(`下载这个视频 https://www.xinpianchang.com/a13727498?use=chrome&cookie=1`), undefined);
+  assert.equal(web.videoDownloadBrowserSessionAuthorization(`下载这个视频 ${url} 能不能使用 Chrome 登录态重试？`), undefined);
+  assert.equal(web.videoDownloadBrowserSessionAuthorization('使用 Chrome 登录态重试', [
+    { role: 'user', content: `下载这个视频 ${url}` },
+    { role: 'assistant', content: `HTTP 403 ${url} 浏览器登录态可能缺失。` },
+  ]), undefined);
+});
+
+test('browser-session consent retains only the original user URL across a separate download turn', () => {
+  const url = 'https://www.xinpianchang.com/a13727498?from=share';
+  const context = [
+    { role: 'user', content: url },
+    { role: 'assistant', content: '收到链接。' },
+    { role: 'user', content: '下载' },
+    { role: 'assistant', content: `下载 ${url}\n时站点返回 HTTP 403。是否授权本次读取 Chrome 浏览器登录态 Cookie 重试？` },
+  ];
+  assert.equal(web.videoDownloadUrl('使用 Chrome 登录态重试', context), url);
+  assert.deepEqual(web.videoDownloadBrowserSessionAuthorization('使用 Chrome 登录态重试', context), { browser: 'chrome', url });
+  assert.equal(web.likelyVideoDownloadRequest('使用 Chrome 登录态重试', context), true);
+  assert.equal(web.videoDownloadBrowserSessionAuthorization('不要使用 Chrome 登录态重试', context), undefined);
+  assert.equal(web.videoDownloadBrowserSessionAuthorization('使用 Chrome 登录态重试', [
+    { role: 'user', content: url },
+    { role: 'assistant', content: '下载 https://www.xinpianchang.com/a999\n时站点返回 HTTP 403。是否授权读取浏览器登录态 Cookie 重试？' },
+  ]), undefined);
+});
+
+test('a Xinpianchang link followed by a short download command stays actionable', () => {
+  const url = 'https://www.xinpianchang.com/a13727498?from=share';
+  assert.equal(web.likelyVideoDownloadRequest('下载', [
+    { role: 'user', content: url },
+    { role: 'assistant', content: '收到链接。' },
+  ]), true);
+  assert.equal(web.videoDownloadUrl('下载', [{ role: 'user', content: url }]), url);
+});
+
 test('上一轮提出可交付文件、本轮只回“1/好/可以”时仍然下发 Office 工具', () => {
   assert.equal(typeof web.isArtifactFollowUpRequest, 'function');
   const offer = '1. 通用求职简历模板 2. 应届生简历模板 3. 有经验社招简历模板\n如果暂时没有偏好，我也可以先按“通用求职简历模板”生成。';

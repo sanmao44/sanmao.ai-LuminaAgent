@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { EnvHttpProxyAgent } from 'undici';
 
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
@@ -48,11 +49,11 @@ function asset() {
   return { name: 'yt-dlp', asset: assetName };
 }
 
-function downloadUrls() {
+function downloadUrls(env = process.env) {
   const selected = asset();
-  const explicit = String(process.env.SANMAO_YTDLP_DOWNLOAD_URL || '').trim();
+  const explicit = String(env.SANMAO_YTDLP_DOWNLOAD_URL || '').trim();
   const official = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${selected.asset}`;
-  const configuredMirror = String(process.env.SANMAO_YTDLP_MIRROR_URL || '').trim();
+  const configuredMirror = String(env.SANMAO_YTDLP_MIRROR_URL || '').trim();
   const urls = [];
   if (explicit) urls.push(explicit);
   if (configuredMirror) urls.push(`${configuredMirror.replace(/\/$/, '')}/${selected.asset}`);
@@ -60,6 +61,57 @@ function downloadUrls() {
   urls.push(`https://ghfast.top/${official}`);
   urls.push(`https://gh-proxy.com/${official}`);
   return [...new Set(urls)];
+}
+
+function proxyUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw || /\s/.test(raw)) return '';
+  try {
+    const parsed = new URL(raw.includes('://') ? raw : `http://${raw}`);
+    return parsed.hostname && ['http:', 'https:', 'socks5:', 'socks:'].includes(parsed.protocol) ? parsed.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
+async function macSystemProxy(runProcess) {
+  try {
+    const result = await runProcess('scutil', ['--proxy'], 1500);
+    if (result.exitCode !== 0) return {};
+    const settings = new Map();
+    for (const line of result.stdout.split(/\r?\n/)) {
+      const match = line.match(/^\s*([A-Za-z]+)\s*:\s*(.*?)\s*$/);
+      if (match) settings.set(match[1].toLowerCase(), match[2]);
+    }
+    const configured = (scheme) => {
+      if (settings.get(`${scheme}enable`) !== '1') return '';
+      const host = settings.get(`${scheme}proxy`);
+      const port = settings.get(`${scheme}port`);
+      return proxyUrl(host ? `${host}${port ? `:${port}` : ''}` : '');
+    };
+    const socks = configured('socks').replace(/^http:/, 'socks5:');
+    return { httpProxy: configured('http') || socks, httpsProxy: configured('https') || socks };
+  } catch {
+    return {};
+  }
+}
+
+async function downloadDispatcher(env, platform, runProcess) {
+  const explicit = proxyUrl(env.SANMAO_YTDLP_PROXY);
+  const fallback = proxyUrl(env.all_proxy || env.ALL_PROXY);
+  const environmentHttpProxy = proxyUrl(env.http_proxy || env.HTTP_PROXY);
+  const environmentHttpsProxy = proxyUrl(env.https_proxy || env.HTTPS_PROXY);
+  const system = platform === 'darwin' && !explicit && !environmentHttpProxy && !environmentHttpsProxy && !fallback
+    ? await macSystemProxy(runProcess)
+    : {};
+  const httpProxy = explicit || environmentHttpProxy || fallback || system.httpProxy;
+  const httpsProxy = explicit || environmentHttpsProxy || fallback || system.httpsProxy || httpProxy;
+  if (!httpProxy && !httpsProxy) return undefined;
+  return new EnvHttpProxyAgent({
+    httpProxy,
+    httpsProxy,
+    noProxy: explicit ? '' : String(env.no_proxy || env.NO_PROXY || ''),
+  });
 }
 
 function run(command, args, timeoutMs = 15000) {
@@ -164,6 +216,7 @@ async function installFromPython(runProcess = run) {
 
 export async function ensureYtDlp(options = {}) {
   const dataDir = options.dataDir || resolveDataDir();
+  const env = options.env || process.env;
   const quiet = options.quiet ?? process.argv.includes('--quiet');
   const target = path.join(dataDir, 'tools', asset().name);
   const toolsDirectory = path.dirname(target);
@@ -193,14 +246,16 @@ export async function ensureYtDlp(options = {}) {
   await mkdir(directory, { recursive: true });
   const partial = `${target}.partial-${process.pid}${process.platform === 'win32' ? '.exe' : ''}`;
   let lastError = new Error('没有可用的 yt-dlp 下载源');
+  const dispatcher = await downloadDispatcher(env, options.platform || process.platform, runProcess);
   try {
-    for (const url of downloadUrls()) {
+    for (const url of downloadUrls(env)) {
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         try {
           const response = await fetch(url, {
             redirect: 'follow',
             signal: AbortSignal.timeout(45000),
             headers: { 'user-agent': 'SANMAO.AI yt-dlp bootstrap' },
+            ...(dispatcher ? { dispatcher } : {}),
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const bytes = Buffer.from(await response.arrayBuffer());
@@ -228,6 +283,8 @@ export async function ensureYtDlp(options = {}) {
     }
   } catch (error) {
     lastError = error instanceof Error ? error : new Error(String(error));
+  } finally {
+    await dispatcher?.close().catch(() => undefined);
   }
   await rm(partial, { force: true }).catch(() => undefined);
   if (!quiet) console.error(`yt-dlp 自动准备失败：${lastError.message}`);

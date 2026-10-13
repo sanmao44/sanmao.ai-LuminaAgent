@@ -330,6 +330,18 @@ function sameHttpUrl(left: string, right: string) {
   }
 }
 
+function videoDownloadAuthorizationStatus(error: string | undefined) {
+  return error?.match(/\b(?:HTTP(?: Error)?|status(?: code)?)\s*[:：]?\s*(401|403)\b/i)?.[1];
+}
+
+function videoDownloadSessionConsentQuestion(url: string, status: string, error: string | undefined) {
+  const publicFailure = error?.match(/^公开媒体解析失败（([^）]{1,200})）；/)?.[1];
+  const failure = publicFailure
+    ? `公开媒体解析失败（${publicFailure}），备用下载返回 HTTP ${status}`
+    : `站点返回 HTTP ${status}`;
+  return `下载 ${url}\n时${failure}，视频尚未保存。若你已登录并有权访问，是否授权本次下载读取你指定浏览器中与该站点匹配的 Cookie，并将其发送给该站点重试？请明确回复“使用 Chrome 登录态重试”，或指定 Edge、Firefox 等浏览器。`;
+}
+
 import { createAgentStream, type AgentStreamMetadata, type AgentStreamSettlement, type AgentUpstreamResponse } from '@/apps/api/agent-stream';
 import { applicationStream, type AgentApplicationOutput } from '@/apps/api/agent-application-contract';
 function toChatContent(message: ClientMessage, allowVideo = false): string | ChatContentPart[] {
@@ -2354,7 +2366,13 @@ const auditMcpCall = (
         : `批量生图已完成 ${succeededItems} 项。`;
     }
     if (generated.length && preparedCaption && !batchItems.some((item) => item.status === 'failed')) finalText = await preparedCaption;
-    const verifiedFailure = toolOutcomeText('', toolOutcomes);
+    const latestVideoDownloadOutcome = [...toolOutcomes].reverse().find((outcome) => outcome.name === 'video_download');
+    const authorizationStatus = videoDownloadRequest && requestedVideoUrl && !authorizedBrowserSession && latestVideoDownloadOutcome && !latestVideoDownloadOutcome.ok
+      ? videoDownloadAuthorizationStatus(latestVideoDownloadOutcome.error)
+      : undefined;
+    const verifiedFailure = authorizationStatus
+      ? videoDownloadSessionConsentQuestion(requestedVideoUrl, authorizationStatus, latestVideoDownloadOutcome?.error)
+      : toolOutcomeText('', toolOutcomes);
     if (verifiedFailure) {
       await settleLlmLog?.({ status: 'error', responseChars: verifiedFailure.length, error: verifiedFailure });
       if (wantsStream) return streamResult(null, { fallback: verifiedFailure, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, mcpTools: usedMcpTools, toolTrace });

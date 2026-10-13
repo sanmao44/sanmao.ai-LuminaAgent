@@ -4,7 +4,10 @@ import { mkdir, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
+import { BilibiliPublicMediaError, isBilibiliVideoUrl, resolveBilibiliPublicMedia } from './bilibili-download';
 import { resolveLocalDataDir } from './data-paths';
+import { resolveVideoDownloadProxy } from './video-download-network';
+import { XinpianchangPublicMediaError, isXinpianchangVideoUrl, resolveXinpianchangPublicMedia } from './xinpianchang-download';
 import { isVideoDownloadBrowserSession, type VideoDownloadBrowserSession } from '@/packages/contracts/video-download';
 
 /**
@@ -56,6 +59,8 @@ export type YtDlpProbeResult = {
   error?: string;
 };
 
+type PublicMediaHeaders = Readonly<{ Range?: string; Referer: string; 'User-Agent'?: string }>;
+
 export class YtDlpUnavailableError extends Error {
   constructor(message = '视频下载技能已启用，但本机下载器未就绪。启动器会自动准备 yt-dlp；请重新启动 SANMAO.AI 后再试。') {
     super(message);
@@ -75,7 +80,29 @@ export class YtDlpDownloadError extends Error {
   }
 }
 
+function summarizeYtDlpFailure(stderr: string, stdout: string) {
+  const output = stderr + '\n' + stdout;
+  if (/This video is unavailable|Video unavailable|This video is no longer available|视频不存在|稿件不可见/i.test(output)) {
+    return '该视频已不可播放或已被站点移除，无法下载。';
+  }
+  if (/Sign in to confirm|login required|login to view|authentication required|HTTP Error 401|HTTP Error 403|HTTP 401|HTTP 403/i.test(output)) {
+    const status = /401/.test(output) ? '401' : '403';
+    return '站点返回 HTTP ' + status + '，可能需要登录或当前网络被拒绝。若你有权访问，请明确指定浏览器登录态后重试。';
+  }
+  if (/timed out|timeout|Temporary failure in name resolution|Name or service not known|Failed to resolve|Connection refused|Network is unreachable/i.test(output)) {
+    return '连接视频站点超时或不可达。请检查设备网络及代理设置后重试。';
+  }
+  if (/Requested format is not available|No video formats found/i.test(output)) {
+    return '站点未提供可用的视频格式。';
+  }
+  if (/File is larger than max-filesize|file is larger than max-filesize|exceeds max-filesize/i.test(output)) {
+    return '视频超过 1 GiB 限制，未保存为下载结果。';
+  }
+  return '下载器未能取得该视频。请确认站点中的视频仍可播放，并更新下载器后重试。';
+}
+
 const MEDIA_EXTENSIONS = new Set(['.avi', '.flv', '.m4v', '.mkv', '.mov', '.mp4', '.ogv', '.webm']);
+const PUBLIC_MEDIA_RESOLVE_TIMEOUT_MS = 12_000;
 /** Keep the downloader and video storage adapter on the same per-file limit. */
 export const YTDLP_MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const SIZE_AWARE_DEFAULT_FORMAT = [
@@ -257,16 +284,24 @@ async function removeNewPartialFiles(outputDirectory: string, existingNames: Rea
 }
 
 /** Build the complete fixed argument list used for every download. */
-export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 'outputDirectory' | 'format' | 'ffmpegPath' | 'cookiesFromBrowser'>) {
+export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 'outputDirectory' | 'format' | 'ffmpegPath' | 'cookiesFromBrowser'> & {
+  proxy?: string;
+  mediaHeaders?: PublicMediaHeaders;
+  outputId?: string;
+}) {
   const url = assertHttpUrl(request.url);
   const outputDirectory = resolveOutputDirectory(request.outputDirectory);
   if (request.format !== undefined && request.format !== 'best' && request.format !== 'bestvideo+bestaudio/best') {
     throw new Error('不支持的视频格式选项。');
   }
+  if (request.outputId && !/^[A-Za-z0-9_-]{1,128}$/.test(request.outputId)) {
+    throw new Error('无效的视频输出标识。');
+  }
   const format = request.format === 'best' || request.format === undefined
     ? SIZE_AWARE_DEFAULT_FORMAT
     : request.format;
   const args: string[] = [
+    '--ignore-config',
     '--no-playlist',
     '--playlist-items', '1',
     // yt-dlp disables Node by default. The application already runs on Node,
@@ -283,7 +318,9 @@ export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 
     '--no-write-playlist-metafiles',
     '--no-simulate',
     '--print', 'after_move:filepath',
-    '--output', outputTemplate(outputDirectory),
+    '--output', request.outputId
+      ? path.join(outputDirectory, `${request.outputId}.%(ext)s`)
+      : outputTemplate(outputDirectory),
     // Favor a source combination that fits the storage limit. Some sites do
     // not report stream sizes; the height/standard fallbacks remain available
     // and the actual merged artifact is checked after download.
@@ -292,6 +329,12 @@ export function buildYtDlpArguments(request: Pick<YtDlpDownloadRequest, 'url' | 
   ];
   const ffmpegPath = String(request.ffmpegPath || '').trim();
   if (ffmpegPath) args.push('--ffmpeg-location', path.resolve(ffmpegPath));
+  if (request.proxy) args.push('--proxy', request.proxy);
+  if (request.mediaHeaders) {
+    if (request.mediaHeaders.Range) args.push('--add-headers', `Range:${request.mediaHeaders.Range}`);
+    args.push('--add-headers', `Referer:${request.mediaHeaders.Referer}`);
+    if (request.mediaHeaders['User-Agent']) args.push('--add-headers', `User-Agent:${request.mediaHeaders['User-Agent']}`);
+  }
   if (request.cookiesFromBrowser !== undefined) {
     if (!isVideoDownloadBrowserSession(request.cookiesFromBrowser)) {
       throw new Error('Unsupported browser session for video download.');
@@ -377,12 +420,48 @@ async function findPrintedFile(stdout: string, outputDirectory: string) {
   return null;
 }
 
-export async function downloadWithYtDlp(request: YtDlpDownloadRequest, dependencies: { command?: string; run?: YtDlpProcessRunner } = {}): Promise<YtDlpDownloadResult> {
+export async function downloadWithYtDlp(request: YtDlpDownloadRequest, dependencies: {
+  command?: string;
+  run?: YtDlpProcessRunner;
+  resolveProxy?: typeof resolveVideoDownloadProxy;
+  resolveXinpianchangMedia?: typeof resolveXinpianchangPublicMedia;
+  resolveBilibiliMedia?: typeof resolveBilibiliPublicMedia;
+} = {}): Promise<YtDlpDownloadResult> {
   const outputDirectory = resolveOutputDirectory(request.outputDirectory);
+  const url = assertHttpUrl(request.url);
   await mkdir(outputDirectory, { recursive: true });
   const existingNames = new Set(readdirSync(outputDirectory));
   const command = configuredCommand(dependencies.command);
-  const args = buildYtDlpArguments({ ...request, outputDirectory });
+  const resolveProxy = dependencies.resolveProxy || resolveVideoDownloadProxy;
+  const sourceProxy = await resolveProxy(url);
+  let downloadUrl = url;
+  let mediaHeaders: PublicMediaHeaders | undefined;
+  let outputId: string | undefined;
+  let publicMediaFailure: string | undefined;
+  const xinpianchangWork = isXinpianchangVideoUrl(url);
+  const bilibiliVideo = isBilibiliVideoUrl(url);
+  if ((xinpianchangWork || bilibiliVideo) && !request.cookiesFromBrowser) {
+    const mediaSignal = request.signal
+      ? AbortSignal.any([request.signal, AbortSignal.timeout(PUBLIC_MEDIA_RESOLVE_TIMEOUT_MS)])
+      : AbortSignal.timeout(PUBLIC_MEDIA_RESOLVE_TIMEOUT_MS);
+    try {
+      const media = xinpianchangWork
+        ? await (dependencies.resolveXinpianchangMedia || resolveXinpianchangPublicMedia)(url, { signal: mediaSignal, proxy: sourceProxy })
+        : await (dependencies.resolveBilibiliMedia || resolveBilibiliPublicMedia)(url, { signal: mediaSignal, proxy: sourceProxy });
+      downloadUrl = media.mediaUrl;
+      mediaHeaders = media.headers;
+      outputId = media.id;
+    } catch (error) {
+      if (request.signal?.aborted) throw error;
+      publicMediaFailure = mediaSignal.aborted
+        ? '公开接口连接超时。'
+        : error instanceof XinpianchangPublicMediaError || error instanceof BilibiliPublicMediaError
+          ? error.message
+          : '公开接口请求失败。';
+    }
+  }
+  const downloadProxy = downloadUrl === url ? sourceProxy : await resolveProxy(downloadUrl);
+  const args = buildYtDlpArguments({ ...request, url: downloadUrl, outputDirectory, proxy: downloadProxy, mediaHeaders, outputId });
   const run = dependencies.run || spawnYtDlp;
   let processResult: YtDlpProcessResult;
   try {
@@ -411,8 +490,14 @@ export async function downloadWithYtDlp(request: YtDlpDownloadRequest, dependenc
   }
   if (processResult.exitCode !== 0) {
     await removeNewPartialFiles(outputDirectory, existingNames);
-    const detail = lines(processResult.stderr).slice(-3).join(' ');
-    throw new YtDlpDownloadError(detail || 'yt-dlp 下载失败。', { exitCode: processResult.exitCode, stderr: processResult.stderr });
+    const fallbackFailure = summarizeYtDlpFailure(processResult.stderr, processResult.stdout);
+    const message = publicMediaFailure
+      ? `公开媒体解析失败（${publicMediaFailure}）；备用下载也失败：${fallbackFailure}`
+      : fallbackFailure;
+    throw new YtDlpDownloadError(message, {
+      exitCode: processResult.exitCode,
+      stderr: processResult.stderr,
+    });
   }
   const file = await findPrintedFile(processResult.stdout, outputDirectory);
   if (!file) {

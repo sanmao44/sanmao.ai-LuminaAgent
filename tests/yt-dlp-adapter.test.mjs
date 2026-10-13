@@ -23,7 +23,7 @@ test('builds a fixed, shell-free yt-dlp argument list', () => {
     outputDirectory: path.join(os.tmpdir(), 'sanmao-ytdlp-output'),
     ffmpegPath: path.join(os.tmpdir(), 'ffmpeg'),
   });
-  for (const option of ['--no-playlist', '--no-cache-dir', '--restrict-filenames', '--no-overwrites', '--newline', '--playlist-items', '--max-filesize']) {
+  for (const option of ['--ignore-config', '--no-playlist', '--no-cache-dir', '--restrict-filenames', '--no-overwrites', '--newline', '--playlist-items', '--max-filesize']) {
     assert.ok(args.includes(option), `missing ${option}`);
   }
   assert.ok(args.includes('--ffmpeg-location'));
@@ -75,8 +75,206 @@ test('browser cookies are omitted by default and included only for a selected su
   assert.throws(() => adapter.buildYtDlpArguments({ ...base, cookiesFromBrowser: 'unknown' }), /browser session/i);
 });
 
+test('download uses the proxy resolved for its URL without changing browser-session consent', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-proxy-'));
+  try {
+    const file = path.join(directory, 'video.mp4');
+    const result = await adapter.downloadWithYtDlp({
+      url: 'https://video.example/watch/123',
+      outputDirectory: directory,
+    }, {
+      command: 'yt-dlp-test',
+      resolveProxy: async (url) => {
+        assert.equal(url, 'https://video.example/watch/123');
+        return 'http://system.proxy:7897/';
+      },
+      run: async ({ args }) => {
+        assert.deepEqual(args.slice(args.indexOf('--proxy'), args.indexOf('--proxy') + 2), ['--proxy', 'http://system.proxy:7897/']);
+        assert.equal(args.includes('--cookies-from-browser'), false);
+        await writeFile(file, Buffer.from('video-bytes'));
+        return { exitCode: 0, signal: null, stdout: `${file}\n`, stderr: '' };
+      },
+    });
+    assert.equal(result.filePath, file);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('download reports removed media distinctly from network and site authorization failures', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-errors-'));
+  const cases = [
+    ['ERROR: [youtube] removed: This video is unavailable', /已不可播放/],
+    ['ERROR: Unable to download webpage: HTTP Error 403: Forbidden', /HTTP 403/],
+    ['ERROR: Unable to download webpage: timed out', /连接视频站点超时/],
+    ['ERROR: No video formats found', /站点未提供可用的视频格式/],
+  ];
+  try {
+    for (const [stderr, expected] of cases) {
+      await assert.rejects(
+        () => adapter.downloadWithYtDlp({ url: 'https://video.example/watch/123', outputDirectory: directory }, {
+          command: 'yt-dlp-test',
+          resolveProxy: async () => undefined,
+          run: async () => ({ exitCode: 1, signal: null, stdout: '', stderr }),
+        }),
+        (error) => error instanceof adapter.YtDlpDownloadError && expected.test(error.message),
+      );
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('public Xinpianchang work uses its progressive URL, required headers and stable output name', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-xpc-'));
+  const sourceUrl = 'https://www.xinpianchang.com/a13727498?from=feed';
+  const mediaUrl = 'https://cdn.example.com/public.mp4?token=temporary';
+  try {
+    const file = path.join(directory, 'a13727498.mp4');
+    const result = await adapter.downloadWithYtDlp({ url: sourceUrl, outputDirectory: directory }, {
+      command: 'yt-dlp-test',
+      resolveProxy: async (url) => {
+        assert.ok(url === sourceUrl || url === mediaUrl);
+        return 'http://proxy.example.com:7897/';
+      },
+      resolveXinpianchangMedia: async (url, options) => {
+        assert.equal(url, sourceUrl);
+        assert.equal(options.proxy, 'http://proxy.example.com:7897/');
+        return {
+          sourceUrl: 'https://www.xinpianchang.com/a13727498',
+          mediaUrl, id: 'a13727498', quality: '720p', filesize: 30_000_000, mimeType: 'video/mp4',
+          headers: { Range: 'bytes=0-', Referer: 'https://www.xinpianchang.com/a13727498' },
+        };
+      },
+      run: async ({ args }) => {
+        assert.equal(args.at(-1), mediaUrl);
+        assert.equal(args[args.indexOf('--output') + 1], path.join(directory, 'a13727498.%(ext)s'));
+        assert.deepEqual(args.slice(args.indexOf('--proxy'), args.indexOf('--proxy') + 2), ['--proxy', 'http://proxy.example.com:7897/']);
+        assert.ok(args.includes('Range:bytes=0-'));
+        assert.ok(args.includes('Referer:https://www.xinpianchang.com/a13727498'));
+        assert.equal(args.includes('--cookies-from-browser'), false);
+        await writeFile(file, Buffer.from('video-bytes'));
+        return { exitCode: 0, signal: null, stdout: `${file}\n`, stderr: '' };
+      },
+    });
+    assert.equal(result.filePath, file);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('public Bilibili video uses its progressive MP4, CDN headers and stable output name', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-bili-'));
+  const sourceUrl = 'https://www.bilibili.com/video/BV1cBpi6YE8L/?spm_id_from=feed';
+  const mediaUrl = 'https://cdn.example.com/video.mp4?token=temporary';
+  try {
+    const file = path.join(directory, 'BV1cBpi6YE8L.mp4');
+    const result = await adapter.downloadWithYtDlp({ url: sourceUrl, outputDirectory: directory }, {
+      command: 'yt-dlp-test',
+      resolveProxy: async () => 'http://system.proxy:7897/',
+      resolveBilibiliMedia: async (url, options) => {
+        assert.equal(url, sourceUrl);
+        assert.equal(options.proxy, 'http://system.proxy:7897/');
+        return {
+          sourceUrl: 'https://www.bilibili.com/video/BV1cBpi6YE8L/',
+          mediaUrl, id: 'BV1cBpi6YE8L', quality: 64, filesize: 24_896_209, mimeType: 'video/mp4',
+          headers: { Referer: 'https://www.bilibili.com/video/BV1cBpi6YE8L/', 'User-Agent': 'Mozilla/5.0' },
+        };
+      },
+      run: async ({ args }) => {
+        assert.equal(args.at(-1), mediaUrl);
+        assert.equal(args[args.indexOf('--output') + 1], path.join(directory, 'BV1cBpi6YE8L.%(ext)s'));
+        assert.ok(args.includes('Referer:https://www.bilibili.com/video/BV1cBpi6YE8L/'));
+        assert.ok(args.includes('User-Agent:Mozilla/5.0'));
+        assert.equal(args.includes('Range:bytes=0-'), false);
+        assert.equal(args.includes('--cookies-from-browser'), false);
+        await writeFile(file, Buffer.from('video-bytes'));
+        return { exitCode: 0, signal: null, stdout: `${file}\n`, stderr: '' };
+      },
+    });
+    assert.equal(result.filePath, file);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('public resolver and fallback failures are both visible', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-bili-'));
+  try {
+    await assert.rejects(
+      () => adapter.downloadWithYtDlp({ url: 'https://www.bilibili.com/video/BV1cBpi6YE8L/', outputDirectory: directory }, {
+        command: 'yt-dlp-test',
+        resolveProxy: async () => undefined,
+        resolveBilibiliMedia: async () => { throw new Error('temporary network failure'); },
+        run: async () => ({ exitCode: 1, signal: null, stdout: '', stderr: 'ERROR: No video formats found' }),
+      }),
+      (error) => error instanceof adapter.YtDlpDownloadError
+        && /公开媒体解析失败（公开接口请求失败。）；备用下载也失败/.test(error.message),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('Xinpianchang public endpoint failure preserves the ordinary extractor path', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-xpc-'));
+  const sourceUrl = 'https://www.xinpianchang.com/a13727498';
+  try {
+    const file = path.join(directory, 'a13727498.mp4');
+    const result = await adapter.downloadWithYtDlp({ url: sourceUrl, outputDirectory: directory }, {
+      command: 'yt-dlp-test',
+      resolveProxy: async () => undefined,
+      resolveXinpianchangMedia: async () => { throw new Error('public API unavailable'); },
+      run: async ({ args }) => {
+        assert.equal(args.at(-1), sourceUrl);
+        assert.equal(args.includes('Range:bytes=0-'), false);
+        await writeFile(file, Buffer.from('video-bytes'));
+        return { exitCode: 0, signal: null, stdout: `${file}\n`, stderr: '' };
+      },
+    });
+    assert.equal(result.filePath, file);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('explicit browser session keeps yt-dlp responsible for Xinpianchang extraction', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-ytdlp-xpc-'));
+  const sourceUrl = 'https://www.xinpianchang.com/a13727498';
+  try {
+    const file = path.join(directory, 'a13727498.mp4');
+    const result = await adapter.downloadWithYtDlp({
+      url: sourceUrl, outputDirectory: directory, cookiesFromBrowser: 'chrome',
+    }, {
+      command: 'yt-dlp-test',
+      resolveProxy: async () => undefined,
+      resolveXinpianchangMedia: async () => { throw new Error('should not call public endpoint'); },
+      run: async ({ args }) => {
+        assert.equal(args.at(-1), sourceUrl);
+        assert.deepEqual(args.slice(args.indexOf('--cookies-from-browser'), args.indexOf('--cookies-from-browser') + 2), ['--cookies-from-browser', 'chrome']);
+        await writeFile(file, Buffer.from('video-bytes'));
+        return { exitCode: 0, signal: null, stdout: `${file}\n`, stderr: '' };
+      },
+    });
+    assert.equal(result.filePath, file);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('rejects non-http URLs before invoking a process', () => {
   assert.throws(() => adapter.buildYtDlpArguments({ url: 'file:///tmp/video.mp4', outputDirectory: path.join(os.tmpdir(), 'out') }), /HTTP 或 HTTPS/);
+});
+
+test('rejects a media resolver output ID that could escape the output directory', () => {
+  assert.throws(
+    () => adapter.buildYtDlpArguments({
+      url: 'https://cdn.example.com/video.mp4',
+      outputDirectory: path.join(os.tmpdir(), 'out'),
+      outputId: '../other-file',
+    }),
+    /无效的视频输出标识/,
+  );
 });
 
 test('rejects local and private HTTP URLs before invoking a process', () => {

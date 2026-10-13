@@ -396,20 +396,33 @@ type VideoDownloadBrowserSessionAuthorization = { browser: VideoDownloadBrowserS
 
 const VIDEO_DOWNLOAD_BROWSER_PATTERN = /\b(?:brave|chrome|chromium|edge|firefox|opera|safari|vivaldi|whale)\b/i;
 
+function asksForVideoDownloadSessionConsent(text: string) {
+  const question = text.replace(/https?:\/\/\S+/ig, ' ');
+  return /cookies?|cookie|browser\s+session|login\s+session|浏览器会话|登录态|登录会话/i.test(question)
+    && (/[?？]/.test(question) || /(?:should i|would you like|do you want|是否|可以吗|要不要|需不需要)/i.test(question));
+}
+
+function videoUrlInText(text: string) {
+  return text.match(/https?:\/\/\S+/i)?.[0]?.replace(/[\]\)>,.;!?]+$/g, '') || '';
+}
+
 export function videoDownloadBrowserSessionAuthorization(input: string, context: readonly VideoDownloadContextMessage[] = []): VideoDownloadBrowserSessionAuthorization | undefined {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
-  const namesBrowser = VIDEO_DOWNLOAD_BROWSER_PATTERN.test(text);
-  const namesSession = /cookies?|cookie|browser\s+session|login\s+session|浏览器会话|登录态|登录会话/i.test(text);
-  const declinesSession = /(?:不要|不用|不使用|不需要|无需|拒绝|取消|don't|do not|without|not use)/i.test(text);
-  const asksInsteadOfSelecting = /[?？]|(?:能不能|是否|可以吗|should i|can i|not sure)/i.test(text);
-  const explicitlySelectsSession = /(?:使用|用|读取|授权|允许|\buse\b|\bread\b|\bauthorize\b|\ballow\b|\bwith\b|\bvia\b)/i.test(text);
+  // URL query strings may contain "?", "cookie", or a browser name. Only
+  // the user's words outside URLs can authorize access to a browser session.
+  const instruction = text.replace(/https?:\/\/\S+/ig, ' ').trim();
+  const namesBrowser = VIDEO_DOWNLOAD_BROWSER_PATTERN.test(instruction);
+  const namesSession = /cookies?|cookie|browser\s+session|login\s+session|浏览器会话|登录态|登录会话/i.test(instruction);
+  const declinesSession = /(?:不要|不用|不使用|不需要|无需|拒绝|取消|don't|do not|without|not use)/i.test(instruction);
+  const asksInsteadOfSelecting = /[?？]|(?:能不能|是否|可以吗|should i|can i|not sure)/i.test(instruction);
+  const explicitlySelectsSession = /(?:使用|用|读取|授权|允许|\buse\b|\bread\b|\bauthorize\b|\ballow\b|\bwith\b|\bvia\b)/i.test(instruction);
   if (!namesBrowser || !namesSession || declinesSession || asksInsteadOfSelecting || !explicitlySelectsSession) return undefined;
   if (!videoDownloadUrl(text)) {
     const previous = context.at(-1);
     const previousText = previous?.role === 'assistant' ? String(previous.content || '') : '';
-    const askedForSessionConsent = /cookies?|cookie|browser\s+session|login\s+session|浏览器会话|登录态|登录会话/i.test(previousText)
-      && (/[?？]/.test(previousText) || /(?:should i|would you like|do you want|是否|可以吗|要不要|需不需要)/i.test(previousText));
-    if (!askedForSessionConsent) return undefined;
+    if (!asksForVideoDownloadSessionConsent(previousText)) return undefined;
+    const consentUrl = videoUrlInText(previousText);
+    if (consentUrl && videoDownloadUrl(text, context) !== consentUrl) return undefined;
   }
 
   const recentUsers = context.filter((message) => message.role === 'user').slice(-3);
@@ -427,12 +440,12 @@ export function videoDownloadBrowserSessionAuthorization(input: string, context:
     && (/(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|douyin|vimeo|xinpianchang)/i.test(recentText) || knownVideoHost);
   if (!hasVideoDownloadIntent) return undefined;
 
-  const url = videoDownloadUrl(text, recentUsers);
+  const url = videoDownloadUrl(text, context);
   if (!url) return undefined;
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
-    const browser = text.match(VIDEO_DOWNLOAD_BROWSER_PATTERN)?.[0].toLowerCase();
+    const browser = instruction.match(VIDEO_DOWNLOAD_BROWSER_PATTERN)?.[0].toLowerCase();
     if (!isVideoDownloadBrowserSession(browser)) return undefined;
     return { browser, url: parsed.toString() };
   } catch {
@@ -446,11 +459,21 @@ function isAuthorizedBrowserSessionFollowUp(text: string, context: readonly Vide
 
 /** Return the URL belonging to the current public-video download request. */
 export function videoDownloadUrl(input: string, context: readonly VideoDownloadContextMessage[] = []) {
-  const current = String(input || '').match(/https?:\/\/\S+/i)?.[0];
-  if (current) return current.replace(/[\]\)>,.;!?]+$/g, '');
+  const current = videoUrlInText(String(input || ''));
+  if (current) return current;
   const previous = [...context].reverse().find((message) => message.role === 'user');
-  if (!previous || !/https?:\/\/\S+/i.test(String(previous.content || ''))) return '';
-  return String(previous?.content || '').match(/https?:\/\/\S+/i)?.[0]?.replace(/[\]\)>,.;!?]+$/g, '') || '';
+  const previousUserUrl = videoUrlInText(String(previous?.content || ''));
+  if (previousUserUrl) return previousUserUrl;
+  // A download can be requested one turn after the URL. The resulting 401/403
+  // consent question carries that exact URL so the next turn can stay scoped
+  // to the user's original link without accepting an arbitrary assistant URL.
+  const lastMessage = context.at(-1);
+  const consentText = lastMessage?.role === 'assistant' ? String(lastMessage.content || '') : '';
+  if (!asksForVideoDownloadSessionConsent(consentText)) return '';
+  const consentUrl = videoUrlInText(consentText);
+  if (!consentUrl) return '';
+  return context.filter((message) => message.role === 'user').slice(-3)
+    .some((message) => videoUrlInText(String(message.content || '')) === consentUrl) ? consentUrl : '';
 }
 
 /** Identify an explicit public-video download request.
@@ -503,8 +526,8 @@ export function likelyVideoDownloadRequest(input: string, context: readonly Vide
   if (!previousUserUrl) return false;
   const previousContent = String(previousUserUrl.content || '');
   if (!/https?:\/\/\S+/i.test(previousContent)) return false;
-  return /(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|抖音|快手|douyin|vimeo)/i.test(previousContent)
-    || /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be|bilibili\.com|douyin\.com|vimeo\.com)\//i.test(previousContent);
+  return /(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|抖音|快手|douyin|vimeo|xinpianchang)/i.test(previousContent)
+    || /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be|bilibili\.com|douyin\.com|vimeo\.com|xinpianchang\.com)\//i.test(previousContent);
 }
 
 export function likelyArtifactGenerationRequest(input: string) {

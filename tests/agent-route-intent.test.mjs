@@ -746,6 +746,54 @@ test('browser cookies are passed only after the user authorizes the matching vid
   assert.equal(downloaded[0].cookiesFromBrowser, 'chrome');
 });
 
+test('HTTP 403 asks for browser-session consent and a separate download turn resumes the same URL', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const downloaded = [];
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async (request) => {
+      downloaded.push(request);
+      if (downloaded.length === 1) throw new Error('公开媒体解析失败（公开接口连接超时。）；备用下载也失败：站点返回 HTTP 403，当前网络被拒绝。');
+      return { filePath: 'C:\\media\\authorized.mp4', bytes: 1234 };
+    },
+    reply: (payload, _callCount, rawModel) => {
+      if (rawModel === 'jev-1.13') return { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"明确的视频下载或会话授权"}' };
+      if (payload.messages.some((message) => message.role === 'tool')) return { content: 'Download completed.' };
+      if (payload.tools?.some((tool) => tool.function.name === 'video_download')) {
+        return { content: null, tool_calls: [{ id: 'video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4', cookiesFromBrowser: 'firefox' }) } }] };
+      }
+      return { content: 'Download was not executed.' };
+    },
+  });
+  const url = 'https://www.xinpianchang.com/a13727498?from=share';
+  const initialMessages = [
+    { role: 'user', content: url },
+    { role: 'assistant', content: '收到链接。' },
+    { role: 'user', content: '下载' },
+  ];
+  const first = await agent.post(initialMessages);
+  assert.equal(downloaded.length, 1);
+  assert.equal(downloaded[0].url, url);
+  assert.equal(downloaded[0].cookiesFromBrowser, undefined);
+  assert.match(first.message, /HTTP 403/);
+  assert.match(first.message, /公开媒体解析失败（公开接口连接超时。）/);
+  assert.match(first.message, /是否授权本次下载读取你指定浏览器.*Cookie/);
+  assert.ok(first.message.includes(url));
+
+  const second = await agent.post([
+    ...initialMessages,
+    { role: 'assistant', content: first.message },
+    { role: 'user', content: '使用 Chrome 登录态重试' },
+  ]);
+  assert.equal(downloaded.length, 2);
+  assert.equal(downloaded[1].url, url);
+  assert.equal(downloaded[1].cookiesFromBrowser, 'chrome');
+  assert.match(second.message, /Download completed/);
+});
+
 test('a bare video URL follows the prior download-on-link instruction through JEV and the native tool', async () => {
   const classifierRuntime = {
     model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
