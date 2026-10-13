@@ -15,14 +15,14 @@ export type CanvasWorkspaceHeaderProps = {
   onToggleAssetLibrary: () => void; agentDockOpen: boolean; agentDockBusy: boolean; onToggleAgentDock: () => void; theme: "light" | "dark"; onToggleTheme: () => void;
   saving: boolean; saveError: boolean; workspaceSyncStatus: WorkspaceSyncStatus; onOpenProject: (projectId: string) => void; onNewProject: () => void; onSaveProjectVersion: () => void;
   projectVersions: CreativeProjectVersion[]; onRestoreProjectVersion: (versionId: string) => void; onDeleteProjectVersion: (versionId: string) => void; onDeleteProject: (projectId: string) => void;
-  onSaveProjectName: (name: string) => boolean;
+  onSaveProjectName: (projectId: string, name: string) => boolean;
 };
 
 export default function CanvasWorkspaceHeader({currentProject, projects, activeProjectId, projectMenuOpen, onProjectMenuOpenChange, topbarCollapsed, onToggleTopbar, canUndo, canRedo, onNavigateHome, onUndo, onRedo, snapEnabled, onToggleSnap, onOpenFilePicker, activePanel, onTogglePanel, onToggleAssetLibrary, agentDockOpen, agentDockBusy, onToggleAgentDock, theme, onToggleTheme, saving, saveError, workspaceSyncStatus, onOpenProject, onNewProject, onSaveProjectVersion, projectVersions, onRestoreProjectVersion, onDeleteProjectVersion, onDeleteProject, onSaveProjectName}: CanvasWorkspaceHeaderProps) {
-  const [projectRename, setProjectRename] = useState(false);
+  const [projectRenameId, setProjectRenameId] = useState<string | null>(null);
   const [projectRenameValue, setProjectRenameValue] = useState("");
   const saveProjectName = () => {
-    if (onSaveProjectName(projectRenameValue)) setProjectRename(false);
+    if (projectRenameId && onSaveProjectName(projectRenameId, projectRenameValue)) setProjectRenameId(null);
   };
   return (<>
       <header className={`canvas-topbar ${topbarCollapsed ? "collapsed" : ""}`}>
@@ -240,9 +240,11 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
               <button type="button" onClick={onNewProject}>＋ 新建画布</button>
               <button
                 type="button"
+                disabled={!currentProject}
                 onClick={() => {
-                  setProjectRenameValue(currentProject?.name || ""); setProjectRename(true);
-
+                  if (!currentProject) return;
+                  setProjectRenameValue(currentProject.name);
+                  setProjectRenameId(currentProject.id);
                 }}
               >
                 重命名
@@ -258,14 +260,17 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
                 删除
               </button>
             </div>
-            {projectRename && (
+            {projectRenameId && (
               <div className="canvas-rename-row">
                 <input
                   value={projectRenameValue}
+                  aria-label="画布名称"
+                  maxLength={60}
                   onChange={(event) => setProjectRenameValue(event.target.value)}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") saveProjectName();
-                    if (event.key === "Escape") setProjectRename(false);
+                    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                    if (event.key === "Enter") { event.preventDefault(); saveProjectName(); }
+                    if (event.key === "Escape") setProjectRenameId(null);
                   }}
                   autoFocus
                 />

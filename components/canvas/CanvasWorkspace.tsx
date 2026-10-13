@@ -115,13 +115,16 @@ import {
 } from "@/lib/canvas/api";
 import {
   canvasProjectFromDocument,
+  CANVAS_PROJECTS_KEY,
+  CANVAS_PROJECT_PREFIX,
+  createCanvasProject,
   deleteCanvasProject,
   describeCanvasSaveFailure,
-  ensureCanvasStorage,
-  loadCanvasDocument,
-  saveCanvasDocument,
-  saveCanvasProjects,
+  readCanvasProjects,
+  renameCanvasProject,
 } from "@/lib/canvas/storage";
+import { CanvasProjectSession } from "@/lib/canvas/project-session";
+import { emitWorkspaceChange, registerWorkspaceDraft } from "@/lib/workspace-events";
 import { canvasSourceColorKey } from "@/lib/canvas/appearance";
 import { formatCanvasAudioDuration, formatCanvasVideoDuration } from "@/lib/canvas/media";
 import { downloadCanvasShareImage } from "@/lib/canvas/share";
@@ -699,6 +702,8 @@ export default function SuperCanvas() {
   const canvasClipboardRef = useRef<CanvasClipboardPayload | null>(null);
   const initialDocumentRef = useRef<CanvasDocument>(normalizeDocument(null));
   const canvasCoreRef = useRef(new CanvasCore<CanvasDocument>(initialDocumentRef.current));
+  const canvasProjectSessionRef = useRef(new CanvasProjectSession());
+  const workspaceDraftRef = useRef<ReturnType<typeof registerWorkspaceDraft> | null>(null);
   const subscribeCanvasCore = useCallback(
     (listener: () => void) => canvasCoreRef.current.subscribe(listener),
     [],
@@ -1707,32 +1712,83 @@ export default function SuperCanvas() {
     };
   }, [notify, ready]);
 
+  const persistCurrentCanvas = useCallback(() => {
+    const ok = canvasProjectSessionRef.current.save(canvasCoreRef.current.document());
+    if (ok) workspaceDraftRef.current?.markSaved();
+    return ok;
+  }, []);
+
+  useEffect(() => {
+    const draft = registerWorkspaceDraft();
+    workspaceDraftRef.current = draft;
+    let observed = canvasCoreRef.current.document();
+    const unsubscribe = canvasCoreRef.current.subscribe(() => {
+      const next = canvasCoreRef.current.document();
+      if (observed === next) return;
+      observed = next;
+      if (canvasProjectSessionRef.current.hasUnsavedChanges(next)) draft.markDirty();
+      else draft.markSaved();
+    });
+    const flushDraft = () => {
+      if (!canvasProjectSessionRef.current.hasUnsavedChanges(canvasCoreRef.current.document())) return true;
+      return persistCurrentCanvas();
+    };
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (flushDraft()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const handleVisibilityChange = () => {
+      if (window.document.visibilityState === "hidden") flushDraft();
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    window.addEventListener("pagehide", flushDraft);
+    window.document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      persistCurrentCanvas();
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("pagehide", flushDraft);
+      window.document.removeEventListener("visibilitychange", handleVisibilityChange);
+      unsubscribe();
+      draft.dispose();
+      workspaceDraftRef.current = null;
+    };
+  }, [persistCurrentCanvas]);
+
   useEffect(() => {
     // React Strict Mode re-runs effects in development. Restore the mount
     // guard before the second setup so queued camera frames are not dropped.
     mountedRef.current = true;
     let cancelled = false;
     let stopWorkspaceSync = () => {};
+    let removeStorageListener = () => {};
     const start = async () => {
       const restoreLocalCanvas = (showRecoveryNotice = false) => {
-        const storage = ensureCanvasStorage();
-        const initial = loadCanvasDocument(storage.activeId);
-        const recovered = recoverInterruptedCanvasDocument(initial);
-        const initialDocument = syncCanvasVideoEditorReferences(recovered.document);
-        canvasCoreRef.current.replace(initialDocument, { clearHistory: true });
+        const storage = canvasProjectSessionRef.current.refresh(canvasCoreRef.current.document());
         setProjects(storage.projects);
         setActiveProjectId(storage.activeId);
+        const recovered = storage.document ? recoverInterruptedCanvasDocument(storage.document) : null;
+        if (recovered) {
+          const initialDocument = syncCanvasVideoEditorReferences(recovered.document);
+          canvasCoreRef.current.replace(initialDocument, { clearHistory: true });
+        }
         if (showRecoveryNotice && storage.migrated) notify("已将 NOVA 画布项目迁移到 SANMAO.AI");
-        if (showRecoveryNotice && recovered.recoveredCount)
+        if (showRecoveryNotice && recovered?.recoveredCount)
           notify(`已恢复 ${recovered.recoveredCount} 个中断任务，可重新生成`);
       };
+      const handleStorage = (event: StorageEvent) => {
+        if (cancelled || (event.key !== null && event.key !== CANVAS_PROJECTS_KEY && !event.key.startsWith(CANVAS_PROJECT_PREFIX))) return;
+        restoreLocalCanvas(false);
+      };
+      window.addEventListener("storage", handleStorage);
+      removeStorageListener = () => window.removeEventListener("storage", handleStorage);
 
       // Render the local canvas first. Remote workspace reconciliation is
       // intentionally detached from the route transition.
-      setReady(true);
       window.setTimeout(() => {
         if (cancelled) return;
         restoreLocalCanvas(true);
+        setReady(true);
         if (cancelled) return;
         void workspaceRepository.bootstrap()
           .then(() => {
@@ -1744,7 +1800,10 @@ export default function SuperCanvas() {
             });
           })
           .catch(() => {
-            if (!cancelled) stopWorkspaceSync = startWorkspaceSync({ onStatus: setWorkspaceSyncStatus });
+            if (!cancelled) stopWorkspaceSync = startWorkspaceSync({
+              onStatus: setWorkspaceSyncStatus,
+              onRestored: () => restoreLocalCanvas(false),
+            });
           });
       }, 0);
       void loadCanvasRuntime()
@@ -1776,6 +1835,7 @@ export default function SuperCanvas() {
     void start();
     return () => {
       cancelled = true;
+      removeStorageListener();
       stopWorkspaceSync();
       mountedRef.current = false;
       pollTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -1989,23 +2049,18 @@ export default function SuperCanvas() {
     setSaving(true);
     setSaveError(false);
     saveTimerRef.current = window.setTimeout(() => {
-      const ok = saveCanvasDocument(activeProjectId, document);
+      if (canvasProjectSessionRef.current.activeId !== activeProjectId) return;
+      const ok = persistCurrentCanvas();
       setSaving(false);
       setSaveError(!ok);
       if (ok)
-        setProjects((items) =>
-          items.map((project) =>
-            project.id === activeProjectId
-              ? { ...project, updatedAt: Date.now() }
-              : project,
-          ),
-        );
+        setProjects(readCanvasProjects());
       else notify(describeCanvasSaveFailure(), "error");
     }, 350);
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     };
-  }, [activeProjectId, document, notify, ready]);
+  }, [activeProjectId, document, notify, persistCurrentCanvas, ready]);
 
   useEffect(() => {
     if (!ready || !stageRef.current || typeof ResizeObserver === "undefined")
@@ -2042,10 +2097,6 @@ export default function SuperCanvas() {
     observer.observe(deck);
     return () => observer.disconnect();
   }, [deckCollapsed, ready]);
-
-  useEffect(() => {
-    if (ready && activeProjectId) saveCanvasProjects(projects, activeProjectId);
-  }, [activeProjectId, projects, ready]);
 
   useEffect(() => {
     if (!ready || !activeProjectId) return;
@@ -3924,14 +3975,20 @@ export default function SuperCanvas() {
     [commit, notify],
   );
 
+  const navigateHome = useCallback(() => {
+    if (!persistCurrentCanvas()) return notify(describeCanvasSaveFailure(), "error");
+    router.push("/");
+  }, [notify, persistCurrentCanvas, router]);
+
   const openProject = useCallback(
     (id: string) => {
-      if (id === activeProjectId) {
+      if (id === canvasProjectSessionRef.current.activeId) {
         setProjectMenuOpen(false);
         return;
       }
-      saveCanvasDocument(activeProjectId, canvasCoreRef.current.document());
-      const next = loadCanvasDocument(id);
+      if (!readCanvasProjects().some((project) => project.id === id)) return notify("这个画布已被删除，请选择其他画布", "error");
+      if (!persistCurrentCanvas()) return notify(describeCanvasSaveFailure(), "error");
+      const next = canvasProjectSessionRef.current.open(id);
       replaceDoc(next);
       setActiveProjectId(id);
       clearSelection();
@@ -3940,10 +3997,11 @@ export default function SuperCanvas() {
         `已打开项目：${projects.find((project) => project.id === id)?.name || "未命名画布"}`,
       );
     },
-    [activeProjectId, addLog, clearSelection, projects, replaceDoc],
+    [addLog, clearSelection, notify, persistCurrentCanvas, projects, replaceDoc],
   );
   const newProject = useCallback(() => {
-    const id = `canvas_${Date.now().toString(36)}`;
+    if (!persistCurrentCanvas()) return notify(describeCanvasSaveFailure(), "error");
+    const id = `canvas_${crypto.randomUUID()}`;
     const project: CanvasProject = {
       id,
       projectId: creativeProjectIdForCanvas(id),
@@ -3951,29 +4009,26 @@ export default function SuperCanvas() {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    const next = [project, ...projects];
-    saveCanvasProjects(next, project.id);
-    saveCanvasDocument(project.id, normalizeDocument(null));
-    setProjects(next);
+    if (!createCanvasProject(project, normalizeDocument(null))) return notify(describeCanvasSaveFailure(), "error");
+    const nextDocument = canvasProjectSessionRef.current.open(project.id);
+    setProjects(readCanvasProjects());
     setActiveProjectId(project.id);
-    replaceDoc(normalizeDocument(null));
+    replaceDoc(nextDocument);
     clearSelection();
     setProjectMenuOpen(false);
     notify("已新建画布");
-  }, [clearSelection, notify, projects, replaceDoc]);
-  const saveProjectName = useCallback((projectName: string) => {
+  }, [clearSelection, notify, persistCurrentCanvas, projects.length, replaceDoc]);
+  const saveProjectName = useCallback((projectId: string, projectName: string) => {
     const name = projectName.trim();
-    if (!name || !currentProject) return false;
-    setProjects((items) =>
-      items.map((project) =>
-        project.id === currentProject.id
-          ? { ...project, name: name.slice(0, 60), updatedAt: Date.now() }
-          : project,
-      ),
-    );
+    if (!name) return false;
+    if (!renameCanvasProject(projectId, name)) {
+      notify("重命名未保存：原画布已被删除或存储写入失败，请检查后重试", "error");
+      return false;
+    }
+    setProjects(readCanvasProjects());
     notify("项目名称已更新");
     return true;
-  }, [currentProject, notify]);
+  }, [notify]);
   const saveProjectVersion = useCallback(() => {
     if (!currentProject?.projectId || !activeProjectId) return;
     const storedProjects = readCreativeProjects();
@@ -3990,7 +4045,7 @@ export default function SuperCanvas() {
     });
     if (!next) return notify("当前项目还没有可保存的版本", "error");
     if (!saveCreativeProjects(next)) return notify("版本保存失败，请先导出工作流 JSON", "error");
-    saveCanvasProjects(projects, activeProjectId);
+    emitWorkspaceChange();
     const savedProject = next.find((item) => item.id === currentProject.projectId);
     setProjectVersions(savedProject?.versions || []);
     notify(`已保存 ${currentProject.name} 的 ${savedProject?.versions?.at(-1)?.label || `V${nextIndex}`}`);
@@ -4021,20 +4076,22 @@ export default function SuperCanvas() {
   }, [currentProject?.projectId, notify, projectVersions]);
   const deleteProject = useCallback(
     (id: string) => {
-      if (projects.length <= 1) return notify("至少保留一个画布。", "error");
-      const project = projects.find((item) => item.id === id);
+      const latestProjects = readCanvasProjects();
+      if (latestProjects.length <= 1) return notify("至少保留一个画布。", "error");
+      const project = latestProjects.find((item) => item.id === id);
+      if (!project) return notify("这个画布已被删除", "error");
       if (
         !window.confirm(
           `删除“${project?.name || "这个画布"}”？本地内容会被移除。`,
         )
       )
         return;
-      const next = projects.filter((item) => item.id !== id);
-      deleteCanvasProject(id);
+      const next = latestProjects.filter((item) => item.id !== id);
+      if (!deleteCanvasProject(id)) return notify(describeCanvasSaveFailure(), "error");
       setProjects(next);
       if (id === activeProjectId) {
         const replacement = next[0];
-        replaceDoc(loadCanvasDocument(replacement.id));
+        replaceDoc(canvasProjectSessionRef.current.open(replacement.id));
         setActiveProjectId(replacement.id);
         clearSelection();
         setProjectMenuOpen(false);
@@ -12844,7 +12901,7 @@ export default function SuperCanvas() {
         if (projectMenuOpen) setProjectMenuOpen(false);
       }}
     >
-      <CanvasWorkspaceHeader currentProject={currentProject} projects={projects} activeProjectId={activeProjectId} projectMenuOpen={projectMenuOpen} onProjectMenuOpenChange={setProjectMenuOpen} topbarCollapsed={topbarCollapsed} onToggleTopbar={() => setTopbarCollapsed((value) => { const next=!value; try { window.localStorage.setItem("sanmao.canvas.topbar.collapsed",String(next)); } catch {} return next; })} canUndo={Boolean(canvasHistory.past.length)} canRedo={Boolean(canvasHistory.future.length)} onNavigateHome={() => router.push("/")} onUndo={undo} onRedo={redo} snapEnabled={snapEnabled} onToggleSnap={toggleSnap} onOpenFilePicker={() => openFilePicker()} activePanel={activePanel} onTogglePanel={(panel) => activePanel === panel ? setActivePanel(null) : openCanvasPanel(panel)} onToggleAssetLibrary={toggleAssetLibrary} agentDockOpen={agentDockOpen} agentDockBusy={agentDockBusy} onToggleAgentDock={() => applyAgentDockOpen(!agentDockOpen)} theme={theme} onToggleTheme={toggleTheme} saving={saving} saveError={saveError} workspaceSyncStatus={workspaceSyncStatus} onOpenProject={openProject} onNewProject={newProject} onSaveProjectVersion={saveProjectVersion} projectVersions={projectVersions} onRestoreProjectVersion={restoreProjectVersion} onDeleteProjectVersion={deleteProjectVersion} onDeleteProject={deleteProject} onSaveProjectName={saveProjectName} />
+      <CanvasWorkspaceHeader currentProject={currentProject} projects={projects} activeProjectId={activeProjectId} projectMenuOpen={projectMenuOpen} onProjectMenuOpenChange={setProjectMenuOpen} topbarCollapsed={topbarCollapsed} onToggleTopbar={() => setTopbarCollapsed((value) => { const next=!value; try { window.localStorage.setItem("sanmao.canvas.topbar.collapsed",String(next)); } catch {} return next; })} canUndo={Boolean(canvasHistory.past.length)} canRedo={Boolean(canvasHistory.future.length)} onNavigateHome={navigateHome} onUndo={undo} onRedo={redo} snapEnabled={snapEnabled} onToggleSnap={toggleSnap} onOpenFilePicker={() => openFilePicker()} activePanel={activePanel} onTogglePanel={(panel) => activePanel === panel ? setActivePanel(null) : openCanvasPanel(panel)} onToggleAssetLibrary={toggleAssetLibrary} agentDockOpen={agentDockOpen} agentDockBusy={agentDockBusy} onToggleAgentDock={() => applyAgentDockOpen(!agentDockOpen)} theme={theme} onToggleTheme={toggleTheme} saving={saving} saveError={saveError} workspaceSyncStatus={workspaceSyncStatus} onOpenProject={openProject} onNewProject={newProject} onSaveProjectVersion={saveProjectVersion} projectVersions={projectVersions} onRestoreProjectVersion={restoreProjectVersion} onDeleteProjectVersion={deleteProjectVersion} onDeleteProject={deleteProject} onSaveProjectName={saveProjectName} />
       {composeDialogGroupId && (() => {
         const composeGroup = groupById(document, composeDialogGroupId);
         if (!composeGroup) return null;

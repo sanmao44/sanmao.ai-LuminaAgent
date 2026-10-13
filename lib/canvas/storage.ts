@@ -3,6 +3,7 @@ import { CANVAS_VERSION, normalizeDocument } from './model';
 import { emitWorkspaceChange } from '../workspace-events';
 import type { CanvasWorkspaceData } from '../workspace-types';
 import {
+  CREATIVE_PROJECTS_KEY,
   normalizeCreativeProjects,
   readCreativeProjects,
   reconcileCreativeProjects,
@@ -12,6 +13,7 @@ import {
 export const CANVAS_PROJECTS_KEY = 'sanmao.canvas.projects';
 export const CANVAS_ACTIVE_KEY = 'sanmao.canvas.active';
 export const CANVAS_UI_KEY = 'sanmao.canvas.ui';
+const CANVAS_TAB_ACTIVE_KEY = 'sanmao.canvas.tab-active';
 const NOVA_PROJECTS_KEY = 'nova.v1.projects';
 const NOVA_ACTIVE_KEY = 'nova.v1.active';
 const NOVA_PROJECT_PREFIX = 'nova.v1.project.';
@@ -27,6 +29,7 @@ function readJson<T>(key: string, fallback: T): T {
 }
 
 let storageQuotaExceeded = false;
+let storageConflict = false;
 
 function isQuotaExceededError(error: unknown) {
   if (!error || typeof error !== 'object') return false;
@@ -48,6 +51,7 @@ function writeJson(key: string, value: unknown) {
 
 /** 最近一次画布写入失败的提示：区分浏览器存储配额不足与其它写入失败。 */
 export function describeCanvasSaveFailure() {
+  if (storageConflict) return '这个画布已在其他页面更新或删除，当前内容已保留，请先导出工作流 JSON，再重新打开画布。';
   return storageQuotaExceeded
     ? '浏览器本地存储已满：请先导出工作流 JSON，再清理生成任务记录或删除无用画布。'
     : '画布保存失败，请先导出工作流 JSON。';
@@ -69,6 +73,31 @@ function activeProjectId(projects: CanvasProject[], value: unknown) {
   return projects.some((project) => project.id === activeId) ? activeId : projects[0]?.id || null;
 }
 
+/** Current selection belongs to this tab; the snapshot activeId is only a startup default. */
+export function retainedCanvasProjectId(projects: CanvasProject[], currentId: string | null, defaultId: string | null) {
+  return activeProjectId(projects, currentId && projects.some((project) => project.id === currentId) ? currentId : defaultId);
+}
+
+export function readCanvasProjects() {
+  return normalizeProjects(readJson(CANVAS_PROJECTS_KEY, []));
+}
+
+function tabActiveProjectId(projects: CanvasProject[]) {
+  let selected: string | null = null;
+  try { selected = window.sessionStorage.getItem(CANVAS_TAB_ACTIVE_KEY); } catch {}
+  const activeId = retainedCanvasProjectId(projects, selected, readJson(CANVAS_ACTIVE_KEY, null));
+  // Capture the startup default in this tab too, so reloading it cannot adopt
+  // a different tab's most recently opened canvas.
+  if (activeId) { try { window.sessionStorage.setItem(CANVAS_TAB_ACTIVE_KEY, activeId); } catch {} }
+  return activeId;
+}
+
+export function saveCanvasActiveProject(id: string) {
+  if (!readCanvasProjects().some((project) => project.id === id)) return false;
+  try { window.sessionStorage.setItem(CANVAS_TAB_ACTIVE_KEY, id); } catch {}
+  return writeJson(CANVAS_ACTIVE_KEY, id);
+}
+
 function persistProjectIdentity(projects: CanvasProject[], storedProjects = readCreativeProjects()) {
   const preferredProjectId = projects.length === 1 && typeof window !== 'undefined'
     ? (() => {
@@ -82,9 +111,8 @@ function persistProjectIdentity(projects: CanvasProject[], storedProjects = read
     ? [{ ...projects[0], projectId: preferredProjectId }, ...projects.slice(1)]
     : projects;
   const identity = reconcileCreativeProjects(preparedProjects, storedProjects);
-  writeJson(CANVAS_PROJECTS_KEY, identity.canvasProjects);
-  saveCreativeProjects(identity.creativeProjects);
-  return identity;
+  const saved = writeJson(CANVAS_PROJECTS_KEY, identity.canvasProjects) && saveCreativeProjects(identity.creativeProjects);
+  return { ...identity, saved };
 }
 
 /** Reads the current canvas without creating a project during workspace bootstrap. */
@@ -94,10 +122,14 @@ export function readCanvasWorkspace(): CanvasWorkspaceData {
     ensureCanvasStorage();
     projects = normalizeProjects(readJson(CANVAS_PROJECTS_KEY, []));
   }
+  const needsIdentity = projects.some((project) => !project.projectId);
   const identity = reconcileCreativeProjects(projects, readCreativeProjects());
   projects = identity.canvasProjects;
-  writeJson(CANVAS_PROJECTS_KEY, projects);
-  saveCreativeProjects(identity.creativeProjects);
+  // Snapshot collection is a read. Rewriting the index here can publish a
+  // stale list over a project created by another tab between storage reads.
+  if (needsIdentity) {
+    persistProjectIdentity(projects);
+  }
   const documents = projects.reduce<Record<string, CanvasDocument>>((result, project) => {
     const value = readJson<unknown>(`${CANVAS_PROJECT_PREFIX}${project.id}`, null);
     if (value) result[project.id] = normalizeDocument(value);
@@ -116,27 +148,47 @@ export function restoreCanvasWorkspace(value: Partial<CanvasWorkspaceData> | nul
   const identity = reconcileCreativeProjects(normalizeProjects(value?.projects), normalizeCreativeProjects(value?.creativeProjects));
   const projects = identity.canvasProjects;
   const activeId = activeProjectId(projects, value?.activeId);
+  const previous = new Map<string, string | null>();
   try {
-    Object.keys(window.localStorage)
-      .filter((key) => key.startsWith(CANVAS_PROJECT_PREFIX))
-      .forEach((key) => window.localStorage.removeItem(key));
-  } catch { return false; }
-  const okProjects = writeJson(CANVAS_PROJECTS_KEY, projects);
-  const okActive = activeId ? writeJson(CANVAS_ACTIVE_KEY, activeId) : writeJson(CANVAS_ACTIVE_KEY, null);
-  const okUi = writeJson(CANVAS_UI_KEY, value?.ui && typeof value.ui === 'object' ? value.ui : {});
-  const okCreativeProjects = saveCreativeProjects(identity.creativeProjects);
-  const okDocuments = projects.every((project) => {
-    const document = value?.documents?.[project.id];
-    return writeJson(`${CANVAS_PROJECT_PREFIX}${project.id}`, normalizeDocument(document || null));
-  });
-  return okProjects && okActive && okUi && okDocuments && okCreativeProjects;
+    const documentKeys = Object.keys(window.localStorage).filter((key) => key.startsWith(CANVAS_PROJECT_PREFIX));
+    const nextDocumentKeys = projects.map((project) => `${CANVAS_PROJECT_PREFIX}${project.id}`);
+    for (const key of [...documentKeys, ...nextDocumentKeys, CANVAS_PROJECTS_KEY, CANVAS_ACTIVE_KEY, CANVAS_UI_KEY, CREATIVE_PROJECTS_KEY]) {
+      previous.set(key, window.localStorage.getItem(key));
+    }
+    // Keep old documents until all replacement writes succeed. Quota or I/O
+    // failure must not leave an index pointing at deleted image nodes.
+    const write = (key: string, data: unknown) => {
+      if (!writeJson(key, data)) throw new Error('Canvas restore write failed');
+    };
+    projects.forEach((project) => write(`${CANVAS_PROJECT_PREFIX}${project.id}`, normalizeDocument(value?.documents?.[project.id] || null)));
+    write(CANVAS_PROJECTS_KEY, projects);
+    write(CANVAS_ACTIVE_KEY, activeId);
+    write(CANVAS_UI_KEY, value?.ui && typeof value.ui === 'object' ? value.ui : {});
+    write(CREATIVE_PROJECTS_KEY, normalizeCreativeProjects(identity.creativeProjects));
+    const retained = new Set(nextDocumentKeys);
+    documentKeys.filter((key) => !retained.has(key)).forEach((key) => window.localStorage.removeItem(key));
+    return true;
+  } catch {
+    // Remove newly allocated entries first to release space for the originals.
+    for (const [key, data] of previous) {
+      if (data === null) { try { window.localStorage.removeItem(key); } catch {} }
+    }
+    for (const [key, data] of previous) {
+      if (data !== null) { try { window.localStorage.setItem(key, data); } catch {} }
+    }
+    return false;
+  }
 }
 
 export function ensureCanvasStorage() {
   const current = normalizeProjects(readJson(CANVAS_PROJECTS_KEY, []));
   if (current.length) {
-    const identity = persistProjectIdentity(current);
-    return { projects: identity.canvasProjects, activeId: readJson<string | null>(CANVAS_ACTIVE_KEY, null) || identity.canvasProjects[0].id, migrated: false };
+    // Established projects need no hydration writes. Storage-event refreshes
+    // must not bounce stale project indexes back into the shared cache.
+    const identity = current.every((project) => project.projectId)
+      ? reconcileCreativeProjects(current, readCreativeProjects())
+      : persistProjectIdentity(current);
+    return { projects: identity.canvasProjects, activeId: tabActiveProjectId(identity.canvasProjects)!, migrated: false };
   }
   const legacy = normalizeProjects(readJson(NOVA_PROJECTS_KEY, []));
   if (legacy.length) {
@@ -168,10 +220,18 @@ export function loadCanvasDocument(id: string) {
   return normalizeDocument(readJson(`${CANVAS_PROJECT_PREFIX}${id}`, null));
 }
 
-export function saveCanvasDocument(id: string, document: CanvasDocument) {
+export function saveCanvasDocument(id: string, document: CanvasDocument, expectedDocument?: CanvasDocument) {
   storageQuotaExceeded = false;
+  storageConflict = false;
   const key = `${CANVAS_PROJECT_PREFIX}${id}`;
   const current = readJson<Record<string, unknown> | null>(key, null);
+  const projects = readCanvasProjects();
+  if (!projects.some((project) => project.id === id) || (expectedDocument && JSON.stringify(normalizeDocument(current)) !== JSON.stringify(normalizeDocument(expectedDocument)))) {
+    storageConflict = true;
+    return false;
+  }
+  const normalized = { ...normalizeDocument(document), version: CANVAS_VERSION };
+  if (current && JSON.stringify(normalizeDocument(current)) === JSON.stringify(normalized)) return true;
   if (current && current.version !== CANVAS_VERSION) {
     const backupKey = `${CANVAS_V1_BACKUP_PREFIX}${id}`;
     try {
@@ -181,21 +241,54 @@ export function saveCanvasDocument(id: string, document: CanvasDocument) {
       return false;
     }
   }
-  const ok = writeJson(key, { ...normalizeDocument(document), version: CANVAS_VERSION });
+  const ok = writeJson(key, normalized);
+  // Touch only the saved project using the latest index, preserving concurrent names and additions.
+  if (ok) persistProjectIdentity(projects.map((project) => project.id === id ? { ...project, updatedAt: Date.now() } : project));
   if (ok) emitWorkspaceChange();
   return ok;
 }
 
 export function saveCanvasProjects(projects: CanvasProject[], activeId: string) {
-  const identity = persistProjectIdentity(projects);
-  const okProjects = writeJson(CANVAS_PROJECTS_KEY, identity.canvasProjects);
-  const okActive = writeJson(CANVAS_ACTIVE_KEY, activeId);
-  const ok = okProjects && okActive;
+  // Compatibility writes never interpret an omitted row as a deletion.
+  const latest = readCanvasProjects();
+  const incoming = new Map(projects.map((project) => [project.id, project]));
+  const merged = latest.map((project) => {
+    const candidate = incoming.get(project.id);
+    incoming.delete(project.id);
+    return candidate && candidate.updatedAt > project.updatedAt ? candidate : project;
+  });
+  const identity = persistProjectIdentity([...incoming.values(), ...merged]);
+  const ok = identity.saved && saveCanvasActiveProject(activeId);
   if (ok) emitWorkspaceChange();
   return ok;
 }
 
+export function createCanvasProject(project: CanvasProject, document: CanvasDocument) {
+  storageConflict = false;
+  const latest = readCanvasProjects();
+  if (latest.some((item) => item.id === project.id)) return false;
+  // Write the document before publishing its index row, so a failed media-heavy save cannot create an empty project.
+  if (!writeJson(`${CANVAS_PROJECT_PREFIX}${project.id}`, normalizeDocument(document))) return false;
+  if (!persistProjectIdentity([project, ...latest]).saved) return false;
+  saveCanvasActiveProject(project.id);
+  emitWorkspaceChange();
+  return true;
+}
+
+export function renameCanvasProject(id: string, name: string) {
+  const latest = readCanvasProjects();
+  const trimmed = name.trim().slice(0, 60);
+  if (!trimmed || !latest.some((project) => project.id === id)) return false;
+  const identity = persistProjectIdentity(latest.map((project) => project.id === id ? { ...project, name: trimmed, updatedAt: Date.now() } : project));
+  if (identity.saved) emitWorkspaceChange();
+  return identity.saved;
+}
+
 export function deleteCanvasProject(id: string) {
+  const latest = readCanvasProjects();
+  if (latest.length <= 1 || !latest.some((project) => project.id === id)) return false;
+  const next = latest.filter((project) => project.id !== id);
+  if (!persistProjectIdentity(next).saved) return false;
   try { window.localStorage.removeItem(`${CANVAS_PROJECT_PREFIX}${id}`); } catch { return false; }
   emitWorkspaceChange();
   return true;

@@ -15,6 +15,10 @@ import {
 } from './canvas/storage';
 import {
   WORKSPACE_CHANGE_EVENT,
+  emitWorkspaceMutation,
+  getWorkspaceMutationGeneration,
+  hasWorkspaceDraftPending,
+  withWorkspaceRestoreSuppressed,
   withWorkspaceRestoreSuppressedAsync,
 } from './workspace-events';
 import {
@@ -87,6 +91,10 @@ class WorkspaceConflictError extends Error {
 
 let syncOwner: symbol | null = null;
 let bootstrapPromise: Promise<{ offline: boolean }> | null = null;
+// This is sync bookkeeping, never a second document owner. Events are counted
+// even before bootstrap / the sync listener is mounted.
+let acknowledgedMutationGeneration = 0;
+let explicitRestoreGeneration = 0;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -122,6 +130,41 @@ function clientId() {
 
 function writeMeta(value: WorkspaceMeta) {
   try { window.localStorage.setItem(META_KEY, JSON.stringify(value)); } catch {}
+}
+
+function currentWorkspaceMeta(): WorkspaceMeta {
+  const meta = readMeta() || { clientId: clientId(), localUpdatedAt: 0, serverUpdatedAt: 0, pending: false, revision: 0 };
+  if (getWorkspaceMutationGeneration() !== acknowledgedMutationGeneration || hasWorkspaceDraftPending()) {
+    if (!meta.pending) {
+      const dirty = { ...meta, localUpdatedAt: Math.max(meta.localUpdatedAt, Date.now()), pending: true };
+      writeMeta(dirty);
+      return dirty;
+    }
+  }
+  return meta;
+}
+
+function captureLocalState() {
+  const persisted = localPersistedSignature();
+  return { generation: getWorkspaceMutationGeneration(), meta: JSON.stringify(readMeta()), persisted };
+}
+
+function localPersistedSignature() {
+  return JSON.stringify({ canvas: readCanvasWorkspace(), preferences: readPreferences() });
+}
+
+function localStateChanged(state: ReturnType<typeof captureLocalState>) {
+  return hasWorkspaceDraftPending()
+    || state.generation !== getWorkspaceMutationGeneration()
+    || state.meta !== JSON.stringify(readMeta())
+    || state.persisted !== localPersistedSignature();
+}
+
+function preserveLocalChanges(state: ReturnType<typeof captureLocalState>) {
+  const meta = currentWorkspaceMeta();
+  if (!meta.pending && state.persisted !== localPersistedSignature()) {
+    writeMeta({ ...meta, localUpdatedAt: Math.max(meta.localUpdatedAt, Date.now()), pending: true });
+  }
 }
 
 function readPreferences() {
@@ -205,12 +248,45 @@ async function requestWorkspaceMetadataInternal(): Promise<WorkspaceMetadataResp
 }
 
 export async function restoreWorkspaceSnapshot(snapshot: WorkspaceSnapshot) {
-  await withWorkspaceRestoreSuppressedAsync(async () => {
+  // Explicit backup restore is replacement, even if the old editor is dirty.
+  // Invalidate any automatic GET/PUT still awaiting a response.
+  explicitRestoreGeneration += 1;
+  emitWorkspaceMutation();
+  await restoreWorkspaceSnapshotInternal(snapshot, readMeta()?.revision ?? 0);
+}
+
+async function restoreWorkspaceSnapshotInternal(
+  snapshot: WorkspaceSnapshot,
+  revision = 0,
+  contentHash?: string,
+  automaticState?: ReturnType<typeof captureLocalState>,
+  stopped = () => false,
+) {
+  const generation = getWorkspaceMutationGeneration();
+  const restoreGeneration = explicitRestoreGeneration;
+  const restoreCanvas = () => withWorkspaceRestoreSuppressed(() => {
     if (!restoreCanvasWorkspace(snapshot.canvas)) throw new Error('恢复画布失败');
+  });
+  return withWorkspaceRestoreSuppressedAsync(async () => {
+    // Explicit backup replacement keeps its existing semantics. Automatic sync
+    // must leave the editor's optimistic-save baseline untouched during I/O.
+    if (!automaticState) restoreCanvas();
     await assetRepository.replaceGallery(snapshot.gallery);
     await replaceChatSessions(snapshot.chatSessions);
     await assetRepository.replaceIndex(snapshot.assetIndex);
     await assetRepository.saveCollections(snapshot.assetCollections);
+    if (automaticState && (localStateChanged(automaticState) || stopped())) {
+      preserveLocalChanges(automaticState);
+      return false;
+    }
+    const current = readMeta();
+    const changed = generation !== getWorkspaceMutationGeneration() || hasWorkspaceDraftPending();
+    if (restoreGeneration !== explicitRestoreGeneration || (current?.revision ?? 0) > revision) {
+      if (changed && current) writeMeta({ ...current, pending: true });
+      return false;
+    }
+    // No await between this guard, canvas replacement and baseline metadata.
+    if (automaticState) restoreCanvas();
     for (const key of WORKSPACE_PREFERENCE_KEYS) {
       try { window.localStorage.removeItem(key); } catch {}
     }
@@ -223,29 +299,51 @@ export async function restoreWorkspaceSnapshot(snapshot: WorkspaceSnapshot) {
     // comparison and overwrite the freshly restored server workspace.
     writeMeta({
       clientId: clientId(),
-      localUpdatedAt: snapshot.updatedAt,
+      localUpdatedAt: changed ? Math.max(current?.localUpdatedAt || 0, Date.now()) : snapshot.updatedAt,
       serverUpdatedAt: snapshot.updatedAt,
-      pending: false,
+      revision,
+      contentHash,
+      pending: changed,
       contentSignature: workspaceContentSignature(snapshot),
     });
+    acknowledgedMutationGeneration = generation;
+    return !changed;
   });
 }
 
-async function saveWorkspace(snapshot: WorkspaceSnapshot, meta: WorkspaceMeta) {
-  const data = await requestWorkspace('PUT', snapshot, false, meta.revision ?? 0);
+async function saveWorkspace(snapshot: WorkspaceSnapshot, meta: WorkspaceMeta, generation: number, keepalive = false) {
+  const restoreGeneration = explicitRestoreGeneration;
+  writeMeta({ ...meta, localUpdatedAt: snapshot.updatedAt, pending: true });
+  const data = await requestWorkspace('PUT', snapshot, keepalive, meta.revision ?? 0);
   const serverUpdatedAt = Number(data.updatedAt || snapshot.updatedAt);
   const revision = Number(data.revision ?? (meta.revision ?? 0) + 1);
   const current = readMeta() || meta;
+  // A backup restore or another tab may have advanced the baseline meanwhile.
+  // Never roll that baseline back to this PUT's response.
+  if (restoreGeneration !== explicitRestoreGeneration || (current.revision ?? 0) > revision) return false;
+  const pending = generation !== getWorkspaceMutationGeneration()
+    || hasWorkspaceDraftPending()
+    || current.localUpdatedAt !== snapshot.updatedAt;
   writeMeta({
     ...current,
     clientId: snapshot.clientId,
     serverUpdatedAt,
     revision,
     contentHash: data.contentHash || undefined,
-    pending: current.localUpdatedAt > snapshot.updatedAt,
+    pending,
     contentSignature: workspaceContentSignature(snapshot),
   });
-  return serverUpdatedAt;
+  acknowledgedMutationGeneration = generation;
+  return !pending;
+}
+
+async function uploadLocalWorkspace(keepalive = false) {
+  const meta = currentWorkspaceMeta();
+  if (hasWorkspaceDraftPending()) return false;
+  const state = captureLocalState();
+  const local = await collectWorkspaceSnapshot(Math.max(meta.localUpdatedAt, Date.now()));
+  if (localStateChanged(state)) { preserveLocalChanges(state); return false; }
+  return saveWorkspace(local, meta, state.generation, keepalive);
 }
 
 /** Reconciles the browser cache with the local service before the page renders its data. */
@@ -260,59 +358,12 @@ export async function bootstrapWorkspace() {
 }
 
 async function bootstrapWorkspaceInternal() {
-  const previous = readMeta();
   try {
-    const metadata = await requestWorkspaceMetadata();
-    if (previous && !previous.pending && previous.contentSignature && previous.serverUpdatedAt === metadata.updatedAt) {
-      return { offline: false };
-    }
-    const local = await collectWorkspaceSnapshot();
-    const currentMeta: WorkspaceMeta = previous || {
-      clientId: local.clientId,
-      localUpdatedAt: 0,
-      serverUpdatedAt: 0,
-      pending: false,
-      revision: 0,
-    };
-
-    // A pending browser snapshot is newer local work. Never restore the
-    // server copy over it during bootstrap; upload the local snapshot instead.
-    if (currentMeta.pending || currentMeta.localUpdatedAt > metadata.updatedAt) {
-      const localUpdatedAt = Math.max(currentMeta.localUpdatedAt, Date.now());
-      await saveWorkspace({ ...local, updatedAt: localUpdatedAt }, {
-        ...currentMeta,
-        localUpdatedAt,
-        pending: true,
-        revision: metadata.revision,
-      });
-      return { offline: false };
-    }
-
-    const server = await requestWorkspace('GET');
-    const remote = server.workspace ? validateWorkspaceShape(server.workspace) as unknown as WorkspaceSnapshot : null;
-    const remoteRevision = Number(server.revision ?? 0);
-    if (remote && currentMeta.pending && currentMeta.localUpdatedAt > remote.updatedAt) {
-      const pending = { ...local, updatedAt: currentMeta.localUpdatedAt };
-      await saveWorkspace(pending, { ...currentMeta, revision: remoteRevision, localUpdatedAt: pending.updatedAt, pending: true });
-    } else if (remote) {
-      await restoreWorkspaceSnapshot(remote);
-      writeMeta({ clientId: local.clientId, localUpdatedAt: remote.updatedAt, serverUpdatedAt: remote.updatedAt, revision: remoteRevision, contentHash: server.contentHash || undefined, pending: false, contentSignature: workspaceContentSignature(remote) });
-    } else if (workspaceHasData(local)) {
-      const migrated = { ...local, updatedAt: Math.max(Date.now(), currentMeta.localUpdatedAt) };
-      await saveWorkspace(migrated, { ...currentMeta, localUpdatedAt: migrated.updatedAt, pending: true });
-    } else {
-      writeMeta({ ...currentMeta, clientId: local.clientId, revision: remoteRevision, pending: false });
-    }
+    await reconcileWorkspace();
     return { offline: false };
   } catch {
     const local = await collectWorkspaceSnapshot().catch(() => null);
-    const currentMeta: WorkspaceMeta = previous || {
-      clientId: local?.clientId || clientId(),
-      localUpdatedAt: 0,
-      serverUpdatedAt: 0,
-      pending: false,
-      revision: 0,
-    };
+    const currentMeta = currentWorkspaceMeta();
     writeMeta({
       ...currentMeta,
       clientId: local?.clientId || currentMeta.clientId,
@@ -320,6 +371,48 @@ async function bootstrapWorkspaceInternal() {
     });
     return { offline: true };
   }
+}
+
+/** Automatic sync only replaces a stable, persisted local baseline. */
+async function reconcileWorkspace(onRestored?: () => void, stopped = () => false) {
+  const meta = currentWorkspaceMeta();
+  if (hasWorkspaceDraftPending() || stopped()) return false;
+  const state = captureLocalState();
+  const metadata = await requestWorkspaceMetadata();
+  if (localStateChanged(state) || stopped()) { preserveLocalChanges(state); return false; }
+
+  // A pending snapshot belongs to the revision it was edited against. Reading
+  // a fresh remote revision must never turn a CAS conflict into an overwrite.
+  if (meta.pending) return uploadLocalWorkspace();
+  const local = await collectWorkspaceSnapshot();
+  if (localStateChanged(state) || stopped()) { preserveLocalChanges(state); return false; }
+  if (meta.contentSignature && meta.contentSignature !== workspaceContentSignature(local)) {
+    writeMeta({ ...meta, localUpdatedAt: Date.now(), pending: true });
+    return uploadLocalWorkspace();
+  }
+  // Collect even on metadata-only polls: preferences or another tab can change
+  // the persisted cache without delivering this tab's workspace event.
+  if (meta.contentSignature && meta.serverUpdatedAt === metadata.updatedAt && (meta.revision ?? 0) === metadata.revision) return true;
+
+  const server = await requestWorkspace('GET');
+  if (localStateChanged(state) || stopped()) {
+    preserveLocalChanges(state);
+    return false;
+  }
+  const remote = server.workspace ? validateWorkspaceShape(server.workspace) as unknown as WorkspaceSnapshot : null;
+  const revision = Number(server.revision ?? 0);
+  if (revision < metadata.revision || revision < (meta.revision ?? 0)) return false;
+  if (remote) {
+    const restored = await restoreWorkspaceSnapshotInternal(remote, revision, server.contentHash || undefined, state, stopped);
+    // Core edits during asynchronous history restore stay in the editor. Do
+    // not reload its document over those edits via the UI restore callback.
+    if (restored && !stopped() && !hasWorkspaceDraftPending() && state.generation === getWorkspaceMutationGeneration()) onRestored?.();
+    return restored && !currentWorkspaceMeta().pending;
+  }
+  if (workspaceHasData(local)) return uploadLocalWorkspace();
+  writeMeta({ ...meta, revision, pending: false });
+  acknowledgedMutationGeneration = state.generation;
+  return true;
 }
 
 export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
@@ -335,49 +428,14 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
   const reconcile = async () => {
     if (stopped || syncing) return;
     syncing = true;
+    let completed = false;
     setStatus('syncing');
     try {
-      const previous = readMeta();
-      const metadata = await requestWorkspaceMetadata();
-      const remoteUpdatedAt = metadata.updatedAt;
-      const remoteRevision = metadata.revision;
-
-      // Most polls only need to confirm that nothing changed. Avoid reading,
-      // parsing, and restoring the multi-megabyte workspace on every interval.
-      if (previous && !previous.pending && previous.contentSignature && previous.serverUpdatedAt === remoteUpdatedAt) {
-        setStatus('synced');
-        return;
-      }
-
-      const local = await collectWorkspaceSnapshot();
-      const meta = previous || { clientId: local.clientId, localUpdatedAt: 0, serverUpdatedAt: 0, pending: false };
-      const localSignature = workspaceContentSignature(local);
-      const signatureChanged = Boolean(meta.contentSignature) && meta.contentSignature !== localSignature;
-      const localDirty = Boolean(meta.pending || signatureChanged);
-      const localUpdatedAt = localDirty ? Math.max(meta.localUpdatedAt, signatureChanged ? Date.now() : 0) : 0;
-      if (signatureChanged && !meta.pending) writeMeta({ ...meta, localUpdatedAt, pending: true });
-      if (localDirty && localUpdatedAt !== meta.localUpdatedAt) writeMeta({ ...meta, localUpdatedAt, pending: true });
-
-      let remote: WorkspaceSnapshot | null = null;
-      let remoteData: WorkspaceServerResponse | null = null;
-      if (remoteUpdatedAt > 0 && (!meta.serverUpdatedAt || remoteUpdatedAt > meta.serverUpdatedAt || !meta.contentSignature)) {
-        remoteData = await requestWorkspace('GET');
-        remote = remoteData.workspace ? validateWorkspaceShape(remoteData.workspace) as unknown as WorkspaceSnapshot : null;
-      }
-      if (remote && localDirty && localUpdatedAt >= remote.updatedAt) {
-        await saveWorkspace({ ...local, updatedAt: localUpdatedAt }, { ...meta, revision: remoteRevision, localUpdatedAt, pending: true });
-      } else if (remote && !localDirty && remote.updatedAt > meta.serverUpdatedAt) {
-        await restoreWorkspaceSnapshot(remote);
-        options.onRestored?.();
-        writeMeta({ clientId: local.clientId, localUpdatedAt: remote.updatedAt, serverUpdatedAt: remote.updatedAt, revision: remoteRevision, contentHash: remoteData?.contentHash || undefined, pending: false, contentSignature: workspaceContentSignature(remote) });
-      } else if (workspaceHasData(local)) {
-        if (!meta.serverUpdatedAt || localDirty) {
-          const next = { ...local, updatedAt: Math.max(localUpdatedAt, Date.now()) };
-          await saveWorkspace(next, { ...meta, localUpdatedAt: next.updatedAt, pending: true });
-        }
-      }
-      if (!readMeta()?.contentSignature && remote) writeMeta({ ...meta, serverUpdatedAt: remote.updatedAt, revision: remoteRevision, contentHash: remoteData?.contentHash || undefined, contentSignature: workspaceContentSignature(remote) });
-      setStatus('synced');
+      if (bootstrapPromise) await bootstrapPromise;
+      if (stopped) return;
+      const synced = await reconcileWorkspace(options.onRestored, () => stopped);
+      completed = true;
+      setStatus(synced ? 'synced' : 'idle');
     } catch (error) {
       if (error instanceof WorkspaceConflictError) {
         setStatus('conflict');
@@ -385,27 +443,38 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
       }
       setStatus('offline');
       retryTimer = window.setTimeout(() => void reconcile(), SYNC_INTERVAL_MS);
-    } finally { syncing = false; }
+    } finally {
+      syncing = false;
+      if (completed) schedulePendingPush();
+    }
   };
 
   const push = async (keepalive = false) => {
-    if (stopped || syncing) return;
-    const before = readMeta();
-    if (!before?.pending && !keepalive) return;
+    if (stopped || syncing || bootstrapPromise || hasWorkspaceDraftPending()) return;
+    const before = currentWorkspaceMeta();
+    if (!before.pending) return;
     syncing = true;
+    let completed = false;
     setStatus('syncing');
     try {
-      const local = await collectWorkspaceSnapshot(before?.localUpdatedAt || Date.now());
-      const meta = readMeta() || { clientId: local.clientId, localUpdatedAt: local.updatedAt, serverUpdatedAt: 0, pending: true };
-      const data = await requestWorkspace('PUT', local, keepalive, meta.revision ?? 0);
-      const current = readMeta() || meta;
-      writeMeta({ ...current, clientId: local.clientId, serverUpdatedAt: local.updatedAt, revision: Number(data.revision ?? (meta.revision ?? 0) + 1), contentHash: data.contentHash || undefined, pending: current.localUpdatedAt > local.updatedAt, contentSignature: workspaceContentSignature(local) });
-      setStatus(current.localUpdatedAt > local.updatedAt ? 'offline' : 'synced');
+      const synced = await uploadLocalWorkspace(keepalive);
+      completed = true;
+      setStatus(synced ? 'synced' : 'idle');
     } catch (error) {
       const current = readMeta();
       if (current) writeMeta({ ...current, pending: true });
       setStatus(error instanceof WorkspaceConflictError ? 'conflict' : 'error');
-    } finally { syncing = false; }
+    } finally {
+      syncing = false;
+      if (completed) schedulePendingPush();
+    }
+  };
+
+  const schedulePendingPush = () => {
+    if (!stopped && readMeta()?.pending && !hasWorkspaceDraftPending() && getWorkspaceMutationGeneration() !== acknowledgedMutationGeneration) {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void push(), SYNC_DEBOUNCE_MS);
+    }
   };
 
   const markDirty = () => {
