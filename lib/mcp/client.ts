@@ -18,7 +18,7 @@ import {
   type McpRequestOptions,
   type McpTimeouts,
 } from './protocol';
-import { callStdioTool, listStdioServerTools, stdioServerStatus } from './stdio';
+import { callStdioTool, closeStdioServer, listStdioServerTools, stdioServerStatus } from './stdio';
 
 /**
  * 最小 MCP 客户端：只实现 tools/list 与 tools/call 需要的部分
@@ -282,6 +282,15 @@ export async function callMcpTool(
   if (server.transport === 'stdio') {
     try {
       const result = await callStdioTool(server, toolName, args, options);
+      if (isRecoverableWindowsMcpControlFailure(server, result) && !options.signal?.aborted) {
+        // Windows-MCP's control gate rejects the call before invoking the tool
+        // when no input step has run. Recreate the local process once so a
+        // stale low-level hook/overlay lease cannot strand the whole session.
+        // Never retry a call that reports executed input steps: it may already
+        // have clicked, typed, or otherwise changed the desktop.
+        closeStdioServer(server.id);
+        return callStdioTool(server, toolName, args, { ...options, retry: false });
+      }
       if (server.catalogId === 'playwright' && ['browser_snapshot', 'browser_find', 'browser_press_key', 'browser_evaluate'].includes(toolName) && !result.isError) {
         // Fixed read-only metadata, not model-authored evaluate code. Do not expose values,
         // mutate the DOM, or follow page instructions. Probe failures never lose the snapshot.
@@ -311,6 +320,27 @@ export async function callMcpTool(
     }, { ...options, timeoutMs: options.timeouts?.call ?? MCP_CALL_TIMEOUT_MS, expectReply: true });
     return { text: resultText(result), isError: Boolean(result?.isError) };
   });
+}
+
+function isWindowsMcpServer(server: McpServerConfig) {
+  const identity = `${server.catalogId || ''} ${server.id} ${server.name}`.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return identity.includes('windowsmcp');
+}
+
+function isRecoverableWindowsMcpControlFailure(server: McpServerConfig, result: { text: string; isError: boolean }) {
+  if (!isWindowsMcpServer(server) || !result.isError) return false;
+  try {
+    const parsed: unknown = JSON.parse(result.text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    const root = parsed as Record<string, unknown>;
+    if (root.code !== 'CONTROL_UNAVAILABLE') return false;
+    if (!root.status || typeof root.status !== 'object' || Array.isArray(root.status)) return true;
+    const executedSteps = (root.status as Record<string, unknown>).executed_steps;
+    return executedSteps === undefined || (typeof executedSteps === 'number' && executedSteps <= 0);
+  } catch {
+    return /["']code["']\s*:\s*["']CONTROL_UNAVAILABLE["']/i.test(result.text)
+      && !/["']executed_steps["']\s*:\s*[1-9]/i.test(result.text);
+  }
 }
 
 /**
