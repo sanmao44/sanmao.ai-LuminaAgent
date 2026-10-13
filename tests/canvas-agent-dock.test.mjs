@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createTsRequire } from './ts-require.mjs';
+import ts from 'typescript';
 
 const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
 const menuLayout = await readFile(new URL("../lib/canvas/menu-layout.ts", import.meta.url), "utf8");
@@ -29,6 +30,57 @@ const [component, canvasSource, styles, context, canvasApi, markdown] = await Pr
 const panelStyles = await readFile(new URL("../app/canvas-panels.css", import.meta.url), "utf8");
 
 const canvas = `${canvasSource}\n${workspaceHeader}\n${viewportOverlay}\n${nodeEditor}`;
+
+// Execute the real UI callbacks with the existing Core and persistence adapter.
+function canvasCallback(name, bindings) {
+  const source = ts.createSourceFile('CanvasWorkspace.tsx', canvasSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let callback;
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === name && node.initializer && ts.isCallExpression(node.initializer)) {
+      callback = node.initializer.arguments[0].getText(source);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.ok(callback, `Missing callback ${name}`);
+  const compiled = ts.transpileModule(`const callback = ${callback};`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  return new Function(...Object.keys(bindings), `${compiled}; return callback;`)(...Object.values(bindings));
+}
+
+function writebackFixture() {
+  const memory = () => {
+    const entries = new Map();
+    return { getItem: (key) => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, String(value)), removeItem: (key) => entries.delete(key) };
+  };
+  globalThis.window = Object.assign(new EventTarget(), { localStorage: memory(), sessionStorage: memory() });
+  const load = createTsRequire(process.cwd());
+  const model = load('./lib/canvas/model');
+  const storage = load('./lib/canvas/storage');
+  const { CanvasProjectSession } = load('./lib/canvas/project-session');
+  const { CanvasCore } = load('./packages/canvas-core/runtime');
+  const project = (id) => ({ id, name: id, createdAt: 1, updatedAt: 1 });
+  storage.createCanvasProject(project('a'), model.normalizeDocument(null));
+  const session = new CanvasProjectSession();
+  const core = new CanvasCore(session.open('a'));
+  const focused = [];
+  const noop = () => {};
+  const bindings = {
+    ...model,
+    ...load('./lib/canvas/node-placement'),
+    ...load('./lib/canvas/patch'),
+    canvasProjectSessionRef: { current: session }, canvasCoreRef: { current: core }, mountedRef: { current: true },
+    updateDoc: (updater) => core.replace(updater(core.document())),
+    commit: (updater) => core.apply({ id: 'writeback', label: 'writeback', apply: updater }),
+    setSaveError: () => assert.fail('Unexpected save error'), describeCanvasSaveFailure: storage.describeCanvasSaveFailure,
+    notify: noop, setSelectedIds: noop, setSelectedGroupId: noop, setReuseDraft: noop, setContextMenu: noop,
+    selectedSingle: null, selectedNodes: [], stageSize: { width: 900, height: 600 }, screenToWorld: (x, y) => ({ x, y }),
+    fitView: (ids) => focused.push(ids),
+  };
+  bindings.captureProjectTask = canvasCallback('captureProjectTask', bindings);
+  return { bindings, core, session, storage, model, project, focused };
+}
 
 test("the canvas agent dock mounts in SuperCanvas and is bound to the selection", () => {
   assert.match(canvas, /<CanvasAgentDock[\s\S]*?contextBlock=\{agentDockContext\.text\}/);
@@ -627,16 +679,21 @@ test("an agent image can be dragged out of the dock and dropped where the pointe
 });
 
 test("agent results land in free space instead of on top of existing nodes", () => {
-  // 面板落画布曾经用固定偏移：选中节点右边已经有东西时，结果会直接压上去。
-  const dockImages = canvas.slice(canvas.indexOf("const applyAgentDockImages = useCallback"), canvas.indexOf("const applyAgentDockText = useCallback"));
-  assert.match(dockImages, /const placed: CanvasNode\[\] = \[\];/);
-  assert.match(dockImages, /openNodePosition\(desired, draft, placed\)/);
-  const dockText = canvas.slice(canvas.indexOf("const applyAgentDockText = useCallback"), canvas.indexOf("const addNodeReference = useCallback"));
-  assert.match(dockText, /openNodePosition\(\{ x: draft\.x, y: draft\.y \}, draft\)/);
-  const imageBranch = canvas.slice(canvas.indexOf("const createImageBranchFromText = useCallback"), canvas.indexOf("const createVideoBranchFromText = useCallback"));
-  assert.match(imageBranch, /openNodePosition\(origin, imageNode\)/);
-  const videoBranch = canvas.slice(canvas.indexOf("const createVideoBranchFromText = useCallback"), canvas.indexOf("const useAgentResponseAsImagePrompt = useCallback"));
-  assert.match(videoBranch, /openNodePosition\(origin, videoNode\)/);
+  const h = writebackFixture();
+  const first = h.model.createMedia('image', '/first.png', 'first', { x: 10, y: 20 });
+  h.core.replace({ ...h.core.document(), nodes: [first] });
+  const scope = h.bindings.captureProjectTask();
+  const draft = h.model.createMedia('image', '/second.png', 'second', { x: 10, y: 20 });
+  const point = scope.placeNode({ x: 10, y: 20 }, draft);
+  const second = { ...draft, ...point };
+  const third = { ...h.model.createMedia('image', '/third.png', 'third', point) };
+  const thirdPoint = scope.placeNode(point, third, [second]);
+  const overlaps = (a, b) => {
+    const as = h.model.nodeSize(a), bs = h.model.nodeSize(b);
+    return a.x < b.x + bs.w && a.x + as.w > b.x && a.y < b.y + bs.h && a.y + as.h > b.y;
+  };
+  assert.equal(overlaps(first, second), false);
+  assert.equal(overlaps(second, { ...third, ...thirdPoint }), false);
 });
 
 test("the collapsed rail reports the failed nodes on the canvas", () => {
@@ -739,10 +796,23 @@ test("canvas overlays step aside for the open agent panel", () => {
 });
 
 test("storing a reply as a node brings it into view", () => {
-  // 「存为节点」把回复放在选中节点右侧：不把视图挪过去，新节点就藏在面板后面。
-  const dockText = canvas.slice(canvas.indexOf("const applyAgentDockText = useCallback"), canvas.indexOf("const addNodeReference = useCallback"));
-  assert.match(dockText, /fitView\(\[node\.id\]\);/);
-  assert.match(dockText, /^\s*fitView,$/m);
+  const h = writebackFixture();
+  const apply = canvasCallback('applyAgentDockText', h.bindings);
+  const ids = apply('reply', { prompt: 'prompt', runContext: { canvasId: 'a' } });
+  assert.deepEqual(h.focused, [ids]);
+  assert.equal(h.core.document().nodes[0].data.text, 'reply');
+  assert.equal(h.session.save(h.core.document()), true);
+  h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
+  h.core.replace(h.session.open('b'));
+  const backgroundIds = apply('background reply', { prompt: 'prompt', runContext: { canvasId: 'a' } });
+  assert.equal(backgroundIds.length, 1);
+  assert.equal(h.core.document().nodes.length, 0);
+  assert.equal(h.storage.loadCanvasDocument('a').nodes.length, 2);
+  assert.deepEqual(h.focused, [ids]);
+  assert.equal(h.storage.deleteCanvasProject('a'), true);
+  const deletedIds = apply('late reply', { prompt: 'prompt', runContext: { canvasId: 'a' } });
+  assert.deepEqual(deletedIds, []);
+  assert.deepEqual(h.focused, [ids]);
 });
 
 test("a waiting approval on the canvas gets the same confirm card as the main chat", () => {
@@ -794,8 +864,17 @@ test("each remote canvas run carries an immutable context snapshot into write-ba
   assert.match(component, /createCanvasAgentRunContext\(\{[\s\S]*runId: progressRunId/);
   assert.match(component, /references: turnNodeReferences/);
   assert.match(component, /onApplyImages\(images, \{ prompt: mentionText, model: response\.model, runContext \}\)/);
-  assert.match(component, /\.\.\.\(images\.length \|\| plan \? \{ runContext \} : \{\}\)/);
   assert.match(canvas, /runContext\.anchorNodeId/);
   assert.match(canvas, /runContext\?\.operation === "edit" \? "edited_from" : "derived_from"/);
   assert.match(canvas, /taskId: runContext\.runId/);
+  const h = writebackFixture();
+  const apply = canvasCallback('applyAgentCanvasPatch', h.bindings);
+  h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
+  h.core.replace(h.session.open('b'));
+  const reply = h.model.createPrompt({ x: 1, y: 2 }, 'original canvas reply');
+  const result = apply({ version: 1, operations: [{ op: 'add_node', node: reply }] }, { canvasId: 'a' });
+  assert.deepEqual(result.ids, [reply.id]);
+  assert.equal(h.core.document().nodes.length, 0);
+  assert.equal(h.storage.loadCanvasDocument('a').nodes[0].id, reply.id);
+  assert.deepEqual(h.focused, []);
 });

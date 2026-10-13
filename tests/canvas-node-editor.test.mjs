@@ -281,7 +281,6 @@ test("editor generation resolves its current draft without waiting for selection
   assert.ok(generationStart >= 0 && generationEnd > generationStart, "generation implementation should be present");
   const generation = component.slice(generationStart, generationEnd);
   assert.match(generation, /async \(request\?: CanvasGenerationRequest\)/);
-  assert.match(generation, /nodeById\(canvasCoreRef\.current\.document\(\), request\.nodeId\)/);
   assert.match(generation, /const source = deckSource\(request\)/);
   assert.match(generation, /const generationMode = source\.kind/);
   assert.match(generation, /const hasRequestedPrompt = typeof request\?\.userPrompt === "string" \|\| typeof request\?\.prompt === "string"/);

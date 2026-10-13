@@ -126,7 +126,7 @@ type Props = {
   selectedNodeIds?: string[];
   context: WorkspaceContext;
   canvasDocument: CanvasDocument;
-  onApplyCanvasPatch: (patch: CanvasPatch) => CanvasAgentDockPlanResult;
+  onApplyCanvasPatch: (patch: CanvasPatch, runContext?: CanvasAgentRunContext) => CanvasAgentDockPlanResult;
   /* 画布上真实的选中数量：芯片只渲染前几个，头部要报完整数字。 */
   selectedTotal?: number;
   contextBlock: string;
@@ -1340,7 +1340,7 @@ export default function CanvasAgentDock({
               : {}),
             ...(plan ? { plan: { ...plan, ...(appliedImageIds.length ? { applied: true } : {}) } } : {}),
             ...(appliedImageIds.length ? { imageNodeIds: appliedImageIds } : {}),
-            ...(images.length || plan ? { runContext } : {}),
+            runContext,
             ...(approval ? { approval } : {}),
             ...(mcpTools.length ? { mcpTools } : {}),
             ...(files.length ? { files } : {}),
@@ -1348,7 +1348,7 @@ export default function CanvasAgentDock({
           },
         ]);
         if (canvasPatch && autoApply) {
-          const applied = onApplyCanvasPatch(canvasPatch);
+          const applied = onApplyCanvasPatch(canvasPatch, runContext);
           if (applied.error) {
             notify(`画布 Patch 未应用：${applied.error}`, "error");
           } else {
@@ -2050,7 +2050,7 @@ export default function CanvasAgentDock({
                 {!message.canvasPatchApplied ? (
                   <div className="canvas-agent-dock-plan-actions">
                     <button type="button" className="primary" onClick={() => {
-                      const result = onApplyCanvasPatch(message.canvasPatch!);
+                      const result = onApplyCanvasPatch(message.canvasPatch!, message.runContext);
                       setMessages((value) => value.map((item) => item.id === message.id
                         ? result.error
                           ? { ...item, error: result.error }

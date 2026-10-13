@@ -17,8 +17,10 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import { useRouter } from "next/navigation";
+import { canvasNodeHasTask, mergeCanvasTaskImages, recoverCanvasTask } from "@/lib/canvas/task-recovery";
 import {
   addEdge,
   alignCanvasNodes,
@@ -1493,6 +1495,27 @@ export default function SuperCanvas() {
       kind === "error" ? 5200 : 2800,
     );
   }, []);
+
+  const captureProjectTask = useCallback((projectId?: string) => {
+    const scope = canvasProjectSessionRef.current.capture({
+      mounted: () => mountedRef.current,
+      document: () => canvasCoreRef.current.document(),
+      update: updateDoc,
+      commit,
+      onFailure: () => { setSaveError(true); notify(describeCanvasSaveFailure(), "error"); },
+    }, projectId);
+    return {
+      ...scope,
+      ifActive: (action: () => void) => { if (scope.isActive()) action(); },
+      placeNode: (position: Point, node: CanvasNode, extraOccupied: CanvasNode[] = []) =>
+        findCanvasNodePlacement(position, node, [...scope.readDocument().nodes, ...extraOccupied]),
+      // Background completion must not select nodes or close an editor in the
+      // canvas the user has since opened.
+      setSelectedIds: (value: Set<string>) => { if (scope.isActive()) setSelectedIds(value); },
+      setSelectedGroupId: (value: string | null) => { if (scope.isActive()) setSelectedGroupId(value); },
+      setReuseDraft: (value: SetStateAction<CanvasReuseDraft | null>) => { if (scope.isActive()) setReuseDraft(value); },
+    };
+  }, [commit, notify, setSelectedIds, setSelectedGroupId, updateDoc]);
   const openImagePanorama = useCallback(
     (nodeId: string) => {
       const node = nodeById(canvasCoreRef.current.document(), nodeId);
@@ -1851,7 +1874,9 @@ export default function SuperCanvas() {
    */
   const healedRemoteMediaRef = useRef(new Set<string>());
   const healRemoteNodeMedia = useCallback(async () => {
-    const remoteUrls = canvasRemoteMediaUrls(canvasCoreRef.current.document().nodes)
+    const projectTask = captureProjectTask();
+    const { updateDoc, readDocument } = projectTask;
+    const remoteUrls = canvasRemoteMediaUrls(readDocument().nodes)
       .filter((url) => !healedRemoteMediaRef.current.has(url));
     if (!remoteUrls.length) return;
     remoteUrls.slice(0, 16).forEach((url) => healedRemoteMediaRef.current.add(url));
@@ -1865,24 +1890,27 @@ export default function SuperCanvas() {
       }),
     }));
     addLog(`已把 ${archived.size} 张远端图片保存到本地`);
-  }, [addLog, updateDoc]);
+  }, [captureProjectTask, addLog, updateDoc]);
 
   // A browser refresh or a dropped Agent stream must not turn a still-running
   // provider task into a permanent canvas failure. Reconcile persisted task
   // ids with the server log and let the terminal result update the node.
   const reconcileBackgroundCanvasTasks = useCallback(async () => {
+    const projectTask = captureProjectTask();
+    const { updateDoc, readDocument } = projectTask;
     if (!ready || !mountedRef.current) return;
-    const candidates = canvasCoreRef.current.document().nodes.filter((node) => {
+    const candidates = readDocument().nodes.filter((node) => {
       if (node.type !== "prompt" && node.type !== "media") return false;
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "").trim();
       return Boolean(taskId) && !node.data.url;
     });
     for (const node of candidates) {
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "").trim();
-      if (!taskId || recoveryTasksRef.current.has(taskId)) continue;
-      recoveryTasksRef.current.add(taskId);
+      const recoveryKey = `${projectTask.projectId}:${node.id}:${taskId}`;
+      if (!taskId || recoveryTasksRef.current.has(recoveryKey)) continue;
+      recoveryTasksRef.current.add(recoveryKey);
       try {
-        const currentNode = nodeById(canvasCoreRef.current.document(), node.id) || node;
+        const currentNode = nodeById(readDocument(), node.id) || node;
         const isVideo = currentNode.type === "media" && currentNode.data.kind === "video";
         const log = isVideo ? null : await getCanvasAgentGeneration(taskId);
         const videoTask = isVideo ? await getCanvasVideoTask(taskId).catch(() => null) : null;
@@ -1895,54 +1923,16 @@ export default function SuperCanvas() {
         const status = isVideo
           ? (videoProgress?.status === "completed" ? "success" : videoProgress?.status === "failed" ? "error" : "pending")
           : (urls.length ? "success" : log!.status);
-        if (status === "pending") {
-          updateDoc((value) => ({
-            ...value,
-            nodes: value.nodes.map((item) => item.id === node.id
-              ? { ...item, data: { ...item.data, status: "running" as const, statusLabel: "服务商仍在生成，请稍候" } }
-              : item),
-          }));
-          continue;
-        }
-        if (status === "error") {
-          updateDoc((value) => ({
-            ...value,
-            nodes: value.nodes.map((item) => item.id === node.id
-              ? { ...item, data: { ...item.data, status: "failed" as const, statusLabel: String(isVideo ? videoTask?.task.error || "视频生成失败" : log?.error || "图片生成失败") } }
-              : item),
-          }));
-          continue;
-        }
-        if (status !== "success") continue;
-        updateDoc((value) => {
-          const current = nodeById(value, node.id);
-          if (!current) return value;
-          if (current.type === "media") {
-            const url = urls[0];
-            if (!url) return value;
-            return {
-              ...value,
-              nodes: value.nodes.map((item) => item.id === node.id
-                ? { ...item, data: { ...item.data, url, status: "completed" as const, statusLabel: isVideo ? "视频已完成" : "图片已完成", progress: 100, processingStartedAt: undefined } }
-                : item),
-            };
-          }
-          const existingUrls = new Set(value.nodes.filter((item) => item.type === "media" && item.data.generation?.parentNodeId === node.id).map((item) => String(item.data.url || "")));
-          const imageNodes = urls.filter((url) => !existingUrls.has(url)).map((url, index) => createMedia("image", url, `Agent 图片 ${index + 1}`, { x: current.x + nodeSize(current).w + 90 + index * 350, y: current.y }, { role: "Agent 生成结果", generation: { kind: "image", prompt: String(current.data.agentPrompt || current.data.text || ""), params: current.data.generation?.params || readSharedCreationSettings("image", runtime), parentNodeId: node.id, taskId, createdAt: Date.now() } }));
-          let next = {
-            ...value,
-            nodes: value.nodes.map((item) => item.id === node.id
-              ? { ...item, data: { ...item.data, status: "completed" as const, statusLabel: "Agent 已回复", processingStartedAt: undefined } }
-              : item).concat(imageNodes),
-          };
-          imageNodes.forEach((image) => { next = addEdge(next, node.id, image.id, "right", "left", "generated"); });
-          return next;
-        });
+        updateDoc((value) => recoverCanvasTask(value, {
+          nodeId: node.id, taskId, status, urls,
+          error: String(isVideo ? videoTask?.task.error || "视频生成失败" : log?.error || "图片生成失败"),
+          imageParams: readSharedCreationSettings("image", runtime),
+        }));
       } finally {
-        recoveryTasksRef.current.delete(taskId);
+        recoveryTasksRef.current.delete(recoveryKey);
       }
     }
-  }, [addLog, ready, runtime, updateDoc]);
+  }, [captureProjectTask, addLog, ready, runtime, updateDoc]);
 
   useEffect(() => {
     if (!ready) return;
@@ -2362,7 +2352,9 @@ export default function SuperCanvas() {
     );
   }, []);
   const applyPanoramaView = useCallback(async (sourceNodeId: string, snapshot: PanoramaSnapshot) => {
-    const source = nodeById(canvasCoreRef.current.document(), sourceNodeId);
+    const projectTask = captureProjectTask();
+    const { commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
+    const source = nodeById(readDocument(), sourceNodeId);
     if (!source || !isCanvasReadyImageSource(source) || source.data.kind !== "image" || !source.data.url)
       throw new Error("原全景图片已不可用，请关闭后重新打开查看器。");
     if (!snapshot.dataUrl || snapshot.width < 1 || snapshot.height < 1)
@@ -2375,7 +2367,7 @@ export default function SuperCanvas() {
     );
     if (asset.kind !== "image") throw new Error("当前视角未能保存为图片素材，请重试。");
 
-    const currentSource = nodeById(canvasCoreRef.current.document(), sourceNodeId);
+    const currentSource = nodeById(readDocument(), sourceNodeId);
     if (!currentSource || !isCanvasReadyImageSource(currentSource) || currentSource.data.kind !== "image")
       throw new Error("原全景图片已被移除，未创建新的平面图片节点。");
 
@@ -2418,7 +2410,7 @@ export default function SuperCanvas() {
     };
     const positioned = {
       ...result,
-      ...openNodePosition({ x: result.x, y: result.y }, result),
+      ...projectTask.placeNode({ x: result.x, y: result.y }, result),
     };
     commit((value) => ({
       ...value,
@@ -2437,10 +2429,10 @@ export default function SuperCanvas() {
     }));
     setSelectedIds(new Set([positioned.id]));
     setSelectedGroupId(null);
-    setQuickToolbarNodeId(null);
+    projectTask.ifActive(() => setQuickToolbarNodeId(null));
     notify("已应用为平面图片");
     addLog(`全景视角已应用为平面图片：${sourceName} · ${viewLabel}`);
-  }, [addLog, commit, notify, openNodePosition, runtime]);
+  }, [captureProjectTask, addLog, commit, notify, openNodePosition, runtime]);
   const selectNode = useCallback((node: CanvasNode, additive = false) => {
     setSelectedEdgeId(null);
     const group = groupForNode(canvasCoreRef.current.document(), node.id);
@@ -4122,11 +4114,15 @@ export default function SuperCanvas() {
   }, [addLog, currentProject?.name, document, notify]);
   const importWorkflow = useCallback(
     async (file: File) => {
+      const projectTask = captureProjectTask();
+      const { commit } = projectTask;
       try {
         const next = normalizeDocument(JSON.parse(await file.text()));
-        commit(() => next);
-        clearSelection();
-        fitView();
+        if (!commit(() => next)) return;
+        if (projectTask.isActive()) {
+          clearSelection();
+          fitView();
+        }
         addLog(`已导入工作流：${file.name}`);
         notify("工作流已导入");
       } catch (error) {
@@ -4136,11 +4132,13 @@ export default function SuperCanvas() {
         );
       }
     },
-    [addLog, clearSelection, commit, fitView, notify],
+    [captureProjectTask, addLog, clearSelection, commit, fitView, notify],
   );
 
   const handleFiles = useCallback(
     async (files: FileList | File[], position?: Point) => {
+      const projectTask = captureProjectTask();
+      const { commit, setSelectedIds, setSelectedGroupId } = projectTask;
       const allFiles = [...files];
       const list = allFiles.filter(
         (file) =>
@@ -4175,7 +4173,7 @@ export default function SuperCanvas() {
             },
           );
           const point = position
-            ? openNodePosition(
+            ? projectTask.placeNode(
                 {
                   x: base.x + (index % 3) * 350,
                   y: base.y + Math.floor(index / 3) * 270,
@@ -4209,7 +4207,7 @@ export default function SuperCanvas() {
           );
           const textNode: CanvasNode = {
             ...draft,
-            ...openNodePosition({ x: draft.x, y: draft.y }, draft, nodes),
+            ...projectTask.placeNode({ x: draft.x, y: draft.y }, draft, nodes),
             data: {
               ...draft.data,
               name: file.name || `文本引用 ${index + 1}`,
@@ -4235,7 +4233,7 @@ export default function SuperCanvas() {
         );
       }
     },
-    [
+    [captureProjectTask,
       addLog,
       commit,
       notify,
@@ -4926,19 +4924,31 @@ export default function SuperCanvas() {
   );
 
   const pollVideo = useCallback(
-    async (nodeId: string, taskId: string) => {
-      if (!mountedRef.current || !nodeById(canvasCoreRef.current.document(), nodeId)) return;
+    async (nodeId: string, taskId: string, projectId = canvasProjectSessionRef.current.activeId) => {
+      const projectTask = captureProjectTask(projectId);
+      const { readDocument, updateDoc } = projectTask;
+      const pollKey = `${projectId}:${nodeId}:${taskId}`;
+      const taskMatches = (document: CanvasDocument) => {
+        const node = nodeById(document, nodeId);
+        return node && String(node.data.jobId || node.data.generation?.taskId || "") === taskId;
+      };
+      const clearPoll = () => {
+        pollAttemptsRef.current.delete(pollKey);
+        pollStartedAtRef.current.delete(pollKey);
+      };
+      if (!mountedRef.current || !taskMatches(readDocument())) { clearPoll(); return; }
       const startedAt =
-        pollStartedAtRef.current.get(taskId) || Date.now();
-      pollStartedAtRef.current.set(taskId, startedAt);
-      const attempts = (pollAttemptsRef.current.get(taskId) || 0) + 1;
-      pollAttemptsRef.current.set(taskId, attempts);
+        pollStartedAtRef.current.get(pollKey) || Date.now();
+      pollStartedAtRef.current.set(pollKey, startedAt);
+      const attempts = (pollAttemptsRef.current.get(pollKey) || 0) + 1;
+      pollAttemptsRef.current.set(pollKey, attempts);
       try {
         const result = await getCanvasVideoTask(taskId);
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || !taskMatches(readDocument())) { clearPoll(); return; }
         const task = result.task;
         const progress = canvasVideoTaskProgress(task);
         updateDoc((value) => {
+          if (!taskMatches(value)) return value;
           const targetNode = nodeById(value, nodeId);
           const variantIndex = targetNode?.data.generation?.variantIndex;
           const sourceGeneratorId = targetNode?.data.generation
@@ -5008,12 +5018,11 @@ export default function SuperCanvas() {
         if (!progress.terminal) {
           const timer = window.setTimeout(() => {
             pollTimersRef.current.delete(timer);
-            void pollVideo(nodeId, taskId);
+            void pollVideo(nodeId, taskId, projectId);
           }, 3000);
           pollTimersRef.current.add(timer);
         } else {
-          pollAttemptsRef.current.delete(taskId);
-          pollStartedAtRef.current.delete(taskId);
+          clearPoll();
           addLog(
               progress.status === "completed"
               ? "视频生成完成"
@@ -5021,18 +5030,18 @@ export default function SuperCanvas() {
           );
         }
       } catch (error) {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || !taskMatches(readDocument())) { clearPoll(); return; }
         addLog(
           `视频进度查询失败：${error instanceof Error ? error.message : "网络错误"}`,
         );
         const timer = window.setTimeout(() => {
           pollTimersRef.current.delete(timer);
-          void pollVideo(nodeId, taskId);
+          void pollVideo(nodeId, taskId, projectId);
         }, 5000);
         pollTimersRef.current.add(timer);
       }
     },
-    [addLog, updateDoc],
+    [addLog, captureProjectTask],
   );
 
   useEffect(() => {
@@ -5046,7 +5055,7 @@ export default function SuperCanvas() {
         node.data.kind === "video" &&
         taskId &&
         (node.data.status === "queued" || node.data.status === "running") &&
-        !pollAttemptsRef.current.has(taskId)
+        !pollAttemptsRef.current.has(`${activeProjectId}:${node.id}:${taskId}`)
       )
         void pollVideo(node.id, taskId);
     });
@@ -5058,7 +5067,9 @@ export default function SuperCanvas() {
       retryIndices?: number[],
       mode: "all" | "failed" | "pending" = retryIndices ? "failed" : "all",
     ) => {
-      const generator = nodeById(canvasCoreRef.current.document(), generatorId);
+      const projectTask = captureProjectTask();
+      const { updateDoc, readDocument } = projectTask;
+      const generator = nodeById(readDocument(), generatorId);
       if (!generator || generator.type !== "generator") {
         notify("变体生成器已不存在，请重新选择节点。", "error");
         return;
@@ -5144,7 +5155,7 @@ export default function SuperCanvas() {
         return { ...value, nodes: nextNodes };
       };
       const prepared = prepareCanvasVariantGeneration({
-        document: canvasCoreRef.current.document(),
+        document: readDocument(),
         generator,
         requirements,
         mentionCandidates,
@@ -5159,6 +5170,8 @@ export default function SuperCanvas() {
           }));
         });
         notify(message, "error");
+        generationKeysRef.current.delete(activeKey);
+        setGenerationKeys(new Set(generationKeysRef.current));
         return;
       }
       const linked = prepared.linkedNodes;
@@ -5200,7 +5213,7 @@ export default function SuperCanvas() {
           : next;
       };
       const promptFor = (index: number) => prepared.prompts[index] || "";
-      let nextResultPlacement = canvasCoreRef.current.document().nodes.filter(
+      let nextResultPlacement = readDocument().nodes.filter(
         (node) =>
           node.type === "media" &&
           node.data.generation?.sourceGeneratorId === generatorId,
@@ -5358,7 +5371,7 @@ export default function SuperCanvas() {
               const videoInputs = resolveCanvasVideoInputs(
                 linked,
                 videoParams.inputMode,
-                canvasInputRolesForTarget(canvasCoreRef.current.document(), generatorId),
+                canvasInputRolesForTarget(readDocument(), generatorId),
                 { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos, maxAudios: videoLimits.maxAudios, supportsAudio: canvasVideoInputCapabilities(videoParams, runtime).supportsAudio },
               );
               const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits, videoParams.operation);
@@ -5459,7 +5472,7 @@ export default function SuperCanvas() {
                 if (!finishedProgress.terminal) {
                   // A local wait limit is not a provider result. Keep the
                   // node running and let the shared poller reconcile it.
-                  void pollVideo(target.id, task.id);
+                  void pollVideo(target.id, task.id, projectTask.projectId);
                   addLog(`视频变体仍在后台生成：${task.id}`);
                   writeSharedCreationSettings(videoParams);
                   continue;
@@ -5499,7 +5512,7 @@ export default function SuperCanvas() {
         setGenerationKeys(new Set(generationKeysRef.current));
       }
     },
-    [addLog, mentionCandidates, notify, resolveAvailableCreationModel, runtime, updateDoc],
+    [captureProjectTask, addLog, mentionCandidates, notify, resolveAvailableCreationModel, runtime, updateDoc],
   );
 
   useEffect(() => {
@@ -5793,6 +5806,8 @@ export default function SuperCanvas() {
     draftInput: CanvasReuseDraft,
     options?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference">,
   ) => {
+    const projectTask = captureProjectTask();
+    const { updateDoc, commit, readDocument, setSelectedIds, setSelectedGroupId, setReuseDraft } = projectTask;
     const draft = cloneReuseDraft(draftInput);
     if (draft.kind !== "image") return;
     const useCurrentImageAsReference = options?.useCurrentImageAsReference !== false;
@@ -5827,7 +5842,7 @@ export default function SuperCanvas() {
     })));
     const prompt = resolveImagePresetPrompt(promptWithReferences, presetId, customImagePresets);
     const source = draft.sourceNodeId
-      ? nodeById(canvasCoreRef.current.document(), draft.sourceNodeId)
+      ? nodeById(readDocument(), draft.sourceNodeId)
       : undefined;
     if (!source || source.type !== "media" || source.data.kind !== "image" || !source.data.url) {
       return notify("图片续生成需要一个已完成的图片节点。", "error");
@@ -5915,7 +5930,7 @@ export default function SuperCanvas() {
 
     for (const [index, reference] of selectedReferences.entries()) {
       const existing = reference.nodeId
-        ? nodeById(canvasCoreRef.current.document(), reference.nodeId)
+        ? nodeById(readDocument(), reference.nodeId)
         : undefined;
       if (reference.kind === "text") {
         if (existing?.type === "prompt" && String(existing.data.text || existing.data.agentResponse || "").trim()) {
@@ -5936,7 +5951,7 @@ export default function SuperCanvas() {
           };
           const placed = {
             ...materializedWithMetadata,
-            ...openNodePosition(
+            ...projectTask.placeNode(
               { x: materialized.x, y: materialized.y },
               materializedWithMetadata,
               [...materializedReferences, outputReservation],
@@ -5971,7 +5986,7 @@ export default function SuperCanvas() {
         );
         const placed = {
           ...materialized,
-          ...openNodePosition(
+          ...projectTask.placeNode(
             { x: materialized.x, y: materialized.y },
             materialized,
             [...materializedReferences, outputReservation],
@@ -6022,7 +6037,7 @@ export default function SuperCanvas() {
     const pending = createOutput("", "图片生成中", outputPosition, "running");
     const pendingPositioned = {
       ...pending,
-      ...openNodePosition(outputPosition, pending, materializedReferences),
+      ...projectTask.placeNode(outputPosition, pending, materializedReferences),
     };
     const inputEdges = [
       {
@@ -6036,9 +6051,9 @@ export default function SuperCanvas() {
       ...referenceEdges.map((edge) => ({ ...edge, target: pendingPositioned.id })),
     ];
     const initialDocument: CanvasDocument = {
-      ...canvasCoreRef.current.document(),
-      nodes: [...canvasCoreRef.current.document().nodes, ...materializedReferences, pendingPositioned],
-      edges: [...canvasCoreRef.current.document().edges, ...inputEdges],
+      ...readDocument(),
+      nodes: [...readDocument().nodes, ...materializedReferences, pendingPositioned],
+      edges: [...readDocument().edges, ...inputEdges],
     };
     generationKeysRef.current.add(activeKey);
     setGenerationKeys(new Set(generationKeysRef.current));
@@ -6104,7 +6119,7 @@ export default function SuperCanvas() {
         );
         outputs.push({
           ...output,
-          ...openNodePosition(
+          ...projectTask.placeNode(
             { x: output.x, y: output.y },
             output,
             outputs,
@@ -6133,39 +6148,22 @@ export default function SuperCanvas() {
               error: undefined,
             })
           : value;
-        return {
-        ...withMask,
-        nodes: withMask.nodes
-          .map((node) => node.id === pendingPositioned.id
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  ...firstData,
-                  url: result.images[0].url,
-                  name: "继续生成图片 1",
-                  model: result.model?.name || params.model,
-                  status: "completed" as const,
-                  statusLabel: "图片已完成",
-                  processingStartedAt: undefined,
-                },
-              }
-            : node,
-          )
-          .concat(outputs),
-        edges: [...value.edges, ...extraEdges],
-        };
+        const merged = mergeCanvasTaskImages(withMask, pendingPositioned.id, taskId, [
+          { ...pendingPositioned, data: { ...firstData, model: result.model?.name || params.model } }, ...outputs,
+        ]);
+        const addedIds = new Set(merged.nodes.filter((node) => !value.nodes.some((existing) => existing.id === node.id)).map((node) => node.id));
+        return { ...merged, edges: [...merged.edges, ...extraEdges.filter((edge) => addedIds.has(edge.target))] };
       });
       setSelectedIds(new Set([pendingPositioned.id, ...outputs.map((output) => output.id)]));
       writeSharedCreationSettings(params);
       setReuseDraft(null);
-      setEditorDrafts((current) => {
+      projectTask.ifActive(() => setEditorDrafts((current) => {
         const next = { ...current };
         delete next[source.id];
         return next;
-      });
+      }));
       const usedReferenceNodes = resolvedReferenceIds
-        .map((id) => nodeById(canvasCoreRef.current.document(), id) || materializedReferences.find((node) => node.id === id))
+        .map((id) => nodeById(readDocument(), id) || materializedReferences.find((node) => node.id === id))
         .filter((node): node is CanvasNode => Boolean(node));
       void recordCanvasImages(result.images, {
         prompt,
@@ -6214,9 +6212,11 @@ export default function SuperCanvas() {
       generationKeysRef.current.delete(activeKey);
       setGenerationKeys(new Set(generationKeysRef.current));
     }
-  }, [addLog, commit, customImagePresets, notify, openNodePosition, runtime, updateDoc]);
+  }, [captureProjectTask, addLog, commit, customImagePresets, notify, openNodePosition, runtime, updateDoc]);
 
   const runVideoContinuation = useCallback(async (draftInput: CanvasReuseDraft) => {
+    const projectTask = captureProjectTask();
+    const { updateDoc, commit, readDocument, setSelectedIds, setSelectedGroupId, setReuseDraft } = projectTask;
     const draft = cloneReuseDraft(draftInput);
     if (draft.kind !== "video") return;
     const userPrompt = draft.prompt.trim();
@@ -6243,7 +6243,7 @@ export default function SuperCanvas() {
     })));
     const activeKey = `reuse:${draft.sourceNodeId || draft.kind}`;
     if (generationKeysRef.current.has(activeKey)) return notify("这个复用任务正在生成，请稍候。", "error");
-    const source = draft.sourceNodeId ? nodeById(canvasCoreRef.current.document(), draft.sourceNodeId) : undefined;
+    const source = draft.sourceNodeId ? nodeById(readDocument(), draft.sourceNodeId) : undefined;
     const sourcePosition = source || selectedSingle;
     const outputPosition = sourcePosition
       ? { x: sourcePosition.x + nodeSize(sourcePosition).w + 90, y: sourcePosition.y }
@@ -6251,7 +6251,7 @@ export default function SuperCanvas() {
     const materializedReferences: CanvasNode[] = [];
     const resolvedReferenceIds: string[] = [];
     for (const [index, reference] of selectedReferences.entries()) {
-      const existing = reference.nodeId ? nodeById(canvasCoreRef.current.document(), reference.nodeId) : undefined;
+      const existing = reference.nodeId ? nodeById(readDocument(), reference.nodeId) : undefined;
       if (existing?.type === "media" && existing.data.url) {
         resolvedReferenceIds.push(existing.id);
         continue;
@@ -6273,7 +6273,7 @@ export default function SuperCanvas() {
       const materializedWithMetadata = reference.kind === "text"
         ? { ...materialized, data: { ...materialized.data, name: reference.name, role: "文本引用", mimeType: reference.mimeType } }
         : materialized;
-      const placed = { ...materializedWithMetadata, ...openNodePosition(position, materializedWithMetadata) };
+      const placed = { ...materializedWithMetadata, ...projectTask.placeNode(position, materializedWithMetadata) };
       materializedReferences.push(placed);
       resolvedReferenceIds.push(placed.id);
     }
@@ -6299,7 +6299,7 @@ export default function SuperCanvas() {
     const reuseInputMode = (draft.params as VideoCreationSettings).inputMode;
     let imageInputPosition = 0;
     const initialEdges: CanvasEdge[] = referenceByIndex.map(({ id }, index) => {
-      const sourceNode = nodeById(canvasCoreRef.current.document(), id) || materializedReferences.find((node) => node.id === id);
+      const sourceNode = nodeById(readDocument(), id) || materializedReferences.find((node) => node.id === id);
       const inputRole = sourceNode && reuseInputMode
         ? inferCanvasInputRole(sourceNode, output, reuseInputMode, sourceNode.data.kind === "image" ? imageInputPosition : index)
         : sourceNode
@@ -6314,9 +6314,9 @@ export default function SuperCanvas() {
     });
     if (source) initialEdges.push({ id: uid("edge"), source: source.id, target: output.id, sourcePort: "right", targetPort: "left", kind: "lineage" });
     const initialDocument: CanvasDocument = {
-      ...canvasCoreRef.current.document(),
-      nodes: [...canvasCoreRef.current.document().nodes, ...materializedReferences, output],
-      edges: [...canvasCoreRef.current.document().edges, ...initialEdges],
+      ...readDocument(),
+      nodes: [...readDocument().nodes, ...materializedReferences, output],
+      edges: [...readDocument().edges, ...initialEdges],
     };
     generationKeysRef.current.add(activeKey);
     setGenerationKeys(new Set(generationKeysRef.current));
@@ -6330,7 +6330,7 @@ export default function SuperCanvas() {
       const videoLimits = getVideoModelLimits(resolvedVideoModel.model || undefined, videoProvider);
       const videoInputs = resolveCanvasVideoInputs(
         referenceByIndex
-          .map(({ id }) => nodeById(canvasCoreRef.current.document(), id) || materializedReferences.find((node) => node.id === id))
+          .map(({ id }) => nodeById(readDocument(), id) || materializedReferences.find((node) => node.id === id))
           .filter((node): node is CanvasNode => Boolean(node)),
         params.inputMode,
         new Map(initialEdges.map((edge) => [edge.source, edge.inputRole])),
@@ -6403,7 +6403,7 @@ export default function SuperCanvas() {
       setReuseDraft(null);
       if (taskProgress.status === "completed") notify("视频新结果已完成");
       else if (taskProgress.status === "failed") throw new Error(task.error || "视频续生成失败");
-      else { void pollVideo(output.id, task.id); notify("视频新结果任务已提交"); }
+      else { void pollVideo(output.id, task.id, projectTask.projectId); notify("视频新结果任务已提交"); }
       addLog(`视频续生成任务已提交：${task.id}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "视频续生成失败";
@@ -6430,7 +6430,7 @@ export default function SuperCanvas() {
       generationKeysRef.current.delete(activeKey);
       setGenerationKeys(new Set(generationKeysRef.current));
     }
-  }, [addLog, commit, notify, openNodePosition, pollVideo, runtime, screenToWorld, selectedSingle, updateDoc]);
+  }, [captureProjectTask, addLog, commit, notify, openNodePosition, pollVideo, runtime, screenToWorld, selectedSingle, updateDoc]);
 
   const runReuseGeneration = useCallback(async (
     draftInput: CanvasReuseDraft,
@@ -6459,8 +6459,10 @@ export default function SuperCanvas() {
   }, [notify, runImageContinuation, runVideoContinuation]);
 
   const runGeneration = useCallback(async (request?: CanvasGenerationRequest) => {
+    const projectTask = captureProjectTask();
+    const { updateDoc, commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
     const requestedNode = request?.nodeId
-      ? nodeById(canvasCoreRef.current.document(), request.nodeId)
+      ? nodeById(readDocument(), request.nodeId)
       : selectedSingle;
     if (requestedNode?.type === "media" && requestedNode.data.kind === "audio") {
       notify("音频节点是独立素材输入，请将它连接到视频节点后生成。", "error");
@@ -6481,7 +6483,7 @@ export default function SuperCanvas() {
         return notify("音频节点只能作为视频参考输入，不能直接生成新分支。", "error");
       }
       const targetKind = selectedMediaTarget.data.kind === "video" ? "video" : "image";
-      const references = incomingReferences(canvasCoreRef.current.document(), selectedMediaTarget.id)
+      const references = incomingReferences(readDocument(), selectedMediaTarget.id)
         .map((node) => createCanvasReferenceDraft(node))
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
       const draft = reuseDraftFromNode(
@@ -6532,7 +6534,7 @@ export default function SuperCanvas() {
       if (generationKeysRef.current.has(activeKey))
         return notify("这个 Agent 节点正在回复。", "error");
       const incoming = source.node
-        ? incomingContext(canvasCoreRef.current.document(), source.node.id)
+        ? incomingContext(readDocument(), source.node.id)
         : selectedNodes;
       const explicitReferenceNodes = request?.referenceNodeIds
         ? request.referenceNodeIds
@@ -6692,7 +6694,7 @@ export default function SuperCanvas() {
           }
         });
         const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
-        const parent = nodeById(canvasCoreRef.current.document(), inputId) || inputNode;
+        const parent = nodeById(readDocument(), inputId) || inputNode;
         const responseText = String(finalEventReceived ? finalEventText : response.message || "").trim();
         if (!responseText) throw new Error("Agent 没有返回有效结果，请重试。");
         const effectiveModelRecord = runtime?.models.find(
@@ -6733,6 +6735,7 @@ export default function SuperCanvas() {
                 params: clone(imageSettings),
                 referenceIds: referenceNodes.map((node) => node.id),
                 parentNodeId: inputId,
+                taskId: agentRunId,
                 createdAt: Date.now(),
                 durationMs: generationDurationMs,
               },
@@ -6741,9 +6744,11 @@ export default function SuperCanvas() {
           ),
         );
         commit((value) => {
-          let next = {
-            ...value,
-            nodes: value.nodes
+          if (!canvasNodeHasTask(nodeById(value, inputId), agentRunId)) return value;
+          const merged = mergeCanvasTaskImages(value, inputId, agentRunId, imageNodes);
+          return {
+            ...merged,
+            nodes: merged.nodes
               .map((node) =>
                 node.id === inputId
                   ? {
@@ -6761,20 +6766,8 @@ export default function SuperCanvas() {
                       },
                     }
                   : node,
-              )
-              .concat(imageNodes),
+              ),
           };
-          imageNodes.forEach((node) => {
-            next = addEdge(
-              next,
-              inputId,
-              node.id,
-              "right",
-              "left",
-              "generated",
-            );
-          });
-          return next;
         });
         setSelectedIds(new Set([inputId]));
         setSelectedGroupId(null);
@@ -6804,7 +6797,7 @@ export default function SuperCanvas() {
           error instanceof Error ? error.message : "Agent 请求失败";
         const pending = isCanvasBackgroundTaskError(error);
         if (pending) {
-          const currentNode = nodeById(canvasCoreRef.current.document(), inputId);
+          const currentNode = nodeById(readDocument(), inputId);
           const currentJobId = String(currentNode?.data.jobId || currentNode?.data.generation?.taskId || "");
           if (currentNode?.data.status === "completed" || (currentJobId && currentJobId !== agentRunId)) return;
           const pendingTaskId = String((error as { taskId?: unknown }).taskId || "").trim();
@@ -6833,7 +6826,7 @@ export default function SuperCanvas() {
         // A late transport/caption failure must not overwrite a newer result
         // for this node (for example, when the provider completed the image
         // after the original stream had already been interrupted).
-        const currentNode = nodeById(canvasCoreRef.current.document(), inputId);
+        const currentNode = nodeById(readDocument(), inputId);
         const currentJobId = String(currentNode?.data.jobId || currentNode?.data.generation?.taskId || "");
         if (currentNode?.data.status === "completed" || (currentJobId && currentJobId !== agentRunId)) return;
         updateDoc((value) => ({
@@ -6863,7 +6856,7 @@ export default function SuperCanvas() {
     }
     const kind = source.kind as CanvasMediaKind;
     const ownerId = source.node?.id || sourceTarget?.id;
-    const incoming = ownerId ? incomingContext(canvasCoreRef.current.document(), ownerId) : [];
+    const incoming = ownerId ? incomingContext(readDocument(), ownerId) : [];
     const currentVideoIsSource = sourceTarget?.data.kind === "video" &&
       (source.params as VideoCreationSettings).operation !== "generate";
     const currentTargetInput = sourceTarget?.data.url &&
@@ -6947,7 +6940,7 @@ export default function SuperCanvas() {
       ? resolveCanvasVideoInputs(
           linked,
           videoParams.inputMode,
-          ownerId ? canvasInputRolesForTarget(canvasCoreRef.current.document(), ownerId) : undefined,
+          ownerId ? canvasInputRolesForTarget(readDocument(), ownerId) : undefined,
           { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos, maxAudios: videoLimits.maxAudios, supportsAudio: canvasVideoInputCapabilities(videoParams, runtime).supportsAudio },
         )
       : undefined;
@@ -7128,41 +7121,7 @@ export default function SuperCanvas() {
         updateDoc((value) => {
           let next = value;
           if (fillsTarget && fillId) {
-            next = {
-              ...next,
-              nodes: [
-                ...next.nodes.map((node) =>
-                  node.id === fillId
-                    ? {
-                        ...node,
-                        ...outputs[0],
-                        id: fillId,
-                        x: node.x,
-                        y: node.y,
-                        groupId: node.groupId,
-                        data: {
-                          ...node.data,
-                          ...outputs[0].data,
-                          status: "completed" as const,
-                          statusLabel: "图片已完成",
-                        },
-                      }
-                    : node,
-                ),
-                ...outputs.slice(1),
-              ],
-            };
-            outputs.slice(1).forEach((output) => {
-              if (sourceTarget)
-                next = addEdge(
-                  next,
-                  sourceTarget.id,
-                  output.id,
-                  "right",
-                  "left",
-                  "variant",
-                );
-            });
+            next = mergeCanvasTaskImages(next, fillId, taskId, outputs);
           } else {
             next = { ...next, nodes: [...next.nodes, ...outputs] };
             if (sourceTarget?.data.url)
@@ -7368,7 +7327,7 @@ export default function SuperCanvas() {
         if (taskProgress.status === "completed") notify("视频生成完成");
         else if (taskProgress.status === "failed") throw new Error(task.error || "视频生成失败");
         else {
-          void pollVideo(targetId, task.id);
+          void pollVideo(targetId, task.id, projectTask.projectId);
           notify("视频任务已提交，结果会自动写入画布");
         }
         addLog(`视频任务已提交：${task.id}`);
@@ -7417,7 +7376,7 @@ export default function SuperCanvas() {
       generationKeysRef.current.delete(activeKey);
       setGenerationKeys(new Set(generationKeysRef.current));
     }
-  }, [
+  }, [captureProjectTask,
     addLog,
     addNode,
     commit,
@@ -7443,7 +7402,9 @@ export default function SuperCanvas() {
       settings: CinematicOpeningSettings,
       selection: OneClickCinematicVideoSelection,
     ) => {
-      const source = nodeById(canvasCoreRef.current.document(), sourceInput.id) || sourceInput;
+      const projectTask = captureProjectTask();
+      const { updateDoc, commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
+      const source = nodeById(readDocument(), sourceInput.id) || sourceInput;
       if (!isCanvasReadyImageSource(source)) {
         notify("参考图片已不可用，请先准备好一张已完成的图片。", "error");
         return;
@@ -7508,7 +7469,7 @@ export default function SuperCanvas() {
           agnesFrameRate: selection.agnesFrameRate || baseParams.agnesFrameRate,
         } : {}),
       };
-      const previousConcepts = canvasCoreRef.current.document().nodes
+      const previousConcepts = readDocument().nodes
         .filter((node) => node.id !== source.id && node.data.generation?.generationType === "one_click_cinematic" && node.data.generation?.sourceImageNodeId === source.id)
         .map((node) => String(node.data.generation?.directorPlan && typeof node.data.generation.directorPlan === "object"
           ? (node.data.generation.directorPlan as { concept?: { title?: string; visualIdea?: string } }).concept?.visualIdea || (node.data.generation.directorPlan as { concept?: { title?: string } }).concept?.title || ""
@@ -7544,7 +7505,7 @@ export default function SuperCanvas() {
         referenceOrder: [source.id],
       });
       const initialDocument = addEdge(
-        { ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, output] },
+        { ...readDocument(), nodes: [...readDocument().nodes, output] },
         source.id,
         output.id,
         "right",
@@ -7553,14 +7514,14 @@ export default function SuperCanvas() {
         inputMode === "first-frame" ? "first-frame" : "reference-image",
         0,
       );
-      if (initialDocument.nodes.length === canvasCoreRef.current.document().nodes.length) {
+      if (initialDocument.nodes.length === readDocument().nodes.length) {
         notify("无法建立图片到视频的参考连线。", "error");
         return;
       }
       commit(() => initialDocument);
       setSelectedIds(new Set([output.id]));
       setSelectedGroupId(null);
-      setQuickToolbarNodeId(null);
+      projectTask.ifActive(() => setQuickToolbarNodeId(null));
       generationKeysRef.current.add(output.id);
       setGenerationKeys(new Set(generationKeysRef.current));
       const directorRunId = uid("agent-run");
@@ -7672,7 +7633,7 @@ export default function SuperCanvas() {
         } else if (taskProgress.status === "failed") {
           throw new Error(task.error || "一键成片失败");
         } else {
-          void pollVideo(output.id, task.id);
+          void pollVideo(output.id, task.id, projectTask.projectId);
           notify("样片任务已提交，结果会自动写入画布");
           addLog(`一键成片任务已提交：${task.id}`);
         }
@@ -7680,7 +7641,7 @@ export default function SuperCanvas() {
         const message = error instanceof Error ? error.message : "一键成片失败";
         const pending = isCanvasBackgroundTaskError(error);
         if (pending) {
-          const currentOutput = nodeById(canvasCoreRef.current.document(), output.id);
+          const currentOutput = nodeById(readDocument(), output.id);
           const currentJobId = String(currentOutput?.data.jobId || currentOutput?.data.generation?.taskId || "");
           if (currentOutput?.data.status === "completed" || (currentJobId && currentJobId !== directorRunId)) return;
           updateOutput({ status: "running", statusLabel: "任务仍在后台处理中，请勿重复提交", processingStartedAt: Date.now() }, { taskId: directorRunId, updatedAt: Date.now() });
@@ -7688,7 +7649,7 @@ export default function SuperCanvas() {
           addLog("一键成片导演任务仍在后台处理中");
           return;
         }
-        const currentOutput = nodeById(canvasCoreRef.current.document(), output.id);
+        const currentOutput = nodeById(readDocument(), output.id);
         const currentJobId = String(currentOutput?.data.jobId || currentOutput?.data.generation?.taskId || "");
         if (currentOutput?.data.status === "completed" || (currentJobId && currentJobId !== directorRunId)) return;
         updateOutput({ status: "failed", statusLabel: message }, { error: message, updatedAt: Date.now() });
@@ -7699,7 +7660,7 @@ export default function SuperCanvas() {
         setGenerationKeys(new Set(generationKeysRef.current));
       }
     },
-    [addLog, commit, notify, pollVideo, runtime, updateDoc],
+    [captureProjectTask, addLog, commit, notify, pollVideo, runtime, updateDoc],
   );
 
   const editorPromptFor = useCallback(
@@ -8003,11 +7964,13 @@ export default function SuperCanvas() {
       images: AgentGeneratedImage[],
       meta: { prompt: string; model?: string; runContext?: CanvasAgentRunContext },
     ) => {
+      const projectTask = captureProjectTask(meta.runContext?.canvasId);
+      const { commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
       const incoming = images.filter((image) => Boolean(String(image.url || "").trim()));
       if (!incoming.length) return [];
       const runContext = meta.runContext;
       const anchor = runContext
-        ? (runContext.anchorNodeId ? nodeById(canvasCoreRef.current.document(), runContext.anchorNodeId) || null : null)
+        ? (runContext.anchorNodeId ? nodeById(readDocument(), runContext.anchorNodeId) || null : null)
         : selectedSingle || selectedNodes[0] || null;
       const origin = anchor
         ? { x: anchor.x, y: anchor.y }
@@ -8078,23 +8041,23 @@ export default function SuperCanvas() {
                 }
               : draft.data.generation,
           },
-          ...openNodePosition(desired, draft, placed),
+          ...projectTask.placeNode(desired, draft, placed),
         };
         placed.push(node);
         return node;
       });
-      commit((value) => {
+      if (!commit((value) => {
         let next = { ...value, nodes: [...value.nodes, ...nodes] };
         if (anchor)
           nodes.forEach((node) => {
             next = addEdge(next, anchor.id, node.id, "right", "left", "generated");
           });
         return next;
-      });
+      })) return [];
       const appliedIds = nodes.map((node) => node.id);
       setSelectedIds(new Set(appliedIds));
       setSelectedGroupId(null);
-      setContextMenu(null);
+      projectTask.ifActive(() => setContextMenu(null));
       void recordCanvasImages(incoming, {
         prompt: meta.prompt,
         source: "canvas",
@@ -8114,10 +8077,10 @@ export default function SuperCanvas() {
       notify(runContext?.operation === "edit" && anchor
         ? `已基于选中节点完成修改，结果已生成并保留来源关系`
         : `已把 ${nodes.length} 张 Agent 图片加入画布`);
-      fitView(appliedIds);
+      projectTask.ifActive(() => fitView(appliedIds));
       return nodes.map((node) => node.id);
     },
-    [
+    [captureProjectTask,
       agentDockReferences,
       commit,
       fitView,
@@ -8140,18 +8103,20 @@ export default function SuperCanvas() {
       images: AgentGeneratedImage[] = [],
       runContext?: CanvasAgentRunContext,
     ): CanvasAgentDockPlanResult => {
+      const projectTask = captureProjectTask(runContext?.canvasId);
+      const { commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
       const validImages = images.filter((image) => Boolean(String(image.url || "").trim()));
       const plannedTargetIds = [...new Set((plan.targetNodeIds || []).filter(Boolean))];
-      const targetIds = plannedTargetIds.filter((id) => Boolean(nodeById(canvasCoreRef.current.document(), id)));
+      const targetIds = plannedTargetIds.filter((id) => Boolean(nodeById(readDocument(), id)));
       if (plannedTargetIds.length && targetIds.length !== plannedTargetIds.length) {
         notify("画布内容已经变化，原操作计划中的节点不再完整，已取消应用", "error");
         return { ids: [], error: "画布内容已经变化，请重新选择节点并生成操作计划" };
       }
       const targetSet = new Set(targetIds);
       const anchor = targetIds.length
-        ? nodeById(canvasCoreRef.current.document(), targetIds[0])
+        ? nodeById(readDocument(), targetIds[0])
         : runContext
-          ? (runContext.anchorNodeId ? nodeById(canvasCoreRef.current.document(), runContext.anchorNodeId) || null : null)
+          ? (runContext.anchorNodeId ? nodeById(readDocument(), runContext.anchorNodeId) || null : null)
           : selectedSingle || selectedNodes[0] || null;
       const imageSettings = readSharedCreationSettings("image", runtime);
       const referenceIds = runContext
@@ -8169,7 +8134,7 @@ export default function SuperCanvas() {
             projectId: agentWorkspaceContext.creativeProjectId,
             canvasId: agentWorkspaceContext.canvasId,
           };
-      let next = canvasCoreRef.current.document();
+      let next = readDocument();
       const created: CanvasNode[] = [];
       let duplicatedIds: string[] = [];
       let duplicatedGroupIds: string[] = [];
@@ -8351,7 +8316,7 @@ export default function SuperCanvas() {
                 },
               }
             : draft;
-          const placed = { ...withProvenance, ...openNodePosition(desired, withProvenance, created) };
+          const placed = { ...withProvenance, ...projectTask.placeNode(desired, withProvenance, created) };
           created.push(placed);
         });
         next = { ...next, nodes: [...next.nodes, ...created] };
@@ -8388,11 +8353,13 @@ export default function SuperCanvas() {
         notify("没有需要应用的画布变更", "error");
         return { ids: [], error: "没有检测到可应用的画布变更" };
       }
-      commit(() => next);
+      if (!commit(() => next)) {
+        return { ids: [], error: "画布已删除或保存失败，未应用操作" };
+      }
       if (created.length) {
         setSelectedIds(new Set(affectedIds));
         setSelectedGroupId(null);
-        setContextMenu(null);
+        projectTask.ifActive(() => setContextMenu(null));
         void recordCanvasImages(validImages, {
           prompt: plan.sourcePrompt || "Agent 批量生成",
           source: "canvas",
@@ -8409,18 +8376,18 @@ export default function SuperCanvas() {
           } : {}),
           provenance: provenanceDraftsForSources(referenceIds, provenanceRelation, provenanceContext),
         });
-        fitView(affectedIds.length ? affectedIds : targetIds);
+        projectTask.ifActive(() => fitView(affectedIds.length ? affectedIds : targetIds));
       } else if (duplicatedIds.length) {
         setSelectedIds(new Set(duplicatedIds));
         setSelectedGroupId(
           duplicatedGroupIds.length === 1 ? duplicatedGroupIds[0] : null,
         );
-        setContextMenu(null);
-        fitView(duplicatedIds);
+        projectTask.ifActive(() => setContextMenu(null));
+        projectTask.ifActive(() => fitView(duplicatedIds));
       } else if (targetIds.length) {
         setSelectedIds(targetSet);
         setSelectedGroupId(createdGroupId);
-        fitView(targetIds);
+        projectTask.ifActive(() => fitView(targetIds));
       }
       notify(
         plan.kind === "batch-image-layout"
@@ -8435,43 +8402,37 @@ export default function SuperCanvas() {
       );
       return { ids: affectedIds.length ? affectedIds : targetIds };
     },
-    [agentDockReferences, commit, fitView, notify, openNodePosition, runtime, screenToWorld, selectedNodes, selectedSingle, stageSize.height, stageSize.width],
+    [captureProjectTask, agentDockReferences, commit, fitView, notify, openNodePosition, runtime, screenToWorld, selectedNodes, selectedSingle, stageSize.height, stageSize.width],
   );
-  const applyAgentCanvasPatch = useCallback((patch: CanvasPatch): CanvasAgentDockPlanResult => {
-    const validation = validateCanvasPatch(canvasCoreRef.current.document(), patch);
+  const applyAgentCanvasPatch = useCallback((patch: CanvasPatch, runContext?: CanvasAgentRunContext): CanvasAgentDockPlanResult => {
+    const projectTask = captureProjectTask(runContext?.canvasId);
+    const { commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
+    const validation = validateCanvasPatch(readDocument(), patch);
     if (!validation.ok) return { ids: [], error: validation.error };
-    const result = canvasCoreRef.current.apply({
-      id: patch.runId || `agent-patch-${Date.now().toString(36)}`,
-      label: "agent.canvas.patch",
-      operations: [{
-        id: patch.runId || "agent.canvas.patch",
-        label: "apply patch",
-        apply: (document) => applyCanvasPatch(document, patch),
-      }],
-    });
-    if (result.changed) setHistoryVersion((value) => value + 1);
-    updateDoc(() => result.document);
+    if (!commit((document) => applyCanvasPatch(document, patch))) return { ids: [], error: "画布已删除或保存失败，未应用操作" };
     const addedIds = patch.operations
       .filter((operation): operation is Extract<CanvasPatch["operations"][number], { op: "add_node" }> => operation.op === "add_node")
       .map((operation) => operation.node.id);
     if (addedIds.length) {
       setSelectedIds(new Set(addedIds));
       setSelectedGroupId(null);
-      fitView(addedIds);
+      projectTask.ifActive(() => fitView(addedIds));
     }
     notify(`已应用 ${patch.operations.length} 个画布操作，可直接撤销`, "ok");
     return { ids: addedIds };
-  }, [fitView, notify, updateDoc]);
+  }, [captureProjectTask, fitView, notify]);
 
   const applyAgentDockText = useCallback(
     (text: string, meta: { prompt: string; runContext?: CanvasAgentRunContext }) => {
+      const projectTask = captureProjectTask(meta.runContext?.canvasId);
+      const { commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
       const content = String(text || "").trim();
       if (!content) return [];
       const anchor = meta.runContext?.anchorNodeId
-        ? nodeById(canvasCoreRef.current.document(), meta.runContext.anchorNodeId) || null
+        ? nodeById(readDocument(), meta.runContext.anchorNodeId) || null
         : selectedSingle || selectedNodes[0] || null;
       if (meta.runContext?.operation === "edit" && anchor?.type === "prompt") {
-        commit((value) => ({
+        if (!commit((value) => ({
           ...value,
           nodes: value.nodes.map((node) => node.id !== anchor.id ? node : {
             ...node,
@@ -8485,10 +8446,10 @@ export default function SuperCanvas() {
               statusLabel: "Agent 已更新",
             },
           }),
-        }));
+        }))) return [];
         setSelectedIds(new Set([anchor.id]));
         notify("已按选中文字节点更新内容");
-        fitView([anchor.id]);
+        projectTask.ifActive(() => fitView([anchor.id]));
         return [anchor.id];
       }
       const origin = anchor
@@ -8501,7 +8462,7 @@ export default function SuperCanvas() {
       );
       const node: CanvasNode = {
         ...draft,
-        ...openNodePosition({ x: draft.x, y: draft.y }, draft),
+        ...projectTask.placeNode({ x: draft.x, y: draft.y }, draft),
         data: {
           ...draft.data,
           text: content,
@@ -8512,20 +8473,20 @@ export default function SuperCanvas() {
           statusLabel: "Agent 已回复",
         },
       };
-      commit((value) => {
+      if (!commit((value) => {
         let next = { ...value, nodes: [...value.nodes, node] };
         if (anchor) next = addEdge(next, anchor.id, node.id, "right", "left", "generated");
         return next;
-      });
+      })) return [];
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
-      setContextMenu(null);
+      projectTask.ifActive(() => setContextMenu(null));
       notify("已把 Agent 回复存成节点");
       /* 和「加入画布」一致：新节点默认落在选中节点右侧，不把视图挪过去就会被面板挡住。 */
-      fitView([node.id]);
+      projectTask.ifActive(() => fitView([node.id]));
       return [node.id];
     },
-    [
+    [captureProjectTask,
       commit,
       fitView,
       notify,
@@ -8570,13 +8531,15 @@ export default function SuperCanvas() {
 
   const addEditorReferenceFiles = useCallback(
     async (targetId: string, files: File[]) => {
-      const target = nodeById(canvasCoreRef.current.document(), targetId);
+      const projectTask = captureProjectTask();
+      const { commit, readDocument } = projectTask;
+      const target = nodeById(readDocument(), targetId);
       if (!target || !files.length) return;
       if (target.type === "media" && target.data.kind === "audio") {
         notify("音频节点请使用“添加音频”或“替换音频”，不能添加生成参考。", "error");
         return;
       }
-      const existing = incomingContext(canvasCoreRef.current.document(), targetId).filter(isCanvasMentionableNode).length;
+      const existing = incomingContext(readDocument(), targetId).filter(isCanvasMentionableNode).length;
       if (existing >= 16) return notify("参考图最多 16 张。", "error");
       const nodes: CanvasNode[] = [];
       let optimizedImageCount = 0;
@@ -8651,12 +8614,14 @@ export default function SuperCanvas() {
       );
       if (rejected.length) addLog(`有 ${rejected.length} 张上传素材未接入目标节点`);
     },
-    [addLog, commit, notify, runtime],
+    [captureProjectTask, addLog, commit, notify, runtime],
   );
 
   const replaceAudioNode = useCallback(
     async (nodeId: string, file: File) => {
-      const node = nodeById(canvasCoreRef.current.document(), nodeId);
+      const projectTask = captureProjectTask();
+      const { commit, readDocument } = projectTask;
+      const node = nodeById(readDocument(), nodeId);
       if (!node || node.type !== "media" || node.data.kind !== "audio") return;
       if (!isCanvasAudioFile(file)) {
         notify("音频节点只接受音频文件。", "error");
@@ -8701,7 +8666,7 @@ export default function SuperCanvas() {
         notify(error instanceof Error ? error.message : "音频上传失败，原音频未改变。", "error");
       }
     },
-    [commit, notify],
+    [captureProjectTask, commit, notify],
   );
 
   const runEditorGeneration = useCallback(
@@ -8826,11 +8791,13 @@ export default function SuperCanvas() {
 
   const applyCanvasMask = useCallback(
     async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0, moveGuideDataUrl?: string) => {
+      const projectTask = captureProjectTask();
+      const { updateDoc, readDocument, setSelectedIds, setSelectedGroupId, setReuseDraft } = projectTask;
       const node = maskNodeId
-        ? nodeById(canvasCoreRef.current.document(), maskNodeId)
+        ? nodeById(readDocument(), maskNodeId)
         : undefined;
       if (!node || node.type !== "media" || node.data.kind !== "image") {
-        setMaskNodeId(null);
+        projectTask.ifActive(() => setMaskNodeId(null));
         return;
       }
       try {
@@ -8839,7 +8806,7 @@ export default function SuperCanvas() {
             ? cloneReuseDraft(reuseDraft)
             : reuseDraftFromNode(
                 node,
-                incomingReferences(canvasCoreRef.current.document(), node.id)
+                incomingReferences(readDocument(), node.id)
                   .map((node) => createCanvasReferenceDraft(node))
                   .filter(
                     (reference): reference is CanvasReferenceDraft =>
@@ -8919,7 +8886,7 @@ export default function SuperCanvas() {
               : item,
           ),
         }));
-        setEditorDrafts((current) => ({
+        projectTask.ifActive(() => setEditorDrafts((current) => ({
           ...current,
           [node.id]: {
             ...current[node.id],
@@ -8927,18 +8894,18 @@ export default function SuperCanvas() {
             params: clone(params),
             dirty: true,
           },
-        }));
+        })));
         setReuseDraft((current) => current?.sourceNodeId === node.id
           ? { ...current, prompt: nextPrompt, params: clone(params), dirty: true }
           : current);
         // Applying a local edit completes the mask dialog. Do not reopen the
         // generic image prompt editor here: the local-edit chip is the single
         // entry point for reviewing or changing this mask again.
-        setExpandedEditorId(null);
+        projectTask.ifActive(() => setExpandedEditorId(null));
         setSelectedIds(new Set([node.id]));
         setSelectedGroupId(null);
-        setLightbox(null);
-        setMaskNodeId(null);
+        projectTask.ifActive(() => setLightbox(null));
+        projectTask.ifActive(() => setMaskNodeId(null));
         notify(
           `局部编辑范围已保存（覆盖 ${Math.round(maskCoverage * 100)}%），点击生成即可创建右侧新图；原图保持不变`,
           "ok",
@@ -8950,7 +8917,7 @@ export default function SuperCanvas() {
         );
       }
     },
-    [editorDrafts, maskNodeId, notify, reuseDraft, runtime, updateDoc],
+    [captureProjectTask, editorDrafts, maskNodeId, notify, reuseDraft, runtime, updateDoc],
   );
 
   const removeCanvasMask = useCallback(
@@ -9022,12 +8989,14 @@ export default function SuperCanvas() {
   }, [commit, notify, selectedSingle]);
 
   const runAngleGeneration = useCallback(async (nodeId: string, input: AngleGenerationInput) => {
-    const angleNode = nodeById(canvasCoreRef.current.document(), nodeId);
+    const projectTask = captureProjectTask();
+    const { updateDoc, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
+    const angleNode = nodeById(readDocument(), nodeId);
     if (!angleNode || angleNode.type !== "angle") {
       notify("角度控制节点已不存在，请重新选择。", "error");
       return;
     }
-    const source = incomingReferences(canvasCoreRef.current.document(), nodeId).find((item) => isCanvasReadyImageSource(item));
+    const source = incomingReferences(readDocument(), nodeId).find((item) => isCanvasReadyImageSource(item));
     const sourceReference = canvasAngleReference(source, isCanvasReadyImageSource);
     if (!source || !sourceReference) {
       notify("角度控制节点需要一张已完成的图片输入。", "error");
@@ -9159,7 +9128,7 @@ export default function SuperCanvas() {
       });
       const output = {
         ...outputDraft,
-        ...openNodePosition(outputPosition, outputDraft),
+        ...projectTask.placeNode(outputPosition, outputDraft),
       };
       updateDoc((value) => ({
         ...value,
@@ -9232,7 +9201,7 @@ export default function SuperCanvas() {
       generationKeysRef.current.delete(nodeId);
       setGenerationKeys(new Set(generationKeysRef.current));
     }
-  }, [addLog, notify, openNodePosition, runtime, updateDoc]);
+  }, [captureProjectTask, addLog, notify, openNodePosition, runtime, updateDoc]);
 
   const runImageAngleGeneration = useCallback(async (
     sourceNodeId: string,
@@ -9243,7 +9212,9 @@ export default function SuperCanvas() {
       onError?: (message: string) => void;
     },
   ) => {
-    const source = nodeById(canvasCoreRef.current.document(), sourceNodeId);
+    const projectTask = captureProjectTask();
+    const { updateDoc, commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
+    const source = nodeById(readDocument(), sourceNodeId);
     const sourceReference = canvasAngleReference(source, isCanvasReadyImageSource);
     if (!source || !isCanvasReadyImageSource(source) || !sourceReference) {
       notify("生成新视角需要一张已完成的图片。", "error");
@@ -9332,7 +9303,7 @@ export default function SuperCanvas() {
       referenceOrder: [source.id],
     }) : null;
     const pendingOutputPositioned = pendingOutput
-      ? { ...pendingOutput, ...openNodePosition(outputPosition, pendingOutput) }
+      ? { ...pendingOutput, ...projectTask.placeNode(outputPosition, pendingOutput) }
       : null;
     const pendingOutputId = pendingOutputPositioned?.id || null;
     if (pendingOutputPositioned && pendingOutputId) {
@@ -9411,7 +9382,7 @@ export default function SuperCanvas() {
       });
       const output = {
         ...outputDraft,
-        ...openNodePosition(outputPosition, outputDraft),
+        ...projectTask.placeNode(outputPosition, outputDraft),
       };
       if (pendingOutputId) {
         updateDoc((value) => ({
@@ -9508,7 +9479,7 @@ export default function SuperCanvas() {
       generationKeysRef.current.delete(generationKey);
       setGenerationKeys(new Set(generationKeysRef.current));
     }
-  }, [addLog, commit, customImagePresets, notify, openNodePosition, runtime, updateDoc]);
+  }, [captureProjectTask, addLog, commit, customImagePresets, notify, openNodePosition, runtime, updateDoc]);
 
   const cancelAngleGeneration = useCallback((nodeId: string) => {
     const controller = angleAbortControllersRef.current.get(nodeId);
@@ -9649,6 +9620,8 @@ export default function SuperCanvas() {
     groupId: string,
     settings: CanvasGroupComposeSettings,
   ): Promise<boolean> => {
+    const projectTask = captureProjectTask();
+    const { commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
     if (composingGroupId) return false;
     const sourceResult = composeSourcesForGroup(groupId);
     if (!sourceResult || sourceResult.sources.length < 2) {
@@ -9675,7 +9648,7 @@ export default function SuperCanvas() {
     const groupNodeIds = [...group.nodeIds];
     const sourceSnapshot = new Map(sourceIds.map((id, index) => [id, sourceUrls[index]]));
     const stillMatchesGroup = () => {
-      const currentGroup = groupById(canvasCoreRef.current.document(), groupId);
+      const currentGroup = groupById(readDocument(), groupId);
       return Boolean(
         currentGroup &&
           currentGroup.nodeIds.length === groupNodeIds.length &&
@@ -9683,7 +9656,7 @@ export default function SuperCanvas() {
           sourceIds.every(
             (id) =>
               currentGroup.nodeIds.includes(id) &&
-              String(nodeById(canvasCoreRef.current.document(), id)?.data.url || "") === sourceSnapshot.get(id),
+              String(nodeById(readDocument(), id)?.data.url || "") === sourceSnapshot.get(id),
           ),
       );
     };
@@ -9703,14 +9676,14 @@ export default function SuperCanvas() {
     try {
       const rendered = await renderCanvasImageGridComposite(sourceUrls, renderOptions);
       if (!stillMatchesGroup()) throw new Error("宫格拼接期间组内内容发生了变化，请重试");
-      const groupBoundsValue = groupBounds(canvasCoreRef.current.document(), groupId);
+      const groupBoundsValue = groupBounds(readDocument(), groupId);
       const asset = await uploadCanvasAsset(
         new File([rendered.blob], `${group.name}-宫格拼接.png`, { type: "image/png" }),
       );
       if (!stillMatchesGroup()) throw new Error("宫格拼接期间组内内容发生了变化，请重试");
 
       const sourceWithImageParams = orderedSources
-        .map((source) => nodeById(canvasCoreRef.current.document(), source.id))
+        .map((source) => nodeById(readDocument(), source.id))
         .find((node) => node?.type === "media" && node.data.kind === "image");
       const sourceParams =
         sourceWithImageParams?.data.generation?.params ||
@@ -9775,7 +9748,7 @@ export default function SuperCanvas() {
       };
       const positioned = {
         ...result,
-        ...openNodePosition({ x: result.x, y: result.y }, result),
+        ...projectTask.placeNode({ x: result.x, y: result.y }, result),
       };
       const lineageEdges: CanvasEdge[] = sourceIds.map((sourceId) => ({
         id: uid("edge"),
@@ -9792,9 +9765,9 @@ export default function SuperCanvas() {
       }));
       setSelectedIds(new Set([positioned.id]));
       setSelectedGroupId(null);
-      setQuickToolbarNodeId(null);
-      setExpandedEditorId(null);
-      setLightbox(null);
+      projectTask.ifActive(() => setQuickToolbarNodeId(null));
+      projectTask.ifActive(() => setExpandedEditorId(null));
+      projectTask.ifActive(() => setLightbox(null));
       notify(`已将 ${orderedSources.length} 张图片拼接为宫格图片`);
       addLog(`宫格拼接完成：${group.name} · ${orderedSources.length} 张`);
       return true;
@@ -9804,11 +9777,13 @@ export default function SuperCanvas() {
     } finally {
       setComposingGroupId((current) => (current === groupId ? null : current));
     }
-  }, [addLog, commit, composingGroupId, composeSourcesForGroup, notify, openNodePosition, runtime]);
+  }, [captureProjectTask, addLog, commit, composingGroupId, composeSourcesForGroup, notify, openNodePosition, runtime]);
 
   const saveImageOperation = useCallback(async (request: CanvasImageEditorSaveRequest) => {
+    const projectTask = captureProjectTask();
+    const { commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
     const source = imageEditorNodeId
-      ? nodeById(canvasCoreRef.current.document(), imageEditorNodeId)
+      ? nodeById(readDocument(), imageEditorNodeId)
       : undefined;
     if (!source || (source.type !== "media" && source.type !== "upscale") || source.data.kind !== "image" || !source.data.url)
       throw new Error("当前图片节点已不存在，请重新选择图片");
@@ -9837,7 +9812,7 @@ export default function SuperCanvas() {
         const asset = await uploadCanvasAsset(new File([output.blob], `${sourceName}-宫格-${assets.length + 1}.png`, { type: "image/png" }));
         assets.push({ asset, size: output.size });
       }
-      let next: CanvasDocument = { ...canvasCoreRef.current.document() };
+      let next: CanvasDocument = { ...readDocument() };
       const createdNodes: CanvasNode[] = [];
       const edges: CanvasEdge[] = [];
       for (const [index, output] of assets.entries()) {
@@ -9883,7 +9858,7 @@ export default function SuperCanvas() {
         };
         const positioned = {
           ...draft,
-          ...openNodePosition({ x: draft.x, y: draft.y }, draft, createdNodes),
+          ...projectTask.placeNode({ x: draft.x, y: draft.y }, draft, createdNodes),
         };
         createdNodes.push(positioned);
         edges.push({ id: uid("edge"), source: source.id, target: positioned.id, sourcePort: "right", targetPort: "left", kind: "lineage" });
@@ -9894,7 +9869,7 @@ export default function SuperCanvas() {
       commit(() => next);
       setSelectedIds(new Set(createdNodes.map((node) => node.id)));
       setSelectedGroupId(group?.id || null);
-      setImageEditorNodeId(null);
+      projectTask.ifActive(() => setImageEditorNodeId(null));
       notify(`已生成 ${createdNodes.length} 个宫格切片，并自动成组`);
       addLog(`图片宫格切分完成：${sourceName} · ${createdNodes.length} 张`);
       return;
@@ -9970,23 +9945,25 @@ export default function SuperCanvas() {
         }, resultData),
         ...outputSize,
       };
-      const positioned = { ...draft, ...openNodePosition({ x: draft.x, y: draft.y }, draft) };
+      const positioned = { ...draft, ...projectTask.placeNode({ x: draft.x, y: draft.y }, draft) };
       const next: CanvasDocument = {
-        ...canvasCoreRef.current.document(),
-        nodes: [...canvasCoreRef.current.document().nodes, positioned],
-        edges: [...canvasCoreRef.current.document().edges, { id: uid("edge"), source: source.id, target: positioned.id, sourcePort: "right", targetPort: "left", kind: "lineage" }],
+        ...readDocument(),
+        nodes: [...readDocument().nodes, positioned],
+        edges: [...readDocument().edges, { id: uid("edge"), source: source.id, target: positioned.id, sourcePort: "right", targetPort: "left", kind: "lineage" }],
       };
       commit(() => next);
       setSelectedIds(new Set([positioned.id]));
       notify(`已${operationLabel}并生成新节点`);
       addLog(`图片${operationLabel}完成：${sourceName}`);
     }
-    setImageEditorNodeId(null);
-  }, [addLog, commit, imageEditorNodeId, notify, openNodePosition, runtime]);
+    projectTask.ifActive(() => setImageEditorNodeId(null));
+  }, [captureProjectTask, addLog, commit, imageEditorNodeId, notify, openNodePosition, runtime]);
 
   const createVideoClip = useCallback(async (draft: CanvasVideoClipState) => {
+    const projectTask = captureProjectTask();
+    const { commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
     const source = videoClipEditorNodeId
-      ? nodeById(canvasCoreRef.current.document(), videoClipEditorNodeId)
+      ? nodeById(readDocument(), videoClipEditorNodeId)
       : undefined;
     if (
       !source ||
@@ -10078,7 +10055,7 @@ export default function SuperCanvas() {
     );
     const positioned = {
       ...draftNode,
-      ...openNodePosition({ x: draftNode.x, y: draftNode.y }, draftNode),
+      ...projectTask.placeNode({ x: draftNode.x, y: draftNode.y }, draftNode),
     };
     commit((value) => ({
       ...value,
@@ -10097,13 +10074,15 @@ export default function SuperCanvas() {
     }));
     setSelectedIds(new Set([positioned.id]));
     setSelectedGroupId(null);
-    setVideoClipEditorNodeId(null);
+    projectTask.ifActive(() => setVideoClipEditorNodeId(null));
     notify("已创建视频剪辑节点");
     addLog(`视频剪辑已创建：${sourceName}`);
-  }, [addLog, commit, notify, openNodePosition, runtime, videoClipEditorNodeId]);
+  }, [captureProjectTask, addLog, commit, notify, openNodePosition, runtime, videoClipEditorNodeId]);
   const captureVideoFrame = useCallback(async (capture: { dataUrl: string; width: number; height: number; time: number }): Promise<boolean> => {
+    const projectTask = captureProjectTask();
+    const { commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
     const source = videoClipEditorNodeId
-      ? nodeById(canvasCoreRef.current.document(), videoClipEditorNodeId)
+      ? nodeById(readDocument(), videoClipEditorNodeId)
       : undefined;
     if (!source || source.type !== "media" || source.data.kind !== "video" || !source.data.url) {
       notify("当前视频节点已不存在，请重新打开剪辑", "error");
@@ -10143,7 +10122,7 @@ export default function SuperCanvas() {
           createdAt,
         },
       });
-      const positioned = { ...frameNode, ...openNodePosition({ x: frameNode.x, y: frameNode.y }, frameNode) };
+      const positioned = { ...frameNode, ...projectTask.placeNode({ x: frameNode.x, y: frameNode.y }, frameNode) };
       commit((value) => ({
         ...value,
         nodes: [...value.nodes, positioned],
@@ -10158,14 +10137,16 @@ export default function SuperCanvas() {
       notify(error instanceof Error ? error.message : "截取当前帧失败，请重试", "error");
       return false;
     }
-  }, [addLog, commit, notify, openNodePosition, runtime, videoClipEditorNodeId]);
+  }, [captureProjectTask, addLog, commit, notify, openNodePosition, runtime, videoClipEditorNodeId]);
 
   const createVideoEditorClip = useCallback((
     editorNodeId: string,
     draft: CanvasVideoEditorState,
     selectedClipId: string | null,
   ) => {
-    const editorNode = nodeById(canvasCoreRef.current.document(), editorNodeId);
+    const projectTask = captureProjectTask();
+    const { commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
+    const editorNode = nodeById(readDocument(), editorNodeId);
     if (!editorNode || editorNode.type !== "video-editor") {
       notify("当前视频编辑节点已不存在，请重新打开工作台", "error");
       return;
@@ -10174,7 +10155,7 @@ export default function SuperCanvas() {
     const selected = selectedClipId ? draft.clips.find((clip) => clip.id === selectedClipId) : undefined;
     const sourceIds = [...new Set(draft.clips.flatMap((clip) => clip.sourceNodeId ? [clip.sourceNodeId] : []))];
     const sourceNodes = sourceIds
-      .map((id) => nodeById(canvasCoreRef.current.document(), id))
+      .map((id) => nodeById(readDocument(), id))
       .filter((source): source is CanvasNode => Boolean(source && source.type === "media" && source.data.url && source.data.kind));
     const renderSources = sourceNodes.map((source) => ({
       nodeId: source.id,
@@ -10237,7 +10218,7 @@ export default function SuperCanvas() {
               },
             },
           );
-          const positioned = { ...draftNode, ...openNodePosition({ x: draftNode.x, y: draftNode.y }, draftNode) };
+          const positioned = { ...draftNode, ...projectTask.placeNode({ x: draftNode.x, y: draftNode.y }, draftNode) };
           commit((value) => ({
             ...value,
             nodes: [...value.nodes, positioned],
@@ -10245,7 +10226,7 @@ export default function SuperCanvas() {
           }));
           setSelectedIds(new Set([positioned.id]));
           setSelectedGroupId(null);
-          setVideoEditorNodeId(null);
+          projectTask.ifActive(() => setVideoEditorNodeId(null));
           notify("已按编辑后的克隆时间轴重新合成最终 MP4");
           addLog(`克隆时间轴重合成完成：${sourceName}`);
         } catch (error) {
@@ -10313,7 +10294,7 @@ export default function SuperCanvas() {
       );
       const positioned = {
         ...draftNode,
-        ...openNodePosition({ x: draftNode.x, y: draftNode.y }, draftNode),
+        ...projectTask.placeNode({ x: draftNode.x, y: draftNode.y }, draftNode),
       };
       commit((value) => ({
         ...value,
@@ -10332,15 +10313,17 @@ export default function SuperCanvas() {
       }));
       setSelectedIds(new Set([positioned.id]));
       setSelectedGroupId(null);
-      setVideoEditorNodeId(null);
+      projectTask.ifActive(() => setVideoEditorNodeId(null));
       notify(selected ? "已导出所选片段所在的完整时间线并创建新节点" : "已导出完整时间线并创建新节点");
       addLog(`视频编辑成片已创建：${sourceName}`);
     })();
-  }, [addLog, commit, notify, openNodePosition, runtime]);
+  }, [captureProjectTask, addLog, commit, notify, openNodePosition, runtime]);
 
   const runUpscaleNode = useCallback(async (node: CanvasNode) => {
+    const projectTask = captureProjectTask();
+    const { updateDoc, commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
     if (node.type !== "upscale") return;
-    const source = canvasUpscaleSource(canvasCoreRef.current.document(), node.id);
+    const source = canvasUpscaleSource(readDocument(), node.id);
     if (!source?.data.url) return notify("请连接一张已完成的图片", "error");
     const params = (node.data.params && typeof node.data.params === "object" ? node.data.params : {}) as CanvasUpscaleParams;
     const dimensions = await loadImageDimensions(String(source.data.url)).catch(() => null);
@@ -10372,7 +10355,7 @@ export default function SuperCanvas() {
     // Processing belongs to this node. Hide the editor after submission so
     // the canvas stays usable; selecting the node again can reopen it while
     // the card continues to show progress.
-    setExpandedEditorId((current) => current === node.id ? null : current);
+    projectTask.ifActive(() => setExpandedEditorId((current) => current === node.id ? null : current));
     updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "running", statusLabel: "超分处理中", progress: undefined, processingStartedAt: Date.now(), upscaleRequestId: requestTaskId } } : item) }));
     try {
       let result = await generateCanvasUpscale({
@@ -10499,7 +10482,7 @@ export default function SuperCanvas() {
       updateDoc((value) => ({ ...value, nodes: value.nodes.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: "failed", statusLabel: message, processingStartedAt: undefined } } : item) }));
       notify(message, "error");
     } finally { generationKeysRef.current.delete(activeKey); setGenerationKeys(new Set(generationKeysRef.current)); }
-  }, [addLog, commit, notify, runtime, updateDoc]);
+  }, [captureProjectTask, addLog, commit, notify, runtime, updateDoc]);
   runUpscaleNodeRef.current = runUpscaleNode;
 
 
@@ -11595,10 +11578,12 @@ export default function SuperCanvas() {
     ),
   );
   const reverseAgentNodePrompt = useCallback(async (node: CanvasNode) => {
+    const projectTask = captureProjectTask();
+    const { updateDoc, readDocument } = projectTask;
     if (node.type !== "prompt" || reverseAgentNodeId === node.id) return;
-    const currentNode = nodeById(canvasCoreRef.current.document(), node.id) || node;
+    const currentNode = nodeById(readDocument(), node.id) || node;
     if (["queued", "running"].includes(String(currentNode.data.status || ""))) return;
-    const images = incomingReferences(canvasCoreRef.current.document(), currentNode.id)
+    const images = incomingReferences(readDocument(), currentNode.id)
       .filter(isCanvasReadyImageSource)
       .map((reference) => ({
         url: String(reference.data.url),
@@ -11608,7 +11593,7 @@ export default function SuperCanvas() {
     if (!images.length) return;
     if (!chatModelsAvailable) return;
 
-    setReverseAgentNodeId(node.id);
+    projectTask.ifActive(() => setReverseAgentNodeId(node.id));
     try {
       const value = await runReversePrompt(images, runtime?.settings.agentModelId || undefined);
       updateDoc((current) => ({
@@ -11639,10 +11624,12 @@ export default function SuperCanvas() {
     } catch (error) {
       notify(error instanceof Error ? error.message : "反推提示词失败", "error");
     } finally {
-      setReverseAgentNodeId(null);
+      projectTask.ifActive(() => setReverseAgentNodeId(null));
     }
-  }, [chatModelsAvailable, notify, reverseAgentNodeId, runtime, updateDoc]);
+  }, [captureProjectTask, chatModelsAvailable, notify, reverseAgentNodeId, runtime, updateDoc]);
   const createDepthVideoFromNode = useCallback(async (source: CanvasNode) => {
+    const projectTask = captureProjectTask();
+    const { updateDoc, commit, readDocument, setSelectedIds, setSelectedGroupId } = projectTask;
     if (source.type !== "media" || source.data.kind !== "video" || !source.data.url) {
       notify("请先选择一个已完成的视频节点", "error");
       return;
@@ -11671,7 +11658,7 @@ export default function SuperCanvas() {
         startedAt: Date.now(),
       },
     });
-    const connected = addEdge({ ...canvasCoreRef.current.document(), nodes: [...canvasCoreRef.current.document().nodes, output] }, source.id, output.id, "right", "left", "manual", "video");
+    const connected = addEdge({ ...readDocument(), nodes: [...readDocument().nodes, output] }, source.id, output.id, "right", "left", "manual", "video");
     commit(() => connected);
     setSelectedIds(new Set([output.id]));
     setSelectedGroupId(null);
@@ -11694,7 +11681,7 @@ export default function SuperCanvas() {
       generationKeysRef.current.delete(activeKey);
       setGenerationKeys(new Set(generationKeysRef.current));
     }
-  }, [addLog, commit, depthQuality, notify, updateDoc]);
+  }, [captureProjectTask, addLog, commit, depthQuality, notify, updateDoc]);
   const quickActions = useMemo<CanvasQuickToolbarActions>(() => {
     const node = selectedSingle;
     if (!node || selectedGroupId || selectedNodes.length !== 1) return { primaryActions: [], menuGroups: [] };
@@ -12036,22 +12023,24 @@ export default function SuperCanvas() {
     setSmartVariantOpen(false);
   }, [cancelSmartVariant]);
   const openSmartVariant = useCallback(async (reanalyze = false) => {
+    const projectTask = captureProjectTask();
+    const { updateDoc } = projectTask;
     if (!reanalyze && selectedSingle?.data.smartVariantSnapshot) {
       const saved = selectedSingle.data.smartVariantSnapshot;
       smartVariantSession.current = { nodeId: selectedSingle.id, sources: clone(saved.sources) };
-      setSmartVariantPlan(clone(saved));
+      projectTask.ifActive(() => setSmartVariantPlan(clone(saved)));
       setSmartVariantError("");
-      setSmartVariantOpen(true);
+      projectTask.ifActive(() => setSmartVariantOpen(true));
       return;
     }
     const session = smartVariantOpen && !reanalyze ? smartVariantSession.current : selectedSingle?.type === "generator"
       ? { nodeId: selectedSingle.id, sources: smartVariantSources } : null;
     if (!session?.sources.length || !chatModelsAvailable || smartVariantLoading) return;
     smartVariantSession.current = session;
-    setSmartVariantOpen(true);
-    setSmartVariantLoading(true);
+    projectTask.ifActive(() => setSmartVariantOpen(true));
+    projectTask.ifActive(() => setSmartVariantLoading(true));
     setSmartVariantError("");
-    setSmartVariantPlan(null);
+    projectTask.ifActive(() => setSmartVariantPlan(null));
     const controller = new AbortController();
     smartVariantAbortRef.current = controller;
     const timeout = window.setTimeout(() => {
@@ -12085,7 +12074,7 @@ export default function SuperCanvas() {
         plan = parseSmartVariantPlan(repairResponse.message, sourceUnits);
       }
       if (smartVariantAbortRef.current === controller) {
-        setSmartVariantPlan(plan);
+        projectTask.ifActive(() => setSmartVariantPlan(plan));
         updateDoc((current) => ({ ...current, nodes: current.nodes.map((node) => node.id !== session.nodeId ? node : {
           ...node, data: { ...node.data, smartVariantSnapshot: { ...plan, sources: clone(session.sources) } },
         }) }));
@@ -12099,10 +12088,10 @@ export default function SuperCanvas() {
       window.clearTimeout(timeout);
       if (smartVariantAbortRef.current === controller) {
         smartVariantAbortRef.current = null;
-        setSmartVariantLoading(false);
+        projectTask.ifActive(() => setSmartVariantLoading(false));
       }
     }
-  }, [chatModelsAvailable, runtime?.settings.agentModelId, selectedSingle, smartVariantSources, smartVariantOpen, smartVariantLoading, updateDoc]);
+  }, [captureProjectTask, chatModelsAvailable, runtime?.settings.agentModelId, selectedSingle, smartVariantSources, smartVariantOpen, smartVariantLoading, updateDoc]);
   const applySmartVariant = useCallback(() => {
     const target = nodeById(canvasCoreRef.current.document(), smartVariantSession.current?.nodeId || "");
     if (target?.type !== "generator" || !smartVariantPlan?.variants.length) return;

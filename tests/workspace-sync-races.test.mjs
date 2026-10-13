@@ -97,8 +97,9 @@ function harness(t, { remote = snapshot(), revision = 1, realCanvas = false } = 
       assetRepository: {
         listGallery: async () => { if (galleryRead) await galleryRead(); return copy(localGallery); },
         listIndex: async () => [], listCollections: async () => [],
-        replaceGallery: async (items) => {
+        replaceGallery: async (items, canWrite) => {
           if (galleryRestore) await galleryRestore();
+          if (canWrite && !canWrite()) return;
           localGallery = copy(items);
           events.emitWorkspaceChange();
         },
@@ -154,6 +155,8 @@ function harness(t, { remote = snapshot(), revision = 1, realCanvas = false } = 
     setFetchHook(value) { fetchHook = value; },
     setGalleryRestore(value) { galleryRestore = value; },
     setGalleryRead(value) { galleryRead = value; },
+    get gallery() { return copy(localGallery); },
+    mutateGallery(item) { localGallery.push(item); events.emitWorkspaceMutation(); },
     start() { stop = workspace.startWorkspaceSync({ onStatus: (status) => statuses.push(status), onRestored: () => { restoredCallbacks += 1; } }); },
     stop() { stop?.(); },
     runDebounce() {
@@ -473,6 +476,37 @@ test('silent persisted edits during deferred GET invalidate the snapshot without
   assert.equal(h.meta.pending, true);
   assert.equal(h.meta.revision, 1);
   assert.equal(h.canvas.documents.new.nodes.length, 1);
+});
+
+test('history read failure aborts snapshot upload instead of uploading an empty gallery', async (t) => {
+  const h = harness(t);
+  h.seedBaseline();
+  h.mutateCanvas();
+  h.setGalleryRead(() => { throw new Error('database unavailable'); });
+  await assert.rejects(h.workspace.collectWorkspaceSnapshot(), /database unavailable/);
+  assert.deepEqual(await h.workspace.bootstrapWorkspace(), { offline: true });
+  assert.equal(h.requests.filter((request) => request.method === 'PUT').length, 0);
+  assert.equal(h.meta.pending, true);
+});
+
+test('a generation record written during automatic restore survives the delayed replacement', async (t) => {
+  const h = harness(t);
+  h.seedBaseline();
+  h.setRemote(snapshot('remote-new', 200), 2);
+  const history = deferred();
+  let started = false;
+  h.setGalleryRestore(() => { started = true; return history.promise; });
+  const boot = h.workspace.bootstrapWorkspace();
+  await waitFor(() => started);
+  const generated = { id: 'fresh-image', url: '/stored/fresh.png', createdAt: 1000 };
+  h.mutateGallery(generated);
+  history.resolve();
+  await boot;
+  assert.deepEqual(h.gallery, [generated]);
+  assert.equal(h.canvas.activeId, 'old');
+  assert.equal(h.restoreCount, 0);
+  assert.equal(h.meta.revision, 1);
+  assert.equal(h.meta.pending, true);
 });
 
 test('explicit backup restore remains replacement and invalidates an older automatic GET', async (t) => {

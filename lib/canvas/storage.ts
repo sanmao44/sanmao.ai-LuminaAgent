@@ -7,7 +7,6 @@ import {
   normalizeCreativeProjects,
   readCreativeProjects,
   reconcileCreativeProjects,
-  saveCreativeProjects,
 } from '../creative-projects';
 
 export const CANVAS_PROJECTS_KEY = 'sanmao.canvas.projects';
@@ -45,6 +44,29 @@ function writeJson(key: string, value: unknown) {
     return true;
   } catch (error) {
     storageQuotaExceeded = isQuotaExceededError(error);
+    return false;
+  }
+}
+
+/** Synchronous adapter transaction: failed multi-key writes retain the original canvas. */
+function writeCanvasEntries(entries: ReadonlyMap<string, string | null>) {
+  const previous = new Map<string, string | null>();
+  try {
+    for (const key of entries.keys()) previous.set(key, window.localStorage.getItem(key));
+    for (const [key, value] of entries) {
+      if (value === null) window.localStorage.removeItem(key);
+      else window.localStorage.setItem(key, value);
+    }
+    storageQuotaExceeded = false;
+    return true;
+  } catch (error) {
+    storageQuotaExceeded = isQuotaExceededError(error);
+    for (const [key, value] of previous) {
+      if (value === null) { try { window.localStorage.removeItem(key); } catch {} }
+    }
+    for (const [key, value] of previous) {
+      if (value !== null) { try { window.localStorage.setItem(key, value); } catch {} }
+    }
     return false;
   }
 }
@@ -98,7 +120,7 @@ export function saveCanvasActiveProject(id: string) {
   return writeJson(CANVAS_ACTIVE_KEY, id);
 }
 
-function persistProjectIdentity(projects: CanvasProject[], storedProjects = readCreativeProjects()) {
+function persistProjectIdentity(projects: CanvasProject[], storedProjects = readCreativeProjects(), entries = new Map<string, string | null>()) {
   const preferredProjectId = projects.length === 1 && typeof window !== 'undefined'
     ? (() => {
         try {
@@ -111,7 +133,9 @@ function persistProjectIdentity(projects: CanvasProject[], storedProjects = read
     ? [{ ...projects[0], projectId: preferredProjectId }, ...projects.slice(1)]
     : projects;
   const identity = reconcileCreativeProjects(preparedProjects, storedProjects);
-  const saved = writeJson(CANVAS_PROJECTS_KEY, identity.canvasProjects) && saveCreativeProjects(identity.creativeProjects);
+  entries.set(CANVAS_PROJECTS_KEY, JSON.stringify(identity.canvasProjects));
+  entries.set(CREATIVE_PROJECTS_KEY, JSON.stringify(normalizeCreativeProjects(identity.creativeProjects)));
+  const saved = writeCanvasEntries(entries);
   return { ...identity, saved };
 }
 
@@ -197,21 +221,23 @@ export function ensureCanvasStorage() {
       if (legacyDocument) result[project.id] = normalizeDocument(legacyDocument);
       return result;
     }, {});
-    writeJson(CANVAS_PROJECTS_KEY, legacy);
     const activeId = readJson<string | null>(NOVA_ACTIVE_KEY, null);
-    writeJson(CANVAS_ACTIVE_KEY, activeId && legacy.some((project) => project.id === activeId) ? activeId : legacy[0].id);
-    legacy.forEach((project) => { if (legacyDocuments[project.id]) writeJson(`${CANVAS_PROJECT_PREFIX}${project.id}`, legacyDocuments[project.id]); });
-    writeJson(MIGRATION_BACKUP_KEY, { backedUpAt: new Date().toISOString(), source: 'nova.v1', projects: legacy, activeId, documents: legacyDocuments });
-    writeJson(MIGRATION_KEY, { migratedAt: new Date().toISOString(), source: 'nova.v1', backupKey: MIGRATION_BACKUP_KEY });
-    const identity = persistProjectIdentity(legacy);
-    return { projects: identity.canvasProjects, activeId: activeId && identity.canvasProjects.some((project) => project.id === activeId) ? activeId : identity.canvasProjects[0].id, migrated: true };
+    const entries = new Map<string, string | null>([
+      [CANVAS_ACTIVE_KEY, JSON.stringify(activeId && legacy.some((project) => project.id === activeId) ? activeId : legacy[0].id)],
+      [MIGRATION_BACKUP_KEY, JSON.stringify({ backedUpAt: new Date().toISOString(), source: 'nova.v1', projects: legacy, activeId, documents: legacyDocuments })],
+      [MIGRATION_KEY, JSON.stringify({ migratedAt: new Date().toISOString(), source: 'nova.v1', backupKey: MIGRATION_BACKUP_KEY })],
+    ]);
+    legacy.forEach((project) => {
+      entries.set(`${CANVAS_PROJECT_PREFIX}${project.id}`, JSON.stringify(legacyDocuments[project.id] || normalizeDocument(null)));
+    });
+    const identity = persistProjectIdentity(legacy, readCreativeProjects(), entries);
+    if (!identity.saved) throw new Error(describeCanvasSaveFailure());
+    return { projects: identity.canvasProjects, activeId: tabActiveProjectId(identity.canvasProjects)!, migrated: true };
   }
   const project: CanvasProject = { id: `canvas_${Date.now().toString(36)}`, name: '我的 AI 画布', createdAt: Date.now(), updatedAt: Date.now() };
-  const identity = persistProjectIdentity([project]);
-  writeJson(CANVAS_PROJECTS_KEY, identity.canvasProjects);
-  writeJson(CANVAS_ACTIVE_KEY, project.id);
-  writeJson(`${CANVAS_PROJECT_PREFIX}${project.id}`, normalizeDocument(null));
-  return { projects: identity.canvasProjects, activeId: project.id, migrated: false };
+  if (!createCanvasProject(project, normalizeDocument(null))) throw new Error(describeCanvasSaveFailure());
+  const projects = readCanvasProjects();
+  return { projects, activeId: tabActiveProjectId(projects)!, migrated: false };
 }
 
 export const CANVAS_PROJECT_PREFIX = 'sanmao.canvas.project.';
@@ -241,9 +267,12 @@ export function saveCanvasDocument(id: string, document: CanvasDocument, expecte
       return false;
     }
   }
-  const ok = writeJson(key, normalized);
-  // Touch only the saved project using the latest index, preserving concurrent names and additions.
-  if (ok) persistProjectIdentity(projects.map((project) => project.id === id ? { ...project, updatedAt: Date.now() } : project));
+  // Document and identity metadata must succeed together; never acknowledge a partial save.
+  const ok = persistProjectIdentity(
+    projects.map((project) => project.id === id ? { ...project, updatedAt: Date.now() } : project),
+    readCreativeProjects(),
+    new Map([[key, JSON.stringify(normalized)]]),
+  ).saved;
   if (ok) emitWorkspaceChange();
   return ok;
 }
@@ -268,8 +297,10 @@ export function createCanvasProject(project: CanvasProject, document: CanvasDocu
   const latest = readCanvasProjects();
   if (latest.some((item) => item.id === project.id)) return false;
   // Write the document before publishing its index row, so a failed media-heavy save cannot create an empty project.
-  if (!writeJson(`${CANVAS_PROJECT_PREFIX}${project.id}`, normalizeDocument(document))) return false;
-  if (!persistProjectIdentity([project, ...latest]).saved) return false;
+  if (!persistProjectIdentity([project, ...latest], readCreativeProjects(), new Map([
+    [`${CANVAS_PROJECT_PREFIX}${project.id}`, JSON.stringify(normalizeDocument(document))],
+    [CANVAS_ACTIVE_KEY, JSON.stringify(project.id)],
+  ])).saved) return false;
   saveCanvasActiveProject(project.id);
   emitWorkspaceChange();
   return true;
@@ -288,8 +319,7 @@ export function deleteCanvasProject(id: string) {
   const latest = readCanvasProjects();
   if (latest.length <= 1 || !latest.some((project) => project.id === id)) return false;
   const next = latest.filter((project) => project.id !== id);
-  if (!persistProjectIdentity(next).saved) return false;
-  try { window.localStorage.removeItem(`${CANVAS_PROJECT_PREFIX}${id}`); } catch { return false; }
+  if (!persistProjectIdentity(next, readCreativeProjects(), new Map([[`${CANVAS_PROJECT_PREFIX}${id}`, null]])).saved) return false;
   emitWorkspaceChange();
   return true;
 }

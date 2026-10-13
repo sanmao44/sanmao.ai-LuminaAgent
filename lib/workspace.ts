@@ -1,13 +1,8 @@
 'use client';
 
 import {
-  DEFAULT_ASSET_COLLECTIONS,
   listChatSessions,
   replaceChatSessions,
-  type AssetCollection,
-  type AssetIndexItem,
-  type ChatSession,
-  type GalleryItem,
 } from './client-history';
 import {
   readCanvasWorkspace,
@@ -180,10 +175,10 @@ function readPreferences() {
 
 export async function collectWorkspaceSnapshot(updatedAt = Date.now()): Promise<WorkspaceSnapshot> {
   const [gallery, chatSessions, assetIndex, assetCollections] = await Promise.all([
-    assetRepository.listGallery().catch(() => [] as GalleryItem[]),
-    listChatSessions().catch(() => [] as ChatSession[]),
-    assetRepository.listIndex().catch(() => [] as AssetIndexItem[]),
-    assetRepository.listCollections().catch(() => DEFAULT_ASSET_COLLECTIONS as AssetCollection[]),
+    assetRepository.listGallery(),
+    listChatSessions(),
+    assetRepository.listIndex(),
+    assetRepository.listCollections(),
   ]);
   const legacyChatProjectId = readWorkspaceContext().creativeProjectId;
   return {
@@ -271,10 +266,12 @@ async function restoreWorkspaceSnapshotInternal(
     // Explicit backup replacement keeps its existing semantics. Automatic sync
     // must leave the editor's optimistic-save baseline untouched during I/O.
     if (!automaticState) restoreCanvas();
-    await assetRepository.replaceGallery(snapshot.gallery);
-    await replaceChatSessions(snapshot.chatSessions);
-    await assetRepository.replaceIndex(snapshot.assetIndex);
-    await assetRepository.saveCollections(snapshot.assetCollections);
+    const canWrite = automaticState ? () => !localStateChanged(automaticState) && !stopped()
+      && restoreGeneration === explicitRestoreGeneration && (readMeta()?.revision ?? 0) <= revision : undefined;
+    await assetRepository.replaceGallery(snapshot.gallery, canWrite);
+    await replaceChatSessions(snapshot.chatSessions, canWrite);
+    await assetRepository.replaceIndex(snapshot.assetIndex, canWrite);
+    await assetRepository.saveCollections(snapshot.assetCollections, canWrite);
     if (automaticState && (localStateChanged(automaticState) || stopped())) {
       preserveLocalChanges(automaticState);
       return false;
