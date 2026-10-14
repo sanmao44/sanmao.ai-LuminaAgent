@@ -245,7 +245,8 @@ html[data-motion="off"] :is(.canvas-edge.related,.canvas-edge-flow-stroke){anima
 .canvas-topbar-main>*{white-space:nowrap}
 .canvas-topbar-main>.canvas-brand,.canvas-topbar-main>.canvas-soft-button,.canvas-topbar-main>.canvas-icon-button,.canvas-topbar-main>.canvas-workbench-button,.canvas-topbar-main>.canvas-save-state,.canvas-topbar-main>.canvas-workspace-sync-state{flex:none}
 .canvas-topbar-main>.canvas-save-state{min-width:calc(29px + 4.5em)}
-.canvas-topbar-main>.canvas-workspace-sync-state{min-width:calc(26px + 5.5em)}
+/* Reserve the longest sync label (存在冲突，请刷新) so state changes cannot resize the centered toolbar. */
+.canvas-topbar-main>.canvas-workspace-sync-state{min-width:calc(26px + 8em)}
 @media(max-width:1520px){.canvas-topbar-main .canvas-workspace-sync-state{display:none}}
 @media(max-width:1440px){.canvas-topbar-main .canvas-save-state{display:none}}
 .canvas-brand{min-width:172px;padding:4px 8px 4px 4px}

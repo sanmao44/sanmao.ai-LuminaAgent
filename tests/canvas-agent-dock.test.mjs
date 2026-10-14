@@ -336,7 +336,7 @@ test("the save and sync badges keep the max-content topbar at a stable width", (
   // The bar hugs its content on wide screens, so every status label change used to
   // resize the whole bar. Both badges reserve room for their longest label.
   assert.match(styles, /\.canvas-topbar-main>\.canvas-save-state\{min-width:calc\(29px \+ 4\.5em\)\}/);
-  assert.match(styles, /\.canvas-topbar-main>\.canvas-workspace-sync-state\{min-width:calc\(26px \+ 5\.5em\)\}/);
+  assert.match(styles, /\.canvas-topbar-main>\.canvas-workspace-sync-state\{min-width:calc\(26px \+ 8em\)\}/);
 });
 
 test("the dock composer calls the shared skill picker with slash and a toolbar button", () => {
