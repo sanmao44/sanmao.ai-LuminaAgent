@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.93",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.93",
+  "latestVersion": "0.7.94",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.94",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.93/SANMAO.AI-0.7.93.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.94/SANMAO.AI-0.7.94.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.93/SANMAO.AI-0.7.93.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.93/SANMAO.AI-0.7.93.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.93/SANMAO.AI-0.7.93.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.94/SANMAO.AI-0.7.94.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.94/SANMAO.AI-0.7.94.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.94/SANMAO.AI-0.7.94.zip"
   ],
   "sha256": "11265b0caeaf454c26ea33ce19efeab410225df22f8dec91e6168b45de353470",
-  "publishedAt": "2026-10-14T00:43:48.439Z",
+  "publishedAt": "2026-10-14T08:58:04.196Z",
   "notes": [
+    "素材库拖入画布时复用已有资产，避免重复导入和重复保存素材。",
+    "为工作区同步状态预留稳定宽度，减少状态文字切换引起的画布顶栏布局抖动。",
+    "移除导致素材库布局变化的参考关系提示，保留既有工具栏抽屉交互。",
     "修复画布素材重复显示及失效旧素材残留，统一素材目录与画布素材库的资产识别。",
     "修复画布保存、项目切换与跨标签页同步竞态，项目选择按标签页独立保存。",
     "修复异步任务和 Agent 结果在项目切换后迟到写入的问题，并改进图片恢复与历史记录事务。",
