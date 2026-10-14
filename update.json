@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.94/SANMAO.AI-0.7.94.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.94/SANMAO.AI-0.7.94.zip"
   ],
-  "sha256": "11265b0caeaf454c26ea33ce19efeab410225df22f8dec91e6168b45de353470",
+  "sha256": "522a3dc4f92e367cadbd1958a59f4dd1c4453b7d633ac2a10b91e7fed4de1b87",
   "publishedAt": "2026-10-14T08:58:04.196Z",
   "notes": [
     "素材库拖入画布时复用已有资产，避免重复导入和重复保存素材。",
