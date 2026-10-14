@@ -1505,6 +1505,8 @@ html[data-theme="light"] .angle-model-option.active small { color:var(--angle-ac
 
 /* Compact shell navigation: a fixed rail, an overlay drawer, and centered creation modes. */
 :root{--shell-rail-width:64px;--shell-drawer-width:272px;--shell-content-left:var(--shell-rail-width);--shell-header-height:64px}
+/* Keep the shared topbar's center stable when a workspace changes its scroll model. */
+html:has(.app-shell){scrollbar-gutter:stable}
 .sidebar{width:var(--shell-rail-width);padding:10px;z-index:130;overflow:hidden;transition:width .2s ease,box-shadow .2s ease,transform .2s ease}
 .sidebar.expanded{width:var(--shell-drawer-width);overflow:hidden;box-shadow:18px 0 48px rgba(10,12,18,.2)}
 
