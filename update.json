@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.92",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.92",
+  "latestVersion": "0.7.93",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.93",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.92/SANMAO.AI-0.7.92.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.93/SANMAO.AI-0.7.93.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.92/SANMAO.AI-0.7.92.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.92/SANMAO.AI-0.7.92.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.92/SANMAO.AI-0.7.92.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.93/SANMAO.AI-0.7.93.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.93/SANMAO.AI-0.7.93.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.93/SANMAO.AI-0.7.93.zip"
   ],
   "sha256": "2e98b80e339c760450c9cc710d110cdc08ca4e2f8e02bf2628dc162a83fe45a6",
-  "publishedAt": "2026-10-13T10:59:40.013Z",
+  "publishedAt": "2026-10-14T00:43:48.439Z",
   "notes": [
+    "修复画布素材重复显示及失效旧素材残留，统一素材目录与画布素材库的资产识别。",
+    "修复画布保存、项目切换与跨标签页同步竞态，项目选择按标签页独立保存。",
+    "修复异步任务和 Agent 结果在项目切换后迟到写入的问题，并改进图片恢复与历史记录事务。",
     "修复画布资产引用与本地存储键识别，改进视频下载平台解析与画布资产注册。",
     "修复设置分类切换时的布局位移，并改进设置导航与图片存储历史保留。",
     "修复 Windows-MCP 控制会话恢复、桌面 Agent 跟进执行与重复旧连接器启动问题。",
