@@ -527,7 +527,38 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     };
     const nativeWebSearch = nativeSearchIsEnabled(agentRuntime.model);
     const latest = latestUser(messages);
-    const latestRefs = normalizeCreativeReferences(latest?.references, 16);
+    const selectedCanvasDocument = canvasDocument as ReturnType<typeof normalizeDocument> | null;
+    const canvasTargetReferences: CreativeReference[] = isCanvasSource && body.executionMode === 'agent-dock' && selectedCanvasDocument
+      ? canvasTargetNodeIds.flatMap<CreativeReference>((nodeId) => {
+        const node = selectedCanvasDocument.nodes.find((candidate) => candidate.id === nodeId);
+        if (!node) return [];
+        if (node.type === 'prompt' || node.type === 'generator') {
+          const text = String(node.type === 'prompt'
+            ? node.data.agentResponse || node.data.text || ''
+            : node.data.prompt || node.data.agentPrompt || '').trim();
+          return text ? [{ id: `node-ref:${node.id}`, nodeId: node.id, kind: 'text' as const, name: String(node.data.name || node.data.role || '画布文本'), text }] : [];
+        }
+        if ((node.type === 'media' || node.type === 'upscale')
+          && (node.data.kind === 'image' || node.data.kind === 'video')
+          && typeof node.data.url === 'string'
+          && node.data.url.trim()) {
+          return [{
+            id: `node-ref:${node.id}`,
+            nodeId: node.id,
+            kind: node.data.kind as 'image' | 'video',
+            name: String(node.data.name || (node.data.kind === 'video' ? '画布参考视频' : '画布参考图')),
+            url: node.data.url,
+            ...(typeof node.data.mimeType === 'string' ? { mimeType: node.data.mimeType } : {}),
+          }];
+        }
+        return [];
+      })
+      : [];
+    const latestRefs = normalizeCreativeReferences([
+      ...(latest?.references || []),
+      ...canvasTargetReferences,
+    ], 16);
+    if (latest) latest.references = latestRefs;
     // 「本轮参考图数量」只统计能交给生图模型的图片/视频素材，引用文本与上传文档不算参考图。
     const latestReferenceImageCount = latestRefs.filter((reference) => reference.kind !== 'text').length;
     // 画布等调用方会把系统上下文拼在用户消息末尾（"画布 / 图片 / 渲染"这些词都在里面）。
@@ -713,16 +744,23 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       // runNativeWebSearch(agentRuntime.provider, agentRuntime.model, llmMessages, plannedNativeQuery, requestController.signal)
       return runNativeWebSearch(...args);
     };
+    const canvasDockSemanticReview = isCanvasSource
+      && body.executionMode === 'agent-dock'
+      && intentDecision.mode === 'unknown'
+      && intentDecision.confidence !== 'high'
+      && (requestedDeliverable === 'OTHER' || requestedDeliverable === 'CLARIFY');
     const needsContextualSemanticPlanner = intentDecision.mode === 'unknown'
       && requestRoute.contextNeed === 'required'
       && needsSemanticIntent(latestInstruction, intentDecision);
     const shouldUseSemanticPlanner = videoDownloadCandidate
+      || canvasDockSemanticReview
       || (!requestRoute.tools.useMcp
         && !requestRoute.tools.useSkills
         && (requestRoute.policy.lane === 'action' && requestRoute.needsTools || needsContextualSemanticPlanner));
-    if (shouldUseSemanticPlanner && !body.task && !isModelIdentityQuestion(latestInstruction) && !isCanvasSource
+    let semanticDecisionResolved = false;
+    if (shouldUseSemanticPlanner && !body.task && !isModelIdentityQuestion(latestInstruction) && (!isCanvasSource || canvasDockSemanticReview)
       && (videoDownloadCandidate || requestedDeliverable === 'OTHER' || requestedDeliverable === 'CLARIFY')
-      && (needsSemanticIntent(latestInstruction, intentDecision) || routeNeedsSemanticReview(requestRoute) || videoDownloadCandidate)) {
+      && (needsSemanticIntent(latestInstruction, intentDecision) || routeNeedsSemanticReview(requestRoute) || videoDownloadCandidate || canvasDockSemanticReview)) {
       reportProgress({ stage: 'thinking', message: '正在结合当前对话理解指令…' });
       try {
         const semanticPayload: Parameters<typeof chatCompletion>[2] = {
@@ -752,11 +790,12 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         } finally {
           intentClassifierMs = Date.now() - classifierStartedAt;
         }
-        if (!decision) {
+        if (!decision && !canvasDockSemanticReview) {
           const planned = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, semanticPayload, requestController.signal);
           decision = parseSemanticIntent(planned?.choices?.[0]?.message?.content);
         }
         if (decision) {
+          semanticDecisionResolved = true;
           requestedDeliverable = decision.deliverable;
           requestedIntentReason = decision.reason;
           if (videoDownloadCandidate) {
@@ -772,6 +811,12 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
       }
+    }
+    if (canvasDockSemanticReview && !semanticDecisionResolved) {
+      const clarification = '我暂时无法可靠判断这句话是要生成图片还是继续讨论。请明确说“用选中素材生成一张海报”或告诉我你想先分析什么。';
+      return wantsStream
+        ? streamResult(null, { fallback: clarification, images: [], files: [], generations: [], model: agentRuntime.model.displayName })
+        : applicationJson({ ok: true, message: clarification, images: [], files: [], deliverable: 'CLARIFY' });
     }
     // Semantic review is allowed to refine ordinary ambiguous turns, but it
     // must not downgrade an explicit public-video download into plain chat.
@@ -876,6 +921,11 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         capability: requestedImageCapability,
       })
       : [];
+    if (imageGenerationRequest && !imageModels.length) {
+      const capabilityLabel = requestedImageCapability === 'edit' ? '改图' : '生图';
+      const message = `当前没有可用${capabilityLabel}模型。请在模型库确认图片模型已启用、已发布，所属服务商也已启用，并且模型声明了 ${requestedImageCapability} 能力。`;
+      return applicationJson({ ok: false, error: message, message, deliverable: requestedDeliverable }, { status: 400 });
+    }
     // Image model choice is independent from the chat model. `auto` keeps the
     // capability-aware default and compatibility fallback policy; an explicit
     // model is validated and executed without silently switching models.

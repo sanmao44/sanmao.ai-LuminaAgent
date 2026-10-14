@@ -216,7 +216,7 @@ function harness(options = {}) {
       getRuntimeImageGenerationModel: async (id) => { imageRuntimeRequests.push({ capability: 'generate', id }); return { provider, model: imageModel }; },
       getRuntimeImageModelForCapability: async (_id, capability) => capability === 'edit' ? { provider, model: { ...imageModel, capabilities: ['edit'] } } : { provider, model: imageModel },
       getRuntimeImageModelCandidates: async () => [{ provider, model: imageModel }],
-      getPublicState: async () => ({ settings: {}, models: [imageModel], providers: [provider] }),
+      getPublicState: async () => ({ settings: {}, models: options.availableImageModels ?? [imageModel], providers: [provider] }),
     },
     '@/lib/auth': { isTrustedAppRequest: () => true },
     '@/lib/runtime-operation': { beginRuntimeRequest: async () => noOp, RuntimeDrainingError: class extends Error {} },
@@ -542,6 +542,96 @@ test('canvas Agent treats a first-turn replacement instruction as an image edit'
   assert.equal(agent.images[0].mode, 'edit');
   assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
   assert.equal(data.images.length, 1);
+});
+
+test('Canvas selected node snapshots reach both the assistant context and image generation references', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"用户明确要求将所选角色素材编排为海报图片"}' }
+      : { content: '正在为你生成海报。' },
+  });
+  const text = '把这四个角色的素材汇总到同一张横版海报里';
+  const data = await agent.post([{ role: 'user', content: text }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    deliverable: 'OTHER',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['character-1', 'character-2', 'prompt-1'], assetIds: [] },
+    canvasTarget: { nodeIds: ['character-1', 'character-2', 'prompt-1'], kind: 'mixed', operation: 'generate' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: [
+        { id: 'character-1', type: 'media', x: 0, y: 0, data: { kind: 'image', name: '角色甲', url: 'https://assets.test/character-1.png' } },
+        { id: 'character-2', type: 'media', x: 0, y: 200, data: { kind: 'image', name: '角色乙', url: 'https://assets.test/character-2.png' } },
+        { id: 'prompt-1', type: 'prompt', x: 0, y: 400, data: { name: '角色设定', text: '两位角色并肩站立，保留各自服装特征。' } },
+      ],
+    },
+  });
+
+  assert.equal(data.images.length, 1);
+  assert.deepEqual(agent.images[0].references, [
+    'https://assets.test/character-1.png',
+    'https://assets.test/character-2.png',
+  ]);
+  const assistantCall = agent.modelCalls.find((call) => call.model === 'test-chat');
+  assert.ok(assistantCall);
+  const userTurn = assistantCall.payload.messages.find((message) => message.role === 'user');
+  assert.ok(Array.isArray(userTurn.content));
+  assert.ok(userTurn.content.some((part) => part.type === 'image_url' && part.image_url.url === 'https://assets.test/character-1.png'));
+  assert.ok(userTurn.content.some((part) => part.type === 'image_url' && part.image_url.url === 'https://assets.test/character-2.png'));
+  assert.match(userTurn.content[0].text, /两位角色并肩站立/);
+  assert.match(userTurn.content[0].text, /角色设定/);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+});
+
+test('Canvas semantic classification failure asks for clarification instead of inventing model availability', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({ intentClassifierRuntime: classifierRuntime, reply: () => ({ content: 'invalid classifier output' }) });
+  const text = '把这四个角色的素材汇总到同一张横版海报里';
+  const data = await agent.post([{ role: 'user', content: text }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    deliverable: 'OTHER',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: [], assetIds: [] },
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+  assert.equal(data.deliverable, 'CLARIFY');
+  assert.match(data.message, /无法可靠判断/);
+  assert.equal(agent.images.length, 0);
+  assert.equal(agent.modelCalls.filter((call) => call.model !== 'jev-1.13').length, 0);
+});
+
+test('Canvas semantic image intent reports actual missing image capability before chat can guess', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    availableImageModels: [],
+    reply: () => ({ content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"请求制作海报图片"}' }),
+  });
+  const text = '把这四个角色的素材汇总到同一张横版海报里';
+  const data = await agent.post([{ role: 'user', content: text }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    deliverable: 'OTHER',
+  });
+  assert.equal(data.ok, false);
+  assert.match(data.message, /当前没有可用生图模型/);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.equal(agent.modelCalls.filter((call) => call.model !== 'jev-1.13').length, 0);
+  assert.equal(agent.images.length, 0);
 });
 
 test('client image model selection reaches Agent generation explicitly', async () => {
