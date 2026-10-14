@@ -641,6 +641,31 @@ test('omits legacy input_fidelity for GPT Image 2 while preserving it for other 
   assert.deepEqual(gptImageBody.images, [{ image_url: input.references[0] }]);
 });
 
+test('image edit payload preserves all selected Canvas references', async () => {
+  const previousFetch = globalThis.fetch;
+  const references = [1, 2, 3, 4].map((index) => `data:image/png;base64,REF${index}`);
+  let requestBody;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ data: [{ url: 'https://cdn.example.test/poster.png' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const images = await providers.editImage({
+      type: 'openai-compatible',
+      platform: 'custom',
+      baseUrl: 'https://images.example.test/v1',
+      apiKey: 'test-key',
+    }, 'gpt-image-2.5', { prompt: '将四个角色合成 16:9 海报', references, count: 1 });
+    assert.deepEqual(images, [{ url: 'https://cdn.example.test/poster.png' }]);
+    assert.deepEqual(requestBody.images, references.map((image_url) => ({ image_url })));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('uses StarAPI native image sizes only for its gpt-image-2 model', () => {
   const starApi = {
     type: 'openai-compatible',

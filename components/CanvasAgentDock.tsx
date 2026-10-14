@@ -36,6 +36,7 @@ import {
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import {
   createCanvasAgentRunContext,
+  canvasAgentImageCapability,
   canvasAgentTargetOperation,
   normalizeCanvasAgentRunContext,
   type CanvasAgentRunContext,
@@ -771,7 +772,13 @@ export default function CanvasAgentDock({
     messages: messages.map((message) => ({ role: message.role, content: message.content, images: message.images })),
     hasReferences: orderedReferences.length > 0 || draftImages.length > 0,
   }), [draftImages.length, input, messages, orderedReferences.length]);
-  const liveCreativeCapability = liveCreativeRoute.operation === "edit" ? "edit" : "generate";
+  const hasSelectedCanvasImageReference = orderedReferences.some((reference) =>
+    reference.kind === "image" && orderedSelectedNodeIds.includes(reference.nodeId || reference.id),
+  );
+  const liveCreativeCapability = canvasAgentImageCapability(
+    liveCreativeRoute.operation === "edit" ? "edit" : "generate",
+    hasSelectedCanvasImageReference,
+  );
   const availableCreativeModels = useMemo(
     () => filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
       kind: "image",
@@ -1082,7 +1089,13 @@ export default function CanvasAgentDock({
         messages: base.map((message) => ({ role: message.role, content: message.content, images: message.images })),
         hasReferences: turnReferences.length > 0,
       });
-      const creativeModelCapability = creativeRoute.operation === "edit" ? "edit" : "generate";
+      const hasSelectedImageReferences = turnNodeReferences.some((reference) =>
+        reference.kind === "image" && turnNodeIds.includes(reference.nodeId || reference.id),
+      );
+      const creativeModelCapability = canvasAgentImageCapability(
+        creativeRoute.operation === "edit" ? "edit" : "generate",
+        hasSelectedImageReferences,
+      );
       const selectedCreativeModel = imageModelId !== "auto"
         && filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
           kind: "image",

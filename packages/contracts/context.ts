@@ -9,3 +9,7 @@ export type WorkspaceContext = {
 };
 
 export type GenerationSource = 'workspace' | 'agent' | 'canvas';
+
+export type CanvasAgentTargetKind = 'none' | 'text' | 'image' | 'video' | 'mixed';
+
+export type CanvasAgentTargetOperation = 'generate' | 'edit';

@@ -1,4 +1,4 @@
-import type { GenerationSource, WorkspaceContext } from '../contracts/context';
+import type { CanvasAgentTargetKind, CanvasAgentTargetOperation, GenerationSource, WorkspaceContext } from '../contracts/context';
 
 type CanvasDocument = unknown;
 
@@ -19,8 +19,16 @@ export function prepareAgentRequestContext(input: AgentRequestContextInput) {
   const canvasTargetNodeIds = Array.isArray(canvasTarget?.nodeIds)
     ? [...new Set(canvasTarget.nodeIds.map((id) => String(id || '').trim()).filter(Boolean))].slice(0, 64)
     : workspaceContext?.selectedNodeIds || [];
-  const canvasTargetKind = ['none', 'text', 'image', 'video', 'mixed'].includes(String(canvasTarget?.kind)) ? String(canvasTarget?.kind) : 'none';
-  const canvasTargetOperation = canvasTarget?.operation === 'edit' ? 'edit' : 'generate';
+  const canvasTargetKind: CanvasAgentTargetKind = (() => {
+    switch (String(canvasTarget?.kind)) {
+      case 'text': return 'text';
+      case 'image': return 'image';
+      case 'video': return 'video';
+      case 'mixed': return 'mixed';
+      default: return 'none';
+    }
+  })();
+  const canvasTargetOperation: CanvasAgentTargetOperation = canvasTarget?.operation === 'edit' ? 'edit' : 'generate';
   const sourceForLog = input.normalizeGenerationSource(body.source, 'agent');
   const isCanvasSource = sourceForLog === 'canvas';
   const isCanvasNodeExecution = isCanvasSource && body.executionMode !== 'agent-dock';

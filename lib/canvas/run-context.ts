@@ -1,3 +1,4 @@
+import type { CanvasAgentTargetKind, CanvasAgentTargetOperation } from "@/packages/contracts/context";
 import type { WorkspaceContext } from "@/lib/workspace-context";
 
 import { isImageEditRequest } from "../agent-intent";
@@ -7,9 +8,33 @@ export const CANVAS_AGENT_RUN_CONTEXT_SCHEMA_VERSION = 1 as const;
 /** Structured selection target sent with a SuperCanvas Agent dock run. */
 export type CanvasAgentTarget = {
   nodeIds: string[];
-  kind: "none" | "text" | "image" | "video" | "mixed";
-  operation: "generate" | "edit";
+  kind: CanvasAgentTargetKind;
+  operation: CanvasAgentTargetOperation;
 };
+
+/** Canvas compositions use the provider's image-input contract even when the
+ * user is creating a new image rather than editing one selected node. */
+export function canvasAgentImageCapability(operation: CanvasAgentTarget["operation"], hasSelectedImageReferences: boolean) {
+  if (operation === "edit") return "edit";
+  return hasSelectedImageReferences ? "reference" : "generate";
+}
+
+/** A selected-image composition is executable when the current turn clearly asks for a visual result. */
+export function canvasAgentImageGenerationIntent(
+  instruction: string,
+  targetKind: CanvasAgentTarget["kind"],
+  operation: CanvasAgentTarget["operation"],
+  hasImageReferences: boolean,
+) {
+  if (operation !== "generate" || !hasImageReferences || !["image", "mixed"].includes(targetKind)) return false;
+  const text = String(instruction || "").replace(/\s+/g, " ").trim();
+  if (!text || /(?:为什么|怎么|如何|能不能|是否|请问|解释|分析|讨论|评价)/i.test(text)) return false;
+  const visualTarget = /(?:图片|图像|画面|海报|封面|插画|配图|banner|poster|image|picture)/i.test(text);
+  const visualAction = /(?:生成|生图|出图|画图|做图|创作|制作|设计|绘制|合成|汇总|编排|拼成|做成)/i.test(text);
+  const directCommand = /^(?:请|帮我|给我|将|把|根据|按照|基于|用|直接|制作|创作|生成|绘制|画|合成|汇总|编排|拼|做成)/i.test(text)
+    || /^(?:直接)?(?:生成(?:图片|图像|海报)?|生图|出图|画图|做图)/i.test(text);
+  return visualTarget && visualAction && directCommand;
+}
 
 export type CanvasAgentRunReference = {
   id: string;

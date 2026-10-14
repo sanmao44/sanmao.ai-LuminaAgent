@@ -214,7 +214,12 @@ function harness(options = {}) {
     '@/lib/store': {
       getRuntimeModel: async (_id, kind) => kind === 'image' ? { provider, model: imageModel } : runtime,
       getRuntimeImageGenerationModel: async (id) => { imageRuntimeRequests.push({ capability: 'generate', id }); return { provider, model: imageModel }; },
-      getRuntimeImageModelForCapability: async (_id, capability) => capability === 'edit' ? { provider, model: { ...imageModel, capabilities: ['edit'] } } : { provider, model: imageModel },
+      getRuntimeImageModelForCapability: async (id, capability) => {
+        imageRuntimeRequests.push({ capability, id });
+        const supportsCapability = imageModel.capabilities.includes(capability)
+          || (capability === 'edit' && imageModel.capabilities.includes('generate'));
+        return supportsCapability ? { provider, model: { ...imageModel, capabilities: [capability] } } : null;
+      },
       getRuntimeImageModelCandidates: async () => [{ provider, model: imageModel }],
       getPublicState: async () => ({ settings: {}, models: options.availableImageModels ?? [imageModel], providers: [provider] }),
     },
@@ -551,6 +556,7 @@ test('Canvas selected node snapshots reach both the assistant context and image 
   };
   const agent = harness({
     intentClassifierRuntime: classifierRuntime,
+    imageCapabilities: ['generate', 'reference'],
     reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
       ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"用户明确要求将所选角色素材编排为海报图片"}' }
       : { content: '正在为你生成海报。' },
@@ -587,6 +593,87 @@ test('Canvas selected node snapshots reach both the assistant context and image 
   assert.match(userTurn.content[0].text, /两位角色并肩站立/);
   assert.match(userTurn.content[0].text, /角色设定/);
   assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+});
+
+test('JEV clarification cannot downgrade an explicit Canvas poster request', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    imageCapabilities: ['generate', 'edit', 'reference'],
+    reply: (_payload, _callNumber, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"unknown","deliverable":"CLARIFY","confidence":"high","reason":"模型无法确定"}' }
+      : { content: '海报已完成。' },
+  });
+  const text = '将这四个角色创作成一张16:9的海报图，各有各的动作！';
+  const data = await agent.post([{ role: 'user', content: text }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['a', 'b', 'c', 'd'], assetIds: [] },
+    canvasTarget: { nodeIds: ['a', 'b', 'c', 'd'], kind: 'image', operation: 'generate' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: ['a', 'b', 'c', 'd'].map((id) => ({ id, type: 'media', x: 0, y: 0, data: { kind: 'image', name: `角色 ${id}`, url: `https://assets.test/${id}.png` } })),
+    },
+  });
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.images[0].mode, 'edit');
+  assert.equal(agent.images[0].references.length, 4);
+  assert.match(agent.images[0].prompt, /16:9|海报/);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+});
+
+test('Canvas short image confirmation carries the original poster task and all selected images', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    imageCapabilities: ['generate', 'edit', 'reference'],
+    reply: (_payload, _callNumber, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"确认上一轮海报任务"}' }
+      : { content: '已按上一轮海报要求生成。' },
+  });
+  const selectedIds = ['character-1', 'character-2', 'character-3', 'character-4'];
+  const document = {
+    version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+    nodes: selectedIds.map((id) => ({ id, type: 'media', x: 0, y: 0, data: { kind: 'image', name: id, url: `https://assets.test/${id}.png` } })),
+  };
+  const data = await agent.post([
+    { role: 'user', content: '将这四个角色创作成一张16:9的海报图，各有各的动作！' },
+    { role: 'assistant', content: '请确认是否使用选中素材生成海报。' },
+    { role: 'user', content: '生成图片！' },
+  ], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '生成图片！',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: selectedIds, assetIds: [] },
+    canvasTarget: { nodeIds: selectedIds, kind: 'image', operation: 'generate' },
+    canvasDocument: document,
+  });
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.images[0].mode, 'edit');
+  assert.deepEqual(agent.images[0].references, selectedIds.map((id) => `https://assets.test/${id}.png`));
+  assert.match(agent.images[0].prompt, /16:9|海报/);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  const classifierCall = agent.modelCalls.find((call) => call.model === 'jev-1.13');
+  const classifierInput = JSON.parse(classifierCall.payload.messages[1].content);
+  assert.equal(classifierInput.referenceImages, 4);
+  assert.equal(classifierInput.request, '生成图片！');
+  assert.ok(classifierInput.history.some((message) => message.content.includes('四个角色创作成一张16:9的海报图')));
+  assert.deepEqual(classifierInput.canvas.target.nodeIds, selectedIds);
+  assert.deepEqual(classifierInput.canvas.references.map((reference) => reference.nodeId), selectedIds);
+  const assistantCall = agent.modelCalls.find((call) => call.model === 'test-chat');
+  const currentUserMessage = [...assistantCall.payload.messages].reverse().find((message) => message.role === 'user');
+  assert.ok(Array.isArray(currentUserMessage.content));
+  assert.equal(currentUserMessage.content.filter((part) => part.type === 'image_url').length, 4);
+  assert.ok(assistantCall.payload.messages.some((message) =>
+    message.role === 'user' && String(message.content || '').includes('四个角色创作成一张16:9的海报图'),
+  ));
 });
 
 test('Canvas semantic classification failure asks for clarification instead of inventing model availability', async () => {
@@ -737,6 +824,25 @@ test('configured JEV classifies an ambiguous confirmation before image execution
   assert.equal('tools' in classifierCalls[0].payload, false);
   assert.equal(agent.images.length, 1);
   assert.equal(data.images.length, 1);
+});
+
+test('Canvas multi-image composition requires reference capability, not edit capability', async () => {
+  const agent = harness({ imageCapabilities: ['generate', 'reference'] });
+  const selectedIds = ['a', 'b', 'c', 'd'];
+  const data = await agent.post([{ role: 'user', content: '将这四个角色创作成一张16:9的海报图，各有各的动作！' }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: selectedIds, assetIds: [] },
+    canvasTarget: { nodeIds: selectedIds, kind: 'image', operation: 'generate' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: selectedIds.map((id) => ({ id, type: 'media', x: 0, y: 0, data: { kind: 'image', name: `角色 ${id}`, url: `https://assets.test/${id}.png` } })),
+    },
+  });
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.images[0].mode, 'edit');
+  assert.deepEqual(agent.images[0].references, selectedIds.map((id) => `https://assets.test/${id}.png`));
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'reference', id: 'auto' }]);
 });
 
 test('invalid JEV output falls back to the selected chat model semantic planner', async () => {

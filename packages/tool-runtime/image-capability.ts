@@ -12,7 +12,7 @@ export type ImageCapabilityPorts = {
   isBareImageExecution: (input: string) => boolean;
   extractBatchPrompts: (content: string) => string[];
   fallbackImagePrompt: string;
-  requestedImageCapability?: 'generate' | 'edit';
+  requestedImageCapability?: 'generate' | 'edit' | 'reference';
   latestRefs: readonly Record<string, unknown>[];
   trackedChatCompletion: (provider: unknown, model: string, payload: Record<string, unknown>, signal?: AbortSignal) => Promise<{ choices?: Array<{ message?: { content?: unknown } }> } | null>;
   agentRuntime: { provider: unknown; model: { rawId: string } };
@@ -74,7 +74,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
       const aspectRatio = String(args.aspectRatio || fallbackImagePrompt.match(/\b(?:1:1|2:3|3:2|3:4|4:3|9:16|16:9|21:9)\b/g)?.at(-1) || '自动');
       // References are not enough to turn a new-image batch into an edit. The
       // server-side intent decision is authoritative over the model's tool name.
-      const mode = requestedImageCapability;
+      const mode = requestedImageCapability === 'generate' ? 'generate' : 'edit';
       if (latestRefs.some((reference: { kind?: string }) => reference.kind === 'video')) {
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: '图片模型不能接收视频引用；请改用视频生成输入或移除视频引用。' }) });
         return { results };
@@ -98,7 +98,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
       // Model selection is controlled by the client/system settings. Never let
       // the language model override the configured default through tool args.
       const requestedImageModelId = requestedAgentImageModelId;
-      const requiredImageCapability = mode === 'edit' ? 'edit' : 'generate';
+      const requiredImageCapability = requestedImageCapability || (mode === 'edit' ? 'edit' : 'generate');
       const explicitlyRequestedImageModel = requestedImageModelId !== 'auto';
       if (explicitlyRequestedImageModel && !imageModels.some((model: { id?: string; capabilities?: readonly string[] }) => model.id === requestedImageModelId
         && (model.capabilities || []).includes(requiredImageCapability))) {
@@ -110,7 +110,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
       // emit an edit tool name and bypass the configured generation model.
       let imageRuntime = mode === 'generate'
         ? await getRuntimeImageGenerationModel(requestedImageModelId)
-        : await getRuntimeImageModelForCapability(requestedImageModelId, 'edit');
+        : await getRuntimeImageModelForCapability(requestedImageModelId, requiredImageCapability);
       if (explicitlyRequestedImageModel && (!imageRuntime || imageRuntime.model.id !== requestedImageModelId)) {
         const error = '本轮选择的生图模型当前不可用，请重新选择或改用自动选择。';
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error }) });
@@ -118,7 +118,9 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
       }
       if (!imageRuntime) {
         const diagnosis = mode === 'edit'
-          ? '没有可用的改图模型：请在模型库启用并发布至少一个支持 edit 的图片模型；文生图模型不能代替改图模型。'
+          ? requiredImageCapability === 'reference'
+            ? '没有可用的参考图生图模型：请在模型库启用并发布至少一个声明 reference 能力的图片模型。'
+            : '没有可用的改图模型：请在模型库启用并发布至少一个支持 edit 的图片模型；文生图模型不能代替改图模型。'
           : '没有可用的生图模型：请在模型库启用并发布至少一个支持 generate 的图片模型；对话模型不能代替生图模型。';
         await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, count, durationMs: Date.now() - startedAt, error: '没有可用的图片模型', ...taskContext }).catch(() => undefined);
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: diagnosis, diagnosis }) });
@@ -153,7 +155,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
               initialRuntime,
               async () => explicitlyRequestedImageModel
                 ? []
-                : getRuntimeImageModelCandidates('auto', mode === 'generate' ? 'generate' : 'edit'),
+                : getRuntimeImageModelCandidates('auto', requiredImageCapability),
               async (candidate: typeof initialRuntime) => {
                 itemRuntime = candidate;
                 return mode === 'edit'

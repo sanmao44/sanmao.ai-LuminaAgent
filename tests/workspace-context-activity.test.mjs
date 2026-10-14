@@ -187,6 +187,9 @@ test('canvas Agent target operation distinguishes edits from analysis and questi
   }
   assert.equal(runContext.canvasAgentTargetOperation('分析一下这张图怎么样？', 'image'), 'generate');
   assert.equal(runContext.canvasAgentTargetOperation('帮我生成一个新版本', 'image'), 'generate');
+  assert.equal(runContext.canvasAgentImageGenerationIntent('将这四个角色创作成一张16:9的海报图，各有各的动作！', 'image', 'generate', true), true);
+  assert.equal(runContext.canvasAgentImageGenerationIntent('分析一下这张图怎么样？', 'image', 'generate', true), false);
+  assert.equal(runContext.canvasAgentImageGenerationIntent('生成图片！', 'image', 'generate', false), false);
 });
 
 test('provenance helpers deduplicate sources and create stable edge IDs', () => {
