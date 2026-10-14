@@ -442,11 +442,6 @@ export default function CanvasAssetDrawer({
             />
           </div>
         </div>
-        {!canReference && (
-          <div className="canvas-asset-reference-hint">
-            要建立参考关系，请先明确选中一个节点或对象组；多选不会隐式冒充单节点。
-          </div>
-        )}
         <div className={`canvas-asset-collection-dropzone ${isAssignableCanvasAssetCollection(collection) ? "" : "needs-collection"}`}>
           <span>⌘</span><b>{isAssignableCanvasAssetCollection(collection) ? "把画布节点拖到这里归类" : "先选择未分类或自定义集合"}</b><small>{isAssignableCanvasAssetCollection(collection) ? "拖动节点右上角 ↗，节点不会从画布移除" : "智能筛选视图不能作为归类目标"}</small>
         </div>
