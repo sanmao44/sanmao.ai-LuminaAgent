@@ -7,6 +7,9 @@ const CANVAS_TEXT_REFERENCE_EXTENSIONS = new Set([
 export function hasExternalFileTransfer(
   dataTransfer: Pick<DataTransfer, "types" | "items">,
 ) {
+  // Native image drags can also expose Files. The asset payload takes priority
+  // so dropping an existing asset never uploads its image as a new file.
+  if (dataTransfer.types.includes("application/x-sanmao-asset")) return false;
   return (
     dataTransfer.types.includes("Files") ||
     [...dataTransfer.items].some((item) => item.kind === "file")

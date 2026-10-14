@@ -496,6 +496,7 @@ export default function CanvasAssetDrawer({
                     {asset.kind === "video" ? (
                       <video
                         src={asset.url}
+                        draggable={false}
                         muted
                         playsInline
                         preload="metadata"
@@ -506,7 +507,7 @@ export default function CanvasAssetDrawer({
                         <b>参考音频</b>
                       </div>
                     ) : (
-                      <img src={asset.url} alt={asset.name} loading="lazy" />
+                      <img src={asset.url} alt={asset.name} loading="lazy" draggable={false} />
                     )}
                     <span>{asset.kind === "video" ? "▶ 视频" : asset.kind === "audio" ? "♫ 音频" : "▣ 图片"}</span>
                   </button>
