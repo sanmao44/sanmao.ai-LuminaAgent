@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.93/SANMAO.AI-0.7.93.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.93/SANMAO.AI-0.7.93.zip"
   ],
-  "sha256": "2e98b80e339c760450c9cc710d110cdc08ca4e2f8e02bf2628dc162a83fe45a6",
+  "sha256": "5c0d9f55fa169a2dad6adddf52d65d9278fbdb0d709881ef19b19b88b24fb587",
   "publishedAt": "2026-10-14T00:43:48.439Z",
   "notes": [
     "修复画布素材重复显示及失效旧素材残留，统一素材目录与画布素材库的资产识别。",
