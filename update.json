@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.95/SANMAO.AI-0.7.95.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.95/SANMAO.AI-0.7.95.zip"
   ],
-  "sha256": "522a3dc4f92e367cadbd1958a59f4dd1c4453b7d633ac2a10b91e7fed4de1b87",
+  "sha256": "4dba9cf6524656373c688f4adaf54927d3e038f46d3900bd3d9aa8a8090261e4",
   "publishedAt": "2026-10-15T01:16:16.228Z",
   "notes": [
     "画布选中素材的图片编排请求统一经过 JEV 语义判定，可靠传递选中图片、视频和文本参考。",
