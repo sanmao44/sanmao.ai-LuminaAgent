@@ -1,10 +1,20 @@
 # SANMAO.AI
 
-一个可运行的中文多模型 AI 创作平台：支持在网页内添加多个第三方 API 服务、读取模型列表、选择实际要使用的模型，并提供独立的智能助手、图片与视频工作台、图片修改和本地生成历史。
+本地优先的中文 AI 创作工作台：支持多模型对话、Agent 调度、图片与视频创作、超级画布、技能/MCP 接入，以及本地历史、任务和备份管理。
 
-> 开发与发布流程请见 [WORKFLOW.md](WORKFLOW.md)；版本更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+> 当前稳定版本：[`v0.7.95`](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.95) · [下载与安装包](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/latest) · [更新记录](CHANGELOG.md)
+>
+> 开发与发布流程请见 [WORKFLOW.md](WORKFLOW.md)。
 
-## 启动方式
+## 能力概览
+
+- **多模型对话与 Agent**：添加多个第三方 API 服务，读取模型列表，按能力选择实际使用的模型。
+- **超级画布**：用节点、素材、引用、连线和历史操作组织可复用的创作流程，并与 Agent 协同。
+- **图片与视频工作台**：支持生成、编辑、超分、视频剪辑、变体与异步任务恢复。
+- **技能与 MCP**：导入可复用技能，按授权接入浏览器、文件系统、GitHub 等外部能力。
+- **本地优先的数据管理**：历史、任务、图片、服务商配置和加密备份保存在本机，可按需部署局域网共享或 Docker 服务。
+
+## 快速开始
 
 ### Windows 本机启动
 
@@ -220,7 +230,7 @@ SANMAO_UPDATE_MANIFEST_URL=https://raw.githubusercontent.com/sanmao44/sanmao.ai-
 
 ```env
 SANMAO_UPDATE_MANIFEST_MIRRORS=https://gitee.com/sanmao44/sanmao.ai-LuminaAgent/raw/main/update.json
-SANMAO_UPDATE_MIRRORS=https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip
+SANMAO_UPDATE_MIRRORS=https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/vX.Y.Z/SANMAO.AI-X.Y.Z.zip
 SANMAO_UPDATE_GITHUB_PROXIES=https://ghfast.top/,https://gh-proxy.com/
 ```
 
@@ -228,10 +238,10 @@ SANMAO_UPDATE_GITHUB_PROXIES=https://ghfast.top/,https://gh-proxy.com/
 
 ```json
 {
-  "latestVersion": "0.7.24",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.24",
+  "latestVersion": "X.Y.Z",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/vX.Y.Z",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://codeload.github.com/sanmao44/sanmao.ai-LuminaAgent/zip/refs/tags/v0.7.24",
+  "packageUrl": "https://codeload.github.com/sanmao44/sanmao.ai-LuminaAgent/zip/refs/tags/vX.Y.Z",
   "sha256": "在发布后填写 64 位 SHA-256"
 }
 ```

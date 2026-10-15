@@ -1,3 +1,13 @@
+# 0.7.95 画布 Agent 路由与发布稳定性
+
+- 画布选中素材的图片编排请求统一经过 JEV 语义判定，可靠传递选中的图片、视频和文本参考。
+- 画布 Agent 无法可靠判断生图意图时改为请求澄清；没有可用生图模型时明确报告能力缺失，不再猜测或误执行。
+- 视频工作台在不同窗口宽度和滚动模式下保持稳定布局，减少页面滚动条和顶栏切换造成的位移。
+- 启动器固定使用本机 `3210` canonical origin，识别并清理旧版本服务和旧构建；健康接口补充版本与构建身份。
+- 发布验证：本地 `npm run check`、Ubuntu CI 和 macOS DMG 独立启动验证通过；2 项 Windows System.Speech 测试因当前安全上下文不可用而跳过。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.95](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.95)。
+
 # 0.7.50 MCP 连接器、文档产物与任务底座
 
 - 对话里可直接生成真实的 Word / Excel / PPT 与 ZIP 压缩包，产物以附件形式下载并支持在线预览（尽量还原 Excel 公式与条件格式、Word 目录样式、PPT 表格图表与演讲者备注）。
