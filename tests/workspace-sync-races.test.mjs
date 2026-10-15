@@ -299,20 +299,21 @@ test('a draft created during PUT remains guarded until Core autosave succeeds', 
 });
 
 for (const entry of ['bootstrap', 'reconcile']) {
-  test(`${entry} never rebases a dirty browser onto a fresh revision to overwrite another browser`, async (t) => {
+  test(`${entry} rebases a dirty browser without dropping another browser's workspace`, async (t) => {
     const h = harness(t);
     h.seedBaseline(snapshot(), 1);
     const newer = snapshot('other-browser', 500);
     h.setRemote(newer, 8);
     h.mutateCanvas();
-    if (entry === 'bootstrap') assert.deepEqual(await h.workspace.bootstrapWorkspace(), { offline: true });
-    else { h.start(); await waitFor(() => h.statuses.at(-1) === 'conflict'); }
-    assert.equal(h.requests.find((request) => request.method === 'PUT').payload.expectedRevision, 1);
-    assert.deepEqual(h.remote, newer);
-    assert.equal(h.restoreCount, 0);
-    assert.equal(h.meta.revision, 1);
-    assert.equal(h.meta.pending, true);
-    if (entry === 'reconcile') assert.equal([...h.timers.values()].filter((timer) => timer.delay === 700).length, 0);
+    if (entry === 'bootstrap') assert.deepEqual(await h.workspace.bootstrapWorkspace(), { offline: false });
+    else { h.start(); await waitFor(() => h.statuses.at(-1) === 'synced'); }
+    assert.equal(h.requests.filter((request) => request.method === 'PUT')[0].payload.expectedRevision, 1);
+    assert.equal(h.requests.filter((request) => request.method === 'PUT').at(-1).payload.expectedRevision, 8);
+    assert.equal(h.remote.canvas.projects.some((project) => project.id === 'other-browser'), true);
+    assert.equal(h.remote.canvas.projects.some((project) => project.id === 'new'), true);
+    assert.equal(h.restoreCount, 1);
+    assert.equal(h.meta.revision, 9);
+    assert.equal(h.meta.pending, false);
   });
 }
 
@@ -381,6 +382,73 @@ test('default canvas UI settings do not block recovery of a pending LAN placehol
   assert.equal(h.requests.filter((request) => request.method === 'PUT').length, 0);
   assert.equal(h.meta.pending, false);
   assert.equal(h.meta.revision, 3);
+});
+
+test('ordinary browser preferences do not block recovery of a pending LAN placeholder', async (t) => {
+  const remote = snapshot('shared-canvas', 200);
+  remote.canvas.documents['shared-canvas'].nodes = [{
+    id: 'shared-image', type: 'media', x: 24, y: 48,
+    data: { kind: 'image', url: '/api/storage/file?name=shared.png' },
+  }];
+  const h = harness(t, { remote, revision: 3, realCanvas: true });
+  h.canvasStorage.ensureCanvasStorage();
+  window.localStorage.setItem('sanmao-theme', 'dark');
+  window.localStorage.setItem('sanmao-generate-settings', JSON.stringify({ modelId: 'auto', ratio: '16:9' }));
+  window.localStorage.setItem('sanmao-model-preferences', JSON.stringify({ favorites: ['image-model'] }));
+  h.writeMeta({ clientId: 'browser-with-preferences', localUpdatedAt: 150, serverUpdatedAt: 0, revision: 0, pending: true });
+
+  assert.deepEqual(await h.workspace.bootstrapWorkspace(), { offline: false });
+  assert.equal(h.canvas.activeId, 'shared-canvas');
+  assert.deepEqual(h.canvas.documents['shared-canvas'].nodes.map((node) => node.id), ['shared-image']);
+  assert.equal(h.requests.filter((request) => request.method === 'PUT').length, 0);
+  assert.equal(h.meta.pending, false);
+  assert.equal(h.meta.revision, 3);
+});
+
+test('a stale LAN browser rebases its newer canvas onto the shared workspace without dropping other projects', async (t) => {
+  const remote = snapshot('remote-project', 300);
+  remote.canvas.documents['remote-project'].nodes = [{
+    id: 'remote-image', type: 'media', x: 80, y: 90,
+    data: { kind: 'image', url: '/api/storage/file?name=remote.png' },
+  }];
+  const h = harness(t, { remote, revision: 5 });
+  h.seedBaseline(snapshot('local-project', 200), 1);
+  h.mutateCanvas();
+  h.start();
+
+  await waitFor(() => h.statuses.at(-1) === 'synced');
+  assert.equal(h.remote.canvas.projects.some((project) => project.id === 'remote-project'), true);
+  assert.equal(h.remote.canvas.projects.some((project) => project.id === 'new'), true);
+  assert.equal(h.remote.canvas.documents['remote-project'].nodes[0].id, 'remote-image');
+  assert.equal(h.remote.canvas.documents.new.nodes[0].id, 'generated-image');
+  assert.equal(h.remote.canvas.activeId, 'new');
+  assert.equal(h.meta.pending, false);
+  assert.equal(h.meta.revision, 6);
+});
+
+test('project timestamps choose the newer same-id canvas during a LAN rebase', async (t) => {
+  const base = snapshot('shared-project', 200);
+  const h = harness(t, { remote: base, revision: 1 });
+  h.seedBaseline(base, 1);
+  h.canvas.projects[0].updatedAt = 400;
+  h.canvas.documents['shared-project'].nodes = [{
+    id: 'shared-image', type: 'media', x: 12, y: 18,
+    data: { kind: 'image', url: '/api/storage/file?name=local.png' },
+  }];
+  h.events.emitWorkspaceMutation();
+  const remote = snapshot('shared-project', 300);
+  remote.canvas.projects[0].updatedAt = 350;
+  remote.canvas.documents['shared-project'].nodes = [{
+    id: 'shared-image', type: 'media', x: 30, y: 40,
+    data: { kind: 'image', url: '/api/storage/file?name=remote.png' },
+  }];
+  h.setRemote(remote, 5);
+  h.start();
+
+  await waitFor(() => h.statuses.at(-1) === 'synced');
+  assert.deepEqual(h.remote.canvas.documents['shared-project'].nodes.map((node) => node.id), ['shared-image']);
+  assert.equal(h.remote.canvas.documents['shared-project'].nodes[0].data.url, '/api/storage/file?name=local.png');
+  assert.equal(h.meta.revision, 6);
 });
 
 test('metadata fast path still detects persisted changes and preferences without a local event', async (t) => {
@@ -496,9 +564,11 @@ test('images generated during automatic async restore save against the unchanged
   assert.deepEqual(reloaded.open('old').nodes.map((node) => node.id), ['one', 'two', 'three']);
   assert.equal(h.meta.pending, true);
   h.runDebounce();
-  await waitFor(() => h.statuses.at(-1) === 'conflict');
+  await waitFor(() => h.statuses.at(-1) === 'synced');
   assert.equal(h.requests.find((request) => request.method === 'PUT').payload.expectedRevision, 1);
-  assert.equal(h.remote.canvas.documents.old.nodes[0].id, 'remote-image');
+  assert.equal(h.requests.filter((request) => request.method === 'PUT').at(-1).payload.expectedRevision, 2);
+  assert.deepEqual(h.remote.canvas.documents.old.nodes.map((node) => node.id).sort(), ['one', 'remote-image', 'three', 'two']);
+  assert.equal(h.meta.revision, 3);
 });
 
 test('stopping sync during async restore cancels the pending canvas commit', async (t) => {

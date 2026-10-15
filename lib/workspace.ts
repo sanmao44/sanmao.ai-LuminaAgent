@@ -173,35 +173,18 @@ function readPreferences() {
   return preferences;
 }
 
-function isDefaultCanvasSettings(value: string) {
-  try {
-    const settings = JSON.parse(value) as unknown;
-    return isObject(settings)
-      && Object.keys(settings).length === 4
-      && settings.connectionStyle === 'curve'
-      && settings.edgesVisible === true
-      && settings.snapEnabled === true
-      && settings.depthQuality === 'medium';
-  } catch {
-    return false;
-  }
-}
-
-function hasNonBootstrapPreferences(preferences: Record<string, string>) {
-  return Object.entries(preferences).some(([key, value]) => (
-    key !== 'sanmao.canvas.settings' || !isDefaultCanvasSettings(value)
-  ));
-}
-
 /**
  * Older LAN clients created this empty browser canvas before bootstrap and
  * marked it pending. It is an adapter placeholder, not user content, so it is
  * safe to replace it with the server snapshot when no sync baseline exists.
+ * Browser preferences are intentionally excluded: a fresh client can have
+ * theme/model settings before its first workspace request, but those settings
+ * do not turn an empty canvas into user content.
  */
 function isLegacyInitialCanvasPlaceholder(snapshot: WorkspaceSnapshot, meta: WorkspaceMeta) {
   if (!meta.pending || meta.revision !== 0 || meta.serverUpdatedAt !== 0 || meta.contentSignature) return false;
   if (snapshot.gallery.length || snapshot.chatSessions.length || snapshot.assetIndex.length) return false;
-  if (snapshot.assetCollections.some((item) => !item.builtin) || hasNonBootstrapPreferences(snapshot.preferences)) return false;
+  if (snapshot.assetCollections.some((item) => !item.builtin)) return false;
   if (Object.keys(snapshot.canvas.ui).length || snapshot.canvas.projects.length !== 1) return false;
   const project = snapshot.canvas.projects[0];
   const document = snapshot.canvas.documents[project.id];
@@ -210,6 +193,123 @@ function isLegacyInitialCanvasPlaceholder(snapshot: WorkspaceSnapshot, meta: Wor
     && document.nodes.length === 0
     && document.edges.length === 0
     && document.groups.length === 0;
+}
+
+type WorkspaceRow = {
+  id: string;
+  createdAt?: number;
+  updatedAt?: number;
+};
+
+function workspaceRowTimestamp(row: WorkspaceRow) {
+  return Math.max(Number(row.updatedAt) || 0, Number(row.createdAt) || 0);
+}
+
+/** Merge independent workspace records without dropping data from either client. */
+function mergeWorkspaceRows<T extends WorkspaceRow>(local: readonly T[], remote: readonly T[]) {
+  const rows = new Map(remote.map((row) => [row.id, row] as const));
+  for (const row of local) {
+    const current = rows.get(row.id);
+    if (!current || workspaceRowTimestamp(row) >= workspaceRowTimestamp(current)) rows.set(row.id, row);
+  }
+  return [...rows.values()].sort((left, right) => workspaceRowTimestamp(right) - workspaceRowTimestamp(left));
+}
+
+type WorkspaceCreativeProject = NonNullable<WorkspaceSnapshot['canvas']['creativeProjects']>[number];
+
+function mergeCreativeProjects(local: readonly WorkspaceCreativeProject[], remote: readonly WorkspaceCreativeProject[]) {
+  const projects = mergeWorkspaceRows(local, remote);
+  return projects.map((project) => {
+    const localProject = local.find((item) => item.id === project.id);
+    const remoteProject = remote.find((item) => item.id === project.id);
+    const versions = mergeWorkspaceRows(localProject?.versions || [], remoteProject?.versions || []);
+    return versions.length ? { ...project, versions } : project;
+  });
+}
+
+type WorkspaceCanvasDocument = WorkspaceSnapshot['canvas']['documents'][string];
+
+function canvasDocumentHasData(document: WorkspaceCanvasDocument | undefined) {
+  return Boolean(document && (document.nodes.length || document.edges.length || document.groups.length));
+}
+
+function mergeCanvasRows<T extends WorkspaceRow>(local: readonly T[], remote: readonly T[], localWins: boolean) {
+  const rows = new Map(remote.map((row) => [row.id, row] as const));
+  for (const row of local) {
+    if (!rows.has(row.id) || localWins) rows.set(row.id, row);
+  }
+  return [...rows.values()];
+}
+
+function mergeCanvasDocuments(
+  local: WorkspaceCanvasDocument | undefined,
+  remote: WorkspaceCanvasDocument | undefined,
+  localWins: boolean,
+) {
+  if (!local) return remote;
+  if (!remote) return local;
+  const base = localWins ? local : remote;
+  return {
+    ...base,
+    nodes: mergeCanvasRows(local.nodes, remote.nodes, localWins),
+    edges: mergeCanvasRows(local.edges, remote.edges, localWins),
+    groups: mergeCanvasRows(local.groups, remote.groups, localWins),
+  };
+}
+
+function selectMergedActiveProject(
+  local: WorkspaceSnapshot,
+  remote: WorkspaceSnapshot,
+  projects: readonly WorkspaceSnapshot['canvas']['projects'][number][],
+) {
+  const projectIds = new Set(projects.map((project) => project.id));
+  const localActive = local.canvas.activeId && projectIds.has(local.canvas.activeId) ? local.canvas.activeId : null;
+  const remoteActive = remote.canvas.activeId && projectIds.has(remote.canvas.activeId) ? remote.canvas.activeId : null;
+  if (localActive && canvasDocumentHasData(local.canvas.documents[localActive])) return localActive;
+  if (remoteActive && canvasDocumentHasData(remote.canvas.documents[remoteActive])) return remoteActive;
+  const candidates = [localActive, remoteActive].filter((id, index, values): id is string => Boolean(id) && values.indexOf(id) === index);
+  candidates.sort((left, right) => {
+    const leftProject = projects.find((project) => project.id === left);
+    const rightProject = projects.find((project) => project.id === right);
+    return workspaceRowTimestamp(rightProject || { id: right }) - workspaceRowTimestamp(leftProject || { id: left });
+  });
+  return candidates[0] || projects[0]?.id || null;
+}
+
+/**
+ * Rebase a stale browser snapshot onto the current shared workspace. Canvas
+ * projects are the conflict unit: newer project rows win, while unrelated
+ * projects and history records are retained from both sides.
+ */
+export function mergeWorkspaceSnapshots(local: WorkspaceSnapshot, remote: WorkspaceSnapshot): WorkspaceSnapshot {
+  const projects = mergeWorkspaceRows(local.canvas.projects, remote.canvas.projects);
+  const documents = Object.fromEntries(projects.flatMap((project) => {
+    const localProject = local.canvas.projects.find((item) => item.id === project.id);
+    const remoteProject = remote.canvas.projects.find((item) => item.id === project.id);
+    const localDocument = local.canvas.documents[project.id];
+    const remoteDocument = remote.canvas.documents[project.id];
+    const localWins = Boolean(localProject && (!remoteProject || workspaceRowTimestamp(localProject) >= workspaceRowTimestamp(remoteProject)));
+    const document = mergeCanvasDocuments(localDocument, remoteDocument, localWins);
+    return document ? [[project.id, document] as const] : [];
+  }));
+  const activeId = selectMergedActiveProject(local, remote, projects);
+  return {
+    schemaVersion: local.schemaVersion,
+    updatedAt: Math.max(local.updatedAt, remote.updatedAt),
+    clientId: local.clientId,
+    canvas: {
+      projects,
+      activeId,
+      documents,
+      ui: { ...remote.canvas.ui, ...local.canvas.ui },
+      creativeProjects: mergeCreativeProjects(local.canvas.creativeProjects || [], remote.canvas.creativeProjects || []),
+    },
+    gallery: mergeWorkspaceRows(local.gallery, remote.gallery),
+    chatSessions: mergeWorkspaceRows(local.chatSessions, remote.chatSessions),
+    assetIndex: mergeWorkspaceRows(local.assetIndex, remote.assetIndex),
+    assetCollections: mergeWorkspaceRows(local.assetCollections, remote.assetCollections),
+    preferences: { ...remote.preferences, ...local.preferences },
+  };
 }
 
 export async function collectWorkspaceSnapshot(updatedAt = Date.now()): Promise<WorkspaceSnapshot> {
@@ -373,13 +473,57 @@ async function saveWorkspace(snapshot: WorkspaceSnapshot, meta: WorkspaceMeta, g
   return !pending;
 }
 
-async function uploadLocalWorkspace(keepalive = false) {
+async function rebaseWorkspaceAfterConflict(
+  local: WorkspaceSnapshot,
+  state: ReturnType<typeof captureLocalState>,
+  keepalive: boolean,
+) {
+  const server = await requestWorkspace('GET');
+  const remote = server.workspace ? validateWorkspaceShape(server.workspace) as unknown as WorkspaceSnapshot : null;
+  const revision = Number(server.revision ?? 0);
+  if (!remote || revision < (readMeta()?.revision ?? 0)) {
+    throw new WorkspaceConflictError('工作区版本变化过快，请刷新后再保存');
+  }
+  if (localStateChanged(state)) {
+    preserveLocalChanges(state);
+    return { synced: false, rebased: false };
+  }
+  const merged = mergeWorkspaceSnapshots(local, remote);
+  const restored = await restoreWorkspaceSnapshotInternal(
+    merged,
+    revision,
+    server.contentHash || undefined,
+    state,
+  );
+  if (!restored) return { synced: false, rebased: false };
+  const baseline = readMeta() || currentWorkspaceMeta();
+  const synced = await saveWorkspace(merged, {
+    ...baseline,
+    revision,
+    serverUpdatedAt: Number(server.updatedAt || remote.updatedAt),
+    pending: true,
+  }, state.generation, keepalive);
+  return { synced, rebased: true };
+}
+
+async function uploadLocalWorkspace(keepalive = false, onRestored?: () => void) {
   const meta = currentWorkspaceMeta();
   if (hasWorkspaceDraftPending()) return false;
   const state = captureLocalState();
   const local = await collectWorkspaceSnapshot(Math.max(meta.localUpdatedAt, Date.now()));
   if (localStateChanged(state)) { preserveLocalChanges(state); return false; }
-  return saveWorkspace(local, meta, state.generation, keepalive);
+  try {
+    return await saveWorkspace(local, meta, state.generation, keepalive);
+  } catch (error) {
+    if (!(error instanceof WorkspaceConflictError)) throw error;
+    // saveWorkspace marks the in-flight snapshot pending before PUT. Capture
+    // that bookkeeping baseline, then let the rebase guard detect real edits
+    // made while the conflict GET and restore are in progress.
+    const conflictState = captureLocalState();
+    const result = await rebaseWorkspaceAfterConflict(local, conflictState, keepalive);
+    if (result.rebased) onRestored?.();
+    return result.synced;
+  }
 }
 
 /** Reconciles the browser cache with the local service before the page renders its data. */
@@ -423,10 +567,10 @@ async function reconcileWorkspace(onRestored?: () => void, stopped = () => false
   // a fresh remote revision must never turn a CAS conflict into an overwrite.
   // The one exception is the pre-bootstrap placeholder written by older LAN
   // clients; it has no baseline or user data and must be replaced by GET.
-  if (meta.pending && !isLegacyInitialCanvasPlaceholder(local, meta)) return uploadLocalWorkspace();
+  if (meta.pending && !isLegacyInitialCanvasPlaceholder(local, meta)) return uploadLocalWorkspace(false, onRestored);
   if (meta.contentSignature && meta.contentSignature !== workspaceContentSignature(local)) {
     writeMeta({ ...meta, localUpdatedAt: Date.now(), pending: true });
-    return uploadLocalWorkspace();
+    return uploadLocalWorkspace(false, onRestored);
   }
   // Collect even on metadata-only polls: preferences or another tab can change
   // the persisted cache without delivering this tab's workspace event.
@@ -447,7 +591,7 @@ async function reconcileWorkspace(onRestored?: () => void, stopped = () => false
     if (restored && !stopped() && !hasWorkspaceDraftPending() && state.generation === getWorkspaceMutationGeneration()) onRestored?.();
     return restored && !currentWorkspaceMeta().pending;
   }
-  if (workspaceHasData(local)) return uploadLocalWorkspace();
+  if (workspaceHasData(local)) return uploadLocalWorkspace(false, onRestored);
   writeMeta({ ...meta, revision, pending: false });
   acknowledgedMutationGeneration = state.generation;
   return true;
