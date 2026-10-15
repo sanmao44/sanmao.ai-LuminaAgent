@@ -808,7 +808,10 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         } finally {
           intentClassifierMs = Date.now() - classifierStartedAt;
         }
-        if (!decision && !canvasDockIntentReview) {
+        const canFallbackCanvasGeneration = canvasDockIntentReview
+          && canvasTargetOperation === 'generate'
+          && latestReferenceImageCount > 0;
+        if (!decision && (!canvasDockIntentReview || canFallbackCanvasGeneration)) {
           const planned = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, semanticPayload, requestController.signal);
           decision = parseSemanticIntent(planned?.choices?.[0]?.message?.content);
         }
@@ -845,7 +848,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
       }
     }
-    if (canvasDockIntentReview && !semanticDecisionResolved && intentDecision.confidence !== 'high' && !canvasImageCompositionIntent) {
+    if (canvasDockIntentReview && !semanticDecisionResolved && intentDecision.confidence !== 'high' && !canvasImageCompositionIntent && canvasTargetNodeIds.length === 0) {
       const clarification = '我暂时无法可靠判断这句话是要生成图片还是继续讨论。请明确说“用选中素材生成一张海报”或告诉我你想先分析什么。';
       return wantsStream
         ? streamResult(null, { fallback: clarification, images: [], files: [], generations: [], model: agentRuntime.model.displayName })

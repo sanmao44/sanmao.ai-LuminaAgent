@@ -697,6 +697,45 @@ test('Canvas semantic classification failure asks for clarification instead of i
   assert.equal(agent.modelCalls.filter((call) => call.model !== 'jev-1.13').length, 0);
 });
 
+test('Canvas follow-up conversation stays conversational with selected image nodes', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"discuss","deliverable":"OTHER","confidence":"high","reason":"这是普通跟进对话"}' }
+      : { content: '在的，我在。你可以继续说。' },
+  });
+  const selectedIds = ['character-1', 'character-2', 'character-3', 'character-4'];
+  const document = {
+    version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+    nodes: selectedIds.map((id) => ({ id, type: 'media', x: 0, y: 0, data: { kind: 'image', name: id, url: `https://assets.test/${id}.png` } })),
+  };
+  const history = [
+    { role: 'user', content: '将这四个角色创作成一张16:9的海报图，各有各的动作！' },
+    { role: 'assistant', content: '请确认是否使用选中素材生成海报？' },
+  ];
+
+  for (const followUp of ['还在吗', '你好', '你能不能正常点']) {
+    const data = await agent.post([...history, { role: 'user', content: followUp }], {
+      source: 'canvas',
+      executionMode: 'agent-dock',
+      intentText: followUp,
+      context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: selectedIds, assetIds: [] },
+      canvasTarget: { nodeIds: selectedIds, kind: 'image', operation: 'generate' },
+      canvasDocument: document,
+    });
+    assert.equal(data.message, '在的，我在。你可以继续说。');
+    assert.equal(data.deliverable, 'OTHER');
+  }
+
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 3);
+  assert.equal(agent.images.length, 0);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'test-chat').length, 3);
+});
+
 test('Canvas semantic image intent reports actual missing image capability before chat can guess', async () => {
   const classifierRuntime = {
     model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
