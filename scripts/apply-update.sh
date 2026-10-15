@@ -8,6 +8,9 @@ VERSION=${4:?version is required}
 RESTART_PORT=${7:-0}
 PROGRESS_PATH=${8:-}
 OPERATION_TOKEN=${9:-}
+if [ "$RESTART_PORT" -ge 3210 ] 2>/dev/null && [ "$RESTART_PORT" -le 3220 ] 2>/dev/null; then
+  RESTART_PORT=3210
+fi
 STAGING_PATH=$(CDPATH= cd -- "$(dirname "$ARCHIVE_PATH")" && pwd)
 TARGET_PATH=$(CDPATH= cd -- "$TARGET_PATH" && pwd)
 . "$TARGET_PATH/scripts/launcher-common.sh"
@@ -109,7 +112,7 @@ start_rollback_service() {
   else
     (cd "$TARGET_PATH" && SANMAO_OPERATION_TOKEN="$OPERATION_TOKEN" SANMAO_SKIP_BUILD=1 SANMAO_NONINTERACTIVE=1 SANMAO_DETACH_SERVER=1 nohup sh scripts/start-macos.sh >"$ROLLBACK_OUT" 2>"$ROLLBACK_ERR" </dev/null &)
     PROBE_START=3210
-    PROBE_END=3220
+    PROBE_END=3210
   fi
   for _ in $(seq 1 360); do
     PROBE_PORT=$PROBE_START
@@ -231,7 +234,7 @@ if [ "$RESTART_PORT" -ge 1024 ] 2>/dev/null && [ "$RESTART_PORT" -le 65525 ] 2>/
   PROBE_END=$RESTART_PORT
 else
   PROBE_START=3210
-  PROBE_END=3220
+  PROBE_END=3210
 fi
 
 . "$TARGET_PATH/scripts/launcher-common.sh"

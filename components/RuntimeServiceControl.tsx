@@ -22,7 +22,7 @@ function reloadPage() {
   try {
     const url = new URL(window.location.href);
     // 重启（含从局域网切回本地）之后服务只监听本机，用局域网 IP 打开的页面会连不上。
-    if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) url.hostname = 'localhost';
+    if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) url.hostname = '127.0.0.1';
     url.searchParams.set('sanmao_reload', String(Date.now()));
     window.location.replace(url.toString());
   } catch {

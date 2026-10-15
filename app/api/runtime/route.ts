@@ -12,6 +12,7 @@ import {
 } from '@/lib/runtime-operation';
 import { getActiveUpdateProgress } from '@/lib/local-update';
 import { getRuntimeStatus, runtimeOperationLockPath, runtimeRestartStatusPath } from '@/lib/runtime-service';
+import { normalizeRuntimeOperationPort } from '@/lib/runtime-port';
 
 export const runtime = 'nodejs';
 
@@ -40,9 +41,9 @@ function sameLocalOrigin(request: Request) {
 function requestPort(request: Request) {
   try {
     const port = Number(new URL(request.url).port);
-    return Number.isInteger(port) && port >= 1024 && port <= 65525 ? port : 3210;
+    return normalizeRuntimeOperationPort(port);
   } catch {
-    return 3210;
+    return normalizeRuntimeOperationPort(0);
   }
 }
 

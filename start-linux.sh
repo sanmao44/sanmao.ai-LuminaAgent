@@ -40,6 +40,7 @@ case "$PORT" in
   ''|*[!0-9]*) PORT=3210 ;;
 esac
 if [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65525 ]; then PORT=3210; fi
+if [ "$PORT" -ge 3210 ] && [ "$PORT" -le 3220 ]; then PORT=3210; fi
 resolve_provider_config_dir() {
   CONFIG_DIR="${SANMAO_PROVIDER_CONFIG_DIR:-${SANMAO_DATA_DIR:-}}"
   if [ -n "$CONFIG_DIR" ]; then
@@ -90,6 +91,8 @@ else
   free_relay_stop "$ROOT_DIR"
 fi
 export SANMAO_LIFECYCLE=1
+SANMAO_BUILD_ID=$(tr -d '\r\n' < "$ROOT_DIR/.next/BUILD_ID" 2>/dev/null || true)
+export SANMAO_BUILD_ID
 RELAY_WATCH_PID=''
 SERVER_PID=''
 cleanup() {

@@ -1,6 +1,7 @@
 import { isTrustedAppRequest } from '@/lib/auth';
 import { LocalUpdateBusyError, startLocalUpdate } from '@/lib/local-update';
 import { getUpdateStatus } from '@/lib/update';
+import { normalizeRuntimeOperationPort } from '@/lib/runtime-port';
 
 export const runtime = 'nodejs';
 
@@ -17,9 +18,9 @@ function unavailableMessage(reason: string | undefined) {
 function requestPort(request: Request) {
   try {
     const port = Number(new URL(request.url).port);
-    return Number.isInteger(port) && port >= 1024 && port <= 65525 ? port : 0;
+    return normalizeRuntimeOperationPort(port);
   } catch {
-    return 0;
+    return normalizeRuntimeOperationPort(0);
   }
 }
 

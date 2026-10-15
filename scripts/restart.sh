@@ -108,7 +108,7 @@ start_service() {
   SERVER_STDOUT="$DATA_DIR/runtime-restart/server.out.log"
   SERVER_STDERR="$DATA_DIR/runtime-restart/server.err.log"
   mkdir -p "$(dirname "$SERVER_STDOUT")"
-  SANMAO_RUNTIME_INSTANCE_ID=$(node -e "process.stdout.write(require('node:crypto').randomUUID())") SANMAO_NETWORK_MODE=local SANMAO_LIFECYCLE=1 nohup "$ROOT_DIR/node_modules/.bin/next" start -H 127.0.0.1 -p "$PORT" >"$SERVER_STDOUT" 2>"$SERVER_STDERR" </dev/null &
+  SANMAO_RUNTIME_INSTANCE_ID=$(node -e "process.stdout.write(require('node:crypto').randomUUID())") SANMAO_BUILD_ID=$(tr -d '\r\n' < "$ROOT_DIR/.next/BUILD_ID" 2>/dev/null || true) SANMAO_NETWORK_MODE=local SANMAO_LIFECYCLE=1 nohup "$ROOT_DIR/node_modules/.bin/next" start -H 127.0.0.1 -p "$PORT" >"$SERVER_STDOUT" 2>"$SERVER_STDERR" </dev/null &
   SERVER_PID=$!
   for _ in $(seq 1 180); do
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then return 1; fi
@@ -148,6 +148,7 @@ claim_lock
 write_status stopping
 
 if [ "$PORT" -lt 1024 ] 2>/dev/null || [ "$PORT" -gt 65525 ] 2>/dev/null; then PORT=3210; fi
+if [ "$PORT" -ge 3210 ] 2>/dev/null && [ "$PORT" -le 3220 ] 2>/dev/null; then PORT=3210; fi
 export SANMAO_PORT="$PORT"
 if ! sh "$SCRIPT_DIR/stop-macos.sh" --operation-token "$OPERATION_TOKEN"; then
   rollback '旧服务未能安全停止'

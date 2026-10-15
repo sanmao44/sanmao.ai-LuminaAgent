@@ -18,6 +18,7 @@ if ($Port -ge 1024 -and $Port -le 65525) {
   $requestedPort = [int]$env:SANMAO_PORT
 }
 $portStart = if ($requestedPort -ge 1024 -and $requestedPort -le 65525) { $requestedPort } else { 3210 }
+if ($portStart -ge 3210 -and $portStart -le 3220) { $portStart = 3210 }
 $portEnd = $portStart + 10
 $portRange = $portStart..$portEnd
 $legacyPortRange = 3000..3010

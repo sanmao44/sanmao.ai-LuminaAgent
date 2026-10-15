@@ -10,6 +10,7 @@
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Port -ge 3210 -and $Port -le 3220) { $Port = 3210 }
 $launcherCommonPath = Join-Path $TargetPath 'scripts\launcher-common.ps1'
 if (Test-Path -LiteralPath $launcherCommonPath) { . $launcherCommonPath }
 $dataDir = if (Get-Command Resolve-SanmaoDataDir -ErrorAction SilentlyContinue) { Resolve-SanmaoDataDir -Root $TargetPath } else { Join-Path $TargetPath '.data' }
@@ -167,7 +168,7 @@ function Start-RolledBackService {
     }
     Remove-Item -LiteralPath $launcherStdoutPath, $launcherStderrPath -Force -ErrorAction SilentlyContinue
     $script:launcherProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $TargetPath -WindowStyle Hidden -RedirectStandardOutput $launcherStdoutPath -RedirectStandardError $launcherStderrPath -PassThru
-    $ports = if ($Port -ge 1024 -and $Port -le 65525) { @($Port) } else { @(3210..3220) }
+    $ports = if ($Port -ge 1024 -and $Port -le 65525) { @($Port) } else { @(3210) }
     $deadline = (Get-Date).AddSeconds(600)
     while ((Get-Date) -lt $deadline) {
       foreach ($probePort in $ports) {
@@ -277,7 +278,7 @@ try {
   if ($Port -ge 1024 -and $Port -le 65525) {
     $restartPorts = @($Port)
   } else {
-    $restartPorts = 3210..3220
+    $restartPorts = @(3210)
   }
   $deadline = (Get-Date).AddSeconds(600)
   $ready = $false
