@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.97/SANMAO.AI-0.7.97.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.97/SANMAO.AI-0.7.97.zip"
   ],
-  "sha256": "3387eafca9ba9a078627e4e5f4560da91a33ecfbab310393e90f53c890bc24e7",
+  "sha256": "1af1de06059cadd96e4ba6d898b46529b56de04cb7322831240f0d0b693418f1",
   "publishedAt": "2026-10-15T13:17:51.481Z",
   "notes": [
     "修复局域网模式下绑定 0.0.0.0 时的真实 Host 同源判断，避免正常局域网请求被误判为跨站请求。",
