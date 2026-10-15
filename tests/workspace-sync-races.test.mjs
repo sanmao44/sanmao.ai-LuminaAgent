@@ -326,6 +326,63 @@ test('clean first startup restores the actual GET revision rather than metadata 
   assert.equal(h.requests.filter((request) => request.method === 'PUT').length, 0);
 });
 
+test('a fresh canvas created during LAN startup does not replace the saved workspace', async (t) => {
+  const remote = snapshot('shared-canvas', 200);
+  remote.canvas.documents['shared-canvas'].nodes = [{
+    id: 'shared-image', type: 'media', x: 24, y: 48,
+    data: { kind: 'image', url: '/api/storage/file?name=shared.png' },
+  }];
+  const h = harness(t, { remote, revision: 3, realCanvas: true });
+
+  h.canvasStorage.ensureCanvasStorage();
+  assert.equal(h.events.getWorkspaceMutationGeneration(), 0, 'initial empty canvas setup is not a user edit');
+
+  assert.deepEqual(await h.workspace.bootstrapWorkspace(), { offline: false });
+  assert.equal(h.canvas.activeId, 'shared-canvas');
+  assert.deepEqual(h.canvas.documents['shared-canvas'].nodes.map((node) => node.id), ['shared-image']);
+  assert.equal(h.restoreCount, 1);
+  assert.equal(h.requests.filter((request) => request.method === 'PUT').length, 0);
+});
+
+test('an old LAN placeholder pending at revision zero is recovered from the server', async (t) => {
+  const remote = snapshot('shared-canvas', 200);
+  remote.canvas.documents['shared-canvas'].nodes = [{
+    id: 'shared-image', type: 'media', x: 24, y: 48,
+    data: { kind: 'image', url: '/api/storage/file?name=shared.png' },
+  }];
+  const h = harness(t, { remote, revision: 3, realCanvas: true });
+  h.canvasStorage.ensureCanvasStorage();
+  h.writeMeta({ clientId: 'old-browser', localUpdatedAt: 150, serverUpdatedAt: 0, revision: 0, pending: true });
+
+  assert.deepEqual(await h.workspace.bootstrapWorkspace(), { offline: false });
+  assert.equal(h.canvas.activeId, 'shared-canvas');
+  assert.deepEqual(h.canvas.documents['shared-canvas'].nodes.map((node) => node.id), ['shared-image']);
+  assert.equal(h.requests.filter((request) => request.method === 'PUT').length, 0);
+  assert.equal(h.meta.pending, false);
+  assert.equal(h.meta.revision, 3);
+});
+
+test('default canvas UI settings do not block recovery of a pending LAN placeholder', async (t) => {
+  const remote = snapshot('shared-canvas', 200);
+  remote.canvas.documents['shared-canvas'].nodes = [{
+    id: 'shared-image', type: 'media', x: 24, y: 48,
+    data: { kind: 'image', url: '/api/storage/file?name=shared.png' },
+  }];
+  const h = harness(t, { remote, revision: 3, realCanvas: true });
+  h.canvasStorage.ensureCanvasStorage();
+  window.localStorage.setItem('sanmao.canvas.settings', JSON.stringify({
+    connectionStyle: 'curve', edgesVisible: true, snapEnabled: true, depthQuality: 'medium',
+  }));
+  h.writeMeta({ clientId: 'browser-with-defaults', localUpdatedAt: 150, serverUpdatedAt: 0, revision: 0, pending: true });
+
+  assert.deepEqual(await h.workspace.bootstrapWorkspace(), { offline: false });
+  assert.equal(h.canvas.activeId, 'shared-canvas');
+  assert.deepEqual(h.canvas.documents['shared-canvas'].nodes.map((node) => node.id), ['shared-image']);
+  assert.equal(h.requests.filter((request) => request.method === 'PUT').length, 0);
+  assert.equal(h.meta.pending, false);
+  assert.equal(h.meta.revision, 3);
+});
+
 test('metadata fast path still detects persisted changes and preferences without a local event', async (t) => {
   const h = harness(t);
   h.seedBaseline();

@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const route = fs.readFileSync(path.join(root, 'app/api/workspace/route.ts'), 'utf8');
@@ -30,6 +31,39 @@ test('workspace writes clean up after failures and sweep stale temporaries', () 
   assert.match(repository, /unlink\(temporary\)\.catch\(\(\) => undefined\)/);
   assert.match(repository, /await rename\(temporary, root\.workspace\)/);
   assert.match(repository, /await sweepStaleWorkspaceTemps\(root\.dataDir\)\.catch\(\(\) => 0\)/);
+});
+
+test('workspace metadata follows the parsed snapshot revision and repairs stale sidecars', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'sanmao-workspace-repository-'));
+  const previousDataDir = process.env.SANMAO_DATA_DIR;
+  process.env.SANMAO_DATA_DIR = dataDir;
+  try {
+    const repository = createTsRequire(path.join(root, 'lib', 'repositories'))('./server-workspace-repository.ts').serverWorkspaceRepository;
+    const workspace = {
+      schemaVersion: 1,
+      updatedAt: 42,
+      clientId: 'server-test',
+      canvas: { projects: [], documents: {}, ui: {} },
+      gallery: [{ id: 'gallery-1', revision: 7 }],
+      chatSessions: [],
+      assetIndex: [],
+      assetCollections: [],
+      preferences: {},
+      revision: 42,
+    };
+    await writeFile(path.join(dataDir, 'workspace.json'), `${JSON.stringify(workspace)}\n`);
+    await writeFile(path.join(dataDir, 'workspace-meta.json'), JSON.stringify({ updatedAt: 7, revision: 7 }));
+
+    assert.deepEqual(await repository.metadata(), { updatedAt: 42, revision: 42 });
+    assert.deepEqual(JSON.parse(await fs.promises.readFile(path.join(dataDir, 'workspace-meta.json'), 'utf8')), { updatedAt: 42, revision: 42 });
+
+    await repository.write({ ...workspace, updatedAt: 43, revision: 43 });
+    assert.deepEqual(await repository.metadata(), { updatedAt: 43, revision: 43 });
+  } finally {
+    if (previousDataDir === undefined) delete process.env.SANMAO_DATA_DIR;
+    else process.env.SANMAO_DATA_DIR = previousDataDir;
+    await rm(dataDir, { recursive: true, force: true });
+  }
 });
 
 test('client restore marks the restored snapshot as the new sync baseline', () => {

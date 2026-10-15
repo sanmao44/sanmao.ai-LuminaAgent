@@ -173,6 +173,45 @@ function readPreferences() {
   return preferences;
 }
 
+function isDefaultCanvasSettings(value: string) {
+  try {
+    const settings = JSON.parse(value) as unknown;
+    return isObject(settings)
+      && Object.keys(settings).length === 4
+      && settings.connectionStyle === 'curve'
+      && settings.edgesVisible === true
+      && settings.snapEnabled === true
+      && settings.depthQuality === 'medium';
+  } catch {
+    return false;
+  }
+}
+
+function hasNonBootstrapPreferences(preferences: Record<string, string>) {
+  return Object.entries(preferences).some(([key, value]) => (
+    key !== 'sanmao.canvas.settings' || !isDefaultCanvasSettings(value)
+  ));
+}
+
+/**
+ * Older LAN clients created this empty browser canvas before bootstrap and
+ * marked it pending. It is an adapter placeholder, not user content, so it is
+ * safe to replace it with the server snapshot when no sync baseline exists.
+ */
+function isLegacyInitialCanvasPlaceholder(snapshot: WorkspaceSnapshot, meta: WorkspaceMeta) {
+  if (!meta.pending || meta.revision !== 0 || meta.serverUpdatedAt !== 0 || meta.contentSignature) return false;
+  if (snapshot.gallery.length || snapshot.chatSessions.length || snapshot.assetIndex.length) return false;
+  if (snapshot.assetCollections.some((item) => !item.builtin) || hasNonBootstrapPreferences(snapshot.preferences)) return false;
+  if (Object.keys(snapshot.canvas.ui).length || snapshot.canvas.projects.length !== 1) return false;
+  const project = snapshot.canvas.projects[0];
+  const document = snapshot.canvas.documents[project.id];
+  return snapshot.canvas.activeId === project.id
+    && Boolean(document)
+    && document.nodes.length === 0
+    && document.edges.length === 0
+    && document.groups.length === 0;
+}
+
 export async function collectWorkspaceSnapshot(updatedAt = Date.now()): Promise<WorkspaceSnapshot> {
   const [gallery, chatSessions, assetIndex, assetCollections] = await Promise.all([
     assetRepository.listGallery(),
@@ -378,11 +417,13 @@ async function reconcileWorkspace(onRestored?: () => void, stopped = () => false
   const metadata = await requestWorkspaceMetadata();
   if (localStateChanged(state) || stopped()) { preserveLocalChanges(state); return false; }
 
-  // A pending snapshot belongs to the revision it was edited against. Reading
-  // a fresh remote revision must never turn a CAS conflict into an overwrite.
-  if (meta.pending) return uploadLocalWorkspace();
   const local = await collectWorkspaceSnapshot();
   if (localStateChanged(state) || stopped()) { preserveLocalChanges(state); return false; }
+  // A pending snapshot belongs to the revision it was edited against. Reading
+  // a fresh remote revision must never turn a CAS conflict into an overwrite.
+  // The one exception is the pre-bootstrap placeholder written by older LAN
+  // clients; it has no baseline or user data and must be replaced by GET.
+  if (meta.pending && !isLegacyInitialCanvasPlaceholder(local, meta)) return uploadLocalWorkspace();
   if (meta.contentSignature && meta.contentSignature !== workspaceContentSignature(local)) {
     writeMeta({ ...meta, localUpdatedAt: Date.now(), pending: true });
     return uploadLocalWorkspace();

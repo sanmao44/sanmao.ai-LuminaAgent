@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveLocalDataDir } from '../data-paths';
 import { validateWorkspaceShape } from '../workspace-format';
@@ -15,6 +15,17 @@ const paths = (dataDir = resolveLocalDataDir()) => ({
   metadata: path.join(dataDir, 'workspace-meta.json'),
 });
 const assertStoreStable = createSqliteAuthorityFence();
+
+type WorkspaceMetadata = { updatedAt: number; revision: number };
+
+type LegacyMetadataCache = {
+  dataDir: string;
+  workspaceMtimeMs: number;
+  metadataMtimeMs: number;
+  value: WorkspaceMetadata | null;
+};
+
+let legacyMetadataCache: LegacyMetadataCache | null = null;
 
 function parse(raw: string) {
   if (!raw.trim()) return null;
@@ -50,19 +61,57 @@ async function writeLegacy(root: ReturnType<typeof paths>, content: string) {
   const temporary = `${root.workspace}.${Date.now()}.${process.pid}.tmp`;
   try {
     await writeFile(temporary, content, { encoding: 'utf8', flush: true });
-    parse(await readFile(temporary, 'utf8'));
+    const workspace = parse(await readFile(temporary, 'utf8'));
+    if (!workspace) throw new Error('Workspace snapshot is empty');
     for (let attempt = 0; ; attempt += 1) {
       try { await rename(temporary, root.workspace); break; }
       catch (error) { if (attempt >= 2) throw error; await new Promise((resolve) => setTimeout(resolve, 150)); }
     }
-    const updatedAt = content.match(/"updatedAt"\s*:\s*(\d+)/)?.[1];
-    const revision = content.match(/"revision"\s*:\s*(\d+)/)?.[1];
-    if (updatedAt) await writeFile(root.metadata, JSON.stringify({ updatedAt: Number(updatedAt) || 0, revision: Number(revision) || 0 }), { encoding: 'utf8', flush: true }).catch(() => undefined);
+    await writeFile(root.metadata, JSON.stringify({
+      updatedAt: Number(workspace.updatedAt) || 0,
+      revision: Number(workspace.revision) || 0,
+    }), { encoding: 'utf8', flush: true }).catch(() => undefined);
+    legacyMetadataCache = null;
   } catch (error) {
     await unlink(temporary).catch(() => undefined);
     throw error;
   }
   await sweepStaleWorkspaceTemps(root.dataDir).catch(() => 0);
+}
+
+async function readLegacyMetadata(root: ReturnType<typeof paths>): Promise<WorkspaceMetadata | null> {
+  const workspaceInfo = await stat(root.workspace).catch(() => null);
+  const metadataInfo = await stat(root.metadata).catch(() => null);
+  if (!workspaceInfo) {
+    legacyMetadataCache = null;
+    return null;
+  }
+  if (legacyMetadataCache
+    && legacyMetadataCache.dataDir === root.dataDir
+    && legacyMetadataCache.workspaceMtimeMs === workspaceInfo.mtimeMs
+    && legacyMetadataCache.metadataMtimeMs === (metadataInfo?.mtimeMs || 0)) {
+    return legacyMetadataCache.value;
+  }
+
+  const workspace = parse(await readFile(root.workspace, 'utf8'));
+  const value = workspace
+    ? { updatedAt: Number(workspace.updatedAt) || 0, revision: Number(workspace.revision) || 0 }
+    : null;
+  const stored = await readFile(root.metadata, 'utf8')
+    .then((raw) => JSON.parse(raw) as Partial<WorkspaceMetadata>)
+    .then((metadata) => ({ updatedAt: Number(metadata.updatedAt) || 0, revision: Number(metadata.revision) || 0 }))
+    .catch(() => null);
+  if (value && (stored?.updatedAt !== value.updatedAt || stored?.revision !== value.revision)) {
+    await writeFile(root.metadata, JSON.stringify(value), { encoding: 'utf8', flush: true }).catch(() => undefined);
+  }
+  const repairedMetadataInfo = await stat(root.metadata).catch(() => null);
+  legacyMetadataCache = {
+    dataDir: root.dataDir,
+    workspaceMtimeMs: workspaceInfo.mtimeMs,
+    metadataMtimeMs: repairedMetadataInfo?.mtimeMs || 0,
+    value,
+  };
+  return value || stored;
 }
 
 export const serverWorkspaceRepository: ServerWorkspaceRepository<StoredWorkspaceSnapshot> = {
@@ -85,18 +134,7 @@ export const serverWorkspaceRepository: ServerWorkspaceRepository<StoredWorkspac
       const workspace = readAuthoritativeWorkspace(root.dataDir);
       return workspace ? { updatedAt: Number(workspace.updatedAt) || 0, revision: Number(workspace.revision) || 0 } : null;
     }
-    try {
-      const value = JSON.parse(await readFile(root.metadata, 'utf8')) as { updatedAt?: unknown; revision?: unknown };
-      return { updatedAt: Number(value.updatedAt) || 0, revision: Number(value.revision) || 0 };
-    } catch (error) { if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error; }
-    try {
-      const handle = await open(root.workspace, 'r');
-      const buffer = Buffer.alloc(4096);
-      const result = await handle.read(buffer, 0, buffer.length, 0);
-      await handle.close();
-      const updatedAt = buffer.subarray(0, result.bytesRead).toString('utf8').match(/"updatedAt"\s*:\s*(\d+)/)?.[1];
-      return updatedAt ? { updatedAt: Number(updatedAt) || 0, revision: 0 } : null;
-    } catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null; throw error; }
+    return readLegacyMetadata(root);
   },
   async write(value) {
     const root = paths();

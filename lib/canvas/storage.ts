@@ -1,6 +1,6 @@
 import type { CanvasDocument, CanvasProject } from './types';
 import { CANVAS_VERSION, normalizeDocument } from './model';
-import { emitWorkspaceChange } from '../workspace-events';
+import { emitWorkspaceChange, withWorkspaceRestoreSuppressed } from '../workspace-events';
 import type { CanvasWorkspaceData } from '../workspace-types';
 import {
   CREATIVE_PROJECTS_KEY,
@@ -235,7 +235,11 @@ export function ensureCanvasStorage() {
     return { projects: identity.canvasProjects, activeId: tabActiveProjectId(identity.canvasProjects)!, migrated: true };
   }
   const project: CanvasProject = { id: `canvas_${Date.now().toString(36)}`, name: '我的 AI 画布', createdAt: Date.now(), updatedAt: Date.now() };
-  if (!createCanvasProject(project, normalizeDocument(null))) throw new Error(describeCanvasSaveFailure());
+  // The first empty project is the browser adapter's initialization state, not
+  // a user edit. Keep it out of the sync dirty-generation so a new LAN client
+  // can download the server workspace before this placeholder is uploaded.
+  const created = withWorkspaceRestoreSuppressed(() => createCanvasProject(project, normalizeDocument(null)));
+  if (!created) throw new Error(describeCanvasSaveFailure());
   const projects = readCanvasProjects();
   return { projects, activeId: tabActiveProjectId(projects)!, migrated: false };
 }
