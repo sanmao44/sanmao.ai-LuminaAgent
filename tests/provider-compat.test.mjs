@@ -145,6 +145,33 @@ test('chat, stream and Responses requests all receive provider-ready media', asy
     || body.input?.[0]?.content[0].image_url.url === 'https://cdn.example/reference.png'));
 });
 
+test('stream transport releases the header timeout after response headers arrive', async () => {
+  const previousFetch = globalThis.fetch;
+  let requestSignal;
+  globalThis.fetch = async (_url, init) => {
+    requestSignal = init.signal;
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('first'));
+        requestSignal.addEventListener('abort', () => controller.error(requestSignal.reason), { once: true });
+        setTimeout(() => {
+          if (requestSignal.aborted) return;
+          controller.enqueue(new TextEncoder().encode('second'));
+          controller.close();
+        }, 30);
+      },
+    });
+    return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const response = await providers.fetchStreamingResponse('https://provider.example/v1/chat/completions', { method: 'POST' }, 10);
+    assert.equal(await response.text(), 'firstsecond');
+    assert.equal(requestSignal.aborted, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('OpenAI-compatible chat keeps inline data URLs without a relay conversion', async () => {
   const requests = [];
   const previousFetch = globalThis.fetch;

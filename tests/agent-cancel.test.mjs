@@ -6,10 +6,9 @@ import { createTsRequire } from './ts-require.mjs';
 
 const root = new URL('..', import.meta.url);
 const read = (path) => readFile(new URL(path, root), 'utf8');
-const [page, history, providers, nativeSearch, webSearch, styles] = await Promise.all([
+const [page, history, nativeSearch, webSearch, styles] = await Promise.all([
   read('app/page.tsx'),
   read('lib/client-history.ts'),
-  read('lib/providers.ts'),
   read('lib/native-web-search.ts'),
   read('lib/web-search.ts'),
   read('app/globals.css'),
@@ -68,8 +67,7 @@ test('HTTP transport preserves the request abort signal for application cancella
   assert.equal(input.signal.aborted, true);
 });
 
-test('server cancellation reaches model, search, image, stream, and subprocess transports', () => {
-  assert.ok(providers.includes('signal: combineSignals(signal, 180000)'));
+test('server cancellation reaches search and subprocess transports', () => {
   assert.ok(nativeSearch.includes('signal: combineSignals(signal, 180000)'));
   assert.ok(webSearch.includes("execFileAsync('powershell.exe'"));
   assert.ok(webSearch.includes('signal,'));

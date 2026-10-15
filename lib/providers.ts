@@ -394,6 +394,18 @@ function combineSignals(signal: AbortSignal | undefined, timeout: number) {
   return controller.signal;
 }
 
+function combineStreamSignals(signal: AbortSignal, timeoutSignal: AbortSignal) {
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, timeoutSignal]);
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(signal.reason || new Error('AGENT_CANCELLED'));
+  const abortFromTimeout = () => controller.abort(timeoutSignal.reason || new Error('The operation was aborted due to timeout'));
+  if (signal.aborted) abortFromParent();
+  else signal.addEventListener('abort', abortFromParent, { once: true });
+  if (timeoutSignal.aborted) abortFromTimeout();
+  else timeoutSignal.addEventListener('abort', abortFromTimeout, { once: true });
+  return controller.signal;
+}
+
 function connectionFailure(url: string, error: unknown, method = 'GET') {
   const host = (() => { try { return new URL(url).host; } catch { return url; } })();
   const path = (() => { try { return new URL(url).pathname || '/'; } catch { return url; } })();
@@ -1764,14 +1776,22 @@ export async function responsesCompletion(provider: RuntimeProvider, rawModelId:
 }
 
 async function fetchStreamingResponse(url: string, init: RequestInit, timeout: number, signal?: AbortSignal) {
-  // Keep the same cancellation contract as the direct stream path:
-  // signal: combineSignals(signal, 180000)
+  // The transport deadline only covers waiting for response headers. Once the
+  // headers arrive, the response body is governed by the caller's signal and
+  // the Agent stream lifecycle, not by the header timer.
   const method = String(init.method || 'GET').toUpperCase();
+  const parentSignal = signal || init.signal || undefined;
+  const timeoutController = new AbortController();
+  const timeoutError = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  const timeoutId = setTimeout(() => timeoutController.abort(timeoutError), timeout);
+  const requestSignal = parentSignal
+    ? combineStreamSignals(parentSignal, timeoutController.signal)
+    : timeoutController.signal;
   try {
     const response = await fetch(url, {
       ...init,
       cache: 'no-store',
-      signal: combineSignals(signal || init.signal || undefined, timeout),
+      signal: requestSignal,
     });
     if (!response.ok) {
       const text = await response.text();
@@ -1781,14 +1801,19 @@ async function fetchStreamingResponse(url: string, init: RequestInit, timeout: n
     }
     return response;
   } catch (error) {
-    if (signal?.aborted) throw signal.reason || error;
+    if (parentSignal?.aborted) throw parentSignal.reason || error;
+    if (timeoutController.signal.aborted) throw providerTimeoutFailure(url, timeout, method);
     if (error instanceof Error && (error as ProviderFailure).providerResponse) throw error;
     if (error instanceof Error && (error.name === 'TimeoutError' || /timed out/i.test(error.message))) {
       throw providerTimeoutFailure(url, timeout, method);
     }
     throw connectionFailure(url, error, method);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
+
+export { fetchStreamingResponse };
 
 export async function chatCompletionStream(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, signal?: AbortSignal) {
   if (isAgnesProvider(provider) && agnesTextProtocol(provider) !== 'chat-completions') {
