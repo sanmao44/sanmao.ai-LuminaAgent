@@ -2,7 +2,7 @@
 
 本地优先的中文 AI 创作工作台：支持多模型对话、Agent 调度、图片与视频创作、超级画布、技能/MCP 接入，以及本地历史、任务和备份管理。
 
-> 当前稳定版本：[`v0.7.96`](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.96) · [下载与安装包](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/latest) · [更新记录](CHANGELOG.md)
+> 当前稳定版本：[`v0.7.97`](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.97) · [下载与安装包](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/latest) · [更新记录](CHANGELOG.md)
 >
 > 开发与发布流程请见 [WORKFLOW.md](WORKFLOW.md)。
 
