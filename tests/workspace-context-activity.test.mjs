@@ -190,6 +190,10 @@ test('canvas Agent target operation distinguishes edits from analysis and questi
   assert.equal(runContext.canvasAgentImageGenerationIntent('将这四个角色创作成一张16:9的海报图，各有各的动作！', 'image', 'generate', true), true);
   assert.equal(runContext.canvasAgentImageGenerationIntent('分析一下这张图怎么样？', 'image', 'generate', true), false);
   assert.equal(runContext.canvasAgentImageGenerationIntent('生成图片！', 'image', 'generate', false), false);
+  for (const message of ['\u4f60\u597d', '\u4f60\u662f\u4ec0\u4e48\u6a21\u578b', '\u4e3a\u4f55\u8fd8\u4e0d\u884c']) {
+    assert.equal(runContext.canvasAgentNeedsSemanticReview(message), false, message);
+  }
+  assert.equal(runContext.canvasAgentNeedsSemanticReview('\u628a\u8fd9\u56db\u4e2a\u89d2\u8272\u521b\u4f5c\u6210\u6a2a\u7248\u6d77\u62a5\u91cc'), true);
 });
 
 test('provenance helpers deduplicate sources and create stable edge IDs', () => {

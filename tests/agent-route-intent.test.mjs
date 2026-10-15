@@ -736,6 +736,23 @@ test('Canvas follow-up conversation stays conversational with selected image nod
   assert.equal(agent.modelCalls.filter((call) => call.model === 'test-chat').length, 3);
 });
 
+test('Canvas without a selection does not turn greetings, identity questions, or complaints into image clarification', async () => {
+  const agent = harness({ reply: () => ({ content: '正常的对话回复。' }) });
+  for (const message of ['你好', '你是什么模型', '为何还不行']) {
+    const data = await agent.post([{ role: 'user', content: message }], {
+      source: 'canvas',
+      executionMode: 'agent-dock',
+      intentText: message,
+      context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: [], assetIds: [] },
+      canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+    });
+    assert.notEqual(data.deliverable, 'CLARIFY', message);
+    assert.doesNotMatch(data.message, /无法可靠判断这句话是要生成图片/);
+  }
+  assert.equal(agent.images.length, 0);
+  assert.equal(agent.modelCalls.length, 3, 'all three turns are answered by their normal model paths');
+});
+
 test('Canvas semantic image intent reports actual missing image capability before chat can guess', async () => {
   const classifierRuntime = {
     model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },

@@ -36,6 +36,15 @@ export function canvasAgentImageGenerationIntent(
   return visualTarget && visualAction && directCommand;
 }
 
+/** Only send visually framed requests to the Canvas-specific intent reviewer. */
+export function canvasAgentNeedsSemanticReview(instruction: string) {
+  const text = String(instruction || "").replace(/\s+/g, " ").trim();
+  if (!text || /(?:\u4e3a\u4ec0\u4e48|\u4e3a\u4f55|\u600e\u4e48|\u5982\u4f55|\u80fd\u4e0d\u80fd|\u662f\u5426|\u5206\u6790|\u8ba8\u8bba|\u89e3\u91ca)/.test(text)) return false;
+  const visualTarget = /(?:\u56fe\u7247|\u56fe\u50cf|\u753b\u9762|\u6d77\u62a5|\u5c01\u9762|\u63d2\u753b|\u914d\u56fe|banner|poster|image|picture)/i.test(text);
+  const visualAction = /(?:\u751f\u6210|\u5236\u4f5c|\u521b\u4f5c|\u8bbe\u8ba1|\u7ed8\u5236|\u5408\u6210|\u6c47\u603b|\u62fc\u6210|\u7f16\u6392)/.test(text);
+  return visualTarget && visualAction;
+}
+
 export type CanvasAgentRunReference = {
   id: string;
   nodeId?: string;

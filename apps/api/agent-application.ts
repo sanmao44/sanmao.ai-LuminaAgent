@@ -38,7 +38,7 @@ import { toolOutcomeText, type ToolOutcome } from '@/lib/agent/tool-outcome';
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
 import { validateCanvasPatch, type CanvasPatch } from '@/lib/canvas/patch';
 import { normalizeDocument } from '@/lib/canvas/model';
-import { canvasAgentImageCapability, canvasAgentImageGenerationIntent } from '@/lib/canvas/run-context';
+import { canvasAgentImageCapability, canvasAgentImageGenerationIntent, canvasAgentNeedsSemanticReview } from '@/lib/canvas/run-context';
 import { runPlainAgentTurn } from '@/apps/api/agent-entry';
 import type { AgentMessage, ModelDescriptor } from '@/packages/contracts';
 import { createLegacyChatModelRuntime } from '@/packages/model-runtime/legacy-chat-adapter';
@@ -753,7 +753,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       && body.executionMode === 'agent-dock'
       && intentDecision.mode !== 'ask'
       && intentDecision.mode !== 'discuss'
-      && (intentDecision.confidence !== 'high' || canvasTargetNodeIds.length > 0);
+      && (intentDecision.deliverable !== 'OTHER'
+        || canvasTargetNodeIds.length > 0
+        || canvasAgentNeedsSemanticReview(latestInstruction));
     const needsContextualSemanticPlanner = intentDecision.mode === 'unknown'
       && requestRoute.contextNeed === 'required'
       && needsSemanticIntent(latestInstruction, intentDecision);
