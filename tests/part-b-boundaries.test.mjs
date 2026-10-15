@@ -348,6 +348,50 @@ test('Provider streaming deadline preserves response status and bounds idle chun
   assert.equal(await response.text(), 'firstsecond');
 });
 
+test('Provider streaming continues across long pauses when the application disables the idle deadline', async () => {
+  const { withProviderResponseDeadline } = load('./packages/model-runtime/invocation');
+  const body = new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('first')); },
+    async pull(controller) {
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      controller.enqueue(new TextEncoder().encode('second'));
+      controller.close();
+    },
+  });
+  const response = await withProviderResponseDeadline({
+    signal: new AbortController().signal,
+    timeoutMs: 10,
+    idleTimeoutMs: null,
+    operation: async () => new Response(body, { status: 200 }),
+    timeoutError: (phase, timeoutMs) => new Error(`${phase}:${timeoutMs}`),
+  });
+  assert.equal(await response.text(), 'firstsecond');
+});
+
+test('Provider streaming remains cancellable by the caller when the idle deadline is disabled', async () => {
+  const { withProviderResponseDeadline } = load('./packages/model-runtime/invocation');
+  const request = new AbortController();
+  let upstreamCancelled = false;
+  const body = new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('first')); },
+    pull() { return new Promise(() => {}); },
+    cancel() { upstreamCancelled = true; },
+  });
+  const response = await withProviderResponseDeadline({
+    signal: request.signal,
+    timeoutMs: 100,
+    idleTimeoutMs: null,
+    operation: async () => new Response(body, { status: 200 }),
+    timeoutError: (phase, timeoutMs) => new Error(`${phase}:${timeoutMs}`),
+  });
+  const reader = response.body.getReader();
+  await reader.read();
+  const pending = reader.read();
+  request.abort(new Error('AGENT_CANCELLED'));
+  assert.equal((await pending).done, true);
+  assert.equal(upstreamCancelled, true);
+});
+
 test('Provider streaming deadline rejects when the first chunk never arrives', async () => {
   const { withProviderResponseDeadline } = load('./packages/model-runtime/invocation');
   const response = await withProviderResponseDeadline({

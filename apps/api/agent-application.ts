@@ -67,10 +67,6 @@ const AGENT_AUTO_FAILOVER_TIMEOUT_MS = 40_000;
 // A manually selected model must still fail visibly instead of holding the
 // composer in a pending state for the provider's 180s transport timeout.
 const AGENT_MODEL_CALL_TIMEOUT_MS = 60_000;
-// Once headers and the first chunk arrived, a silent upstream is a different
-// failure from slow thinking. Bound that idle gap without cutting off a
-// provider that is still producing a response.
-const AGENT_STREAM_IDLE_TIMEOUT_MS = 30_000;
 // Search is a pre-answer dependency. It must not inherit the provider's long
 // request timeout, otherwise a stalled search blocks the whole chat surface.
 const AGENT_WEB_SEARCH_TOTAL_TIMEOUT_MS = 30_000;
@@ -510,7 +506,8 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       isCancelled: isAgentRequestCancelled,
       timeoutMs: AGENT_MODEL_CALL_TIMEOUT_MS,
       failoverTimeoutMs: AGENT_AUTO_FAILOVER_TIMEOUT_MS,
-      idleTimeoutMs: AGENT_STREAM_IDLE_TIMEOUT_MS,
+      // Let an established response stream finish regardless of pauses between chunks.
+      idleTimeoutMs: null,
       timeoutError: (phase, durationMs) => Object.assign(new Error(phase === 'idle' ? `模型流式响应在 ${Math.round(durationMs / 1000)} 秒内没有新内容` : `模型在 ${Math.round(durationMs / 1000)} 秒内没有返回响应`), { name: 'TimeoutError', providerFailureKind: 'timeout' as const }),
       orderCandidates: orderAgentModelCandidates,
       onModelHealthSuccess: noteAgentModelSuccess,

@@ -25,7 +25,7 @@ export type ProviderCoordinatorOptions<T extends ProviderRuntime> = {
   isCancelled?: (error: unknown) => boolean;
   timeoutMs: number;
   failoverTimeoutMs: number;
-  idleTimeoutMs: number;
+  idleTimeoutMs: number | null;
   timeoutError: (phase: 'initial' | 'idle', timeoutMs: number) => Error;
   health?: ProviderHealthPort<T>;
 };

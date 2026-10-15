@@ -254,7 +254,7 @@ export type AgentApplicationCompositionOptions<TRuntime extends AgentComposition
   isCancelled?: (error: unknown) => boolean;
   timeoutMs: number;
   failoverTimeoutMs: number;
-  idleTimeoutMs: number;
+  idleTimeoutMs: number | null;
   timeoutError: (phase: 'initial' | 'idle', timeoutMs: number) => Error;
   orderCandidates: (candidates: readonly TRuntime[]) => readonly TRuntime[];
   onModelHealthSuccess: (runtime: TRuntime, durationMs: number) => void;
