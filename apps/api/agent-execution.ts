@@ -19,6 +19,7 @@ export type CapabilityFollowupOptions = {
   artifactTools: readonly unknown[];
   skillToolCalls: number;
   artifactRequested: boolean;
+  skipArtifactFollowup?: boolean;
   initialToolCalls: readonly ToolLoopCall[];
   hasGenerated: boolean;
   hasGeneratedFiles: boolean;
@@ -122,7 +123,7 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
     trace.push(...outcome.trace);
   }
 
-  if (options.artifactRequested && options.artifactTools.length && options.initialToolCalls.some((call) => isArchiveToolCall(call) || String(call?.function?.name || '').startsWith('document_') || String(call?.function?.name || '').startsWith('spreadsheet_') || String(call?.function?.name || '').startsWith('presentation_')) && !options.hasGenerated && !options.hasWebSearch) {
+  if (!options.skipArtifactFollowup && options.artifactRequested && options.artifactTools.length && options.initialToolCalls.some((call) => isArchiveToolCall(call) || String(call?.function?.name || '').startsWith('document_') || String(call?.function?.name || '').startsWith('spreadsheet_') || String(call?.function?.name || '').startsWith('presentation_')) && !options.hasGenerated && !options.hasWebSearch) {
     const outcome = await options.toolRuntime.runLoop({
       messages: options.messages,
       contextMaxChars: options.contextMaxChars,

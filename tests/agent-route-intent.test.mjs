@@ -301,32 +301,41 @@ function harness(options = {}) {
   };
 }
 
-test('不支持原生工具调用的模型仍能通过 Excel JSON 兜底生成真实 artifact', async () => {
-  const workbook = {
-    filename: '销售数据.xlsx',
-    sheets: [{
-      name: '销售明细',
-      columns: [{ key: 'product', header: '产品' }, { key: 'amount', header: '金额' }],
-      rows: [{ product: 'A', amount: 10 }],
-    }],
-  };
+test('不支持原生工具调用的模型仍能通过本地 Excel 兜底生成真实 artifact', async () => {
   const agent = harness({
     reply: (payload) => {
       if (payload.tools?.some((tool) => tool.function.name === 'spreadsheet_generate')) {
         throw new Error('当前接口不支持 tools');
       }
-      if (payload.messages.some((message) => message.role === 'tool')) return { content: 'Excel 已生成。' };
-      return { content: JSON.stringify(workbook) };
+      return { content: '模型未能发起文件工具调用。' };
     },
   });
   const data = await agent.post([{ role: 'user', content: '请生成一个 Excel 销售数据表格' }]);
   assert.equal(agent.spreadsheetCalls.length, 1);
-  assert.deepEqual(agent.spreadsheetCalls[0], workbook);
+  assert.equal(agent.spreadsheetCalls[0].sheets.length, 1);
+  assert.deepEqual(agent.spreadsheetCalls[0].sheets[0].columns.map((column) => column.header), ['序号', '日期', '客户/产品', '数量', '单价', '金额', '状态', '备注']);
+  assert.deepEqual(agent.spreadsheetCalls[0].sheets[0].rows, []);
   assert.equal(data.files[0].artifactId, 'test-spreadsheet-artifact');
   assert.match(data.files[0].name, /\.xlsx$/);
   assert.ok(agent.calls.some((payload) => payload.tools?.some((tool) => tool.function.name === 'spreadsheet_generate')));
-  assert.ok(agent.calls.some((payload) => !payload.tools && payload.messages.at(-1)?.role === 'user'));
-  assert.match(data.message, /Excel 已生成/);
+  assert.equal(agent.calls.some((payload) => !payload.tools && payload.messages.at(-1)?.role === 'user'), false);
+  assert.match(data.message, /已完成/);
+});
+
+test('Excel 工具返回空 sheets 时会替换为可生成的本地参数', async () => {
+  const agent = harness({
+    reply: (payload) => {
+      if (payload.tools?.some((tool) => tool.function.name === 'spreadsheet_generate')) {
+        return { tool_calls: [{ id: 'empty-spreadsheet', function: { name: 'spreadsheet_generate', arguments: '{"sheets":[]}' } }] };
+      }
+      return { content: '工具参数已修复。' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '请生成一个 Excel 销售数据表格' }]);
+  assert.equal(agent.spreadsheetCalls.length, 1);
+  assert.ok(agent.spreadsheetCalls[0].sheets[0].columns.length > 0);
+  assert.equal(data.files[0].artifactId, 'test-spreadsheet-artifact');
+  assert.match(data.message, /已完成/);
 });
 
 test('普通问答绕过语义规划和 MCP 能力发现', async () => {

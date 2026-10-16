@@ -35,14 +35,13 @@ import { memoryContextMessage } from '@/lib/agent-memory';
 import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-persona';
 import { normalizeWorkspaceContext } from '@/lib/workspace-context';
 import { toolOutcomeText, type ToolOutcome } from '@/lib/agent/tool-outcome';
-import { parseSpreadsheetFallback, SPREADSHEET_FALLBACK_REQUEST_PROMPT, SPREADSHEET_FALLBACK_SYSTEM_PROMPT } from '@/lib/agent/spreadsheet-fallback';
+import { artifactFallbackKindFor, artifactInputHasContent, makeArtifactFallbackCall } from '@/lib/agent/artifact-fallback';
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
 import { validateCanvasPatch, type CanvasPatch } from '@/lib/canvas/patch';
 import { normalizeDocument } from '@/lib/canvas/model';
 import { canvasAgentImageCapability, canvasAgentImageGenerationIntent, canvasAgentNeedsSemanticReview } from '@/lib/canvas/run-context';
 import { runPlainAgentTurn } from '@/apps/api/agent-entry';
 import type { AgentMessage, ModelDescriptor } from '@/packages/contracts';
-import type { SpreadsheetInput } from '@/packages/contracts/artifact';
 import { createLegacyChatModelRuntime } from '@/packages/model-runtime/legacy-chat-adapter';
 import { noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates } from '@/lib/agent/model-health';
 import { prepareAgentRequestContext } from '@/packages/agent-core/request-context';
@@ -314,13 +313,6 @@ function makeFallbackVideoToolCall(url: string, cookiesFromBrowser?: VideoDownlo
     id: 'sanmao-local-video-download',
     type: 'function',
     function: { name: 'video_download', arguments: JSON.stringify(args) },
-  };
-}
-
-function makeFallbackSpreadsheetToolCall(input: SpreadsheetInput): ToolRuntimeCall {
-  return {
-    id: 'sanmao-local-spreadsheet-fallback',
-    function: { name: 'spreadsheet_generate', arguments: JSON.stringify(input) },
   };
 }
 
@@ -1684,9 +1676,13 @@ const auditMcpCall = (
     }
     const skillToolsOnly = callableTools.filter((tool: any) => isSkillToolCall({ function: { name: tool?.function?.name } }));
     const artifactToolsOnly = callableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }));
-    const spreadsheetGenerationRequest = artifactGenerationRequest
-      && artifactToolsOnly.some((tool: any) => tool?.function?.name === 'spreadsheet_generate')
-      && (requestRoute.artifactKind === 'excel' || /(?:excel|xlsx|spreadsheet|表格|报表|台账|清单|数据表)/i.test(`${latestInstruction}\n${previousAssistantText}`));
+    const artifactFallbackKind = artifactGenerationRequest
+      ? artifactFallbackKindFor(requestRoute.route, `${latestInstruction}\n${previousAssistantText}`)
+      : null;
+    let artifactFallbackUsed = false;
+    const artifactFallbackContext: unknown = requestRoute.contextNeed === 'required'
+      ? modelContextMessages
+      : latestInstruction;
     const responseContent = (response: unknown) => {
       if (!response || typeof response !== 'object') return '';
       const choices = (response as { choices?: unknown }).choices;
@@ -1695,34 +1691,19 @@ const auditMcpCall = (
       if (!message || typeof message !== 'object') return '';
       return chatContentText((message as { content?: unknown }).content);
     };
-    const spreadsheetToolCallFromResponse = (response: unknown) => {
-      const input = parseSpreadsheetFallback(responseContent(response));
-      return input ? makeFallbackSpreadsheetToolCall(input) : null;
-    };
-    const spreadsheetFallbackMessages = (): ChatMessage[] => {
-      const hasSystemMessage = llmMessages[0]?.role === 'system';
-      const originalSystem = hasSystemMessage ? chatContentText(llmMessages[0].content) : '';
-      const contextMessages = hasSystemMessage ? llmMessages.slice(1) : llmMessages;
-      return [
-        {
-          role: 'system',
-          content: `${originalSystem}\n\n${SPREADSHEET_FALLBACK_SYSTEM_PROMPT}`.trim(),
-        },
-        ...contextMessages,
-        { role: 'user', content: SPREADSHEET_FALLBACK_REQUEST_PROMPT },
-      ];
-    };
-    const requestSpreadsheetFallback = async (initialResponse?: unknown) => {
-      const initialCall = initialResponse === undefined ? null : spreadsheetToolCallFromResponse(initialResponse);
-      if (initialCall) return initialCall;
-      reportProgress({ stage: 'tool', message: '当前模型不支持原生文件调用，正在使用 Excel 结构化生成…' });
-      const fallback = await trackedChatCompletion(
-        agentRuntime.provider,
-        agentRuntime.model.rawId,
-        { messages: spreadsheetFallbackMessages() },
-        requestController.signal,
-      );
-      return spreadsheetToolCallFromResponse(fallback);
+    const requestArtifactFallback = (initialResponse?: unknown): ToolRuntimeCall | null => {
+      if (!artifactFallbackKind) return null;
+      const call = makeArtifactFallbackCall({
+        kind: artifactFallbackKind,
+        content: initialResponse === undefined ? undefined : responseContent(initialResponse),
+        fallbackContent: artifactFallbackContext,
+        filenameHint: `${latestInstruction}\n${previousAssistantText}`,
+      });
+      if (call) {
+        artifactFallbackUsed = true;
+        reportProgress({ stage: 'tool', message: '当前模型未返回文件调用，正在使用本地 Office 生成器…' });
+      }
+      return call as ToolRuntimeCall | null;
     };
     const searchMetadata = (): WebSearchMeta | null => {
       if (nativeSearchData) return { source: 'native', protocol: nativeSearchData.protocol, modelId: nativeSearchData.modelId, provider: nativeSearchData.provider, query: nativeSearchData.query, resultCount: nativeSearchData.resultCount, searchedAt: nativeSearchData.searchedAt };
@@ -1829,13 +1810,13 @@ const auditMcpCall = (
        if (/413|request entity too large|请求内容过大/i.test(error instanceof Error ? error.message : '')) throw error;
        if (imageGenerationRequest) {
         first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [makeFallbackImageToolCall({ prompt: fallbackImagePrompt, mode: requestedImageCapability === 'generate' ? 'generate' : 'edit', batchContent: batchPlanContent })] } }] };
-       } else if (spreadsheetGenerationRequest) {
-         const spreadsheetCall = await requestSpreadsheetFallback();
-         if (spreadsheetCall) {
-           first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [spreadsheetCall] } }] };
-         } else {
-           throw new Error('当前对话模型未能生成有效的 Excel 数据。请重试，或切换支持工具调用的模型。');
-         }
+        } else if (artifactFallbackKind) {
+          const artifactCall = requestArtifactFallback();
+          if (artifactCall) {
+            first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [artifactCall] } }] };
+          } else {
+            throw new Error('当前请求的 Office 文件无法生成。');
+          }
        } else {
          if (!isCinematicDirectorTask && (filesystemRequest || browserAutomationRequest || artifactGenerationRequest || mcpExecutionRequest)) throw new Error('当前对话模型未能发起工具调用，操作尚未完成。请检查模型接口或切换支持工具调用的模型。');
          const fallback = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages }, requestController.signal);
@@ -1908,11 +1889,29 @@ const auditMcpCall = (
         toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
       }
     }
-    if (!toolCalls.length && spreadsheetGenerationRequest) {
-      const spreadsheetCall = await requestSpreadsheetFallback(first);
-      if (spreadsheetCall) {
-        toolCalls = [spreadsheetCall];
+    if (!toolCalls.length && artifactFallbackKind) {
+      const artifactCall = requestArtifactFallback(first);
+      if (artifactCall) {
+        toolCalls = [artifactCall];
         toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
+      }
+    }
+    if (artifactFallbackKind) {
+      const expectedArtifactTool = artifactFallbackKind === 'document'
+        ? 'document_generate'
+        : artifactFallbackKind === 'spreadsheet'
+          ? 'spreadsheet_generate'
+          : 'presentation_generate';
+      const artifactCall = toolCalls.find((call: any) => call?.function?.name === expectedArtifactTool);
+      if (artifactCall) {
+        const artifactArgs = parseToolArguments(artifactCall.function?.arguments);
+        if (!artifactInputHasContent(artifactFallbackKind, artifactArgs)) {
+          const fallbackCall = requestArtifactFallback(first);
+          if (fallbackCall) {
+            toolCalls = toolCalls.map((call: any) => call === artifactCall ? fallbackCall : call);
+            toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
+          }
+        }
       }
     }
     if (forcedSkillRead && !toolCalls.some((call: any) => call?.function?.name === 'skill_read')) {
@@ -2349,6 +2348,7 @@ const auditMcpCall = (
         artifactTools: artifactToolsOnly,
         skillToolCalls,
         artifactRequested: artifactGenerationRequest,
+        skipArtifactFollowup: artifactFallbackUsed,
         initialToolCalls: toolCalls,
         hasGenerated: generated.length > 0,
         hasGeneratedFiles: generatedFiles.length > 0,
@@ -2557,6 +2557,7 @@ const auditMcpCall = (
     }
     if (wantsStream) {
       if (followupText || artifactFollowupText || mcpFollowupText) return streamResult(null, { fallback: followupText || artifactFollowupText || mcpFollowupText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
+      if ((artifactGenerationRequest || fileGenerationRequest) && generatedDeliveryCount > 0 && !generated.length && !webSearchData) return streamResult(null, { fallback: finalText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'answering', message: '文件已生成，正在返回下载信息…' }] });
       try {
         if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
         const secondStream = await trackedChatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
@@ -2572,7 +2573,7 @@ const auditMcpCall = (
     }
     if (followupText || artifactFollowupText || mcpFollowupText) finalText = followupText || artifactFollowupText || mcpFollowupText;
     try {
-       if (!followupText && !artifactFollowupText && !mcpFollowupText && !canvasImageEditRequest) {
+       if (!followupText && !artifactFollowupText && !mcpFollowupText && !canvasImageEditRequest && !((artifactGenerationRequest || fileGenerationRequest) && generatedDeliveryCount > 0 && !generated.length && !webSearchData)) {
         const second = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
         const secondText = stripToolCallMarkup(String(second?.choices?.[0]?.message?.content || '')).trim();
         if (secondText) finalText = secondText;
