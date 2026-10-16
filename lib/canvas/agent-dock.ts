@@ -310,6 +310,17 @@ function canvasAgentDockLayoutRequested(input: string) {
   );
 }
 
+/**
+ * Layout words also describe the visual design of a generated image or the
+ * typography of a text answer. They become a local canvas mutation only when
+ * the user explicitly names the canvas, nodes, selection, or an @ reference.
+ */
+function canvasAgentDockExplicitLayoutTarget(input: string) {
+  return /(?:画布|画板|节点|选中(?:的)?(?:节点|对象|内容)?|所选(?:节点|对象)?|这些节点|它们|当前(?:选中|卡片)|(?:全部|所有)(?:节点|对象)|整张画布|整个画布|@\d+)/.test(
+    String(input || ""),
+  );
+}
+
 function canvasAgentDockSelectionCommand(input: string): CanvasAgentDockSelectionCommand | null {
   const text = String(input || "").replace(/\s+/g, " ").trim();
   if (!text) return null;
@@ -383,6 +394,7 @@ export function buildCanvasAgentDockPlan(input: string, options: {
   const direct = canvasAgentDockDirectExecution(text);
   const selectionCommand = canvasAgentDockSelectionCommand(text);
   const minimumTargetCount = selectionCommand === "duplicate-selection" ? 1 : 2;
+  const explicitLayoutTarget = canvasAgentDockExplicitLayoutTarget(text);
 
   if (selectionCommand && requestedNodeIds?.length && requestedNodeIds.length >= minimumTargetCount) {
     const commandLabel = canvasAgentDockSelectionCommandLabel(selectionCommand);
@@ -423,7 +435,7 @@ export function buildCanvasAgentDockPlan(input: string, options: {
     };
   }
 
-  if (layoutRequested && (hasSelection || /(?:全部|所有|整张画布|整个画布)/.test(text))) {
+  if (layoutRequested && explicitLayoutTarget && (hasSelection || /(?:全部|所有|整张画布|整个画布)/.test(text))) {
     const layout = canvasAgentDockLayout(text);
     const targetCount = requestedNodeIds?.length || options.selectedTotal || 0;
     const targetLabel = mentionedNodeIds?.length

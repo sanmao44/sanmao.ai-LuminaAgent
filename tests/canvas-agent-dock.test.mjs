@@ -17,6 +17,7 @@ const workspaceHeader = await readFile(new URL("../components/canvas/CanvasWorks
 const viewportOverlay = await readFile(new URL("../components/canvas/CanvasViewportOverlay.tsx", import.meta.url), "utf8");
 const toolsMenuSource = await readFile(new URL("../components/canvas/CanvasToolsContextMenu.tsx", import.meta.url), "utf8");
 const interactionTargets = createTsRequire(process.cwd())("./lib/canvas/interaction-targets");
+const agentDock = createTsRequire(process.cwd())("./lib/canvas/agent-dock");
 const interactionTargetsSource = await readFile(new URL("../lib/canvas/interaction-targets.ts", import.meta.url), "utf8");
 
 const [component, canvasSource, styles, context, canvasApi, markdown] = await Promise.all([
@@ -187,6 +188,27 @@ test("canvas workflows expose a reviewable plan and apply through one canvas tra
   assert.match(canvas, /const result = arrangeCanvas\(next/);
   assert.match(canvas, /commit\(\(\) => next\)/);
   assert.match(styles, /\.canvas-agent-dock-plan\{/);
+});
+
+test("layout words do not hijack ordinary Agent prompts", () => {
+  const selected = { targetNodeIds: ["node-1"], selectedTotal: 1 };
+  for (const input of [
+    "排版",
+    "还有更好的设计吗？出新图，顶尖设计排版，不一样的排版，出图！",
+    "帮我排版这段文字",
+    "请给我一个排版方案",
+    "排版一下这张海报",
+  ]) {
+    assert.equal(agentDock.buildCanvasAgentDockPlan(input, selected), null, input);
+  }
+
+  const selectedPlan = agentDock.buildCanvasAgentDockPlan("把选中的节点按网格重新排列", selected);
+  assert.equal(selectedPlan?.kind, "layout-selection");
+  assert.equal(selectedPlan?.layout, "grid");
+
+  const canvasPlan = agentDock.buildCanvasAgentDockPlan("把整张画布按横向重新排列");
+  assert.equal(canvasPlan?.kind, "layout-selection");
+  assert.equal(canvasPlan?.layout, "horizontal");
 });
 
 test("selection canvas commands stay reviewable and reuse safe model operations", () => {
