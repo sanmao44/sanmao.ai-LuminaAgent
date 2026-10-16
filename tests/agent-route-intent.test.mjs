@@ -15,6 +15,7 @@ function harness(options = {}) {
   const imageRuntimeRequests = [];
   const modelCalls = [];
   const bundledSkillInstalls = [];
+  const spreadsheetCalls = [];
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: [], kind: 'chat' };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
@@ -62,7 +63,22 @@ function harness(options = {}) {
             generateArchiveArtifact: async () => ({ files: [] }),
             generateDocumentArtifact: async () => ({ files: [] }),
             generatePresentationArtifact: async () => ({ files: [] }),
-            generateSpreadsheetArtifact: async () => ({ files: [] }),
+            generateSpreadsheetArtifact: async (input) => {
+              spreadsheetCalls.push(input);
+              if (typeof options.generateSpreadsheetArtifact === 'function') return options.generateSpreadsheetArtifact(input);
+              return {
+                artifact: {
+                  id: 'test-spreadsheet-artifact',
+                  kind: 'spreadsheet',
+                  name: 'SANMAO-表格.xlsx',
+                  mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                  size: 128,
+                  downloadUrl: '/api/artifacts/test-spreadsheet-artifact',
+                  createdAt: Date.now(),
+                },
+                warnings: [],
+              };
+            },
             isValidArtifactId: mocks['@/lib/artifacts'].isValidArtifactId,
             artifactDownloadUrl: (id) => `/api/artifacts/${id}`,
             getStorageRoots: () => [],
@@ -271,7 +287,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-    calls, modelCalls, mcpCalls, discoveryCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls,
+    calls, modelCalls, mcpCalls, discoveryCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -284,6 +300,34 @@ function harness(options = {}) {
     },
   };
 }
+
+test('不支持原生工具调用的模型仍能通过 Excel JSON 兜底生成真实 artifact', async () => {
+  const workbook = {
+    filename: '销售数据.xlsx',
+    sheets: [{
+      name: '销售明细',
+      columns: [{ key: 'product', header: '产品' }, { key: 'amount', header: '金额' }],
+      rows: [{ product: 'A', amount: 10 }],
+    }],
+  };
+  const agent = harness({
+    reply: (payload) => {
+      if (payload.tools?.some((tool) => tool.function.name === 'spreadsheet_generate')) {
+        throw new Error('当前接口不支持 tools');
+      }
+      if (payload.messages.some((message) => message.role === 'tool')) return { content: 'Excel 已生成。' };
+      return { content: JSON.stringify(workbook) };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '请生成一个 Excel 销售数据表格' }]);
+  assert.equal(agent.spreadsheetCalls.length, 1);
+  assert.deepEqual(agent.spreadsheetCalls[0], workbook);
+  assert.equal(data.files[0].artifactId, 'test-spreadsheet-artifact');
+  assert.match(data.files[0].name, /\.xlsx$/);
+  assert.ok(agent.calls.some((payload) => payload.tools?.some((tool) => tool.function.name === 'spreadsheet_generate')));
+  assert.ok(agent.calls.some((payload) => !payload.tools && payload.messages.at(-1)?.role === 'user'));
+  assert.match(data.message, /Excel 已生成/);
+});
 
 test('普通问答绕过语义规划和 MCP 能力发现', async () => {
   const agent = harness({

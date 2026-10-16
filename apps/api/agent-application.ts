@@ -35,12 +35,14 @@ import { memoryContextMessage } from '@/lib/agent-memory';
 import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-persona';
 import { normalizeWorkspaceContext } from '@/lib/workspace-context';
 import { toolOutcomeText, type ToolOutcome } from '@/lib/agent/tool-outcome';
+import { parseSpreadsheetFallback, SPREADSHEET_FALLBACK_REQUEST_PROMPT, SPREADSHEET_FALLBACK_SYSTEM_PROMPT } from '@/lib/agent/spreadsheet-fallback';
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
 import { validateCanvasPatch, type CanvasPatch } from '@/lib/canvas/patch';
 import { normalizeDocument } from '@/lib/canvas/model';
 import { canvasAgentImageCapability, canvasAgentImageGenerationIntent, canvasAgentNeedsSemanticReview } from '@/lib/canvas/run-context';
 import { runPlainAgentTurn } from '@/apps/api/agent-entry';
 import type { AgentMessage, ModelDescriptor } from '@/packages/contracts';
+import type { SpreadsheetInput } from '@/packages/contracts/artifact';
 import { createLegacyChatModelRuntime } from '@/packages/model-runtime/legacy-chat-adapter';
 import { noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates } from '@/lib/agent/model-health';
 import { prepareAgentRequestContext } from '@/packages/agent-core/request-context';
@@ -312,6 +314,13 @@ function makeFallbackVideoToolCall(url: string, cookiesFromBrowser?: VideoDownlo
     id: 'sanmao-local-video-download',
     type: 'function',
     function: { name: 'video_download', arguments: JSON.stringify(args) },
+  };
+}
+
+function makeFallbackSpreadsheetToolCall(input: SpreadsheetInput): ToolRuntimeCall {
+  return {
+    id: 'sanmao-local-spreadsheet-fallback',
+    function: { name: 'spreadsheet_generate', arguments: JSON.stringify(input) },
   };
 }
 
@@ -1675,6 +1684,46 @@ const auditMcpCall = (
     }
     const skillToolsOnly = callableTools.filter((tool: any) => isSkillToolCall({ function: { name: tool?.function?.name } }));
     const artifactToolsOnly = callableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }));
+    const spreadsheetGenerationRequest = artifactGenerationRequest
+      && artifactToolsOnly.some((tool: any) => tool?.function?.name === 'spreadsheet_generate')
+      && (requestRoute.artifactKind === 'excel' || /(?:excel|xlsx|spreadsheet|表格|报表|台账|清单|数据表)/i.test(`${latestInstruction}\n${previousAssistantText}`));
+    const responseContent = (response: unknown) => {
+      if (!response || typeof response !== 'object') return '';
+      const choices = (response as { choices?: unknown }).choices;
+      if (!Array.isArray(choices) || !choices.length || !choices[0] || typeof choices[0] !== 'object') return '';
+      const message = (choices[0] as { message?: unknown }).message;
+      if (!message || typeof message !== 'object') return '';
+      return chatContentText((message as { content?: unknown }).content);
+    };
+    const spreadsheetToolCallFromResponse = (response: unknown) => {
+      const input = parseSpreadsheetFallback(responseContent(response));
+      return input ? makeFallbackSpreadsheetToolCall(input) : null;
+    };
+    const spreadsheetFallbackMessages = (): ChatMessage[] => {
+      const hasSystemMessage = llmMessages[0]?.role === 'system';
+      const originalSystem = hasSystemMessage ? chatContentText(llmMessages[0].content) : '';
+      const contextMessages = hasSystemMessage ? llmMessages.slice(1) : llmMessages;
+      return [
+        {
+          role: 'system',
+          content: `${originalSystem}\n\n${SPREADSHEET_FALLBACK_SYSTEM_PROMPT}`.trim(),
+        },
+        ...contextMessages,
+        { role: 'user', content: SPREADSHEET_FALLBACK_REQUEST_PROMPT },
+      ];
+    };
+    const requestSpreadsheetFallback = async (initialResponse?: unknown) => {
+      const initialCall = initialResponse === undefined ? null : spreadsheetToolCallFromResponse(initialResponse);
+      if (initialCall) return initialCall;
+      reportProgress({ stage: 'tool', message: '当前模型不支持原生文件调用，正在使用 Excel 结构化生成…' });
+      const fallback = await trackedChatCompletion(
+        agentRuntime.provider,
+        agentRuntime.model.rawId,
+        { messages: spreadsheetFallbackMessages() },
+        requestController.signal,
+      );
+      return spreadsheetToolCallFromResponse(fallback);
+    };
     const searchMetadata = (): WebSearchMeta | null => {
       if (nativeSearchData) return { source: 'native', protocol: nativeSearchData.protocol, modelId: nativeSearchData.modelId, provider: nativeSearchData.provider, query: nativeSearchData.query, resultCount: nativeSearchData.resultCount, searchedAt: nativeSearchData.searchedAt };
       if (webSearchData) return { source: 'external', provider: webSearchData.provider, query: webSearchData.query, rawResultCount: webSearchData.rawResultCount, resultCount: webSearchData.resultCount, status: webSearchData.status, coverageNote: webSearchData.coverageNote, rounds: webSearchData.rounds, warnings: webSearchData.warnings, retryable: webSearchData.retryable, suggestedAction: webSearchData.suggestedAction, fallbackFrom: nativeSearchError ? 'native' : undefined, searchedAt: webSearchData.searchedAt };
@@ -1777,20 +1826,27 @@ const auditMcpCall = (
          ? { messages: llmMessages, tools: callableTools, tool_choice: 'auto' }
          : { messages: llmMessages }, requestController.signal);
      } catch (error) {
-      if (/413|request entity too large|请求内容过大/i.test(error instanceof Error ? error.message : '')) throw error;
-      if (imageGenerationRequest) {
+       if (/413|request entity too large|请求内容过大/i.test(error instanceof Error ? error.message : '')) throw error;
+       if (imageGenerationRequest) {
         first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [makeFallbackImageToolCall({ prompt: fallbackImagePrompt, mode: requestedImageCapability === 'generate' ? 'generate' : 'edit', batchContent: batchPlanContent })] } }] };
-      } else {
-        if (!isCinematicDirectorTask && (filesystemRequest || browserAutomationRequest || artifactGenerationRequest || mcpExecutionRequest)) throw new Error('当前对话模型未能发起工具调用，操作尚未完成。请检查模型接口或切换支持工具调用的模型。');
-        const fallback = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages }, requestController.signal);
-        const actualModel = extractUpstreamModel(fallback);
-        const fallbackMessage = identityQuestion
-          ? modelIdentityReply({ actualModel, requestedModel: agentRuntime.model.rawId, providerName: agentRuntime.provider.name, platform: providerPlatform })
-          : fallback?.choices?.[0]?.message?.content || '当前对话模型没有返回内容。';
-        llmResponseChars = String(fallbackMessage).length;
-        return wantsStream
-          ? streamResult(null, { fallback: fallbackMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() })
-          : applicationJson({ ok: true, message: fallbackMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: false, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
+       } else if (spreadsheetGenerationRequest) {
+         const spreadsheetCall = await requestSpreadsheetFallback();
+         if (spreadsheetCall) {
+           first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [spreadsheetCall] } }] };
+         } else {
+           throw new Error('当前对话模型未能生成有效的 Excel 数据。请重试，或切换支持工具调用的模型。');
+         }
+       } else {
+         if (!isCinematicDirectorTask && (filesystemRequest || browserAutomationRequest || artifactGenerationRequest || mcpExecutionRequest)) throw new Error('当前对话模型未能发起工具调用，操作尚未完成。请检查模型接口或切换支持工具调用的模型。');
+         const fallback = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages }, requestController.signal);
+         const actualModel = extractUpstreamModel(fallback);
+         const fallbackMessage = identityQuestion
+           ? modelIdentityReply({ actualModel, requestedModel: agentRuntime.model.rawId, providerName: agentRuntime.provider.name, platform: providerPlatform })
+           : fallback?.choices?.[0]?.message?.content || '当前对话模型没有返回内容。';
+         llmResponseChars = String(fallbackMessage).length;
+         return wantsStream
+           ? streamResult(null, { fallback: fallbackMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() })
+           : applicationJson({ ok: true, message: fallbackMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: false, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
       }
     }
 
@@ -1849,6 +1905,13 @@ const auditMcpCall = (
         videoCall.function.arguments = JSON.stringify({ ...safeArgs, url: requestedVideoUrl });
       } else {
         toolCalls = [...toolCalls, makeFallbackVideoToolCall(requestedVideoUrl, authorizedBrowserSession?.browser)];
+        toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
+      }
+    }
+    if (!toolCalls.length && spreadsheetGenerationRequest) {
+      const spreadsheetCall = await requestSpreadsheetFallback(first);
+      if (spreadsheetCall) {
+        toolCalls = [spreadsheetCall];
         toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
       }
     }
