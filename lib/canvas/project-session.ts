@@ -14,6 +14,27 @@ function documentSignature(document: CanvasDocument) {
   return JSON.stringify(normalizeDocument(document));
 }
 
+function mergeCanvasRows<T extends { id: string }>(local: readonly T[], remote: readonly T[]) {
+  const rows = new Map(remote.map((row) => [row.id, row] as const));
+  for (const row of local) rows.set(row.id, row);
+  return [...rows.values()];
+}
+
+/**
+ * Keep this editor's current edits while retaining rows written by another
+ * tab. The storage adapter still performs the compare-and-swap; this merge is
+ * only the bounded retry after that CAS reports a document conflict.
+ */
+function mergeCanvasDocuments(local: CanvasDocument, remote: CanvasDocument) {
+  return normalizeDocument({
+    ...remote,
+    ...local,
+    nodes: mergeCanvasRows(local.nodes, remote.nodes),
+    edges: mergeCanvasRows(local.edges, remote.edges),
+    groups: mergeCanvasRows(local.groups, remote.groups),
+  });
+}
+
 /** Per-view persistence adapter. CanvasCore remains the document/history owner. */
 export class CanvasProjectSession {
   activeId = '';
@@ -69,6 +90,37 @@ export class CanvasProjectSession {
     if (!saveCanvasDocument(this.activeId, document, this.persisted)) return false;
     this.persisted = normalizeDocument(document);
     return true;
+  }
+
+  /**
+   * Autosave/navigation recovery for a same-project storage conflict.
+   *
+   * The ordinary save method intentionally remains strict: callers that are
+   * applying a background result must never overwrite a newer tab. Interactive
+   * save boundaries (autosave, project switch, leaving the canvas) can safely
+   * merge the latest persisted rows with the current Core document, then retry
+   * against that freshly read document. Returning the merged document lets the
+   * Core projection adopt the rows retained from the other tab as well.
+   */
+  saveRecoveringConflict(document: CanvasDocument) {
+    if (this.save(document)) return { saved: true, document: normalizeDocument(document), rebased: false };
+    if (!this.activeId || !this.persisted || !readCanvasProjects().some((project) => project.id === this.activeId)) {
+      return { saved: false, document: normalizeDocument(document), rebased: false };
+    }
+
+    const latest = loadCanvasDocument(this.activeId);
+    if (documentSignature(latest) === documentSignature(this.persisted)) {
+      // The document did not change underneath us; the failed write was a
+      // quota/metadata failure and must not be masked as a conflict.
+      return { saved: false, document: normalizeDocument(document), rebased: false };
+    }
+
+    const merged = mergeCanvasDocuments(document, latest);
+    if (!saveCanvasDocument(this.activeId, merged, latest)) {
+      return { saved: false, document: normalizeDocument(document), rebased: false };
+    }
+    this.persisted = merged;
+    return { saved: true, document: merged, rebased: true };
   }
 
   refresh(document: CanvasDocument) {

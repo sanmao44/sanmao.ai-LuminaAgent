@@ -111,6 +111,20 @@ test('refresh preserves generated unsaved nodes and rejects a conflicting subseq
   assert.equal(storage.loadCanvasDocument('a').nodes[0].id, 'remote');
 });
 
+test('interactive save rebases a same-project conflict and retains both tab edits', () => {
+  const { storage, CanvasProjectSession, imageDocument, empty } = fixture();
+  const session = new CanvasProjectSession();
+  session.open('a');
+  const current = imageDocument('local');
+  assert.equal(storage.saveCanvasDocument('a', imageDocument('remote'), empty), true);
+  const result = session.saveRecoveringConflict(current);
+  assert.equal(result.saved, true);
+  assert.equal(result.rebased, true);
+  assert.deepEqual(result.document.nodes.map((node) => node.id), ['remote', 'local']);
+  assert.deepEqual(storage.loadCanvasDocument('a').nodes.map((node) => node.id), ['remote', 'local']);
+  assert.equal(session.save(result.document), true);
+});
+
 test('deleted rename targets and delayed autosave never affect another project or resurrect documents', () => {
   const { storage, CanvasProjectSession, empty, project } = fixture();
   storage.createCanvasProject(project('b'), empty);

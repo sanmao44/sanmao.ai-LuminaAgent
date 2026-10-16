@@ -1736,9 +1736,13 @@ export default function SuperCanvas() {
   }, [notify, ready]);
 
   const persistCurrentCanvas = useCallback(() => {
-    const ok = canvasProjectSessionRef.current.save(canvasCoreRef.current.document());
-    if (ok) workspaceDraftRef.current?.markSaved();
-    return ok;
+    const result = canvasProjectSessionRef.current.saveRecoveringConflict(canvasCoreRef.current.document());
+    if (result.saved) {
+      if (result.rebased) canvasCoreRef.current.sync(result.document);
+      setSaveError(false);
+      workspaceDraftRef.current?.markSaved();
+    }
+    return result.saved;
   }, []);
 
   useEffect(() => {
@@ -3968,8 +3972,11 @@ export default function SuperCanvas() {
   );
 
   const navigateHome = useCallback(() => {
-    if (!persistCurrentCanvas()) return notify(describeCanvasSaveFailure(), "error");
-    router.push("/");
+    if (!persistCurrentCanvas()) {
+      notify(describeCanvasSaveFailure(), "error");
+      return;
+    }
+    void router.push("/");
   }, [notify, persistCurrentCanvas, router]);
 
   const openProject = useCallback(
