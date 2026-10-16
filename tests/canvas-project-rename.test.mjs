@@ -12,7 +12,7 @@ function headerHarness() {
     const slot = index++;
     if (!(slot in values)) values[slot] = initial;
     return [values[slot], (value) => { values[slot] = value; }];
-  } };
+  }, useRef(initial) { return { current: initial }; }, useEffect() {} };
   const load = createTsRequire(process.cwd(), { react, '@/components/AgentOrb': { default: () => null, busyOrbState: () => 'idle' } });
   const Header = load(path.join(process.cwd(), 'components/canvas/CanvasWorkspaceHeader.tsx')).default;
   const saved = [];

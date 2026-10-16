@@ -4258,3 +4258,7 @@ html:not([data-theme="light"]) .canvas-group-label-layer>.canvas-group-world-lab
   white-space:nowrap;
   line-height:1;
 }
+
+/* Keep the menu's transparent positioning wrapper from blocking topbar controls. */
+.canvas-project-popover-wrap{pointer-events:none}
+.canvas-project-popover-wrap>.canvas-project-popover{pointer-events:auto}

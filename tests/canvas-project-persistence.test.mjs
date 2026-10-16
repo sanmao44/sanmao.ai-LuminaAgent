@@ -125,6 +125,26 @@ test('interactive save rebases a same-project conflict and retains both tab edit
   assert.equal(session.save(result.document), true);
 });
 
+test('interactive save retries after a transient metadata write failure', () => {
+  const { storage, CanvasProjectSession, imageDocument } = fixture();
+  const session = new CanvasProjectSession();
+  session.open('a');
+  const current = imageDocument('local');
+  const setItem = window.localStorage.setItem;
+  let failed = false;
+  window.localStorage.setItem = function (key, value) {
+    if (!failed && key === 'sanmao.creative.projects.v1') {
+      failed = true;
+      throw new Error('transient metadata failure');
+    }
+    setItem.call(this, key, value);
+  };
+  const result = session.saveRecoveringConflict(current);
+  assert.equal(result.saved, true);
+  assert.equal(result.rebased, true);
+  assert.deepEqual(storage.loadCanvasDocument('a').nodes.map((node) => node.id), ['local']);
+});
+
 test('deleted rename targets and delayed autosave never affect another project or resurrect documents', () => {
   const { storage, CanvasProjectSession, empty, project } = fixture();
   storage.createCanvasProject(project('b'), empty);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AgentOrb, { busyOrbState } from "@/components/AgentOrb";
 import type { CanvasProject } from "@/lib/canvas/types";
 import type { CreativeProjectVersion } from "@/lib/creative-projects";
@@ -21,6 +21,17 @@ export type CanvasWorkspaceHeaderProps = {
 export default function CanvasWorkspaceHeader({currentProject, projects, activeProjectId, projectMenuOpen, onProjectMenuOpenChange, topbarCollapsed, onToggleTopbar, canUndo, canRedo, onNavigateHome, onUndo, onRedo, snapEnabled, onToggleSnap, onOpenFilePicker, activePanel, onTogglePanel, onToggleAssetLibrary, agentDockOpen, agentDockBusy, onToggleAgentDock, theme, onToggleTheme, saving, saveError, workspaceSyncStatus, onOpenProject, onNewProject, onSaveProjectVersion, projectVersions, onRestoreProjectVersion, onDeleteProjectVersion, onDeleteProject, onSaveProjectName}: CanvasWorkspaceHeaderProps) {
   const [projectRenameId, setProjectRenameId] = useState<string | null>(null);
   const [projectRenameValue, setProjectRenameValue] = useState("");
+  const projectPopoverRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!projectMenuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && projectPopoverRef.current?.contains(target)) return;
+      onProjectMenuOpenChange(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [onProjectMenuOpenChange, projectMenuOpen]);
   const saveProjectName = () => {
     if (projectRenameId && onSaveProjectName(projectRenameId, projectRenameValue)) setProjectRenameId(null);
   };
@@ -186,6 +197,7 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
       {projectMenuOpen && (
         <div className="canvas-project-popover-wrap">
           <div
+            ref={projectPopoverRef}
             className="canvas-project-popover"
             onClick={(event) => event.stopPropagation()}
           >

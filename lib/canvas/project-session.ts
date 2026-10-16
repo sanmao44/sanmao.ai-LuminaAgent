@@ -103,21 +103,19 @@ export class CanvasProjectSession {
    * Core projection adopt the rows retained from the other tab as well.
    */
   saveRecoveringConflict(document: CanvasDocument) {
-    if (this.save(document)) return { saved: true, document: normalizeDocument(document), rebased: false };
-    if (!this.activeId || !this.persisted || !readCanvasProjects().some((project) => project.id === this.activeId)) {
+    const normalized = normalizeDocument(document);
+    if (this.save(normalized)) return { saved: true, document: normalized, rebased: false };
+    if (!this.activeId || !readCanvasProjects().some((project) => project.id === this.activeId)) {
       return { saved: false, document: normalizeDocument(document), rebased: false };
     }
 
     const latest = loadCanvasDocument(this.activeId);
-    if (documentSignature(latest) === documentSignature(this.persisted)) {
-      // The document did not change underneath us; the failed write was a
-      // quota/metadata failure and must not be masked as a conflict.
-      return { saved: false, document: normalizeDocument(document), rebased: false };
-    }
-
-    const merged = mergeCanvasDocuments(document, latest);
+    // Retry against a fresh expected snapshot even when the first failure was
+    // caused by session timing rather than a concurrent document write. The
+    // storage adapter still rejects quota and metadata failures.
+    const merged = mergeCanvasDocuments(normalized, latest);
     if (!saveCanvasDocument(this.activeId, merged, latest)) {
-      return { saved: false, document: normalizeDocument(document), rebased: false };
+      return { saved: false, document: normalized, rebased: false };
     }
     this.persisted = merged;
     return { saved: true, document: merged, rebased: true };
