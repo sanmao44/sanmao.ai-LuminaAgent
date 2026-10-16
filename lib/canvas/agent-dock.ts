@@ -33,6 +33,11 @@ export type CanvasAgentDockReference = {
   mimeType?: string;
 };
 
+/** 文本节点是文案上下文，不是图片编辑的视觉参考。 */
+export function canvasAgentDockHasVisualReferences(references: readonly CanvasAgentDockReference[]) {
+  return references.some((reference) => reference.kind === "image" || reference.kind === "video");
+}
+
 export type CanvasAgentDockChip = {
   id: string;
   label: string;
@@ -310,6 +315,16 @@ function canvasAgentDockLayoutRequested(input: string) {
   );
 }
 
+/** Copy editing may mention typography, but it is not a spatial canvas command. */
+function canvasAgentDockTextEditingRequested(input: string) {
+  const text = String(input || "").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  const copyTarget = /(?:文案|文字|文本|提示词|标题|段落|句子|内容)/.test(text);
+  const copyAction = /(?:优化|润色|改写|修改|改善|精简|扩写|重写|表达|语气|语法|排版)/.test(text);
+  const explicitSpatialLayout = /(?:网格|宫格|横向(?:排列|整理|布局)?|纵向(?:排列|整理|布局)?|水平(?:排列|整理|布局)?|垂直(?:排列|整理|布局)?|重新排列|排列节点|整理节点|整理画布|对齐|均匀分布|等距分布|连线|成组|分组|复制为分支)/.test(text);
+  return copyTarget && copyAction && !explicitSpatialLayout;
+}
+
 /**
  * Layout words also describe the visual design of a generated image or the
  * typography of a text answer. They become a local canvas mutation only when
@@ -381,7 +396,7 @@ export function buildCanvasAgentDockPlan(input: string, options: {
 } = {}): CanvasAgentDockPlan | null {
   const text = String(input || "").replace(/\s+/g, " ").trim();
   if (!text) return null;
-  const layoutRequested = canvasAgentDockLayoutRequested(text);
+  const layoutRequested = !canvasAgentDockTextEditingRequested(text) && canvasAgentDockLayoutRequested(text);
   const imageCount = Math.max(0, Math.floor(Number(options.imageCount || 0)));
   const batchRequested = imageCount > 1 && /(?:批量|多张|多个|几张|版本|变体|方案|批次|一起)/.test(text);
   const connectRequested = /(?:连线|连接|接到|接入|关联|串起来|建立关系)/.test(text);

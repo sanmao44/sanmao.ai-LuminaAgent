@@ -22,6 +22,7 @@ import {
   CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES,
   CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE,
   CANVAS_AGENT_DOCK_MAX_REFERENCES,
+  canvasAgentDockHasVisualReferences,
   canvasAgentDockAcceptsImages,
   canvasAgentDockRequestsPreviousImageApply,
   composeCanvasAgentDockMessage,
@@ -770,8 +771,8 @@ export default function CanvasAgentDock({
   );
   const liveCreativeRoute = useMemo(() => resolveCreativeRoute(input, {
     messages: messages.map((message) => ({ role: message.role, content: message.content, images: message.images })),
-    hasReferences: orderedReferences.length > 0 || draftImages.length > 0,
-  }), [draftImages.length, input, messages, orderedReferences.length]);
+    hasReferences: canvasAgentDockHasVisualReferences(orderedReferences) || draftImages.length > 0,
+  }), [draftImages.length, input, messages, orderedReferences]);
   const hasSelectedCanvasImageReference = orderedReferences.some((reference) =>
     reference.kind === "image" && orderedSelectedNodeIds.includes(reference.nodeId || reference.id),
   );
@@ -1087,7 +1088,7 @@ export default function CanvasAgentDock({
         : messages;
       const creativeRoute = resolveCreativeRoute(promptText, {
         messages: base.map((message) => ({ role: message.role, content: message.content, images: message.images })),
-        hasReferences: turnReferences.length > 0,
+        hasReferences: canvasAgentDockHasVisualReferences(turnReferences),
       });
       const hasSelectedImageReferences = turnNodeReferences.some((reference) =>
         reference.kind === "image" && turnNodeIds.includes(reference.nodeId || reference.id),
@@ -1370,9 +1371,9 @@ export default function CanvasAgentDock({
               : message));
           }
         }
-        if (autoApply && (canvasAgentDockShouldAutoApplyText(text)
-          || (runContext.operation === "edit" && runContext.targetKind === "text"))) {
-          const appliedIds = onApplyText(content, { prompt: mentionText, runContext });
+        if (autoApply && canvasAgentDockShouldAutoApplyText(text)) {
+          // 文案优化只留在面板；明确要求保存时也创建新节点，绝不覆盖引用的原节点。
+          const appliedIds = onApplyText(content, { prompt: mentionText });
           if (appliedIds.length) {
             setMessages((value) =>
               value.map((message) => (message.id === assistantMessageId ? { ...message, textNodeId: appliedIds[0] } : message)),

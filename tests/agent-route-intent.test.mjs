@@ -552,6 +552,28 @@ test('canvas image edit target overrides vague wording and reaches the edit capa
   assert.equal(agent.calls.length, 0, 'Canvas edit should execute the image capability without a preliminary chat completion');
 });
 
+test('canvas text target stays a text-only optimization conversation', async () => {
+  const agent = harness({ reply: () => ({ content: '白色渐变字，层次清晰，整体画面更有亮点。' }) });
+  const data = await agent.post([{
+    role: 'user',
+    content: '改成白色渐变字，整体画面设计更有亮点',
+    references: [{ id: 'text-1', nodeId: 'text-1', kind: 'text', name: '选中文案', text: '原始文案' }],
+  }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['text-1'], assetIds: [] },
+    canvasTarget: { nodeIds: ['text-1'], kind: 'text', operation: 'edit' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: [{ id: 'text-1', type: 'prompt', x: 0, y: 0, data: { text: '原始文案', name: '选中文案' } }],
+    },
+  });
+  assert.equal(agent.images.length, 0);
+  assert.equal(data.images.length, 0);
+  assert.equal(data.message, '白色渐变字，层次清晰，整体画面更有亮点。');
+  assert.ok(agent.calls.some((call) => call.messages.some((message) => message.role === 'user' && JSON.stringify(message.content).includes('原始文案'))));
+});
+
 test('canvas image edit target activates image routing for colloquial changes', async () => {
   const agent = harness({ imageCapabilities: ['generate', 'edit'] });
   const data = await agent.post([{

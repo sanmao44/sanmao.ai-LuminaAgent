@@ -161,6 +161,20 @@ test("agent text and images land on the canvas through the shared undostack", ()
   assert.match(canvas, /role: "Agent 回复"/);
 });
 
+test("text references stay contextual and text replies never auto-write back", () => {
+  assert.equal(agentDock.canvasAgentDockHasVisualReferences([
+    { id: "copy", kind: "text", name: "原文", text: "原始文案" },
+  ]), false);
+  assert.equal(agentDock.canvasAgentDockHasVisualReferences([
+    { id: "image", kind: "image", name: "参考图", url: "/image.png" },
+  ]), true);
+  assert.equal(agentDock.canvasAgentDockShouldAutoApplyText("请优化选中文案的排版"), false);
+  assert.equal(agentDock.canvasAgentDockShouldAutoApplyText("请把结果存为节点"), true);
+  assert.doesNotMatch(component, /runContext.operation === "edit" && runContext.targetKind === "text"/);
+  assert.match(component, /onApplyText\(content, \{ prompt: mentionText \}\)/);
+  assert.doesNotMatch(canvas, /已按选中文字节点更新内容/);
+});
+
 test("smart canvas apply only promotes explicit canvas-directed replies", () => {
   assert.match(context, /export function canvasAgentDockShouldAutoApplyText/);
   assert.match(component, /canvasAgentDockShouldAutoApplyText\(text\)/);
@@ -198,6 +212,8 @@ test("layout words do not hijack ordinary Agent prompts", () => {
     "帮我排版这段文字",
     "请给我一个排版方案",
     "排版一下这张海报",
+    "请根据我选中的文案优化排版和表达层次",
+    "请润色选中的文本，改善排版与表达",
   ]) {
     assert.equal(agentDock.buildCanvasAgentDockPlan(input, selected), null, input);
   }

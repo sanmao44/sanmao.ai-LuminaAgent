@@ -41,6 +41,8 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   const { body, messages, isCanvasSource, isCanvasNodeExecution, canvasTargetNodeIds, canvasTargetOperation, ports } = input;
   const latest = [...messages].reverse().find((message) => message.role === 'user');
   const latestRefs = ports.normalizeCreativeReferences(latest?.references, 16);
+  // 文本引用仍然要传给模型，但不能把普通文案优化误判成图片任务。
+  const hasVisualReferences = latestRefs.some((reference) => reference.kind !== 'text');
   const rawLatestInstruction = ports.agentInstructionText(body.intentText, latest?.content || '');
   // A short follow-up such as “下载” is still an actionable request when the
   // immediately preceding user turn supplied the public video URL. Preserve
@@ -62,7 +64,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   const batchPlanContent = selectedTextBatchPlan || previousImagePlan?.content || '';
   const intentDecision = ports.classifyAgentDeliverable(latestInstruction, {
     messages: messages.slice(0, -1),
-    hasReferences: latestRefs.length > 0,
+    hasReferences: hasVisualReferences,
     hasFiles: Boolean(latest?.files?.length),
   });
   const previousAssistantForRouting = [...messages].reverse().find((message) => message.role === 'assistant')?.content || '';
@@ -100,7 +102,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   };
   const requestRoute = ports.classifyAgentRequest(latestInstruction, {
     messages: messages.slice(0, -1),
-    hasReferences: latestRefs.length > 0,
+    hasReferences: hasVisualReferences,
     hasFiles: Boolean(latest?.files?.length),
   }, { webMode: isCanvasNodeExecution ? 'off' : webMode, previousAssistant: previousAssistantForRouting, intent: intentDecision, skillRoute });
   if (requestRoute.tools.useSkills && requestRoute.skillRoute.matched) requestModeAllowsExecution = true;

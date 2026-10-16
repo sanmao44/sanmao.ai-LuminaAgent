@@ -8438,27 +8438,6 @@ export default function SuperCanvas() {
       const anchor = meta.runContext?.anchorNodeId
         ? nodeById(readDocument(), meta.runContext.anchorNodeId) || null
         : selectedSingle || selectedNodes[0] || null;
-      if (meta.runContext?.operation === "edit" && anchor?.type === "prompt") {
-        if (!commit((value) => ({
-          ...value,
-          nodes: value.nodes.map((node) => node.id !== anchor.id ? node : {
-            ...node,
-            data: {
-              ...node.data,
-              text: content,
-              agentResponse: content,
-              agentPrompt: meta.prompt,
-              role: node.data.role || "Agent 回复",
-              status: "completed" as const,
-              statusLabel: "Agent 已更新",
-            },
-          }),
-        }))) return [];
-        setSelectedIds(new Set([anchor.id]));
-        notify("已按选中文字节点更新内容");
-        projectTask.ifActive(() => fitView([anchor.id]));
-        return [anchor.id];
-      }
       const origin = anchor
         ? { x: anchor.x, y: anchor.y }
         : screenToWorld(stageSize.width / 2, stageSize.height / 2);
