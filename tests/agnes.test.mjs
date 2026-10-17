@@ -396,6 +396,40 @@ test('uses the latest automatically recovered relay URL without restarting the s
   }
 });
 
+test('waits briefly for the automatic relay during tunnel startup', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-relay-startup-'));
+  const previous = {
+    dataDir: process.env.SANMAO_DATA_DIR,
+    mode: process.env.SANMAO_RELAY_MODE,
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+  };
+  process.env.SANMAO_DATA_DIR = root;
+  process.env.SANMAO_RELAY_MODE = '1';
+  delete process.env.SANMAO_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  await mkdir(path.join(root, 'free-relay'), { recursive: true });
+  let uploadCalls = 0;
+  globalThis.fetch = async (url) => {
+    uploadCalls += 1;
+    assert.equal(String(url), 'https://ready.trycloudflare.com/api/relay/media');
+    return new Response(JSON.stringify({ ok: true, url: 'https://ready.trycloudflare.com/api/relay/media/startup-token', expiresAt: '2099-01-01T00:30:00.000Z' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const pending = signed.prepareAgnesMediaUrl('data:image/png;base64,AAECAw==', 'image');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await writeFile(path.join(root, 'free-relay', 'public-url.txt'), 'https://ready.trycloudflare.com\n');
+    assert.equal(await pending, 'https://ready.trycloudflare.com/api/relay/media/startup-token');
+    assert.equal(uploadCalls, 1);
+  } finally {
+    if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
+    if (previous.mode === undefined) delete process.env.SANMAO_RELAY_MODE; else process.env.SANMAO_RELAY_MODE = previous.mode;
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('does not relay public Agnes image URLs and gives a recoverable error when relay is unavailable', async () => {
   const previous = {
     relay: process.env.SANMAO_MEDIA_RELAY_URL,
