@@ -12,6 +12,7 @@ import {
 export const CANVAS_PROJECTS_KEY = 'sanmao.canvas.projects';
 export const CANVAS_ACTIVE_KEY = 'sanmao.canvas.active';
 export const CANVAS_UI_KEY = 'sanmao.canvas.ui';
+export const CANVAS_DELETION_TOMBSTONES_KEY = 'sanmao.canvas.deletion-tombstones.v1';
 const CANVAS_TAB_ACTIVE_KEY = 'sanmao.canvas.tab-active';
 const NOVA_PROJECTS_KEY = 'nova.v1.projects';
 const NOVA_ACTIVE_KEY = 'nova.v1.active';
@@ -19,6 +20,14 @@ const NOVA_PROJECT_PREFIX = 'nova.v1.project.';
 const MIGRATION_KEY = 'sanmao.canvas.nova-migrated';
 const MIGRATION_BACKUP_KEY = 'sanmao.canvas.nova-backup';
 export const CANVAS_V1_BACKUP_PREFIX = 'sanmao.canvas.v1-backup.';
+
+export type CanvasDeletionTombstone = {
+  nodes: string[];
+  edges: string[];
+  groups: string[];
+};
+
+export type CanvasDeletionTombstones = Record<string, CanvasDeletionTombstone>;
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -88,6 +97,51 @@ function normalizeProjects(value: unknown): CanvasProject[] {
     createdAt: Number(item.createdAt) || Date.now(),
     updatedAt: Number(item.updatedAt) || Number(item.createdAt) || Date.now(),
   }));
+}
+
+function normalizeDeletionTombstones(value: unknown): CanvasDeletionTombstones {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const result: CanvasDeletionTombstones = {};
+  for (const [projectId, raw] of Object.entries(value)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const record = raw as Record<string, unknown>;
+    const ids = (key: keyof CanvasDeletionTombstone) => Array.from(new Set(
+      (Array.isArray(record[key]) ? record[key] : [])
+        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+        .map((id) => id.trim().slice(0, 200)),
+    ));
+    const tombstone = { nodes: ids('nodes'), edges: ids('edges'), groups: ids('groups') };
+    if (tombstone.nodes.length || tombstone.edges.length || tombstone.groups.length) result[projectId] = tombstone;
+  }
+  return result;
+}
+
+function idsOf(rows: ReadonlyArray<{ id: string }>) {
+  return new Set(rows.map((row) => row.id));
+}
+
+function updateDeletionTombstones(
+  current: CanvasDeletionTombstones,
+  projectId: string,
+  previous: CanvasDocument,
+  next: CanvasDocument,
+) {
+  const result = normalizeDeletionTombstones(current);
+  const previousRows = { nodes: previous.nodes, edges: previous.edges, groups: previous.groups };
+  const nextRows = { nodes: next.nodes, edges: next.edges, groups: next.groups };
+  const tombstone = result[projectId] || { nodes: [], edges: [], groups: [] };
+  (['nodes', 'edges', 'groups'] as const).forEach((key) => {
+    const removed = idsOf(previousRows[key]);
+    const present = idsOf(nextRows[key]);
+    for (const id of present) removed.delete(id);
+    const ids = new Set(tombstone[key]);
+    for (const id of removed) ids.add(id);
+    for (const id of present) ids.delete(id);
+    tombstone[key] = [...ids];
+  });
+  if (tombstone.nodes.length || tombstone.edges.length || tombstone.groups.length) result[projectId] = tombstone;
+  else delete result[projectId];
+  return result;
 }
 
 function activeProjectId(projects: CanvasProject[], value: unknown) {
@@ -250,6 +304,14 @@ export function loadCanvasDocument(id: string) {
   return normalizeDocument(readJson(`${CANVAS_PROJECT_PREFIX}${id}`, null));
 }
 
+export function readCanvasDeletionTombstones(): CanvasDeletionTombstones {
+  return normalizeDeletionTombstones(readJson(CANVAS_DELETION_TOMBSTONES_KEY, {}));
+}
+
+export function clearCanvasDeletionTombstones() {
+  return writeJson(CANVAS_DELETION_TOMBSTONES_KEY, {});
+}
+
 export function saveCanvasDocument(id: string, document: CanvasDocument, expectedDocument?: CanvasDocument) {
   storageQuotaExceeded = false;
   storageConflict = false;
@@ -272,10 +334,16 @@ export function saveCanvasDocument(id: string, document: CanvasDocument, expecte
     }
   }
   // Document and identity metadata must succeed together; never acknowledge a partial save.
+  const tombstones = expectedDocument
+    ? updateDeletionTombstones(readCanvasDeletionTombstones(), id, normalizeDocument(expectedDocument), normalized)
+    : readCanvasDeletionTombstones();
   const ok = persistProjectIdentity(
     projects.map((project) => project.id === id ? { ...project, updatedAt: Date.now() } : project),
     readCreativeProjects(),
-    new Map([[key, JSON.stringify(normalized)]]),
+    new Map([
+      [key, JSON.stringify(normalized)],
+      [CANVAS_DELETION_TOMBSTONES_KEY, JSON.stringify(tombstones)],
+    ]),
   ).saved;
   if (ok) emitWorkspaceChange();
   return ok;
@@ -323,7 +391,12 @@ export function deleteCanvasProject(id: string) {
   const latest = readCanvasProjects();
   if (latest.length <= 1 || !latest.some((project) => project.id === id)) return false;
   const next = latest.filter((project) => project.id !== id);
-  if (!persistProjectIdentity(next, readCreativeProjects(), new Map([[`${CANVAS_PROJECT_PREFIX}${id}`, null]])).saved) return false;
+  const tombstones = readCanvasDeletionTombstones();
+  delete tombstones[id];
+  if (!persistProjectIdentity(next, readCreativeProjects(), new Map([
+    [`${CANVAS_PROJECT_PREFIX}${id}`, null],
+    [CANVAS_DELETION_TOMBSTONES_KEY, JSON.stringify(tombstones)],
+  ])).saved) return false;
   emitWorkspaceChange();
   return true;
 }

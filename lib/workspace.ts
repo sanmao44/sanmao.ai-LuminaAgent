@@ -5,9 +5,12 @@ import {
   replaceChatSessions,
 } from './client-history';
 import {
+  clearCanvasDeletionTombstones,
+  readCanvasDeletionTombstones,
   readCanvasWorkspace,
   restoreCanvasWorkspace,
 } from './canvas/storage';
+import type { CanvasDeletionTombstones } from './canvas/storage';
 import {
   WORKSPACE_CHANGE_EVENT,
   emitWorkspaceMutation,
@@ -233,8 +236,19 @@ function canvasDocumentHasData(document: WorkspaceCanvasDocument | undefined) {
   return Boolean(document && (document.nodes.length || document.edges.length || document.groups.length));
 }
 
-function mergeCanvasRows<T extends WorkspaceRow>(local: readonly T[], remote: readonly T[], localWins: boolean) {
+function mergeCanvasRows<T extends WorkspaceRow>(
+  local: readonly T[],
+  remote: readonly T[],
+  localWins: boolean,
+  deletedIds: readonly string[] = [],
+) {
   const rows = new Map(remote.map((row) => [row.id, row] as const));
+  if (deletedIds.length) {
+    const deleted = new Set(deletedIds);
+    for (const id of deleted) {
+      if (!local.some((row) => row.id === id)) rows.delete(id);
+    }
+  }
   for (const row of local) {
     if (!rows.has(row.id) || localWins) rows.set(row.id, row);
   }
@@ -245,15 +259,16 @@ function mergeCanvasDocuments(
   local: WorkspaceCanvasDocument | undefined,
   remote: WorkspaceCanvasDocument | undefined,
   localWins: boolean,
+  deleted?: CanvasDeletionTombstones[string],
 ) {
   if (!local) return remote;
   if (!remote) return local;
   const base = localWins ? local : remote;
   return {
     ...base,
-    nodes: mergeCanvasRows(local.nodes, remote.nodes, localWins),
-    edges: mergeCanvasRows(local.edges, remote.edges, localWins),
-    groups: mergeCanvasRows(local.groups, remote.groups, localWins),
+    nodes: mergeCanvasRows(local.nodes, remote.nodes, localWins, deleted?.nodes),
+    edges: mergeCanvasRows(local.edges, remote.edges, localWins, deleted?.edges),
+    groups: mergeCanvasRows(local.groups, remote.groups, localWins, deleted?.groups),
   };
 }
 
@@ -281,7 +296,11 @@ function selectMergedActiveProject(
  * projects are the conflict unit: newer project rows win, while unrelated
  * projects and history records are retained from both sides.
  */
-export function mergeWorkspaceSnapshots(local: WorkspaceSnapshot, remote: WorkspaceSnapshot): WorkspaceSnapshot {
+export function mergeWorkspaceSnapshots(
+  local: WorkspaceSnapshot,
+  remote: WorkspaceSnapshot,
+  deletionTombstones: CanvasDeletionTombstones = {},
+): WorkspaceSnapshot {
   const projects = mergeWorkspaceRows(local.canvas.projects, remote.canvas.projects);
   const documents = Object.fromEntries(projects.flatMap((project) => {
     const localProject = local.canvas.projects.find((item) => item.id === project.id);
@@ -289,7 +308,7 @@ export function mergeWorkspaceSnapshots(local: WorkspaceSnapshot, remote: Worksp
     const localDocument = local.canvas.documents[project.id];
     const remoteDocument = remote.canvas.documents[project.id];
     const localWins = Boolean(localProject && (!remoteProject || workspaceRowTimestamp(localProject) >= workspaceRowTimestamp(remoteProject)));
-    const document = mergeCanvasDocuments(localDocument, remoteDocument, localWins);
+    const document = mergeCanvasDocuments(localDocument, remoteDocument, localWins, deletionTombstones[project.id]);
     return document ? [[project.id, document] as const] : [];
   }));
   const activeId = selectMergedActiveProject(local, remote, projects);
@@ -442,6 +461,7 @@ async function restoreWorkspaceSnapshotInternal(
       pending: changed,
       contentSignature: workspaceContentSignature(snapshot),
     });
+    if (!changed) clearCanvasDeletionTombstones();
     acknowledgedMutationGeneration = generation;
     return !changed;
   });
@@ -469,6 +489,7 @@ async function saveWorkspace(snapshot: WorkspaceSnapshot, meta: WorkspaceMeta, g
     pending,
     contentSignature: workspaceContentSignature(snapshot),
   });
+  if (!pending) clearCanvasDeletionTombstones();
   acknowledgedMutationGeneration = generation;
   return !pending;
 }
@@ -488,7 +509,7 @@ async function rebaseWorkspaceAfterConflict(
     preserveLocalChanges(state);
     return { synced: false, rebased: false };
   }
-  const merged = mergeWorkspaceSnapshots(local, remote);
+  const merged = mergeWorkspaceSnapshots(local, remote, readCanvasDeletionTombstones());
   const restored = await restoreWorkspaceSnapshotInternal(
     merged,
     revision,

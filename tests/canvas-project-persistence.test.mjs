@@ -125,6 +125,23 @@ test('interactive save rebases a same-project conflict and retains both tab edit
   assert.equal(session.save(result.document), true);
 });
 
+test('interactive save keeps a local image deletion while retaining a concurrent image', () => {
+  const { storage, CanvasProjectSession, imageDocument, empty } = fixture();
+  const baseline = imageDocument('deleted', 'kept');
+  assert.equal(storage.saveCanvasDocument('a', baseline, empty), true);
+  const session = new CanvasProjectSession();
+  session.open('a');
+  const current = imageDocument('kept', 'local');
+  const remote = imageDocument('deleted', 'kept', 'remote');
+  assert.equal(storage.saveCanvasDocument('a', remote, baseline), true);
+
+  const result = session.saveRecoveringConflict(current);
+  assert.equal(result.saved, true);
+  assert.deepEqual(result.document.nodes.map((node) => node.id), ['kept', 'remote', 'local']);
+  assert.equal(result.document.nodes.some((node) => node.id === 'deleted'), false);
+  assert.deepEqual(storage.loadCanvasDocument('a').nodes.map((node) => node.id), ['kept', 'remote', 'local']);
+});
+
 test('interactive save retries after a transient metadata write failure', () => {
   const { storage, CanvasProjectSession, imageDocument } = fixture();
   const session = new CanvasProjectSession();

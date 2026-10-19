@@ -14,10 +14,41 @@ function documentSignature(document: CanvasDocument) {
   return JSON.stringify(normalizeDocument(document));
 }
 
-function mergeCanvasRows<T extends { id: string }>(local: readonly T[], remote: readonly T[]) {
-  const rows = new Map(remote.map((row) => [row.id, row] as const));
-  for (const row of local) rows.set(row.id, row);
-  return [...rows.values()];
+function sameRow<T>(left: T, right: T) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function mergeCanvasRows<T extends { id: string }>(
+  local: readonly T[],
+  remote: readonly T[],
+  base: readonly T[],
+) {
+  const localById = new Map(local.map((row) => [row.id, row] as const));
+  const remoteById = new Map(remote.map((row) => [row.id, row] as const));
+  const baseById = new Map(base.map((row) => [row.id, row] as const));
+  const ids = new Set([...remoteById.keys(), ...localById.keys(), ...baseById.keys()]);
+  const rows: T[] = [];
+  for (const id of ids) {
+    const localRow = localById.get(id);
+    const remoteRow = remoteById.get(id);
+    const baseRow = baseById.get(id);
+    if (!baseRow) {
+      if (localRow) rows.push(localRow);
+      else if (remoteRow) rows.push(remoteRow);
+      continue;
+    }
+    if (!localRow) {
+      // A row missing from the local draft but present in its save baseline
+      // was intentionally deleted; a remote copy must not resurrect it.
+      continue;
+    }
+    if (!remoteRow) {
+      if (!sameRow(localRow, baseRow)) rows.push(localRow);
+      continue;
+    }
+    rows.push(sameRow(localRow, baseRow) ? remoteRow : localRow);
+  }
+  return rows;
 }
 
 /**
@@ -25,13 +56,13 @@ function mergeCanvasRows<T extends { id: string }>(local: readonly T[], remote: 
  * tab. The storage adapter still performs the compare-and-swap; this merge is
  * only the bounded retry after that CAS reports a document conflict.
  */
-function mergeCanvasDocuments(local: CanvasDocument, remote: CanvasDocument) {
+function mergeCanvasDocuments(local: CanvasDocument, remote: CanvasDocument, base: CanvasDocument) {
   return normalizeDocument({
     ...remote,
     ...local,
-    nodes: mergeCanvasRows(local.nodes, remote.nodes),
-    edges: mergeCanvasRows(local.edges, remote.edges),
-    groups: mergeCanvasRows(local.groups, remote.groups),
+    nodes: mergeCanvasRows(local.nodes, remote.nodes, base.nodes),
+    edges: mergeCanvasRows(local.edges, remote.edges, base.edges),
+    groups: mergeCanvasRows(local.groups, remote.groups, base.groups),
   });
 }
 
@@ -108,12 +139,14 @@ export class CanvasProjectSession {
     if (!this.activeId || !readCanvasProjects().some((project) => project.id === this.activeId)) {
       return { saved: false, document: normalizeDocument(document), rebased: false };
     }
+    const baseline = this.persisted;
+    if (!baseline) return { saved: false, document: normalizeDocument(document), rebased: false };
 
     const latest = loadCanvasDocument(this.activeId);
     // Retry against a fresh expected snapshot even when the first failure was
     // caused by session timing rather than a concurrent document write. The
     // storage adapter still rejects quota and metadata failures.
-    const merged = mergeCanvasDocuments(normalized, latest);
+    const merged = mergeCanvasDocuments(normalized, latest, baseline);
     if (!saveCanvasDocument(this.activeId, merged, latest)) {
       return { saved: false, document: normalized, rebased: false };
     }

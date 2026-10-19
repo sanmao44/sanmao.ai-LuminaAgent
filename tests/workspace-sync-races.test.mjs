@@ -83,6 +83,8 @@ function harness(t, { remote = snapshot(), revision = 1, realCanvas = false } = 
       replaceChatSessions: async () => events.emitWorkspaceChange(),
     },
     './canvas/storage': {
+      clearCanvasDeletionTombstones: () => realCanvas ? canvasStorage.clearCanvasDeletionTombstones() : true,
+      readCanvasDeletionTombstones: () => realCanvas ? canvasStorage.readCanvasDeletionTombstones() : {},
       readCanvasWorkspace: () => realCanvas ? canvasStorage.readCanvasWorkspace() : copy(localCanvas),
       restoreCanvasWorkspace: (canvas) => {
         restoreCount += 1;
@@ -449,6 +451,41 @@ test('project timestamps choose the newer same-id canvas during a LAN rebase', a
   assert.deepEqual(h.remote.canvas.documents['shared-project'].nodes.map((node) => node.id), ['shared-image']);
   assert.equal(h.remote.canvas.documents['shared-project'].nodes[0].data.url, '/api/storage/file?name=local.png');
   assert.equal(h.meta.revision, 6);
+});
+
+test('a LAN rebase does not resurrect a locally deleted image when the remote project is newer', async (t) => {
+  const base = snapshot('shared-project', 100);
+  base.canvas.documents['shared-project'].nodes = [
+    { id: 'deleted-image', type: 'media', x: 0, y: 0, data: { kind: 'image', url: '/stored/deleted.png' } },
+    { id: 'kept-image', type: 'media', x: 360, y: 0, data: { kind: 'image', url: '/stored/kept.png' } },
+  ];
+  const h = harness(t, { remote: base, revision: 1, realCanvas: true });
+  h.seedBaseline(base, 1);
+  const baselineDocument = h.canvasStorage.loadCanvasDocument('shared-project');
+  const localDocument = {
+    ...baselineDocument,
+    nodes: [
+      baselineDocument.nodes.find((node) => node.id === 'kept-image'),
+      { id: 'local-image', type: 'media', x: 720, y: 0, data: { kind: 'image', url: '/stored/local.png' } },
+    ].filter(Boolean),
+  };
+  assert.equal(h.canvasStorage.saveCanvasDocument('shared-project', localDocument, baselineDocument), true);
+
+  const remote = copy(base);
+  remote.canvas.projects[0].updatedAt = 1200;
+  remote.canvas.documents['shared-project'].nodes.push({
+    id: 'remote-image', type: 'media', x: 1080, y: 0, data: { kind: 'image', url: '/stored/remote.png' },
+  });
+  h.setRemote(remote, 5);
+  h.start();
+
+  await waitFor(() => h.statuses.at(-1) === 'synced');
+  const ids = h.remote.canvas.documents['shared-project'].nodes.map((node) => node.id);
+  assert.equal(ids.includes('deleted-image'), false);
+  assert.equal(ids.includes('kept-image'), true);
+  assert.equal(ids.includes('local-image'), true);
+  assert.equal(ids.includes('remote-image'), true);
+  assert.equal(h.meta.pending, false);
 });
 
 test('metadata fast path still detects persisted changes and preferences without a local event', async (t) => {
