@@ -1,17 +1,21 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.97",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.97",
+  "latestVersion": "0.7.98",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.98",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.97/SANMAO.AI-0.7.97.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.98/SANMAO.AI-0.7.98.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.97/SANMAO.AI-0.7.97.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.97/SANMAO.AI-0.7.97.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.97/SANMAO.AI-0.7.97.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.98/SANMAO.AI-0.7.98.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.98/SANMAO.AI-0.7.98.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.98/SANMAO.AI-0.7.98.zip"
   ],
   "sha256": "1af1de06059cadd96e4ba6d898b46529b56de04cb7322831240f0d0b693418f1",
-  "publishedAt": "2026-10-15T13:17:51.481Z",
+  "publishedAt": "2026-10-19T04:12:27.000Z",
   "notes": [
+    "修复 Canvas Agent 对文本优化、排版和选中素材操作的意图路由，选区引用可可靠传递给图片、视频和文本编辑任务。",
+    "修复 Canvas 项目保存发生冲突后导航失效，以及打开项目菜单后画布导航被遮挡的问题。",
+    "改进 Agent 流连接保持和自动媒体 Relay 启动时序，减少长响应中断与媒体访问瞬时失败。",
+    "为 Word、Excel、PPT 等 Office 产物生成补充受控回退路径，提升复杂任务的完成率。",
     "修复局域网模式下绑定 0.0.0.0 时的真实 Host 同源判断，避免正常局域网请求被误判为跨站请求。",
     "修复新局域网客户端初始化占位画布覆盖服务端工作区的问题，启动时可正确恢复共享项目和素材。",
     "修复多个局域网客户端同时编辑时的工作区冲突合并、元数据修复与竞态保护，避免覆盖其他客户端的项目。",

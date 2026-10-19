@@ -1,3 +1,12 @@
+# 0.7.98 Canvas Agent 与稳定性修复
+
+- 修复 Canvas Agent 对文本优化、排版和选中素材操作的意图路由，图片、视频和文本参考可可靠传递给编辑任务。
+- 修复 Canvas 项目保存冲突后导航失效，以及打开项目菜单后画布导航被遮挡的问题。
+- 改进 Agent 流连接保持和自动媒体 Relay 启动时序，减少长响应中断与媒体访问瞬时失败。
+- 为 Word、Excel、PPT 等 Office 产物生成补充受控回退路径，提升复杂任务的完成率。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.98](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.98)。
+
 # 0.7.97 局域网画布工作区同步修复
 
 - 修复局域网模式下绑定 `0.0.0.0` 时的真实 Host 同源判断，避免正常局域网请求被误判为跨站请求。
