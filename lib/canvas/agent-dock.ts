@@ -38,6 +38,15 @@ export function canvasAgentDockHasVisualReferences(references: readonly CanvasAg
   return references.some((reference) => reference.kind === "image" || reference.kind === "video");
 }
 
+/** 选段操作只能把文本节点作为连线锚点；其他节点仍允许创建独立分支。 */
+export function canvasAgentDockPromptAnchor(
+  selectedSingle: CanvasNode | null | undefined,
+  selectedNodes: readonly CanvasNode[],
+) {
+  if (selectedSingle?.type === "prompt") return selectedSingle;
+  return selectedNodes.find((node) => node.type === "prompt") || null;
+}
+
 export type CanvasAgentDockChip = {
   id: string;
   label: string;

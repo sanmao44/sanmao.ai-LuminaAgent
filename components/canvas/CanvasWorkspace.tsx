@@ -199,6 +199,7 @@ import {
   CANVAS_AGENT_DOCK_MAX_REFERENCES,
   buildCanvasAgentDockContext,
   canvasAgentDockNodeLabel,
+  canvasAgentDockPromptAnchor,
   canvasAgentDockStatus,
   type CanvasAgentDockPlan,
   type CanvasAgentDockPlanResult,
@@ -11051,15 +11052,15 @@ export default function SuperCanvas() {
 
   /* Agent 助手面板里的选段操作：没有选中节点时落在视口中心，不连线。 */
   const applyAgentDockAgentNode = useCallback(
-    (text: string) => createViewerAgentNode(selectedSingle || selectedNodes[0] || null, text),
+    (text: string) => createViewerAgentNode(canvasAgentDockPromptAnchor(selectedSingle, selectedNodes), text),
     [createViewerAgentNode, selectedNodes, selectedSingle],
   );
   const applyAgentDockImageBranch = useCallback(
-    (text: string) => createImageBranchFromText(selectedSingle || selectedNodes[0] || null, text),
+    (text: string) => createImageBranchFromText(canvasAgentDockPromptAnchor(selectedSingle, selectedNodes), text),
     [createImageBranchFromText, selectedNodes, selectedSingle],
   );
   const applyAgentDockVideoBranch = useCallback(
-    (text: string) => createVideoBranchFromText(selectedSingle || selectedNodes[0] || null, text),
+    (text: string) => createVideoBranchFromText(canvasAgentDockPromptAnchor(selectedSingle, selectedNodes), text),
     [createVideoBranchFromText, selectedNodes, selectedSingle],
   );
   const updateTextNode = useCallback(

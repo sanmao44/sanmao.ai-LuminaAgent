@@ -516,9 +516,16 @@ test("the dock reply offers the same select-text toolbar as the node text viewer
 test("dock select-text actions fall back to the viewport centre without a selection", () => {
   // 没选中节点时不能连线，节点落在视口中心，anchor 必须可空。
   assert.match(canvas, /\(anchor: CanvasNode \| null, value: string\) => \{\s*if \(anchor && anchor\.type !== "prompt"\) return;/);
-  assert.match(canvas, /\(text: string\) => createImageBranchFromText\(selectedSingle \|\| selectedNodes\[0\] \|\| null, text\)/);
-  assert.match(canvas, /\(text: string\) => createViewerAgentNode\(selectedSingle \|\| selectedNodes\[0\] \|\| null, text\)/);
+  assert.match(canvas, /canvasAgentDockPromptAnchor\(selectedSingle, selectedNodes\)/);
   assert.match(canvas, /return anchor\s*\?\s*addEdge\(withNode, anchor\.id, nextImageNode\.id/);
+});
+
+test("dock select-text actions do not silently no-op when a media node is selected", () => {
+  const media = { type: "media" };
+  const prompt = { type: "prompt" };
+  assert.equal(agentDock.canvasAgentDockPromptAnchor(media, [media]), null);
+  assert.equal(agentDock.canvasAgentDockPromptAnchor(null, [media, prompt]), prompt);
+  assert.equal(agentDock.canvasAgentDockPromptAnchor(media, [media, prompt]), prompt);
 });
 
 test("the dock header counts the tasks of the selected nodes", () => {
