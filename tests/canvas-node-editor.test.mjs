@@ -587,7 +587,8 @@ test("image continuation uses the ordinary image API and keeps lineage on image 
   assert.match(continuation, /result\.images\.forEach/);
   assert.match(continuation, /status: "failed"/);
   assert.match(continuation, /referenceEdges\.map/);
-  assert.match(continuation, /fallbackToGenerationOnEdit404: true/);
+  assert.match(continuation, /imageOperation: imageReferenceRequest\.imageOperation/);
+  assert.doesNotMatch(continuation, /fallbackToGenerationOnEdit404/);
   assert.doesNotMatch(continuation, /sourceGeneratorId/);
   assert.doesNotMatch(continuation, /variantBatchId|variantIndex/);
   assert.doesNotMatch(continuation, /createGenerator\(/);
@@ -627,7 +628,8 @@ test("current-image reference choice reaches repeat generation without changing 
   assert.match(continuation, /options\?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference">/);
   assert.match(continuation, /const useCurrentImageAsReference = options\?\.useCurrentImageAsReference !== false/);
   assert.match(continuation, /if \(useCurrentImageAsReference\) \{[\s\S]*?addReference\([\s\S]*?source\.id/);
-  assert.match(continuation, /operation: actualUsesCurrentImageAsReference \? "edit" : "generate"/);
+  assert.match(continuation, /canvasImageRequestOperation\(paramsWithMask, \{ useCurrentImageAsReference \}\)/);
+  assert.match(continuation, /operation: actualImageOperation/);
   assert.match(continuation, /referenceIds: \[\.\.\.\(actualUsesCurrentImageAsReference \? resolvedReferenceIds/);
   assert.match(continuation, /parentNodeId: source\.id/);
   assert.match(continuation, /reuseSourceNodeId: source\.id/);
@@ -638,7 +640,7 @@ test("disabling the current image keeps explicit references and omits the mask f
   const end = component.indexOf("const runReuseGeneration = useCallback", start);
   assert.ok(start >= 0 && end > start, "image continuation should be present");
   const continuation = component.slice(start, end);
-  assert.match(continuation, /const \{ mask: _mask, \.\.\.withoutMask \} = paramsWithMask/);
+  assert.match(continuation, /const \{ mask: _mask, \.\.\.withoutMask \} = imageReferenceRequest\.params/);
   assert.match(continuation, /const params = useCurrentImageAsReference[\s\S]*withoutMask as ImageCreationSettings/);
   assert.match(continuation, /for \(const \[index, reference\] of selectedReferences\.entries\(\)\)/);
   assert.match(continuation, /addReference\(existing\.id, url, name\)/);

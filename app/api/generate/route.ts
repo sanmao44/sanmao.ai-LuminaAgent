@@ -7,6 +7,7 @@ import { renderAngleOutput } from '@/lib/angle-image';
 import type { GeneratedImage } from '@/lib/types';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
+import type { ImageRequestOperation } from '@/packages/contracts/creative';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { enforceLocalEditMask } from '@/lib/local-edit-composite';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
@@ -153,7 +154,24 @@ export async function POST(request: Request) {
       ? body.references.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0).slice(0, 16)
       : [];
     if (camera?.viewpoint && references.length !== (hasAngleGuide ? 2 : 1)) return Response.json({ error: hasAngleGuide ? '请提交原始参考图和一张构图导引，原图必须排在第一张。' : '请提交一张原始参考图。' }, { status: 400 });
-    const hasEditInput = references.length > 0 || (typeof body.mask === 'string' && body.mask.trim().length > 0) || (typeof body.moveGuide === 'string' && body.moveGuide.trim().length > 0);
+    const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
+    const rawMoveGuide = typeof body.moveGuide === 'string' ? body.moveGuide.trim() : '';
+    const requestedImageOperation = body.imageOperation;
+    if (requestedImageOperation !== undefined && requestedImageOperation !== 'generate' && requestedImageOperation !== 'edit') {
+      return Response.json({ error: '图片操作必须是 generate 或 edit。' }, { status: 400 });
+    }
+    if (requestedImageOperation === 'generate' && (rawMask || rawMoveGuide)) {
+      return Response.json({ error: '蒙版和移动引导只能用于改图操作。' }, { status: 400 });
+    }
+    const imageOperation: ImageRequestOperation = requestedImageOperation
+      || (camera || rawMask || rawMoveGuide ? 'edit' : 'generate');
+    if (camera && imageOperation !== 'edit') {
+      return Response.json({ error: '角度控制只能用于改图操作。' }, { status: 400 });
+    }
+    if (imageOperation === 'edit' && !references.length) {
+      return Response.json({ error: '改图操作至少需要一张图片参考。' }, { status: 400 });
+    }
+    const hasEditInput = imageOperation === 'edit';
     const requestedModelId = String(body.model || 'auto');
     let runtime = hasEditInput
       ? await getRuntimeImageModelForCapability(requestedModelId, 'edit') || (camera && body.model && body.model !== 'auto' ? null : await getRuntimeImageModelForCapability('auto', 'edit'))
@@ -170,9 +188,7 @@ export async function POST(request: Request) {
     promptForLog = generationPrompt;
     const referenceRecords = referenceRecordsForLog(body.referenceImages);
     if (camera && hasAngleGuide && references.length !== 2) return Response.json({ error: '角度控制台必须按顺序提交两张参考图：原始参考和构图导引。' }, { status: 400 });
-    const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
     const mask = rawMask.startsWith('data:image/png') ? rawMask : undefined;
-    const rawMoveGuide = typeof body.moveGuide === 'string' ? body.moveGuide.trim() : '';
     const moveGuide = rawMoveGuide.startsWith('data:image/') ? rawMoveGuide : undefined;
     if (rawMask && !mask) return Response.json({ error: '局部编辑范围必须是 PNG 格式。' }, { status: 400 });
     if (mask && !references.length) return Response.json({ error: '使用局部编辑前请先添加一张参考图。' }, { status: 400 });
@@ -203,11 +219,12 @@ export async function POST(request: Request) {
       outputFormat,
       responseFormat,
       background,
+      ...(references.length ? { references } : {}),
     };
     aspectRatioForLog = input.aspectRatio;
     resolutionForLog = input.resolution;
     outputSizeForLog = input.width && input.height ? `${input.width}×${input.height}` : undefined;
-    modeForLog = references.length ? 'edit' : 'generate';
+    modeForLog = imageOperation;
     logId = await startGenerationLog({ mode: modeForLog, source: sourceForLog, prompt: generationPrompt, presetId, presetName, modelId: runtime.model.id, modelName: runtime.model.displayName, providerName: runtime.provider.name, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, count: input.count, angle: cameraPayload, references: referenceRecords.length ? referenceRecords : undefined }, String(body.taskId || ''));
     storagePath = (await getPublicState()).settings.imageStoragePath || '';
     downloadAuthForResult = imageDownloadAuth(runtime.provider);
@@ -216,12 +233,12 @@ export async function POST(request: Request) {
       runtime,
       // Explicit selections remain authoritative unless the provider returns
       // a clear compatibility rejection; only then try configured alternatives.
-      async () => getRuntimeImageModelCandidates('auto', references.length ? 'edit' : 'generate'),
+      async () => getRuntimeImageModelCandidates('auto', imageOperation),
       async (candidate) => {
         runtime = candidate;
         runtimeProviderId = candidate.provider.id;
         downloadAuthForResult = imageDownloadAuth(candidate.provider);
-        if (!references.length) return generateImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
+        if (imageOperation === 'generate') return generateImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
         try {
           return await editImage(candidate.provider, candidate.model.rawId, { ...input, references: providerReferences, mask, fidelity: camera?.viewpoint ? 'high' : camera ? 'low' : body.fidelity === 'low' ? 'low' : 'high' }, requestController.signal);
         } catch (error) {
@@ -245,7 +262,7 @@ export async function POST(request: Request) {
     providerFinishedAt = Date.now();
     const generatedImages = normalizedImages;
     const stored = await persistGenerationResult({ images: generatedImages, storagePath, startedAt, providerFinishedAt, logId, downloadAuth: downloadAuthForResult });
-    return Response.json({ ok: true, images: stored.images, mode: usedGenerationFallback ? 'generate-fallback' : references.length ? 'reference' : 'generate', ...(usedGenerationFallback ? { warning: '当前服务商不支持图片修改接口，已按普通生图生成新图。' } : {}), model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name }, camera: cameraPayload, storagePath: stored.path });
+    return Response.json({ ok: true, images: stored.images, mode: usedGenerationFallback ? 'generate-fallback' : imageOperation === 'edit' ? 'reference' : 'generate', ...(usedGenerationFallback ? { warning: '当前服务商不支持图片修改接口，已按普通生图生成新图。' } : {}), model: { id: runtime.model.id, name: runtime.model.displayName, provider: runtime.provider.name }, camera: cameraPayload, storagePath: stored.path });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) {
       return Response.json({ error: error.message, retryable: true }, { status: 409 });

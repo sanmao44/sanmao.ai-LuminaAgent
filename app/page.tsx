@@ -5620,6 +5620,7 @@ export default function Page() {
                                 },
                                 body: JSON.stringify({
                                     taskId: childTaskId,
+                                    imageOperation: taskMask || isAngleGeneration ? 'edit' : 'generate',
                                     prompt: taskPrompt,
                                     model: taskModelId,
                                     aspectRatio: requestRatio,
@@ -5719,6 +5720,7 @@ export default function Page() {
                 },
                 body: JSON.stringify({
                     taskId,
+                    imageOperation: taskMask || isAngleGeneration ? 'edit' : 'generate',
                     prompt: taskPrompt,
                     model: taskModelId,
                     aspectRatio: requestRatio,

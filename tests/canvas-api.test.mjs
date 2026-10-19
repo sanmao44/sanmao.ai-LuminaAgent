@@ -153,14 +153,37 @@ test('canvas image generation follows SANMAO response protocol', async () => {
   const result = await withFetch(async (input, options) => {
     request = { input, options };
     return jsonResponse({ images: [{ url: '/api/storage/file?name=generated.png' }] });
-  }, () => api.generateCanvasImage({ prompt: '紫色云海', model: 'image-model', count: 2, aspect: '16:9' }));
+  }, () => api.generateCanvasImage({ prompt: '紫色云海', model: 'image-model', count: 2, aspect: '16:9', imageOperation: 'generate' }));
 
   assert.deepEqual(result.images, [{ url: '/api/storage/file?name=generated.png' }]);
   assert.equal(request.input, '/api/generate');
   assert.deepEqual(JSON.parse(request.options.body), {
-    source: 'canvas', prompt: '紫色云海', model: 'image-model', count: 2, aspectRatio: '16:9',
+    source: 'canvas', imageOperation: 'generate', prompt: '紫色云海', model: 'image-model', count: 2, aspectRatio: '16:9',
     resolution: '自动', quality: '自动', references: [], referenceImages: [],
   });
+});
+
+test('canvas image generation sends the explicit image operation for references', async () => {
+  const mocks = withImageCanvas({ width: 1200, height: 800 });
+  try {
+    let request;
+    await withFetch(async (input, options) => {
+      request = { input, options };
+      return jsonResponse({ images: [{ url: '/generated.png' }] });
+    }, () => api.generateCanvasImage({
+      prompt: '生成山东版本',
+      model: 'image-model',
+      imageOperation: 'generate',
+      references: [{ url: 'data:image/png;base64,reference', name: 'visual reference' }],
+    }));
+
+    const payload = JSON.parse(request.options.body);
+    assert.equal(payload.imageOperation, 'generate');
+    assert.equal(payload.references.length, 1);
+    assert.equal(payload.referenceImages.length, 1);
+  } finally {
+    mocks.restore();
+  }
 });
 
 test('canvas image generation only sends a mask when one is present', async () => {
@@ -171,6 +194,7 @@ test('canvas image generation only sends a mask when one is present', async () =
   }, () => api.generateCanvasImage({
     prompt: '局部修改',
     model: 'image-model',
+    imageOperation: 'edit',
     maskUrl: 'data:image/png;base64,mask',
   }));
 
@@ -294,6 +318,7 @@ test('canvas image generation compresses reference images before submitting', as
       return jsonResponse({ images: [{ url: '/generated.png' }] });
     }, () => api.generateCanvasImage({
       prompt: '统一风格',
+      imageOperation: 'generate',
       references: [{ url: 'data:image/png;base64,ORIGINAL' }],
     }));
 
@@ -313,6 +338,7 @@ test('canvas local editing keeps the original source for compositing and sends a
       return jsonResponse({ images: [{ url: '/generated.png' }] });
     }, () => api.generateCanvasImage({
       prompt: 'local edit',
+      imageOperation: 'edit',
       maskUrl: 'data:image/png;base64,MASK',
       moveGuideUrl: 'data:image/png;base64,MOVE_GUIDE',
       references: [{ url: 'data:image/png;base64,SOURCE' }],

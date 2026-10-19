@@ -16,6 +16,7 @@ export type CreativeReference = {
  */
 export type CreativeLane = 'prompt' | 'image' | 'chat' | 'clarify';
 export type CreativeOperation = 'none' | 'generate' | 'edit' | 'reference-generate';
+export type ImageRequestOperation = Extract<CreativeOperation, 'generate' | 'edit'>;
 export type CreativeExecution = 'none' | 'preview' | 'run';
 
 export type CreativeRoute = {

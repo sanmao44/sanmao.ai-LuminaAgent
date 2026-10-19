@@ -208,6 +208,7 @@ test("maps image variant settings into the existing generation request shape", (
 
   assert.deepEqual(request, {
     taskId: "image-task-1",
+    imageOperation: "edit",
     prompt: "portrait",
     model: "image-model",
     count: 2,

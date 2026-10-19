@@ -420,7 +420,6 @@ import {
 import { prepareCanvasVariantGeneration } from "@/lib/canvas/variant-generation";
 import { canvasAngleReference } from "@/lib/canvas/angle-reference";
 import {
-  mentionedCanvasMedia,
   resolveCanvasMentionTokens,
 } from "@/lib/canvas/mention-resolution";
 import {
@@ -469,7 +468,8 @@ import {
 import { generateLocalDepthVideo } from "@/lib/local-depth-video-browser";
 import { DEFAULT_DEPTH_QUALITY, depthQualityProfile, normalizeDepthQuality, type DepthQuality } from "@/lib/canvas/depth-settings";
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from "@/lib/theme";
-import { insertReferenceMention as insertCreativeMention, referenceMentionNumbers, referenceMentionRange as creativeReferenceMentionRange, appendTextReferenceContext, replaceNaturalReferenceLabels, selectCreativeReferences } from "@/lib/creative-references";
+import { insertReferenceMention as insertCreativeMention, referenceMentionNumbers, referenceMentionRange as creativeReferenceMentionRange, appendTextReferenceContext, replaceNaturalReferenceLabels, resolveCreativeReferenceRoles, selectCreativeReferences } from "@/lib/creative-references";
+import { canvasImageRequestOperation, prepareCanvasImageReferenceRequest } from "@/lib/canvas/image-reference-request";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 import { readWorkspaceContext, updateWorkspaceContext, type WorkspaceContext } from "@/lib/workspace-context";
 import {
@@ -5167,6 +5167,7 @@ export default function SuperCanvas() {
         generator,
         requirements,
         mentionCandidates,
+        ...(kind === "image" ? { imageParams: effectiveParams as ImageCreationSettings } : {}),
       });
       if (prepared.invalidNumbers.length) {
         const invalid = prepared.invalidNumbers.map((number) => `@${number}`);
@@ -5280,7 +5281,17 @@ export default function SuperCanvas() {
         }
         for (const index of requested) {
           if (!mountedRef.current) return;
-          const prompt = promptFor(index);
+        const imageRequest = kind === "image" ? prepared.imageRequests?.[index] : undefined;
+        if (imageRequest && !imageRequest.ok) {
+          updateDoc((value) =>
+            updateVariantState(value, index, {
+              status: "failed",
+              error: imageRequest.message,
+            }),
+          );
+          continue;
+        }
+        const prompt = imageRequest?.ok ? imageRequest.prompt : promptFor(index);
           if (!prompt.trim()) {
             updateDoc((value) =>
               updateVariantState(value, index, {
@@ -5299,14 +5310,24 @@ export default function SuperCanvas() {
           );
           try {
             if (kind === "image") {
-              const imageParams = effectiveParams as ImageCreationSettings;
+              const imageParams = imageRequest?.ok
+                ? imageRequest.params
+                : effectiveParams as ImageCreationSettings;
+              const imageReferences = imageRequest?.ok
+                ? imageRequest.imageReferences
+                : refs;
+              const imageLinked = imageRequest?.ok
+                ? imageRequest.references
+                    .map((reference) => nodeById(readDocument(), reference.nodeId || reference.id))
+                    .filter((node): node is CanvasNode => Boolean(node && isCanvasReferenceableNode(node)))
+                : linked;
               const generationStartedAt = Date.now();
               const result = await generateCanvasImage(
                 canvasVariantImageRequest({
                   taskId: uid("image-task"),
                   prompt,
                   params: imageParams,
-                  references: refs,
+                  references: imageReferences,
                 }),
               );
               if (!result.images?.length)
@@ -5321,7 +5342,7 @@ export default function SuperCanvas() {
                   canvasVariantImageNodeData({
                     prompt,
                     params: clone(imageParams),
-                    linkedIds: linked.map((item) => item.id),
+                    linkedIds: imageLinked.map((item) => item.id),
                     sourceGeneratorId: generatorId,
                     variantBatchId: batchId,
                     variantIndex: index,
@@ -5368,7 +5389,7 @@ export default function SuperCanvas() {
                     : imageParams.resolution,
                  outputFormat: imageParams.outputFormat,
                  parentId: generatorId,
-                 references: createCanvasReferenceRecords(linked),
+                references: createCanvasReferenceRecords(imageLinked),
                   annotations: imageParams.mask?.annotations,
                   mask: canvasHistoryMask(imageParams.mask),
               }).catch(() => addLog("图片变体已生成，但写入历史失败"));
@@ -5827,28 +5848,16 @@ export default function SuperCanvas() {
       (reference) => reference.kind === "text" && Boolean(reference.text?.trim()),
     );
     if (!userPrompt && !hasTextReference && !presetId) return notify("请输入生成提示词。", "error");
-    const naturalReferenceReplacement = replaceNaturalReferenceLabels(userPrompt, draft.references);
-    const selection = selectCreativeReferences(naturalReferenceReplacement.value, draft.references);
-    if (selection.invalidNumbers.length) {
-      return notify(`引用编号无效：${selection.invalidNumbers.map((number) => `@${number}`).join("、")}`, "error");
-    }
-    const selectedReferenceIds = new Set(selection.references.map((reference) => reference.id));
-    const selectedReferences = draft.references.filter((reference) => selectedReferenceIds.has(reference.id));
-    if (selectedReferences.some((reference) => reference.pending || reference.error)) {
-      return notify("请等待参考图准备完成，或移除失败的参考图。", "error");
-    }
-    if (selectedReferences.some((reference) => reference.kind === "video")) {
-      return notify("图片生成只能使用图片参考，请移除视频素材。", "error");
-    }
-    const promptWithReferences = appendTextReferenceContext(naturalReferenceReplacement.value, selectedReferences.map((reference) => ({
-      id: reference.id,
-      kind: reference.kind,
-      name: reference.name,
-      ...(reference.url ? { url: reference.url } : {}),
-      ...(reference.text ? { text: reference.text } : {}),
-      ...(reference.mimeType ? { mimeType: reference.mimeType } : {}),
-    })));
-    const prompt = resolveImagePresetPrompt(promptWithReferences, presetId, customImagePresets);
+    const paramsWithMask = copyCanvasGenerationParams(draft.params, "image", runtime) as ImageCreationSettings;
+    const imageReferenceRequest = prepareCanvasImageReferenceRequest({
+      prompt: userPrompt,
+      references: draft.references,
+      params: paramsWithMask,
+      imageOperation: canvasImageRequestOperation(paramsWithMask, { useCurrentImageAsReference }),
+    });
+    if (!imageReferenceRequest.ok) return notify(imageReferenceRequest.message, "error");
+    const selectedReferences = imageReferenceRequest.references;
+    const prompt = resolveImagePresetPrompt(imageReferenceRequest.prompt, presetId, customImagePresets);
     const source = draft.sourceNodeId
       ? nodeById(readDocument(), draft.sourceNodeId)
       : undefined;
@@ -5860,11 +5869,10 @@ export default function SuperCanvas() {
       return notify("这个图片续生成任务正在处理，请稍候。", "error");
     }
 
-    const paramsWithMask = copyCanvasGenerationParams(draft.params, "image", runtime) as ImageCreationSettings;
     const params = useCurrentImageAsReference
-      ? paramsWithMask
+      ? imageReferenceRequest.params
       : (() => {
-          const { mask: _mask, ...withoutMask } = paramsWithMask;
+          const { mask: _mask, ...withoutMask } = imageReferenceRequest.params;
           return withoutMask as ImageCreationSettings;
         })();
     const createdAt = Date.now();
@@ -6009,7 +6017,8 @@ export default function SuperCanvas() {
     if (skippedReferenceCount)
       notify(`图片参考最多 ${CANVAS_MAX_REFERENCES} 张，已跳过 ${skippedReferenceCount} 张多余参考。`, "error");
 
-    let actualUsesCurrentImageAsReference = useCurrentImageAsReference;
+    const actualUsesCurrentImageAsReference = useCurrentImageAsReference;
+    let actualImageOperation = imageReferenceRequest.imageOperation;
     const createOutput = (
       url: string,
       name: string,
@@ -6031,7 +6040,7 @@ export default function SuperCanvas() {
         params: clone(params),
         ...(presetId ? { presetId } : {}),
         ...(presetName ? { presetName } : {}),
-        operation: actualUsesCurrentImageAsReference ? "edit" : "generate",
+        operation: actualImageOperation,
         referenceIds: [...(actualUsesCurrentImageAsReference ? resolvedReferenceIds : resolvedReferenceIds.filter((id) => id !== source.id))],
         parentNodeId: source.id,
         reuseSourceNodeId: source.id,
@@ -6082,6 +6091,7 @@ export default function SuperCanvas() {
       const generationStartedAt = Date.now();
       const result = await generateCanvasImage({
         taskId,
+        imageOperation: imageReferenceRequest.imageOperation,
         prompt,
         ...(presetId ? { presetId } : {}),
         ...(presetName ? { presetName } : {}),
@@ -6102,13 +6112,10 @@ export default function SuperCanvas() {
             : undefined,
         ...(params.mask ? { maskUrl: params.mask.url } : {}),
         ...(params.mask?.sourceUrl ? { moveGuideUrl: params.mask.sourceUrl } : {}),
-        ...(useCurrentImageAsReference && apiReferences.length === 1 && !params.mask
-          ? { fallbackToGenerationOnEdit404: true }
-          : {}),
         references: apiReferences,
       });
       if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
-      actualUsesCurrentImageAsReference = useCurrentImageAsReference && result.mode !== "generate-fallback";
+      actualImageOperation = result.mode === "generate-fallback" ? "generate" : imageReferenceRequest.imageOperation;
       if (result.warning) notify(result.warning);
       const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
 
@@ -6558,20 +6565,21 @@ export default function SuperCanvas() {
         .map((node) => createCanvasReferenceDraft(node))
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
       const naturalReferenceReplacement = replaceNaturalReferenceLabels(rawPrompt, candidateReferences);
-      const selection = selectCreativeReferences(naturalReferenceReplacement.value, candidateReferences);
-      if (selection.invalidNumbers.length) {
-        return notify(`引用编号无效：${Array.from(new Set(selection.invalidNumbers)).map((number) => `@${number}`).join("、")}`, "error");
+      const referenceResolution = resolveCreativeReferenceRoles(naturalReferenceReplacement.value, candidateReferences);
+      if (referenceResolution.invalidNumbers.length) {
+        return notify(`引用编号无效：${Array.from(new Set(referenceResolution.invalidNumbers)).map((number) => `@${number}`).join("、")}`, "error");
       }
-      const selectedReferenceIds = new Set(selection.references.map((reference) => reference.nodeId || reference.id));
+      const selectedReferenceIds = new Set(referenceResolution.references.map((reference) => reference.nodeId || reference.id));
+      const layoutOnlyReferenceIds = new Set(referenceResolution.layoutOnlyReferences.map((reference) => reference.nodeId || reference.id));
       const referenceNodes = explicitReferenceNodes
-        ? explicitReferenceNodes
-        : selection.hasMentions
+        ? explicitReferenceNodes.filter((node) => !layoutOnlyReferenceIds.has(node.id))
+        : referenceResolution.hasMentions
           ? candidateNodes.filter((node) => selectedReferenceIds.has(node.id))
           : incoming.filter(
               (node) => (isCanvasReferenceableNode(node) && (node.data.kind === "image" || node.data.kind === "video"))
                 || (node.type === "prompt" && Boolean(String(node.data.text || node.data.agentResponse || "").trim())),
             );
-      const prompt = naturalReferenceReplacement.value;
+      const prompt = referenceResolution.prompt;
       generationKeysRef.current.add(activeKey);
       setGenerationKeys(new Set(generationKeysRef.current));
       const contextMessages = referenceNodes
@@ -6877,10 +6885,9 @@ export default function SuperCanvas() {
           ...incoming.filter((node) => isCanvasReferenceableNode(node)),
         ]
       : selectedNodes.filter((node) => isCanvasReferenceableNode(node));
-    const naturalReferenceReplacement = replaceNaturalReferenceLabels(
-      source.prompt,
-      mentionCandidates.map((candidate, index) => ({
+    const candidateReferences = mentionCandidates.map((candidate, index) => ({
         id: candidate.id,
+        nodeId: candidate.id,
         kind: candidate.type === "prompt" || candidate.type === "generator"
           ? "text" as const
           : candidate.data.kind === "video" ? "video" as const : "image" as const,
@@ -6895,24 +6902,25 @@ export default function SuperCanvas() {
         ...(candidate.data.text || candidate.data.agentResponse || candidate.data.prompt || candidate.data.agentPrompt
           ? { text: String(candidate.data.text || candidate.data.agentResponse || candidate.data.prompt || candidate.data.agentPrompt) }
           : {}),
-      })),
-    );
-    const sourcePrompt = naturalReferenceReplacement.value;
+        ...(Number(candidate.data.nativeWidth) > 0 ? { width: Number(candidate.data.nativeWidth) } : {}),
+        ...(Number(candidate.data.nativeHeight) > 0 ? { height: Number(candidate.data.nativeHeight) } : {}),
+        origin: "node" as const,
+      }));
     const userPrompt = typeof request?.userPrompt === "string"
       ? request.userPrompt.trim()
       : source.prompt.trim();
-    const explicitMentionNumbers = referenceMentionNumbers(sourcePrompt);
-    const invalidMentionNumbers = explicitMentionNumbers.filter((number) => number < 1 || number > mentionCandidates.length);
-    if (invalidMentionNumbers.length) return notify(`引用编号无效：${Array.from(new Set(invalidMentionNumbers)).map((number) => `@${number}`).join("、")}`, "error");
-    const hasExplicitMentions = explicitMentionNumbers.length > 0;
-    const mentionedNodes = [...sourcePrompt.matchAll(/@([0-9]+)/g)]
-      .map((match) => mentionCandidates[Number(match[1]) - 1])
+    const naturalReferenceReplacement = replaceNaturalReferenceLabels(userPrompt, candidateReferences);
+    const referenceResolution = resolveCreativeReferenceRoles(naturalReferenceReplacement.value, candidateReferences);
+    if (referenceResolution.invalidNumbers.length) return notify(`引用编号无效：${Array.from(new Set(referenceResolution.invalidNumbers)).map((number) => `@${number}`).join("、")}`, "error");
+    const hasExplicitMentions = referenceResolution.hasMentions;
+    const mentionedNodes = referenceResolution.references
+      .map((reference) => mentionCandidates.find((node) => node.id === (reference.nodeId || reference.id)))
       .filter((node): node is CanvasNode => Boolean(node));
     const linked = [
       ...new Map(
         [
           ...(hasExplicitMentions ? currentTargetInput : baseLinked),
-          ...mentionedCanvasMedia(sourcePrompt, mentionCandidates, isCanvasReferenceableNode),
+          ...mentionedNodes.filter((node) => isCanvasReferenceableNode(node)),
         ].map((node) => [node.id, node]),
       ).values(),
     ];
@@ -6922,7 +6930,7 @@ export default function SuperCanvas() {
       ...(hasExplicitMentions ? [] : selectedNodes.filter((node) => node.type === "prompt")),
     ];
     const prompt = smartPrompt(
-      resolveCanvasMentionTokens(sourcePrompt, mentionCandidates),
+      resolveCanvasMentionTokens(referenceResolution.prompt, mentionCandidates),
       context,
     );
     if (!prompt.trim()) return notify("请输入生成提示词。", "error");
@@ -6939,6 +6947,20 @@ export default function SuperCanvas() {
       ...source.params,
       model: resolvedModel.model?.id || "auto",
     } as CreationSettings;
+    const preparedImageRequest = kind === "image"
+      ? prepareCanvasImageReferenceRequest({
+          prompt: userPrompt,
+          references: candidateReferences,
+          defaultReferences: candidateReferences.filter((reference) =>
+            baseLinked.some((node) => node.id === reference.nodeId),
+          ),
+          params: effectiveParams as ImageCreationSettings,
+          imageOperation: canvasImageRequestOperation(effectiveParams as ImageCreationSettings),
+        })
+      : undefined;
+    if (preparedImageRequest && !preparedImageRequest.ok) {
+      return notify(preparedImageRequest.message, "error");
+    }
     const presetId = request?.presetId;
     const presetName = request?.presetName;
     const videoParams = kind === "video" ? effectiveParams as VideoCreationSettings : undefined;
@@ -6998,7 +7020,9 @@ export default function SuperCanvas() {
           ),
         }));
       if (kind === "image") {
-        const imageParams = effectiveParams as ImageCreationSettings;
+        const imageParams = preparedImageRequest?.ok
+          ? preparedImageRequest.params
+          : effectiveParams as ImageCreationSettings;
         const taskId = imageTaskId || uid("image-task");
         const base = sourceTarget || sourceNode;
         const maskOwner = sourceTarget?.type === "media" && sourceTarget.data.kind === "image"
@@ -7060,6 +7084,7 @@ export default function SuperCanvas() {
         const generationStartedAt = Date.now();
         const result = await generateCanvasImage({
           taskId,
+          imageOperation: canvasImageRequestOperation(imageParams),
           prompt,
           ...(presetId ? { presetId } : {}),
           ...(presetName ? { presetName } : {}),
@@ -9068,6 +9093,7 @@ export default function SuperCanvas() {
       ].filter((reference) => reference.url);
       const response = await generateCanvasImage({
         taskId,
+        imageOperation: "edit",
         prompt: input.prompt,
         model: input.camera.modelId,
         count: 1,
@@ -9326,6 +9352,7 @@ export default function SuperCanvas() {
       ].filter((reference) => reference.url);
       const response = await generateCanvasImage({
         taskId,
+        imageOperation: "edit",
         prompt: input.prompt,
         model: input.camera.modelId,
         count: 1,

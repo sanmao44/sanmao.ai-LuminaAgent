@@ -668,6 +668,28 @@ test('omits legacy input_fidelity for GPT Image 2 while preserving it for other 
   assert.deepEqual(gptImageBody.images, [{ image_url: input.references[0] }]);
 });
 
+test('custom image dimensions take precedence over the resolution tier for edit requests', () => {
+  const provider = {
+    type: 'openai-compatible',
+    name: '65535',
+    platform: '65535',
+    baseUrl: 'https://api.example.test/v1',
+  };
+  const input = {
+    prompt: 'long image edit',
+    references: ['https://cdn.example.test/source.png'],
+    aspectRatio: '自动',
+    sizeMode: 'custom',
+    width: 2429,
+    height: 432,
+    resolution: '4K',
+    count: 1,
+  };
+  const body = providers.buildImageEditRequestBody(provider, 'gemini-3.1-flash-image', input, input.references, 1, '2432x432');
+  assert.equal(body.size, '2432x432');
+  assert.equal('resolution' in body, false);
+});
+
 test('image edit payload preserves all selected Canvas references', async () => {
   const previousFetch = globalThis.fetch;
   const references = [1, 2, 3, 4].map((index) => `data:image/png;base64,REF${index}`);
@@ -740,6 +762,38 @@ test('sends a manually registered image model raw ID to the real generation requ
     assert.equal(images.length, 1);
     assert.equal(JSON.parse(calls[0].init.body).model, 'gpt-image-2-4K');
     assert.match(calls[0].url, /\/images\/generations$/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('custom image dimensions take precedence over the resolution tier for generation requests', async () => {
+  let requestBody;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ data: [{ b64_json: 'iVBORw0KGgoAAAAAAAAAAAAA' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    await providers.generateImage({
+      type: 'openai-compatible',
+      platform: '65535',
+      baseUrl: 'https://api.example.test/v1',
+      apiKey: 'test-key',
+    }, 'gemini-3.1-flash-image', {
+      prompt: 'long image',
+      count: 1,
+      aspectRatio: '自动',
+      sizeMode: 'custom',
+      width: 2429,
+      height: 432,
+      resolution: '4K',
+    });
+    assert.equal(requestBody.size, '2432x432');
+    assert.equal('resolution' in requestBody, false);
   } finally {
     globalThis.fetch = previousFetch;
   }

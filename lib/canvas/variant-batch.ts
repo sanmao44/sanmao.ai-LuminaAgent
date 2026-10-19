@@ -2,6 +2,7 @@ import type { CanvasNodeData, CanvasVariantState } from "./types";
 import type { ImageCreationSettings, VideoCreationSettings } from "../creation/settings";
 import { canvasVariantBatchStatus } from "./variant-status";
 import { videoTaskOutputUrl } from "../video-task-output";
+import { canvasImageRequestOperation } from "./image-reference-request";
 
 export type CanvasVariantBatchMode = "all" | "failed" | "pending";
 
@@ -15,6 +16,7 @@ export function canvasVariantImageRequest(input: {
   const { params } = input;
   return {
     taskId: input.taskId,
+    imageOperation: canvasImageRequestOperation(params),
     prompt: input.prompt,
     model: params.model,
     count: params.count,

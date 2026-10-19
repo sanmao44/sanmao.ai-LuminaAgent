@@ -3,7 +3,7 @@ import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
-import type { CreativeRoute } from "@/packages/contracts/creative";
+import type { CreativeRoute, ImageRequestOperation } from "@/packages/contracts/creative";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import {
@@ -610,6 +610,7 @@ export async function encodeCanvasDepthVideoFrameSequence(
 
 export async function generateCanvasImage(input: {
   taskId?: string;
+  imageOperation: ImageRequestOperation;
   prompt: string;
   presetId?: string;
   presetName?: string;
@@ -684,6 +685,7 @@ export async function generateCanvasImage(input: {
       body: JSON.stringify({
       source: "canvas",
       ...(input.taskId ? { taskId: input.taskId } : {}),
+      imageOperation: input.imageOperation,
       prompt: input.prompt,
       ...(input.presetId ? { presetId: input.presetId } : {}),
       ...(input.presetName ? { presetName: input.presetName } : {}),

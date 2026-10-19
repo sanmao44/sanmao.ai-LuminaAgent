@@ -1311,7 +1311,7 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
   throw new Error('图片超分任务等待超时，请稍后到服务商控制台查看任务状态');
 }
 
-export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque'; references?: string[] }, signal?: AbortSignal): Promise<GeneratedImage[]> {
+export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque'; references?: string[] }, signal?: AbortSignal): Promise<GeneratedImage[]> {
   const references = (input.references || []).filter((reference) => typeof reference === 'string' && reference.trim()).map(normalizeReference).slice(0, 16);
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
@@ -1324,8 +1324,8 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
     size: mapImageRequestSize(provider, rawModelId, input.aspectRatio || '自动', input.width, input.height),
   };
   if (input.quality && input.quality !== '自动') body.quality = input.quality;
-  if (input.resolution && input.aspectRatio === '自动') body.resolution = input.resolution;
-  if (isApimartProvider(provider) && input.resolution && input.resolution !== '自动') body.resolution = String(input.resolution).toLowerCase();
+  if (input.resolution && input.aspectRatio === '自动' && input.sizeMode !== 'custom') body.resolution = input.resolution;
+  if (isApimartProvider(provider) && input.resolution && input.resolution !== '自动' && input.sizeMode !== 'custom') body.resolution = String(input.resolution).toLowerCase();
   if (input.outputFormat) body.output_format = input.outputFormat;
   if (input.background) body.background = input.background;
   if (provider.type === 'google-gemini') body.response_format = 'b64_json';
@@ -1417,7 +1417,7 @@ export function buildImageEditRequestBody(provider: RuntimeProvider, rawModelId:
   if (is65535Provider(provider) || isApimartProvider(provider)) jsonBody.image_urls = references;
   else jsonBody.images = references.map((image_url) => ({ image_url }));
   if (input.quality && input.quality !== '自动') jsonBody.quality = input.quality;
-  if (input.resolution && input.aspectRatio === '自动') jsonBody.resolution = input.resolution;
+  if (input.resolution && input.aspectRatio === '自动' && input.sizeMode !== 'custom') jsonBody.resolution = input.resolution;
   if (input.fidelity && shouldSendInputFidelity(provider, rawModelId)) jsonBody.input_fidelity = input.fidelity;
   if (input.mask) jsonBody.mask = input.mask;
   if (input.outputFormat) jsonBody.output_format = input.outputFormat;

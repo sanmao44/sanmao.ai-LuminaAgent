@@ -19,7 +19,7 @@ function load(source, dependencies = {}) {
 const angle = load(angleSource);
 
 function harness(options = {}) {
-  const calls = { edits: [], generations: [], logs: [], releases: 0, modelLookups: [] };
+  const calls = { edits: [], generations: [], logs: [], releases: 0, modelLookups: [], generationLookups: [] };
   const runtime = { provider: { id: 'test-provider', name: 'Test' }, model: { id: 'test-edit', rawId: 'gpt-image-2', displayName: 'Test Edit' } };
   const route = load(routeSource, {
     '@/lib/angle-control': angle,
@@ -35,7 +35,7 @@ function harness(options = {}) {
     },
     '@/lib/store': {
       getRuntimeImageModelForCapability: async id => { calls.modelLookups.push(id); return id === 'missing' ? null : runtime; },
-      getRuntimeImageGenerationModel: async () => runtime,
+      getRuntimeImageGenerationModel: async id => { calls.generationLookups.push(id); return runtime; },
       getPublicState: async () => ({ settings: {} }),
       markProviderCredentialFailure: async () => {},
     },
@@ -165,6 +165,63 @@ test('legacy camera and ordinary generation keep their existing paths', async ()
   assert.equal(ordinary.calls.edits.length, 0);
 });
 
+test('canvas reference-guided creation uses generation instead of the image-edit endpoint', async () => {
+  const api = harness({ generationImages: [{ url: '/generated-shandong.png' }] });
+  const response = await api.post({
+    source: 'canvas',
+    imageOperation: 'generate',
+    prompt: '保持参考图的构图风格，生成山东主题并替换全部地域元素',
+    references: [reference],
+    referenceImages: [{ name: '河南参考', url: '/henan.png' }],
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.mode, 'generate');
+  assert.equal(api.calls.edits.length, 0);
+  assert.equal(api.calls.generations.length, 1);
+  assert.deepEqual(api.calls.generations[0].references, [reference]);
+  assert.deepEqual(api.calls.generationLookups, ['auto']);
+  assert.deepEqual(api.calls.modelLookups, []);
+  assert.equal(api.calls.logs[0].mode, 'generate');
+});
+
+test('explicit canvas edits keep the edit capability and endpoint', async () => {
+  const api = harness({ editImages: [{ url: '/edited.png' }] });
+  const response = await api.post({
+    source: 'canvas',
+    imageOperation: 'edit',
+    prompt: '只调整原图光线',
+    references: [reference],
+  });
+  assert.equal(response.status, 200);
+  assert.equal(api.calls.generations.length, 0);
+  assert.equal(api.calls.edits.length, 1);
+  assert.deepEqual(api.calls.modelLookups, ['auto']);
+  assert.equal(api.calls.logs[0].mode, 'edit');
+});
+
+test('invalid canvas image operation fails before selecting or calling a model', async () => {
+  const api = harness();
+  const response = await api.post({ source: 'canvas', imageOperation: 'unknown', prompt: 'A landscape' });
+  assert.equal(response.status, 400);
+  assert.equal(api.calls.generations.length + api.calls.edits.length, 0);
+  assert.equal(api.calls.generationLookups.length + api.calls.modelLookups.length, 0);
+});
+
+test('references without an explicit edit operation default to generation', async () => {
+  const api = harness({ generationImages: [{ url: '/generated.png' }] });
+  const response = await api.post({
+    prompt: '保持参考图构图，改为山东主题并替换地域元素',
+    references: [reference],
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.mode, 'generate');
+  assert.equal(api.calls.edits.length, 0);
+  assert.deepEqual(api.calls.generations[0].references, [reference]);
+  assert.deepEqual(api.calls.generationLookups, ['auto']);
+});
+
 test('provider image remains successful when local post-processing fails', async () => {
   const api = harness({
     generationImages: [{ url: 'https://provider.example/result.png' }],
@@ -250,6 +307,7 @@ test('canvas single-source continuation falls back to generation when the edit r
   });
   const response = await api.post({
     source: 'canvas',
+    imageOperation: 'edit',
     prompt: '换成清晨光线',
     references: [reference],
     fallbackToGenerationOnEdit404: true,
@@ -259,5 +317,6 @@ test('canvas single-source continuation falls back to generation when the edit r
   assert.equal(api.calls.edits.length, 1);
   assert.equal(api.calls.generations.length, 1);
   assert.equal(body.mode, 'generate-fallback');
+  assert.deepEqual(api.calls.generations[0].references, [reference]);
   assert.match(body.warning, /普通生图/);
 });

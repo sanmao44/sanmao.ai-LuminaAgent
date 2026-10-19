@@ -7,17 +7,20 @@ import {
 } from "./model";
 import { createCanvasReferenceDraft } from "./reference-drafts";
 import { resolveCanvasMentionTokens } from "./mention-resolution";
+import { canvasImageRequestOperation, prepareCanvasImageReferenceRequest, type CanvasImageReferenceRequest } from "./image-reference-request";
 import {
   replaceNaturalReferenceLabels,
   selectCreativeReferences,
 } from "../creative-references";
 import type { CanvasReferenceDraft } from "./reuse";
+import type { ImageCreationSettings } from "../creation/settings";
 
 export type CanvasVariantGenerationPreparation = {
   linkedNodes: CanvasNode[];
   imageReferences: { url: string; name: string }[];
   prompts: string[];
   invalidNumbers: number[];
+  imageRequests?: CanvasImageReferenceRequest[];
 };
 
 export type PrepareCanvasVariantGenerationInput = {
@@ -25,6 +28,7 @@ export type PrepareCanvasVariantGenerationInput = {
   generator: CanvasNode;
   requirements: readonly string[];
   mentionCandidates: readonly CanvasNode[];
+  imageParams?: ImageCreationSettings;
 };
 
 /**
@@ -80,6 +84,20 @@ export function prepareCanvasVariantGeneration(
       name: String(node.data.name || "\u53c2\u8003\u7d20\u6750"),
     }))
     .filter((reference) => reference.url);
+  const imageParams = input.imageParams;
+  const imageRequests = imageParams
+    ? input.requirements.map((requirement) =>
+        prepareCanvasImageReferenceRequest({
+          prompt: [commonPrompt, requirement.trim()].filter(Boolean).join("\n"),
+          references: candidateReferences,
+          defaultReferences: incoming
+            .map((node) => createCanvasReferenceDraft(node))
+            .filter((reference): reference is CanvasReferenceDraft => Boolean(reference)),
+          params: imageParams,
+          imageOperation: canvasImageRequestOperation(imageParams),
+        }),
+      )
+    : undefined;
   const prompts = naturalRequirements.map((requirement) => {
     const instruction = requirement.value || "";
     return smartPrompt(
@@ -101,5 +119,6 @@ export function prepareCanvasVariantGeneration(
     imageReferences,
     prompts,
     invalidNumbers: [...selection.invalidNumbers],
+    ...(imageRequests ? { imageRequests } : {}),
   };
 }
