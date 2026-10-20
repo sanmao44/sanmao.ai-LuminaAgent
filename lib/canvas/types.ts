@@ -285,7 +285,7 @@ export type CanvasGenerationMeta = {
       assetId?: string;
     };
   };
-  operation?: "generate" | "edit" | "upscale" | "extend";
+  operation?: "generate" | "edit" | "reference-generate" | "upscale" | "extend";
   referenceIds?: string[];
   sourceGeneratorId?: string;
   parentNodeId?: string;

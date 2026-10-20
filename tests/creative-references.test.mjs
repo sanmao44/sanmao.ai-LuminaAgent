@@ -154,7 +154,7 @@ test("keeps a ratio-mentioned image as a visual reference unless its role is exp
       upscaleColorCorrection: "wavelet",
       upscaleAlgorithm: "lanczos",
     },
-    imageOperation: "generate",
+    imageOperation: "auto",
   });
 
   assert.equal(result.ok, true);
@@ -221,12 +221,12 @@ test("prepares the screenshot reference roles as a new-image request without lea
       upscaleColorCorrection: "wavelet",
       upscaleAlgorithm: "lanczos",
     },
-    imageOperation: "generate",
+    imageOperation: "auto",
   });
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.imageOperation, "generate");
+  assert.equal(result.imageOperation, "auto");
   assert.deepEqual(result.resolution.layoutOnlyReferences.map((reference) => reference.id), ["guangdong"]);
   assert.deepEqual(result.references.map((reference) => reference.id), ["henan"]);
   assert.deepEqual(result.imageReferences.map((reference) => reference.url), ["/henan.png"]);
@@ -250,7 +250,7 @@ test("uses connected references by default without sending unrelated candidates"
       { id: "connected", kind: "image", name: "已连接风格图", url: "/style.png", origin: "node" },
     ],
     params: { sizeMode: "system", aspect: "自动", customAspectWidth: 1, customAspectHeight: 1 },
-    imageOperation: "generate",
+    imageOperation: "auto",
   });
 
   assert.equal(result.ok, true);
@@ -263,7 +263,7 @@ test("blocks a missing or conflicting ratio reference before Canvas submits the 
   const common = {
     prompt: "仅将 @1 用于比例",
     references: [{ id: "ratio", kind: "image", name: "尺寸参考", url: "/ratio.png", width: 2429, height: 432 }],
-    imageOperation: "generate",
+    imageOperation: "auto",
     params: {
       kind: "image",
       model: "image-model",

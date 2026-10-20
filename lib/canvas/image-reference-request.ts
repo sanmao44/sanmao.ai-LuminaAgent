@@ -5,14 +5,14 @@ import {
   type CreativeReferenceRoleResolution,
 } from "../creative-references";
 import type { ImageCreationSettings } from "../creation/settings";
-import type { ImageRequestOperation } from "@/packages/contracts/creative";
+import type { ImageRequestMode } from "@/packages/contracts/creative";
 import type { CanvasReferenceDraft } from "./reuse";
 
 export type CanvasImageReferenceRequest =
   | { ok: false; message: string }
   | {
       ok: true;
-      imageOperation: ImageRequestOperation;
+      imageOperation: ImageRequestMode;
       prompt: string;
       params: ImageCreationSettings;
       references: CanvasReferenceDraft[];
@@ -76,7 +76,7 @@ export function prepareCanvasImageReferenceRequest(input: {
   references: readonly CanvasReferenceDraft[];
   defaultReferences?: readonly CanvasReferenceDraft[];
   params: ImageCreationSettings;
-  imageOperation: ImageRequestOperation;
+  imageOperation: ImageRequestMode;
 }): CanvasImageReferenceRequest {
   const naturalPrompt = replaceNaturalReferenceLabels(input.prompt, input.references);
   const resolution = resolveCreativeReferenceRoles(naturalPrompt.value, input.references);
@@ -102,15 +102,19 @@ export function prepareCanvasImageReferenceRequest(input: {
     ? applyLayoutAspect(input.params, resolution.layoutAspectRatio)
     : { params: input.params } as const;
   if ("error" in resolvedParams && resolvedParams.error) return { ok: false, message: resolvedParams.error };
+  const imageReferences = references
+    .filter((reference) => reference.kind === "image" && Boolean(reference.url?.trim()))
+    .map((reference) => ({ url: String(reference.url), name: reference.name || "参考图片" }));
+  const imageOperation = input.imageOperation === "auto" && imageReferences.length === 0
+    ? "generate"
+    : input.imageOperation;
   return {
     ok: true,
-    imageOperation: input.imageOperation,
+    imageOperation,
     prompt: appendTextReferenceContext(resolution.prompt, references),
     params: resolvedParams.params,
     references: [...references],
-    imageReferences: references
-      .filter((reference) => reference.kind === "image" && Boolean(reference.url?.trim()))
-      .map((reference) => ({ url: String(reference.url), name: reference.name || "参考图片" })),
+    imageReferences,
     resolution,
   };
 }
@@ -118,6 +122,6 @@ export function prepareCanvasImageReferenceRequest(input: {
 export function canvasImageRequestOperation(
   params: Pick<ImageCreationSettings, "mask">,
   options: { useCurrentImageAsReference?: boolean } = {},
-): ImageRequestOperation {
-  return params.mask && options.useCurrentImageAsReference !== false ? "edit" : "generate";
+): ImageRequestMode {
+  return params.mask && options.useCurrentImageAsReference !== false ? "edit" : "auto";
 }

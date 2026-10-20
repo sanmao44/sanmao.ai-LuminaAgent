@@ -154,6 +154,7 @@ test("projects image variant provenance and duration without owning node creatio
   const data = batch.canvasVariantImageNodeData({
     prompt: "portrait",
     params,
+    operation: "reference-generate",
     linkedIds: ["prompt-1", "image-1"],
     sourceGeneratorId: "generator-1",
     variantBatchId: "batch-1",
@@ -171,6 +172,7 @@ test("projects image variant provenance and duration without owning node creatio
       kind: "image",
       prompt: "portrait",
       params,
+      operation: "reference-generate",
       referenceIds: ["prompt-1", "image-1"],
       sourceGeneratorId: "generator-1",
       variantBatchId: "batch-1",

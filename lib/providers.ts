@@ -729,6 +729,21 @@ function choiceConfidence(answer: IntentChoiceAnswer | undefined) {
   return String(answer?.confidence || '').trim().toLowerCase() === 'high' ? 'high' : 'low';
 }
 
+async function requestJevSystemOne(
+  provider: RuntimeProvider,
+  rawModelId: string,
+  state: string,
+  questions: IntentSystemOneQuestions,
+  signal?: AbortSignal,
+) {
+  if (!isJevModelId(rawModelId)) throw new Error('intent classification requires the JEV model');
+  return await fetchJson(jevSystemOneEndpoint(provider), {
+    method: 'POST',
+    headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: rawModelId, state, questions }),
+  }, 120000, signal) as IntentSystemOneResponse;
+}
+
 function normalizeJevIntentResponse(data: IntentSystemOneResponse, rawModelId: string) {
   const mode = choiceValue(data.answers?.mode);
   const deliverable = choiceValue(data.answers?.deliverable);
@@ -745,29 +760,55 @@ function normalizeJevIntentResponse(data: IntentSystemOneResponse, rawModelId: s
 }
 
 export async function intentClassificationCompletion(provider: RuntimeProvider, rawModelId: string, payload: IntentClassificationPayload, signal?: AbortSignal) {
-  if (!isJevModelId(rawModelId)) throw new Error('intent classification requires the JEV model');
   const state = intentState(payload.messages);
-  const data = await fetchJson(jevSystemOneEndpoint(provider), {
-    method: 'POST',
-    headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: rawModelId,
-      state,
-      questions: {
-        mode: {
-          type: 'choice',
-          instructions: '当前请求模式是什么？',
-          criteria: { execute: '明确要求执行', ask: '提问或需要澄清', discuss: '讨论或咨询', follow_up: '承接上一轮任务', unknown: '无法判断' },
-        },
-        deliverable: {
-          type: 'choice',
-          instructions: '当前请求的主要交付物是什么？',
-          criteria: { image: '需要生成或编辑图片', text: '需要文字、提示词或文案', both: '同时需要图片和文字', clarify: '需要先澄清交付物', other: '普通问答、分析或工具请求' },
-        },
-      },
-    }),
-  }, 120000, signal) as IntentSystemOneResponse;
+  const data = await requestJevSystemOne(provider, rawModelId, state, {
+    mode: {
+      type: 'choice',
+      instructions: '当前请求模式是什么？',
+      criteria: { execute: '明确要求执行', ask: '提问或需要澄清', discuss: '讨论或咨询', follow_up: '承接上一轮任务', unknown: '无法判断' },
+    },
+    deliverable: {
+      type: 'choice',
+      instructions: '当前请求的主要交付物是什么？',
+      criteria: { image: '需要生成或编辑图片', text: '需要文字、提示词或文案', both: '同时需要图片和文字', clarify: '需要先澄清交付物', other: '普通问答、分析或工具请求' },
+    },
+  }, signal);
   return normalizeJevIntentResponse(data, rawModelId);
+}
+
+export async function canvasImageIntentCompletion(
+  provider: RuntimeProvider,
+  rawModelId: string,
+  input: { prompt: string; imageReferenceCount: number },
+  signal?: AbortSignal,
+) {
+  const state = JSON.stringify({
+    prompt: input.prompt,
+    connectedImageReferenceCount: input.imageReferenceCount,
+    task: 'Canvas creates a new output node; no input image is mutated in place.',
+  });
+  const data = await requestJevSystemOne(provider, rawModelId, state, {
+    imageOperation: {
+      type: 'choice',
+      instructions: '用户希望如何使用已连接的图片？只判断操作意图，不改写提示词。',
+      criteria: {
+        reference_generate: '把已连接图片作为视觉参考，生成一张新的图片；允许重组、替换主旨或借鉴风格。',
+        edit: '把已连接图片作为要修改的原图，重点是在原有画面基础上增删、替换或修整内容。',
+        unclear: '无法有把握地区分参考生成与基于原图修改。',
+      },
+    },
+  }, signal);
+  const value = choiceValue(data.answers?.imageOperation).replace(/[\s_]+/g, '-');
+  const operation = value === 'reference-generate' || value === 'reference'
+    ? 'reference-generate'
+    : value === 'edit' || value === 'modify'
+      ? 'edit'
+      : undefined;
+  return {
+    operation,
+    confidence: choiceConfidence(data.answers?.imageOperation),
+    model: String(data.model || rawModelId),
+  } as const;
 }
 
 const apimartModelCatalog = [
@@ -1639,8 +1680,15 @@ type IntentSystemOneResponse = {
   answers?: {
     mode?: IntentChoiceAnswer;
     deliverable?: IntentChoiceAnswer;
+    imageOperation?: IntentChoiceAnswer;
   };
 };
+
+type IntentSystemOneQuestions = Record<string, {
+  type: 'choice';
+  instructions: string;
+  criteria: Record<string, string>;
+}>;
 
 function agnesUsage(usage: any) {
   if (!usage || typeof usage !== 'object') return undefined;

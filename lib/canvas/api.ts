@@ -3,7 +3,7 @@ import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
-import type { CreativeRoute, ImageRequestOperation } from "@/packages/contracts/creative";
+import type { CreativeRoute, ImageRequestMode, ImageRequestOperation } from "@/packages/contracts/creative";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import {
@@ -610,7 +610,7 @@ export async function encodeCanvasDepthVideoFrameSequence(
 
 export async function generateCanvasImage(input: {
   taskId?: string;
-  imageOperation: ImageRequestOperation;
+  imageOperation: ImageRequestMode;
   prompt: string;
   presetId?: string;
   presetName?: string;
@@ -656,6 +656,7 @@ export async function generateCanvasImage(input: {
     taskId?: string;
     message?: string;
     mode?: "reference" | "generate" | "generate-fallback";
+    operation?: ImageRequestOperation;
     warning?: string;
     model?: { id?: string; name?: string; provider?: string };
   };
@@ -665,7 +666,12 @@ export async function generateCanvasImage(input: {
     const log = await getCanvasAgentGeneration(taskId).catch(() => null);
     const images = canvasImageTaskOutputUrls(log);
     if (images.length) {
-      return { images: images.map((url) => ({ url })), pending: false, taskId };
+      return {
+        images: images.map((url) => ({ url })),
+        pending: false,
+        taskId,
+        ...(log?.operation ? { operation: log.operation } : {}),
+      };
     }
     if (log?.status === "pending") {
       const pendingError = new Error("服务商已接收任务，正在生成，请勿重复提交。") as Error & { generationPending?: boolean; taskId?: string };
@@ -731,17 +737,17 @@ export async function generateCanvasImage(input: {
       const timer = window.setTimeout(resolve, 2000);
       input.signal?.addEventListener('abort', () => { window.clearTimeout(timer); reject(input.signal?.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
     });
-    let status: { log?: { status?: string; imageUrls?: string[]; error?: string } | null };
+    let status: { log?: { status?: string; imageUrls?: string[]; error?: string; operation?: ImageRequestOperation } | null };
     try {
-      status = await request<{ log?: { status?: string; imageUrls?: string[]; error?: string } | null }>(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`);
+      status = await request<{ log?: { status?: string; imageUrls?: string[]; error?: string; operation?: ImageRequestOperation } | null }>(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`);
     } catch (error) {
       const recovered = await recoverAcceptedImageTask(error);
-      if (recovered?.images?.length) return { ...result, pending: false, images: recovered.images };
+      if (recovered?.images?.length) return { ...result, ...recovered, pending: false };
       throw error;
     }
     const log = status.log;
     const images = canvasImageTaskOutputUrls(log);
-    if (images.length) return { ...result, pending: false, images: images.map((url) => ({ url })) };
+    if (images.length) return { ...result, pending: false, images: images.map((url) => ({ url })), ...(log?.operation ? { operation: log.operation } : {}) };
     if (log?.status === 'error') throw new Error(log.error || '生图失败');
   }
   const pendingError = new Error(result.message || '服务商仍在生成，任务已保留，请勿重复提交。') as Error & { generationPending?: boolean; taskId?: string };
@@ -953,7 +959,7 @@ export const CANVAS_AGENT_MAX_WAIT_MS = 5 * 60 * 1000;
 export async function getCanvasAgentGeneration(taskId: string) {
   const response = await fetch(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`, { cache: "no-store" });
   if (!response.ok) return null;
-  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; imageUrls?: string[]; error?: string } | null } | null;
+  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; imageUrls?: string[]; error?: string; operation?: ImageRequestOperation } | null } | null;
   return body?.log || null;
 }
 

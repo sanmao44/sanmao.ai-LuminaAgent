@@ -4,6 +4,7 @@ import test from 'node:test';
 import ts from 'typescript';
 
 const angleSource = await readFile(new URL('../lib/angle-control.ts', import.meta.url), 'utf8');
+const modelSelectionSource = await readFile(new URL('../lib/model-selection.ts', import.meta.url), 'utf8');
 const routeSource = await readFile(new URL('../app/api/generate/route.ts', import.meta.url), 'utf8');
 function load(source, dependencies = {}) {
   const compiled = ts.transpileModule(source, {
@@ -17,12 +18,26 @@ function load(source, dependencies = {}) {
   return module.exports;
 }
 const angle = load(angleSource);
+const modelSelection = load(modelSelectionSource);
+
+test('model capability matching requires every capability and rejects incomplete reference models', () => {
+  const required = ['generate', 'reference'];
+  assert.equal(modelSelection.modelSupportsCapabilities({ capabilities: ['generate', 'reference', 'edit'] }, required), true);
+  assert.equal(modelSelection.modelSupportsCapabilities({ capabilities: ['generate', 'edit'] }, required), false);
+  assert.equal(modelSelection.modelSupportsCapabilities({ capabilities: ['reference'] }, required), false);
+});
 
 function harness(options = {}) {
-  const calls = { edits: [], generations: [], logs: [], releases: 0, modelLookups: [], generationLookups: [] };
-  const runtime = { provider: { id: 'test-provider', name: 'Test' }, model: { id: 'test-edit', rawId: 'gpt-image-2', displayName: 'Test Edit' } };
+  const calls = { edits: [], generations: [], logs: [], releases: 0, modelLookups: [], generationLookups: [], capabilityLookups: [], candidateLookups: [], intentInputs: [] };
+  const runtime = options.runtime || { provider: { id: 'test-provider', name: 'Test' }, model: { id: 'test-edit', rawId: 'gpt-image-2', displayName: 'Test Edit', capabilities: ['generate', 'edit', 'reference'] } };
   const route = load(routeSource, {
     '@/lib/angle-control': angle,
+    '@/apps/api/image-intent-composition': {
+      resolveCanvasImageRequestIntent: async input => {
+        calls.intentInputs.push(input);
+        return options.intentResolution || { operation: 'reference-generate', classifierStatus: 'used', classifierModelId: 'jev-runtime', classifierMs: 12 };
+      },
+    },
     '@/lib/providers': {
       editImage: async (_provider, _model, input) => {
         calls.edits.push(input);
@@ -35,7 +50,16 @@ function harness(options = {}) {
     },
     '@/lib/store': {
       getRuntimeImageModelForCapability: async id => { calls.modelLookups.push(id); return id === 'missing' ? null : runtime; },
+      getRuntimeImageModelForCapabilities: async (id, capabilities) => {
+        calls.capabilityLookups.push({ id, capabilities });
+        if (options.noReferenceModel) return null;
+        return id === 'missing' ? null : runtime;
+      },
       getRuntimeImageGenerationModel: async id => { calls.generationLookups.push(id); return runtime; },
+      getRuntimeImageModelCandidates: async (id, capabilities) => {
+        calls.candidateLookups.push({ id, capabilities });
+        return [runtime];
+      },
       getPublicState: async () => ({ settings: {} }),
       markProviderCredentialFailure: async () => {},
     },
@@ -62,7 +86,10 @@ function harness(options = {}) {
       },
     },
     '@/packages/model-runtime/media': {
-      invokeMediaModelCandidates: async (initial, _loadFallbacks, operation) => operation(initial),
+      invokeMediaModelCandidates: async (initial, loadFallbacks, operation) => {
+        await loadFallbacks();
+        return operation(initial);
+      },
     },
   });
   return {
@@ -165,11 +192,11 @@ test('legacy camera and ordinary generation keep their existing paths', async ()
   assert.equal(ordinary.calls.edits.length, 0);
 });
 
-test('canvas reference-guided creation uses generation instead of the image-edit endpoint', async () => {
+test('Canvas auto intent keeps linked references on the reference-capable generation path', async () => {
   const api = harness({ generationImages: [{ url: '/generated-shandong.png' }] });
   const response = await api.post({
     source: 'canvas',
-    imageOperation: 'generate',
+    imageOperation: 'auto',
     prompt: '保持参考图的构图风格，生成山东主题并替换全部地域元素',
     references: [reference],
     referenceImages: [{ name: '河南参考', url: '/henan.png' }],
@@ -177,12 +204,63 @@ test('canvas reference-guided creation uses generation instead of the image-edit
   const body = await response.json();
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(body.mode, 'generate');
+  assert.equal(body.operation, 'reference-generate');
   assert.equal(api.calls.edits.length, 0);
   assert.equal(api.calls.generations.length, 1);
   assert.deepEqual(api.calls.generations[0].references, [reference]);
-  assert.deepEqual(api.calls.generationLookups, ['auto']);
+  assert.deepEqual(api.calls.intentInputs.map(input => input.imageReferenceCount), [1]);
+  assert.deepEqual(api.calls.capabilityLookups, [{ id: 'auto', capabilities: ['generate', 'reference'] }]);
+  assert.deepEqual(api.calls.candidateLookups, [{ id: 'auto', capabilities: ['generate', 'reference'] }]);
   assert.deepEqual(api.calls.modelLookups, []);
   assert.equal(api.calls.logs[0].mode, 'generate');
+  assert.equal(api.calls.logs[0].operation, 'reference-generate');
+  assert.equal(api.calls.logs[0].intentClassifierStatus, 'used');
+  assert.equal(api.calls.logs[0].intentClassifierModelId, 'jev-runtime');
+});
+
+test('Canvas JEV edit decision routes linked image to edit capability and endpoint', async () => {
+  const api = harness({ editImages: [{ url: '/edited.png' }], intentResolution: { operation: 'edit', classifierStatus: 'used' } });
+  const response = await api.post({
+    source: 'canvas',
+    imageOperation: 'auto',
+    prompt: '只调整原图光线',
+    references: [reference],
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.operation, 'edit');
+  assert.equal(api.calls.generations.length, 0);
+  assert.equal(api.calls.edits.length, 1);
+  assert.deepEqual(api.calls.modelLookups, ['auto']);
+  assert.equal(api.calls.capabilityLookups.length, 0);
+  assert.equal(api.calls.logs[0].operation, 'edit');
+});
+
+test('uncertain JEV decisions conservatively use connected references for a new image', async () => {
+  const api = harness({
+    generationImages: [{ url: '/fallback-reference.png' }],
+    intentResolution: { operation: 'reference-generate', classifierStatus: 'fallback', classifierMs: 2000 },
+  });
+  const response = await api.post({ source: 'canvas', imageOperation: 'auto', prompt: 'Create a new scene', references: [reference] });
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.operation, 'reference-generate');
+  assert.equal(api.calls.generations.length, 1);
+  assert.deepEqual(api.calls.generations[0].references, [reference]);
+  assert.equal(api.calls.logs[0].intentClassifierStatus, 'fallback');
+});
+
+test('reference-generation rejects a selected model that lacks the required capabilities', async () => {
+  const api = harness({ noReferenceModel: true });
+  const response = await api.post({
+    source: 'canvas', imageOperation: 'reference-generate', model: 'selected-model',
+    prompt: 'Use the linked image as reference', references: [reference],
+  });
+  const body = await response.json();
+  assert.equal(response.status, 400);
+  assert.match(body.error, /generate 和 reference/);
+  assert.equal(api.calls.generations.length + api.calls.edits.length, 0);
+  assert.deepEqual(api.calls.capabilityLookups, [{ id: 'selected-model', capabilities: ['generate', 'reference'] }]);
 });
 
 test('explicit canvas edits keep the edit capability and endpoint', async () => {

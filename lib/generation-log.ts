@@ -37,7 +37,7 @@ export type GenerationLog = {
   error?: string;
   angle?: Record<string, unknown>;
   references?: ReferenceImageRecord[];
-  operation?: 'generate' | 'edit' | 'extend';
+  operation?: 'generate' | 'edit' | 'reference-generate' | 'extend';
   videoUrls?: string[];
   videoPath?: string;
   providerTaskId?: string;

@@ -5347,6 +5347,13 @@ export default function SuperCanvas() {
                   canvasVariantImageNodeData({
                     prompt,
                     params: clone(imageParams),
+                    operation: result.operation ?? (
+                      result.mode === "generate-fallback"
+                        ? "generate"
+                        : imageParams.mask
+                          ? "edit"
+                          : imageReferences.length ? "reference-generate" : "generate"
+                    ),
                     linkedIds: imageLinked.map((item) => item.id),
                     sourceGeneratorId: generatorId,
                     variantBatchId: batchId,
@@ -6032,7 +6039,9 @@ export default function SuperCanvas() {
       notify(`图片参考最多 ${CANVAS_MAX_REFERENCES} 张，已跳过 ${skippedReferenceCount} 张多余参考。`, "error");
 
     const actualUsesCurrentImageAsReference = useCurrentImageAsReference;
-    let actualImageOperation = imageReferenceRequest.imageOperation;
+    let actualImageOperation = imageReferenceRequest.imageOperation === "auto"
+      ? apiReferences.length ? "reference-generate" as const : "generate" as const
+      : imageReferenceRequest.imageOperation;
     const createOutput = (
       url: string,
       name: string,
@@ -6129,7 +6138,13 @@ export default function SuperCanvas() {
         references: apiReferences,
       });
       if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
-      actualImageOperation = result.mode === "generate-fallback" ? "generate" : imageReferenceRequest.imageOperation;
+      actualImageOperation = result.operation ?? (
+        result.mode === "generate-fallback"
+          ? "generate"
+          : imageReferenceRequest.imageOperation === "auto"
+            ? apiReferences.length ? "reference-generate" : "generate"
+            : imageReferenceRequest.imageOperation
+      );
       if (result.warning) notify(result.warning);
       const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
 
@@ -7139,6 +7154,13 @@ export default function SuperCanvas() {
           references: refs,
         });
         if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
+        const actualImageOperation = result.operation ?? (
+          result.mode === "generate-fallback"
+            ? "generate"
+            : imageParams.mask
+              ? "edit"
+              : imageReferenceNodes.length ? "reference-generate" : "generate"
+        );
         const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
         const outputs = result.images.map((image, index) =>
           createMedia(
@@ -7162,6 +7184,7 @@ export default function SuperCanvas() {
                 params: clone(imageParams),
                 ...(presetId ? { presetId } : {}),
                 ...(presetName ? { presetName } : {}),
+                operation: actualImageOperation,
                 referenceIds: imageReferenceNodes.map((node) => node.id),
                 sourceGeneratorId: sourceNode?.id,
                 parentNodeId: undefined,

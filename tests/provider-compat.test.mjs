@@ -264,6 +264,55 @@ test('JEV intent classification uses System One and normalizes its choice answer
   }
 });
 
+test('JEV image-intent classification sends prompt metadata only and normalizes reference generation', async () => {
+  const previousFetch = globalThis.fetch;
+  let requestUrl = '';
+  let requestBody;
+  globalThis.fetch = async (url, init) => {
+    requestUrl = String(url);
+    requestBody = JSON.parse(init.body);
+    return new Response(JSON.stringify({
+      model: 'jev-1.13.0',
+      answers: { imageOperation: { type: 'choice', choice: 'reference_generate', confidence: 0.96 } },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const response = await providers.canvasImageIntentCompletion({
+      id: 'jev', name: '65535', type: 'openai-compatible', platform: '65535',
+      baseUrl: 'https://api2-cn.65535.space/v1', apiKey: 'test-key',
+    }, 'jev-1.13', { prompt: 'Use the connected image as a visual reference', imageReferenceCount: 2 });
+    assert.equal(requestUrl, 'https://api2.65535.space/v1/systemone');
+    assert.equal(requestBody.model, 'jev-1.13');
+    assert.deepEqual(JSON.parse(requestBody.state), {
+      prompt: 'Use the connected image as a visual reference',
+      connectedImageReferenceCount: 2,
+      task: 'Canvas creates a new output node; no input image is mutated in place.',
+    });
+    assert.equal(JSON.stringify(requestBody).includes('data:image'), false);
+    assert.deepEqual(response, { operation: 'reference-generate', confidence: 'high', model: 'jev-1.13.0' });
+    assert.equal(requestBody.questions.imageOperation.criteria.reference_generate.length > 0, true);
+    assert.equal(requestBody.questions.imageOperation.criteria.edit.length > 0, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('JEV image-intent classification normalizes edit and treats low confidence as uncertain', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    answers: { imageOperation: { type: 'choice', choice: 'edit', confidence: 0.45 } },
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    const response = await providers.canvasImageIntentCompletion({
+      id: 'jev', name: 'JEV', type: 'openai-compatible', platform: 'openai',
+      baseUrl: 'https://jev.example/v1', apiKey: 'test-key',
+    }, 'jev-1.13', { prompt: 'Edit the source image', imageReferenceCount: 1 });
+    assert.deepEqual(response, { operation: 'edit', confidence: 'low', model: 'jev-1.13' });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('uses the OpenAI video task status default for a custom compatible provider', () => {
   const config = presets.resolveProviderConfiguration({
     platform: 'custom',

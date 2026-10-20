@@ -124,12 +124,12 @@ test("prepares each image variant with its own visual refs and layout ratio", ()
   assert.equal(square.ok, true);
   if (!wide.ok || !square.ok) return;
   assert.deepEqual(wide.references.map((reference) => reference.nodeId), ["style"]);
-  assert.equal(wide.imageOperation, "generate");
+  assert.equal(wide.imageOperation, "auto");
   assert.deepEqual(wide.imageReferences.map((reference) => reference.url), ["/style.png"]);
   assert.ok(Math.abs(wide.params.customAspectWidth / wide.params.customAspectHeight - 4) < 0.005);
   assert.doesNotMatch(wide.prompt, /@1|@2/);
   assert.deepEqual(square.references.map((reference) => reference.nodeId), ["style"]);
-  assert.equal(square.imageOperation, "generate");
+  assert.equal(square.imageOperation, "auto");
   assert.deepEqual(square.imageReferences.map((reference) => reference.url), ["/style.png"]);
   assert.equal(square.params.aspect, "自动");
 });
@@ -166,16 +166,16 @@ test("keeps masked image variants on the edit operation", () => {
   assert.equal(request.moveGuideUrl, base.params.mask.sourceUrl);
 });
 
-test("a current-image reference does not change generation mode unless a mask requests editing", () => {
+test("unmasked canvas images defer semantic operation choice while masks remain explicit edits", () => {
   assert.equal(
     imageReferenceRequest.canvasImageRequestOperation({}, { useCurrentImageAsReference: true }),
-    "generate",
+    "auto",
   );
   assert.equal(
     imageReferenceRequest.canvasImageRequestOperation({
       mask: { url: "data:image/png;base64,mask", sourceUrl: "data:image/png;base64,source" },
     }, { useCurrentImageAsReference: false }),
-    "generate",
+    "auto",
   );
   assert.equal(
     imageReferenceRequest.canvasImageRequestOperation({

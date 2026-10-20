@@ -186,6 +186,28 @@ test('canvas image generation sends the explicit image operation for references'
   }
 });
 
+test('accepted image-task recovery preserves the server-classified operation', async () => {
+  const mocks = withImageCanvas();
+  try {
+    let calls = 0;
+    const result = await withFetch(async input => {
+      calls += 1;
+      if (String(input) === '/api/generate') throw new Error('connection lost after submission');
+      return jsonResponse({ log: { status: 'success', imageUrls: ['/recovered.png'], operation: 'edit' } });
+    }, () => api.generateCanvasImage({
+      taskId: 'image-task-1',
+      prompt: '调整连线参考图',
+      imageOperation: 'auto',
+      references: [{ url: 'data:image/png;base64,reference' }],
+    }));
+    assert.equal(calls, 2);
+    assert.deepEqual(result.images, [{ url: '/recovered.png' }]);
+    assert.equal(result.operation, 'edit');
+  } finally {
+    mocks.restore();
+  }
+});
+
 test('canvas image generation only sends a mask when one is present', async () => {
   let request;
   await withFetch(async (input, options) => {

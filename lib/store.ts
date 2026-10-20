@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID, createHash }
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderTextProtocol, ProviderType, PublicState, RegistryModel, WebSearchApiProvider, NativeSearchDetection, NativeSearchOverride, NativeSearchProtocol, ModelBilling, UpscaleConnection, UpscaleConnectionStatus, UpscaleProviderId } from './types';
-import { selectAutomaticModel } from './model-selection';
+import { modelSupportsCapabilities, selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
 import { inferModelKind, isImageEditOnlyModel, isNonConversationalModelId, isSpeechModelId, resolveModelKind } from './model-kind';
@@ -876,21 +876,29 @@ export async function getRuntimeVisionModel(id: string | null | undefined) {
   return { model, provider: { ...provider, responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'), apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
 }
 
-export async function getRuntimeImageModelForCapability(id: string | null | undefined, capability: ModelCapability) {
+export async function getRuntimeImageModelForCapabilities(id: string | null | undefined, capabilities: readonly ModelCapability[]) {
   const state = await readState();
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
   const targetId = id && id !== 'auto' ? id : undefined;
   const compatible = models.filter((item) => {
     const provider = state.providers.find((candidate) => candidate.id === item.providerId);
-    return isProviderModelLibraryEnabled(provider) && item.kind === 'image' && item.enabled && item.published && item.capabilities.includes(capability);
+    return isProviderModelLibraryEnabled(provider)
+      && item.kind === 'image'
+      && item.enabled
+      && item.published
+      && modelSupportsCapabilities(item, capabilities);
   });
   const model = targetId
     ? compatible.find((item) => item.id === targetId)
     : selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultImageModelId);
-  if (!model || !model.enabled || !model.published || model.kind !== 'image' || !model.capabilities.includes(capability)) return null;
+  if (!model || !model.enabled || !model.published || model.kind !== 'image' || !modelSupportsCapabilities(model, capabilities)) return null;
   const provider = state.providers.find((item) => item.id === model!.providerId);
   if (!provider) return null;
   return { model, provider: { ...provider, imageStoragePath: state.settings.imageStoragePath, apiKey: await decryptSecret(provider.encryptedApiKey) } };
+}
+
+export async function getRuntimeImageModelForCapability(id: string | null | undefined, capability: ModelCapability) {
+  return getRuntimeImageModelForCapabilities(id, [capability]);
 }
 
 export async function getRuntimeImageGenerationModel(id: string | null | undefined) {
@@ -914,16 +922,20 @@ export async function getRuntimeImageGenerationModel(id: string | null | undefin
  * explicitly rejected a request; transport failures and ambiguous upstream
  * failures must not trigger a second paid generation request.
  */
-export async function getRuntimeImageModelCandidates(id: string | null | undefined, capability?: ModelCapability) {
+export async function getRuntimeImageModelCandidates(
+  id: string | null | undefined,
+  capability?: ModelCapability | readonly ModelCapability[],
+) {
   const state = await readState();
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
+  const capabilities = capability === undefined ? [] : typeof capability === 'string' ? [capability] : capability;
   const compatible = models.filter((item) => {
     const provider = state.providers.find((candidate) => candidate.id === item.providerId);
     return isProviderModelLibraryEnabled(provider)
       && item.kind === 'image'
       && item.enabled
       && item.published
-      && (!capability || item.capabilities.includes(capability));
+      && modelSupportsCapabilities(item, capabilities);
   });
   const explicit = id && id !== 'auto' ? compatible.find((item) => item.id === id) : undefined;
   const first = explicit || selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultImageModelId);
