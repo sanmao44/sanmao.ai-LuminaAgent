@@ -27,6 +27,7 @@ type Props = {
   runtime: PublicState | null;
   unavailableModelId?: string;
   referenceCount?: number;
+  modelCapabilities?: readonly ModelCapability[];
   variant?: "default" | "canvas-flat" | "dock";
   portalZIndex?: number;
   dialogPortalZIndex?: number;
@@ -58,6 +59,7 @@ function ImageEditor({
   settings,
   runtime,
   unavailableModelId,
+  modelCapabilities,
   variant,
   portalZIndex = CANVAS_Z_INDEX.portalPopover,
   dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog,
@@ -66,6 +68,7 @@ function ImageEditor({
   settings: ImageCreationSettings;
   runtime: PublicState | null;
   unavailableModelId?: string;
+  modelCapabilities?: readonly ModelCapability[];
   variant?: Props["variant"];
   portalZIndex?: number;
   dialogPortalZIndex?: number;
@@ -243,7 +246,7 @@ function ImageEditor({
               <ModelPicker
                 models={models}
                 value={settings.model}
-                capability={settings.mask ? "edit" : "generate"}
+                capability={modelCapabilities ?? (settings.mask ? ["edit"] : ["generate"])}
                 portalZIndex={portalZIndex}
                 dialogPortalZIndex={dialogPortalZIndex}
                 defaultProviderId={runtime?.settings.defaultProviderId}
@@ -402,7 +405,7 @@ function ImageEditor({
           <ModelPicker
             models={models}
             value={settings.model}
-            capability={settings.mask ? "edit" : "generate"}
+            capability={modelCapabilities ?? (settings.mask ? ["edit"] : ["generate"])}
             portalZIndex={portalZIndex}
             dialogPortalZIndex={dialogPortalZIndex}
             defaultProviderId={runtime?.settings.defaultProviderId}
@@ -1115,6 +1118,7 @@ export default function CreationParameterEditor({
   settings,
   runtime,
   unavailableModelId,
+  modelCapabilities,
   variant,
   portalZIndex = CANVAS_Z_INDEX.portalPopover,
   dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog,
@@ -1146,6 +1150,7 @@ export default function CreationParameterEditor({
       settings={settings}
       runtime={runtime}
       unavailableModelId={unavailableModelId}
+      modelCapabilities={modelCapabilities}
       variant={variant}
       portalZIndex={portalZIndex}
       dialogPortalZIndex={dialogPortalZIndex}

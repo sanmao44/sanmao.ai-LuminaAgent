@@ -164,6 +164,7 @@ test("keeps a ratio-mentioned image as a visual reference unless its role is exp
   assert.deepEqual(result.resolution.layoutOnlyReferences, []);
   assert.deepEqual(result.references.map((reference) => reference.id), ["source"]);
   assert.deepEqual(result.imageReferences.map((reference) => reference.url), ["/source.png"]);
+  assert.deepEqual(imageRequest.canvasImageRequestCapabilities(result.imageOperation, result.imageReferences.length), ["generate", "reference"]);
   assert.match(result.prompt, /视觉参考图1/);
 });
 
@@ -232,6 +233,7 @@ test("prepares the screenshot reference roles as a new-image request without lea
   assert.deepEqual(result.resolution.layoutOnlyReferences.map((reference) => reference.id), ["guangdong"]);
   assert.deepEqual(result.references.map((reference) => reference.id), ["henan"]);
   assert.deepEqual(result.imageReferences.map((reference) => reference.url), ["/henan.png"]);
+  assert.deepEqual(imageRequest.canvasImageRequestCapabilities(result.imageOperation, result.imageReferences.length), ["generate", "reference"]);
   assert.equal(result.params.aspect, "自定义");
   assert.ok(Math.abs(result.params.customAspectWidth / result.params.customAspectHeight - 2429 / 432) / (2429 / 432) < 0.005);
   assert.doesNotMatch(result.prompt, /@1|@2|广东版本|河南版本/);
@@ -259,6 +261,14 @@ test("uses connected references by default without sending unrelated candidates"
   if (!result.ok) return;
   assert.deepEqual(result.references.map((reference) => reference.id), ["connected"]);
   assert.deepEqual(result.imageReferences.map((reference) => reference.url), ["/style.png"]);
+  assert.deepEqual(imageRequest.canvasImageRequestCapabilities(result.imageOperation, result.imageReferences.length), ["generate", "reference"]);
+});
+
+test("derives image model capabilities from edit mode and submitted visual references", () => {
+  assert.deepEqual(imageRequest.canvasImageRequestCapabilities("generate", 0), ["generate"]);
+  assert.deepEqual(imageRequest.canvasImageRequestCapabilities("edit", 0), ["edit"]);
+  assert.deepEqual(imageRequest.canvasImageRequestCapabilities("edit", 1), ["edit"]);
+  assert.deepEqual(imageRequest.canvasImageRequestCapabilities("auto", 1), ["generate", "reference"]);
 });
 
 test("rejects more image references than the request contract allows", () => {

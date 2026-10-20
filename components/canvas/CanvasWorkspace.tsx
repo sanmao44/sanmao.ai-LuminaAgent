@@ -7167,15 +7167,19 @@ export default function SuperCanvas() {
               : imageReferenceNodes.length ? "reference-generate" : "generate"
         );
         const generationDurationMs = Math.max(0, Date.now() - generationStartedAt);
-        const outputs = result.images.map((image, index) =>
-          createMedia(
+        const fillsTarget = Boolean(sourceTarget && !sourceTarget.data.url) || Boolean(pendingImageId);
+        const fillId = sourceTarget?.id || pendingImageId;
+        const outputs: CanvasNode[] = [];
+        result.images.forEach((image, index) => {
+          const positionForOutput = {
+            x: position.x + (index % 2) * 350,
+            y: position.y + Math.floor(index / 2) * 280,
+          };
+          const draft = createMedia(
             "image",
             image.url,
             `生成图片 ${index + 1}`,
-            {
-              x: position.x + (index % 2) * 350,
-              y: position.y + Math.floor(index / 2) * 280,
-            },
+            positionForOutput,
             {
               role: "生成结果",
               model: result.model?.name || imageParams.model,
@@ -7199,10 +7203,14 @@ export default function SuperCanvas() {
               },
               referenceOrder: imageReferenceNodes.map((node) => node.id),
             },
-          ),
-        );
-        const fillsTarget = Boolean(sourceTarget && !sourceTarget.data.url) || Boolean(pendingImageId);
-        const fillId = sourceTarget?.id || pendingImageId;
+          );
+          outputs.push(fillsTarget && index === 0
+            ? draft
+            : {
+                ...draft,
+                ...projectTask.placeNode(positionForOutput, draft, outputs),
+              });
+        });
         const selectedOutputIds = fillsTarget && fillId
           ? [fillId, ...outputs.slice(1).map((output) => output.id)]
           : outputs.map((output) => output.id);

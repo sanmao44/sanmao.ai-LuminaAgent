@@ -6,7 +6,16 @@ import {
 } from "../creative-references";
 import type { ImageCreationSettings } from "../creation/settings";
 import { MAX_IMAGE_REFERENCES, type ImageRequestMode } from "@/packages/contracts/creative";
+import type { ModelCapability } from "@/lib/types";
 import type { CanvasReferenceDraft } from "./reuse";
+
+export function canvasImageRequestCapabilities(
+  imageOperation: ImageRequestMode,
+  imageReferenceCount: number,
+): ModelCapability[] {
+  if (imageOperation === "edit") return ["edit"];
+  return ["generate", ...(imageReferenceCount > 0 ? ["reference" as const] : [])];
+}
 
 export type CanvasImageReferenceRequest =
   | { ok: false; message: string }

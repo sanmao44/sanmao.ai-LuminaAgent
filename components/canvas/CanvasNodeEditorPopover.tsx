@@ -31,7 +31,10 @@ import { canvasNodeSupportsImagePresets } from "@/lib/canvas/image-presets";
 import { placeCanvasNodeEditorDock } from "@/lib/canvas/editor-layout";
 import { canvasVisibleStageWidth } from "@/lib/canvas/menu-layout";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
-import { replaceNaturalReferenceLabels } from "@/lib/creative-references";
+import { replaceNaturalReferenceLabels, resolveCreativeReferenceRoles } from "@/lib/creative-references";
+import { canvasImageRequestCapabilities, canvasImageRequestOperation } from "@/lib/canvas/image-reference-request";
+import { modelSupportsCapabilityRequirements } from "@/lib/model-picker";
+import type { ModelCapability } from "@/lib/types";
 import { canvasMentionOption } from "@/components/canvas/mention-options";
 import CanvasReferenceDraftStrip from "@/components/CanvasReferenceDraftStrip";
 import CreationParameterEditor from "@/components/CreationParameterEditor";
@@ -220,18 +223,69 @@ function CanvasNodeEditorPopover({
     ? imageParameterSummary
     : (videoParameterSummary || (textEditorParams ? `${modelNameForSummary} · ${webModeLabel}` : "") || upscaleParameterSummary || "");
   const dockModelValue = imageParams?.model ?? videoEditorParams?.model ?? textEditorParams?.model;
-  const dockModelCapability = imageParams
-    ? (imageParams.mask ? "edit" : "generate")
-    : videoEditorParams
-      ? "video-generate"
-      : textEditorParams
-        ? "chat"
-        : null;
   const dockModelDefaultId = imageParams
     ? runtime?.settings.defaultImageModelId
     : videoEditorParams
       ? runtime?.settings.defaultVideoModelId
       : runtime?.settings.agentModelId;
+  const imageReferenceCandidate = (candidate: CanvasNode, index: number): CanvasReferenceDraft => {
+    const option = canvasMentionOption(document, candidate, index);
+    return {
+      id: candidate.id,
+      nodeId: candidate.id,
+      kind: option.kind,
+      name: option.name,
+      origin: "node",
+      ...(option.url ? { url: option.url } : {}),
+      ...(option.text ? { text: option.text } : {}),
+      ...(Number(candidate.data.nativeWidth) > 0 ? { width: Number(candidate.data.nativeWidth) } : {}),
+      ...(Number(candidate.data.nativeHeight) > 0 ? { height: Number(candidate.data.nativeHeight) } : {}),
+    };
+  };
+  const imageMentionCandidates = branchDraft
+    ? branchDraft.references
+    : mentionCandidates.map(imageReferenceCandidate);
+  const defaultImageReferences = branchDraft
+    ? branchDraft.references
+    : editorReferences.map((reference) => imageReferenceCandidate(reference, mentionCandidates.indexOf(reference)));
+  const imageReferenceResolution = resolveCreativeReferenceRoles(
+    replaceNaturalReferenceLabels(editorPrompt, imageMentionCandidates).value,
+    imageMentionCandidates,
+  );
+  const submittedImageReferences = imageReferenceResolution.hasMentions
+    ? imageReferenceResolution.references
+    : defaultImageReferences;
+  const imageReferenceIds = new Set(
+    submittedImageReferences
+      .filter((reference) => reference.kind === "image")
+      .map((reference) => reference.id),
+  );
+  if (canUseCurrentImageAsReference && useCurrentImageAsReference && data.url) imageReferenceIds.add(node.id);
+  const imageRequestOperation = imageParams
+    ? canUseCurrentImageAsReference
+      ? canvasImageRequestOperation(imageParams, { useCurrentImageAsReference })
+      : canvasImageRequestOperation(imageParams)
+    : "auto";
+  const imageRequiredCapabilities: ModelCapability[] = imageParams
+    ? canvasImageRequestCapabilities(imageRequestOperation, imageReferenceIds.size)
+    : [];
+  const dockModelCapability: ModelCapability | readonly ModelCapability[] | null = imageParams
+    ? imageRequiredCapabilities
+    : videoEditorParams
+      ? "video-generate"
+      : textEditorParams
+        ? "chat"
+        : null;
+  const selectedImageModel = imageParams?.model && imageParams.model !== "auto"
+    ? runtime?.models.find((model) => model.id === imageParams.model)
+    : undefined;
+  const imageModelCompatibilityError = imageParams?.model && imageParams.model !== "auto" && runtime
+    ? !selectedImageModel || !selectedImageModel.enabled || !selectedImageModel.published
+      ? "当前选择的图片模型不可用，请切换自动或选择其他模型。"
+      : !modelSupportsCapabilityRequirements(selectedImageModel, imageRequiredCapabilities)
+        ? `当前选择的图片模型不支持${imageRequiredCapabilities.map((capability) => capability === "generate" ? "生图" : capability === "edit" ? "改图" : capability === "reference" ? "参考图" : capability).join("、")}能力，请切换自动或选择兼容模型。`
+        : null
+    : null;
   const referenceFileAccept = isUpscaleNode
     ? "image/png,image/jpeg,image/webp,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1"
     : "image/*,video/*,audio/*,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1";
@@ -272,6 +326,15 @@ function CanvasNodeEditorPopover({
               ? "生成新图"
               : "生成";
   const editorActionLabel = promptExpanded ? "保存" : generateLabel;
+  const blockIncompatibleImageModel = () => {
+    if (!imageModelCompatibilityError) return false;
+    onNotify(imageModelCompatibilityError, "error");
+    return true;
+  };
+  const submitEditorGeneration = (options?: { useCurrentImageAsReference?: boolean; presetId?: string; presetName?: string }) => {
+    if (blockIncompatibleImageModel()) return;
+    onGenerate(node, options);
+  };
   const handleEditorAction = () => {
     if (promptExpanded) {
       setPromptBeforeOptimization(null);
@@ -279,6 +342,7 @@ function CanvasNodeEditorPopover({
       window.setTimeout(() => promptRef.current?.focus(), 0);
       return;
     }
+    if (blockIncompatibleImageModel()) return;
     if (canUseCurrentImageAsReference) {
       onGenerate(node, generationOptions);
       return;
@@ -743,7 +807,7 @@ function CanvasNodeEditorPopover({
                 onKeyDown={(event) => {
                   if (!promptExpanded && event.key === "Enter" && (isAgentNode ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
                     event.preventDefault();
-                    onGenerate(node, generationOptions);
+                    submitEditorGeneration(generationOptions);
                   }
                 }}
                 transformPastedText={(text) => replaceNaturalReferenceLabels(
@@ -827,6 +891,7 @@ function CanvasNodeEditorPopover({
                         key={node.id}
                         settings={editorParams}
                         runtime={runtime}
+                        modelCapabilities={imageRequiredCapabilities}
                         referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
                         variant={isDockNode ? "dock" : undefined}
                         portalZIndex={CANVAS_Z_INDEX.modalPopover}
@@ -840,7 +905,7 @@ function CanvasNodeEditorPopover({
                   </div>
                 )}
               </div>
-              <button type="button" className="canvas-node-editor-generate" data-tooltip={promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "生成新的结果卡片" : undefined} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
+              <button type="button" className="canvas-node-editor-generate" data-tooltip={imageModelCompatibilityError || (promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "生成新的结果卡片" : undefined)} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
             </div>
             <input ref={imageDockFileRef} hidden type="file" multiple accept={referenceFileAccept} onChange={(event) => { if (event.target.files) onAddReferenceFiles(node.id, [...event.target.files]); event.currentTarget.value = ""; }} />
            </div>
@@ -868,7 +933,7 @@ function CanvasNodeEditorPopover({
                  onKeyDown={(event) => {
                    if (!promptExpanded && event.key === "Enter" && (node.type === "prompt" ? !event.shiftKey : (event.ctrlKey || event.metaKey))) {
                      event.preventDefault();
-                     onGenerate(node, generationOptions);
+                     submitEditorGeneration(generationOptions);
                   }
                 }}
                 transformPastedText={(text) => replaceNaturalReferenceLabels(
@@ -947,6 +1012,7 @@ function CanvasNodeEditorPopover({
                 key={node.id}
                 settings={editorParams}
                 runtime={runtime}
+                modelCapabilities={imageRequiredCapabilities}
                 referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
                 variant="canvas-flat"
                 portalZIndex={CANVAS_Z_INDEX.modalPopover}
@@ -982,7 +1048,7 @@ function CanvasNodeEditorPopover({
                 />
               </div>
             )}
-            <button type="button" className="canvas-node-editor-generate" title={promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "生成新的结果卡片" : undefined} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
+            <button type="button" className="canvas-node-editor-generate" title={imageModelCompatibilityError || (promptExpanded ? "保存编辑内容" : upscaleMissingInput ? "请连接一张已完成的图片" : inPlaceVideo ? "生成新的结果卡片" : undefined)} disabled={!promptExpanded && (pending || upscaleMissingInput)} onClick={handleEditorAction}>{editorActionLabel}</button>
           </div>
         </div>}
       </div>
