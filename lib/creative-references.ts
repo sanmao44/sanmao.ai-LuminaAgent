@@ -267,6 +267,7 @@ export type CreativeReferenceRoleResolution<T extends CreativeReferenceLike = Cr
 
 const layoutCuePattern = /(?:比例|画幅|宽高比|长宽比|尺寸|分辨率|横版|竖版|横向|纵向|aspect\s*ratio|ratio|dimensions?|resolution|landscape|portrait|width|height)/i;
 const visualCuePattern = /(?:风格|元素|主体|内容|画面|构图|色彩|颜色|色调|建筑|人物|类似|复刻|重现|style|elements?|subject|content|visual|composition|color|similar|recreate|copy)/i;
+const layoutOnlyIntentPattern = /(?:(?:仅|只)(?:把|将)?[^，。！？；\n]{0,18}(?:画幅|比例|宽高比|长宽比|尺寸|分辨率)|(?:画幅|比例|宽高比|长宽比|尺寸|分辨率)[^，。！？；\n]{0,18}(?:仅|只)(?:用于|参考|取)|only\s+(?:use\s+)?(?:the\s+)?(?:aspect(?:\s*ratio)?|ratio|dimensions?|resolution))/i;
 const clauseBoundaryPattern = /[\r\n，。！？；、,.;!?]/;
 const broadReplacementSubjectPattern = /(?:全部|所有|任何|元素|画面|视觉|场景|地域|地名|文字|主体|建筑|内容)/i;
 const broadReplacementActionPattern = /(?:替换|换成|改成|改为|变成|不能|不得|不要|禁止|不出现|移除|去掉|避免)/i;
@@ -287,7 +288,7 @@ function referenceMentionClause(value: string, start: number, end: number) {
 
 function isLayoutOnlyMention(value: string, start: number, end: number) {
   const clause = referenceMentionClause(value, start, end);
-  return layoutCuePattern.test(clause) && !visualCuePattern.test(clause);
+  return layoutCuePattern.test(clause) && layoutOnlyIntentPattern.test(clause) && !visualCuePattern.test(clause);
 }
 
 function greatestCommonDivisor(left: number, right: number): number {

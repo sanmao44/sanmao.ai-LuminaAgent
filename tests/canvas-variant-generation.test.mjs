@@ -113,7 +113,7 @@ test("prepares each image variant with its own visual refs and layout ratio", ()
   const prepared = generation.prepareCanvasVariantGeneration({
     document: { version: "test", nodes: [ratio, style, generator], edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 } },
     generator,
-    requirements: ["保持 @1 比例，采用 @2 风格", "只采用 @2 风格"],
+    requirements: ["仅将 @1 用于比例，采用 @2 风格", "只采用 @2 风格"],
     mentionCandidates: [ratio, style],
     imageParams: params,
   });

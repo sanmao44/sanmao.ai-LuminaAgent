@@ -118,7 +118,7 @@ test("treats an aspect-ratio mention as layout-only and keeps visual references 
     { id: "henan", kind: "image", name: "河南版本", url: "data:image/png;base64,henan", width: 2429, height: 432 },
     { id: "shandong", kind: "image", name: "山东参考", url: "data:image/png;base64,shandong", width: 1920, height: 1080 },
   ];
-  const result = refs.resolveCreativeReferenceRoles("保持和 @1 一样的比例，来个类似 @2 山东版本", images);
+  const result = refs.resolveCreativeReferenceRoles("仅将 @1 用于画幅比例，来个类似 @2 山东版本", images);
   assert.deepEqual(result.layoutOnlyNumbers, [1]);
   assert.deepEqual(result.layoutOnlyReferences.map((reference) => reference.id), ["henan"]);
   assert.deepEqual(result.references.map((reference) => reference.id), ["shandong"]);
@@ -126,6 +126,43 @@ test("treats an aspect-ratio mention as layout-only and keeps visual references 
   assert.match(result.prompt, /2429:432/);
   assert.match(result.prompt, /视觉参考图1/);
   assert.match(result.prompt, /不是视觉参考/);
+});
+
+test("keeps a ratio-mentioned image as a visual reference unless its role is explicitly limited to layout", () => {
+  const result = imageRequest.prepareCanvasImageReferenceRequest({
+    prompt: "保持比例和 @1 一致，替换地域元素并参考画面设计",
+    references: [
+      { id: "source", kind: "image", name: "原始参考图", url: "/source.png", width: 2429, height: 432 },
+    ],
+    params: {
+      kind: "image",
+      model: "image-model",
+      aspect: "自动",
+      customAspectWidth: 16,
+      customAspectHeight: 9,
+      sizeMode: "system",
+      resolution: "2K",
+      width: 1024,
+      height: 1024,
+      count: 1,
+      quality: "自动",
+      outputFormat: "png",
+      backgroundMode: "auto",
+      upscaleScale: 2,
+      upscaleTarget: "auto",
+      upscaleSeed: 1,
+      upscaleColorCorrection: "wavelet",
+      upscaleAlgorithm: "lanczos",
+    },
+    imageOperation: "generate",
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.resolution.layoutOnlyReferences, []);
+  assert.deepEqual(result.references.map((reference) => reference.id), ["source"]);
+  assert.deepEqual(result.imageReferences.map((reference) => reference.url), ["/source.png"]);
+  assert.match(result.prompt, /视觉参考图1/);
 });
 
 test("keeps a reference visual when the same mention is used for style", () => {
@@ -138,12 +175,12 @@ test("keeps a reference visual when the same mention is used for style", () => {
 });
 
 test("does not drop a reference when one mention uses both layout and visual roles", () => {
-  const result = refs.resolveCreativeReferenceRoles("保持 @1 比例，同时使用 @1 风格", [
+  const result = refs.resolveCreativeReferenceRoles("仅将 @1 用于比例，同时使用 @1 风格", [
     { id: "mixed", kind: "image", name: "混合参考", url: "data:image/png;base64,mixed", width: 1600, height: 900 },
   ]);
   assert.deepEqual(result.layoutOnlyNumbers, []);
   assert.deepEqual(result.references.map((reference) => reference.id), ["mixed"]);
-  assert.equal(result.prompt, "保持 16:9（约 1.778:1） 比例，同时使用 视觉参考图1 风格");
+  assert.equal(result.prompt, "仅将 16:9（约 1.778:1） 用于比例，同时使用 视觉参考图1 风格");
 });
 
 test("replaces numeric labels so a sparse mention cannot be misread as reference two", () => {
@@ -157,7 +194,7 @@ test("replaces numeric labels so a sparse mention cannot be misread as reference
 });
 
 test("prepares the screenshot reference roles as a new-image request without leaking source labels", () => {
-  const prompt = "保持和 @1 一样的比例，来个类似 @2 山东版本，画面元素全要换成山东元素，任何元素都不能和广东那张图的元素一样";
+  const prompt = "仅将 @1 用于画幅比例，来个类似 @2 山东版本，画面元素全要换成山东元素，任何元素都不能和广东那张图的元素一样";
   const result = imageRequest.prepareCanvasImageReferenceRequest({
     prompt,
     references: [
@@ -224,7 +261,7 @@ test("uses connected references by default without sending unrelated candidates"
 
 test("blocks a missing or conflicting ratio reference before Canvas submits the request", () => {
   const common = {
-    prompt: "保持 @1 比例",
+    prompt: "仅将 @1 用于比例",
     references: [{ id: "ratio", kind: "image", name: "尺寸参考", url: "/ratio.png", width: 2429, height: 432 }],
     imageOperation: "generate",
     params: {

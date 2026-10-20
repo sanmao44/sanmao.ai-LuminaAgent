@@ -12,6 +12,7 @@ import {
 } from "react";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import { incomingReferences, isCanvasReadyImageSource, nodeSize } from "@/lib/canvas/model";
+import { canvasImageReferencesForContinuation } from "@/lib/canvas/reference-edges";
 import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/lib/canvas/node-editor";
 import type {
   CanvasDocument,
@@ -158,7 +159,7 @@ function CanvasNodeEditorPopover({
   const [promptOptimizing, setPromptOptimizing] = useState(false);
   const [promptBeforeOptimization, setPromptBeforeOptimization] = useState<string | null>(null);
   const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
-  const [useCurrentImageAsReference, setUseCurrentImageAsReference] = useState(currentImageReference ?? true);
+  const [useCurrentImageAsReference, setUseCurrentImageAsReference] = useState(currentImageReference ?? false);
   const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
   const imageDockParamsRef = useRef<HTMLDivElement | null>(null);
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
@@ -179,7 +180,9 @@ function CanvasNodeEditorPopover({
   const size = nodeSize(node);
   const pending = data.status === "queued" || data.status === "running";
   const upscaleMissingInput = node.type === "upscale" && !upscaleSourceUrl;
-  const editorReferences = incomingReferences(document, node.id);
+  const editorReferences = node.type === "media" && data.kind === "image"
+    ? canvasImageReferencesForContinuation(document, node.id)
+    : incomingReferences(document, node.id);
   const readyOneTakeReferences = editorReferences.filter(isCanvasReadyImageSource);
   const inPlaceVideo = canvasVideoTargetHasImageReference(document, node);
   const branchReferences = branchDraft?.references || [];
@@ -335,7 +338,7 @@ function CanvasNodeEditorPopover({
   }, [branchDraft?.presetId, branchDraft?.presetName, node.data.generation?.presetId, node.data.generation?.presetName, node.id, supportsImagePresets]);
 
   useEffect(() => {
-    setUseCurrentImageAsReference(currentImageReference ?? true);
+    setUseCurrentImageAsReference(currentImageReference ?? false);
   }, [currentImageReference, node.id]);
 
   async function optimizeEditorPrompt() {
@@ -671,7 +674,7 @@ function CanvasNodeEditorPopover({
                     <b>当前图片作参考</b>
                     <small>
                       {useCurrentImageAsReference
-                        ? "默认使用当前图片"
+                        ? "本次会把当前图片作为参考图"
                         : maskState
                           ? "已关闭，本次不应用局部编辑蒙版"
                           : "已关闭，本次不提交当前图片"}

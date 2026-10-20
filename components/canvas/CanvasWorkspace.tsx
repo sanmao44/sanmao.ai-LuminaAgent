@@ -343,6 +343,8 @@ import {
   videoClipDurationSeconds,
 } from "@/lib/canvas/video-clip";
 import {
+  attachCanvasImageReferenceEdges,
+  canvasImageReferencesForContinuation,
   referenceEdgeIdsForCanvasSource,
   referenceEdgesForCanvasTarget,
   referenceNodesForCanvasEdge,
@@ -4890,7 +4892,10 @@ export default function SuperCanvas() {
           return;
         }
         const targetKind = target.data.kind === "video" ? "video" : "image";
-        const references = incomingReferences(canvasCoreRef.current.document(), target.id)
+        const sourceReferences = targetKind === "image"
+          ? canvasImageReferencesForContinuation(canvasCoreRef.current.document(), target.id)
+          : incomingReferences(canvasCoreRef.current.document(), target.id);
+        const references = sourceReferences
           .map((node) => createCanvasReferenceDraft(node))
           .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
         const draft = reuseDraftFromNode(
@@ -5368,6 +5373,12 @@ export default function SuperCanvas() {
                     "generated",
                   );
                 });
+                next = attachCanvasImageReferenceEdges(
+                  next,
+                  imageLinked,
+                  outputs.map((output) => output.id),
+                  () => uid("edge"),
+                );
                 next = updateVariantState(next, index, {
                   status: "completed",
                   progress: 100,
@@ -5580,7 +5591,10 @@ export default function SuperCanvas() {
         notify("只有已完成的图片或视频节点可以复用参数。", "error");
         return;
       }
-      const linkedReferences = incomingReferences(canvasCoreRef.current.document(), source.id)
+      const sourceReferences = source.data.kind === "image"
+        ? canvasImageReferencesForContinuation(canvasCoreRef.current.document(), source.id)
+        : incomingReferences(canvasCoreRef.current.document(), source.id);
+      const linkedReferences = sourceReferences
         .map((node) => createCanvasReferenceDraft(node))
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
       const draft = reuseDraftFromNode(
@@ -5839,7 +5853,7 @@ export default function SuperCanvas() {
     const { updateDoc, commit, readDocument, setSelectedIds, setSelectedGroupId, setReuseDraft } = projectTask;
     const draft = cloneReuseDraft(draftInput);
     if (draft.kind !== "image") return;
-    const useCurrentImageAsReference = options?.useCurrentImageAsReference !== false;
+    const useCurrentImageAsReference = options?.useCurrentImageAsReference === true;
     const presetId = draft.presetId;
     const presetName = draft.presetName;
     const userPrompt = visibleImagePresetPrompt(draft.prompt, presetId, customImagePresets);
@@ -6498,7 +6512,10 @@ export default function SuperCanvas() {
         return notify("音频节点只能作为视频参考输入，不能直接生成新分支。", "error");
       }
       const targetKind = selectedMediaTarget.data.kind === "video" ? "video" : "image";
-      const references = incomingReferences(readDocument(), selectedMediaTarget.id)
+      const sourceReferences = targetKind === "image"
+        ? canvasImageReferencesForContinuation(readDocument(), selectedMediaTarget.id)
+        : incomingReferences(readDocument(), selectedMediaTarget.id);
+      const references = sourceReferences
         .map((node) => createCanvasReferenceDraft(node))
         .filter((reference): reference is CanvasReferenceDraft => Boolean(reference));
       const draft = reuseDraftFromNode(
@@ -6978,7 +6995,17 @@ export default function SuperCanvas() {
       const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits, videoParams.operation);
       if (videoInputError) return notify(videoInputError, "error");
     }
-    const refs = (kind === "video" ? videoInputs?.referenceImages || [] : inputSemantics.imageReferences)
+    const imageReferenceNodes = preparedImageRequest?.ok
+      ? preparedImageRequest.references
+          .filter((reference) => reference.kind === "image")
+          .map((reference) => nodeById(readDocument(), reference.nodeId || reference.id))
+          .filter((node): node is CanvasNode => isCanvasReadyImageSource(node))
+      : [];
+    const refs = (kind === "video"
+      ? videoInputs?.referenceImages || []
+      : preparedImageRequest?.ok
+        ? imageReferenceNodes
+        : inputSemantics.imageReferences)
       .map((node) => ({
           url: String(node.data.url || ""),
           name: String(node.data.name || "参考素材"),
@@ -7059,11 +7086,11 @@ export default function SuperCanvas() {
                 params: clone(imageParams),
                 ...(presetId ? { presetId } : {}),
                 ...(presetName ? { presetName } : {}),
-                referenceIds: linked.map((node) => node.id),
+                referenceIds: imageReferenceNodes.map((node) => node.id),
                 taskId,
                 createdAt: Date.now(),
               },
-              referenceOrder: linked.map((node) => node.id),
+              referenceOrder: imageReferenceNodes.map((node) => node.id),
             },
           );
           pendingImageId = pending.id;
@@ -7135,20 +7162,20 @@ export default function SuperCanvas() {
                 params: clone(imageParams),
                 ...(presetId ? { presetId } : {}),
                 ...(presetName ? { presetName } : {}),
-                referenceIds: linked.map((node) => node.id),
+                referenceIds: imageReferenceNodes.map((node) => node.id),
                 sourceGeneratorId: sourceNode?.id,
                 parentNodeId: undefined,
                 taskId,
                 createdAt: Date.now(),
                 durationMs: generationDurationMs,
               },
-              referenceOrder: linked.map((node) => node.id),
+              referenceOrder: imageReferenceNodes.map((node) => node.id),
             },
           ),
         );
         const fillsTarget = Boolean(sourceTarget && !sourceTarget.data.url) || Boolean(pendingImageId);
         const fillId = sourceTarget?.id || pendingImageId;
-        const selectedOutputIds = fillsTarget
+        const selectedOutputIds = fillsTarget && fillId
           ? [fillId, ...outputs.slice(1).map((output) => output.id)]
           : outputs.map((output) => output.id);
         updateDoc((value) => {
@@ -7180,6 +7207,12 @@ export default function SuperCanvas() {
                 );
               });
           }
+          next = attachCanvasImageReferenceEdges(
+            next,
+            imageReferenceNodes,
+            selectedOutputIds,
+            () => uid("edge"),
+          );
           if (sourceNode)
             next = {
               ...next,
@@ -7222,7 +7255,7 @@ export default function SuperCanvas() {
               : imageParams.resolution,
           outputFormat: imageParams.outputFormat,
           parentId: sourceTarget?.data.url ? sourceTarget.id : undefined,
-          references: createCanvasReferenceRecords(linked),
+          references: createCanvasReferenceRecords(imageReferenceNodes),
           annotations: imageParams.mask?.annotations,
           mask: canvasHistoryMask(imageParams.mask),
         })
@@ -8818,7 +8851,7 @@ export default function SuperCanvas() {
             ? cloneReuseDraft(reuseDraft)
             : reuseDraftFromNode(
                 node,
-                incomingReferences(readDocument(), node.id)
+                canvasImageReferencesForContinuation(readDocument(), node.id)
                   .map((node) => createCanvasReferenceDraft(node))
                   .filter(
                     (reference): reference is CanvasReferenceDraft =>

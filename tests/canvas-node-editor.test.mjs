@@ -600,11 +600,11 @@ test("completed image editors remember the current-image reference switch per no
   assert.ok(editorStart >= 0 && editorEnd > editorStart, "image editor should be present");
   const editor = component.slice(editorStart, editorEnd);
   assert.match(editor, /useCurrentImageAsReference/);
-  assert.match(editor, /useState\(currentImageReference \?\? true\)/);
+  assert.match(editor, /useState\(currentImageReference \?\? false\)/);
   assert.match(editor, /checked=\{useCurrentImageAsReference\}/);
   assert.match(editor, /aria-label="当前图片作参考"/);
   assert.match(editor, /!branchDraft/);
-  assert.match(editor, /setUseCurrentImageAsReference\(currentImageReference \?\? true\)/);
+  assert.match(editor, /setUseCurrentImageAsReference\(currentImageReference \?\? false\)/);
   assert.match(editor, /onCurrentImageReferenceChange\?\.\(next\)/);
   assert.doesNotMatch(editor, /setUseCurrentImageAsReference\(true\)/);
   assert.match(component, /const \[currentImageReferenceByNode, setCurrentImageReferenceByNode\] = useState<Record<string, boolean>>\(\{\}\)/);
@@ -626,7 +626,7 @@ test("current-image reference choice reaches repeat generation without changing 
   assert.match(editor, /useCurrentImageAsReference: options\.useCurrentImageAsReference/);
   assert.match(component, /request\.useCurrentImageAsReference/);
   assert.match(continuation, /options\?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference">/);
-  assert.match(continuation, /const useCurrentImageAsReference = options\?\.useCurrentImageAsReference !== false/);
+  assert.match(continuation, /const useCurrentImageAsReference = options\?\.useCurrentImageAsReference === true/);
   assert.match(continuation, /if \(useCurrentImageAsReference\) \{[\s\S]*?addReference\([\s\S]*?source\.id/);
   assert.match(continuation, /canvasImageRequestOperation\(paramsWithMask, \{ useCurrentImageAsReference \}\)/);
   assert.match(continuation, /operation: actualImageOperation/);
