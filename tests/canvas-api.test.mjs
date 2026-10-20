@@ -30,6 +30,7 @@ async function loadTypeScript(path) {
     const dependencyDataUrl = `data:text/javascript;base64,${Buffer.from(dependencyCompiled).toString('base64')}`;
     compiled = compiled.replace('from "../video-task-output"', `from "${dependencyDataUrl}"`);
   }
+  compiled = compiled.replace('import { MAX_IMAGE_REFERENCES } from "@/packages/contracts/creative";', 'const MAX_IMAGE_REFERENCES = 16;');
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
 
@@ -184,6 +185,38 @@ test('canvas image generation sends the explicit image operation for references'
   } finally {
     mocks.restore();
   }
+});
+
+test('canvas image generation rejects excess references before sending a request', async () => {
+  let requestCount = 0;
+  await assert.rejects(
+    withFetch(async () => {
+      requestCount += 1;
+      return jsonResponse({ images: [] });
+    }, () => api.generateCanvasImage({
+      prompt: 'too many references',
+      imageOperation: 'auto',
+      references: Array.from({ length: 17 }, (_, index) => ({ url: `/image-${index + 1}.png` })),
+    })),
+    /最多 16 张/,
+  );
+  assert.equal(requestCount, 0);
+});
+
+test('canvas image generation rejects an unreadable reference before sending a request', async () => {
+  let requestCount = 0;
+  await assert.rejects(
+    withFetch(async () => {
+      requestCount += 1;
+      return jsonResponse({ images: [] });
+    }, () => api.generateCanvasImage({
+      prompt: 'preserve the source image',
+      imageOperation: 'auto',
+      references: [{ url: '' }],
+    })),
+    /有图片参考无法读取/,
+  );
+  assert.equal(requestCount, 0);
 });
 
 test('accepted image-task recovery preserves the server-classified operation', async () => {
@@ -351,6 +384,27 @@ test('canvas image generation compresses reference images before submitting', as
   }
 });
 
+test('canvas image generation preserves small references without lossy re-encoding', async () => {
+  const mocks = withImageCanvas({ width: 1200, height: 800 });
+  const reference = 'data:image/png;base64,SMALL';
+  try {
+    let request;
+    await withFetch(async (input, options) => {
+      request = { input, options };
+      return jsonResponse({ images: [{ url: '/generated.png' }] });
+    }, () => api.generateCanvasImage({
+      prompt: 'keep the source appearance',
+      imageOperation: 'generate',
+      references: [{ url: reference }],
+    }));
+
+    assert.deepEqual(JSON.parse(request.options.body).references, [reference]);
+    assert.deepEqual(mocks.encodedTypes, []);
+  } finally {
+    mocks.restore();
+  }
+});
+
 test('canvas local editing keeps the original source for compositing and sends a separate move guide', async () => {
   const mocks = withImageCanvas({ width: 3200, height: 1800 });
   try {
@@ -392,7 +446,7 @@ test('canvas video generation sends explicit reference mode inputs', async () =>
 
     const payload = JSON.parse(request.options.body);
     assert.equal(payload.input.videoMode, 'reference');
-    assert.deepEqual(payload.input.referenceImages, ['data:image/jpeg;base64,AA==', 'data:image/jpeg;base64,AA==']);
+    assert.deepEqual(payload.input.referenceImages, ['data:image/png;base64,one', 'data:image/png;base64,two']);
     assert.equal('firstFrame' in payload.input, false);
     assert.equal('lastFrame' in payload.input, false);
   } finally {
@@ -444,12 +498,12 @@ test('canvas video generation sends explicit first-frame and first/last-frame in
     });
 
     assert.equal('videoMode' in requests[0].input, false);
-    assert.equal(requests[0].input.firstFrame, 'data:image/jpeg;base64,AA==');
+    assert.equal(requests[0].input.firstFrame, 'data:image/png;base64,first');
     assert.equal('lastFrame' in requests[0].input, false);
     assert.deepEqual(requests[0].input.referenceImages, []);
     assert.equal(requests[1].input.videoMode, 'keyframe');
-    assert.equal(requests[1].input.firstFrame, 'data:image/jpeg;base64,AA==');
-    assert.equal(requests[1].input.lastFrame, 'data:image/jpeg;base64,AA==');
+    assert.equal(requests[1].input.firstFrame, 'data:image/png;base64,first');
+    assert.equal(requests[1].input.lastFrame, 'data:image/png;base64,last');
     assert.deepEqual(requests[1].input.referenceImages, []);
   } finally {
     mocks.restore();

@@ -133,6 +133,7 @@ import { downloadCanvasShareImage } from "@/lib/canvas/share";
 import {
   normalizeCreationSettings,
   imageModelOptions,
+  imageModelIdForRequest,
   readSharedCreationSettings,
   resolveAvailableCreationModel,
   subscribeSharedCreationSettings,
@@ -5134,7 +5135,9 @@ export default function SuperCanvas() {
       const resolvedModel = resolveAvailableCreationModel(sourceParams, runtime);
       const effectiveParams = {
         ...sourceParams,
-        model: resolvedModel.model?.id || "auto",
+        model: kind === "image"
+          ? imageModelIdForRequest(sourceParams as ImageCreationSettings)
+          : resolvedModel.model?.id || sourceParams.model,
       } as ImageCreationSettings | VideoCreationSettings;
       const updateVariantState = (
         value: CanvasDocument,
@@ -6977,7 +6980,9 @@ export default function SuperCanvas() {
     const resolvedModel = resolveAvailableCreationModel(source.params, runtime);
     const effectiveParams = {
       ...source.params,
-      model: resolvedModel.model?.id || "auto",
+      model: kind === "image"
+        ? imageModelIdForRequest(source.params as ImageCreationSettings)
+        : resolvedModel.model?.id || source.params.model,
     } as CreationSettings;
     const preparedImageRequest = kind === "image"
       ? prepareCanvasImageReferenceRequest({

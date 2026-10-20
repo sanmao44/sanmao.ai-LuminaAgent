@@ -3,7 +3,7 @@ import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
-import type { CreativeRoute, ImageRequestMode, ImageRequestOperation } from "@/packages/contracts/creative";
+import { MAX_IMAGE_REFERENCES, type CreativeRoute, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import {
@@ -160,9 +160,8 @@ function optimizedUploadFile(blob: Blob, original: File) {
 }
 
 /**
- * Convert a chat reference to the same compact browser image used by the
- * main Agent surface. Providers can reject a perfectly valid image_url when
- * the original canvas asset is too large or uses an unsupported encoding.
+ * Keep ordinary references byte-for-byte; compact only large or unsupported
+ * inputs because re-encoding can soften fine source details before generation.
  */
 export async function compressReferenceDataUrl(dataUrl: string) {
   if (!dataUrl || !/^data:image\//i.test(dataUrl)) return dataUrl;
@@ -175,6 +174,14 @@ export async function compressReferenceDataUrl(dataUrl: string) {
   });
 
   const maxEdge = 1400;
+  const sourceMime = dataUrl.slice(5, dataUrl.indexOf(";")).toLowerCase();
+  if (
+    /^(?:image\/png|image\/jpe?g|image\/webp)$/.test(sourceMime) &&
+    source.naturalWidth <= maxEdge &&
+    source.naturalHeight <= maxEdge &&
+    dataUrl.length <= 900000
+  ) return dataUrl;
+
   let scale = Math.min(
     1,
     maxEdge / Math.max(source.naturalWidth, source.naturalHeight),
@@ -637,18 +644,23 @@ export async function generateCanvasImage(input: {
    * when the provider has no image-edit endpoint. */
   fallbackToGenerationOnEdit404?: boolean;
 }) {
+  const sourceReferences = input.references || [];
+  if (sourceReferences.length > MAX_IMAGE_REFERENCES) {
+    throw new Error(`图片参考最多 ${MAX_IMAGE_REFERENCES} 张，请移除多余参考后再提交。`);
+  }
+  if (sourceReferences.some((item) => !item.url?.trim())) {
+    throw new Error("有图片参考无法读取，请重新导入该图片后再提交。");
+  }
   const mask = input.maskUrl ? await asDataUrl(input.maskUrl) : undefined;
   const moveGuide = input.moveGuideUrl ? await asDataUrl(input.moveGuideUrl) : undefined;
   const references = await Promise.all(
-    (input.references || [])
-      .slice(0, 16)
-      .map(async (item, index) => {
-        const dataUrl = await asDataUrl(item.url);
-        // The first reference is the source image for local editing. Keep it
-        // at the same dimensions as the mask; compressing only the source
-        // makes otherwise valid edit requests look like the mask was ignored.
-        return mask && index === 0 ? dataUrl : compressReferenceDataUrl(dataUrl);
-      }),
+    sourceReferences.map(async (item, index) => {
+      const dataUrl = await asDataUrl(item.url);
+      // The first reference is the source image for local editing. Keep it
+      // at the same dimensions as the mask; compressing only the source
+      // makes otherwise valid edit requests look like the mask was ignored.
+      return mask && index === 0 ? dataUrl : compressReferenceDataUrl(dataUrl);
+    }),
   );
   type CanvasImageResult = {
     images: Array<{ url: string; revisedPrompt?: string }>;
@@ -714,12 +726,10 @@ export async function generateCanvasImage(input: {
       ...(moveGuide ? { moveGuide } : {}),
       ...(input.fallbackToGenerationOnEdit404 ? { fallbackToGenerationOnEdit404: true } : {}),
       references,
-      referenceImages: (input.references || [])
-        .slice(0, 16)
-        .map((item, index) => ({
-          name: item.name || `参考图 ${index + 1}`,
-          url: item.url,
-        })),
+      referenceImages: sourceReferences.map((item, index) => ({
+        name: item.name || `参考图 ${index + 1}`,
+        url: item.url,
+      })),
       }),
     });
   } catch (error) {

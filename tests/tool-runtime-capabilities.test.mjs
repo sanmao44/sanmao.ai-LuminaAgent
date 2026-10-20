@@ -133,7 +133,7 @@ test('image capability normalizes ordered prompt batches at the runtime boundary
   assert.equal(result.count, 1);
 });
 
-test('image capability returns the durable media log id when a provider accepts an async task', async () => {
+test('reference image generation keeps its operation on an accepted async task', async () => {
   const image = load('./packages/tool-runtime/image-capability');
   const accepted = Object.assign(new Error('provider accepted'), {
     providerPossiblyAccepted: true,
@@ -151,21 +151,24 @@ test('image capability returns the durable media log id when a provider accepts 
       isBareImageExecution: () => false,
       extractBatchPrompts: () => [],
       fallbackImagePrompt: 'fallback',
-      requestedImageCapability: 'generate',
-      latestRefs: [],
+      requestedImageCapability: 'reference',
+      latestRefs: [{ kind: 'image', url: 'data:image/png;base64,reference' }],
       trackedChatCompletion: async () => ({ choices: [{ message: { content: '' } }] }),
       agentRuntime: { provider: { name: 'chat' }, model: { rawId: 'chat-model' } },
       requestedAgentImageModelId: 'auto',
-      imageModels: [{ id: 'image-model', capabilities: ['generate'] }],
-      getRuntimeImageGenerationModel: async () => ({ provider: { name: 'image-provider' }, model: { id: 'image-model', rawId: 'image-raw', displayName: 'Image' } }),
-      getRuntimeImageModelForCapability: async () => null,
+      imageModels: [{ id: 'image-model', capabilities: ['generate', 'reference'] }],
+      getRuntimeImageGenerationModel: async () => { throw new Error('reference work must use the reference capability lookup'); },
+      getRuntimeImageModelForCapability: async (_id, capability) => {
+        assert.equal(capability, 'reference');
+        return { provider: { name: 'image-provider' }, model: { id: 'image-model', rawId: 'image-raw', displayName: 'Image' } };
+      },
       appendGenerationLog: async () => {},
       sourceForLog: 'canvas',
       taskContext: { taskId: 'agent-run-1' },
-      startGenerationLog: async () => 'media-log-1',
+      startGenerationLog: async (log) => { finished.push({ started: log }); return 'media-log-1'; },
       referenceRecords: [],
       getRuntimeImageModelCandidates: () => [],
-      editImage: async () => [],
+      editImage: async () => { throw new Error('reference generation must not call image edit'); },
       generateImage: async () => { throw accepted; },
       persistGenerationResult: async () => ({ images: [] }),
       imageDownloadAuth: () => undefined,
@@ -180,9 +183,12 @@ test('image capability returns the durable media log id when a provider accepts 
   assert.equal(payload.pending, true);
   assert.equal(payload.generationTaskId, 'media-log-1');
   assert.equal(payload.mediaLogId, 'media-log-1');
-  assert.equal(finished[0].id, 'media-log-1');
-  assert.equal(finished[0].patch.providerTaskId, 'provider-task-1');
-  assert.equal(finished[0].patch.taskId, 'agent-run-1');
+  assert.equal(finished[0].started.operation, 'reference-generate');
+  assert.equal(finished[1].id, 'media-log-1');
+  assert.equal(finished[1].patch.providerTaskId, 'provider-task-1');
+  assert.equal(finished[1].patch.taskId, 'agent-run-1');
+  assert.equal(finished[1].patch.mode, 'generate');
+  assert.equal(finished[1].patch.operation, 'reference-generate');
 });
 
 test('Windows-MCP waits for a ready control state and recovers from repeated handoffs', async () => {

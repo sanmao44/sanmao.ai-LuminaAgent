@@ -26,7 +26,9 @@ async function loadImageReferenceRequest() {
   const requestCompiled = ts.transpileModule(requestSource, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: requestUrl.pathname,
-  }).outputText.replace('from "../creative-references"', `from "${referencesModuleUrl}"`);
+  }).outputText
+    .replace('from "../creative-references"', `from "${referencesModuleUrl}"`)
+    .replace('import { MAX_IMAGE_REFERENCES } from "@/packages/contracts/creative";', 'const MAX_IMAGE_REFERENCES = 16;');
   return import(`data:text/javascript;base64,${Buffer.from(requestCompiled).toString("base64")}`);
 }
 
@@ -257,6 +259,24 @@ test("uses connected references by default without sending unrelated candidates"
   if (!result.ok) return;
   assert.deepEqual(result.references.map((reference) => reference.id), ["connected"]);
   assert.deepEqual(result.imageReferences.map((reference) => reference.url), ["/style.png"]);
+});
+
+test("rejects more image references than the request contract allows", () => {
+  const result = imageRequest.prepareCanvasImageReferenceRequest({
+    prompt: "Generate a new image",
+    references: Array.from({ length: 17 }, (_, index) => ({
+      id: `image-${index + 1}`,
+      kind: "image",
+      name: `image ${index + 1}`,
+      url: `/image-${index + 1}.png`,
+      origin: "node",
+    })),
+    params: { sizeMode: "system", aspect: "自动", customAspectWidth: 1, customAspectHeight: 1 },
+    imageOperation: "auto",
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.message, /最多 16 张/);
 });
 
 test("blocks a missing or conflicting ratio reference before Canvas submits the request", () => {

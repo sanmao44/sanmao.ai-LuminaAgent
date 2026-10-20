@@ -1,4 +1,5 @@
 import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderTextProtocol, ProviderType } from './types';
+import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';
 import type { ImageDownloadAuth } from './image-storage';
 import { inferNativeSearch } from './native-search-detection';
 import { inferModelKind } from './model-kind';
@@ -463,6 +464,7 @@ export function canRetryImageRequest(error: unknown) {
   const failure = error as ProviderFailure | null;
   // Retry only an explicit validation/compatibility rejection. Transport errors,
   // timeouts, and 5xx responses may mean the provider already accepted the job.
+  if (failure?.providerAcceptedTask || failure?.providerPossiblyAccepted) return false;
   return failure?.providerFailureKind === 'http' && [400, 415, 422].includes(Number(failure.providerStatus || (failure as any).status));
 }
 
@@ -1353,7 +1355,10 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
 }
 
 export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque'; references?: string[] }, signal?: AbortSignal): Promise<GeneratedImage[]> {
-  const references = (input.references || []).filter((reference) => typeof reference === 'string' && reference.trim()).map(normalizeReference).slice(0, 16);
+  const rawReferences = input.references || [];
+  if (rawReferences.some((reference) => typeof reference !== 'string' || !reference.trim())) throw new Error('参考图数据格式无效，请重新添加参考图后再提交。');
+  const references = rawReferences.map(normalizeReference);
+  if (references.length > MAX_IMAGE_REFERENCES) throw new Error(`图片参考最多 ${MAX_IMAGE_REFERENCES} 张，请移除多余参考后再提交。`);
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
   if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
@@ -1469,7 +1474,9 @@ export function buildImageEditRequestBody(provider: RuntimeProvider, rawModelId:
 async function editImageFromProvider(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, signal?: AbortSignal): Promise<GeneratedImage[]> {
   // Agnes can consume the local storage URL through the signed-media bridge;
   // other providers keep the historical data-URL normalization path.
-  const references = (isAgnesProvider(provider) ? input.references : input.references.map(normalizeReference)).slice(0, 16);
+  if (input.references.some((reference) => typeof reference !== 'string' || !reference.trim())) throw new Error('参考图数据格式无效，请重新添加参考图后再提交。');
+  const references = (isAgnesProvider(provider) ? input.references : input.references.map(normalizeReference));
+  if (references.length > MAX_IMAGE_REFERENCES) throw new Error(`图片参考最多 ${MAX_IMAGE_REFERENCES} 张，请移除多余参考后再提交。`);
   if (!references.length) throw new Error('修改图片至少需要一张参考图');
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
@@ -1529,6 +1536,7 @@ async function editImageFromProvider(provider: RuntimeProvider, rawModelId: stri
     // compatibility failure. Falling back to multipart here would submit a
     // second paid job after the provider has already accepted the first one.
     if (jsonError instanceof ProviderImageFormatError) throw jsonError;
+    if (!canRetryImageRequest(jsonError)) throw jsonError;
     // 65535/APIMart expose image_urls as their input contract. Multipart is
     // not a compatible fallback and would only hide the actionable JSON error.
     if (requiresPublicImageInput(provider)) throw jsonError;

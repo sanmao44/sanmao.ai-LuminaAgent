@@ -502,8 +502,10 @@ test("all image entry points use local edit wording while persisted field remain
 test("local edit model selection is restricted to edit-capable image models and videos remain separate", () => {
   assert.match(settings, /export function imageEditModelOptions/);
   assert.match(settings, /settings\.mask\s*\n\s*\? imageEditModelOptions\(runtime\)/);
-  assert.match(page, /generateMask && availableEditModels\.length \? availableEditModels : availableGenerationModels/);
-  assert.match(page, /capability: generateMask && availableEditModels\.length \? "edit" : "generate"/);
+  assert.match(page, /generateMask && availableEditModels\.length\s*\? availableEditModels\s*:\s*generateRefs\.some\(\(reference\)=>reference\.kind === 'image' && creativeReferenceUrl\(reference\)\)\s*\? availableReferenceGenerationModels\s*:\s*availableGenerationModels/);
+  assert.match(page, /capability: generateMask && availableEditModels\.length\s*\? "edit"\s*:\s*generateRefs\.some\(\(reference\)=>reference\.kind === 'image' && creativeReferenceUrl\(reference\)\)\s*\? "reference"\s*:\s*"generate"/);
+  assert.match(page, /const submittedModelId = requestedModelId;/);
+  assert.match(page, /当前选择的图片模型不支持/);
   assert.match(canvas, /kind === "video"/);
   assert.doesNotMatch(editor, /video/);
 });

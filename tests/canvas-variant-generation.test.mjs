@@ -16,7 +16,9 @@ async function loadImageReferenceRequest() {
   const requestCompiled = ts.transpileModule(requestSource, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: requestUrl.pathname,
-  }).outputText.replace('from "../creative-references"', `from "${referencesModuleUrl}"`);
+  }).outputText
+    .replace('from "../creative-references"', `from "${referencesModuleUrl}"`)
+    .replace('import { MAX_IMAGE_REFERENCES } from "@/packages/contracts/creative";', 'const MAX_IMAGE_REFERENCES = 16;');
   return import(`data:text/javascript;base64,${Buffer.from(requestCompiled).toString("base64")}`);
 }
 

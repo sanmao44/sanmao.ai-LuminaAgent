@@ -27,7 +27,8 @@ const providers = await importTypeScript(providersUrl, [
   providersSource
     .replace("import { inferNativeSearch } from './native-search-detection';", '')
     .replace("import { inferModelKind } from './model-kind';", '')
-    .replace("import { agnesModelCatalog } from './agnes';", ''),
+    .replace("import { agnesModelCatalog } from './agnes';", '')
+    .replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;'),
 ].join('\n').replace(signedMediaImport, `Promise.resolve({ preparePublicMediaUrl: async (value, kind) => {
   const signed = await globalThis.__providerTestSignedMedia.preparePublicMediaUrl(value, kind);
   return signed;

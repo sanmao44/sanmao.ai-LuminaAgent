@@ -18,6 +18,7 @@ export type CreativeLane = 'prompt' | 'image' | 'chat' | 'clarify';
 export type CreativeOperation = 'none' | 'generate' | 'edit' | 'reference-generate';
 export type ImageRequestOperation = Extract<CreativeOperation, 'generate' | 'edit' | 'reference-generate'>;
 export type ImageRequestMode = ImageRequestOperation | 'auto';
+export const MAX_IMAGE_REFERENCES = 16;
 export type CreativeExecution = 'none' | 'preview' | 'run';
 
 export type CreativeRoute = {

@@ -2752,6 +2752,9 @@ export default function Page() {
     const availableGenerationModels = useMemo(()=>availableImageModels.filter((m)=>m.capabilities.includes('generate')), [
         availableImageModels
     ]);
+    const availableReferenceGenerationModels = useMemo(()=>availableGenerationModels.filter((m)=>m.capabilities.includes('reference')), [
+        availableGenerationModels
+    ]);
     const availableEditModels = useMemo(()=>availableImageModels.filter((m)=>m.capabilities.includes('edit')), [
         availableImageModels
     ]);
@@ -5361,9 +5364,11 @@ export default function Page() {
         const submittedImageRefs = submittedRefs.filter((reference)=>reference.kind === 'image' && creativeReferenceUrl(reference));
         const submittedUpscaleMode = !isAngleGeneration && (savedRequest ? overrides?.mode === 'upscale' : generateUpscaleMode);
         const hasLocalEditMask = !isAngleGeneration && Boolean((savedRequest ? savedRequest.mask?.dataUrl : generateMask?.dataUrl) && submittedImageRefs.length === 1);
-        const submittedImageModelOptions = isAngleGeneration || hasLocalEditMask ? availableEditModels : availableGenerationModels;
+        const submittedImageModelOptions = isAngleGeneration || hasLocalEditMask
+            ? availableEditModels
+            : submittedImageRefs.length ? availableReferenceGenerationModels : availableGenerationModels;
         const requestedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
-        const submittedModelId = !submittedUpscaleMode && hasLocalEditMask && requestedModelId !== 'auto' && !submittedImageModelOptions.some((model)=>model.id === requestedModelId) ? 'auto' : requestedModelId;
+        const submittedModelId = requestedModelId;
         const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : submittedImageModelOptions.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : selectAutomaticModel(submittedImageModelOptions, state.settings.defaultProviderId, state.settings.defaultImageModelId);
         const moveGuideDataUrl = !isAngleGeneration && submittedImageRefs.length === 1
             ? (savedRequest ? savedRequest.mask?.sourceImageDataUrl : generateMask?.sourceImageDataUrl) || ''
@@ -5376,7 +5381,11 @@ export default function Page() {
         if (!submittedUpscaleMode && !submittedPrompt) return notify('先描述你想生成什么');
         if (!submittedUpscaleMode && !isAngleGeneration && submittedSizeMode === 'custom' && (submittedCustomWidth < 1 || submittedCustomHeight < 1)) return notify('请输入有效的自定义宽高');
         const hasAvailableModel = submittedUpscaleMode ? availableUpscaleModels.length > 0 : submittedImageModelOptions.length > 0;
-        if (!hasAvailableModel) return notify(submittedUpscaleMode ? '还没有可用的超分模型，请先到模型库启用模型' : hasLocalEditMask ? '还没有支持局部编辑的图片模型，请先到模型库启用带“修改”能力的图片模型' : '还没有可用图片模型，请先到模型库启用模型');
+        if (!hasAvailableModel) return notify(submittedUpscaleMode ? '还没有可用的超分模型，请先到模型库启用模型' : hasLocalEditMask ? '还没有支持局部编辑的图片模型，请先到模型库启用带“修改”能力的图片模型' : submittedImageRefs.length ? '还没有支持参考图生成的图片模型，请先到模型库启用带“参考图”能力的模型' : '还没有可用图片模型，请先到模型库启用模型');
+        if (!submittedUpscaleMode && requestedModelId !== 'auto' && !submittedImageModelOptions.some((model)=>model.id === requestedModelId)) {
+            const operationLabel = hasLocalEditMask || isAngleGeneration ? '改图' : submittedImageRefs.length ? '参考图生成' : '生图';
+            return notify(`当前选择的图片模型不支持${operationLabel}，请切换到支持该操作的模型或选择自动。`);
+        }
         const taskId = uid('generate-task');
         const taskPrompt = submittedPrompt || 'Upscale this image';
         const taskRefs = submittedRefs;
@@ -5620,7 +5629,7 @@ export default function Page() {
                                 },
                                 body: JSON.stringify({
                                     taskId: childTaskId,
-                                    imageOperation: taskMask || isAngleGeneration ? 'edit' : 'generate',
+                                    imageOperation: taskMask || isAngleGeneration ? 'edit' : submittedImageRefs.length ? 'auto' : 'generate',
                                     prompt: taskPrompt,
                                     model: taskModelId,
                                     aspectRatio: requestRatio,
@@ -5720,7 +5729,7 @@ export default function Page() {
                 },
                 body: JSON.stringify({
                     taskId,
-                    imageOperation: taskMask || isAngleGeneration ? 'edit' : 'generate',
+                    imageOperation: taskMask || isAngleGeneration ? 'edit' : submittedImageRefs.length ? 'auto' : 'generate',
                     prompt: taskPrompt,
                     model: taskModelId,
                     aspectRatio: requestRatio,
@@ -8972,9 +8981,17 @@ export default function Page() {
                                                                 children: "图片模型"
                                                             }),
                                                             /*#__PURE__*/ _jsx(ModelPicker, {
-                                                                models: generateMask && availableEditModels.length ? availableEditModels : availableGenerationModels,
+                                                                models: generateMask && availableEditModels.length
+                                                                    ? availableEditModels
+                                                                    : generateRefs.some((reference)=>reference.kind === 'image' && creativeReferenceUrl(reference))
+                                                                        ? availableReferenceGenerationModels
+                                                                        : availableGenerationModels,
                                                                 value: generateModelId,
-                                                                capability: generateMask && availableEditModels.length ? "edit" : "generate",
+                                                                capability: generateMask && availableEditModels.length
+                                                                    ? "edit"
+                                                                    : generateRefs.some((reference)=>reference.kind === 'image' && creativeReferenceUrl(reference))
+                                                                        ? "reference"
+                                                                        : "generate",
                                                                 defaultProviderId: state.settings.defaultProviderId,
                                                                 defaultProviderName: defaultProvider?.name,
                                                                 defaultModelId: state.settings.defaultImageModelId,

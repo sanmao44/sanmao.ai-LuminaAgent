@@ -5,7 +5,7 @@ import {
   type CreativeReferenceRoleResolution,
 } from "../creative-references";
 import type { ImageCreationSettings } from "../creation/settings";
-import type { ImageRequestMode } from "@/packages/contracts/creative";
+import { MAX_IMAGE_REFERENCES, type ImageRequestMode } from "@/packages/contracts/creative";
 import type { CanvasReferenceDraft } from "./reuse";
 
 export type CanvasImageReferenceRequest =
@@ -98,6 +98,9 @@ export function prepareCanvasImageReferenceRequest(input: {
   if (references.some((reference) => reference.kind === "video" || reference.kind === "audio")) {
     return { ok: false, message: "图片生成只能使用图片或文本引用，请移除视频和音频素材。" };
   }
+  if (references.some((reference) => reference.kind === "image" && !reference.url?.trim())) {
+    return { ok: false, message: "有图片参考无法读取，请重新导入该图片后再提交。" };
+  }
   const resolvedParams = resolution.layoutAspectRatio
     ? applyLayoutAspect(input.params, resolution.layoutAspectRatio)
     : { params: input.params } as const;
@@ -105,6 +108,9 @@ export function prepareCanvasImageReferenceRequest(input: {
   const imageReferences = references
     .filter((reference) => reference.kind === "image" && Boolean(reference.url?.trim()))
     .map((reference) => ({ url: String(reference.url), name: reference.name || "参考图片" }));
+  if (imageReferences.length > MAX_IMAGE_REFERENCES) {
+    return { ok: false, message: `图片参考最多 ${MAX_IMAGE_REFERENCES} 张，请移除多余参考后再提交。` };
+  }
   const imageOperation = input.imageOperation === "auto" && imageReferences.length === 0
     ? "generate"
     : input.imageOperation;

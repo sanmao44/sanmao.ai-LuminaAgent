@@ -9,7 +9,7 @@ const agnes = await readFile(new URL('../lib/agnes.ts', import.meta.url), 'utf8'
 const modelKind = await readFile(new URL('../lib/model-kind.ts', import.meta.url), 'utf8');
 const detectionUrl = new URL('../lib/native-search-detection.ts', import.meta.url);
 const detection = await readFile(detectionUrl, 'utf8');
-const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '')}`;
+const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '').replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;')}`;
 const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,
@@ -572,6 +572,72 @@ test('does not retry image requests after ambiguous upstream failures', () => {
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'timeout', providerStatus: 0 }), false);
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 500 }), false);
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422 }), true);
+  assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422, providerAcceptedTask: true }), false);
+  assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422, providerPossiblyAccepted: true }), false);
+});
+
+test('does not submit multipart edit after an ambiguous JSON provider failure', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ error: { message: 'provider temporarily failed' } }), {
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    await assert.rejects(
+      providers.editImage({
+        type: 'openai-compatible',
+        platform: 'custom',
+        baseUrl: 'https://images.example.test/v1',
+        apiKey: 'test-key',
+      }, 'gpt-image-2', {
+        prompt: 'camera edit',
+        references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
+      }),
+      /provider temporarily failed/,
+    );
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('falls back to multipart edit only after an explicit compatibility rejection', async () => {
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    requests.push(init);
+    if (requests.length === 1) {
+      return new Response(JSON.stringify({ error: { message: 'JSON payload is not supported' } }), {
+        status: 415,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ data: [{ url: 'https://cdn.example.test/edited.png' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const images = await providers.editImage({
+      type: 'openai-compatible',
+      platform: 'custom',
+      baseUrl: 'https://images.example.test/v1',
+      apiKey: 'test-key',
+    }, 'gpt-image-2', {
+      prompt: 'camera edit',
+      references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
+    });
+    assert.deepEqual(images, [{ url: 'https://cdn.example.test/edited.png' }]);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].headers['Content-Type'], 'application/json');
+    assert.equal(requests[1].body instanceof FormData, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test('treats an HTTP provider error as terminal instead of accepted background work', async () => {
@@ -872,6 +938,36 @@ test('passes shared reference images through the generation request', async () =
     });
     const body = JSON.parse(calls[0].init.body);
     assert.deepEqual(body.images, [{ image_url: 'data:image/png;base64,REF' }]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('provider image adapters reject excess references instead of silently truncating', async () => {
+  let requests = 0;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    requests += 1;
+    return new Response(JSON.stringify({ data: [{ b64_json: 'iVBORw0KGgoAAAAAAAAAAAAA' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const references = Array.from({ length: 17 }, (_, index) => `data:image/png;base64,REF${index + 1}`);
+  try {
+    await assert.rejects(providers.generateImage({
+      type: 'openai-compatible', platform: 'custom', baseUrl: 'https://images.example.test/v1', apiKey: 'test-key',
+    }, 'gpt-image-2', { prompt: 'too many references', references }), /最多 16 张/);
+    await assert.rejects(providers.editImage({
+      type: 'openai-compatible', platform: 'custom', baseUrl: 'https://images.example.test/v1', apiKey: 'test-key',
+    }, 'gpt-image-2', { prompt: 'too many references', references }), /最多 16 张/);
+    await assert.rejects(providers.generateImage({
+      type: 'openai-compatible', platform: 'custom', baseUrl: 'https://images.example.test/v1', apiKey: 'test-key',
+    }, 'gpt-image-2', { prompt: 'invalid reference', references: ['data:image/png;base64,REF', ''] }), /参考图数据格式无效/);
+    await assert.rejects(providers.editImage({
+      type: 'openai-compatible', platform: 'custom', baseUrl: 'https://images.example.test/v1', apiKey: 'test-key',
+    }, 'gpt-image-2', { prompt: 'invalid reference', references: ['data:image/png;base64,REF', ''] }), /参考图数据格式无效/);
+    assert.equal(requests, 0);
   } finally {
     globalThis.fetch = previousFetch;
   }

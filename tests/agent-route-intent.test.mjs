@@ -695,7 +695,7 @@ test('JEV clarification cannot downgrade an explicit Canvas poster request', asy
     },
   });
   assert.equal(data.images.length, 1);
-  assert.equal(agent.images[0].mode, 'edit');
+  assert.equal(agent.images[0].mode, 'generate');
   assert.equal(agent.images[0].references.length, 4);
   assert.match(agent.images[0].prompt, /16:9|海报/);
   assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
@@ -731,7 +731,7 @@ test('Canvas short image confirmation carries the original poster task and all s
     canvasDocument: document,
   });
   assert.equal(data.images.length, 1);
-  assert.equal(agent.images[0].mode, 'edit');
+  assert.equal(agent.images[0].mode, 'generate');
   assert.deepEqual(agent.images[0].references, selectedIds.map((id) => `https://assets.test/${id}.png`));
   assert.match(agent.images[0].prompt, /16:9|海报/);
   assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
@@ -958,7 +958,14 @@ test('configured JEV classifies an ambiguous confirmation before image execution
 });
 
 test('Canvas multi-image composition requires reference capability, not edit capability', async () => {
-  const agent = harness({ imageCapabilities: ['generate', 'reference'] });
+  const agent = harness({
+    imageCapabilities: ['generate', 'reference'],
+    reply: (payload) => payload.messages.some((message) => message.role === 'tool')
+      ? { content: '海报已完成。' }
+      : payload.tools?.some((tool) => tool.function.name === 'image_edit')
+        ? { content: null, tool_calls: [{ id: 'wrong-edit-call', type: 'function', function: { name: 'image_edit', arguments: JSON.stringify({ prompt: '模型误选了改图工具' }) } }] }
+        : { content: '正在生成。' },
+  });
   const selectedIds = ['a', 'b', 'c', 'd'];
   const data = await agent.post([{ role: 'user', content: '将这四个角色创作成一张16:9的海报图，各有各的动作！' }], {
     source: 'canvas',
@@ -971,7 +978,7 @@ test('Canvas multi-image composition requires reference capability, not edit cap
     },
   });
   assert.equal(data.images.length, 1);
-  assert.equal(agent.images[0].mode, 'edit');
+  assert.equal(agent.images[0].mode, 'generate');
   assert.deepEqual(agent.images[0].references, selectedIds.map((id) => `https://assets.test/${id}.png`));
   assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'reference', id: 'auto' }]);
 });

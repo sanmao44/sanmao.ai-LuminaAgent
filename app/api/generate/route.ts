@@ -1,5 +1,5 @@
 import { editImage, generateImage, imageDownloadAuth, imageMimeFromBytes, isProviderEndpointNotFound, ProviderImageFormatError } from '@/lib/providers';
-import { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapabilities, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
+import { getPublicState, getRuntimeImageModelCandidates, getRuntimeImageModelForCapabilities, getRuntimeImageModelForCapability, markProviderCredentialFailure } from '@/lib/store';
 import { appendGenerationLog, finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
 import { persistGenerationResult } from '@/lib/generation-persistence';
 import { buildAnglePayload, compileAngleTargetPrompt, effectiveAngle, generationCamera, normalizeAngleState, readViewpointOptions, VIEWPOINT_LIMITS } from '@/lib/angle-control';
@@ -7,7 +7,7 @@ import { renderAngleOutput } from '@/lib/angle-image';
 import type { GeneratedImage } from '@/lib/types';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
-import type { ImageRequestMode, ImageRequestOperation } from '@/packages/contracts/creative';
+import { MAX_IMAGE_REFERENCES, type ImageRequestMode, type ImageRequestOperation } from '@/packages/contracts/creative';
 import { resolveCanvasImageRequestIntent } from '@/apps/api/image-intent-composition';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { enforceLocalEditMask } from '@/lib/local-edit-composite';
@@ -111,6 +111,7 @@ export async function POST(request: Request) {
   let storagePath = '';
   let providerImages: GeneratedImage[] = [];
   let providerFinishedAt = 0;
+  let usedGenerationFallback = false;
   let downloadAuthForResult: ReturnType<typeof imageDownloadAuth> | undefined;
   const startedAt = Date.now();
   const requestController = new AbortController();
@@ -152,9 +153,17 @@ export async function POST(request: Request) {
       ? compileAngleTargetPrompt(angleNote, camera, { hasGuideReference: hasAngleGuide, output: angleOutput, cameraStart })
       : prompt;
     if (!baseGenerationPrompt) return Response.json({ error: '请输入生图描述。' }, { status: 400 });
-    const references = Array.isArray(body.references)
-      ? body.references.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0).slice(0, 16)
-      : [];
+    if (body.references !== undefined && !Array.isArray(body.references)) {
+      return Response.json({ error: '参考图数据格式无效，请重新添加参考图后再提交。' }, { status: 400 });
+    }
+    const rawReferences = Array.isArray(body.references) ? body.references : [];
+    if (rawReferences.some((value: unknown) => typeof value !== 'string' || !value.trim())) {
+      return Response.json({ error: '参考图数据格式无效，请重新添加参考图后再提交。' }, { status: 400 });
+    }
+    const references: string[] = rawReferences.map((value: string) => value.trim());
+    if (references.length > MAX_IMAGE_REFERENCES) {
+      return Response.json({ error: `图片参考最多 ${MAX_IMAGE_REFERENCES} 张，请移除多余参考后再提交。` }, { status: 400 });
+    }
     if (camera?.viewpoint && references.length !== (hasAngleGuide ? 2 : 1)) return Response.json({ error: hasAngleGuide ? '请提交原始参考图和一张构图导引，原图必须排在第一张。' : '请提交一张原始参考图。' }, { status: 400 });
     const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
     const rawMoveGuide = typeof body.moveGuide === 'string' ? body.moveGuide.trim() : '';
@@ -163,7 +172,7 @@ export async function POST(request: Request) {
       return Response.json({ error: '图片操作必须是 generate、edit、reference-generate 或 auto。' }, { status: 400 });
     }
     const requestedMode: ImageRequestMode = requestedImageOperation
-      || (camera || rawMask || rawMoveGuide ? 'edit' : 'generate');
+      || (camera || rawMask || rawMoveGuide ? 'edit' : 'auto');
     if (requestedMode === 'generate' && (rawMask || rawMoveGuide)) {
       return Response.json({ error: '蒙版和移动引导只能用于改图操作。' }, { status: 400 });
     }
@@ -205,17 +214,19 @@ export async function POST(request: Request) {
     const requestedModelId = String(body.model || 'auto');
     let runtime = imageOperation === 'reference-generate'
       ? await getRuntimeImageModelForCapabilities(requestedModelId, requiredModelCapabilities)
-      : hasEditInput
-      ? await getRuntimeImageModelForCapability(requestedModelId, 'edit') || (camera && body.model && body.model !== 'auto' ? null : await getRuntimeImageModelForCapability('auto', 'edit'))
-      : await getRuntimeImageGenerationModel(requestedModelId);
+      : await getRuntimeImageModelForCapability(requestedModelId, hasEditInput ? 'edit' : 'generate');
     if (!runtime) {
       const error = imageOperation === 'reference-generate'
         ? requestedModelId !== 'auto'
           ? '当前选中的图片模型不支持参考图生成，请选择同时具有 generate 和 reference 能力的模型。'
           : '没有可用的参考图生成模型，请在模型库启用同时具有 generate 和 reference 能力的模型。'
         : hasEditInput
-          ? '没有可用的改图模型，请启用带 edit 能力的图片模型'
-          : '没有可用的生图模型。请先到“模型库”勾选一个图片模型。';
+          ? requestedModelId !== 'auto'
+            ? '当前选中的图片模型不支持改图，请选择具有 edit 能力的模型。'
+            : '没有可用的改图模型，请启用带 edit 能力的图片模型。'
+          : requestedModelId !== 'auto'
+            ? '当前选中的图片模型不可用或不支持生图。'
+            : '没有可用的生图模型。请先到“模型库”勾选一个图片模型。';
       return Response.json({ error }, { status: 400 });
     }
     runtimeProviderId = runtime.provider.id;
@@ -227,7 +238,16 @@ export async function POST(request: Request) {
       sizeMode,
     });
     promptForLog = generationPrompt;
-    const referenceRecords = referenceRecordsForLog(body.referenceImages);
+    const submittedReferenceRecords = Array.isArray(body.referenceImages) ? body.referenceImages : [];
+    const referenceRecords = references.map((_, index) => {
+      const record = referenceRecordsForLog([submittedReferenceRecords[index]])[0];
+      return {
+        kind: 'image' as const,
+        name: record?.name || `参考图 ${index + 1}`,
+        url: record?.url || '',
+        ...(record?.id ? { id: record.id } : {}),
+      };
+    });
     if (camera && hasAngleGuide && references.length !== 2) return Response.json({ error: '角度控制台必须按顺序提交两张参考图：原始参考和构图导引。' }, { status: 400 });
     // Canvas continuation is intentionally allowed to degrade to a fresh
     // generation when the selected gateway has no edit route at all. Keep
@@ -283,7 +303,6 @@ export async function POST(request: Request) {
     }, String(body.taskId || ''));
     storagePath = (await getPublicState()).settings.imageStoragePath || '';
     downloadAuthForResult = imageDownloadAuth(runtime.provider);
-    let usedGenerationFallback = false;
     providerImages = await runImageModelCandidates(
       runtime,
       // Explicit selections remain authoritative unless the provider returns
@@ -299,10 +318,15 @@ export async function POST(request: Request) {
         } catch (error) {
           if (!allowGenerationFallbackOnEdit404 || !isProviderEndpointNotFound(error)) throw error;
           usedGenerationFallback = true;
+          operationForLog = 'generate';
+          modeForLog = 'generate';
           return generateImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
         }
       },
     );
+    if (usedGenerationFallback && logId) {
+      await finishGenerationLog(logId, { mode: modeForLog, operation: operationForLog }).catch(() => undefined);
+    }
     const maskSafeImages = mask
       ? await enforceLocalEditMask(providerImages, references[0], mask, {
           storagePath,
@@ -334,7 +358,14 @@ export async function POST(request: Request) {
         logId,
         downloadAuth: downloadAuthForResult,
       }).catch(() => ({ images: providerImages, path: storagePath, remoteFallbacks: [] }));
-      return Response.json({ ok: true, images: providerResult.images, storagePath: providerResult.path, warning: `图片已生成，但本地后处理未完成：${postProcessError}` });
+      return Response.json({
+        ok: true,
+        images: providerResult.images,
+        storagePath: providerResult.path,
+        mode: usedGenerationFallback ? 'generate-fallback' : operationForLog === 'edit' ? 'reference' : 'generate',
+        operation: operationForLog,
+        ...(usedGenerationFallback ? { warning: `图片已生成，但本地后处理未完成：${postProcessError}；当前服务商不支持图片修改接口，已按普通生图生成新图。` } : { warning: `图片已生成，但本地后处理未完成：${postProcessError}` }),
+      });
     }
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'GENERATION_CANCELLED');
     const providerPossiblyAccepted = !cancelled && Boolean((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask);

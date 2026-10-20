@@ -28,14 +28,17 @@ test('model capability matching requires every capability and rejects incomplete
 });
 
 function harness(options = {}) {
-  const calls = { edits: [], generations: [], logs: [], releases: 0, modelLookups: [], generationLookups: [], capabilityLookups: [], candidateLookups: [], intentInputs: [] };
+  const calls = { edits: [], generations: [], logs: [], finishes: [], releases: 0, modelLookups: [], generationLookups: [], capabilityLookups: [], candidateLookups: [], intentInputs: [] };
   const runtime = options.runtime || { provider: { id: 'test-provider', name: 'Test' }, model: { id: 'test-edit', rawId: 'gpt-image-2', displayName: 'Test Edit', capabilities: ['generate', 'edit', 'reference'] } };
   const route = load(routeSource, {
     '@/lib/angle-control': angle,
     '@/apps/api/image-intent-composition': {
       resolveCanvasImageRequestIntent: async input => {
         calls.intentInputs.push(input);
-        return options.intentResolution || { operation: 'reference-generate', classifierStatus: 'used', classifierModelId: 'jev-runtime', classifierMs: 12 };
+        if (options.intentResolution) return options.intentResolution;
+        return input.isCanvasRequest
+          ? { operation: 'reference-generate', classifierStatus: 'used', classifierModelId: 'jev-runtime', classifierMs: 12 }
+          : { operation: input.imageReferenceCount ? 'reference-generate' : 'generate', ...(input.imageReferenceCount ? { classifierStatus: 'unavailable' } : {}) };
       },
     },
     '@/lib/providers': {
@@ -49,7 +52,11 @@ function harness(options = {}) {
       isProviderEndpointNotFound: error => error?.providerFailureKind === 'http' && error?.providerStatus === 404,
     },
     '@/lib/store': {
-      getRuntimeImageModelForCapability: async id => { calls.modelLookups.push(id); return id === 'missing' ? null : runtime; },
+      getRuntimeImageModelForCapability: async (id, capability) => {
+        calls.modelLookups.push(id);
+        if (id === 'missing' || (id === options.incompatibleModelId && capability === options.incompatibleCapability)) return null;
+        return runtime;
+      },
       getRuntimeImageModelForCapabilities: async (id, capabilities) => {
         calls.capabilityLookups.push({ id, capabilities });
         if (options.noReferenceModel) return null;
@@ -65,7 +72,7 @@ function harness(options = {}) {
     },
     '@/lib/generation-log': {
       startGenerationLog: async input => { calls.logs.push(input); return 'test-log'; },
-      finishGenerationLog: async () => {},
+      finishGenerationLog: async (_id, patch) => { calls.finishes.push(patch); },
       appendGenerationLog: async () => {},
     },
     '@/lib/generation-persistence': { persistGenerationResult: async ({ images }) => ({ images }) },
@@ -91,6 +98,7 @@ function harness(options = {}) {
         return operation(initial);
       },
     },
+    '@/packages/contracts/creative': { MAX_IMAGE_REFERENCES: 16 },
   });
   return {
     calls,
@@ -286,18 +294,89 @@ test('invalid canvas image operation fails before selecting or calling a model',
   assert.equal(api.calls.generationLookups.length + api.calls.modelLookups.length, 0);
 });
 
-test('references without an explicit edit operation default to generation', async () => {
+test('references without an explicit operation use the reference-generation capability path', async () => {
   const api = harness({ generationImages: [{ url: '/generated.png' }] });
   const response = await api.post({
     prompt: '保持参考图构图，改为山东主题并替换地域元素',
     references: [reference],
+    referenceImages: [
+      { id: 'reference-1', name: '原图', url: '/source.png' },
+      { id: 'unsubmitted', name: '未提交参考', url: '/unused.png' },
+    ],
   });
   const body = await response.json();
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(body.mode, 'generate');
+  assert.equal(body.operation, 'reference-generate');
   assert.equal(api.calls.edits.length, 0);
   assert.deepEqual(api.calls.generations[0].references, [reference]);
-  assert.deepEqual(api.calls.generationLookups, ['auto']);
+  assert.deepEqual(api.calls.capabilityLookups, [{ id: 'auto', capabilities: ['generate', 'reference'] }]);
+  assert.deepEqual(api.calls.logs[0].references, [{ id: 'reference-1', name: '原图', url: '/source.png', kind: 'image' }]);
+});
+
+test('an explicitly selected model is not silently replaced when JEV chooses an unsupported operation', async () => {
+  const api = harness({
+    intentResolution: { operation: 'edit', classifierStatus: 'used' },
+    incompatibleModelId: 'selected-model',
+    incompatibleCapability: 'edit',
+  });
+  const response = await api.post({
+    source: 'canvas',
+    imageOperation: 'auto',
+    model: 'selected-model',
+    prompt: '只调整原图光线',
+    references: [reference],
+  });
+  const body = await response.json();
+  assert.equal(response.status, 400);
+  assert.match(body.error, /当前选中的图片模型不支持改图/);
+  assert.deepEqual(api.calls.modelLookups, ['selected-model']);
+  assert.equal(api.calls.edits.length + api.calls.generations.length, 0);
+});
+
+test('the generate route rejects excess image references instead of truncating their provenance', async () => {
+  const api = harness();
+  const response = await api.post({
+    imageOperation: 'auto',
+    prompt: 'too many references',
+    references: Array.from({ length: 17 }, (_, index) => `data:image/png;base64,REF${index + 1}`),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 400);
+  assert.match(body.error, /最多 16 张/);
+  assert.equal(api.calls.intentInputs.length, 0);
+  assert.equal(api.calls.capabilityLookups.length + api.calls.modelLookups.length, 0);
+});
+
+test('the generate route rejects malformed reference slots instead of shifting provenance order', async () => {
+  const api = harness();
+  const response = await api.post({
+    imageOperation: 'auto',
+    prompt: 'preserve source order',
+    references: [reference, '', guide],
+    referenceImages: [
+      { id: 'source', name: '原图', url: '/source.png' },
+      { id: 'guide', name: '导引图', url: '/guide.png' },
+    ],
+  });
+  const body = await response.json();
+  assert.equal(response.status, 400);
+  assert.match(body.error, /参考图数据格式无效/);
+  assert.equal(api.calls.capabilityLookups.length + api.calls.modelLookups.length, 0);
+});
+
+test('the generate route rejects a non-array reference payload instead of treating it as text-only generation', async () => {
+  const api = harness();
+  const response = await api.post({
+    imageOperation: 'auto',
+    prompt: 'preserve the source image',
+    references: { url: reference },
+  });
+  const body = await response.json();
+  assert.equal(response.status, 400);
+  assert.match(body.error, /参考图数据格式无效/);
+  assert.equal(api.calls.intentInputs.length, 0);
+  assert.equal(api.calls.capabilityLookups.length + api.calls.modelLookups.length, 0);
 });
 
 test('provider image remains successful when local post-processing fails', async () => {
@@ -395,6 +474,25 @@ test('canvas single-source continuation falls back to generation when the edit r
   assert.equal(api.calls.edits.length, 1);
   assert.equal(api.calls.generations.length, 1);
   assert.equal(body.mode, 'generate-fallback');
+  assert.equal(body.operation, 'generate');
   assert.deepEqual(api.calls.generations[0].references, [reference]);
+  assert.ok(api.calls.finishes.some(patch => patch.mode === 'generate' && patch.operation === 'generate'));
   assert.match(body.warning, /普通生图/);
+});
+
+test('post-processing recovery returns the JEV-selected operation with the preserved image', async () => {
+  const api = harness({
+    generationImages: [{ url: 'https://provider.example/result.png' }],
+    normalizeError: new Error('本地方向处理失败'),
+  });
+  const response = await api.post({
+    source: 'canvas',
+    imageOperation: 'auto',
+    prompt: '以参考图为基础生成新图',
+    references: [reference],
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.operation, 'reference-generate');
+  assert.deepEqual(body.images, [{ url: 'https://provider.example/result.png' }]);
 });

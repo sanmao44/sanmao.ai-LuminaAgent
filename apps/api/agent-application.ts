@@ -1207,7 +1207,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       if (canvasTargetKind === 'image' && canvasTargetOperation === 'edit') {
         system += '\n当前选中的图片是本轮修改目标。用户说“修改/改成/换背景/再来一版”等省略表达时，优先基于这张选中图片调用 image_edit，不要新建无关图片。';
       } else if (canvasReferenceComposition) {
-        system += '\n当前选中的图片是本轮合成参考，不是要求修改其中某一张。生成海报等新图时，必须把每张选中图片作为 image_edit 的参考输入，并尽量保留每个角色各自的外观特征；不能只生成泛化人物图。';
+        system += '\n当前选中的图片是本轮合成参考，不是要求修改其中某一张。生成海报等新图时，必须把每张选中图片作为 image_generate 的参考输入，并尽量保留每个角色各自的外观特征；不能只生成泛化人物图。';
       }
       if (canvasTargetKind === 'text' && canvasTargetOperation === 'edit') {
         system += '\n当前选中的文字节点只作为本轮文案上下文。用户要求改写、润色或更新时，直接围绕该节点内容回答；不要调用图片工具，也不要声称或要求自动覆盖原节点。只有用户明确要求“存为节点/加入画布”时，客户端才会另建文本节点。';
@@ -1809,7 +1809,7 @@ const auditMcpCall = (
      } catch (error) {
        if (/413|request entity too large|请求内容过大/i.test(error instanceof Error ? error.message : '')) throw error;
        if (imageGenerationRequest) {
-        first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [makeFallbackImageToolCall({ prompt: fallbackImagePrompt, mode: requestedImageCapability === 'generate' ? 'generate' : 'edit', batchContent: batchPlanContent })] } }] };
+        first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [makeFallbackImageToolCall({ prompt: fallbackImagePrompt, mode: requestedImageCapability === 'edit' ? 'edit' : 'generate', batchContent: batchPlanContent })] } }] };
         } else if (artifactFallbackKind) {
           const artifactCall = requestArtifactFallback();
           if (artifactCall) {
@@ -1868,7 +1868,7 @@ const auditMcpCall = (
       toolCalls = [...toolCalls, makeFallbackImageToolCall({
         prompt: fallbackImagePrompt,
         content: message?.content,
-        mode: requestedImageCapability === 'generate' ? 'generate' : 'edit',
+        mode: requestedImageCapability === 'edit' ? 'edit' : 'generate',
         batchContent: batchPlanContent,
       })];
     }

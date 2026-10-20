@@ -54,6 +54,9 @@ test('pure image generation excludes edit-only models and honors the configured 
   assert.deepEqual(settings.imageModelOptions(runtime).map((model) => model.id), ['gpt-image']);
   const selected = settings.resolveAvailableCreationModel(settings.defaultImageCreationSettings(runtime), runtime);
   assert.equal(selected.model?.id, 'gpt-image');
+  assert.equal(settings.imageModelIdForRequest(settings.defaultImageCreationSettings(runtime)), 'auto');
+  assert.equal(settings.imageModelIdForRequest({ ...settings.defaultImageCreationSettings(runtime), model: 'gpt-image' }), 'gpt-image');
+  assert.equal(settings.imageModelIdForRequest({ ...settings.defaultImageCreationSettings(runtime), model: 'removed-model' }), 'removed-model');
 });
 
 test('automatic video settings resolve the actual default video model', () => {

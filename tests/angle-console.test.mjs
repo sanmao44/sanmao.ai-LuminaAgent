@@ -73,7 +73,7 @@ test('submit row sizes to content, mobile footer remains visible, and original i
 
 test('page uses edit models, preserves the original and excludes unrelated local-edit state', async () => {
   const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
-  assert.match(page, /isAngleGeneration \|\| hasLocalEditMask \? availableEditModels/);
+  assert.match(page, /isAngleGeneration \|\| hasLocalEditMask\s*\?\s*availableEditModels/);
   assert.match(page, /const taskMaskAsset = isAngleGeneration \? null/);
   assert.match(page, /const moveGuideDataUrl = !isAngleGeneration/);
   assert.match(page, /const originalUrl = item\.angle \? item\.references\?\.\[0\]\?\.url : item\.url/);
