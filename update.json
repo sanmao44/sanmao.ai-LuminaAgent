@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.99/SANMAO.AI-0.7.99.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.99/SANMAO.AI-0.7.99.zip"
   ],
-  "sha256": "b6ba4ab1bdb475f7a36240915de78b5c3871d92bd8a9a3ad71e2fa94172c045a",
+  "sha256": "2603c63d7f9642538fc95b8d1b4c30e34e0727c6cec53881ce82342bdde4667b",
   "publishedAt": "2026-10-19T04:12:27.000Z",
   "notes": [
     "修复 Canvas Agent 将图片参考和编辑请求误判为新图生成的问题，意图路由更准确。",
