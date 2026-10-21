@@ -177,6 +177,16 @@ test('canvas Agent run context freezes the original selection and edit sources',
   assert.equal(snapshot.references[0].url, '/source.png');
   assert.ok(Object.isFrozen(snapshot));
   assert.ok(Object.isFrozen(snapshot.sourceNodeIds));
+
+  const descriptionRun = runContext.createCanvasAgentRunContext({
+    runId: 'run-description',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['node-source'], assetIds: [], updatedAt: 123 },
+    references: [{ id: 'node-source', nodeId: 'node-source', kind: 'image', name: '原图', url: '/source.png' }],
+    target: { nodeIds: ['node-source'], kind: 'image', operation: 'none' },
+  });
+  assert.equal(descriptionRun.targetOperation, 'none');
+  assert.equal(descriptionRun.operation, 'generate');
+  assert.equal(runContext.normalizeCanvasAgentRunContext(descriptionRun)?.targetOperation, 'none');
 });
 
 test('canvas Agent target operation distinguishes edits from analysis and questions', () => {
@@ -185,7 +195,8 @@ test('canvas Agent target operation distinguishes edits from analysis and questi
   for (const instruction of ['把牛变成马', '把人物改为机器人', '把主体替换为白马', '换个美女角色，换个色调']) {
     assert.equal(runContext.canvasAgentTargetOperation(instruction, 'image'), 'edit', instruction);
   }
-  assert.equal(runContext.canvasAgentTargetOperation('分析一下这张图怎么样？', 'image'), 'generate');
+  assert.equal(runContext.canvasAgentTargetOperation('分析一下这张图怎么样？', 'image'), 'none');
+  assert.equal(runContext.canvasAgentTargetOperation('描述下画面', 'image'), 'none');
   assert.equal(runContext.canvasAgentTargetOperation('帮我生成一个新版本', 'image'), 'generate');
   assert.equal(runContext.canvasAgentImageGenerationIntent('将这四个角色创作成一张16:9的海报图，各有各的动作！', 'image', 'generate', true), true);
   assert.equal(runContext.canvasAgentImageGenerationIntent('分析一下这张图怎么样？', 'image', 'generate', true), false);

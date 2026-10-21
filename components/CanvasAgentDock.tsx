@@ -1285,7 +1285,7 @@ export default function CanvasAgentDock({
             canvasTarget: {
               nodeIds: [...runContext.targetNodeIds],
               kind: runContext.targetKind,
-              operation: runContext.operation,
+              operation: runContext.targetOperation,
             },
             references: [...turnReferences],
             signal: controller.signal,

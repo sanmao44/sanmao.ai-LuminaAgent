@@ -1,7 +1,7 @@
 import type { CanvasAgentTargetKind, CanvasAgentTargetOperation } from "@/packages/contracts/context";
 import type { WorkspaceContext } from "@/lib/workspace-context";
 
-import { isImageEditRequest } from "../agent-intent";
+import { isImageEditRequest, resolveCreativeRoute } from "../agent-intent";
 
 export const CANVAS_AGENT_RUN_CONTEXT_SCHEMA_VERSION = 1 as const;
 
@@ -70,18 +70,20 @@ export type CanvasAgentRunContext = Readonly<{
   references: readonly CanvasAgentRunReference[];
   anchorNodeId?: string;
   operation: "generate" | "edit";
+  targetOperation: CanvasAgentTarget["operation"];
   startedAt: number;
 }>;
 
 /** Only treat the selection as an edit target when the user's current turn asks for a change. */
 export function canvasAgentTargetOperation(instruction: string, kind: CanvasAgentTarget["kind"]): CanvasAgentTarget["operation"] {
   const text = String(instruction || "").replace(/\s+/g, " ").trim();
-  if (!text || kind === "none" || kind === "mixed" || kind === "video") return "generate";
-  if (/(?:为什么|怎么|如何|能不能|可不可以|是否|请问|解释|分析|评价|觉得|怎么样)/.test(text) && /[？?]?$/.test(text)) return "generate";
-  const editRequest = kind === "image"
-    ? isImageEditRequest(text) || /(?:局部编辑|扩图|抠图|继续修改|再来一版|调整一下)/.test(text)
-    : /(?:修改|改写|改一下|改成|换成|替换|重写|润色|优化|扩写|缩写|精简|调整一下|翻译|更新内容)/.test(text);
-  return editRequest ? "edit" : "generate";
+  if (!text) return "none";
+  if (kind === "text" && /(?:修改|改写|改一下|改成|换成|替换|重写|润色|优化|扩写|缩写|精简|调整一下|翻译|更新内容)/.test(text)) return "edit";
+  if (kind === "image" && (isImageEditRequest(text) || /(?:局部编辑|扩图|抠图|继续修改|再来一版|调整一下)/.test(text))) return "edit";
+
+  const route = resolveCreativeRoute(text, { hasReferences: ["image", "video", "mixed"].includes(kind) });
+  if (route.lane !== "image" || route.execution !== "run") return "none";
+  return route.operation === "edit" ? "edit" : "generate";
 }
 
 function cleanIds(value: unknown) {
@@ -130,13 +132,16 @@ export function createCanvasAgentRunContext(input: {
         : references.some((reference) => reference.kind === "text")
           ? "text"
           : "none";
-  const operation = input.target?.operation === "edit"
+  const targetOperation = input.target?.operation === "edit"
     ? "edit"
     : input.target?.operation === "generate"
       ? "generate"
-      : sourceNodeIds.length
-        ? "edit"
-        : "generate";
+      : input.target?.operation === "none"
+        ? "none"
+        : sourceNodeIds.length
+          ? "edit"
+          : "generate";
+  const operation = targetOperation === "edit" ? "edit" : "generate";
   const frozenReferences = references.map((reference) => Object.freeze(reference));
   return Object.freeze({
     schemaVersion: CANVAS_AGENT_RUN_CONTEXT_SCHEMA_VERSION,
@@ -152,6 +157,7 @@ export function createCanvasAgentRunContext(input: {
     references: Object.freeze(frozenReferences),
     ...(selectedNodeIds[0] ? { anchorNodeId: selectedNodeIds[0] } : {}),
     operation,
+    targetOperation,
     startedAt: Number(input.startedAt) || Date.now(),
   });
 }
@@ -178,7 +184,7 @@ export function normalizeCanvasAgentRunContext(value: unknown): CanvasAgentRunCo
     target: {
       nodeIds: cleanIds(input.targetNodeIds),
       kind: input.targetKind,
-      operation: input.operation,
+      operation: input.targetOperation || input.operation,
     },
     startedAt: Number(input.startedAt) || Date.now(),
   });

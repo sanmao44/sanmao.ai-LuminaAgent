@@ -574,6 +574,44 @@ test('canvas text target stays a text-only optimization conversation', async () 
   assert.ok(agent.calls.some((call) => call.messages.some((message) => message.role === 'user' && JSON.stringify(message.content).includes('原始文案'))));
 });
 
+test('Canvas JEV review cannot turn an explicit image description into generation', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"误读了选中图片"}' }
+      : { content: '画面描绘了一处临水的古镇，前景有船只，远处是暖色天空。' },
+  });
+  const text = '描述下画面';
+  const data = await agent.post([{
+    role: 'user',
+    content: text,
+    references: [{ id: 'image-1', nodeId: 'image-1', kind: 'image', name: '选中图片', url: 'data:image/png;base64,dGVzdA==' }],
+  }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['image-1'], assetIds: [] },
+    // Exercise a stale generate hint from the UI: selection metadata is not user authorization.
+    canvasTarget: { nodeIds: ['image-1'], kind: 'image', operation: 'generate' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: [{ id: 'image-1', type: 'media', x: 0, y: 0, data: { kind: 'image', name: '选中图片', url: 'data:image/png;base64,dGVzdA==' } }],
+    },
+  });
+  const classifierCalls = agent.modelCalls.filter((call) => call.model === 'jev-1.13');
+  assert.equal(classifierCalls.length, 1);
+  assert.match(classifierCalls[0].payload.messages[0].content, /target\.operation is not the user request/);
+  assert.equal(JSON.parse(classifierCalls[0].payload.messages[1].content).localIntent.deliverable, 'TEXT');
+  assert.equal(agent.images.length, 0);
+  assert.deepEqual(data.images, []);
+  assert.equal(data.deliverable, 'TEXT');
+  assert.match(data.message, /古镇/);
+});
+
 test('canvas image edit target activates image routing for colloquial changes', async () => {
   const agent = harness({ imageCapabilities: ['generate', 'edit'] });
   const data = await agent.post([{

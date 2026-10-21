@@ -28,7 +28,9 @@ export function prepareAgentRequestContext(input: AgentRequestContextInput) {
       default: return 'none';
     }
   })();
-  const canvasTargetOperation: CanvasAgentTargetOperation = canvasTarget?.operation === 'edit' ? 'edit' : 'generate';
+  const canvasTargetOperation: CanvasAgentTargetOperation = canvasTarget?.operation === 'edit'
+    ? 'edit'
+    : canvasTarget?.operation === 'none' ? 'none' : 'generate';
   const sourceForLog = input.normalizeGenerationSource(body.source, 'agent');
   const isCanvasSource = sourceForLog === 'canvas';
   const isCanvasNodeExecution = isCanvasSource && body.executionMode !== 'agent-dock';
