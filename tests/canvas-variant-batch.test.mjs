@@ -152,6 +152,7 @@ test("projects a polled video task onto existing node data", () => {
 test("projects image variant provenance and duration without owning node creation", () => {
   const params = { kind: "image", model: "image-model", count: 1 };
   const data = batch.canvasVariantImageNodeData({
+    taskId: "image-task-1",
     prompt: "portrait",
     params,
     operation: "reference-generate",
@@ -172,6 +173,7 @@ test("projects image variant provenance and duration without owning node creatio
       kind: "image",
       prompt: "portrait",
       params,
+      taskId: "image-task-1",
       operation: "reference-generate",
       referenceIds: ["prompt-1", "image-1"],
       sourceGeneratorId: "generator-1",

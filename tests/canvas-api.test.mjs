@@ -164,6 +164,29 @@ test('canvas image generation follows SANMAO response protocol', async () => {
   });
 });
 
+test('canvas image generation forwards the preflight operation metadata', async () => {
+  let request;
+  const intentPreview = {
+    operation: 'generate',
+    classifierStatus: 'fallback',
+    classifierMs: 12,
+  };
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ images: [{ url: '/generated.png' }] });
+  }, () => api.generateCanvasImage({
+    taskId: 'task-preflight-1',
+    imageOperation: 'generate',
+    intentPreview,
+    prompt: 'create a new image',
+  }));
+
+  assert.equal(request.input, '/api/generate');
+  const payload = JSON.parse(request.options.body);
+  assert.equal(payload.imageOperation, 'generate');
+  assert.deepEqual(payload.imageIntentPreview, intentPreview);
+});
+
 test('canvas image generation sends the explicit image operation for references', async () => {
   const mocks = withImageCanvas({ width: 1200, height: 800 });
   try {
@@ -402,6 +425,47 @@ test('canvas image generation preserves small references without lossy re-encodi
     assert.deepEqual(mocks.encodedTypes, []);
   } finally {
     mocks.restore();
+  }
+});
+
+test('stopping a pending canvas image wait aborts the active log read without a recovery request', async () => {
+  const originalWindow = globalThis.window;
+  globalThis.window = {
+    setTimeout: (callback, delay) => globalThis.setTimeout(callback, Math.min(delay, 0)),
+    clearTimeout: timer => globalThis.clearTimeout(timer),
+  };
+  const controller = new AbortController();
+  const abortReason = new DOMException('Stopped waiting', 'AbortError');
+  const requests = [];
+
+  try {
+    await withFetch(async (input, options) => {
+      requests.push({ input, signal: options.signal });
+      if (input === '/api/generate') return jsonResponse({ pending: true, taskId: 'task-abort' }, 202);
+      if (input === '/api/generation-logs?taskId=task-abort') {
+        assert.equal(options.signal, controller.signal);
+        return new Promise((_, reject) => {
+          options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        });
+      }
+      assert.fail(`Unexpected recovery request: ${input}`);
+    }, async () => {
+      const generation = api.generateCanvasImage({
+        taskId: 'task-abort',
+        imageOperation: 'generate',
+        prompt: 'pending image',
+        signal: controller.signal,
+      });
+      globalThis.setTimeout(() => controller.abort(abortReason), 20);
+      await assert.rejects(generation, error => error === abortReason);
+    });
+
+    assert.deepEqual(requests.map(request => request.input), [
+      '/api/generate',
+      '/api/generation-logs?taskId=task-abort',
+    ]);
+  } finally {
+    globalThis.window = originalWindow;
   }
 });
 
@@ -1000,4 +1064,40 @@ test('canvas video polling uses the SANMAO task endpoint', async () => {
   assert.equal(request.input, '/api/video/tasks/task%2F1');
   assert.deepEqual(request.options, { cache: 'no-store' });
   assert.deepEqual(result.task.videoUrls, ['/video.mp4']);
+});
+
+test('canvas image intent preview forwards the prompt, reference count, and cancellation signal', async () => {
+  const controller = new AbortController();
+  let request;
+  const result = await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ operation: 'reference-generate', classifierStatus: 'used' });
+  }, () => api.previewCanvasImageIntent({
+    prompt: 'Use the linked image as a visual reference',
+    imageReferenceCount: 2,
+    hasMask: false,
+  }, controller.signal));
+
+  assert.equal(request.input, '/api/generate/intent');
+  assert.equal(request.options.method, 'POST');
+  assert.equal(request.options.signal, controller.signal);
+  assert.deepEqual(JSON.parse(request.options.body), {
+    prompt: 'Use the linked image as a visual reference',
+    imageReferenceCount: 2,
+    hasMask: false,
+  });
+  assert.equal(result.operation, 'reference-generate');
+});
+
+test('canvas video cancellation uses the existing Worker-owned task control route', async () => {
+  let request;
+  const result = await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ task: { id: 'video-task-1', status: 'cancelled' } });
+  }, () => api.stopCanvasVideoTaskTracking('video-task-1'));
+
+  assert.equal(request.input, '/api/video/tasks/video-task-1');
+  assert.equal(request.options.method, 'PATCH');
+  assert.deepEqual(JSON.parse(request.options.body), { action: 'cancel' });
+  assert.equal(result.task.status, 'cancelled');
 });

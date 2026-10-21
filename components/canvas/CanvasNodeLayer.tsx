@@ -148,7 +148,7 @@ function CanvasNodeLayerItem({ node, ...props }: MemoizedCanvasNodeLayerItemProp
       onRename={props.callbacksRef.current.onRename ? (name) => props.callbacksRef.current.onRename?.(node, name) : undefined}
       renaming={props.renamingNodeId === undefined ? undefined : props.renamingNodeId === node.id}
       onRenamingChange={props.callbacksRef.current.onRenamingChange ? (editing) => props.callbacksRef.current.onRenamingChange?.(node, editing) : undefined}
-      onNaturalSize={(nodeId, width, height, durationSeconds) => props.callbacksRef.current.onNaturalSize(nodeId, width, height, durationSeconds)}
+      onNaturalSize={(nodeId, width, height, durationSeconds, sourceUrl) => props.callbacksRef.current.onNaturalSize(nodeId, width, height, durationSeconds, sourceUrl)}
       onPromptChange={(value) => props.callbacksRef.current.onPromptChange(node, value)}
       onEditorPromptChange={(target, value) => props.callbacksRef.current.onEditorPromptChange(target, value)}
       onEditorParamsChange={(target, settings) => props.callbacksRef.current.onEditorParamsChange(target, settings)}

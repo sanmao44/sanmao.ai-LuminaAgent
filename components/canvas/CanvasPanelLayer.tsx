@@ -33,7 +33,9 @@ export type CanvasPanelLayerProps = {
   onRefreshGenerationLogs: () => void;
   onFocusTask: (log: GenerationLog, openMedia?: boolean) => void;
   onFocusNode: (nodeId: string, openMedia?: boolean) => void;
-  onRetryTask: (log: GenerationLog) => void;
+  onRestoreTaskContext: (log: GenerationLog) => void;
+  onCancelTask: (log: GenerationLog) => Promise<void>;
+  cancellableImageTaskIds: ReadonlySet<string>;
   onRememberActivityScroll: (scrollTop: number) => void;
   onNotify: (message: string, kind?: "ok" | "error") => void;
   onClose: () => void;
@@ -70,7 +72,9 @@ export default function CanvasPanelLayer({
   onRefreshGenerationLogs,
   onFocusTask,
   onFocusNode,
-  onRetryTask,
+  onRestoreTaskContext,
+  onCancelTask,
+  cancellableImageTaskIds,
   onRememberActivityScroll,
   onNotify,
   onClose,
@@ -111,7 +115,9 @@ export default function CanvasPanelLayer({
         onRefresh={onRefreshGenerationLogs}
         onFocusTask={onFocusTask}
         onFocusNode={onFocusNode}
-        onRetryTask={onRetryTask}
+        onRestoreTaskContext={onRestoreTaskContext}
+        onCancelTask={onCancelTask}
+        cancellableImageTaskIds={cancellableImageTaskIds}
         onClose={onClose}
         onNotify={onNotify}
         restoreScrollTop={activityPanelScrollTop}

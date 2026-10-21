@@ -32,6 +32,7 @@ export type CanvasMediaNodeCardProps = {
     width: number,
     height: number,
     durationSeconds?: number,
+    sourceUrl?: string,
   ) => void;
   onLocalEdit: () => void;
   onRename?: (value: string) => void;
@@ -151,6 +152,7 @@ export default function CanvasMediaNodeCard({
                     event.currentTarget.videoWidth,
                     event.currentTarget.videoHeight,
                     event.currentTarget.duration,
+                    String(data.url || ""),
                   );
                   if (videoClip) event.currentTarget.currentTime = videoClip.startTime;
                 }}
@@ -168,7 +170,7 @@ export default function CanvasMediaNodeCard({
                   src={String(data.url)}
                   name={String(data.name || "音频素材")}
                   compact
-                  onDuration={(duration) => onNaturalSize(node.id, 0, 0, duration)}
+                  onDuration={(duration) => onNaturalSize(node.id, 0, 0, duration, String(data.url || ""))}
                 />
                 <span className="canvas-audio-mark">♫ 音频节点</span>
               </div>
@@ -184,6 +186,8 @@ export default function CanvasMediaNodeCard({
                     node.id,
                     event.currentTarget.naturalWidth,
                     event.currentTarget.naturalHeight,
+                    undefined,
+                    String(data.url || ""),
                   )
                 }
               />

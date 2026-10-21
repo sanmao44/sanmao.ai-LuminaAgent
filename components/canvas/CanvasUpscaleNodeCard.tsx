@@ -20,6 +20,7 @@ export type CanvasUpscaleNodeCardProps = {
     width: number,
     height: number,
     durationSeconds?: number,
+    sourceUrl?: string,
   ) => void;
   onRename?: (value: string) => void;
   renaming?: boolean;
@@ -68,6 +69,8 @@ export default function CanvasUpscaleNodeCard({
                 node.id,
                 event.currentTarget.naturalWidth,
                 event.currentTarget.naturalHeight,
+                undefined,
+                String(data.url || ""),
               )
             }
           />

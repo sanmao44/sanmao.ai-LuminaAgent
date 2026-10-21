@@ -192,6 +192,7 @@ export function canvasVariantVideoNodeData(input: {
 }
 
 export function canvasVariantImageNodeData(input: {
+  taskId?: string;
   prompt: string;
   params: ImageCreationSettings;
   operation?: "generate" | "edit" | "reference-generate";
@@ -211,6 +212,7 @@ export function canvasVariantImageNodeData(input: {
       kind: "image",
       prompt: input.prompt,
       params: input.params,
+      ...(input.taskId ? { taskId: input.taskId } : {}),
       ...(input.operation ? { operation: input.operation } : {}),
       referenceIds: [...input.linkedIds],
       sourceGeneratorId: input.sourceGeneratorId,

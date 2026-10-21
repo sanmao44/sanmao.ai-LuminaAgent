@@ -5,8 +5,15 @@ import {
   type CreativeReferenceRoleResolution,
 } from "../creative-references";
 import type { ImageCreationSettings } from "../creation/settings";
-import { MAX_IMAGE_REFERENCES, type ImageRequestMode } from "@/packages/contracts/creative";
-import type { ModelCapability } from "@/lib/types";
+import {
+  MAX_IMAGE_REFERENCES,
+  type CanvasImageIntentPreview,
+  type CanvasImageIntentPreviewRequest,
+  type ImageRequestMode,
+  type ImageRequestOperation,
+} from "@/packages/contracts/creative";
+import type { ModelCapability, RegistryModel } from "@/lib/types";
+import { modelSupportsCapabilityRequirements } from "@/lib/model-picker";
 import type { CanvasReferenceDraft } from "./reuse";
 
 export function canvasImageRequestCapabilities(
@@ -15,6 +22,70 @@ export function canvasImageRequestCapabilities(
 ): ModelCapability[] {
   if (imageOperation === "edit") return ["edit"];
   return ["generate", ...(imageReferenceCount > 0 ? ["reference" as const] : [])];
+}
+
+export type CanvasImageIntentSubmission = {
+  operation: ImageRequestOperation;
+  intentPreview?: CanvasImageIntentPreview;
+};
+
+export async function resolveCanvasImageIntentForSubmit(input: {
+  requestMode: ImageRequestMode;
+  prompt: string;
+  imageReferenceCount: number;
+  hasMask: boolean;
+  modelId: string;
+  models?: readonly RegistryModel[];
+  preview: (
+    request: CanvasImageIntentPreviewRequest,
+    signal?: AbortSignal,
+  ) => Promise<CanvasImageIntentPreview>;
+  signal?: AbortSignal;
+}): Promise<CanvasImageIntentSubmission> {
+  let operation: ImageRequestOperation;
+  let intentPreview: CanvasImageIntentPreview | undefined;
+
+  if (input.requestMode !== "auto") {
+    operation = input.requestMode;
+  } else if (input.hasMask) {
+    operation = "edit";
+  } else if (!input.imageReferenceCount) {
+    operation = "generate";
+  } else {
+    intentPreview = await input.preview({
+      prompt: input.prompt,
+      imageReferenceCount: input.imageReferenceCount,
+      hasMask: false,
+    }, input.signal);
+    operation = intentPreview.operation;
+  }
+
+  const selectedModelId = input.modelId.trim();
+  if (selectedModelId && selectedModelId !== "auto" && input.models) {
+    const selectedModel = input.models.find((model) => model.id === selectedModelId);
+    if (!selectedModel) {
+      throw new Error("当前选择的图片模型已不可用，请切换到自动或重新选择模型。");
+    }
+    const requiredCapabilities = canvasImageRequestCapabilities(operation, input.imageReferenceCount);
+    if (!modelSupportsCapabilityRequirements(selectedModel, requiredCapabilities)) {
+      const operationLabel = operation === "edit"
+        ? "改图"
+        : operation === "reference-generate"
+          ? "参考图生成"
+          : "生图";
+      const capabilityLabels = requiredCapabilities.map((capability) =>
+        capability === "generate" ? "生图" : capability === "edit" ? "改图" : "参考图",
+      );
+      throw new Error(
+        `JEV 判定本次为${operationLabel}，但所选模型「${selectedModel.displayName}」缺少${capabilityLabels.join("、")}能力。请切换到自动或支持该操作的模型。`,
+      );
+    }
+  }
+
+  return {
+    operation,
+    ...(intentPreview ? { intentPreview } : {}),
+  };
 }
 
 export type CanvasImageReferenceRequest =

@@ -83,3 +83,15 @@ test("fit camera centers bounds in the visible stage and respects the inset", ()
     { x: 400, y: 300, zoom: 1 },
   );
 });
+
+test("fit camera recovers content positioned far from the world origin", () => {
+  const bounds = { x: -18_000, y: 22_000, w: 440, h: 260 };
+  const camera = viewport.canvasFitCamera([bounds], { width: 1200, height: 760 });
+  const center = viewport.canvasWorldToStagePoint(
+    { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 },
+    camera,
+  );
+
+  assert.deepEqual(center, { x: 600, y: 320 });
+  assert.ok(camera.zoom >= 0.12 && camera.zoom <= 1.25);
+});

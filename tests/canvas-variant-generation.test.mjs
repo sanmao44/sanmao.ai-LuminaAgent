@@ -11,6 +11,13 @@ async function loadImageReferenceRequest() {
     fileName: referencesUrl.pathname,
   }).outputText;
   const referencesModuleUrl = `data:text/javascript;base64,${Buffer.from(referencesCompiled).toString("base64")}`;
+  const modelPickerUrl = new URL("../lib/model-picker.ts", import.meta.url);
+  const modelPickerSource = await readFile(modelPickerUrl, "utf8");
+  const modelPickerCompiled = ts.transpileModule(modelPickerSource, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    fileName: modelPickerUrl.pathname,
+  }).outputText;
+  const modelPickerModuleUrl = `data:text/javascript;base64,${Buffer.from(modelPickerCompiled).toString("base64")}`;
   const requestUrl = new URL("../lib/canvas/image-reference-request.ts", import.meta.url);
   const requestSource = await readFile(requestUrl, "utf8");
   const requestCompiled = ts.transpileModule(requestSource, {
@@ -18,7 +25,8 @@ async function loadImageReferenceRequest() {
     fileName: requestUrl.pathname,
   }).outputText
     .replace('from "../creative-references"', `from "${referencesModuleUrl}"`)
-    .replace('import { MAX_IMAGE_REFERENCES } from "@/packages/contracts/creative";', 'const MAX_IMAGE_REFERENCES = 16;');
+    .replace('from "@/lib/model-picker"', `from "${modelPickerModuleUrl}"`)
+    .replace(/import\s*\{\s*MAX_IMAGE_REFERENCES,?\s*\}\s*from "@\/packages\/contracts\/creative";/, 'const MAX_IMAGE_REFERENCES = 16;');
   return import(`data:text/javascript;base64,${Buffer.from(requestCompiled).toString("base64")}`);
 }
 

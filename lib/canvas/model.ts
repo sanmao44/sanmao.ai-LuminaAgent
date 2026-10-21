@@ -2659,7 +2659,9 @@ export function createEmptyMedia(
     kind === "image"
       ? normalizeCreationSettings("image", params)
       : normalizeCreationSettings("video", params);
-  const size = smartMediaSize(kind, normalizedParams);
+  const size = kind === "image"
+    ? mediaCardSizeForRatio(DEFAULT_VIDEO_ASPECT_RATIO, "image")
+    : smartMediaSize(kind, normalizedParams);
   return {
     ...createMedia(
       kind,

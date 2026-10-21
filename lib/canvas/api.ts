@@ -3,7 +3,7 @@ import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
-import { MAX_IMAGE_REFERENCES, type CreativeRoute, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
+import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeRoute, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import {
@@ -44,6 +44,30 @@ export type CanvasAgentTask =
   | "cinematic_shock_opening_director"
   | "smart_variant_planning"
   | "optimize_prompt";
+
+export async function previewCanvasImageIntent(
+  input: CanvasImageIntentPreviewRequest,
+  signal?: AbortSignal,
+): Promise<CanvasImageIntentPreview> {
+  return request<CanvasImageIntentPreview>("/api/generate/intent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify(input),
+  });
+}
+
+export type CanvasImageWaitStoppedError = Error & {
+  canvasWaitStopped: true;
+  taskId: string;
+  generationPending?: true;
+};
+
+export function isCanvasImageWaitStopped(error: unknown): error is CanvasImageWaitStoppedError {
+  if (!(error instanceof Error)) return false;
+  const value = error as Error & { canvasWaitStopped?: unknown; taskId?: unknown };
+  return value.canvasWaitStopped === true && typeof value.taskId === "string";
+}
 
 export function inferCanvasAgentTask(
   prompt: string,
@@ -615,6 +639,30 @@ export async function encodeCanvasDepthVideoFrameSequence(
   return response.blob();
 }
 
+function waitForCanvasImagePoll(delayMs: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason || new DOMException("Image task wait stopped", "AbortError"));
+      return;
+    }
+
+    let timer: number | undefined;
+    const removeAbortListener = () => signal?.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      removeAbortListener();
+      reject(signal?.reason || new DOMException("Image task wait stopped", "AbortError"));
+    };
+
+    timer = window.setTimeout(() => {
+      removeAbortListener();
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+}
+
 export async function generateCanvasImage(input: {
   taskId?: string;
   imageOperation: ImageRequestMode;
@@ -637,6 +685,7 @@ export async function generateCanvasImage(input: {
   angleNote?: string;
   angleGuide?: boolean;
   signal?: AbortSignal;
+  intentPreview?: CanvasImageIntentPreview;
   maskUrl?: string;
   moveGuideUrl?: string;
   references?: Array<{ url: string; name?: string }>;
@@ -704,6 +753,7 @@ export async function generateCanvasImage(input: {
       source: "canvas",
       ...(input.taskId ? { taskId: input.taskId } : {}),
       imageOperation: input.imageOperation,
+      ...(input.intentPreview ? { imageIntentPreview: input.intentPreview } : {}),
       prompt: input.prompt,
       ...(input.presetId ? { presetId: input.presetId } : {}),
       ...(input.presetName ? { presetName: input.presetName } : {}),
@@ -733,6 +783,7 @@ export async function generateCanvasImage(input: {
       }),
     });
   } catch (error) {
+    if (input.signal?.aborted) throw input.signal.reason || error;
     const recovered = await recoverAcceptedImageTask(error);
     if (!recovered) throw error;
     result = recovered;
@@ -743,14 +794,12 @@ export async function generateCanvasImage(input: {
   const deadline = Date.now() + 30 * 60 * 1000;
   while (Date.now() < deadline) {
     if (input.signal?.aborted) throw input.signal.reason || new Error('GENERATION_CANCELLED');
-    await new Promise<void>((resolve, reject) => {
-      const timer = window.setTimeout(resolve, 2000);
-      input.signal?.addEventListener('abort', () => { window.clearTimeout(timer); reject(input.signal?.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
-    });
+    await waitForCanvasImagePoll(2000, input.signal);
     let status: { log?: { status?: string; imageUrls?: string[]; error?: string; operation?: ImageRequestOperation } | null };
     try {
-      status = await request<{ log?: { status?: string; imageUrls?: string[]; error?: string; operation?: ImageRequestOperation } | null }>(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`);
+      status = await request<{ log?: { status?: string; imageUrls?: string[]; error?: string; operation?: ImageRequestOperation } | null }>(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`, { signal: input.signal });
     } catch (error) {
+      if (input.signal?.aborted) throw input.signal.reason || error;
       const recovered = await recoverAcceptedImageTask(error);
       if (recovered?.images?.length) return { ...result, ...recovered, pending: false };
       throw error;
@@ -1130,6 +1179,20 @@ export async function getCanvasVideoTask(id: string) {
       modelId?: string;
     };
   }>(`/api/video/tasks/${encodeURIComponent(id)}`);
+}
+
+export async function stopCanvasVideoTaskTracking(id: string) {
+  return request<{
+    task: {
+      id: string;
+      status: string;
+      error?: string;
+    };
+  }>(`/api/video/tasks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "cancel" }),
+  });
 }
 
 /** Prefer a local archive, but never discard a provider result when archiving failed. */

@@ -571,13 +571,13 @@ test("one-take Agent requests preserve connected image order and stream back as 
   assert.match(generation, /role: "Agent 回复"/);
 });
 
-test("image continuation uses the ordinary image API and keeps lineage on image nodes", () => {
+test("image continuation tracks the ordinary image request and keeps lineage on image nodes", () => {
   const start = component.indexOf("const runImageContinuation = useCallback");
   const end = component.indexOf("const runReuseGeneration = useCallback", start);
   assert.ok(start >= 0 && end > start, "image continuation implementation should be present");
   const continuation = component.slice(start, end);
 
-  assert.match(continuation, /generateCanvasImage\(/);
+  assert.match(continuation, /runTrackedCanvasImageRequest\(/);
   assert.match(continuation, /addReference\(\s*source\.id/);
   assert.match(continuation, /referenceIds: \[\.\.\.\(actualUsesCurrentImageAsReference \? resolvedReferenceIds/);
   assert.match(continuation, /parentNodeId: source\.id/);
@@ -587,7 +587,7 @@ test("image continuation uses the ordinary image API and keeps lineage on image 
   assert.match(continuation, /result\.images\.forEach/);
   assert.match(continuation, /status: "failed"/);
   assert.match(continuation, /referenceEdges\.map/);
-  assert.match(continuation, /imageOperation: imageReferenceRequest\.imageOperation/);
+  assert.match(continuation, /imageOperation: imageIntent\.operation/);
   assert.doesNotMatch(continuation, /fallbackToGenerationOnEdit404/);
   assert.doesNotMatch(continuation, /sourceGeneratorId/);
   assert.doesNotMatch(continuation, /variantBatchId|variantIndex/);

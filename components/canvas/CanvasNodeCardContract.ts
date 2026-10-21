@@ -41,6 +41,7 @@ export type CanvasNodeCardProps = {
     width: number,
     height: number,
     durationSeconds?: number,
+    sourceUrl?: string,
   ) => void;
   onPromptChange: (value: string) => void;
   onEditorPromptChange: (node: CanvasNode, value: string) => void;

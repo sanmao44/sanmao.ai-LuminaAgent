@@ -1,8 +1,30 @@
 import { addEdge, createMedia, nodeById, nodeSize } from './model';
 import type { CanvasDocument, CanvasNode, CanvasNodeParams } from './types';
+import type { GenerationLog } from '@/lib/generation-log';
 
 export function canvasNodeHasTask(node: CanvasNode | undefined, taskId: string) {
   return Boolean(node && taskId && String(node.data.jobId || node.data.generation?.taskId || '') === taskId);
+}
+
+export function canvasNodeForGenerationLog(document: CanvasDocument, log: Pick<GenerationLog, 'id' | 'taskId' | 'nodeId' | 'prompt' | 'mode' | 'mediaKind'>) {
+  const taskId = String(log.taskId || log.id || '');
+  const taskNode = document.nodes.find((node) => canvasNodeHasTask(node, taskId));
+  if (taskNode) return taskNode;
+
+  const variantNode = document.nodes.find((node) =>
+    node.type === 'generator' && node.data.variantStates?.some((state) =>
+      state.taskIds?.some((id) => String(id) === taskId),
+    ),
+  );
+  if (variantNode) return variantNode;
+
+  const expectedKind = log.mediaKind || (log.mode === 'video' ? 'video' : log.mode === 'audio' ? 'audio' : 'image');
+  const linkedNode = log.nodeId ? nodeById(document, log.nodeId) : undefined;
+  if (linkedNode && (linkedNode.data.kind || 'image') === expectedKind) return linkedNode;
+
+  return document.nodes.find((node) =>
+    node.data.generation?.prompt === log.prompt && (node.data.kind || 'image') === expectedKind,
+  );
 }
 
 /** Merge HTTP and recovery results by task/url while keeping existing node identities. */

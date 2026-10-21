@@ -7,7 +7,7 @@ import { renderAngleOutput } from '@/lib/angle-image';
 import type { GeneratedImage } from '@/lib/types';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
-import { MAX_IMAGE_REFERENCES, type ImageRequestMode, type ImageRequestOperation } from '@/packages/contracts/creative';
+import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type ImageRequestMode, type ImageRequestOperation } from '@/packages/contracts/creative';
 import { resolveCanvasImageRequestIntent } from '@/apps/api/image-intent-composition';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { enforceLocalEditMask } from '@/lib/local-edit-composite';
@@ -19,6 +19,17 @@ export const runtime = 'nodejs';
 export const maxDuration = 1800;
 
 const runImageModelCandidates = invokeMediaModelCandidates;
+
+function isCanvasImageIntentPreview(value: unknown): value is CanvasImageIntentPreview {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const preview = value as Record<string, unknown>;
+  return (
+    (preview.operation === 'generate' || preview.operation === 'edit' || preview.operation === 'reference-generate') &&
+    (preview.classifierStatus === undefined || preview.classifierStatus === 'used' || preview.classifierStatus === 'fallback' || preview.classifierStatus === 'unavailable') &&
+    (preview.classifierModelId === undefined || typeof preview.classifierModelId === 'string') &&
+    (preview.classifierMs === undefined || (typeof preview.classifierMs === 'number' && Number.isFinite(preview.classifierMs) && preview.classifierMs >= 0))
+  );
+}
 
 function readCameraNumber(value: unknown, field: string) {
   if (value === undefined) return undefined;
@@ -185,6 +196,10 @@ export async function POST(request: Request) {
     if (requestedMode === 'reference-generate' && (mask || moveGuide || camera)) {
       return Response.json({ error: '参考图生成不能同时提供局部编辑或角度控制。' }, { status: 400 });
     }
+    const submittedIntentPreview = isCanvasImageIntentPreview(body.imageIntentPreview)
+      && body.imageIntentPreview.operation === requestedMode
+      ? body.imageIntentPreview
+      : undefined;
     const intentResolution = requestedMode === 'auto'
       ? await resolveCanvasImageRequestIntent({
           requestedMode: 'auto',
@@ -194,7 +209,12 @@ export async function POST(request: Request) {
           hasMask: Boolean(mask || moveGuide || camera),
           signal: requestController.signal,
         })
-      : { operation: requestedMode };
+      : {
+          operation: requestedMode,
+          ...(submittedIntentPreview?.classifierStatus ? { classifierStatus: submittedIntentPreview.classifierStatus } : {}),
+          ...(submittedIntentPreview?.classifierModelId ? { classifierModelId: submittedIntentPreview.classifierModelId } : {}),
+          ...(submittedIntentPreview?.classifierMs !== undefined ? { classifierMs: submittedIntentPreview.classifierMs } : {}),
+        };
     const imageOperation = intentResolution.operation;
     if (camera && imageOperation !== 'edit') {
       return Response.json({ error: '角度控制只能用于改图操作。' }, { status: 400 });

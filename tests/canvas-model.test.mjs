@@ -461,6 +461,23 @@ test('sizes video cards from the requested aspect ratio and intrinsic metadata',
   assert.equal(manual.h, 330);
 });
 
+test('sizes new empty image nodes with the same preview ratio as an empty video node', () => {
+  const image = model.createEmptyMedia('image', { x: 0, y: 0 }, {
+    kind: 'image',
+    aspect: '1:1',
+  });
+  const video = model.createEmptyMedia('video', { x: 0, y: 0 }, {
+    kind: 'video',
+    aspect: '16:9',
+  });
+  const imagePreviewRatio = image.w / (image.h - 48);
+  const videoPreviewRatio = video.w / (video.h - 42);
+
+  assert.ok(Math.abs(imagePreviewRatio - videoPreviewRatio) < 0.02);
+  assert.ok(image.h < video.h);
+  assert.equal(image.data.generation.params.aspect, '1:1');
+});
+
 test('canvas upscale nodes preserve provider-specific settings', () => {
   const cloud = model.createUpscaleNode({ x: 0, y: 0 }, {
     model: 'aliyun-standard-super-resolution',

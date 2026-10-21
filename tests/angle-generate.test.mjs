@@ -226,6 +226,32 @@ test('Canvas auto intent keeps linked references on the reference-capable genera
   assert.equal(api.calls.logs[0].intentClassifierModelId, 'jev-runtime');
 });
 
+test('Canvas generation reuses a preflight JEV decision without classifying twice', async () => {
+  const api = harness({ generationImages: [{ url: '/generated-from-reference.png' }] });
+  const response = await api.post({
+    source: 'canvas',
+    imageOperation: 'reference-generate',
+    imageIntentPreview: {
+      operation: 'reference-generate',
+      classifierStatus: 'used',
+      classifierModelId: 'jev-runtime',
+      classifierMs: 21,
+    },
+    prompt: 'Create a new scene using the linked image',
+    references: [reference],
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.operation, 'reference-generate');
+  assert.equal(api.calls.intentInputs.length, 0);
+  assert.equal(api.calls.generations.length, 1);
+  assert.deepEqual(api.calls.generations[0].references, [reference]);
+  assert.equal(api.calls.logs[0].intentClassifierStatus, 'used');
+  assert.equal(api.calls.logs[0].intentClassifierModelId, 'jev-runtime');
+  assert.equal(api.calls.logs[0].intentClassifierMs, 21);
+});
+
 test('Canvas JEV edit decision routes linked image to edit capability and endpoint', async () => {
   const api = harness({ editImages: [{ url: '/edited.png' }], intentResolution: { operation: 'edit', classifierStatus: 'used' } });
   const response = await api.post({

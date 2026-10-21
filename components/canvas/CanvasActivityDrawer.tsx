@@ -18,7 +18,9 @@ export default function CanvasActivityDrawer({
   onRefresh,
   onFocusTask,
   onFocusNode,
-  onRetryTask,
+  onRestoreTaskContext,
+  onCancelTask,
+  cancellableImageTaskIds,
   onClose,
   onNotify,
   restoreScrollTop,
@@ -31,7 +33,9 @@ export default function CanvasActivityDrawer({
   onRefresh: () => void;
   onFocusTask: (log: GenerationLog, openMedia?: boolean) => void;
   onFocusNode: (nodeId: string, openMedia?: boolean) => void;
-  onRetryTask: (log: GenerationLog) => void;
+  onRestoreTaskContext: (log: GenerationLog) => void;
+  onCancelTask: (log: GenerationLog) => Promise<void>;
+  cancellableImageTaskIds: ReadonlySet<string>;
   onClose: () => void;
   onNotify: (message: string, kind?: "ok" | "error") => void;
   restoreScrollTop: number | null;
@@ -42,6 +46,7 @@ export default function CanvasActivityDrawer({
   const [media, setMedia] = useState<"all" | "image" | "video" | "llm">("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
   const scrollBodyRef = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
     if (restoreScrollTop === null) return;
@@ -112,6 +117,10 @@ export default function CanvasActivityDrawer({
             {filteredTasks.map((log) => {
               const urls = generationLogOutputUrls(log);
               const kind = generationLogKind(log);
+              const taskId = String(log.taskId || log.id);
+              const canStopTask = log.status === "pending" && (
+                kind === "video" || (kind === "image" && cancellableImageTaskIds.has(taskId))
+              );
               const activityTask = activityTaskFromGenerationLog(log);
               const lineage = canvasLineageForTask(canvasDocument, activityTask.sourceId || log.id);
               const nodeLabel = (nodeId: string) => {
@@ -145,7 +154,7 @@ export default function CanvasActivityDrawer({
                 <div className="canvas-task-log-status">{generationLogStatusLabel(log.status)}</div>
                 <div className="canvas-task-log-main"><strong>{log.prompt || "未填写提示词"}</strong><small>{log.presetName ? `预设：${log.presetName} · ` : ""}{log.source === "agent" ? "Agent" : "画布生成"} · {log.modelName || "自动选择模型"} · {log.providerName || "等待服务商响应"}</small>{log.status === "pending" && <small className="pending-note">任务正在后台生成，可继续使用画布</small>}{log.error && <small className="error-note">{log.error}</small>}</div>
                 <div className="canvas-task-log-meta"><span className="canvas-task-log-meta-count">{kind === "llm" ? `${log.llmCallCount || 0} 次调用` : kind === "video" ? `${urls.length || (log.status === "pending" ? 1 : 0)} 段视频` : `${log.status === "pending" ? log.count || 1 : log.imageCount || urls.length} 张`}</span><span className="canvas-task-log-meta-duration">{generationLogDuration(log)}</span><span className="canvas-task-log-meta-size">{kind === "llm" ? `${log.task || "普通对话"} · ${log.responseChars || 0} 字响应 · 联网 ${log.webSearchStatus || "未检索"}` : kind === "video" ? `${log.operation === "edit" ? "编辑" : log.operation === "extend" ? "扩展" : "生成"} · ${log.resolution || "自动"}` : `${log.outputSize || "自动尺寸"} · ${log.aspectRatio || "自动比例"}`}</span><time>{new Date(log.createdAt).toLocaleString("zh-CN", { hour12: false })}</time></div>
-                <div className="canvas-task-log-actions"><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId((value) => value === log.id ? null : log.id); }}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>{log.status === "error" && kind !== "llm" && <button type="button" onClick={(event) => { event.stopPropagation(); onRetryTask(log); }}>重试</button>}{kind !== "llm" && <button type="button" onClick={(event) => { event.stopPropagation(); const openMedia = Boolean(urls.length); rememberScrollBeforeMediaOpen(openMedia); onFocusTask(log, openMedia); }}>{urls.length ? "打开结果" : "定位节点"}</button>}</div>
+                <div className="canvas-task-log-actions"><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId((value) => value === log.id ? null : log.id); }}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>{canStopTask && <button type="button" disabled={cancellingTaskId === log.id} title={kind === "video" ? "只停止本地跟踪；服务商可能仍在生成或计费。" : "停止等待图片结果；服务商若已受理，仍可能继续生成或计费。"} onClick={(event) => { event.stopPropagation(); setCancellingTaskId(log.id); void onCancelTask(log).catch((error) => onNotify(error instanceof Error ? error.message : "停止任务失败", "error")).finally(() => setCancellingTaskId((current) => current === log.id ? null : current)); }}>{cancellingTaskId === log.id ? "正在停止…" : kind === "video" ? "停止跟踪" : "停止等待"}</button>}{log.status === "error" && (kind === "image" || kind === "video") && <button type="button" onClick={(event) => { event.stopPropagation(); onRestoreTaskContext(log); }}>恢复上下文</button>}{kind !== "llm" && <button type="button" onClick={(event) => { event.stopPropagation(); const openMedia = Boolean(urls.length); rememberScrollBeforeMediaOpen(openMedia); onFocusTask(log, openMedia); }}>{urls.length ? "打开结果" : "定位节点"}</button>}</div>
                 {selectedId === log.id && <div className="canvas-task-log-detail"><div><b>任务详情</b><small>{log.id}</small></div><p>{log.prompt || "未填写提示词"}</p>{kind === "llm" && <small>模型调用：{log.llmCallCount || 0} 次 · 响应：{log.responseChars || 0} 字 · 联网：{log.webSearchStatus || "未检索"}</small>}{log.references?.length ? <small>参考图：{log.references.map((reference) => reference.name || "参考素材").join("、")}</small> : null}{log.providerTaskId && <small>服务商任务：{log.providerTaskId}</small>}{log.error && <strong className="error-note">失败原因：{log.error}</strong>}</div>}
                 </article>;
             })}

@@ -42,6 +42,33 @@ function clamp(value: number, min: number, max: number) {
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
 }
+
+export function CanvasFitButton({
+  className,
+  onFit,
+}: {
+  className: string;
+  onFit: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={(event) => {
+        event.stopPropagation();
+        onFit();
+      }}
+      title="将所有画布内容适应到视口"
+      aria-label="适应全部画布内容"
+    >
+      <svg viewBox="0 0 16 16" focusable="false" aria-hidden="true">
+        <path d="M6 2H2v4m0-4 4 4m4-4h4v4m0-4-4 4m4 4v4h-4m4 0-4-4m-4 4H2v-4m0 4 4-4" />
+      </svg>
+      <span>适应全部</span>
+    </button>
+  );
+}
+
 export default function CanvasMinimap({
   document,
   connectionStyle,
@@ -316,6 +343,10 @@ export default function CanvasMinimap({
           <span aria-hidden="true">⌖</span>
           {document.nodes.length > 0 && <b>{document.nodes.length}</b>}
         </button>
+        <CanvasFitButton
+          className="canvas-minimap-fit canvas-minimap-fit-compact"
+          onFit={() => fitView()}
+        />
       </div>
     );
   return (
@@ -500,13 +531,10 @@ export default function CanvasMinimap({
             ＋
           </button>
         </div>
-        <button
-          type="button"
+        <CanvasFitButton
           className="canvas-minimap-fit"
-          onClick={() => fitView()}
-        >
-          适应
-        </button>
+          onFit={() => fitView()}
+        />
       </div>
     </aside>
   );
