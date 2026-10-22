@@ -94,6 +94,7 @@ export async function POST(request: Request) {
         downloadAuthForResult = imageDownloadAuth(candidate.provider);
         return editImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
       },
+      { allowFallbackBeforeProviderSubmission: requestedModelId === 'auto' },
     );
     const maskSafeImages = mask
       ? await enforceLocalEditMask(providerImages, resolvedReferences[0], mask, {

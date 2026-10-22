@@ -9093,6 +9093,9 @@ export default function SuperCanvas() {
             dirty: true,
           },
         })));
+        projectTask.ifActive(() => setCurrentImageReferenceByNode((current) =>
+          current[node.id] === true ? current : { ...current, [node.id]: true },
+        ));
         setReuseDraft((current) => current?.sourceNodeId === node.id
           ? { ...current, prompt: nextPrompt, params: clone(params), dirty: true }
           : current);

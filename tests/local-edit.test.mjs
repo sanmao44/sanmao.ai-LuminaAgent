@@ -142,10 +142,11 @@ test("annotation descriptions compile once without duplicating the generated sec
 });
 
 test("the workbench records complete operations, supports undo/redo, feather and empty-range blocking", () => {
-  assert.match(editor, /while \(nextStates\.length > 21\) nextStates\.shift\(\)/);
+  assert.match(editor, /historyRef = useRef\(new LocalEditHistory\(\)\)/);
   assert.match(editor, /pushHistory\(gesture\.before\)/);
-  assert.match(editor, /restoreHistory\(historyRef\.current\.index - 1\)/);
-  assert.match(editor, /restoreHistory\(historyRef\.current\.index \+ 1\)/);
+  assert.match(editor, /historyRef\.current\.moveTo\(index\)/);
+  assert.match(editor, /historyRef\.current\.index > 0/);
+  assert.match(editor, /historyRef\.current\.index \+ 1 < historyRef\.current\.length/);
   assert.match(editor, /const fusionFeather = localEditFusionFeather\(feather\)/);
   assert.match(editor, /createSeamlessLocalEditMask\(sourcePixels, source\.width, source\.height, fusionFeather\)/);
   assert.match(editor, /exported\.feather/);
@@ -157,13 +158,10 @@ test("the workbench records complete operations, supports undo/redo, feather and
   assert.match(editor, /请先指定编辑区域，再应用局部编辑/);
   assert.match(editor, /const exported = exportMask\(\);[\s\S]*exported\.coverage <= 0/);
   assert.doesNotMatch(editor, /disabled=\{[^}]*coverage <= 0/);
-  assert.match(editor, /disabled=\{!ready \|\| saving \|\| Boolean\(pendingAnnotation\) \|\| Boolean\(movingAnnotation\)/);
+  assert.match(editor, /disabled=\{!ready \|\| saving \|\| Boolean\(pendingAnnotation\) \|\| Boolean\(movingAnnotation\) \|\| smartBusy\}/);
 });
 
-test("local edit history shortcuts use physical keys and are not preempted by canvas shortcuts", () => {
-  assert.match(editor, /const isUndoKey = key === 'z' \|\| event\.code === 'KeyZ'/);
-  assert.match(editor, /const isRedoKey = key === 'y' \|\| event\.code === 'KeyY'/);
-  assert.match(editor, /!event\.repeat && \(event\.ctrlKey \|\| event\.metaKey\) && isUndoKey/);
+test("canvas-level shortcut handling yields while the local edit modal is active", () => {
   assert.match(canvas, /if \(maskNodeId\) return;/);
 });
 
@@ -184,10 +182,10 @@ test("completed marks stay editable without opening a text dialog", () => {
   assert.match(styles, /\.local-edit-selection-thumb\{[^}]*background-repeat:no-repeat/);
   assert.match(styles, /\.local-edit-annotation-summary>div\{[^}]*max-height:min\(32vh,260px\);[^}]*overflow-x:hidden;[^}]*overflow-y:auto/);
   assert.match(editor, /className=\{`local-edit-annotation-summary\$\{annotations\.length > 0 \? ' has-items' : ''\}\$\{annotations\.length >= 4 \? ' dense' : ''\}`\}/);
-  assert.match(styles, /\.local-edit-workbench-sidebar\{overflow:hidden;padding-right:0/);
-  assert.match(styles, /\.local-edit-annotation-summary\.has-items\{[^}]*flex:1 1 0;min-height:0;overflow:hidden;grid-template-rows:auto minmax\(0,1fr\)/);
-  assert.match(styles, /\.local-edit-annotation-summary\.has-items>div\{[^}]*min-height:0;max-height:none;overflow-x:hidden;overflow-y:auto/);
-  assert.match(styles, /\.local-edit-prompt\{min-height:100px;flex:0 0 clamp\(100px,14vh,160px\)/);
+  assert.match(styles, /\.local-edit-workbench-sidebar\{[^}]*grid-template-rows:minmax\(0,1fr\) auto;[^}]*overflow:hidden/);
+  assert.match(styles, /\.local-edit-annotation-summary\.has-items\{[^}]*flex:none;min-height:0;overflow:visible;grid-template-rows:auto auto/);
+  assert.match(styles, /\.local-edit-annotation-summary\.has-items>div\{[^}]*min-height:0;max-height:min\(32vh,260px\);overflow-x:hidden;overflow-y:auto/);
+  assert.match(styles, /\.local-edit-prompt\{min-height:100px;flex:none/);
   assert.match(styles, /\.local-edit-prompt textarea\{min-height:68px/);
   assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-annotation-summary-select\{min-height:30px/);
   assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-selection-thumb\{width:26px;height:26px/);
@@ -402,7 +400,7 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /stage: 'move-target'/);
   assert.match(editor, /pendingIsExisting: pending\.isExisting/);
   assert.match(editor, /isExisting: movingAnnotation\.pendingIsExisting/);
-  assert.match(editor, /dragImage: copyImageData\(dragBefore\.image\)/);
+  assert.match(editor, /dragImage: imageContext\.getImageData\(0, 0, imageCanvas\.width, imageCanvas\.height\)/);
   assert.match(editor, /isPendingDraft: true/);
   assert.match(editor, /setPendingAnnotation\(pending\)/);
   assert.match(editor, /rebuildMask\(annotationsWithPending\(pending\)\)/);

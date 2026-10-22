@@ -4271,3 +4271,9 @@ html:not([data-theme="light"]) .canvas-group-label-layer>.canvas-group-world-lab
 @media(max-width:1000px){
   .canvas-minimap-fit-mobile{position:absolute;z-index:var(--canvas-z-selection);right:16px;bottom:calc(var(--canvas-deck-height,0px) + 14px);display:inline-flex;min-height:40px;padding:0 11px!important;border-radius:10px!important;font-size:9px!important;font-weight:850}
 }
+
+.canvas-node-editor-popover.canvas-node-editor-popover.is-viewport-fitted:not(.is-prompt-expanded)[data-density]{max-height:var(--canvas-editor-max-height)!important;overflow:hidden!important}
+.canvas-node-editor-popover.canvas-node-editor-popover.is-viewport-fitted:not(.is-prompt-expanded)[data-density]>.canvas-node-editor-surface{min-height:0;flex:1 1 auto!important;overflow:hidden!important}
+.canvas-node-editor-popover.canvas-node-editor-popover.is-viewport-fitted:not(.is-prompt-expanded)[data-density] .canvas-node-editor-body{min-height:0!important;max-height:none!important;flex:1 1 auto!important;overflow-x:hidden!important;overflow-y:auto!important;scrollbar-width:thin}
+.canvas-node-editor-popover.canvas-node-editor-popover.is-viewport-fitted:not(.is-prompt-expanded)[data-density]>.canvas-node-editor-actions{flex:0 0 auto!important}
+.canvas-node-editor-popover.canvas-node-editor-popover.is-viewport-fitted:not(.is-prompt-expanded)[data-density] .canvas-node-editor-dock-toolbar{position:sticky!important;bottom:0;z-index:var(--canvas-z-local-overlay);padding:7px 0;background:var(--panel);border-top:1px solid var(--line)}

@@ -211,3 +211,10 @@ export function canvasImageRequestOperation(
 ): ImageRequestMode {
   return params.mask && options.useCurrentImageAsReference !== false ? "edit" : "auto";
 }
+
+export function canvasCurrentImageReferenceDefault(
+  preference: boolean | undefined,
+  hasLocalEditMask: boolean,
+) {
+  return preference ?? hasLocalEditMask;
+}

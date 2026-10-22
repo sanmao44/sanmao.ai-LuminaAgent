@@ -1,5 +1,19 @@
 /** Provider-neutral model contract. Provider SDKs and HTTP protocols stay in adapters. */
 
+export const MEDIA_MODEL_INPUT_NOT_SUBMITTED = 'MEDIA_MODEL_INPUT_NOT_SUBMITTED';
+export type ModelProviderFailureCode = typeof MEDIA_MODEL_INPUT_NOT_SUBMITTED;
+
+export type ModelProviderFailureKind = 'http' | 'transport' | 'timeout' | 'input';
+
+export type ModelProviderFailure = {
+  providerResponse?: boolean;
+  providerFailureKind?: ModelProviderFailureKind;
+  providerFailureCode?: ModelProviderFailureCode;
+  providerStatus?: number;
+  status?: number;
+  message?: string;
+};
+
 export type ModelCapability =
   | 'text'
   | 'reasoning'

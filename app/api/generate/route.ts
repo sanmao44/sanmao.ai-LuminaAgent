@@ -343,6 +343,7 @@ export async function POST(request: Request) {
           return generateImage(candidate.provider, candidate.model.rawId, input, requestController.signal);
         }
       },
+      { allowFallbackBeforeProviderSubmission: requestedModelId === 'auto' },
     );
     if (usedGenerationFallback && logId) {
       await finishGenerationLog(logId, { mode: modeForLog, operation: operationForLog }).catch(() => undefined);

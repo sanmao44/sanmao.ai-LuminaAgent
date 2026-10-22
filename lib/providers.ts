@@ -1,4 +1,5 @@
 import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderTextProtocol, ProviderType } from './types';
+import type { ModelProviderFailure } from '@/packages/contracts/model';
 import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';
 import type { ImageDownloadAuth } from './image-storage';
 import { inferNativeSearch } from './native-search-detection';
@@ -182,12 +183,7 @@ type ProviderResponseMeta = {
   requestId?: string;
 };
 
-type ProviderFailureKind = 'http' | 'transport' | 'timeout';
-type ProviderFailure = Error & {
-  providerResponse?: boolean;
-  providerFailureKind?: ProviderFailureKind;
-  status?: number;
-  providerStatus?: number;
+type ProviderFailure = Error & ModelProviderFailure & {
   providerRequestId?: string;
   providerUrl?: string;
   providerMethod?: string;
@@ -612,7 +608,13 @@ function isPrivateImageReferenceUrl(value: string) {
 
 function providerImageInputError(detail: string) {
   const error = new Error(`参考图尚未准备好，图片请求未提交：${detail}`);
-  return decorateProviderFailure(error, { providerFailureKind: 'http', providerStatus: 422, providerResponse: true });
+  return decorateProviderFailure(error, { providerFailureKind: 'input', providerStatus: 422, providerResponse: false });
+}
+
+function providerMediaRelayUnavailableError(detail: string) {
+  const error = providerImageInputError(detail);
+  error.providerFailureCode = 'MEDIA_MODEL_INPUT_NOT_SUBMITTED';
+  return error;
 }
 
 async function fetchProviderImageDataUrl(value: string, signal?: AbortSignal) {
@@ -673,11 +675,18 @@ async function materializeProviderImageInput(provider: RuntimeProvider, value: s
 async function prepareProviderImageInput(provider: RuntimeProvider, value: string, signal?: AbortSignal) {
   const dataUrl = await materializeProviderImageInput(provider, value, signal);
   if (!requiresPublicImageInput(provider)) return dataUrl;
+  const signedMedia = await import('./signed-media');
   try {
-    return await (await import('./signed-media')).preparePublicMediaUrl(dataUrl, 'image');
+    return await signedMedia.preparePublicMediaUrl(dataUrl, 'image');
   } catch (error) {
+    if (error instanceof signedMedia.PublicMediaError) {
+      if (error.code === signedMedia.MEDIA_RELAY_REQUIRED || error.code === signedMedia.MEDIA_RELAY_UNAVAILABLE) {
+        throw providerMediaRelayUnavailableError('当前服务商需要可公开访问的图片地址，但应用的媒体中转尚未可用。请稍后重试或在高级设置中配置公网媒体地址。');
+      }
+      throw providerImageInputError(error.message);
+    }
     if (error instanceof Error && error.message.startsWith('参考图尚未准备好')) throw error;
-    throw providerImageInputError('当前服务商需要可公开访问的图片地址，但应用的媒体中转尚未可用。请稍后重试或在高级设置中配置公网媒体地址。');
+    throw providerImageInputError(error instanceof Error ? error.message : '图片尚未准备好，无法提交给当前服务商。');
   }
 }
 

@@ -600,11 +600,12 @@ test("completed image editors remember the current-image reference switch per no
   assert.ok(editorStart >= 0 && editorEnd > editorStart, "image editor should be present");
   const editor = component.slice(editorStart, editorEnd);
   assert.match(editor, /useCurrentImageAsReference/);
-  assert.match(editor, /useState\(currentImageReference \?\? false\)/);
+  assert.match(editor, /canvasCurrentImageReferenceDefault\(currentImageReference, Boolean\(maskState\?\.url\)\)/);
   assert.match(editor, /checked=\{useCurrentImageAsReference\}/);
   assert.match(editor, /aria-label="当前图片作参考"/);
   assert.match(editor, /!branchDraft/);
-  assert.match(editor, /setUseCurrentImageAsReference\(currentImageReference \?\? false\)/);
+  assert.match(editor, /setUseCurrentImageAsReference\([\s\S]*?canvasCurrentImageReferenceDefault\(currentImageReference, Boolean\(maskState\?\.url\)\)/);
+  assert.match(editor, /\[currentImageReference, maskState\?\.url, node\.id\]/);
   assert.match(editor, /onCurrentImageReferenceChange\?\.\(next\)/);
   assert.doesNotMatch(editor, /setUseCurrentImageAsReference\(true\)/);
   assert.match(component, /const \[currentImageReferenceByNode, setCurrentImageReferenceByNode\] = useState<Record<string, boolean>>\(\{\}\)/);
@@ -742,10 +743,10 @@ test("canvas drawers appear directly and do not add heavy stacked shadows", () =
   assert.match(shadowStyles, /\.canvas-node-editor-popover\.is-video-variant \.canvas-node-editor-dock-drawer\s*\{[\s\S]*box-shadow:0 12px 28px rgba\(0,0,0,\.17\)/);
 });
 
-test("opening a dock drawer never changes the attached editor position", () => {
-  assert.doesNotMatch(component, /surface = popover\.querySelector<HTMLElement>\("\.canvas-node-editor-surface"\)/);
-  assert.doesNotMatch(component, /const (popoverHeight|estimatedPopoverHeight|naturalHeight)/);
-  assert.match(component, /isCompact, isDockNode, isImageNode/);
+test("dock drawer height participates in viewport-aware editor positioning", () => {
+  assert.match(component, /const popoverHeight = popover \? measureCanvasNodeEditorHeight\(popover\) : 0/);
+  assert.match(component, /height: popoverHeight/);
+  assert.match(component, /observer\.observe\(popoverRef\.current\)/);
 });
 
 test("selected related edges animate dashed guides and aligned tapered light trails", () => {
@@ -1005,15 +1006,14 @@ test("dock local edit control keeps editing and removal actions in a clear segme
   assert.doesNotMatch(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*position:absolute/);
 });
 
-test("regular editor stays below its node in the stacked main-composer layout", () => {
+test("regular editor uses viewport-aware dock placement and sizing", () => {
   assert.match(component, /placeCanvasNodeEditorDock\(/);
   assert.match(component, /const nextPosition = placeCanvasNodeEditorDock\(\s*anchor,/);
   assert.doesNotMatch(component, /--canvas-editor-width/);
   assert.doesNotMatch(component, /layoutAnchor/);
-  assert.match(component, /data-placement="bottom"/);
-  assert.doesNotMatch(component, /maxHeight: promptExpanded \|\| stackedEditor \|\| isDockNode/);
-  assert.doesNotMatch(component, /needsFullPanelLift/);
-  assert.doesNotMatch(component, /useTopPlacement/);
+  assert.match(component, /data-placement=\{position\.placement\}/);
+  assert.match(component, /position\.isViewportFitted \? " is-viewport-fitted"/);
+  assert.match(component, /height: popoverHeight/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\)\[data-density\]\{[^}]*width:min\(620px,calc\(100vw - 24px\)\)!important/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\)\{[^}]*max-height:min\(560px,calc\(100dvh - 24px\)\)/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-columns\{grid-template-columns:minmax\(0,1fr\)/);
@@ -1029,6 +1029,8 @@ test("regular editor stays below its node in the stacked main-composer layout", 
   assert.match(styles, /\.canvas-node-editor-popover\.is-image-dock:not\(.is-prompt-expanded\) \.canvas-node-editor-dock-preset-wrap\{\s*position:relative!important/);
   assert.match(styles, /\.canvas-node-editor-dock-preset-wrap>\.canvas-node-editor-dock-popover\.is-presets\{[\s\S]*top:auto!important;[\s\S]*bottom:calc\(100% \+ 8px\)!important/);
   assert.match(styles, /:has\(\.canvas-node-editor-dock-popover\.is-presets\)>\.canvas-node-editor-surface,[\s\S]*overflow:visible/);
+  assert.match(styles, /\.canvas-node-editor-popover\.canvas-node-editor-popover\.is-viewport-fitted:not\(\.is-prompt-expanded\)\[data-density\] \.canvas-node-editor-body\{[^}]*overflow-y:auto!important/);
+  assert.match(styles, /\.canvas-node-editor-popover\.canvas-node-editor-popover\.is-viewport-fitted:not\(\.is-prompt-expanded\)\[data-density\] \.canvas-node-editor-dock-toolbar\{position:sticky!important;bottom:0/);
 });
 
 test("multi-select layout toolbar exposes alignment and distribution icons only for ordinary nodes", () => {

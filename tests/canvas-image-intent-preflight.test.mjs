@@ -80,6 +80,15 @@ test('Canvas image preflight skips JEV for explicit operations, masks, and text-
   assert.equal(textOnly.operation, 'generate');
 });
 
+test('a saved local-edit mask enables the current source image unless the user chose otherwise', () => {
+  const preference = imageRequest.canvasCurrentImageReferenceDefault;
+
+  assert.equal(preference(undefined, true), true);
+  assert.equal(preference(undefined, false), false);
+  assert.equal(preference(false, true), false);
+  assert.equal(preference(true, false), true);
+});
+
 test('Canvas image preflight rejects a selected model missing the JEV-selected capability', async () => {
   await assert.rejects(imageRequest.resolveCanvasImageIntentForSubmit({
     requestMode: 'auto', prompt: 'Modify this reference', imageReferenceCount: 1,

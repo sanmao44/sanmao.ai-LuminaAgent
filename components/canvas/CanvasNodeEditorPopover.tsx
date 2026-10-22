@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent as ReactClipboardEvent,
+  type CSSProperties,
   type RefObject,
   type ReactNode,
 } from "react";
@@ -32,7 +33,11 @@ import { placeCanvasNodeEditorDock } from "@/lib/canvas/editor-layout";
 import { canvasVisibleStageWidth } from "@/lib/canvas/menu-layout";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
 import { replaceNaturalReferenceLabels, resolveCreativeReferenceRoles } from "@/lib/creative-references";
-import { canvasImageRequestCapabilities, canvasImageRequestOperation } from "@/lib/canvas/image-reference-request";
+import {
+  canvasCurrentImageReferenceDefault,
+  canvasImageRequestCapabilities,
+  canvasImageRequestOperation,
+} from "@/lib/canvas/image-reference-request";
 import { modelSupportsCapabilityRequirements } from "@/lib/model-picker";
 import type { ModelCapability } from "@/lib/types";
 import { canvasMentionOption } from "@/components/canvas/mention-options";
@@ -47,6 +52,29 @@ import CanvasMaskSummary from "@/components/canvas/CanvasMaskSummary";
 import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStrip";
 import CanvasUpscaleSettingsPanel from "@/components/canvas/CanvasUpscaleSettingsPanel";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
+
+function measureCanvasNodeEditorHeight(popover: HTMLDivElement) {
+  const panelHeight = popover.getBoundingClientRect().height;
+  if (!popover.classList.contains("is-viewport-fitted")) return panelHeight;
+
+  const header = popover.querySelector<HTMLElement>(".canvas-node-editor-head");
+  const body = popover.querySelector<HTMLElement>(".canvas-node-editor-body");
+  const actions = popover.querySelector<HTMLElement>(".canvas-node-editor-actions");
+  const surface = popover.querySelector<HTMLElement>(".canvas-node-editor-surface");
+  if (!header || !body || !actions || !surface) return Math.max(panelHeight, popover.scrollHeight);
+
+  const surfaceStyle = window.getComputedStyle(surface);
+  const popoverStyle = window.getComputedStyle(popover);
+  const extraHeight = [
+    surfaceStyle.rowGap,
+    surfaceStyle.paddingTop,
+    surfaceStyle.paddingBottom,
+    popoverStyle.borderTopWidth,
+    popoverStyle.borderBottomWidth,
+  ].reduce((total, value) => total + (Number.parseFloat(value) || 0), 0);
+
+  return Math.max(panelHeight, header.offsetHeight + body.scrollHeight + actions.offsetHeight + extraHeight);
+}
 
 export type CanvasNodeEditorPopoverProps = {
   smartVariantAction?: ReactNode;
@@ -156,13 +184,21 @@ function CanvasNodeEditorPopover({
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState({ left: 18, top: 86 });
+  const [position, setPosition] = useState<ReturnType<typeof placeCanvasNodeEditorDock>>({
+    left: 18,
+    top: 86,
+    maxHeight: 0,
+    placement: "bottom",
+    isViewportFitted: false,
+  });
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [promptOptimizing, setPromptOptimizing] = useState(false);
   const [promptBeforeOptimization, setPromptBeforeOptimization] = useState<string | null>(null);
   const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
-  const [useCurrentImageAsReference, setUseCurrentImageAsReference] = useState(currentImageReference ?? false);
+  const [useCurrentImageAsReference, setUseCurrentImageAsReference] = useState(
+    canvasCurrentImageReferenceDefault(currentImageReference, Boolean(maskState?.url)),
+  );
   const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
   const imageDockParamsRef = useRef<HTMLDivElement | null>(null);
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
@@ -402,8 +438,10 @@ function CanvasNodeEditorPopover({
   }, [branchDraft?.presetId, branchDraft?.presetName, node.data.generation?.presetId, node.data.generation?.presetName, node.id, supportsImagePresets]);
 
   useEffect(() => {
-    setUseCurrentImageAsReference(currentImageReference ?? false);
-  }, [currentImageReference, node.id]);
+    setUseCurrentImageAsReference(
+      canvasCurrentImageReferenceDefault(currentImageReference, Boolean(maskState?.url)),
+    );
+  }, [currentImageReference, maskState?.url, node.id]);
 
   async function optimizeEditorPrompt() {
     if (!visibleEditorPrompt.trim()) return;
@@ -544,7 +582,9 @@ function CanvasNodeEditorPopover({
     const nextCompact = stageWidth < 960 || zoom < 0.58;
     const microEditor = zoom < 0.35;
     if (nextCompact !== isCompact) setIsCompact(nextCompact);
-    const popoverWidth = popoverRef.current?.offsetWidth || (microEditor ? 360 : nextCompact ? 510 : 640);
+    const popover = popoverRef.current;
+    const popoverWidth = popover?.offsetWidth || (microEditor ? 360 : nextCompact ? 510 : 640);
+    const popoverHeight = popover ? measureCanvasNodeEditorHeight(popover) : 0;
     const stageRect = stage.getBoundingClientRect();
     const nodeElement = Array.from(
       stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
@@ -568,18 +608,20 @@ function CanvasNodeEditorPopover({
     // but it must not be recentered independently from the node.
     /* 参数面板同理：贴到面板左边，别让 Agent 面板压住正在调的那几个参数。 */
     const visibleStage = { width: canvasVisibleStageWidth(stage), height: stageHeight };
-    // Keep the complete editor laid out below the node. The editor never jumps
-    // above its owner; only its prompt field and explicit drawers can scroll.
+    // Keep the editor attached to its node and move it to whichever side fits.
     const nextPosition = placeCanvasNodeEditorDock(
       anchor,
       visibleStage,
-      { width: popoverWidth, height: 0 },
+      { width: popoverWidth, height: popoverHeight },
       14,
       12,
     );
     setPosition((current) =>
       current.left === nextPosition.left &&
-      current.top === nextPosition.top
+      current.top === nextPosition.top &&
+      current.maxHeight === nextPosition.maxHeight &&
+      current.placement === nextPosition.placement &&
+      current.isViewportFitted === nextPosition.isViewportFitted
         ? current
         : nextPosition,
     );
@@ -615,8 +657,8 @@ function CanvasNodeEditorPopover({
     <>
     <div
       ref={popoverRef}
-       className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
-      data-placement="bottom"
+       className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}${position.isViewportFitted ? " is-viewport-fitted" : ""}`}
+      data-placement={position.placement}
       data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
       data-prompt-expanded={promptExpanded ? "true" : "false"}
@@ -625,7 +667,8 @@ function CanvasNodeEditorPopover({
       style={{
         left: position.left,
         top: position.top,
-      }}
+        "--canvas-editor-max-height": `${position.maxHeight}px`,
+      } as CSSProperties}
       onPointerDown={(event) => {
         const target = event.target as Node;
         if (imageDockPanel === "params" && !imageDockParamsRef.current?.contains(target)) {

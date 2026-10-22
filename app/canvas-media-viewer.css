@@ -1,5 +1,6 @@
 /* Media viewer presentation, comparison, and responsive controls. */
 .media-viewer-backdrop{padding:22px}
+.media-viewer-backdrop.is-expanded{padding:0}
 .media-viewer-shared{width:min(1180px,100%);max-height:calc(100vh - 44px);grid-template-rows:auto minmax(300px,1fr) auto auto auto auto;overflow:hidden}
 .media-viewer-shared>header{min-height:58px}
 .media-viewer-header-actions{display:flex;align-items:center;justify-content:flex-end;gap:5px;flex-wrap:wrap}
@@ -90,7 +91,12 @@
 @media(max-width:720px){.canvas-media-viewer-prompt-head{gap:7px}}
 @media(max-width:720px){.canvas-media-viewer-prompt-content>p{max-height:132px}}
 .media-viewer-shared{width:min(1180px,100%);height:min(calc(100vh - 44px),900px);max-height:calc(100vh - 44px);display:flex;flex-direction:column;overflow:hidden}
+.media-viewer-shared.is-expanded{width:100%;max-width:none;height:100vh;height:100dvh;max-height:none;border:0;border-radius:0}
 .media-viewer-shared .media-viewer-stage{flex:1 1 0;min-height:240px;height:auto;max-height:none;overflow:hidden}
+.media-viewer-shared.is-expanded .media-viewer-stage{min-height:0}
+.media-viewer-shared.is-expanded .media-viewer-reference-panel,
+.media-viewer-shared.is-expanded .canvas-media-viewer-prompt,
+.media-viewer-shared.is-expanded .canvas-media-parameters{display:none}
 .media-viewer-shared .canvas-lightbox-stage:not(.compare) .canvas-lightbox-after,
 .media-viewer-shared .canvas-lightbox-before,
 .media-viewer-shared .canvas-lightbox-after{height:100%;min-height:0}
@@ -186,6 +192,8 @@
 .media-viewer-shared .media-viewer-header-button:hover:not(:disabled),.media-viewer-shared .media-viewer-header-button.active,.media-viewer-shared .media-viewer-download-button:hover:not(:disabled){border-color:color-mix(in srgb,var(--accent) 64%,var(--line));background:var(--accent-soft);color:var(--accent-text);transform:translateY(-1px);box-shadow:0 5px 13px color-mix(in srgb,var(--accent) 12%,transparent)}
 .media-viewer-shared .media-viewer-header-button.active .media-viewer-button-icon{border-color:color-mix(in srgb,var(--accent) 48%,var(--line));background:color-mix(in srgb,var(--accent) 22%,var(--panel));color:var(--accent-text)}
 .media-viewer-shared .media-viewer-header-button:focus-visible,.media-viewer-shared .media-viewer-download-button:focus-visible,.media-viewer-shared .media-viewer-close-button:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 52%,transparent);outline-offset:2px}
+.media-viewer-fullscreen-button{width:34px;padding:0!important}
+.media-viewer-fullscreen-button svg{width:13px;height:13px}
 .media-viewer-shared .media-viewer-header-button:disabled,.media-viewer-shared .media-viewer-download-button:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
 .media-viewer-compare-mode{height:36px;gap:3px;padding:4px;border-radius:11px;background:color-mix(in srgb,var(--panel-2) 92%,transparent)}
 .media-viewer-compare-mode button{height:26px;display:inline-flex;align-items:center;gap:4px;padding:0 8px;border-radius:7px;font-size:8px}

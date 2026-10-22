@@ -6,6 +6,7 @@ import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
 import {
   applyLocalEditAnnotationMask,
   applyLocalEditGeometryMask,
+  applyLocalEditProtectionMask,
   calculateEditableCoverage as calculateLocalEditableCoverage,
   composeLocalEditMovePreview,
   composeLocalEditMoveReference,
@@ -15,10 +16,20 @@ import {
   localEditFusionFeather,
   moveLocalEditPixels,
   normalizeLocalEditAnnotations,
+  recoverLocalEditProtectedPixels,
+  rasterizeLocalEditAnnotations,
   type LocalEditAnnotation,
   type LocalEditAnnotationGeometry,
   type LocalEditPoint,
 } from '@/lib/local-edit';
+import {
+  LocalEditHistory,
+  createLocalEditHistorySnapshot,
+  isLocalEditTextEditingTarget,
+  LOCAL_EDIT_HISTORY_LIMIT,
+  resolveLocalEditHistoryShortcut,
+  type LocalEditHistorySnapshot,
+} from '@/lib/local-edit-history';
 import {
   getLocalSegmentationProvider,
   localSegmentationUnavailableMessage,
@@ -52,15 +63,10 @@ type LocalEditTool = 'brush' | 'eraser' | 'rectangle' | 'ellipse' | 'lasso' | 'p
 type LocalEditMode = 'modify' | 'move';
 type PreviewMode = 'overlay' | 'original' | 'range';
 type Point = { x: number; y: number };
-type HistorySnapshot = {
-  image: ImageData;
-  mask: ImageData;
-  baseMask: ImageData;
-  annotations: LocalEditAnnotation[];
-  protectedPixels: Uint8Array;
-  smartMasks: Array<[string, Uint8ClampedArray]>;
+type HistorySnapshot = LocalEditHistorySnapshot & {
+  mask?: ImageData;
+  pendingSelection?: ImageData | null;
 };
-type HistoryState = { states: HistorySnapshot[]; index: number };
 type Gesture = {
   pointerId: number;
   kind: 'draw' | 'shape' | 'lasso' | 'pan';
@@ -102,33 +108,6 @@ type MovePreview = {
   dx: number;
   dy: number;
 };
-
-function samePixels(left: ImageData, right: ImageData) {
-  if (left.width !== right.width || left.height !== right.height || left.data.length !== right.data.length) return false;
-  for (let index = 0; index < left.data.length; index += 1) {
-    if (left.data[index] !== right.data[index]) return false;
-  }
-  return true;
-}
-
-function sameSnapshot(left: HistorySnapshot, right: HistorySnapshot) {
-  if (!samePixels(left.image, right.image) || !samePixels(left.mask, right.mask) || !samePixels(left.baseMask, right.baseMask)) return false;
-  if (left.protectedPixels.length !== right.protectedPixels.length) return false;
-  for (let index = 0; index < left.protectedPixels.length; index += 1) {
-    if (left.protectedPixels[index] !== right.protectedPixels[index]) return false;
-  }
-  if (JSON.stringify(left.annotations) !== JSON.stringify(right.annotations)) return false;
-  if (left.smartMasks.length !== right.smartMasks.length) return false;
-  for (let index = 0; index < left.smartMasks.length; index += 1) {
-    const [leftId, leftPixels] = left.smartMasks[index];
-    const [rightId, rightPixels] = right.smartMasks[index];
-    if (leftId !== rightId || leftPixels.length !== rightPixels.length) return false;
-    for (let pixel = 0; pixel < leftPixels.length; pixel += 1) {
-      if (leftPixels[pixel] !== rightPixels[pixel]) return false;
-    }
-  }
-  return true;
-}
 
 function formatCoverage(value: number) {
   const percent = value * 100;
@@ -217,10 +196,6 @@ function createProtectedImageData(width: number, height: number) {
     image.data[index + 3] = 255;
   }
   return image;
-}
-
-function copySmartMasks(masks: ReadonlyMap<string, Uint8ClampedArray>) {
-  return Array.from(masks.entries(), ([id, pixels]) => [id, new Uint8ClampedArray(pixels)] as [string, Uint8ClampedArray]);
 }
 
 function copyGeometry(geometry: LocalEditAnnotationGeometry) {
@@ -320,7 +295,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const sourceImageRef = useRef<ImageData | null>(null);
-  const historyRef = useRef<HistoryState>({ states: [], index: -1 });
+  const historyRef = useRef(new LocalEditHistory());
   const baseMaskRef = useRef<ImageData | null>(null);
   const protectedPixelsRef = useRef<Uint8Array | null>(null);
   const smartMaskPixelsRef = useRef<Map<string, Uint8ClampedArray>>(new Map());
@@ -329,6 +304,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   const gestureRef = useRef<Gesture | null>(null);
   const movePreviewRef = useRef<MovePreview | null>(null);
   const spacePressedRef = useRef(false);
+  const smartBusyRef = useRef(false);
+  const smartOperationRevisionRef = useRef(0);
   const [mode, setMode] = useState<LocalEditMode>('modify');
   const [tool, setTool] = useState<LocalEditTool>('brush');
   const [brushSize, setBrushSize] = useState(48);
@@ -370,23 +347,29 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     if (ready) refreshPreview();
   }, [feather, ready]);
 
-  const captureSnapshot = (snapshotAnnotations = annotationsRef.current): HistorySnapshot | null => {
-    const imageCanvas = imageCanvasRef.current;
-    const imageContext = imageCanvas?.getContext('2d');
+  const captureSnapshot = (
+    snapshotAnnotations = annotationsRef.current,
+    options: { includeMask?: boolean } = {},
+  ): HistorySnapshot | null => {
     const canvas = maskCanvasRef.current;
     const context = canvas?.getContext('2d');
-    if (!imageCanvas || !imageContext || !canvas || !context) return null;
-    const currentImage = imageContext.getImageData(0, 0, imageCanvas.width, imageCanvas.height);
-    const current = context.getImageData(0, 0, canvas.width, canvas.height);
-    const base = baseMaskRef.current || copyImageData(current);
+    if (!canvas || !context) return null;
+    const mask = options.includeMask || !baseMaskRef.current
+      ? context.getImageData(0, 0, canvas.width, canvas.height)
+      : undefined;
+    const baseMask = baseMaskRef.current || (mask ? copyImageData(mask) : null);
+    if (!baseMask) return null;
     const protectedPixels = protectedPixelsRef.current || new Uint8Array(canvas.width * canvas.height);
+    const snapshot = createLocalEditHistorySnapshot({
+      baseMask,
+      annotations: snapshotAnnotations,
+      protectedPixels,
+      smartMasks: smartMaskPixelsRef.current,
+    });
     return {
-      image: copyImageData(currentImage),
-      mask: copyImageData(current),
-      baseMask: copyImageData(base),
-      annotations: copyAnnotations(snapshotAnnotations),
-      protectedPixels: new Uint8Array(protectedPixels),
-      smartMasks: copySmartMasks(smartMaskPixelsRef.current),
+      ...snapshot,
+      ...(options.includeMask && mask ? { mask } : {}),
+      pendingSelection: pendingSelectionRef.current ? copyImageData(pendingSelectionRef.current) : null,
     };
   };
 
@@ -416,9 +399,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       smartMaskPixelsRef.current.get(annotation.id),
       annotation.move?.from.map((_, index) => smartMaskPixelsRef.current.get(`${annotation.id}:from:${index}`)),
     ));
-    for (let pixel = 0; pixel < protectedPixelsRef.current.length; pixel += 1) {
-      if (protectedPixelsRef.current[pixel]) image.data[pixel * 4 + 3] = 255;
-    }
+    applyLocalEditProtectionMask(image.data, protectedPixelsRef.current);
     context.putImageData(image, 0, 0);
     refreshPreview();
   };
@@ -443,48 +424,46 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
 
   const pushHistory = (before?: HistorySnapshot | null) => {
     const after = captureSnapshot();
-    if (!after || (before && sameSnapshot(before, after))) return;
-    const history = historyRef.current;
-    const nextStates = history.states.slice(0, history.index + 1);
-    nextStates.push(after);
-    while (nextStates.length > 21) nextStates.shift();
-    historyRef.current = { states: nextStates, index: nextStates.length - 1 };
+    if (!after || !historyRef.current.push(after, before)) return;
     setHistoryVersion((value) => value + 1);
   };
 
-  const restoreSnapshot = (state: HistorySnapshot) => {
+  const restoreSnapshot = (state: HistorySnapshot | LocalEditHistorySnapshot) => {
     const imageCanvas = imageCanvasRef.current;
-    const imageContext = imageCanvas?.getContext('2d');
     const canvas = maskCanvasRef.current;
     const context = canvas?.getContext('2d');
-    if (!imageCanvas || !imageContext || !canvas || !context) return;
-    imageContext.putImageData(copyImageData(state.image), 0, 0);
-    baseMaskRef.current = copyImageData(state.baseMask);
-    protectedPixelsRef.current = new Uint8Array(state.protectedPixels);
-    smartMaskPixelsRef.current = new Map(state.smartMasks.map(([id, pixels]) => [id, new Uint8ClampedArray(pixels)]));
+    if (!imageCanvas || !canvas || !context) return;
+    baseMaskRef.current = state.baseMask;
+    protectedPixelsRef.current = state.protectedPixels;
+    smartMaskPixelsRef.current = new Map(state.smartMasks);
     annotationsRef.current = copyAnnotations(state.annotations);
     setAnnotations(annotationsRef.current);
+    const pendingSelection = 'pendingSelection' in state ? state.pendingSelection : null;
+    pendingSelectionRef.current = pendingSelection ? copyImageData(pendingSelection) : null;
     setMoveSourceId((current) => current && state.annotations.some((annotation) => annotation.id === current) ? current : null);
-    context.putImageData(copyImageData(state.mask), 0, 0);
-    refreshPreview();
+    renderMovePreview(annotationsRef.current);
+    if (pendingAnnotation?.stage === 'modify' && !pendingAnnotation.isExisting && pendingSelectionRef.current) {
+      rebuildMaskWithPending(pendingAnnotation);
+    } else {
+      rebuildMask(annotationsRef.current);
+    }
   };
 
   const restoreHistory = (index: number) => {
-    const state = historyRef.current.states[index];
+    const state = historyRef.current.moveTo(index);
     if (!state) return;
     restoreSnapshot(state);
-    historyRef.current.index = index;
     setHistoryVersion((value) => value + 1);
   };
 
   const undo = () => {
-    if (pendingAnnotation || movingAnnotation) return;
+    if (smartBusyRef.current || pendingAnnotation || movingAnnotation) return;
     if (historyRef.current.index > 0) restoreHistory(historyRef.current.index - 1);
   };
 
   const redo = () => {
-    if (pendingAnnotation || movingAnnotation) return;
-    if (historyRef.current.index + 1 < historyRef.current.states.length) restoreHistory(historyRef.current.index + 1);
+    if (smartBusyRef.current || pendingAnnotation || movingAnnotation) return;
+    if (historyRef.current.index + 1 < historyRef.current.length) restoreHistory(historyRef.current.index + 1);
   };
 
   useEffect(() => {
@@ -492,7 +471,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        if (!saving) {
+        if (!saving && !smartBusyRef.current) {
           if (movingAnnotation) cancelMoveAnnotation();
           else if (pendingAnnotation) cancelPendingAnnotation();
           else onCancel();
@@ -500,19 +479,13 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
         return;
       }
       if (event.code === 'Space' && !event.repeat) {
-        spacePressedRef.current = true;
+        if (!isLocalEditTextEditingTarget(event.target)) spacePressedRef.current = true;
         return;
       }
-      const key = event.key.toLowerCase();
-      const isUndoKey = key === 'z' || event.code === 'KeyZ';
-      const isRedoKey = key === 'y' || event.code === 'KeyY';
-      if (!event.repeat && (event.ctrlKey || event.metaKey) && isUndoKey) {
-        event.preventDefault();
-        if (event.shiftKey) redo(); else undo();
-      } else if (!event.repeat && (event.ctrlKey || event.metaKey) && isRedoKey) {
-        event.preventDefault();
-        redo();
-      }
+      const shortcut = resolveLocalEditHistoryShortcut(event, event.target);
+      if (!shortcut) return;
+      event.preventDefault();
+      if (shortcut === 'undo') undo(); else redo();
     };
     const handleKeyUp = (event: KeyboardEvent) => {
       if (event.code === 'Space') spacePressedRef.current = false;
@@ -527,6 +500,9 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
 
   useEffect(() => {
     let cancelled = false;
+    smartOperationRevisionRef.current += 1;
+    smartBusyRef.current = false;
+    setSmartBusy(false);
     setReady(false);
     setError('');
     setCoverage(0);
@@ -549,7 +525,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     protectedPixelsRef.current = null;
     sourceImageRef.current = null;
     smartMaskPixelsRef.current.clear();
-    historyRef.current = { states: [], index: -1 };
+    historyRef.current.reset();
     const image = new Image();
     image.onload = () => {
       if (cancelled) return;
@@ -569,7 +545,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       const mask = maskCanvasRef.current;
       const maskContext = mask?.getContext('2d');
       if (!mask || !maskContext) return;
-      const initialize = async () => {
+      const initialize = async (persistedMaskLoaded = false) => {
         if (cancelled) return;
         const restoredAnnotations = normalizeLocalEditAnnotations(initialAnnotations);
         smartMaskPixelsRef.current.clear();
@@ -591,21 +567,31 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
           });
         }));
         if (cancelled) return;
-        // A persisted mask already contains the merged selection. When its
-        // annotations are present, rebuild from a protected base so deleting
-        // or moving one marker can actually remove its old pixels. A legacy
-        // mask without metadata remains fully editable for compatibility.
-        baseMaskRef.current = restoredAnnotations.length
-          ? createProtectedImageData(mask.width, mask.height)
-          : copyImageData(maskContext.getImageData(0, 0, mask.width, mask.height));
-        protectedPixelsRef.current = new Uint8Array(mask.width * mask.height);
+        const persistedMask = maskContext.getImageData(0, 0, mask.width, mask.height);
+        if (restoredAnnotations.length) {
+          // Rebuild annotations from a protected base so markers remain removable,
+          // while recovering erased pixels from the persisted merged mask.
+          baseMaskRef.current = createProtectedImageData(mask.width, mask.height);
+          protectedPixelsRef.current = persistedMaskLoaded
+            ? recoverLocalEditProtectedPixels(
+              persistedMask.data,
+              mask.width,
+              mask.height,
+              restoredAnnotations,
+              smartMaskPixelsRef.current,
+            )
+            : new Uint8Array(mask.width * mask.height);
+        } else {
+          baseMaskRef.current = copyImageData(persistedMask);
+          protectedPixelsRef.current = new Uint8Array(mask.width * mask.height);
+        }
         rebuildMask(restoredAnnotations);
         annotationsRef.current = restoredAnnotations;
         setAnnotations(copyAnnotations(restoredAnnotations));
         renderMovePreview(restoredAnnotations);
         const initial = captureSnapshot(restoredAnnotations);
         if (!initial) return;
-        historyRef.current = { states: [initial], index: 0 };
+        historyRef.current.reset(initial);
         refreshPreview();
         setReady(true);
       };
@@ -621,7 +607,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
         if (cancelled) return;
         maskContext.clearRect(0, 0, mask.width, mask.height);
         maskContext.drawImage(existingMask, 0, 0, mask.width, mask.height);
-        void initialize();
+        void initialize(true);
       };
       existingMask.onerror = () => { void initialize(); };
       existingMask.src = initialMaskDataUrl;
@@ -631,7 +617,11 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     };
     image.src = imageUrl;
     imageRef.current = image;
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      smartOperationRevisionRef.current += 1;
+      smartBusyRef.current = false;
+    };
   }, [imageUrl, initialMaskDataUrl, initialFeather]);
 
   function point(event: React.PointerEvent<HTMLCanvasElement>): Point {
@@ -748,7 +738,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     const base = imageCanvasRef.current;
     const overlay = overlayCanvasRef.current;
     if (!base || !overlay) return;
-    if (annotations.length >= 16) {
+    if (smartBusyRef.current) return;
+    if (annotationsRef.current.length >= 16) {
       setSmartError('最多可以添加 16 个局部标记');
       return;
     }
@@ -756,10 +747,13 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       setSmartError(localSegmentationUnavailableMessage());
       return;
     }
+    const operationRevision = ++smartOperationRevisionRef.current;
+    smartBusyRef.current = true;
     try {
       setSmartBusy(true);
       setSmartError('');
       const result = await segmentLocalSubject(base.toDataURL('image/png'), normalizedPoint(current));
+      if (operationRevision !== smartOperationRevisionRef.current) return;
       if (!result.maskDataUrl) throw new Error('智能点选没有返回有效主体遮罩，请改用框选或画笔标记');
       const rawBounds = result.bounds || { x: 0, y: 0, width: 1, height: 1 };
       const bounds = {
@@ -785,6 +779,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
         createdAt: Date.now(),
       };
       const smartMask = await loadMaskPixels(result.maskDataUrl, base.width, base.height);
+      if (operationRevision !== smartOperationRevisionRef.current) return;
       if (pendingAnnotation?.stage === 'modify' && !pendingAnnotation.isExisting && pendingSelectionRef.current) {
         for (let index = 3; index < pendingSelectionRef.current.data.length; index += 4) {
           if (smartMask[index] < 128) pendingSelectionRef.current.data[index] = 0;
@@ -810,10 +805,14 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
         rebuildMaskWithPending(pending);
       }
     } catch (cause) {
+      if (operationRevision !== smartOperationRevisionRef.current) return;
       setSmartError(cause instanceof Error ? cause.message : '智能点选失败，已保留当前画布；请改用框选或画笔标记');
       restoreSnapshot(before);
     } finally {
-      setSmartBusy(false);
+      if (operationRevision === smartOperationRevisionRef.current) {
+        smartBusyRef.current = false;
+        setSmartBusy(false);
+      }
     }
   }
 
@@ -834,6 +833,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   async function clearLocalSegmentationModel() {
+    if (smartBusyRef.current) return;
     const provider = getLocalSegmentationProvider();
     if (!provider?.clear) return;
     try {
@@ -885,7 +885,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function switchLocalEditMode(nextMode: LocalEditMode, annotation?: LocalEditAnnotation) {
-    if (saving || pendingAnnotation || movingAnnotation || smartBusy) return;
+    if (saving || pendingAnnotation || movingAnnotation || smartBusyRef.current) return;
     setMode(nextMode);
     if (nextMode === 'move' && annotation) setMoveSourceId(annotation.id);
     if (nextMode === 'modify') setMoveSourceId(null);
@@ -893,6 +893,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function handleAnnotationSummaryClick(annotation: LocalEditAnnotation) {
+    if (smartBusyRef.current) return;
     if (mode === 'move') {
       setMoveSourceId(annotation.id);
       return;
@@ -999,12 +1000,14 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function beginMoveAnnotation(event: React.PointerEvent, annotation: LocalEditAnnotation) {
-    if (saving || pendingAnnotation || smartBusy || mode !== 'move') return;
+    if (saving || pendingAnnotation || smartBusyRef.current || mode !== 'move') return;
     event.preventDefault();
     event.stopPropagation();
     const canvas = overlayCanvasRef.current;
     const maskCanvas = maskCanvasRef.current;
-    if (!canvas || !maskCanvas) return;
+    const imageCanvas = imageCanvasRef.current;
+    const imageContext = imageCanvas?.getContext('2d');
+    if (!canvas || !maskCanvas || !imageCanvas || !imageContext) return;
     const before = captureSnapshot();
     if (!before) return;
     setMoveSourceId(annotation.id);
@@ -1016,7 +1019,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       startY: event.clientY,
       initial: annotation,
       before,
-      dragImage: copyImageData(before.image),
+      dragImage: imageContext.getImageData(0, 0, imageCanvas.width, imageCanvas.height),
       selectionMask: selectionMaskForGeometry(
         annotation.geometry,
         maskCanvas.width,
@@ -1034,15 +1037,15 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function beginPendingMove(event: React.PointerEvent, pending: PendingAnnotation) {
-    if (saving || smartBusy || (pending.stage !== 'move-source' && pending.stage !== 'move-target') || movingAnnotation) return;
+    if (saving || smartBusyRef.current || (pending.stage !== 'move-source' && pending.stage !== 'move-target') || movingAnnotation) return;
     event.preventDefault();
     event.stopPropagation();
     const canvas = overlayCanvasRef.current;
     const maskCanvas = maskCanvasRef.current;
-    if (!canvas || !maskCanvas) return;
+    const imageCanvas = imageCanvasRef.current;
+    const imageContext = imageCanvas?.getContext('2d');
+    if (!canvas || !maskCanvas || !imageCanvas || !imageContext) return;
     const sourceGeometry = pending.sourceGeometry || pending.annotation.move?.from.at(-1) || pending.annotation.geometry;
-    const dragBefore = captureSnapshot();
-    if (!dragBefore) return;
     const initialSmartMask = smartMaskPixelsRef.current.get(pending.annotation.id);
     setMovingAnnotation({
       id: pending.annotation.id,
@@ -1051,7 +1054,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       startY: event.clientY,
       initial: pending.annotation,
       before: pending.before,
-      dragImage: copyImageData(dragBefore.image),
+      dragImage: imageContext.getImageData(0, 0, imageCanvas.width, imageCanvas.height),
       selectionMask: selectionMaskForGeometry(pending.annotation.geometry, maskCanvas.width, maskCanvas.height, initialSmartMask),
       sourceGeometry: copyGeometry(sourceGeometry),
       isPendingDraft: true,
@@ -1064,7 +1067,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function cancelMoveAnnotation() {
-    if (!movingAnnotation) return;
+    if (smartBusyRef.current || !movingAnnotation) return;
     const wasPendingDraft = movingAnnotation.isPendingDraft;
     restoreSnapshot(movingAnnotation.before);
     movePreviewRef.current = null;
@@ -1213,14 +1216,20 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       smartMaskPixelsRef.current.get(annotation.id),
       annotation.move?.from.map((_, index) => smartMaskPixelsRef.current.get(`${annotation.id}:from:${index}`)),
     );
-    if (!protectedPixelsRef.current) protectedPixelsRef.current = new Uint8Array(canvas.width * canvas.height);
-    for (let pixel = 0; pixel < protectedPixelsRef.current.length; pixel += 1) {
-      if (selection.data[pixel * 4 + 3] < 128) protectedPixelsRef.current[pixel] = 0;
+    const protectedPixels = protectedPixelsRef.current;
+    if (!protectedPixels) return;
+    let nextProtectedPixels = protectedPixels;
+    for (let pixel = 0; pixel < protectedPixels.length; pixel += 1) {
+      if (selection.data[pixel * 4 + 3] < 128 && protectedPixels[pixel]) {
+        if (nextProtectedPixels === protectedPixels) nextProtectedPixels = new Uint8Array(protectedPixels);
+        nextProtectedPixels[pixel] = 0;
+      }
     }
+    if (nextProtectedPixels !== protectedPixels) protectedPixelsRef.current = nextProtectedPixels;
   }
 
   function confirmAnnotation() {
-    if (!pendingAnnotation) return;
+    if (smartBusyRef.current || !pendingAnnotation) return;
     if (pendingAnnotation.stage === 'modify' && !pendingAnnotation.isExisting && !pendingSelectionHasPixels()) {
       setError('请保留至少一块修改区域后再添加');
       return;
@@ -1243,7 +1252,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function cancelPendingAnnotation() {
-    if (!pendingAnnotation) return;
+    if (smartBusyRef.current || !pendingAnnotation) return;
     restoreSnapshot(pendingAnnotation.before);
     setPendingAnnotation(null);
     setEditingAnnotationId(null);
@@ -1255,27 +1264,21 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function editAnnotation(annotation: LocalEditAnnotation) {
-    if (pendingAnnotation || movingAnnotation) return;
+    if (smartBusyRef.current || pendingAnnotation || movingAnnotation) return;
+    const canvas = maskCanvasRef.current;
+    const before = captureSnapshot();
+    if (!canvas || !before) return;
     setMode('modify');
     setMoveSourceId(null);
     setEditingAnnotationId(annotation.id);
     setAnnotationDraft(annotation.description);
-    const canvas = maskCanvasRef.current;
-    const context = canvas?.getContext('2d');
     const bounds = annotationBounds(annotation);
     setPendingAnnotation({
       annotation,
-      before: captureSnapshot() || {
-        image: new ImageData(1, 1),
-        mask: new ImageData(1, 1),
-        baseMask: new ImageData(1, 1),
-        annotations: copyAnnotations(annotations),
-        protectedPixels: new Uint8Array(1),
-        smartMasks: [],
-      },
+      before,
       anchor: {
-        x: (bounds.x + bounds.width / 2) * Math.max(1, canvas?.width || 1),
-        y: (bounds.y + bounds.height / 2) * Math.max(1, canvas?.height || 1),
+        x: (bounds.x + bounds.width / 2) * Math.max(1, canvas.width),
+        y: (bounds.y + bounds.height / 2) * Math.max(1, canvas.height),
       },
       stage: 'modify',
       isExisting: true,
@@ -1283,7 +1286,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function saveEditedAnnotation() {
-    if (!editingAnnotationId) return;
+    if (smartBusyRef.current || !editingAnnotationId) return;
     const next = annotations.map((item) => item.id === editingAnnotationId ? { ...item, description: annotationDraft.trim() } : item);
     annotationsRef.current = next;
     setAnnotations(next);
@@ -1296,6 +1299,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function confirmPendingAnnotation() {
+    if (smartBusyRef.current) return;
     if (editingAnnotationId) {
       saveEditedAnnotation();
       return;
@@ -1304,7 +1308,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function deleteAnnotation(annotation: LocalEditAnnotation) {
-    if (pendingAnnotation || movingAnnotation) return;
+    if (smartBusyRef.current || pendingAnnotation || movingAnnotation) return;
     const canvas = maskCanvasRef.current;
     const context = canvas?.getContext('2d');
     if (!canvas || !context) return;
@@ -1323,7 +1327,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   function commitEraser(before: HistorySnapshot) {
     const canvas = maskCanvasRef.current;
     const context = canvas?.getContext('2d');
-    if (!canvas || !context) return;
+    if (!canvas || !context || !before.mask) return;
     const current = context.getImageData(0, 0, canvas.width, canvas.height);
     const base = baseMaskRef.current ? copyImageData(baseMaskRef.current) : copyImageData(before.baseMask);
     const protectedPixels = protectedPixelsRef.current ? new Uint8Array(protectedPixelsRef.current) : new Uint8Array(canvas.width * canvas.height);
@@ -1341,14 +1345,15 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
 
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     const canContinueModifyDraft = pendingAnnotation?.stage === 'modify' && !pendingAnnotation.isExisting;
-    if (!ready || saving || movingAnnotation || smartBusy || (pendingAnnotation && !canContinueModifyDraft)) return;
+    if (!ready || saving || movingAnnotation || smartBusyRef.current || (pendingAnnotation && !canContinueModifyDraft)) return;
     event.preventDefault();
     event.stopPropagation();
     const canvas = event.currentTarget;
     const panGesture = tool === 'pan' || event.button === 1 || spacePressedRef.current;
     const current = point(event);
     const maskContext = maskCanvasRef.current?.getContext('2d');
-    const before = captureSnapshot();
+    const includeMask = !panGesture && (tool === 'eraser' || tool === 'rectangle' || tool === 'ellipse' || tool === 'lasso');
+    const before = captureSnapshot(annotationsRef.current, { includeMask });
     if (tool === 'smart') {
       if (before) void handleSmartSelection(current, before);
       return;
@@ -1387,9 +1392,11 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     if (!context) return;
     if (tool === 'point') return;
     if (gesture.kind === 'shape' && gesture.before && gesture.start) {
+      if (!gesture.before.mask) return;
       context.putImageData(gesture.before.mask, 0, 0);
       drawShape(context, gesture.start, current);
     } else if (gesture.kind === 'lasso' && gesture.before && gesture.path) {
+      if (!gesture.before.mask) return;
       const nextPath = [...gesture.path, current];
       context.putImageData(gesture.before.mask, 0, 0);
       drawLasso(context, nextPath);
@@ -1453,7 +1460,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function resetAll(protect: boolean) {
-    if (pendingAnnotation || movingAnnotation) return;
+    if (smartBusyRef.current || pendingAnnotation || movingAnnotation) return;
     const canvas = maskCanvasRef.current;
     const context = canvas?.getContext('2d');
     if (!canvas || !context) return;
@@ -1577,7 +1584,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   async function applyLocalEdit() {
-    if (!ready || saving || pendingAnnotation || movingAnnotation || smartBusy) return;
+    if (!ready || saving || pendingAnnotation || movingAnnotation || smartBusyRef.current) return;
     try {
       setError('');
       setSaving(true);
@@ -1617,12 +1624,12 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     : null;
   const pendingAnnotationInput = pendingAnnotation?.stage !== 'move-source' ? pendingAnnotation : null;
   return (
-    <div className="mask-editor-backdrop local-edit-backdrop" style={{ zIndex: CANVAS_Z_INDEX.modal }} onMouseDown={(event) => { if (!saving && event.target === event.currentTarget) onCancel(); }}>
+    <div className="mask-editor-backdrop local-edit-backdrop" style={{ zIndex: CANVAS_Z_INDEX.modal }} onMouseDown={(event) => { if (!saving && !smartBusy && event.target === event.currentTarget) onCancel(); }}>
       <div className="mask-editor local-edit-workbench surface" role="dialog" aria-modal="true" aria-labelledby="local-edit-title">
         {error && <div className="mask-editor-error local-edit-error" role="alert">{error}</div>}
         <div className="mask-editor-head local-edit-workbench-head">
           <div><span>图片工作台</span><h2 id="local-edit-title">局部编辑</h2><small>透明和过渡区域会生成新内容，白色区域保护原图；提交后生成新结果，原图不会被覆盖。</small></div>
-          <button type="button" className="icon-button" disabled={saving} onClick={onCancel} aria-label="关闭局部编辑">×</button>
+          <button type="button" className="icon-button" disabled={saving || smartBusy} onClick={onCancel} aria-label="关闭局部编辑">×</button>
         </div>
         <div className="local-edit-mode-switch" role="group" aria-label="局部编辑功能">
           <span>功能</span>
@@ -1636,7 +1643,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
           <div className="local-edit-workbench-tool-row">
             {([
               ['brush', '画笔标记'], ['eraser', '橡皮擦'], ['rectangle', '矩形选区'], ['ellipse', '椭圆选区'], ['lasso', '自由圈选'], ['point', '点选标记'], ['smart', '智能点选'], ['pan', '拖动画布'],
-            ] as const).map(([value, label]) => <button key={value} type="button" disabled={!ready || saving || (value === 'smart' && !getLocalSegmentationProvider())} className={tool === value ? 'active' : ''} aria-pressed={tool === value} title={value === 'smart' && !getLocalSegmentationProvider() ? localSegmentationUnavailableMessage() : undefined} onClick={() => setTool(value)}>{label}</button>)}
+            ] as const).map(([value, label]) => <button key={value} type="button" disabled={!ready || saving || smartBusy || (value === 'smart' && !getLocalSegmentationProvider())} className={tool === value ? 'active' : ''} aria-pressed={tool === value} title={value === 'smart' && !getLocalSegmentationProvider() ? localSegmentationUnavailableMessage() : undefined} onClick={() => setTool(value)}>{label}</button>)}
             <span className="local-edit-pan-hint" role="note" aria-label="按住鼠标中键拖动画布">
               <span className="local-edit-pan-mouse" aria-hidden="true">
                 <svg viewBox="0 0 32 42" focusable="false">
@@ -1650,8 +1657,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
             </span>
           </div>
           <div className="local-edit-workbench-tool-row local-edit-workbench-view-tools">
-            <button type="button" disabled={!ready || saving} onClick={undo} title="Ctrl/Cmd + Z">撤销</button>
-            <button type="button" disabled={!ready || saving} onClick={redo} title="Ctrl/Cmd + Shift + Z">重做</button>
+            <button type="button" disabled={!ready || saving || smartBusy || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || history.index <= 0} onClick={undo} title="Ctrl/Cmd + Z">撤销</button>
+            <button type="button" disabled={!ready || saving || smartBusy || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || history.index + 1 >= history.length} onClick={redo} title="Ctrl/Cmd + Shift + Z">重做</button>
             <button type="button" disabled={!ready || saving} onClick={() => zoomBy(-0.1)}>−</button>
             <output aria-label="缩放比例">{Math.round(zoom * 100)}%</output>
             <button type="button" disabled={!ready || saving} onClick={() => zoomBy(0.1)}>＋</button>
@@ -1709,9 +1716,9 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
                   const top = pendingAnnotationInput.anchor.y / Math.max(1, imageCanvas?.height || 1);
                   return (
                     <div className="local-edit-annotation-popover" style={{ left: `${Math.max(2, Math.min(72, left * 100))}%`, top: `${Math.max(2, Math.min(78, top * 100))}%` }} onPointerDown={(event) => event.stopPropagation()}>
-                      <input autoFocus value={annotationDraft} disabled={saving} onChange={(event) => setAnnotationDraft(event.target.value)} placeholder={pendingAnnotationInput.stage === 'move-target' ? '补充移动说明' : '补充修改说明'} aria-label={pendingAnnotationInput.stage === 'move-target' ? '移动说明' : '修改说明'} />
-                      <button type="button" disabled={saving} onClick={confirmPendingAnnotation}>{editingAnnotationId || pendingAnnotationInput.isExisting ? '保存' : '添加'}</button>
-                      <button type="button" disabled={saving} onClick={cancelPendingAnnotation}>取消</button>
+                      <input autoFocus value={annotationDraft} disabled={saving || smartBusy} onChange={(event) => setAnnotationDraft(event.target.value)} placeholder={pendingAnnotationInput.stage === 'move-target' ? '补充移动说明' : '补充修改说明'} aria-label={pendingAnnotationInput.stage === 'move-target' ? '移动说明' : '修改说明'} />
+                      <button type="button" disabled={saving || smartBusy} onClick={confirmPendingAnnotation}>{editingAnnotationId || pendingAnnotationInput.isExisting ? '保存' : '添加'}</button>
+                      <button type="button" disabled={saving || smartBusy} onClick={cancelPendingAnnotation}>取消</button>
                     </div>
                   );
                 })()}
@@ -1719,9 +1726,10 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
             </div>
           </div>
           <div className="local-edit-workbench-sidebar">
+            <div className="local-edit-workbench-sidebar-content">
             <div className="local-edit-workbench-summary">
                 <span>编辑范围 <b>{formatCoverage(coverage)}</b></span>
-              <span>历史 {Math.max(0, history.index)} / 20</span>
+              <span>历史 {Math.max(0, history.index)} / {LOCAL_EDIT_HISTORY_LIMIT - 1}</span>
               <div className="local-edit-preview-switch" role="group" aria-label="预览模式">
                 {([['overlay', '叠加预览'], ['original', '原图'], ['range', '编辑范围']] as const).map(([value, label]) => <button key={value} type="button" className={previewMode === value ? 'active' : ''} aria-pressed={previewMode === value} onClick={() => setPreviewMode(value)}>{label}</button>)}
               </div>
@@ -1738,8 +1746,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
               )}
             </section>
             <div className="local-edit-workbench-controls">
-              <label><span>画笔大小</span><input type="range" min="8" max="180" value={brushSize} disabled={!ready || saving} onChange={(event) => setBrushSize(Number(event.target.value))} /><b>{brushSize}px</b></label>
-              <label><span>边缘融合</span><input type="range" min="0" max="48" value={feather} disabled={!ready || saving} onChange={(event) => setFeather(Number(event.target.value))} /><b>{feather > 0 ? `${feather}px` : '自动 2px'}</b></label>
+              <label><span>画笔大小</span><input type="range" min="8" max="180" value={brushSize} disabled={!ready || saving || smartBusy} onChange={(event) => setBrushSize(Number(event.target.value))} /><b>{brushSize}px</b></label>
+              <label><span>边缘融合</span><input type="range" min="0" max="48" value={feather} disabled={!ready || saving || smartBusy} onChange={(event) => setFeather(Number(event.target.value))} /><b>{feather > 0 ? `${feather}px` : '自动 2px'}</b></label>
             </div>
        <section className="local-edit-segmentation-card" aria-label="本地智能点选模型">
               <div className="local-edit-segmentation-head"><span>本地智能点选（SAM）</span><b>{segmentationStatus === 'ready' ? '已安装' : segmentationCached ? '已缓存' : '免费可用'}</b></div>
@@ -1747,8 +1755,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
               {segmentationStatus === 'loading' && <div className="local-edit-segmentation-progress" aria-live="polite"><progress max="100" value={segmentationProgress} /><span>正在安装 {segmentationProgress}%</span></div>}
               {segmentationProviderError && segmentationStatus === 'error' && <div className="local-edit-segmentation-error" role="alert">{segmentationProviderError}</div>}
               <div className="local-edit-segmentation-actions">
-                <button type="button" disabled={segmentationStatus === 'loading' || saving} onClick={() => void installLocalSegmentationModel()}>{segmentationStatus === 'ready' ? '已就绪，可直接点选' : segmentationStatus === 'error' ? '重试安装' : segmentationCached ? '启用本地模型' : '安装免费智能点选模型'}</button>
-                {segmentationStatus === 'ready' && <button type="button" className="danger" disabled={saving} onClick={() => void clearLocalSegmentationModel()}>清除本地模型</button>}
+                 <button type="button" disabled={segmentationStatus === 'loading' || saving || smartBusy} onClick={() => void installLocalSegmentationModel()}>{segmentationStatus === 'ready' ? '已就绪，可直接点选' : segmentationStatus === 'error' ? '重试安装' : segmentationCached ? '启用本地模型' : '安装免费智能点选模型'}</button>
+                 {segmentationStatus === 'ready' && <button type="button" className="danger" disabled={saving || smartBusy} onClick={() => void clearLocalSegmentationModel()}>清除本地模型</button>}
               </div>
             </section>
              <div className="local-edit-intents" aria-label="提示词快捷模板">
@@ -1758,22 +1766,23 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
              <div className={`local-edit-annotation-summary${annotations.length > 0 ? ' has-items' : ''}${annotations.length >= 4 ? ' dense' : ''}`} aria-live="polite">
                <span>局部标记</span><b>{annotations.length} / 16</b>
                {annotations.length > 0 && <div>{annotations.map((annotation, index) => <div key={annotation.id} className="local-edit-annotation-summary-item">
-                 <button type="button" className="local-edit-annotation-summary-select" title={annotationLabel(annotation)} onClick={() => handleAnnotationSummaryClick(annotation)}>
+                  <button type="button" className="local-edit-annotation-summary-select" disabled={smartBusy} title={annotationLabel(annotation)} onClick={() => handleAnnotationSummaryClick(annotation)}>
                    <span className="local-edit-selection-thumb" aria-hidden="true" style={annotationPreviewStyle(annotation, imageUrl)} />
                    <span>{index + 1} · {annotationLabel(annotation)}</span>
                  </button>
-                 <button type="button" className="local-edit-annotation-edit-icon" aria-label={`编辑第 ${index + 1} 个局部标记`} title="编辑局部标记" onClick={() => editAnnotation(annotation)}>
+                  <button type="button" className="local-edit-annotation-edit-icon" disabled={smartBusy} aria-label={`编辑第 ${index + 1} 个局部标记`} title="编辑局部标记" onClick={() => editAnnotation(annotation)}>
                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.8V20h3.2L18.5 8.7l-3.2-3.2L4 16.8Zm15.7-9.9c.4-.4.4-1 0-1.4l-1.2-1.2c-.4-.4-1-.4-1.4 0l-1.6 1.6 3.2 3.2 1-1.1Z" fill="currentColor" /></svg>
                   </button>
-                  <button type="button" className="local-edit-annotation-delete-icon danger" aria-label={`删除第 ${index + 1} 个局部标记`} title="删除整个局部标记（可撤销）" disabled={saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation)} onClick={() => deleteAnnotation(annotation)}>
+                  <button type="button" className="local-edit-annotation-delete-icon danger" aria-label={`删除第 ${index + 1} 个局部标记`} title="删除整个局部标记（可撤销）" disabled={saving || smartBusy || Boolean(pendingAnnotation) || Boolean(movingAnnotation)} onClick={() => deleteAnnotation(annotation)}>
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V5h6v2m-8 0 1 12h6l1-12M10 10v6m4-6v6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
                   </button>
                 </div>)}</div>}
              </div>
              {smartError && <div className="local-edit-smart-note" role="status">{smartError}</div>}
              <label className="local-edit-prompt"><span>局部编辑补充说明（可选）</span><textarea value={prompt} disabled={saving} onChange={(event) => setPrompt(event.target.value)} placeholder="可选：补充本次局部编辑要移除、替换或添加的内容…" /></label>
-            <div className="local-edit-workbench-presets"><button type="button" disabled={!ready || saving} onClick={() => resetAll(true)}>保护全图</button><button type="button" disabled={!ready || saving} onClick={() => resetAll(false)}>编辑全图</button><small>红色区域是编辑范围；橡皮擦会恢复保护。</small></div>
-            <div className="mask-editor-actions local-edit-workbench-actions"><button type="button" className="secondary-action" disabled={saving} onClick={onCancel}>取消</button><button type="button" className="primary-action compact" disabled={!ready || saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || smartBusy} onClick={() => void applyLocalEdit()}>{saving ? '正在提交…' : '应用局部编辑'}</button></div>
+            <div className="local-edit-workbench-presets"><button type="button" disabled={!ready || saving || smartBusy} onClick={() => resetAll(true)}>保护全图</button><button type="button" disabled={!ready || saving || smartBusy} onClick={() => resetAll(false)}>编辑全图</button><small>红色区域是编辑范围；橡皮擦会恢复保护。</small></div>
+            </div>
+            <div className="mask-editor-actions local-edit-workbench-actions"><button type="button" className="secondary-action" disabled={saving || smartBusy} onClick={onCancel}>取消</button><button type="button" className="primary-action compact" disabled={!ready || saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || smartBusy} onClick={() => void applyLocalEdit()}>{saving ? '正在提交…' : '应用局部编辑'}</button></div>
           </div>
         </div>
       </div>

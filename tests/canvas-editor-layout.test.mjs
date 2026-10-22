@@ -125,14 +125,20 @@ test("fits a tall editor below its node without moving it across the anchor", ()
   assert.equal(editor.top, anchor.top + anchor.height + 14);
 });
 
-test("keeps the complete editor below the node when below placement would clip it", () => {
+test("flips the editor above its node when that side has room", () => {
   const editor = layout.placeCanvasNodeEditorDock(
     { left: 300, top: 520, width: 380, height: 120 },
     { width: 1280, height: 720 },
     { width: 640, height: 300 },
   );
 
-  assert.deepEqual(editor, { left: 170, top: 654 });
+  assert.deepEqual(editor, {
+    left: 170,
+    top: 206,
+    maxHeight: 300,
+    placement: "top",
+    isViewportFitted: false,
+  });
 });
 
 test("keeps the editor below the node when the full panel fits", () => {
@@ -142,7 +148,13 @@ test("keeps the editor below the node when the full panel fits", () => {
     { width: 640, height: 300 },
   );
 
-  assert.deepEqual(editor, { left: 170, top: 254 });
+  assert.deepEqual(editor, {
+    left: 170,
+    top: 254,
+    maxHeight: 300,
+    placement: "bottom",
+    isViewportFitted: false,
+  });
 });
 
 test("keeps a below-node editor inside the horizontal viewport margins", () => {
@@ -201,14 +213,20 @@ test("keeps context menus bounded with a short dynamic viewport", () => {
 
 test("places a compact dock horizontally centered below a centered node", () => {
   const anchor = { left: 300, top: 200, width: 380, height: 260 };
-  const stage = { width: 1280, height: 720 };
+  const stage = { width: 1280, height: 900 };
   const dock = layout.placeCanvasNodeEditorDock(
     anchor,
     stage,
     { width: 680, height: 320 },
   );
 
-  assert.deepEqual(dock, { left: 150, top: 474 });
+  assert.deepEqual(dock, {
+    left: 150,
+    top: 474,
+    maxHeight: 320,
+    placement: "bottom",
+    isViewportFitted: false,
+  });
   assert.equal(dock.top, anchor.top + anchor.height + 14);
 });
 
@@ -219,7 +237,13 @@ test("clamps a compact dock to the left horizontal margin", () => {
     { width: 680, height: 300 },
   );
 
-  assert.deepEqual(dock, { left: 12, top: 254 });
+  assert.deepEqual(dock, {
+    left: 12,
+    top: 254,
+    maxHeight: 300,
+    placement: "bottom",
+    isViewportFitted: false,
+  });
 });
 
 test("clamps a compact dock to the right horizontal margin", () => {
@@ -229,16 +253,59 @@ test("clamps a compact dock to the right horizontal margin", () => {
     { width: 680, height: 300 },
   );
 
-  assert.deepEqual(dock, { left: 208, top: 254 });
+  assert.deepEqual(dock, {
+    left: 208,
+    top: 254,
+    maxHeight: 300,
+    placement: "bottom",
+    isViewportFitted: false,
+  });
 });
 
-test("allows a compact dock to extend past the bottom of the viewport", () => {
+test("moves a compact dock above a low node instead of clipping it below the viewport", () => {
   const dock = layout.placeCanvasNodeEditorDock(
     { left: 300, top: 600, width: 380, height: 260 },
     { width: 1280, height: 720 },
     { width: 680, height: 320 },
   );
 
-  assert.deepEqual(dock, { left: 150, top: 874 });
-  assert.equal("maxHeight" in dock, false);
+  assert.deepEqual(dock, {
+    left: 150,
+    top: 266,
+    maxHeight: 320,
+    placement: "top",
+    isViewportFitted: false,
+  });
+});
+
+test("fits and scrolls an editor when neither side has room for its full height", () => {
+  const dock = layout.placeCanvasNodeEditorDock(
+    { left: 300, top: 320, width: 380, height: 260 },
+    { width: 1280, height: 600 },
+    { width: 680, height: 500 },
+  );
+
+  assert.deepEqual(dock, {
+    left: 150,
+    top: 12,
+    maxHeight: 294,
+    placement: "top",
+    isViewportFitted: true,
+  });
+});
+
+test("uses the larger side when both sides need scrolling", () => {
+  const dock = layout.placeCanvasNodeEditorDock(
+    { left: 300, top: 100, width: 380, height: 300 },
+    { width: 1280, height: 600 },
+    { width: 680, height: 500 },
+  );
+
+  assert.deepEqual(dock, {
+    left: 150,
+    top: 414,
+    maxHeight: 174,
+    placement: "bottom",
+    isViewportFitted: true,
+  });
 });

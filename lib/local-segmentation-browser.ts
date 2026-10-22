@@ -6,6 +6,7 @@ import {
   type LocalSegmentationStatus,
 } from './local-segmentation';
 import type { LocalEditPoint } from './local-edit';
+import { selectLocalSegmentationMaskCandidate } from './local-segmentation-sam';
 
 /**
  * Browser-only, free local subject selection.
@@ -30,23 +31,58 @@ const REQUIRED_CACHE_FILES = [
 
 type TransformerRuntime = {
   model: {
-    (inputs: unknown): Promise<any>;
+    (inputs: ProcessorInputs): Promise<SamModelOutput>;
     dispose?: () => Promise<unknown>;
   };
   processor: {
-    (image: unknown, options?: unknown): Promise<any>;
-    post_process_masks: (masks: unknown, originalSizes: unknown, reshapedInputSizes: unknown) => Promise<any[]>;
+    (image: TransformerImage, options?: { input_points: number[][][] }): Promise<ProcessorInputs>;
+    post_process_masks: (
+      masks: TransformerTensor,
+      originalSizes: [number, number][],
+      reshapedInputSizes: [number, number][],
+    ) => Promise<TransformerTensor[]>;
   };
   RawImage: {
-    read: (input: string) => Promise<any>;
+    read: (input: string) => Promise<TransformerImage>;
   };
   env: {
     useBrowserCache: boolean;
     useWasmCache: boolean;
     cacheKey: string;
+    remoteHost: string;
+    remotePathTemplate: string;
     allowRemoteModels: boolean;
     allowLocalModels: boolean;
   };
+};
+
+type TransformerTensor = {
+  data: ArrayLike<number>;
+  dims: number[];
+};
+
+type ProcessorInputs = {
+  original_sizes: [number, number][];
+  reshaped_input_sizes: [number, number][];
+  [key: string]: unknown;
+};
+
+type SamModelOutput = {
+  pred_masks: TransformerTensor;
+  iou_scores?: TransformerTensor;
+};
+
+type TransformerImage = {
+  width: number;
+  height: number;
+  resize: (width: number, height: number) => Promise<TransformerImage>;
+};
+
+type TransformerRuntimeFactory = {
+  AutoProcessor: { from_pretrained: (modelId: string, options?: unknown) => Promise<TransformerRuntime['processor']> };
+  SamModel: { from_pretrained: (modelId: string, options?: unknown) => Promise<TransformerRuntime['model']> };
+  RawImage: TransformerRuntime['RawImage'];
+  env: TransformerRuntime['env'];
 };
 
 let status: LocalSegmentationStatus = 'unavailable';
@@ -69,13 +105,30 @@ function modelFileUrl(file: string) {
   return `https://huggingface.co/${MODEL_ID}/resolve/${MODEL_REVISION}/${file}`;
 }
 
-async function hasCompleteBrowserCache() {
-  if (typeof caches === 'undefined') return false;
+function sameOriginModelFileUrl(file: string) {
+  if (typeof window === 'undefined') return null;
+  const path = [
+    ...MODEL_ID.split('/'),
+    'resolve',
+    MODEL_REVISION,
+    ...file.split('/'),
+  ].map(encodeURIComponent).join('/');
+  return new URL(`/api/local-segmentation/${path}`, window.location.origin).toString();
+}
+
+async function migrateLegacyBrowserCache() {
+  if (typeof caches === 'undefined' || typeof window === 'undefined') return false;
   try {
     const cache = await caches.open(MODEL_CACHE_NAME);
+    await Promise.all(REQUIRED_CACHE_FILES.map(async (file) => {
+      const sameOriginUrl = sameOriginModelFileUrl(file);
+      if (!sameOriginUrl || await cache.match(sameOriginUrl)) return;
+      const legacyResponse = await cache.match(modelFileUrl(file));
+      if (legacyResponse) await cache.put(sameOriginUrl, legacyResponse);
+    }));
     const entries = await Promise.all(REQUIRED_CACHE_FILES.map(async (file) => {
-      const remoteUrl = modelFileUrl(file);
-      return Boolean(await cache.match(remoteUrl));
+      const sameOriginUrl = sameOriginModelFileUrl(file);
+      return Boolean(sameOriginUrl && await cache.match(sameOriginUrl));
     }));
     return entries.every(Boolean);
   } catch {
@@ -105,6 +158,10 @@ function configureTransformers(transformersEnv: TransformerRuntime['env']) {
   transformersEnv.useBrowserCache = typeof caches !== 'undefined';
   transformersEnv.useWasmCache = typeof caches !== 'undefined';
   transformersEnv.cacheKey = MODEL_CACHE_NAME;
+  if (typeof window !== 'undefined') {
+    transformersEnv.remoteHost = `${window.location.origin}/api/local-segmentation/`;
+    transformersEnv.remotePathTemplate = '{model}/resolve/{revision}/';
+  }
   transformersEnv.allowRemoteModels = true;
   transformersEnv.allowLocalModels = false;
 }
@@ -120,13 +177,9 @@ async function load() {
 
   loadPromise = (async () => {
     try {
+      await migrateLegacyBrowserCache();
       const transformers = await import('@huggingface/transformers');
-      const transformerRuntime = transformers as unknown as {
-        AutoProcessor: { from_pretrained: (modelId: string, options?: unknown) => Promise<any> };
-        SamModel: { from_pretrained: (modelId: string, options?: unknown) => Promise<any> };
-        RawImage: TransformerRuntime['RawImage'];
-        env: TransformerRuntime['env'];
-      };
+      const transformerRuntime = transformers as unknown as TransformerRuntimeFactory;
       configureTransformers(transformerRuntime.env);
       const options = {
         revision: MODEL_REVISION,
@@ -180,16 +233,12 @@ async function segment(imageDataUrl: string, point: LocalEditPoint): Promise<Loc
     inputs.reshaped_input_sizes,
   );
   const scores = Array.from(outputs.iou_scores?.data ?? [], Number);
-  const bestIndex = scores.length
-    ? scores.reduce((best: number, score: number, index: number) => score > scores[best] ? index : best, 0)
-    : 0;
-  const maskBatch = masks[0];
-  const mask = maskBatch?.[0]?.[bestIndex];
-  if (!mask?.dims || mask.dims.length !== 2 || !mask.data) {
+  const mask = selectLocalSegmentationMaskCandidate(masks[0], scores);
+  if (!mask) {
     throw new Error('智能点选没有返回有效主体遮罩，请改用框选或画笔标记。');
   }
 
-  const [height, width] = mask.dims as [number, number];
+  const { width, height, data, offset: candidateOffset } = mask;
   const rgba = new Uint8ClampedArray(width * height * 4);
   let minX = width;
   let minY = height;
@@ -197,7 +246,7 @@ async function segment(imageDataUrl: string, point: LocalEditPoint): Promise<Loc
   let maxY = -1;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const selected = Number(mask.data[y * width + x]) > 0;
+      const selected = Number(data[candidateOffset + y * width + x]) > 0;
       const offset = (y * width + x) * 4;
       rgba[offset] = 255;
       rgba[offset + 1] = 255;
@@ -271,7 +320,7 @@ const provider: LocalSegmentationProvider = {
 // Register on both server and client so the optional provider has one stable
 // identity and the editor can render its install card for every user.
 registerLocalSegmentationProvider(provider);
-void hasCompleteBrowserCache().then((value) => {
+void migrateLegacyBrowserCache().then((value) => {
   if (!value || cached) return;
   cached = true;
   emit();

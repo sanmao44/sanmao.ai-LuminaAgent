@@ -257,6 +257,42 @@ export function rasterizeLocalEditAnnotations(
   return pixels;
 }
 
+/** Restore erased protection from a persisted mask and its editable annotations. */
+export function recoverLocalEditProtectedPixels(
+  persistedPixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  annotations: LocalEditAnnotation[],
+  smartMasks?: ReadonlyMap<string, Uint8ClampedArray>,
+) {
+  const annotationPixels = rasterizeLocalEditAnnotations(width, height, annotations, smartMasks);
+  const pixelCount = Math.min(
+    width * height,
+    Math.floor(persistedPixels.length / 4),
+    Math.floor(annotationPixels.length / 4),
+  );
+  const protectedPixels = new Uint8Array(width * height);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const alpha = pixel * 4 + 3;
+    if (persistedPixels[alpha] >= 250 && annotationPixels[alpha] < 250) {
+      protectedPixels[pixel] = 1;
+    }
+  }
+  return protectedPixels;
+}
+
+/** Reapply eraser-protected pixels after rebuilding a mask from annotations. */
+export function applyLocalEditProtectionMask(
+  pixels: Uint8ClampedArray,
+  protectedPixels: Uint8Array,
+) {
+  const pixelCount = Math.min(Math.floor(pixels.length / 4), protectedPixels.length);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    if (protectedPixels[pixel]) pixels[pixel * 4 + 3] = 255;
+  }
+  return pixels;
+}
+
 function withoutConflictingMoveInstruction(prompt: string) {
   return prompt
     .replace(/(?:^|\n)\s*保持主体、姿态和构图不变，只编辑指定范围。?\s*(?=\n|$)/gu, "\n")
