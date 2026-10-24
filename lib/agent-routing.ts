@@ -1,5 +1,5 @@
 import { classifyAgentDeliverable, inferAgentRequestMode, isCapabilityQuestion, type AgentDeliverable, type AgentIntentContext, type AgentIntentDecision, type AgentIntentMessage } from '@/lib/agent-intent';
-import { classifyBrowserAutomation, likelyArtifactGenerationRequest, likelyFileGenerationRequest, likelyFilesystemRequest, likelyMcpManagementRequest, shouldUseAgentWebSearch, type AgentWebDecision, type AgentWebMode, type BrowserAutomationIntent } from '@/lib/agent-web';
+import { classifyBrowserAutomation, classifyDesktopAutomation, likelyArtifactGenerationRequest, likelyFileGenerationRequest, likelyFilesystemRequest, likelyMcpManagementRequest, shouldUseAgentWebSearch, type AgentWebDecision, type AgentWebMode, type BrowserAutomationIntent } from '@/lib/agent-web';
 import { classifyAgentInformationSource } from '@/packages/agent-core/information-routing';
 import type { AgentInformationDecision, AgentRequestDecision as ContractAgentRequestDecision } from '@/packages/contracts/planning';
 import type { SkillRouteDecision } from '@/packages/contracts/skill';
@@ -35,8 +35,6 @@ const filePattern = /(?:文件|附件|csv|tsv|json|markdown|\.md\b|\.txt\b|\.htm
 const contextReferencePattern = /(?:刚才|上一条|上面|之前|此前|继续|再来|再写|再做|基于|按照|按刚才|这个|这张|这份|该|它|他|她|同上|沿用|保持|换成|改成|第[一二三四五六七八九十\d]+张)/i;
 const selfContainedPattern = /(?:只根据这句话|只看本句|不要结合上下文|无需上下文|独立回答|不参考历史|不用参考之前)/i;
 const externalServiceActionPattern = /(?:mcp|model context protocol|接入|连接|调用|同步|提交|发送|发到|创建|更新|删除|读取|查看|列出|搜索|查询).{0,24}(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器|api)|(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器).{0,24}(?:接入|连接|调用|同步|提交|发送|创建|更新|删除|读取|查看|列出|搜索|查询)/i;
-const desktopTargetPattern = /(?:windows|电脑|桌面|窗口|本地(?:软件|应用|程序)|软件|应用程序|记事本|计算器|设备管理器)/i;
-const desktopActionPattern = /(?:打开|启动|切换|点击|输入|打字|滚动|截图|截屏|操作|控制|按键|关闭|launch|open|click|type|scroll|screenshot)/i;
 const githubRepositoryEntityPattern = /(?:github(?:\.com)?|仓库|repo|pull request|\bpr\b|issue|commit|提交|分支|branch|release)/i;
 const githubRepositoryQueryActionPattern = /(?:我的|当前|这个|该|本|上述|上面|最近|最新|多少|几个|哪些|列表|列出|查看|看看|查询|搜索|状态|详情|有|谁|合并)/i;
 
@@ -86,11 +84,13 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   const requestMode = intent.mode || inferAgentRequestMode(text);
   const executable = requestMode === 'execute' || requestMode === 'follow_up';
   const artifactKindCandidate = artifactKindFor(text);
+  const desktopIntent = classifyDesktopAutomation(text);
   const browserIntent = classifyBrowserAutomation(text);
   const skillInstallation = executable && !/[?？]\s*$/.test(text) && /(?:skill|技能)/i.test(text)
     && /(?:安装|导入|创建|制作|做成|打包成|生成|沉淀|install|import|create|build)/i.test(text);
   const artifactKind = skillInstallation ? 'none' as const : artifactKindCandidate;
-  const browserAutomation = executable && !skillInstallation && browserIntent.shouldAutomate;
+  const desktopAutomation = executable && !skillInstallation && desktopIntent.shouldAutomate;
+  const browserAutomation = executable && !skillInstallation && !desktopAutomation && browserIntent.shouldAutomate;
   const filesystem = executable && !skillInstallation && likelyFilesystemRequest(text, options.previousAssistant || '');
   const contextInfo = contextDecision(text, messages);
   // `context.messages` is the prior conversation for callers from the Agent
@@ -112,7 +112,6 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
     : shouldUseAgentWebSearch(options.webMode || 'auto', text, webContext);
   const explicitExternalAction = executable && externalServiceActionPattern.test(text)
     && /(?:mcp|连接|接入|调用|同步|提交|发送|创建|更新|删除)/i.test(text);
-  const desktopAutomation = executable && desktopTargetPattern.test(text) && desktopActionPattern.test(text);
   // GitHub repository/PR/Issue queries are read-only actions even when written
   // as a question. They need MCP discovery and tool execution, but do not
   // grant any write permission.
@@ -133,7 +132,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
       policy: { lane: 'search', web: 'require', discoverMcp: false, allowMcp: false },
       intent, route: 'web', artifactKind: 'none',
       contextNeed: contextInfo.need, contextReason: contextInfo.reason,
-      browserAutomation: false, browserIntent, filesystem: false, web, information, needsTools: true,
+      desktopAutomation: false, browserAutomation: false, browserIntent, filesystem: false, web, information, needsTools: true,
       tools: { useMcp: false, useBrowserMcp: false, useFilesystemMcp: false, useSkills: false, useNativeWeb: true, useNativeArtifact: false, reason: 'Read-only external information request.' },
       skillRoute,
       candidates: [candidate('web', 120, web.reason)],
@@ -150,6 +149,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
       artifactKind: 'none',
       contextNeed: contextInfo.need,
       contextReason: contextInfo.reason,
+      desktopAutomation: false,
       browserAutomation: false,
       browserIntent,
       filesystem: false,
@@ -200,7 +200,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // connector for an otherwise ordinary or ambiguous conversation turn.
   const discoverMcp = !skillInstallation && (executable || githubRepositoryQuery) && (useMcp || (route === 'chat' && intent.mode === 'execute'));
   const webPolicy: AgentWebPolicy = useNativeWeb ? 'require' : 'forbid';
-  return { policy: { lane: 'action', web: webPolicy, discoverMcp, allowMcp: useMcp || discoverMcp }, intent, route, artifactKind, contextNeed: contextInfo.need, contextReason: contextInfo.reason, browserAutomation, browserIntent, filesystem, web, information, needsTools, tools: { useMcp, useBrowserMcp, useFilesystemMcp, useSkills, useNativeWeb, useNativeArtifact, reason }, skillRoute, candidates };
+  return { policy: { lane: 'action', web: webPolicy, discoverMcp, allowMcp: useMcp || discoverMcp }, intent, route, artifactKind, contextNeed: contextInfo.need, contextReason: contextInfo.reason, desktopAutomation, browserAutomation, browserIntent, filesystem, web, information, needsTools, tools: { useMcp, useBrowserMcp, useFilesystemMcp, useSkills, useNativeWeb, useNativeArtifact, reason }, skillRoute, candidates };
 }
 
 /** Keep enough recent context for continuity while dropping stale turns. */

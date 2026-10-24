@@ -322,6 +322,19 @@ test('Windows-MCP routes Device Manager requests and documents the safe App laun
   assert.match(type.description, /requires text and either loc=\[x,y\] or label from a fresh Snapshot/);
 });
 
+test('a desktop-intent priority selects lazy Windows-MCP without loading the browser connector', () => {
+  const windows = {
+    id: 'windows-mcp', name: 'Windows Desktop', catalogId: 'windows-mcp',
+    url: 'stdio://windows-mcp', enabled: true, allowWrite: true, lazy: true,
+  };
+  const browser = {
+    id: 'playwright', name: 'Browser Control', catalogId: 'playwright',
+    url: 'stdio://playwright', enabled: true, allowWrite: true, lazy: true,
+  };
+  assert.deepEqual(mcp.mcpServersForTurn([windows, browser], '打开防火墙'), []);
+  assert.deepEqual(mcp.mcpServersForTurn([windows, browser], '打开防火墙', ['windows-mcp']), [windows]);
+});
+
 test('旧版 Windows-MCP 手动副本不会与内置连接器并行运行', async () => {
   await withDataDir(async (dataDir) => {
     const storeFile = path.join(dataDir, 'mcp', 'servers.json');
