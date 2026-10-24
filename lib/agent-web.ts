@@ -34,17 +34,43 @@ export type BrowserAutomationIntent = {
 
 const BROWSER_NAVIGATION_PATTERN = /(?:打开|访问|进入|前往|去到|跳转到|登陆|登录)\s*(?:一下\s*)?([^，,。！？!?；;\n]+)/i;
 const BROWSER_CONTEXT_PATTERN = /(?:在|用|通过|从)[^，,。！？!?；;]{0,24}(?:浏览器|网页|网站|页面)(?:里|中|上)?|(?:浏览器|网页|网站|页面)(?:里|中|上)|当前(?:网页|页面)|这个(?:网页|页面|网站)/i;
+const DESKTOP_CONTEXT_PATTERN = /(?:windows|电脑|桌面|窗口|本地(?:软件|应用|程序)|软件|应用程序|记事本|计算器)/i;
+const WINDOWS_SYSTEM_TARGET_PATTERN = /(?:防火墙|windows\s*(?:defender|安全中心|更新)|安全中心|系统设置|控制面板|任务管理器|设备管理器|网络设置|网络适配器|个性化|辅助功能|终端|命令提示符|电源选项|蓝牙|音量|服务管理器|事件查看器|注册表|组策略|本地安全策略|系统信息|资源监视器|性能监视器|firewall|settings?|control panel|task manager|device manager|defender|registry|group policy|services?)/i;
 const LOCAL_DESTINATION_PATTERN = /(?:网络设置|设备管理器|个性化|辅助功能|控制面板|任务管理器|终端|命令提示符|文件夹|目录|项目|工作区|剪贴板|计算器|记事本|设置|应用|程序|窗口|菜单|系统|本地|桌面|文件|网络适配器|音量|蓝牙|wifi|wi-?fi|settings?|device manager|task manager|terminal|folder|workspace|clipboard)/i;
 const BROWSER_SEARCH_PATTERN = /(?:搜索|查找|检索|搜一下|搜索一下|find|search|look\s*up)/i;
 const BROWSER_SELECTION_PATTERN = /(?:第\s*[一二三四五六七八九十\d]+|第一条|第一个|最(?:多|少|高|低|新|旧)|最高|最低|下载量|排名|排序|哪个|哪一个|挑选|选择|most|highest|lowest|top\s*\d+)/i;
 const BROWSER_DOWNLOAD_ACTION_PATTERN = /(?:下载|保存|导出)(?!量|数|次数)|\b(?:download|save)\b/i;
 const BROWSER_DOWNLOAD_METRIC_PATTERN = /(?:最多下载|下载最多|下载量|下载数|下载次数)/i;
 const BROWSER_INTERACTION_PATTERN = /(?:点击|点赞|点踩|收藏|关注|评论|回复|填写|登录|提交|播放|滚动|切换|选中|发帖|购买|click|like|comment|fill|submit|play)/i;
+const DESKTOP_ACTION_PATTERN = /(?:打开|启动|启用|开启|切换|点击|输入|打字|滚动|截图|截屏|操作|控制|按键|关闭|禁用|launch|open|click|type|scroll|screenshot|enable|disable|toggle)/i;
+
+export type DesktopAutomationIntent = {
+  shouldAutomate: boolean;
+  reason: string;
+};
+
+/** Recognize local Windows controls before an unqualified target is treated as a website. */
+export function classifyDesktopAutomation(input: string): DesktopAutomationIntent {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return { shouldAutomate: false, reason: 'empty-request' };
+  if (BROWSER_CONTEXT_PATTERN.test(text) || /(?:https?:\/\/|www\.)/i.test(text)) {
+    return { shouldAutomate: false, reason: 'explicit-browser-target' };
+  }
+  if (/^(?:怎么|如何|怎样|为什么|解释|介绍|说明|教我|告诉我|请问)/i.test(text)) {
+    return { shouldAutomate: false, reason: 'desktop-how-to-question' };
+  }
+  const localTarget = DESKTOP_CONTEXT_PATTERN.test(text) || WINDOWS_SYSTEM_TARGET_PATTERN.test(text);
+  const shouldAutomate = localTarget && DESKTOP_ACTION_PATTERN.test(text);
+  return {
+    shouldAutomate,
+    reason: shouldAutomate ? 'windows-desktop-target' : 'no-windows-desktop-target',
+  };
+}
 
 function browserDestinationFrom(text: string) {
   const match = text.match(BROWSER_NAVIGATION_PATTERN);
   const candidate = String(match?.[1] || '').replace(/^['"“”‘’\s]+|['"“”‘’\s]+$/g, '').trim();
-  if (!candidate || LOCAL_DESTINATION_PATTERN.test(candidate)) return '';
+  if (!candidate || LOCAL_DESTINATION_PATTERN.test(candidate) || WINDOWS_SYSTEM_TARGET_PATTERN.test(candidate)) return '';
   return candidate;
 }
 
@@ -59,6 +85,7 @@ export function classifyBrowserAutomation(input: string): BrowserAutomationInten
   const hasSelection = BROWSER_SELECTION_PATTERN.test(text);
   const hasDownloadAction = BROWSER_DOWNLOAD_ACTION_PATTERN.test(text) && !BROWSER_DOWNLOAD_METRIC_PATTERN.test(text);
   const hasInteraction = BROWSER_INTERACTION_PATTERN.test(text);
+  const desktopIntent = classifyDesktopAutomation(text);
   const chained = /(?:然后|接着|之后|再|并且|并|最后|找到|筛选|按|给第|第一条|第一个)/i.test(text);
   const steps: BrowserAutomationStep[] = [];
   if (genericNavigation || destination) steps.push('navigate');
@@ -69,11 +96,13 @@ export function classifyBrowserAutomation(input: string): BrowserAutomationInten
   if (hasSelection && /(?:排序|下载量|最多|最高|排名|按)/i.test(text)) steps.push('sort');
   if (hasDownloadAction) steps.push('download');
   if (hasInteraction) steps.push('interact');
-  const shouldAutomate = genericNavigation
+  const shouldAutomate = !desktopIntent.shouldAutomate && (genericNavigation
     || (Boolean(destination) && (hasSearch || hasSelection || hasDownloadAction || hasInteraction || chained || !browserContext))
-    || (browserContext && (hasSearch || hasSelection || hasDownloadAction || hasInteraction));
+    || (browserContext && (hasSearch || hasSelection || hasDownloadAction || hasInteraction)));
   const confidence = genericNavigation || (destination && (hasSearch || hasSelection || hasDownloadAction || hasInteraction)) ? 'high' : shouldAutomate ? 'medium' : 'low';
-  const reason = genericNavigation
+  const reason = desktopIntent.shouldAutomate
+    ? 'windows-desktop-target'
+    : genericNavigation
     ? 'explicit-browser-navigation'
     : destination
       ? (steps.length > 1 ? 'external-destination-with-page-plan' : 'external-destination')

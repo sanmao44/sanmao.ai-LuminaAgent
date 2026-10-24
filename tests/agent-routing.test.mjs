@@ -46,8 +46,9 @@ test('discovery resolution preserves policy while activating selected desktop to
   for (const input of ['打开个性化', '打开网络设置', '打开设备管理器']) {
     const plan = routing.classifyAgentRequest(input);
     assert.equal(routing.resolveAgentToolPlan(plan, ['windows-test']).useMcp, true, input);
-    assert.equal(routing.resolveAgentToolPlan(plan, []).useMcp, /设备管理器/.test(input), input);
-    assert.equal(plan.tools.useMcp, /设备管理器/.test(input), 'explicit desktop targets activate MCP without mutating the resolved plan');
+    assert.equal(routing.resolveAgentToolPlan(plan, []).useMcp, true, input);
+    assert.equal(plan.tools.useMcp, true, 'explicit Windows controls activate MCP without mutating the resolved plan');
+    assert.equal(plan.desktopAutomation, true, input);
   }
   for (const input of ['推送今日AI新闻', '今天有什么新闻？', '怎么打开网络设置？', '你能打开辅助功能吗？']) {
     const plan = routing.classifyAgentRequest(input);
@@ -62,6 +63,27 @@ test('explicit multi-step desktop command activates MCP but a capability questio
   const question = routing.classifyAgentRequest('你能在记事本里输入文字吗？');
   assert.equal(question.tools.useMcp, false);
   assert.equal(question.policy.allowMcp, false);
+});
+
+test('Windows system-control requests select desktop MCP and exclude browser automation', () => {
+  const desktop = routing.classifyAgentRequest('打开防火墙');
+  assert.equal(desktop.desktopAutomation, true);
+  assert.equal(desktop.browserAutomation, false);
+  assert.equal(desktop.tools.useMcp, true);
+  assert.equal(desktop.tools.useBrowserMcp, false);
+  assert.equal(desktop.policy.discoverMcp, true);
+
+  const question = routing.classifyAgentRequest('怎么打开防火墙？');
+  assert.equal(question.desktopAutomation, false);
+  assert.equal(question.browserAutomation, false);
+  assert.equal(question.tools.useMcp, false);
+  assert.equal(routing.classifyAgentRequest('你能打开防火墙吗？').desktopAutomation, false);
+
+  const browser = routing.classifyAgentRequest('在浏览器里搜索防火墙设置');
+  assert.equal(browser.desktopAutomation, false);
+  assert.equal(browser.browserAutomation, true);
+  assert.equal(browser.tools.useBrowserMcp, true);
+  assert.equal(routing.classifyAgentRequest('打开 bilibili').browserAutomation, true);
 });
 
 test('shared request mode lets role-voice questions activate the matching skill', () => {

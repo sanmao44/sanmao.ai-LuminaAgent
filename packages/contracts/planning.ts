@@ -31,6 +31,7 @@ export type AgentRequestDecision = {
   artifactKind: AgentArtifactKind;
   contextNeed: AgentContextNeed;
   contextReason: string;
+  desktopAutomation: boolean;
   browserAutomation: boolean;
   browserIntent: { shouldAutomate: boolean; destination: string; steps: BrowserAutomationStep[]; confidence: 'high' | 'medium' | 'low'; reason: string };
   filesystem: boolean;

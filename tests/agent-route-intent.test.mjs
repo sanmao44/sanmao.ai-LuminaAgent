@@ -9,6 +9,8 @@ function harness(options = {}) {
   const calls = [];
   const mcpCalls = [];
   const discoveryCalls = [];
+  const mcpSelectionCalls = [];
+  const tabbitCalls = [];
   const manageCalls = [];
   const runtimeLoads = [];
   const images = [];
@@ -139,8 +141,8 @@ function harness(options = {}) {
             discoverMcpForRequest: mcpDiscoveryApi.discoverMcpForRequest,
           },
           browser: {
-            isTabbitCliAvailable: () => false,
-            runTabbitBrowserAction: async () => ({ ok: false, error: 'test browser unavailable' }),
+            isTabbitCliAvailable: () => options.tabbitAvailable === true,
+            runTabbitBrowserAction: async (args) => { tabbitCalls.push(args); return { ok: false, error: 'test browser unavailable' }; },
           },
           filesystem: {
             persistImageBuffer: async () => null,
@@ -248,8 +250,23 @@ function harness(options = {}) {
     '@/lib/web-search': { planSearch: () => ({ intent: { entities: [] }, queries: [] }) },
     '@/lib/native-web-search': { nativeSearchIsEnabled: () => false },
     '@/lib/mcp/store': { listMcpServers: () => options.mcpServers || [] },
-    '@/lib/mcp/discovery': { discoverMcpForRequest: async () => { discoveryCalls.push(true); return { serverIds: (options.mcpServers || []).map((server) => server.id), unavailable: [] }; } },
-    '@/lib/mcp/tools': { mcpServersForTurn: (servers) => servers, loadMcpToolRuntime: async (input) => { runtimeLoads.push(input); return { servers: options.mcpServers || [], tools: options.mcpTools || [] }; }, lazyMcpGroupKeywords: () => ({}) },
+    '@/lib/mcp/discovery': { discoverMcpForRequest: async () => { discoveryCalls.push(true); return { serverIds: options.discoveredMcpIds ?? (options.mcpServers || []).map((server) => server.id), unavailable: [] }; } },
+    '@/lib/mcp/tools': {
+      mcpServersForTurn: (servers, userText, priorityServerIds = []) => {
+        const priority = new Set(priorityServerIds);
+        const selected = servers.filter((server) => server.enabled !== false && (server.lazy !== true || priority.has(server.id)));
+        mcpSelectionCalls.push({ userText, priorityServerIds, selectedServerIds: selected.map((server) => server.id) });
+        return selected;
+      },
+      loadMcpToolRuntime: async (input) => {
+        runtimeLoads.push(input);
+        const servers = input.servers || options.mcpServers || [];
+        const serverIds = new Set(servers.map((server) => server.id));
+        const tools = (options.mcpTools || []).filter((tool) => !tool.mcp?.serverId || serverIds.has(tool.mcp.serverId));
+        return { servers, tools };
+      },
+      lazyMcpGroupKeywords: () => ({}),
+    },
     '@/lib/mcp/client': {},
     '@/lib/mcp/audit': {},
     '@/lib/mcp/filesystem-policy': {},
@@ -287,7 +304,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-    calls, modelCalls, mcpCalls, discoveryCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls,
+    calls, modelCalls, mcpCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -407,6 +424,46 @@ test('discovered desktop tools reach the model instead of the compact no-tools p
     assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'windows-test__App')), content);
     assert.ok(agent.calls.every((call) => !call.messages[0].content.includes('当前请求不需要联网、图片、文件、浏览器、MCP')), content);
   }
+});
+
+test('firewall requests load and execute Windows desktop tools without exposing Tabbit or Playwright', async () => {
+  const windowsServer = { id: 'windows-test', name: 'Windows Desktop', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazy: true };
+  const browserServer = { id: 'playwright-test', name: 'Browser Control', catalogId: 'playwright', enabled: true, allowWrite: true, lazy: true };
+  const agent = harness({
+    mcpServers: [windowsServer, browserServer],
+    discoveredMcpIds: [],
+    tabbitAvailable: true,
+    mcpTools: [
+      {
+        id: 'mcp:windows-test:App', name: 'windows-test__App', source: 'mcp',
+        description: 'Open a Windows application', schema: { type: 'object', properties: {} },
+        tags: ['mcp'], risk: 'external_side_effect', permissions: ['process'], gating: () => true,
+        mcp: { serverId: 'windows-test', serverName: 'Windows Desktop', toolName: 'App', readOnly: false, blocked: false },
+      },
+      {
+        id: 'mcp:playwright-test:browser_navigate', name: 'playwright-test__browser_navigate', source: 'mcp',
+        description: 'Navigate a browser page', schema: { type: 'object', properties: {} },
+        tags: ['mcp'], risk: 'external_side_effect', gating: () => true,
+        mcp: { serverId: 'playwright-test', serverName: 'Browser Control', toolName: 'browser_navigate', readOnly: false, blocked: false },
+      },
+    ],
+    callMcpTool: async (_server, toolName) => ({ isError: false, text: `${toolName} opened Windows firewall controls` }),
+    reply: (payload) => {
+      if (payload.messages.some((message) => message.role === 'tool')) return { content: 'Windows firewall controls opened.' };
+      if (payload.tools?.some((tool) => tool.function.name === 'windows-test__App')) {
+        return { tool_calls: [{ id: 'open-firewall', type: 'function', function: { name: 'windows-test__App', arguments: '{}' } }] };
+      }
+      return { content: 'No Windows desktop tool was available.' };
+    },
+  });
+
+  const result = await agent.post([{ role: 'user', content: '打开防火墙' }]);
+  assert.deepEqual(agent.runtimeLoads[0].servers.map((server) => server.id), ['windows-test']);
+  assert.ok(agent.mcpSelectionCalls[0].priorityServerIds.includes('windows-test'));
+  assert.deepEqual(agent.mcpCalls.map((call) => [call.server, call.toolName]), [['windows-test', 'App']]);
+  assert.ok(agent.calls.every((call) => !call.tools?.some((tool) => ['tabbit_browser', 'playwright-test__browser_navigate'].includes(tool.function.name))));
+  assert.equal(agent.tabbitCalls.length, 0);
+  assert.match(result.message, /Windows firewall controls opened/);
 });
 
 test('desktop Agent keeps calling tools after launch until typing and a fresh snapshot are verified', async () => {

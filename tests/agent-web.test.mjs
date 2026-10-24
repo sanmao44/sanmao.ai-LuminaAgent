@@ -180,6 +180,16 @@ test('识别浏览器连续操作请求，并排除普通联网搜索', () => {
   assert.equal(web.likelyBrowserAutomationRequest('打开网页看看这个页面'), true);
 });
 
+test('Windows 系统控制目标优先于未限定的浏览器导航', () => {
+  for (const input of ['打开防火墙', '启动 Windows 安全中心', '关闭任务管理器']) {
+    assert.equal(web.classifyDesktopAutomation(input).shouldAutomate, true, input);
+    assert.equal(web.classifyBrowserAutomation(input).shouldAutomate, false, input);
+  }
+  assert.equal(web.classifyDesktopAutomation('在浏览器里搜索防火墙设置').shouldAutomate, false);
+  assert.equal(web.classifyBrowserAutomation('在浏览器里搜索防火墙设置').shouldAutomate, true);
+  assert.equal(web.classifyBrowserAutomation('打开 bilibili').shouldAutomate, true);
+});
+
 test('识别本地文件和项目操作请求', () => {
   for (const input of [
     '请读取我授权的项目文件夹，列出目录结构',

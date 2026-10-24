@@ -1576,24 +1576,27 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       .map((message) => (typeof message.content === 'string' ? message.content : ''))
       .join('\n')
       .slice(0, 2000);
-    // The shared route plan remains the source of truth for whether these
-    // priorities are active; keep the legacy expressions for stable source
-    // contracts and the existing priority ordering.
-    const priorityServerIds = [
-      ...(browserAutomationRequest ? ['playwright'] : []),
-      ...(filesystemRequest ? ['filesystem'] : []),
-      ...discoveredMcpIds,
-    ];
     // Canvas context is an untrusted snapshot of old nodes. Do not use it to
     // decide which remote connectors to load; otherwise a stale node saying
     // “GitHub” can make GitHub tools appear in an unrelated image request.
     const creativeToolIsolation = imageGenerationRequest && !browserAutomationRequest && !filesystemRequest && !mcpAdminRequest;
     const toolSelectionIsolated = isCanvasNodeExecution || creativeToolIsolation;
+    const configuredMcpServers = mcpAllowedThisTurn && !toolSelectionIsolated ? listMcpServers() : [];
+    // The shared route plan remains the source of truth for whether these
+    // priorities are active; keep the existing priority ordering.
+    const priorityServerIds = [
+      ...(browserAutomationRequest ? ['playwright'] : []),
+      ...(filesystemRequest ? ['filesystem'] : []),
+      ...(requestRoute.desktopAutomation
+        ? configuredMcpServers.filter((server) => server.catalogId === 'windows-mcp' || server.id === 'windows-mcp').map((server) => server.id)
+        : []),
+      ...discoveredMcpIds,
+    ];
     const mcpTurnText = toolSelectionIsolated ? '' : isCanvasSource ? latestInstruction : recentTurnText;
     const selectedMcpServers = mcpAllowedThisTurn && !toolSelectionIsolated
-      ? mcpServersForTurn(listMcpServers(), mcpTurnText, priorityServerIds)
+      ? mcpServersForTurn(configuredMcpServers, mcpTurnText, priorityServerIds)
       : [];
-    if (tabbitAvailable) {
+    if (requestRoute.desktopAutomation || tabbitAvailable) {
       for (let index = selectedMcpServers.length - 1; index >= 0; index -= 1) {
         if (selectedMcpServers[index]?.catalogId === 'playwright') selectedMcpServers.splice(index, 1);
       }
