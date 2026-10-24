@@ -9,6 +9,21 @@ export type EditorTaskResponse = {
   model?: { id?: string; name?: string; provider?: string };
 };
 
+export type EditorImageResult = { url: string; revisedPrompt?: string };
+
+export function requireEditorImages(value: unknown): EditorImageResult[] {
+  if (!Array.isArray(value)) throw new Error("图片服务没有返回可应用的结果，本轮任务未完成。");
+  const images = value.flatMap((image): EditorImageResult[] => {
+    if (!image || typeof image !== "object" || !("url" in image) || typeof image.url !== "string" || !image.url.trim()) return [];
+    return [{
+      url: image.url,
+      ...( "revisedPrompt" in image && typeof image.revisedPrompt === "string" ? { revisedPrompt: image.revisedPrompt } : {}),
+    }];
+  });
+  if (!images.length) throw new Error("图片服务没有返回可应用的结果，本轮任务未完成。");
+  return images;
+}
+
 export function buildEditorModelCallInput(
   editor: EditorRequestState,
   response: EditorTaskResponse,
@@ -62,6 +77,7 @@ export function buildEditorHistoryMeta(
   durationMs: number,
   reference: EditorReference,
   cloudOutputFormat: string | undefined,
+  taskId?: string,
 ) {
   const isUpscale = editor.mode === "upscale";
   const mask = !isUpscale ? editorMaskProjection(editor) : null;
@@ -77,6 +93,7 @@ export function buildEditorHistoryMeta(
       : isUpscale ? "png" : undefined,
     source: isUpscale ? "upscale" : "edit",
     parentId: editor.item.id,
+    ...(taskId ? { taskId } : {}),
     sourceImageId: isUpscale ? editor.item.id : undefined,
     upscaleProvider: isUpscale ? response.model?.provider : undefined,
     upscaleModel: isUpscale ? response.model?.id : undefined,

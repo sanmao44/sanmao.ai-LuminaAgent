@@ -70,6 +70,7 @@ import {
   removeNodes,
   moveNodesToGroup,
   reorderReferences,
+  smartMediaSize,
   smartPrompt,
   snapshot,
   uid,
@@ -174,7 +175,6 @@ import {
 import { getVideoModelLimits } from "@/lib/video-model-limits";
 import { is65535Provider } from "@/lib/video-platform";
 import {
-  placeCanvasNodeEditorDock,
   placeCanvasGroupToolbar,
   placeCanvasContextMenu,
   placeCanvasNodeToolbar,
@@ -5969,18 +5969,20 @@ export default function SuperCanvas() {
       x: source.x + nodeSize(source).w + 90,
       y: source.y,
     };
+    const sourceRatio = source.data.nativeWidth && source.data.nativeHeight
+      ? source.data.nativeWidth / source.data.nativeHeight
+      : undefined;
+    const outputSize = smartMediaSize("image", params, sourceRatio);
     const resolvedReferenceIds: string[] = [];
     const referenceKeys = new Set<string>();
     const apiReferences: Array<{ url: string; name: string }> = [];
     const materializedReferences: CanvasNode[] = [];
     const referenceEdges: CanvasEdge[] = [];
     let skippedReferenceCount = 0;
-    const outputReservation = createMedia(
-      "image",
-      "",
-      "图片生成中",
-      outputPosition,
-    );
+    const outputReservation = {
+      ...createMedia("image", "", "图片生成中", outputPosition),
+      ...outputSize,
+    };
 
     const addReference = (
       id: string,
@@ -6129,30 +6131,33 @@ export default function SuperCanvas() {
       position: Point,
       status: "running" | "completed" | "failed",
       durationMs?: number,
-    ) => createMedia("image", url, name, position, {
-      role: "图片续生成结果",
-      model: params.model,
-      ...(params.mask ? { maskApplied: true, maskSourceNodeId: source.id } : {}),
-      params: clone(params),
-      status,
-      ...(status === "running" ? { processingStartedAt: createdAt } : {}),
-      statusLabel: status === "running" ? "图片续生成中" : status === "completed" ? "图片已完成" : "图片生成失败",
-      generation: {
-        kind: "image",
-        prompt,
-        userPrompt,
+    ) => ({
+      ...createMedia("image", url, name, position, {
+        role: "图片续生成结果",
+        model: params.model,
+        ...(params.mask ? { maskApplied: true, maskSourceNodeId: source.id } : {}),
         params: clone(params),
-        ...(presetId ? { presetId } : {}),
-        ...(presetName ? { presetName } : {}),
-        operation: actualImageOperation,
-        referenceIds: [...(actualUsesCurrentImageAsReference ? resolvedReferenceIds : resolvedReferenceIds.filter((id) => id !== source.id))],
-        parentNodeId: source.id,
-        reuseSourceNodeId: source.id,
-        taskId,
-        createdAt,
-        ...(durationMs !== undefined ? { durationMs } : {}),
-      },
-      referenceOrder: [...(actualUsesCurrentImageAsReference ? resolvedReferenceIds : resolvedReferenceIds.filter((id) => id !== source.id))],
+        status,
+        ...(status === "running" ? { processingStartedAt: createdAt } : {}),
+        statusLabel: status === "running" ? "图片续生成中" : status === "completed" ? "图片已完成" : "图片生成失败",
+        generation: {
+          kind: "image",
+          prompt,
+          userPrompt,
+          params: clone(params),
+          ...(presetId ? { presetId } : {}),
+          ...(presetName ? { presetName } : {}),
+          operation: actualImageOperation,
+          referenceIds: [...(actualUsesCurrentImageAsReference ? resolvedReferenceIds : resolvedReferenceIds.filter((id) => id !== source.id))],
+          parentNodeId: source.id,
+          reuseSourceNodeId: source.id,
+          taskId,
+          createdAt,
+          ...(durationMs !== undefined ? { durationMs } : {}),
+        },
+        referenceOrder: [...(actualUsesCurrentImageAsReference ? resolvedReferenceIds : resolvedReferenceIds.filter((id) => id !== source.id))],
+      }),
+      ...outputSize,
     });
 
     const pending = createOutput("", "图片生成中", outputPosition, "running");
@@ -9099,10 +9104,8 @@ export default function SuperCanvas() {
         setReuseDraft((current) => current?.sourceNodeId === node.id
           ? { ...current, prompt: nextPrompt, params: clone(params), dirty: true }
           : current);
-        // Applying a local edit completes the mask dialog. Do not reopen the
-        // generic image prompt editor here: the local-edit chip is the single
-        // entry point for reviewing or changing this mask again.
-        projectTask.ifActive(() => setExpandedEditorId(null));
+        // Return to the image dock so the saved mask can be submitted immediately.
+        projectTask.ifActive(() => setExpandedEditorId(node.id));
         setSelectedIds(new Set([node.id]));
         setSelectedGroupId(null);
         projectTask.ifActive(() => setLightbox(null));

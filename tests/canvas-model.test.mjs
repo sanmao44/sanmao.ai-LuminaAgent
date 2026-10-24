@@ -461,6 +461,26 @@ test('sizes video cards from the requested aspect ratio and intrinsic metadata',
   assert.equal(manual.h, 330);
 });
 
+test('sizes image results from custom aspect, custom dimensions, and source fallback', () => {
+  const customAspect = model.smartMediaSize('image', {
+    kind: 'image', aspect: '自定义', customAspectWidth: 16,
+    customAspectHeight: 9, sizeMode: 'system', width: 1024, height: 1024,
+  });
+  const customDimensions = model.smartMediaSize('image', {
+    kind: 'image', aspect: '16:9', customAspectWidth: 16,
+    customAspectHeight: 9, sizeMode: 'custom', width: 1024, height: 2048,
+  });
+  const automatic = model.smartMediaSize('image', {
+    kind: 'image', aspect: '自动', customAspectWidth: 16,
+    customAspectHeight: 9, sizeMode: 'system', width: 1024, height: 1024,
+  }, 9 / 16);
+  const previewRatio = (size) => size.w / (size.h - 48);
+
+  assert.ok(Math.abs(previewRatio(customAspect) - 16 / 9) < 0.02);
+  assert.ok(Math.abs(previewRatio(customDimensions) - 0.5) < 0.02);
+  assert.ok(Math.abs(previewRatio(automatic) - 9 / 16) < 0.02);
+});
+
 test('sizes new empty image nodes with the same preview ratio as an empty video node', () => {
   const image = model.createEmptyMedia('image', { x: 0, y: 0 }, {
     kind: 'image',

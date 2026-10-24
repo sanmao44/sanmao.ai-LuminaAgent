@@ -1,0 +1,94 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createTsRequire } from "./ts-require.mjs";
+
+function createEditRoute(resolveReference) {
+  const logs = new Map();
+  const runtimeModel = {
+    model: { id: "common-image-model", rawId: "raw-common-image-model", displayName: "Common Image" },
+    provider: { id: "common-provider", name: "Common Provider", platform: "custom", baseUrl: "https://provider.example/v1" },
+  };
+  const modules = {
+    "@/lib/providers": {
+      editImage: async () => [{ url: "https://example.test/result.png" }],
+      imageDownloadAuth: () => undefined,
+    },
+    "@/lib/image-storage": { resolveStoredImageReference: resolveReference },
+    "@/lib/generation-log": {
+      startGenerationLog: async (input, id) => {
+        logs.set(id, { ...input, id, status: "pending" });
+        return id;
+      },
+      finishGenerationLog: async (id, patch) => logs.set(id, { ...logs.get(id), ...patch }),
+      appendGenerationLog: async () => {},
+    },
+    "@/lib/generation-persistence": {
+      persistGenerationResult: async ({ images, logId }) => {
+        logs.set(logId, { ...logs.get(logId), status: "success", imageUrls: images.map((image) => image.url) });
+        return { images, path: "" };
+      },
+    },
+    "@/lib/store": {
+      getPublicState: async () => ({ settings: { imageStoragePath: "" } }),
+      getRuntimeImageModelCandidates: async () => [runtimeModel],
+      getRuntimeImageModelForCapability: async () => runtimeModel,
+      markProviderCredentialFailure: async () => {},
+    },
+    "@/lib/auth": { isTrustedAppRequest: () => true },
+    "@/lib/reference-images": { referenceRecordsForLog: () => [] },
+    "@/lib/local-edit-composite": { enforceLocalEditMask: async (images) => images },
+    "@/lib/runtime-operation": {
+      beginRuntimeRequest: async () => async () => {},
+      RuntimeDrainingError: class RuntimeDrainingError extends Error {},
+    },
+    "@/lib/image-orientation": {
+      normalizeStarApiLandscapeImages: async (_provider, _model, _input, images) => images,
+      normalizeStarApiLandscapePrompt: (_provider, _model, prompt) => prompt,
+    },
+    "@/packages/model-runtime/media": {
+      invokeMediaModelCandidates: async (initial, _fallbacks, operation) => operation(initial),
+    },
+  };
+  const { POST } = createTsRequire(process.cwd(), modules)("./app/api/edit/route");
+  return { POST, logs };
+}
+
+function editRequest() {
+  return new Request("http://localhost:3210/api/edit", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      taskId: "local-edit-task-1",
+      prompt: "replace the marked object",
+      model: "auto",
+      references: ["https://example.test/source.png"],
+      referenceImages: [{ id: "source-1", name: "source", url: "https://example.test/source.png" }],
+      count: 1,
+      aspectRatio: "1:1",
+    }),
+  });
+}
+
+test("edit route creates its recovery record before resolving source images", async () => {
+  let logs;
+  const route = createEditRoute(async (reference) => {
+    assert.equal(logs.get("local-edit-task-1")?.status, "pending");
+    return reference;
+  });
+  logs = route.logs;
+
+  const response = await route.POST(editRequest());
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).images[0].url, "https://example.test/result.png");
+  assert.equal(logs.get("local-edit-task-1").status, "success");
+});
+
+test("source resolution failures finish the pre-existing edit record", async () => {
+  const route = createEditRoute(async () => { throw new Error("source image unavailable"); });
+  const response = await route.POST(editRequest());
+
+  assert.equal(response.status, 502);
+  assert.equal(route.logs.get("local-edit-task-1").status, "error");
+  assert.match(route.logs.get("local-edit-task-1").error, /source image unavailable/);
+  assert.equal(route.logs.get("local-edit-task-1").errorCode, undefined);
+});

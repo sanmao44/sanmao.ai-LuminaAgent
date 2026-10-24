@@ -1,6 +1,7 @@
 import type { GenerationLog } from "@/lib/generation-log";
 
 export type GenerationLogListResult = { logs: GenerationLog[] };
+export type GenerationLogResult = { log: GenerationLog | null };
 export type GenerationLogCleanupResult = { removedLogs?: number; deletedImages?: number; dryRun?: boolean };
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -13,6 +14,15 @@ export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> 
   const response = await fetch(`/api/generation-logs?limit=${encodeURIComponent(String(limit))}`, { cache: "no-store" });
   const data = await readJson<GenerationLogListResult>(response);
   return Array.isArray(data.logs) ? data.logs : [];
+}
+
+export async function getGenerationLog(taskId: string, signal?: AbortSignal): Promise<GenerationLog | null> {
+  const response = await fetch(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`, {
+    cache: "no-store",
+    ...(signal ? { signal } : {}),
+  });
+  const data = await readJson<GenerationLogResult>(response);
+  return data.log || null;
 }
 
 export async function cleanupGenerationLogs(days?: number, deleteImages = false): Promise<GenerationLogCleanupResult> {

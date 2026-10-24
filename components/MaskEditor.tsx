@@ -7,6 +7,7 @@ import {
   applyLocalEditAnnotationMask,
   applyLocalEditGeometryMask,
   applyLocalEditProtectionMask,
+  canResetLocalEditMask,
   calculateEditableCoverage as calculateLocalEditableCoverage,
   composeLocalEditMovePreview,
   composeLocalEditMoveReference,
@@ -14,6 +15,7 @@ import {
   createSeamlessLocalEditMask,
   featherLocalEditMask,
   localEditFusionFeather,
+  localEditMoveGuideFeatherRadius,
   moveLocalEditPixels,
   normalizeLocalEditAnnotations,
   recoverLocalEditProtectedPixels,
@@ -330,6 +332,13 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   const [error, setError] = useState('');
   const [, setHistoryVersion] = useState(0);
   const [, setSegmentationVersion] = useState(0);
+  const canResetMask = canResetLocalEditMask({
+    ready,
+    saving,
+    smartBusy,
+    pendingAnnotation: Boolean(pendingAnnotation),
+    movingAnnotation: Boolean(movingAnnotation),
+  });
 
   useEffect(() => {
     const provider = getLocalSegmentationProvider();
@@ -859,10 +868,11 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     width: number,
     height: number,
     smartPixels?: Uint8ClampedArray,
+    featherRadius = localEditFusionFeather(0),
   ) {
     const selection = createProtectedImageData(width, height);
     applyLocalEditGeometryMask(selection.data, width, height, geometry, 'edit', smartPixels);
-    return featherLocalEditMask(selection.data, width, height, localEditFusionFeather(0));
+    return featherLocalEditMask(selection.data, width, height, featherRadius);
   }
 
   function renderMovePreview(nextAnnotations = annotationsRef.current) {
@@ -1025,6 +1035,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
         maskCanvas.width,
         maskCanvas.height,
         initialSmartMask,
+        localEditMoveGuideFeatherRadius(maskCanvas.width, maskCanvas.height),
       ),
       sourceGeometry: copyGeometry(annotation.geometry),
       isPendingDraft: false,
@@ -1055,7 +1066,13 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       initial: pending.annotation,
       before: pending.before,
       dragImage: imageContext.getImageData(0, 0, imageCanvas.width, imageCanvas.height),
-      selectionMask: selectionMaskForGeometry(pending.annotation.geometry, maskCanvas.width, maskCanvas.height, initialSmartMask),
+      selectionMask: selectionMaskForGeometry(
+        pending.annotation.geometry,
+        maskCanvas.width,
+        maskCanvas.height,
+        initialSmartMask,
+        localEditMoveGuideFeatherRadius(maskCanvas.width, maskCanvas.height),
+      ),
       sourceGeometry: copyGeometry(sourceGeometry),
       isPendingDraft: true,
       pendingIsExisting: pending.isExisting,
@@ -1460,7 +1477,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   }
 
   function resetAll(protect: boolean) {
-    if (smartBusyRef.current || pendingAnnotation || movingAnnotation) return;
+    if (!canResetMask || smartBusyRef.current) return;
     const canvas = maskCanvasRef.current;
     const context = canvas?.getContext('2d');
     if (!canvas || !context) return;
@@ -1780,7 +1797,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
              </div>
              {smartError && <div className="local-edit-smart-note" role="status">{smartError}</div>}
              <label className="local-edit-prompt"><span>局部编辑补充说明（可选）</span><textarea value={prompt} disabled={saving} onChange={(event) => setPrompt(event.target.value)} placeholder="可选：补充本次局部编辑要移除、替换或添加的内容…" /></label>
-            <div className="local-edit-workbench-presets"><button type="button" disabled={!ready || saving || smartBusy} onClick={() => resetAll(true)}>保护全图</button><button type="button" disabled={!ready || saving || smartBusy} onClick={() => resetAll(false)}>编辑全图</button><small>红色区域是编辑范围；橡皮擦会恢复保护。</small></div>
+            <div className="local-edit-workbench-presets"><button type="button" disabled={!canResetMask} onClick={() => resetAll(true)}>保护全图</button><button type="button" disabled={!canResetMask} onClick={() => resetAll(false)}>编辑全图</button><small>红色区域是编辑范围；橡皮擦会恢复保护。</small></div>
             </div>
             <div className="mask-editor-actions local-edit-workbench-actions"><button type="button" className="secondary-action" disabled={saving || smartBusy} onClick={onCancel}>取消</button><button type="button" className="primary-action compact" disabled={!ready || saving || Boolean(pendingAnnotation) || Boolean(movingAnnotation) || smartBusy} onClick={() => void applyLocalEdit()}>{saving ? '正在提交…' : '应用局部编辑'}</button></div>
           </div>

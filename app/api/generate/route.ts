@@ -122,6 +122,7 @@ export async function POST(request: Request) {
   let storagePath = '';
   let providerImages: GeneratedImage[] = [];
   let providerFinishedAt = 0;
+  let localMaskSubmitted = false;
   let usedGenerationFallback = false;
   let downloadAuthForResult: ReturnType<typeof imageDownloadAuth> | undefined;
   const startedAt = Date.now();
@@ -177,6 +178,7 @@ export async function POST(request: Request) {
     }
     if (camera?.viewpoint && references.length !== (hasAngleGuide ? 2 : 1)) return Response.json({ error: hasAngleGuide ? '请提交原始参考图和一张构图导引，原图必须排在第一张。' : '请提交一张原始参考图。' }, { status: 400 });
     const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
+    localMaskSubmitted = rawMask.startsWith('data:image/png');
     const rawMoveGuide = typeof body.moveGuide === 'string' ? body.moveGuide.trim() : '';
     const requestedImageOperation = body.imageOperation;
     if (requestedImageOperation !== undefined && requestedImageOperation !== 'generate' && requestedImageOperation !== 'edit' && requestedImageOperation !== 'reference-generate' && requestedImageOperation !== 'auto') {
@@ -369,7 +371,7 @@ export async function POST(request: Request) {
     }
     const upstreamStatus = Number((error as Error & { providerStatus?: number; status?: number }).providerStatus || (error as Error & { status?: number }).status || 0);
     if (runtimeProviderId && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(runtimeProviderId).catch(() => undefined);
-    if (providerImages.some((image) => Boolean(String(image.url || '').trim()))) {
+    if (!localMaskSubmitted && providerImages.some((image) => Boolean(String(image.url || '').trim()))) {
       const postProcessError = error instanceof Error ? error.message : '图片后处理失败';
       const providerResult = await persistGenerationResult({
         images: providerImages,
@@ -390,7 +392,9 @@ export async function POST(request: Request) {
     }
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'GENERATION_CANCELLED');
     const providerPossiblyAccepted = !cancelled && Boolean((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask);
-    const failure = { status: providerPossiblyAccepted ? 'pending' as const : 'error' as const, mode: modeForLog, operation: operationForLog, source: sourceForLog, prompt: promptForLog, presetId: presetIdForLog, presetName: presetNameForLog, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, durationMs: Date.now() - startedAt, error: providerPossiblyAccepted ? '服务商已接收任务，正在生成，请勿重复提交。' : cancelled ? '任务已取消，已停止等待服务商返回' : error instanceof Error ? error.message : '生图失败' };
+    const errorMessage = error instanceof Error ? error.message : '生图失败';
+    const localEditFailure = localMaskSubmitted && providerImages.some((image) => Boolean(String(image.url || '').trim()));
+    const failure = { status: providerPossiblyAccepted ? 'pending' as const : 'error' as const, mode: modeForLog, operation: operationForLog, source: sourceForLog, prompt: promptForLog, presetId: presetIdForLog, presetName: presetNameForLog, aspectRatio: aspectRatioForLog, resolution: resolutionForLog, outputSize: outputSizeForLog, durationMs: Date.now() - startedAt, error: providerPossiblyAccepted ? '服务商已接收任务，正在生成，请勿重复提交。' : cancelled ? '任务已取消，已停止等待服务商返回' : localEditFailure ? `局部编辑后处理失败，未返回未受蒙版约束的图片：${errorMessage}` : errorMessage };
     if (logId) await finishGenerationLog(logId, failure).catch(() => undefined); else await appendGenerationLog(failure).catch(() => undefined);
     if (providerPossiblyAccepted) return Response.json({ pending: true, taskId: logId, message: failure.error }, { status: 202 });
     return Response.json({ error: failure.error }, { status: cancelled ? 499 : 502 });

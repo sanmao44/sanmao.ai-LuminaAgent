@@ -54,7 +54,7 @@ test("canvas shows a non-interactive middle-button pan affordance", () => {
   assert.match(globalCss, /\.local-edit-pan-hint\{[^}]*pointer-events:none/);
   assert.match(globalCss, /\.local-edit-pan-hint\.active\{[^}]*box-shadow/);
   assert.match(globalCss, /@media\(max-width:760px\)/);
-  assert.match(globalCss, /\.local-edit-pan-hint\{flex:1 1 150px/);
+  assert.match(globalCss, /\.local-edit-pan-hint\{display:none/);
 });
 
 test("canvas cursor follows the active pointer task", () => {

@@ -156,6 +156,7 @@ export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> 
       status: 'error',
       durationMs: Math.max(0, now - new Date(log.createdAt).getTime()),
       error,
+      ...(log.mode === 'edit' ? { errorCode: 'provider_result_unconfirmed' } : {}),
     }).catch(() => undefined)));
     const staleIds = new Set(staleLogs.map((log) => log.id));
     return logs.map((log): GenerationLog => staleIds.has(log.id) ? {
@@ -163,6 +164,7 @@ export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> 
       status: 'error',
       durationMs: Math.max(0, now - new Date(log.createdAt).getTime()),
       error,
+      ...(log.mode === 'edit' ? { errorCode: 'provider_result_unconfirmed' } : {}),
     } : log).reverse().slice(0, limit);
   }
   return logs.reverse().slice(0, limit);

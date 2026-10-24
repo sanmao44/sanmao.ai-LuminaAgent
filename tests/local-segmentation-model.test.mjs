@@ -34,7 +34,6 @@ test('local model resource lookup accepts only the pinned SAM files', () => {
   assert.equal(modelFiles.resolveLocalSegmentationModelResource(['Xenova', 'slimsam-77-uniform', 'resolve', 'main', 'config.json']), null);
   assert.equal(modelFiles.resolveLocalSegmentationModelResource(modelPath('../config.json')), null);
 });
-
 test('the model adapter fetches an allowed file and returns immutable cache headers', async () => {
   const expectedUrl = 'https://huggingface.co/Xenova/slimsam-77-uniform/resolve/5850ab45f587c112167512ffef949107115e26a0/config.json';
   const bytes = new Uint8Array([123, 125]);
@@ -81,6 +80,20 @@ test('segmentation proxy configuration is optional and validates its protocol', 
   assert.equal(modelFiles.resolveLocalSegmentationProxy({}), null);
   assert.equal(
     modelFiles.resolveLocalSegmentationProxy({ SANMAO_LOCAL_SEGMENTATION_PROXY: 'http://127.0.0.1:7897' }),
+    'http://127.0.0.1:7897/',
+  );
+  assert.equal(
+    modelFiles.resolveLocalSegmentationProxy({
+      HTTPS_PROXY: '127.0.0.1:8080',
+      HTTP_PROXY: 'http://127.0.0.1:8081',
+    }),
+    'http://127.0.0.1:8080/',
+  );
+  assert.equal(
+    modelFiles.resolveLocalSegmentationProxy({
+      SANMAO_LOCAL_SEGMENTATION_PROXY: 'http://127.0.0.1:7897',
+      HTTPS_PROXY: 'http://127.0.0.1:8080',
+    }),
     'http://127.0.0.1:7897/',
   );
   assert.throws(

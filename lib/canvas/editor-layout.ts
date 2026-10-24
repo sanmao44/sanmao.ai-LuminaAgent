@@ -32,9 +32,8 @@ export type CanvasOverlayFit = CanvasOverlayPosition & {
   maxHeight: number;
 };
 
-export type CanvasNodeEditorDockLayout = CanvasOverlayFit & {
-  placement: "bottom" | "top";
-  isViewportFitted: boolean;
+export type CanvasNodeEditorDockLayout = CanvasOverlayPosition & {
+  placement: "bottom";
 };
 
 /**
@@ -92,7 +91,7 @@ export function placeCanvasActionPopover(
 function centeredLeft(
   anchor: CanvasOverlayAnchor,
   _stage: CanvasOverlayStage,
-  overlay: CanvasOverlaySize,
+  overlay: Pick<CanvasOverlaySize, "width">,
 ) {
   return anchor.left + anchor.width / 2 - overlay.width / 2;
 }
@@ -181,54 +180,21 @@ export function fitCanvasNodeEditorBelow(
   };
 }
 
-/**
- * Keeps the editor attached to its node while choosing the side with enough
- * viewport space. If neither side fits, the larger side becomes scrollable.
- */
+/** Keeps the editor below its node and sizes its scrollable body to the viewport. */
 export function placeCanvasNodeEditorDock(
   anchor: CanvasOverlayAnchor,
   stage: CanvasOverlayStage,
-  overlay: CanvasOverlaySize,
+  overlay: Pick<CanvasOverlaySize, "width">,
   gap = 14,
   margin = 12,
 ): CanvasNodeEditorDockLayout {
-  const fullHeight = Math.max(0, overlay.height);
-  const maxViewportHeight = Math.max(0, stage.height - margin * 2);
-  const belowTop = anchor.top + anchor.height + gap;
-  const aboveBottom = anchor.top - gap;
-  const belowHeight = Math.max(
-    0,
-    Math.min(stage.height - margin - belowTop, maxViewportHeight),
-  );
-  const aboveHeight = Math.max(
-    0,
-    Math.min(aboveBottom - margin, maxViewportHeight),
-  );
-  const placement = fullHeight <= belowHeight
-    ? "bottom"
-    : fullHeight <= aboveHeight
-      ? "top"
-      : belowHeight >= aboveHeight
-        ? "bottom"
-        : "top";
-  const availableHeight = placement === "bottom" ? belowHeight : aboveHeight;
-  const maxHeight = Math.min(fullHeight, availableHeight);
-  const visibleHeight = maxHeight;
-  const desiredTop = placement === "bottom"
-    ? belowTop
-    : aboveBottom - visibleHeight;
-  const top = Math.min(
-    Math.max(desiredTop, margin),
-    Math.max(margin, stage.height - visibleHeight - margin),
-  );
+  const top = anchor.top + anchor.height + gap;
   const centered = centeredLeft(anchor, stage, overlay);
   const rightmostLeft = Math.max(margin, stage.width - overlay.width - margin);
 
   return {
     left: Math.min(Math.max(centered, margin), rightmostLeft),
     top,
-    maxHeight,
-    placement,
-    isViewportFitted: maxHeight + 0.5 < fullHeight,
+    placement: "bottom",
   };
 }

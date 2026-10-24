@@ -28,7 +28,7 @@ test('model capability matching requires every capability and rejects incomplete
 });
 
 function harness(options = {}) {
-  const calls = { edits: [], generations: [], logs: [], finishes: [], releases: 0, modelLookups: [], generationLookups: [], capabilityLookups: [], candidateLookups: [], intentInputs: [] };
+  const calls = { edits: [], generations: [], logs: [], finishes: [], persisted: [], releases: 0, modelLookups: [], generationLookups: [], capabilityLookups: [], candidateLookups: [], intentInputs: [] };
   const runtime = options.runtime || { provider: { id: 'test-provider', name: 'Test' }, model: { id: 'test-edit', rawId: 'gpt-image-2', displayName: 'Test Edit', capabilities: ['generate', 'edit', 'reference'] } };
   const route = load(routeSource, {
     '@/lib/angle-control': angle,
@@ -75,12 +75,17 @@ function harness(options = {}) {
       finishGenerationLog: async (_id, patch) => { calls.finishes.push(patch); },
       appendGenerationLog: async () => {},
     },
-    '@/lib/generation-persistence': { persistGenerationResult: async ({ images }) => ({ images }) },
+    '@/lib/generation-persistence': { persistGenerationResult: async ({ images }) => { calls.persisted.push(images); return { images }; } },
     '@/lib/angle-image': { renderAngleOutput: () => assert.fail('No real image processing expected') },
     '@/lib/auth': { isTrustedAppRequest: () => true },
     '@/lib/reference-images': { referenceRecordsForLog: value => value || [] },
     '@/lib/generation-source': { normalizeGenerationSource: value => value || 'workspace' },
-    '@/lib/local-edit-composite': { enforceLocalEditMask: () => assert.fail('No masks expected') },
+    '@/lib/local-edit-composite': {
+      enforceLocalEditMask: async images => {
+        if (options.localEditError) throw options.localEditError;
+        return images;
+      },
+    },
     '@/lib/runtime-operation': {
       beginRuntimeRequest: async () => async () => { calls.releases++; },
       RuntimeDrainingError: class extends Error {},
@@ -483,6 +488,68 @@ test('image edit keeps a provider image successful when local post-processing fa
   assert.deepEqual(persisted.map(item => item.images), [[providerImage]]);
 });
 
+test('image edit does not return or persist an unmasked provider image when mask compositing fails', async () => {
+  const providerImage = { url: 'https://provider.example/unmasked.png' };
+  const persisted = [];
+  const editSource = await readFile(new URL('../app/api/edit/route.ts', import.meta.url), 'utf8');
+  const route = load(editSource, {
+    '@/lib/providers': {
+      editImage: async () => [providerImage],
+      imageDownloadAuth: () => undefined,
+    },
+    '@/lib/image-storage': { resolveStoredImageReference: async value => value },
+    '@/lib/generation-log': {
+      startGenerationLog: async () => 'masked-edit-result',
+      finishGenerationLog: async () => {},
+      appendGenerationLog: async () => {},
+    },
+    '@/lib/generation-persistence': {
+      persistGenerationResult: async input => {
+        persisted.push(input);
+        return { images: input.images, path: input.storagePath || '' };
+      },
+    },
+    '@/lib/store': {
+      getPublicState: async () => ({ settings: {} }),
+      getRuntimeImageModelForCapability: async () => ({
+        provider: { id: 'provider', name: 'Provider' },
+        model: { id: 'edit-model', rawId: 'edit-model', displayName: 'Edit model' },
+      }),
+      getRuntimeImageModelCandidates: async () => [],
+      markProviderCredentialFailure: async () => {},
+    },
+    '@/lib/auth': { isTrustedAppRequest: () => true },
+    '@/lib/reference-images': { referenceRecordsForLog: () => [] },
+    '@/lib/local-edit-composite': {
+      enforceLocalEditMask: async () => { throw new Error('蒙版合成失败'); },
+    },
+    '@/lib/runtime-operation': {
+      beginRuntimeRequest: async () => async () => {},
+      RuntimeDrainingError: class extends Error {},
+    },
+    '@/lib/image-orientation': {
+      normalizeStarApiLandscapePrompt: (_provider, _model, prompt) => prompt,
+      normalizeStarApiLandscapeImages: async (_provider, _model, _input, images) => images,
+    },
+    '@/packages/model-runtime/media': {
+      invokeMediaModelCandidates: async (initial, _loadFallbacks, operation) => operation(initial),
+    },
+  });
+  const response = await route.POST(new Request('http://localhost/api/edit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt: '局部替换',
+      references: ['data:image/png;base64,dGVzdA=='],
+      mask: 'data:image/png;base64,bWFzaw==',
+    }),
+  }));
+  const body = await response.json();
+  assert.equal(response.status, 502, JSON.stringify(body));
+  assert.match(body.error, /未返回未受蒙版约束的图片/);
+  assert.equal(persisted.length, 0);
+});
+
 test('canvas single-source continuation falls back to generation when the edit route is missing', async () => {
   const api = harness({
     editError: Object.assign(new Error('服务商接口返回 HTTP 404：404 page not found'), { providerFailureKind: 'http', providerStatus: 404 }),
@@ -521,4 +588,22 @@ test('post-processing recovery returns the JEV-selected operation with the prese
   assert.equal(response.status, 200);
   assert.equal(body.operation, 'reference-generate');
   assert.deepEqual(body.images, [{ url: 'https://provider.example/result.png' }]);
+});
+
+test('masked canvas edits fail closed when local mask compositing fails', async () => {
+  const api = harness({
+    editImages: [{ url: 'https://provider.example/unmasked.png' }],
+    localEditError: new Error('蒙版合成失败'),
+  });
+  const response = await api.post({
+    source: 'canvas',
+    imageOperation: 'edit',
+    prompt: '局部替换',
+    references: [reference],
+    mask: 'data:image/png;base64,bWFzaw==',
+  });
+  const body = await response.json();
+  assert.equal(response.status, 502, JSON.stringify(body));
+  assert.match(body.error, /未返回未受蒙版约束的图片/);
+  assert.equal(api.calls.persisted.length, 0);
 });

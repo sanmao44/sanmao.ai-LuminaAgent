@@ -36,6 +36,20 @@ export type LocalEditAnnotation = {
 /** Every submitted local edit gets a small transition zone, even at UI value 0. */
 export const LOCAL_EDIT_MIN_FUSION_FEATHER = 2;
 
+export function canResetLocalEditMask(input: {
+  ready: boolean;
+  saving: boolean;
+  smartBusy: boolean;
+  pendingAnnotation: boolean;
+  movingAnnotation: boolean;
+}) {
+  return input.ready
+    && !input.saving
+    && !input.smartBusy
+    && !input.pendingAnnotation
+    && !input.movingAnnotation;
+}
+
 function clampUnit(value: number) {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 }
@@ -555,7 +569,7 @@ export function composeLocalEditMovePreview(
   return composeLocalEditMoveReference(source, width, height, annotations, smartMasks);
 }
 
-function moveGuideFeatherRadius(width: number, height: number) {
+export function localEditMoveGuideFeatherRadius(width: number, height: number) {
   return Math.max(2, Math.min(12, Math.round(Math.max(width, height) * 0.004)));
 }
 
@@ -599,7 +613,7 @@ export function composeLocalEditMoveReference(
         selection,
         width,
         height,
-        moveGuideFeatherRadius(width, height),
+        localEditMoveGuideFeatherRadius(width, height),
       );
       for (let pixel = 3; pixel < sourceRepairMask.length; pixel += 4) {
         sourceRepairMask[pixel] = Math.min(sourceRepairMask[pixel], softenedSelection[pixel]);

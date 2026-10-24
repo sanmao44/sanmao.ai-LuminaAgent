@@ -2535,14 +2535,24 @@ export function upscaleCardSizeForRatio(ratio?: number) {
 export function smartMediaSize(
   kind: CanvasMediaKind,
   params?: CanvasGenerationParams,
+  fallbackRatio?: number,
 ) {
   if (kind === "video")
     return mediaCardSizeForRatio(videoAspectRatio(params), kind);
-  const aspect = params && "aspect" in params ? params.aspect : "1:1";
-  const [a, b] = String(aspect || "1:1")
-    .split(":")
-    .map(Number);
-  return mediaCardSizeForRatio((a || 1) / (b || 1), kind);
+  const imageParams = params?.kind === "image" ? params : undefined;
+  let ratio = fallbackRatio || 1;
+  if (imageParams?.sizeMode === "custom") {
+    ratio =
+      (positiveRatio(imageParams.width) || 1) /
+      (positiveRatio(imageParams.height) || 1);
+  } else if (imageParams?.aspect === "自定义") {
+    ratio =
+      (positiveRatio(imageParams.customAspectWidth) || 1) /
+      (positiveRatio(imageParams.customAspectHeight) || 1);
+  } else if (imageParams) {
+    ratio = ratioFromAspect(imageParams.aspect, ratio);
+  }
+  return mediaCardSizeForRatio(ratio, kind);
 }
 
 export function createMedia(

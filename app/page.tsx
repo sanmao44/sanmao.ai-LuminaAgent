@@ -50,7 +50,7 @@ import { normalizeConversationPersona, personaBadgeLabel } from '@/lib/agent-per
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS } from '@/lib/creation/settings';
 import { requestPromptOptimization } from '@/lib/creation/agent';
-import { cleanupGenerationLogs, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
+import { cleanupGenerationLogs, getGenerationLog, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
 import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVideoTask as patchVideoTaskRequest, saveVideoTaskLocally as saveVideoTaskLocallyRequest } from '@/lib/video-task-client';
 import { videoTaskStatus } from '@/lib/video-task-output';
 import { createManualStorageSnapshot, loadStorageMaintenance, restoreLocalStorageSnapshot } from '@/lib/storage-maintenance-client';
@@ -145,8 +145,9 @@ import { renderOutpaintWhiteCanvas } from '@/lib/image-editor/outpaint-renderer'
 import { cloudUpscaleFormatOptions, isCloudUpscaleModel, qualityOptions, upscaleScales } from '@/lib/image-editor/editor-options';
 import { editorModelSelectionPatch, upscaleEditorSettingsPatch } from '@/lib/image-editor/editor-form';
 import { buildEditorRequest } from '@/lib/image-editor/editor-request';
-import { buildEditorTaskDraft } from '@/lib/image-editor/editor-task';
-import { buildEditorModelCallInput, buildEditorHistoryMeta, editorCompletionInfo } from '@/lib/image-editor/editor-result';
+import { buildEditorTaskDraft, editorTaskAction, editorTaskGalleryItemId, findEditorTaskSource, isEditorImageTask, restoreEditorTaskState } from '@/lib/image-editor/editor-task';
+import { buildEditorModelCallInput, buildEditorHistoryMeta, editorCompletionInfo, requireEditorImages } from '@/lib/image-editor/editor-result';
+import { waitForEditorTaskLog } from '@/lib/image-editor/editor-task-recovery';
 import { cropSourceRect } from '@/lib/image-editor/local-image-layout';
 import { renderLocalImage } from '@/lib/image-editor/local-image-renderer';
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
@@ -2633,6 +2634,7 @@ export default function Page() {
     const [generateTasks, setGenerateTasks] = useState([]);
     const [generateTaskView, setGenerateTaskView] = useState('current');
     const upscaleRecoveryRef = useRef(new Set());
+    const editorRecoveryRef = useRef(new Map());
     const [generateTasksReady, setGenerateTasksReady] = useState(false);
     const [generateClock, setGenerateClock] = useState(Date.now());
     const [resultItems, setResultItems] = useState([]);
@@ -3216,17 +3218,23 @@ export default function Page() {
                 const restoredAt = Date.now();
                 const tasks = savedTasks.filter((task)=>typeof task?.id === 'string' && typeof task?.prompt === 'string').slice(0, 12).map((task)=>{
                     const pending = task.status === 'pending';
+                    const resumableEditor = isEditorImageTask(task);
+                    const interrupted = pending && !resumableEditor;
                     return {
                         id: task.id,
-                        status: pending ? 'error' : task.status === 'success' ? 'success' : 'error',
+                        status: pending && resumableEditor ? 'pending' : pending ? 'error' : task.status === 'success' ? 'success' : 'error',
                         mode: task.mode === 'edit' || task.mode === 'upscale' ? task.mode : 'generate',
                         prompt: task.prompt,
                         expectedCount: Math.max(1, Number(task.expectedCount) || 1),
                         startedAt: Number(task.startedAt) || restoredAt,
-                        completedAt: pending ? restoredAt : Number(task.completedAt) || undefined,
-                        info: pending ? `${task.info || '生图任务'} · 页面刷新后已中断` : String(task.info || '生图任务'),
-                        error: pending ? '页面刷新导致本轮任务中断，已保留已经返回的图片。可恢复参数后重新提交。' : typeof task.error === 'string' ? task.error : undefined,
-                        interrupted: pending,
+                        completedAt: interrupted ? restoredAt : Number(task.completedAt) || undefined,
+                        info: pending && resumableEditor ? `${task.info || '图片修改'} · 正在核对服务端状态` : interrupted ? `${task.info || '生图任务'} · 页面刷新后已中断` : String(task.info || '生图任务'),
+                        error: interrupted ? '页面刷新后未能恢复这类任务的执行状态；可恢复参数后重新提交。' : typeof task.error === 'string' ? task.error : undefined,
+                        interrupted: interrupted || Boolean(task.interrupted),
+                        providerPossiblyAccepted: Boolean(task.providerPossiblyAccepted),
+                        providerResultWithheld: Boolean(task.providerResultWithheld),
+                        resultRecoveryRequired: Boolean(task.resultRecoveryRequired),
+                        providerTaskId: typeof task.providerTaskId === 'string' ? task.providerTaskId : undefined,
                         items: [],
                         itemIds: Array.isArray(task.itemIds) ? task.itemIds.filter((id)=>typeof id === 'string') : [],
                         request: task.request
@@ -3427,6 +3435,24 @@ export default function Page() {
             }).finally(()=>upscaleRecoveryRef.current.delete(task.upscaleTaskId));
         }
     }, [generateTasksReady, generateTasks, gallery]);
+    useEffect(()=>{
+        if (!generateTasksReady) return;
+        const recoverable = generateTasks.filter((task)=>isEditorImageTask(task) && (
+            task.status === 'pending' || (task.status === 'error' && (task.providerPossiblyAccepted || task.resultRecoveryRequired))
+        ));
+        const controllers = recoverable.map((task)=>{
+            const controller = new AbortController();
+            void recoverEditorTask(task, controller);
+            return { id: task.id, controller };
+        });
+        return ()=>{
+            for (const { id, controller } of controllers) {
+                if (editorRecoveryRef.current.get(id) !== controller) continue;
+                editorRecoveryRef.current.delete(id);
+                controller.abort();
+            }
+        };
+    }, [generateTasksReady]);
     useEffect(()=>{
         const updateChatScrollState = ()=>{
             const nearBottom = isChatNearBottom();
@@ -5193,7 +5219,7 @@ export default function Page() {
         }
         return normalized;
     }
-    async function recordImages(images, meta) {
+    async function recordImages(images, meta, editorTaskId, editorImageIndexes) {
         const storedImages = await Promise.all(images.map(async (image)=>{
             return persistHistoryImage(image);
         }));
@@ -5210,15 +5236,13 @@ export default function Page() {
             },
             {
                 createdAt: now,
-                createId: ()=>uid('img'),
+                createId: (_image, index)=>editorTaskId ? editorTaskGalleryItemId(editorTaskId, editorImageIndexes?.[index] ?? index) : uid('img'),
                 includeCompareReference: true
             }
         );
         await assetRepository.saveGallery(items);
-        setGallery((old)=>[
-                ...items,
-                ...old
-            ]);
+        const itemIds = new Set(items.map((item)=>item.id));
+        setGallery((old)=>[...items, ...old.filter((item)=>!itemIds.has(item.id))]);
         registerHistorySuccess(items, sectionRef.current === 'generate' || (meta.source === 'agent' && sectionRef.current === 'agent'));
         void saveImagesToLocalDirectory(storedImages);
         return items;
@@ -5243,9 +5267,24 @@ export default function Page() {
                     ]
                 } : task));
     }
+    function editorStateFromTask(task) {
+        const source = findEditorTaskSource(task, gallery);
+        return source ? restoreEditorTaskState(task, source, availableEditModels.map((model)=>model.id)) : null;
+    }
     function restoreGenerateTask(task) {
         const request = task.request;
         if (!request) return notify('这轮任务没有保存完整参数，无法恢复');
+        if (isEditorImageTask(task)) {
+            const restoredEditor = editorStateFromTask(task);
+            if (!restoredEditor) return notify('原图已不在本机图库，无法恢复局部编辑参数。');
+            setEditorMaskOpen(false);
+            setEditor(restoredEditor);
+            setSection('generate');
+            if (request.maskOmitted) return notify('任务结果仍可恢复，但原蒙版未能随任务保存；请重新绘制编辑范围后再提交。');
+            if (request.moveGuideOmitted) return notify('任务结果仍可恢复，但移动引导图未能随任务保存；请重新确认移动范围后再提交。');
+            notify('已恢复局部编辑参数；不会自动重新提交。');
+            return;
+        }
         if (request.angle) {
             setAngleReference(request.references?.[0] || null);
             setAngleCameraSeed(request.angle);
@@ -5290,6 +5329,7 @@ export default function Page() {
         notify(request.referencesOmitted ? '参数已恢复，但参考图较大未能随任务保存，请重新添加参考图' : '已恢复这一轮的生图参数');
     }
     async function retryGenerateTask(task) {
+        if (isEditorImageTask(task)) return retryEditorTask(task);
         const request = task.request;
         if (!request) return notify('这轮任务没有保存完整参数，无法重试');
         if (request.referencesOmitted) return notify('这轮任务的参考图过大未保存，请先点击“恢复参数”并重新添加参考图');
@@ -5313,6 +5353,33 @@ export default function Page() {
             mode: task.mode,
             request: retryRequest
         });
+    }
+    function retryEditorTask(task) {
+        const action = editorTaskAction(task);
+        if (action === 'recover-result' || action === 'check-record') {
+            const controller = new AbortController();
+            void recoverEditorTask(task, controller);
+            notify(action === 'recover-result'
+                ? '正在从原任务记录找回结果，不会再次调用图片模型。'
+                : '正在重新读取原任务记录，不会再次调用图片模型。');
+            return;
+        }
+        const request = task.request || {};
+        if (request.maskOmitted || request.moveGuideOmitted) {
+            restoreGenerateTask(task);
+            return;
+        }
+        const currentEditor = editorStateFromTask(task);
+        if (!currentEditor) return notify('原图已不在本机图库，无法安全重试这轮局部编辑。');
+        const completedCount = Math.max(task.items?.length || 0, task.itemIds?.length || 0);
+        const remainingCount = Math.max(1, Math.min(8, task.expectedCount - completedCount));
+        const retryEditor = { ...currentEditor, count: remainingCount };
+        const taskId = uid('edit-task');
+        const taskDraft = buildEditorTaskDraft(retryEditor, taskId, Date.now());
+        setGenerateTasks((old)=>[taskDraft, ...old]);
+        setGenerateClock(Date.now());
+        void processEditorTask(retryEditor, taskId);
+        notify('已按原局部编辑参数重新提交；本次结果会作为新任务记录。');
     }
     const UPSCALE_CANCELLED_MESSAGE = '高清任务已取消。';
     async function cancelGenerateTask(task) {
@@ -7303,10 +7370,15 @@ export default function Page() {
     }
     async function processEditorTask(currentEditor, taskId) {
         const requestStartedAt = performance.now();
+        let providerRequestStarted = false;
+        let providerResponseReceived = false;
+        let successfulHttpResponse = false;
+        let editorImagesReceived = false;
         try {
             const sourceSize = currentEditor.mode === 'upscale' ? await loadImageDimensions(currentEditor.item.url) : null;
             const editorUpscaleModel = currentEditor.mode === 'upscale' ? availableUpscaleModels.find((model)=>model.id === currentEditor.modelId) || defaultUpscaleModel : null;
             const { endpoint, body, editorReference, ratio: editRatio, cloudUpscale, cloudOutputFormat: editorCloudOutputFormat } = buildEditorRequest(currentEditor, taskId, sourceSize, editorUpscaleModel);
+            providerRequestStarted = true;
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
@@ -7314,41 +7386,217 @@ export default function Page() {
                 },
                 body: JSON.stringify(body)
             });
-            let data = await res.json();
-            if (!res.ok) throw new Error(data.error || '处理失败');
+            providerResponseReceived = true;
+            successfulHttpResponse = res.ok;
+            let data;
+            try {
+                data = await res.json();
+            } catch {
+                throw new Error('服务端返回内容无法读取；请先核对任务状态，避免重复提交。');
+            }
+            if (!res.ok) {
+                const error = new Error(data.error || '处理失败');
+                error.providerPossiblyAccepted = Boolean(data.providerPossiblyAccepted || data.providerResultWithheld);
+                error.providerResultWithheld = Boolean(data.providerResultWithheld);
+                error.providerTaskId = data.providerTaskId;
+                error.errorCode = data.errorCode;
+                throw error;
+            }
             if (currentEditor.mode === 'upscale' && data.taskId) patchGenerateTask(taskId, { upscaleTaskId: data.taskId, info: `${data.model?.name || '高清放大'} · 后台处理中` });
             if (currentEditor.mode === 'upscale' && data.taskId && (data.status === 'queued' || data.status === 'processing')) data = await waitForUpscaleTask(data.taskId, data);
+            const resultImages = requireEditorImages(data.images);
+            editorImagesReceived = true;
             const knownUpscaleModels = [...state.models, ...(state.upscaleModels || [])];
             recordModelCall(buildEditorModelCallInput(currentEditor, data, knownUpscaleModels, cloudUpscale, editorCloudOutputFormat));
             const durationMs = Math.round(performance.now() - requestStartedAt);
-            const items = await recordImages(data.images || [], buildEditorHistoryMeta(currentEditor, data, durationMs, editorReference, editorCloudOutputFormat));
+            const items = await recordImages(resultImages, buildEditorHistoryMeta(currentEditor, data, durationMs, editorReference, editorCloudOutputFormat, taskId), taskId);
             const info = editorCompletionInfo(currentEditor, data, durationMs, items.length);
-            setResultItems((old)=>[
-                    ...items,
-                    ...old
-                ]);
+            const incomplete = items.length < (currentEditor.mode === 'edit' ? currentEditor.count : 1);
+            const taskError = incomplete ? `服务端仅返回 ${items.length}/${currentEditor.mode === 'edit' ? currentEditor.count : 1} 张图片。已收到的结果已保存，可安全重试剩余数量。` : undefined;
+            const savedItemIds = new Set(items.map((item)=>item.id));
+            setResultItems((old)=>[...items, ...old.filter((item)=>!savedItemIds.has(item.id))]);
             patchGenerateTask(taskId, {
-                status: 'success',
+                status: incomplete ? 'error' : 'success',
                 completedAt: Date.now(),
                 info,
+                error: taskError,
+                providerPossiblyAccepted: false,
+                providerResultWithheld: false,
+                resultRecoveryRequired: false,
                 items,
                 itemIds: items.map((item)=>item.id)
             });
             if (items.length) playSuccessSound();
             void refreshGenerationLogs();
-            notify(currentEditor.mode === 'upscale' ? '后台超分已完成，结果已返回创作记录。' : '后台图片修改已完成，结果已返回创作记录。');
+            notify(taskError || (currentEditor.mode === 'upscale' ? '后台超分已完成，结果已返回创作记录。' : '后台图片修改已完成，结果已返回创作记录。'));
         } catch (error) {
             const message = error instanceof Error ? error.message : '处理失败';
             const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
+            const providerResultWithheld = Boolean(error?.providerResultWithheld);
+            const providerPossiblyAccepted = providerResultWithheld || Boolean(error?.providerPossiblyAccepted) || editorImagesReceived || (providerRequestStarted && !providerResponseReceived) || (successfulHttpResponse && !editorImagesReceived);
+            const resultRecoveryRequired = editorImagesReceived;
             patchGenerateTask(taskId, {
                 status: 'error',
                 completedAt: Date.now(),
                 error: message,
                 ...(cancelled ? { cancelled: true } : {}),
-                info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${cancelled ? '已停止跟踪' : '处理失败'}`
+                providerPossiblyAccepted,
+                providerResultWithheld,
+                resultRecoveryRequired,
+                providerTaskId: error?.providerTaskId,
+                errorCode: error?.errorCode,
+                info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${resultRecoveryRequired ? '结果待保存' : providerResultWithheld ? '安全拦截' : providerPossiblyAccepted ? '状态待核对' : cancelled ? '已停止跟踪' : '处理失败'}`
             });
             void refreshGenerationLogs();
-            notify(cancelled ? '已停止跟踪这条高清任务，服务商可能仍在生成。' : `后台${currentEditor.mode === 'upscale' ? '超分' : '图片修改'}失败：${message}`);
+            if (resultRecoveryRequired) notify('模型已返回图片，但本机图库保存未完成。请在任务卡片中找回原结果，不要重新调用模型。');
+            else if (providerResultWithheld) notify('服务商已返回图片，但蒙版保护处理失败；未将未受保护的结果应用到图库。');
+            else if (providerPossiblyAccepted) notify('服务商可能已接收任务，当前结果未确认。请先核对服务商状态，不要重复提交。');
+            else notify(cancelled ? '已停止跟踪这条高清任务，服务商可能仍在生成。' : `后台${currentEditor.mode === 'upscale' ? '超分' : '图片修改'}失败：${message}`);
+        }
+    }
+    async function recoverEditorTask(task, controller = new AbortController()) {
+        if (!isEditorImageTask(task) || !task.id || editorRecoveryRef.current.has(task.id)) return;
+        editorRecoveryRef.current.set(task.id, controller);
+        let serverResultFound = false;
+        try {
+            const recovery = await waitForEditorTaskLog(
+                task.id,
+                (taskId, signal)=>getGenerationLog(taskId, signal),
+                { signal: controller.signal },
+            );
+            if (controller.signal.aborted) return;
+            if (recovery.kind === 'pending') {
+                patchGenerateTask(task.id, {
+                    status: 'pending',
+                    completedAt: undefined,
+                    providerPossiblyAccepted: true,
+                    info: '图片修改 · 服务端仍在处理，请勿重复提交',
+                    error: recovery.message,
+                });
+                return;
+            }
+            if (recovery.kind === 'not-found') {
+                const providerPossiblyAccepted = Boolean(task.providerPossiblyAccepted);
+                patchGenerateTask(task.id, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    interrupted: true,
+                    providerPossiblyAccepted,
+                    providerResultWithheld: Boolean(task.providerResultWithheld),
+                    resultRecoveryRequired: false,
+                    error: providerPossiblyAccepted
+                        ? '本机没有找到原任务记录，但此前状态显示服务商可能已接收；请先核对服务商任务或用量，不要直接重提。'
+                        : '服务端没有找到这轮编辑任务记录；未发现已提交任务，可以安全重试。',
+                    info: providerPossiblyAccepted ? '图片修改 · 服务商状态待核对' : '图片修改 · 服务端未找到任务',
+                });
+                notify(providerPossiblyAccepted
+                    ? '原任务记录暂不可用，未重新提交；请先核对服务商任务状态。'
+                    : '未找到已提交的编辑任务，可以恢复参数后安全重试。');
+                return;
+            }
+            if (recovery.kind === 'failed') {
+                patchGenerateTask(task.id, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    providerPossiblyAccepted: recovery.providerPossiblyAccepted,
+                    providerResultWithheld: recovery.providerResultWithheld,
+                    resultRecoveryRequired: false,
+                    providerTaskId: recovery.providerTaskId,
+                    errorCode: recovery.errorCode,
+                    error: recovery.error,
+                    info: recovery.providerResultWithheld ? '图片修改 · 蒙版保护失败，结果已拦截' : recovery.providerPossiblyAccepted ? '图片修改 · 服务商状态待核对' : '图片修改 · 处理失败',
+                });
+                notify(recovery.providerPossiblyAccepted
+                    ? '原任务记录仍未确认结果；为避免重复扣费，没有重新提交。'
+                    : recovery.error);
+                return;
+            }
+
+            serverResultFound = true;
+
+            const source = findEditorTaskSource(task, gallery, recovery.log.references || []);
+            const editorState = source ? restoreEditorTaskState(task, source, availableEditModels.map((model)=>model.id)) : null;
+            const response = {
+                taskId: task.id,
+                model: {
+                    id: recovery.log.modelId,
+                    name: recovery.log.modelName,
+                    provider: recovery.log.providerName,
+                },
+            };
+            const durationMs = Number(recovery.log.durationMs) || Math.max(0, Date.now() - Number(task.startedAt || Date.now()));
+            const reference = source ? {
+                id: source.id,
+                name: `上一版-${source.id.slice(-6)}`,
+                url: source.url,
+            } : null;
+            const historyMeta = editorState && reference
+                ? {
+                    ...buildEditorHistoryMeta(editorState, response, durationMs, reference, undefined, task.id),
+                    prompt: task.prompt,
+                    modelId: recovery.log.modelId,
+                    modelName: recovery.log.modelName,
+                    providerName: recovery.log.providerName,
+                    aspectRatio: recovery.log.aspectRatio || editorState.ratio,
+                    outputSize: recovery.log.outputSize,
+                }
+                : {
+                    prompt: task.prompt,
+                    modelId: recovery.log.modelId,
+                    modelName: recovery.log.modelName,
+                    providerName: recovery.log.providerName,
+                    aspectRatio: recovery.log.aspectRatio,
+                    outputSize: recovery.log.outputSize,
+                    source: 'edit',
+                    ...(source ? { parentId: source.id, references: [{ id: source.id, name: reference.name, url: source.url }] } : {}),
+                    taskId: task.id,
+                    generationMs: durationMs,
+                };
+            const existingItems = gallery.filter((item)=>item.taskId === task.id);
+            const existingUrls = new Set(existingItems.map((item)=>item.url));
+            const missing = recovery.images
+                .map((image, index)=>({ image, index }))
+                .filter(({ image })=>!existingUrls.has(image.url));
+            const recoveredItems = missing.length
+                ? (await Promise.all(missing.map(({ image, index })=>recordImages([image], historyMeta, task.id, [index])))).flat()
+                : [];
+            const items = [...existingItems, ...recoveredItems].sort((left, right)=>left.createdAt - right.createdAt);
+            if (controller.signal.aborted) return;
+            const expectedCount = Math.max(1, Number(task.expectedCount) || 1);
+            const incomplete = items.length < expectedCount;
+            const error = incomplete ? `服务端已保存 ${items.length}/${expectedCount} 张图片；可安全重试剩余数量。` : undefined;
+            const itemIds = new Set(items.map((item)=>item.id));
+            setResultItems((old)=>[...items, ...old.filter((item)=>!itemIds.has(item.id))]);
+            patchGenerateTask(task.id, {
+                status: incomplete ? 'error' : 'success',
+                completedAt: Date.now(),
+                providerPossiblyAccepted: false,
+                providerResultWithheld: false,
+                resultRecoveryRequired: false,
+                items,
+                itemIds: items.map((item)=>item.id),
+                error,
+                info: incomplete ? `图片修改 · 已恢复 ${items.length}/${expectedCount} 张` : `图片修改 · 已恢复 ${items.length} 张`,
+            });
+            notify(incomplete ? error : '已从服务端任务记录找回局部编辑结果。');
+        } catch (error) {
+            if (controller.signal.aborted) return;
+            const providerPossiblyAccepted = Boolean(task.providerPossiblyAccepted || task.status === 'pending' || serverResultFound);
+            patchGenerateTask(task.id, {
+                status: 'error',
+                completedAt: Date.now(),
+                providerPossiblyAccepted,
+                resultRecoveryRequired: serverResultFound,
+                error: serverResultFound
+                    ? error instanceof Error ? error.message : '本地结果保存失败'
+                    : error instanceof Error ? `无法读取服务端任务记录：${error.message}` : '无法读取服务端任务记录；未重新提交。',
+                info: serverResultFound ? '图片修改 · 结果待保存' : '图片修改 · 状态待核对',
+            });
+            notify(serverResultFound
+                ? '服务端已有图片结果，但图库保存未完成。可再次点击“找回结果”，不会重新调用模型。'
+                : '无法读取原任务记录；没有重新提交图片模型，请检查本地服务后再核对。');
+        } finally {
+            if (editorRecoveryRef.current.get(task.id) === controller) editorRecoveryRef.current.delete(task.id);
         }
     }
     function askDeleteItems(ids) {
@@ -9557,8 +9805,8 @@ export default function Page() {
                                                                                 className: "task-retry-button",
                                                                                 onClick: ()=>void retryGenerateTask(task),
                                                                                 children: [
-                                                                                    "重试",
-                                                                                    task.items.length > 0 && task.items.length < task.expectedCount ? `剩余 ${task.expectedCount - task.items.length} 张` : '本轮'
+                                                                                    isEditorImageTask(task) && editorTaskAction(task) === 'recover-result' ? '找回原结果' : isEditorImageTask(task) && editorTaskAction(task) === 'check-record' ? '重新读取记录' : '重试',
+                                                                                    isEditorImageTask(task) && editorTaskAction(task) !== 'retry' ? '' : task.items.length > 0 && task.items.length < task.expectedCount ? `剩余 ${task.expectedCount - task.items.length} 张` : '本轮'
                                                                                 ]
                                                                             })
                                                                         ]
@@ -9640,7 +9888,7 @@ export default function Page() {
                                                                                 children: task.cancelled ? '本轮任务已取消' : task.interrupted ? '本轮任务已中断' : '本轮部分生成失败'
                                                                             }),
                                                                             /*#__PURE__*/ _jsx("small", {
-                                                                                children: task.cancelled ? '任务已停止，已返回的图片仍会保留。' : task.interrupted ? '页面状态中断，可恢复参数后重新提交。' : task.items.length ? `${task.items.length} / ${task.expectedCount} 张已完成，可重试失败部分。` : '未收到可用图片，请检查模型连接或稍后重试。'
+                                                                                children: task.resultRecoveryRequired ? '原任务已返回图片，但本机图库保存未完成；可找回原结果，不会再次调用模型。' : task.providerPossiblyAccepted && task.providerResultWithheld ? '服务商已返回图片，但蒙版保护失败，结果未应用；请先恢复参数修正蒙版。' : task.providerPossiblyAccepted ? '服务商可能已接收任务，为避免重复扣费不会自动重提；请先核对服务商任务或用量记录。' : task.cancelled ? '任务已停止，已返回的图片仍会保留。' : task.interrupted ? '页面状态中断，可恢复参数后重新提交。' : task.items.length ? `${task.items.length} / ${task.expectedCount} 张已完成，可重试失败部分。` : '未收到可用图片，请检查模型连接或稍后重试。'
                                                                             }),
                                                                             task.error && /*#__PURE__*/ _jsxs("details", {
                                                                                 className: "generation-error-details",

@@ -474,9 +474,55 @@ test('does not submit a second edit job after malformed JSON image output', asyn
         references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
         count: 1,
       }),
-      /不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片/,
+      (error) => {
+        assert.match(error.message, /不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片/);
+        assert.equal(error.providerPossiblyAccepted, true);
+        assert.equal(error.providerStatus, 200);
+        return true;
+      },
     );
     assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("successful empty and server-error image responses are marked unsafe for resubmission", async () => {
+  const previousFetch = globalThis.fetch;
+  const cases = [
+    { status: 200, body: {}, expectedStatus: 200 },
+    { status: 202, body: { status: "accepted" }, expectedStatus: 202 },
+    { status: 500, body: { error: { message: "provider interrupted" } }, expectedStatus: 500 },
+  ];
+  try {
+    for (const scenario of cases) {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        return new Response(JSON.stringify(scenario.body), {
+          status: scenario.status,
+          headers: { "content-type": "application/json" },
+        });
+      };
+      await assert.rejects(
+        providers.editImage({
+          type: "openai-compatible",
+          platform: "custom",
+          baseUrl: "https://images.example.test/v1",
+          apiKey: "test-key",
+        }, "gpt-image-2.5", {
+          prompt: "camera edit",
+          references: ["data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA"],
+          count: 1,
+        }),
+        (error) => {
+          assert.equal(error.providerPossiblyAccepted, true);
+          assert.equal(error.providerStatus, scenario.expectedStatus);
+          return true;
+        },
+      );
+      assert.equal(calls, 1, `HTTP ${scenario.status} must not cause a second provider request`);
+    }
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -640,12 +686,16 @@ test('falls back to multipart edit only after an explicit compatibility rejectio
   }
 });
 
-test('treats an HTTP provider error as terminal instead of accepted background work', async () => {
+test('keeps a provider HTTP 500 terminal and marks delivery status uncertain', async () => {
   const previousFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'provider rejected request' } }), {
-    status: 500,
-    headers: { 'content-type': 'application/json' },
-  });
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ error: { message: 'provider interrupted' } }), {
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
   try {
     await assert.rejects(
       () => providers.generateImage({
@@ -655,11 +705,12 @@ test('treats an HTTP provider error as terminal instead of accepted background w
         apiKey: 'test-key',
       }, 'image-model', { prompt: 'terminal provider error' }),
       (error) => {
-        assert.match(error.message, /provider rejected request/);
-        assert.equal(error.providerPossiblyAccepted, undefined);
+        assert.match(error.message, /provider interrupted/);
+        assert.equal(error.providerPossiblyAccepted, true);
         return true;
       },
     );
+    assert.equal(calls, 1);
   } finally {
     globalThis.fetch = previousFetch;
   }

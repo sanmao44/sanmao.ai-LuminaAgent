@@ -397,6 +397,51 @@ test('uses the latest automatically recovered relay URL without restarting the s
   }
 });
 
+test('retries an image upload after the automatic relay recovers from an outage', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-relay-recovery-'));
+  const previous = {
+    dataDir: process.env.SANMAO_DATA_DIR,
+    mode: process.env.SANMAO_RELAY_MODE,
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+  };
+  process.env.SANMAO_DATA_DIR = root;
+  process.env.SANMAO_RELAY_MODE = '1';
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://stale.relay.example';
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  await mkdir(path.join(root, 'free-relay'), { recursive: true });
+  await writeFile(path.join(root, 'free-relay', 'public-url.txt'), 'https://stale.relay.example\n');
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (calls.length === 3) {
+      await writeFile(path.join(root, 'free-relay', 'public-url.txt'), 'https://recovered.relay.example\n');
+    }
+    if (calls.length <= 3) throw new Error('relay temporarily unavailable');
+    return new Response(JSON.stringify({
+      ok: true,
+      url: 'https://recovered.relay.example/api/relay/media/recovered-token',
+      expiresAt: '2099-01-01T00:30:00.000Z',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const url = await signed.preparePublicMediaUrl('data:image/png;base64,AAECAw==', 'image');
+    assert.equal(url, 'https://recovered.relay.example/api/relay/media/recovered-token');
+    assert.deepEqual(calls, [
+      'https://stale.relay.example/api/relay/media',
+      'https://stale.relay.example/api/relay/media',
+      'https://stale.relay.example/api/relay/media',
+      'https://recovered.relay.example/api/relay/media',
+    ]);
+  } finally {
+    if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
+    if (previous.mode === undefined) delete process.env.SANMAO_RELAY_MODE; else process.env.SANMAO_RELAY_MODE = previous.mode;
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('waits briefly for the automatic relay during tunnel startup', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-relay-startup-'));
   const previous = {

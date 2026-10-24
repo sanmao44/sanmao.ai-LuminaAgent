@@ -59,12 +59,20 @@ export function resolveLocalSegmentationModelResource(path: readonly string[]): 
 }
 
 export function resolveLocalSegmentationProxy(environment: Record<string, string | undefined>) {
-  const configured = String(environment.SANMAO_LOCAL_SEGMENTATION_PROXY || '').trim();
+  const configured = [
+    environment.SANMAO_LOCAL_SEGMENTATION_PROXY,
+    environment.https_proxy,
+    environment.HTTPS_PROXY,
+    environment.http_proxy,
+    environment.HTTP_PROXY,
+    environment.all_proxy,
+    environment.ALL_PROXY,
+  ].map((value) => String(value || '').trim()).find(Boolean) || '';
   if (!configured) return null;
 
   let proxy: URL;
   try {
-    proxy = new URL(configured);
+    proxy = new URL(configured.includes('://') ? configured : `http://${configured}`);
   } catch {
     throw new Error('SANMAO_LOCAL_SEGMENTATION_PROXY 必须是有效的 HTTP 或 HTTPS 代理地址');
   }

@@ -125,19 +125,17 @@ test("fits a tall editor below its node without moving it across the anchor", ()
   assert.equal(editor.top, anchor.top + anchor.height + 14);
 });
 
-test("flips the editor above its node when that side has room", () => {
+test("keeps the editor below its node even when it extends past the viewport", () => {
   const editor = layout.placeCanvasNodeEditorDock(
     { left: 300, top: 520, width: 380, height: 120 },
     { width: 1280, height: 720 },
-    { width: 640, height: 300 },
+    { width: 640 },
   );
 
   assert.deepEqual(editor, {
     left: 170,
-    top: 206,
-    maxHeight: 300,
-    placement: "top",
-    isViewportFitted: false,
+    top: 654,
+    placement: "bottom",
   });
 });
 
@@ -145,15 +143,13 @@ test("keeps the editor below the node when the full panel fits", () => {
   const editor = layout.placeCanvasNodeEditorDock(
     { left: 300, top: 120, width: 380, height: 120 },
     { width: 1280, height: 720 },
-    { width: 640, height: 300 },
+    { width: 640 },
   );
 
   assert.deepEqual(editor, {
     left: 170,
     top: 254,
-    maxHeight: 300,
     placement: "bottom",
-    isViewportFitted: false,
   });
 });
 
@@ -217,32 +213,28 @@ test("places a compact dock horizontally centered below a centered node", () => 
   const dock = layout.placeCanvasNodeEditorDock(
     anchor,
     stage,
-    { width: 680, height: 320 },
+    { width: 680 },
   );
 
   assert.deepEqual(dock, {
     left: 150,
     top: 474,
-    maxHeight: 320,
     placement: "bottom",
-    isViewportFitted: false,
   });
   assert.equal(dock.top, anchor.top + anchor.height + 14);
 });
 
-test("clamps a compact dock to the left horizontal margin", () => {
+test("clamps a dock horizontally without changing its below-node position", () => {
   const dock = layout.placeCanvasNodeEditorDock(
     { left: -100, top: 60, width: 280, height: 180 },
     { width: 900, height: 700 },
-    { width: 680, height: 300 },
+    { width: 680 },
   );
 
   assert.deepEqual(dock, {
     left: 12,
     top: 254,
-    maxHeight: 300,
     placement: "bottom",
-    isViewportFitted: false,
   });
 });
 
@@ -250,62 +242,54 @@ test("clamps a compact dock to the right horizontal margin", () => {
   const dock = layout.placeCanvasNodeEditorDock(
     { left: 700, top: 60, width: 280, height: 180 },
     { width: 900, height: 700 },
-    { width: 680, height: 300 },
+    { width: 680 },
   );
 
   assert.deepEqual(dock, {
     left: 208,
     top: 254,
-    maxHeight: 300,
     placement: "bottom",
-    isViewportFitted: false,
   });
 });
 
-test("moves a compact dock above a low node instead of clipping it below the viewport", () => {
+test("keeps the full dock below a low node without a viewport height constraint", () => {
   const dock = layout.placeCanvasNodeEditorDock(
     { left: 300, top: 600, width: 380, height: 260 },
     { width: 1280, height: 720 },
-    { width: 680, height: 320 },
+    { width: 680 },
   );
 
   assert.deepEqual(dock, {
     left: 150,
-    top: 266,
-    maxHeight: 320,
-    placement: "top",
-    isViewportFitted: false,
+    top: 874,
+    placement: "bottom",
   });
 });
 
-test("fits and scrolls an editor when neither side has room for its full height", () => {
+test("keeps the editor below the node even when no viewport space remains", () => {
   const dock = layout.placeCanvasNodeEditorDock(
     { left: 300, top: 320, width: 380, height: 260 },
     { width: 1280, height: 600 },
-    { width: 680, height: 500 },
+    { width: 680 },
   );
 
   assert.deepEqual(dock, {
     left: 150,
-    top: 12,
-    maxHeight: 294,
-    placement: "top",
-    isViewportFitted: true,
+    top: 594,
+    placement: "bottom",
   });
 });
 
-test("uses the larger side when both sides need scrolling", () => {
+test("keeps the editor below the node regardless of its full measured height", () => {
   const dock = layout.placeCanvasNodeEditorDock(
     { left: 300, top: 100, width: 380, height: 300 },
     { width: 1280, height: 600 },
-    { width: 680, height: 500 },
+    { width: 680 },
   );
 
   assert.deepEqual(dock, {
     left: 150,
     top: 414,
-    maxHeight: 174,
     placement: "bottom",
-    isViewportFitted: true,
   });
 });

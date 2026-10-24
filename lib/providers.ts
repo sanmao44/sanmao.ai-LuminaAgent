@@ -180,6 +180,7 @@ const providerResponseMeta = Symbol('providerResponseMeta');
 type ProviderResponseMeta = {
   contentType: string;
   byteLength: number;
+  status?: number;
   requestId?: string;
 };
 
@@ -323,7 +324,7 @@ async function parseResponse(response: Response) {
   const requestId = requestIdFrom(null, '', response.headers);
   const detectedImageMime = imageMimeFromBytes(bytes);
   if (response.ok && detectedImageMime && bytes.length) {
-    return attachProviderResponseMeta(`data:${detectedImageMime};base64,${Buffer.from(bytes).toString('base64')}`, { contentType, byteLength: bytes.byteLength, requestId });
+    return attachProviderResponseMeta(`data:${detectedImageMime};base64,${Buffer.from(bytes).toString('base64')}`, { contentType, byteLength: bytes.byteLength, status: response.status, requestId });
   }
   const text = Buffer.from(bytes).toString('utf8');
   let data: any = {};
@@ -354,7 +355,7 @@ async function parseResponse(response: Response) {
   if (!response.ok) {
     throw providerResponseError(response.status, data, text, responseRequestId);
   }
-  return attachProviderResponseMeta(data, { contentType, byteLength: bytes.byteLength, requestId: responseRequestId });
+  return attachProviderResponseMeta(data, { contentType, byteLength: bytes.byteLength, status: response.status, requestId: responseRequestId });
 }
 
 function providerResponseError(status: number, data: any, text: string, requestId = '') {
@@ -377,6 +378,7 @@ function providerResponseError(status: number, data: any, text: string, requestI
     status,
     providerStatus: status,
     providerRequestId: requestId,
+    ...(status >= 500 ? { providerPossiblyAccepted: true } : {}),
   });
 }
 
@@ -1154,12 +1156,32 @@ function responseShape(value: any, depth = 0): string {
 export function normalizeProviderImages(data: any): GeneratedImage[] {
   const images = extractImages(data);
   const validImages = images.filter((image) => !/^data:image\//i.test(image.url) || isSupportedImageDataUrl(image.url));
+  const meta = data && typeof data === 'object' ? (data as any)[providerResponseMeta] as ProviderResponseMeta | undefined : undefined;
+  const successfulProviderResponse = Number(meta?.status) >= 200 && Number(meta?.status) < 300;
   if (images.length && !validImages.length) {
-    throw new ProviderImageFormatError('服务商返回了图片字段，但内容不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片。请检查服务商的 image_url/b64_json 响应格式；任务可能已经提交，请先核对服务商后台状态后再重试。');
+    const error = new ProviderImageFormatError('服务商返回了图片字段，但内容不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片。请检查服务商的 image_url/b64_json 响应格式；任务可能已经提交，请先核对服务商后台状态后再重试。');
+    throw decorateProviderFailure(error, {
+      providerResponse: true,
+      providerStatus: meta?.status,
+      status: meta?.status,
+      providerRequestId: meta?.requestId,
+      providerPossiblyAccepted: successfulProviderResponse,
+    });
   }
   if (!images.length) {
-    const meta = data && typeof data === 'object' ? (data as any)[providerResponseMeta] as ProviderResponseMeta | undefined : undefined;
     const typeHint = meta?.contentType ? `，响应类型 ${meta.contentType.split(';', 1)[0]}` : '';
+    if (successfulProviderResponse) {
+      const acceptedMessage = meta?.status === 202
+        ? `服务商已接受图片任务，但没有返回图片或可查询的任务编号${typeHint}。`
+        : `服务商返回了成功响应，但没有找到可显示的图片${typeHint}。`;
+      throw decorateProviderFailure(new Error(`${acceptedMessage}请先核对服务商后台状态，确认后再决定是否重试。`), {
+        providerResponse: true,
+        status: meta?.status,
+        providerStatus: meta?.status,
+        providerRequestId: meta?.requestId,
+        providerPossiblyAccepted: true,
+      });
+    }
     throw new Error(`服务商已返回成功响应，但没有找到可显示的图片${typeHint}。响应结构：${responseShape(data)}。请确认模型支持图片接口，并检查服务商是否返回了 image_url、b64_json、二进制图片或异步任务结果。`);
   }
   return validImages;

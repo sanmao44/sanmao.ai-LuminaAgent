@@ -42,6 +42,55 @@ test("canvas node placement separates a generated batch from existing nodes and 
   }
 });
 
+test("canvas image results reserve their requested size before the image loads", () => {
+  const params = {
+    kind: 'image', aspect: '1:1', customAspectWidth: 16,
+    customAspectHeight: 9, sizeMode: 'system', width: 1024, height: 1024,
+  };
+  const source = {
+    ...model.createMedia('image', '/source.png', 'source', { x: 0, y: 0 }),
+    ...model.smartMediaSize('image', { ...params, aspect: '1:1' }),
+  };
+  const outputSize = model.smartMediaSize('image', params);
+  const createPendingResult = (name) => ({
+    ...model.createMedia('image', '', name, { x: 0, y: 0 }, { params, status: 'running' }),
+    ...outputSize,
+  });
+  const firstPending = createPendingResult('result 1');
+  const first = {
+    ...firstPending,
+    ...placement.findCanvasNodePlacement(
+      { x: source.x + source.w + 90, y: source.y },
+      firstPending,
+      [source],
+    ),
+  };
+  const secondPending = createPendingResult('result 2');
+  const second = {
+    ...secondPending,
+    ...placement.findCanvasNodePlacement(
+      { x: first.x + 350, y: first.y },
+      secondPending,
+      [source, first],
+    ),
+  };
+  const nodes = [source, first, second];
+
+  assert.equal(firstPending.h, outputSize.h);
+  assert.ok(firstPending.h > 270);
+  for (let firstIndex = 0; firstIndex < nodes.length; firstIndex += 1) {
+    const firstSize = model.nodeSize(nodes[firstIndex]);
+    for (let secondIndex = firstIndex + 1; secondIndex < nodes.length; secondIndex += 1) {
+      const secondSize = model.nodeSize(nodes[secondIndex]);
+      const overlaps = nodes[firstIndex].x < nodes[secondIndex].x + secondSize.w + 28
+        && nodes[firstIndex].x + firstSize.w + 28 > nodes[secondIndex].x
+        && nodes[firstIndex].y < nodes[secondIndex].y + secondSize.h + 28
+        && nodes[firstIndex].y + firstSize.h + 28 > nodes[secondIndex].y;
+      assert.equal(overlaps, false, `${nodes[firstIndex].data.name} overlaps ${nodes[secondIndex].data.name}`);
+    }
+  }
+});
+
 test("canvas node placement keeps the anchor when every candidate is occupied", () => {
   const node = model.createMedia("image", "/new.png", "new", { x: 0, y: 0 });
   const occupied = [{

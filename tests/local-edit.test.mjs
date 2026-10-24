@@ -29,6 +29,22 @@ const editorRequest = await import(`data:text/javascript;base64,${Buffer.from(ts
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText).toString("base64")}`);
 
+test("mask-wide presets are unavailable while an annotation or edit task is pending", () => {
+  const readyState = {
+    ready: true,
+    saving: false,
+    smartBusy: false,
+    pendingAnnotation: false,
+    movingAnnotation: false,
+  };
+
+  assert.equal(raster.canResetLocalEditMask(readyState), true);
+  for (const key of ["ready", "saving", "smartBusy", "pendingAnnotation", "movingAnnotation"]) {
+    const blocked = { ...readyState, [key]: key === "ready" ? false : true };
+    assert.equal(raster.canResetLocalEditMask(blocked), false, `reset should be blocked by ${key}`);
+  }
+});
+
 test("brush and eraser preserve the mask alpha contract and coverage", () => {
   const pixels = raster.createProtectedMask(10, 10);
   raster.applyBrushMask(pixels, 10, 10, 5, 5, 2, "edit");
@@ -187,8 +203,8 @@ test("completed marks stay editable without opening a text dialog", () => {
   assert.match(styles, /\.local-edit-annotation-summary\.has-items>div\{[^}]*min-height:0;max-height:min\(32vh,260px\);overflow-x:hidden;overflow-y:auto/);
   assert.match(styles, /\.local-edit-prompt\{min-height:100px;flex:none/);
   assert.match(styles, /\.local-edit-prompt textarea\{min-height:68px/);
-  assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-annotation-summary-select\{min-height:30px/);
-  assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-selection-thumb\{width:26px;height:26px/);
+  assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-annotation-summary-select\{min-height:36px/);
+  assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-selection-thumb\{width:30px;height:30px/);
 });
 
 test("pixel feathering creates a real alpha transition around an editable region", () => {
@@ -287,6 +303,50 @@ test("moving a selection repairs the source, pastes the selected pixels, and kee
   assert.deepEqual([...movedAgain.subarray(4, 8)], [0, 255, 0, 255]);
   assert.notDeepEqual([...movedAgain.subarray(12, 16)], [0, 255, 0, 255]);
   for (let index = 3; index < movedAgain.length; index += 4) assert.equal(movedAgain[index], 255);
+});
+
+test("move gestures and history replay use the same image-sized feather", () => {
+  const width = 768;
+  const height = 256;
+  const source = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      source[index] = (x * 3 + y) % 256;
+      source[index + 1] = (x + y * 5) % 256;
+      source[index + 2] = (x * 7 + y * 11) % 256;
+      source[index + 3] = 255;
+    }
+  }
+  const dx = 103.225;
+  const dy = 45.55;
+  const sourceGeometry = { kind: "rectangle", x: 0.21, y: 0.22, width: 0.14, height: 0.24 };
+  const targetGeometry = {
+    ...sourceGeometry,
+    x: sourceGeometry.x + dx / width,
+    y: sourceGeometry.y + dy / height,
+  };
+  const selection = raster.createProtectedMask(width, height);
+  raster.applyLocalEditGeometryMask(selection, width, height, sourceGeometry, "edit");
+  const gestureMask = raster.featherLocalEditMask(
+    selection,
+    width,
+    height,
+    raster.localEditMoveGuideFeatherRadius(width, height),
+  );
+  const annotation = {
+    id: "move-replay",
+    kind: "rectangle",
+    description: "",
+    geometry: targetGeometry,
+    move: { from: [sourceGeometry] },
+    createdAt: 1,
+  };
+
+  const gesturePreview = raster.moveLocalEditPixels(source, gestureMask, width, height, dx, dy);
+  const historyReplay = raster.composeLocalEditMovePreview(source, width, height, [annotation]);
+
+  assert.deepEqual(gesturePreview, historyReplay);
 });
 
 test("move preview and provider guide remove the source while preserving an opaque blended target cue", () => {
@@ -435,7 +495,7 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /原位置 · 待修补/);
   assert.match(editor, /function deleteAnnotation/);
   assert.match(editor, /补充.*说明/);
-  assert.match(styles, /\.local-edit-workbench\{[^}]*height:min\(900px,calc\(100vh - 24px\)\);[^}]*overflow:hidden/);
+  assert.match(styles, /\.local-edit-workbench\{[^}]*height:min\(900px,calc\(100vh - var\(--local-edit-backdrop-inset\)\)\);[^}]*overflow:hidden/);
   assert.match(styles, /\.local-edit-workbench-body\{display:grid;grid-template-columns:minmax\(0,1fr\) minmax\(260px,320px\)/);
   assert.match(styles, /\.local-edit-move-frame\.target[^}]*pointer-events:auto/);
   assert.match(styles, /\.local-edit-annotation-edit-icon/);
