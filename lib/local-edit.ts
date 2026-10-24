@@ -342,7 +342,7 @@ export function compileLocalEditPrompt(prompt: string, annotations: LocalEditAnn
       return { index: index + 1, text: description };
     })
     .filter((item) => item.text);
-  const fusionRequirement = "只修改编辑范围，并与周围画面自然融合，不要留下矩形边界、硬边或拼接痕迹。";
+  const fusionRequirement = "以参考原图为唯一底图，只在标记的编辑范围内按区域说明修改；范围外保持原样，包括主体、构图、视角、透视、光照、色彩、材质、文字和标识。编辑范围内应沿用邻近区域的纹理、色彩、光影和空间关系自然补全；不要新增未要求的内容，不要留下残影、重复物体、矩形边界、硬边、透明洞或拼接痕迹。";
   if (!descriptions.length) {
     if (!fusionRequirement) return base;
     return base

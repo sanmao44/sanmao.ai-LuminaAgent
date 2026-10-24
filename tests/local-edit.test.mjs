@@ -134,8 +134,11 @@ test("annotation descriptions compile once without duplicating the generated sec
   assert.equal(raster.compileLocalEditPrompt(compiled, annotations), compiled);
   const unlabelled = raster.compileLocalEditPrompt("整体保持自然", [annotations[1]]);
   assert.doesNotMatch(unlabelled, /区域 1：/);
-  assert.match(unlabelled, /局部处理要求：只修改编辑范围/);
-  assert.match(raster.compileLocalEditPrompt("整体保持自然"), /局部处理要求：只修改编辑范围/);
+  assert.match(unlabelled, /局部处理要求：以参考原图为唯一底图/);
+  assert.match(unlabelled, /范围外保持原样，包括主体、构图、视角、透视、光照、色彩、材质、文字和标识/);
+  assert.match(unlabelled, /沿用邻近区域的纹理、色彩、光影和空间关系自然补全/);
+  assert.match(unlabelled, /不要新增未要求的内容/);
+  assert.match(raster.compileLocalEditPrompt("整体保持自然"), /局部处理要求：以参考原图为唯一底图/);
 
   const moved = {
     id: "move-one",
