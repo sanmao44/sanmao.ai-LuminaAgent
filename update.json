@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.100/SANMAO.AI-0.7.100.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.100/SANMAO.AI-0.7.100.zip"
   ],
-  "sha256": "2603c63d7f9642538fc95b8d1b4c30e34e0727c6cec53881ce82342bdde4667b",
+  "sha256": "42def9c265e938fc1e2fdce10537f7db72e2b68759f467d8559ba79b90cf311d",
   "publishedAt": "2026-10-19T04:12:27.000Z",
   "notes": [
     "改进本地图片编辑器与分割蒙版交互，支持历史记录、遮罩持久化和编辑结果恢复。",
