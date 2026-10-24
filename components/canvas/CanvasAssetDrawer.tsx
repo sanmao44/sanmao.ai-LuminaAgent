@@ -70,6 +70,7 @@ export default function CanvasAssetDrawer({
   const [tagFilter, setTagFilter] = useState("");
   const [nodeDropActive, setNodeDropActive] = useState(false);
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
+  const [savingCollection, setSavingCollection] = useState(false);
 
   useEffect(() => {
     if (!preview) return;
@@ -189,12 +190,26 @@ export default function CanvasAssetDrawer({
   const createCollection = async () => {
     const name = newCollectionName.trim();
     if (!name) return;
-    const item: AssetCollection = { id: `collection_${Date.now().toString(36)}`, name, createdAt: Date.now(), updatedAt: Date.now() };
+    if (savingCollection) return;
+    if (collections.some((item) => item.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      onNotify("已经存在同名资产集合。", "error");
+      return;
+    }
+    const now = Date.now();
+    const item: AssetCollection = { id: `collection_${now.toString(36)}`, name, createdAt: now, updatedAt: now, builtin: false };
     const next = [...collections, item];
-    setCollections(next); setNewCollectionName("");
-    await persistCanvasAssetCollections(next);
-    setCollection(item.id);
-    onCollectionSelectionChange(item.id);
+    setSavingCollection(true);
+    try {
+      await persistCanvasAssetCollections(next);
+      setCollections(next);
+      setNewCollectionName("");
+      setCollection(item.id);
+      onCollectionSelectionChange(item.id);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "资产集合创建失败。", "error");
+    } finally {
+      setSavingCollection(false);
+    }
   };
 
   const deleteCollection = async (collectionId: string) => {
@@ -427,11 +442,6 @@ export default function CanvasAssetDrawer({
             />
           </div>
         </div>
-        {!canReference && (
-          <div className="canvas-asset-reference-hint">
-            要建立参考关系，请先明确选中一个节点或对象组；多选不会隐式冒充单节点。
-          </div>
-        )}
         <div className={`canvas-asset-collection-dropzone ${isAssignableCanvasAssetCollection(collection) ? "" : "needs-collection"}`}>
           <span>⌘</span><b>{isAssignableCanvasAssetCollection(collection) ? "把画布节点拖到这里归类" : "先选择未分类或自定义集合"}</b><small>{isAssignableCanvasAssetCollection(collection) ? "拖动节点右上角 ↗，节点不会从画布移除" : "智能筛选视图不能作为归类目标"}</small>
         </div>
@@ -445,7 +455,7 @@ export default function CanvasAssetDrawer({
           </div>
           <div className="canvas-asset-new-collection-form">
             <input value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} placeholder="输入合集名称，例如：灵感参考" aria-label="新合集名称" onKeyDown={(event) => { if (event.key === "Enter") void createCollection(); }} />
-            <button type="button" onClick={() => void createCollection()} disabled={!newCollectionName.trim()}><span aria-hidden="true">＋</span>创建</button>
+            <button type="button" onClick={() => void createCollection()} disabled={!newCollectionName.trim()} aria-busy={savingCollection}><span aria-hidden="true">＋</span>{savingCollection ? "保存中" : "创建"}</button>
           </div>
         </div>
         {selectedAssetIds.size > 0 && <div className="canvas-asset-bulk-bar"><b>已选 {selectedAssetIds.size} 个</b><button type="button" onClick={() => void addSelectedAssetsToCollection()}>加入当前集合</button><button type="button" onClick={() => setSelectedAssetIds(new Set())}>清除选择</button></div>}
@@ -481,6 +491,7 @@ export default function CanvasAssetDrawer({
                     {asset.kind === "video" ? (
                       <video
                         src={asset.url}
+                        draggable={false}
                         muted
                         playsInline
                         preload="metadata"
@@ -491,7 +502,7 @@ export default function CanvasAssetDrawer({
                         <b>参考音频</b>
                       </div>
                     ) : (
-                      <img src={asset.url} alt={asset.name} loading="lazy" />
+                      <img src={asset.url} alt={asset.name} loading="lazy" draggable={false} />
                     )}
                     <span>{asset.kind === "video" ? "▶ 视频" : asset.kind === "audio" ? "♫ 音频" : "▣ 图片"}</span>
                   </button>

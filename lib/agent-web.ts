@@ -1,3 +1,5 @@
+import { isVideoDownloadBrowserSession, type VideoDownloadBrowserSession } from '../packages/contracts/video-download';
+
 export type AgentWebMode = 'auto' | 'always' | 'off';
 
 export type AgentWebDecisionReason =
@@ -389,6 +391,146 @@ export function likelyFileGenerationRequest(input: string) {
     || /(?:给我|提供|返回).{0,12}(?:一个|一份|可下载的)?.{0,12}(?:csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|文件|附件)/i.test(text);
 }
 
+type VideoDownloadContextMessage = { role?: string; content?: unknown };
+type VideoDownloadBrowserSessionAuthorization = { browser: VideoDownloadBrowserSession; url: string };
+
+const VIDEO_DOWNLOAD_BROWSER_PATTERN = /\b(?:brave|chrome|chromium|edge|firefox|opera|safari|vivaldi|whale)\b|默认浏览器/i;
+
+function asksForVideoDownloadSessionConsent(text: string) {
+  const question = text.replace(/https?:\/\/\S+/ig, ' ');
+  return /cookies?|cookie|browser\s+session|login\s+session|浏览器会话|登录态|登录会话/i.test(question)
+    && (/[?？]/.test(question) || /(?:should i|would you like|do you want|是否|可以吗|要不要|需不需要)/i.test(question));
+}
+
+function videoUrlInText(text: string) {
+  return text.match(/https?:\/\/\S+/i)?.[0]?.replace(/[\]\)>,.;!?]+$/g, '') || '';
+}
+
+export function videoDownloadBrowserSessionAuthorization(input: string, context: readonly VideoDownloadContextMessage[] = []): VideoDownloadBrowserSessionAuthorization | undefined {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  // URL query strings may contain "?", "cookie", or a browser name. Only
+  // the user's words outside URLs can authorize access to a browser session.
+  const instruction = text.replace(/https?:\/\/\S+/ig, ' ').trim();
+  const namesBrowser = VIDEO_DOWNLOAD_BROWSER_PATTERN.test(instruction);
+  const namesSession = /cookies?|cookie|browser\s+session|login\s+session|浏览器会话|登录态|登录会话/i.test(instruction);
+  const declinesSession = /(?:不要|不用|不使用|不需要|无需|拒绝|取消|don't|do not|without|not use)/i.test(instruction);
+  const asksInsteadOfSelecting = /[?？]|(?:能不能|是否|可以吗|should i|can i|not sure)/i.test(instruction);
+  const explicitlySelectsSession = /(?:使用|用|读取|授权|允许|\buse\b|\bread\b|\bauthorize\b|\ballow\b|\bwith\b|\bvia\b)/i.test(instruction);
+  if (!namesBrowser || !namesSession || declinesSession || asksInsteadOfSelecting || !explicitlySelectsSession) return undefined;
+  if (!videoDownloadUrl(text)) {
+    const previous = context.at(-1);
+    const previousText = previous?.role === 'assistant' ? String(previous.content || '') : '';
+    if (!asksForVideoDownloadSessionConsent(previousText)) return undefined;
+    const consentUrl = videoUrlInText(previousText);
+    if (consentUrl && videoDownloadUrl(text, context) !== consentUrl) return undefined;
+  }
+
+  const recentUsers = context.filter((message) => message.role === 'user').slice(-3);
+  const recentText = [...recentUsers.map((message) => String(message.content || '')), text].join(' ');
+  const recentUrls = [...recentUsers.map((message) => String(message.content || '')).join(' '), text]
+    .flatMap((value) => value.match(/https?:\/\/\S+/ig) || []);
+  const knownVideoHost = recentUrls.some((value) => {
+    try {
+      return /(?:^|\.)(?:youtube\.com|youtu\.be|bilibili\.com|douyin\.com|vimeo\.com|xinpianchang\.com)$/i.test(new URL(value).hostname);
+    } catch {
+      return false;
+    }
+  });
+  const hasVideoDownloadIntent = /(?:下载|download)/i.test(recentText)
+    && (/(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|douyin|vimeo|xinpianchang)/i.test(recentText) || knownVideoHost);
+  if (!hasVideoDownloadIntent) return undefined;
+
+  const url = videoDownloadUrl(text, context);
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+    const browserMatch = instruction.match(VIDEO_DOWNLOAD_BROWSER_PATTERN)?.[0].toLowerCase();
+    const browser = browserMatch === '默认浏览器' ? 'default' : browserMatch;
+    if (!isVideoDownloadBrowserSession(browser)) return undefined;
+    return { browser, url: parsed.toString() };
+  } catch {
+    return undefined;
+  }
+}
+
+function isAuthorizedBrowserSessionFollowUp(text: string, context: readonly VideoDownloadContextMessage[]) {
+  return Boolean(videoDownloadBrowserSessionAuthorization(text, context));
+}
+
+/** Return the URL belonging to the current public-video download request. */
+export function videoDownloadUrl(input: string, context: readonly VideoDownloadContextMessage[] = []) {
+  const current = videoUrlInText(String(input || ''));
+  if (current) return current;
+  const previous = [...context].reverse().find((message) => message.role === 'user');
+  const previousUserUrl = videoUrlInText(String(previous?.content || ''));
+  if (previousUserUrl) return previousUserUrl;
+  // A download can be requested one turn after the URL. The resulting 401/403
+  // consent question carries that exact URL so the next turn can stay scoped
+  // to the user's original link without accepting an arbitrary assistant URL.
+  const lastMessage = context.at(-1);
+  const consentText = lastMessage?.role === 'assistant' ? String(lastMessage.content || '') : '';
+  if (!asksForVideoDownloadSessionConsent(consentText)) return '';
+  const consentUrl = videoUrlInText(consentText);
+  if (!consentUrl) return '';
+  return context.filter((message) => message.role === 'user').slice(-3)
+    .some((message) => videoUrlInText(String(message.content || '')) === consentUrl) ? consentUrl : '';
+}
+
+/** Identify an explicit public-video download request.
+ *
+ * A common chat flow puts the URL in one turn and the confirmation in the
+ * next turn (for example: "https://..." followed by "下载"). Keep that
+ * follow-up actionable by looking only at the nearest preceding user URL;
+ * callers still decide whether the request is allowed to execute.
+ */
+export function likelyVideoDownloadRequest(input: string, context: readonly VideoDownloadContextMessage[] = []) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  if (isAuthorizedBrowserSessionFollowUp(text, context)) return true;
+  // A bare video URL is an execution follow-up only when the nearest prior
+  // user turn explicitly established "send a video link later and download it".
+  // The assistant's prose cannot grant this action, and JEV still reviews the
+  // resulting candidate before the native downloader is exposed.
+  if (/^https?:\/\/\S+$/i.test(text) && context.length) {
+    let hostname = '';
+    try { hostname = new URL(text).hostname.toLowerCase(); } catch { /* Keep the normal request path. */ }
+    const knownVideoHost = hostname === 'youtu.be'
+      || /^(?:www\.)?youtube\.com$/.test(hostname)
+      || /^(?:www\.|m\.)?bilibili\.com$/.test(hostname)
+      || /^(?:www\.)?douyin\.com$/.test(hostname)
+      || /^(?:www\.)?vimeo\.com$/.test(hostname)
+      || /^(?:www\.)?xinpianchang\.com$/.test(hostname);
+    const previousUser = [...context].reverse().find((message) => message.role === 'user');
+    const previousInstruction = String(previousUser?.content || '').replace(/\s+/g, ' ');
+    const hasDownloadOnLinkInstruction = /(?:以后|后续|之后|下次|later|next time).{0,40}(?:视频链接|视频地址|video link|链接|地址).{0,24}(?:下载|保存|download|save)/i.test(previousInstruction);
+    const isQuestionOrRejection = /[?？]$/.test(previousInstruction)
+      || /(?:能不能|是否|可以吗|能否|不要|别|不需要).{0,16}(?:下载|保存|download|save)/i.test(previousInstruction);
+    if (knownVideoHost && hasDownloadOnLinkInstruction && !isQuestionOrRejection) return true;
+  }
+  if (!/(?:下载|保存|提取|抓取|转存|download|save)/i.test(text)) return false;
+  // GitHub repository links mentioned while asking for a Skill are source
+  // repositories, not media URLs. Keep them out of the yt-dlp path even when
+  // the same sentence also says “download video”.
+  if (/https?:\/\/(?:www\.)?github\.com\//i.test(text)
+    && /(?:skill|repo)/i.test(text)) return false;
+  const hasVideoSignal = /(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|抖音|快手|douyin|vimeo|xinpianchang)/i.test(text);
+  if (hasVideoSignal && /https?:\/\/\S+/i.test(text)) {
+    if (/https?:\/\/(?:www\.)?github\.com\//i.test(text)) return false;
+    return true;
+  }
+  if (hasVideoSignal && !context.length) return false;
+  // Only inherit a URL for a short follow-up. A fresh sentence containing a
+  // different topic must not accidentally reuse an old media URL.
+  if (text.length > 32 || !context.length) return false;
+  const previousUserUrl = [...context].reverse().find((message) => message.role === 'user');
+  if (!previousUserUrl) return false;
+  const previousContent = String(previousUserUrl.content || '');
+  if (!/https?:\/\/\S+/i.test(previousContent)) return false;
+  return /(?:视频|video|mp4|webm|mov|youtube|youtu\.be|bilibili|抖音|快手|douyin|vimeo|xinpianchang)/i.test(previousContent)
+    || /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be|bilibili\.com|douyin\.com|vimeo\.com|xinpianchang\.com)\//i.test(previousContent);
+}
+
 export function likelyArtifactGenerationRequest(input: string) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
@@ -450,6 +592,13 @@ export function likelyMcpManagementRequest(input: string) {
  */
 export function extractGithubMcpInstallRequest(input: string, previousAssistantText = '', previousUserText = '', previousContextText = '') {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
+  // A repository named as the source for an Agent Skill is not an MCP
+  // server.  Keep the direct MCP installer from pre-empting skill_install.
+  const skillContext = [text, previousAssistantText, previousUserText, previousContextText]
+    .map((value) => String(value || '').replace(/\s+/g, ' '))
+    .some((value) => /(?:skill|技能)/i.test(value)
+      && /(?:github\.com\/|yt-dlp|仓库|repo)/i.test(value));
+  if (skillContext) return null;
   const url = text.match(githubRepositoryUrlPattern)?.[0] || '';
   const previousUser = String(previousUserText || '').replace(/\s+/g, ' ').trim();
   const previousUserUrl = previousUser.match(githubRepositoryUrlPattern)?.[0] || '';

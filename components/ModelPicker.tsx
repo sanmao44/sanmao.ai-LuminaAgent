@@ -7,15 +7,16 @@ import type { ModelCapability, RegistryModel } from '@/lib/types';
 import type { AgentModelHealthRecord } from '@/lib/agent/model-health';
 import { getFavoriteModelIds, getRecentModelIds, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
-import { MODEL_PICKER_QUICK_LIMIT, modelPickerMatches, takeUniqueModelSlice } from '@/lib/model-picker';
+import { MODEL_PICKER_QUICK_LIMIT, modelPickerMatches, modelSupportsCapabilityRequirements, takeUniqueModelSlice } from '@/lib/model-picker';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
+import { isIntentClassifierModel } from '@/lib/intent-classifier';
 
 type ModelPickerProps = {
   models: RegistryModel[];
   value: string;
   onChange: (value: string) => void;
-  capability: ModelCapability;
+  capability: ModelCapability | readonly ModelCapability[];
   defaultProviderId?: string | null;
   defaultProviderName?: string;
   defaultModelId?: string | null;
@@ -72,6 +73,8 @@ function selectCloneAutomaticModel(models: RegistryModel[]) {
 }
 
 export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '', portalZIndex = CANVAS_Z_INDEX.portalPopover, dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog, automaticMode = 'default', automaticHint, triggerPrefix, health = [], disabled = false }: ModelPickerProps) {
+  const requiredCapabilities: readonly ModelCapability[] = typeof capability === 'string' ? [capability] : capability;
+  const capabilityLabel = requiredCapabilities.map((item) => capabilityLabels[item] || item).join(' + ');
   const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
   const [quickOpen, setQuickOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -92,15 +95,16 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   useBodyScrollLock(dialogOpen);
 
   const availableModels = useMemo(() => models.filter((model) => {
+    if (isIntentClassifierModel(model)) return false;
     if (!model.enabled || !model.published) return false;
-    // A clone job can only execute video-generation models. Do not let a
-    // video-edit/extend model appear selectable and then silently fall back.
-    if (capability === 'video-generate') return model.capabilities.includes('video-generate');
-    return model.capabilities.includes(capability) || (capability.startsWith('video-') && model.kind === 'video');
+    return modelSupportsCapabilityRequirements(model, requiredCapabilities);
   }), [models, capability]);
   const healthByModel = useMemo(() => new Map(health.map((item) => [item.modelId, item])), [health]);
   const selected = value !== 'auto' ? availableModels.find((model) => model.id === value) : null;
-  const autoModel = automaticMode === 'clone' && capability === 'video-generate'
+  const unavailableSelectedModel = value && value !== 'auto' && !selected
+    ? models.find((model) => model.id === value)
+    : undefined;
+  const autoModel = automaticMode === 'clone' && requiredCapabilities.length === 1 && requiredCapabilities[0] === 'video-generate'
     ? selectCloneAutomaticModel(availableModels)
     : selectAutomaticModel(availableModels, defaultProviderId, defaultModelId);
   const recentModels = useMemo(() => uniqueModels(recent.map((id) => availableModels.find((model) => model.id === id))), [availableModels, recent]);
@@ -241,7 +245,11 @@ export default function ModelPicker({ models, value, onChange, capability, defau
 
   const triggerLabel = selected
     ? `${triggerPrefix || '手动'} · ${selected.providerName} · ${selected.displayName}`
-    : autoModel
+    : unavailableSelectedModel
+      ? `${triggerPrefix || '手动'} · ${unavailableSelectedModel.enabled && unavailableSelectedModel.published && !modelSupportsCapabilityRequirements(unavailableSelectedModel, requiredCapabilities) ? `不支持${capabilityLabel}` : '模型不可用'} · ${unavailableSelectedModel.displayName}`
+      : value && value !== 'auto'
+        ? `${triggerPrefix || '手动'} · 所选模型不可用`
+        : autoModel
       ? `${triggerPrefix || '自动'} · ${automaticMode === 'clone' ? '克隆主要使用 Seedance' : defaultProviderName || '默认厂商'} · ${autoModel.displayName}`
       : placeholder;
   const quickShowsAll = availableModels.length <= 8;
@@ -264,7 +272,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
       }}
     >
       <section className="model-picker-dialog" role="dialog" aria-modal="true" aria-label="浏览全部模型">
-        <div className="model-picker-dialog-head"><div><strong>浏览全部模型</strong><small>{capabilityLabels[capability] || '当前能力'} · {availableModels.length} 个可用模型</small></div><button type="button" className="model-picker-dialog-close" onClick={() => setDialogOpen(false)} aria-label="关闭">×</button></div>
+        <div className="model-picker-dialog-head"><div><strong>浏览全部模型</strong><small>{capabilityLabel || '当前能力'} · {availableModels.length} 个可用模型</small></div><button type="button" className="model-picker-dialog-close" onClick={() => setDialogOpen(false)} aria-label="关闭">×</button></div>
         <label className="model-picker-dialog-search"><span>⌕</span><input ref={dialogSearchRef} value={dialogQuery} onChange={(event) => setDialogQuery(event.target.value)} placeholder="搜索模型、原始 ID 或服务商…"/><kbd>Esc</kbd>{dialogQuery && <button type="button" aria-label="清空搜索" onClick={() => setDialogQuery('')}>×</button>}</label>
         <div className="model-picker-dialog-body">
           <aside className="model-picker-provider-filter" aria-label="按服务商筛选"><button type="button" className={dialogProviderId === 'all' ? 'active' : ''} onClick={() => setDialogProviderId('all')}><span>全部模型</span><b>{availableModels.length}</b></button>{providerOptions.map((provider) => <button type="button" className={dialogProviderId === provider.id ? 'active' : ''} key={provider.id} onClick={() => setDialogProviderId(provider.id)}><span>{provider.name}</span><b>{provider.count}</b></button>)}</aside>
@@ -272,7 +280,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
             {dialogProviderId === 'all' && !dialogQuery.trim() && <section className="model-picker-dialog-auto"><div className="model-picker-section-title"><span>推荐模型</span><small>普通情况下使用自动</small></div>{renderAutoChoice()}</section>}
             <div className="model-picker-dialog-summary"><strong>{dialogModels.length} 个匹配模型</strong><span>{dialogQuery.trim() ? `搜索“${dialogQuery.trim()}”` : dialogProviderId === 'all' ? '全部服务商' : providerOptions.find((provider) => provider.id === dialogProviderId)?.name}</span></div>
             <div className="model-picker-dialog-list" role="listbox" aria-label="模型列表">{dialogModels.map(renderModel)}</div>
-            {!dialogModels.length && <div className="model-picker-empty">没有找到支持“{capabilityLabels[capability] || '当前任务'}”的模型</div>}
+            {!dialogModels.length && <div className="model-picker-empty">没有找到支持“{capabilityLabel || '当前任务'}”的模型</div>}
           </main>
         </div>
       </section>
@@ -294,7 +302,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
       onWheel={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
     >
-      <div className="model-picker-panel-head"><div><strong>快速选择</strong><small>{capabilityLabels[capability] || '当前能力'} · {availableModels.length} 个可用模型</small></div><button type="button" onClick={() => setQuickOpen(false)} aria-label="关闭">×</button></div>
+      <div className="model-picker-panel-head"><div><strong>快速选择</strong><small>{capabilityLabel || '当前能力'} · {availableModels.length} 个可用模型</small></div><button type="button" onClick={() => setQuickOpen(false)} aria-label="关闭">×</button></div>
       <div className="model-picker-scroll">
         <section className="model-picker-section model-picker-auto-section"><div className="model-picker-section-title"><span>推荐模型</span><small>普通情况下使用自动</small></div>{renderAutoChoice()}{!quickShowsAll && quickModelGroups.recommended.map(renderModel)}</section>
         {quickShowsAll ? <section className="model-picker-section"><div className="model-picker-section-title"><span>全部模型</span><small>{quickModels.length} 个模型</small></div>{quickModels.map(renderModel)}</section> : <>

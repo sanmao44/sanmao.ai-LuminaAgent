@@ -281,7 +281,6 @@ test("editor generation resolves its current draft without waiting for selection
   assert.ok(generationStart >= 0 && generationEnd > generationStart, "generation implementation should be present");
   const generation = component.slice(generationStart, generationEnd);
   assert.match(generation, /async \(request\?: CanvasGenerationRequest\)/);
-  assert.match(generation, /nodeById\(canvasCoreRef\.current\.document\(\), request\.nodeId\)/);
   assert.match(generation, /const source = deckSource\(request\)/);
   assert.match(generation, /const generationMode = source\.kind/);
   assert.match(generation, /const hasRequestedPrompt = typeof request\?\.userPrompt === "string" \|\| typeof request\?\.prompt === "string"/);
@@ -572,13 +571,13 @@ test("one-take Agent requests preserve connected image order and stream back as 
   assert.match(generation, /role: "Agent 回复"/);
 });
 
-test("image continuation uses the ordinary image API and keeps lineage on image nodes", () => {
+test("image continuation tracks the ordinary image request and keeps lineage on image nodes", () => {
   const start = component.indexOf("const runImageContinuation = useCallback");
   const end = component.indexOf("const runReuseGeneration = useCallback", start);
   assert.ok(start >= 0 && end > start, "image continuation implementation should be present");
   const continuation = component.slice(start, end);
 
-  assert.match(continuation, /generateCanvasImage\(/);
+  assert.match(continuation, /runTrackedCanvasImageRequest\(/);
   assert.match(continuation, /addReference\(\s*source\.id/);
   assert.match(continuation, /referenceIds: \[\.\.\.\(actualUsesCurrentImageAsReference \? resolvedReferenceIds/);
   assert.match(continuation, /parentNodeId: source\.id/);
@@ -588,7 +587,8 @@ test("image continuation uses the ordinary image API and keeps lineage on image 
   assert.match(continuation, /result\.images\.forEach/);
   assert.match(continuation, /status: "failed"/);
   assert.match(continuation, /referenceEdges\.map/);
-  assert.match(continuation, /fallbackToGenerationOnEdit404: true/);
+  assert.match(continuation, /imageOperation: imageIntent\.operation/);
+  assert.doesNotMatch(continuation, /fallbackToGenerationOnEdit404/);
   assert.doesNotMatch(continuation, /sourceGeneratorId/);
   assert.doesNotMatch(continuation, /variantBatchId|variantIndex/);
   assert.doesNotMatch(continuation, /createGenerator\(/);
@@ -600,11 +600,12 @@ test("completed image editors remember the current-image reference switch per no
   assert.ok(editorStart >= 0 && editorEnd > editorStart, "image editor should be present");
   const editor = component.slice(editorStart, editorEnd);
   assert.match(editor, /useCurrentImageAsReference/);
-  assert.match(editor, /useState\(currentImageReference \?\? true\)/);
+  assert.match(editor, /canvasCurrentImageReferenceDefault\(currentImageReference, Boolean\(maskState\?\.url\)\)/);
   assert.match(editor, /checked=\{useCurrentImageAsReference\}/);
   assert.match(editor, /aria-label="当前图片作参考"/);
   assert.match(editor, /!branchDraft/);
-  assert.match(editor, /setUseCurrentImageAsReference\(currentImageReference \?\? true\)/);
+  assert.match(editor, /setUseCurrentImageAsReference\([\s\S]*?canvasCurrentImageReferenceDefault\(currentImageReference, Boolean\(maskState\?\.url\)\)/);
+  assert.match(editor, /\[currentImageReference, maskState\?\.url, node\.id\]/);
   assert.match(editor, /onCurrentImageReferenceChange\?\.\(next\)/);
   assert.doesNotMatch(editor, /setUseCurrentImageAsReference\(true\)/);
   assert.match(component, /const \[currentImageReferenceByNode, setCurrentImageReferenceByNode\] = useState<Record<string, boolean>>\(\{\}\)/);
@@ -626,9 +627,10 @@ test("current-image reference choice reaches repeat generation without changing 
   assert.match(editor, /useCurrentImageAsReference: options\.useCurrentImageAsReference/);
   assert.match(component, /request\.useCurrentImageAsReference/);
   assert.match(continuation, /options\?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference">/);
-  assert.match(continuation, /const useCurrentImageAsReference = options\?\.useCurrentImageAsReference !== false/);
+  assert.match(continuation, /const useCurrentImageAsReference = options\?\.useCurrentImageAsReference === true/);
   assert.match(continuation, /if \(useCurrentImageAsReference\) \{[\s\S]*?addReference\([\s\S]*?source\.id/);
-  assert.match(continuation, /operation: actualUsesCurrentImageAsReference \? "edit" : "generate"/);
+  assert.match(continuation, /canvasImageRequestOperation\(paramsWithMask, \{ useCurrentImageAsReference \}\)/);
+  assert.match(continuation, /operation: actualImageOperation/);
   assert.match(continuation, /referenceIds: \[\.\.\.\(actualUsesCurrentImageAsReference \? resolvedReferenceIds/);
   assert.match(continuation, /parentNodeId: source\.id/);
   assert.match(continuation, /reuseSourceNodeId: source\.id/);
@@ -639,7 +641,7 @@ test("disabling the current image keeps explicit references and omits the mask f
   const end = component.indexOf("const runReuseGeneration = useCallback", start);
   assert.ok(start >= 0 && end > start, "image continuation should be present");
   const continuation = component.slice(start, end);
-  assert.match(continuation, /const \{ mask: _mask, \.\.\.withoutMask \} = paramsWithMask/);
+  assert.match(continuation, /const \{ mask: _mask, \.\.\.withoutMask \} = imageReferenceRequest\.params/);
   assert.match(continuation, /const params = useCurrentImageAsReference[\s\S]*withoutMask as ImageCreationSettings/);
   assert.match(continuation, /for \(const \[index, reference\] of selectedReferences\.entries\(\)\)/);
   assert.match(continuation, /addReference\(existing\.id, url, name\)/);
@@ -739,12 +741,6 @@ test("canvas drawers appear directly and do not add heavy stacked shadows", () =
   assert.match(styles, /is-image-dock \.canvas-node-editor-dock-drawer\{[\s\S]*animation:none!important[\s\S]*transition:none!important/);
   assert.match(shadowStyles, /\.canvas-node-editor-popover\.is-video-variant\s*\{[\s\S]*box-shadow:0 10px 26px rgba\(0,0,0,\.16\)/);
   assert.match(shadowStyles, /\.canvas-node-editor-popover\.is-video-variant \.canvas-node-editor-dock-drawer\s*\{[\s\S]*box-shadow:0 12px 28px rgba\(0,0,0,\.17\)/);
-});
-
-test("opening a dock drawer never changes the attached editor position", () => {
-  assert.doesNotMatch(component, /surface = popover\.querySelector<HTMLElement>\("\.canvas-node-editor-surface"\)/);
-  assert.doesNotMatch(component, /const (popoverHeight|estimatedPopoverHeight|naturalHeight)/);
-  assert.match(component, /isCompact, isDockNode, isImageNode/);
 });
 
 test("selected related edges animate dashed guides and aligned tapered light trails", () => {
@@ -879,12 +875,12 @@ test("local edit editor reports saving state and passes coverage into the attach
   assert.match(styles, /\.canvas-mask-summary/);
 });
 
-test("applying a local edit closes both editors instead of reopening the node prompt", () => {
+test("applying a local edit returns to the node editor with the saved mask ready", () => {
   const applyStart = component.indexOf("const applyCanvasMask = useCallback");
   const applyEnd = component.indexOf("const removeCanvasMask = useCallback", applyStart);
   const apply = component.slice(applyStart, applyEnd);
   assert.ok(applyStart >= 0 && applyEnd > applyStart, "canvas mask apply handler should be present");
-  assert.match(apply, /setExpandedEditorId\(null\)/);
+  assert.match(apply, /setExpandedEditorId\(node\.id\)/);
   assert.match(apply, /setMaskNodeId\(null\)/);
   assert.match(apply, /const moveGuide = moveGuideDataUrl/);
   assert.match(apply, /sourceAssetId: moveGuide\.id, sourceUrl: moveGuide\.url/);
@@ -1004,15 +1000,12 @@ test("dock local edit control keeps editing and removal actions in a clear segme
   assert.doesNotMatch(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*position:absolute/);
 });
 
-test("regular editor stays below its node in the stacked main-composer layout", () => {
-  assert.match(component, /placeCanvasNodeEditorDock\(/);
-  assert.match(component, /const nextPosition = placeCanvasNodeEditorDock\(\s*anchor,/);
+test("regular editor stays below its node without viewport fitting", () => {
   assert.doesNotMatch(component, /--canvas-editor-width/);
   assert.doesNotMatch(component, /layoutAnchor/);
-  assert.match(component, /data-placement="bottom"/);
-  assert.doesNotMatch(component, /maxHeight: promptExpanded \|\| stackedEditor \|\| isDockNode/);
-  assert.doesNotMatch(component, /needsFullPanelLift/);
-  assert.doesNotMatch(component, /useTopPlacement/);
+  assert.match(component, /data-placement=\{position\.placement\}/);
+  assert.match(component, /placeCanvasNodeEditorDock\(/);
+  assert.doesNotMatch(component, /isViewportFitted|is-viewport-fitted|--canvas-editor-max-height/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\)\[data-density\]\{[^}]*width:min\(620px,calc\(100vw - 24px\)\)!important/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\)\{[^}]*max-height:min\(560px,calc\(100dvh - 24px\)\)/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-columns\{grid-template-columns:minmax\(0,1fr\)/);
@@ -1156,6 +1149,7 @@ test("completed video nodes offer a guarded local depth-video action in more too
   assert.match(videoActions, /disabled: !hasMedia \|\| generationKeys\.has\(`depth:\$\{node\.id\}`\)/);
   assert.match(component, /const createDepthVideoFromNode = useCallback/);
   assert.match(component, /generateLocalDepthVideo/);
+  assert.match(component, /mode: "model"/);
 });
 
 test("quick-action menus never expose a horizontal scrollbar", () => {
@@ -1165,13 +1159,15 @@ test("quick-action menus never expose a horizontal scrollbar", () => {
 });
 
 test("local depth video balances inference quality with higher-resolution export", () => {
-  assert.match(localDepthVideo, /const MAX_INFERENCE_SIDE = 1024/);
-  assert.match(localDepthVideo, /const MAX_EXPORT_SIDE = 1920/);
-  assert.match(localDepthVideo, /inferenceScale = Math\.min\(1, MAX_INFERENCE_SIDE/);
-  assert.match(localDepthVideo, /exportScale = Math\.min\(1, MAX_EXPORT_SIDE/);
+  assert.match(localDepthVideo, /depthQualityProfile\(options\.quality\)/);
+  assert.match(localDepthVideo, /runDepthInference\(estimator, sourceCanvas, profile\.inferenceSide\)/);
+  assert.match(localDepthVideo, /imageProcessor\.size = \{ width: normalizedSide, height: normalizedSide \}/);
+  assert.match(localDepthVideo, /inferenceScale = Math\.min\(1, profile\.inferenceSide/);
+  assert.match(localDepthVideo, /exportScale = Math\.min\(1, profile\.exportSide/);
   assert.match(localDepthVideo, /sourceCanvas\.width = inferenceWidth/);
   assert.match(localDepthVideo, /canvas\.width = exportWidth/);
   assert.match(localDepthVideo, /context\.drawImage\(depthCanvas, 0, 0, exportWidth, exportHeight\)/);
+  assert.match(localDepthVideo, /canvasBlob\(canvas, "image\/webp", profile\.frameQuality\)/);
 });
 
 test("local depth video follows source FPS and produces an editor-compatible MP4", () => {

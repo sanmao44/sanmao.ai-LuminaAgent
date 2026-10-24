@@ -4,6 +4,9 @@ export const GENERATE_TASKS_STORAGE_LIMIT = 12;
 export const GENERATE_TASKS_STORAGE_BUDGET = 1200000;
 /** 单个任务的参考图超过该字符数时不再写入存储。 */
 export const GENERATE_TASK_REFERENCE_BUDGET = 2500000;
+/** 局部编辑任务的蒙版单独设限，避免超大源图挤掉可恢复的蒙版。 */
+export const GENERATE_TASK_EDIT_MASK_BUDGET = 350000;
+export const GENERATE_TASK_MOVE_GUIDE_BUDGET = 250000;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -16,13 +19,9 @@ function isRecord(value: unknown): value is UnknownRecord {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
-function referenceChars(task: UnknownRecord) {
-  const request = isRecord(task.request) ? task.request : null;
-  if (!request) return 0;
+function referenceChars(request: UnknownRecord) {
   const references = Array.isArray(request.references) ? request.references : [];
-  const referenceTotal = references.reduce<number>((total, item) => total + (isRecord(item) && typeof item.dataUrl === 'string' ? item.dataUrl.length : 0), 0);
-  const mask = isRecord(request.mask) && typeof request.mask.dataUrl === 'string' ? request.mask.dataUrl.length : 0;
-  return referenceTotal + mask;
+  return references.reduce<number>((total, item) => total + (isRecord(item) && typeof item.dataUrl === 'string' ? item.dataUrl.length : 0), 0);
 }
 
 function compactTask(task: unknown, keepReferences: boolean) {
@@ -31,8 +30,31 @@ function compactTask(task: unknown, keepReferences: boolean) {
     ? source.itemIds
     : (Array.isArray(source.items) ? source.items.map((item) => (isRecord(item) ? item.id : undefined)).filter((id) => id !== undefined) : []);
   let request = isRecord(source.request) ? { ...source.request } : undefined;
-  if (request && (!keepReferences || referenceChars(source) > GENERATE_TASK_REFERENCE_BUDGET)) {
-    request = { ...request, references: [], mask: null, referencesOmitted: true };
+  if (!request) return { ...source, items: [], itemIds };
+
+  const isLocalEditorTask = request.imageOperation === 'edit';
+  if (!keepReferences || referenceChars(request) > GENERATE_TASK_REFERENCE_BUDGET) {
+    request = {
+      ...request,
+      references: [],
+      referencesOmitted: true,
+      ...(!isLocalEditorTask ? { mask: null } : {}),
+    };
+  }
+
+  if (isLocalEditorTask && isRecord(request.mask)) {
+    const mask = { ...request.mask };
+    const guide = typeof mask.sourceImageDataUrl === 'string' ? mask.sourceImageDataUrl : '';
+    if (guide.length > GENERATE_TASK_MOVE_GUIDE_BUDGET) {
+      delete mask.sourceImageDataUrl;
+      request = { ...request, mask, moveGuideOmitted: true };
+    }
+    const maskData = typeof mask.dataUrl === 'string' ? mask.dataUrl : '';
+    if (maskData.length > GENERATE_TASK_EDIT_MASK_BUDGET) {
+      request = { ...request, mask: null, maskOmitted: true };
+    } else {
+      request = { ...request, mask };
+    }
   }
   return { ...source, items: [], itemIds, request };
 }

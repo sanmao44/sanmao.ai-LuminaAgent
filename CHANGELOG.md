@@ -1,3 +1,56 @@
+# 0.7.100 本地图片编辑与任务恢复
+
+- 改进本地图片编辑器与分割蒙版交互，支持历史记录、遮罩持久化和编辑结果恢复。
+- 修复编辑任务中断后的恢复与结果归档，保持编辑器位置和画布任务状态一致。
+- 优化 Canvas Agent 图片意图识别，避免把参考图和编辑请求误判为新图生成。
+- 增强图片模型兼容、生成结果放置和画布编辑回归测试。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.100](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.100)。
+
+# 0.7.99 Canvas 图片生成与恢复改进
+
+- 修复 Canvas Agent 将图片参考和编辑请求误判为新图生成的问题，意图路由更准确。
+- 修复画布同步与保存恢复中图片引用丢失的问题，降低冲突恢复时素材丢失风险。
+- 改进 Canvas 图片模型兼容和生成结果放置流程，生成任务更稳定。
+- 优化画布生成与恢复工作流，并补充对应行为测试。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.99](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.99)。
+
+# 0.7.98 Canvas Agent 与稳定性修复
+
+- 修复 Canvas Agent 对文本优化、排版和选中素材操作的意图路由，图片、视频和文本参考可可靠传递给编辑任务。
+- 修复 Canvas 项目保存冲突后导航失效，以及打开项目菜单后画布导航被遮挡的问题。
+- 改进 Agent 流连接保持和自动媒体 Relay 启动时序，减少长响应中断与媒体访问瞬时失败。
+- 为 Word、Excel、PPT 等 Office 产物生成补充受控回退路径，提升复杂任务的完成率。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.98](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.98)。
+
+# 0.7.97 局域网画布工作区同步修复
+
+- 修复局域网模式下绑定 `0.0.0.0` 时的真实 Host 同源判断，避免正常局域网请求被误判为跨站请求。
+- 修复新局域网客户端初始化占位画布覆盖服务端工作区的问题，启动时可正确恢复共享项目和素材。
+- 修复多个局域网客户端同时编辑时的工作区冲突合并、元数据修复与竞态保护，避免覆盖其他客户端的项目。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.97](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.97)。
+
+# 0.7.96 画布 Agent 路由修复
+
+- 修复画布 Agent 后续意图路由，继续当前任务时正确关联当前对话上下文。
+- 修复普通画布对话误触发生图澄清的问题，非生图请求不再进入生图流程。
+- 发布源代码包含 `v0.7.95` 之后的 Canvas Agent 行为测试与项目展示文档更新。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.96](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.96)。
+
+# 0.7.95 画布 Agent 路由与发布稳定性
+
+- 画布选中素材的图片编排请求统一经过 JEV 语义判定，可靠传递选中的图片、视频和文本参考。
+- 画布 Agent 无法可靠判断生图意图时改为请求澄清；没有可用生图模型时明确报告能力缺失，不再猜测或误执行。
+- 视频工作台在不同窗口宽度和滚动模式下保持稳定布局，减少页面滚动条和顶栏切换造成的位移。
+- 启动器固定使用本机 `3210` canonical origin，识别并清理旧版本服务和旧构建；健康接口补充版本与构建身份。
+- 发布验证：本地 `npm run check`、Ubuntu CI 和 macOS DMG 独立启动验证通过；2 项 Windows System.Speech 测试因当前安全上下文不可用而跳过。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.95](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.95)。
+
 # 0.7.50 MCP 连接器、文档产物与任务底座
 
 - 对话里可直接生成真实的 Word / Excel / PPT 与 ZIP 压缩包，产物以附件形式下载并支持在线预览（尽量还原 Excel 公式与条件格式、Word 目录样式、PPT 表格图表与演讲者备注）。

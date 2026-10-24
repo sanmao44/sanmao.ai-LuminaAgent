@@ -243,6 +243,26 @@ test('normalizes NOVA-compatible documents and drops invalid graph references', 
   assert.equal(result.camera.zoom, 3);
 });
 
+test('normalizes custom names and group colors immutably', () => {
+  const source = model.normalizeDocument({
+    nodes: [
+      { id: 'node-1', type: 'prompt', x: 0, y: 0, data: { text: 'x', name: '  My\nNode  ' } },
+      { id: 'node-2', type: 'media', x: 1, y: 1, data: { kind: 'image', url: '/x' } },
+    ],
+    groups: [{ id: 'group-1', name: '  Work\tGroup ', color: '#AABBCC', nodeIds: ['node-1', 'node-2'] }],
+  });
+  const renamed = model.renameCanvasNode(source, 'node-1', '  Renamed\nNode  ');
+  assert.equal(renamed.nodes[0].data.name, 'Renamed Node');
+  assert.equal(source.nodes[0].data.name, 'My Node');
+  assert.equal(model.renameCanvasNode(renamed, 'node-1', '  ').nodes[0].data.name, undefined);
+  const longName = model.renameCanvasNode(source, 'node-1', 'x'.repeat(80));
+  assert.equal(longName.nodes[0].data.name.length, 48);
+  const recolored = model.setCanvasGroupColor(source, 'group-1', '#12ABef');
+  assert.equal(recolored.groups[0].color, '#12abef');
+  assert.equal(model.setCanvasGroupColor(recolored, 'group-1', 'invalid').groups[0].color, undefined);
+  assert.equal(model.renameCanvasGroup(source, 'group-1', '').groups[0].name, '对象组 1');
+});
+
 test('angle node drafts preserve a relative viewpoint baseline', () => {
   const created = model.createAngleNode({ x: 0, y: 0 });
   assert.equal(created.data.angle.camera.viewpoint.version, 2);
@@ -276,6 +296,25 @@ test('recovers interrupted local canvas work while preserving remote video tasks
   assert.equal(result.document.nodes.find((node) => node.id === 'agent-1').data.statusLabel, '上次 Agent 请求已中断，可重试');
   assert.equal(result.document.nodes.find((node) => node.id === 'image-1').data.status, 'failed');
   assert.equal(result.document.nodes.find((node) => node.id === 'video-1').data.status, 'running');
+});
+
+test('recovers a browser depth video with a depth-specific retry state', () => {
+  const document = model.normalizeDocument({
+    nodes: [
+      { id: 'source-video', type: 'media', x: 0, y: 0, data: { kind: 'video', url: '/source.mp4', status: 'completed' } },
+      { id: 'depth-video', type: 'media', x: 200, y: 0, data: { kind: 'video', status: 'running', processingStartedAt: 99, depthVideo: { sourceNodeId: 'source-video', mode: 'grayscale', startedAt: 99 } } },
+    ],
+    edges: [{ id: 'source-to-depth', source: 'source-video', target: 'depth-video', kind: 'manual' }],
+  });
+
+  const result = model.recoverInterruptedCanvasDocument(document, 123);
+  const depth = result.document.nodes.find((node) => node.id === 'depth-video');
+  assert.equal(result.recoveredCount, 1);
+  assert.equal(depth.data.status, 'failed');
+  assert.equal(depth.data.statusLabel, '上次本机深度图处理被页面中断，请从原视频节点重新生成');
+  assert.equal(depth.data.processingStartedAt, undefined);
+  assert.equal(depth.data.depthVideo.sourceNodeId, 'source-video');
+  assert.equal(result.document.nodes.find((node) => node.id === 'source-video').data.status, 'completed');
 });
 
 test('hydrates legacy video media params from generation params', () => {
@@ -420,6 +459,43 @@ test('sizes video cards from the requested aspect ratio and intrinsic metadata',
   }).nodes[0];
   assert.equal(manual.w, 510);
   assert.equal(manual.h, 330);
+});
+
+test('sizes image results from custom aspect, custom dimensions, and source fallback', () => {
+  const customAspect = model.smartMediaSize('image', {
+    kind: 'image', aspect: '自定义', customAspectWidth: 16,
+    customAspectHeight: 9, sizeMode: 'system', width: 1024, height: 1024,
+  });
+  const customDimensions = model.smartMediaSize('image', {
+    kind: 'image', aspect: '16:9', customAspectWidth: 16,
+    customAspectHeight: 9, sizeMode: 'custom', width: 1024, height: 2048,
+  });
+  const automatic = model.smartMediaSize('image', {
+    kind: 'image', aspect: '自动', customAspectWidth: 16,
+    customAspectHeight: 9, sizeMode: 'system', width: 1024, height: 1024,
+  }, 9 / 16);
+  const previewRatio = (size) => size.w / (size.h - 48);
+
+  assert.ok(Math.abs(previewRatio(customAspect) - 16 / 9) < 0.02);
+  assert.ok(Math.abs(previewRatio(customDimensions) - 0.5) < 0.02);
+  assert.ok(Math.abs(previewRatio(automatic) - 9 / 16) < 0.02);
+});
+
+test('sizes new empty image nodes with the same preview ratio as an empty video node', () => {
+  const image = model.createEmptyMedia('image', { x: 0, y: 0 }, {
+    kind: 'image',
+    aspect: '1:1',
+  });
+  const video = model.createEmptyMedia('video', { x: 0, y: 0 }, {
+    kind: 'video',
+    aspect: '16:9',
+  });
+  const imagePreviewRatio = image.w / (image.h - 48);
+  const videoPreviewRatio = video.w / (video.h - 42);
+
+  assert.ok(Math.abs(imagePreviewRatio - videoPreviewRatio) < 0.02);
+  assert.ok(image.h < video.h);
+  assert.equal(image.data.generation.params.aspect, '1:1');
 });
 
 test('canvas upscale nodes preserve provider-specific settings', () => {

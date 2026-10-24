@@ -1,11 +1,15 @@
 import type { CanvasNode, CanvasVideoEditorState } from "@/lib/canvas/types";
 import { normalizeVideoEditorState } from "@/lib/canvas/video-editor";
+import CanvasInlineNameEditor from "@/components/canvas/CanvasInlineNameEditor";
 
 export type VideoEditorNodeProps = {
   node: CanvasNode;
   state?: CanvasVideoEditorState;
   inputs: CanvasNode[];
   onOpen: () => void;
+  onRename?: (value: string) => void;
+  renaming?: boolean;
+  onRenamingChange?: (editing: boolean) => void;
 };
 
 function secondsLabel(value: number) {
@@ -15,7 +19,7 @@ function secondsLabel(value: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-export default function VideoEditorNode({ state: rawState, inputs, onOpen }: VideoEditorNodeProps) {
+export default function VideoEditorNode({ state: rawState, inputs, onOpen, node, onRename, renaming, onRenamingChange }: VideoEditorNodeProps) {
   const state = normalizeVideoEditorState(rawState);
   const videoClips = state.clips.filter((clip) => clip.track === "video").length;
   const audioClips = state.clips.filter((clip) => clip.track === "audio").length;
@@ -26,7 +30,7 @@ export default function VideoEditorNode({ state: rawState, inputs, onOpen }: Vid
         <div className="canvas-video-editor-title">
           <span className="canvas-video-editor-icon" aria-hidden="true">✂</span>
           <div>
-            <b>视频编辑节点</b>
+            <CanvasInlineNameEditor value={node.data.name} fallback="视频编辑节点" ariaLabel="视频编辑节点名称" onCommit={onRename} editing={renaming} onEditingChange={onRenamingChange} className="canvas-inline-name-editor canvas-node-name" />
             <small>多轨剪辑、裁剪、分割和字幕</small>
           </div>
         </div>

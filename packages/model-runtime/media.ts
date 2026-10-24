@@ -1,11 +1,7 @@
 import { invokeModelCandidates } from './invocation';
+import { MEDIA_MODEL_INPUT_NOT_SUBMITTED, type ModelProviderFailure } from '../contracts/model';
 
-type ProviderFailure = {
-  providerFailureKind?: string;
-  providerStatus?: number;
-  status?: number;
-  message?: string;
-};
+type ProviderFailure = ModelProviderFailure;
 
 /**
  * A media model may be replaced only when the provider explicitly rejects the
@@ -23,6 +19,13 @@ export function isSafeMediaModelFallbackError(error: unknown): boolean {
     && explicitCompatibility;
 }
 
+export function isSafeMediaInputFallbackError(error: unknown): boolean {
+  const failure = error as ProviderFailure | null;
+  return failure?.providerFailureKind === 'input'
+    && failure.providerFailureCode === MEDIA_MODEL_INPUT_NOT_SUBMITTED
+    && failure.providerResponse === false;
+}
+
 /**
  * Capability-specific provider fallback. Candidate loading and retry policy
  * live in model-runtime so API routes and tool execution share one boundary.
@@ -31,6 +34,9 @@ export function invokeMediaModelCandidates<T extends { model: { id: string } }, 
   initial: T,
   loadFallbacks: () => Promise<readonly T[]>,
   operation: (runtime: T) => Promise<R>,
+  options: { allowFallbackBeforeProviderSubmission?: boolean } = {},
 ): Promise<R> {
-  return invokeModelCandidates(initial, loadFallbacks, operation, isSafeMediaModelFallbackError);
+  return invokeModelCandidates(initial, loadFallbacks, operation, (error) =>
+    isSafeMediaModelFallbackError(error)
+    || (options.allowFallbackBeforeProviderSubmission === true && isSafeMediaInputFallbackError(error)));
 }

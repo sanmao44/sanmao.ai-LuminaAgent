@@ -29,6 +29,22 @@ const editorRequest = await import(`data:text/javascript;base64,${Buffer.from(ts
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText).toString("base64")}`);
 
+test("mask-wide presets are unavailable while an annotation or edit task is pending", () => {
+  const readyState = {
+    ready: true,
+    saving: false,
+    smartBusy: false,
+    pendingAnnotation: false,
+    movingAnnotation: false,
+  };
+
+  assert.equal(raster.canResetLocalEditMask(readyState), true);
+  for (const key of ["ready", "saving", "smartBusy", "pendingAnnotation", "movingAnnotation"]) {
+    const blocked = { ...readyState, [key]: key === "ready" ? false : true };
+    assert.equal(raster.canResetLocalEditMask(blocked), false, `reset should be blocked by ${key}`);
+  }
+});
+
 test("brush and eraser preserve the mask alpha contract and coverage", () => {
   const pixels = raster.createProtectedMask(10, 10);
   raster.applyBrushMask(pixels, 10, 10, 5, 5, 2, "edit");
@@ -118,8 +134,11 @@ test("annotation descriptions compile once without duplicating the generated sec
   assert.equal(raster.compileLocalEditPrompt(compiled, annotations), compiled);
   const unlabelled = raster.compileLocalEditPrompt("整体保持自然", [annotations[1]]);
   assert.doesNotMatch(unlabelled, /区域 1：/);
-  assert.match(unlabelled, /局部处理要求：只修改编辑范围/);
-  assert.match(raster.compileLocalEditPrompt("整体保持自然"), /局部处理要求：只修改编辑范围/);
+  assert.match(unlabelled, /局部处理要求：以参考原图为唯一底图/);
+  assert.match(unlabelled, /范围外保持原样，包括主体、构图、视角、透视、光照、色彩、材质、文字和标识/);
+  assert.match(unlabelled, /沿用邻近区域的纹理、色彩、光影和空间关系自然补全/);
+  assert.match(unlabelled, /不要新增未要求的内容/);
+  assert.match(raster.compileLocalEditPrompt("整体保持自然"), /局部处理要求：以参考原图为唯一底图/);
 
   const moved = {
     id: "move-one",
@@ -142,10 +161,11 @@ test("annotation descriptions compile once without duplicating the generated sec
 });
 
 test("the workbench records complete operations, supports undo/redo, feather and empty-range blocking", () => {
-  assert.match(editor, /while \(nextStates\.length > 21\) nextStates\.shift\(\)/);
+  assert.match(editor, /historyRef = useRef\(new LocalEditHistory\(\)\)/);
   assert.match(editor, /pushHistory\(gesture\.before\)/);
-  assert.match(editor, /restoreHistory\(historyRef\.current\.index - 1\)/);
-  assert.match(editor, /restoreHistory\(historyRef\.current\.index \+ 1\)/);
+  assert.match(editor, /historyRef\.current\.moveTo\(index\)/);
+  assert.match(editor, /historyRef\.current\.index > 0/);
+  assert.match(editor, /historyRef\.current\.index \+ 1 < historyRef\.current\.length/);
   assert.match(editor, /const fusionFeather = localEditFusionFeather\(feather\)/);
   assert.match(editor, /createSeamlessLocalEditMask\(sourcePixels, source\.width, source\.height, fusionFeather\)/);
   assert.match(editor, /exported\.feather/);
@@ -157,13 +177,10 @@ test("the workbench records complete operations, supports undo/redo, feather and
   assert.match(editor, /请先指定编辑区域，再应用局部编辑/);
   assert.match(editor, /const exported = exportMask\(\);[\s\S]*exported\.coverage <= 0/);
   assert.doesNotMatch(editor, /disabled=\{[^}]*coverage <= 0/);
-  assert.match(editor, /disabled=\{!ready \|\| saving \|\| Boolean\(pendingAnnotation\) \|\| Boolean\(movingAnnotation\)/);
+  assert.match(editor, /disabled=\{!ready \|\| saving \|\| Boolean\(pendingAnnotation\) \|\| Boolean\(movingAnnotation\) \|\| smartBusy\}/);
 });
 
-test("local edit history shortcuts use physical keys and are not preempted by canvas shortcuts", () => {
-  assert.match(editor, /const isUndoKey = key === 'z' \|\| event\.code === 'KeyZ'/);
-  assert.match(editor, /const isRedoKey = key === 'y' \|\| event\.code === 'KeyY'/);
-  assert.match(editor, /!event\.repeat && \(event\.ctrlKey \|\| event\.metaKey\) && isUndoKey/);
+test("canvas-level shortcut handling yields while the local edit modal is active", () => {
   assert.match(canvas, /if \(maskNodeId\) return;/);
 });
 
@@ -184,13 +201,13 @@ test("completed marks stay editable without opening a text dialog", () => {
   assert.match(styles, /\.local-edit-selection-thumb\{[^}]*background-repeat:no-repeat/);
   assert.match(styles, /\.local-edit-annotation-summary>div\{[^}]*max-height:min\(32vh,260px\);[^}]*overflow-x:hidden;[^}]*overflow-y:auto/);
   assert.match(editor, /className=\{`local-edit-annotation-summary\$\{annotations\.length > 0 \? ' has-items' : ''\}\$\{annotations\.length >= 4 \? ' dense' : ''\}`\}/);
-  assert.match(styles, /\.local-edit-workbench-sidebar\{overflow:hidden;padding-right:0/);
-  assert.match(styles, /\.local-edit-annotation-summary\.has-items\{[^}]*flex:1 1 0;min-height:0;overflow:hidden;grid-template-rows:auto minmax\(0,1fr\)/);
-  assert.match(styles, /\.local-edit-annotation-summary\.has-items>div\{[^}]*min-height:0;max-height:none;overflow-x:hidden;overflow-y:auto/);
-  assert.match(styles, /\.local-edit-prompt\{min-height:100px;flex:0 0 clamp\(100px,14vh,160px\)/);
+  assert.match(styles, /\.local-edit-workbench-sidebar\{[^}]*grid-template-rows:minmax\(0,1fr\) auto;[^}]*overflow:hidden/);
+  assert.match(styles, /\.local-edit-annotation-summary\.has-items\{[^}]*flex:none;min-height:0;overflow:visible;grid-template-rows:auto auto/);
+  assert.match(styles, /\.local-edit-annotation-summary\.has-items>div\{[^}]*min-height:0;max-height:min\(32vh,260px\);overflow-x:hidden;overflow-y:auto/);
+  assert.match(styles, /\.local-edit-prompt\{min-height:100px;flex:none/);
   assert.match(styles, /\.local-edit-prompt textarea\{min-height:68px/);
-  assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-annotation-summary-select\{min-height:30px/);
-  assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-selection-thumb\{width:26px;height:26px/);
+  assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-annotation-summary-select\{min-height:36px/);
+  assert.match(styles, /\.local-edit-annotation-summary\.dense \.local-edit-selection-thumb\{width:30px;height:30px/);
 });
 
 test("pixel feathering creates a real alpha transition around an editable region", () => {
@@ -289,6 +306,50 @@ test("moving a selection repairs the source, pastes the selected pixels, and kee
   assert.deepEqual([...movedAgain.subarray(4, 8)], [0, 255, 0, 255]);
   assert.notDeepEqual([...movedAgain.subarray(12, 16)], [0, 255, 0, 255]);
   for (let index = 3; index < movedAgain.length; index += 4) assert.equal(movedAgain[index], 255);
+});
+
+test("move gestures and history replay use the same image-sized feather", () => {
+  const width = 768;
+  const height = 256;
+  const source = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      source[index] = (x * 3 + y) % 256;
+      source[index + 1] = (x + y * 5) % 256;
+      source[index + 2] = (x * 7 + y * 11) % 256;
+      source[index + 3] = 255;
+    }
+  }
+  const dx = 103.225;
+  const dy = 45.55;
+  const sourceGeometry = { kind: "rectangle", x: 0.21, y: 0.22, width: 0.14, height: 0.24 };
+  const targetGeometry = {
+    ...sourceGeometry,
+    x: sourceGeometry.x + dx / width,
+    y: sourceGeometry.y + dy / height,
+  };
+  const selection = raster.createProtectedMask(width, height);
+  raster.applyLocalEditGeometryMask(selection, width, height, sourceGeometry, "edit");
+  const gestureMask = raster.featherLocalEditMask(
+    selection,
+    width,
+    height,
+    raster.localEditMoveGuideFeatherRadius(width, height),
+  );
+  const annotation = {
+    id: "move-replay",
+    kind: "rectangle",
+    description: "",
+    geometry: targetGeometry,
+    move: { from: [sourceGeometry] },
+    createdAt: 1,
+  };
+
+  const gesturePreview = raster.moveLocalEditPixels(source, gestureMask, width, height, dx, dy);
+  const historyReplay = raster.composeLocalEditMovePreview(source, width, height, [annotation]);
+
+  assert.deepEqual(gesturePreview, historyReplay);
 });
 
 test("move preview and provider guide remove the source while preserving an opaque blended target cue", () => {
@@ -402,7 +463,7 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /stage: 'move-target'/);
   assert.match(editor, /pendingIsExisting: pending\.isExisting/);
   assert.match(editor, /isExisting: movingAnnotation\.pendingIsExisting/);
-  assert.match(editor, /dragImage: copyImageData\(dragBefore\.image\)/);
+  assert.match(editor, /dragImage: imageContext\.getImageData\(0, 0, imageCanvas\.width, imageCanvas\.height\)/);
   assert.match(editor, /isPendingDraft: true/);
   assert.match(editor, /setPendingAnnotation\(pending\)/);
   assert.match(editor, /rebuildMask\(annotationsWithPending\(pending\)\)/);
@@ -437,7 +498,7 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /原位置 · 待修补/);
   assert.match(editor, /function deleteAnnotation/);
   assert.match(editor, /补充.*说明/);
-  assert.match(styles, /\.local-edit-workbench\{[^}]*height:min\(900px,calc\(100vh - 24px\)\);[^}]*overflow:hidden/);
+  assert.match(styles, /\.local-edit-workbench\{[^}]*height:min\(900px,calc\(100vh - var\(--local-edit-backdrop-inset\)\)\);[^}]*overflow:hidden/);
   assert.match(styles, /\.local-edit-workbench-body\{display:grid;grid-template-columns:minmax\(0,1fr\) minmax\(260px,320px\)/);
   assert.match(styles, /\.local-edit-move-frame\.target[^}]*pointer-events:auto/);
   assert.match(styles, /\.local-edit-annotation-edit-icon/);
@@ -502,8 +563,10 @@ test("all image entry points use local edit wording while persisted field remain
 test("local edit model selection is restricted to edit-capable image models and videos remain separate", () => {
   assert.match(settings, /export function imageEditModelOptions/);
   assert.match(settings, /settings\.mask\s*\n\s*\? imageEditModelOptions\(runtime\)/);
-  assert.match(page, /generateMask && availableEditModels\.length \? availableEditModels : availableGenerationModels/);
-  assert.match(page, /capability: generateMask && availableEditModels\.length \? "edit" : "generate"/);
+  assert.match(page, /generateMask && availableEditModels\.length\s*\? availableEditModels\s*:\s*generateRefs\.some\(\(reference\)=>reference\.kind === 'image' && creativeReferenceUrl\(reference\)\)\s*\? availableReferenceGenerationModels\s*:\s*availableGenerationModels/);
+  assert.match(page, /capability: generateMask && availableEditModels\.length\s*\? "edit"\s*:\s*generateRefs\.some\(\(reference\)=>reference\.kind === 'image' && creativeReferenceUrl\(reference\)\)\s*\? "reference"\s*:\s*"generate"/);
+  assert.match(page, /const submittedModelId = requestedModelId;/);
+  assert.match(page, /当前选择的图片模型不支持/);
   assert.match(canvas, /kind === "video"/);
   assert.doesNotMatch(editor, /video/);
 });

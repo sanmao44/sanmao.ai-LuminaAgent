@@ -9,6 +9,10 @@ type TabbitResult = { ok: boolean; response?: unknown; error?: unknown };
 type McpMeta = { serverId: string; serverName: string; toolName: string; readOnly: boolean; blocked: boolean };
 type McpServer = Parameters<typeof executeMcpTool>[0]['server'];
 
+const WINDOWS_MCP_CALL_TIMEOUT_MS = 30_000;
+const WINDOWS_MCP_TURN_TIMEOUT_MS = 30_000;
+const WINDOWS_MCP_CONTROL_STATUS_CHECK_LIMIT = 4;
+
 export type McpCapabilityDependencies = {
   state: ToolRuntimeState;
   call: ToolCall;
@@ -42,6 +46,7 @@ export type McpCapabilityDependencies = {
   reportProgress: (patch: unknown) => void;
   mcpCall: McpCapabilityInfrastructure['call'];
   mcpCallTimeoutMs: number;
+  waitForMcpRetry?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   importBrowserArtifacts: McpCapabilityInfrastructure['importBrowserArtifacts'];
   shouldImportBrowserArtifacts: McpCapabilityInfrastructure['shouldImportBrowserArtifacts'];
   noteRemoteCatalogCallFailure: McpCapabilityInfrastructure['noteRemoteCatalogCallFailure'];
@@ -74,6 +79,75 @@ export type McpCapabilityPorts = Omit<
 >;
 
 const toolMessage = (callId: string | undefined, payload: unknown): ChatMessage => ({ role: 'tool', tool_call_id: callId, content: JSON.stringify(payload) });
+
+export function windowsMcpUserControlWaitSeconds(text: string): number | null {
+  const normalized = text.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  const isUserControl = normalized.includes('usercontrol')
+    || /["']state["']\s*:\s*["']user["']/i.test(text);
+  const isTakeoverPending = normalized.includes('takeoverpending')
+    || /["']state["']\s*:\s*["']takeover_pending["']/i.test(text);
+  const hasControlMarker = isUserControl || isTakeoverPending;
+  if (!hasControlMarker) return null;
+  const match = text.match(/["']?wait[_\s-]*seconds["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i);
+  if (!match) return isTakeoverPending ? 1 : 10;
+  const seconds = Number(match[1]);
+  return Number.isFinite(seconds) ? Math.min(120, Math.ceil(seconds)) : 10;
+}
+
+function windowsMcpControlState(text: string): string | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const root = value as Record<string, unknown>;
+    const status = root.status && typeof root.status === 'object' && !Array.isArray(root.status)
+      ? root.status as Record<string, unknown>
+      : root;
+    return typeof status.state === 'string' ? status.state.toLowerCase() : null;
+  } catch {
+    const match = text.match(/["']state["']\s*:\s*["']([a-z_]+)["']/i);
+    return match?.[1].toLowerCase() || null;
+  }
+}
+
+function windowsMcpControlUnavailableReason(text: string): string | null {
+  let code = '';
+  try {
+    const value: unknown = JSON.parse(text);
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const root = value as Record<string, unknown>;
+      code = typeof root.code === 'string' ? root.code.toUpperCase() : '';
+    }
+  } catch {
+    const match = text.match(/["']code["']\s*:\s*["']([a-z_]+)["']/i);
+    code = match?.[1].toUpperCase() || '';
+  }
+  if (windowsMcpControlState(text) !== 'unavailable' && code !== 'CONTROL_UNAVAILABLE') return null;
+  return `Windows-MCP 控制器当前不可用${code ? `（${code}）` : ''}，这不是键鼠空闲等待状态。本轮已停止，避免继续空转；请在 MCP 管理中重新启动 Windows 桌面控制服务后重试。`;
+}
+
+function waitForWindowsMcpRetry(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason || new Error('Windows 桌面控制等待已取消'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      reject(signal.reason || new Error('Windows 桌面控制等待已取消'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function isWindowsMcpServer(server: McpServer) {
+  const identity = `${server.catalogId || ''} ${server.id} ${server.name}`.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return identity.includes('windowsmcp');
+}
 
 export async function executeMcpManageCapability(input: McpCapabilityDependencies): Promise<ToolCallRun> {
   const { state, call, args } = input;
@@ -130,9 +204,18 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
     const localImage = server.catalogId === 'filesystem' && input.isLocalImageRead(meta.toolName, args)
       ? await input.importLocalImage(String(args.path), { roots: input.mcpFilesystemRoots, dataDir: input.localDataDir }, (bytes) => input.persistImageBuffer(bytes, 'image/png', input.executionPublicState.settings.imageStoragePath))
       : null;
-    const mcpExecution = await executeMcpTool({
+    let windowsControlRetries = 0;
+    const windowsControlRetryDeadline = isWindowsMcpServer(server)
+      ? mcpStartedAt + WINDOWS_MCP_TURN_TIMEOUT_MS
+      : Number.POSITIVE_INFINITY;
+    const executeCall = () => executeMcpTool({
       callId: call.id, server, meta, args, signal: input.requestController.signal,
-      timeoutMs: Math.max(5_000, Math.min(input.mcpCallTimeoutMs, state.mcpTurnBudget)), decision: 'call', retry: meta.readOnly,
+      timeoutMs: Math.max(5_000, Math.min(
+        input.mcpCallTimeoutMs,
+        isWindowsMcpServer(server) ? WINDOWS_MCP_CALL_TIMEOUT_MS : Number.POSITIVE_INFINITY,
+        Math.max(0, state.mcpTurnBudget - (Date.now() - mcpStartedAt)),
+        windowsControlRetryDeadline - Date.now(),
+      )), decision: 'call', retry: meta.readOnly && windowsControlRetries === 0,
       dependencies: {
         observer: input.observer,
         call: async (targetServer, toolName, callArgs, options) => localImage ? { isError: false, text: JSON.stringify({ name: localImage.name, size: localImage.size, image: localImage.url, displayed: true }) } : input.mcpCall(targetServer, toolName, callArgs, options),
@@ -157,9 +240,112 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
         },
       },
     });
+    let mcpExecution = await executeCall();
+    let windowsControlWaitProblem = isWindowsMcpServer(server) && mcpExecution.result?.isError
+      ? windowsMcpControlUnavailableReason(mcpExecution.text) || ''
+      : '';
+    let controlWaitSeconds = !windowsControlWaitProblem && isWindowsMcpServer(server) && mcpExecution.result?.isError
+      ? windowsMcpUserControlWaitSeconds(mcpExecution.text)
+      : null;
+    let windowsControlStatusChecks = 0;
+    while (controlWaitSeconds !== null && windowsControlRetries < 3 && !windowsControlWaitProblem) {
+      const controlTimeRemaining = windowsControlRetryDeadline - Date.now();
+      const waitMilliseconds = Math.min(Math.max(250, controlWaitSeconds * 1000), Math.max(0, controlTimeRemaining));
+      const remainingBudget = state.mcpTurnBudget - (Date.now() - mcpStartedAt);
+      if (windowsControlStatusChecks >= WINDOWS_MCP_CONTROL_STATUS_CHECK_LIMIT || controlTimeRemaining < 5_000) {
+        windowsControlWaitProblem = `Windows 桌面控制在 ${Math.round(WINDOWS_MCP_TURN_TIMEOUT_MS / 1000)} 秒总时限内仍未就绪，本轮已停止。`;
+        break;
+      }
+      if (state.mcpToolCallCount >= input.mcpToolCallLimit || remainingBudget < waitMilliseconds + 10_000) break;
+      input.reportProgress({ stage: 'mcp', message: `Windows 桌面控制正在等待键鼠空闲，约 ${Math.ceil(waitMilliseconds / 1000)} 秒后检查状态（本次调用总计最多 ${Math.round(WINDOWS_MCP_TURN_TIMEOUT_MS / 1000)} 秒）。` });
+      await (input.waitForMcpRetry || waitForWindowsMcpRetry)(waitMilliseconds, input.requestController.signal);
+
+      if (windowsControlRetryDeadline - Date.now() < 5_000) {
+        windowsControlWaitProblem = `Windows 桌面控制在 ${Math.round(WINDOWS_MCP_TURN_TIMEOUT_MS / 1000)} 秒总时限内仍未就绪，本轮已停止。`;
+        break;
+      }
+      if (state.mcpToolCallCount >= input.mcpToolCallLimit) break;
+      state.mcpToolCallCount += 1;
+      windowsControlStatusChecks += 1;
+      const statusExecution = await executeMcpTool({
+        callId: `${call.id || 'windows-mcp'}-control-status-${windowsControlRetries + 1}`,
+        server,
+        meta: { serverId: meta.serverId, serverName: meta.serverName, toolName: 'ControlStatus', readOnly: true, blocked: false },
+        args: {},
+        signal: input.requestController.signal,
+        timeoutMs: Math.max(5_000, Math.min(5_000, state.mcpTurnBudget - (Date.now() - mcpStartedAt), windowsControlRetryDeadline - Date.now())),
+        decision: 'call',
+        retry: true,
+        dependencies: {
+          observer: input.observer,
+          call: input.mcpCall,
+          onRemoteFailure: (targetServer, reason, options) => input.noteRemoteCatalogCallFailure(targetServer, reason, options),
+          onRemoteSuccess: (targetServer) => input.noteRemoteCatalogCallSuccess(targetServer),
+          onAudit: (audit) => input.auditMcpCall(audit.meta, { risk: 'read', allowed: audit.allowed, decision: 'call', ok: audit.ok, durationMs: audit.durationMs, summary: audit.summary }),
+        },
+      });
+      if (statusExecution.result?.isError) {
+        windowsControlWaitProblem = windowsMcpControlUnavailableReason(statusExecution.text) || '';
+        if (windowsControlWaitProblem) break;
+        const statusWaitSeconds = windowsMcpUserControlWaitSeconds(statusExecution.text);
+        if (statusWaitSeconds === null) {
+          windowsControlWaitProblem = '无法读取 Windows 桌面控制状态。';
+          break;
+        }
+        controlWaitSeconds = statusWaitSeconds;
+        continue;
+      }
+
+      const controlState = windowsMcpControlState(statusExecution.text);
+      if (controlState === 'unavailable') {
+        windowsControlWaitProblem = windowsMcpControlUnavailableReason(statusExecution.text)
+          || 'Windows-MCP 控制器当前不可用，本轮已停止；请在 MCP 管理中重新启动 Windows 桌面控制服务后重试。';
+        break;
+      }
+      if (controlState === 'ready' || controlState === 'ai') {
+        if (state.mcpToolCallCount >= input.mcpToolCallLimit) break;
+        if (windowsControlRetryDeadline - Date.now() < 5_000) {
+          windowsControlWaitProblem = 'Windows 桌面控制已就绪，但等待窗口不足以安全重试，本轮已停止。';
+          break;
+        }
+        state.mcpToolCallCount += 1;
+        windowsControlRetries += 1;
+        mcpExecution = await executeCall();
+        controlWaitSeconds = isWindowsMcpServer(server) && mcpExecution.result?.isError
+          ? windowsMcpUserControlWaitSeconds(mcpExecution.text)
+          : null;
+        continue;
+      }
+      if (controlState === 'user' || controlState === 'takeover_pending') {
+        controlWaitSeconds = windowsMcpUserControlWaitSeconds(statusExecution.text) ?? (controlState === 'takeover_pending' ? 1 : 10);
+        if (windowsControlStatusChecks >= WINDOWS_MCP_CONTROL_STATUS_CHECK_LIMIT || windowsControlRetryDeadline - Date.now() < 5_000) {
+          windowsControlWaitProblem = `Windows 桌面控制在 ${Math.round(WINDOWS_MCP_TURN_TIMEOUT_MS / 1000)} 秒总时限内仍处于用户控制，本轮已停止。`;
+          break;
+        }
+        continue;
+      }
+      windowsControlWaitProblem = `Windows 桌面控制状态为「${controlState || '未知'}」，无法安全重试。`;
+      break;
+    }
     const result = { isError: !mcpExecution.ok, text: mcpExecution.text };
     state.mcpTurnBudget -= Date.now() - mcpStartedAt;
     state.usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
+    const userControlWaitSeconds = isWindowsMcpServer(server) && mcpExecution.result?.isError
+      ? windowsMcpUserControlWaitSeconds(result.text)
+      : null;
+    if (userControlWaitSeconds !== null || windowsControlWaitProblem) {
+      const wait = userControlWaitSeconds !== null && userControlWaitSeconds > 0
+        ? `仍需约 ${userControlWaitSeconds} 秒键鼠空闲时间。`
+        : userControlWaitSeconds === 0 ? '请先松开按住的鼠标或键盘按键。' : '';
+      state.stalledMcpReason = windowsControlWaitProblem
+        ? `${windowsControlWaitProblem}本轮已停止。`
+        : windowsControlRetries > 0
+          ? `Windows 桌面控制在自动等待并重试 ${windowsControlRetries} 次后仍未释放。${wait}本轮已停止。`
+          : `Windows 桌面控制暂不可用，且本轮剩余时间或调用额度不足以安全等待重试。${wait}本轮已停止。`;
+      const results: ChatMessage[] = [toolMessage(call.id, { ok: false, error: state.stalledMcpReason })];
+      for (const rest of input.stepCalls.slice(input.callIndex + 1)) results.push(toolMessage(rest.id, { ok: false, error: '桌面控制已交还给用户，本轮剩余调用没有执行。' }));
+      return { results, stalled: true };
+    }
     if (server.catalogId === 'playwright' && !meta.readOnly && !result.isError) input.mcpRepeatTracker.clear();
     const repeats = trackMcpRepeat(input.mcpRepeatTracker, mcpCallSignature(meta.serverId, meta.toolName, args), result.text);
     if (repeats >= TOOL_LOOP_MCP_REPEAT_LIMIT) {

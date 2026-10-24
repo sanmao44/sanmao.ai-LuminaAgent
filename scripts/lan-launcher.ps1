@@ -338,14 +338,16 @@ function Show-SanmaoLanPasswordDialog {
 function Get-SanmaoLanServerInfo {
   $ports = @()
   if ($env:SANMAO_PORT -match '^\d+$') {
-    $ports += [int]$env:SANMAO_PORT
+    $configuredPort = [int]$env:SANMAO_PORT
+    if ($configuredPort -ge 3210 -and $configuredPort -le 3220) { $configuredPort = 3210 }
+    $ports += $configuredPort
   }
   try {
     $ports += @(Get-NetTCPConnection -State Listen -ErrorAction Stop |
-      Where-Object { $_.LocalPort -ge 3210 -and $_.LocalPort -le 3220 } |
+      Where-Object { $_.LocalPort -eq 3210 } |
       Select-Object -ExpandProperty LocalPort)
   } catch {
-    $ports += 3210..3220
+    $ports += 3210
   }
 
   foreach ($port in @($ports | Sort-Object -Unique)) {
@@ -361,7 +363,15 @@ function Get-SanmaoLanServerInfo {
       if ([int]$response.StatusCode -lt 200 -or [int]$response.StatusCode -ge 300) { continue }
       $reader = New-Object System.IO.StreamReader($response.GetResponseStream(), [System.Text.Encoding]::UTF8)
       $data = $reader.ReadToEnd() | ConvertFrom-Json
-      if ($data.service -eq 'sanmao-ai-studio' -and $data.networkMode -eq 'lan') {
+      $expectedVersion = ''
+      $expectedBuildId = ''
+      try {
+        $package = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw -ErrorAction Stop | ConvertFrom-Json
+        $expectedVersion = [string]$package.version
+        $expectedBuildId = (Get-Content -LiteralPath (Join-Path $root '.next\BUILD_ID') -Raw -ErrorAction Stop).Trim()
+      } catch {}
+      if ($data.service -eq 'sanmao-ai-studio' -and $data.networkMode -eq 'lan' -and
+          [string]$data.version -eq $expectedVersion -and [string]$data.buildId -eq $expectedBuildId) {
         return [pscustomobject]@{ Port = $port }
       }
     } catch {} finally {
@@ -481,7 +491,7 @@ function Show-SanmaoLanAccessDialog([int]$port) {
     ) | Out-Null
   })
 
-  $openButton.Add_Click({ Start-Process "http://localhost:$port/canvas" })
+  $openButton.Add_Click({ Start-Process "http://127.0.0.1:$port/canvas" })
   $form.ShowDialog() | Out-Null
   $form.Dispose()
 }
@@ -682,7 +692,7 @@ try {
   }
 
   Update-SanmaoLanStartingForm $ui.StartingReady
-  $openUrl = "http://localhost:$($server.Port)/canvas"
+  $openUrl = "http://127.0.0.1:$($server.Port)/canvas"
   Start-Process $openUrl | Out-Null
   Write-SanmaoLanLauncherLog "Opened LAN canvas: $openUrl."
   Write-SanmaoLanLauncherLog ($ui.LogReady -f $server.Port)

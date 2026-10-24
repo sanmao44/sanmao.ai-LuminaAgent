@@ -45,7 +45,7 @@ export type McpCatalogBrowserMode = 'managed' | 'extension';
 /** stdio：本机子进程；http：远端 Streamable HTTP。 */
 export type McpCatalogTransport = 'stdio' | 'http';
 
-export type McpCatalogInstallMode = 'optional-npm' | 'remote';
+export type McpCatalogInstallMode = 'optional-npm' | 'optional-uv' | 'remote';
 
 /** 维护方等级：official 是厂商官方项目，curated 是我们挑过、但不是厂商自营。 */
 export type McpCatalogTrust = 'trusted-official' | 'trusted-curated';
@@ -148,6 +148,12 @@ export type McpCatalogEntry = {
   toolsets?: readonly McpCatalogToolset[];
   /** 远端专用：任何开关都打不开的操作（任务书 §22），命中的写工具一律拒绝。 */
   forbiddenTools?: readonly string[];
+  /** 仅允许在这些 Node 平台上安装和启动；缺省表示所有平台。 */
+  platforms?: readonly string[];
+  /** 对混合读写工具的安全子集。关闭写入时只下发这些工具。 */
+  readOnlyTools?: readonly string[];
+  /** Python/uv 运行时的固定规格；仅 optional-uv 条目使用。 */
+  runtime?: { kind: 'node' | 'uv'; python?: string; uv?: string };
 };
 
 /** stdio 条目：字段收窄，调用方不用再判空。 */
@@ -160,6 +166,10 @@ export type McpStdioCatalogEntry = McpCatalogEntry & {
   allowedTools: readonly string[];
   args: (context: McpCatalogArgs) => string[];
 };
+
+export function catalogEntryAvailable(entry: McpCatalogEntry, platform: string = process.platform) {
+  return !entry.platforms?.length || entry.platforms.includes(platform);
+}
 
 export type McpRemoteCatalogEntry = McpCatalogEntry & {
   transport: 'http';
@@ -238,6 +248,16 @@ const FILESYSTEM_TOOLS: readonly string[] = [
   'list_allowed_directories',
 ];
 
+/** Windows-MCP 0.8.8 tools reviewed against its published wheel. */
+const WINDOWS_MCP_TOOLS: readonly string[] = [
+  'ControlStatus', 'App', 'DisplayInventory', 'FileSystem', 'Snapshot', 'Screenshot',
+  'Click', 'Type', 'Scroll', 'Move', 'Shortcut', 'Wait', 'WaitFor', 'Scrape',
+  'MultiSelect', 'MultiEdit', 'Clipboard', 'Process', 'Notification',
+];
+const WINDOWS_MCP_READ_ONLY_TOOLS: readonly string[] = [
+  'ControlStatus', 'DisplayInventory', 'Snapshot', 'Screenshot', 'Wait', 'WaitFor', 'Scrape',
+];
+
 /**
  * Context7 公布的两个工具（实测 tools/list）：resolve-library-id / query-docs。
  * 白名单写死，服务以后新增工具也不会自动挂给模型。
@@ -302,6 +322,33 @@ const GITHUB_FORBIDDEN_TOOLS: readonly string[] = [
  * 升级版本时必须重新核对这些 flag，不要凭印象改。
  */
 export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
+  {
+    id: 'windows-mcp',
+    intentKeywords: ['桌面', '窗口', '点击', '输入', '截图', '屏幕', '打开应用', '应用', '滚动', '剪贴板', '设备管理器', '管理控制台', 'Device Manager', 'devmgmt.msc', 'desktop', 'window', 'click', 'type', 'screenshot', 'screen', 'launch app', 'clipboard'],
+    examples: ['截一张当前桌面截图', '打开桌面上的应用并切换窗口', '在当前窗口输入文字'],
+    name: 'Windows 桌面控制',
+    summary: '读取 Windows 桌面状态、窗口和截图；开启桌面操作后才允许点击、输入和启动应用。',
+    publisher: 'CursorTouch',
+    homepage: 'https://github.com/CursorTouch/Windows-MCP',
+    transport: 'stdio',
+    installMode: 'optional-uv',
+    trust: 'trusted-curated',
+    capabilities: ['桌面状态', '窗口管理', '截图', '显示器信息', '条件等待', '桌面操作'],
+    permissions: ['process', 'fs:read', 'fs:write', 'external:write'],
+    defaultReadOnly: true,
+    defaultEnabled: false,
+    setup: { requiresAuth: false, requiresLocalRuntime: true },
+    toolSelection: { mode: 'allowlist', lazy: true },
+    pkg: 'windows-mcp',
+    version: '0.8.8',
+    installNote: 'Windows 专用；首次使用时通过受控 uv 环境安装 Python 3.14 依赖。',
+    needsBrowser: false,
+    platforms: ['win32'],
+    runtime: { kind: 'uv', python: '3.14', uv: '0.12.19' },
+    readOnlyTools: WINDOWS_MCP_READ_ONLY_TOOLS,
+    allowedTools: WINDOWS_MCP_TOOLS,
+    args: ({ installRoot }) => ['--directory', installRoot, 'run', '--no-project', '--python', path.join(installRoot, '.venv', 'Scripts', 'python.exe'), 'windows-mcp', 'serve'],
+  },
   {
     id: 'playwright',
     intentKeywords: ['浏览器', '网页', '网站', '网址', '链接', '页面', '打开', '点击', '填写', '登录', '注册', '提交', '截图', '下载', '抓取', 'browser', 'playwright', 'chrome', 'http://', 'https://'],
@@ -500,6 +547,10 @@ export function resolveCatalogWorkspace(entryId: string, options: { dataDir?: st
   return path.join(catalogDataDir(options), 'browser', 'workspace', entryId);
 }
 
+export function resolveCatalogUvExecutable(dataDir?: string) {
+  return path.join(dataDir || catalogDataDir(), 'runtime', 'uv', process.platform === 'win32' ? 'uv.exe' : 'uv');
+}
+
 export function catalogEntryBinPath(entry: McpStdioCatalogEntry, options: { dataDir?: string } = {}) {
   return path.join(resolveCatalogInstallRoot(entry.id, options), 'node_modules', entry.pkg.replace('/', path.sep), 'cli.js');
 }
@@ -509,6 +560,11 @@ export function catalogEntryBinPath(entry: McpStdioCatalogEntry, options: { data
  * 两者都没有就当没装好——不能只看目录存在，半截安装会让服务起不来。
  */
 export function isCatalogInstalled(entry: McpStdioCatalogEntry, options: { dataDir?: string } = {}) {
+  if (entry.installMode === 'optional-uv') {
+    const root = resolveCatalogInstallRoot(entry.id, options);
+    return existsSync(path.join(root, '.venv', 'Scripts', 'python.exe'))
+      && existsSync(path.join(root, '.venv', 'Scripts', 'windows-mcp.exe'));
+  }
   const packageRoot = path.join(resolveCatalogInstallRoot(entry.id, options), 'node_modules', entry.pkg.replace('/', path.sep));
   if (!existsSync(packageRoot)) return false;
   if (existsSync(catalogEntryBinPath(entry, options))) return true;
@@ -1004,8 +1060,12 @@ export function catalogServerConfig(
     // Filesystem 相反：默认只读，写权限要用户在面板里单独打开（任务书 §13）。
     allowWrite: options.allowWrite ?? catalogEntryAllowWrite(entry.id, options),
     catalogId: entry.id,
-    command: process.execPath,
-    args: entry.args({
+    command: entry.installMode === 'optional-uv'
+      ? resolveCatalogUvExecutable(dataDir)
+      : process.execPath,
+    args: entry.installMode === 'optional-uv'
+    ? ['--directory', installRoot, 'run', '--no-project', '--python', path.join(installRoot, '.venv', 'Scripts', 'python.exe'), 'windows-mcp', 'serve']
+      : entry.args({
       installRoot,
       dataDir,
       browser: browser.channel,
@@ -1014,16 +1074,18 @@ export function catalogServerConfig(
       roots,
       allowedOrigins: origins.allowed || [],
       blockedOrigins: origins.blocked || [],
-    }),
+      }),
     ...(env ? { env } : {}),
     enabledTools: [...entry.allowedTools],
     cwd: workspace,
+    lazy: entry.toolSelection.lazy === true,
   };
 }
 
 /** 目录条目的启动条件：装好、开了开关、要目录的条目得先有授权目录。 */
 export function catalogEntryReady(entry: McpCatalogEntry, options: { dataDir?: string; roots?: readonly string[] } = {}) {
   if (!isStdioCatalogEntry(entry)) return true;
+  if (!catalogEntryAvailable(entry)) return false;
   if (!isCatalogInstalled(entry, options)) return false;
   if (!catalogEntryEnabled(entry.id, options)) return false;
   if (entry.requiresRoots && !(options.roots ?? []).length) return false;

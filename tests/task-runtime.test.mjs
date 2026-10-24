@@ -60,6 +60,17 @@ test('video and upscale adapters preserve legacy cancel and retry decisions', ()
   assert.equal(upscaleAdapter.canRetryUpscaleTask('processing'), false);
 });
 
+test('video task timeout only closes accepted provider tasks after the orphan threshold', () => {
+  const { isStaleVideoTask, VIDEO_TASK_STALE_AFTER_MS } = videoAdapter;
+  const now = Date.parse('2026-10-11T12:00:00.000Z');
+  const createdAt = new Date(now - VIDEO_TASK_STALE_AFTER_MS - 1).toISOString();
+
+  assert.equal(isStaleVideoTask({ createdAt, providerTaskId: 'remote-1' }, now), true);
+  assert.equal(isStaleVideoTask({ createdAt, providerTaskId: '  ' }, now), false, 'submission retry without a provider id must stay active');
+  assert.equal(isStaleVideoTask({ createdAt: new Date(now).toISOString(), providerTaskId: 'remote-2' }, now), false);
+  assert.equal(isStaleVideoTask({ createdAt: 'invalid', providerTaskId: 'remote-3' }, now), false);
+});
+
 test('Clone adapter preserves stage, cancellation, recovery, and idempotency behavior', () => {
   const { cloneTaskRuntime, canResumeCloneJob, reusesCloneJobIdempotencyKey, isCloneJobExecutionActive } = cloneAdapter;
 

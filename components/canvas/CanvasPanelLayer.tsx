@@ -3,6 +3,7 @@
 import type { AssetRecord } from "@/lib/assets";
 import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
 import type { CanvasConnectionStyle, CanvasDocument } from "@/lib/canvas/types";
+import type { DepthQuality } from "@/lib/canvas/depth-settings";
 import type { GenerationLog } from "@/lib/generation-log";
 import CanvasActivityDrawer from "@/components/canvas/CanvasActivityDrawer";
 import CanvasAssetDrawer from "@/components/canvas/CanvasAssetDrawer";
@@ -21,6 +22,8 @@ export type CanvasPanelLayerProps = {
   generationLogsLoading: boolean;
   theme: "light" | "dark";
   connectionStyle: CanvasConnectionStyle;
+  edgesVisible: boolean;
+  depthQuality: DepthQuality;
   activityPanelScrollTop: number | null;
   onCollectionSelectionChange: (collectionId: string) => void;
   onAddAsset: (asset: AssetRecord) => void;
@@ -30,13 +33,17 @@ export type CanvasPanelLayerProps = {
   onRefreshGenerationLogs: () => void;
   onFocusTask: (log: GenerationLog, openMedia?: boolean) => void;
   onFocusNode: (nodeId: string, openMedia?: boolean) => void;
-  onRetryTask: (log: GenerationLog) => void;
+  onRestoreTaskContext: (log: GenerationLog) => void;
+  onCancelTask: (log: GenerationLog) => Promise<void>;
+  cancellableImageTaskIds: ReadonlySet<string>;
   onRememberActivityScroll: (scrollTop: number) => void;
   onNotify: (message: string, kind?: "ok" | "error") => void;
   onClose: () => void;
   onOpenAssetWorkbench: () => void;
   onTheme: () => void;
   onConnectionStyleChange: (value: CanvasConnectionStyle) => void;
+  onEdgesVisibleChange: (value: boolean) => void;
+  onDepthQualityChange: (value: DepthQuality) => void;
   onExportWorkflow: () => void;
   onImportWorkflow: () => void;
 };
@@ -54,6 +61,8 @@ export default function CanvasPanelLayer({
   generationLogsLoading,
   theme,
   connectionStyle,
+  edgesVisible,
+  depthQuality,
   activityPanelScrollTop,
   onCollectionSelectionChange,
   onAddAsset,
@@ -63,13 +72,17 @@ export default function CanvasPanelLayer({
   onRefreshGenerationLogs,
   onFocusTask,
   onFocusNode,
-  onRetryTask,
+  onRestoreTaskContext,
+  onCancelTask,
+  cancellableImageTaskIds,
   onRememberActivityScroll,
   onNotify,
   onClose,
   onOpenAssetWorkbench,
   onTheme,
   onConnectionStyleChange,
+  onEdgesVisibleChange,
+  onDepthQualityChange,
   onExportWorkflow,
   onImportWorkflow,
 }: CanvasPanelLayerProps) {
@@ -102,7 +115,9 @@ export default function CanvasPanelLayer({
         onRefresh={onRefreshGenerationLogs}
         onFocusTask={onFocusTask}
         onFocusNode={onFocusNode}
-        onRetryTask={onRetryTask}
+        onRestoreTaskContext={onRestoreTaskContext}
+        onCancelTask={onCancelTask}
+        cancellableImageTaskIds={cancellableImageTaskIds}
         onClose={onClose}
         onNotify={onNotify}
         restoreScrollTop={activityPanelScrollTop}
@@ -116,8 +131,12 @@ export default function CanvasPanelLayer({
       <CanvasSettingsPanel
         theme={theme}
         connectionStyle={connectionStyle}
+        edgesVisible={edgesVisible}
+        depthQuality={depthQuality}
         onTheme={onTheme}
         onConnectionStyleChange={onConnectionStyleChange}
+        onEdgesVisibleChange={onEdgesVisibleChange}
+        onDepthQualityChange={onDepthQualityChange}
         onExportWorkflow={onExportWorkflow}
         onImportWorkflow={onImportWorkflow}
         onClose={onClose}

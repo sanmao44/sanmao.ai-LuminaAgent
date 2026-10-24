@@ -7,10 +7,14 @@ import ts from 'typescript';
 
 const source = await readFile(new URL('../lib/skills.ts', import.meta.url), 'utf8');
 const dataPathsSource = await readFile(new URL('../lib/data-paths.ts', import.meta.url), 'utf8');
+const skillRoutingSource = await readFile(new URL('../packages/agent-core/skill-routing.ts', import.meta.url), 'utf8');
 const dataPathsCompiled = ts.transpileModule(dataPathsSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const skillRoutingCompiled = ts.transpileModule(skillRoutingSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const dataPathsUrl = `data:text/javascript;base64,${Buffer.from(dataPathsCompiled).toString('base64')}`;
-const compiled = ts.transpileModule(source.replace("from './data-paths'", `from '${dataPathsUrl}'`), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const skillRoutingUrl = `data:text/javascript;base64,${Buffer.from(skillRoutingCompiled).toString('base64')}`;
+const compiled = ts.transpileModule(source.replace("from './data-paths'", `from '${dataPathsUrl}'`).replace("from '../packages/agent-core/skill-routing'", `from '${skillRoutingUrl}'`), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const skills = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const skillRouting = await import(`data:text/javascript;base64,${Buffer.from(skillRoutingCompiled).toString('base64')}`);
 
 async function tempStore() {
   const dir = await mkdtemp(path.join(tmpdir(), 'sanmao-skills-'));
@@ -145,6 +149,18 @@ test('Agent 技能上下文包含索引与工具说明', async () => {
   }
 });
 
+test('已安装技能通过元数据路由到自然语言请求', async () => {
+  const { store, cleanup } = await tempStore();
+  try {
+    skills.installSkill({ id: 'luxun-voice', name: 'luxun-voice', description: '用鲁迅口吻写作', tags: ['鲁迅', '口吻', '风格'], body: '正文' }, store);
+    const route = skillRouting.routeSkillRequest('用鲁迅的口吻赞美一位女生', skills.listSkills({ dataDir: store.dataDir, pending: false }));
+    assert.equal(route.matched, true);
+    assert.equal(route.skillId, 'luxun-voice');
+  } finally {
+    await cleanup();
+  }
+});
+
 test('导入地址与主机安全校验', () => {
   for (const blocked of ['127.0.0.1', '10.0.0.5', '192.168.1.10', '172.16.3.4', '169.254.169.254', '[::1]', 'localhost', 'skill.internal', 'foo.local']) {
     assert.equal(skills.isBlockedSkillHost(blocked), true, blocked + ' 应当被拦截');
@@ -198,6 +214,58 @@ test('本机技能目录按标识去重', async () => {
   } finally {
     await rm(first, { recursive: true, force: true });
     await rm(second, { recursive: true, force: true });
+  }
+});
+
+test('repo skills directory can be explicitly imported into the runtime store', async () => {
+  const dirs = skills.localAgentSkillDirs(process.cwd(), '');
+  assert.ok(dirs.includes(path.join(process.cwd(), 'skills')));
+  const found = skills.listLocalAgentSkills({ dirs: [path.join(process.cwd(), 'skills')] });
+  const candidate = found.find((item) => item.id === 'video-download');
+  assert.ok(candidate);
+  const { store, cleanup } = await tempStore();
+  try {
+    assert.equal(skills.readSkill(candidate.id, store), null, 'repo template should need explicit import');
+    const installed = skills.installSkillFromDocument({
+      text: skills.readLocalSkillDocument(candidate.dir),
+      id: candidate.id,
+      files: skills.skillFilesFromDirectory(candidate.dir),
+      source: 'local',
+    }, store);
+    assert.equal(installed.id, 'video-download');
+    assert.equal(installed.source, 'local');
+    assert.ok(installed.tools.includes('video_download'));
+    assert.ok(skills.readSkill('video-download', store)?.body.includes('video_download'));
+    assert.ok(skills.listSkills({ ...store, pending: false }).some((item) => item.id === 'video-download'));
+  } finally {
+    await cleanup();
+  }
+});
+
+test('known executable repositories use the reviewed bundled integration Skill', async () => {
+  const { store, cleanup } = await tempStore();
+  try {
+    const installed = skills.installBundledSkillForGithub({
+      owner: 'yt-dlp',
+      repo: 'yt-dlp',
+      sourceUrl: 'https://github.com/yt-dlp/yt-dlp',
+      pending: false,
+    }, store);
+    assert.ok(installed);
+    assert.equal(installed.id, 'video-download');
+    assert.equal(installed.source, 'local');
+    assert.equal(installed.sourceUrl, 'https://github.com/yt-dlp/yt-dlp');
+    assert.ok(installed.tools.includes('video_download'));
+    assert.match(installed.body, /video_download/);
+    const repeated = skills.installBundledSkillForGithub({ owner: 'yt-dlp', repo: 'yt-dlp', pending: true }, store);
+    assert.equal(repeated.id, installed.id);
+    assert.equal(repeated.pending, false);
+    assert.equal(repeated.enabled, true);
+    assert.equal(repeated.updatedAt, installed.updatedAt);
+    assert.equal(skills.readSkill('video-download', { ...store, pending: true }), null);
+    assert.equal(skills.installBundledSkillForGithub({ owner: 'yt-dlp', repo: 'yt-dlp', dir: 'other' }, store), null);
+  } finally {
+    await cleanup();
   }
 });
 
@@ -458,9 +526,49 @@ test('Skill capability uses injected ports for search, read and install', async 
   const read = await executeSkillCapability({ state, call: { id: 'read-1', function: { name: 'skill_read' } }, args: { id: 'demo' }, skillContext: context, skillPorts: ports, signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
   assert.equal(JSON.parse(read.content).content, 'instructions');
   assert.deepEqual(calls, [['usage', 'demo']]);
+  const canonicalDocument = await executeSkillCapability({ state, call: { id: 'read-2', function: { name: 'skill_read' } }, args: { id: 'demo', file: 'SKILL.md' }, skillContext: context, skillPorts: ports, signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
+  assert.equal(JSON.parse(canonicalDocument.content).content, 'instructions', '根级 SKILL.md 应读取技能正文，不应当作附件');
+  const nestedDocument = await executeSkillCapability({ state, call: { id: 'read-3', function: { name: 'skill_read' } }, args: { id: 'demo', file: 'references/SKILL.md' }, skillContext: context, skillPorts: ports, signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
+  assert.match(JSON.parse(nestedDocument.content).error, /没有这个附件/);
   const installed = await executeSkillCapability({ state, call: { id: 'install-1', function: { name: 'skill_install' } }, args: { name: 'New skill', body: 'new instructions' }, skillContext: context, skillPorts: ports, signal, installer: { kind: 'agent', name: 'test', detail: 'test' }, parseToolArguments: () => ({}) });
   assert.equal(JSON.parse(installed.content).id, 'installed');
-  assert.equal(state.skillToolCalls, 3);
+  assert.equal(state.skillToolCalls, 5);
+  assert.equal(state.skillInstalls, 1);
+});
+
+test('skill_install uses a bundled integration before fetching executable GitHub repositories', async () => {
+  const { createTsRequire } = await import('./ts-require.mjs');
+  const { executeSkillCapability } = createTsRequire(process.cwd())('./packages/tool-runtime/skill-capability');
+  const state = { skillToolCalls: 0, skillInstalls: 0, usedSkills: [] };
+  const calls = [];
+  const bundled = { id: 'video-download', name: 'video-download', description: 'download', tags: ['视频'], enabled: true, pending: false, body: 'video_download' };
+  const ports = {
+    maxCalls: 6,
+    maxInstalls: 2,
+    searchSkills: () => [],
+    readSkill: () => null,
+    readSkillFile: () => null,
+    recordSkillUsage: () => {},
+    buildSkillToolContent: () => '{}',
+    installSkill: () => null,
+    installSkillFromDocument: () => { throw new Error('should not fetch executable repository'); },
+    installBundledSkill: (input) => { calls.push(input); return bundled; },
+    fetchSkillText: async () => { throw new Error('should not fetch URL'); },
+    parseGithubSkillTarget: () => ({ owner: 'yt-dlp', repo: 'yt-dlp', ref: '', dir: '' }),
+    fetchSkillFilesFromGithub: async () => { throw new Error('should not fetch repository'); },
+  };
+  const result = await executeSkillCapability({
+    state,
+    call: { id: 'install-bundled', function: { name: 'skill_install' } },
+    args: { url: 'https://github.com/yt-dlp/yt-dlp' },
+    skillContext: { settings: { enabled: true, autoApprove: true }, skills: [], pending: [], indexSection: '', toolHint: '' },
+    skillPorts: ports,
+    signal: new AbortController().signal,
+    installer: { kind: 'agent', name: 'test', detail: 'test' },
+    parseToolArguments: () => ({}),
+  });
+  assert.equal(JSON.parse(result.content).id, 'video-download');
+  assert.deepEqual(calls.map((input) => ({ owner: input.owner, repo: input.repo, dir: input.dir })), [{ owner: 'yt-dlp', repo: 'yt-dlp', dir: '' }]);
   assert.equal(state.skillInstalls, 1);
 });
 
@@ -480,6 +588,7 @@ test('技能接口覆盖列表、导入、待确认与设置', async () => {
   assert.match(detail, /updateSkill\(decode\(id\), patch\)/);
   assert.match(importRoute, /skillFilesFromArchive\(buffer\)/);
   assert.match(importRoute, /fetchSkillFilesFromGithub\(target\)/);
+  assert.match(importRoute, /installBundledSkillForGithub\(/);
   assert.match(importRoute, /listLocalAgentSkills\(\)\.find/);
   assert.match(importRoute, /readSelectionDirs\(/);
   assert.match(importRoute, /parsed\.roots\.length > 1/);

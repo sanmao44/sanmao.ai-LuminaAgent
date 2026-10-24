@@ -4,6 +4,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const load = createTsRequire(process.cwd());
 const capabilities = load('./packages/tool-runtime/native-capabilities');
+const mcpCapabilities = load('./packages/tool-runtime/mcp-capability');
 const artifacts = load('./lib/artifacts/index');
 const artifactLimits = load('./lib/artifacts/limits');
 const imageStorage = load('./lib/image-storage');
@@ -17,6 +18,58 @@ const artifactInfrastructure = {
   collectArchiveEntries: artifacts.collectArchiveEntries,
   generateArchiveArtifact: artifacts.generateArchiveArtifact,
 };
+
+function createWindowsMcpTestContext({ mcpCall, waitForMcpRetry = async () => {}, mcpCallTimeoutMs = 10_000 }) {
+  const state = {
+    generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [],
+    browserRecoveryNeeded: false, generated: [], browserDownloadCount: 0, stalledMcpReason: '',
+    batchItems: [], generations: [], recentPageText: '', skillToolCalls: 0, skillInstalls: 0,
+    generatedArtifactCount: 0, usedSkills: [],
+  };
+  const server = { id: 'cursortouch-windows-mcp', name: 'Windows MCP', url: 'stdio://windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true };
+  const meta = { serverId: server.id, serverName: server.name, toolName: 'App', readOnly: false, blocked: false };
+  const input = {
+    state,
+    call: { id: 'desktop-current' },
+    policy: { tool: { mcp: meta, risk: 'write' } },
+    args: { mode: 'launch', name: 'Device Manager' },
+    stepCalls: [{ id: 'desktop-current' }, { id: 'desktop-following' }],
+    callIndex: 0,
+    requestController: new AbortController(),
+    MCP_MANAGE_LABELS: {},
+    isMcpRuntimeAction: () => false,
+    runMcpRuntimeAction: async () => ({ result: {} }),
+    runMcpManageAction: async () => ({ result: {} }),
+    executionPublicState: { settings: {} },
+    runTabbitBrowserAction: async () => ({ ok: true }),
+    mcpToolCallLimit: 12,
+    mcpTurnBudgetLimit: 60_000,
+    browserMetrics: { record: () => '' },
+    auditMcpCall: () => {},
+    mcpServerById: new Map([[server.id, server]]),
+    browserMutationBatches: new WeakSet(),
+    mcpFilesystemRoots: [],
+    persistImageBuffer: async () => ({ url: '' }),
+    mcpRepeatTracker: new Map(),
+    agentTurnStartedAt: Date.now(),
+    ARTIFACT_MAX_PER_TURN: 10,
+    appendPageContext: (_current, _source, text) => text,
+    reportProgress: () => {},
+    mcpCall,
+    mcpCallTimeoutMs,
+    waitForMcpRetry,
+    importBrowserArtifacts: async () => ({ files: [], skipped: 0 }),
+    shouldImportBrowserArtifacts: () => false,
+    noteRemoteCatalogCallFailure: () => {},
+    noteRemoteCatalogCallSuccess: () => {},
+    importLocalImage: async () => ({ name: '', size: 0, url: '' }),
+    isLocalImageRead: () => false,
+    verifyFilesystemMove: async () => null,
+    browserToolName: (name) => name,
+    isBrowserMutationTool: () => false,
+  };
+  return { state, input };
+}
 
 test('native web capability returns bounded tool results and preserves search state', async () => {
   const result = await capabilities.executeWebCapability({
@@ -78,6 +131,386 @@ test('image capability normalizes ordered prompt batches at the runtime boundary
   });
   assert.deepEqual(result.prompts, ['first', 'second']);
   assert.equal(result.count, 1);
+});
+
+test('reference image generation keeps its operation on an accepted async task', async () => {
+  const image = load('./packages/tool-runtime/image-capability');
+  const accepted = Object.assign(new Error('provider accepted'), {
+    providerPossiblyAccepted: true,
+    providerTaskId: 'provider-task-1',
+  });
+  const finished = [];
+  const result = await image.executeImageCapability({
+    state: { generated: [], batchItems: [], generations: [] },
+    call: { id: 'image-pending-1', function: { name: 'image_generate' } },
+    args: { prompt: 'a test image' },
+    results: [],
+    ports: {
+      requestController: new AbortController(),
+      imageToolsAllowed: true,
+      isBareImageExecution: () => false,
+      extractBatchPrompts: () => [],
+      fallbackImagePrompt: 'fallback',
+      requestedImageCapability: 'reference',
+      latestRefs: [{ kind: 'image', url: 'data:image/png;base64,reference' }],
+      trackedChatCompletion: async () => ({ choices: [{ message: { content: '' } }] }),
+      agentRuntime: { provider: { name: 'chat' }, model: { rawId: 'chat-model' } },
+      requestedAgentImageModelId: 'auto',
+      imageModels: [{ id: 'image-model', capabilities: ['generate', 'reference'] }],
+      getRuntimeImageGenerationModel: async () => { throw new Error('reference work must use the reference capability lookup'); },
+      getRuntimeImageModelForCapability: async (_id, capability) => {
+        assert.equal(capability, 'reference');
+        return { provider: { name: 'image-provider' }, model: { id: 'image-model', rawId: 'image-raw', displayName: 'Image' } };
+      },
+      appendGenerationLog: async () => {},
+      sourceForLog: 'canvas',
+      taskContext: { taskId: 'agent-run-1' },
+      startGenerationLog: async (log) => { finished.push({ started: log }); return 'media-log-1'; },
+      referenceRecords: [],
+      getRuntimeImageModelCandidates: () => [],
+      editImage: async () => { throw new Error('reference generation must not call image edit'); },
+      generateImage: async () => { throw accepted; },
+      persistGenerationResult: async () => ({ images: [] }),
+      imageDownloadAuth: () => undefined,
+      finishGenerationLog: async (id, patch) => { finished.push({ id, patch }); },
+      latestInstruction: 'a test image',
+      agentRunId: 'agent-run-1',
+      skipCaption: true,
+      executionPublicState: { settings: {} },
+    },
+  });
+  const payload = JSON.parse(String(result.results[0].content));
+  assert.equal(payload.pending, true);
+  assert.equal(payload.generationTaskId, 'media-log-1');
+  assert.equal(payload.mediaLogId, 'media-log-1');
+  assert.equal(finished[0].started.operation, 'reference-generate');
+  assert.equal(finished[1].id, 'media-log-1');
+  assert.equal(finished[1].patch.providerTaskId, 'provider-task-1');
+  assert.equal(finished[1].patch.taskId, 'agent-run-1');
+  assert.equal(finished[1].patch.mode, 'generate');
+  assert.equal(finished[1].patch.operation, 'reference-generate');
+});
+
+test('Windows-MCP waits for a ready control state and recovers from repeated handoffs', async () => {
+  const state = {
+    generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [],
+    browserRecoveryNeeded: false, generated: [], browserDownloadCount: 0, stalledMcpReason: '',
+    batchItems: [], generations: [], recentPageText: '', skillToolCalls: 0, skillInstalls: 0,
+    generatedArtifactCount: 0, usedSkills: [],
+  };
+  const server = { id: 'cursortouch-windows-mcp', name: 'Windows MCP', url: 'stdio://windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true };
+  const meta = { serverId: server.id, serverName: server.name, toolName: 'App', readOnly: false, blocked: false };
+  const calls = [{ id: 'desktop-current' }, { id: 'desktop-following' }];
+  let actionCalls = 0;
+  let statusCalls = 0;
+  const waits = [];
+  const progress = [];
+  const result = await mcpCapabilities.executeMcpCapability({
+    state,
+    call: calls[0],
+    policy: { tool: { mcp: meta, risk: 'read' } },
+    args: {},
+    stepCalls: calls,
+    callIndex: 0,
+    requestController: new AbortController(),
+    MCP_MANAGE_LABELS: {},
+    isMcpRuntimeAction: () => false,
+    runMcpRuntimeAction: async () => ({ result: {} }),
+    runMcpManageAction: async () => ({ result: {} }),
+    executionPublicState: { settings: {} },
+    runTabbitBrowserAction: async () => ({ ok: true }),
+    mcpToolCallLimit: 12,
+    mcpTurnBudgetLimit: 60_000,
+    browserMetrics: { record: () => '' },
+    auditMcpCall: () => {},
+    mcpServerById: new Map([[server.id, server]]),
+    browserMutationBatches: new WeakSet(),
+    mcpFilesystemRoots: [],
+    persistImageBuffer: async () => ({ url: '' }),
+    mcpRepeatTracker: new Map(),
+    agentTurnStartedAt: Date.now(),
+    ARTIFACT_MAX_PER_TURN: 10,
+    appendPageContext: (_current, _source, text) => text,
+    mcpCall: async (_targetServer, toolName) => {
+      if (toolName === 'ControlStatus') {
+        statusCalls += 1;
+        const states = [
+          { state: 'user', wait_seconds: 2 },
+          { state: 'ready', wait_seconds: 0 },
+          { state: 'user', wait_seconds: 1 },
+          { state: 'ready', wait_seconds: 0 },
+        ];
+        return { isError: false, text: JSON.stringify(states[statusCalls - 1]) };
+      }
+      actionCalls += 1;
+      if (actionCalls === 1) return { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 7 } }) };
+      if (actionCalls === 2) return { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 4 } }) };
+      return { isError: false, text: 'Device Manager launched' };
+    },
+    waitForMcpRetry: async (milliseconds) => { waits.push(milliseconds); },
+    reportProgress: (patch) => progress.push(patch),
+    mcpCallTimeoutMs: 10_000,
+    importBrowserArtifacts: async () => ({ files: [], skipped: 0 }),
+    shouldImportBrowserArtifacts: () => false,
+    noteRemoteCatalogCallFailure: () => {},
+    noteRemoteCatalogCallSuccess: () => {},
+    importLocalImage: async () => ({ name: '', size: 0, url: '' }),
+    isLocalImageRead: () => false,
+    verifyFilesystemMove: async () => null,
+    browserToolName: (name) => name,
+    isBrowserMutationTool: () => false,
+  });
+
+  assert.equal(actionCalls, 3);
+  assert.equal(statusCalls, 4);
+  assert.deepEqual(waits, [7_000, 2_000, 4_000, 1_000]);
+  assert.equal(state.mcpToolCallCount, 7);
+  assert.equal(state.stalledMcpReason, '');
+  assert.equal(result.stalled, undefined);
+  assert.equal(result.results.length, 1);
+  assert.match(JSON.parse(result.results[0].content).content, /Device Manager launched/);
+  assert.ok(progress.some((patch) => /检查状态/.test(patch.message)));
+});
+
+test('Windows-MCP user-control retry respects call and time budgets and stops further calls', async () => {
+  const state = {
+    generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 8_000, usedMcpTools: [], browserUses: [],
+    browserRecoveryNeeded: false, generated: [], browserDownloadCount: 0, stalledMcpReason: '',
+    batchItems: [], generations: [], recentPageText: '', skillToolCalls: 0, skillInstalls: 0,
+    generatedArtifactCount: 0, usedSkills: [],
+  };
+  const server = { id: 'cursortouch-windows-mcp', name: 'Windows MCP', url: 'stdio://windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true };
+  const meta = { serverId: server.id, serverName: server.name, toolName: 'App', readOnly: false, blocked: false };
+  const calls = [{ id: 'desktop-current' }, { id: 'desktop-following' }];
+  let invoked = 0;
+  let waited = false;
+  const result = await mcpCapabilities.executeMcpCapability({
+    state,
+    call: calls[0],
+    policy: { tool: { mcp: meta, risk: 'write' } },
+    args: { mode: 'launch', name: 'Device Manager' },
+    stepCalls: calls,
+    callIndex: 0,
+    requestController: new AbortController(),
+    MCP_MANAGE_LABELS: {},
+    isMcpRuntimeAction: () => false,
+    runMcpRuntimeAction: async () => ({ result: {} }),
+    runMcpManageAction: async () => ({ result: {} }),
+    executionPublicState: { settings: {} },
+    runTabbitBrowserAction: async () => ({ ok: true }),
+    mcpToolCallLimit: 1,
+    mcpTurnBudgetLimit: 8_000,
+    browserMetrics: { record: () => '' },
+    auditMcpCall: () => {},
+    mcpServerById: new Map([[server.id, server]]),
+    browserMutationBatches: new WeakSet(),
+    mcpFilesystemRoots: [],
+    persistImageBuffer: async () => ({ url: '' }),
+    mcpRepeatTracker: new Map(),
+    agentTurnStartedAt: Date.now(),
+    ARTIFACT_MAX_PER_TURN: 10,
+    appendPageContext: (_current, _source, text) => text,
+    reportProgress: () => {},
+    mcpCall: async () => {
+      invoked += 1;
+      return { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 7 } }) };
+    },
+    mcpCallTimeoutMs: 10_000,
+    waitForMcpRetry: async () => { waited = true; },
+    importBrowserArtifacts: async () => ({ files: [], skipped: 0 }),
+    shouldImportBrowserArtifacts: () => false,
+    noteRemoteCatalogCallFailure: () => {},
+    noteRemoteCatalogCallSuccess: () => {},
+    importLocalImage: async () => ({ name: '', size: 0, url: '' }),
+    isLocalImageRead: () => false,
+    verifyFilesystemMove: async () => null,
+    browserToolName: (name) => name,
+    isBrowserMutationTool: () => false,
+  });
+
+  assert.equal(invoked, 1);
+  assert.equal(waited, false);
+  assert.equal(result.stalled, true);
+  assert.match(state.stalledMcpReason, /剩余时间或调用额度不足以安全等待重试/);
+  assert.equal(result.results.length, 2);
+  assert.equal(result.results[1].tool_call_id, 'desktop-following');
+});
+
+test('successful Windows-MCP ControlStatus with user state is returned without stalling', async () => {
+  const state = {
+    generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [],
+    browserRecoveryNeeded: false, generated: [], browserDownloadCount: 0, stalledMcpReason: '',
+    batchItems: [], generations: [], recentPageText: '', skillToolCalls: 0, skillInstalls: 0,
+    generatedArtifactCount: 0, usedSkills: [],
+  };
+  const server = { id: 'cursortouch-windows-mcp', name: 'Windows MCP', url: 'stdio://windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true };
+  const meta = { serverId: server.id, serverName: server.name, toolName: 'ControlStatus', readOnly: true, blocked: false };
+  let waited = false;
+  const result = await mcpCapabilities.executeMcpCapability({
+    state,
+    call: { id: 'desktop-status' },
+    policy: { tool: { mcp: meta, risk: 'read' } },
+    args: {},
+    stepCalls: [{ id: 'desktop-status' }],
+    callIndex: 0,
+    requestController: new AbortController(),
+    MCP_MANAGE_LABELS: {},
+    isMcpRuntimeAction: () => false,
+    runMcpRuntimeAction: async () => ({ result: {} }),
+    runMcpManageAction: async () => ({ result: {} }),
+    executionPublicState: { settings: {} },
+    runTabbitBrowserAction: async () => ({ ok: true }),
+    mcpToolCallLimit: 12,
+    mcpTurnBudgetLimit: 60_000,
+    browserMetrics: { record: () => '' },
+    auditMcpCall: () => {},
+    mcpServerById: new Map([[server.id, server]]),
+    browserMutationBatches: new WeakSet(),
+    mcpFilesystemRoots: [],
+    persistImageBuffer: async () => ({ url: '' }),
+    mcpRepeatTracker: new Map(),
+    agentTurnStartedAt: Date.now(),
+    ARTIFACT_MAX_PER_TURN: 10,
+    appendPageContext: (_current, _source, text) => text,
+    reportProgress: () => {},
+    mcpCall: async () => ({ isError: false, text: JSON.stringify({ state: 'user', wait_seconds: 7 }) }),
+    mcpCallTimeoutMs: 10_000,
+    waitForMcpRetry: async () => { waited = true; },
+    importBrowserArtifacts: async () => ({ files: [], skipped: 0 }),
+    shouldImportBrowserArtifacts: () => false,
+    noteRemoteCatalogCallFailure: () => {},
+    noteRemoteCatalogCallSuccess: () => {},
+    importLocalImage: async () => ({ name: '', size: 0, url: '' }),
+    isLocalImageRead: () => false,
+    verifyFilesystemMove: async () => null,
+    browserToolName: (name) => name,
+    isBrowserMutationTool: () => false,
+  });
+
+  assert.equal(result.stalled, undefined);
+  assert.equal(state.stalledMcpReason, '');
+  assert.equal(waited, false);
+  assert.equal(JSON.parse(result.results[0].content).ok, true);
+});
+
+test('USER_CONTROL from an unrelated MCP does not trigger Windows desktop handoff behavior', async () => {
+  const state = {
+    generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [],
+    browserRecoveryNeeded: false, generated: [], browserDownloadCount: 0, stalledMcpReason: '',
+    batchItems: [], generations: [], recentPageText: '', skillToolCalls: 0, skillInstalls: 0,
+    generatedArtifactCount: 0, usedSkills: [],
+  };
+  const server = { id: 'other-mcp', name: 'Other MCP', url: 'stdio://other', catalogId: 'other', enabled: true, allowWrite: true };
+  const meta = { serverId: server.id, serverName: server.name, toolName: 'action', readOnly: false, blocked: false };
+  const result = await mcpCapabilities.executeMcpCapability({
+    state,
+    call: { id: 'other-control' },
+    policy: { tool: { mcp: meta, risk: 'write' } },
+    args: {},
+    stepCalls: [{ id: 'other-control' }],
+    callIndex: 0,
+    requestController: new AbortController(),
+    MCP_MANAGE_LABELS: {},
+    isMcpRuntimeAction: () => false,
+    runMcpRuntimeAction: async () => ({ result: {} }),
+    runMcpManageAction: async () => ({ result: {} }),
+    executionPublicState: { settings: {} },
+    runTabbitBrowserAction: async () => ({ ok: true }),
+    mcpToolCallLimit: 12,
+    mcpTurnBudgetLimit: 60_000,
+    browserMetrics: { record: () => '' },
+    auditMcpCall: () => {},
+    mcpServerById: new Map([[server.id, server]]),
+    browserMutationBatches: new WeakSet(),
+    mcpFilesystemRoots: [],
+    persistImageBuffer: async () => ({ url: '' }),
+    mcpRepeatTracker: new Map(),
+    agentTurnStartedAt: Date.now(),
+    ARTIFACT_MAX_PER_TURN: 10,
+    appendPageContext: (_current, _source, text) => text,
+    reportProgress: () => {},
+    mcpCall: async () => ({ isError: false, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 7 } }) }),
+    mcpCallTimeoutMs: 10_000,
+    importBrowserArtifacts: async () => ({ files: [], skipped: 0 }),
+    shouldImportBrowserArtifacts: () => false,
+    noteRemoteCatalogCallFailure: () => {},
+    noteRemoteCatalogCallSuccess: () => {},
+    importLocalImage: async () => ({ name: '', size: 0, url: '' }),
+    isLocalImageRead: () => false,
+    verifyFilesystemMove: async () => null,
+    browserToolName: (name) => name,
+    isBrowserMutationTool: () => false,
+  });
+
+  assert.equal(result.stalled, undefined);
+  assert.equal(state.stalledMcpReason, '');
+  assert.equal(result.results.length, 1);
+});
+
+test('Windows-MCP user-control parser accepts normalized markers and bounds wait time', () => {
+  assert.equal(mcpCapabilities.windowsMcpUserControlWaitSeconds('USERCONTROL'), 10);
+  assert.equal(mcpCapabilities.windowsMcpUserControlWaitSeconds('{"state":"user","wait_seconds":500}'), 120);
+  assert.equal(mcpCapabilities.windowsMcpUserControlWaitSeconds('{"code":"TAKEOVER_PENDING","status":{"state":"takeover_pending"}}'), 1);
+  assert.equal(mcpCapabilities.windowsMcpUserControlWaitSeconds('ordinary desktop result'), null);
+});
+
+test('Windows-MCP stops immediately when CONTROL_PREEMPTED reports an unavailable controller', async () => {
+  const calls = [];
+  let waited = false;
+  const { state, input } = createWindowsMcpTestContext({
+    mcpCall: async (_server, toolName) => {
+      calls.push(toolName);
+      return {
+        isError: true,
+        text: '执行中曾遇到错误： windows-mcp_App: {"code":"CONTROL_PREEMPTED","status":{"state":"unavailable","generation":5,"wait_seconds":0.0,"executed_steps":0}}',
+      };
+    },
+    waitForMcpRetry: async () => { waited = true; },
+  });
+
+  const result = await mcpCapabilities.executeMcpCapability(input);
+
+  assert.deepEqual(calls, ['App']);
+  assert.equal(waited, false);
+  assert.equal(result.stalled, true);
+  assert.match(state.stalledMcpReason, /控制器当前不可用/);
+  assert.equal(result.results.length, 2);
+  assert.equal(result.results[1].tool_call_id, 'desktop-following');
+});
+
+test('Windows-MCP handoff polling shares a 30-second total call budget', async () => {
+  const originalNow = Date.now;
+  let now = originalNow();
+  Date.now = () => now;
+  try {
+    const calls = [];
+    const timeouts = [];
+    const waits = [];
+    const { state, input } = createWindowsMcpTestContext({
+      mcpCallTimeoutMs: 120_000,
+      mcpCall: async (_server, toolName, _args, options) => {
+        calls.push(toolName);
+        timeouts.push(options.timeouts.call);
+        return toolName === 'App'
+          ? { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 20 } }) }
+          : { isError: false, text: JSON.stringify({ state: 'user', wait_seconds: 20 }) };
+      },
+      waitForMcpRetry: async (milliseconds) => {
+        waits.push(milliseconds);
+        now += milliseconds;
+      },
+    });
+
+    const result = await mcpCapabilities.executeMcpCapability(input);
+
+    assert.deepEqual(calls, ['App', 'ControlStatus']);
+    assert.deepEqual(timeouts, [30_000, 5_000]);
+    assert.deepEqual(waits, [20_000, 10_000]);
+    assert.equal(result.stalled, true);
+    assert.match(state.stalledMcpReason, /30 秒总时限/);
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 

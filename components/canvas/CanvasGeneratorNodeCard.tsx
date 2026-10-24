@@ -3,6 +3,7 @@ import CanvasProcessingIndicator, {
   type CanvasProcessingKind,
 } from "@/components/canvas/CanvasProcessingIndicator";
 import { CanvasGeneratorHelp } from "@/components/canvas/CanvasVariantEditors";
+import CanvasInlineNameEditor from "@/components/canvas/CanvasInlineNameEditor";
 
 export type CanvasGeneratorNodeCardProps = {
   node: CanvasNode;
@@ -27,6 +28,9 @@ export type CanvasGeneratorNodeCardProps = {
   onRetryVariant: (variantIndex: number) => void;
   onRetryFailedVariants: () => void;
   onOutputPreview: (node: CanvasNode) => void;
+  onRename?: (value: string) => void;
+  renaming?: boolean;
+  onRenamingChange?: (editing: boolean) => void;
 };
 
 export function canvasVariantStatusLabel(status: CanvasVariantState["status"]) {
@@ -62,13 +66,24 @@ export default function CanvasGeneratorNodeCard({
   onRetryVariant,
   onRetryFailedVariants,
   onOutputPreview,
+  onRename,
+  renaming,
+  onRenamingChange,
 }: CanvasGeneratorNodeCardProps) {
   return (
     <div className="canvas-generator-card">
       <div className="canvas-generator-head">
         <span>{kind === "video" ? "▶" : "✦"}</span>
         <div className="canvas-generator-head-copy">
-          <b>{kind === "video" ? "视频变体生成器" : "图片变体生成器"}</b>
+          <CanvasInlineNameEditor
+            value={node.data.name}
+            fallback={kind === "video" ? "视频变体生成器" : "图片变体生成器"}
+            ariaLabel="变体生成器名称"
+            onCommit={onRename}
+            editing={renaming}
+            onEditingChange={onRenamingChange}
+            className="canvas-inline-name-editor canvas-node-name"
+          />
           <small>
             {status === "running"
               ? "批量处理中…"

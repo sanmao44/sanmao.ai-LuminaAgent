@@ -5,6 +5,9 @@
 )
 
 $ErrorActionPreference = 'Stop'
+# Normalize the former automatic allocation range during direct or legacy
+# restart handoffs. Custom ports outside that range remain supported.
+if ($Port -ge 3210 -and $Port -le 3220) { $Port = 3210 }
 $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'launcher-common.ps1')
 $dataDir = Resolve-SanmaoDataDir -Root $root

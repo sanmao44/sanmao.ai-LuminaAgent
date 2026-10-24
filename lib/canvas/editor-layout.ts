@@ -24,8 +24,16 @@ export type CanvasGroupToolbarPlacement = CanvasOverlayPosition & {
   placement: "above" | "inside";
 };
 
+export type CanvasPopoverPosition = CanvasOverlayPosition & {
+  width: number;
+};
+
 export type CanvasOverlayFit = CanvasOverlayPosition & {
   maxHeight: number;
+};
+
+export type CanvasNodeEditorDockLayout = CanvasOverlayPosition & {
+  placement: "bottom";
 };
 
 /**
@@ -55,10 +63,35 @@ export function placeCanvasContextMenu(
   };
 }
 
+/** Places a small anchored popover in the viewport and flips it above as needed. */
+export function placeCanvasActionPopover(
+  anchor: CanvasOverlayAnchor,
+  viewport: CanvasOverlayStage,
+  size: CanvasOverlaySize,
+  gap = 8,
+  margin = 12,
+): CanvasPopoverPosition {
+  const width = Math.min(size.width, Math.max(1, viewport.width - margin * 2));
+  const left = Math.min(
+    Math.max(anchor.left + anchor.width / 2 - width / 2, margin),
+    Math.max(margin, viewport.width - width - margin),
+  );
+  const below = anchor.top + anchor.height + gap;
+  const above = anchor.top - size.height - gap;
+  const maxTop = Math.max(margin, viewport.height - size.height - margin);
+  return {
+    left,
+    top: below + size.height <= viewport.height - margin
+      ? below
+      : Math.min(Math.max(above, margin), maxTop),
+    width,
+  };
+}
+
 function centeredLeft(
   anchor: CanvasOverlayAnchor,
   _stage: CanvasOverlayStage,
-  overlay: CanvasOverlaySize,
+  overlay: Pick<CanvasOverlaySize, "width">,
 ) {
   return anchor.left + anchor.width / 2 - overlay.width / 2;
 }
@@ -147,27 +180,21 @@ export function fitCanvasNodeEditorBelow(
   };
 }
 
-/**
- * Places a compact editor dock just below its node. The dock follows the node
- * vertically so it never changes side, and it is never height-clamped (so its
- * body does not scroll). It may therefore extend past the bottom of the
- * viewport just as the node that owns it does, which keeps the dock out of the
- * way of the toolbar and other overlays. Only the horizontal position is
- * clamped to the stage margins on both sides so the box stays reachable on
- * narrow screens.
- */
+/** Keeps the editor below its node and sizes its scrollable body to the viewport. */
 export function placeCanvasNodeEditorDock(
   anchor: CanvasOverlayAnchor,
   stage: CanvasOverlayStage,
-  overlay: CanvasOverlaySize,
+  overlay: Pick<CanvasOverlaySize, "width">,
   gap = 14,
   margin = 12,
-): CanvasOverlayPosition {
-  const position = placeCanvasNodeEditor(anchor, stage, overlay, gap);
+): CanvasNodeEditorDockLayout {
+  const top = anchor.top + anchor.height + gap;
+  const centered = centeredLeft(anchor, stage, overlay);
   const rightmostLeft = Math.max(margin, stage.width - overlay.width - margin);
 
   return {
-    left: Math.min(Math.max(position.left, margin), rightmostLeft),
-    top: position.top,
+    left: Math.min(Math.max(centered, margin), rightmostLeft),
+    top,
+    placement: "bottom",
   };
 }

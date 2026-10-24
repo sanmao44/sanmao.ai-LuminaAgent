@@ -34,6 +34,21 @@ test("canvas file classification keeps text and audio references deterministic",
   assert.equal(fileInput.isCanvasAudioFile({ name: "clip.mp4", type: "video/mp4" }), false);
 });
 
+test("asset drags with native image files reuse the asset instead of importing a file", () => {
+  assert.equal(fileInput.hasExternalFileTransfer({
+    types: ["Files", "application/x-sanmao-asset"],
+    items: [{ kind: "file" }],
+  }), false);
+  assert.equal(fileInput.hasExternalFileTransfer({
+    types: ["application/x-sanmao-asset"],
+    items: [],
+  }), false);
+  assert.equal(fileInput.hasExternalFileTransfer({
+    types: ["Files", "text/uri-list"],
+    items: [{ kind: "file" }],
+  }), true);
+});
+
 test("external file drops keep the existing asset drop handler as a fallback", () => {
   const stage = component.slice(
     component.indexOf('className={`canvas-stage'),

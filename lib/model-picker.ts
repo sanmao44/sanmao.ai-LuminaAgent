@@ -1,6 +1,16 @@
-import type { RegistryModel } from './types';
+import type { ModelCapability, RegistryModel } from './types';
 
 export const MODEL_PICKER_QUICK_LIMIT = 4;
+
+export function modelSupportsCapabilityRequirements(
+  model: RegistryModel,
+  requiredCapabilities: readonly ModelCapability[],
+) {
+  return requiredCapabilities.every((capability) => {
+    if (capability === 'video-generate') return model.capabilities.includes(capability);
+    return model.capabilities.includes(capability) || (capability.startsWith('video-') && model.kind === 'video');
+  });
+}
 
 export function modelPickerMatches(model: RegistryModel, query: string) {
   const normalizedQuery = query.trim().toLowerCase();

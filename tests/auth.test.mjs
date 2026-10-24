@@ -56,6 +56,33 @@ test('lan mode accepts only the configured admin cookie remotely', () => {
   assert.equal(auth.isTrustedAppRequest(request(remote.url, 'sanmao_admin=invalid')), false);
 });
 
+test('same-origin LAN requests use Host when Next is bound to a wildcard address', () => {
+  process.env.SANMAO_NETWORK_MODE = 'lan';
+  process.env.SANMAO_ADMIN_PASSWORD = 'lan-test-password';
+  const internalUrl = 'http://0.0.0.0:3210/api/workspace';
+  const lanHost = '192.168.1.20:3210';
+  const cookie = auth.adminCookie(request(`http://${lanHost}/api/workspace`)).split(';', 1)[0];
+  const sameOrigin = new Request(internalUrl, {
+    headers: {
+      host: lanHost,
+      origin: `http://${lanHost}`,
+      'sec-fetch-site': 'same-origin',
+      cookie,
+    },
+  });
+  assert.equal(auth.isTrustedAppRequest(sameOrigin), true);
+
+  const crossSite = new Request(internalUrl, {
+    headers: {
+      host: lanHost,
+      origin: 'https://evil.example',
+      'sec-fetch-site': 'cross-site',
+      cookie,
+    },
+  });
+  assert.equal(auth.isTrustedAppRequest(crossSite), false);
+});
+
 test('本机模式下也拦跨站请求，命令行与同源页面不受影响', () => {
   delete process.env.SANMAO_NETWORK_MODE;
   delete process.env.SANMAO_ADMIN_PASSWORD;

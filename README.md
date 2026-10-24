@@ -1,10 +1,20 @@
 # SANMAO.AI
 
-一个可运行的中文多模型 AI 创作平台：支持在网页内添加多个第三方 API 服务、读取模型列表、选择实际要使用的模型，并提供独立的智能助手、图片与视频工作台、图片修改和本地生成历史。
+本地优先的中文 AI 创作工作台：支持多模型对话、Agent 调度、图片与视频创作、超级画布、技能/MCP 接入，以及本地历史、任务和备份管理。
 
-> 开发与发布流程请见 [WORKFLOW.md](WORKFLOW.md)；版本更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+> 当前稳定版本：[`v0.7.98`](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.98) · [下载与安装包](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/latest) · [更新记录](CHANGELOG.md)
+>
+> 开发与发布流程请见 [WORKFLOW.md](WORKFLOW.md)。
 
-## 启动方式
+## 能力概览
+
+- **多模型对话与 Agent**：添加多个第三方 API 服务，读取模型列表，按能力选择实际使用的模型。
+- **超级画布**：用节点、素材、引用、连线和历史操作组织可复用的创作流程，并与 Agent 协同。
+- **图片与视频工作台**：支持生成、编辑、超分、视频剪辑、变体与异步任务恢复。
+- **技能与 MCP**：导入可复用技能，按授权接入浏览器、文件系统、GitHub 等外部能力。
+- **本地优先的数据管理**：历史、任务、图片、服务商配置和加密备份保存在本机，可按需部署局域网共享或 Docker 服务。
+
+## 快速开始
 
 ### Windows 本机启动
 
@@ -14,10 +24,10 @@
 
 启动器会自动：
 
-1. 检查 Node.js 22.13.0+
+1. 检查 Node.js 22.13.0+；新电脑没有 Node.js 时，会把应用内运行时下载到本机数据目录，不需要手动安装（首次需要联网）
 2. 安装/修复 npm 依赖
 3. 构建正式版本
-4. 使用专用端口段（3210～3220）中的可用端口
+4. 固定使用本机端口 `3210`，旧的 `3210～3220` 端口段仅用于清理历史服务
 5. 等服务器真的启动后再打开浏览器
 
 首次安装依赖通常需要几分钟：要下载约 800 MB 依赖（其中 FFmpeg 约 29 MB 来自 GitHub）。网速慢时可能要十几分钟甚至更久；安装和构建期间启动器会持续显示已用时间和进度，下载阶段没有输出属正常现象。检测到官方源较慢时，启动器会自动改用国内镜像（npmmirror）下载依赖；如需强制只用官方源，可在启动前设置环境变量 `SANMAO_NO_MIRROR=1`。
@@ -54,13 +64,51 @@ npm start
 
 然后打开：
 
-`http://localhost:3210`
+`http://127.0.0.1:3210`
+
+### 视频下载技能（可选）
+
+仓库内的 [video-download 技能文档](skills/video-download/SKILL.md) 可在设置的技能管理器中作为本地技能导入。仓库 `skills/` 目录只是模板来源；导入后保存在 `.data/skills`，才会进入 Agent 的技能索引和读取流程。
+
+聊天中明确发送一个公开视频地址并要求“下载”时，Agent 会通过项目内置的
+`video_download` 工具调用 `yt-dlp`，将结果保存到项目视频目录，并返回可播放的
+项目地址。技能正文只描述流程，下载命令由服务端受控适配器组装，不会执行用户提供的
+Shell 或 PowerShell 文本。
+
+下载器会优先读取运行设备已有的代理环境变量，并在 Windows/macOS 上识别启用的系统代理；
+代理地址不会写死到项目中。公开视频可直接下载；需要登录的网站须由用户针对当前链接明确指定
+浏览器会话后重试。站点删除的视频、付费内容、DRM 内容或当前网络无法访问的站点，仍会返回实际
+失败原因。新片场公开作品和 Bilibili 公开单段 BV 视频会优先使用各站点公开媒体接口取得视频流，
+再由 yt-dlp 下载；接口不可用时回到 yt-dlp 的站点提取路径。其他站点使用 yt-dlp 的对应提取器，
+抖音使用 yt-dlp 官方提取器；当前站点可能要求 fresh cookies，遇到 HTTP 403 时应先在浏览器打开并播放链接，再明确授权本次读取指定浏览器会话后重试。微信视频号分享页目前没有官方 yt-dlp 提取器，GitHub 上常见的抓包、证书安装和流量解密方案不属于项目下载链路；如果用户能提供自己有权访问的直接媒体 URL，仍可按通用地址尝试。支持范围随站点接口、下载器版本和用户当前网络变化，不能保证所有平台或所有链接均可下载。
+
+“使用默认浏览器登录态重试”会先解析系统默认浏览器，再交给 yt-dlp 的官方
+`--cookies-from-browser` 机制。Windows 新版 Chrome 的 App-Bound Encryption 可能阻止第三方读取
+Cookie；这时优先改用已登录的 Firefox 会话，或由用户用浏览器 Cookie 导出工具导出当前站点的
+Netscape cookies.txt。这个限制和排查方式记录在
+[yt-dlp issue #10927](https://github.com/yt-dlp/yt-dlp/issues/10927)。项目不会绕过浏览器加密，
+也不会自动读取未授权的浏览器会话。
+
+通过项目自带启动器运行时，会在首次启动时自动准备当前系统的
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) 下载器，并由服务端验证后调用。用户无需安装
+Python、设置 PATH 或输入命令行。下载器保存在当前安装的数据目录 `tools/` 下，换电脑后
+由新电脑的启动器自行准备；项目已经通过 `ffmpeg-static` 提供 FFmpeg。正式安装包会把
+可写数据放在当前用户数据目录，源码目录仍使用项目内 `.data/`。
+
+首次准备需要访问下载源。若网络或系统策略阻止下载，启动器会提示依赖未就绪，应用仍可启动，
+下次启动或实际下载时会重试。此时可将适用于本机系统的 `yt-dlp.exe`（Windows）或
+`yt-dlp`（macOS/Linux）放入数据目录的 `tools/` 下，然后重新启动。默认开发版数据目录为
+`.data/`；便携版为 `data/`；安装版为系统用户数据目录。也可在 `.env.local` 中设置
+`SANMAO_YTDLP_PATH` 或 `YT_DLP_PATH` 指向已有可执行文件。
+
+技能管理器的“已启用”表示 Agent 可使用下载流程；实际下载器仍会在本机验证。下载器无法
+准备时会返回明确错误，不会伪造下载结果。
 
 ## 启动器说明
 
 - 快捷方式只在本机生成，不会把当前电脑的绝对路径提交到 GitHub。
 - 颜色标识：蓝色＝本机启动，绿色＝局域网共享，橙色＝macOS 应用。
-- 启动器会自动检查 Node.js 22.13.0+、安装依赖、构建项目、使用 3210～3220 端口段并打开浏览器。项目使用 Node.js 内置 `node:sqlite`，低于此版本不能启动。
+- 启动器会自动检查 Node.js 22.13.0+、在缺失时准备应用内 Node.js、安装依赖、构建项目，并固定使用 `3210` 打开浏览器。旧版本曾使用 `3210～3220` 自动选端口，现仅会在清理旧服务时兼容回收，不会再把其他端口作为新的浏览器入口。项目使用 Node.js 内置 `node:sqlite`，低于此版本不能启动。
 - 检测到已保存并启用的视觉聊天模型、需要公网媒体地址的视频服务，或云端超分连接时，启动入口会按需准备免费的临时 HTTPS 通道（首次使用可能自动下载 Cloudflare 通道组件），不需要服务器、域名、`.env` 或手工配置。没有此类配置时不会下载或启动中转；纯本地任务接口和本机 CLI 保持原有启动行为。
 - 依赖只在清单真正变化或缺失时同步，且使用增量安装，不会删除已有 node_modules；发布新版本号不会再触发重装。首次安装会单独获取 FFmpeg 组件（约 29 MB，支持断点续传，GitHub 下载失败时自动改用公共镜像）；如需指定下载源，可在启动前设置环境变量 FFMPEG_BINARIES_URL（ffmpeg-static 自带该开关）。
 - 重复双击不会启动第二个后台服务，而是打开已有网页；本地服务不会因为页面暂时不操作、切到后台或电脑从睡眠中恢复而自动退出。请使用“停止 SANMAO.AI”入口停止服务，临时通道也会随服务停止而清理。
@@ -182,7 +230,7 @@ SANMAO_UPDATE_MANIFEST_URL=https://raw.githubusercontent.com/sanmao44/sanmao.ai-
 
 ```env
 SANMAO_UPDATE_MANIFEST_MIRRORS=https://gitee.com/sanmao44/sanmao.ai-LuminaAgent/raw/main/update.json
-SANMAO_UPDATE_MIRRORS=https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.24/SANMAO.AI-0.7.24.zip
+SANMAO_UPDATE_MIRRORS=https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/vX.Y.Z/SANMAO.AI-X.Y.Z.zip
 SANMAO_UPDATE_GITHUB_PROXIES=https://ghfast.top/,https://gh-proxy.com/
 ```
 
@@ -190,10 +238,10 @@ SANMAO_UPDATE_GITHUB_PROXIES=https://ghfast.top/,https://gh-proxy.com/
 
 ```json
 {
-  "latestVersion": "0.7.24",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.24",
+  "latestVersion": "X.Y.Z",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/vX.Y.Z",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://codeload.github.com/sanmao44/sanmao.ai-LuminaAgent/zip/refs/tags/v0.7.24",
+  "packageUrl": "https://codeload.github.com/sanmao44/sanmao.ai-LuminaAgent/zip/refs/tags/vX.Y.Z",
   "sha256": "在发布后填写 64 位 SHA-256"
 }
 ```

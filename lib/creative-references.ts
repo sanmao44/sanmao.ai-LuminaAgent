@@ -17,6 +17,8 @@ export type CreativeReferenceLike = {
   url?: string;
   text?: string;
   mimeType?: string;
+  width?: number;
+  height?: number;
   pending?: boolean;
   error?: string;
 };
@@ -29,6 +31,8 @@ export type CreativeReference = {
   text?: string;
   mimeType?: string;
   nodeId?: string;
+  width?: number;
+  height?: number;
   pending?: boolean;
   error?: string;
 };
@@ -43,6 +47,8 @@ export type LegacyCreativeReference = {
   content?: unknown;
   mimeType?: unknown;
   nodeId?: unknown;
+  width?: unknown;
+  height?: unknown;
   pending?: unknown;
 };
 
@@ -53,6 +59,11 @@ const videoDataPattern = /^data:video\//i;
 
 function stringValue(value: unknown, max = 160) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+function positiveNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
 function kindFromValue(value: unknown, url: string, mimeType: string, text: string): CreativeReferenceKind {
@@ -83,6 +94,8 @@ export function normalizeCreativeReference(
   if (kind !== "text" && !url) return null;
   const id = stringValue(raw.id, 160) || `ref-${index + 1}`;
   const name = stringValue(raw.name, 160) || (kind === "image" ? `参考图 ${index + 1}` : kind === "video" ? `参考视频 ${index + 1}` : `文本 ${index + 1}`);
+  const width = positiveNumber(raw.width);
+  const height = positiveNumber(raw.height);
   return {
     id,
     kind,
@@ -91,6 +104,8 @@ export function normalizeCreativeReference(
     ...(text ? { text } : {}),
     ...(mimeType ? { mimeType } : {}),
     ...(stringValue(raw.nodeId, 160) ? { nodeId: stringValue(raw.nodeId, 160) } : {}),
+    ...(width !== undefined ? { width } : {}),
+    ...(height !== undefined ? { height } : {}),
     ...(raw.pending === true ? { pending: true } : {}),
   };
 }
@@ -236,6 +251,175 @@ export function selectCreativeReferences<T extends CreativeReferenceLike>(value:
     }
   }
   return { references: selected, invalidNumbers, hasMentions };
+}
+
+export type CreativeReferenceRoleResolution<T extends CreativeReferenceLike = CreativeReference> = ReferenceSelection<T> & {
+  /** References used only to derive the output canvas size, never sent as images. */
+  layoutOnlyReferences: T[];
+  layoutOnlyNumbers: number[];
+  /** Exact reduced aspect ratio derived from layout-only image dimensions. */
+  layoutAspectRatio?: string;
+  layoutAspectRatioConflict: boolean;
+  layoutDimensionsMissingReferences: T[];
+  /** Prompt with layout-only mentions replaced by explicit output-size language. */
+  prompt: string;
+};
+
+const layoutCuePattern = /(?:比例|画幅|宽高比|长宽比|尺寸|分辨率|横版|竖版|横向|纵向|aspect\s*ratio|ratio|dimensions?|resolution|landscape|portrait|width|height)/i;
+const visualCuePattern = /(?:风格|元素|主体|内容|画面|构图|色彩|颜色|色调|建筑|人物|类似|复刻|重现|style|elements?|subject|content|visual|composition|color|similar|recreate|copy)/i;
+const layoutOnlyIntentPattern = /(?:(?:仅|只)(?:把|将)?[^，。！？；\n]{0,18}(?:画幅|比例|宽高比|长宽比|尺寸|分辨率)|(?:画幅|比例|宽高比|长宽比|尺寸|分辨率)[^，。！？；\n]{0,18}(?:仅|只)(?:用于|参考|取)|only\s+(?:use\s+)?(?:the\s+)?(?:aspect(?:\s*ratio)?|ratio|dimensions?|resolution))/i;
+const clauseBoundaryPattern = /[\r\n，。！？；、,.;!?]/;
+const broadReplacementSubjectPattern = /(?:全部|所有|任何|元素|画面|视觉|场景|地域|地名|文字|主体|建筑|内容)/i;
+const broadReplacementActionPattern = /(?:替换|换成|改成|改为|变成|不能|不得|不要|禁止|不出现|移除|去掉|避免)/i;
+
+function hasBroadReplacementIntent(value: string) {
+  const subjectThenAction = new RegExp(`${broadReplacementSubjectPattern.source}[^，。！？；\\n]{0,18}${broadReplacementActionPattern.source}`, "i");
+  const actionThenSubject = new RegExp(`${broadReplacementActionPattern.source}[^，。！？；\\n]{0,18}${broadReplacementSubjectPattern.source}`, "i");
+  return subjectThenAction.test(value) || actionThenSubject.test(value);
+}
+
+function referenceMentionClause(value: string, start: number, end: number) {
+  let clauseStart = start;
+  while (clauseStart > 0 && !clauseBoundaryPattern.test(value[clauseStart - 1])) clauseStart -= 1;
+  let clauseEnd = end;
+  while (clauseEnd < value.length && !clauseBoundaryPattern.test(value[clauseEnd])) clauseEnd += 1;
+  return value.slice(clauseStart, clauseEnd);
+}
+
+function isLayoutOnlyMention(value: string, start: number, end: number) {
+  const clause = referenceMentionClause(value, start, end);
+  return layoutCuePattern.test(clause) && layoutOnlyIntentPattern.test(clause) && !visualCuePattern.test(clause);
+}
+
+function greatestCommonDivisor(left: number, right: number): number {
+  let a = Math.abs(Math.round(left));
+  let b = Math.abs(Math.round(right));
+  while (b > 0) {
+    const remainder = a % b;
+    a = b;
+    b = remainder;
+  }
+  return a || 1;
+}
+
+function exactAspectRatio(reference: CreativeReferenceLike) {
+  const width = positiveNumber(reference.width);
+  const height = positiveNumber(reference.height);
+  if (width === undefined || height === undefined) return "";
+  const divisor = greatestCommonDivisor(width, height);
+  return `${Math.round(width) / divisor}:${Math.round(height) / divisor}`;
+}
+
+function aspectRatioLabel(reference: CreativeReferenceLike) {
+  const width = positiveNumber(reference.width);
+  const height = positiveNumber(reference.height);
+  if (width === undefined || height === undefined) return "";
+  const ratio = width / height;
+  if (!Number.isFinite(ratio) || ratio <= 0) return "";
+  const exact = exactAspectRatio(reference) || `${ratio.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}:1`;
+  return `${exact}（约 ${ratio.toFixed(3)}:1）`;
+}
+
+function referencePromptLabel(reference: CreativeReferenceLike, number: number) {
+  const label = reference.kind === "text"
+    ? "引用文本"
+    : reference.kind === "video"
+      ? "参考视频"
+      : "视觉参考图";
+  return `${label}${number}`;
+}
+
+function rewriteResolvedReferenceMentions<T extends CreativeReferenceLike>(
+  value: string,
+  available: readonly T[],
+  layoutOnlyNumbers: readonly number[],
+  visualReferenceIndexes: ReadonlyMap<string, number>,
+) {
+  const layoutNumbers = new Set(layoutOnlyNumbers);
+  const constraints: string[] = [];
+  const replacementIntent = hasBroadReplacementIntent(value);
+  let output = "";
+  let cursor = 0;
+  for (const match of value.matchAll(/@([0-9]+)\b/g)) {
+    const number = Number(match[1]);
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    const reference = available[number - 1];
+    if (!reference) continue;
+    output += value.slice(cursor, start);
+    if (isLayoutOnlyMention(value, start, end)) {
+      const ratio = aspectRatioLabel(reference);
+      output += ratio || "参考图的宽高比";
+    } else {
+      const referenceIndex = visualReferenceIndexes.get(reference.id) || number;
+      output += referencePromptLabel(reference, referenceIndex);
+      if (replacementIntent) {
+        output += "（仅参考构图、排版和整体风格；不要复制参考图中的文字、地名、主体、建筑或可识别元素；最终内容以提示词指定的新版本为准）";
+      }
+    }
+    cursor = end;
+    if (layoutNumbers.has(number)) {
+      const ratio = aspectRatioLabel(reference);
+      constraints.push(
+        ratio
+          ? `第${number}张素材只提供画幅比例 ${ratio}`
+          : `第${number}张素材只提供画幅比例`,
+      );
+    }
+  }
+  output += value.slice(cursor);
+  const directives: string[] = [];
+  if (constraints.length) {
+    directives.push(`画幅约束：${constraints.join("；")}。这些素材只提供宽高比，不是视觉参考；不要读取其中的主体、构图、风格、颜色、建筑、人物或其他画面元素。`);
+  }
+  if (replacementIntent && visualReferenceIndexes.size) {
+    directives.push("视觉参考图只用于构图、排版和整体风格；必须替换其中的具体文字、地名、主体、建筑和可识别元素，最终内容以提示词指定的新版本为准。");
+  }
+  return [output.trim(), ...directives].filter(Boolean).join("\n\n");
+}
+
+/** Resolve mentions whose role is layout-only before image references reach a provider. */
+export function resolveCreativeReferenceRoles<T extends CreativeReferenceLike>(
+  value: string,
+  available: readonly T[],
+): CreativeReferenceRoleResolution<T> {
+  const selection = selectCreativeReferences(value, available);
+  const mentionGroups = new Map<number, { start: number; end: number; layoutOnly: boolean }[]>();
+  for (const match of String(value || "").matchAll(/@([0-9]+)\b/g)) {
+    const number = Number(match[1]);
+    if (number < 1 || number > available.length) continue;
+    const start = match.index ?? 0;
+    const mentions = mentionGroups.get(number) || [];
+    mentions.push({ start, end: start + match[0].length, layoutOnly: isLayoutOnlyMention(value, start, start + match[0].length) });
+    mentionGroups.set(number, mentions);
+  }
+  const layoutOnlyNumbers = [...mentionGroups.entries()]
+    .filter(([, mentions]) => mentions.length > 0 && mentions.every((mention) => mention.layoutOnly))
+    .map(([number]) => number);
+  const layoutIds = new Set(
+    layoutOnlyNumbers
+      .map((number) => available[number - 1]?.id)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const layoutOnlyReferences = selection.references.filter((reference) => layoutIds.has(reference.id));
+  const references = selection.references.filter((reference) => !layoutIds.has(reference.id));
+  const layoutDimensionsMissingReferences = layoutOnlyReferences.filter((reference) => !exactAspectRatio(reference));
+  const aspectRatios = new Set(layoutOnlyReferences.map(exactAspectRatio).filter(Boolean));
+  const layoutAspectRatioConflict = aspectRatios.size > 1;
+  const layoutAspectRatio = layoutDimensionsMissingReferences.length || layoutAspectRatioConflict
+    ? undefined
+    : [...aspectRatios][0];
+  const visualReferenceIndexes = new Map(references.map((reference, index) => [reference.id, index + 1]));
+  return {
+    ...selection,
+    references,
+    layoutOnlyReferences,
+    layoutOnlyNumbers,
+    layoutAspectRatio,
+    layoutAspectRatioConflict,
+    layoutDimensionsMissingReferences,
+    prompt: rewriteResolvedReferenceMentions(value, available, layoutOnlyNumbers, visualReferenceIndexes),
+  };
 }
 
 export function referencePreviewText(reference: CreativeReference, max = 96) {

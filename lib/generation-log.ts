@@ -37,7 +37,7 @@ export type GenerationLog = {
   error?: string;
   angle?: Record<string, unknown>;
   references?: ReferenceImageRecord[];
-  operation?: 'generate' | 'edit' | 'extend';
+  operation?: 'generate' | 'edit' | 'reference-generate' | 'extend';
   videoUrls?: string[];
   videoPath?: string;
   providerTaskId?: string;
@@ -55,6 +55,9 @@ export type GenerationLog = {
   /** Agent routing timing, kept separate from provider duration for diagnosis. */
   routeLane?: 'answer' | 'search' | 'action';
   routerMs?: number;
+  intentClassifierModelId?: string;
+  intentClassifierMs?: number;
+  intentClassifierStatus?: 'used' | 'fallback' | 'unavailable';
   searchMs?: number;
   /** Browser-only execution counters; page content and tool arguments are excluded. */
   browserToolCallCount?: number;
@@ -153,6 +156,7 @@ export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> 
       status: 'error',
       durationMs: Math.max(0, now - new Date(log.createdAt).getTime()),
       error,
+      ...(log.mode === 'edit' ? { errorCode: 'provider_result_unconfirmed' } : {}),
     }).catch(() => undefined)));
     const staleIds = new Set(staleLogs.map((log) => log.id));
     return logs.map((log): GenerationLog => staleIds.has(log.id) ? {
@@ -160,6 +164,7 @@ export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> 
       status: 'error',
       durationMs: Math.max(0, now - new Date(log.createdAt).getTime()),
       error,
+      ...(log.mode === 'edit' ? { errorCode: 'provider_result_unconfirmed' } : {}),
     } : log).reverse().slice(0, limit);
   }
   return logs.reverse().slice(0, limit);

@@ -3,7 +3,7 @@ import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
-import type { CreativeRoute } from "@/packages/contracts/creative";
+import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeRoute, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import {
@@ -44,6 +44,30 @@ export type CanvasAgentTask =
   | "cinematic_shock_opening_director"
   | "smart_variant_planning"
   | "optimize_prompt";
+
+export async function previewCanvasImageIntent(
+  input: CanvasImageIntentPreviewRequest,
+  signal?: AbortSignal,
+): Promise<CanvasImageIntentPreview> {
+  return request<CanvasImageIntentPreview>("/api/generate/intent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify(input),
+  });
+}
+
+export type CanvasImageWaitStoppedError = Error & {
+  canvasWaitStopped: true;
+  taskId: string;
+  generationPending?: true;
+};
+
+export function isCanvasImageWaitStopped(error: unknown): error is CanvasImageWaitStoppedError {
+  if (!(error instanceof Error)) return false;
+  const value = error as Error & { canvasWaitStopped?: unknown; taskId?: unknown };
+  return value.canvasWaitStopped === true && typeof value.taskId === "string";
+}
 
 export function inferCanvasAgentTask(
   prompt: string,
@@ -160,9 +184,8 @@ function optimizedUploadFile(blob: Blob, original: File) {
 }
 
 /**
- * Convert a chat reference to the same compact browser image used by the
- * main Agent surface. Providers can reject a perfectly valid image_url when
- * the original canvas asset is too large or uses an unsupported encoding.
+ * Keep ordinary references byte-for-byte; compact only large or unsupported
+ * inputs because re-encoding can soften fine source details before generation.
  */
 export async function compressReferenceDataUrl(dataUrl: string) {
   if (!dataUrl || !/^data:image\//i.test(dataUrl)) return dataUrl;
@@ -175,6 +198,14 @@ export async function compressReferenceDataUrl(dataUrl: string) {
   });
 
   const maxEdge = 1400;
+  const sourceMime = dataUrl.slice(5, dataUrl.indexOf(";")).toLowerCase();
+  if (
+    /^(?:image\/png|image\/jpe?g|image\/webp)$/.test(sourceMime) &&
+    source.naturalWidth <= maxEdge &&
+    source.naturalHeight <= maxEdge &&
+    dataUrl.length <= 900000
+  ) return dataUrl;
+
   let scale = Math.min(
     1,
     maxEdge / Math.max(source.naturalWidth, source.naturalHeight),
@@ -608,8 +639,33 @@ export async function encodeCanvasDepthVideoFrameSequence(
   return response.blob();
 }
 
+function waitForCanvasImagePoll(delayMs: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason || new DOMException("Image task wait stopped", "AbortError"));
+      return;
+    }
+
+    let timer: number | undefined;
+    const removeAbortListener = () => signal?.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      removeAbortListener();
+      reject(signal?.reason || new DOMException("Image task wait stopped", "AbortError"));
+    };
+
+    timer = window.setTimeout(() => {
+      removeAbortListener();
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+}
+
 export async function generateCanvasImage(input: {
   taskId?: string;
+  imageOperation: ImageRequestMode;
   prompt: string;
   presetId?: string;
   presetName?: string;
@@ -629,6 +685,7 @@ export async function generateCanvasImage(input: {
   angleNote?: string;
   angleGuide?: boolean;
   signal?: AbortSignal;
+  intentPreview?: CanvasImageIntentPreview;
   maskUrl?: string;
   moveGuideUrl?: string;
   references?: Array<{ url: string; name?: string }>;
@@ -636,18 +693,23 @@ export async function generateCanvasImage(input: {
    * when the provider has no image-edit endpoint. */
   fallbackToGenerationOnEdit404?: boolean;
 }) {
+  const sourceReferences = input.references || [];
+  if (sourceReferences.length > MAX_IMAGE_REFERENCES) {
+    throw new Error(`图片参考最多 ${MAX_IMAGE_REFERENCES} 张，请移除多余参考后再提交。`);
+  }
+  if (sourceReferences.some((item) => !item.url?.trim())) {
+    throw new Error("有图片参考无法读取，请重新导入该图片后再提交。");
+  }
   const mask = input.maskUrl ? await asDataUrl(input.maskUrl) : undefined;
   const moveGuide = input.moveGuideUrl ? await asDataUrl(input.moveGuideUrl) : undefined;
   const references = await Promise.all(
-    (input.references || [])
-      .slice(0, 16)
-      .map(async (item, index) => {
-        const dataUrl = await asDataUrl(item.url);
-        // The first reference is the source image for local editing. Keep it
-        // at the same dimensions as the mask; compressing only the source
-        // makes otherwise valid edit requests look like the mask was ignored.
-        return mask && index === 0 ? dataUrl : compressReferenceDataUrl(dataUrl);
-      }),
+    sourceReferences.map(async (item, index) => {
+      const dataUrl = await asDataUrl(item.url);
+      // The first reference is the source image for local editing. Keep it
+      // at the same dimensions as the mask; compressing only the source
+      // makes otherwise valid edit requests look like the mask was ignored.
+      return mask && index === 0 ? dataUrl : compressReferenceDataUrl(dataUrl);
+    }),
   );
   type CanvasImageResult = {
     images: Array<{ url: string; revisedPrompt?: string }>;
@@ -655,6 +717,7 @@ export async function generateCanvasImage(input: {
     taskId?: string;
     message?: string;
     mode?: "reference" | "generate" | "generate-fallback";
+    operation?: ImageRequestOperation;
     warning?: string;
     model?: { id?: string; name?: string; provider?: string };
   };
@@ -664,7 +727,12 @@ export async function generateCanvasImage(input: {
     const log = await getCanvasAgentGeneration(taskId).catch(() => null);
     const images = canvasImageTaskOutputUrls(log);
     if (images.length) {
-      return { images: images.map((url) => ({ url })), pending: false, taskId };
+      return {
+        images: images.map((url) => ({ url })),
+        pending: false,
+        taskId,
+        ...(log?.operation ? { operation: log.operation } : {}),
+      };
     }
     if (log?.status === "pending") {
       const pendingError = new Error("服务商已接收任务，正在生成，请勿重复提交。") as Error & { generationPending?: boolean; taskId?: string };
@@ -684,6 +752,8 @@ export async function generateCanvasImage(input: {
       body: JSON.stringify({
       source: "canvas",
       ...(input.taskId ? { taskId: input.taskId } : {}),
+      imageOperation: input.imageOperation,
+      ...(input.intentPreview ? { imageIntentPreview: input.intentPreview } : {}),
       prompt: input.prompt,
       ...(input.presetId ? { presetId: input.presetId } : {}),
       ...(input.presetName ? { presetName: input.presetName } : {}),
@@ -706,15 +776,14 @@ export async function generateCanvasImage(input: {
       ...(moveGuide ? { moveGuide } : {}),
       ...(input.fallbackToGenerationOnEdit404 ? { fallbackToGenerationOnEdit404: true } : {}),
       references,
-      referenceImages: (input.references || [])
-        .slice(0, 16)
-        .map((item, index) => ({
-          name: item.name || `参考图 ${index + 1}`,
-          url: item.url,
-        })),
+      referenceImages: sourceReferences.map((item, index) => ({
+        name: item.name || `参考图 ${index + 1}`,
+        url: item.url,
+      })),
       }),
     });
   } catch (error) {
+    if (input.signal?.aborted) throw input.signal.reason || error;
     const recovered = await recoverAcceptedImageTask(error);
     if (!recovered) throw error;
     result = recovered;
@@ -725,21 +794,19 @@ export async function generateCanvasImage(input: {
   const deadline = Date.now() + 30 * 60 * 1000;
   while (Date.now() < deadline) {
     if (input.signal?.aborted) throw input.signal.reason || new Error('GENERATION_CANCELLED');
-    await new Promise<void>((resolve, reject) => {
-      const timer = window.setTimeout(resolve, 2000);
-      input.signal?.addEventListener('abort', () => { window.clearTimeout(timer); reject(input.signal?.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
-    });
-    let status: { log?: { status?: string; imageUrls?: string[]; error?: string } | null };
+    await waitForCanvasImagePoll(2000, input.signal);
+    let status: { log?: { status?: string; imageUrls?: string[]; error?: string; operation?: ImageRequestOperation } | null };
     try {
-      status = await request<{ log?: { status?: string; imageUrls?: string[]; error?: string } | null }>(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`);
+      status = await request<{ log?: { status?: string; imageUrls?: string[]; error?: string; operation?: ImageRequestOperation } | null }>(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`, { signal: input.signal });
     } catch (error) {
+      if (input.signal?.aborted) throw input.signal.reason || error;
       const recovered = await recoverAcceptedImageTask(error);
-      if (recovered?.images?.length) return { ...result, pending: false, images: recovered.images };
+      if (recovered?.images?.length) return { ...result, ...recovered, pending: false };
       throw error;
     }
     const log = status.log;
     const images = canvasImageTaskOutputUrls(log);
-    if (images.length) return { ...result, pending: false, images: images.map((url) => ({ url })) };
+    if (images.length) return { ...result, pending: false, images: images.map((url) => ({ url })), ...(log?.operation ? { operation: log.operation } : {}) };
     if (log?.status === 'error') throw new Error(log.error || '生图失败');
   }
   const pendingError = new Error(result.message || '服务商仍在生成，任务已保留，请勿重复提交。') as Error & { generationPending?: boolean; taskId?: string };
@@ -951,7 +1018,7 @@ export const CANVAS_AGENT_MAX_WAIT_MS = 5 * 60 * 1000;
 export async function getCanvasAgentGeneration(taskId: string) {
   const response = await fetch(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`, { cache: "no-store" });
   if (!response.ok) return null;
-  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; imageUrls?: string[]; error?: string } | null } | null;
+  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; imageUrls?: string[]; error?: string; operation?: ImageRequestOperation } | null } | null;
   return body?.log || null;
 }
 
@@ -1112,6 +1179,20 @@ export async function getCanvasVideoTask(id: string) {
       modelId?: string;
     };
   }>(`/api/video/tasks/${encodeURIComponent(id)}`);
+}
+
+export async function stopCanvasVideoTaskTracking(id: string) {
+  return request<{
+    task: {
+      id: string;
+      status: string;
+      error?: string;
+    };
+  }>(`/api/video/tasks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "cancel" }),
+  });
 }
 
 /** Prefer a local archive, but never discard a provider result when archiving failed. */

@@ -35,6 +35,7 @@ case "$PORT_START" in
   ''|*[!0-9]*) PORT_START=3210 ;;
 esac
 if [ "$PORT_START" -lt 1024 ] || [ "$PORT_START" -gt 65525 ]; then PORT_START=3210; fi
+if [ "$PORT_START" -ge 3210 ] && [ "$PORT_START" -le 3220 ]; then PORT_START=3210; fi
 PORT_END=$((PORT_START + 10))
 
 . "$SCRIPT_DIR/free-relay-common.sh"

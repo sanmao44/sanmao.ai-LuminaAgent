@@ -54,3 +54,40 @@ test("visible edge projection requires rendered endpoints and omits compose line
 
   assert.deepEqual(visible.map((edge) => edge.id), [linked.edges[0].id]);
 });
+
+test("hidden edge mode keeps only directly related selected-node connections", () => {
+  const source = model.createPrompt({ x: 0, y: 0 }, "Source");
+  const selected = model.createMedia("image", "/selected.png", "Selected", { x: 240, y: 0 });
+  const target = model.createGenerator("image", { x: 480, y: 0 });
+  const unrelated = model.createPrompt({ x: 720, y: 0 }, "Unrelated");
+  let document = model.normalizeDocument({ nodes: [source, selected, target, unrelated] });
+  document = model.addEdge(document, source.id, selected.id);
+  document = model.addEdge(document, selected.id, target.id);
+  document = model.addEdge(document, target.id, unrelated.id);
+  const related = new Set(
+    document.edges
+      .filter((edge) => model.edgeTouchesSelection(document, edge, [selected.id]))
+      .map((edge) => edge.id),
+  );
+
+  assert.deepEqual(
+    projection.visibleCanvasEdgeProjection(document, new Set(), new Set(), related).map((edge) => edge.id),
+    [...related],
+    "selected relationships remain visible even when the other endpoint is outside the viewport",
+  );
+  assert.deepEqual(
+    projection.visibleCanvasEdgeProjection(document, new Set([source.id, selected.id, target.id]), new Set(), related).map((edge) => edge.id),
+    [...related],
+  );
+
+  assert.deepEqual(
+    projection.visibleCanvasEdgeProjection(document, new Set([source.id, selected.id, target.id, unrelated.id]), new Set(), related).map((edge) => edge.id),
+    [...related],
+    "hidden mode does not fall back to all edges whose endpoints are in view",
+  );
+  assert.deepEqual(
+    projection.visibleCanvasEdgeProjection(document, new Set([source.id, selected.id, target.id, unrelated.id]), new Set(), new Set()).map((edge) => edge.id),
+    [],
+    "hidden mode with no selection renders no ordinary connections",
+  );
+});

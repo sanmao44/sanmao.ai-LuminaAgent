@@ -8,6 +8,7 @@ import type {
   AgentWebMode,
   CreativeReference,
 } from '../contracts/planning';
+import type { SkillRouteDecision, SkillRouteOptions } from '../contracts/skill';
 
 export type { AgentPlanningMessage } from '../contracts/planning';
 
@@ -17,7 +18,8 @@ export type AgentPlanningPorts = {
   agentInstructionText: (intentText: unknown, fallback: unknown) => string;
   classifyAgentDeliverable: (input: string, context?: AgentIntentContext) => AgentIntentDecision;
   isBareImageExecution: (input: string) => boolean;
-  classifyAgentRequest: (input: string, context?: AgentIntentContext, options?: { webMode?: AgentWebMode; previousAssistant?: string; intent?: AgentIntentDecision }) => AgentRequestDecision;
+  classifyAgentRequest: (input: string, context?: AgentIntentContext, options?: { webMode?: AgentWebMode; previousAssistant?: string; intent?: AgentIntentDecision; skillRoute?: SkillRouteDecision }) => AgentRequestDecision;
+  routeSkillRequest?: (input: string, options?: SkillRouteOptions) => SkillRouteDecision;
   routeNeedsSemanticReview: (decision: AgentRequestDecision) => boolean;
   routeToolSummary: (decision: AgentRequestDecision) => Record<string, unknown>;
   selectAgentContextMessages: (messages: AgentPlanningMessage[], need: AgentContextNeed) => AgentPlanningMessage[];
@@ -39,7 +41,18 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   const { body, messages, isCanvasSource, isCanvasNodeExecution, canvasTargetNodeIds, canvasTargetOperation, ports } = input;
   const latest = [...messages].reverse().find((message) => message.role === 'user');
   const latestRefs = ports.normalizeCreativeReferences(latest?.references, 16);
-  const latestInstruction = ports.agentInstructionText(body.intentText, latest?.content || '');
+  // 文本引用仍然要传给模型，但不能把普通文案优化误判成图片任务。
+  const hasVisualReferences = latestRefs.some((reference) => reference.kind !== 'text');
+  const rawLatestInstruction = ports.agentInstructionText(body.intentText, latest?.content || '');
+  // A short follow-up such as “下载” is still an actionable request when the
+  // immediately preceding user turn supplied the public video URL. Preserve
+  // that URL in the effective instruction so routing and the model tool call
+  // receive the same explicit source without reaching back into older turns.
+  const previousUser = [...messages.slice(0, -1)].reverse().find((message) => message.role === 'user');
+  const previousVideoUrl = previousUser ? extractHttpUrl(previousUser.content) : '';
+  const latestInstruction = previousVideoUrl && isVideoDownloadFollowUp(rawLatestInstruction)
+    ? `${rawLatestInstruction} ${previousVideoUrl}`
+    : rawLatestInstruction;
   const previousImagePlan = [...messages.slice(0, -1)].reverse().find((message) => message.role === 'assistant'
     && /(?:^|\n)\s*1[\.\u3002\u3001)]/.test(message.content)
     && isExplicitImageBatchPlan(message.content)
@@ -51,7 +64,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   const batchPlanContent = selectedTextBatchPlan || previousImagePlan?.content || '';
   const intentDecision = ports.classifyAgentDeliverable(latestInstruction, {
     messages: messages.slice(0, -1),
-    hasReferences: latestRefs.length > 0,
+    hasReferences: hasVisualReferences,
     hasFiles: Boolean(latest?.files?.length),
   });
   const previousAssistantForRouting = [...messages].reverse().find((message) => message.role === 'assistant')?.content || '';
@@ -74,20 +87,44 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     || canvasTargetExecution;
   const webMode = isCanvasNodeExecution ? 'off' : ports.resolveAgentWebMode(body.webMode, body.webSearch);
   const routingStartedAt = Date.now();
+  const explicitSkillId = typeof body.skillId === 'string' ? body.skillId.trim() : '';
+  const skillRoute = ports.routeSkillRequest?.(latestInstruction, {
+    ...(explicitSkillId ? { explicitSkillId } : {}),
+    requestMode: intentDecision.mode,
+  }) || {
+    enabled: false,
+    matched: false,
+    explicit: false,
+    confidence: 'none' as const,
+    skillId: '',
+    skillName: '',
+    reason: '未执行技能路由。',
+  };
   const requestRoute = ports.classifyAgentRequest(latestInstruction, {
     messages: messages.slice(0, -1),
-    hasReferences: latestRefs.length > 0,
+    hasReferences: hasVisualReferences,
     hasFiles: Boolean(latest?.files?.length),
-  }, { webMode: isCanvasNodeExecution ? 'off' : webMode, previousAssistant: previousAssistantForRouting, intent: intentDecision });
+  }, { webMode: isCanvasNodeExecution ? 'off' : webMode, previousAssistant: previousAssistantForRouting, intent: intentDecision, skillRoute });
+  if (requestRoute.tools.useSkills && requestRoute.skillRoute.matched) requestModeAllowsExecution = true;
+  // Read-only GitHub repository queries are intentionally classified from a
+  // question-shaped sentence, but they still need the normal MCP discovery
+  // and execution path. This does not authorize writes; the MCP approval and
+  // catalog policy remain the final side-effect gates.
+  if (requestRoute.tools.useMcp && requestRoute.route === 'chat' && requestRoute.policy.discoverMcp) {
+    requestModeAllowsExecution = true;
+  }
   const routerMs = Date.now() - routingStartedAt;
   const latestMessage = messages[messages.length - 1]!;
+  const effectiveLatestMessage = latestInstruction === rawLatestInstruction
+    ? latestMessage
+    : { ...latestMessage, content: latestInstruction };
   const modelContextMessages = [
     ...ports.selectAgentContextMessages(messages.slice(0, -1), requestRoute.contextNeed),
-    latestMessage,
+    effectiveLatestMessage,
   ];
   const routeSummary = requestRoute.needsTools || ports.routeNeedsSemanticReview(requestRoute)
     ? ports.routeToolSummary(requestRoute)
-    : { route: requestRoute.route, contextNeed: requestRoute.contextNeed, shouldSearch: requestRoute.web.shouldSearch };
+    : { route: requestRoute.route, contextNeed: requestRoute.contextNeed, shouldSearch: requestRoute.web.shouldSearch, information: requestRoute.information };
   const hasExplicitDeliverable = ['IMAGE', 'TEXT', 'BOTH', 'CLARIFY', 'OTHER'].includes(String(body.deliverable));
   let requestedDeliverable: AgentDeliverable = requestModeAllowsExecution && hasExplicitDeliverable
     ? body.deliverable as AgentDeliverable
@@ -101,6 +138,20 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     requestedIntentReason = 'canvas node execution is text-only; side effects belong to the Agent dock';
   }
   return { latest, latestRefs, latestInstruction, latestReferenceImageCount: latestRefs.filter((reference) => reference.kind !== 'text').length, previousImagePlan, batchPlanContent, previousAssistantForRouting, directGithubMcpRepo, intentDecision, requestModeAllowsExecution, setRequestModeAllowsExecution(value: boolean) { requestModeAllowsExecution = value; }, webMode, requestRoute, routerMs, modelContextMessages, routeSummary, requestedDeliverable, setRequestedDeliverable(value: AgentDeliverable) { requestedDeliverable = value; }, requestedIntentReason, setRequestedIntentReason(value: string) { requestedIntentReason = value; } };
+}
+
+function extractHttpUrl(input: string): string {
+  const match = String(input || '').match(/https?:\/\/[^\s<>"'`]+/i);
+  return String(match?.[0] || '').replace(/[),.;!?，。！？；：】）》]+$/u, '');
+}
+
+function isVideoDownloadFollowUp(input: string): boolean {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length > 32 || /https?:\/\//i.test(text)) return false;
+  if (!/(?:下载|保存|提取|抓取|转存|download|save)/i.test(text)) return false;
+  // Keep questions, explanations, and unrelated file requests conversational.
+  if (/[?？]$/.test(text) && !/^(?:下载|保存|提取|抓取|转存)(?:一下|这个|该视频)?[?？]$/i.test(text)) return false;
+  return /^(?:(?:帮我|请|麻烦)?(?:下载|保存|提取|抓取|转存)(?:一下|这个|该视频|视频)?|(?:再|重新)?下载(?:一下|这个|该视频|视频)?|(?:download|save)(?: this)?)(?:[。.!！])?$/i.test(text);
 }
 
 function extractBatchPrompts(content: string): string[] {

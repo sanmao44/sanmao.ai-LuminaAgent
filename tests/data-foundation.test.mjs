@@ -25,9 +25,36 @@ test('data profiles preserve development defaults and support explicit modes', a
     assert.equal(paths.resolveDataProfile(root, {}).dataDir, path.join(root, '.data'));
     assert.equal(paths.resolveDataProfile(root, { SANMAO_PORTABLE: '1' }).mode, 'portable');
     assert.equal(paths.resolveDataProfile(root, { SANMAO_PORTABLE: '1' }).dataDir, path.join(root, 'data'));
-    assert.equal(paths.resolveDataProfile(root, { SANMAO_INSTALL_MODE: 'installed', LOCALAPPDATA: path.join(root, 'LocalAppData') }).dataDir, path.join(root, 'LocalAppData', 'SANMAO.AI'));
+    const installedProfile = paths.resolveDataProfile(root, {
+      SANMAO_INSTALL_MODE: 'installed',
+      LOCALAPPDATA: path.join(root, 'LocalAppData'),
+      XDG_DATA_HOME: path.join(root, 'xdg-data'),
+    });
+    const installedDataDir = path.join(root, process.platform === 'win32' ? 'LocalAppData' : 'xdg-data', 'SANMAO.AI');
+    assert.equal(installedProfile.mode, 'installed');
+    assert.equal(installedProfile.dataDir, installedDataDir);
+    assert.equal(installedProfile.providerConfigDir, installedDataDir);
+    assert.equal(installedProfile.override, false);
     assert.equal(paths.resolveDataProfile(root, { SANMAO_DATA_DIR: 'custom-data', SANMAO_INSTALL_MODE: 'installed' }).mode, 'custom');
     assert.equal(paths.resolveDataProfile(root, { SANMAO_DATA_DIR: 'custom-data', SANMAO_INSTALL_MODE: 'installed' }).dataDir, path.join(root, 'custom-data'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('installed data follows XDG_DATA_HOME on Unix', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-installed-profile-'));
+  const configuredDataHome = path.join(root, 'xdg-data');
+  try {
+    const profile = paths.resolveDataProfile(root, {
+      SANMAO_INSTALL_MODE: 'installed',
+      XDG_DATA_HOME: configuredDataHome,
+    });
+    if (process.platform === 'win32') {
+      assert.notEqual(profile.dataDir, path.join(configuredDataHome, 'SANMAO.AI'));
+    } else {
+      assert.equal(profile.dataDir, path.join(configuredDataHome, 'SANMAO.AI'));
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

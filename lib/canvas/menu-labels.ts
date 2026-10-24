@@ -1,6 +1,8 @@
 import type { CanvasNode } from "@/lib/canvas/types";
 
 export function nodeLabel(node: CanvasNode) {
+  const customName = typeof node.data.name === "string" ? node.data.name.trim() : "";
+  if (customName) return customName;
   if (node.data.depthVideo) return "视频深度图";
   if (node.type === "video-editor") return "视频编辑节点";
   if (node.type === "angle") return "角度控制节点";

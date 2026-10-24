@@ -24,7 +24,8 @@ test('runtime_status 是只读的，能报出本机运行时的安装与运行�
     const outcome = await mcp.runMcpRuntimeAction('runtime_status', { dataDir: dir });
     assert.equal(outcome.readOnly, true);
     assert.equal(outcome.result.ok, true);
-    const [runtime] = outcome.result.runtimes;
+    const runtime = outcome.result.runtimes.find((item) => item.id === 'playwright');
+    assert.ok(runtime);
     assert.equal(runtime.id, 'playwright');
     assert.equal(runtime.installed, false);
     assert.equal(runtime.running, false);

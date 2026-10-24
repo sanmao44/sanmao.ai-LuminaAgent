@@ -12,7 +12,7 @@ export type ImageCapabilityPorts = {
   isBareImageExecution: (input: string) => boolean;
   extractBatchPrompts: (content: string) => string[];
   fallbackImagePrompt: string;
-  requestedImageCapability?: 'generate' | 'edit';
+  requestedImageCapability?: 'generate' | 'edit' | 'reference';
   latestRefs: readonly Record<string, unknown>[];
   trackedChatCompletion: (provider: unknown, model: string, payload: Record<string, unknown>, signal?: AbortSignal) => Promise<{ choices?: Array<{ message?: { content?: unknown } }> } | null>;
   agentRuntime: { provider: unknown; model: { rawId: string } };
@@ -33,6 +33,9 @@ export type ImageCapabilityPorts = {
   finishGenerationLog: (id: string, patch: Record<string, unknown>) => Promise<void>;
   latestInstruction?: string;
   agentRunId?: string;
+  /** Canvas image edits already have an explicit target and prompt. They do
+   * not need a preliminary chat completion for captioning. */
+  skipCaption?: boolean;
   executionPublicState: { settings: { imageStoragePath?: string } };
 };
 
@@ -62,7 +65,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
     trackedChatCompletion, agentRuntime, requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel,
     getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog,
     referenceRecords, getRuntimeImageModelCandidates, editImage, generateImage,
-    persistGenerationResult, imageDownloadAuth, finishGenerationLog, latestInstruction, agentRunId, executionPublicState,
+    persistGenerationResult, imageDownloadAuth, finishGenerationLog, latestInstruction, agentRunId, skipCaption, executionPublicState,
   } = input.ports;
   let { generated, preparedCaption, batchItems, generations } = state;
       const startedAt = Date.now();
@@ -71,12 +74,17 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
       const aspectRatio = String(args.aspectRatio || fallbackImagePrompt.match(/\b(?:1:1|2:3|3:2|3:4|4:3|9:16|16:9|21:9)\b/g)?.at(-1) || '自动');
       // References are not enough to turn a new-image batch into an edit. The
       // server-side intent decision is authoritative over the model's tool name.
-      const mode = requestedImageCapability;
+      const mode = requestedImageCapability
+        ? requestedImageCapability === 'edit' ? 'edit' : 'generate'
+        : call.function?.name === 'image_edit' ? 'edit' : 'generate';
       if (latestRefs.some((reference: { kind?: string }) => reference.kind === 'video')) {
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: '图片模型不能接收视频引用；请改用视频生成输入或移除视频引用。' }) });
         return { results };
       }
       if (!preparedCaption) {
+        if (skipCaption) {
+          preparedCaption = Promise.resolve('\u56fe\u7247\u5df2\u751f\u6210\u3002');
+        } else {
           preparedCaption = trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
           messages: [
             { role: 'system', content: '只根据用户意图和已确认的图片提示词，写一段简短中文创作说明。末尾必须添加“下一版可尝试方向”小标题，并使用 1.、2.、3. 的有序列表列出 2—3 个可直接用于基于当前图片继续修改的方向，每项一句话。不要假装逐像素看到了图片，不要重复已完成生成。使用自然、精炼的 Markdown。' },
@@ -86,12 +94,14 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
         }, requestController.signal).then((result: { choices?: Array<{ message?: { content?: unknown } }> } | null) => String(result?.choices?.[0]?.message?.content || '').trim()).catch((error: unknown) => {
           if (requestController.signal.aborted) throw requestController.signal.reason || error;
           return '本版已按你确认的创作方向生成。下一版可以继续调整构图、光线或风格细节。';
-        });
+          });
+        }
       }
       // Model selection is controlled by the client/system settings. Never let
       // the language model override the configured default through tool args.
       const requestedImageModelId = requestedAgentImageModelId;
-      const requiredImageCapability = mode === 'edit' ? 'edit' : 'generate';
+      const requiredImageCapability = requestedImageCapability || (mode === 'edit' ? 'edit' : 'generate');
+      const operation = requiredImageCapability === 'reference' ? 'reference-generate' : mode;
       const explicitlyRequestedImageModel = requestedImageModelId !== 'auto';
       if (explicitlyRequestedImageModel && !imageModels.some((model: { id?: string; capabilities?: readonly string[] }) => model.id === requestedImageModelId
         && (model.capabilities || []).includes(requiredImageCapability))) {
@@ -101,25 +111,28 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
       }
       // The server-side intent decides the capability. Do not let a model
       // emit an edit tool name and bypass the configured generation model.
-      let imageRuntime = mode === 'generate'
+      let imageRuntime = requiredImageCapability === 'generate'
         ? await getRuntimeImageGenerationModel(requestedImageModelId)
-        : await getRuntimeImageModelForCapability(requestedImageModelId, 'edit');
+        : await getRuntimeImageModelForCapability(requestedImageModelId, requiredImageCapability);
       if (explicitlyRequestedImageModel && (!imageRuntime || imageRuntime.model.id !== requestedImageModelId)) {
         const error = '本轮选择的生图模型当前不可用，请重新选择或改用自动选择。';
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error }) });
         return { results };
       }
       if (!imageRuntime) {
-        const diagnosis = mode === 'edit'
-          ? '没有可用的改图模型：请在模型库启用并发布至少一个支持 edit 的图片模型；文生图模型不能代替改图模型。'
-          : '没有可用的生图模型：请在模型库启用并发布至少一个支持 generate 的图片模型；对话模型不能代替生图模型。';
-        await appendGenerationLog({ status: 'error', mode, source: sourceForLog, prompt, aspectRatio, count, durationMs: Date.now() - startedAt, error: '没有可用的图片模型', ...taskContext }).catch(() => undefined);
+        const diagnosis = requiredImageCapability === 'reference'
+          ? '没有可用的参考图生图模型：请在模型库启用并发布至少一个声明 reference 能力的图片模型。'
+          : requiredImageCapability === 'edit'
+            ? '没有可用的改图模型：请在模型库启用并发布至少一个支持 edit 的图片模型；文生图模型不能代替改图模型。'
+            : '没有可用的生图模型：请在模型库启用并发布至少一个支持 generate 的图片模型；对话模型不能代替生图模型。';
+        await appendGenerationLog({ status: 'error', mode, operation, source: sourceForLog, prompt, aspectRatio, count, durationMs: Date.now() - startedAt, error: '没有可用的图片模型', ...taskContext }).catch(() => undefined);
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: diagnosis, diagnosis }) });
         return { results };
       }
       let selectedImageRuntime = imageRuntime;
       const mediaLogId = await startGenerationLog({
         mode,
+        operation,
         taskKind: 'media',
         source: sourceForLog,
         prompt,
@@ -132,7 +145,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
       }).catch(() => null);
       try {
         const imageReferences = latestRefs.filter((reference: { kind?: string; url?: string }) => reference.kind === 'image' && reference.url).map((reference: { kind?: string; url?: string }) => reference.url!);
-        if (mode === 'edit' && !imageReferences.length) throw new Error('请先提供图片参考');
+        if (requiredImageCapability !== 'generate' && !imageReferences.length) throw new Error('请先提供图片参考');
         const images: RuntimeImage[] = [];
         const batchId = effectiveRequestedPrompts.length > 1 ? `agent-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : undefined;
         const initialRuntime = imageRuntime;
@@ -146,7 +159,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
               initialRuntime,
               async () => explicitlyRequestedImageModel
                 ? []
-                : getRuntimeImageModelCandidates('auto', mode === 'generate' ? 'generate' : 'edit'),
+                : getRuntimeImageModelCandidates('auto', requiredImageCapability),
               async (candidate: typeof initialRuntime) => {
                 itemRuntime = candidate;
                 return mode === 'edit'
@@ -203,7 +216,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
           if ((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted
             || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask) {
             const pendingTaskId = String((error as { providerTaskId?: unknown }).providerTaskId || '') || undefined;
-            const pendingPatch = { status: 'pending' as const, mode: mode as 'generate' | 'edit', taskKind: 'media' as const, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: String((selectedImageRuntime.provider as { name?: unknown }).name || ''), count, durationMs: Date.now() - startedAt, error: '服务商已接收任务，正在生成，请勿重复提交。', ...(pendingTaskId ? { providerTaskId: pendingTaskId } : {}), ...taskContext };
+            const pendingPatch = { status: 'pending' as const, mode: mode as 'generate' | 'edit', operation, taskKind: 'media' as const, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: String((selectedImageRuntime.provider as { name?: unknown }).name || ''), count, durationMs: Date.now() - startedAt, error: '服务商已接收任务，正在生成，请勿重复提交。', ...(pendingTaskId ? { providerTaskId: pendingTaskId } : {}), ...taskContext };
             if (mediaLogId) await finishGenerationLog(mediaLogId, pendingPatch).catch(() => undefined);
             else await appendGenerationLog(pendingPatch).catch(() => undefined);
           }
@@ -229,7 +242,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
           startedAt,
           providerFinishedAt,
           downloadAuth: imageDownloadAuth(selectedImageRuntime.provider),
-          ...(mediaLogId ? { logId: mediaLogId } : { log: { mode, taskKind: 'media' as const, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: String((selectedImageRuntime.provider as { name?: unknown }).name || ''), count, references: referenceRecords.length ? referenceRecords : undefined, ...taskContext } }),
+          ...(mediaLogId ? { logId: mediaLogId } : { log: { mode, operation, taskKind: 'media' as const, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: String((selectedImageRuntime.provider as { name?: unknown }).name || ''), count, references: referenceRecords.length ? referenceRecords : undefined, ...taskContext } }),
         });
         if (!stored.images.length) throw new Error('图片结果未能保存，本轮没有可交付的图片');
         generated.push(...stored.images.map((image: RuntimeImage, index: number) => {
@@ -270,14 +283,30 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
         });
       } catch (error) {
         const possiblyAccepted = Boolean((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask);
+        const pendingProviderTaskId = possiblyAccepted
+          ? String((error as { providerTaskId?: unknown } | null)?.providerTaskId || '').trim()
+          : '';
         if (requestController.signal.aborted && !possiblyAccepted) {
           if (requestController.signal.aborted) throw requestController.signal.reason || error;
         }
         const message = possiblyAccepted ? '服务商已接收图片任务，正在生成，请勿重复提交。' : error instanceof Error ? error.message : '图片工具失败';
-        const failurePatch = { status: possiblyAccepted ? 'pending' as const : 'error' as const, mode: mode as 'generate' | 'edit', taskKind: 'media' as const, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: String((selectedImageRuntime.provider as { name?: unknown }).name || ''), count, durationMs: Date.now() - startedAt, error: message, ...taskContext };
+        const failurePatch = { status: possiblyAccepted ? 'pending' as const : 'error' as const, mode: mode as 'generate' | 'edit', operation, taskKind: 'media' as const, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: String((selectedImageRuntime.provider as { name?: unknown }).name || ''), count, durationMs: Date.now() - startedAt, error: message, ...(pendingProviderTaskId ? { providerTaskId: pendingProviderTaskId } : {}), ...taskContext };
         if (mediaLogId) await finishGenerationLog(mediaLogId, failurePatch).catch(() => undefined);
         else await appendGenerationLog(failurePatch).catch(() => undefined);
-        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, pending: possiblyAccepted, error: message, ...(batchItems.length ? { batchItems } : {}) }) });
+        // The media log is the durable task record that the Canvas recovery
+        // endpoint can query. Keep it separate from the Agent run id carried
+        // in taskContext: those ids represent different lifecycles.
+        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({
+          ok: false,
+          pending: possiblyAccepted,
+          error: message,
+          ...(possiblyAccepted && mediaLogId ? {
+            generationTaskId: mediaLogId,
+            mediaLogId,
+          } : {}),
+          ...(pendingProviderTaskId ? { providerTaskId: pendingProviderTaskId } : {}),
+          ...(batchItems.length ? { batchItems } : {}),
+        }) });
       }
 
   Object.assign(state, { generated, preparedCaption, batchItems, generations });

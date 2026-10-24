@@ -1,6 +1,11 @@
 "use client";
 
-import { memo, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  memo,
+  useMemo,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   connectionPath,
   edgePath,
@@ -168,6 +173,21 @@ export default function CanvasEdgeLayer({
   onHover,
   onLeave,
 }: CanvasEdgeLayerProps) {
+  // Lane assignment depends on endpoint membership and edge order, never on
+  // node coordinates. Keep the membership signature stable while dragging so
+  // pointer-move frames do not repeat the full edge scan.
+  const nodeMembershipKey = useMemo(
+    () => document.nodes.map((node) => `${node.id}:${node.groupId || ""}`).join("|"),
+    [document.nodes],
+  );
+  const routeLaneOffsets = useMemo(() => {
+    const offsets = new Map<string, number>();
+    for (const edge of document.edges) {
+      offsets.set(edge.id, edgeRouteLaneOffset(document, edge));
+    }
+    return offsets;
+  }, [document.edges, document.groups, nodeMembershipKey]);
+
   return (
     <svg className="canvas-edge-layer" viewBox="-5000 -5000 10000 10000">
       <defs>
@@ -198,7 +218,7 @@ export default function CanvasEdgeLayer({
           style={style}
           selected={selectedEdgeId === edge.id}
           colorKey={colorKeyById.get(edge.source) ?? "image"}
-          routeLaneOffset={edgeRouteLaneOffset(document, edge)}
+          routeLaneOffset={routeLaneOffsets.get(edge.id) ?? 0}
           sourceKey={geometryKeyById.get(edge.source) ?? edge.source}
           targetKey={geometryKeyById.get(edge.target) ?? edge.target}
           onSelect={() => onSelect(edge)}

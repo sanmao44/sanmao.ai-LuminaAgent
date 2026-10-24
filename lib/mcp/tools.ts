@@ -21,11 +21,30 @@ export function mcpToolId(serverId: string, toolName: string) {
 /**
  * 任何来源都不下发的工具。
  *
- * browser_run_code_unsafe 在 MCP 服务进程里跑任意 JS：等于把整台机器交给模型，
- * 而且它不在 --caps 后面，光靠启动参数关不掉。目录白名单已经排除了它，
- * 这里再兜一道，免得用户配置里的旧清单又把它放回来。
+ * browser_run_code_unsafe 可以在 MCP 服务进程里跑任意 JS；PowerShell 和 Registry
+ * 则提供原始系统访问。即使旧的手动连接器把这些名称放进白名单，也不能下发给模型。
  */
 export const MCP_FORBIDDEN_TOOLS: ReadonlySet<string> = new Set(['browser_run_code_unsafe']);
+
+function isForbiddenMcpTool(server: McpServerConfig, name: string) {
+  if (MCP_FORBIDDEN_TOOLS.has(name)) return true;
+  const serverIdentity = `${server.catalogId || ''} ${server.id} ${server.name}`.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  if (!serverIdentity.includes('windowsmcp') && !serverIdentity.includes('cursortouch')) return false;
+  const normalized = name.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return normalized.includes('powershell') || normalized.includes('registry');
+}
+
+function mcpToolDescription(server: McpServerConfig, tool: McpRemoteTool) {
+  const upstream = String(tool.description || tool.title || tool.name).trim();
+  const serverIdentity = `${server.catalogId || ''} ${server.id} ${server.name}`.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  const isWindowsMcp = serverIdentity.includes('windowsmcp');
+  const guidance = isWindowsMcp && tool.name === 'App'
+    ? 'Windows-MCP App: for a known absolute .exe, prefer mode="launch_executable" with executable set to that file and args as a string array. The executable must exist and be a real application; never pass PowerShell, a shell command, or a relative path. .msc and .cpl files are not executable paths: launch them through C:\\Windows\\System32\\mmc.exe with the file as an argument. Device Manager example: executable="C:\\Windows\\System32\\mmc.exe", args=["C:\\Windows\\System32\\devmgmt.msc"]. Use mode="launch" with a Start Menu name only when no executable path is known. Verify with a fresh Snapshot or WaitFor before claiming success. '
+    : isWindowsMcp && tool.name === 'Type'
+      ? 'Windows-MCP Type requires text and either loc=[x,y] or label from a fresh Snapshot. It cannot type into the focused window without a target. Refresh Snapshot after changing windows, then choose the editor target before typing. '
+      : '';
+  return `[MCP · ${server.name}] ${guidance}${upstream}`.slice(0, MCP_MAX_TOOL_DESCRIPTION_CHARS);
+}
 
 /** 注册表里的运行时 id，和模型看到的名字分开记：名字是给人看的，id 给审计用。 */
 export function mcpRuntimeToolId(serverId: string, toolName: string) {
@@ -65,12 +84,20 @@ export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpR
   // 远端连接器（GitHub 等）白名单为空，表示「不限制」，仍然沿用用户勾选的那份清单。
   const catalogWhitelist = server.catalogId ? (findCatalogEntry(server.catalogId)?.allowedTools || []) : [];
   const allowed = new Set(catalogWhitelist.length ? catalogWhitelist : server.enabledTools || []);
+  const catalogEntry = server.catalogId ? findCatalogEntry(server.catalogId) : null;
+  const readOnlyAllowlist = !server.allowWrite && catalogEntry?.readOnlyTools?.length
+    ? new Set(catalogEntry.readOnlyTools)
+    : null;
   // 写操作策略一次读盘、按需取：没有写权限分项的条目根本不会去读配置。
   let writePolicy: ReturnType<typeof catalogWritePolicy> | undefined;
   const selected = tools
     // 名字要能直接当 function name 下发：上游只接受 [A-Za-z0-9_-]，服务公布怪名字就直接跳过，
     // 否则这一轮整个工具表都会被服务商判成非法请求。
-    .filter((tool) => !MCP_FORBIDDEN_TOOLS.has(tool.name) && (!allowed.size || allowed.has(tool.name)) && !isMcpToolSchemaTooLarge(tool) && isValidToolName(mcpToolId(server.id, tool.name)))
+    .filter((tool) => !isForbiddenMcpTool(server, tool.name)
+      && (!allowed.size || allowed.has(tool.name))
+      && (!readOnlyAllowlist || readOnlyAllowlist.has(tool.name))
+      && !isMcpToolSchemaTooLarge(tool)
+      && isValidToolName(mcpToolId(server.id, tool.name)))
     .slice(0, MCP_MAX_TOOLS_PER_SERVER);
   return selected.map((tool) => {
     const readOnly = isMcpReadOnlyTool(tool);
@@ -87,7 +114,7 @@ export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpR
     return {
       id: mcpRuntimeToolId(server.id, tool.name),
       name: mcpToolId(server.id, tool.name),
-      description: `[MCP · ${server.name}] ${String(tool.description || tool.title || tool.name).trim().slice(0, MCP_MAX_TOOL_DESCRIPTION_CHARS)}`,
+      description: mcpToolDescription(server, tool),
       schema: inputSchemaOf(tool),
       permissions: readOnly ? ['network'] : ['network', 'external:write'],
       tags: ['mcp'],
@@ -198,8 +225,12 @@ export function mcpServersForTurn(
   });
 }
 
-type McpToolCacheEntry = { at: number; tools: ToolDefinition[] };
+type McpToolCacheEntry = { at: number; signature: string; tools: ToolDefinition[] };
 const toolCache = new Map<string, McpToolCacheEntry>();
+
+function toolCacheKey(server: McpServerConfig) {
+  return JSON.stringify([server.transport || 'http', server.url, server.command || '', server.args || [], server.cwd || '']);
+}
 
 type McpLoadOptions = {
   servers?: readonly McpServerConfig[];
@@ -225,8 +256,11 @@ function orderMcpServers(servers: readonly McpServerConfig[], priorityServerIds:
 }
 
 export function clearMcpToolCache(serverId?: string) {
-  if (serverId) toolCache.delete(serverId);
-  else toolCache.clear();
+  if (!serverId) {
+    toolCache.clear();
+    return;
+  }
+  toolCache.delete(serverId);
 }
 
 /**
@@ -239,12 +273,14 @@ async function loadForServers(servers: readonly McpServerConfig[], options: McpL
   const cacheable = options.cache !== false;
   const definitions: ToolDefinition[] = [];
   const settled = await Promise.all(servers.map(async (server) => {
+    const signature = toolCacheKey(server);
     const cached = cacheable ? toolCache.get(server.id) : undefined;
-    if (cached && now() - cached.at < MCP_TOOL_CACHE_TTL_MS) return cached.tools;
+    if (cached && cached.signature !== signature) toolCache.delete(server.id);
+    if (cached && cached.signature === signature && now() - cached.at < MCP_TOOL_CACHE_TTL_MS) return cached.tools;
     try {
       const tools = await listMcpServerTools(server, { fetchImpl: options.fetchImpl, now: options.now, timeouts: options.timeouts, signal: options.signal });
       const built = mcpToolDefinitions(server, tools, { dataDir: options.dataDir });
-      if (cacheable) toolCache.set(server.id, { at: now(), tools: built });
+      if (cacheable) toolCache.set(server.id, { at: now(), signature, tools: built });
       return built;
     } catch {
       return [] as ToolDefinition[];

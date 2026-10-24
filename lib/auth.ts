@@ -40,10 +40,14 @@ export function isCrossSiteBrowserRequest(request: Request) {
   if (from.protocol !== 'http:' && from.protocol !== 'https:') return false;
   // 反向代理会改写 Host，但通常会把原始站点写在 X-Forwarded-Host 里。
   // 跨站请求要带上这个自定义头必须过 CORS 预检，本服务不发 CORS 头，所以这里可以信它。
-  const forwardedHost = String(request.headers.get('x-forwarded-host') || '').split(',')[0].trim();
-  if (forwardedHost && forwardedHost === from.host) return false;
+  // Next 在监听 0.0.0.0 时，request.url 可能仍然使用 0.0.0.0，
+  // 但浏览器的同源地址由真实 Host 头决定。优先使用转发 Host，再使用
+  // 当前请求的 Host，避免把正常的局域网页面误判为跨站请求。
+  const forwardedHost = String(request.headers.get('x-forwarded-host') || '').split(',')[0].trim().toLowerCase();
+  const requestHost = (forwardedHost || String(request.headers.get('host') || '').trim() || new URL(request.url).host).toLowerCase();
+  if (requestHost === from.host.toLowerCase()) return false;
   try {
-    return from.host !== new URL(request.url).host;
+    return from.host.toLowerCase() !== requestHost;
   } catch {
     return false;
   }

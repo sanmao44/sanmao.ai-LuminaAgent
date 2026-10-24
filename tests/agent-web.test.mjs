@@ -1,15 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
-const sourceUrl = new URL('../lib/agent-web.ts', import.meta.url);
-const source = await readFile(sourceUrl, 'utf8');
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  fileName: sourceUrl.pathname,
-}).outputText;
-const web = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const web = createTsRequire(process.cwd())('./lib/agent-web');
 
 test('only offers the MCP manager when the turn is about MCP services', () => {
   for (const input of ['帮我接入 GitHub 的 MCP 服务', '看看我现在接了哪些 MCP', '添加一个远程服务', '把 stub-notes 服务删掉', '给这个服务自检一下', '停用这个 server']) {
@@ -292,6 +285,87 @@ test('recognizes Office and ZIP delivery requests without firing on ordinary cha
   ]) {
     assert.equal(web.likelyArtifactGenerationRequest(input), false, input);
   }
+});
+
+test('does not route GitHub Skill repositories to video download', () => {
+  const request = '帮我把这个开源工具 https://github.com/yt-dlp/yt-dlp 打包成一个 Skill，后续给出视频链接就下载视频';
+  assert.equal(web.likelyVideoDownloadRequest(request), false);
+  assert.equal(web.videoDownloadUrl(request), 'https://github.com/yt-dlp/yt-dlp');
+  assert.equal(web.extractGithubMcpInstallRequest('安装 https://github.com/yt-dlp/yt-dlp 作为 Skill'), null);
+  assert.equal(web.extractGithubMcpInstallRequest('把 https://github.com/yt-dlp/yt-dlp 做成技能'), null);
+  assert.equal(web.extractGithubMcpInstallRequest('安装', '请把这个 GitHub 仓库做成 Skill', 'https://github.com/yt-dlp/yt-dlp'), null);
+});
+
+test('bare video URL continues an explicit earlier download-on-link instruction', () => {
+  const url = 'https://www.youtube.com/watch?v=plN7JMbadRg';
+  const instruction = '把 https://github.com/yt-dlp/yt-dlp 做成 Skill，以后给视频链接就下载';
+  assert.equal(web.likelyVideoDownloadRequest(url, [{ role: 'user', content: instruction }, { role: 'assistant', content: '请发视频链接。' }]), true);
+  assert.equal(web.likelyVideoDownloadRequest(url), false);
+  assert.equal(web.likelyVideoDownloadRequest(url, [{ role: 'assistant', content: '以后给视频链接就下载' }]), false);
+  assert.equal(web.likelyVideoDownloadRequest(url, [{ role: 'user', content: instruction }, { role: 'user', content: '今天天气怎么样？' }]), false);
+  assert.equal(web.likelyVideoDownloadRequest('https://github.com/yt-dlp/yt-dlp', [{ role: 'user', content: instruction }]), false);
+});
+
+test('explicit browser-session consent continues only a recent video download', () => {
+  const url = 'https://www.xinpianchang.com/a13727498';
+  const context = [
+    { role: 'user', content: `下载这个视频 ${url}` },
+    { role: 'assistant', content: '站点返回 403。是否授权使用浏览器登录态重试？' },
+  ];
+
+  assert.equal(web.likelyVideoDownloadRequest('使用 Chrome 登录态重试', context), true);
+  assert.equal(web.likelyVideoDownloadRequest('不要使用 Chrome 登录态重试', context), false);
+  assert.equal(web.likelyVideoDownloadRequest('使用 Chrome 登录态重试', [{ role: 'assistant', content: `下载视频 ${url}` }]), false);
+  assert.equal(web.likelyVideoDownloadRequest('使用 Chrome 登录态重试', [
+    { role: 'user', content: `下载这个视频 ${url}` },
+    { role: 'assistant', content: '视频最高支持 1080p。' },
+  ]), false);
+  assert.equal(web.likelyVideoDownloadRequest('使用 Chrome 登录态重试', [
+    { role: 'user', content: `下载这个视频 ${url}` },
+    { role: 'assistant', content: '站点返回 403。是否授权使用浏览器登录态重试？' },
+    { role: 'user', content: '今天天气怎么样？' },
+  ]), false);
+});
+
+test('browser-session authorization ignores URL query syntax and requires user words outside the URL', () => {
+  const url = 'https://www.xinpianchang.com/a13727498?from=share&video=1';
+  const request = `下载这个视频 ${url} 使用 Chrome 登录态重试`;
+  assert.deepEqual(web.videoDownloadBrowserSessionAuthorization(request), { browser: 'chrome', url });
+  assert.equal(web.likelyVideoDownloadRequest(request), true);
+  assert.equal(web.videoDownloadBrowserSessionAuthorization(`下载这个视频 https://www.xinpianchang.com/a13727498?use=chrome&cookie=1`), undefined);
+  assert.equal(web.videoDownloadBrowserSessionAuthorization(`下载这个视频 ${url} 能不能使用 Chrome 登录态重试？`), undefined);
+  assert.deepEqual(web.videoDownloadBrowserSessionAuthorization(`下载这个视频 ${url} 使用默认浏览器登录态重试`), { browser: 'default', url });
+  assert.equal(web.videoDownloadBrowserSessionAuthorization('使用 Chrome 登录态重试', [
+    { role: 'user', content: `下载这个视频 ${url}` },
+    { role: 'assistant', content: `HTTP 403 ${url} 浏览器登录态可能缺失。` },
+  ]), undefined);
+});
+
+test('browser-session consent retains only the original user URL across a separate download turn', () => {
+  const url = 'https://www.xinpianchang.com/a13727498?from=share';
+  const context = [
+    { role: 'user', content: url },
+    { role: 'assistant', content: '收到链接。' },
+    { role: 'user', content: '下载' },
+    { role: 'assistant', content: `下载 ${url}\n时站点返回 HTTP 403。是否授权本次读取 Chrome 浏览器登录态 Cookie 重试？` },
+  ];
+  assert.equal(web.videoDownloadUrl('使用 Chrome 登录态重试', context), url);
+  assert.deepEqual(web.videoDownloadBrowserSessionAuthorization('使用 Chrome 登录态重试', context), { browser: 'chrome', url });
+  assert.equal(web.likelyVideoDownloadRequest('使用 Chrome 登录态重试', context), true);
+  assert.equal(web.videoDownloadBrowserSessionAuthorization('不要使用 Chrome 登录态重试', context), undefined);
+  assert.equal(web.videoDownloadBrowserSessionAuthorization('使用 Chrome 登录态重试', [
+    { role: 'user', content: url },
+    { role: 'assistant', content: '下载 https://www.xinpianchang.com/a999\n时站点返回 HTTP 403。是否授权读取浏览器登录态 Cookie 重试？' },
+  ]), undefined);
+});
+
+test('a Xinpianchang link followed by a short download command stays actionable', () => {
+  const url = 'https://www.xinpianchang.com/a13727498?from=share';
+  assert.equal(web.likelyVideoDownloadRequest('下载', [
+    { role: 'user', content: url },
+    { role: 'assistant', content: '收到链接。' },
+  ]), true);
+  assert.equal(web.videoDownloadUrl('下载', [{ role: 'user', content: url }]), url);
 });
 
 test('上一轮提出可交付文件、本轮只回“1/好/可以”时仍然下发 Office 工具', () => {

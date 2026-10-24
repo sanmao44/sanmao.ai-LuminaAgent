@@ -33,6 +33,31 @@ test("world to stage projection preserves the camera transform", () => {
   assert.deepEqual(viewport.canvasStageToWorldPoint(stage, camera), world);
 });
 
+test("viewport world bounds account for camera zoom and overscan", () => {
+  assert.deepEqual(
+    viewport.canvasViewportWorldBounds(
+      { x: 100, y: 60, zoom: 2 },
+      { width: 800, height: 600 },
+      100,
+    ),
+    { x: -100, y: -80, w: 500, h: 400 },
+  );
+  assert.equal(
+    viewport.canvasBoundsIntersect(
+      { x: 200, y: 200, w: 40, h: 40 },
+      { x: 0, y: 0, w: 100, h: 100 },
+    ),
+    false,
+  );
+  assert.equal(
+    viewport.canvasBoundsIntersect(
+      { x: 90, y: 90, w: 40, h: 40 },
+      { x: 0, y: 0, w: 100, h: 100 },
+    ),
+    true,
+  );
+});
+
 test("zoom keeps the anchored world point stable and clamps the zoom", () => {
   const camera = { x: 20, y: -10, zoom: 1 };
   const anchor = { x: 240, y: 180 };
@@ -57,4 +82,16 @@ test("fit camera centers bounds in the visible stage and respects the inset", ()
     viewport.canvasFitCamera([], { width: 1000, height: 600 }, 200),
     { x: 400, y: 300, zoom: 1 },
   );
+});
+
+test("fit camera recovers content positioned far from the world origin", () => {
+  const bounds = { x: -18_000, y: 22_000, w: 440, h: 260 };
+  const camera = viewport.canvasFitCamera([bounds], { width: 1200, height: 760 });
+  const center = viewport.canvasWorldToStagePoint(
+    { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 },
+    camera,
+  );
+
+  assert.deepEqual(center, { x: 600, y: 320 });
+  assert.ok(camera.zoom >= 0.12 && camera.zoom <= 1.25);
 });

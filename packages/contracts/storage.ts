@@ -22,18 +22,21 @@ export interface WorkspaceRepository<TSnapshot = unknown> {
   restore(snapshot: TSnapshot): Promise<void>;
 }
 
+/** Evaluated by the adapter immediately before a delayed replacement writes. */
+export type StorageWriteGuard = () => boolean;
+
 export interface AssetRepository<TAsset extends StorageEntity = StorageEntity, TGallery extends StorageEntity = TAsset, TIndex extends StorageEntity = TAsset> {
   list(extra?: TAsset[]): Promise<readonly TAsset[]>;
   listGallery(): Promise<TGallery[]>;
   saveGallery(items: readonly TGallery[]): Promise<void>;
   patchGallery(id: string, patch: Partial<TGallery>): Promise<void>;
   removeGallery(ids: readonly string[]): Promise<void>;
-  replaceGallery(items: readonly TGallery[]): Promise<void>;
+  replaceGallery(items: readonly TGallery[], canWrite?: StorageWriteGuard): Promise<void>;
   listIndex(): Promise<TIndex[]>;
   saveIndex(item: TIndex): Promise<void>;
-  replaceIndex(items: readonly TIndex[]): Promise<void>;
+  replaceIndex(items: readonly TIndex[], canWrite?: StorageWriteGuard): Promise<void>;
   listCollections(): Promise<{ id: string; name: string; color?: string; createdAt: number; updatedAt: number; builtin?: boolean }[]>;
-  saveCollections(collections: readonly { id: string; name: string; color?: string; createdAt: number; updatedAt: number; builtin?: boolean }[]): Promise<void>;
+  saveCollections(collections: readonly { id: string; name: string; color?: string; createdAt: number; updatedAt: number; builtin?: boolean }[], canWrite?: StorageWriteGuard): Promise<void>;
 }
 
 export type TaskRecord = StorageEntity & {

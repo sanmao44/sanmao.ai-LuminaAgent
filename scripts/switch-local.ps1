@@ -8,6 +8,7 @@
 # 方式重新拉起服务。start.ps1 会先停掉当前局域网服务，再以 127.0.0.1 启动。
 # 与 restart.ps1 的区别是不搬移 .next、不强制重新构建，切模式通常几秒到一分钟即可。
 $ErrorActionPreference = 'Stop'
+if ($Port -ge 3210 -and $Port -le 3220) { $Port = 3210 }
 $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'launcher-common.ps1')
 $dataDir = Resolve-SanmaoDataDir -Root $root

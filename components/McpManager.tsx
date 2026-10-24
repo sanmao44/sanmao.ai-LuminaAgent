@@ -16,6 +16,18 @@ type McpServerView = {
   hasHeaders: boolean;
   enabledTools: string[];
   lazy: boolean;
+  managedRepo?: {
+    owner: string;
+    repo: string;
+    kind?: 'node' | 'python';
+    packageName?: string;
+    packageVersion?: string;
+    commit?: string;
+    lastCheckedAt?: number;
+    lastUpdatedAt?: number;
+    lastUpdateError?: string;
+    autoUpdate: boolean;
+  };
   /** 谈成的协议版本；没握过手就是 null。 */
   protocol?: ProtocolView | null;
 };
@@ -43,7 +55,7 @@ type RuntimeView = {
   summary: string;
   version: string;
   installNote: string;
-  state: 'not_installed' | 'installing' | 'installed' | 'running' | 'error';
+  state: 'unavailable' | 'not_installed' | 'installing' | 'installed' | 'running' | 'error';
   installed: boolean;
   installing: boolean;
   running: boolean;
@@ -195,6 +207,7 @@ const PERMISSION_LABELS: Record<string, string> = {
 };
 
 const RUNTIME_STATE_LABELS: Record<string, string> = {
+  unavailable: '不适用于当前系统',
   not_installed: '未安装',
   installing: '安装中',
   installed: '已安装',
@@ -496,6 +509,21 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
       }));
       if (patch.allowWrite !== undefined) {
         setNotice(patch.allowWrite ? `已允许「${server.name}」执行有副作用的工具，请确认信任这个服务。` : `已禁止「${server.name}」执行有副作用的工具，只保留只读工具。`);
+      }
+    });
+  }
+
+  async function checkGithubUpdate(server: McpServerView) {
+    await runItem(server.id, 'update', async () => {
+      try {
+        const data = await requestJson(`/api/mcp/${encodeURIComponent(server.id)}/update`, { method: 'POST' });
+        applyPayload(data);
+        setNotice(data.updated
+          ? `「${server.name}」已更新到 ${String(data.latestCommit || '').slice(0, 12)}。`
+          : `「${server.name}」已经是最新版本（${String(data.latestCommit || '').slice(0, 12)}）。`);
+      } catch (failure) {
+        try { applyPayload(await requestJson('/api/mcp')); } catch {}
+        throw failure;
       }
     });
   }
@@ -1075,6 +1103,14 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
                   {server.enabledTools.length > 0 && <span className={styles.badge}>已选 {server.enabledTools.length} 个工具</span>}
                 </div>
                 <p className={styles.endpoint} title={server.url}><code>{hostOf(server.url)}</code><span className={styles.endpointUrl}>{server.url}</span></p>
+                {server.managedRepo && <div className={styles.facts}>
+                  <span className={styles.fact}><b>GitHub 来源</b><code>{server.managedRepo.owner}/{server.managedRepo.repo}</code></span>
+                  {server.managedRepo.packageVersion && <span className={styles.fact}><b>版本</b><code>{server.managedRepo.packageVersion}</code></span>}
+                  {server.managedRepo.commit && <span className={styles.fact}><b>提交</b><code>{server.managedRepo.commit.slice(0, 12)}</code></span>}
+                  {server.managedRepo.lastCheckedAt && <span className={styles.fact}><b>最近检查</b>{new Date(server.managedRepo.lastCheckedAt).toLocaleString()}</span>}
+                  {server.managedRepo.lastUpdatedAt && <span className={styles.fact}><b>最近更新</b>{new Date(server.managedRepo.lastUpdatedAt).toLocaleString()}</span>}
+                </div>}
+                {server.managedRepo?.lastUpdateError && <p className={styles.meta} role="status">最近更新失败：{server.managedRepo.lastUpdateError}</p>}
                 {protocolNote(server.protocol) && <p className={styles.meta}>{protocolNote(server.protocol)}</p>}
                 {probe && <div className={styles.probe}>
                   <div className={styles.probeHead}>
@@ -1105,6 +1141,10 @@ export default function McpManager({ disabled, icon }: { disabled: boolean; icon
               </div>
               <div className={styles.rowActions}>
                 <button type="button" disabled={busy} onClick={() => void probeServer(server)}>{probe?.status === 'busy' ? '连接中…' : '连接自检'}</button>
+                {server.managedRepo && <>
+                  <label className={styles.check}><input type="checkbox" checked={server.managedRepo.autoUpdate} disabled={busy} onChange={() => void updateServer(server, { autoUpdate: !server.managedRepo?.autoUpdate })} />自动更新</label>
+                  <button type="button" disabled={busy || pending?.id === server.id} onClick={() => void checkGithubUpdate(server)}>{pending?.id === server.id && pending.action === 'update' ? '检查/更新中…' : '立即检查并更新'}</button>
+                </>}
                 <label className={styles.check}><input type="checkbox" checked={server.enabled} disabled={busy} onChange={() => void updateServer(server, { enabled: !server.enabled })} />启用</label>
                 <label className={styles.check}><input type="checkbox" checked={server.allowWrite} disabled={busy} onChange={() => void updateServer(server, { allowWrite: !server.allowWrite })} />允许写入</label>
                 <label className={styles.check} title="工具很多的服务建议打开：只有这一轮提到它时才会把它的工具交给助手"><input type="checkbox" checked={server.lazy} disabled={busy} onChange={() => void updateServer(server, { lazy: !server.lazy })} />按需下发</label>

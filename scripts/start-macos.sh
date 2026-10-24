@@ -3,10 +3,31 @@ set -eu
 set -f
 IFS=
 
-SCRIPT_DIR=`dirname $0`
-ROOT_DIR=`CDPATH= cd -- $SCRIPT_DIR/.. && pwd`
-cd $ROOT_DIR
+SCRIPT_DIR=`CDPATH= cd -- "$(dirname "$0")" && pwd`
+ROOT_DIR=`CDPATH= cd -- "$SCRIPT_DIR/.." && pwd`
+cd "$ROOT_DIR"
 . "$SCRIPT_DIR/launcher-common.sh"
+if [ -z "${SANMAO_DATA_DIR:-}" ] && [ -z "${SANMAO_INSTALL_MODE:-}" ] && [ -z "${SANMAO_INSTALLED:-}" ] && [ ! -e "$ROOT_DIR/.git" ]; then
+  SANMAO_INSTALL_MODE=installed
+  export SANMAO_INSTALL_MODE
+fi
+
+# Prefer a system Node.js 22.13+, but bootstrap an app-owned runtime when a
+# newly installed computer has no Node.js/PATH yet.
+NODE_RUNTIME_BIN=`sanmao_data_dir "$ROOT_DIR"`
+if [ -f "$SCRIPT_DIR/ensure-node-runtime.sh" ]; then
+  if ! NODE_RUNTIME_BIN=`sh "$SCRIPT_DIR/ensure-node-runtime.sh" --data-dir "$NODE_RUNTIME_BIN" --print-bin 2>/dev/null`; then
+    printf '%s\n' '没有可用的 Node.js，应用内 Node.js 自动准备失败。请检查网络后重新启动。' >&2
+    exit 1
+  fi
+  if [ -n "$NODE_RUNTIME_BIN" ] && [ -x "$NODE_RUNTIME_BIN/node" ]; then
+    PATH="$NODE_RUNTIME_BIN:$PATH"
+    export PATH
+  else
+    printf '%s\n' 'Node.js 运行时路径无效，无法启动 SANMAO.AI。' >&2
+    exit 1
+  fi
+fi
 
 NON_INTERACTIVE=${SANMAO_NONINTERACTIVE:-0}
 DETACH_SERVER=${SANMAO_DETACH_SERVER:-0}
@@ -29,6 +50,9 @@ case "$PORT_START" in
   ''|*[!0-9]*) PORT_START=3210 ;;
 esac
 if [ "$PORT_START" -lt 1024 ] || [ "$PORT_START" -gt 65525 ]; then PORT_START=3210; fi
+# 3210..3220 was the old automatic range; collapse handoffs from that range
+# back to the single browser origin.
+if [ "$PORT_START" -ge 3210 ] && [ "$PORT_START" -le 3220 ]; then PORT_START=3210; fi
 PORT_END=$((PORT_START + 10))
 
 resolve_provider_config_dir() {
@@ -66,7 +90,7 @@ LOCK_DIR="${TMPDIR:-/tmp}/sanmao-ai-launcher.lock"
 
 . "$SCRIPT_DIR/free-relay-common.sh"
 sanmao_init "$ROOT_DIR" "$PORT_START" "$PORT_END" 3000 3010 "$(sanmao_data_dir "$ROOT_DIR")/logs/launcher.log"
-sanmao_log "启动器开始运行，根目录：${ROOT_DIR}，端口范围：${PORT_START}..${PORT_END}" INFO
+sanmao_log "启动器开始运行，根目录：${ROOT_DIR}，固定端口：${PORT_START}；旧端口清理范围：${PORT_START}..${PORT_END}" INFO
 
 media_relay_required() {
   DATA_ROOT="$SANMAO_PROVIDER_CONFIG_DIR"
@@ -144,6 +168,27 @@ server_is_ready() {
   sanmao_server_health "$1"
 }
 
+server_identity_current() {
+  PORT_TO_CHECK=$1
+  BODY="${TMPDIR:-/tmp}/sanmao-identity-health-$$.json"
+  rm -f "$BODY"
+  STATUS=$(curl --noproxy '*' -sS -o "$BODY" -w '%{http_code}' --connect-timeout 0.3 --max-time 1 "http://127.0.0.1:$PORT_TO_CHECK/api/health" 2>/dev/null || true)
+  if [ "$STATUS" != 200 ]; then rm -f "$BODY"; return 1; fi
+  EXPECTED_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || true)
+  EXPECTED_BUILD_ID=$(tr -d '\r\n' < "$BUILD_ID" 2>/dev/null || true)
+  node - "$BODY" "$EXPECTED_VERSION" "$EXPECTED_BUILD_ID" <<'NODE' >/dev/null 2>&1
+const fs = require('fs');
+const [file, version, buildId] = process.argv.slice(2);
+try {
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  process.exit(value.service === 'sanmao-ai-studio' && value.version === version && value.buildId === buildId ? 0 : 1);
+} catch { process.exit(1); }
+NODE
+  RESULT=$?
+  rm -f "$BODY"
+  return "$RESULT"
+}
+
 server_lifecycle_enabled() {
   PORT_TO_CHECK=$1
   BODY="${TMPDIR:-/tmp}/sanmao-lifecycle-health-$$.json"
@@ -172,14 +217,10 @@ server_media_relay_mode() {
 }
 
 find_existing_server() {
-  PORT_TO_CHECK=$PORT_START
-  while [ $PORT_TO_CHECK -le $PORT_END ]; do
-    if server_is_ready $PORT_TO_CHECK; then
-      printf '%s' $PORT_TO_CHECK
-      return 0
-    fi
-    PORT_TO_CHECK=$((PORT_TO_CHECK + 1))
-  done
+  if server_is_ready "$PORT_START"; then
+    printf '%s' "$PORT_START"
+    return 0
+  fi
   printf '0'
 }
 
@@ -228,6 +269,11 @@ acquire_lock() {
 }
 
 EXISTING_PORT=`find_existing_server`
+if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && ! server_identity_current "$EXISTING_PORT"; then
+  sanmao_log "检测到当前服务不是本次构建，正在重启固定端口 $EXISTING_PORT" WARN
+  sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
+  EXISTING_PORT=0
+fi
 if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && build_served_stale; then
   sanmao_log "检测到当前服务使用旧构建，正在重启端口 $EXISTING_PORT" WARN
   sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
@@ -249,9 +295,9 @@ if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && server_lifecycle_enabled "$EXISTING
     sanmao_log "检测到当前服务不需要媒体中转，正在关闭临时通道并重启端口 $EXISTING_PORT" INFO
     sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
   else
-    printf 'SANMAO.AI 已在运行：http://localhost:%s\n' $EXISTING_PORT
+    printf 'SANMAO.AI 已在运行：http://127.0.0.1:%s\n' $EXISTING_PORT
     rm -f "$LEGACY_MARKER"
-    open "http://localhost:$EXISTING_PORT"
+    open "http://127.0.0.1:$EXISTING_PORT"
     exit 0
   fi
 fi
@@ -502,6 +548,17 @@ else
   printf '%s\n' '依赖已安装。'
 fi
 
+# Video downloads use the app-owned yt-dlp runtime. Prepare it on first launch
+# so a fresh computer does not require Python or a manually edited PATH.
+if [ -f "$SCRIPT_DIR/ensure-ytdlp.mjs" ]; then
+  printf '%s\n' '准备视频下载依赖…'
+  if node "$SCRIPT_DIR/ensure-ytdlp.mjs" --data-dir "$(sanmao_data_dir "$ROOT_DIR")"; then
+    printf '%s\n' '视频下载依赖已就绪。'
+  else
+    printf '%s\n' '视频下载依赖暂未准备好；应用仍会启动，下载时会再次自动尝试。'
+  fi
+fi
+
 if [ ! -x node_modules/.bin/next ]; then
   fail '依赖安装完成后仍找不到 Next.js。请删除 node_modules 文件夹后重新运行启动器。'
 fi
@@ -566,13 +623,8 @@ sanmao_clear_stale 3000 3010
 sanmao_clear_stale "$PORT_START" "$PORT_END"
 
 PORT=$PORT_START
-if command -v lsof >/dev/null 2>&1; then
-  while [ $PORT -le $PORT_END ] && lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; do
-    PORT=$((PORT + 1))
-  done
-fi
-if [ $PORT -gt $PORT_END ]; then
-  fail "${PORT_START}～${PORT_END} 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。"
+if [ -n "$(sanmao_listening_pid_on_port "$PORT")" ]; then
+  fail "固定端口 $PORT 已被占用。为避免启动到另一套浏览器数据，已停止自动换端口；请关闭占用进程后重试。"
 fi
 
 if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
@@ -591,13 +643,15 @@ else
   free_relay_stop "$ROOT_DIR"
 fi
 
-URL=http://localhost:$PORT
+URL=http://127.0.0.1:$PORT
 SERVER_STDOUT="${TMPDIR:-/tmp}/sanmao-ai-server.out.log"
 SERVER_STDERR="${TMPDIR:-/tmp}/sanmao-ai-server.err.log"
 rm -f "$SERVER_STDOUT" "$SERVER_STDERR"
 NEXT_CLI="$ROOT_DIR/node_modules/next/dist/bin/next"
 SANMAO_RUNTIME_INSTANCE_ID=$(node -e "process.stdout.write(require('node:crypto').randomUUID())")
 export SANMAO_RUNTIME_INSTANCE_ID
+SANMAO_BUILD_ID=$(tr -d '\r\n' < "$BUILD_ID" 2>/dev/null || true)
+export SANMAO_BUILD_ID
 export SANMAO_LIFECYCLE=1
 if [ "$DETACH_SERVER" = 1 ]; then
   nohup node "$NEXT_CLI" start -H 127.0.0.1 -p $PORT >"$SERVER_STDOUT" 2>"$SERVER_STDERR" </dev/null &

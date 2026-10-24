@@ -59,6 +59,16 @@ async function readTrimmed(file: string) {
   try { return (await readFile(file, 'utf8')).trim(); } catch { return ''; }
 }
 
+export async function getRuntimeIdentity() {
+  return {
+    version: String(packageInfo.version || ''),
+    // The launcher pins this value in the server environment. Reading the
+    // mutable .next marker alone could make an older process report a newer
+    // build after another process replaces the build directory.
+    buildId: process.env.SANMAO_BUILD_ID || await readTrimmed(buildIdPath),
+  };
+}
+
 async function readRestartStatus() {
   try {
     const content = await readFile(restartStatusPath, 'utf8');

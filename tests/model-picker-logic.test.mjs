@@ -20,6 +20,10 @@ const model = (id, providerName = '接口 A') => ({
   providerName,
   rawId: `raw-${id}`,
   displayName: id,
+  kind: 'image',
+  enabled: true,
+  published: true,
+  capabilities: [],
 });
 
 test('model search matches display name, raw id and provider name', () => {
@@ -33,4 +37,20 @@ test('quick model slices remove duplicates across sections and respect their lim
   const models = [model('a'), model('b'), model('a'), model('c'), model('d')];
   assert.deepEqual(picker.takeUniqueModelSlice(models, seen, 3).map((item) => item.id), ['a', 'b', 'c']);
   assert.deepEqual(picker.takeUniqueModelSlice([model('b'), model('d')], seen, 4).map((item) => item.id), ['d']);
+});
+
+test('model capability requirements require every requested capability', () => {
+  const referenceModel = { ...model('reference-model'), capabilities: ['generate', 'reference'] };
+  const generateOnlyModel = { ...model('generate-model'), capabilities: ['generate'] };
+
+  assert.equal(picker.modelSupportsCapabilityRequirements(referenceModel, ['generate', 'reference']), true);
+  assert.equal(picker.modelSupportsCapabilityRequirements(generateOnlyModel, ['generate', 'reference']), false);
+  assert.equal(picker.modelSupportsCapabilityRequirements(generateOnlyModel, ['edit']), false);
+});
+
+test('video capability fallback remains limited to non-generation video capabilities', () => {
+  const legacyVideoModel = { ...model('video-model'), kind: 'video', capabilities: [] };
+
+  assert.equal(picker.modelSupportsCapabilityRequirements(legacyVideoModel, ['video-edit']), true);
+  assert.equal(picker.modelSupportsCapabilityRequirements(legacyVideoModel, ['video-generate']), false);
 });

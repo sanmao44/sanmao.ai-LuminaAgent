@@ -14,6 +14,8 @@ export type CanvasReferenceDraft = {
   url?: string;
   text?: string;
   mimeType?: string;
+  width?: number;
+  height?: number;
   name: string;
   origin: CanvasReferenceOrigin;
   nodeId?: string;

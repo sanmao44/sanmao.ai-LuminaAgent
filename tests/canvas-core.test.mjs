@@ -157,3 +157,40 @@ test('CanvasCore history snapshots protect nested document data', () => {
   assert.equal(redone.edges[0].data.weight, 3);
   assert.equal(redone.groups[0].data.color, 'green');
 });
+
+test('CanvasCore keeps naming and group color edits as independent undo boundaries', () => {
+  const core = new CanvasCore({
+    ...document([{ id: 'node-1', data: { name: '原名' } }]),
+    groups: [{ id: 'group-1', name: '对象组 1', nodeIds: ['node-1'], color: '#8d7be2' }],
+  });
+  core.setSelection({ nodeIds: ['node-1'], groupId: 'group-1' });
+  core.apply({
+    id: 'rename-node',
+    label: 'rename node',
+    apply: (value) => ({
+      ...value,
+      nodes: value.nodes.map((node) => node.id === 'node-1' ? { ...node, data: { ...node.data, name: '新名称' } } : node),
+    }),
+  });
+  core.apply({
+    id: 'color-group',
+    label: 'color group',
+    apply: (value) => ({
+      ...value,
+      groups: value.groups.map((group) => group.id === 'group-1' ? { ...group, color: '#4ea6d8' } : group),
+    }),
+  });
+  assert.equal(core.history().past.length, 2);
+  assert.equal(core.document().nodes[0].data.name, '新名称');
+  assert.equal(core.document().groups[0].color, '#4ea6d8');
+  assert.deepEqual(core.selection(), { nodeIds: ['node-1'], groupId: 'group-1' });
+  core.undo();
+  assert.equal(core.document().groups[0].color, '#8d7be2');
+  assert.equal(core.document().nodes[0].data.name, '新名称');
+  core.undo();
+  assert.equal(core.document().nodes[0].data.name, '原名');
+  core.redo();
+  core.redo();
+  assert.equal(core.document().groups[0].color, '#4ea6d8');
+  assert.deepEqual(core.selection(), { nodeIds: ['node-1'], groupId: 'group-1' });
+});

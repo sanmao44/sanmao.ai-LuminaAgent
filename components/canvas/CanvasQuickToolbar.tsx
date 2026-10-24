@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import AgentOrb from "@/components/AgentOrb";
 import { canvasVisibleStageWidth } from "@/lib/canvas/menu-layout";
 import { groupBounds, nodeSize } from "@/lib/canvas/model";
 import type { CanvasDocument, CanvasGroup, CanvasNode } from "@/lib/canvas/types";
-import { placeCanvasGroupToolbar, placeCanvasNodeToolbar } from "@/lib/canvas/editor-layout";
+import { placeCanvasActionPopover, placeCanvasGroupToolbar, placeCanvasNodeToolbar } from "@/lib/canvas/editor-layout";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
 import { CanvasNodeQuickMenu, canvasPromptOrbState, type CanvasQuickAction, type CanvasQuickActionGroup, type CanvasQuickToolbarActions, type CanvasQuickToolbarTarget } from "@/components/canvas/CanvasContextMenu";
 import CanvasActionIcon from "@/components/canvas/CanvasActionIcon";
@@ -22,6 +23,7 @@ export default function CanvasQuickToolbar({
   actions,
   menuSubtitle,
   actionRenderer,
+  actionPopoverRenderer,
 }: {
   target: CanvasQuickToolbarTarget;
   document: CanvasDocument;
@@ -29,13 +31,16 @@ export default function CanvasQuickToolbar({
   actions: CanvasQuickToolbarActions;
   menuSubtitle: string;
   actionRenderer?: (action: CanvasQuickAction, button: ReactNode) => ReactNode;
+  actionPopoverRenderer?: (action: CanvasQuickAction, position: { left: number; top: number; width: number }) => ReactNode;
 }) {
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState<CanvasQuickToolbarPosition>({ left: 10, top: 10 });
   const [isCompact, setIsCompact] = useState(false);
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+  const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number; width: number } | null>(null);
   const targetId = target.kind === "node" ? target.node.id : target.group.id;
+  const colorAction = actions.primaryActions.find((action) => action.id === "color-group");
 
   const closeMenu = useCallback((returnFocus = false) => {
     const groupId = openGroupId;
@@ -57,7 +62,9 @@ export default function CanvasQuickToolbar({
     if (!openGroupId) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      if (toolbarRef.current?.contains(target) || target?.closest(".canvas-node-quick-menu")) return;
+      if (toolbarRef.current?.contains(target)
+        || target?.closest(".canvas-node-quick-menu")
+        || target?.closest(".canvas-group-color-popover")) return;
       setOpenGroupId(null);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -66,10 +73,10 @@ export default function CanvasQuickToolbar({
       event.stopPropagation();
       closeMenu(true);
     };
-    window.document.addEventListener("pointerdown", closeOnOutsidePointer);
+    window.document.addEventListener("pointerdown", closeOnOutsidePointer, true);
     window.document.addEventListener("keydown", closeOnEscape, true);
     return () => {
-      window.document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      window.document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
       window.document.removeEventListener("keydown", closeOnEscape, true);
     };
   }, [closeMenu, openGroupId]);
@@ -134,7 +141,25 @@ export default function CanvasQuickToolbar({
         ? current
         : nextPosition,
     );
-  }, [document, isCompact, stageRef, target, targetId]);
+    if (popoverPosition && colorAction) {
+      const colorActionButton = toolbarRef.current?.querySelector<HTMLButtonElement>(
+        '[data-action-id="color-group"]',
+      );
+      if (colorActionButton) {
+        const rect = colorActionButton.getBoundingClientRect();
+        const next = placeCanvasActionPopover(
+          { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+          { width: window.innerWidth, height: window.innerHeight },
+          { width: 196, height: 172 },
+        );
+        setPopoverPosition((current) =>
+          current?.left === next.left && current.top === next.top && current.width === next.width
+            ? current
+            : next,
+        );
+      }
+    }
+  }, [colorAction, document, isCompact, popoverPosition, stageRef, target, targetId]);
 
   const toggleGroup = useCallback((event: ReactMouseEvent<HTMLButtonElement>, group: CanvasQuickActionGroup) => {
     event.stopPropagation();
@@ -152,7 +177,10 @@ export default function CanvasQuickToolbar({
       <button
         type="button"
         key={action.id}
-        className={action.danger ? "danger" : ""}
+        className={[
+          action.danger ? "danger" : "",
+          action.id === "color-group" ? "canvas-group-quick-color-trigger" : "",
+        ].filter(Boolean).join(" ")}
         data-action-id={action.id}
         title={action.title || action.label}
         aria-label={action.label}
@@ -161,6 +189,14 @@ export default function CanvasQuickToolbar({
           event.stopPropagation();
           closeMenu();
           action.onClick();
+          if (action.id === "color-group" && target.kind === "group") {
+            const rect = event.currentTarget.getBoundingClientRect();
+            setPopoverPosition(placeCanvasActionPopover(
+              { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+              { width: window.innerWidth, height: window.innerHeight },
+              { width: 196, height: 172 },
+            ));
+          }
         }}
       >
         <span className="canvas-node-quick-icon" aria-hidden="true"><CanvasActionIcon name={action.icon} /></span>
@@ -219,8 +255,14 @@ export default function CanvasQuickToolbar({
           </span>
         </span>
         <span className="canvas-node-quick-divider" aria-hidden="true" />
-        <div className="canvas-node-quick-actions">
-          {actions.primaryActions.map(renderAction)}
+        <div className="canvas-node-quick-actions" onScroll={reposition}>
+          {actions.primaryActions.map((action) =>
+            target.kind === "group" && action.id === "color-group" && actionPopoverRenderer ? (
+              <div className="canvas-group-color-control" key={action.id}>
+                {renderAction(action)}
+              </div>
+            ) : renderAction(action),
+          )}
           {actions.menuGroups.filter((group) => group.actions.length > 0).map((group) => (
             <button
               type="button"
@@ -242,6 +284,12 @@ export default function CanvasQuickToolbar({
           {actions.dangerAction && renderAction(actions.dangerAction)}
         </div>
       </div>
+      {actionPopoverRenderer && colorAction && target.kind === "group" && popoverPosition &&
+        createPortal(
+          actionPopoverRenderer(colorAction, popoverPosition),
+          window.document.body,
+          `canvas-action-popover-${targetId}-${colorAction.id}`,
+        )}
       {openGroup && (
         <CanvasNodeQuickMenu
           targetId={targetId}

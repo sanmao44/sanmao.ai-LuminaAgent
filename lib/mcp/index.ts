@@ -42,6 +42,7 @@ export {
   MCP_CATALOG_MAX_EXTENSION_TOKEN_CHARS,
   MCP_CATALOG_MAX_ORIGINS,
   catalogEntryAccount,
+  catalogEntryAvailable,
   catalogEntryAllowWrite,
   catalogEntryBrowserExecutablePath,
   catalogEntryExtensionToken,
@@ -74,6 +75,7 @@ export {
   remoteCatalogEntries,
   requireStdioCatalogEntry,
   resolveCatalogInstallRoot,
+  resolveCatalogUvExecutable,
   resolveCatalogStateFile,
   resolveCatalogWorkspace,
   setCatalogEntryAccount,
@@ -223,8 +225,9 @@ export {
 export type { BrowserArtifactFile, ImportBrowserArtifactsOptions } from './browser-downloads';
 export { MCP_ADMIN_ACTIONS, githubRepoIdentity, runMcpManageAction } from './admin';
 export { MCP_RUNTIME_ACTIONS, isMcpRuntimeAction, runMcpRuntimeAction } from './runtime-admin';
-export { extractMcpRepoArchive, installGithubMcpFromRepo } from './repo-installer';
-export type { GithubMcpInstallResult } from './repo-installer';
+export { extractMcpRepoArchive, installGithubMcpFromRepo, updateGithubMcpFromRepo } from './repo-installer';
+export type { GithubMcpInstallResult, GithubMcpUpdateDependencies, GithubMcpUpdateResult } from './repo-installer';
+export { scheduleManagedGithubMcpUpdates } from './update-manager';
 export type { McpRuntimeAction, McpRuntimeOutcome } from './runtime-admin';
 export type { McpAdminAction, McpManageOptions, McpManageOutcome } from './admin';
 export type { McpRemoteTool, McpServerConfig, McpToolMeta } from './types';

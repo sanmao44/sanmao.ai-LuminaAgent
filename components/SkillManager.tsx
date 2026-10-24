@@ -66,6 +66,7 @@ function formatSkillAge(value: number) {
 const SCRIPT_FILE_PATTERN = /\.(?:sh|bash|zsh|ps1|psm1|ps|bat|cmd|vbs|py|js|mjs|cjs|ts|tsx|jsx|rb|pl|php|lua)$/i;
 
 const RATE_LIMIT_PATTERN = /限流|rate limit|HTTP 403|HTTP 429/i;
+const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 type UpdateOutcome = { status: 'updated' | 'same'; message: string };
 
@@ -153,6 +154,8 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   const retryImport = useRef<(() => Promise<void>) | null>(null);
   const choiceSource = useRef<ChoiceSource | null>(null);
   const importFooterRef = useRef<HTMLDivElement>(null);
+  const autoUpdateCheckStarted = useRef(false);
+  const autoUpdateCheckRunId = useRef(0);
   useBodyScrollLock(open);
 
   useEffect(() => {
@@ -195,6 +198,28 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
       setLocals(Array.isArray(localData.locals) ? localData.locals as LocalCandidate[] : []);
     });
   }, [open, run, applyPayload]);
+
+  /* 打开面板时自动检查在线来源；按时间间隔限流，避免每次打开都请求 GitHub。只提示更新，不静默覆盖本地内容。 */
+  useEffect(() => {
+    autoUpdateCheckRunId.current += 1;
+    autoUpdateCheckStarted.current = false;
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || autoUpdateCheckStarted.current || !skills.length) return;
+    autoUpdateCheckStarted.current = true;
+    const runId = autoUpdateCheckRunId.current;
+    const targets = skills.filter((skill) => canCheckUpdate(skill)
+      && Date.now() - (Number(skill.sourceCheckedAt) || 0) >= AUTO_UPDATE_CHECK_INTERVAL_MS);
+    if (!targets.length) return;
+    void (async () => {
+      for (let index = 0; index < targets.length; index += 1) {
+        if (!open || runId !== autoUpdateCheckRunId.current) return;
+        await checkUpdate(targets[index], false, true);
+        if (index < targets.length - 1) await new Promise((resolve) => window.setTimeout(resolve, 350));
+      }
+    })();
+  }, [open, skills]);
 
   /* 助手忙完这一轮可能刚好自己装了技能：面板没打开时也刷新一下，好在按钮上提醒待确认。 */
   useEffect(() => {
@@ -438,7 +463,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
   }
 
   /* 检查来源更新：只比对内容哈希；确认更新后可一键重装（保留启用状态与本地别名）。 */
-  async function checkUpdate(skill: SkillSummary, apply = false) {
+  async function checkUpdate(skill: SkillSummary, apply = false, quiet = false) {
     await run(async () => {
       setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'checking', message: apply ? '正在更新…' : '正在检查来源…' } }));
       try {
@@ -450,7 +475,21 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
           return;
         }
         const outcome = readUpdateOutcome(data.result as { status?: string; localEdited?: boolean; remote?: { version?: string } } | undefined);
-        setUpdates((previous) => ({ ...previous, [skill.id]: { status: outcome.status, message: outcome.message } }));
+        if (quiet && outcome.status === 'same') {
+          setUpdates((previous) => {
+            const next = { ...previous };
+            delete next[skill.id];
+            return next;
+          });
+        } else {
+          setUpdates((previous) => ({ ...previous, [skill.id]: { status: outcome.status, message: outcome.message } }));
+        }
+        const checkedSkill = data.skill as { id?: string; sourceCheckedAt?: number } | undefined;
+        if (checkedSkill?.id) {
+          setSkills((current) => current.map((item) => item.id === checkedSkill.id
+            ? { ...item, sourceCheckedAt: checkedSkill.sourceCheckedAt || Date.now() }
+            : item));
+        }
       } catch (failure) {
         setUpdates((previous) => ({ ...previous, [skill.id]: { status: 'error', message: failure instanceof Error ? failure.message : '检查更新失败。' } }));
       }
@@ -528,6 +567,7 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
             <h2 id="skill-manager-title"><i aria-hidden="true">✦</i>技能</h2>
             <button type="button" className={styles.help} aria-label="技能说明" title="技能说明" aria-expanded={helpOpen} aria-controls="skill-manager-help" onClick={() => setHelpOpen((value) => !value)}>?</button>
           </div>
+          <p className={styles.subtitle}>管理助手可复用的工作流与资料</p>
           {helpOpen && <div id="skill-manager-help" className={styles.helpPanel} role="region" aria-label="技能说明">
             <div className={styles.helpPanelHead}>
               <strong>技能说明</strong>
@@ -636,14 +676,14 @@ export default function SkillManager({ disabled, icon }: { disabled: boolean; ic
                 </div>
                 <div className={styles.rowActions}>
                   <label className={styles.check}>
-                    <input type="checkbox" checked={skill.enabled} disabled={busy} onChange={() => void toggleSkill(skill)} />
+                    <input type="checkbox" checked={skill.enabled} disabled={busy} aria-label={`${skill.name}：启用`} onChange={() => void toggleSkill(skill)} />
                     <span>启用</span>
                   </label>
-                  <button type="button" disabled={busy} onClick={() => void openEditor(skill)}>编辑</button>
-                  <button type="button" disabled={busy} onClick={() => void openPreview(skill)}>预览</button>
-                  {canCheckUpdate(skill) && <button type="button" disabled={busy || Boolean(batch)} onClick={() => void checkUpdate(skill)}>{update?.status === 'checking' ? '检查中…' : '检查更新'}</button>}
-                  <button type="button" disabled={busy} onClick={() => void exportSkill(skill)}>{skill.files.length ? '导出 zip' : '导出 md'}</button>
-                  <button type="button" disabled={busy} onClick={() => void removeSkill(skill)}>{confirming === skill.id ? '确认删除' : '删除'}</button>
+                  <button type="button" disabled={busy} aria-label={`编辑 ${skill.name}`} onClick={() => void openEditor(skill)}>编辑</button>
+                  <button type="button" disabled={busy} aria-label={`预览 ${skill.name}`} onClick={() => void openPreview(skill)}>预览</button>
+                  {canCheckUpdate(skill) && <button type="button" disabled={busy || Boolean(batch)} aria-label={`检查 ${skill.name} 的更新`} onClick={() => void checkUpdate(skill)}>{update?.status === 'checking' ? '检查中…' : '检查更新'}</button>}
+                  <button type="button" disabled={busy} aria-label={`导出 ${skill.name}`} onClick={() => void exportSkill(skill)}>{skill.files.length ? '导出 zip' : '导出 md'}</button>
+                  <button type="button" disabled={busy} aria-label={`${confirming === skill.id ? '确认删除' : '删除'} ${skill.name}`} onClick={() => void removeSkill(skill)}>{confirming === skill.id ? '确认删除' : '删除'}</button>
                 </div>
               </article>;
                   })

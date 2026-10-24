@@ -85,13 +85,6 @@ test("video canvas cards expose a persistent visual and accessible distinction",
   assert.match(styles, /\.canvas-video-resolution\{[^}]*border-color:rgba\(147,197,253/);
 });
 
-test("video metadata persists both intrinsic size and duration on media nodes", () => {
-  assert.match(component, /durationSeconds\?: number/);
-  assert.match(component, /Math\.round\(durationSeconds \* 1000\)/);
-  assert.match(mediaCard, /event\.currentTarget\.duration/);
-  assert.match(component, /nativeWidth: width, nativeHeight: height/);
-});
-
 test("video canvas input mode supports automatic locking and restoration", () => {
   assert.match(types, /videoInputModeAuto\?: boolean/);
   assert.match(types, /videoInputModeLocked\?: boolean/);

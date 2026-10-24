@@ -29,6 +29,9 @@ const MIME_PATTERN = /^(image|video|audio)\/[a-z0-9.+-]+$/i;
 let manifestMutationChain: Promise<unknown> = Promise.resolve();
 const RELAY_CACHE_SKEW_MS = 15_000;
 const RELAY_UPLOAD_CACHE_MAX = 128;
+const AUTOMATIC_RELAY_WAIT_MS = 15_000;
+const AUTOMATIC_RELAY_RECOVERY_WAIT_MS = 120_000;
+const AUTOMATIC_RELAY_POLL_MS = 250;
 
 type RelayUploadResult = { url: string; expiresAt?: string };
 type RelayUploadCacheEntry = { url: string; expiresAt: number };
@@ -137,6 +140,17 @@ function mediaRelayUrl() {
 function relayPublicBaseUrl() {
   if (process.env.SANMAO_RELAY_MODE === '1') return runningRelayUrl();
   return String(process.env.SANMAO_RELAY_PUBLIC_BASE_URL || process.env.SANMAO_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+}
+
+async function waitForAutomaticRelay(timeoutMs = AUTOMATIC_RELAY_WAIT_MS) {
+  if (process.env.SANMAO_RELAY_MODE !== '1' || publicBaseUrl()) return '';
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const relay = runningRelayUrl();
+    if (relay) return relay;
+    await new Promise((resolve) => setTimeout(resolve, AUTOMATIC_RELAY_POLL_MS));
+  }
+  return runningRelayUrl();
 }
 
 function isPrivateOrLocalHostname(hostname: string) {
@@ -430,6 +444,23 @@ async function uploadToPublicMediaRelay(data: Buffer, mime: string, kind: 'image
   return pending;
 }
 
+async function uploadImageWithAutomaticRelayRecovery(data: Buffer, mime: string) {
+  try {
+    return await uploadToPublicMediaRelay(data, mime, 'image');
+  } catch (error) {
+    if (process.env.SANMAO_RELAY_MODE !== '1'
+      || !(error instanceof PublicMediaError)
+      || error.code !== MEDIA_RELAY_UNAVAILABLE) throw error;
+
+    // A recovered quick tunnel publishes a new URL through the watchdog. Wait
+    // for that URL and retry once instead of failing during the recovery window.
+    if (!await waitForAutomaticRelay(AUTOMATIC_RELAY_RECOVERY_WAIT_MS)) throw error;
+    const recovered = await uploadToPublicMediaRelay(data, mime, 'image');
+    if (!recovered) throw error;
+    return recovered;
+  }
+}
+
 export function getPublicMediaTransportStatus() {
   const relay = mediaRelayUrl();
   const publicBase = publicBaseUrl();
@@ -485,8 +516,9 @@ export async function preparePublicMediaUrl(value: string, kind: 'image' | 'vide
   if (!loaded) throw new PublicMediaError('当前服务商需要可公开访问的媒体地址；请提供有效的本地媒体或公网 URL。');
   const mime = cleanMime(loaded.mime);
   if (!MIME_PATTERN.test(mime) || kindForMime(mime) !== kind) throw new PublicMediaError('当前服务商只接受与媒体类型匹配的图片、视频或音频文件。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
-  if (mediaRelayUrl() && kind === 'image') {
-    const uploaded = await uploadToPublicMediaRelay(loaded.data, mime, kind);
+  const relay = kind === 'image' ? mediaRelayUrl() || await waitForAutomaticRelay() : mediaRelayUrl();
+  if (relay && kind === 'image') {
+    const uploaded = await uploadImageWithAutomaticRelayRecovery(loaded.data, mime);
     if (uploaded) return uploaded.url;
   }
   const base = publicBaseUrl();

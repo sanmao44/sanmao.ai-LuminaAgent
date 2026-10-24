@@ -2,6 +2,7 @@
 
 import { zipSync } from "fflate";
 import { encodeCanvasDepthVideoFrameSequence, probeCanvasVideoFrameRate, uploadCanvasAsset } from "./canvas/api";
+import { depthQualityProfile, type DepthQuality, type DepthQualityProfile } from "./canvas/depth-settings";
 
 export type LocalDepthVideoProgress = {
   phase: "loading" | "processing" | "encoding";
@@ -11,17 +12,49 @@ export type LocalDepthVideoProgress = {
 
 const MODEL_ID = "onnx-community/depth-anything-v2-small";
 const CACHE_NAME = "sanmao-local-depth-v1";
-// Keep inference high enough for meaningful contours, but avoid 4K WebGPU/WASM stalls.
-const MAX_INFERENCE_SIDE = 1024;
-// Re-expand the inferred depth map for export without making a browser-sized 4K video.
-const MAX_EXPORT_SIDE = 1920;
 const MAX_DURATION_SECONDS = 30;
+
+export type LocalDepthVideoOptions = {
+  quality?: DepthQuality;
+  profile?: Partial<DepthQualityProfile>;
+};
 
 type DepthPipeline = ((image: unknown) => Promise<{ depth: { toCanvas: () => HTMLCanvasElement } }>) & {
   dispose?: () => Promise<void>;
+  mode?: "model";
+  processor?: {
+    image_processor?: {
+      size?: { width: number; height: number };
+    };
+  };
 };
 
+function stageError(stage: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "未知错误");
+  const normalized = message.trim() || "未知错误";
+  return new Error(`${stage}失败：${normalized.slice(0, 240)}`);
+}
+
 let pipelinePromise: Promise<DepthPipeline> | null = null;
+let depthInferenceQueue: Promise<void> = Promise.resolve();
+
+function configureDepthInferenceSize(estimator: DepthPipeline, side: number) {
+  const imageProcessor = estimator.processor?.image_processor;
+  if (!imageProcessor) {
+    throw new Error("深度模型处理器不支持性能档位");
+  }
+  const normalizedSide = Math.max(224, Math.round(side));
+  imageProcessor.size = { width: normalizedSide, height: normalizedSide };
+}
+
+function runDepthInference(estimator: DepthPipeline, image: HTMLCanvasElement, side: number) {
+  const turn = depthInferenceQueue.then(async () => {
+    configureDepthInferenceSize(estimator, side);
+    return estimator(image);
+  });
+  depthInferenceQueue = turn.then(() => undefined, () => undefined);
+  return turn;
+}
 
 function emitProgress(onProgress: ((progress: LocalDepthVideoProgress) => void) | undefined, value: LocalDepthVideoProgress) {
   onProgress?.({ ...value, progress: Math.max(0, Math.min(100, value.progress)) });
@@ -32,13 +65,27 @@ async function loadPipeline(onProgress?: (progress: LocalDepthVideoProgress) => 
     pipelinePromise = (async () => {
       emitProgress(onProgress, { phase: "loading", progress: 2, message: "正在加载深度模型…" });
       const transformers = await import("@huggingface/transformers");
-      const env = transformers.env as typeof transformers.env & { useBrowserCache?: boolean; useWasmCache?: boolean; cacheKey?: string };
+      const env = transformers.env as typeof transformers.env & {
+        useBrowserCache?: boolean;
+        useWasmCache?: boolean;
+        cacheKey?: string;
+        remoteHost?: string;
+        remotePathTemplate?: string;
+        allowRemoteModels?: boolean;
+        allowLocalModels?: boolean;
+      };
       env.useBrowserCache = typeof caches !== "undefined";
       env.useWasmCache = typeof caches !== "undefined";
       env.cacheKey = CACHE_NAME;
+      env.allowRemoteModels = true;
+      env.allowLocalModels = false;
+      if (typeof window !== "undefined" && window.location.origin) {
+        env.remoteHost = `${window.location.origin}/api/canvas/depth-model/`;
+        env.remotePathTemplate = "{model}/resolve/{revision}/";
+      }
       const device = typeof navigator !== "undefined" && "gpu" in navigator ? "webgpu" : "wasm";
       try {
-        return await transformers.pipeline("depth-estimation", MODEL_ID, {
+        const loaded = await transformers.pipeline("depth-estimation", MODEL_ID, {
           device,
           dtype: device === "webgpu" ? "fp16" : "q8",
           progress_callback: (info: unknown) => {
@@ -47,17 +94,24 @@ async function loadPipeline(onProgress?: (progress: LocalDepthVideoProgress) => 
             }
           },
         }) as unknown as DepthPipeline;
+        loaded.mode = "model";
+        return loaded;
       } catch (error) {
-        if (device !== "webgpu") throw error;
-        return await transformers.pipeline("depth-estimation", MODEL_ID, {
-          device: "wasm",
-          dtype: "q8",
-          progress_callback: (info: unknown) => {
-            if (info && typeof info === "object" && "progress" in info) {
-              emitProgress(onProgress, { phase: "loading", progress: Number((info as { progress?: number }).progress) || 0, message: "正在准备 CPU 模型…" });
-            }
-          },
-        }) as unknown as DepthPipeline;
+        if (device === "webgpu") {
+          const loaded = await transformers.pipeline("depth-estimation", MODEL_ID, {
+            device: "wasm",
+            dtype: "q8",
+            progress_callback: (info: unknown) => {
+              if (info && typeof info === "object" && "progress" in info) {
+                emitProgress(onProgress, { phase: "loading", progress: Number((info as { progress?: number }).progress) || 0, message: "正在准备 CPU 模型…" });
+              }
+            },
+          }) as unknown as DepthPipeline;
+          loaded.mode = "model";
+          return loaded;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`深度模型加载失败，未生成伪深度图：${message.slice(0, 240)}`);
       }
     })();
     pipelinePromise.catch(() => { pipelinePromise = null; });
@@ -96,6 +150,7 @@ export async function generateLocalDepthVideo(
   sourceName = "video",
   onProgress?: (progress: LocalDepthVideoProgress) => void,
   knownDurationSeconds?: number,
+  options: LocalDepthVideoOptions = {},
 ) {
   if (!sourceUrl) throw new Error("缺少视频输入");
   const video = document.createElement("video");
@@ -114,20 +169,44 @@ export async function generateLocalDepthVideo(
     : fallbackDuration;
   if (!Number.isFinite(duration) || duration <= 0) throw new Error("无法读取视频时长，请重新导入视频后重试");
   if (duration > MAX_DURATION_SECONDS) throw new Error(`为保证本机稳定处理，深度图节点暂支持 30 秒以内的视频；请先在视频剪辑中裁剪后再试`);
-  const sourceResponse = await fetch(sourceUrl, { cache: "no-store" });
-  if (!sourceResponse.ok) throw new Error(`无法读取原视频：HTTP ${sourceResponse.status}`);
-  const sourceBlob = await sourceResponse.blob();
+  const profile = {
+    ...depthQualityProfile(options.quality),
+    ...(options.profile || {}),
+  };
+  let sourceResponse: Response;
+  try {
+    sourceResponse = await fetch(sourceUrl, { cache: "no-store" });
+  } catch (error) {
+    throw stageError("读取原视频", error);
+  }
+  if (!sourceResponse.ok) throw new Error(`读取原视频失败：HTTP ${sourceResponse.status}`);
+  let sourceBlob: Blob;
+  try {
+    sourceBlob = await sourceResponse.blob();
+  } catch (error) {
+    throw stageError("读取原视频内容", error);
+  }
   const sourceFile = new File([sourceBlob], sourceName, { type: sourceBlob.type || "video/mp4" });
   emitProgress(onProgress, { phase: "loading", progress: 4, message: "正在识别原视频帧率…" });
-  const fps = await probeCanvasVideoFrameRate(sourceFile);
-  const estimator = await loadPipeline(onProgress);
+  let fps: number;
+  try {
+    fps = await probeCanvasVideoFrameRate(sourceFile);
+  } catch (error) {
+    throw stageError("识别原视频帧率", error);
+  }
+  let estimator: DepthPipeline;
+  try {
+    estimator = await loadPipeline(onProgress);
+  } catch (error) {
+    throw stageError("加载深度模型", error);
+  }
   const frameCount = Math.max(1, Math.round(duration * fps));
   const sourceWidth = Math.max(2, video.videoWidth);
   const sourceHeight = Math.max(2, video.videoHeight);
-  const inferenceScale = Math.min(1, MAX_INFERENCE_SIDE / Math.max(sourceWidth, sourceHeight));
+  const inferenceScale = Math.min(1, profile.inferenceSide / Math.max(sourceWidth, sourceHeight));
   const inferenceWidth = Math.max(2, Math.round(sourceWidth * inferenceScale));
   const inferenceHeight = Math.max(2, Math.round(sourceHeight * inferenceScale));
-  const exportScale = Math.min(1, MAX_EXPORT_SIDE / Math.max(sourceWidth, sourceHeight));
+  const exportScale = Math.min(1, profile.exportSide / Math.max(sourceWidth, sourceHeight));
   const exportWidth = Math.max(2, Math.round(sourceWidth * exportScale));
   const exportHeight = Math.max(2, Math.round(sourceHeight * exportScale));
   const sourceCanvas = document.createElement("canvas");
@@ -142,24 +221,48 @@ export async function generateLocalDepthVideo(
   for (let index = 0; index < frameCount; index += 1) {
     await seek(video, Math.min(duration, index / fps));
     sourceContext.drawImage(video, 0, 0, inferenceWidth, inferenceHeight);
-    const result = await estimator(sourceCanvas);
+    let result: { depth: { toCanvas: () => HTMLCanvasElement } };
+    try {
+      result = await runDepthInference(estimator, sourceCanvas, profile.inferenceSide);
+    } catch (error) {
+      throw stageError(`推理第 ${index + 1}/${frameCount} 帧`, error);
+    }
     const depthCanvas = result.depth.toCanvas() as HTMLCanvasElement;
     context.clearRect(0, 0, exportWidth, exportHeight);
     context.drawImage(depthCanvas, 0, 0, exportWidth, exportHeight);
-    frames.push(await canvasBlob(canvas, "image/webp", 0.88));
+    try {
+      frames.push(await canvasBlob(canvas, "image/webp", profile.frameQuality));
+    } catch (error) {
+      throw stageError(`编码第 ${index + 1}/${frameCount} 帧`, error);
+    }
     emitProgress(onProgress, { phase: "processing", progress: ((index + 1) / frameCount) * 100, message: `正在处理第 ${index + 1}/${frameCount} 帧…` });
   }
   const base = sourceName.replace(/\.[^.]+$/, "") || "video";
   emitProgress(onProgress, { phase: "encoding", progress: 1, message: "正在整理深度帧…" });
-  const archive = await depthFrameArchive(frames);
+  let archive: Blob;
+  try {
+    archive = await depthFrameArchive(frames);
+  } catch (error) {
+    throw stageError("整理深度帧", error);
+  }
   emitProgress(onProgress, { phase: "encoding", progress: 18, message: "正在按原帧率合成兼容剪辑软件的 MP4…" });
-  const mp4Blob = await encodeCanvasDepthVideoFrameSequence(
-    new File([archive], `${base}-depth-frames.zip`, { type: "application/zip" }),
-    fps,
-    frames.length,
-  );
-  const asset = await uploadCanvasAsset(new File([mp4Blob], `${base}-depth.mp4`, { type: "video/mp4" }));
-  return { ...asset, fps, frameCount };
+  let mp4Blob: Blob;
+  try {
+    mp4Blob = await encodeCanvasDepthVideoFrameSequence(
+      new File([archive], `${base}-depth-frames.zip`, { type: "application/zip" }),
+      fps,
+      frames.length,
+    );
+  } catch (error) {
+    throw stageError("编码深度图 MP4", error);
+  }
+  let asset: Awaited<ReturnType<typeof uploadCanvasAsset>>;
+  try {
+    asset = await uploadCanvasAsset(new File([mp4Blob], `${base}-depth.mp4`, { type: "video/mp4" }));
+  } catch (error) {
+    throw stageError("上传深度图视频", error);
+  }
+  return { ...asset, fps, frameCount, inferenceMode: estimator.mode || "model" };
 }
 
 export function localDepthModelInfo() {

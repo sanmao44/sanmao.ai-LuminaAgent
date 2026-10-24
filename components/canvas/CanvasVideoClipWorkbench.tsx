@@ -12,6 +12,7 @@ type Props = {
   node: CanvasNode;
   onClose: () => void;
   onCreate: (clip: CanvasVideoClipState) => void | Promise<void>;
+  onCaptureFrame: (capture: { dataUrl: string; width: number; height: number; time: number }) => Promise<boolean>;
 };
 
 type TrimHandle = "start" | "end";
@@ -45,7 +46,7 @@ function initialClip(node: CanvasNode, sourceDuration: number) {
   };
 }
 
-export default function CanvasVideoClipWorkbench({ node, onClose, onCreate }: Props) {
+export default function CanvasVideoClipWorkbench({ node, onClose, onCreate, onCaptureFrame }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const timelinePointerRef = useRef<number | null>(null);
   const initialSourceDuration = sourceDurationFor(node);
@@ -55,6 +56,8 @@ export default function CanvasVideoClipWorkbench({ node, onClose, onCreate }: Pr
   const [playing, setPlaying] = useState(false);
   const [scrubbing, setScrubbing] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [captureError, setCaptureError] = useState<string | null>(null);
 
   useEffect(() => {
     const nextDuration = sourceDurationFor(node);
@@ -243,12 +246,43 @@ export default function CanvasVideoClipWorkbench({ node, onClose, onCreate }: Pr
     }
   };
 
+  const captureCurrentFrame = async () => {
+    const video = videoRef.current;
+    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth < 1 || video.videoHeight < 1) {
+      setCaptureError("视频画面还未准备好，请稍候再试");
+      return;
+    }
+    setCapturing(true);
+    setCaptureError(null);
+    try {
+      const canvas = window.document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("当前浏览器无法读取视频画面");
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const captured = await onCaptureFrame({
+        dataUrl: canvas.toDataURL("image/png"),
+        width: canvas.width,
+        height: canvas.height,
+        time: currentTime,
+      });
+      if (captured) onClose();
+    } catch (error) {
+      setCaptureError(error instanceof Error && error.message
+        ? error.message
+        : "当前视频不允许导出画面，请确认视频来源支持截图");
+    } finally {
+      setCapturing(false);
+    }
+  };
+
   const timelineStart = `${(clip.startTime / timelineDuration) * 100}%`;
   const timelineWidth = `${((clip.endTime - clip.startTime) / timelineDuration) * 100}%`;
   const playhead = `${(currentTime / timelineDuration) * 100}%`;
 
   return (
-    <div className="canvas-modal-backdrop canvas-video-clip-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="canvas-modal-backdrop canvas-video-clip-backdrop" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onPointerMove={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onContextMenu={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
       <section
         className="canvas-video-clip-workbench"
         role="dialog"
@@ -353,7 +387,7 @@ export default function CanvasVideoClipWorkbench({ node, onClose, onCreate }: Pr
           <div className="canvas-video-clip-tool-group canvas-video-clip-fit" role="group" aria-label={`显示方式：${fitLabel}`}><span className="canvas-video-clip-tool-label">画面</span><button type="button" className={clip.fit === "contain" ? "active" : ""} onClick={() => setClip((current) => ({ ...current, fit: "contain" }))}>完整显示</button><button type="button" className={clip.fit === "cover" ? "active" : ""} onClick={() => setClip((current) => ({ ...current, fit: "cover" }))}>填满裁切</button></div>
         </section>
 
-        <footer className="canvas-video-clip-footer"><div className="canvas-video-clip-footer-note"><span aria-hidden="true">✓</span><p><b>生成新视频</b><small>会导出选定区间并生成可独立播放的新视频节点</small></p></div><div><button type="button" onClick={onClose} disabled={creating}>取消</button><button type="button" className="primary" disabled={!canCreate || creating} onClick={() => void createClip()}>{creating ? "正在生成…" : "创建剪辑"}</button></div></footer>
+        <footer className="canvas-video-clip-footer"><div className="canvas-video-clip-footer-note"><span aria-hidden="true">✓</span><p><b>生成新视频</b><small>会导出选定区间并生成可独立播放的新视频节点</small>{captureError && <small className="canvas-video-clip-capture-error" role="alert">{captureError}</small>}</p></div><div><button type="button" className="canvas-video-clip-capture" onClick={() => void captureCurrentFrame()} disabled={creating || capturing} title="将当前播放位置保存为新的图片节点">{capturing ? "截取中…" : "截取当前帧"}</button><button type="button" onClick={onClose} disabled={creating || capturing}>取消</button><button type="button" className="primary" disabled={!canCreate || creating || capturing} onClick={() => void createClip()}>{creating ? "正在生成…" : "创建剪辑"}</button></div></footer>
       </section>
     </div>
   );

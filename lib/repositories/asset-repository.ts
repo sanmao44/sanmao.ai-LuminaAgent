@@ -34,5 +34,5 @@ export const assetRepository: AssetRepository = {
   saveIndex: saveAssetIndexItem,
   replaceIndex: replaceAssetIndexItems,
   listCollections: listAssetCollections as () => Promise<AssetCollection[]>,
-  saveCollections: saveAssetCollections as (collections: readonly AssetCollection[]) => Promise<void>,
+  saveCollections: saveAssetCollections,
 };

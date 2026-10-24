@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createTsRequire } from './ts-require.mjs';
+import ts from 'typescript';
 
 const panels = await readFile(new URL("../components/canvas/CanvasPanels.tsx", import.meta.url), "utf8");
 const menuLayout = await readFile(new URL("../lib/canvas/menu-layout.ts", import.meta.url), "utf8");
@@ -16,6 +17,7 @@ const workspaceHeader = await readFile(new URL("../components/canvas/CanvasWorks
 const viewportOverlay = await readFile(new URL("../components/canvas/CanvasViewportOverlay.tsx", import.meta.url), "utf8");
 const toolsMenuSource = await readFile(new URL("../components/canvas/CanvasToolsContextMenu.tsx", import.meta.url), "utf8");
 const interactionTargets = createTsRequire(process.cwd())("./lib/canvas/interaction-targets");
+const agentDock = createTsRequire(process.cwd())("./lib/canvas/agent-dock");
 const interactionTargetsSource = await readFile(new URL("../lib/canvas/interaction-targets.ts", import.meta.url), "utf8");
 
 const [component, canvasSource, styles, context, canvasApi, markdown] = await Promise.all([
@@ -29,6 +31,57 @@ const [component, canvasSource, styles, context, canvasApi, markdown] = await Pr
 const panelStyles = await readFile(new URL("../app/canvas-panels.css", import.meta.url), "utf8");
 
 const canvas = `${canvasSource}\n${workspaceHeader}\n${viewportOverlay}\n${nodeEditor}`;
+
+// Execute the real UI callbacks with the existing Core and persistence adapter.
+function canvasCallback(name, bindings) {
+  const source = ts.createSourceFile('CanvasWorkspace.tsx', canvasSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let callback;
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === name && node.initializer && ts.isCallExpression(node.initializer)) {
+      callback = node.initializer.arguments[0].getText(source);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.ok(callback, `Missing callback ${name}`);
+  const compiled = ts.transpileModule(`const callback = ${callback};`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  return new Function(...Object.keys(bindings), `${compiled}; return callback;`)(...Object.values(bindings));
+}
+
+function writebackFixture() {
+  const memory = () => {
+    const entries = new Map();
+    return { getItem: (key) => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, String(value)), removeItem: (key) => entries.delete(key) };
+  };
+  globalThis.window = Object.assign(new EventTarget(), { localStorage: memory(), sessionStorage: memory() });
+  const load = createTsRequire(process.cwd());
+  const model = load('./lib/canvas/model');
+  const storage = load('./lib/canvas/storage');
+  const { CanvasProjectSession } = load('./lib/canvas/project-session');
+  const { CanvasCore } = load('./packages/canvas-core/runtime');
+  const project = (id) => ({ id, name: id, createdAt: 1, updatedAt: 1 });
+  storage.createCanvasProject(project('a'), model.normalizeDocument(null));
+  const session = new CanvasProjectSession();
+  const core = new CanvasCore(session.open('a'));
+  const focused = [];
+  const noop = () => {};
+  const bindings = {
+    ...model,
+    ...load('./lib/canvas/node-placement'),
+    ...load('./lib/canvas/patch'),
+    canvasProjectSessionRef: { current: session }, canvasCoreRef: { current: core }, mountedRef: { current: true },
+    updateDoc: (updater) => core.replace(updater(core.document())),
+    commit: (updater) => core.apply({ id: 'writeback', label: 'writeback', apply: updater }),
+    setSaveError: () => assert.fail('Unexpected save error'), describeCanvasSaveFailure: storage.describeCanvasSaveFailure,
+    notify: noop, setSelectedIds: noop, setSelectedGroupId: noop, setReuseDraft: noop, setContextMenu: noop,
+    selectedSingle: null, selectedNodes: [], stageSize: { width: 900, height: 600 }, screenToWorld: (x, y) => ({ x, y }),
+    fitView: (ids) => focused.push(ids),
+  };
+  bindings.captureProjectTask = canvasCallback('captureProjectTask', bindings);
+  return { bindings, core, session, storage, model, project, focused };
+}
 
 test("the canvas agent dock mounts in SuperCanvas and is bound to the selection", () => {
   assert.match(canvas, /<CanvasAgentDock[\s\S]*?contextBlock=\{agentDockContext\.text\}/);
@@ -108,6 +161,20 @@ test("agent text and images land on the canvas through the shared undostack", ()
   assert.match(canvas, /role: "Agent 回复"/);
 });
 
+test("text references stay contextual and text replies never auto-write back", () => {
+  assert.equal(agentDock.canvasAgentDockHasVisualReferences([
+    { id: "copy", kind: "text", name: "原文", text: "原始文案" },
+  ]), false);
+  assert.equal(agentDock.canvasAgentDockHasVisualReferences([
+    { id: "image", kind: "image", name: "参考图", url: "/image.png" },
+  ]), true);
+  assert.equal(agentDock.canvasAgentDockShouldAutoApplyText("请优化选中文案的排版"), false);
+  assert.equal(agentDock.canvasAgentDockShouldAutoApplyText("请把结果存为节点"), true);
+  assert.doesNotMatch(component, /runContext.operation === "edit" && runContext.targetKind === "text"/);
+  assert.match(component, /onApplyText\(content, \{ prompt: mentionText \}\)/);
+  assert.doesNotMatch(canvas, /已按选中文字节点更新内容/);
+});
+
 test("smart canvas apply only promotes explicit canvas-directed replies", () => {
   assert.match(context, /export function canvasAgentDockShouldAutoApplyText/);
   assert.match(component, /canvasAgentDockShouldAutoApplyText\(text\)/);
@@ -135,6 +202,29 @@ test("canvas workflows expose a reviewable plan and apply through one canvas tra
   assert.match(canvas, /const result = arrangeCanvas\(next/);
   assert.match(canvas, /commit\(\(\) => next\)/);
   assert.match(styles, /\.canvas-agent-dock-plan\{/);
+});
+
+test("layout words do not hijack ordinary Agent prompts", () => {
+  const selected = { targetNodeIds: ["node-1"], selectedTotal: 1 };
+  for (const input of [
+    "排版",
+    "还有更好的设计吗？出新图，顶尖设计排版，不一样的排版，出图！",
+    "帮我排版这段文字",
+    "请给我一个排版方案",
+    "排版一下这张海报",
+    "请根据我选中的文案优化排版和表达层次",
+    "请润色选中的文本，改善排版与表达",
+  ]) {
+    assert.equal(agentDock.buildCanvasAgentDockPlan(input, selected), null, input);
+  }
+
+  const selectedPlan = agentDock.buildCanvasAgentDockPlan("把选中的节点按网格重新排列", selected);
+  assert.equal(selectedPlan?.kind, "layout-selection");
+  assert.equal(selectedPlan?.layout, "grid");
+
+  const canvasPlan = agentDock.buildCanvasAgentDockPlan("把整张画布按横向重新排列");
+  assert.equal(canvasPlan?.kind, "layout-selection");
+  assert.equal(canvasPlan?.layout, "horizontal");
 });
 
 test("selection canvas commands stay reviewable and reuse safe model operations", () => {
@@ -284,7 +374,7 @@ test("the save and sync badges keep the max-content topbar at a stable width", (
   // The bar hugs its content on wide screens, so every status label change used to
   // resize the whole bar. Both badges reserve room for their longest label.
   assert.match(styles, /\.canvas-topbar-main>\.canvas-save-state\{min-width:calc\(29px \+ 4\.5em\)\}/);
-  assert.match(styles, /\.canvas-topbar-main>\.canvas-workspace-sync-state\{min-width:calc\(26px \+ 5\.5em\)\}/);
+  assert.match(styles, /\.canvas-topbar-main>\.canvas-workspace-sync-state\{min-width:calc\(26px \+ 8em\)\}/);
 });
 
 test("the dock composer calls the shared skill picker with slash and a toolbar button", () => {
@@ -426,9 +516,16 @@ test("the dock reply offers the same select-text toolbar as the node text viewer
 test("dock select-text actions fall back to the viewport centre without a selection", () => {
   // 没选中节点时不能连线，节点落在视口中心，anchor 必须可空。
   assert.match(canvas, /\(anchor: CanvasNode \| null, value: string\) => \{\s*if \(anchor && anchor\.type !== "prompt"\) return;/);
-  assert.match(canvas, /\(text: string\) => createImageBranchFromText\(selectedSingle \|\| selectedNodes\[0\] \|\| null, text\)/);
-  assert.match(canvas, /\(text: string\) => createViewerAgentNode\(selectedSingle \|\| selectedNodes\[0\] \|\| null, text\)/);
+  assert.match(canvas, /canvasAgentDockPromptAnchor\(selectedSingle, selectedNodes\)/);
   assert.match(canvas, /return anchor\s*\?\s*addEdge\(withNode, anchor\.id, nextImageNode\.id/);
+});
+
+test("dock select-text actions do not silently no-op when a media node is selected", () => {
+  const media = { type: "media" };
+  const prompt = { type: "prompt" };
+  assert.equal(agentDock.canvasAgentDockPromptAnchor(media, [media]), null);
+  assert.equal(agentDock.canvasAgentDockPromptAnchor(null, [media, prompt]), prompt);
+  assert.equal(agentDock.canvasAgentDockPromptAnchor(media, [media, prompt]), prompt);
 });
 
 test("the dock header counts the tasks of the selected nodes", () => {
@@ -627,16 +724,21 @@ test("an agent image can be dragged out of the dock and dropped where the pointe
 });
 
 test("agent results land in free space instead of on top of existing nodes", () => {
-  // 面板落画布曾经用固定偏移：选中节点右边已经有东西时，结果会直接压上去。
-  const dockImages = canvas.slice(canvas.indexOf("const applyAgentDockImages = useCallback"), canvas.indexOf("const applyAgentDockText = useCallback"));
-  assert.match(dockImages, /const placed: CanvasNode\[\] = \[\];/);
-  assert.match(dockImages, /openNodePosition\(desired, draft, placed\)/);
-  const dockText = canvas.slice(canvas.indexOf("const applyAgentDockText = useCallback"), canvas.indexOf("const addNodeReference = useCallback"));
-  assert.match(dockText, /openNodePosition\(\{ x: draft\.x, y: draft\.y \}, draft\)/);
-  const imageBranch = canvas.slice(canvas.indexOf("const createImageBranchFromText = useCallback"), canvas.indexOf("const createVideoBranchFromText = useCallback"));
-  assert.match(imageBranch, /openNodePosition\(origin, imageNode\)/);
-  const videoBranch = canvas.slice(canvas.indexOf("const createVideoBranchFromText = useCallback"), canvas.indexOf("const useAgentResponseAsImagePrompt = useCallback"));
-  assert.match(videoBranch, /openNodePosition\(origin, videoNode\)/);
+  const h = writebackFixture();
+  const first = h.model.createMedia('image', '/first.png', 'first', { x: 10, y: 20 });
+  h.core.replace({ ...h.core.document(), nodes: [first] });
+  const scope = h.bindings.captureProjectTask();
+  const draft = h.model.createMedia('image', '/second.png', 'second', { x: 10, y: 20 });
+  const point = scope.placeNode({ x: 10, y: 20 }, draft);
+  const second = { ...draft, ...point };
+  const third = { ...h.model.createMedia('image', '/third.png', 'third', point) };
+  const thirdPoint = scope.placeNode(point, third, [second]);
+  const overlaps = (a, b) => {
+    const as = h.model.nodeSize(a), bs = h.model.nodeSize(b);
+    return a.x < b.x + bs.w && a.x + as.w > b.x && a.y < b.y + bs.h && a.y + as.h > b.y;
+  };
+  assert.equal(overlaps(first, second), false);
+  assert.equal(overlaps(second, { ...third, ...thirdPoint }), false);
 });
 
 test("the collapsed rail reports the failed nodes on the canvas", () => {
@@ -739,10 +841,23 @@ test("canvas overlays step aside for the open agent panel", () => {
 });
 
 test("storing a reply as a node brings it into view", () => {
-  // 「存为节点」把回复放在选中节点右侧：不把视图挪过去，新节点就藏在面板后面。
-  const dockText = canvas.slice(canvas.indexOf("const applyAgentDockText = useCallback"), canvas.indexOf("const addNodeReference = useCallback"));
-  assert.match(dockText, /fitView\(\[node\.id\]\);/);
-  assert.match(dockText, /^\s*fitView,$/m);
+  const h = writebackFixture();
+  const apply = canvasCallback('applyAgentDockText', h.bindings);
+  const ids = apply('reply', { prompt: 'prompt', runContext: { canvasId: 'a' } });
+  assert.deepEqual(h.focused, [ids]);
+  assert.equal(h.core.document().nodes[0].data.text, 'reply');
+  assert.equal(h.session.save(h.core.document()), true);
+  h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
+  h.core.replace(h.session.open('b'));
+  const backgroundIds = apply('background reply', { prompt: 'prompt', runContext: { canvasId: 'a' } });
+  assert.equal(backgroundIds.length, 1);
+  assert.equal(h.core.document().nodes.length, 0);
+  assert.equal(h.storage.loadCanvasDocument('a').nodes.length, 2);
+  assert.deepEqual(h.focused, [ids]);
+  assert.equal(h.storage.deleteCanvasProject('a'), true);
+  const deletedIds = apply('late reply', { prompt: 'prompt', runContext: { canvasId: 'a' } });
+  assert.deepEqual(deletedIds, []);
+  assert.deepEqual(h.focused, [ids]);
 });
 
 test("a waiting approval on the canvas gets the same confirm card as the main chat", () => {
@@ -794,8 +909,17 @@ test("each remote canvas run carries an immutable context snapshot into write-ba
   assert.match(component, /createCanvasAgentRunContext\(\{[\s\S]*runId: progressRunId/);
   assert.match(component, /references: turnNodeReferences/);
   assert.match(component, /onApplyImages\(images, \{ prompt: mentionText, model: response\.model, runContext \}\)/);
-  assert.match(component, /\.\.\.\(images\.length \|\| plan \? \{ runContext \} : \{\}\)/);
   assert.match(canvas, /runContext\.anchorNodeId/);
   assert.match(canvas, /runContext\?\.operation === "edit" \? "edited_from" : "derived_from"/);
   assert.match(canvas, /taskId: runContext\.runId/);
+  const h = writebackFixture();
+  const apply = canvasCallback('applyAgentCanvasPatch', h.bindings);
+  h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
+  h.core.replace(h.session.open('b'));
+  const reply = h.model.createPrompt({ x: 1, y: 2 }, 'original canvas reply');
+  const result = apply({ version: 1, operations: [{ op: 'add_node', node: reply }] }, { canvasId: 'a' });
+  assert.deepEqual(result.ids, [reply.id]);
+  assert.equal(h.core.document().nodes.length, 0);
+  assert.equal(h.storage.loadCanvasDocument('a').nodes[0].id, reply.id);
+  assert.deepEqual(h.focused, []);
 });

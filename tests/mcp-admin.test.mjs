@@ -198,7 +198,16 @@ test('仓库安装：归档的顶层目录不会被算成工作目录，装完�
     'package.json': JSON.stringify({ name: 'demo-mcp', version: '1.0.0', bin: { 'demo-mcp': 'index.js' } }),
     'index.js': fixture,
   });
-  globalThis.fetch = async () => new Response(archive, { status: 200, headers: { 'content-type': 'application/zip' } });
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    if (parsed.hostname === 'api.github.com' && parsed.pathname === '/repos/demo/demo-mcp') {
+      return Response.json({ full_name: 'demo/demo-mcp', default_branch: 'main' });
+    }
+    if (parsed.hostname === 'api.github.com' && parsed.pathname === '/repos/demo/demo-mcp/commits') {
+      return Response.json([{ sha: 'c'.repeat(40) }]);
+    }
+    return new Response(archive, { status: 200, headers: { 'content-type': 'application/zip' } });
+  };
   try {
     const installed = await mcp.installGithubMcpFromRepo('https://github.com/demo/demo-mcp', { dataDir });
     assert.equal(installed.server.cwd, installed.projectRoot, '启动工作目录必须是归档解出来的项目目录');

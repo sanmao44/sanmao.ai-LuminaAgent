@@ -178,8 +178,8 @@ html:has(.video-studio-page),body:has(.video-studio-page){height:100%;min-height
 
 /* The mobile document remains touch-scrollable, but the browser chrome does
    not add a second hard-edged scrollbar beside the rounded studio surface. */
-html:has(.video-studio-page),body:has(.video-studio-page){scrollbar-width:none}
-html:has(.video-studio-page)::-webkit-scrollbar,body:has(.video-studio-page)::-webkit-scrollbar{display:none;width:0;height:0}
+html:not(:has(.video-app-shell)):has(.video-studio-page),body:not(:has(.video-app-shell)):has(.video-studio-page){scrollbar-width:none}
+html:not(:has(.video-app-shell)):has(.video-studio-page)::-webkit-scrollbar,body:not(:has(.video-app-shell)):has(.video-studio-page)::-webkit-scrollbar{display:none;width:0;height:0}
 
 /* Fit the primary controls in a 900px desktop viewport. Scrolling remains
    available for accessibility and smaller laptops, but the scrollbar itself
@@ -362,8 +362,8 @@ html:has(.video-studio-page)::-webkit-scrollbar,body:has(.video-studio-page)::-w
 @media(max-width:620px){.video-media-dialog-inner video{width:calc(100vw - 44px);max-height:calc(90vh - 72px)}}
 
 /* Viewport-locked video workbench. Only bounded editors and lists scroll internally. */
-html:has(.video-app-shell),body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden;scrollbar-width:none}
-html:has(.video-app-shell)::-webkit-scrollbar,body:has(.video-app-shell)::-webkit-scrollbar{display:none;width:0;height:0}
+html:has(.video-app-shell){height:100%;min-height:0;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable}
+body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
 .video-app-shell{height:100dvh;min-height:0;overflow:hidden}
 .video-app-shell .main-column{height:100dvh;min-height:0;overflow:hidden}
 .video-studio-page{width:100%;max-width:none;height:calc(100dvh - var(--shell-header-height,64px));min-height:0;max-height:calc(100dvh - var(--shell-header-height,64px));margin:0;box-sizing:border-box;padding:14px clamp(14px,2.1vw,32px) 16px;display:grid;grid-template-rows:minmax(0,1fr);gap:12px;overflow:hidden}
@@ -483,7 +483,8 @@ html:has(.video-app-shell)::-webkit-scrollbar,body:has(.video-app-shell)::-webki
   .video-compose-column .video-studio-hero p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 }
 @media(max-width:1100px){
-  html:has(.video-app-shell),body:has(.video-app-shell){overflow:hidden}
+  html:has(.video-app-shell){overflow-x:hidden;overflow-y:auto}
+  body:has(.video-app-shell){overflow:hidden}
   .video-studio-page{height:calc(100dvh - var(--shell-header-height,64px));max-height:calc(100dvh - var(--shell-header-height,64px));padding:10px;gap:9px;grid-template-rows:auto minmax(0,1fr)}
   .video-mobile-tabs{display:flex;align-items:center;gap:4px;min-height:38px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
   .video-mobile-tabs button{position:relative;flex:1;height:30px;border:0;border-radius:9px;background:transparent;color:var(--muted);font-size:10px;font-weight:850}

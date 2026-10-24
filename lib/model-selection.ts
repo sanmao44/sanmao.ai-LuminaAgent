@@ -3,6 +3,13 @@ type SelectableModel = {
   providerId: string;
 };
 
+export function modelSupportsCapabilities<T extends { capabilities: readonly string[] }>(
+  model: T,
+  required: readonly string[],
+) {
+  return required.every((capability) => model.capabilities.includes(capability));
+}
+
 export function selectAutomaticModel<T extends SelectableModel>(
   models: T[],
   defaultProviderId?: string | null,

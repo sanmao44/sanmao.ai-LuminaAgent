@@ -16,19 +16,19 @@ export const skillReadTool = defineTool({
   id: nativeToolId('skill_read'),
   risk: 'read',
   name: 'skill_read',
-  description: '读取已启用技能的完整正文，或它附带的参考资料文件。技能索引里只有名称和简介，需要具体步骤时必须先读取。内容被截断时返回 truncated 与 nextOffset，带上 offset 继续读直到读完。返回的附件清单会标注类型（text / binary / script），脚本内容只作阅读参考，永远不要执行。',
+  description: '读取已启用技能的完整正文，或它附带的参考资料文件。省略 file 读取技能正文；file 只能填写附件相对路径，不要把根级 SKILL.md 当作附件传入。技能索引里只有名称和简介，需要具体步骤时必须先读取。内容被截断时返回 truncated 与 nextOffset，带上 offset 继续读直到读完。返回的附件清单会标注类型（text / binary / script），脚本内容只作阅读参考，永远不要执行。',
   permissions: ['fs:read'],
   tags: ['skill'],
   source: 'native',
   gating: TOOL_GATE.skills,
-  schema: { type: 'object', properties: { id: { type: 'string' }, file: { type: 'string', description: '可选，技能目录内的相对路径。' }, offset: { type: 'number', description: '可选，从第几个字符开始读，用于接着上一次被截断的位置继续读。' } }, required: ['id'] },
+  schema: { type: 'object', properties: { id: { type: 'string' }, file: { type: 'string', description: '可选，仅填写附件相对路径；省略此字段读取技能正文。不要填写根级 SKILL.md。' }, offset: { type: 'number', description: '可选，从第几个字符开始读，用于接着上一次被截断的位置继续读。' } }, required: ['id'] },
 });
 
 export const skillInstallTool = defineTool({
   id: nativeToolId('skill_install'),
   risk: 'write',
   name: 'skill_install',
-  description: '安装技能：用户要求把某个链接、GitHub 仓库上的技能装进来，或你判断某套可复用流程值得沉淀成技能时调用。安装后需要用户在技能面板确认才会生效。',
+  description: '安装技能：用户要求把某个链接、GitHub 仓库上的技能装进来，或把开源工具做成可复用技能时调用。yt-dlp/yt-dlp 使用项目内置 video-download 技能。安装后根据返回状态说明是否需要用户在技能面板确认。',
   permissions: ['network', 'fs:write'],
   tags: ['skill'],
   source: 'native',

@@ -38,6 +38,14 @@ const imageActionPattern = /(?:画(?!面|布|板|框|纸|册|廊)|绘制|描绘|
 const imageBatchPattern = /(?:套图|详情图|商品详情(?:页)?图|批量生图|批量出图|一套图|一组图|系列图|多张图|多张图片|组图|batch)/i;
 const imageTargetPattern = /(?:图片|图像|画面|海报|封面图|封面|插画|插图|漫画|头像|壁纸|表情包|图标|logo|banner|配图|信息图|概念图|效果图|宣传图|广告图|主视觉|场景图|吉祥物|IP形象|设计稿|设计图|mascot|image|picture|poster|cover|illustration|avatar|wallpaper|icon)/i;
 const imageEditPattern = /(?:修改|调整|改一下|改成|改为|换成|替换为|替换|变成|变为|变作|重绘|重制|修图|换背景|去掉|加上|增加|减少|保持主体|延续|继续|再来|更高级|更年轻|更简洁|优化构图|强化光线|调整色彩)/i;
+/*
+ * Colloquial visual edits often omit the verb-object grammar used by the
+ * formal commands above: “换个美女角色，换个色调”. Keep this as one shared
+ * speech-act rule so the Canvas dock and the server choose the same image
+ * capability. Requiring a visual target avoids treating a bare “换个” as an
+ * edit request.
+ */
+const colloquialImageEditPattern = /(?:换(?:个|一个|一位|一套)|改(?:个|一个)|换用)[^，。！？?!]{0,20}(?:角色|人物|主体|色调|色彩|颜色|配色|风格|背景|构图|姿势|动作|服装|衣服|发型|场景|镜头|光线|氛围|材质|布局)/i;
 const textArtifactPattern = /(?:文案|标题|正文|文章|脚本|口播|广告语|宣传语|配文|简介|描述|提示词|prompt|代码|程序|报告|方案|清单|表格|摘要|总结|翻译|邮件|回复|文字|方向|创意|灵感|思路|markdown|json|csv|html|css)/i;
 // Office / 可下载文档类交付物。出现这些词时用户要的是一份文档，而不是一张图：
 // 「做一个 word 简历模板」这类说法会命中下面的“做一个…”弱信号，必须让文档交付优先。
@@ -60,10 +68,15 @@ const vagueFollowUpPattern = /^(?:继续|再来一个|再来一版|再来几版|
 // 先判断用户的“请求模式”，再判断交付物。这里识别的是句子的言语行为
 // （询问、讨论、执行、承接上一轮），而不是把某个功能词直接映射到工具。
 // 这层是图片、文件、联网、MCP 和 Skill 路由共用的安全闸门。
-const capabilityQuestionPattern = /^(?:(?:你|您)?\s*(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)|.*(?:能做什么|可以做什么|支持什么|有哪些能力|有什么能力|干啥|干什么|做啥|做什么|干哪些|做哪些|会什么|懂什么|能提供什么|能帮我做什么|能帮我干什么))(?:[？?。!！]*)$/i;
+const capabilityQuestionPattern = /^(?:(?:你|您)?\s*(?:能否|能不能|能|可以|支持|会不会|会).{0,96}(?:吗|么|呢)|.*(?:能做什么|可以做什么|支持什么|有哪些能力|有什么能力|干啥|干什么|做啥|做什么|干哪些|做哪些|会什么|懂什么|能提供什么|能帮我做什么|能帮我干什么)|(?:(?:你|您|助手|系统)\s*)?(?:目前|当前|现在|现阶段)?\s*(?:(?:能否|能不能|能|可以|支持|会不会|会)\s*)?(?:生成|制作|创建|做|创作)?\s*(?:pptx?|幻灯片|演示文稿|word|excel|表格|文档|文件|图片|生图|改图|联网|搜索|浏览器|mcp|技能|画布|模型|视频|音频|代码|zip|压缩包).{0,40}(?:能力|创作能力|支持|可用|能生成|吗|么|呢|如何|怎么样|怎样))(?:[？?。!！]*)$/i;
 const taskLeadPattern = /^(?:请(?!问)|麻烦(?!问)|帮我|给我|给我们|替我|为我|我想(?:要|让你|生成|制作|创建|写|改写|润色|总结|翻译|分析|描述|搜索|打开|执行)|我(?:要|需要)(?!了解|知道|确认|咨询|问|弄清楚)|需要你|直接|开始|继续|再来|按照刚才|基于这个|把它|将其)/i;
 const taskVerbPattern = /(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|安装|接入|连接|导入|生图|出图)/i;
 const questionShapePattern = /^(?:为什么|怎么(?:做|办)|如何|什么是|是什么|能否|能不能|是否|可以吗|支持吗|请问|告诉我|解释一下|分析一下|比较一下|建议一下|你觉得).*[？?]?$|[？?]$/i;
+// A perspective question can be a creative execution request: its grammar is
+// interrogative, but it asks the assistant to perform a voice or viewpoint.
+// Keep this speech-act rule in the shared intent boundary so Skill and web
+// routing do not grow separate keyword exceptions.
+const creativeSimulationPattern = /^(?:(?:如果|假如|倘若|要是).{0,96}(?:会怎么说|会如何说|会怎样说|会怎么写|会如何评论|会怎样评论|会如何回应|会怎么看|会如何看).{0,48}|.{0,96}(?:会怎么说|会如何说|会怎样说|会怎么写|会如何评论|会怎样评论|会如何回应|会怎么看|会如何看).{0,48})[？?]?$/i;
 
 /**
  * Capability questions are a speech act, not an execution request. Keep the
@@ -120,6 +133,7 @@ export function inferAgentRequestMode(input: string): AgentRequestMode {
   // “你能帮我打开网页吗？” must not become a browser command. An imperative
   // lead such as “请帮我打开网页，可以吗？” is the explicit exception.
   if (capabilityQuestion) return 'ask';
+  if (creativeSimulationPattern.test(text)) return 'execute';
   if (genericQuestion && !explicitTask && !taskLeadPattern.test(text)) return 'ask';
 
   if (explicitTask) return 'execute';
@@ -133,7 +147,8 @@ function clean(value: unknown) {
 
 /** Shared visual-edit signal for UI routing and server capability selection. */
 export function isImageEditRequest(input: string) {
-  return imageEditPattern.test(clean(input));
+  const text = clean(input);
+  return imageEditPattern.test(text) || colloquialImageEditPattern.test(text);
 }
 
 function latestMessageWithImages(messages: AgentIntentMessage[]) {
@@ -344,9 +359,16 @@ export function parseSemanticIntent(content: unknown): AgentIntentDecision | nul
     const parsed = JSON.parse(content.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')) as Record<string, unknown>;
     if (!['IMAGE', 'TEXT', 'BOTH', 'CLARIFY', 'OTHER'].includes(String(parsed.deliverable))) return null;
     if (parsed.confidence !== 'high') return null;
-    const mode = ['execute', 'ask', 'discuss', 'follow_up', 'unknown'].includes(String(parsed.mode))
-      ? String(parsed.mode) as AgentRequestMode
-      : (parsed.deliverable === 'OTHER' || parsed.deliverable === 'CLARIFY' ? 'unknown' : 'execute');
+    // A missing mode is tolerated for backwards-compatible classifier output,
+    // but an explicitly invalid mode is rejected. Never turn malformed model
+    // output into an execution authorization.
+    const rawMode = parsed.mode;
+    const mode = rawMode === undefined
+      ? (parsed.deliverable === 'OTHER' || parsed.deliverable === 'CLARIFY' ? 'unknown' : 'execute')
+      : ['execute', 'ask', 'discuss', 'follow_up', 'unknown'].includes(String(rawMode))
+        ? String(rawMode) as AgentRequestMode
+        : null;
+    if (!mode) return null;
     return result(parsed.deliverable as AgentDeliverable, String(parsed.reason || '结合当前对话理解用户要求。').slice(0, 240), 'high', ['上下文语义判断'], mode);
   } catch { return null; }
 }

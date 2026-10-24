@@ -49,10 +49,24 @@ test("server lifecycle expires stale records without terminating the local servi
 
 test("health and official launchers expose the intended lifecycle modes", () => {
   assert.match(health, /lifecycleEnabled: process\.env\.SANMAO_LIFECYCLE === '1'/);
+  assert.match(health, /version: identity\.version/);
+  assert.match(health, /buildId: identity\.buildId/);
   assert.match(windowsLauncher, /if \(\$Lan\.IsPresent\) \{[\s\S]*Remove-Item Env:SANMAO_LIFECYCLE/);
   assert.match(windowsLauncher, /else \{[\s\S]*\$env:SANMAO_LIFECYCLE = '1'/);
   assert.match(macLauncher, /export SANMAO_LIFECYCLE=1/);
   assert.match(linuxLauncher, /export SANMAO_LIFECYCLE=1/);
+});
+
+test("official launchers keep one browser origin and reject build identity drift", () => {
+  assert.match(windowsLauncher, /Find-ExistingServer[\s\S]*\$port = \$portStart/);
+  assert.match(windowsLauncher, /Test-SanmaoServerIdentityStale/);
+  assert.match(windowsLauncher, /固定端口 \$port 已被占用/);
+  assert.match(windowsLauncher, /SANMAO_BUILD_ID/);
+  assert.match(macLauncher, /server_identity_current/);
+  assert.match(macLauncher, /固定端口 \$PORT 已被占用/);
+  assert.match(macLauncher, /SANMAO_BUILD_ID=/);
+  assert.match(linuxLauncher, /SANMAO_BUILD_ID=/);
+  assert.match(lanLauncher, /\$data\.buildId -eq \$expectedBuildId/);
 });
 
 test("Windows launcher waits for fresh production-build artifacts", () => {

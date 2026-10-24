@@ -49,6 +49,33 @@ test('Agent planning boundary produces a stable execution plan without transport
   assert.equal(plan.webMode, 'off');
 });
 
+test('Agent planning carries a public video URL into a short download follow-up', () => {
+  const { planAgentRequest } = load('./packages/agent-core/request-planning');
+  const planningPorts = {
+    ...load('./lib/agent-web'),
+    ...load('./lib/agent-intent'),
+    ...load('./lib/agent-context'),
+    ...load('./lib/agent-routing'),
+    ...load('./lib/creative-references'),
+  };
+  const plan = planAgentRequest({
+    body: { webMode: 'off' },
+    messages: [
+      { role: 'user', content: 'https://www.youtube.com/watch?v=example123' },
+      { role: 'assistant', content: '我收到这个链接了。' },
+      { role: 'user', content: '下载' },
+    ],
+    isCanvasSource: false,
+    isCanvasNodeExecution: false,
+    canvasTargetNodeIds: [],
+    canvasTargetKind: 'none',
+    canvasTargetOperation: 'generate',
+    ports: planningPorts,
+  });
+  assert.match(plan.latestInstruction, /下载\s+https:\/\/www\.youtube\.com\/watch\?v=example123/);
+  assert.equal(plan.modelContextMessages.at(-1).content, plan.latestInstruction);
+});
+
 test('Agent execution boundary owns bounded skill and artifact follow-ups', async () => {
   const { runCapabilityFollowups } = load('./apps/api/agent-execution');
   const messages = [{ role: 'user', content: 'prepare delivery' }];
@@ -81,6 +108,38 @@ test('Agent execution boundary owns bounded skill and artifact follow-ups', asyn
   assert.equal(result.artifactText, 'follow-up complete');
   assert.deepEqual(calls.map((call) => call.function.name), ['skill_read', 'archive_generate']);
   assert.equal(result.trace.length, 2);
+});
+
+test('Skill follow-up rejects a tool that was not offered without executing it', async () => {
+  const { runCapabilityFollowups } = load('./apps/api/agent-execution');
+  const executed = [];
+  const toolRuntime = {
+    async runLoop(options) {
+      const reply = await options.callModel({ step: 0, messages: options.messages });
+      const requested = Array.isArray(reply?.tool_calls) ? reply.tool_calls : [];
+      const results = await options.runCalls(requested, { step: 0 });
+      assert.match(String(results[0]?.content || ''), /只允许调用当前下发的工具/);
+      return { text: '根据技能正文完成回答。', trace: [{ step: 0, calls: ['file_generate'], durationMs: 1, continued: false }] };
+    },
+    async executeCalls(calls) { executed.push(...calls); return { results: [], deferredCalls: [], stalled: false }; },
+  };
+  const result = await runCapabilityFollowups({
+    messages: [{ role: 'user', content: '写段离职申请' }],
+    contextMaxChars: 4000,
+    signal: new AbortController().signal,
+    toolRuntime,
+    callModel: async () => ({ tool_calls: [{ id: 'file-1', function: { name: 'file_generate', arguments: '{}' } }] }),
+    skillTools: [{ function: { name: 'skill_read' } }],
+    artifactTools: [],
+    skillToolCalls: 1,
+    artifactRequested: false,
+    initialToolCalls: [{ id: 'skill-1', function: { name: 'skill_read' } }],
+    hasGenerated: false,
+    hasGeneratedFiles: false,
+    hasWebSearch: false,
+  });
+  assert.equal(result.skillText, '根据技能正文完成回答。');
+  assert.deepEqual(executed, []);
 });
 
 test('Agent execution boundary owns MCP continuation lifecycle', async () => {
@@ -287,6 +346,50 @@ test('Provider streaming deadline preserves response status and bounds idle chun
   assert.equal(response.status, 207);
   assert.equal(response.headers.get('x-provider'), 'test');
   assert.equal(await response.text(), 'firstsecond');
+});
+
+test('Provider streaming continues across long pauses when the application disables the idle deadline', async () => {
+  const { withProviderResponseDeadline } = load('./packages/model-runtime/invocation');
+  const body = new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('first')); },
+    async pull(controller) {
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      controller.enqueue(new TextEncoder().encode('second'));
+      controller.close();
+    },
+  });
+  const response = await withProviderResponseDeadline({
+    signal: new AbortController().signal,
+    timeoutMs: 10,
+    idleTimeoutMs: null,
+    operation: async () => new Response(body, { status: 200 }),
+    timeoutError: (phase, timeoutMs) => new Error(`${phase}:${timeoutMs}`),
+  });
+  assert.equal(await response.text(), 'firstsecond');
+});
+
+test('Provider streaming remains cancellable by the caller when the idle deadline is disabled', async () => {
+  const { withProviderResponseDeadline } = load('./packages/model-runtime/invocation');
+  const request = new AbortController();
+  let upstreamCancelled = false;
+  const body = new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('first')); },
+    pull() { return new Promise(() => {}); },
+    cancel() { upstreamCancelled = true; },
+  });
+  const response = await withProviderResponseDeadline({
+    signal: request.signal,
+    timeoutMs: 100,
+    idleTimeoutMs: null,
+    operation: async () => new Response(body, { status: 200 }),
+    timeoutError: (phase, timeoutMs) => new Error(`${phase}:${timeoutMs}`),
+  });
+  const reader = response.body.getReader();
+  await reader.read();
+  const pending = reader.read();
+  request.abort(new Error('AGENT_CANCELLED'));
+  assert.equal((await pending).done, true);
+  assert.equal(upstreamCancelled, true);
 });
 
 test('Provider streaming deadline rejects when the first chunk never arrives', async () => {

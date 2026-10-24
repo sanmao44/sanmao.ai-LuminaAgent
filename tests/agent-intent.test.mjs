@@ -20,6 +20,16 @@ test('routes explicit visual requests to an image deliverable', () => {
   assert.notEqual(intent.classifyAgentDeliverable('怎么画只猫').deliverable, 'IMAGE');
 });
 
+test('treats perspective and role-voice questions as creative execution', () => {
+  for (const input of [
+    '如果鲁迅能抽上电子烟他会怎么说',
+    '鲁迅看到这张图会怎么说？',
+    '鲁迅会如何评论这件事',
+  ]) {
+    assert.equal(intent.inferAgentRequestMode(input), 'execute', input);
+  }
+});
+
 test('routes batch image commands to image delivery', () => {
   for (const input of ['套图', '详情图', '批量生图', '生成一套商品详情图']) {
     assert.equal(intent.classifyAgentDeliverable(input).deliverable, 'IMAGE', input);
@@ -42,6 +52,14 @@ test('uses request mode as a cross-feature safety gate', () => {
   assert.equal(intent.inferAgentRequestMode('帮我生成一张猫的图片，可以吗？'), 'execute');
   assert.equal(intent.inferAgentRequestMode('请做一个产品介绍 PPT'), 'execute');
   assert.equal(intent.inferAgentRequestMode('请分析一下这个方案'), 'execute');
+});
+
+test('recognizes current product capability questions without treating freshness as execution', () => {
+  for (const input of ['你目前PPT创作能力如何？', '你现在能生成PPT吗？', 'PPT能做什么？']) {
+    const decision = intent.classifyAgentDeliverable(input);
+    assert.equal(decision.mode, 'ask', input);
+    assert.equal(decision.deliverable, 'OTHER', input);
+  }
 });
 
 test('does not execute a capability mentioned inside status or complaint text', () => {
@@ -79,6 +97,7 @@ test('real conversation scene commands generate images while commentary remains 
   assert.equal(intent.parseSemanticIntent('{"deliverable":"IMAGE","confidence":"high"}')?.deliverable, 'IMAGE');
   assert.equal(intent.parseSemanticIntent('{"mode":"ask","deliverable":"IMAGE","confidence":"high"}')?.mode, 'ask');
   assert.equal(intent.parseSemanticIntent('{"mode":"ask","deliverable":"IMAGE","confidence":"high"}')?.deliverable, 'IMAGE');
+  assert.equal(intent.parseSemanticIntent('{"mode":"malicious","deliverable":"IMAGE","confidence":"high"}'), null);
 });
 
 test('routes prompt and copy requests to text without being fooled by visual nouns', () => {
@@ -99,7 +118,7 @@ test('keeps image description requests as text when a reference image is attache
 });
 
 test('routes an explicit edit of an attached reference to image editing', () => {
-  for (const input of ['把背景换成黑色', '优化构图', '去掉画面中的文字', '把牛变成马', '把背景变为夜晚', '把人物改为机器人', '把主体替换为白马']) {
+  for (const input of ['把背景换成黑色', '优化构图', '去掉画面中的文字', '把牛变成马', '把背景变为夜晚', '把人物改为机器人', '把主体替换为白马', '换个美女角色，换个色调']) {
     assert.equal(intent.classifyAgentDeliverable(input, { hasReferences: true }).deliverable, 'IMAGE', input);
     assert.equal(intent.resolveCreativeRoute(input, { hasReferences: true }).operation, 'edit', input);
   }

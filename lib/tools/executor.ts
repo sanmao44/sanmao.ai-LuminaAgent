@@ -8,12 +8,13 @@
  */
 import type { ToolDefinition, ToolTag } from './registry';
 
-export type ToolExecutionKind = 'web' | 'file' | 'artifact' | 'image' | 'skill' | 'tabbit' | 'mcp' | 'mcp-manage' | 'canvas';
+export type ToolExecutionKind = 'web' | 'file' | 'video-download' | 'artifact' | 'image' | 'skill' | 'tabbit' | 'mcp' | 'mcp-manage' | 'canvas';
 
 /** 一个工具只归入第一类命中的标签；archive_generate 带 artifact + archive，复用 artifact 分支。 */
 const KIND_BY_TAG: ReadonlyArray<readonly [ToolTag, ToolExecutionKind]> = [
   ['web', 'web'],
   ['file', 'file'],
+  ['video', 'video-download'],
   ['artifact', 'artifact'],
   ['image', 'image'],
   ['skill', 'skill'],

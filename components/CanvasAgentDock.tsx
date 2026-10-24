@@ -22,6 +22,7 @@ import {
   CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES,
   CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE,
   CANVAS_AGENT_DOCK_MAX_REFERENCES,
+  canvasAgentDockHasVisualReferences,
   canvasAgentDockAcceptsImages,
   canvasAgentDockRequestsPreviousImageApply,
   composeCanvasAgentDockMessage,
@@ -36,6 +37,7 @@ import {
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import {
   createCanvasAgentRunContext,
+  canvasAgentImageCapability,
   canvasAgentTargetOperation,
   normalizeCanvasAgentRunContext,
   type CanvasAgentRunContext,
@@ -126,7 +128,7 @@ type Props = {
   selectedNodeIds?: string[];
   context: WorkspaceContext;
   canvasDocument: CanvasDocument;
-  onApplyCanvasPatch: (patch: CanvasPatch) => CanvasAgentDockPlanResult;
+  onApplyCanvasPatch: (patch: CanvasPatch, runContext?: CanvasAgentRunContext) => CanvasAgentDockPlanResult;
   /* 画布上真实的选中数量：芯片只渲染前几个，头部要报完整数字。 */
   selectedTotal?: number;
   contextBlock: string;
@@ -769,9 +771,15 @@ export default function CanvasAgentDock({
   );
   const liveCreativeRoute = useMemo(() => resolveCreativeRoute(input, {
     messages: messages.map((message) => ({ role: message.role, content: message.content, images: message.images })),
-    hasReferences: orderedReferences.length > 0 || draftImages.length > 0,
-  }), [draftImages.length, input, messages, orderedReferences.length]);
-  const liveCreativeCapability = liveCreativeRoute.operation === "edit" ? "edit" : "generate";
+    hasReferences: canvasAgentDockHasVisualReferences(orderedReferences) || draftImages.length > 0,
+  }), [draftImages.length, input, messages, orderedReferences]);
+  const hasSelectedCanvasImageReference = orderedReferences.some((reference) =>
+    reference.kind === "image" && orderedSelectedNodeIds.includes(reference.nodeId || reference.id),
+  );
+  const liveCreativeCapability = canvasAgentImageCapability(
+    liveCreativeRoute.operation === "edit" ? "edit" : "generate",
+    hasSelectedCanvasImageReference,
+  );
   const availableCreativeModels = useMemo(
     () => filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
       kind: "image",
@@ -1080,9 +1088,15 @@ export default function CanvasAgentDock({
         : messages;
       const creativeRoute = resolveCreativeRoute(promptText, {
         messages: base.map((message) => ({ role: message.role, content: message.content, images: message.images })),
-        hasReferences: turnReferences.length > 0,
+        hasReferences: canvasAgentDockHasVisualReferences(turnReferences),
       });
-      const creativeModelCapability = creativeRoute.operation === "edit" ? "edit" : "generate";
+      const hasSelectedImageReferences = turnNodeReferences.some((reference) =>
+        reference.kind === "image" && turnNodeIds.includes(reference.nodeId || reference.id),
+      );
+      const creativeModelCapability = canvasAgentImageCapability(
+        creativeRoute.operation === "edit" ? "edit" : "generate",
+        hasSelectedImageReferences,
+      );
       const selectedCreativeModel = imageModelId !== "auto"
         && filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
           kind: "image",
@@ -1271,7 +1285,7 @@ export default function CanvasAgentDock({
             canvasTarget: {
               nodeIds: [...runContext.targetNodeIds],
               kind: runContext.targetKind,
-              operation: runContext.operation,
+              operation: runContext.targetOperation,
             },
             references: [...turnReferences],
             signal: controller.signal,
@@ -1340,7 +1354,7 @@ export default function CanvasAgentDock({
               : {}),
             ...(plan ? { plan: { ...plan, ...(appliedImageIds.length ? { applied: true } : {}) } } : {}),
             ...(appliedImageIds.length ? { imageNodeIds: appliedImageIds } : {}),
-            ...(images.length || plan ? { runContext } : {}),
+            runContext,
             ...(approval ? { approval } : {}),
             ...(mcpTools.length ? { mcpTools } : {}),
             ...(files.length ? { files } : {}),
@@ -1348,7 +1362,7 @@ export default function CanvasAgentDock({
           },
         ]);
         if (canvasPatch && autoApply) {
-          const applied = onApplyCanvasPatch(canvasPatch);
+          const applied = onApplyCanvasPatch(canvasPatch, runContext);
           if (applied.error) {
             notify(`画布 Patch 未应用：${applied.error}`, "error");
           } else {
@@ -1357,9 +1371,9 @@ export default function CanvasAgentDock({
               : message));
           }
         }
-        if (autoApply && (canvasAgentDockShouldAutoApplyText(text)
-          || (runContext.operation === "edit" && runContext.targetKind === "text"))) {
-          const appliedIds = onApplyText(content, { prompt: mentionText, runContext });
+        if (autoApply && canvasAgentDockShouldAutoApplyText(text)) {
+          // 文案优化只留在面板；明确要求保存时也创建新节点，绝不覆盖引用的原节点。
+          const appliedIds = onApplyText(content, { prompt: mentionText });
           if (appliedIds.length) {
             setMessages((value) =>
               value.map((message) => (message.id === assistantMessageId ? { ...message, textNodeId: appliedIds[0] } : message)),
@@ -2050,7 +2064,7 @@ export default function CanvasAgentDock({
                 {!message.canvasPatchApplied ? (
                   <div className="canvas-agent-dock-plan-actions">
                     <button type="button" className="primary" onClick={() => {
-                      const result = onApplyCanvasPatch(message.canvasPatch!);
+                      const result = onApplyCanvasPatch(message.canvasPatch!, message.runContext);
                       setMessages((value) => value.map((item) => item.id === message.id
                         ? result.error
                           ? { ...item, error: result.error }

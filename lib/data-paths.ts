@@ -26,6 +26,7 @@ type DataProfileEnv = {
   SANMAO_INSTALL_MODE?: string;
   SANMAO_INSTALLED?: string;
   LOCALAPPDATA?: string;
+  XDG_DATA_HOME?: string;
 };
 
 function absolutePath(root: string, value: string) {
@@ -38,11 +39,12 @@ function isEnabled(value: unknown) {
 
 function installedDataDir(env: DataProfileEnv) {
   const localAppData = String(env.LOCALAPPDATA || '').trim();
-  if (localAppData) return path.join(localAppData, 'SANMAO.AI');
+  if (process.platform === 'win32' && localAppData) return path.join(localAppData, 'SANMAO.AI');
   let home = '';
   try { home = os.homedir(); } catch {}
   if (process.platform === 'win32' && home) return path.join(home, 'AppData', 'Local', 'SANMAO.AI');
-  return path.join(home || path.resolve('.'), '.local', 'share', 'SANMAO.AI');
+  const xdgDataHome = String(env.XDG_DATA_HOME || '').trim();
+  return path.join(xdgDataHome || path.join(home || path.resolve('.'), '.local', 'share'), 'SANMAO.AI');
 }
 
 function findGitEntry(start: string) {

@@ -33,6 +33,20 @@ export type CanvasAgentDockReference = {
   mimeType?: string;
 };
 
+/** 文本节点是文案上下文，不是图片编辑的视觉参考。 */
+export function canvasAgentDockHasVisualReferences(references: readonly CanvasAgentDockReference[]) {
+  return references.some((reference) => reference.kind === "image" || reference.kind === "video");
+}
+
+/** 选段操作只能把文本节点作为连线锚点；其他节点仍允许创建独立分支。 */
+export function canvasAgentDockPromptAnchor(
+  selectedSingle: CanvasNode | null | undefined,
+  selectedNodes: readonly CanvasNode[],
+) {
+  if (selectedSingle?.type === "prompt") return selectedSingle;
+  return selectedNodes.find((node) => node.type === "prompt") || null;
+}
+
 export type CanvasAgentDockChip = {
   id: string;
   label: string;
@@ -310,6 +324,27 @@ function canvasAgentDockLayoutRequested(input: string) {
   );
 }
 
+/** Copy editing may mention typography, but it is not a spatial canvas command. */
+function canvasAgentDockTextEditingRequested(input: string) {
+  const text = String(input || "").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  const copyTarget = /(?:文案|文字|文本|提示词|标题|段落|句子|内容)/.test(text);
+  const copyAction = /(?:优化|润色|改写|修改|改善|精简|扩写|重写|表达|语气|语法|排版)/.test(text);
+  const explicitSpatialLayout = /(?:网格|宫格|横向(?:排列|整理|布局)?|纵向(?:排列|整理|布局)?|水平(?:排列|整理|布局)?|垂直(?:排列|整理|布局)?|重新排列|排列节点|整理节点|整理画布|对齐|均匀分布|等距分布|连线|成组|分组|复制为分支)/.test(text);
+  return copyTarget && copyAction && !explicitSpatialLayout;
+}
+
+/**
+ * Layout words also describe the visual design of a generated image or the
+ * typography of a text answer. They become a local canvas mutation only when
+ * the user explicitly names the canvas, nodes, selection, or an @ reference.
+ */
+function canvasAgentDockExplicitLayoutTarget(input: string) {
+  return /(?:画布|画板|节点|选中(?:的)?(?:节点|对象|内容)?|所选(?:节点|对象)?|这些节点|它们|当前(?:选中|卡片)|(?:全部|所有)(?:节点|对象)|整张画布|整个画布|@\d+)/.test(
+    String(input || ""),
+  );
+}
+
 function canvasAgentDockSelectionCommand(input: string): CanvasAgentDockSelectionCommand | null {
   const text = String(input || "").replace(/\s+/g, " ").trim();
   if (!text) return null;
@@ -370,7 +405,7 @@ export function buildCanvasAgentDockPlan(input: string, options: {
 } = {}): CanvasAgentDockPlan | null {
   const text = String(input || "").replace(/\s+/g, " ").trim();
   if (!text) return null;
-  const layoutRequested = canvasAgentDockLayoutRequested(text);
+  const layoutRequested = !canvasAgentDockTextEditingRequested(text) && canvasAgentDockLayoutRequested(text);
   const imageCount = Math.max(0, Math.floor(Number(options.imageCount || 0)));
   const batchRequested = imageCount > 1 && /(?:批量|多张|多个|几张|版本|变体|方案|批次|一起)/.test(text);
   const connectRequested = /(?:连线|连接|接到|接入|关联|串起来|建立关系)/.test(text);
@@ -383,6 +418,7 @@ export function buildCanvasAgentDockPlan(input: string, options: {
   const direct = canvasAgentDockDirectExecution(text);
   const selectionCommand = canvasAgentDockSelectionCommand(text);
   const minimumTargetCount = selectionCommand === "duplicate-selection" ? 1 : 2;
+  const explicitLayoutTarget = canvasAgentDockExplicitLayoutTarget(text);
 
   if (selectionCommand && requestedNodeIds?.length && requestedNodeIds.length >= minimumTargetCount) {
     const commandLabel = canvasAgentDockSelectionCommandLabel(selectionCommand);
@@ -423,7 +459,7 @@ export function buildCanvasAgentDockPlan(input: string, options: {
     };
   }
 
-  if (layoutRequested && (hasSelection || /(?:全部|所有|整张画布|整个画布)/.test(text))) {
+  if (layoutRequested && explicitLayoutTarget && (hasSelection || /(?:全部|所有|整张画布|整个画布)/.test(text))) {
     const layout = canvasAgentDockLayout(text);
     const targetCount = requestedNodeIds?.length || options.selectedTotal || 0;
     const targetLabel = mentionedNodeIds?.length

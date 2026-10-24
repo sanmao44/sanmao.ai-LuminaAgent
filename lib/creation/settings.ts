@@ -661,3 +661,7 @@ export function resolveAvailableCreationModel(
     ? { model: selected }
     : { model: candidates[0] || null, unavailableModelId: settings.model };
 }
+
+export function imageModelIdForRequest(settings: ImageCreationSettings) {
+  return settings.model === "auto" ? "auto" : settings.model;
+}

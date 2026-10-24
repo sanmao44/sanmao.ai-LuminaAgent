@@ -58,6 +58,7 @@ test("video clips stay ordinary media nodes and open the lightweight trimmer", (
   assert.match(canvas, /else if \(node\.type === "media" && node\.data\.kind === "video" && node\.data\.url\) onOpenVideoClip\(\)/);
   assert.match(canvas, /id: "trim-video"/);
   assert.match(canvas, /<CanvasVideoClipWorkbench/);
+  assert.match(canvas, /onCaptureFrame=\{captureVideoFrame\}/);
 });
 
 test("trimmer keeps playback local and has Chinese trim, preview, and create controls", () => {
@@ -72,12 +73,17 @@ test("trimmer keeps playback local and has Chinese trim, preview, and create con
   assert.match(workbench, /填满裁切/);
   assert.match(workbench, /canvas-video-clip-close/);
   assert.match(workbench, /canvas-video-clip-mute-toggle/);
+  assert.match(workbench, /captureCurrentFrame/);
+  assert.match(workbench, /onCaptureFrame/);
+  assert.match(workbench, /截取当前帧/);
   assert.match(workbench, /beginTimelineScrub/);
   assert.match(workbench, /scrubTimeline/);
   assert.match(workbench, /setPointerCapture/);
   assert.match(workbench, /onPointerMove=\{scrubTimeline\}/);
   assert.doesNotMatch(workbench, /fit-height|fit-width/);
   assert.match(workbench, /event\.key === "Escape"/);
+  assert.doesNotMatch(workbench, /event\.target === event\.currentTarget\) onClose/);
+  assert.match(workbench, /onClick=\{\(event\) => event\.stopPropagation\(\)\}/);
 });
 
 test("timeline supports pointer capture for live scrubbing", () => {

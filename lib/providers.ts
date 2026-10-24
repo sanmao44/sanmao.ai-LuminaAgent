@@ -1,4 +1,6 @@
 import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderTextProtocol, ProviderType } from './types';
+import type { ModelProviderFailure } from '@/packages/contracts/model';
+import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';
 import type { ImageDownloadAuth } from './image-storage';
 import { inferNativeSearch } from './native-search-detection';
 import { inferModelKind } from './model-kind';
@@ -36,6 +38,7 @@ export type RuntimeProvider = {
   jimengCliPollSeconds?: number;
   authHeader?: string;
   authPrefix?: string;
+  imageStoragePath?: string;
 };
 
 export type DiscoveredModel = {
@@ -75,8 +78,9 @@ export async function prepareProviderChatMessages<T extends { content: unknown }
   options: { prepareDataUrls?: boolean } = { prepareDataUrls: true },
 ) {
   return Promise.all(messages.map(async (message) => {
-    if (!Array.isArray(message.content)) return message;
-    const content = await Promise.all(message.content.map(async (part: any) => {
+    const normalizedMessage = normalizeProviderToolCalls(message);
+    if (!Array.isArray(normalizedMessage.content)) return normalizedMessage;
+    const content = await Promise.all(normalizedMessage.content.map(async (part: any) => {
       if (part?.type === 'image_url' && typeof part?.image_url?.url === 'string') {
         const value = String(part.image_url.url).trim();
         const url = !value || (/^https?:\/\//i.test(value) && !isLocalProviderMediaUrl(value))
@@ -95,8 +99,40 @@ export async function prepareProviderChatMessages<T extends { content: unknown }
       }
       return part;
     }));
-    return { ...message, content };
+    return { ...normalizedMessage, content };
   }));
+}
+
+/**
+ * Keep assistant tool calls provider-valid when an OpenAI-compatible model
+ * omits fields that are optional in its response but required in the next
+ * request. Several gateways return a function call without `type`; replaying
+ * it verbatim makes the follow-up fail with `messages[2]: missing field type`.
+ */
+function normalizeProviderToolCalls<T extends { content: unknown }>(message: T): T {
+  const role = (message as { role?: unknown }).role;
+  const rawToolCalls = (message as { tool_calls?: unknown }).tool_calls;
+  if (role !== 'assistant' || !Array.isArray(rawToolCalls)) return message;
+  const toolCalls = rawToolCalls.map((rawCall) => {
+    if (!rawCall || typeof rawCall !== 'object' || Array.isArray(rawCall)) return rawCall;
+    const call = rawCall as Record<string, unknown>;
+    const rawFunction = call.function;
+    if (!rawFunction || typeof rawFunction !== 'object' || Array.isArray(rawFunction)) return rawCall;
+    const functionValue = rawFunction as Record<string, unknown>;
+    const rawArguments = functionValue.arguments;
+    const serializedArguments = typeof rawArguments === 'string'
+      ? rawArguments
+      : JSON.stringify(rawArguments && typeof rawArguments === 'object' && !Array.isArray(rawArguments) ? rawArguments : {});
+    return {
+      ...call,
+      type: 'function',
+      function: {
+        ...functionValue,
+        arguments: serializedArguments,
+      },
+    };
+  });
+  return { ...message, tool_calls: toolCalls } as T;
 }
 
 function jimengCommand(explicit?: string) {
@@ -144,15 +180,11 @@ const providerResponseMeta = Symbol('providerResponseMeta');
 type ProviderResponseMeta = {
   contentType: string;
   byteLength: number;
+  status?: number;
   requestId?: string;
 };
 
-type ProviderFailureKind = 'http' | 'transport' | 'timeout';
-type ProviderFailure = Error & {
-  providerResponse?: boolean;
-  providerFailureKind?: ProviderFailureKind;
-  status?: number;
-  providerStatus?: number;
+type ProviderFailure = Error & ModelProviderFailure & {
   providerRequestId?: string;
   providerUrl?: string;
   providerMethod?: string;
@@ -292,7 +324,7 @@ async function parseResponse(response: Response) {
   const requestId = requestIdFrom(null, '', response.headers);
   const detectedImageMime = imageMimeFromBytes(bytes);
   if (response.ok && detectedImageMime && bytes.length) {
-    return attachProviderResponseMeta(`data:${detectedImageMime};base64,${Buffer.from(bytes).toString('base64')}`, { contentType, byteLength: bytes.byteLength, requestId });
+    return attachProviderResponseMeta(`data:${detectedImageMime};base64,${Buffer.from(bytes).toString('base64')}`, { contentType, byteLength: bytes.byteLength, status: response.status, requestId });
   }
   const text = Buffer.from(bytes).toString('utf8');
   let data: any = {};
@@ -323,7 +355,7 @@ async function parseResponse(response: Response) {
   if (!response.ok) {
     throw providerResponseError(response.status, data, text, responseRequestId);
   }
-  return attachProviderResponseMeta(data, { contentType, byteLength: bytes.byteLength, requestId: responseRequestId });
+  return attachProviderResponseMeta(data, { contentType, byteLength: bytes.byteLength, status: response.status, requestId: responseRequestId });
 }
 
 function providerResponseError(status: number, data: any, text: string, requestId = '') {
@@ -346,6 +378,7 @@ function providerResponseError(status: number, data: any, text: string, requestI
     status,
     providerStatus: status,
     providerRequestId: requestId,
+    ...(status >= 500 ? { providerPossiblyAccepted: true } : {}),
   });
 }
 
@@ -357,6 +390,18 @@ function combineSignals(signal: AbortSignal | undefined, timeout: number) {
   const abort = () => controller.abort(signal.reason || new Error('请求已取消'));
   if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
   timeoutSignal.addEventListener('abort', () => controller.abort(timeoutSignal.reason), { once: true });
+  return controller.signal;
+}
+
+function combineStreamSignals(signal: AbortSignal, timeoutSignal: AbortSignal) {
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, timeoutSignal]);
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(signal.reason || new Error('AGENT_CANCELLED'));
+  const abortFromTimeout = () => controller.abort(timeoutSignal.reason || new Error('The operation was aborted due to timeout'));
+  if (signal.aborted) abortFromParent();
+  else signal.addEventListener('abort', abortFromParent, { once: true });
+  if (timeoutSignal.aborted) abortFromTimeout();
+  else timeoutSignal.addEventListener('abort', abortFromTimeout, { once: true });
   return controller.signal;
 }
 
@@ -417,6 +462,7 @@ export function canRetryImageRequest(error: unknown) {
   const failure = error as ProviderFailure | null;
   // Retry only an explicit validation/compatibility rejection. Transport errors,
   // timeouts, and 5xx responses may mean the provider already accepted the job.
+  if (failure?.providerAcceptedTask || failure?.providerPossiblyAccepted) return false;
   return failure?.providerFailureKind === 'http' && [400, 415, 422].includes(Number(failure.providerStatus || (failure as any).status));
 }
 
@@ -516,6 +562,140 @@ function isApimartProvider(provider: RuntimeProvider) {
   return provider.platform === 'apimart' || /(^|\.)api\.apimart\.ai$/i.test(new URL(runtimeBaseUrl(provider)).hostname);
 }
 
+const PROVIDER_IMAGE_INPUT_MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * 65535/APIMart image_urls inputs are URL transports: the
+ * upstream service fetches the reference instead of receiving a multipart
+ * file. Keep that contract explicit so a local storage path or an expired
+ * provider URL never reaches the upstream image loader unchecked.
+ */
+function requiresPublicImageInput(provider: RuntimeProvider) {
+  return is65535Provider(provider) || isApimartProvider(provider);
+}
+
+function isStoredImageReference(value: string) {
+  return /^\/?api\/storage\/file\?/i.test(String(value || '').trim());
+}
+
+function imageDataUrlBytes(value: string) {
+  const match = value.match(/^data:([^;,]+)(;base64)?,([\s\S]*)$/i);
+  if (!match || !/^image\//i.test(match[1])) return null;
+  try {
+    const bytes = match[2]
+      ? Buffer.from(match[3], 'base64')
+      : Buffer.from(decodeURIComponent(match[3]), 'utf8');
+    const mime = imageMimeFromBytes(bytes);
+    return mime ? { bytes, mime } : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPrivateImageReferenceUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
+    const host = parsed.hostname.toLowerCase();
+    return parsed.username.length > 0 || parsed.password.length > 0
+      || host === 'localhost' || host === '::1' || host === '0.0.0.0'
+      || host === '169.254.169.254' || /^127\./.test(host)
+      || /^10\./.test(host) || /^192\.168\./.test(host)
+      || /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+      || host.endsWith('.local');
+  } catch {
+    return true;
+  }
+}
+
+function providerImageInputError(detail: string) {
+  const error = new Error(`参考图尚未准备好，图片请求未提交：${detail}`);
+  return decorateProviderFailure(error, { providerFailureKind: 'input', providerStatus: 422, providerResponse: false });
+}
+
+function providerMediaRelayUnavailableError(detail: string) {
+  const error = providerImageInputError(detail);
+  error.providerFailureCode = 'MEDIA_MODEL_INPUT_NOT_SUBMITTED';
+  return error;
+}
+
+async function fetchProviderImageDataUrl(value: string, signal?: AbortSignal) {
+  if (isPrivateImageReferenceUrl(value)) throw providerImageInputError('图片地址不是可安全读取的 HTTPS/HTTP 地址，请重新上传图片。');
+  let response: Response;
+  try {
+    response = await fetch(value, {
+      cache: 'no-store',
+      redirect: 'error',
+      signal: combineSignals(signal, 30_000),
+    });
+  } catch (error) {
+    const detail = error instanceof Error && /timed out|timeout/i.test(error.message)
+      ? '读取图片地址超时，请重新上传图片或检查图片地址。'
+      : '读取图片地址失败，请重新上传图片或检查图片地址。';
+    throw providerImageInputError(detail);
+  }
+  if (!response.ok) throw providerImageInputError(`读取图片地址返回 HTTP ${response.status}，请重新上传图片。`);
+  const declaredLength = Number(response.headers.get('content-length') || 0);
+  if (declaredLength > PROVIDER_IMAGE_INPUT_MAX_BYTES) throw providerImageInputError('图片超过 25 MiB，请先压缩后重试。');
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > PROVIDER_IMAGE_INPUT_MAX_BYTES) throw providerImageInputError('图片超过 25 MiB 或内容为空，请先压缩后重试。');
+  const mime = imageMimeFromBytes(bytes);
+  if (!mime) throw providerImageInputError('地址返回的内容不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片。');
+  return `data:${mime};base64,${bytes.toString('base64')}`;
+}
+
+async function materializeProviderImageInput(provider: RuntimeProvider, value: string, signal?: AbortSignal, depth = 0): Promise<string> {
+  if (depth > 2) throw providerImageInputError('图片引用嵌套层级过深，请重新上传图片。');
+  const raw = String(value || '').trim();
+  if (isStoredImageReference(raw)) {
+    try {
+      const { resolveStoredImageReference } = await import('./image-storage');
+      const storageReference = raw.startsWith('/') ? raw : `/${raw}`;
+      const resolved = await resolveStoredImageReference(storageReference, provider.imageStoragePath);
+      if (resolved === raw) throw new Error('storage reference was not resolved');
+      return materializeProviderImageInput(provider, resolved, signal, depth + 1);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('参考图尚未准备好')) throw error;
+      throw providerImageInputError('本地图片文件已不存在，请重新上传图片。');
+    }
+  }
+  const input = normalizeReference(raw);
+  if (!input) throw providerImageInputError('图片地址为空，请重新上传图片。');
+  if (/^data:/i.test(input)) {
+    if (!requiresPublicImageInput(provider)) return input;
+    const parsed = imageDataUrlBytes(input);
+    if (!parsed || parsed.bytes.length > PROVIDER_IMAGE_INPUT_MAX_BYTES) throw providerImageInputError('内嵌内容不是有效图片或超过 25 MiB，请重新上传图片。');
+    return `data:${parsed.mime};base64,${parsed.bytes.toString('base64')}`;
+  }
+  if (/^https?:\/\//i.test(input)) {
+    if (!requiresPublicImageInput(provider)) return input;
+    return fetchProviderImageDataUrl(input, signal);
+  }
+  throw providerImageInputError('无法识别图片引用，请重新上传图片。');
+}
+
+async function prepareProviderImageInput(provider: RuntimeProvider, value: string, signal?: AbortSignal) {
+  const dataUrl = await materializeProviderImageInput(provider, value, signal);
+  if (!requiresPublicImageInput(provider)) return dataUrl;
+  const signedMedia = await import('./signed-media');
+  try {
+    return await signedMedia.preparePublicMediaUrl(dataUrl, 'image');
+  } catch (error) {
+    if (error instanceof signedMedia.PublicMediaError) {
+      if (error.code === signedMedia.MEDIA_RELAY_REQUIRED || error.code === signedMedia.MEDIA_RELAY_UNAVAILABLE) {
+        throw providerMediaRelayUnavailableError('当前服务商需要可公开访问的图片地址，但应用的媒体中转尚未可用。请稍后重试或在高级设置中配置公网媒体地址。');
+      }
+      throw providerImageInputError(error.message);
+    }
+    if (error instanceof Error && error.message.startsWith('参考图尚未准备好')) throw error;
+    throw providerImageInputError(error instanceof Error ? error.message : '图片尚未准备好，无法提交给当前服务商。');
+  }
+}
+
+async function prepareProviderImageInputs(provider: RuntimeProvider, values: string[], signal?: AbortSignal) {
+  return Promise.all(values.map((value) => prepareProviderImageInput(provider, value, signal)));
+}
+
 /**
  * Some image-model families expose high-fidelity input handling as a fixed
  * default rather than accepting the legacy input_fidelity request field.
@@ -530,6 +710,118 @@ export function shouldSendInputFidelity(provider: Pick<RuntimeProvider, 'name' |
 
 function unwrapProviderData(provider: RuntimeProvider, data: any) {
   return isApimartProvider(provider) && data && typeof data === 'object' && 'data' in data ? data.data : data;
+}
+
+function isJevModelId(rawId: string) {
+  const value = String(rawId || '').trim().toLowerCase();
+  return value === 'jev-1.13' || value.endsWith('/jev-1.13');
+}
+
+function jevSystemOneEndpoint(provider: RuntimeProvider) {
+  // 65535 exposes JEV's System One channel on the international API host.
+  // The mainland chat host advertises the model but does not expose this route.
+  if (is65535Provider(provider)) return 'https://api2.65535.space/v1/systemone';
+  return providerEndpoint(provider, undefined, '/systemone');
+}
+
+function intentState(messages: ChatMessage[]) {
+  return messages.map((message) => {
+    const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content || '');
+    return `${message.role}: ${content}`;
+  }).join('\n');
+}
+
+function choiceValue(answer: IntentChoiceAnswer | undefined) {
+  const value = String(answer?.choice || '').trim().toLowerCase();
+  return value;
+}
+
+function choiceConfidence(answer: IntentChoiceAnswer | undefined) {
+  const value = Number(answer?.confidence);
+  if (Number.isFinite(value)) return value >= 0.8 ? 'high' : 'low';
+  return String(answer?.confidence || '').trim().toLowerCase() === 'high' ? 'high' : 'low';
+}
+
+async function requestJevSystemOne(
+  provider: RuntimeProvider,
+  rawModelId: string,
+  state: string,
+  questions: IntentSystemOneQuestions,
+  signal?: AbortSignal,
+) {
+  if (!isJevModelId(rawModelId)) throw new Error('intent classification requires the JEV model');
+  return await fetchJson(jevSystemOneEndpoint(provider), {
+    method: 'POST',
+    headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: rawModelId, state, questions }),
+  }, 120000, signal) as IntentSystemOneResponse;
+}
+
+function normalizeJevIntentResponse(data: IntentSystemOneResponse, rawModelId: string) {
+  const mode = choiceValue(data.answers?.mode);
+  const deliverable = choiceValue(data.answers?.deliverable);
+  const validMode = ['execute', 'ask', 'discuss', 'follow_up', 'unknown'].includes(mode) ? mode : 'unknown';
+  const validDeliverable = ['image', 'text', 'both', 'clarify', 'other'].includes(deliverable)
+    ? deliverable.toUpperCase()
+    : 'OTHER';
+  const confidence = choiceConfidence(data.answers?.mode) === 'high' && choiceConfidence(data.answers?.deliverable) === 'high' ? 'high' : 'low';
+  const reason = `JEV System One 判定：mode=${validMode}，deliverable=${validDeliverable}`;
+  return {
+    model: String(data.model || rawModelId),
+    choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify({ mode: validMode, deliverable: validDeliverable, confidence, reason }) }, finish_reason: 'stop' }],
+  };
+}
+
+export async function intentClassificationCompletion(provider: RuntimeProvider, rawModelId: string, payload: IntentClassificationPayload, signal?: AbortSignal) {
+  const state = intentState(payload.messages);
+  const data = await requestJevSystemOne(provider, rawModelId, state, {
+    mode: {
+      type: 'choice',
+      instructions: '当前请求模式是什么？',
+      criteria: { execute: '明确要求执行', ask: '提问或需要澄清', discuss: '讨论或咨询', follow_up: '承接上一轮任务', unknown: '无法判断' },
+    },
+    deliverable: {
+      type: 'choice',
+      instructions: '当前请求的主要交付物是什么？',
+      criteria: { image: '需要生成或编辑图片', text: '需要文字、提示词或文案', both: '同时需要图片和文字', clarify: '需要先澄清交付物', other: '普通问答、分析或工具请求' },
+    },
+  }, signal);
+  return normalizeJevIntentResponse(data, rawModelId);
+}
+
+export async function canvasImageIntentCompletion(
+  provider: RuntimeProvider,
+  rawModelId: string,
+  input: { prompt: string; imageReferenceCount: number },
+  signal?: AbortSignal,
+) {
+  const state = JSON.stringify({
+    prompt: input.prompt,
+    connectedImageReferenceCount: input.imageReferenceCount,
+    task: 'Canvas creates a new output node; no input image is mutated in place.',
+  });
+  const data = await requestJevSystemOne(provider, rawModelId, state, {
+    imageOperation: {
+      type: 'choice',
+      instructions: '用户希望如何使用已连接的图片？只判断操作意图，不改写提示词。',
+      criteria: {
+        reference_generate: '把已连接图片作为视觉参考，生成一张新的图片；允许重组、替换主旨或借鉴风格。',
+        edit: '把已连接图片作为要修改的原图，重点是在原有画面基础上增删、替换或修整内容。',
+        unclear: '无法有把握地区分参考生成与基于原图修改。',
+      },
+    },
+  }, signal);
+  const value = choiceValue(data.answers?.imageOperation).replace(/[\s_]+/g, '-');
+  const operation = value === 'reference-generate' || value === 'reference'
+    ? 'reference-generate'
+    : value === 'edit' || value === 'modify'
+      ? 'edit'
+      : undefined;
+  return {
+    operation,
+    confidence: choiceConfidence(data.answers?.imageOperation),
+    model: String(data.model || rawModelId),
+  } as const;
 }
 
 const apimartModelCatalog = [
@@ -864,12 +1156,32 @@ function responseShape(value: any, depth = 0): string {
 export function normalizeProviderImages(data: any): GeneratedImage[] {
   const images = extractImages(data);
   const validImages = images.filter((image) => !/^data:image\//i.test(image.url) || isSupportedImageDataUrl(image.url));
+  const meta = data && typeof data === 'object' ? (data as any)[providerResponseMeta] as ProviderResponseMeta | undefined : undefined;
+  const successfulProviderResponse = Number(meta?.status) >= 200 && Number(meta?.status) < 300;
   if (images.length && !validImages.length) {
-    throw new ProviderImageFormatError('服务商返回了图片字段，但内容不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片。请检查服务商的 image_url/b64_json 响应格式；任务可能已经提交，请先核对服务商后台状态后再重试。');
+    const error = new ProviderImageFormatError('服务商返回了图片字段，但内容不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片。请检查服务商的 image_url/b64_json 响应格式；任务可能已经提交，请先核对服务商后台状态后再重试。');
+    throw decorateProviderFailure(error, {
+      providerResponse: true,
+      providerStatus: meta?.status,
+      status: meta?.status,
+      providerRequestId: meta?.requestId,
+      providerPossiblyAccepted: successfulProviderResponse,
+    });
   }
   if (!images.length) {
-    const meta = data && typeof data === 'object' ? (data as any)[providerResponseMeta] as ProviderResponseMeta | undefined : undefined;
     const typeHint = meta?.contentType ? `，响应类型 ${meta.contentType.split(';', 1)[0]}` : '';
+    if (successfulProviderResponse) {
+      const acceptedMessage = meta?.status === 202
+        ? `服务商已接受图片任务，但没有返回图片或可查询的任务编号${typeHint}。`
+        : `服务商返回了成功响应，但没有找到可显示的图片${typeHint}。`;
+      throw decorateProviderFailure(new Error(`${acceptedMessage}请先核对服务商后台状态，确认后再决定是否重试。`), {
+        providerResponse: true,
+        status: meta?.status,
+        providerStatus: meta?.status,
+        providerRequestId: meta?.requestId,
+        providerPossiblyAccepted: true,
+      });
+    }
     throw new Error(`服务商已返回成功响应，但没有找到可显示的图片${typeHint}。响应结构：${responseShape(data)}。请确认模型支持图片接口，并检查服务商是否返回了 image_url、b64_json、二进制图片或异步任务结果。`);
   }
   return validImages;
@@ -1073,11 +1385,15 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
   throw new Error('图片超分任务等待超时，请稍后到服务商控制台查看任务状态');
 }
 
-export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque'; references?: string[] }, signal?: AbortSignal): Promise<GeneratedImage[]> {
-  const references = (input.references || []).filter((reference) => typeof reference === 'string' && reference.trim()).map(normalizeReference).slice(0, 16);
+export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque'; references?: string[] }, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  const rawReferences = input.references || [];
+  if (rawReferences.some((reference) => typeof reference !== 'string' || !reference.trim())) throw new Error('参考图数据格式无效，请重新添加参考图后再提交。');
+  const references = rawReferences.map(normalizeReference);
+  if (references.length > MAX_IMAGE_REFERENCES) throw new Error(`图片参考最多 ${MAX_IMAGE_REFERENCES} 张，请移除多余参考后再提交。`);
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
   if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
+  const providerReferences = references.length ? await prepareProviderImageInputs(provider, references, signal) : [];
   const body: Record<string, unknown> = {
     model: rawModelId,
     prompt: input.prompt,
@@ -1085,15 +1401,15 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
     size: mapImageRequestSize(provider, rawModelId, input.aspectRatio || '自动', input.width, input.height),
   };
   if (input.quality && input.quality !== '自动') body.quality = input.quality;
-  if (input.resolution && input.aspectRatio === '自动') body.resolution = input.resolution;
-  if (isApimartProvider(provider) && input.resolution && input.resolution !== '自动') body.resolution = String(input.resolution).toLowerCase();
+  if (input.resolution && input.aspectRatio === '自动' && input.sizeMode !== 'custom') body.resolution = input.resolution;
+  if (isApimartProvider(provider) && input.resolution && input.resolution !== '自动' && input.sizeMode !== 'custom') body.resolution = String(input.resolution).toLowerCase();
   if (input.outputFormat) body.output_format = input.outputFormat;
   if (input.background) body.background = input.background;
   if (provider.type === 'google-gemini') body.response_format = 'b64_json';
-  if (references.length) {
-    if (isModelScopeProvider(provider)) body.image_url = references.length === 1 ? references[0] : references;
-    else if (is65535Provider(provider) || isApimartProvider(provider)) body.image_urls = references;
-    else body.images = references.map((image_url) => ({ image_url }));
+  if (providerReferences.length) {
+    if (isModelScopeProvider(provider)) body.image_url = providerReferences.length === 1 ? providerReferences[0] : providerReferences;
+    else if (is65535Provider(provider) || isApimartProvider(provider)) body.image_urls = providerReferences;
+    else body.images = providerReferences.map((image_url) => ({ image_url }));
   }
   const endpoint = providerEndpoint(provider, provider.imageGenerationPath, '/images/generations');
   const request = (payload: Record<string, unknown>) => fetchJson(endpoint, {
@@ -1146,7 +1462,7 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
 }
 
 function normalizeReference(ref: string) {
-  if (/^https?:\/\//i.test(ref) || ref.startsWith('data:image/')) return ref;
+  if (/^https?:\/\//i.test(ref) || isStoredImageReference(ref) || ref.startsWith('data:image/')) return ref;
   return `data:image/png;base64,${ref}`;
 }
 
@@ -1178,7 +1494,7 @@ export function buildImageEditRequestBody(provider: RuntimeProvider, rawModelId:
   if (is65535Provider(provider) || isApimartProvider(provider)) jsonBody.image_urls = references;
   else jsonBody.images = references.map((image_url) => ({ image_url }));
   if (input.quality && input.quality !== '自动') jsonBody.quality = input.quality;
-  if (input.resolution && input.aspectRatio === '自动') jsonBody.resolution = input.resolution;
+  if (input.resolution && input.aspectRatio === '自动' && input.sizeMode !== 'custom') jsonBody.resolution = input.resolution;
   if (input.fidelity && shouldSendInputFidelity(provider, rawModelId)) jsonBody.input_fidelity = input.fidelity;
   if (input.mask) jsonBody.mask = input.mask;
   if (input.outputFormat) jsonBody.output_format = input.outputFormat;
@@ -1186,17 +1502,26 @@ export function buildImageEditRequestBody(provider: RuntimeProvider, rawModelId:
   return jsonBody;
 }
 
-export async function editImage(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, signal?: AbortSignal): Promise<GeneratedImage[]> {
+async function editImageFromProvider(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, signal?: AbortSignal): Promise<GeneratedImage[]> {
   // Agnes can consume the local storage URL through the signed-media bridge;
   // other providers keep the historical data-URL normalization path.
-  const references = (isAgnesProvider(provider) ? input.references : input.references.map(normalizeReference)).slice(0, 16);
+  if (input.references.some((reference) => typeof reference !== 'string' || !reference.trim())) throw new Error('参考图数据格式无效，请重新添加参考图后再提交。');
+  const references = (isAgnesProvider(provider) ? input.references : input.references.map(normalizeReference));
+  if (references.length > MAX_IMAGE_REFERENCES) throw new Error(`图片参考最多 ${MAX_IMAGE_REFERENCES} 张，请移除多余参考后再提交。`);
   if (!references.length) throw new Error('修改图片至少需要一张参考图');
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
+  const providerReferences = await prepareProviderImageInputs(provider, references, signal);
+  const providerMask = input.mask ? await prepareProviderImageInput(provider, input.mask, signal) : undefined;
+  const providerInput = providerMask ? { ...input, mask: providerMask } : input;
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
+  // Gateways occasionally ignore `n` and return more images than requested.
+  // Keep the application contract authoritative: one requested output must
+  // never fan out into multiple Canvas nodes.
+  const limitImages = (images: GeneratedImage[]) => images.slice(0, count);
   const size = mapImageRequestSize(provider, rawModelId, input.aspectRatio || '自动', input.width, input.height);
   const sendInputFidelity = input.fidelity && shouldSendInputFidelity(provider, rawModelId);
-  const jsonBody = buildImageEditRequestBody(provider, rawModelId, input, references, count, size);
+  const jsonBody = buildImageEditRequestBody(provider, rawModelId, providerInput, providerReferences, count, size);
 
   // ModelScope's Qwen-Image-Edit is exposed as an asynchronous image
   // generation task, not through the OpenAI-compatible /images/edits route.
@@ -1209,18 +1534,18 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
       body: JSON.stringify({
         model: rawModelId,
         prompt: input.prompt,
-        image_url: references.length === 1 ? references[0] : references,
+        image_url: providerReferences.length === 1 ? providerReferences[0] : providerReferences,
         ...(size !== 'auto' ? { size } : {}),
         ...(count > 1 ? { n: count } : {}),
       }),
     }, IMAGE_REQUEST_TIMEOUT, signal);
     const images = extractImages(data);
-    if (images.length) return normalizeImages(data);
+    if (images.length) return limitImages(normalizeImages(data));
     if (taskIdFrom(data)) {
-      try { return await waitForImageTask(provider, data, signal); }
+      try { return limitImages(await waitForImageTask(provider, data, signal)); }
       catch (error) { throw acceptedProviderTaskError(error, taskIdFrom(data)); }
     }
-    return normalizeImages(data);
+    return limitImages(normalizeImages(data));
   }
 
   // 新版 Images API 支持 JSON image_url/data URL；优先使用，兼容远程 URL 和多图。
@@ -1228,20 +1553,24 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
     const data = await fetchJson(providerEndpoint(provider, provider.imageEditPath, '/images/edits'), {
       method: 'POST', headers: { ...authHeaders(provider), ...modelScopeImageHeaders(provider), 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody),
     }, IMAGE_REQUEST_TIMEOUT, signal);
-    if (isApimartProvider(provider)) return waitForApimartTask(provider, data, signal);
+    if (isApimartProvider(provider)) return limitImages(await waitForApimartTask(provider, data, signal));
     const images = extractImages(data);
-    if (images.length) return normalizeImages(data);
+    if (images.length) return limitImages(normalizeImages(data));
     if (taskIdFrom(data)) {
-      try { return await waitForImageTask(provider, data, signal); }
+      try { return limitImages(await waitForImageTask(provider, data, signal)); }
       catch (error) { throw acceptedProviderTaskError(error, taskIdFrom(data)); }
     }
-    return normalizeImages(data);
+    return limitImages(normalizeImages(data));
   } catch (jsonError) {
     if (signal?.aborted && !isAcceptedProviderTask(jsonError)) throw signal.reason || jsonError;
     // A successful JSON response with malformed image data is not a request
     // compatibility failure. Falling back to multipart here would submit a
     // second paid job after the provider has already accepted the first one.
     if (jsonError instanceof ProviderImageFormatError) throw jsonError;
+    if (!canRetryImageRequest(jsonError)) throw jsonError;
+    // 65535/APIMart expose image_urls as their input contract. Multipart is
+    // not a compatible fallback and would only hide the actionable JSON error.
+    if (requiresPublicImageInput(provider)) throw jsonError;
     // 一些 OpenAI 兼容中转仍只接受 multipart/form-data，自动回退。
     try {
       const form = new FormData();
@@ -1253,12 +1582,12 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
       if (sendInputFidelity) form.append('input_fidelity', input.fidelity!);
       if (input.outputFormat) form.append('output_format', input.outputFormat);
       if (input.background) form.append('background', input.background);
-      for (let i = 0; i < references.length; i++) {
-        const { blob, filename } = await refToBlob(references[i], i);
+      for (let i = 0; i < providerReferences.length; i++) {
+        const { blob, filename } = await refToBlob(providerReferences[i], i);
         form.append('image', blob, filename);
       }
-      if (input.mask) {
-        const { blob } = await refToBlob(input.mask, 0);
+      if (providerInput.mask) {
+        const { blob } = await refToBlob(providerInput.mask, 0);
         form.append('mask', blob, 'mask.png');
       }
       const response = await fetch(providerEndpoint(provider, provider.imageEditPath, '/images/edits'), {
@@ -1267,10 +1596,10 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
       const data = await parseResponse(response);
       const images = extractImages(data);
       if (!images.length && taskIdFrom(data)) {
-        try { return await waitForImageTask(provider, data, signal); }
+        try { return limitImages(await waitForImageTask(provider, data, signal)); }
         catch (error) { throw acceptedProviderTaskError(error, taskIdFrom(data)); }
       }
-      return normalizeImages(data);
+      return limitImages(normalizeImages(data));
     } catch (multipartError) {
       const a = jsonError instanceof Error ? jsonError.message : 'JSON 编辑接口失败';
       const b = multipartError instanceof Error ? multipartError.message : '表单编辑接口失败';
@@ -1295,6 +1624,12 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
       throw error;
     }
   }
+}
+
+export async function editImage(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  const images = await editImageFromProvider(provider, rawModelId, input, signal);
+  const count = Math.max(1, Math.min(8, Number(input.count || 1)));
+  return images.slice(0, count);
 }
 
 export async function upscaleImage(provider: RuntimeProvider, rawModelId: string, input: { reference: string; size: string; prompt?: string; seed?: number; colorCorrection?: string; resizeMethod?: string }, signal?: AbortSignal): Promise<GeneratedImage[]> {
@@ -1366,6 +1701,33 @@ export type ChatMessage = {
   tool_call_id?: string;
   tool_calls?: any[];
 };
+
+export type IntentClassificationPayload = {
+  messages: ChatMessage[];
+  tools?: unknown[];
+  tool_choice?: 'auto' | 'none';
+};
+
+type IntentChoiceAnswer = {
+  choice?: unknown;
+  confidence?: unknown;
+  probabilities?: Record<string, unknown>;
+};
+
+type IntentSystemOneResponse = {
+  model?: unknown;
+  answers?: {
+    mode?: IntentChoiceAnswer;
+    deliverable?: IntentChoiceAnswer;
+    imageOperation?: IntentChoiceAnswer;
+  };
+};
+
+type IntentSystemOneQuestions = Record<string, {
+  type: 'choice';
+  instructions: string;
+  criteria: Record<string, string>;
+}>;
 
 function agnesUsage(usage: any) {
   if (!usage || typeof usage !== 'object') return undefined;
@@ -1501,14 +1863,22 @@ export async function responsesCompletion(provider: RuntimeProvider, rawModelId:
 }
 
 async function fetchStreamingResponse(url: string, init: RequestInit, timeout: number, signal?: AbortSignal) {
-  // Keep the same cancellation contract as the direct stream path:
-  // signal: combineSignals(signal, 180000)
+  // The transport deadline only covers waiting for response headers. Once the
+  // headers arrive, the response body is governed by the caller's signal and
+  // the Agent stream lifecycle, not by the header timer.
   const method = String(init.method || 'GET').toUpperCase();
+  const parentSignal = signal || init.signal || undefined;
+  const timeoutController = new AbortController();
+  const timeoutError = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  const timeoutId = setTimeout(() => timeoutController.abort(timeoutError), timeout);
+  const requestSignal = parentSignal
+    ? combineStreamSignals(parentSignal, timeoutController.signal)
+    : timeoutController.signal;
   try {
     const response = await fetch(url, {
       ...init,
       cache: 'no-store',
-      signal: combineSignals(signal || init.signal || undefined, timeout),
+      signal: requestSignal,
     });
     if (!response.ok) {
       const text = await response.text();
@@ -1518,14 +1888,19 @@ async function fetchStreamingResponse(url: string, init: RequestInit, timeout: n
     }
     return response;
   } catch (error) {
-    if (signal?.aborted) throw signal.reason || error;
+    if (parentSignal?.aborted) throw parentSignal.reason || error;
+    if (timeoutController.signal.aborted) throw providerTimeoutFailure(url, timeout, method);
     if (error instanceof Error && (error as ProviderFailure).providerResponse) throw error;
     if (error instanceof Error && (error.name === 'TimeoutError' || /timed out/i.test(error.message))) {
       throw providerTimeoutFailure(url, timeout, method);
     }
     throw connectionFailure(url, error, method);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
+
+export { fetchStreamingResponse };
 
 export async function chatCompletionStream(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, signal?: AbortSignal) {
   if (isAgnesProvider(provider) && agnesTextProtocol(provider) !== 'chat-completions') {

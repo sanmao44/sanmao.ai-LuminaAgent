@@ -19,6 +19,11 @@ const fail = (call: ToolCall, error: string): ChatMessage => ({
   content: JSON.stringify({ ok: false, error }),
 });
 
+function isRootSkillDocumentPath(value: string) {
+  const normalized = value.replace(/\\/g, '/').trim().toLowerCase();
+  return normalized === 'skill.md' || normalized === './skill.md';
+}
+
 export async function executeSkillCapability(input: SkillCapabilityInput): Promise<ChatMessage> {
   const { state, call, skillContext, signal, installer, skillPorts } = input;
   if (!skillPorts) return fail(call, '技能运行时未配置。');
@@ -45,7 +50,11 @@ export async function executeSkillCapability(input: SkillCapabilityInput): Promi
         return fail(call, waiting ? `技能“${waiting.name}”还在等待用户确认，确认后才能使用。` : '技能不存在或尚未启用。');
       }
       if (!skill.enabled) return fail(call, `技能“${skill.name}”当前未启用。`);
-      const filePath = typeof args.file === 'string' ? args.file.trim() : '';
+      const requestedFilePath = typeof args.file === 'string' ? args.file.trim() : '';
+      // SKILL.md is the canonical document, not an attachment. Some models
+      // spell out the document name after reading the skill index; normalize
+      // only the root-level canonical path and keep nested paths blocked.
+      const filePath = requestedFilePath && !isRootSkillDocumentPath(requestedFilePath) ? requestedFilePath : '';
       const offsetValue = Math.trunc(Number(args.offset));
       const offset = Number.isFinite(offsetValue) && offsetValue > 0 ? offsetValue : 0;
       const file = filePath ? skillPorts.readSkillFile(skill.id, filePath, { pending: false, offset }) : null;
@@ -65,12 +74,28 @@ export async function executeSkillCapability(input: SkillCapabilityInput): Promi
     if (sourceRef) {
       const githubTarget = /github\.com\//i.test(sourceRef) || !/^[a-z]+:\/\//i.test(sourceRef) ? skillPorts.parseGithubSkillTarget(sourceRef) : null;
       if (githubTarget) {
-        const parsed = await skillPorts.fetchSkillFilesFromGithub(githubTarget, { signal });
-        if (parsed.roots.length > 1) {
-          const list = parsed.candidates.slice(0, 8).map((item) => item.key + (item.name ? `（${item.name}）` : '')).join('、');
-          return fail(call, `这个仓库里有 ${parsed.roots.length} 个技能：${list}。先和用户确认安装哪一个，再用 owner/repo/目录 或 /tree/分支/目录 形式的链接重新安装。`);
+        // Some upstream projects are executable tools rather than Agent Skills
+        // and intentionally do not ship SKILL.md (yt-dlp is one example).
+        // Prefer the reviewed project integration when one exists; only then
+        // fall back to importing a repository-provided Skill document.
+        installed = skillPorts.installBundledSkill?.({
+          owner: githubTarget.owner,
+          repo: githubTarget.repo,
+          dir: githubTarget.dir,
+          sourceUrl: sourceRef,
+          id: args.id,
+          tags: args.tags,
+          installer,
+          pending: !autoApprove,
+        }) || null;
+        if (!installed) {
+          const parsed = await skillPorts.fetchSkillFilesFromGithub(githubTarget, { signal });
+          if (parsed.roots.length > 1) {
+            const list = parsed.candidates.slice(0, 8).map((item) => item.key + (item.name ? `（${item.name}）` : '')).join('、');
+            return fail(call, `这个仓库里有 ${parsed.roots.length} 个技能：${list}。先和用户确认安装哪一个，再用 owner/repo/目录 或 /tree/分支/目录 形式的链接重新安装。`);
+          }
+          installed = skillPorts.installSkillFromDocument({ text: parsed.document, files: parsed.files, id: args.id, tags: args.tags, source: 'github', sourceUrl: sourceRef, sourceDir: githubTarget.dir, installer, pending: !autoApprove });
         }
-        installed = skillPorts.installSkillFromDocument({ text: parsed.document, files: parsed.files, id: args.id, tags: args.tags, source: 'github', sourceUrl: sourceRef, sourceDir: githubTarget.dir, installer, pending: !autoApprove });
       } else {
         const fetched = await skillPorts.fetchSkillText(sourceRef, { signal });
         installed = skillPorts.installSkillFromDocument({ text: fetched.text, id: args.id, tags: args.tags, source: 'url', sourceUrl: fetched.url, installer, pending: !autoApprove });

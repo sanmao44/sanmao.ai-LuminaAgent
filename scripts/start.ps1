@@ -28,7 +28,33 @@ $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $launcherCommonPath = Join-Path $PSScriptRoot 'launcher-common.ps1'
 . $launcherCommonPath
+# A release archive has no .git directory and may be installed under a
+# read-only application folder. Keep its mutable data (including the bundled
+# Node and yt-dlp runtimes) in the per-user data directory automatically;
+# source checkouts retain the historical local .data layout.
+if ([string]::IsNullOrWhiteSpace($env:SANMAO_DATA_DIR) -and
+    [string]::IsNullOrWhiteSpace($env:SANMAO_INSTALL_MODE) -and
+    [string]::IsNullOrWhiteSpace($env:SANMAO_INSTALLED) -and
+    -not (Test-Path -LiteralPath (Join-Path $root '.git'))) {
+  $env:SANMAO_INSTALL_MODE = 'installed'
+}
 $dataDir = Resolve-SanmaoDataDir -Root $root
+
+# Prefer a system Node.js 22.13+, but bootstrap an app-owned runtime when a
+# newly installed computer has no Node.js/PATH yet. The runtime lives under
+# the durable data directory and is never added to the system installation.
+$nodeBootstrap = Join-Path $PSScriptRoot 'ensure-node-runtime.ps1'
+if (Test-Path -LiteralPath $nodeBootstrap -PathType Leaf) {
+  $nodeRuntimeOutput = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $nodeBootstrap -DataDir $dataDir -PrintBin 2>$null)
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error '没有可用的 Node.js，且应用内 Node.js 自动准备失败。请检查网络后重新启动。'
+    exit 1
+  }
+  $nodeBin = [string]($nodeRuntimeOutput | Select-Object -Last 1)
+  if ($nodeBin -and (Test-Path -LiteralPath (Join-Path $nodeBin 'node.exe'))) {
+    $env:PATH = "$nodeBin;$env:PATH"
+  }
+}
 $script:MediaRelayRequired = $false
 $requestedPort = 0
 if ($Port -ge 1024 -and $Port -le 65525) {
@@ -37,6 +63,9 @@ if ($Port -ge 1024 -and $Port -le 65525) {
   $requestedPort = [int]$env:SANMAO_PORT
 }
 $portStart = if ($requestedPort -ge 1024 -and $requestedPort -le 65525) { $requestedPort } else { 3210 }
+# 3210..3220 was the old automatic range. Treat it as a compatibility input
+# only, so restart/update handoffs from an old process return to 3210.
+if ($portStart -ge 3210 -and $portStart -le 3220) { $portStart = 3210 }
 $portEnd = $portStart + 10
 $portRange = $portStart..$portEnd
 $legacyPortRange = 3000..3010
@@ -411,7 +440,7 @@ try {
 } catch {
   Write-SanmaoLauncherLog "恢复更新器入口失败：$($_.Exception.Message)" 'WARN'
 }
-Write-SanmaoLauncherLog "启动器开始运行，根目录：$root，端口范围：$portStart..$portEnd" 'INFO'
+Write-SanmaoLauncherLog "启动器开始运行，根目录：$root，固定端口：$portStart；旧端口清理范围：$portStart..$portEnd" 'INFO'
 
 try {
   $selfProcess = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID) -ErrorAction Stop
@@ -450,6 +479,15 @@ function Test-SanmaoMediaRelayRequired {
 
 $script:MediaRelayRequired = Test-SanmaoMediaRelayRequired
 
+function Get-SanmaoPackageVersion {
+  try {
+    $package = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw -ErrorAction Stop | ConvertFrom-Json
+    return [string]$package.version
+  } catch {
+    return ''
+  }
+}
+
 function Get-SanmaoServerInfo([int]$port) {
   $health = Invoke-SanmaoLocalHttp -Port $port -Path '/api/health' -TimeoutMs 1000
   if (-not $health.Ok -or $health.StatusCode -lt 200 -or $health.StatusCode -ge 500) { return $null }
@@ -466,11 +504,22 @@ function Get-SanmaoServerInfo([int]$port) {
     }
     return [pscustomobject]@{
       Port = $port
+      Version = [string]$data.version
+      BuildId = [string]$data.buildId
       NetworkMode = if ($data.networkMode -eq 'lan') { 'lan' } else { 'local' }
       LifecycleEnabled = [bool]$data.lifecycleEnabled
       MediaRelayMode = $relayMode
     }
   } catch { return $null }
+}
+
+function Test-SanmaoServerIdentityStale([object]$ServerInfo) {
+  if (-not $ServerInfo) { return $true }
+  $expectedVersion = Get-SanmaoPackageVersion
+  $expectedBuildId = Get-SanmaoBuildId
+  if ([string]::IsNullOrWhiteSpace($expectedVersion) -or [string]::IsNullOrWhiteSpace($expectedBuildId)) { return $true }
+  if ([string]$ServerInfo.Version -ne $expectedVersion) { return $true }
+  return [string]$ServerInfo.BuildId -ne $expectedBuildId
 }
 
 function Get-SanmaoLanAddresses {
@@ -702,15 +751,14 @@ function Wait-SanmaoBuildArtifacts([int]$TimeoutMs = 15000) {
 # launch. The preflight mutex below only serializes setup and startup.
 function Find-ExistingServer {
   $listeningPorts = Get-ListeningPortSnapshot
-  for ($port = $portStart; $port -le $portEnd; $port++) {
-    if ($null -ne $listeningPorts) {
-      if ($listeningPorts -notcontains $port) { continue }
-    } elseif (-not (Test-LocalPortOpen $port)) {
-      continue
-    }
-    $info = Get-SanmaoServerInfo $port
-    if ((Test-SanmaoProcessAtPort $port) -and $info) { return $info }
+  $port = $portStart
+  if ($null -ne $listeningPorts) {
+    if ($listeningPorts -notcontains $port) { return 0 }
+  } elseif (-not (Test-LocalPortOpen $port)) {
+    return 0
   }
+  $info = Get-SanmaoServerInfo $port
+  if ((Test-SanmaoProcessAtPort $port) -and $info) { return $info }
   return 0
 }
 
@@ -965,7 +1013,8 @@ if ($existing) {
   $existingPort = [int]$existing.Port
   $modeMismatch = $existing.NetworkMode -ne $networkMode
   $lifecycleMismatch = $existing.LifecycleEnabled -ne (-not $Lan.IsPresent)
-  $buildStale = (Test-SanmaoBuildStale -or Test-SanmaoServedBuildStale)
+  $identityStale = Test-SanmaoServerIdentityStale -ServerInfo $existing
+  $buildStale = (Test-SanmaoBuildStale -or Test-SanmaoServedBuildStale -or $identityStale)
   if (($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
   $freeRelayMismatch =
     ($FreeRelay.IsPresent -and $script:MediaRelayRequired -and (
@@ -977,19 +1026,19 @@ if ($existing) {
     )) -or
     (-not $script:MediaRelayRequired -and $existing.MediaRelayMode -eq 'relay')
   if ($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent -or $freeRelayMismatch) {
-    $reason = if ($freeRelayMismatch -and $script:MediaRelayRequired) { '正在准备免费媒体中转通道' } elseif ($freeRelayMismatch) { '正在关闭不需要的临时通道' } elseif ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换网络共享模式' } elseif ($lifecycleMismatch) { '正在更新本地服务生命周期设置' } else { '检测到源码比当前构建更新' }
-    Write-Host "$reason，正在重启旧服务：http://localhost:$existingPort" -ForegroundColor Yellow
+    $reason = if ($freeRelayMismatch -and $script:MediaRelayRequired) { '正在准备免费媒体中转通道' } elseif ($freeRelayMismatch) { '正在关闭不需要的临时通道' } elseif ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换网络共享模式' } elseif ($lifecycleMismatch) { '正在更新本地服务生命周期设置' } elseif ($identityStale) { '检测到当前服务不是本次构建' } else { '检测到源码比当前构建更新' }
+    Write-Host "$reason，正在重启旧服务：http://127.0.0.1:$existingPort" -ForegroundColor Yellow
     Stop-SanmaoProcessAtPort $existingPort
     if (-not (Wait-SanmaoPortReleased $existingPort)) {
       Fail "旧服务仍占用端口 $existingPort，已停止启动以避免继续使用旧页面。请运行停止 SANMAO.AI - Windows.cmd 后重试。"
     }
   } else {
     if ($existing.NetworkMode -eq 'lan') {
-      Write-Host "SANMAO.AI 局域网共享已在运行（本机：http://localhost:$existingPort）" -ForegroundColor Green
+      Write-Host "SANMAO.AI 局域网共享已在运行（本机：http://127.0.0.1:$existingPort）" -ForegroundColor Green
       Show-SanmaoLanAccess $existingPort
       $openUrl = Get-SanmaoLocalUrl -Port $existingPort -Path '/canvas'
     } else {
-      Write-Host "SANMAO.AI 已在运行：http://localhost:$existingPort" -ForegroundColor Green
+      Write-Host "SANMAO.AI 已在运行：http://127.0.0.1:$existingPort" -ForegroundColor Green
       $openUrl = Get-SanmaoLocalUrl -Port $existingPort
     }
     Remove-Item -LiteralPath $legacyMarkerPath -Force -ErrorAction SilentlyContinue
@@ -1006,14 +1055,11 @@ if ($Lan.IsPresent) { Ensure-SanmaoLanPassword }
 # before choosing a port. This reclaims hung/legacy/relative-path servers that
 # used to make the port range look occupied.
 if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
-  Write-SanmaoLauncherLog '部分旧服务端口未能释放，将继续使用可用端口。' 'WARN'
+  Write-SanmaoLauncherLog '部分旧服务端口未能释放；固定端口仍会严格检查，不能自动切换到其他端口。' 'WARN'
 }
 
-$launcherVersion = 'unknown'
-try {
-  $launcherPackage = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw -ErrorAction Stop | ConvertFrom-Json
-  if ($launcherPackage.version) { $launcherVersion = [string]$launcherPackage.version }
-} catch {}
+$launcherVersion = Get-SanmaoPackageVersion
+if ([string]::IsNullOrWhiteSpace($launcherVersion)) { $launcherVersion = 'unknown' }
 Write-Host '========================================' -ForegroundColor DarkGray
 Write-Host "        SANMAO.AI 一键启动器 $launcherVersion" -ForegroundColor White
 Write-Host '========================================' -ForegroundColor DarkGray
@@ -1184,6 +1230,19 @@ if ($SkipBuild.IsPresent) {
   }
 }
 
+# Video downloads use the app-owned yt-dlp runtime. Prepare it on first launch
+# so a fresh computer does not require Python or a manually edited PATH.
+Write-Step '准备视频下载依赖'
+$ytDlpPrepare = Join-Path $root 'scripts\ensure-ytdlp.mjs'
+if (Test-Path -LiteralPath $ytDlpPrepare -PathType Leaf) {
+  & node $ytDlpPrepare --data-dir $dataDir
+  if ($LASTEXITCODE -eq 0) {
+    Write-Host '视频下载依赖已就绪。' -ForegroundColor Green
+  } else {
+    Write-Host '视频下载依赖暂未准备好；应用仍会启动，下载时会再次自动尝试。' -ForegroundColor Yellow
+  }
+}
+
 # 3. Build production bundle（智能构建：代码没变就跳过，固定使用 webpack）
 Write-Step '检查构建产物是否最新'
 
@@ -1206,6 +1265,20 @@ if (-not $needBuild -and -not $SkipBuild.IsPresent) {
   $newest = $files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
   $needBuild = $true
   if ($newest -and $newest.LastWriteTimeUtc -lt $buildTime) { $needBuild = $false }
+}
+if (-not $needBuild -and -not $SkipBuild.IsPresent) {
+  $builtSourceFingerprintPath = Join-Path $root '.next\.sanmao-source-fingerprint'
+  $currentSourceFingerprint = Get-SanmaoSourceFingerprint
+  if (-not (Test-Path -LiteralPath $builtSourceFingerprintPath -PathType Leaf)) {
+    $needBuild = $true
+  } else {
+    try {
+      $builtFingerprint = (Get-Content -LiteralPath $builtSourceFingerprintPath -Raw -ErrorAction Stop).Trim().ToLowerInvariant()
+      if (-not $builtFingerprint -or $builtFingerprint -ne $currentSourceFingerprint) { $needBuild = $true }
+    } catch {
+      $needBuild = $true
+    }
+  }
 }
 
 if ($SkipBuild.IsPresent) {
@@ -1246,7 +1319,9 @@ if ($SkipBuild.IsPresent) {
   Write-Host '构建产物已是最新，跳过构建，直接启动。' -ForegroundColor Green
 }
 
-# 4. Choose a free port after reclaiming any owned stale listeners again.
+# 4. Use the fixed application port after reclaiming any owned stale listeners
+# again. The old 3210..3220 range remains cleanup-only for older launchers; it
+# must never become a second browser origin.
 Write-Step '启动 SANMAO.AI'
 if (-not (Clear-SanmaoOwnedServers -Ports @($legacyPortRange + $portRange))) {
   Write-SanmaoLauncherLog '启动前仍有旧服务端口未释放。' 'WARN'
@@ -1256,20 +1331,12 @@ function Test-Port([int]$port) {
 }
 
 $port = $portStart
-while (($port -le $portEnd) -and (Test-Port $port)) { $port++ }
-if ($port -gt $portEnd) {
-  $details = @()
-  foreach ($p in $portRange) {
-    $pids = @(Get-SanmaoOwningPidsByPort -Port $p)
-    if ($pids.Count -gt 0) {
-      $details += "端口 $p：PID $($pids -join ', ')"
-    }
+if (Test-Port $port) {
+  $pids = @(Get-SanmaoOwningPidsByPort -Port $port)
+  if ($pids.Count -gt 0) {
+    Fail "固定端口 $port 仍被 PID $($pids -join ', ') 占用。为避免启动到另一套浏览器数据，已停止自动换端口；请关闭占用进程后重试。"
   }
-  if ($details.Count -gt 0) {
-    Fail ("$($portStart)～$($portEnd) 端口都被占用。" + ($details -join '；') + '。请关闭对应进程后重试。')
-  } else {
-    Fail "$($portStart)～$($portEnd) 端口都被占用，请关闭旧的 SANMAO.AI/开发服务器后再试。"
-  }
+  Fail "固定端口 $port 已被占用。为避免启动到另一套浏览器数据，已停止自动换端口；请关闭占用进程后重试。"
 }
 
 $freeRelayRequested = $FreeRelay.IsPresent -and $script:MediaRelayRequired
@@ -1297,6 +1364,12 @@ if ($Lan.IsPresent) {
 }
 $env:SANMAO_NETWORK_MODE = $networkMode
 $env:SANMAO_RUNTIME_INSTANCE_ID = [guid]::NewGuid().ToString()
+$runningBuildIdForProcess = Get-SanmaoBuildId
+if ($runningBuildIdForProcess) {
+  $env:SANMAO_BUILD_ID = $runningBuildIdForProcess
+} else {
+  Remove-Item Env:SANMAO_BUILD_ID -ErrorAction SilentlyContinue
+}
 Remove-Item -LiteralPath $serverStdoutPath, $serverStderrPath -Force -ErrorAction SilentlyContinue
 $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
 $nextCliPath = Join-Path $root 'node_modules\next\dist\bin\next'
@@ -1309,7 +1382,7 @@ $script:serverProcess = Start-Process `
   -RedirectStandardError $serverStderrPath `
   -PassThru
 
-Write-Host "正在等待 http://localhost:$port 启动..." -ForegroundColor Yellow
+Write-Host "正在等待 http://127.0.0.1:$port 启动..." -ForegroundColor Yellow
 Write-SanmaoLauncherLog "已启动服务进程 PID $($script:serverProcess.Id)，等待端口 $port 就绪。" 'INFO'
 $ready = $false
 for ($i = 0; $i -lt 150; $i++) {
@@ -1377,7 +1450,7 @@ if ($Lan.IsPresent) {
   $openUrl = $url
 }
 Write-Host '本地服务会保持运行，下一次启动会直接打开已有服务。' -ForegroundColor DarkGray
-Write-SanmaoLauncherLog "服务已就绪：http://localhost:$port，网络模式：$networkMode" 'INFO'
+Write-SanmaoLauncherLog "服务已就绪：http://127.0.0.1:$port，网络模式：$networkMode" 'INFO'
 Release-LauncherMutex
 if (-not $script:NonInteractive) { Start-Process $openUrl }
 Start-Sleep -Milliseconds 300

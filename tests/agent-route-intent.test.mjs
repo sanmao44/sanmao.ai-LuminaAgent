@@ -7,14 +7,29 @@ const requireTs = createTsRequire(fileURLToPath(new URL('../lib', import.meta.ur
 const realSkills = requireTs('./skills');
 function harness(options = {}) {
   const calls = [];
+  const mcpCalls = [];
   const discoveryCalls = [];
   const manageCalls = [];
+  const runtimeLoads = [];
   const images = [];
   const imageRuntimeRequests = [];
+  const modelCalls = [];
+  const bundledSkillInstalls = [];
+  const spreadsheetCalls = [];
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: [], kind: 'chat' };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
   const runtime = { model, provider };
+  const routedSkill = options.skill || {
+    id: 'luxun-voice',
+    name: 'luxun-voice',
+    description: '用鲁迅口吻写作',
+    tags: ['鲁迅', '口吻', '风格'],
+    enabled: true,
+    pending: false,
+    body: '保持冷峻、克制、文白夹杂的语气。',
+    files: [],
+  };
   const reply = (message) => ({ choices: [{ message }] });
   const noOp = async () => {};
   const mocks = {
@@ -48,7 +63,22 @@ function harness(options = {}) {
             generateArchiveArtifact: async () => ({ files: [] }),
             generateDocumentArtifact: async () => ({ files: [] }),
             generatePresentationArtifact: async () => ({ files: [] }),
-            generateSpreadsheetArtifact: async () => ({ files: [] }),
+            generateSpreadsheetArtifact: async (input) => {
+              spreadsheetCalls.push(input);
+              if (typeof options.generateSpreadsheetArtifact === 'function') return options.generateSpreadsheetArtifact(input);
+              return {
+                artifact: {
+                  id: 'test-spreadsheet-artifact',
+                  kind: 'spreadsheet',
+                  name: 'SANMAO-表格.xlsx',
+                  mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                  size: 128,
+                  downloadUrl: '/api/artifacts/test-spreadsheet-artifact',
+                  createdAt: Date.now(),
+                },
+                warnings: [],
+              };
+            },
             isValidArtifactId: mocks['@/lib/artifacts'].isValidArtifactId,
             artifactDownloadUrl: (id) => `/api/artifacts/${id}`,
             getStorageRoots: () => [],
@@ -59,6 +89,7 @@ function harness(options = {}) {
             getRuntimeImageModelCandidates: storeApi.getRuntimeImageModelCandidates,
             getRuntimeImageModelForCapability: storeApi.getRuntimeImageModelForCapability,
             getRuntimeModel: storeApi.getRuntimeModel,
+            getRuntimeIntentClassifierModel: options.intentClassifierRuntime ? async () => options.intentClassifierRuntime : async () => null,
             getRuntimeModelCandidates: async () => [runtime],
             filterModelsByActiveProviders: (models) => models,
             getProviderPreset: () => ({ label: 'Test' }),
@@ -74,7 +105,11 @@ function harness(options = {}) {
             searchWeb: async () => ({ query: '', intent: { entities: [] }, results: [], status: 'empty', resultCount: 0, rounds: 0 }),
           },
           mcp: {
-            callMcpTool: async () => ({ ok: false, error: 'test MCP tool unavailable' }),
+            callMcpTool: async (server, toolName, args) => {
+              mcpCalls.push({ server: server?.id, toolName, args });
+              if (typeof options.callMcpTool === 'function') return options.callMcpTool(server, toolName, args);
+              return { isError: true, text: 'test MCP tool unavailable' };
+            },
             MCP_CALL_TIMEOUT_MS: 30_000,
             MCP_TOOL_MAX_CALLS_PER_TURN: 8,
             MCP_TURN_TIME_BUDGET_MS: 120_000,
@@ -89,7 +124,7 @@ function harness(options = {}) {
             browserExternalBlocker: () => '',
             browserTextNeedsContinuation: () => false,
             browserTextSubmissionGap: () => '',
-            guardMcpServerCall: (_meta, args) => ({ ok: true, args }),
+            guardMcpServerCall: (_server, _toolName, args) => ({ ok: true, args }),
             importBrowserArtifacts: async () => [],
             shouldImportBrowserArtifacts: () => false,
             noteRemoteCatalogCallFailure: () => {},
@@ -115,16 +150,23 @@ function harness(options = {}) {
           },
           skills: {
             buildAgentSkillContext: skillsApi.buildAgentSkillContext,
+            routeSkillRequest: options.routeSkillRequest || ((input) => options.skillRoute
+              ? { enabled: true, matched: true, explicit: false, confidence: 'high', skillId: routedSkill.id, skillName: routedSkill.name, reason: 'test metadata match' }
+              : { enabled: false, matched: false, explicit: false, confidence: 'none', skillId: '', skillName: '', reason: 'test ordinary turn' }),
             createCapabilityPorts: (dataDir) => ({
               maxCalls: skillsApi.SKILL_TOOL_MAX_CALLS,
               maxInstalls: skillsApi.SKILL_INSTALL_MAX_PER_REQUEST,
               searchSkills: (query, skills, limit) => skillsApi.searchSkills(query, [...skills], limit),
-              readSkill: (id, options = {}) => skillsApi.readSkill(id, { ...options, dataDir }),
+              readSkill: (id, readOptions = {}) => id === routedSkill.id ? routedSkill : skillsApi.readSkill(id, { ...readOptions, dataDir }),
               readSkillFile: (id, file, options = {}) => skillsApi.readSkillFile(id, file, { ...options, dataDir }),
               recordSkillUsage: (id, options = {}) => { skillsApi.recordSkillUsage(id, { ...options, dataDir }); },
               buildSkillToolContent: (skill, file, offset) => skillsApi.buildSkillToolContent(skill, file, offset),
               installSkill: (input) => skillsApi.installSkill(input, { dataDir }),
               installSkillFromDocument: (input) => skillsApi.installSkillFromDocument(input, { dataDir }),
+              installBundledSkill: (input) => {
+                bundledSkillInstalls.push(input);
+                return { id: 'video-download', name: 'video-download', description: 'download', tags: ['视频'], enabled: false, pending: true, files: [], body: 'video_download' };
+              },
               fetchSkillText: (source, options) => skillsApi.fetchSkillText(source, options),
               parseGithubSkillTarget: (source) => skillsApi.parseGithubSkillTarget(source),
               fetchSkillFilesFromGithub: async () => { throw new Error('test GitHub skill adapter unavailable'); },
@@ -138,6 +180,10 @@ function harness(options = {}) {
             stripNativeSearchProcess: (text) => String(text || ''),
           },
           data: { resolveLocalDataDir: () => '/unused-test-data' },
+          video: {
+            downloadWithYtDlp: options.downloadWithYtDlp || (async () => { throw new Error('test video downloader unavailable'); }),
+            getDefaultVideoStoragePath: () => '/unused-test-video-data',
+          },
           health: {
             orderAgentModelCandidates: (candidates) => candidates,
             noteAgentModelSuccess: () => {},
@@ -168,32 +214,42 @@ function harness(options = {}) {
     '@/lib/providers': {
       chatCompletion: async (_provider, _model, payload) => {
         calls.push(payload);
-        return reply(options.reply?.(payload, calls.length) || { content: '已经完成。' });
+        modelCalls.push({ model: _model, payload });
+        return reply(options.reply?.(payload, calls.length, _model) || { content: '已经完成。' });
       },
       chatCompletionStream: async () => { throw new Error('unexpected direct stream'); },
       describeProviderFailure: () => 'provider failure',
-      generateImage: async (_provider, _model, args) => { images.push({ mode: 'generate', ...args }); return options.emptyImages ? [] : [{ url: '/test.png' }]; },
+      generateImage: async (_provider, _model, args) => {
+        images.push({ mode: 'generate', ...args });
+        if (options.pendingImage) throw Object.assign(new Error('provider accepted'), { providerPossiblyAccepted: true, providerTaskId: 'provider-task-1' });
+        return options.emptyImages ? [] : [{ url: '/test.png' }];
+      },
       editImage: async (_provider, _model, args) => { images.push({ mode: 'edit', ...args }); return [{ url: '/test.png' }]; },
       imageDownloadAuth: () => undefined,
     },
     '@/lib/store': {
       getRuntimeModel: async (_id, kind) => kind === 'image' ? { provider, model: imageModel } : runtime,
       getRuntimeImageGenerationModel: async (id) => { imageRuntimeRequests.push({ capability: 'generate', id }); return { provider, model: imageModel }; },
-      getRuntimeImageModelForCapability: async (_id, capability) => capability === 'edit' ? { provider, model: { ...imageModel, capabilities: ['edit'] } } : { provider, model: imageModel },
+      getRuntimeImageModelForCapability: async (id, capability) => {
+        imageRuntimeRequests.push({ capability, id });
+        const supportsCapability = imageModel.capabilities.includes(capability)
+          || (capability === 'edit' && imageModel.capabilities.includes('generate'));
+        return supportsCapability ? { provider, model: { ...imageModel, capabilities: [capability] } } : null;
+      },
       getRuntimeImageModelCandidates: async () => [{ provider, model: imageModel }],
-      getPublicState: async () => ({ settings: {}, models: [imageModel], providers: [provider] }),
+      getPublicState: async () => ({ settings: {}, models: options.availableImageModels ?? [imageModel], providers: [provider] }),
     },
     '@/lib/auth': { isTrustedAppRequest: () => true },
     '@/lib/runtime-operation': { beginRuntimeRequest: async () => noOp, RuntimeDrainingError: class extends Error {} },
-    '@/lib/generation-log': { startGenerationLog: async () => 'test', finishGenerationLog: noOp, appendGenerationLog: noOp },
+    '@/lib/generation-log': { startGenerationLog: async () => options.mediaLogId || 'test', finishGenerationLog: noOp, appendGenerationLog: noOp },
     '@/lib/generation-persistence': { persistGenerationResult: async ({ images: result }) => ({ images: result }) },
-    '@/lib/agent/progress': { beginAgentRun: async () => null, finishAgentRun: noOp, reportAgentProgress: noOp, agentToolProgress: () => null },
+    '@/lib/agent/progress': { beginAgentRun: async (runId) => runId ? { runId: String(runId) } : null, finishAgentRun: noOp, reportAgentProgress: noOp, agentToolProgress: () => null },
     '@/lib/reference-images': { referenceRecordsForLog: () => [] },
     '@/lib/web-search': { planSearch: () => ({ intent: { entities: [] }, queries: [] }) },
     '@/lib/native-web-search': { nativeSearchIsEnabled: () => false },
     '@/lib/mcp/store': { listMcpServers: () => options.mcpServers || [] },
     '@/lib/mcp/discovery': { discoverMcpForRequest: async () => { discoveryCalls.push(true); return { serverIds: (options.mcpServers || []).map((server) => server.id), unavailable: [] }; } },
-    '@/lib/mcp/tools': { mcpServersForTurn: (servers) => servers, loadMcpToolRuntime: async () => ({ servers: options.mcpServers || [], tools: options.mcpTools || [] }), lazyMcpGroupKeywords: () => ({}) },
+    '@/lib/mcp/tools': { mcpServersForTurn: (servers) => servers, loadMcpToolRuntime: async (input) => { runtimeLoads.push(input); return { servers: options.mcpServers || [], tools: options.mcpTools || [] }; }, lazyMcpGroupKeywords: () => ({}) },
     '@/lib/mcp/client': {},
     '@/lib/mcp/audit': {},
     '@/lib/mcp/filesystem-policy': {},
@@ -207,8 +263,22 @@ function harness(options = {}) {
       },
     },
     '@/lib/mcp/runtime-admin': {},
-    '@/lib/agent/approval': { toolApprovalPolicy: () => 'ask', assessToolApproval: () => ({ required: false, blocked: false }) },
-    '@/lib/skills': { ...realSkills, buildAgentSkillContext: () => ({ settings: { enabled: false }, skills: [], indexSection: '', toolHint: '' }) },
+    '@/lib/agent/approval': {
+      toolApprovalPolicy: () => 'ask',
+      assessToolApproval: () => ({ required: false, blocked: false }),
+      appendPageContext: (current, source, text) => `${current || ''}\n${source}: ${text}`.trim(),
+    },
+    '@/lib/skills': {
+      ...realSkills,
+      routeSkillRequest: options.routeSkillRequest || ((input) => options.skillRoute
+        ? { enabled: true, matched: true, explicit: false, confidence: 'high', skillId: routedSkill.id, skillName: routedSkill.name, reason: 'test metadata match' }
+        : { enabled: false, matched: false, explicit: false, confidence: 'none', skillId: '', skillName: '', reason: 'test ordinary turn' }),
+      buildAgentSkillContext: () => options.skillRoute
+        ? { settings: { enabled: true, autoApprove: false }, skills: [routedSkill], pending: [], indexSection: '技能：luxun-voice', toolHint: '使用 skill_read 读取技能正文。' }
+        : options.skillInstall
+          ? { settings: { enabled: true, autoApprove: false }, skills: [], pending: [], indexSection: '', toolHint: '使用 skill_install 安装技能。' }
+        : { settings: { enabled: false }, skills: [], indexSection: '', toolHint: '' },
+    },
     '@/lib/skill-archive': {},
     '@/lib/data-paths': { resolveLocalDataDir: () => '/unused-test-data' },
     '@/lib/image-storage': {},
@@ -217,7 +287,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-    calls, discoveryCalls, manageCalls, images, imageRuntimeRequests,
+    calls, modelCalls, mcpCalls, discoveryCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -231,6 +301,43 @@ function harness(options = {}) {
   };
 }
 
+test('不支持原生工具调用的模型仍能通过本地 Excel 兜底生成真实 artifact', async () => {
+  const agent = harness({
+    reply: (payload) => {
+      if (payload.tools?.some((tool) => tool.function.name === 'spreadsheet_generate')) {
+        throw new Error('当前接口不支持 tools');
+      }
+      return { content: '模型未能发起文件工具调用。' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '请生成一个 Excel 销售数据表格' }]);
+  assert.equal(agent.spreadsheetCalls.length, 1);
+  assert.equal(agent.spreadsheetCalls[0].sheets.length, 1);
+  assert.deepEqual(agent.spreadsheetCalls[0].sheets[0].columns.map((column) => column.header), ['序号', '日期', '客户/产品', '数量', '单价', '金额', '状态', '备注']);
+  assert.deepEqual(agent.spreadsheetCalls[0].sheets[0].rows, []);
+  assert.equal(data.files[0].artifactId, 'test-spreadsheet-artifact');
+  assert.match(data.files[0].name, /\.xlsx$/);
+  assert.ok(agent.calls.some((payload) => payload.tools?.some((tool) => tool.function.name === 'spreadsheet_generate')));
+  assert.equal(agent.calls.some((payload) => !payload.tools && payload.messages.at(-1)?.role === 'user'), false);
+  assert.match(data.message, /已完成/);
+});
+
+test('Excel 工具返回空 sheets 时会替换为可生成的本地参数', async () => {
+  const agent = harness({
+    reply: (payload) => {
+      if (payload.tools?.some((tool) => tool.function.name === 'spreadsheet_generate')) {
+        return { tool_calls: [{ id: 'empty-spreadsheet', function: { name: 'spreadsheet_generate', arguments: '{"sheets":[]}' } }] };
+      }
+      return { content: '工具参数已修复。' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '请生成一个 Excel 销售数据表格' }]);
+  assert.equal(agent.spreadsheetCalls.length, 1);
+  assert.ok(agent.spreadsheetCalls[0].sheets[0].columns.length > 0);
+  assert.equal(data.files[0].artifactId, 'test-spreadsheet-artifact');
+  assert.match(data.message, /已完成/);
+});
+
 test('普通问答绕过语义规划和 MCP 能力发现', async () => {
   const agent = harness({
     mcpServers: [{ id: 'windows-test', name: 'windows-mcp', enabled: true, allowWrite: true }],
@@ -240,6 +347,40 @@ test('普通问答绕过语义规划和 MCP 能力发现', async () => {
   assert.equal(agent.calls.length, 1);
   assert.equal(data.message, '已经完成。');
   assert.ok(agent.calls.every((call) => !String(call.messages?.[0]?.content || '').includes('只判断当前用户')));
+});
+
+test('自然语言命中已安装技能后会强制读取技能正文并回传真实使用记录', async () => {
+  const agent = harness({
+    skillRoute: true,
+    reply: (payload, callNumber) => callNumber === 1
+      ? { content: '先读取已匹配的技能。' }
+      : { content: '大抵是赞美的；不过赞美若太热闹，也未免像广告。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '用鲁迅的口吻赞美一位女生' }]);
+  assert.equal(data.message, '大抵是赞美的；不过赞美若太热闹，也未免像广告。');
+  assert.deepEqual(data.skills, [{ id: 'luxun-voice', name: 'luxun-voice' }]);
+  assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function?.name === 'skill_read')));
+});
+
+test('GitHub 仓库只读查询会发现并下发 MCP 工具', async () => {
+  const agent = harness({
+    mcpServers: [{ id: 'github', name: 'GitHub', enabled: true, allowWrite: false, catalogId: 'github' }],
+    mcpTools: [{
+      id: 'mcp:github:list_repositories', name: 'github__list_repositories', source: 'mcp',
+      description: 'List repositories', schema: { type: 'object', properties: {} }, tags: ['mcp'], risk: 'read',
+      gating: () => true,
+      mcp: { serverId: 'github', serverName: 'GitHub', toolName: 'list_repositories', readOnly: true, blocked: false },
+    }],
+    callMcpTool: async () => ({ isError: false, text: JSON.stringify({ repositories: [{ name: 'sanmao-ai' }] }) }),
+    reply: (_payload, count) => count === 1
+      ? { content: null, tool_calls: [{ id: 'github-call', type: 'function', function: { name: 'github__list_repositories', arguments: '{}' } }] }
+      : { content: '已成功读取仓库列表。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '我的 GitHub 仓库有几个项目' }]);
+  assert.equal(data.message, '已成功读取仓库列表。');
+  assert.ok(agent.discoveryCalls.length > 0);
+  assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'github__list_repositories')));
+  assert.deepEqual(agent.mcpCalls, [{ server: 'github', toolName: 'list_repositories', args: {} }]);
 });
 
 test('纯问候仍调用当前选择的模型，不返回固定本地文案', async () => {
@@ -266,6 +407,38 @@ test('discovered desktop tools reach the model instead of the compact no-tools p
     assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'windows-test__App')), content);
     assert.ok(agent.calls.every((call) => !call.messages[0].content.includes('当前请求不需要联网、图片、文件、浏览器、MCP')), content);
   }
+});
+
+test('desktop Agent keeps calling tools after launch until typing and a fresh snapshot are verified', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:windows-test:${name}`, name: `windows-test__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+  const steps = [
+    { name: 'App', args: { mode: 'launch_executable', executable: 'C:\\Windows\\System32\\notepad.exe' } },
+    { name: 'Snapshot', args: {} },
+    { name: 'Type', args: { text: 'SANMAO_MCP_AGENT_CHECK', loc: [10, 20] } },
+    { name: 'Snapshot', args: {} },
+  ];
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [tool('App', false), tool('Snapshot', true), tool('Type', false)],
+    callMcpTool: async (_server, name) => ({ isError: false, text: name === 'Snapshot' ? 'Notepad editor SANMAO_MCP_AGENT_CHECK' : `${name} ok` }),
+    reply: (_payload, count) => {
+      const step = steps[count - 1];
+      return step
+        ? { content: null, tool_calls: [{ id: `desktop-${count}`, type: 'function', function: { name: `windows-test__${step.name}`, arguments: JSON.stringify(step.args) } }] }
+        : { content: 'Verified the text in the latest Notepad snapshot.' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '请打开Windows桌面的记事本，在窗口输入SANMAO_MCP_AGENT_CHECK，然后截图核验' }]);
+  assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App', 'Snapshot', 'Type', 'Snapshot']);
+  assert.match(data.message, /Verified the text/);
+  assert.ok(agent.calls.length >= 5);
+  assert.match(agent.calls[0].messages[0].content, /Type 必须传入.*loc=\[x,y\] 或 label/);
 });
 
 test('smart variant planning uses the isolated JSON-only route without tools', async () => {
@@ -335,6 +508,22 @@ test('valid inline tool calls are executed once with their original prompt', asy
   assert.doesNotMatch(data.message, /tool_call/);
 });
 
+test('accepted image generation returns the durable media task id for recovery', async () => {
+  const agent = harness({
+    pendingImage: true,
+    mediaLogId: 'media-log-1',
+    reply: (payload) => payload.tools
+      ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"异步出图测试"}}</tool_call>' }
+      : { content: '图片正在生成。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '生成一张异步测试图' }], { runId: 'agent-run-1' });
+  assert.equal(data.pending, true);
+  assert.equal(data.taskId, 'media-log-1');
+  assert.equal(data.generationTaskId, 'media-log-1');
+  assert.equal(data.mediaLogId, 'media-log-1');
+  assert.equal(data.agentRunId, 'agent-run-1');
+});
+
 test('language model cannot override the system default image model through tool arguments', async () => {
   const agent = harness({ reply: (payload) => payload.tools
     ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"系统默认模型测试","modelId":"language-model-picked"}}</tool_call>' }
@@ -351,6 +540,85 @@ test('canvas image edit target overrides vague wording and reaches the edit capa
     ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"背景换成深蓝色"}}</tool_call>' }
     : { content: '修改完成。' } });
   const data = await agent.post([{ role: 'user', content: '改一下，背景换成深蓝色', references: [{ id: 'image-1', nodeId: 'image-1', kind: 'image', name: '当前选中图片', url: 'data:image/png;base64,dGVzdA==' }] }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['image-1'], assetIds: [] },
+    canvasTarget: { nodeIds: ['image-1'], kind: 'image', operation: 'edit' },
+  });
+  assert.equal(agent.images.length, 1);
+  assert.equal(agent.images[0].mode, 'edit');
+  assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.calls.length, 0, 'Canvas edit should execute the image capability without a preliminary chat completion');
+});
+
+test('canvas text target stays a text-only optimization conversation', async () => {
+  const agent = harness({ reply: () => ({ content: '白色渐变字，层次清晰，整体画面更有亮点。' }) });
+  const data = await agent.post([{
+    role: 'user',
+    content: '改成白色渐变字，整体画面设计更有亮点',
+    references: [{ id: 'text-1', nodeId: 'text-1', kind: 'text', name: '选中文案', text: '原始文案' }],
+  }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['text-1'], assetIds: [] },
+    canvasTarget: { nodeIds: ['text-1'], kind: 'text', operation: 'edit' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: [{ id: 'text-1', type: 'prompt', x: 0, y: 0, data: { text: '原始文案', name: '选中文案' } }],
+    },
+  });
+  assert.equal(agent.images.length, 0);
+  assert.equal(data.images.length, 0);
+  assert.equal(data.message, '白色渐变字，层次清晰，整体画面更有亮点。');
+  assert.ok(agent.calls.some((call) => call.messages.some((message) => message.role === 'user' && JSON.stringify(message.content).includes('原始文案'))));
+});
+
+test('Canvas JEV review cannot turn an explicit image description into generation', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"误读了选中图片"}' }
+      : { content: '画面描绘了一处临水的古镇，前景有船只，远处是暖色天空。' },
+  });
+  const text = '描述下画面';
+  const data = await agent.post([{
+    role: 'user',
+    content: text,
+    references: [{ id: 'image-1', nodeId: 'image-1', kind: 'image', name: '选中图片', url: 'data:image/png;base64,dGVzdA==' }],
+  }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['image-1'], assetIds: [] },
+    // Exercise a stale generate hint from the UI: selection metadata is not user authorization.
+    canvasTarget: { nodeIds: ['image-1'], kind: 'image', operation: 'generate' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: [{ id: 'image-1', type: 'media', x: 0, y: 0, data: { kind: 'image', name: '选中图片', url: 'data:image/png;base64,dGVzdA==' } }],
+    },
+  });
+  const classifierCalls = agent.modelCalls.filter((call) => call.model === 'jev-1.13');
+  assert.equal(classifierCalls.length, 1);
+  assert.match(classifierCalls[0].payload.messages[0].content, /target\.operation is not the user request/);
+  assert.equal(JSON.parse(classifierCalls[0].payload.messages[1].content).localIntent.deliverable, 'TEXT');
+  assert.equal(agent.images.length, 0);
+  assert.deepEqual(data.images, []);
+  assert.equal(data.deliverable, 'TEXT');
+  assert.match(data.message, /古镇/);
+});
+
+test('canvas image edit target activates image routing for colloquial changes', async () => {
+  const agent = harness({ imageCapabilities: ['generate', 'edit'] });
+  const data = await agent.post([{
+    role: 'user',
+    content: '换个美女角色，换个色调',
+    references: [{ id: 'image-1', nodeId: 'image-1', kind: 'image', name: '当前选中图片', url: 'data:image/png;base64,dGVzdA==' }],
+  }], {
     source: 'canvas',
     executionMode: 'agent-dock',
     context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['image-1'], assetIds: [] },
@@ -392,6 +660,234 @@ test('canvas Agent treats a first-turn replacement instruction as an image edit'
   assert.equal(agent.images[0].mode, 'edit');
   assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
   assert.equal(data.images.length, 1);
+});
+
+test('Canvas selected node snapshots reach both the assistant context and image generation references', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    imageCapabilities: ['generate', 'reference'],
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"用户明确要求将所选角色素材编排为海报图片"}' }
+      : { content: '正在为你生成海报。' },
+  });
+  const text = '把这四个角色的素材汇总到同一张横版海报里';
+  const data = await agent.post([{ role: 'user', content: text }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    deliverable: 'OTHER',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['character-1', 'character-2', 'prompt-1'], assetIds: [] },
+    canvasTarget: { nodeIds: ['character-1', 'character-2', 'prompt-1'], kind: 'mixed', operation: 'generate' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: [
+        { id: 'character-1', type: 'media', x: 0, y: 0, data: { kind: 'image', name: '角色甲', url: 'https://assets.test/character-1.png' } },
+        { id: 'character-2', type: 'media', x: 0, y: 200, data: { kind: 'image', name: '角色乙', url: 'https://assets.test/character-2.png' } },
+        { id: 'prompt-1', type: 'prompt', x: 0, y: 400, data: { name: '角色设定', text: '两位角色并肩站立，保留各自服装特征。' } },
+      ],
+    },
+  });
+
+  assert.equal(data.images.length, 1);
+  assert.deepEqual(agent.images[0].references, [
+    'https://assets.test/character-1.png',
+    'https://assets.test/character-2.png',
+  ]);
+  const assistantCall = agent.modelCalls.find((call) => call.model === 'test-chat');
+  assert.ok(assistantCall);
+  const userTurn = assistantCall.payload.messages.find((message) => message.role === 'user');
+  assert.ok(Array.isArray(userTurn.content));
+  assert.ok(userTurn.content.some((part) => part.type === 'image_url' && part.image_url.url === 'https://assets.test/character-1.png'));
+  assert.ok(userTurn.content.some((part) => part.type === 'image_url' && part.image_url.url === 'https://assets.test/character-2.png'));
+  assert.match(userTurn.content[0].text, /两位角色并肩站立/);
+  assert.match(userTurn.content[0].text, /角色设定/);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+});
+
+test('JEV clarification cannot downgrade an explicit Canvas poster request', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    imageCapabilities: ['generate', 'edit', 'reference'],
+    reply: (_payload, _callNumber, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"unknown","deliverable":"CLARIFY","confidence":"high","reason":"模型无法确定"}' }
+      : { content: '海报已完成。' },
+  });
+  const text = '将这四个角色创作成一张16:9的海报图，各有各的动作！';
+  const data = await agent.post([{ role: 'user', content: text }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['a', 'b', 'c', 'd'], assetIds: [] },
+    canvasTarget: { nodeIds: ['a', 'b', 'c', 'd'], kind: 'image', operation: 'generate' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: ['a', 'b', 'c', 'd'].map((id) => ({ id, type: 'media', x: 0, y: 0, data: { kind: 'image', name: `角色 ${id}`, url: `https://assets.test/${id}.png` } })),
+    },
+  });
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.images[0].mode, 'generate');
+  assert.equal(agent.images[0].references.length, 4);
+  assert.match(agent.images[0].prompt, /16:9|海报/);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+});
+
+test('Canvas short image confirmation carries the original poster task and all selected images', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    imageCapabilities: ['generate', 'edit', 'reference'],
+    reply: (_payload, _callNumber, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"确认上一轮海报任务"}' }
+      : { content: '已按上一轮海报要求生成。' },
+  });
+  const selectedIds = ['character-1', 'character-2', 'character-3', 'character-4'];
+  const document = {
+    version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+    nodes: selectedIds.map((id) => ({ id, type: 'media', x: 0, y: 0, data: { kind: 'image', name: id, url: `https://assets.test/${id}.png` } })),
+  };
+  const data = await agent.post([
+    { role: 'user', content: '将这四个角色创作成一张16:9的海报图，各有各的动作！' },
+    { role: 'assistant', content: '请确认是否使用选中素材生成海报。' },
+    { role: 'user', content: '生成图片！' },
+  ], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '生成图片！',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: selectedIds, assetIds: [] },
+    canvasTarget: { nodeIds: selectedIds, kind: 'image', operation: 'generate' },
+    canvasDocument: document,
+  });
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.images[0].mode, 'generate');
+  assert.deepEqual(agent.images[0].references, selectedIds.map((id) => `https://assets.test/${id}.png`));
+  assert.match(agent.images[0].prompt, /16:9|海报/);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  const classifierCall = agent.modelCalls.find((call) => call.model === 'jev-1.13');
+  const classifierInput = JSON.parse(classifierCall.payload.messages[1].content);
+  assert.equal(classifierInput.referenceImages, 4);
+  assert.equal(classifierInput.request, '生成图片！');
+  assert.ok(classifierInput.history.some((message) => message.content.includes('四个角色创作成一张16:9的海报图')));
+  assert.deepEqual(classifierInput.canvas.target.nodeIds, selectedIds);
+  assert.deepEqual(classifierInput.canvas.references.map((reference) => reference.nodeId), selectedIds);
+  const assistantCall = agent.modelCalls.find((call) => call.model === 'test-chat');
+  const currentUserMessage = [...assistantCall.payload.messages].reverse().find((message) => message.role === 'user');
+  assert.ok(Array.isArray(currentUserMessage.content));
+  assert.equal(currentUserMessage.content.filter((part) => part.type === 'image_url').length, 4);
+  assert.ok(assistantCall.payload.messages.some((message) =>
+    message.role === 'user' && String(message.content || '').includes('四个角色创作成一张16:9的海报图'),
+  ));
+});
+
+test('Canvas semantic classification failure asks for clarification instead of inventing model availability', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({ intentClassifierRuntime: classifierRuntime, reply: () => ({ content: 'invalid classifier output' }) });
+  const text = '把这四个角色的素材汇总到同一张横版海报里';
+  const data = await agent.post([{ role: 'user', content: text }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    deliverable: 'OTHER',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: [], assetIds: [] },
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+  assert.equal(data.deliverable, 'CLARIFY');
+  assert.match(data.message, /无法可靠判断/);
+  assert.equal(agent.images.length, 0);
+  assert.equal(agent.modelCalls.filter((call) => call.model !== 'jev-1.13').length, 0);
+});
+
+test('Canvas follow-up conversation stays conversational with selected image nodes', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"discuss","deliverable":"OTHER","confidence":"high","reason":"这是普通跟进对话"}' }
+      : { content: '在的，我在。你可以继续说。' },
+  });
+  const selectedIds = ['character-1', 'character-2', 'character-3', 'character-4'];
+  const document = {
+    version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+    nodes: selectedIds.map((id) => ({ id, type: 'media', x: 0, y: 0, data: { kind: 'image', name: id, url: `https://assets.test/${id}.png` } })),
+  };
+  const history = [
+    { role: 'user', content: '将这四个角色创作成一张16:9的海报图，各有各的动作！' },
+    { role: 'assistant', content: '请确认是否使用选中素材生成海报？' },
+  ];
+
+  for (const followUp of ['还在吗', '你好', '你能不能正常点']) {
+    const data = await agent.post([...history, { role: 'user', content: followUp }], {
+      source: 'canvas',
+      executionMode: 'agent-dock',
+      intentText: followUp,
+      context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: selectedIds, assetIds: [] },
+      canvasTarget: { nodeIds: selectedIds, kind: 'image', operation: 'generate' },
+      canvasDocument: document,
+    });
+    assert.equal(data.message, '在的，我在。你可以继续说。');
+    assert.equal(data.deliverable, 'OTHER');
+  }
+
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 3);
+  assert.equal(agent.images.length, 0);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'test-chat').length, 3);
+});
+
+test('Canvas without a selection does not turn greetings, identity questions, or complaints into image clarification', async () => {
+  const agent = harness({ reply: () => ({ content: '正常的对话回复。' }) });
+  for (const message of ['你好', '你是什么模型', '为何还不行']) {
+    const data = await agent.post([{ role: 'user', content: message }], {
+      source: 'canvas',
+      executionMode: 'agent-dock',
+      intentText: message,
+      context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: [], assetIds: [] },
+      canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+    });
+    assert.notEqual(data.deliverable, 'CLARIFY', message);
+    assert.doesNotMatch(data.message, /无法可靠判断这句话是要生成图片/);
+  }
+  assert.equal(agent.images.length, 0);
+  assert.equal(agent.modelCalls.length, 3, 'all three turns are answered by their normal model paths');
+});
+
+test('Canvas semantic image intent reports actual missing image capability before chat can guess', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    availableImageModels: [],
+    reply: () => ({ content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"请求制作海报图片"}' }),
+  });
+  const text = '把这四个角色的素材汇总到同一张横版海报里';
+  const data = await agent.post([{ role: 'user', content: text }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    deliverable: 'OTHER',
+  });
+  assert.equal(data.ok, false);
+  assert.match(data.message, /当前没有可用生图模型/);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.equal(agent.modelCalls.filter((call) => call.model !== 'jev-1.13').length, 0);
+  assert.equal(agent.images.length, 0);
 });
 
 test('client image model selection reaches Agent generation explicitly', async () => {
@@ -473,6 +969,286 @@ test('an accepted image plan is resolved semantically within this conversation',
   assert.equal(data.images.length, 1);
   assert.match(agent.images[0].prompt, /太空书店/);
   assert.equal(agent.images[0].aspectRatio, '9:16');
+});
+
+test('configured JEV classifies an ambiguous confirmation before image execution', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"用户确认上一轮海报方案"}' }
+      : { content: '已经完成。' },
+  });
+  const data = await agent.post([
+    { role: 'user', content: '先构思一个太空书店的海报，9:16' },
+    { role: 'assistant', content: '海报画面是月球书店，是否按这个生成？' },
+    { role: 'user', content: '好的' },
+  ]);
+  const classifierCalls = agent.modelCalls.filter((call) => call.model === 'jev-1.13');
+  assert.equal(classifierCalls.length, 1);
+  assert.equal(classifierCalls[0].payload.tool_choice, 'none');
+  assert.equal('tools' in classifierCalls[0].payload, false);
+  assert.equal(agent.images.length, 1);
+  assert.equal(data.images.length, 1);
+});
+
+test('Canvas multi-image composition requires reference capability, not edit capability', async () => {
+  const agent = harness({
+    imageCapabilities: ['generate', 'reference'],
+    reply: (payload) => payload.messages.some((message) => message.role === 'tool')
+      ? { content: '海报已完成。' }
+      : payload.tools?.some((tool) => tool.function.name === 'image_edit')
+        ? { content: null, tool_calls: [{ id: 'wrong-edit-call', type: 'function', function: { name: 'image_edit', arguments: JSON.stringify({ prompt: '模型误选了改图工具' }) } }] }
+        : { content: '正在生成。' },
+  });
+  const selectedIds = ['a', 'b', 'c', 'd'];
+  const data = await agent.post([{ role: 'user', content: '将这四个角色创作成一张16:9的海报图，各有各的动作！' }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: selectedIds, assetIds: [] },
+    canvasTarget: { nodeIds: selectedIds, kind: 'image', operation: 'generate' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: selectedIds.map((id) => ({ id, type: 'media', x: 0, y: 0, data: { kind: 'image', name: `角色 ${id}`, url: `https://assets.test/${id}.png` } })),
+    },
+  });
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.images[0].mode, 'generate');
+  assert.deepEqual(agent.images[0].references, selectedIds.map((id) => `https://assets.test/${id}.png`));
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'reference', id: 'auto' }]);
+});
+
+test('invalid JEV output falls back to the selected chat model semantic planner', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: 'not-json' }
+      : { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"主模型回退确认"}' },
+  });
+  const data = await agent.post([
+    { role: 'user', content: '先构思一个太空书店的海报，9:16' },
+    { role: 'assistant', content: '海报画面是月球书店，是否按这个生成？' },
+    { role: 'user', content: '好的' },
+  ]);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.ok(agent.modelCalls.filter((call) => call.model === 'test-chat').length >= 1);
+  assert.equal(data.images.length, 1);
+});
+
+test('configured JEV is skipped for a clear ordinary conversation turn', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const agent = harness({ intentClassifierRuntime: classifierRuntime });
+  await agent.post([{ role: 'user', content: '你好，你能做什么？' }]);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 0);
+});
+
+test('video download uses JEV before exposing the native downloader', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const downloaded = [];
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async (request) => {
+      downloaded.push(request);
+      return { filePath: 'C:\\media\\example.mp4', bytes: 1234 };
+    },
+    reply: (payload, _callCount, rawModel) => {
+      if (rawModel === 'jev-1.13') return { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"用户明确要求下载视频"}' };
+      if (payload.messages.some((message) => message.role === 'tool')) return { content: '已完成下载。' };
+      if (payload.tools?.some((tool) => tool.function.name === 'video_download')) {
+        return { content: null, tool_calls: [{ id: 'video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4', cookiesFromBrowser: 'chrome' }) } }] };
+      }
+      return { content: '未执行下载。' };
+    },
+  });
+  const data = await agent.post([
+    { role: 'user', content: 'https://www.youtube.com/watch?v=example123' },
+    { role: 'assistant', content: '我收到这个链接了。' },
+    { role: 'user', content: '下载' },
+  ]);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'video_download')));
+  assert.deepEqual(downloaded.map((request) => request.url), ['https://www.youtube.com/watch?v=example123']);
+  assert.equal(downloaded[0].cookiesFromBrowser, undefined);
+  assert.match(data.message, /完成下载/);
+});
+
+test('browser cookies are passed only after the user authorizes the matching video URL and browser', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const downloaded = [];
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async (request) => {
+      downloaded.push(request);
+      return { filePath: 'C:\\media\\authorized.mp4', bytes: 1234 };
+    },
+    reply: (payload, _callCount, rawModel) => {
+      if (rawModel === 'jev-1.13') return { content: '{"mode":"follow_up","deliverable":"OTHER","confidence":"high","reason":"用户明确授权本次浏览器会话"}' };
+      if (payload.messages.some((message) => message.role === 'tool')) return { content: 'Download completed.' };
+      if (payload.tools?.some((tool) => tool.function.name === 'video_download')) {
+        return { content: null, tool_calls: [{ id: 'authorized-video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4', cookiesFromBrowser: 'firefox' }) } }] };
+      }
+      return { content: 'Download was not executed.' };
+    },
+  });
+  const url = 'https://www.xinpianchang.com/a13727498';
+  await agent.post([
+    { role: 'user', content: `Download this video ${url}` },
+    { role: 'assistant', content: 'HTTP 403. Should I use your Chrome browser session?' },
+    { role: 'user', content: 'Use Chrome browser session to retry the download.' },
+  ]);
+
+  assert.equal(downloaded.length, 1);
+  assert.equal(downloaded[0].url, url);
+  assert.equal(downloaded[0].cookiesFromBrowser, 'chrome');
+});
+
+test('HTTP 403 asks for browser-session consent and a separate download turn resumes the same URL', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const downloaded = [];
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async (request) => {
+      downloaded.push(request);
+      if (downloaded.length === 1) throw new Error('公开媒体解析失败（公开接口连接超时。）；备用下载也失败：站点返回 HTTP 403，当前网络被拒绝。');
+      return { filePath: 'C:\\media\\authorized.mp4', bytes: 1234 };
+    },
+    reply: (payload, _callCount, rawModel) => {
+      if (rawModel === 'jev-1.13') return { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"明确的视频下载或会话授权"}' };
+      if (payload.messages.some((message) => message.role === 'tool')) return { content: 'Download completed.' };
+      if (payload.tools?.some((tool) => tool.function.name === 'video_download')) {
+        return { content: null, tool_calls: [{ id: 'video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4', cookiesFromBrowser: 'firefox' }) } }] };
+      }
+      return { content: 'Download was not executed.' };
+    },
+  });
+  const url = 'https://www.xinpianchang.com/a13727498?from=share';
+  const initialMessages = [
+    { role: 'user', content: url },
+    { role: 'assistant', content: '收到链接。' },
+    { role: 'user', content: '下载' },
+  ];
+  const first = await agent.post(initialMessages);
+  assert.equal(downloaded.length, 1);
+  assert.equal(downloaded[0].url, url);
+  assert.equal(downloaded[0].cookiesFromBrowser, undefined);
+  assert.match(first.message, /HTTP 403/);
+  assert.match(first.message, /公开媒体解析失败（公开接口连接超时。）/);
+  assert.match(first.message, /是否授权本次下载读取你指定浏览器.*Cookie/);
+  assert.ok(first.message.includes(url));
+
+  const second = await agent.post([
+    ...initialMessages,
+    { role: 'assistant', content: first.message },
+    { role: 'user', content: '使用 Chrome 登录态重试' },
+  ]);
+  assert.equal(downloaded.length, 2);
+  assert.equal(downloaded[1].url, url);
+  assert.equal(downloaded[1].cookiesFromBrowser, 'chrome');
+  assert.match(second.message, /Download completed/);
+});
+
+test('a bare video URL follows the prior download-on-link instruction through JEV and the native tool', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const downloaded = [];
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async (request) => {
+      downloaded.push(request);
+      return { filePath: 'C:\\media\\follow-up.mp4', bytes: 1234 };
+    },
+    reply: (payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"follow_up","deliverable":"OTHER","confidence":"high","reason":"承接用户此前给视频链接就下载的要求"}' }
+      : payload.messages.some((message) => message.role === 'tool')
+        ? { content: '已完成下载。' }
+        : { content: '我无法下载这个链接。' },
+  });
+  const url = 'https://www.youtube.com/watch?v=plN7JMbadRg';
+  const data = await agent.post([
+    { role: 'user', content: '把 https://github.com/yt-dlp/yt-dlp 做成 Skill，以后给视频链接就下载' },
+    { role: 'assistant', content: '视频下载能力已接入，发视频链接即可下载。' },
+    { role: 'user', content: url },
+  ]);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'video_download')));
+  assert.deepEqual(downloaded.map((request) => request.url), [url]);
+  assert.match(data.message, /完成下载/);
+});
+
+test('GitHub executable project can be installed as the bundled Skill without MCP or archive tools', async () => {
+  const agent = harness({
+    skillInstall: true,
+    reply: (payload) => {
+      if (payload.messages.some((message) => message.role === 'tool')) return { content: '技能待确认。' };
+      return { content: null, tool_calls: [{ id: 'skill-install', type: 'function', function: { name: 'skill_install', arguments: JSON.stringify({ url: 'https://github.com/yt-dlp/yt-dlp' }) } }] };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '把 https://github.com/yt-dlp/yt-dlp 做成 Skill，以后给视频链接就下载' }]);
+  assert.equal(agent.manageCalls.length, 0);
+  assert.equal(agent.bundledSkillInstalls.length, 1);
+  assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'skill_install')));
+  assert.ok(agent.calls.every((call) => !call.tools?.some((tool) => tool.function.name === 'archive_generate')));
+  assert.match(data.message, /待确认/);
+});
+
+test('video download falls back to the canonical native call when the model returns prose', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  const downloaded = [];
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async (request) => {
+      downloaded.push(request);
+      return { filePath: 'C:\\media\\fallback.mp4', bytes: 4567 };
+    },
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"明确下载请求"}' }
+      : { content: '我会帮你下载。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '下载 https://www.youtube.com/watch?v=fallback123' }]);
+  assert.deepEqual(downloaded.map((request) => request.url), ['https://www.youtube.com/watch?v=fallback123']);
+  assert.match(data.message, /已经|完成|下载/);
+});
+
+test('JEV can reject a video-shaped question without running the downloader', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  let downloads = 0;
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async () => { downloads += 1; return { filePath: 'C:\\media\\never.mp4', bytes: 1 }; },
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+      ? { content: '{"mode":"ask","deliverable":"OTHER","confidence":"high","reason":"用户是在询问是否支持下载"}' }
+      : { content: '支持下载公开视频，但这句话是在询问能力。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '能下载这个视频吗？ https://www.youtube.com/watch?v=question123' }]);
+  assert.equal(downloads, 0);
+  assert.match(data.message, /支持下载/);
 });
 
 test('asking about an image does not grant permission to generate another one', async () => {

@@ -36,6 +36,20 @@ export type LocalEditAnnotation = {
 /** Every submitted local edit gets a small transition zone, even at UI value 0. */
 export const LOCAL_EDIT_MIN_FUSION_FEATHER = 2;
 
+export function canResetLocalEditMask(input: {
+  ready: boolean;
+  saving: boolean;
+  smartBusy: boolean;
+  pendingAnnotation: boolean;
+  movingAnnotation: boolean;
+}) {
+  return input.ready
+    && !input.saving
+    && !input.smartBusy
+    && !input.pendingAnnotation
+    && !input.movingAnnotation;
+}
+
 function clampUnit(value: number) {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 }
@@ -257,6 +271,42 @@ export function rasterizeLocalEditAnnotations(
   return pixels;
 }
 
+/** Restore erased protection from a persisted mask and its editable annotations. */
+export function recoverLocalEditProtectedPixels(
+  persistedPixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  annotations: LocalEditAnnotation[],
+  smartMasks?: ReadonlyMap<string, Uint8ClampedArray>,
+) {
+  const annotationPixels = rasterizeLocalEditAnnotations(width, height, annotations, smartMasks);
+  const pixelCount = Math.min(
+    width * height,
+    Math.floor(persistedPixels.length / 4),
+    Math.floor(annotationPixels.length / 4),
+  );
+  const protectedPixels = new Uint8Array(width * height);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const alpha = pixel * 4 + 3;
+    if (persistedPixels[alpha] >= 250 && annotationPixels[alpha] < 250) {
+      protectedPixels[pixel] = 1;
+    }
+  }
+  return protectedPixels;
+}
+
+/** Reapply eraser-protected pixels after rebuilding a mask from annotations. */
+export function applyLocalEditProtectionMask(
+  pixels: Uint8ClampedArray,
+  protectedPixels: Uint8Array,
+) {
+  const pixelCount = Math.min(Math.floor(pixels.length / 4), protectedPixels.length);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    if (protectedPixels[pixel]) pixels[pixel * 4 + 3] = 255;
+  }
+  return pixels;
+}
+
 function withoutConflictingMoveInstruction(prompt: string) {
   return prompt
     .replace(/(?:^|\n)\s*保持主体、姿态和构图不变，只编辑指定范围。?\s*(?=\n|$)/gu, "\n")
@@ -292,7 +342,7 @@ export function compileLocalEditPrompt(prompt: string, annotations: LocalEditAnn
       return { index: index + 1, text: description };
     })
     .filter((item) => item.text);
-  const fusionRequirement = "只修改编辑范围，并与周围画面自然融合，不要留下矩形边界、硬边或拼接痕迹。";
+  const fusionRequirement = "以参考原图为唯一底图，只在标记的编辑范围内按区域说明修改；范围外保持原样，包括主体、构图、视角、透视、光照、色彩、材质、文字和标识。编辑范围内应沿用邻近区域的纹理、色彩、光影和空间关系自然补全；不要新增未要求的内容，不要留下残影、重复物体、矩形边界、硬边、透明洞或拼接痕迹。";
   if (!descriptions.length) {
     if (!fusionRequirement) return base;
     return base
@@ -519,7 +569,7 @@ export function composeLocalEditMovePreview(
   return composeLocalEditMoveReference(source, width, height, annotations, smartMasks);
 }
 
-function moveGuideFeatherRadius(width: number, height: number) {
+export function localEditMoveGuideFeatherRadius(width: number, height: number) {
   return Math.max(2, Math.min(12, Math.round(Math.max(width, height) * 0.004)));
 }
 
@@ -563,7 +613,7 @@ export function composeLocalEditMoveReference(
         selection,
         width,
         height,
-        moveGuideFeatherRadius(width, height),
+        localEditMoveGuideFeatherRadius(width, height),
       );
       for (let pixel = 3; pixel < sourceRepairMask.length; pixel += 4) {
         sourceRepairMask[pixel] = Math.min(sourceRepairMask[pixel], softenedSelection[pixel]);

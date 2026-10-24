@@ -42,6 +42,33 @@ function clamp(value: number, min: number, max: number) {
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
 }
+
+export function CanvasFitButton({
+  className,
+  onFit,
+}: {
+  className: string;
+  onFit: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={(event) => {
+        event.stopPropagation();
+        onFit();
+      }}
+      title="将所有画布内容适应到视口"
+      aria-label="适应全部画布内容"
+    >
+      <svg viewBox="0 0 16 16" focusable="false" aria-hidden="true">
+        <path d="M6 2H2v4m0-4 4 4m4-4h4v4m0-4-4 4m4 4v4h-4m4 0-4-4m-4 4H2v-4m0 4 4-4" />
+      </svg>
+      <span>适应全部</span>
+    </button>
+  );
+}
+
 export default function CanvasMinimap({
   document,
   connectionStyle,
@@ -53,6 +80,8 @@ export default function CanvasMinimap({
   onNavigate,
   onMoveNodes,
   nodeLabel,
+  edgesVisible = true,
+  relatedEdgeIds = new Set<string>(),
 }: {
   document: CanvasDocument;
   connectionStyle: CanvasConnectionStyle;
@@ -64,6 +93,8 @@ export default function CanvasMinimap({
   onNavigate: (x: number, y: number) => void;
   onMoveNodes: (positions: Record<string, Point>, recordHistory: boolean) => void;
   nodeLabel: (node: CanvasNode) => string;
+  edgesVisible?: boolean;
+  relatedEdgeIds?: ReadonlySet<string>;
 }) {
   type MinimapInteraction =
     | {
@@ -312,6 +343,10 @@ export default function CanvasMinimap({
           <span aria-hidden="true">⌖</span>
           {document.nodes.length > 0 && <b>{document.nodes.length}</b>}
         </button>
+        <CanvasFitButton
+          className="canvas-minimap-fit canvas-minimap-fit-compact"
+          onFit={() => fitView()}
+        />
       </div>
     );
   return (
@@ -368,7 +403,7 @@ export default function CanvasMinimap({
           preserveAspectRatio="none"
           aria-hidden="true"
         >
-          {document.edges.filter((edge) => isCanvasEdgeVisible(document, edge)).map((edge) => {
+          {document.edges.filter((edge) => isCanvasEdgeVisible(document, edge) && (edgesVisible || relatedEdgeIds.has(edge.id))).map((edge) => {
             const source = nodeById(document, edge.source);
             const target = nodeById(document, edge.target);
             const sourceGroup = groupById(document, edge.source);
@@ -412,7 +447,7 @@ export default function CanvasMinimap({
           <button
             type="button"
             key={node.id}
-            aria-label={`${nodeLabel(node)}：${node.data.name || "未命名节点"}`}
+            aria-label={nodeLabel(node)}
             title={`${nodeLabel(node)} · 点击定位，拖动移动`}
             className={`canvas-minimap-node node-color-${canvasNodeColorKey(node)} type-${node.type} kind-${node.data.kind || "text"} status-${node.data.status || "idle"} ${node.groupId ? "grouped" : ""} ${selectedIds.has(node.id) ? "active" : ""}`}
             data-node-color={canvasNodeColorKey(node)}
@@ -496,13 +531,10 @@ export default function CanvasMinimap({
             ＋
           </button>
         </div>
-        <button
-          type="button"
+        <CanvasFitButton
           className="canvas-minimap-fit"
-          onClick={() => fitView()}
-        >
-          适应
-        </button>
+          onFit={() => fitView()}
+        />
       </div>
     </aside>
   );

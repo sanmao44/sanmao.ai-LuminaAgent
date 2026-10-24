@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID, createHash }
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderTextProtocol, ProviderType, PublicState, RegistryModel, WebSearchApiProvider, NativeSearchDetection, NativeSearchOverride, NativeSearchProtocol, ModelBilling, UpscaleConnection, UpscaleConnectionStatus, UpscaleProviderId } from './types';
-import { selectAutomaticModel } from './model-selection';
+import { modelSupportsCapabilities, selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
 import { inferModelKind, isImageEditOnlyModel, isNonConversationalModelId, isSpeechModelId, resolveModelKind } from './model-kind';
@@ -11,6 +11,9 @@ import { buildPublicUpscaleModels } from './upscale-catalog';
 import { resolveProviderConfigDir } from './data-paths';
 import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
 import { providerStateRepository } from './repositories/server-provider-repository';
+import { isIntentClassifierModel } from './intent-classifier';
+import { isRetiredAgnesModel } from './agnes';
+import { prepareImageStoragePath } from './image-storage';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -43,7 +46,7 @@ type StoredUpscaleConnection = {
 const dataDir = resolveProviderConfigDir();
 const keyPath = path.join(dataDir, 'master.key');
 const CURRENT_SCHEMA_VERSION = 3;
-const emptyState: StoreData = { schemaVersion: CURRENT_SCHEMA_VERSION, providers: [], models: [], settings: { agentModelId: null, defaultImageModelId: null, defaultVideoModelId: null, defaultProviderId: null, imageStoragePath: '', videoStoragePath: '' }, upscaleConnections: [] };
+const emptyState: StoreData = { schemaVersion: CURRENT_SCHEMA_VERSION, providers: [], models: [], settings: { agentModelId: null, intentClassifierModelId: null, defaultImageModelId: null, defaultVideoModelId: null, defaultProviderId: null, imageStoragePath: '', videoStoragePath: '' }, upscaleConnections: [] };
 
 let stateMutationChain: Promise<unknown> = Promise.resolve();
 let stateCorruptionError = '';
@@ -111,17 +114,31 @@ async function readState(): Promise<StoreData> {
     if (!parsed || typeof parsed !== 'object' || (!Array.isArray(parsed.providers) && parsed.providers !== undefined) || (!Array.isArray(parsed.models) && parsed.models !== undefined) || (parsed.settings !== undefined && (!parsed.settings || typeof parsed.settings !== 'object'))) {
       throw new Error('state.json 数据结构无效');
     }
+    const parsedModels = Array.isArray(parsed.models) ? parsed.models : [];
+    const models = parsedModels.filter((model) => !isRetiredAgnesModel((model as RegistryModel).rawId));
+    const settings = { ...emptyState.settings, ...(parsed.settings || {}) };
+    const retiredModelIds = new Set(parsedModels
+      .filter((model) => isRetiredAgnesModel((model as RegistryModel).rawId))
+      .map((model) => (model as RegistryModel).id));
+    let settingsChanged = false;
+    for (const key of ['agentModelId', 'intentClassifierModelId', 'defaultImageModelId', 'defaultVideoModelId'] as const) {
+      const selectedId = settings[key];
+      if (selectedId && retiredModelIds.has(selectedId)) {
+        settings[key] = null;
+        settingsChanged = true;
+      }
+    }
     const nextState: StoreData = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       providers: Array.isArray(parsed.providers) ? parsed.providers : [],
-      models: Array.isArray(parsed.models) ? parsed.models : [],
-      settings: { ...emptyState.settings, ...(parsed.settings || {}) },
+      models,
+      settings,
       upscaleConnections: Array.isArray(parsed.upscaleConnections) ? parsed.upscaleConnections.filter((item): item is StoredUpscaleConnection => Boolean(item && typeof item === 'object' && (item as StoredUpscaleConnection).provider && ['tencent-ci', 'aliyun-viapi'].includes((item as StoredUpscaleConnection).provider))) : [],
       webSearch: parsed.webSearch && typeof parsed.webSearch === 'object' && parsed.webSearch.encryptedApiKey && parsed.webSearch.provider === 'baidu-qianfan'
         ? { provider: 'baidu-qianfan', encryptedApiKey: parsed.webSearch.encryptedApiKey }
         : undefined,
     };
-    if (parsed.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(parsed.upscaleConnections)) {
+    if (parsed.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(parsed.upscaleConnections) || models.length !== parsedModels.length || settingsChanged) {
       await writeStateDirect(nextState);
     }
     return nextState;
@@ -162,6 +179,11 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
   const id = rawId.toLowerCase();
   const inferredKind = inferModelKind({ rawId, displayName: hints.displayName, capabilities: hints.capabilities });
   // 与 inferModelKind 共用同一套判据，避免两边正则各自漂移导致「模型库认、弹窗不认」。
+  // JEV is intentionally classified as an internal chat-compatible model here.
+  // Its name contains “classifier”, so the generic non-conversational guard
+  // would otherwise mark a discovered `jev-1.13` record as unknown and the
+  // runtime resolver could never select it after a model refresh.
+  if (isIntentClassifierModel({ rawId })) return { kind: 'chat', capabilities: ['chat'] };
   if (isSpeechModelId(id) || inferredKind === 'audio') return { kind: 'audio', capabilities: ['speech'] };
   // 向量 / OCR / ASR 这一类即使命中 chatish（qwen3-embedding）也不能当对话模型。
   if (isNonConversationalModelId(id)) return { kind: 'unknown', capabilities: [] };
@@ -489,6 +511,7 @@ export async function removeProvider(id: string) {
     state.providers = state.providers.filter((p) => p.id !== id);
     state.models = state.models.filter((m) => m.providerId !== id);
     if (state.settings.agentModelId && !state.models.some((m) => m.id === state.settings.agentModelId)) state.settings.agentModelId = null;
+    if (state.settings.intentClassifierModelId && !state.models.some((m) => m.id === state.settings.intentClassifierModelId)) state.settings.intentClassifierModelId = null;
     if (state.settings.defaultImageModelId && !state.models.some((m) => m.id === state.settings.defaultImageModelId)) state.settings.defaultImageModelId = null;
     if (state.settings.defaultVideoModelId && !state.models.some((m) => m.id === state.settings.defaultVideoModelId)) state.settings.defaultVideoModelId = null;
     if (state.settings.defaultProviderId && !state.providers.some((provider) => provider.id === state.settings.defaultProviderId)) state.settings.defaultProviderId = null;
@@ -610,6 +633,7 @@ export async function removeManualModel(id: string) {
     if (model.source !== 'manual') throw new Error('只能删除手动登记的模型');
     state.models = state.models.filter((item) => item.id !== id);
     if (state.settings.agentModelId === id) state.settings.agentModelId = null;
+    if (state.settings.intentClassifierModelId === id) state.settings.intentClassifierModelId = null;
     if (state.settings.defaultImageModelId === id) state.settings.defaultImageModelId = null;
     if (state.settings.defaultVideoModelId === id) state.settings.defaultVideoModelId = null;
     return model;
@@ -630,6 +654,7 @@ export async function patchModel(id: string, patch: Partial<Pick<RegistryModel, 
     const model = state.models.find((m) => m.id === id);
     if (!model) throw new Error('模型不存在');
     if (model.kind !== 'chat' && state.settings.agentModelId === id) state.settings.agentModelId = null;
+    if ((!model.enabled || !model.published || model.kind !== 'chat') && state.settings.intentClassifierModelId === id) state.settings.intentClassifierModelId = null;
     if (model.kind !== 'image' && state.settings.defaultImageModelId === id) state.settings.defaultImageModelId = null;
     if (model.kind !== 'video' && state.settings.defaultVideoModelId === id) state.settings.defaultVideoModelId = null;
     return model;
@@ -637,17 +662,25 @@ export async function patchModel(id: string, patch: Partial<Pick<RegistryModel, 
 }
 
 export async function patchSettings(patch: Partial<AppSettings>) {
-  return mutateState((state) => {
+  return mutateState(async (state) => {
     // 兼容旧配置：历史上部分带生图能力的模型可能仍保存为 chat/unknown，
     // 但前端和运行时已经按能力把它们展示为 image。设置默认模型时必须使用同一套归类。
     state.models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
     if ('agentModelId' in patch) {
       const id = patch.agentModelId;
       if (id) {
-        const model = state.models.find((m) => m.id === id && m.enabled && m.published && m.kind === 'chat');
+        const model = state.models.find((m) => m.id === id && m.enabled && m.published && m.kind === 'chat' && !isIntentClassifierModel(m));
         if (!model) throw new Error('请选择已启用、已发布的对话模型');
       }
       state.settings.agentModelId = id ?? null;
+    }
+    if ('intentClassifierModelId' in patch) {
+      const id = patch.intentClassifierModelId;
+      if (id) {
+        const model = state.models.find((m) => m.id === id && m.enabled && m.published && isIntentClassifierModel(m));
+        if (!model) throw new Error('intent classifier model must be enabled and published');
+      }
+      state.settings.intentClassifierModelId = id ?? null;
     }
     if ('defaultImageModelId' in patch) {
       const id = patch.defaultImageModelId;
@@ -670,7 +703,7 @@ export async function patchSettings(patch: Partial<AppSettings>) {
       if (id && !state.providers.some((provider) => provider.id === id)) throw new Error('请选择已存在的默认厂商');
       state.settings.defaultProviderId = id ?? null;
     }
-    if ('imageStoragePath' in patch) state.settings.imageStoragePath = String(patch.imageStoragePath || '').trim();
+    if ('imageStoragePath' in patch) state.settings.imageStoragePath = await prepareImageStoragePath(String(patch.imageStoragePath || ''), state.settings.imageStoragePath);
     if ('videoStoragePath' in patch) state.settings.videoStoragePath = String(patch.videoStoragePath || '').trim();
     if ('skillsEnabled' in patch) state.settings.skillsEnabled = Boolean(patch.skillsEnabled);
     if ('skillsAutoApprove' in patch) state.settings.skillsAutoApprove = Boolean(patch.skillsAutoApprove);
@@ -700,10 +733,15 @@ export async function getRuntimeModel(id: string | null | undefined, kind: Model
 export async function getRuntimeModelCandidates(id: string | null | undefined, kind: ModelKind) {
   const state = await readState();
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
-  const explicitId = id && id !== 'auto' ? id : null;
+  const explicitCandidate = id && id !== 'auto' ? models.find((model) => model.id === id) : undefined;
+  const explicitId = explicitCandidate && !isIntentClassifierModel(explicitCandidate) ? id : null;
   const compatible = models.filter((m) => {
     const provider = state.providers.find((item) => item.id === m.providerId);
-    return isProviderModelLibraryEnabled(provider) && m.kind === kind && m.enabled && m.published;
+    return isProviderModelLibraryEnabled(provider)
+      && m.kind === kind
+      && m.enabled
+      && m.published
+      && (kind !== 'chat' || !isIntentClassifierModel(m));
   });
   let model = explicitId ? compatible.find((m) => m.id === explicitId) : undefined;
   if (!explicitId) {
@@ -721,6 +759,35 @@ export async function getRuntimeModelCandidates(id: string | null | undefined, k
     return { model: candidate, provider: { ...provider, responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'), apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
   }));
   return runtimes.filter((runtime): runtime is NonNullable<typeof runtime> => Boolean(runtime));
+}
+
+/** Resolve the optional internal intent classifier without changing the chat model order. */
+export async function getRuntimeIntentClassifierModel() {
+  const state = await readState();
+  const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
+  const compatible = models.filter((model) => {
+    const provider = state.providers.find((candidate) => candidate.id === model.providerId);
+    return isProviderModelLibraryEnabled(provider)
+      && isIntentClassifierModel(model)
+      && model.enabled
+      && model.published;
+  });
+  const model = (state.settings.intentClassifierModelId
+    ? compatible.find((candidate) => candidate.id === state.settings.intentClassifierModelId)
+    : undefined)
+    || compatible.find((candidate) => isIntentClassifierModel(candidate));
+  if (!model) return null;
+  const provider = state.providers.find((candidate) => candidate.id === model.providerId);
+  if (!provider) return null;
+  return {
+    model,
+    provider: {
+      ...provider,
+      responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'),
+      apiKey: await decryptSecret(provider.encryptedApiKey),
+      videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined,
+    },
+  };
 }
 
 export async function getRuntimeVideoModel(id: string | null | undefined) {
@@ -793,7 +860,11 @@ export async function getRuntimeVisionModel(id: string | null | undefined) {
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
   const compatible = models.filter((item) => {
     const provider = state.providers.find((candidate) => candidate.id === item.providerId);
-    return isProviderModelLibraryEnabled(provider) && item.kind === 'chat' && item.enabled && item.published;
+    return isProviderModelLibraryEnabled(provider)
+      && item.kind === 'chat'
+      && item.enabled
+      && item.published
+      && !isIntentClassifierModel(item);
   });
   const explicit = id && id !== 'auto' ? compatible.find((item) => item.id === id) : undefined;
   const visionModels = compatible.filter((item) => item.capabilities.includes('vision'));
@@ -805,21 +876,29 @@ export async function getRuntimeVisionModel(id: string | null | undefined) {
   return { model, provider: { ...provider, responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'), apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
 }
 
-export async function getRuntimeImageModelForCapability(id: string | null | undefined, capability: ModelCapability) {
+export async function getRuntimeImageModelForCapabilities(id: string | null | undefined, capabilities: readonly ModelCapability[]) {
   const state = await readState();
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
   const targetId = id && id !== 'auto' ? id : undefined;
   const compatible = models.filter((item) => {
     const provider = state.providers.find((candidate) => candidate.id === item.providerId);
-    return isProviderModelLibraryEnabled(provider) && item.kind === 'image' && item.enabled && item.published && item.capabilities.includes(capability);
+    return isProviderModelLibraryEnabled(provider)
+      && item.kind === 'image'
+      && item.enabled
+      && item.published
+      && modelSupportsCapabilities(item, capabilities);
   });
   const model = targetId
     ? compatible.find((item) => item.id === targetId)
     : selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultImageModelId);
-  if (!model || !model.enabled || !model.published || model.kind !== 'image' || !model.capabilities.includes(capability)) return null;
+  if (!model || !model.enabled || !model.published || model.kind !== 'image' || !modelSupportsCapabilities(model, capabilities)) return null;
   const provider = state.providers.find((item) => item.id === model!.providerId);
   if (!provider) return null;
-  return { model, provider: { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey) } };
+  return { model, provider: { ...provider, imageStoragePath: state.settings.imageStoragePath, apiKey: await decryptSecret(provider.encryptedApiKey) } };
+}
+
+export async function getRuntimeImageModelForCapability(id: string | null | undefined, capability: ModelCapability) {
+  return getRuntimeImageModelForCapabilities(id, [capability]);
 }
 
 export async function getRuntimeImageGenerationModel(id: string | null | undefined) {
@@ -834,7 +913,7 @@ export async function getRuntimeImageGenerationModel(id: string | null | undefin
   if (!model || !model.enabled || !model.published || model.kind !== 'image' || !model.capabilities.includes('generate')) return null;
   const provider = state.providers.find((item) => item.id === model.providerId);
   if (!provider) return null;
-  return { model, provider: { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey) } };
+  return { model, provider: { ...provider, imageStoragePath: state.settings.imageStoragePath, apiKey: await decryptSecret(provider.encryptedApiKey) } };
 }
 
 /**
@@ -843,16 +922,20 @@ export async function getRuntimeImageGenerationModel(id: string | null | undefin
  * explicitly rejected a request; transport failures and ambiguous upstream
  * failures must not trigger a second paid generation request.
  */
-export async function getRuntimeImageModelCandidates(id: string | null | undefined, capability?: ModelCapability) {
+export async function getRuntimeImageModelCandidates(
+  id: string | null | undefined,
+  capability?: ModelCapability | readonly ModelCapability[],
+) {
   const state = await readState();
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
+  const capabilities = capability === undefined ? [] : typeof capability === 'string' ? [capability] : capability;
   const compatible = models.filter((item) => {
     const provider = state.providers.find((candidate) => candidate.id === item.providerId);
     return isProviderModelLibraryEnabled(provider)
       && item.kind === 'image'
       && item.enabled
       && item.published
-      && (!capability || item.capabilities.includes(capability));
+      && modelSupportsCapabilities(item, capabilities);
   });
   const explicit = id && id !== 'auto' ? compatible.find((item) => item.id === id) : undefined;
   const first = explicit || selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultImageModelId);
@@ -861,7 +944,7 @@ export async function getRuntimeImageModelCandidates(id: string | null | undefin
   const runtimes = await Promise.all(ordered.map(async (model) => {
     const provider = state.providers.find((item) => item.id === model.providerId);
     if (!provider) return null;
-    return { model, provider: { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey) } };
+    return { model, provider: { ...provider, imageStoragePath: state.settings.imageStoragePath, apiKey: await decryptSecret(provider.encryptedApiKey) } };
   }));
   return runtimes.filter((runtime): runtime is NonNullable<typeof runtime> => Boolean(runtime));
 }

@@ -93,6 +93,17 @@ export function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+export function normalizeCanvasEntityName(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return Array.from(value.trim().replace(/\s+/gu, " ")).slice(0, 48).join("");
+}
+
+export function normalizeCanvasGroupColor(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const color = value.trim();
+  return /^#[0-9a-f]{6}$/iu.test(color) ? color.toLowerCase() : undefined;
+}
+
 export function defaultCamera(width = 1200, height = 760): CanvasCamera {
   return { x: width / 2, y: height / 2, zoom: 1 };
 }
@@ -419,6 +430,9 @@ function normalizeNode(value: unknown): CanvasNode | null {
     raw.data && typeof raw.data === "object"
       ? clone(raw.data as CanvasNodeData)
       : {};
+  const normalizedName = normalizeCanvasEntityName(data.name);
+  if (normalizedName) data.name = normalizedName;
+  else delete data.name;
   const type = nodeType(raw.type);
   if (type === "media" || type === "generator")
     data.kind = mediaKind(data.kind);
@@ -859,9 +873,9 @@ export function normalizeDocument(
         .filter((group): group is CanvasGroup =>
           Boolean(group && typeof group === "object"),
         )
-        .map((group) => ({
+        .map((group, index) => ({
           id: String(group.id || uid("group")),
-          name: String(group.name || "对象组"),
+          name: normalizeCanvasEntityName(group.name) || `对象组 ${index + 1}`,
           nodeIds: Array.isArray(group.nodeIds)
             ? [...new Set(group.nodeIds.map(String).map((id) => legacyUpscaleResultParentIds.get(id) || id))].filter((id) =>
                 nodeIds.has(id),
@@ -869,6 +883,9 @@ export function normalizeDocument(
             : [],
           ...(typeof group.zIndex === "number" && Number.isFinite(group.zIndex)
             ? { zIndex: Math.trunc(group.zIndex) }
+            : {}),
+          ...(normalizeCanvasGroupColor(group.color)
+            ? { color: normalizeCanvasGroupColor(group.color) }
             : {}),
         }))
         .filter(
@@ -1071,6 +1088,9 @@ export function recoverInterruptedCanvasDocument(
     }
 
     if (node.type === "media") {
+      if (node.data.kind === "video" && node.data.depthVideo) {
+        return interrupted(node, "上次本机深度图处理被页面中断，请从原视频节点重新生成");
+      }
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "");
       if (taskId && (node.data.kind === "video" || node.data.kind === "image")) {
         return {
@@ -1163,6 +1183,44 @@ export function nodeById(document: CanvasDocument, id: string | undefined) {
 
 export function groupById(document: CanvasDocument, id: string | undefined) {
   return document.groups.find((group) => group.id === id);
+}
+
+export function renameCanvasNode(document: CanvasDocument, nodeId: string, name: unknown): CanvasDocument {
+  if (!nodeById(document, nodeId)) return document;
+  const normalized = normalizeCanvasEntityName(name);
+  return {
+    ...document,
+    nodes: document.nodes.map((node) => {
+      if (node.id !== nodeId) return node;
+      if (normalized) return { ...node, data: { ...node.data, name: normalized } };
+      const { name: _name, ...data } = node.data;
+      return { ...node, data };
+    }),
+  };
+}
+
+export function renameCanvasGroup(document: CanvasDocument, groupId: string, name: unknown): CanvasDocument {
+  const index = document.groups.findIndex((group) => group.id === groupId);
+  if (index < 0) return document;
+  const normalized = normalizeCanvasEntityName(name) || `对象组 ${index + 1}`;
+  return {
+    ...document,
+    groups: document.groups.map((group) => group.id === groupId ? { ...group, name: normalized } : group),
+  };
+}
+
+export function setCanvasGroupColor(document: CanvasDocument, groupId: string, color: unknown): CanvasDocument {
+  if (!groupById(document, groupId)) return document;
+  const normalized = normalizeCanvasGroupColor(color);
+  return {
+    ...document,
+    groups: document.groups.map((group) => {
+      if (group.id !== groupId) return group;
+      if (normalized) return { ...group, color: normalized };
+      const { color: _color, ...withoutColor } = group;
+      return withoutColor;
+    }),
+  };
 }
 
 /** Resolve a node's group from both persisted membership representations. */
@@ -2477,14 +2535,24 @@ export function upscaleCardSizeForRatio(ratio?: number) {
 export function smartMediaSize(
   kind: CanvasMediaKind,
   params?: CanvasGenerationParams,
+  fallbackRatio?: number,
 ) {
   if (kind === "video")
     return mediaCardSizeForRatio(videoAspectRatio(params), kind);
-  const aspect = params && "aspect" in params ? params.aspect : "1:1";
-  const [a, b] = String(aspect || "1:1")
-    .split(":")
-    .map(Number);
-  return mediaCardSizeForRatio((a || 1) / (b || 1), kind);
+  const imageParams = params?.kind === "image" ? params : undefined;
+  let ratio = fallbackRatio || 1;
+  if (imageParams?.sizeMode === "custom") {
+    ratio =
+      (positiveRatio(imageParams.width) || 1) /
+      (positiveRatio(imageParams.height) || 1);
+  } else if (imageParams?.aspect === "自定义") {
+    ratio =
+      (positiveRatio(imageParams.customAspectWidth) || 1) /
+      (positiveRatio(imageParams.customAspectHeight) || 1);
+  } else if (imageParams) {
+    ratio = ratioFromAspect(imageParams.aspect, ratio);
+  }
+  return mediaCardSizeForRatio(ratio, kind);
 }
 
 export function createMedia(
@@ -2601,7 +2669,9 @@ export function createEmptyMedia(
     kind === "image"
       ? normalizeCreationSettings("image", params)
       : normalizeCreationSettings("video", params);
-  const size = smartMediaSize(kind, normalizedParams);
+  const size = kind === "image"
+    ? mediaCardSizeForRatio(DEFAULT_VIDEO_ASPECT_RATIO, "image")
+    : smartMediaSize(kind, normalizedParams);
   return {
     ...createMedia(
       kind,

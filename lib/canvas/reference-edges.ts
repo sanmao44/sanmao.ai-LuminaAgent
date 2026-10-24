@@ -1,6 +1,8 @@
 import {
   groupById,
   groupNodes,
+  incomingReferences,
+  isCanvasReadyImageSource,
   isCanvasReferenceableNode,
   nodeById,
 } from "@/lib/canvas/model";
@@ -59,4 +61,128 @@ export function referenceEdgeIdsForCanvasSource(
       referenceNodesForCanvasEdge(document, edge).some((node) => node.id === sourceId),
     )
     .map(({ edge }) => edge.id);
+}
+
+/**
+ * Returns the image inputs for continuing a generated image. Older outputs
+ * stored reference IDs without materializing the corresponding reference edges.
+ */
+export function canvasImageReferencesForContinuation(
+  document: CanvasDocument,
+  targetId: string,
+) {
+  const targetEdges = referenceEdgesForCanvasTarget(document, targetId);
+  const connectedImageNodes = targetEdges
+    .flatMap(({ edge }) => referenceNodesForCanvasEdge(document, edge))
+    .filter((node) => node.data.kind === "image");
+  const imageInputIds = new Set(
+    targetEdges
+      .filter(({ edge }) => edge.inputRole === undefined || edge.inputRole === "reference-image")
+      .flatMap(({ edge }) => referenceNodesForCanvasEdge(document, edge))
+      .filter((node) => node.data.kind === "image")
+      .map((node) => node.id),
+  );
+  const connected = incomingReferences(document, targetId).filter(
+    (node) => node.data.kind === "image" && imageInputIds.has(node.id),
+  );
+  if (connectedImageNodes.length) return connected.filter(isCanvasReadyImageSource);
+
+  const target = nodeById(document, targetId);
+  const storedIds = target?.data.referenceOrder?.length
+    ? target.data.referenceOrder
+    : target?.data.generation?.referenceIds || [];
+  const seen = new Set<string>();
+  return storedIds
+    .map((id) => nodeById(document, id))
+    .filter((node): node is CanvasNode => Boolean(
+      node && node.id !== targetId && isCanvasReadyImageSource(node) && !seen.has(node.id) && seen.add(node.id),
+    ));
+}
+
+/** Keep each output's image inputs aligned with the references sent to generation. */
+export function attachCanvasImageReferenceEdges(
+  document: CanvasDocument,
+  references: readonly CanvasNode[],
+  targetIds: readonly string[],
+  createEdgeId: () => string,
+) {
+  const imageReferences = [...new Map(
+    references
+      .filter(isCanvasReadyImageSource)
+      .map((node) => [node.id, node]),
+  ).values()];
+  const targets = [...new Set(targetIds)];
+  const desiredByTarget = new Map(
+    targets.map((targetId) => [
+      targetId,
+      imageReferences.filter((reference) => reference.id !== targetId),
+    ]),
+  );
+  const connectedByTarget = new Map<string, Set<string>>(
+    targets.map((targetId) => [targetId, new Set<string>()]),
+  );
+  const edges: CanvasEdge[] = [];
+
+  for (const edge of document.edges) {
+    const desired = desiredByTarget.get(edge.target);
+    if (
+      !desired ||
+      ["generated", "variant", "lineage"].includes(edge.kind || "") ||
+      (edge.inputRole !== undefined && edge.inputRole !== "reference-image")
+    ) {
+      edges.push(edge);
+      continue;
+    }
+
+    const sourceGroup = groupById(document, edge.source);
+    if (sourceGroup) {
+      const memberIds = edge.sourceNodeIds || sourceGroup.nodeIds;
+      const nonImageIds = memberIds.filter((id) => nodeById(document, id)?.data.kind !== "image");
+      if (nonImageIds.length === memberIds.length) {
+        edges.push(edge);
+      } else if (nonImageIds.length) {
+        edges.push({ ...edge, sourceNodeIds: nonImageIds });
+      }
+      continue;
+    }
+
+    const source = nodeById(document, edge.source);
+    if (source?.data.kind !== "image") {
+      edges.push(edge);
+      continue;
+    }
+
+    const order = desired.findIndex((reference) => reference.id === source.id);
+    const connected = connectedByTarget.get(edge.target);
+    if (order < 0 || !connected || connected.has(source.id)) continue;
+    connected.add(source.id);
+    edges.push(
+      edge.inputRole === "reference-image" && edge.order === order
+        ? edge
+        : { ...edge, inputRole: "reference-image", order },
+    );
+  }
+
+  for (const targetId of targets) {
+    const desired = desiredByTarget.get(targetId) || [];
+    const connected = connectedByTarget.get(targetId);
+    for (const [order, reference] of desired.entries()) {
+      if (connected?.has(reference.id)) continue;
+      edges.push({
+        id: createEdgeId(),
+        source: reference.id,
+        target: targetId,
+        sourcePort: "right",
+        targetPort: "left",
+        inputRole: "reference-image",
+        order,
+        kind: "reference",
+      });
+      connected?.add(reference.id);
+    }
+  }
+
+  return edges.length === document.edges.length && edges.every((edge, index) => edge === document.edges[index])
+    ? document
+    : { ...document, edges };
 }

@@ -8,6 +8,7 @@ import {
   updateUnifiedAssetMetadata,
   type AssetRecord,
 } from "@/lib/assets";
+import { assetKey } from "@/lib/asset-catalog";
 import type { AssetCollection } from "@/lib/client-history";
 import {
   isAssignableCanvasAssetCollection,
@@ -77,7 +78,7 @@ async function saveCanvasAssetCollection(
 }
 
 export function addExistingCanvasAssetToCollection(
-  asset: Pick<AssetRecord, "kind" | "url">,
+  asset: Pick<AssetRecord, "kind" | "url" | "storageKey">,
   collectionId: string,
   extraAssets: AssetRecord[] = [],
 ) {
@@ -85,7 +86,7 @@ export function addExistingCanvasAssetToCollection(
     return Promise.resolve({ status: "invalid-collection" } as const);
   return listUnifiedAssets(extraAssets).then(async (assets) => {
     const existing = assets.find(
-      (item) => item.kind === asset.kind && item.url === asset.url,
+      (item) => assetKey(item.kind, item.url, item.storageKey) === assetKey(asset.kind, asset.url, asset.storageKey),
     );
     if (!existing) return { status: "missing-asset" } as const;
     return saveCanvasAssetCollection(existing, collectionId);
@@ -101,7 +102,7 @@ export function registerCanvasAssetInCollection(
     return Promise.resolve({ status: "invalid-collection" } as const);
   return listUnifiedAssets(extraAssets).then(async (assets) => {
     const existing = assets.find(
-      (item) => item.kind === asset.kind && item.url === asset.url,
+      (item) => assetKey(item.kind, item.url, item.storageKey) === assetKey(asset.kind, asset.url, asset.storageKey),
     );
     if (existing) return saveCanvasAssetCollection(existing, collectionId);
 

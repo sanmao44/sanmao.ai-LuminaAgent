@@ -1,4 +1,4 @@
-﻿# Shared Windows launcher helpers for SANMAO.AI start.ps1 / stop.ps1.
+# Shared Windows launcher helpers for SANMAO.AI start.ps1 / stop.ps1.
 # This file is dot-sourced. Call Initialize-SanmaoLauncher before using the
 # functions below.
 
@@ -63,6 +63,12 @@ function Resolve-SanmaoProviderConfigDir {
     if ([System.IO.Path]::IsPathRooted($configured)) { return [System.IO.Path]::GetFullPath($configured) }
     return [System.IO.Path]::GetFullPath((Join-Path $Root $configured))
   }
+
+  $portable = [string]$env:SANMAO_PORTABLE -match '^(?i:1|true|yes|on)$' -or
+    ([string]$env:SANMAO_DATA_MODE).Trim().ToLowerInvariant() -eq 'portable'
+  $installed = ([string]$env:SANMAO_INSTALL_MODE).Trim().ToLowerInvariant() -eq 'installed' -or
+    [string]$env:SANMAO_INSTALLED -match '^(?i:1|true|yes|on)$'
+  if ($portable -or $installed) { return Resolve-SanmaoDataDir -Root $Root }
 
   try {
     $commonDir = & git -C $Root rev-parse --git-common-dir 2>$null

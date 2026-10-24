@@ -12,6 +12,8 @@ export default function CanvasActionIcon({ name }: { name: string }) {
   switch (name) {
     case "edit":
       return svg(<><path d="m13.5 5.5 5 5" /><path d="m5 19 3.9-.9L18.7 8.3a2.1 2.1 0 0 0-3-3L5.9 15.1 5 19Z" /><path d="M13.5 5.5 18.7 10.7" /></>);
+    case "palette":
+      return svg(<><path d="M12 4.5a7.5 7.5 0 0 0 0 15h1.4a1.6 1.6 0 0 0 0-3.2h-.9a1.5 1.5 0 0 1 0-3h2.8a4.6 4.6 0 0 0 4.6-4.6A7.5 7.5 0 0 0 12 4.5Z" /><circle cx="8.2" cy="10" r="1" fill="currentColor" stroke="none" /><circle cx="11" cy="7.8" r="1" fill="currentColor" stroke="none" /><circle cx="14.4" cy="7.8" r="1" fill="currentColor" stroke="none" /><circle cx="17" cy="10" r="1" fill="currentColor" stroke="none" /></>);
     case "image-operations":
       return svg(<><path d="M5 7h14" /><path d="M5 12h14" /><path d="M5 17h14" /><circle cx="9" cy="7" r="1.7" fill="currentColor" stroke="none" /><circle cx="15" cy="12" r="1.7" fill="currentColor" stroke="none" /><circle cx="11" cy="17" r="1.7" fill="currentColor" stroke="none" /></>);
     case "more":

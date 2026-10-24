@@ -44,6 +44,8 @@ export function createCanvasReferenceDraft(
     url: String(node.data.url),
     name: String(node.data.name || (node.data.kind === "video" ? "视频素材" : node.data.kind === "audio" ? "音频素材" : "图片素材")),
     ...(node.data.mimeType ? { mimeType: String(node.data.mimeType) } : {}),
+    ...(Number(node.data.nativeWidth) > 0 ? { width: Number(node.data.nativeWidth) } : {}),
+    ...(Number(node.data.nativeHeight) > 0 ? { height: Number(node.data.nativeHeight) } : {}),
     origin: "node",
   };
 }

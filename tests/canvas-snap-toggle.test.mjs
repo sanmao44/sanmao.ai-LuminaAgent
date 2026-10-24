@@ -10,7 +10,11 @@ const header = await readFile(
   new URL("../components/canvas/CanvasWorkspaceHeader.tsx", import.meta.url),
   "utf8",
 );
-const component = `${workspace}\n${header}`;
+const panels = await readFile(
+  new URL("../components/canvas/CanvasPanels.tsx", import.meta.url),
+  "utf8",
+);
+const component = `${workspace}\n${header}\n${panels}`;
 const styles = await readFile(
   new URL("../app/canvas.css", import.meta.url),
   "utf8",
@@ -28,7 +32,16 @@ test("canvas exposes a visible node-snap toggle with an accessible state", () =>
 test("turning off node snap bypasses alignment while retaining the normal drag path", () => {
   assert.match(component, /const snapResult = snapEnabled\s*\n\s*\? snapCanvasNodePositions\(/);
   assert.match(component, /: \{ positions: proposedPositions, guides: \[\] as CanvasSnapGuide\[\] \}/);
-  assert.match(component, /JSON\.stringify\(\{ connectionStyle, snapEnabled \}\)/);
+  assert.match(component, /JSON\.stringify\(\{ connectionStyle, edgesVisible, snapEnabled, depthQuality \}\)/);
   assert.match(styles, /\.canvas-snap-button\.active\{/);
   assert.match(styles, /\.canvas-snap-button:not\(\.active\)/);
+});
+
+test("canvas settings expose a persisted node-edge visibility toggle", () => {
+  assert.match(component, /const \[edgesVisible, setEdgesVisible\] = useState\(true\)/);
+  assert.match(component, /edgesVisible\?: unknown/);
+  assert.match(component, /setEdgesVisible\(raw\.edgesVisible\)/);
+  assert.match(component, /onEdgesVisibleChange=\{setEdgesVisible\}/);
+  assert.match(component, /aria-pressed=\{edgesVisible\}/);
+  assert.match(component, /隐藏（选中时显示关系）/);
 });

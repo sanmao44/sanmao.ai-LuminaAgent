@@ -82,6 +82,16 @@ test('removes disconnected source clips but preserves internal captions', () => 
   assert.equal(synced.clips.some((clip) => clip.type === 'caption'), true);
 });
 
+test('keeps an explicitly deleted source clip excluded during later input sync', () => {
+  let state = editor.createVideoEditorState([{ nodeId: 'video-1', kind: 'video' }]);
+  state = editor.removeVideoEditorClip(state, 'clip-video-1');
+  assert.deepEqual(state.clips, []);
+  assert.deepEqual(state.excludedSourceNodeIds, ['video-1']);
+  const synced = editor.syncVideoEditorInputs(state, [{ nodeId: 'video-1', kind: 'video' }]);
+  assert.deepEqual(synced.clips, []);
+  assert.deepEqual(synced.excludedSourceNodeIds, ['video-1']);
+});
+
 test('places added captions after an occupied caption range', () => {
   let state = editor.createVideoEditorState([{ nodeId: 'video-1', kind: 'video' }]);
   state = editor.addVideoEditorCaption(state, '第一条', 0, 3);
@@ -236,9 +246,10 @@ test('video editor nodes bypass the generic prompt editor while ordinary nodes k
   assert.match(componentSource, /if \(node\.type === "video-editor"\) onOpenVideoEditor\(\)/);
 });
 
-test('workbench keeps edits as a draft and creates a separate video clip node', () => {
+test('workbench persists edits through CanvasCore and creates a separate video clip node', () => {
   assert.match(workbenchSource, /onCreate: \(state: CanvasVideoEditorState, selectedClipId: string \| null\) => void/);
-  assert.doesNotMatch(workbenchSource, /onChange:\s*\(state: CanvasVideoEditorState/);
+  assert.match(workbenchSource, /onChange\?: \(state: CanvasVideoEditorState\) => void/);
+  assert.match(workbenchSource, /persistDraft\(normalized\)/);
   assert.match(workbenchSource, /trimVideoEditorClip/);
   assert.match(workbenchSource, /canvas-video-editor-trim start/);
   assert.match(workbenchSource, /创建剪辑/);
@@ -248,6 +259,7 @@ test('workbench keeps edits as a draft and creates a separate video clip node', 
   assert.match(componentSource, /const createVideoEditorClip = useCallback/);
   assert.match(componentSource, /videoClip: clip/);
   assert.match(componentSource, /onCreate=\{\(draft, selectedClipId\) => createVideoEditorClip/);
+  assert.match(componentSource, /updateVideoEditorDraft/);
   assert.match(componentSource, /setVideoEditorNodeId\(null\)/);
 });
 
@@ -381,9 +393,9 @@ test('workbench keeps timeline gestures local and exposes professional timeline 
   assert.match(canvasCssSource, /canvas-video-editor-mark-range/);
   assert.match(canvasCssSource, /tool-razor/);
   assert.match(cursorCssSource, /sanmao-razor\.svg/);
-  assert.match(workbenchSource, /backdropPointerRef/);
-  assert.match(workbenchSource, /Math\.hypot/);
-  assert.match(workbenchSource, /onClick={closeBackdropOnClick}/);
+  assert.doesNotMatch(workbenchSource, /backdropPointerRef/);
+  assert.doesNotMatch(workbenchSource, /closeBackdropOnClick/);
+  assert.match(workbenchSource, /onClick=\{\(event\) => event\.stopPropagation\(\)\}/);
 });
 
 test('node context menu handles each exact node type once and closes the editor action', () => {

@@ -39,7 +39,22 @@ export type McpServerConfig = {
   /** stdio 专用：来自 curated 目录的条目 id，用于面板显示与配置校验。 */
   catalogId?: string;
   /** 助手从 GitHub 仓库安装的受控项目来源。 */
-  managedRepo?: { owner: string; repo: string; ref: string; url: string };
+  managedRepo?: {
+    owner: string;
+    repo: string;
+    ref: string;
+    url: string;
+    kind?: 'node' | 'python';
+    packageName?: string;
+    packageVersion?: string;
+    commit?: string;
+    archiveSha256?: string;
+    installedAt?: number;
+    lastCheckedAt?: number;
+    lastUpdatedAt?: number;
+    lastUpdateError?: string;
+    autoUpdate?: boolean;
+  };
 };
 
 /** MCP 服务公布的单个工具，字段与规范一致。 */

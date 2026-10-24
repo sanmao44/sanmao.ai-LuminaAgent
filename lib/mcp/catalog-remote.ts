@@ -10,6 +10,7 @@
  */
 import { callMcpTool, probeMcpServer, resetMcpSessions } from './client';
 import {
+  catalogEntryAvailable,
   catalogEntryAllowWrite,
   catalogEntryAuthRequired,
   catalogEntryEnabled,
@@ -249,6 +250,7 @@ export function catalogEntryState(
   options: { dataDir?: string; roots?: readonly string[]; runtime?: { state: string; installed?: boolean } } = {},
 ): McpCatalogConnectionState {
   if (isRemoteCatalogEntry(entry)) return remoteCatalogConnectionState(entry, options);
+  if (!catalogEntryAvailable(entry)) return 'unavailable';
   const runtime = options.runtime;
   if (options.runtime && options.runtime.state === 'installing') return 'installing';
   if (options.runtime && options.runtime.state === 'error') return 'error';

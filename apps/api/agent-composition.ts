@@ -1,5 +1,6 @@
 import {
   chatCompletion,
+  intentClassificationCompletion,
   chatCompletionStream,
   describeProviderFailure,
   editImage,
@@ -25,6 +26,7 @@ import {
   getRuntimeImageModelForCapability,
   getRuntimeModel,
   getRuntimeModelCandidates,
+  getRuntimeIntentClassifierModel,
 } from '@/lib/store';
 import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { getProviderPreset } from '@/lib/provider-presets';
@@ -68,11 +70,19 @@ import {
   readSkillFile,
   recordSkillUsage,
   searchSkills,
+  listSkills,
+  installBundledSkillForGithub,
   SKILL_INSTALL_MAX_PER_REQUEST,
   SKILL_TOOL_MAX_CALLS,
   type SkillRecord as LegacySkillRecord,
 } from '@/lib/skills';
 import { fetchSkillFilesFromGithub } from '@/lib/skill-archive';
+import { isIntentClassifierModel } from '@/lib/intent-classifier';
+import { downloadWithYtDlp } from '@/lib/yt-dlp-adapter';
+import { getDefaultVideoStoragePath } from '@/lib/video-storage';
+import { resolveFfmpeg } from '@/lib/video-trim-service';
+import { routeSkillRequest as routeSkillRequestFromMetadata } from '@/packages/agent-core/skill-routing';
+import type { SkillRouteDecision, SkillRouteOptions } from '@/packages/contracts/skill';
 
 export type AgentCompositionRuntime = ProviderRuntime & {
   provider: Parameters<typeof chatCompletion>[0];
@@ -106,6 +116,7 @@ export type AgentMcpDiscovery = typeof discoverMcpForRequest;
 export type AgentApplicationInfrastructure = {
   provider: {
     chatCompletion: typeof chatCompletion;
+    intentClassificationCompletion?: typeof intentClassificationCompletion;
     chatCompletionStream: typeof chatCompletionStream;
     describeProviderFailure: typeof describeProviderFailure;
     editImage: typeof editImage;
@@ -129,6 +140,7 @@ export type AgentApplicationInfrastructure = {
     getRuntimeImageModelForCapability: typeof getRuntimeImageModelForCapability;
     getRuntimeModel: typeof getRuntimeModel;
     getRuntimeModelCandidates: typeof getRuntimeModelCandidates;
+    getRuntimeIntentClassifierModel?: typeof getRuntimeIntentClassifierModel;
     filterModelsByActiveProviders: typeof filterModelsByActiveProviders;
     getProviderPreset: typeof getProviderPreset;
   };
@@ -173,16 +185,29 @@ export type AgentApplicationInfrastructure = {
   filesystem: { persistImageBuffer: typeof persistImageBuffer; importLocalImage: typeof importLocalImage; isLocalImageRead: typeof isLocalImageRead; verifyFilesystemMove: typeof verifyFilesystemMove };
   skills: {
     buildAgentSkillContext: typeof buildAgentSkillContext;
+    routeSkillRequest: (input: string, options?: { dataDir?: string } & SkillRouteOptions) => SkillRouteDecision;
     createCapabilityPorts: (dataDir?: string) => SkillCapabilityPorts;
     SKILL_TOOL_MAX_CALLS: typeof SKILL_TOOL_MAX_CALLS;
     stripToolCallMarkup: typeof stripToolCallMarkup;
   };
   search: { nativeSearchIsEnabled: typeof nativeSearchIsEnabled; runNativeWebSearch: typeof runNativeWebSearch; stripNativeSearchProcess: typeof stripNativeSearchProcess };
   data: { resolveLocalDataDir: typeof resolveLocalDataDir };
+  video: {
+    downloadWithYtDlp: typeof downloadWithYtDlp;
+    getDefaultVideoStoragePath: typeof getDefaultVideoStoragePath;
+    resolveFfmpeg?: typeof resolveFfmpeg;
+  };
   health: { orderAgentModelCandidates: typeof orderAgentModelCandidates; noteAgentModelSuccess: typeof noteAgentModelSuccess; noteAgentModelFailure: typeof noteAgentModelFailure };
 };
 
 export function createAgentApplicationInfrastructure(): AgentApplicationInfrastructure {
+  const routeSkillRequest = (input: string, options: { dataDir?: string } & SkillRouteOptions = {}) => {
+    const routeOptions: SkillRouteOptions = {
+      ...(options.explicitSkillId ? { explicitSkillId: options.explicitSkillId } : {}),
+      ...(options.requestMode ? { requestMode: options.requestMode } : {}),
+    };
+    return routeSkillRequestFromMetadata(input, listSkills({ dataDir: options.dataDir, pending: false }), routeOptions);
+  };
   const createSkillCapabilityPorts = (dataDir?: string): SkillCapabilityPorts => ({
     maxCalls: SKILL_TOOL_MAX_CALLS,
     maxInstalls: SKILL_INSTALL_MAX_PER_REQUEST,
@@ -193,22 +218,24 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
     buildSkillToolContent: (skill, file, offset) => buildSkillToolContent(skill as LegacySkillRecord, file, offset),
     installSkill: (input) => installSkill(input as Parameters<typeof installSkill>[0], { dataDir }),
     installSkillFromDocument: (input) => installSkillFromDocument(input as Parameters<typeof installSkillFromDocument>[0], { dataDir }),
+    installBundledSkill: (input) => installBundledSkillForGithub(input as Parameters<typeof installBundledSkillForGithub>[0], { dataDir }),
     fetchSkillText: (source, options) => fetchSkillText(source, options),
     parseGithubSkillTarget: (source) => parseGithubSkillTarget(source),
     fetchSkillFilesFromGithub: (target, options) => fetchSkillFilesFromGithub({ ...target, ref: target.ref || '', dir: target.dir || '' }, options),
   });
   return {
-    provider: { chatCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth },
+    provider: { chatCompletion, intentClassificationCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth },
     artifacts: { collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact, isValidArtifactId, artifactDownloadUrl, getStorageRoots },
-    models: { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, getRuntimeModel, getRuntimeModelCandidates, filterModelsByActiveProviders, getProviderPreset },
+    models: { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, getRuntimeModel, getRuntimeModelCandidates, getRuntimeIntentClassifierModel, filterModelsByActiveProviders, getProviderPreset },
     persistence: { appendGenerationLog, finishGenerationLog, startGenerationLog, persistGenerationResult },
     web: { planSearch, searchWeb },
     mcp: { callMcpTool, MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime, mcpServersForTurn, listMcpServers, BROWSER_TOOL_GUIDE, TABBIT_BROWSER_TOOL_GUIDE, BROWSER_EXECUTION_LIMITS, browserExternalBlocker, browserTextNeedsContinuation, browserTextSubmissionGap, guardMcpServerCall, importBrowserArtifacts, shouldImportBrowserArtifacts, noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess, listFilesystemRoots, listFilesystemWriteRoots, recordMcpCall, summarizeMcpAuditText, runMcpManageAction, isMcpRuntimeAction, runMcpRuntimeAction, discoverMcpForRequest },
     browser: { isTabbitCliAvailable, runTabbitBrowserAction },
     filesystem: { persistImageBuffer, importLocalImage, isLocalImageRead, verifyFilesystemMove },
-    skills: { buildAgentSkillContext, createCapabilityPorts: createSkillCapabilityPorts, SKILL_TOOL_MAX_CALLS, stripToolCallMarkup },
+    skills: { buildAgentSkillContext, routeSkillRequest, createCapabilityPorts: createSkillCapabilityPorts, SKILL_TOOL_MAX_CALLS, stripToolCallMarkup },
     search: { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess },
     data: { resolveLocalDataDir },
+    video: { downloadWithYtDlp, getDefaultVideoStoragePath, resolveFfmpeg },
     health: { orderAgentModelCandidates, noteAgentModelSuccess, noteAgentModelFailure },
   };
 }
@@ -227,7 +254,7 @@ export type AgentApplicationCompositionOptions<TRuntime extends AgentComposition
   isCancelled?: (error: unknown) => boolean;
   timeoutMs: number;
   failoverTimeoutMs: number;
-  idleTimeoutMs: number;
+  idleTimeoutMs: number | null;
   timeoutError: (phase: 'initial' | 'idle', timeoutMs: number) => Error;
   orderCandidates: (candidates: readonly TRuntime[]) => readonly TRuntime[];
   onModelHealthSuccess: (runtime: TRuntime, durationMs: number) => void;
@@ -245,6 +272,7 @@ export type AgentApplicationComposition<TRuntime extends AgentCompositionRuntime
   invokeChatModel: (payload: ChatPayload, signal?: AbortSignal) => Promise<ChatResponse>;
   invokeChatModelStream: (payload: ChatPayload, signal?: AbortSignal) => Promise<StreamResponse>;
   invokeSpecificChatModel: (runtime: TRuntime, payload: ChatPayload, signal: AbortSignal) => Promise<ChatResponse>;
+  invokeIntentClassifier?: (runtime: TRuntime, payload: ChatPayload, signal: AbortSignal) => Promise<ChatResponse>;
   invokeCandidateChatModels: (candidates: readonly TRuntime[], payload: ChatPayload, signal: AbortSignal) => Promise<ChatResponse>;
 };
 
@@ -300,6 +328,14 @@ export function createAgentApplicationComposition<TRuntime extends AgentComposit
       runtime,
       payload,
       (selectedRuntime, callSignal) => (options.invokeProvider || ((selected, body, invokeSignal) => chatCompletion(selected.provider, selected.model.rawId, body, invokeSignal)))(selectedRuntime, payload, callSignal),
+      signal,
+    ),
+    invokeIntentClassifier: (runtime, payload, signal) => invoker.invokeSpecificWith(
+      runtime,
+      payload,
+      (selectedRuntime, invokeSignal) => isIntentClassifierModel(selectedRuntime.model)
+        ? (infrastructure.provider.intentClassificationCompletion || intentClassificationCompletion)(selectedRuntime.provider, selectedRuntime.model.rawId, payload, invokeSignal)
+        : chatCompletion(selectedRuntime.provider, selectedRuntime.model.rawId, payload, invokeSignal),
       signal,
     ),
     invokeCandidateChatModels: (candidates, payload, signal) => invoker.invokeCandidates(candidates, payload, signal),

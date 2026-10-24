@@ -9,7 +9,7 @@ const agnes = await readFile(new URL('../lib/agnes.ts', import.meta.url), 'utf8'
 const modelKind = await readFile(new URL('../lib/model-kind.ts', import.meta.url), 'utf8');
 const detectionUrl = new URL('../lib/native-search-detection.ts', import.meta.url);
 const detection = await readFile(detectionUrl, 'utf8');
-const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '')}`;
+const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '').replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;')}`;
 const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,
@@ -145,6 +145,33 @@ test('chat, stream and Responses requests all receive provider-ready media', asy
     || body.input?.[0]?.content[0].image_url.url === 'https://cdn.example/reference.png'));
 });
 
+test('stream transport releases the header timeout after response headers arrive', async () => {
+  const previousFetch = globalThis.fetch;
+  let requestSignal;
+  globalThis.fetch = async (_url, init) => {
+    requestSignal = init.signal;
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('first'));
+        requestSignal.addEventListener('abort', () => controller.error(requestSignal.reason), { once: true });
+        setTimeout(() => {
+          if (requestSignal.aborted) return;
+          controller.enqueue(new TextEncoder().encode('second'));
+          controller.close();
+        }, 30);
+      },
+    });
+    return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const response = await providers.fetchStreamingResponse('https://provider.example/v1/chat/completions', { method: 'POST' }, 10);
+    assert.equal(await response.text(), 'firstsecond');
+    assert.equal(requestSignal.aborted, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('OpenAI-compatible chat keeps inline data URLs without a relay conversion', async () => {
   const requests = [];
   const previousFetch = globalThis.fetch;
@@ -172,6 +199,118 @@ test('OpenAI-compatible chat keeps inline data URLs without a relay conversion',
   }
   assert.equal(requests.length, 1);
   assert.equal(requests[0].messages[0].content[1].image_url.url, inline);
+});
+
+test('normalizes assistant tool calls before replaying a tool follow-up', async () => {
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url: String(url), body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'done' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const provider = {
+    id: '65535', name: '65535', type: 'openai-compatible', platform: '65535',
+    baseUrl: 'https://api2.65535.space/v1', apiKey: 'test-key',
+  };
+  try {
+    await providers.chatCompletion(provider, 'deepseek-v4-flash', {
+      messages: [
+        { role: 'assistant', content: null, tool_calls: [{ id: 'call-1', function: { name: 'video_download', arguments: { url: 'https://example.test/video' } } }] },
+        { role: 'tool', tool_call_id: 'call-1', content: '{"ok":true}' },
+      ],
+      tool_choice: 'none',
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  const call = requests[0].body.messages[0].tool_calls[0];
+  assert.equal(call.id, 'call-1');
+  assert.equal(call.type, 'function');
+  assert.equal(call.function.name, 'video_download');
+  assert.equal(call.function.arguments, '{"url":"https://example.test/video"}');
+});
+
+test('JEV intent classification uses System One and normalizes its choice answers', async () => {
+  const previousFetch = globalThis.fetch;
+  let requestUrl = '';
+  let requestBody;
+  globalThis.fetch = async (url, init) => {
+    requestUrl = String(url);
+    requestBody = JSON.parse(init.body);
+    return new Response(JSON.stringify({
+      model: 'jev-1.13.0',
+      answers: {
+        mode: { type: 'choice', choice: 'follow_up', confidence: 0.97 },
+        deliverable: { type: 'choice', choice: 'image', confidence: 0.93 },
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const response = await providers.intentClassificationCompletion({
+      id: 'jev', name: '65535', type: 'openai-compatible', platform: '65535',
+      baseUrl: 'https://api2-cn.65535.space/v1', apiKey: 'test-key',
+    }, 'jev-1.13', { messages: [{ role: 'user', content: '按刚才的做' }] });
+    assert.equal(requestUrl, 'https://api2.65535.space/v1/systemone');
+    assert.equal(requestBody.model, 'jev-1.13');
+    assert.match(requestBody.state, /user: 按刚才的做/);
+    assert.equal(response.choices[0].message.content, JSON.stringify({
+      mode: 'follow_up', deliverable: 'IMAGE', confidence: 'high', reason: 'JEV System One 判定：mode=follow_up，deliverable=IMAGE',
+    }));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('JEV image-intent classification sends prompt metadata only and normalizes reference generation', async () => {
+  const previousFetch = globalThis.fetch;
+  let requestUrl = '';
+  let requestBody;
+  globalThis.fetch = async (url, init) => {
+    requestUrl = String(url);
+    requestBody = JSON.parse(init.body);
+    return new Response(JSON.stringify({
+      model: 'jev-1.13.0',
+      answers: { imageOperation: { type: 'choice', choice: 'reference_generate', confidence: 0.96 } },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const response = await providers.canvasImageIntentCompletion({
+      id: 'jev', name: '65535', type: 'openai-compatible', platform: '65535',
+      baseUrl: 'https://api2-cn.65535.space/v1', apiKey: 'test-key',
+    }, 'jev-1.13', { prompt: 'Use the connected image as a visual reference', imageReferenceCount: 2 });
+    assert.equal(requestUrl, 'https://api2.65535.space/v1/systemone');
+    assert.equal(requestBody.model, 'jev-1.13');
+    assert.deepEqual(JSON.parse(requestBody.state), {
+      prompt: 'Use the connected image as a visual reference',
+      connectedImageReferenceCount: 2,
+      task: 'Canvas creates a new output node; no input image is mutated in place.',
+    });
+    assert.equal(JSON.stringify(requestBody).includes('data:image'), false);
+    assert.deepEqual(response, { operation: 'reference-generate', confidence: 'high', model: 'jev-1.13.0' });
+    assert.equal(requestBody.questions.imageOperation.criteria.reference_generate.length > 0, true);
+    assert.equal(requestBody.questions.imageOperation.criteria.edit.length > 0, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('JEV image-intent classification normalizes edit and treats low confidence as uncertain', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    answers: { imageOperation: { type: 'choice', choice: 'edit', confidence: 0.45 } },
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    const response = await providers.canvasImageIntentCompletion({
+      id: 'jev', name: 'JEV', type: 'openai-compatible', platform: 'openai',
+      baseUrl: 'https://jev.example/v1', apiKey: 'test-key',
+    }, 'jev-1.13', { prompt: 'Edit the source image', imageReferenceCount: 1 });
+    assert.deepEqual(response, { operation: 'edit', confidence: 'low', model: 'jev-1.13' });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test('uses the OpenAI video task status default for a custom compatible provider', () => {
@@ -335,9 +474,90 @@ test('does not submit a second edit job after malformed JSON image output', asyn
         references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
         count: 1,
       }),
-      /不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片/,
+      (error) => {
+        assert.match(error.message, /不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片/);
+        assert.equal(error.providerPossiblyAccepted, true);
+        assert.equal(error.providerStatus, 200);
+        return true;
+      },
     );
     assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("successful empty and server-error image responses are marked unsafe for resubmission", async () => {
+  const previousFetch = globalThis.fetch;
+  const cases = [
+    { status: 200, body: {}, expectedStatus: 200 },
+    { status: 202, body: { status: "accepted" }, expectedStatus: 202 },
+    { status: 500, body: { error: { message: "provider interrupted" } }, expectedStatus: 500 },
+  ];
+  try {
+    for (const scenario of cases) {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        return new Response(JSON.stringify(scenario.body), {
+          status: scenario.status,
+          headers: { "content-type": "application/json" },
+        });
+      };
+      await assert.rejects(
+        providers.editImage({
+          type: "openai-compatible",
+          platform: "custom",
+          baseUrl: "https://images.example.test/v1",
+          apiKey: "test-key",
+        }, "gpt-image-2.5", {
+          prompt: "camera edit",
+          references: ["data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA"],
+          count: 1,
+        }),
+        (error) => {
+          assert.equal(error.providerPossiblyAccepted, true);
+          assert.equal(error.providerStatus, scenario.expectedStatus);
+          return true;
+        },
+      );
+      assert.equal(calls, 1, `HTTP ${scenario.status} must not cause a second provider request`);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('image edits return only the requested number when one provider request contains extra results', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ data: [
+      { url: 'https://cdn.example.test/first.png' },
+      { url: 'https://cdn.example.test/second.png' },
+    ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const provider = {
+      type: 'openai-compatible',
+      platform: 'custom',
+      baseUrl: 'https://images.example.test/v1',
+      apiKey: 'test-key',
+    };
+    const input = {
+      prompt: 'change the color',
+      references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
+    };
+    assert.deepEqual(await providers.editImage(provider, 'gpt-image-2.5', { ...input, count: 1 }), [
+      { url: 'https://cdn.example.test/first.png' },
+    ]);
+    assert.deepEqual(await providers.editImage(provider, 'gpt-image-2.5', { ...input, count: 2 }), [
+      { url: 'https://cdn.example.test/first.png' },
+      { url: 'https://cdn.example.test/second.png' },
+    ]);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls.map((call) => JSON.parse(call.init.body).n), [1, 2]);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -398,14 +618,84 @@ test('does not retry image requests after ambiguous upstream failures', () => {
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'timeout', providerStatus: 0 }), false);
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 500 }), false);
   assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422 }), true);
+  assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422, providerAcceptedTask: true }), false);
+  assert.equal(providers.canRetryImageRequest({ providerFailureKind: 'http', providerStatus: 422, providerPossiblyAccepted: true }), false);
 });
 
-test('treats an HTTP provider error as terminal instead of accepted background work', async () => {
+test('does not submit multipart edit after an ambiguous JSON provider failure', async () => {
+  const calls = [];
   const previousFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'provider rejected request' } }), {
-    status: 500,
-    headers: { 'content-type': 'application/json' },
-  });
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ error: { message: 'provider temporarily failed' } }), {
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    await assert.rejects(
+      providers.editImage({
+        type: 'openai-compatible',
+        platform: 'custom',
+        baseUrl: 'https://images.example.test/v1',
+        apiKey: 'test-key',
+      }, 'gpt-image-2', {
+        prompt: 'camera edit',
+        references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
+      }),
+      /provider temporarily failed/,
+    );
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('falls back to multipart edit only after an explicit compatibility rejection', async () => {
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    requests.push(init);
+    if (requests.length === 1) {
+      return new Response(JSON.stringify({ error: { message: 'JSON payload is not supported' } }), {
+        status: 415,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ data: [{ url: 'https://cdn.example.test/edited.png' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const images = await providers.editImage({
+      type: 'openai-compatible',
+      platform: 'custom',
+      baseUrl: 'https://images.example.test/v1',
+      apiKey: 'test-key',
+    }, 'gpt-image-2', {
+      prompt: 'camera edit',
+      references: ['data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA'],
+    });
+    assert.deepEqual(images, [{ url: 'https://cdn.example.test/edited.png' }]);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].headers['Content-Type'], 'application/json');
+    assert.equal(requests[1].body instanceof FormData, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('keeps a provider HTTP 500 terminal and marks delivery status uncertain', async () => {
+  const previousFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ error: { message: 'provider interrupted' } }), {
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
   try {
     await assert.rejects(
       () => providers.generateImage({
@@ -415,11 +705,12 @@ test('treats an HTTP provider error as terminal instead of accepted background w
         apiKey: 'test-key',
       }, 'image-model', { prompt: 'terminal provider error' }),
       (error) => {
-        assert.match(error.message, /provider rejected request/);
-        assert.equal(error.providerPossiblyAccepted, undefined);
+        assert.match(error.message, /provider interrupted/);
+        assert.equal(error.providerPossiblyAccepted, true);
         return true;
       },
     );
+    assert.equal(calls, 1);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -439,7 +730,7 @@ test('polls ModelScope image tasks and normalizes output_images', async () => {
     return new Response(JSON.stringify({
       task_id: 'modelscope-task-1',
       task_status: 'SUCCEED',
-      output_images: ['https://cdn.example.test/modelscope-result.png'],
+      output_images: ['https://cdn.example.test/modelscope-result.png', 'https://cdn.example.test/extra-result.png'],
     }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -543,6 +834,53 @@ test('omits legacy input_fidelity for GPT Image 2 while preserving it for other 
   assert.deepEqual(gptImageBody.images, [{ image_url: input.references[0] }]);
 });
 
+test('custom image dimensions take precedence over the resolution tier for edit requests', () => {
+  const provider = {
+    type: 'openai-compatible',
+    name: '65535',
+    platform: '65535',
+    baseUrl: 'https://api.example.test/v1',
+  };
+  const input = {
+    prompt: 'long image edit',
+    references: ['https://cdn.example.test/source.png'],
+    aspectRatio: '自动',
+    sizeMode: 'custom',
+    width: 2429,
+    height: 432,
+    resolution: '4K',
+    count: 1,
+  };
+  const body = providers.buildImageEditRequestBody(provider, 'gemini-3.1-flash-image', input, input.references, 1, '2432x432');
+  assert.equal(body.size, '2432x432');
+  assert.equal('resolution' in body, false);
+});
+
+test('image edit payload preserves all selected Canvas references', async () => {
+  const previousFetch = globalThis.fetch;
+  const references = [1, 2, 3, 4].map((index) => `data:image/png;base64,REF${index}`);
+  let requestBody;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ data: [{ url: 'https://cdn.example.test/poster.png' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const images = await providers.editImage({
+      type: 'openai-compatible',
+      platform: 'custom',
+      baseUrl: 'https://images.example.test/v1',
+      apiKey: 'test-key',
+    }, 'gpt-image-2.5', { prompt: '将四个角色合成 16:9 海报', references, count: 1 });
+    assert.deepEqual(images, [{ url: 'https://cdn.example.test/poster.png' }]);
+    assert.deepEqual(requestBody.images, references.map((image_url) => ({ image_url })));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('uses StarAPI native image sizes only for its gpt-image-2 model', () => {
   const starApi = {
     type: 'openai-compatible',
@@ -595,6 +933,38 @@ test('sends a manually registered image model raw ID to the real generation requ
   }
 });
 
+test('custom image dimensions take precedence over the resolution tier for generation requests', async () => {
+  let requestBody;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ data: [{ b64_json: 'iVBORw0KGgoAAAAAAAAAAAAA' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    await providers.generateImage({
+      type: 'openai-compatible',
+      platform: '65535',
+      baseUrl: 'https://api.example.test/v1',
+      apiKey: 'test-key',
+    }, 'gemini-3.1-flash-image', {
+      prompt: 'long image',
+      count: 1,
+      aspectRatio: '自动',
+      sizeMode: 'custom',
+      width: 2429,
+      height: 432,
+      resolution: '4K',
+    });
+    assert.equal(requestBody.size, '2432x432');
+    assert.equal('resolution' in requestBody, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('passes shared reference images through the generation request', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
@@ -619,6 +989,36 @@ test('passes shared reference images through the generation request', async () =
     });
     const body = JSON.parse(calls[0].init.body);
     assert.deepEqual(body.images, [{ image_url: 'data:image/png;base64,REF' }]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('provider image adapters reject excess references instead of silently truncating', async () => {
+  let requests = 0;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    requests += 1;
+    return new Response(JSON.stringify({ data: [{ b64_json: 'iVBORw0KGgoAAAAAAAAAAAAA' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const references = Array.from({ length: 17 }, (_, index) => `data:image/png;base64,REF${index + 1}`);
+  try {
+    await assert.rejects(providers.generateImage({
+      type: 'openai-compatible', platform: 'custom', baseUrl: 'https://images.example.test/v1', apiKey: 'test-key',
+    }, 'gpt-image-2', { prompt: 'too many references', references }), /最多 16 张/);
+    await assert.rejects(providers.editImage({
+      type: 'openai-compatible', platform: 'custom', baseUrl: 'https://images.example.test/v1', apiKey: 'test-key',
+    }, 'gpt-image-2', { prompt: 'too many references', references }), /最多 16 张/);
+    await assert.rejects(providers.generateImage({
+      type: 'openai-compatible', platform: 'custom', baseUrl: 'https://images.example.test/v1', apiKey: 'test-key',
+    }, 'gpt-image-2', { prompt: 'invalid reference', references: ['data:image/png;base64,REF', ''] }), /参考图数据格式无效/);
+    await assert.rejects(providers.editImage({
+      type: 'openai-compatible', platform: 'custom', baseUrl: 'https://images.example.test/v1', apiKey: 'test-key',
+    }, 'gpt-image-2', { prompt: 'invalid reference', references: ['data:image/png;base64,REF', ''] }), /参考图数据格式无效/);
+    assert.equal(requests, 0);
   } finally {
     globalThis.fetch = previousFetch;
   }

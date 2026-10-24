@@ -7,6 +7,7 @@ import CanvasProcessingIndicator, {
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 import type { ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import { canvasPromptOrbState } from "@/components/canvas/CanvasContextMenu";
+import CanvasInlineNameEditor from "@/components/canvas/CanvasInlineNameEditor";
 
 export type CanvasAgentNodeCardProps = {
   node: CanvasNode;
@@ -28,6 +29,9 @@ export type CanvasAgentNodeCardProps = {
   onEdit: (value: boolean) => void;
   onUseAsImagePrompt: () => void;
   onTextPreview: () => void;
+  onRename?: (value: string) => void;
+  renaming?: boolean;
+  onRenamingChange?: (editing: boolean) => void;
 };
 
 export default function CanvasAgentNodeCard({
@@ -50,13 +54,26 @@ export default function CanvasAgentNodeCard({
   onEdit,
   onUseAsImagePrompt,
   onTextPreview,
+  onRename,
+  renaming,
+  onRenamingChange,
 }: CanvasAgentNodeCardProps) {
   return (
     <div className="canvas-prompt-card">
       <div className="canvas-node-kicker">
         <span><AgentOrb state={canvasPromptOrbState(status)} size={16} label="" /></span>
-        <b>{String(role || "Agent 节点")}</b>
+        <CanvasInlineNameEditor
+          value={node.data.name}
+          fallback={String(role || "Agent 节点")}
+          ariaLabel="Agent 节点名称"
+          onCommit={onRename}
+          editing={renaming}
+          onEditingChange={onRenamingChange}
+          className="canvas-inline-name-editor canvas-agent-node-name"
+          inputClassName="canvas-inline-name-editor-input canvas-agent-node-name-input"
+        />
       </div>
+      <small className="canvas-agent-node-kind-label">{String(role || "Agent 节点")}{model ? ` · ${String(model)}` : ""}</small>
       {pending && (
         <CanvasProcessingIndicator
           label={processingLabel}

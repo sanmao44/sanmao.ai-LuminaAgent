@@ -186,6 +186,9 @@ export function normalizeVideoEditorState(value: unknown): CanvasVideoEditorStat
   const disabledTracks = Array.isArray(raw.disabledTracks)
     ? [...new Set(raw.disabledTracks.filter((track): track is CanvasVideoEditorTrack => TRACK_ORDER.includes(track as CanvasVideoEditorTrack)).map(normalizeTrack))]
     : [];
+  const excludedSourceNodeIds = Array.isArray(raw.excludedSourceNodeIds)
+    ? [...new Set(raw.excludedSourceNodeIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0))]
+    : [];
   // A video track is a sequential edit lane. Repair legacy/manual overlap data
   // on load so clips can never hide one another on the same video layer.
   const videoPositions = new Map<string, number>();
@@ -212,6 +215,7 @@ export function normalizeVideoEditorState(value: unknown): CanvasVideoEditorStat
     resolution: raw.resolution === "720p" || raw.resolution === "2K" || raw.resolution === "4K" ? raw.resolution : VIDEO_EDITOR_DEFAULT_RESOLUTION,
     clips: positionedClips,
     mutedTracks,
+    ...(excludedSourceNodeIds.length ? { excludedSourceNodeIds } : {}),
     ...(typeof raw.referenceAudioDucking === "boolean" ? { referenceAudioDucking: raw.referenceAudioDucking } : {}),
     disabledTracks,
   };
@@ -277,6 +281,7 @@ export function syncVideoEditorInputs(
     input.nodeId && all.findIndex((candidate) => candidate.nodeId === input.nodeId) === index,
   );
   const inputIds = new Set(validInputs.map((input) => input.nodeId));
+  const excludedSourceNodeIds = new Set(current.excludedSourceNodeIds || []);
   const retained = current.clips.filter((clip) =>
     clip.track === "caption" || clip.track === "graphics" || clip.track === "effect" || (clip.sourceNodeId && inputIds.has(clip.sourceNodeId)),
   );
@@ -288,6 +293,7 @@ export function syncVideoEditorInputs(
     .filter((clip) => clip.track === track)
     .reduce((end, clip) => Math.max(end, clip.start + clip.duration), 0);
   for (const input of validInputs) {
+    if (excludedSourceNodeIds.has(input.nodeId)) continue;
     if (retainedBySource.has(input.nodeId)) continue;
     const track = input.kind === "audio" ? "audio" : "video";
     next.push(clipForInput(input, trackEnd(track)));
@@ -459,6 +465,11 @@ export function moveVideoEditorClip(
 export function removeVideoEditorClip(state: CanvasVideoEditorState, clipId: string) {
   const removed = state.clips.find((clip) => clip.id === clipId);
   if (!removed) return state;
+  const sourceNodeId = removed.sourceNodeId;
+  const sourceStillUsed = sourceNodeId && state.clips.some((clip) => clip.id !== clipId && clip.sourceNodeId === sourceNodeId);
+  const excludedSourceNodeIds = sourceNodeId && !sourceStillUsed
+    ? [...new Set([...(state.excludedSourceNodeIds || []), sourceNodeId])]
+    : state.excludedSourceNodeIds;
   // Removing a picture edit removes a real range from the program timeline.
   // Ripple every track together so A1/A2 and captions do not drift away from
   // the remaining video. Removing an overlay/audio clip remains track-local.
@@ -473,6 +484,7 @@ export function removeVideoEditorClip(state: CanvasVideoEditorState, clipId: str
       ...state,
       clips,
       projectDuration: clips.reduce((max, clip) => Math.max(max, clipEnd(clip)), 0),
+      ...(excludedSourceNodeIds?.length ? { excludedSourceNodeIds } : {}),
     };
   }
   const removedEnd = clipEnd(removed);
@@ -486,6 +498,7 @@ export function removeVideoEditorClip(state: CanvasVideoEditorState, clipId: str
     ...state,
     clips,
     projectDuration: clips.reduce((max, clip) => Math.max(max, clipEnd(clip)), 0),
+    ...(excludedSourceNodeIds?.length ? { excludedSourceNodeIds } : {}),
   };
 }
 

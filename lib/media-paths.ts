@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -45,12 +46,13 @@ type MediaRootRegistry = {
   version: number;
   updatedAt: string;
   roots: Record<string, string[]>;
+  lookupOnlyRoots: Record<string, string[]>;
 };
 
 let registryCache: { file: string; value: MediaRootRegistry } | null = null;
 
 function emptyRegistry(): MediaRootRegistry {
-  return { version: 1, updatedAt: new Date(0).toISOString(), roots: {} };
+  return { version: 1, updatedAt: new Date(0).toISOString(), roots: {}, lookupOnlyRoots: {} };
 }
 
 function readRegistry(cwd = process.cwd()): MediaRootRegistry {
@@ -61,13 +63,20 @@ function readRegistry(cwd = process.cwd()): MediaRootRegistry {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<MediaRootRegistry>;
     if (parsed && typeof parsed === 'object' && parsed.roots && typeof parsed.roots === 'object') {
       const roots: Record<string, string[]> = {};
+      const lookupOnlyRoots: Record<string, string[]> = {};
       for (const kind of MEDIA_KINDS) {
         const list = (parsed.roots as Record<string, unknown>)[kind];
         if (Array.isArray(list)) {
           roots[kind] = list.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
         }
+        const lookupList = parsed.lookupOnlyRoots && typeof parsed.lookupOnlyRoots === 'object'
+          ? (parsed.lookupOnlyRoots as Record<string, unknown>)[kind]
+          : undefined;
+        if (Array.isArray(lookupList)) {
+          lookupOnlyRoots[kind] = lookupList.filter((item): item is string => typeof item === 'string' && Boolean(roots[kind]?.includes(item)));
+        }
       }
-      value = { version: 1, updatedAt: String(parsed.updatedAt || ''), roots };
+      value = { version: 1, updatedAt: String(parsed.updatedAt || ''), roots, lookupOnlyRoots };
     }
   } catch { /* 注册表缺失或损坏时按空表处理，不影响默认目录。 */ }
   registryCache = { file, value };
@@ -76,11 +85,18 @@ function readRegistry(cwd = process.cwd()): MediaRootRegistry {
 
 function writeRegistry(value: MediaRootRegistry, cwd = process.cwd()) {
   const file = registryPath(cwd);
+  const temporary = `${file}.${randomUUID()}.tmp`;
   try {
     mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    renameSync(temporary, file);
     registryCache = { file, value };
-  } catch { /* 注册表写失败只影响旧目录回退，不阻断媒体读写。 */ }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try { rmSync(temporary, { force: true }); } catch { /* 清理失败不能破坏已有注册表。 */ }
+  }
 }
 
 /** 历史上出现过的媒体目录，用于在固定媒体库之外继续找回旧素材。 */
@@ -88,19 +104,33 @@ export function knownMediaRoots(kind: MediaKind, cwd = process.cwd()) {
   return readRegistry(cwd).roots[kind] || [];
 }
 
-/** 记住一个额外的媒体目录（复制完旧素材或发现新位置时调用）。 */
-export function rememberMediaRoot(kind: MediaKind, root: string | undefined, cwd = process.cwd()) {
-  const value = String(root || '').trim();
-  if (!value) return;
-  const target = path.resolve(value);
+/** 用户选择的自定义目录只作读取回退，不能被历史素材迁移顺带复制。 */
+export function lookupOnlyMediaRoots(kind: MediaKind, cwd = process.cwd()) {
+  return readRegistry(cwd).lookupOnlyRoots[kind] || [];
+}
+
+/** 批量保留历史读取目录；lookupOnly 标记不改变已有媒体文件。 */
+export function rememberMediaRoots(kind: MediaKind, roots: readonly (string | undefined)[], cwd = process.cwd(), options: { lookupOnly?: boolean } = {}) {
+  const targets = [...new Set(roots.map((root) => String(root || '').trim()).filter(Boolean).map((root) => path.resolve(cwd, root)))];
+  if (!targets.length) return true;
   const registry = readRegistry(cwd);
   const current = registry.roots[kind] || [];
-  if (current.includes(target)) return;
-  const next = [...current, target].slice(-MAX_REGISTERED_ROOTS);
+  // 本次切换涉及的旧/新目录放到最近位置，不能在达到上限时把刚保留的旧目录挤掉。
+  const next = [...current.filter((root) => !targets.includes(root)), ...targets].slice(-MAX_REGISTERED_ROOTS);
+  const currentLookupOnly = registry.lookupOnlyRoots[kind] || [];
+  const lookupOnly = [...new Set([...currentLookupOnly, ...(options.lookupOnly ? targets : [])])].filter((root) => next.includes(root));
+  if (next.length === current.length && next.every((root, index) => root === current[index])
+    && lookupOnly.length === currentLookupOnly.length && lookupOnly.every((root, index) => root === currentLookupOnly[index])) return true;
   const value2: MediaRootRegistry = {
     version: 1,
     updatedAt: new Date().toISOString(),
     roots: { ...registry.roots, [kind]: next },
+    lookupOnlyRoots: { ...registry.lookupOnlyRoots, [kind]: lookupOnly },
   };
-  writeRegistry(value2, cwd);
+  return writeRegistry(value2, cwd);
+}
+
+/** 历史目录发现仍为 best effort；设置切换可用批量接口确认登记是否成功。 */
+export function rememberMediaRoot(kind: MediaKind, root: string | undefined, cwd = process.cwd()) {
+  rememberMediaRoots(kind, [root], cwd);
 }

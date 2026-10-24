@@ -30,7 +30,17 @@ function replyError(id, code, message) {
 
 function callTool(id, name, args) {
   if (name === 'ping') return reply(id, { result: { content: [{ type: 'text', text: 'pong' }] } });
-  if (name === 'echo') return reply(id, { result: { content: [{ type: 'text', text: String(args?.text ?? '') }] } });
+  if (name === 'echo') {
+    const marker = process.env.MCP_FIXTURE_CONTROL_RECOVERY;
+    if (marker && !existsSync(marker)) {
+      writeFileSync(marker, 'control gate failed before execution');
+      return reply(id, { result: { content: [{ type: 'text', text: JSON.stringify({ code: 'CONTROL_UNAVAILABLE', status: { state: 'unavailable', generation: 1, executed_steps: 0 } }) }], isError: true } });
+    }
+    if (process.env.MCP_FIXTURE_CONTROL_PARTIAL === '1') {
+      return reply(id, { result: { content: [{ type: 'text', text: JSON.stringify({ code: 'CONTROL_UNAVAILABLE', status: { state: 'unavailable', generation: 1, executed_steps: 1 } }) }], isError: true } });
+    }
+    return reply(id, { result: { content: [{ type: 'text', text: String(args?.text ?? '') }] } });
+  }
   if (name === 'fail') return reply(id, { result: { content: [{ type: 'text', text: '出错了' }], isError: true } });
   if (name === 'crash') return process.exit(3);
   if (name === 'slow') {

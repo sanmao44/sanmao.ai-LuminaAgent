@@ -81,3 +81,34 @@ test("agent prompt counts only real image references and preserves text referenc
   assert.equal(plan.latestReferenceImageCount, 1);
   assert.equal(plan.latestRefs.find((reference) => reference.kind === 'text')?.text, 'caption');
 });
+
+test("text-only canvas references do not activate visual intent routing", () => {
+  let deliverableContext;
+  let requestContext;
+  const plan = planning.planAgentRequest({
+    body: { webMode: 'off' },
+    messages: [{ role: 'user', content: '请优化这段文案的排版', references: [
+      { id: 'text', kind: 'text', name: '选中文案', text: '原始文案' },
+    ] }],
+    isCanvasSource: true,
+    isCanvasNodeExecution: false,
+    canvasTargetNodeIds: ['prompt-1'],
+    canvasTargetKind: 'text',
+    canvasTargetOperation: 'edit',
+    ports: {
+      ...planningPorts,
+      classifyAgentDeliverable: (input, context) => {
+        deliverableContext = context;
+        return planningPorts.classifyAgentDeliverable(input, context);
+      },
+      classifyAgentRequest: (input, context, options) => {
+        requestContext = context;
+        return planningPorts.classifyAgentRequest(input, context, options);
+      },
+    },
+  });
+  assert.equal(deliverableContext.hasReferences, false);
+  assert.equal(requestContext.hasReferences, false);
+  assert.equal(plan.latestReferenceImageCount, 0);
+  assert.equal(plan.latestRefs[0]?.text, '原始文案');
+});

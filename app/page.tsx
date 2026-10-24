@@ -7,10 +7,13 @@ import AngleConsole from '@/components/AngleConsole';
 import ModelPicker from '@/components/ModelPicker';
 import UpdateNotice from '@/components/UpdateNotice';
 import RuntimeServiceControl from '@/components/RuntimeServiceControl';
+import SettingsWorkspace from '@/components/settings/SettingsWorkspace';
+import ImageStorageSettings from '@/components/settings/ImageStorageSettings';
+import { saveImagesToDirectory } from '@/lib/browser-image-directory';
 import { getProviderPreset, providerPresets } from '@/lib/provider-presets';
 import { agnesBillingLabel } from '@/lib/agnes';
 import AgnesConnectionGuide from '@/components/AgnesConnectionGuide';
-import { loadImageDirectoryHandle, saveImageDirectoryHandle } from '@/lib/client-history';
+import { loadImageDirectoryHandle, saveImageDirectoryHandle, clearImageDirectoryHandle } from '@/lib/client-history';
 import { assetRepository } from '@/lib/repositories/asset-repository';
 import Link from 'next/link';
 import LocalEditEditor from '@/components/MaskEditor';
@@ -23,6 +26,7 @@ import VideoRecordCard from '@/components/VideoRecordCard';
 import { getFavoriteModelIds, getLastModelCall, getRecentModelIds, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { filterModelsByActiveProviders, isProviderModelLibraryEnabled } from '@/lib/provider-availability';
+import { isIntentClassifierModel } from '@/lib/intent-classifier';
 import { galleryReferences, normalizeReferenceRecords, referenceCount } from '@/lib/reference-images';
 import { createShareConversationPreview } from '@/lib/share-conversation-workflow';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
@@ -46,7 +50,7 @@ import { normalizeConversationPersona, personaBadgeLabel } from '@/lib/agent-per
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS } from '@/lib/creation/settings';
 import { requestPromptOptimization } from '@/lib/creation/agent';
-import { cleanupGenerationLogs, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
+import { cleanupGenerationLogs, getGenerationLog, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
 import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVideoTask as patchVideoTaskRequest, saveVideoTaskLocally as saveVideoTaskLocallyRequest } from '@/lib/video-task-client';
 import { videoTaskStatus } from '@/lib/video-task-output';
 import { createManualStorageSnapshot, loadStorageMaintenance, restoreLocalStorageSnapshot } from '@/lib/storage-maintenance-client';
@@ -141,12 +145,13 @@ import { renderOutpaintWhiteCanvas } from '@/lib/image-editor/outpaint-renderer'
 import { cloudUpscaleFormatOptions, isCloudUpscaleModel, qualityOptions, upscaleScales } from '@/lib/image-editor/editor-options';
 import { editorModelSelectionPatch, upscaleEditorSettingsPatch } from '@/lib/image-editor/editor-form';
 import { buildEditorRequest } from '@/lib/image-editor/editor-request';
-import { buildEditorTaskDraft } from '@/lib/image-editor/editor-task';
-import { buildEditorModelCallInput, buildEditorHistoryMeta, editorCompletionInfo } from '@/lib/image-editor/editor-result';
+import { buildEditorTaskDraft, editorTaskAction, editorTaskGalleryItemId, findEditorTaskSource, isEditorImageTask, restoreEditorTaskState } from '@/lib/image-editor/editor-task';
+import { buildEditorModelCallInput, buildEditorHistoryMeta, editorCompletionInfo, requireEditorImages } from '@/lib/image-editor/editor-result';
+import { waitForEditorTaskLog } from '@/lib/image-editor/editor-task-recovery';
 import { cropSourceRect } from '@/lib/image-editor/local-image-layout';
 import { renderLocalImage } from '@/lib/image-editor/local-image-renderer';
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
-import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile } from '@/lib/chat-file-preview';
+import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile, isVideoChatFile } from '@/lib/chat-file-preview';
 import { buildGalleryItems } from '@/lib/creation/gallery-items';
 import { storeImages } from '@/lib/image-storage-client';
 import { applyMessageVersion, messageVersionIndex, messageVersionsFor, normalizeAssistantImageSources, normalizeChatSession } from '@/lib/conversation/session-normalization';
@@ -2529,6 +2534,7 @@ export default function Page() {
     const [agentSkillQuery, setAgentSkillQuery] = useState('');
     const [agentSkillActive, setAgentSkillActive] = useState(0);
     const [agentSkills, setAgentSkills] = useState([]);
+    const [agentSkillId, setAgentSkillId] = useState('');
     const agentSkillMenuFromSlashRef = useRef(false);
     const chatAutoFollowRef = useRef(false);
     const chatScrollAfterCommitRef = useRef(false);
@@ -2628,6 +2634,7 @@ export default function Page() {
     const [generateTasks, setGenerateTasks] = useState([]);
     const [generateTaskView, setGenerateTaskView] = useState('current');
     const upscaleRecoveryRef = useRef(new Set());
+    const editorRecoveryRef = useRef(new Map());
     const [generateTasksReady, setGenerateTasksReady] = useState(false);
     const [generateClock, setGenerateClock] = useState(Date.now());
     const [resultItems, setResultItems] = useState([]);
@@ -2659,7 +2666,7 @@ export default function Page() {
     const [logFailureFirst, setLogFailureFirst] = useState(false);
     const [logPage, setLogPage] = useState(1);
     const [selectedLog, setSelectedLog] = useState(null);
-    const [localDirectoryHandle, setLocalDirectoryHandle] = useState(null);
+    const localDirectoryHandleRef = useRef(null);
     const [localDirectoryName, setLocalDirectoryName] = useState('');
     const [storagePath, setStoragePath] = useState('');
     const [storageUsage, setStorageUsage] = useState(null);
@@ -2735,7 +2742,7 @@ export default function Page() {
         state.models,
         state.providers
     ]);
-    const availableChatModels = useMemo(()=>activeProviderModels.filter((m)=>m.enabled && m.published && m.kind === 'chat' && !m.capabilities.includes('generate') && !m.capabilities.includes('upscale')), [
+    const availableChatModels = useMemo(()=>activeProviderModels.filter((m)=>!isIntentClassifierModel(m) && m.enabled && m.published && m.kind === 'chat' && !m.capabilities.includes('generate') && !m.capabilities.includes('upscale')), [
         activeProviderModels
     ]);
     const availableImageModels = useMemo(()=>activeProviderModels.filter((m)=>m.enabled && m.published && (m.kind === 'image' || m.capabilities.includes('generate') || m.capabilities.includes('upscale'))), [
@@ -2746,6 +2753,9 @@ export default function Page() {
     ]);
     const availableGenerationModels = useMemo(()=>availableImageModels.filter((m)=>m.capabilities.includes('generate')), [
         availableImageModels
+    ]);
+    const availableReferenceGenerationModels = useMemo(()=>availableGenerationModels.filter((m)=>m.capabilities.includes('reference')), [
+        availableGenerationModels
     ]);
     const availableEditModels = useMemo(()=>availableImageModels.filter((m)=>m.capabilities.includes('edit')), [
         availableImageModels
@@ -3208,17 +3218,23 @@ export default function Page() {
                 const restoredAt = Date.now();
                 const tasks = savedTasks.filter((task)=>typeof task?.id === 'string' && typeof task?.prompt === 'string').slice(0, 12).map((task)=>{
                     const pending = task.status === 'pending';
+                    const resumableEditor = isEditorImageTask(task);
+                    const interrupted = pending && !resumableEditor;
                     return {
                         id: task.id,
-                        status: pending ? 'error' : task.status === 'success' ? 'success' : 'error',
+                        status: pending && resumableEditor ? 'pending' : pending ? 'error' : task.status === 'success' ? 'success' : 'error',
                         mode: task.mode === 'edit' || task.mode === 'upscale' ? task.mode : 'generate',
                         prompt: task.prompt,
                         expectedCount: Math.max(1, Number(task.expectedCount) || 1),
                         startedAt: Number(task.startedAt) || restoredAt,
-                        completedAt: pending ? restoredAt : Number(task.completedAt) || undefined,
-                        info: pending ? `${task.info || '生图任务'} · 页面刷新后已中断` : String(task.info || '生图任务'),
-                        error: pending ? '页面刷新导致本轮任务中断，已保留已经返回的图片。可恢复参数后重新提交。' : typeof task.error === 'string' ? task.error : undefined,
-                        interrupted: pending,
+                        completedAt: interrupted ? restoredAt : Number(task.completedAt) || undefined,
+                        info: pending && resumableEditor ? `${task.info || '图片修改'} · 正在核对服务端状态` : interrupted ? `${task.info || '生图任务'} · 页面刷新后已中断` : String(task.info || '生图任务'),
+                        error: interrupted ? '页面刷新后未能恢复这类任务的执行状态；可恢复参数后重新提交。' : typeof task.error === 'string' ? task.error : undefined,
+                        interrupted: interrupted || Boolean(task.interrupted),
+                        providerPossiblyAccepted: Boolean(task.providerPossiblyAccepted),
+                        providerResultWithheld: Boolean(task.providerResultWithheld),
+                        resultRecoveryRequired: Boolean(task.resultRecoveryRequired),
+                        providerTaskId: typeof task.providerTaskId === 'string' ? task.providerTaskId : undefined,
                         items: [],
                         itemIds: Array.isArray(task.itemIds) ? task.itemIds.filter((id)=>typeof id === 'string') : [],
                         request: task.request
@@ -3419,6 +3435,24 @@ export default function Page() {
             }).finally(()=>upscaleRecoveryRef.current.delete(task.upscaleTaskId));
         }
     }, [generateTasksReady, generateTasks, gallery]);
+    useEffect(()=>{
+        if (!generateTasksReady) return;
+        const recoverable = generateTasks.filter((task)=>isEditorImageTask(task) && (
+            task.status === 'pending' || (task.status === 'error' && (task.providerPossiblyAccepted || task.resultRecoveryRequired))
+        ));
+        const controllers = recoverable.map((task)=>{
+            const controller = new AbortController();
+            void recoverEditorTask(task, controller);
+            return { id: task.id, controller };
+        });
+        return ()=>{
+            for (const { id, controller } of controllers) {
+                if (editorRecoveryRef.current.get(id) !== controller) continue;
+                editorRecoveryRef.current.delete(id);
+                controller.abort();
+            }
+        };
+    }, [generateTasksReady]);
     useEffect(()=>{
         const updateChatScrollState = ()=>{
             const nearBottom = isChatNearBottom();
@@ -3768,6 +3802,19 @@ export default function Page() {
     }
     function openChatFilePreview(file) {
         if (!isPreviewableChatFile(file)) return;
+        if (isVideoChatFile(file)) {
+            if (!file.downloadUrl) {
+                notify('视频地址已失效，请重新下载');
+                return;
+            }
+            setChatFilePreview({
+                ...file,
+                name: file.name || '视频文件',
+                label: chatFilePreviewKindLabel(file),
+                content: ''
+            });
+            return;
+        }
         if (isOfficeArtifactChatFile(file)) {
             const name = file.name || '文件';
             const label = chatFilePreviewKindLabel(file);
@@ -4400,7 +4447,7 @@ export default function Page() {
                 mode: 'readwrite'
             });
             if (permission !== 'denied') {
-                setLocalDirectoryHandle(handle);
+                localDirectoryHandleRef.current = handle;
                 setLocalDirectoryName(handle.name);
             }
         } catch  {}
@@ -4413,37 +4460,42 @@ export default function Page() {
             const permission = await handle.requestPermission?.({
                 mode: 'readwrite'
             });
-            if (permission === 'denied') throw new Error('没有获得目录写入权限');
+            if (permission !== 'granted') throw new Error('没有获得目录写入权限，请重新选择目录并允许写入');
             await saveImageDirectoryHandle(handle);
-            setLocalDirectoryHandle(handle);
+            localDirectoryHandleRef.current = handle;
             setLocalDirectoryName(handle.name);
             notify(`已选择本地目录：${handle.name}`);
         } catch (error) {
             if (error?.name !== 'AbortError') notify(error instanceof Error ? error.message : '选择目录失败');
         }
     }
-    async function saveImagesToLocalDirectory(images) {
-        if (!localDirectoryHandle) return;
+    async function stopLocalDirectorySave() {
         try {
-            const permission = await localDirectoryHandle.queryPermission?.({
-                mode: 'readwrite'
-            });
-            if (permission !== 'granted' && await localDirectoryHandle.requestPermission?.({
-                mode: 'readwrite'
-            }) !== 'granted') throw new Error('本地目录写入权限已失效');
-            for (const [index, image] of images.entries()){
-                const response = image.url.startsWith('data:') ? await fetch(image.url) : await fetch(image.url);
-                if (!response.ok) continue;
-                const extension = response.headers.get('content-type')?.includes('jpeg') ? 'jpg' : response.headers.get('content-type')?.includes('webp') ? 'webp' : 'png';
-                const fileHandle = await localDirectoryHandle.getFileHandle(`SANMAO-${Date.now()}-${index + 1}.${extension}`, {
-                    create: true
-                });
-                const writable = await fileHandle.createWritable();
-                await writable.write(await response.blob());
-                await writable.close();
-            }
+            await clearImageDirectoryHandle();
+            localDirectoryHandleRef.current = null;
+            setLocalDirectoryName('');
+            notify('已停止浏览器额外保存');
         } catch (error) {
-            notify(error instanceof Error ? error.message : '保存到本地目录失败');
+            notify(error instanceof Error ? error.message : '停止额外保存失败');
+        }
+    }
+    async function saveImagesToLocalDirectory(images) {
+        const handle = localDirectoryHandleRef.current;
+        if (!handle) return;
+        try {
+            await saveImagesToDirectory(handle, images);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '额外保存失败');
+        }
+    }
+    async function openImageStorageDirectory() {
+        try {
+            const res = await fetch('/api/storage/open', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '打开目录失败');
+            notify('已请求在应用所在电脑打开图片库');
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '打开目录失败');
         }
     }
     async function saveStoragePath(nextPath = storagePath) {
@@ -4461,7 +4513,7 @@ export default function Page() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || '保存失败');
-            setStoragePath(next);
+            setStoragePath(data.state?.settings?.imageStoragePath || '');
             setState(data.state);
             notify(next ? '图片存储路径已保存' : '已恢复默认存储路径');
         } catch (error) {
@@ -4588,7 +4640,7 @@ export default function Page() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || '读取配置失败');
             setState(data);
-            const selectedChat = filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>model.id === data.settings?.agentModelId && model.enabled && model.published && model.kind === 'chat') || filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>model.enabled && model.published && model.kind === 'chat');
+            const selectedChat = filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>!isIntentClassifierModel(model) && model.id === data.settings?.agentModelId && model.enabled && model.published && model.kind === 'chat') || filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>!isIntentClassifierModel(model) && model.enabled && model.published && model.kind === 'chat');
             if (!data.settings?.webSearchConfigured && !selectedChat?.capabilities.includes('web-search')) {
                 setAgentWebMode('off');
                 setAgentWebModeMenuOpen(false);
@@ -5167,7 +5219,7 @@ export default function Page() {
         }
         return normalized;
     }
-    async function recordImages(images, meta) {
+    async function recordImages(images, meta, editorTaskId, editorImageIndexes) {
         const storedImages = await Promise.all(images.map(async (image)=>{
             return persistHistoryImage(image);
         }));
@@ -5184,17 +5236,15 @@ export default function Page() {
             },
             {
                 createdAt: now,
-                createId: ()=>uid('img'),
+                createId: (_image, index)=>editorTaskId ? editorTaskGalleryItemId(editorTaskId, editorImageIndexes?.[index] ?? index) : uid('img'),
                 includeCompareReference: true
             }
         );
         await assetRepository.saveGallery(items);
-        setGallery((old)=>[
-                ...items,
-                ...old
-            ]);
+        const itemIds = new Set(items.map((item)=>item.id));
+        setGallery((old)=>[...items, ...old.filter((item)=>!itemIds.has(item.id))]);
         registerHistorySuccess(items, sectionRef.current === 'generate' || (meta.source === 'agent' && sectionRef.current === 'agent'));
-        void saveImagesToLocalDirectory(images);
+        void saveImagesToLocalDirectory(storedImages);
         return items;
     }
     function patchGenerateTask(id, patch) {
@@ -5217,9 +5267,24 @@ export default function Page() {
                     ]
                 } : task));
     }
+    function editorStateFromTask(task) {
+        const source = findEditorTaskSource(task, gallery);
+        return source ? restoreEditorTaskState(task, source, availableEditModels.map((model)=>model.id)) : null;
+    }
     function restoreGenerateTask(task) {
         const request = task.request;
         if (!request) return notify('这轮任务没有保存完整参数，无法恢复');
+        if (isEditorImageTask(task)) {
+            const restoredEditor = editorStateFromTask(task);
+            if (!restoredEditor) return notify('原图已不在本机图库，无法恢复局部编辑参数。');
+            setEditorMaskOpen(false);
+            setEditor(restoredEditor);
+            setSection('generate');
+            if (request.maskOmitted) return notify('任务结果仍可恢复，但原蒙版未能随任务保存；请重新绘制编辑范围后再提交。');
+            if (request.moveGuideOmitted) return notify('任务结果仍可恢复，但移动引导图未能随任务保存；请重新确认移动范围后再提交。');
+            notify('已恢复局部编辑参数；不会自动重新提交。');
+            return;
+        }
         if (request.angle) {
             setAngleReference(request.references?.[0] || null);
             setAngleCameraSeed(request.angle);
@@ -5264,6 +5329,7 @@ export default function Page() {
         notify(request.referencesOmitted ? '参数已恢复，但参考图较大未能随任务保存，请重新添加参考图' : '已恢复这一轮的生图参数');
     }
     async function retryGenerateTask(task) {
+        if (isEditorImageTask(task)) return retryEditorTask(task);
         const request = task.request;
         if (!request) return notify('这轮任务没有保存完整参数，无法重试');
         if (request.referencesOmitted) return notify('这轮任务的参考图过大未保存，请先点击“恢复参数”并重新添加参考图');
@@ -5287,6 +5353,33 @@ export default function Page() {
             mode: task.mode,
             request: retryRequest
         });
+    }
+    function retryEditorTask(task) {
+        const action = editorTaskAction(task);
+        if (action === 'recover-result' || action === 'check-record') {
+            const controller = new AbortController();
+            void recoverEditorTask(task, controller);
+            notify(action === 'recover-result'
+                ? '正在从原任务记录找回结果，不会再次调用图片模型。'
+                : '正在重新读取原任务记录，不会再次调用图片模型。');
+            return;
+        }
+        const request = task.request || {};
+        if (request.maskOmitted || request.moveGuideOmitted) {
+            restoreGenerateTask(task);
+            return;
+        }
+        const currentEditor = editorStateFromTask(task);
+        if (!currentEditor) return notify('原图已不在本机图库，无法安全重试这轮局部编辑。');
+        const completedCount = Math.max(task.items?.length || 0, task.itemIds?.length || 0);
+        const remainingCount = Math.max(1, Math.min(8, task.expectedCount - completedCount));
+        const retryEditor = { ...currentEditor, count: remainingCount };
+        const taskId = uid('edit-task');
+        const taskDraft = buildEditorTaskDraft(retryEditor, taskId, Date.now());
+        setGenerateTasks((old)=>[taskDraft, ...old]);
+        setGenerateClock(Date.now());
+        void processEditorTask(retryEditor, taskId);
+        notify('已按原局部编辑参数重新提交；本次结果会作为新任务记录。');
     }
     const UPSCALE_CANCELLED_MESSAGE = '高清任务已取消。';
     async function cancelGenerateTask(task) {
@@ -5338,9 +5431,11 @@ export default function Page() {
         const submittedImageRefs = submittedRefs.filter((reference)=>reference.kind === 'image' && creativeReferenceUrl(reference));
         const submittedUpscaleMode = !isAngleGeneration && (savedRequest ? overrides?.mode === 'upscale' : generateUpscaleMode);
         const hasLocalEditMask = !isAngleGeneration && Boolean((savedRequest ? savedRequest.mask?.dataUrl : generateMask?.dataUrl) && submittedImageRefs.length === 1);
-        const submittedImageModelOptions = isAngleGeneration || hasLocalEditMask ? availableEditModels : availableGenerationModels;
+        const submittedImageModelOptions = isAngleGeneration || hasLocalEditMask
+            ? availableEditModels
+            : submittedImageRefs.length ? availableReferenceGenerationModels : availableGenerationModels;
         const requestedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
-        const submittedModelId = !submittedUpscaleMode && hasLocalEditMask && requestedModelId !== 'auto' && !submittedImageModelOptions.some((model)=>model.id === requestedModelId) ? 'auto' : requestedModelId;
+        const submittedModelId = requestedModelId;
         const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : submittedImageModelOptions.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : selectAutomaticModel(submittedImageModelOptions, state.settings.defaultProviderId, state.settings.defaultImageModelId);
         const moveGuideDataUrl = !isAngleGeneration && submittedImageRefs.length === 1
             ? (savedRequest ? savedRequest.mask?.sourceImageDataUrl : generateMask?.sourceImageDataUrl) || ''
@@ -5353,7 +5448,11 @@ export default function Page() {
         if (!submittedUpscaleMode && !submittedPrompt) return notify('先描述你想生成什么');
         if (!submittedUpscaleMode && !isAngleGeneration && submittedSizeMode === 'custom' && (submittedCustomWidth < 1 || submittedCustomHeight < 1)) return notify('请输入有效的自定义宽高');
         const hasAvailableModel = submittedUpscaleMode ? availableUpscaleModels.length > 0 : submittedImageModelOptions.length > 0;
-        if (!hasAvailableModel) return notify(submittedUpscaleMode ? '还没有可用的超分模型，请先到模型库启用模型' : hasLocalEditMask ? '还没有支持局部编辑的图片模型，请先到模型库启用带“修改”能力的图片模型' : '还没有可用图片模型，请先到模型库启用模型');
+        if (!hasAvailableModel) return notify(submittedUpscaleMode ? '还没有可用的超分模型，请先到模型库启用模型' : hasLocalEditMask ? '还没有支持局部编辑的图片模型，请先到模型库启用带“修改”能力的图片模型' : submittedImageRefs.length ? '还没有支持参考图生成的图片模型，请先到模型库启用带“参考图”能力的模型' : '还没有可用图片模型，请先到模型库启用模型');
+        if (!submittedUpscaleMode && requestedModelId !== 'auto' && !submittedImageModelOptions.some((model)=>model.id === requestedModelId)) {
+            const operationLabel = hasLocalEditMask || isAngleGeneration ? '改图' : submittedImageRefs.length ? '参考图生成' : '生图';
+            return notify(`当前选择的图片模型不支持${operationLabel}，请切换到支持该操作的模型或选择自动。`);
+        }
         const taskId = uid('generate-task');
         const taskPrompt = submittedPrompt || 'Upscale this image';
         const taskRefs = submittedRefs;
@@ -5597,6 +5696,7 @@ export default function Page() {
                                 },
                                 body: JSON.stringify({
                                     taskId: childTaskId,
+                                    imageOperation: taskMask || isAngleGeneration ? 'edit' : submittedImageRefs.length ? 'auto' : 'generate',
                                     prompt: taskPrompt,
                                     model: taskModelId,
                                     aspectRatio: requestRatio,
@@ -5696,6 +5796,7 @@ export default function Page() {
                 },
                 body: JSON.stringify({
                     taskId,
+                    imageOperation: taskMask || isAngleGeneration ? 'edit' : submittedImageRefs.length ? 'auto' : 'generate',
                     prompt: taskPrompt,
                     model: taskModelId,
                     aspectRatio: requestRatio,
@@ -6001,6 +6102,7 @@ export default function Page() {
         setMessages([]);
         setAgentRefs([]);
         setAgentFiles([]);
+        setAgentSkillId('');
         setAgentInput('');
         setAgentInputBeforeOptimization(null);
         setAgentFollowUp(null);
@@ -6017,6 +6119,7 @@ export default function Page() {
         setMessages(pendingChatMessagesRef.current.get(session.id) || normalized.messages);
         setAgentRefs([]);
         setAgentFiles([]);
+        setAgentSkillId('');
         setAgentInput('');
         setAgentInputBeforeOptimization(null);
         setAgentFollowUp(null);
@@ -6391,12 +6494,13 @@ export default function Page() {
                 if (images.length) playSuccessSound();
             }
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string')).map((file)=>({
+            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string' || typeof file.url === 'string' || typeof file.downloadUrl === 'string')).map((file)=>({
                     id: uid('file'),
                     name: file.name,
                     mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
                     ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' } : {}),
                     ...(typeof file.artifactId === 'string' ? { artifactId: file.artifactId, downloadUrl: typeof file.downloadUrl === 'string' ? file.downloadUrl : `/api/artifacts/${file.artifactId}` } : {}),
+                    ...(typeof file.url === 'string' ? { downloadUrl: file.url } : {}),
                     size: typeof file.size === 'number' ? file.size : undefined
                 })) : [];
             const completedMessages = (pendingChatMessagesRef.current.get(sessionId) || workingMessages).map((item)=>{
@@ -6460,6 +6564,7 @@ export default function Page() {
     }
     async function sendAgent(text = agentInput, task, overrideRefs, deliverableOverride, durationSeconds) {
         closeAgentSkillMenu();
+        const explicitSkillId = agentSkillId.trim();
         if (agentMessageSelectionMode) return notify('请先完成或取消删除选择');
         if (shareSelectionMode) return notify('请先完成或取消分享选择');
         const rawContent = text.trim();
@@ -6553,6 +6658,7 @@ export default function Page() {
         ]);
         requestChatScrollAfterCommit();
         setAgentInput('');
+        setAgentSkillId('');
         setAgentInputBeforeOptimization(null);
         setAgentRefs([]);
         setAgentFiles([]);
@@ -6662,6 +6768,7 @@ export default function Page() {
                     webSearch: agentWebMode !== 'off',
                     deliverable: selectedDeliverable,
                     intentReason: requestIntent.reason,
+                    ...(explicitSkillId ? { skillId: explicitSkillId } : {}),
                     creativeRoute,
                     runId: progressRunId
                 }, {
@@ -6714,12 +6821,13 @@ export default function Page() {
                 if (items.length) playSuccessSound();
             }
             if (requestController.signal.aborted || !isCurrentRequest()) return;
-            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string')).map((file)=>({
+            const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string' || typeof file.url === 'string' || typeof file.downloadUrl === 'string')).map((file)=>({
                     id: uid('file'),
                     name: file.name,
                     mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
                     ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' } : {}),
                     ...(typeof file.artifactId === 'string' ? { artifactId: file.artifactId, downloadUrl: typeof file.downloadUrl === 'string' ? file.downloadUrl : `/api/artifacts/${file.artifactId}` } : {}),
+                    ...(typeof file.url === 'string' ? { downloadUrl: file.url } : {}),
                     size: typeof file.size === 'number' ? file.size : undefined
                 })) : [];
             const completed = [
@@ -6879,6 +6987,7 @@ export default function Page() {
     }
     function applyAgentSkill(skill) {
         setAgentInput(skillMessageValue(agentInput, skill.name));
+        setAgentSkillId(skill.id);
         setAgentInputBeforeOptimization(null);
         closeAgentSkillMenu();
         window.setTimeout(()=>focusContentEditableToEnd(agentInputRef.current), 0);
@@ -7261,10 +7370,15 @@ export default function Page() {
     }
     async function processEditorTask(currentEditor, taskId) {
         const requestStartedAt = performance.now();
+        let providerRequestStarted = false;
+        let providerResponseReceived = false;
+        let successfulHttpResponse = false;
+        let editorImagesReceived = false;
         try {
             const sourceSize = currentEditor.mode === 'upscale' ? await loadImageDimensions(currentEditor.item.url) : null;
             const editorUpscaleModel = currentEditor.mode === 'upscale' ? availableUpscaleModels.find((model)=>model.id === currentEditor.modelId) || defaultUpscaleModel : null;
             const { endpoint, body, editorReference, ratio: editRatio, cloudUpscale, cloudOutputFormat: editorCloudOutputFormat } = buildEditorRequest(currentEditor, taskId, sourceSize, editorUpscaleModel);
+            providerRequestStarted = true;
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
@@ -7272,41 +7386,217 @@ export default function Page() {
                 },
                 body: JSON.stringify(body)
             });
-            let data = await res.json();
-            if (!res.ok) throw new Error(data.error || '处理失败');
+            providerResponseReceived = true;
+            successfulHttpResponse = res.ok;
+            let data;
+            try {
+                data = await res.json();
+            } catch {
+                throw new Error('服务端返回内容无法读取；请先核对任务状态，避免重复提交。');
+            }
+            if (!res.ok) {
+                const error = new Error(data.error || '处理失败');
+                error.providerPossiblyAccepted = Boolean(data.providerPossiblyAccepted || data.providerResultWithheld);
+                error.providerResultWithheld = Boolean(data.providerResultWithheld);
+                error.providerTaskId = data.providerTaskId;
+                error.errorCode = data.errorCode;
+                throw error;
+            }
             if (currentEditor.mode === 'upscale' && data.taskId) patchGenerateTask(taskId, { upscaleTaskId: data.taskId, info: `${data.model?.name || '高清放大'} · 后台处理中` });
             if (currentEditor.mode === 'upscale' && data.taskId && (data.status === 'queued' || data.status === 'processing')) data = await waitForUpscaleTask(data.taskId, data);
+            const resultImages = requireEditorImages(data.images);
+            editorImagesReceived = true;
             const knownUpscaleModels = [...state.models, ...(state.upscaleModels || [])];
             recordModelCall(buildEditorModelCallInput(currentEditor, data, knownUpscaleModels, cloudUpscale, editorCloudOutputFormat));
             const durationMs = Math.round(performance.now() - requestStartedAt);
-            const items = await recordImages(data.images || [], buildEditorHistoryMeta(currentEditor, data, durationMs, editorReference, editorCloudOutputFormat));
+            const items = await recordImages(resultImages, buildEditorHistoryMeta(currentEditor, data, durationMs, editorReference, editorCloudOutputFormat, taskId), taskId);
             const info = editorCompletionInfo(currentEditor, data, durationMs, items.length);
-            setResultItems((old)=>[
-                    ...items,
-                    ...old
-                ]);
+            const incomplete = items.length < (currentEditor.mode === 'edit' ? currentEditor.count : 1);
+            const taskError = incomplete ? `服务端仅返回 ${items.length}/${currentEditor.mode === 'edit' ? currentEditor.count : 1} 张图片。已收到的结果已保存，可安全重试剩余数量。` : undefined;
+            const savedItemIds = new Set(items.map((item)=>item.id));
+            setResultItems((old)=>[...items, ...old.filter((item)=>!savedItemIds.has(item.id))]);
             patchGenerateTask(taskId, {
-                status: 'success',
+                status: incomplete ? 'error' : 'success',
                 completedAt: Date.now(),
                 info,
+                error: taskError,
+                providerPossiblyAccepted: false,
+                providerResultWithheld: false,
+                resultRecoveryRequired: false,
                 items,
                 itemIds: items.map((item)=>item.id)
             });
             if (items.length) playSuccessSound();
             void refreshGenerationLogs();
-            notify(currentEditor.mode === 'upscale' ? '后台超分已完成，结果已返回创作记录。' : '后台图片修改已完成，结果已返回创作记录。');
+            notify(taskError || (currentEditor.mode === 'upscale' ? '后台超分已完成，结果已返回创作记录。' : '后台图片修改已完成，结果已返回创作记录。'));
         } catch (error) {
             const message = error instanceof Error ? error.message : '处理失败';
             const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
+            const providerResultWithheld = Boolean(error?.providerResultWithheld);
+            const providerPossiblyAccepted = providerResultWithheld || Boolean(error?.providerPossiblyAccepted) || editorImagesReceived || (providerRequestStarted && !providerResponseReceived) || (successfulHttpResponse && !editorImagesReceived);
+            const resultRecoveryRequired = editorImagesReceived;
             patchGenerateTask(taskId, {
                 status: 'error',
                 completedAt: Date.now(),
                 error: message,
                 ...(cancelled ? { cancelled: true } : {}),
-                info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${cancelled ? '已停止跟踪' : '处理失败'}`
+                providerPossiblyAccepted,
+                providerResultWithheld,
+                resultRecoveryRequired,
+                providerTaskId: error?.providerTaskId,
+                errorCode: error?.errorCode,
+                info: `${currentEditor.mode === 'upscale' ? '图片超分' : '图片修改'} · ${resultRecoveryRequired ? '结果待保存' : providerResultWithheld ? '安全拦截' : providerPossiblyAccepted ? '状态待核对' : cancelled ? '已停止跟踪' : '处理失败'}`
             });
             void refreshGenerationLogs();
-            notify(cancelled ? '已停止跟踪这条高清任务，服务商可能仍在生成。' : `后台${currentEditor.mode === 'upscale' ? '超分' : '图片修改'}失败：${message}`);
+            if (resultRecoveryRequired) notify('模型已返回图片，但本机图库保存未完成。请在任务卡片中找回原结果，不要重新调用模型。');
+            else if (providerResultWithheld) notify('服务商已返回图片，但蒙版保护处理失败；未将未受保护的结果应用到图库。');
+            else if (providerPossiblyAccepted) notify('服务商可能已接收任务，当前结果未确认。请先核对服务商状态，不要重复提交。');
+            else notify(cancelled ? '已停止跟踪这条高清任务，服务商可能仍在生成。' : `后台${currentEditor.mode === 'upscale' ? '超分' : '图片修改'}失败：${message}`);
+        }
+    }
+    async function recoverEditorTask(task, controller = new AbortController()) {
+        if (!isEditorImageTask(task) || !task.id || editorRecoveryRef.current.has(task.id)) return;
+        editorRecoveryRef.current.set(task.id, controller);
+        let serverResultFound = false;
+        try {
+            const recovery = await waitForEditorTaskLog(
+                task.id,
+                (taskId, signal)=>getGenerationLog(taskId, signal),
+                { signal: controller.signal },
+            );
+            if (controller.signal.aborted) return;
+            if (recovery.kind === 'pending') {
+                patchGenerateTask(task.id, {
+                    status: 'pending',
+                    completedAt: undefined,
+                    providerPossiblyAccepted: true,
+                    info: '图片修改 · 服务端仍在处理，请勿重复提交',
+                    error: recovery.message,
+                });
+                return;
+            }
+            if (recovery.kind === 'not-found') {
+                const providerPossiblyAccepted = Boolean(task.providerPossiblyAccepted);
+                patchGenerateTask(task.id, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    interrupted: true,
+                    providerPossiblyAccepted,
+                    providerResultWithheld: Boolean(task.providerResultWithheld),
+                    resultRecoveryRequired: false,
+                    error: providerPossiblyAccepted
+                        ? '本机没有找到原任务记录，但此前状态显示服务商可能已接收；请先核对服务商任务或用量，不要直接重提。'
+                        : '服务端没有找到这轮编辑任务记录；未发现已提交任务，可以安全重试。',
+                    info: providerPossiblyAccepted ? '图片修改 · 服务商状态待核对' : '图片修改 · 服务端未找到任务',
+                });
+                notify(providerPossiblyAccepted
+                    ? '原任务记录暂不可用，未重新提交；请先核对服务商任务状态。'
+                    : '未找到已提交的编辑任务，可以恢复参数后安全重试。');
+                return;
+            }
+            if (recovery.kind === 'failed') {
+                patchGenerateTask(task.id, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    providerPossiblyAccepted: recovery.providerPossiblyAccepted,
+                    providerResultWithheld: recovery.providerResultWithheld,
+                    resultRecoveryRequired: false,
+                    providerTaskId: recovery.providerTaskId,
+                    errorCode: recovery.errorCode,
+                    error: recovery.error,
+                    info: recovery.providerResultWithheld ? '图片修改 · 蒙版保护失败，结果已拦截' : recovery.providerPossiblyAccepted ? '图片修改 · 服务商状态待核对' : '图片修改 · 处理失败',
+                });
+                notify(recovery.providerPossiblyAccepted
+                    ? '原任务记录仍未确认结果；为避免重复扣费，没有重新提交。'
+                    : recovery.error);
+                return;
+            }
+
+            serverResultFound = true;
+
+            const source = findEditorTaskSource(task, gallery, recovery.log.references || []);
+            const editorState = source ? restoreEditorTaskState(task, source, availableEditModels.map((model)=>model.id)) : null;
+            const response = {
+                taskId: task.id,
+                model: {
+                    id: recovery.log.modelId,
+                    name: recovery.log.modelName,
+                    provider: recovery.log.providerName,
+                },
+            };
+            const durationMs = Number(recovery.log.durationMs) || Math.max(0, Date.now() - Number(task.startedAt || Date.now()));
+            const reference = source ? {
+                id: source.id,
+                name: `上一版-${source.id.slice(-6)}`,
+                url: source.url,
+            } : null;
+            const historyMeta = editorState && reference
+                ? {
+                    ...buildEditorHistoryMeta(editorState, response, durationMs, reference, undefined, task.id),
+                    prompt: task.prompt,
+                    modelId: recovery.log.modelId,
+                    modelName: recovery.log.modelName,
+                    providerName: recovery.log.providerName,
+                    aspectRatio: recovery.log.aspectRatio || editorState.ratio,
+                    outputSize: recovery.log.outputSize,
+                }
+                : {
+                    prompt: task.prompt,
+                    modelId: recovery.log.modelId,
+                    modelName: recovery.log.modelName,
+                    providerName: recovery.log.providerName,
+                    aspectRatio: recovery.log.aspectRatio,
+                    outputSize: recovery.log.outputSize,
+                    source: 'edit',
+                    ...(source ? { parentId: source.id, references: [{ id: source.id, name: reference.name, url: source.url }] } : {}),
+                    taskId: task.id,
+                    generationMs: durationMs,
+                };
+            const existingItems = gallery.filter((item)=>item.taskId === task.id);
+            const existingUrls = new Set(existingItems.map((item)=>item.url));
+            const missing = recovery.images
+                .map((image, index)=>({ image, index }))
+                .filter(({ image })=>!existingUrls.has(image.url));
+            const recoveredItems = missing.length
+                ? (await Promise.all(missing.map(({ image, index })=>recordImages([image], historyMeta, task.id, [index])))).flat()
+                : [];
+            const items = [...existingItems, ...recoveredItems].sort((left, right)=>left.createdAt - right.createdAt);
+            if (controller.signal.aborted) return;
+            const expectedCount = Math.max(1, Number(task.expectedCount) || 1);
+            const incomplete = items.length < expectedCount;
+            const error = incomplete ? `服务端已保存 ${items.length}/${expectedCount} 张图片；可安全重试剩余数量。` : undefined;
+            const itemIds = new Set(items.map((item)=>item.id));
+            setResultItems((old)=>[...items, ...old.filter((item)=>!itemIds.has(item.id))]);
+            patchGenerateTask(task.id, {
+                status: incomplete ? 'error' : 'success',
+                completedAt: Date.now(),
+                providerPossiblyAccepted: false,
+                providerResultWithheld: false,
+                resultRecoveryRequired: false,
+                items,
+                itemIds: items.map((item)=>item.id),
+                error,
+                info: incomplete ? `图片修改 · 已恢复 ${items.length}/${expectedCount} 张` : `图片修改 · 已恢复 ${items.length} 张`,
+            });
+            notify(incomplete ? error : '已从服务端任务记录找回局部编辑结果。');
+        } catch (error) {
+            if (controller.signal.aborted) return;
+            const providerPossiblyAccepted = Boolean(task.providerPossiblyAccepted || task.status === 'pending' || serverResultFound);
+            patchGenerateTask(task.id, {
+                status: 'error',
+                completedAt: Date.now(),
+                providerPossiblyAccepted,
+                resultRecoveryRequired: serverResultFound,
+                error: serverResultFound
+                    ? error instanceof Error ? error.message : '本地结果保存失败'
+                    : error instanceof Error ? `无法读取服务端任务记录：${error.message}` : '无法读取服务端任务记录；未重新提交。',
+                info: serverResultFound ? '图片修改 · 结果待保存' : '图片修改 · 状态待核对',
+            });
+            notify(serverResultFound
+                ? '服务端已有图片结果，但图库保存未完成。可再次点击“找回结果”，不会重新调用模型。'
+                : '无法读取原任务记录；没有重新提交图片模型，请检查本地服务后再核对。');
+        } finally {
+            if (editorRecoveryRef.current.get(task.id) === controller) editorRecoveryRef.current.delete(task.id);
         }
     }
     function askDeleteItems(ids) {
@@ -8363,6 +8653,7 @@ export default function Page() {
                                                     title: "清空输入内容",
                                                     onClick: ()=>{
                                                         setAgentInput('');
+                                                        setAgentSkillId('');
                                                         setAgentInputBeforeOptimization(null);
                                                     },
                                                     children: "清空"
@@ -8938,9 +9229,17 @@ export default function Page() {
                                                                 children: "图片模型"
                                                             }),
                                                             /*#__PURE__*/ _jsx(ModelPicker, {
-                                                                models: generateMask && availableEditModels.length ? availableEditModels : availableGenerationModels,
+                                                                models: generateMask && availableEditModels.length
+                                                                    ? availableEditModels
+                                                                    : generateRefs.some((reference)=>reference.kind === 'image' && creativeReferenceUrl(reference))
+                                                                        ? availableReferenceGenerationModels
+                                                                        : availableGenerationModels,
                                                                 value: generateModelId,
-                                                                capability: generateMask && availableEditModels.length ? "edit" : "generate",
+                                                                capability: generateMask && availableEditModels.length
+                                                                    ? "edit"
+                                                                    : generateRefs.some((reference)=>reference.kind === 'image' && creativeReferenceUrl(reference))
+                                                                        ? "reference"
+                                                                        : "generate",
                                                                 defaultProviderId: state.settings.defaultProviderId,
                                                                 defaultProviderName: defaultProvider?.name,
                                                                 defaultModelId: state.settings.defaultImageModelId,
@@ -9506,8 +9805,8 @@ export default function Page() {
                                                                                 className: "task-retry-button",
                                                                                 onClick: ()=>void retryGenerateTask(task),
                                                                                 children: [
-                                                                                    "重试",
-                                                                                    task.items.length > 0 && task.items.length < task.expectedCount ? `剩余 ${task.expectedCount - task.items.length} 张` : '本轮'
+                                                                                    isEditorImageTask(task) && editorTaskAction(task) === 'recover-result' ? '找回原结果' : isEditorImageTask(task) && editorTaskAction(task) === 'check-record' ? '重新读取记录' : '重试',
+                                                                                    isEditorImageTask(task) && editorTaskAction(task) !== 'retry' ? '' : task.items.length > 0 && task.items.length < task.expectedCount ? `剩余 ${task.expectedCount - task.items.length} 张` : '本轮'
                                                                                 ]
                                                                             })
                                                                         ]
@@ -9589,7 +9888,7 @@ export default function Page() {
                                                                                 children: task.cancelled ? '本轮任务已取消' : task.interrupted ? '本轮任务已中断' : '本轮部分生成失败'
                                                                             }),
                                                                             /*#__PURE__*/ _jsx("small", {
-                                                                                children: task.cancelled ? '任务已停止，已返回的图片仍会保留。' : task.interrupted ? '页面状态中断，可恢复参数后重新提交。' : task.items.length ? `${task.items.length} / ${task.expectedCount} 张已完成，可重试失败部分。` : '未收到可用图片，请检查模型连接或稍后重试。'
+                                                                                children: task.resultRecoveryRequired ? '原任务已返回图片，但本机图库保存未完成；可找回原结果，不会再次调用模型。' : task.providerPossiblyAccepted && task.providerResultWithheld ? '服务商已返回图片，但蒙版保护失败，结果未应用；请先恢复参数修正蒙版。' : task.providerPossiblyAccepted ? '服务商可能已接收任务，为避免重复扣费不会自动重提；请先核对服务商任务或用量记录。' : task.cancelled ? '任务已停止，已返回的图片仍会保留。' : task.interrupted ? '页面状态中断，可恢复参数后重新提交。' : task.items.length ? `${task.items.length} / ${task.expectedCount} 张已完成，可重试失败部分。` : '未收到可用图片，请检查模型连接或稍后重试。'
                                                                             }),
                                                                             task.error && /*#__PURE__*/ _jsxs("details", {
                                                                                 className: "generation-error-details",
@@ -10240,7 +10539,7 @@ export default function Page() {
                                                         children: "图片存储路径"
                                                     }),
                                                     /*#__PURE__*/ _jsx("small", {
-                                                        children: "默认保存到 .data/images；旧版本项目同级的 image_generation_records 会保留读取兼容。修改并保存后，后续图片都会使用新路径。"
+                                                        children: "保存到应用所在电脑的图片库；留空使用默认媒体库。浏览器额外保存独立于此路径，已有图片不会搬移。"
                                                     })
                                                 ]
                                             }),
@@ -10250,7 +10549,8 @@ export default function Page() {
                                                     /*#__PURE__*/ _jsx("input", {
                                                         value: storagePath,
                                                         onChange: (e)=>setStoragePath(e.target.value),
-                                                        placeholder: "默认路径：.data/images"
+                                                        placeholder: "留空使用默认图片库，或填写完整目录路径",
+                                                        "aria-label": "图片库路径"
                                                     }),
                                                     /*#__PURE__*/ _jsx("button", {
                                                         className: "ghost-button",
@@ -10274,12 +10574,12 @@ export default function Page() {
                                                             const data = await res.json();
                                                             if (!res.ok) notify(data.error || '打开目录失败');
                                                         },
-                                                        children: "↗ 一键打开保存目录"
+                                                        children: "打开已保存目录"
                                                     }),
                                                     /*#__PURE__*/ _jsx("button", {
                                                         className: "ghost-button local-folder-button",
                                                         onClick: ()=>void chooseLocalDirectory(),
-                                                        children: "选择本地目录"
+                                                        children: "选择额外保存目录"
                                                     }),
                                                     localDirectoryName && /*#__PURE__*/ _jsxs("span", {
                                                         className: "local-folder-name",
@@ -10500,82 +10800,10 @@ export default function Page() {
                                     })
                                 ]
                             }),
-                            section === 'settings' && /*#__PURE__*/ _jsxs("section", {
+                            section === 'settings' && /*#__PURE__*/ _jsx("section", {
                                 className: "settings-page",
-                                children: [
-                                    /*#__PURE__*/ _jsxs("div", {
-                                        className: "settings-intro",
-                                        children: [
-                                            /*#__PURE__*/ _jsx("div", {
-                                                className: "settings-intro-icon",
-                                                children: /*#__PURE__*/ _jsx(Icon, {
-                                                    name: "settings",
-                                                    size: 22
-                                                })
-                                            }),
-                                            /*#__PURE__*/ _jsxs("div", {
-                                                children: [
-                                                    /*#__PURE__*/ _jsx("h1", {
-                                                        children: "设置"
-                                                    }),
-                                                    /*#__PURE__*/ _jsx("p", {
-                                                        children: "把界面偏好、通知、图片存储和日志管理集中放在这里。后续新增功能也会优先归档到设置页。"
-                                                    })
-                                                ]
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("nav", {
-                                className: "settings-section-nav",
-                                "aria-label": "设置分组",
-                                children: [
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>document.getElementById('settings-appearance')?.scrollIntoView({
-                                                behavior: 'smooth',
-                                                block: 'start'
-                                            }),
-                                        children: "偏好"
-                                    }),
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>document.getElementById('settings-search')?.scrollIntoView({
-                                                behavior: 'smooth',
-                                                block: 'start'
-                                            }),
-                                        children: "联网"
-                                    }),
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>document.getElementById('settings-storage')?.scrollIntoView({
-                                                behavior: 'smooth',
-                                                block: 'start'
-                                            }),
-                                        children: "存储"
-                                    }),
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>document.getElementById('settings-backup')?.scrollIntoView({
-                                                behavior: 'smooth',
-                                                block: 'start'
-                                            }),
-                                        children: "备份"
-                                    }),
-                                    /*#__PURE__*/ _jsx("button", {
-                                        type: "button",
-                                        onClick: ()=>document.getElementById('settings-maintenance')?.scrollIntoView({
-                                                behavior: 'smooth',
-                                                block: 'start'
-                                            }),
-                                        children: "维护"
-                                    })
-                                ]
-                            }),
-                            /*#__PURE__*/ _jsxs("div", {
-                                className: "settings-layout",
-                                 children: [
-                                     /*#__PURE__*/ _jsx(RuntimeServiceControl, {}),
-                                     /*#__PURE__*/ _jsxs("section", {
+                                children: _jsx(SettingsWorkspace, {
+                                    preferences: _jsxs(_Fragment, { children: [_jsxs("section", {
                                         id: "settings-appearance",
                                         className: "settings-card surface",
                                                 children: [
@@ -10608,6 +10836,7 @@ export default function Page() {
                                                             /*#__PURE__*/ _jsxs("button", {
                                                                 type: "button",
                                                                 className: theme === 'light' ? 'active' : '',
+                                                                "aria-pressed": theme === 'light',
                                                                 onClick: ()=>setThemePreference('light'),
                                                                 children: [
                                                                     /*#__PURE__*/ _jsx(Icon, {
@@ -10625,6 +10854,7 @@ export default function Page() {
                                                             /*#__PURE__*/ _jsxs("button", {
                                                                 type: "button",
                                                                 className: theme === 'dark' ? 'active' : '',
+                                                                "aria-pressed": theme === 'dark',
                                                                 onClick: ()=>setThemePreference('dark'),
                                                                 children: [
                                                                     /*#__PURE__*/ _jsx(Icon, {
@@ -10642,8 +10872,7 @@ export default function Page() {
                                                         ]
                                                     })
                                                 ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("section", {
+                                            }), _jsxs("section", {
                                                 className: "settings-card surface",
                                                 children: [
                                                     /*#__PURE__*/ _jsxs("div", {
@@ -10665,6 +10894,9 @@ export default function Page() {
                                                                     /*#__PURE__*/ _jsx("input", {
                                                                         type: "checkbox",
                                                                         checked: successSoundEnabled,
+                                                                        role: "switch",
+                                                                        "aria-label": "出图成功音效",
+                                                                        "aria-checked": successSoundEnabled,
                                                                         onChange: (e)=>setSuccessSoundPreference(e.target.checked)
                                                                     }),
                                                                     /*#__PURE__*/ _jsx("span", {})
@@ -10692,8 +10924,8 @@ export default function Page() {
                                                         ]
                                                     })
                                                 ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("section", {
+                                            })] }),
+                                    network: _jsxs("section", {
                                                 id: "settings-search",
                                                 className: "settings-card surface settings-search-api",
                                                 children: [
@@ -10706,7 +10938,7 @@ export default function Page() {
                                                                         children: "联网搜索"
                                                                     }),
                                                                     /*#__PURE__*/ _jsx("h2", {
-                                                                        children: "搜索API"
+                                                                        children: "搜索服务"
                                                                     })
                                                                 ]
                                                             }),
@@ -10716,10 +10948,7 @@ export default function Page() {
                                                             })
                                                         ]
                                                     }),
-                                                    /*#__PURE__*/ _jsx("p", {
-                                                        className: "settings-card-note",
-                                                         children: "联网搜索支持模型原生搜索、AnySearch 和百度千帆。当前模型带“原生联网”能力时会优先调用模型自身搜索；原生搜索失败、限流或无结果时自动回退外部搜索 API。没有原生搜索能力的模型直接使用 AnySearch/百度千帆。AnySearch 默认可使用匿名免费额度，配置 ANYSEARCH_API_KEY 后可获得更高额度；百度千帆 Key 会加密保存在本机服务端，也可使用 QIANFAN_API_KEY。"
-                                                    }),
+                                                    /*#__PURE__*/ _jsxs(_Fragment, { children: [ _jsx("p", { className: "settings-card-note", children: "优先使用模型原生联网；不可用时自动回退到外部搜索。AnySearch 可使用匿名额度，百度千帆可配置备用 Key。" }), _jsxs("details", { className: "settings-help-details", children: [ _jsx("summary", { children: "搜索优先级与 Key 配置" }), _jsx("p", { children: "联网搜索支持模型原生搜索、AnySearch 和百度千帆。当前模型带“原生联网”能力时会优先调用模型自身搜索；原生搜索失败、限流或无结果时自动回退外部搜索 API。没有原生搜索能力的模型直接使用 AnySearch/百度千帆。AnySearch 默认可使用匿名免费额度，配置 ANYSEARCH_API_KEY 后可获得更高额度；百度千帆 Key 会加密保存在本机服务端，也可使用 QIANFAN_API_KEY。" }) ] }) ] }),
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "settings-api-grid",
                                                         children: [
@@ -10735,6 +10964,7 @@ export default function Page() {
                                                                             /*#__PURE__*/ _jsxs("button", {
                                                                                 type: "button",
                                                                                 className: "settings-provider-trigger",
+                                                                                disabled: webSearchApiBusy,
                                                                                 "aria-haspopup": "listbox",
                                                                                 "aria-expanded": webSearchProviderMenuOpen,
                                                                                 onClick: ()=>setWebSearchProviderMenuOpen((value)=>!value),
@@ -10767,6 +10997,7 @@ export default function Page() {
                                                                                     /*#__PURE__*/ _jsxs("button", {
                                                                                         type: "button",
                                                                                         role: "option",
+                                                                                        disabled: webSearchApiBusy,
                                                                                         "aria-selected": webSearchAnySearchSelected,
                                                                                         className: `settings-provider-option ${webSearchAnySearchSelected ? 'selected' : ''}`,
                                                                                         onClick: ()=>{
@@ -10800,6 +11031,7 @@ export default function Page() {
                                                                                     /*#__PURE__*/ _jsxs("button", {
                                                                                         type: "button",
                                                                                         role: "option",
+                                                                                        disabled: webSearchApiBusy,
                                                                                         "aria-selected": !webSearchAnySearchSelected,
                                                                                         className: `settings-provider-option ${!webSearchAnySearchSelected ? 'selected' : ''}`,
                                                                                         onClick: ()=>{
@@ -10844,7 +11076,7 @@ export default function Page() {
                                                                     /*#__PURE__*/ _jsx("input", {
                                                                         type: "password",
                                                                         autoComplete: "off",
-                                                                        disabled: webSearchAnySearchSelected,
+                                                                        disabled: webSearchAnySearchSelected || webSearchApiBusy,
                                                                         value: webSearchAnySearchSelected ? '' : webSearchApiKey,
                                                                         onChange: (e)=>{
                                                                             setWebSearchApiKey(e.target.value);
@@ -10877,7 +11109,7 @@ export default function Page() {
                                                                 className: "secondary-action compact",
                                                                 disabled: webSearchApiBusy || !webSearchApiKey.trim() && !selectedWebSearchConfigured,
                                                                 onClick: ()=>void testWebSearchApiConnection(),
-                                                                children: webSearchApiBusy ? '测试中…' : webSearchAnySearchSelected ? '测试 AnySearch' : '测试百度千帆'
+                                                                children: webSearchApiBusy ? '测试中…' : webSearchAnySearchSelected ? '测试 AnySearch' : webSearchApiKey.trim() ? '测试并保存百度千帆' : '测试已保存的连接'
                                                             }),
                                                             !webSearchAnySearchSelected && /*#__PURE__*/ _jsx("button", {
                                                                 type: "button",
@@ -10891,11 +11123,12 @@ export default function Page() {
                                                                 className: "ghost-button",
                                                                 disabled: webSearchApiBusy,
                                                                 onClick: ()=>void saveWebSearchApi(true),
-                                                                children: "清除 API"
+                                                                children: "清除已保存的 Key"
                                                             })
                                                         ]
                                                     }),
                                                     /*#__PURE__*/ _jsx("div", {
+                                                        role: "status",
                                                         className: `settings-api-status ${webSearchApiResult.includes('可用') || webSearchApiResult.includes('已保存') ? 'ok' : ''}`,
                                                         children: webSearchApiResult || (webSearchAnySearchSelected
                                                             ? webSearchAnySearchKeyConfigured ? 'AnySearch 已配置，将作为主源；失败、限流或无结果时自动切换百度千帆' : 'AnySearch 将使用匿名免费额度作为主源；失败、限流或无结果时自动切换百度千帆'
@@ -10903,82 +11136,18 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsxs("section", {
-                                                id: "settings-storage",
-                                                className: "settings-card surface",
-                                                children: [
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        className: "settings-card-head",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsxs("div", {
-                                                                children: [
-                                                                    /*#__PURE__*/ _jsx("span", {
-                                                                        children: "图片与文件"
-                                                                    }),
-                                                                    /*#__PURE__*/ _jsx("h2", {
-                                                                        children: "图片存储路径"
-                                                                    })
-                                                                ]
-                                                            }),
-                                                            /*#__PURE__*/ _jsx(Icon, {
-                                                                name: "folder",
-                                                                size: 18
-                                                            })
-                                                        ]
-                                                    }),
-                                                    /*#__PURE__*/ _jsx("p", {
-                                                        className: "settings-card-note",
-                                                        children: "默认保存到 .data/images；旧版本项目同级的 image_generation_records 会保留读取兼容。修改并保存后，后续图片都会使用新路径。"
-                                                    }),
-                                                    /*#__PURE__*/ _jsxs("div", {
-                                                        className: "storage-row settings-storage-row",
-                                                        children: [
-                                                            /*#__PURE__*/ _jsx("input", {
-                                                                value: storagePath,
-                                                                onChange: (e)=>setStoragePath(e.target.value),
-                                                                placeholder: "默认路径：.data/images"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                className: "ghost-button",
-                                                                disabled: storageBusy,
-                                                                onClick: ()=>void saveStoragePath(''),
-                                                                children: "使用默认路径"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                className: "primary-small",
-                                                                disabled: storageBusy,
-                                                                onClick: ()=>void saveStoragePath(),
-                                                                children: storageBusy ? '保存中…' : '保存路径'
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                className: "primary-small open-storage-button",
-                                                                disabled: storageBusy,
-                                                                onClick: async ()=>{
-                                                                    const res = await fetch('/api/storage/open', {
-                                                                        method: 'POST'
-                                                                    });
-                                                                    const data = await res.json();
-                                                                    if (!res.ok) notify(data.error || '打开目录失败');
-                                                                },
-                                                                children: "↗ 一键打开保存目录"
-                                                            }),
-                                                            /*#__PURE__*/ _jsx("button", {
-                                                                className: "ghost-button local-folder-button",
-                                                                onClick: ()=>void chooseLocalDirectory(),
-                                                                children: "选择本地目录"
-                                                            }),
-                                                            localDirectoryName && /*#__PURE__*/ _jsxs("span", {
-                                                                className: "local-folder-name",
-                                                                children: [
-                                                                    "已选择：",
-                                                                    localDirectoryName
-                                                                ]
-                                                            })
-                                                        ]
-                                                    })
-                                                ]
-                                            }),
-                                            /*#__PURE__*/ _jsxs("section", {
+                                    storage: _jsx(ImageStorageSettings, {
+                                        path: storagePath,
+                                        savedPath: state.settings?.imageStoragePath || '',
+                                        busy: storageBusy,
+                                        directoryName: localDirectoryName,
+                                        onPathChange: setStoragePath,
+                                        onSave: saveStoragePath,
+                                        onOpen: openImageStorageDirectory,
+                                        onChooseDirectory: chooseLocalDirectory,
+                                        onClearDirectory: stopLocalDirectorySave
+                                    }),
+                                    backup: _jsxs("section", {
                                                 id: "settings-backup",
                                                 className: "settings-card surface settings-backup",
                                                 children: [
@@ -11164,7 +11333,7 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
-                                            /*#__PURE__*/ _jsxs("section", {
+                                    maintenance: _jsxs(_Fragment, { children: [_jsx(RuntimeServiceControl, {}), _jsxs("section", {
                                                 id: "settings-maintenance",
                                                 className: "settings-card surface settings-danger",
                                                 children: [
@@ -11230,10 +11399,8 @@ export default function Page() {
                                                         ]
                                                     })
                                                 ]
-                                            })
-                                        ]
-                                    })
-                                ]
+                                            })] })
+                                })
                             }),
                             section === 'providers' && (adminRequired && !isAdmin ? /*#__PURE__*/ _jsx(AdminLogin, {
                                 password: adminPassword,
@@ -12632,6 +12799,7 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
              chatFilePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(ChatFilePreviewDialog, {
                  file: chatFilePreview,
                  Icon,
+                 kind: isVideoChatFile(chatFilePreview) ? 'video' : 'html',
                  onClose: ()=>setChatFilePreview(null)
              }), document.body),
              messageReferencePreview && typeof document !== 'undefined' && /*#__PURE__*/ createPortal(/*#__PURE__*/ _jsx(MessageReferencePreviewModal, {

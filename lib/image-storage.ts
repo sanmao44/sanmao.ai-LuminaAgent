@@ -1,10 +1,10 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { GeneratedImage } from './types';
-import { knownMediaRoots, mediaDirectory } from './media-paths';
+import { knownMediaRoots, mediaDirectory, rememberMediaRoots } from './media-paths';
 import { resolveLocalDataDir } from './data-paths';
 
 const dataDir = resolveLocalDataDir();
@@ -36,12 +36,48 @@ function configuredRoot() {
 export function getDefaultStoragePath() { return configuredRoot(); }
 export function getLegacyStoragePath() { return path.resolve(legacyStoragePath); }
 
+export function resolveImageStoragePath(configuredPath?: string) {
+  return path.resolve(configuredPath?.trim() || configuredRoot());
+}
+
+/** 保存图片和打开目录使用同一绝对目标；仅准备目录，不迁移或删除已有素材。 */
+export async function ensureImageStorageDirectory(configuredPath?: string) {
+  const root = resolveImageStoragePath(configuredPath);
+  await mkdir(root, { recursive: true });
+  return root;
+}
+
+/** 在设置落库之前验证写入能力，并保留切换前后的读取目录。 */
+export async function prepareImageStoragePath(nextPath: string, previousPath?: string) {
+  const value = String(nextPath || '').trim();
+  let root: string;
+  try {
+    root = await ensureImageStorageDirectory(value);
+    const probeFile = path.join(root, `.sanmao-storage-${randomUUID()}.tmp`);
+    const probe = await open(probeFile, 'wx', 0o600);
+    try {
+      await probe.writeFile('SANMAO.AI storage write check');
+    } finally {
+      try { await probe.close(); } finally { await rm(probeFile, { force: true }); }
+    }
+  } catch (error) {
+    throw new Error('图片保存目录不可写，请检查路径、磁盘空间和写入权限。', { cause: error });
+  }
+  const defaultRoot = getDefaultStoragePath();
+  const customRoots = [previousPath?.trim() ? resolveImageStoragePath(previousPath) : '', value ? root : '']
+    .filter((candidate) => candidate && candidate !== defaultRoot);
+  if (!rememberMediaRoots('image', customRoots, process.cwd(), { lookupOnly: true })) {
+    throw new Error('无法记录历史图片目录，保存路径未更改。请检查媒体库的写入权限。');
+  }
+  return value ? root : '';
+}
+
 export function getStorageRoots(configuredPath?: string) {
   // 主目录永远排第一；其余是历史目录（旧运行目录、image_generation_records、
   // 媒体库注册表），用于继续读取迁移前生成的图片，避免画布节点断链。
-  const primary = path.resolve(configuredPath?.trim() || configuredRoot());
+  const primary = resolveImageStoragePath(configuredPath);
   const roots = [primary];
-  const candidates = [getLegacyStoragePath(), path.join(dataDir, 'images'), ...knownMediaRoots('image')];
+  const candidates = [getDefaultStoragePath(), getLegacyStoragePath(), path.join(dataDir, 'images'), ...knownMediaRoots('image')];
   for (const candidate of candidates) {
     const resolved = path.resolve(candidate);
     if (!roots.includes(resolved)) roots.push(resolved);
@@ -82,8 +118,7 @@ export async function persistImageBuffer(buffer: Buffer, _contentType = 'image/p
   if (!Buffer.isBuffer(buffer) || buffer.byteLength <= 0) throw new Error('服务商没有返回有效的图片数据');
   if (buffer.byteLength > MAX_STORED_IMAGE_BYTES) throw new Error('高清图片超过 100MB，无法保存');
   const mime = await validateImageBuffer(buffer);
-  const root = path.resolve(configuredPath?.trim() || configuredRoot());
-  await mkdir(root, { recursive: true });
+  const root = await ensureImageStorageDirectory(configuredPath);
   const name = `${Date.now()}-${randomUUID()}.${imageExtension(mime)}`;
   await writeFile(path.join(root, name), buffer, { flag: 'wx' });
   return { url: `/api/storage/file?name=${encodeURIComponent(name)}`, path: root, name, bytes: buffer.byteLength, contentType: mime };
@@ -280,8 +315,7 @@ async function readImageBuffer(url: string, downloadAuth?: ImageDownloadAuth, de
 }
 
 export async function persistGeneratedImages(images: GeneratedImage[], configuredPath?: string, downloadAuth?: ImageDownloadAuth, options: PersistGeneratedImagesOptions = {}) {
-  const root = path.resolve(configuredPath?.trim() || configuredRoot());
-  await mkdir(root, { recursive: true });
+  const root = await ensureImageStorageDirectory(configuredPath);
   const writtenFiles: string[] = [];
   const failures: string[] = [];
   const remoteFallbacks: RemoteImageFallback[] = [];

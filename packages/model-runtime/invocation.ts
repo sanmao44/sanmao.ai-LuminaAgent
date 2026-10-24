@@ -47,7 +47,7 @@ export async function invokeProviderWithFailover<T, R>(options: ProviderInvocati
 export type ProviderResponseDeadlineOptions<T> = {
   signal: AbortSignal;
   timeoutMs: number;
-  idleTimeoutMs: number;
+  idleTimeoutMs: number | null;
   operation: (signal: AbortSignal) => Promise<T>;
   timeoutError: (phase: 'initial' | 'idle', timeoutMs: number) => Error;
 };
@@ -122,7 +122,9 @@ export async function withProviderResponseDeadline<T>(options: ProviderResponseD
               else streamController.close();
               return;
             }
-            const next = await readWithTimeout(reader, options.idleTimeoutMs, options.timeoutError('idle', options.idleTimeoutMs));
+            const next = options.idleTimeoutMs === null
+              ? await reader.read()
+              : await readWithTimeout(reader, options.idleTimeoutMs, options.timeoutError('idle', options.idleTimeoutMs));
             if (next.done) {
               cleanupBody();
               streamController.close();

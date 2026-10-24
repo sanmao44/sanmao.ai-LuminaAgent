@@ -4,6 +4,7 @@ import type { CanvasNode, CanvasUpscaleParams } from "@/lib/canvas/types";
 import CanvasProcessingIndicator, {
   type CanvasProcessingKind,
 } from "@/components/canvas/CanvasProcessingIndicator";
+import CanvasInlineNameEditor from "@/components/canvas/CanvasInlineNameEditor";
 
 export type CanvasUpscaleNodeCardProps = {
   node: CanvasNode;
@@ -19,7 +20,11 @@ export type CanvasUpscaleNodeCardProps = {
     width: number,
     height: number,
     durationSeconds?: number,
+    sourceUrl?: string,
   ) => void;
+  onRename?: (value: string) => void;
+  renaming?: boolean;
+  onRenamingChange?: (editing: boolean) => void;
 };
 
 export default function CanvasUpscaleNodeCard({
@@ -32,13 +37,16 @@ export default function CanvasUpscaleNodeCard({
   imageResolution,
   sourceConnected,
   onNaturalSize,
+  onRename,
+  renaming,
+  onRenamingChange,
 }: CanvasUpscaleNodeCardProps) {
   const data = node.data;
   const params = data.params as CanvasUpscaleParams | undefined;
 
   return (
     <div className={`canvas-upscale-card${hasResult ? " has-result" : ""}`}>
-      <div className="canvas-upscale-card-head"><span>↗</span><div><b>图片超分</b><small>{hasResult ? "超分节点生成的结果" : "独立超分节点"}</small></div></div>
+      <div className="canvas-upscale-card-head"><span>↗</span><div><CanvasInlineNameEditor value={data.name} fallback="图片超分" ariaLabel="超分节点名称" onCommit={onRename} editing={renaming} onEditingChange={onRenamingChange} className="canvas-inline-name-editor canvas-node-name" /><small>{hasResult ? "超分节点生成的结果" : "独立超分节点"}</small></div></div>
       {pending ? (
         <div className="canvas-upscale-card-loading">
           <CanvasProcessingIndicator
@@ -61,6 +69,8 @@ export default function CanvasUpscaleNodeCard({
                 node.id,
                 event.currentTarget.naturalWidth,
                 event.currentTarget.naturalHeight,
+                undefined,
+                String(data.url || ""),
               )
             }
           />

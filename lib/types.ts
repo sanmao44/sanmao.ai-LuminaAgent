@@ -162,6 +162,8 @@ export type UpscaleModel = {
 
 export type AppSettings = {
   agentModelId: string | null;
+  /** Optional server-side model used only to classify ambiguous requests. */
+  intentClassifierModelId?: string | null;
   defaultImageModelId: string | null;
   defaultVideoModelId?: string | null;
   defaultProviderId: string | null;

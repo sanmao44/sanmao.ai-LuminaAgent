@@ -153,6 +153,8 @@ export type CanvasVideoEditorState = {
   resolution?: "720p" | "1080p" | "2K" | "4K";
   clips: CanvasVideoEditorClip[];
   mutedTracks: CanvasVideoEditorTrack[];
+  /** Source media the user intentionally removed from the editable timeline. */
+  excludedSourceNodeIds?: string[];
   /** Lower reference ambience/music while the clone voice track is speaking. */
   referenceAudioDucking?: boolean;
   /** Tracks hidden from preview and export. Missing means every track is enabled. */
@@ -283,7 +285,7 @@ export type CanvasGenerationMeta = {
       assetId?: string;
     };
   };
-  operation?: "generate" | "edit" | "upscale" | "extend";
+  operation?: "generate" | "edit" | "reference-generate" | "upscale" | "extend";
   referenceIds?: string[];
   sourceGeneratorId?: string;
   parentNodeId?: string;
@@ -374,6 +376,8 @@ export type CanvasNodeData = {
   videoInputModeLocked?: boolean;
   assetId?: string;
   sourceAssetId?: string;
+  /** Stable asset-library identity carried by references into the canvas. */
+  storageKey?: string;
   /** MIME type of an imported media asset, kept for reliable audio handling. */
   mimeType?: string;
   autoFit?: boolean;
@@ -418,7 +422,12 @@ export type CanvasNodeData = {
   depthVideo?: {
     sourceNodeId?: string;
     model?: string;
-    mode?: "grayscale";
+    /** Current output mode; grayscale is retained for legacy persisted nodes. */
+    mode?: "model" | "grayscale";
+    quality?: "low" | "medium" | "high";
+    inferenceSide?: number;
+    exportSide?: number;
+    frameQuality?: number;
     fps?: number;
     frameCount?: number;
     startedAt?: number;
@@ -468,6 +477,8 @@ export type CanvasGroup = {
   id: string;
   name: string;
   nodeIds: string[];
+  /** Persisted user-selected accent used to identify the group. */
+  color?: string;
   /** Persisted top-level paint order shared with ungrouped nodes. */
   zIndex?: number;
 };

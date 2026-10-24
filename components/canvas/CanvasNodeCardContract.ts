@@ -41,6 +41,7 @@ export type CanvasNodeCardProps = {
     width: number,
     height: number,
     durationSeconds?: number,
+    sourceUrl?: string,
   ) => void;
   onPromptChange: (value: string) => void;
   onEditorPromptChange: (node: CanvasNode, value: string) => void;
@@ -62,6 +63,9 @@ export type CanvasNodeCardProps = {
   onOutputPreview: (node: CanvasNode) => void;
   editing: boolean;
   onEdit: (value: boolean) => void;
+  onRename?: (value: string) => void;
+  renaming?: boolean;
+  onRenamingChange?: (editing: boolean) => void;
 };
 
 /**
@@ -119,6 +123,9 @@ export function areCanvasNodeCardPropsEqual(
     previous.mentionCandidates === next.mentionCandidates &&
     previous.onOutputPreview === next.onOutputPreview &&
     previous.editing === next.editing &&
-    previous.onEdit === next.onEdit
+    previous.onEdit === next.onEdit &&
+    previous.onRename === next.onRename &&
+    previous.renaming === next.renaming &&
+    previous.onRenamingChange === next.onRenamingChange
   );
 }

@@ -134,6 +134,7 @@ export default function MediaViewer({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [mediaSizes, setMediaSizes] = useState<Record<MediaViewerSide, MediaViewerSize>>({
     item: { width: 0, height: 0 },
     reference: { width: 0, height: 0 },
@@ -273,6 +274,10 @@ export default function MediaViewer({
         if (target?.closest(".select-menu-popover,.model-picker-panel,.model-picker-dialog-backdrop")) return;
         event.preventDefault();
         event.stopPropagation();
+        if (expanded) {
+          setExpanded(false);
+          return;
+        }
         onClose();
       } else if (event.key === "ArrowLeft" && onNavigate) {
         if (event.target instanceof HTMLElement && ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
@@ -291,7 +296,7 @@ export default function MediaViewer({
       window.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = previousOverflow;
     };
-  }, [onClose, onNavigate]);
+  }, [expanded, onClose, onNavigate]);
 
   const resetView = () => {
     pointerStart.current = null;
@@ -438,7 +443,7 @@ export default function MediaViewer({
 
   return (
     <div
-      className="canvas-modal-backdrop media-viewer-backdrop"
+      className={`canvas-modal-backdrop media-viewer-backdrop ${expanded ? "is-expanded" : ""}`}
       role="dialog"
       aria-modal="true"
       aria-label={`${item.name || "素材"}预览`}
@@ -446,7 +451,7 @@ export default function MediaViewer({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="canvas-lightbox canvas-media-viewer media-viewer-shared">
+      <div className={`canvas-lightbox canvas-media-viewer media-viewer-shared ${expanded ? "is-expanded" : ""}`}>
         <header>
           <div>
             <b>{item.name || "素材预览"}</b>
@@ -458,6 +463,22 @@ export default function MediaViewer({
               <button type="button" className="zoom-readout" onClick={resetView} title="恢复原比例">{Math.round(zoom * 100)}%</button>
               <button type="button" onClick={() => updateZoom(zoom + 0.1)} title="放大">＋</button>
             </div>
+            <button
+              type="button"
+              className={`media-viewer-header-button media-viewer-fullscreen-button ${expanded ? "active" : ""}`}
+              title={expanded ? "退出全屏查看" : "全屏查看"}
+              aria-label={expanded ? "退出全屏查看" : "全屏查看"}
+              aria-pressed={expanded}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              <span className="media-viewer-button-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  {expanded
+                    ? <path d="M8 3v5H3m18 0h-5V3M16 21v-5h5M3 16h5v5" />
+                    : <path d="M3 8V3h5m8 0h5v5m0 8v5h-5M8 21H3v-5" />}
+                </svg>
+              </span>
+            </button>
             {onNavigate && <span className="media-viewer-nav-hint">← / → 切换</span>}
             <button type="button" className={`media-viewer-header-button media-viewer-toggle-button ${compare ? "active" : ""}`} onClick={() => setCompare((value) => !value)} disabled={!canCompare}>
               <span className="media-viewer-button-icon" aria-hidden="true">{compare ? "◉" : "◌"}</span>

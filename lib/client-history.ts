@@ -1,6 +1,7 @@
 import type { ClientReferenceImage, ReferenceImageRecord, WebSearchDecisionMeta, WebSearchMeta } from './types';
 import type { AngleCameraState } from './angle-control';
-import { emitWorkspaceChange } from './workspace-events';
+import { emitWorkspaceChange, emitWorkspaceMutation } from './workspace-events';
+import type { StorageWriteGuard } from '@/packages/contracts';
 import type { UpscaleOutputFormat } from './types';
 import type { LocalEditAnnotation } from './local-edit';
 import type { ConversationMemory } from './agent-memory';
@@ -179,25 +180,28 @@ function openDb(): Promise<IDBDatabase> {
 
 function withNamedStore<T>(storeName: string, mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
   return openDb().then((db) => new Promise<T>((resolve, reject) => {
-    const tx = db.transaction(storeName, mode);
-    const request = fn(tx.objectStore(storeName));
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('本地历史数据库操作失败'));
-    tx.oncomplete = () => db.close();
+    let tx: IDBTransaction;
+    try { tx = db.transaction(storeName, mode); }
+    catch (error) { db.close(); reject(error); return; }
+    let result: T;
+    // Request success is provisional: a later request or commit can still fail.
+    // Only acknowledge a save (and emit its mutation) after the transaction commits.
+    tx.oncomplete = () => { db.close(); resolve(result); };
     tx.onerror = () => { db.close(); reject(tx.error || new Error('本地历史数据库事务失败')); };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('本地历史数据库事务已取消')); };
+    try {
+      const request = fn(tx.objectStore(storeName));
+      request.onsuccess = () => { result = request.result; };
+      request.onerror = () => reject(request.error || new Error('本地历史数据库操作失败'));
+    } catch (error) {
+      tx.abort();
+      reject(error);
+    }
   }));
 }
 
-async function withStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-  const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, mode);
-    const request = fn(tx.objectStore(STORE));
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('本地历史数据库操作失败'));
-    tx.oncomplete = () => db.close();
-    tx.onerror = () => { db.close(); reject(tx.error || new Error('本地历史数据库事务失败')); };
-  });
+function withStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  return withNamedStore(STORE, mode, fn);
 }
 
 export async function listGallery(): Promise<GalleryItem[]> {
@@ -207,38 +211,30 @@ export async function listGallery(): Promise<GalleryItem[]> {
 
 export async function saveGalleryItem(item: GalleryItem) {
   await withStore<IDBValidKey>('readwrite', (store) => store.put(item));
-  emitWorkspaceChange();
+  emitWorkspaceMutation();
 }
 
 export async function saveGalleryItems(items: GalleryItem[]) {
   if (!items.length) return;
-  const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    const store = tx.objectStore(STORE);
+  await withStore('readwrite', (store) => {
     for (const item of items) store.put(item);
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error || new Error('保存历史失败')); };
+    return store.count();
   });
-  emitWorkspaceChange();
+  emitWorkspaceMutation();
 }
 
 export async function removeGalleryItem(id: string) {
   await withStore<undefined>('readwrite', (store) => store.delete(id) as IDBRequest<undefined>);
-  emitWorkspaceChange();
+  emitWorkspaceMutation();
 }
 
 export async function removeGalleryItems(ids: string[]) {
   if (!ids.length) return;
-  const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    const store = tx.objectStore(STORE);
+  await withStore('readwrite', (store) => {
     for (const id of ids) store.delete(id);
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error || new Error('删除历史失败')); };
+    return store.count();
   });
-  emitWorkspaceChange();
+  emitWorkspaceMutation();
 }
 
 export async function patchGalleryItem(id: string, patch: Partial<GalleryItem>) {
@@ -249,19 +245,32 @@ export async function patchGalleryItem(id: string, patch: Partial<GalleryItem>) 
 
 export async function clearGallery() {
   await withStore<undefined>('readwrite', (store) => store.clear() as IDBRequest<undefined>);
-  emitWorkspaceChange();
+  emitWorkspaceMutation();
 }
 
-export async function replaceGalleryItems(items: GalleryItem[]) {
+async function replaceStoredRows(storeName: string, items: readonly (GalleryItem | ChatSession | AssetIndexItem | { key: string; value: AssetCollection[] })[], canWrite?: StorageWriteGuard, clear = true) {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    const store = tx.objectStore(STORE);
-    store.clear();
-    for (const item of items) store.put(item);
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    // Waiting for a request ensures queued earlier edits have committed before
+    // evaluating the restore guard, while this transaction still owns the store.
+    const ready = store.count();
+    ready.onsuccess = () => {
+      try {
+        if (canWrite && !canWrite()) return;
+        if (clear) store.clear();
+        for (const item of items) store.put(item);
+      } catch { tx.abort(); }
+    };
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error || new Error('恢复生成历史失败')); };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('恢复事务已取消')); };
   });
+}
+
+export async function replaceGalleryItems(items: GalleryItem[], canWrite?: StorageWriteGuard) {
+  await replaceStoredRows(STORE, items, canWrite);
   emitWorkspaceChange();
 }
 
@@ -272,24 +281,16 @@ export async function listChatSessions(): Promise<ChatSession[]> {
 
 export async function saveChatSession(session: ChatSession) {
   await withNamedStore<IDBValidKey>(CHAT_STORE, 'readwrite', (store) => store.put(session));
-  emitWorkspaceChange();
+  emitWorkspaceMutation();
 }
 
 export async function removeChatSession(id: string) {
   await withNamedStore<undefined>(CHAT_STORE, 'readwrite', (store) => store.delete(id) as IDBRequest<undefined>);
-  emitWorkspaceChange();
+  emitWorkspaceMutation();
 }
 
-export async function replaceChatSessions(sessions: ChatSession[]) {
-  const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(CHAT_STORE, 'readwrite');
-    const store = tx.objectStore(CHAT_STORE);
-    store.clear();
-    for (const session of sessions) store.put(session);
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error || new Error('恢复助手历史失败')); };
-  });
+export async function replaceChatSessions(sessions: ChatSession[], canWrite?: StorageWriteGuard) {
+  await replaceStoredRows(CHAT_STORE, sessions, canWrite);
   emitWorkspaceChange();
 }
 
@@ -313,37 +314,25 @@ export async function listAssetIndex(): Promise<AssetIndexItem[]> {
 
 export async function saveAssetIndexItem(item: AssetIndexItem) {
   await withNamedStore<IDBValidKey>(ASSET_STORE, 'readwrite', (store) => store.put(item));
-  emitWorkspaceChange();
+  emitWorkspaceMutation();
 }
 
 export async function saveAssetIndexItems(items: AssetIndexItem[]) {
   if (!items.length) return;
-  const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(ASSET_STORE, 'readwrite');
-    const store = tx.objectStore(ASSET_STORE);
+  await withNamedStore(ASSET_STORE, 'readwrite', (store) => {
     items.forEach((item) => store.put(item));
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error || new Error('保存资产索引失败')); };
+    return store.count();
   });
-  emitWorkspaceChange();
+  emitWorkspaceMutation();
 }
 
 export async function removeAssetIndexItem(id: string) {
   await withNamedStore<undefined>(ASSET_STORE, 'readwrite', (store) => store.delete(id) as IDBRequest<undefined>);
-  emitWorkspaceChange();
+  emitWorkspaceMutation();
 }
 
-export async function replaceAssetIndexItems(items: AssetIndexItem[]) {
-  const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(ASSET_STORE, 'readwrite');
-    const store = tx.objectStore(ASSET_STORE);
-    store.clear();
-    for (const item of items) store.put(item);
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error || new Error('恢复资产索引失败')); };
-  });
+export async function replaceAssetIndexItems(items: AssetIndexItem[], canWrite?: StorageWriteGuard) {
+  await replaceStoredRows(ASSET_STORE, items, canWrite);
   emitWorkspaceChange();
 }
 
@@ -367,10 +356,11 @@ export async function listAssetCollections(): Promise<AssetCollection[]> {
   return [...DEFAULT_ASSET_COLLECTIONS, ...custom.filter((item) => !DEFAULT_ASSET_COLLECTIONS.some((builtin) => builtin.id === item.id))];
 }
 
-export async function saveAssetCollections(collections: AssetCollection[]) {
+export async function saveAssetCollections(collections: readonly AssetCollection[], canWrite?: StorageWriteGuard) {
   const custom = collections.filter((item) => !item.builtin && !DEFAULT_ASSET_COLLECTIONS.some((builtin) => builtin.id === item.id));
-  await withNamedStore<IDBValidKey>(SETTINGS_STORE, 'readwrite', (store) => store.put({ key: ASSET_COLLECTIONS_KEY, value: custom }));
-  emitWorkspaceChange();
+  await replaceStoredRows(SETTINGS_STORE, [{ key: ASSET_COLLECTIONS_KEY, value: custom }], canWrite, false);
+  if (canWrite) emitWorkspaceChange();
+  else emitWorkspaceMutation();
 }
 
 export async function patchAssetIndexMetadata(id: string, patch: Partial<Pick<AssetIndexItem, 'collectionIds' | 'tags' | 'favorite' | 'projectIds'>>) {

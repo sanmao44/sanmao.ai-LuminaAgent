@@ -1,4 +1,5 @@
 import type { CreativeReference } from './creative';
+import type { SkillRouteDecision } from './skill';
 export type { CreativeReference } from './creative';
 
 export type AgentDeliverable = 'IMAGE' | 'TEXT' | 'BOTH' | 'CLARIFY' | 'OTHER';
@@ -7,6 +8,13 @@ export type AgentContextNeed = 'none' | 'recent' | 'required';
 export type AgentWebMode = 'auto' | 'always' | 'off';
 export type AgentWebDecisionReason = 'off' | 'always' | 'explicit-search' | 'fact-verification' | 'time-sensitive' | 'recommendation' | 'comparison' | 'location-sensitive' | 'context-follow-up' | 'ordinary-chat';
 export type AgentWebDecision = { shouldSearch: boolean; reason: AgentWebDecisionReason; query: string };
+export type AgentInformationSource = 'conversation' | 'model-knowledge' | 'internal-capability' | 'external-web' | 'external-service' | 'browser' | 'local-workspace';
+export type AgentInformationDecision = {
+  source: AgentInformationSource;
+  needsExternalWeb: boolean;
+  reason: string;
+  capabilityTopic?: string;
+};
 export type BrowserAutomationStep = 'navigate' | 'inspect' | 'search' | 'select' | 'sort' | 'download' | 'interact';
 export type AgentPlanningMessage = { role: 'user' | 'assistant'; content: string; references?: CreativeReference[] | string[]; files?: { name: string; content?: string; artifactId?: string }[] };
 export type AgentIntentContext = { messages?: AgentPlanningMessage[]; hasReferences?: boolean; hasFiles?: boolean };
@@ -27,7 +35,9 @@ export type AgentRequestDecision = {
   browserIntent: { shouldAutomate: boolean; destination: string; steps: BrowserAutomationStep[]; confidence: 'high' | 'medium' | 'low'; reason: string };
   filesystem: boolean;
   web: AgentWebDecision;
+  information: AgentInformationDecision;
   needsTools: boolean;
   tools: AgentToolPlan;
+  skillRoute: SkillRouteDecision;
   candidates: AgentRequestCandidate[];
 };

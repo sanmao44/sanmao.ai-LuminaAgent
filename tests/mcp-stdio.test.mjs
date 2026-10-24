@@ -52,6 +52,43 @@ test('stdio：tools/call 返回文本，业务错误带 isError', async () => {
   mcp.closeStdioServer('call');
 });
 
+test('Windows-MCP 控制器在执行前失效时自动重启 stdio 会话并只重试一次', async () => {
+  const marker = path.join(os.tmpdir(), `sanmao-mcp-control-recovery-${process.pid}-${Date.now()}.marker`);
+  const server = stdioServer({
+    id: 'control-recovery',
+    catalogId: 'windows-mcp',
+    env: { MCP_FIXTURE_CONTROL_RECOVERY: marker },
+  });
+  try {
+    const first = await mcp.callMcpTool(server, 'echo', { text: 'recovered' });
+    assert.deepEqual(first, { text: 'recovered', isError: false });
+    assert.ok(mcp.stdioServerStatus('control-recovery').pid);
+  } finally {
+    mcp.closeStdioServer('control-recovery');
+    await unlink(marker).catch(() => undefined);
+  }
+});
+
+test('Windows-MCP 已执行输入步骤时不自动重放控制失败', async () => {
+  const server = stdioServer({
+    id: 'control-partial',
+    catalogId: 'windows-mcp',
+    env: { MCP_FIXTURE_CONTROL_PARTIAL: '1' },
+  });
+  try {
+    const result = await mcp.callMcpTool(server, 'echo', { text: 'must not replay' });
+    assert.equal(result.isError, true);
+    assert.match(result.text, /CONTROL_UNAVAILABLE/);
+    const pid = mcp.stdioServerStatus('control-partial').pid;
+    assert.ok(pid);
+    const second = await mcp.callMcpTool(server, 'echo', { text: 'still blocked' });
+    assert.equal(second.isError, true);
+    assert.equal(mcp.stdioServerStatus('control-partial').pid, pid);
+  } finally {
+    mcp.closeStdioServer('control-partial');
+  }
+});
+
 test('stdio：超长结果截断并说明，不把 9000 字灌进上下文', async () => {
   const result = await mcp.callMcpTool(stdioServer({ id: 'big' }), 'big', {});
   assert.match(result.text, /结果过长已截断/);

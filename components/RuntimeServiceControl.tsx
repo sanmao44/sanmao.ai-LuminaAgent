@@ -22,7 +22,7 @@ function reloadPage() {
   try {
     const url = new URL(window.location.href);
     // 重启（含从局域网切回本地）之后服务只监听本机，用局域网 IP 打开的页面会连不上。
-    if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) url.hostname = 'localhost';
+    if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) url.hostname = '127.0.0.1';
     url.searchParams.set('sanmao_reload', String(Date.now()));
     window.location.replace(url.toString());
   } catch {
@@ -92,7 +92,7 @@ export default function RuntimeServiceControl() {
       }
       if (!response.ok) {
         setBusy(false);
-        setMessage(result.requiresFormalUpdate ? '检测到依赖文件变化，请使用上方“正式更新”流程。' : result.error || '重启请求失败');
+        setMessage(result.requiresFormalUpdate ? '检测到依赖文件变化，请使用“正式更新”流程。' : result.error || '重启请求失败');
         return;
       }
       setOperationId(result.operationId || '');
@@ -115,27 +115,33 @@ export default function RuntimeServiceControl() {
           <span>本地服务</span>
           <h2>服务运行与重启</h2>
         </div>
-        <span className={`runtime-status-badge ${inProgress ? 'working' : 'ready'}`}>
-          {inProgress ? '重启中' : '运行中'}
+        <span className={`runtime-status-badge ${inProgress ? 'working' : status ? 'ready' : 'pending'}`}>
+          {inProgress ? '重启中' : status ? '运行中' : '读取中…'}
         </span>
       </div>
       <p className="settings-card-note">关闭网页不会关闭后台服务。代码修改后，可从这里安全重启并载入最新构建。</p>
-      <div className="runtime-service-details">
-        <span>版本 <b>{status?.version || '读取中…'}</b></span>
-        <span>端口 <b>{status?.port || '—'}</b></span>
-        <span>构建 <b>{status?.buildId ? status.buildId.slice(0, 10) : '未就绪'}</b></span>
-        <span>活动任务 <b className={status?.activeRequests ? 'warning' : ''}>{status?.activeRequests ?? '—'}</b></span>
+      <div className="runtime-service-overview">
+        <p>活动任务 <b className={status?.activeRequests ? 'warning' : ''}>{status?.activeRequests ?? '—'}</b></p>
+        <span>{status ? lan ? '局域网访问' : '仅本机访问' : '正在读取连接状态'}</span>
       </div>
+      <details className="runtime-service-diagnostics">
+        <summary>服务详情 <span>版本、端口与构建信息</span></summary>
+        <div className="runtime-service-details">
+          <span>版本 <b>{status?.version || '读取中…'}</b></span>
+          <span>端口 <b>{status?.port || '—'}</b></span>
+          <span>构建 <b>{status?.buildId ? status.buildId.slice(0, 10) : '未就绪'}</b></span>
+        </div>
+      </details>
       {lan ? <div className="runtime-service-hint">当前是局域网模式，同一网络的设备都能访问。切回本地模式后只在本机可用，其他设备会断开。</div> : null}
       {dependencyWarning ? <div className="runtime-service-hint warning">检测到依赖文件发生变化，请使用正式更新流程，不要用普通重启。</div> : null}
       {status?.sourceStale && !dependencyWarning ? <div className="runtime-service-hint warning">检测到源码尚未构建，点击重启后会重新构建。</div> : null}
       {message ? <div className={`runtime-service-message ${restart === 'failed' || restart === 'failed-rolled-back' ? 'error' : ''}`}>{message}</div> : null}
       {lan ? (
-        <button type="button" className="primary-small runtime-restart-button" disabled={inProgress} onClick={() => void postAction('switch-local', false)}>
+        <button type="button" className="secondary-action runtime-restart-button" disabled={inProgress} onClick={() => void postAction('switch-local', false)}>
           {inProgress ? '正在切换…' : '切回本地模式'}
         </button>
       ) : (
-        <button type="button" className="primary-small runtime-restart-button" disabled={dependencyWarning || inProgress} onClick={() => void postAction('restart', false)}>
+        <button type="button" className="secondary-action runtime-restart-button" disabled={dependencyWarning || inProgress} onClick={() => void postAction('restart', false)}>
           {inProgress ? '正在重启…' : '重启并载入最新代码'}
         </button>
       )}
