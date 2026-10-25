@@ -456,10 +456,103 @@ export function repairLocalEditMoveSource(
     repaired[index + 2] = source[ownerIndex + 2];
   }
 
-  // Two small local smoothing passes remove the staircase edge left by a
-  // nearest-background fill while retaining nearby texture for the model.
+  // Interpolate from both sides of each scanline before diffusion. This
+  // carries broad gradients such as sky, water, and ground through the
+  // source hole instead of copying one boundary color across the whole area.
+  const horizontalKnown = new Uint8Array(pixelCount);
+  const rowLast = new Int32Array(width);
+  for (let y = 0; y < height; y += 1) {
+    rowLast.fill(-1);
+    const row = y * width;
+    let left = -1;
+    for (let x = 0; x < width; x += 1) {
+      const pixel = row + x;
+      if (!selected[pixel]) left = pixel;
+      rowLast[x] = left;
+    }
+    let right = -1;
+    for (let x = width - 1; x >= 0; x -= 1) {
+      const pixel = row + x;
+      if (!selected[pixel]) {
+        right = pixel;
+        continue;
+      }
+      const left = rowLast[x];
+      if (left < 0 && right < 0) continue;
+      const index = pixel * 4;
+      if (left >= 0 && right >= 0 && left !== right) {
+        const leftDistance = pixel - left;
+        const rightDistance = right - pixel;
+        const totalDistance = leftDistance + rightDistance;
+        for (let channel = 0; channel < 3; channel += 1) {
+          repaired[index + channel] = Math.round(
+            (source[left * 4 + channel] * rightDistance
+              + source[right * 4 + channel] * leftDistance) / totalDistance,
+          );
+        }
+      } else {
+        const nearest = left >= 0 ? left : right;
+        for (let channel = 0; channel < 3; channel += 1) {
+          repaired[index + channel] = source[nearest * 4 + channel];
+        }
+      }
+      horizontalKnown[pixel] = 1;
+    }
+  }
+
+  const columnLast = new Int32Array(height);
+  for (let x = 0; x < width; x += 1) {
+    columnLast.fill(-1);
+    let top = -1;
+    for (let y = 0; y < height; y += 1) {
+      const pixel = y * width + x;
+      if (!selected[pixel]) top = pixel;
+      columnLast[y] = top;
+    }
+    let bottom = -1;
+    for (let y = height - 1; y >= 0; y -= 1) {
+      const pixel = y * width + x;
+      if (!selected[pixel]) {
+        bottom = pixel;
+        continue;
+      }
+      const top = columnLast[y];
+      if (top < 0 && bottom < 0) continue;
+      const index = pixel * 4;
+      let red = 0;
+      let green = 0;
+      let blue = 0;
+      if (top >= 0 && bottom >= 0 && top !== bottom) {
+        const topDistance = pixel - top;
+        const bottomDistance = bottom - pixel;
+        const totalDistance = topDistance + bottomDistance;
+        red = Math.round((source[top * 4] * bottomDistance + source[bottom * 4] * topDistance) / totalDistance);
+        green = Math.round((source[top * 4 + 1] * bottomDistance + source[bottom * 4 + 1] * topDistance) / totalDistance);
+        blue = Math.round((source[top * 4 + 2] * bottomDistance + source[bottom * 4 + 2] * topDistance) / totalDistance);
+      } else {
+        const nearest = top >= 0 ? top : bottom;
+        red = source[nearest * 4];
+        green = source[nearest * 4 + 1];
+        blue = source[nearest * 4 + 2];
+      }
+      if (horizontalKnown[pixel]) {
+        repaired[index] = Math.round((repaired[index] + red) / 2);
+        repaired[index + 1] = Math.round((repaired[index + 1] + green) / 2);
+        repaired[index + 2] = Math.round((repaired[index + 2] + blue) / 2);
+      } else {
+        repaired[index] = red;
+        repaired[index + 1] = green;
+        repaired[index + 2] = blue;
+      }
+    }
+  }
+
+  // Diffuse the boundary colors through the whole hole. Two passes leave
+  // broad selections split into nearest-neighbor stripes; enough iterations
+  // are needed to produce a continuous gradient for the provider guide.
+  const smoothingPasses = Math.max(8, Math.min(32, Math.ceil(Math.sqrt(selectedCount) / 2)));
   let smoothed = repaired;
-  for (let pass = 0; pass < 2; pass += 1) {
+  for (let pass = 0; pass < smoothingPasses; pass += 1) {
     const next = new Uint8ClampedArray(smoothed);
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {

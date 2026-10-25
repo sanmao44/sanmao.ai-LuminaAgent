@@ -287,6 +287,27 @@ test("moving a selection edits its source and target fusion ring while protectin
   assert.match(compiled, /补充说明：把物体移到右侧/);
 });
 
+test("move source repair diffuses broad holes instead of leaving nearest-neighbor bands", () => {
+  const width = 32;
+  const height = 1;
+  const source = new Uint8ClampedArray(width * height * 4);
+  const selection = raster.createProtectedMask(width, height);
+  for (let x = 0; x < width; x += 1) {
+    const index = x * 4;
+    const background = x < 4 ? [30, 60, 90] : x > 27 ? [210, 180, 150] : [220, 30, 20];
+    source.set([...background, 255], index);
+    if (x >= 4 && x <= 27) selection[index + 3] = 0;
+  }
+
+  const repaired = raster.repairLocalEditMoveSource(source, selection, width, height);
+  const red = (x) => repaired[x * 4];
+  const largestJump = Math.max(...Array.from({ length: 27 }, (_, index) => Math.abs(red(index + 4) - red(index + 5))));
+
+  assert.ok(red(12) > red(8), "the fill should carry the background gradient through the hole");
+  assert.ok(red(20) > red(16), "the fill should keep progressing toward the opposite edge");
+  assert.ok(largestJump < 50, "the fill should not contain a nearest-neighbor color step");
+});
+
 test("move preview shows the repaired source background and moved object as one opaque image", () => {
   const source = Uint8ClampedArray.from([
     1, 0, 0, 255,

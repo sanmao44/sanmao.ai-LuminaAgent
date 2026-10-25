@@ -9,11 +9,21 @@ import sharp from 'sharp';
 const require = createRequire(import.meta.url);
 const sharpUrl = pathToFileURL(require.resolve('sharp')).href;
 const sourceUrl = new URL('../lib/local-edit-composite.ts', import.meta.url);
+const localEditSource = await readFile(new URL('../lib/local-edit.ts', import.meta.url), 'utf8');
+const localEditCompiled = ts.transpileModule(localEditSource, {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  fileName: 'local-edit.ts',
+}).outputText;
+const localEditRuntime = `data:text/javascript;base64,${Buffer.from(localEditCompiled).toString('base64')}`;
 const source = (await readFile(sourceUrl, 'utf8'))
   .replace("from 'sharp'", `from '${sharpUrl}'`)
   .replace(
     "import { resolveStoredImageReference } from './image-storage';",
     'const resolveStoredImageReference = async () => { throw new Error("stored image is unavailable"); };',
+  )
+  .replace(
+    "import { repairLocalEditMoveSource } from './local-edit';",
+    `const { repairLocalEditMoveSource } = await import(${JSON.stringify(localEditRuntime)});`,
   );
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -127,7 +137,7 @@ test('move compositing keeps the precomposed target object while regenerating it
   assert.deepEqual([...output.data.subarray(7 * 4, 8 * 4)], [0, 0, 200, 255], 'unmarked content stays unchanged');
 });
 
-test('move compositing removes a color-shifted Provider duplicate from the old position without changing the destination', async () => {
+test('move compositing inpaints a retained Provider duplicate from its surrounding background', async () => {
   const width = 4;
   const height = 1;
   const originalPixels = Buffer.from([
@@ -172,7 +182,8 @@ test('move compositing removes a color-shifted Provider duplicate from the old p
   );
   const output = await raw(Buffer.from(result[0].url.split(',')[1], 'base64'));
 
-  assert.deepEqual([...output.data.subarray(1 * 4, 2 * 4)], [30, 160, 30, 255], 'a retained duplicate is replaced by the repaired source guide');
+  assert.deepEqual([...output.data.subarray(1 * 4, 2 * 4)], [90, 90, 90, 255], 'a retained duplicate is repaired from the Provider background');
+  assert.notDeepEqual([...output.data.subarray(1 * 4, 2 * 4)], [...guidePixels.subarray(1 * 4, 2 * 4)], 'the rough synthetic guide must not replace the whole source region');
   assert.deepEqual([...output.data.subarray(3 * 4, 4 * 4)], [220, 0, 0, 255], 'the moved object remains at the destination');
   assert.deepEqual([...output.data.subarray(0, 4)], [...guidePixels.subarray(0, 4)], 'protected pixels stay unchanged from the move guide');
 });

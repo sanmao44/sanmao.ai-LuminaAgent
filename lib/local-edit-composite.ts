@@ -1,5 +1,6 @@
 import sharp from 'sharp';
 import { resolveStoredImageReference } from './image-storage';
+import { repairLocalEditMoveSource } from './local-edit';
 import type { GeneratedImage } from './types';
 
 const MAX_IMAGE_BYTES = 100 * 1024 * 1024;
@@ -74,7 +75,7 @@ export function compositeLocalEditPixels(
   source: Uint8Array,
   generated: Uint8Array,
   mask: Uint8Array,
-  moveSource?: { mask: Uint8Array; original: Uint8Array },
+  moveSource?: { mask: Uint8Array; original: Uint8Array; width: number; height: number },
 ) {
   if (source.length !== generated.length || source.length !== mask.length || source.length % 4 !== 0) {
     throw new Error('Local-edit images must have matching RGBA buffers');
@@ -83,14 +84,26 @@ export function compositeLocalEditPixels(
     throw new Error('Move source images must have matching RGBA buffers');
   }
   let generatedPixels = generated;
-  if (moveSource && moveSourceMaskRetainsSource(generated, moveSource.original, source, moveSource.mask)) {
-    generatedPixels = Uint8Array.from(generated);
-    for (let index = 3; index < moveSource.mask.length; index += 4) {
-      if (moveSource.mask[index] >= 253) continue;
-      generatedPixels[index - 3] = source[index - 3];
-      generatedPixels[index - 2] = source[index - 2];
-      generatedPixels[index - 1] = source[index - 1];
-      generatedPixels[index] = source[index];
+  if (moveSource) {
+    const duplicateMask = moveSourceDuplicateMask(
+      generated,
+      moveSource.original,
+      source,
+      moveSource.mask,
+    );
+    if (duplicateMask) {
+      // Keep the Provider's surrounding pixels as the background and repair
+      // only the pixels that still look like the old subject. Replacing the
+      // whole source selection with the synthetic guide creates visible
+      // seams in textured scenes.
+      generatedPixels = Uint8Array.from(
+        repairLocalEditMoveSource(
+          Uint8ClampedArray.from(generated),
+          duplicateMask,
+          moveSource.width,
+          moveSource.height,
+        ),
+      );
     }
   }
   const output = new Uint8ClampedArray(source.length);
@@ -120,12 +133,19 @@ export function compositeLocalEditPixels(
   return output;
 }
 
-function moveSourceMaskRetainsSource(
+function moveSourceDuplicateMask(
   generated: Uint8Array,
   original: Uint8Array,
   repaired: Uint8Array,
   moveMask: Uint8Array,
-) {
+): Uint8ClampedArray | undefined {
+  const duplicateMask = new Uint8ClampedArray(moveMask.length);
+  for (let index = 0; index < duplicateMask.length; index += 4) {
+    duplicateMask[index] = 255;
+    duplicateMask[index + 1] = 255;
+    duplicateMask[index + 2] = 255;
+    duplicateMask[index + 3] = 255;
+  }
   let objectPixels = 0;
   let retainedPixels = 0;
   for (let index = 3; index < moveMask.length; index += 4) {
@@ -150,8 +170,16 @@ function moveSourceMaskRetainsSource(
       + Math.abs(generated[index - 1] - repaired[index - 1])
     ) / 3;
     if (generatedOriginalDifference + 8 <= generatedRepairedDifference) retainedPixels += 1;
+    if (generatedOriginalDifference + 8 <= generatedRepairedDifference) {
+      duplicateMask[index - 3] = 255;
+      duplicateMask[index - 2] = 255;
+      duplicateMask[index - 1] = 255;
+      duplicateMask[index] = 0;
+    }
   }
-  return objectPixels > 0 && retainedPixels / objectPixels >= 0.45;
+  return objectPixels > 0 && retainedPixels / objectPixels >= 0.45
+    ? duplicateMask
+    : undefined;
 }
 
 async function compositeLocalEditImage(
@@ -181,7 +209,12 @@ async function compositeLocalEditImage(
     generated.data,
     mask.data,
     moveSourceMask && moveSourceOriginal
-      ? { mask: moveSourceMask.data, original: moveSourceOriginal.data }
+      ? {
+          mask: moveSourceMask.data,
+          original: moveSourceOriginal.data,
+          width,
+          height,
+        }
       : undefined,
   );
   const output = await sharp(Buffer.from(pixels), {
