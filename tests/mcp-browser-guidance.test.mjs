@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildMcpModule } from './tools-build.mjs';
+import { buildBrowserGuidanceModule, buildMcpModule } from './tools-build.mjs';
 
 const mcp = await buildMcpModule();
+const { TABBIT_BROWSER_TOOL_GUIDE } = await buildBrowserGuidanceModule();
 
 test('元素定位写错时要给出能照着改的中文纠错', () => {
   // 全部是本机真实踩到的报错原文（上游 Playwright MCP 只说英文，模型看不懂就换个选择器再试）。
@@ -33,6 +34,15 @@ test('系统提示里的浏览器约定要写清 ref 的取法', () => {
   assert.match(guide, /ref=f5e14/, '把「连前缀一起抄」这个错法点名');
   assert.match(guide, /CSS 选择器/, '把「自己编选择器」这个错法点名');
   assert.match(guide, /重新/, '每次操作后 ref 会换，要重新取快照');
+});
+
+test('Tabbit 提示按 CLI 生命周期创建任务并为新程序生成独立 requestId', () => {
+  assert.match(TABBIT_BROWSER_TOOL_GUIDE, /明确的新网址.*直接调用 nodejs/);
+  assert.match(TABBIT_BROWSER_TOOL_GUIDE, /已有标签页时，先用 create/);
+  assert.match(TABBIT_BROWSER_TOOL_GUIDE, /task 名称（允许空格）/);
+  assert.match(TABBIT_BROWSER_TOOL_GUIDE, /diagnose 只检查运行状态，不创建 task/);
+  assert.match(TABBIT_BROWSER_TOOL_GUIDE, /每个新的 nodejs 程序必须使用新的 requestId/);
+  assert.match(TABBIT_BROWSER_TOOL_GUIDE, /Unknown task name.*先用 create/);
 });
 
 test('浏览器循环不会把“现在继续提交评论”当成最终回复', () => {

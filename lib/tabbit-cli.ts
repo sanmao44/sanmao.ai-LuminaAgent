@@ -20,7 +20,7 @@ export function isTabbitCliAvailable(options: { platform?: NodeJS.Platform; env?
   return Boolean(resolveTabbitCli(options));
 }
 
-type TabbitAction = 'diagnose' | 'tabs' | 'claim' | 'resume' | 'nodejs' | 'resource' | 'receipt' | 'finish';
+type TabbitAction = 'diagnose' | 'create' | 'tabs' | 'claim' | 'resume' | 'nodejs' | 'resource' | 'receipt' | 'finish';
 
 export type TabbitBrowserArgs = {
   action?: unknown;
@@ -49,7 +49,14 @@ export type TabbitCliResult = {
   exitCode?: number | null;
 };
 
-const ACTIONS = new Set<TabbitAction>(['diagnose', 'tabs', 'claim', 'resume', 'nodejs', 'resource', 'receipt', 'finish']);
+export type TabbitCliInvocation = {
+  action: TabbitAction;
+  args: string[];
+  stdin?: string;
+  timeoutMs: number;
+};
+
+const ACTIONS = new Set<TabbitAction>(['diagnose', 'create', 'tabs', 'claim', 'resume', 'nodejs', 'resource', 'receipt', 'finish']);
 const SAFE_TOKEN = /^[A-Za-z0-9_-]{1,96}$/;
 const GROUP_ID = /^[A-Fa-f0-9]{16,96}$/;
 const MAX_CODE_CHARS = 240_000;
@@ -67,6 +74,14 @@ function token(value: unknown, label: string, pattern = SAFE_TOKEN) {
 function optionalToken(value: unknown, label: string, pattern = SAFE_TOKEN) {
   const result = String(value ?? '').trim();
   return result ? token(result, label, pattern) : '';
+}
+
+function optionalTaskName(value: unknown) {
+  const result = String(value ?? '').trim();
+  if (result && (result.length > 96 || /[\u0000-\u001f\u007f]/u.test(result))) {
+    throw new Error('task 格式无效');
+  }
+  return result;
 }
 
 function integer(value: unknown, label: string, min: number, max: number, fallback: number) {
@@ -88,10 +103,10 @@ function boundedValue(value: unknown, depth = 0): unknown {
   return value;
 }
 
-function cliArgs(input: TabbitBrowserArgs): { action: TabbitAction; args: string[]; stdin?: string; timeoutMs: number } {
+export function buildTabbitCliInvocation(input: TabbitBrowserArgs): TabbitCliInvocation {
   const action = String(input.action || '').trim() as TabbitAction;
   if (!ACTIONS.has(action)) throw new Error('Tabbit action 无效');
-  const task = optionalToken(input.task, 'task');
+  const task = optionalTaskName(input.task);
   const requestId = optionalToken(input.requestId, 'requestId');
   const args: string[] = [action];
   if (task) args.push('--task', task);
@@ -104,6 +119,10 @@ function cliArgs(input: TabbitBrowserArgs): { action: TabbitAction; args: string
   );
 
   if (action === 'diagnose') return { action, args, timeoutMs };
+  if (action === 'create') {
+    if (!task) throw new Error('create 需要 task');
+    return { action, args, timeoutMs };
+  }
   if (action === 'tabs') {
     if (!task) throw new Error('tabs 需要 task');
     const state = optionalToken(input.state, 'state');
@@ -200,7 +219,7 @@ function runProcess(file: string, args: string[], stdin: string | undefined, tim
 }
 
 export async function runTabbitBrowserAction(input: TabbitBrowserArgs, options: { signal?: AbortSignal } = {}): Promise<TabbitCliResult> {
-  const prepared = cliArgs(input);
+  const prepared = buildTabbitCliInvocation(input);
   const file = resolveTabbitCli();
   if (!file) return { ok: false, action: prepared.action, error: '未找到 Tabbit 原生 CLI，已保留 Playwright 兼容回退' };
   const result = await runProcess(file, prepared.args, prepared.stdin, prepared.timeoutMs, options.signal);

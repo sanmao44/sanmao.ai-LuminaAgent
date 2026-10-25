@@ -141,9 +141,12 @@ export const BROWSER_TOOL_GUIDE = [
  * mention the Playwright Extension MCP tool names. */
 export const TABBIT_BROWSER_TOOL_GUIDE = [
   'Tabbit 浏览器操作约定：本轮使用 tabbit_browser，不使用 Playwright Extension。',
-  '1. 先用 tabs 或 diagnose 发现当前页面；浏览器任务选一个简短稳定的 task 名称，并在后续所有调用中复用它。',
-  '2. 用 nodejs 在 Tabbit 自有 Browser-owned Playwright 运行时执行 JavaScript。每次脚本都要 return 有界、JSON 可序列化的结果；不要返回 Page、Locator、DOM、JSHandle 或无限文本。',
-  '3. 只读脚本才设置 readOnly=true；导航、点击、输入、聚焦、滚动、选择和其他会改变页面状态的操作必须设置 readOnly=false。',
-  '4. 先观察再操作；导航或页面变化后重新获取页面状态。需要输入时使用原生 Playwright locator/action，不要调用网站私有 API。',
-  '5. 登录、验证码、付款、发布、删除和其他不可逆动作在最后确认前停止；工具没有返回成功证据时不要声称完成。',
+  '1. 用户给出明确的新网址或网站时，首个浏览器动作直接调用 nodejs，提供 task 和 requestId；Tabbit 会创建任务和初始页面，不要先调用 tabs 或 diagnose。',
+  '2. 需要操作用户已有标签页时，先用 create 创建或复用 task，再用 tabs 查看标签页并按观察到的 tabId 调用 nodejs。diagnose 只检查运行状态，不创建 task；tabs 也不能代替 create。',
+  '3. 使用简短可读的 task 名称（允许空格），并在同一浏览器任务的所有调用中保持一致。每个新的 nodejs 程序必须使用新的 requestId；只有 receipt 等待或读取同一程序时复用原 requestId。不要用旧 requestId 提交修改后的代码。',
+  '4. 如果返回 Unknown task name，先用 create 注册同名 task，再用 tabs 检查当前标签页；确认状态后再以新的 requestId 调用 nodejs，不要直接重复失败调用。',
+  '5. 用 nodejs 在 Tabbit 自有 Browser-owned Playwright 运行时执行 JavaScript。每次脚本都要 return 有界、JSON 可序列化的结果；不要返回 Page、Locator、DOM、JSHandle 或无限文本。',
+  '6. 只读脚本才设置 readOnly=true；导航、点击、输入、聚焦、滚动、选择和其他会改变页面状态的操作必须设置 readOnly=false。',
+  '7. 先观察再操作；导航或页面变化后重新获取页面状态。需要输入时使用原生 Playwright locator/action，不要调用网站私有 API。',
+  '8. 登录、验证码、付款、发布、删除和其他不可逆动作在最后确认前停止；工具没有返回成功证据时不要声称完成。',
 ].join('\n');

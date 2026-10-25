@@ -150,6 +150,14 @@ export async function buildMcpModule() {
   return load('lib/mcp/index.mjs');
 }
 
+export async function buildBrowserGuidanceModule() {
+  return load('lib/mcp/browser-guidance.mjs');
+}
+
+export async function buildTabbitCliModule() {
+  return load('lib/tabbit-cli.mjs');
+}
+
 /**
  * 把同一个转译文件按两个不同的 URL 各导入一次，模拟 dev 下的模块热更新：
  * ESM 按完整 URL 缓存，问号不同就是两个模块实例，模块级 const 会被重新初始化。
