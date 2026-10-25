@@ -359,6 +359,23 @@ test('anchors left and right camera moves to the source frame and preserves scen
   assert.doesNotMatch(rearInstruction, /RIGHT edge|LEFT edge/);
 });
 
+test('large person camera moves require a new near-profile projection while preserving identity', () => {
+  const defaults = angle.createViewpointCamera();
+  const state = angle.normalizeAngleState({
+    ...defaults,
+    yaw: 77.4,
+    pitch: -25.5,
+    viewpoint: { ...defaults.viewpoint, subjectType: 'person' },
+  });
+  const prompt = angle.compileAngleTargetPrompt('', state);
+
+  assert.match(prompt, /final image MUST visibly reproject the subject and scene/);
+  assert.match(prompt, /near-profile target/);
+  assert.match(prompt, /genuine near-profile facial projection/);
+  assert.match(prompt, /This locks identity, not the original 2D visibility, facial projection or screen positions/);
+  assert.doesNotMatch(prompt, /CONTENT LOCK \(HIGHEST PRIORITY\)/);
+});
+
 test('builds scene-camera semantics and explicit lighting instructions', () => {
   const state = angle.normalizeAngleState({
     yaw: -90,
