@@ -326,6 +326,12 @@ export function normalizeImageCreationSettings(
           ...(typeof maskRaw.sourceUrl === "string"
             ? { sourceUrl: maskRaw.sourceUrl }
             : {}),
+          ...(typeof maskRaw.moveSourceMaskAssetId === "string"
+            ? { moveSourceMaskAssetId: maskRaw.moveSourceMaskAssetId }
+            : {}),
+          ...(typeof maskRaw.moveSourceMaskUrl === "string"
+            ? { moveSourceMaskUrl: maskRaw.moveSourceMaskUrl }
+            : {}),
           ...(typeof maskRaw.sourceImageDataUrl === "string"
             ? { sourceImageDataUrl: maskRaw.sourceImageDataUrl }
             : {}),

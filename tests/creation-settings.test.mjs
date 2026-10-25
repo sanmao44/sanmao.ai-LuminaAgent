@@ -148,6 +148,8 @@ test('image settings retain local-edit annotations in the persisted mask', () =>
       url: '/mask.png',
       sourceUrl: '/legacy-source.png',
       sourceImageDataUrl: 'data:image/png;base64,legacy-source',
+      moveSourceMaskAssetId: 'legacy-source-mask-asset',
+      moveSourceMaskUrl: '/legacy-source-mask.png',
       feather: 99,
       annotations: [{
         id: 'text',
@@ -167,6 +169,8 @@ test('image settings retain local-edit annotations in the persisted mask', () =>
   assert.equal(result.mask?.feather, 48);
   assert.equal(result.mask?.sourceUrl, '/legacy-source.png');
   assert.equal(result.mask?.sourceImageDataUrl, 'data:image/png;base64,legacy-source');
+  assert.equal(result.mask?.moveSourceMaskAssetId, 'legacy-source-mask-asset');
+  assert.equal(result.mask?.moveSourceMaskUrl, '/legacy-source-mask.png');
 });
 
 test('legacy string masks remain readable while new feather metadata is normalized', () => {
