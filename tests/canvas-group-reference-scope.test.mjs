@@ -113,6 +113,42 @@ test("generated image outputs retain exact inputs and recover legacy reference I
     [original.id],
   );
 
+  const chainedResult = {
+    ...node("chained-result"),
+    data: {
+      ...node("chained-result").data,
+      referenceOrder: [original.id, replacement.id],
+      generation: {
+        kind: "image",
+        parentNodeId: original.id,
+        referenceIds: [original.id, replacement.id],
+      },
+    },
+  };
+  const chainedDocument = documentWith(
+    [original, replacement, chainedResult],
+    [],
+    [{ id: "lineage", source: original.id, target: chainedResult.id, kind: "lineage" }],
+  );
+  assert.deepEqual(
+    referenceEdges.canvasImageReferencesForContinuation(chainedDocument, chainedResult.id).map((item) => item.id),
+    [replacement.id],
+    "a generated node's direct lineage parent should not be reconnected as an inherited reference",
+  );
+  const connectedChainedDocument = {
+    ...chainedDocument,
+    edges: [
+      ...chainedDocument.edges,
+      { id: "parent-reference", source: original.id, target: chainedResult.id, kind: "reference", inputRole: "reference-image" },
+      { id: "independent-reference", source: replacement.id, target: chainedResult.id, kind: "reference", inputRole: "reference-image" },
+    ],
+  };
+  assert.deepEqual(
+    referenceEdges.canvasImageReferencesForContinuation(connectedChainedDocument, chainedResult.id).map((item) => item.id),
+    [replacement.id],
+    "an explicit reference edge to the lineage parent should not create a second continuation link",
+  );
+
   const output = node("output");
   const withOutput = documentWith([original, replacement, output], [], []);
   const attached = referenceEdges.attachCanvasImageReferenceEdges(
