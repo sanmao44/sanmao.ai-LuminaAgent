@@ -65,9 +65,12 @@ function Test-SanmaoFreeRelayTunnel {
 }
 
 function Test-SanmaoFreeRelayReachable {
-  param([Parameter(Mandatory = $true)][string]$Root)
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [string]$PublicUrl = ''
+  )
 
-  $publicUrl = Get-SanmaoFreeRelayPublicUrl -Root $Root
+  $publicUrl = if ($PublicUrl) { $PublicUrl } else { Get-SanmaoFreeRelayPublicUrl -Root $Root }
   if (-not $publicUrl) { return $false }
   $response = $null
   $reader = $null
@@ -165,17 +168,15 @@ function Start-SanmaoFreeRelayTunnel {
     $match = [regex]::Match($log, 'https://[a-z0-9-]+\.trycloudflare\.com', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     if ($match.Success) {
       $publicUrl = $match.Value.TrimEnd('/')
-      Set-Content -LiteralPath (Join-Path $stateRoot 'public-url.txt') -Value $publicUrl -Encoding ASCII
-      # cloudflared prints the quick-tunnel URL before the edge is ready. Do
-      # not publish that address to the app until the public health endpoint
-      # proves that the tunnel reaches the local service.
+      # Probe the candidate directly; the app must not see it until healthy.
       $reachable = $false
       for ($probeAttempt = 0; $probeAttempt -lt 40; $probeAttempt++) {
         if ($process.HasExited) { break }
-        if (Test-SanmaoFreeRelayReachable -Root $Root) { $reachable = $true; break }
+        if (Test-SanmaoFreeRelayReachable -Root $Root -PublicUrl $publicUrl) { $reachable = $true; break }
         Start-Sleep -Milliseconds 500
       }
       if ($reachable) {
+        Set-Content -LiteralPath (Join-Path $stateRoot 'public-url.txt') -Value $publicUrl -Encoding ASCII
         return [pscustomobject]@{ ProcessId = $process.Id; PublicUrl = $publicUrl }
       }
       try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}

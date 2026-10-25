@@ -71,6 +71,12 @@ export function canvasImageReferencesForContinuation(
   document: CanvasDocument,
   targetId: string,
 ) {
+  const target = nodeById(document, targetId);
+  // A reused result may list its lineage parent as a reference in saved metadata.
+  const lineageParentIds = new Set([
+    target?.data.generation?.parentNodeId,
+    target?.data.generation?.reuseSourceNodeId,
+  ].filter((id): id is string => Boolean(id)));
   const targetEdges = referenceEdgesForCanvasTarget(document, targetId);
   const connectedImageNodes = targetEdges
     .flatMap(({ edge }) => referenceNodesForCanvasEdge(document, edge))
@@ -85,9 +91,12 @@ export function canvasImageReferencesForContinuation(
   const connected = incomingReferences(document, targetId).filter(
     (node) => node.data.kind === "image" && imageInputIds.has(node.id),
   );
-  if (connectedImageNodes.length) return connected.filter(isCanvasReadyImageSource);
+  if (connectedImageNodes.length) {
+    return connected.filter((node) =>
+      !lineageParentIds.has(node.id) && isCanvasReadyImageSource(node),
+    );
+  }
 
-  const target = nodeById(document, targetId);
   const storedIds = target?.data.referenceOrder?.length
     ? target.data.referenceOrder
     : target?.data.generation?.referenceIds || [];
@@ -95,7 +104,12 @@ export function canvasImageReferencesForContinuation(
   return storedIds
     .map((id) => nodeById(document, id))
     .filter((node): node is CanvasNode => Boolean(
-      node && node.id !== targetId && isCanvasReadyImageSource(node) && !seen.has(node.id) && seen.add(node.id),
+      node &&
+      node.id !== targetId &&
+      !lineageParentIds.has(node.id) &&
+      isCanvasReadyImageSource(node) &&
+      !seen.has(node.id) &&
+      seen.add(node.id),
     ));
 }
 

@@ -452,12 +452,20 @@ async function uploadImageWithAutomaticRelayRecovery(data: Buffer, mime: string)
       || !(error instanceof PublicMediaError)
       || error.code !== MEDIA_RELAY_UNAVAILABLE) throw error;
 
-    // A recovered quick tunnel publishes a new URL through the watchdog. Wait
-    // for that URL and retry once instead of failing during the recovery window.
-    if (!await waitForAutomaticRelay(AUTOMATIC_RELAY_RECOVERY_WAIT_MS)) throw error;
-    const recovered = await uploadToPublicMediaRelay(data, mime, 'image');
-    if (!recovered) throw error;
-    return recovered;
+    const deadline = Date.now() + AUTOMATIC_RELAY_RECOVERY_WAIT_MS;
+    let lastError: unknown = error;
+    while (Date.now() < deadline) {
+      if (!await waitForAutomaticRelay(deadline - Date.now())) throw lastError;
+      try {
+        const recovered = await uploadToPublicMediaRelay(data, mime, 'image');
+        if (recovered) return recovered;
+        throw lastError;
+      } catch (retryError) {
+        if (!(retryError instanceof PublicMediaError) || retryError.code !== MEDIA_RELAY_UNAVAILABLE) throw retryError;
+        lastError = retryError;
+      }
+    }
+    throw lastError;
   }
 }
 
@@ -516,7 +524,14 @@ export async function preparePublicMediaUrl(value: string, kind: 'image' | 'vide
   if (!loaded) throw new PublicMediaError('当前服务商需要可公开访问的媒体地址；请提供有效的本地媒体或公网 URL。');
   const mime = cleanMime(loaded.mime);
   if (!MIME_PATTERN.test(mime) || kindForMime(mime) !== kind) throw new PublicMediaError('当前服务商只接受与媒体类型匹配的图片、视频或音频文件。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
-  const relay = kind === 'image' ? mediaRelayUrl() || await waitForAutomaticRelay() : mediaRelayUrl();
+  // Match the launcher's recovery window when its watchdog is replacing a tunnel.
+  const relay = kind === 'image'
+    ? mediaRelayUrl() || await waitForAutomaticRelay(
+      process.env.SANMAO_RELAY_MODE === '1'
+        ? AUTOMATIC_RELAY_RECOVERY_WAIT_MS
+        : AUTOMATIC_RELAY_WAIT_MS,
+    )
+    : mediaRelayUrl();
   if (relay && kind === 'image') {
     const uploaded = await uploadImageWithAutomaticRelayRecovery(loaded.data, mime);
     if (uploaded) return uploaded.url;

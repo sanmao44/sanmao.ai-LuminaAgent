@@ -442,6 +442,57 @@ test('retries an image upload after the automatic relay recovers from an outage'
   }
 });
 
+test('keeps waiting when the first recovered tunnel also fails its image upload', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-relay-repeated-recovery-'));
+  const previous = {
+    dataDir: process.env.SANMAO_DATA_DIR,
+    mode: process.env.SANMAO_RELAY_MODE,
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+  };
+  const initialRelay = 'https://stale-repeated.trycloudflare.com';
+  const firstRecovery = 'https://first-recovery.trycloudflare.com';
+  const secondRecovery = 'https://second-recovery.trycloudflare.com';
+  const relayFile = path.join(root, 'free-relay', 'public-url.txt');
+  process.env.SANMAO_DATA_DIR = root;
+  process.env.SANMAO_RELAY_MODE = '1';
+  delete process.env.SANMAO_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  await mkdir(path.dirname(relayFile), { recursive: true });
+  await writeFile(relayFile, `${initialRelay}\n`);
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    const current = String(url);
+    calls.push(current);
+    if (calls.length === 3) await writeFile(relayFile, `${firstRecovery}\n`);
+    if (calls.length === 6) await writeFile(relayFile, `${secondRecovery}\n`);
+    if (current.startsWith(`${secondRecovery}/`)) {
+      return new Response(JSON.stringify({
+        ok: true,
+        url: `${secondRecovery}/api/relay/media/recovered-token`,
+        expiresAt: '2099-01-01T00:30:00.000Z',
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    throw new Error('relay tunnel disconnected');
+  };
+
+  try {
+    const url = await signed.preparePublicMediaUrl('data:image/png;base64,AAECAw==', 'image');
+    assert.equal(url, `${secondRecovery}/api/relay/media/recovered-token`);
+    assert.deepEqual(calls, [
+      ...Array(3).fill(`${initialRelay}/api/relay/media`),
+      ...Array(3).fill(`${firstRecovery}/api/relay/media`),
+      `${secondRecovery}/api/relay/media`,
+    ]);
+  } finally {
+    if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
+    if (previous.mode === undefined) delete process.env.SANMAO_RELAY_MODE; else process.env.SANMAO_RELAY_MODE = previous.mode;
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('waits briefly for the automatic relay during tunnel startup', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-relay-startup-'));
   const previous = {
@@ -468,6 +519,58 @@ test('waits briefly for the automatic relay during tunnel startup', async () => 
     assert.equal(await pending, 'https://ready.trycloudflare.com/api/relay/media/startup-token');
     assert.equal(uploadCalls, 1);
   } finally {
+    if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
+    if (previous.mode === undefined) delete process.env.SANMAO_RELAY_MODE; else process.env.SANMAO_RELAY_MODE = previous.mode;
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('waits through an automatic relay watchdog restart before rejecting image input', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-relay-watchdog-recovery-'));
+  const previous = {
+    dataDir: process.env.SANMAO_DATA_DIR,
+    mode: process.env.SANMAO_RELAY_MODE,
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+  };
+  process.env.SANMAO_DATA_DIR = root;
+  process.env.SANMAO_RELAY_MODE = '1';
+  delete process.env.SANMAO_MEDIA_RELAY_URL;
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  await mkdir(path.join(root, 'free-relay'), { recursive: true });
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({
+      ok: true,
+      url: 'https://watchdog-recovered.trycloudflare.com/api/relay/media/watchdog-token',
+      expiresAt: '2099-01-01T00:30:00.000Z',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  try {
+    const pending = signed.preparePublicMediaUrl('data:image/png;base64,AAECAw==', 'image');
+    const outcome = pending.then((value) => ({ value }), (error) => ({ error }));
+
+    // The launcher watchdog can take over 15 seconds to publish a replacement URL.
+    for (let index = 0; index < 68; index += 1) {
+      t.mock.timers.tick(250);
+      await Promise.resolve();
+    }
+    await writeFile(path.join(root, 'free-relay', 'public-url.txt'), 'https://watchdog-recovered.trycloudflare.com\n');
+    for (let index = 0; index < 4 && calls.length === 0; index += 1) {
+      t.mock.timers.tick(250);
+      await Promise.resolve();
+    }
+
+    const result = await outcome;
+    assert.equal(result.error, undefined);
+    assert.equal(result.value, 'https://watchdog-recovered.trycloudflare.com/api/relay/media/watchdog-token');
+    assert.deepEqual(calls, ['https://watchdog-recovered.trycloudflare.com/api/relay/media']);
+  } finally {
+    t.mock.timers.reset();
     if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
     if (previous.mode === undefined) delete process.env.SANMAO_RELAY_MODE; else process.env.SANMAO_RELAY_MODE = previous.mode;
     if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
