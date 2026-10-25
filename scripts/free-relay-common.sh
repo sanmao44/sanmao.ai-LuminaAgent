@@ -54,7 +54,7 @@ free_relay_public_url() {
 
 free_relay_probe() {
   ROOT_TO_USE=$1
-  PUBLIC_URL=$(free_relay_public_url "$ROOT_TO_USE" 2>/dev/null || true)
+  PUBLIC_URL=${2:-$(free_relay_public_url "$ROOT_TO_USE" 2>/dev/null || true)}
   [ -n "$PUBLIC_URL" ] || return 1
   PROBE_BODY="${TMPDIR:-/tmp}/sanmao-relay-probe-$$.json"
   rm -f "$PROBE_BODY"
@@ -207,13 +207,13 @@ free_relay_start() {
     if ! free_relay_pid_is_cloudflared "$CLOUDFLARED_PID"; then break; fi
     PUBLIC_URL=$(cat "$STDOUT_FILE" "$STDERR_FILE" 2>/dev/null | grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' | head -n 1 | tr -d '\r' || true)
     if [ -n "$PUBLIC_URL" ]; then
-      printf '%s\n' "$PUBLIC_URL" > "$STATE_ROOT/public-url.txt"
       # cloudflared prints the URL before the edge is ready. Only publish a
       # tunnel after the public health endpoint reaches the local service.
       PROBE_ATTEMPT=0
       while [ $PROBE_ATTEMPT -lt 40 ]; do
         if ! free_relay_pid_is_cloudflared "$CLOUDFLARED_PID"; then break; fi
-        if free_relay_probe "$ROOT_TO_USE"; then
+        if free_relay_probe "$ROOT_TO_USE" "$PUBLIC_URL"; then
+          printf '%s\n' "$PUBLIC_URL" > "$STATE_ROOT/public-url.txt"
           printf '%s' "$PUBLIC_URL"
           return 0
         fi

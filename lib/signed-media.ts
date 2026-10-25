@@ -452,12 +452,20 @@ async function uploadImageWithAutomaticRelayRecovery(data: Buffer, mime: string)
       || !(error instanceof PublicMediaError)
       || error.code !== MEDIA_RELAY_UNAVAILABLE) throw error;
 
-    // A recovered quick tunnel publishes a new URL through the watchdog. Wait
-    // for that URL and retry once instead of failing during the recovery window.
-    if (!await waitForAutomaticRelay(AUTOMATIC_RELAY_RECOVERY_WAIT_MS)) throw error;
-    const recovered = await uploadToPublicMediaRelay(data, mime, 'image');
-    if (!recovered) throw error;
-    return recovered;
+    const deadline = Date.now() + AUTOMATIC_RELAY_RECOVERY_WAIT_MS;
+    let lastError: unknown = error;
+    while (Date.now() < deadline) {
+      if (!await waitForAutomaticRelay(deadline - Date.now())) throw lastError;
+      try {
+        const recovered = await uploadToPublicMediaRelay(data, mime, 'image');
+        if (recovered) return recovered;
+        throw lastError;
+      } catch (retryError) {
+        if (!(retryError instanceof PublicMediaError) || retryError.code !== MEDIA_RELAY_UNAVAILABLE) throw retryError;
+        lastError = retryError;
+      }
+    }
+    throw lastError;
   }
 }
 
