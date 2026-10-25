@@ -11,7 +11,6 @@ export {
   appendCanvasAgentAction,
   createCanvasAgentAction,
   projectCanvasGroupContextMenuGroups,
-  prependCanvasAgentContextMenuGroup,
   type CanvasContextMenuGroup,
   type CanvasQuickAction,
   type CanvasQuickActionGroup,

@@ -500,36 +500,6 @@ function repairLocalEditMoveSource(
   return output;
 }
 
-/**
- * Move a selected region into a new location while repairing its source area.
- * The output stays opaque, so it can be shown directly in the workbench and
- * used as a provider guide without turning the source into a visible hole.
- */
-export function moveLocalEditPixels(
-  source: Uint8ClampedArray,
-  selectionMask: Uint8ClampedArray,
-  width: number,
-  height: number,
-  dx: number,
-  dy: number,
-) {
-  if (
-    width < 1 ||
-    height < 1 ||
-    source.length !== width * height * 4 ||
-    selectionMask.length !== source.length
-  ) {
-    throw new Error("Local-edit move buffers must match the canvas dimensions");
-  }
-
-  const original = new Uint8ClampedArray(source);
-  const repaired = repairLocalEditMoveSource(original, selectionMask, width, height);
-  return preserveLocalEditAlphaFloor(
-    pasteLocalEditPixels(repaired, original, selectionMask, width, height, dx, dy),
-    original,
-  );
-}
-
 /** A move can repair or add pixels, but it must never punch a new alpha hole. */
 function preserveLocalEditAlphaFloor(output: Uint8ClampedArray, source: Uint8ClampedArray) {
   for (let index = 3; index < output.length; index += 4) {
@@ -578,7 +548,7 @@ function pasteLocalEditPixels(
   return output;
 }
 
-/** Rebuild a move preview from the original pixels with an opaque source repair. */
+/** Build a transparent, feathered foreground layer for move interaction previews. */
 export function composeLocalEditMovePreview(
   source: Uint8ClampedArray,
   width: number,
@@ -586,11 +556,75 @@ export function composeLocalEditMovePreview(
   annotations: LocalEditAnnotation[] = [],
   smartMasks?: ReadonlyMap<string, Uint8ClampedArray>,
 ) {
-  return composeLocalEditMoveReference(source, width, height, annotations, smartMasks);
+  if (width < 1 || height < 1 || source.length !== width * height * 4) {
+    throw new Error("Local-edit move preview must match the canvas dimensions");
+  }
+
+  const { moves } = localEditMoveOperations(width, height, annotations, smartMasks);
+  let preview = new Uint8ClampedArray(source.length);
+  for (const move of moves) {
+    preview = pasteLocalEditPixels(preview, source, move.selection, width, height, move.dx, move.dy);
+  }
+  return preview;
 }
 
 export function localEditMoveGuideFeatherRadius(width: number, height: number) {
   return Math.max(2, Math.min(12, Math.round(Math.max(width, height) * 0.004)));
+}
+
+export function localEditMoveFusionFeather(radius: number, width: number, height: number) {
+  return Math.max(localEditFusionFeather(radius), localEditMoveGuideFeatherRadius(width, height));
+}
+
+function localEditMoveOperations(
+  width: number,
+  height: number,
+  annotations: LocalEditAnnotation[],
+  smartMasks?: ReadonlyMap<string, Uint8ClampedArray>,
+  repairSources = false,
+) {
+  const moves: Array<{ selection: Uint8ClampedArray; dx: number; dy: number }> = [];
+  const sourceRepairMask = repairSources ? createProtectedMask(width, height) : undefined;
+  for (const annotation of normalizeLocalEditAnnotations(annotations)) {
+    const sourceGeometries = annotation.move?.from || [];
+    const sourceGeometry = sourceGeometries[0];
+    if (!sourceGeometry) continue;
+    const sourceBounds = localEditGeometryBounds(sourceGeometry);
+    const targetBounds = localEditGeometryBounds(annotation.geometry);
+    let pasteSelection: Uint8ClampedArray | undefined;
+    sourceGeometries.forEach((geometry, index) => {
+      if (!repairSources && index > 0) return;
+      const selection = createProtectedMask(width, height);
+      applyLocalEditGeometryMask(
+        selection,
+        width,
+        height,
+        geometry,
+        "edit",
+        smartMasks?.get(`${annotation.id}:from:${index}`),
+      );
+      const softenedSelection = featherLocalEditMask(
+        selection,
+        width,
+        height,
+        localEditMoveGuideFeatherRadius(width, height),
+      );
+      if (sourceRepairMask) {
+        for (let pixel = 3; pixel < sourceRepairMask.length; pixel += 4) {
+          sourceRepairMask[pixel] = Math.min(sourceRepairMask[pixel], softenedSelection[pixel]);
+        }
+      }
+      if (!pasteSelection) pasteSelection = softenedSelection;
+    });
+    if (!pasteSelection) continue;
+    moves.push({
+      // Repeated drags repair every source, but keep the original object only once.
+      selection: pasteSelection,
+      dx: ((targetBounds.x + targetBounds.width / 2) - (sourceBounds.x + sourceBounds.width / 2)) * width,
+      dy: ((targetBounds.y + targetBounds.height / 2) - (sourceBounds.y + sourceBounds.height / 2)) * height,
+    });
+  }
+  return { moves, sourceRepairMask };
 }
 
 /**
@@ -610,45 +644,8 @@ export function composeLocalEditMoveReference(
     throw new Error("Local-edit move reference must match the canvas dimensions");
   }
 
-  const moves: Array<{ selection: Uint8ClampedArray; dx: number; dy: number }> = [];
-  const sourceRepairMask = createProtectedMask(width, height);
-  for (const annotation of normalizeLocalEditAnnotations(annotations)) {
-    const sourceGeometries = annotation.move?.from || [];
-    const sourceGeometry = sourceGeometries[0];
-    if (!sourceGeometry) continue;
-    const sourceBounds = localEditGeometryBounds(sourceGeometry);
-    const targetBounds = localEditGeometryBounds(annotation.geometry);
-    let pasteSelection: Uint8ClampedArray | undefined;
-    sourceGeometries.forEach((geometry, index) => {
-      const selection = createProtectedMask(width, height);
-      applyLocalEditGeometryMask(
-        selection,
-        width,
-        height,
-        geometry,
-        "edit",
-        smartMasks?.get(`${annotation.id}:from:${index}`),
-      );
-      const softenedSelection = featherLocalEditMask(
-        selection,
-        width,
-        height,
-        localEditMoveGuideFeatherRadius(width, height),
-      );
-      for (let pixel = 3; pixel < sourceRepairMask.length; pixel += 4) {
-        sourceRepairMask[pixel] = Math.min(sourceRepairMask[pixel], softenedSelection[pixel]);
-      }
-      if (!pasteSelection) pasteSelection = softenedSelection;
-    });
-    if (!pasteSelection) continue;
-    moves.push({
-      // A repeated drag records every source position for repair, but the
-      // original object is pasted only once at its final destination.
-      selection: pasteSelection,
-      dx: ((targetBounds.x + targetBounds.width / 2) - (sourceBounds.x + sourceBounds.width / 2)) * width,
-      dy: ((targetBounds.y + targetBounds.height / 2) - (sourceBounds.y + sourceBounds.height / 2)) * height,
-    });
-  }
+  const { moves, sourceRepairMask } = localEditMoveOperations(width, height, annotations, smartMasks, true);
+  if (!sourceRepairMask) throw new Error("Local-edit move repair mask is unavailable");
   let output = repairLocalEditMoveSource(source, sourceRepairMask, width, height);
   for (const move of moves) {
     output = pasteLocalEditPixels(output, source, move.selection, width, height, move.dx, move.dy);

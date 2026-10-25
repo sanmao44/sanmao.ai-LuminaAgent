@@ -166,7 +166,6 @@ test("the workbench records complete operations, supports undo/redo, feather and
   assert.match(editor, /historyRef\.current\.moveTo\(index\)/);
   assert.match(editor, /historyRef\.current\.index > 0/);
   assert.match(editor, /historyRef\.current\.index \+ 1 < historyRef\.current\.length/);
-  assert.match(editor, /const fusionFeather = localEditFusionFeather\(feather\)/);
   assert.match(editor, /createSeamlessLocalEditMask\(sourcePixels, source\.width, source\.height, fusionFeather\)/);
   assert.match(editor, /exported\.feather/);
   assert.doesNotMatch(editor, /outputContext\.filter = `blur\(\$\{feather\}px\)`/);
@@ -288,75 +287,7 @@ test("moving a selection edits its source and target fusion ring while protectin
   assert.match(compiled, /补充说明：把物体移到右侧/);
 });
 
-test("moving a selection repairs the source, pastes the selected pixels, and keeps the guide opaque", () => {
-  const source = Uint8ClampedArray.from([
-    255, 0, 0, 255,
-    0, 255, 0, 255,
-    0, 0, 255, 255,
-    255, 255, 255, 255,
-  ]);
-  const original = new Uint8ClampedArray(source);
-  const selection = raster.createProtectedMask(4, 1);
-  selection[7] = 0;
-  const moved = raster.moveLocalEditPixels(source, selection, 4, 1, 2, 0);
-  assert.deepEqual([...source], [...original]);
-  for (let index = 3; index < moved.length; index += 4) assert.equal(moved[index], 255);
-  assert.notDeepEqual([...moved.subarray(4, 8)], [...source.subarray(4, 8)]);
-  assert.deepEqual([...moved.subarray(12, 16)], [0, 255, 0, 255]);
-
-  const secondSelection = raster.createProtectedMask(4, 1);
-  secondSelection[15] = 0;
-  const movedAgain = raster.moveLocalEditPixels(moved, secondSelection, 4, 1, -2, 0);
-  assert.deepEqual([...movedAgain.subarray(4, 8)], [0, 255, 0, 255]);
-  assert.notDeepEqual([...movedAgain.subarray(12, 16)], [0, 255, 0, 255]);
-  for (let index = 3; index < movedAgain.length; index += 4) assert.equal(movedAgain[index], 255);
-});
-
-test("move gestures and history replay use the same image-sized feather", () => {
-  const width = 768;
-  const height = 256;
-  const source = new Uint8ClampedArray(width * height * 4);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const index = (y * width + x) * 4;
-      source[index] = (x * 3 + y) % 256;
-      source[index + 1] = (x + y * 5) % 256;
-      source[index + 2] = (x * 7 + y * 11) % 256;
-      source[index + 3] = 255;
-    }
-  }
-  const dx = 103.225;
-  const dy = 45.55;
-  const sourceGeometry = { kind: "rectangle", x: 0.21, y: 0.22, width: 0.14, height: 0.24 };
-  const targetGeometry = {
-    ...sourceGeometry,
-    x: sourceGeometry.x + dx / width,
-    y: sourceGeometry.y + dy / height,
-  };
-  const selection = raster.createProtectedMask(width, height);
-  raster.applyLocalEditGeometryMask(selection, width, height, sourceGeometry, "edit");
-  const gestureMask = raster.featherLocalEditMask(
-    selection,
-    width,
-    height,
-    raster.localEditMoveGuideFeatherRadius(width, height),
-  );
-  const annotation = {
-    id: "move-replay",
-    kind: "rectangle",
-    description: "",
-    geometry: targetGeometry,
-    move: { from: [sourceGeometry] },
-    createdAt: 1,
-  };
-
-  const gesturePreview = raster.moveLocalEditPixels(source, gestureMask, width, height, dx, dy);
-  const historyReplay = raster.composeLocalEditMovePreview(source, width, height, [annotation]);
-
-  assert.deepEqual(gesturePreview, historyReplay);
-});
-
-test("move preview and provider guide remove the source while preserving an opaque blended target cue", () => {
+test("move preview is a transparent foreground while the provider guide repairs the source", () => {
   const source = Uint8ClampedArray.from([
     1, 0, 0, 255,
     2, 0, 0, 255,
@@ -396,7 +327,10 @@ test("move preview and provider guide remove the source while preserving an opaq
   const reference = raster.composeLocalEditMoveReference(source, 10, 1, annotations, smartMasks);
 
   assert.deepEqual([...source], [...original]);
-  assert.deepEqual([...preview], [...reference]);
+  assert.notDeepEqual([...preview], [...reference]);
+  assert.equal(preview[1 * 4 + 3], 0, "interaction preview must not paint over the original location");
+  assert.equal(preview[4 * 4 + 3], 0, "past source locations stay on the untouched base layer");
+  assert.ok(preview[6 * 4 + 3] > 0, "the moved object appears at its target");
   for (let index = 3; index < reference.length; index += 4) assert.equal(reference[index], 255);
   assert.notDeepEqual([...reference.subarray(4, 8)], [...source.subarray(4, 8)]);
   assert.notDeepEqual([...reference.subarray(12, 16)], [...source.subarray(12, 16)]);
@@ -407,6 +341,41 @@ test("move preview and provider guide remove the source while preserving an opaq
   assert.notEqual(repeatedOnly[1 * 4], source[1 * 4]);
   assert.notEqual(repeatedOnly[4 * 4], source[4 * 4]);
   assert.notEqual(repeatedOnly[6 * 4], source[6 * 4]);
+});
+
+test("move preview keeps the source image intact and feathers the inserted object's edge", () => {
+  const width = 64;
+  const height = 32;
+  const source = new Uint8ClampedArray(width * height * 4);
+  for (let pixel = 0; pixel < width * height; pixel += 1) {
+    source.set([20, 80, 180, 255], pixel * 4);
+  }
+  const sourceGeometry = { kind: "rectangle", x: 0.125, y: 0.25, width: 0.25, height: 0.5 };
+  const annotation = {
+    id: "preview-move",
+    kind: "rectangle",
+    description: "移到右侧",
+    geometry: { ...sourceGeometry, x: 0.625 },
+    move: { from: [sourceGeometry] },
+    createdAt: 1,
+  };
+  for (let y = 8; y < 24; y += 1) {
+    for (let x = 8; x < 24; x += 1) source.set([230, 40, 30, 255], (y * width + x) * 4);
+  }
+  const original = new Uint8ClampedArray(source);
+  const preview = raster.composeLocalEditMovePreview(source, width, height, [annotation]);
+  const alphaAt = (x, y) => preview[(y * width + x) * 4 + 3];
+
+  assert.deepEqual([...source], [...original], "preview composition must not mutate its source");
+  assert.equal(alphaAt(16, 16), 0, "the source remains visible on the untouched base image");
+  assert.ok(alphaAt(40, 16) > 0 && alphaAt(40, 16) < 255, "target edge has a transparent transition");
+  assert.equal(alphaAt(48, 16), 255, "the target object's interior remains opaque");
+  assert.deepEqual([...preview.slice((16 * width + 48) * 4, (16 * width + 48) * 4 + 4)], [230, 40, 30, 255]);
+
+  const guide = raster.composeLocalEditMoveReference(source, width, height, [annotation]);
+  assert.equal(guide[(16 * width + 16) * 4 + 3], 255, "provider guide remains fully opaque");
+  assert.notDeepEqual([...guide.slice((16 * width + 16) * 4, (16 * width + 16) * 4 + 3)], [230, 40, 30]);
+  assert.equal(raster.localEditMoveFusionFeather(0, 1024, 512), 4, "move masks reserve enough fusion for the guide edge");
 });
 
 test("moving a smart selection masks its original and translated smart pixels", () => {
@@ -467,7 +436,6 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /stage: 'move-target'/);
   assert.match(editor, /pendingIsExisting: pending\.isExisting/);
   assert.match(editor, /isExisting: movingAnnotation\.pendingIsExisting/);
-  assert.match(editor, /dragImage: imageContext\.getImageData\(0, 0, imageCanvas\.width, imageCanvas\.height\)/);
   assert.match(editor, /isPendingDraft: true/);
   assert.match(editor, /setPendingAnnotation\(pending\)/);
   assert.match(editor, /rebuildMask\(annotationsWithPending\(pending\)\)/);
@@ -493,7 +461,6 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.doesNotMatch(editor, /local-edit-move-arrow/);
   assert.match(editor, /move: \{ from:/);
   assert.match(editor, /取消移动/);
-  assert.match(editor, /moveLocalEditPixels\(/);
   assert.match(editor, /composeLocalEditMovePreview\(/);
   assert.match(editor, /composeLocalEditMoveReference\(/);
   assert.match(editor, /function exportMoveGuideImage\(\)/);

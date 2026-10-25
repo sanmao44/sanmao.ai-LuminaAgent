@@ -42,7 +42,6 @@ const assetStyles = await readFile(
 test("all canvas asset actions open the collection picker before writing", () => {
   assert.match(picker, /export default function CanvasAssetCollectionPicker/);
   assert.match(workspace, /onClick: \(\) => openAssetCollectionPicker\(node\)/);
-  assert.match(workspace, /onClick: close\(\(\) => openAssetCollectionPicker\(node\)\)/);
   assert.doesNotMatch(workspace, /onAddToAssets=\{/);
   assert.match(workspace, /preferredCollectionId=\{assetLibraryCollectionId\}/);
   assert.match(workspace, /const success = await addViewerAsset\(pickerNode, collectionId\)/);
