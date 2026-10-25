@@ -11,6 +11,7 @@ import {
   calculateEditableCoverage as calculateLocalEditableCoverage,
   composeLocalEditMovePreview,
   composeLocalEditMoveReference,
+  composeLocalEditMoveSourceMask,
   compileLocalEditPrompt,
   createSeamlessLocalEditMask,
   featherLocalEditMask,
@@ -47,7 +48,7 @@ export type LocalEditEditorProps = {
   initialPrompt?: string;
   initialAnnotations?: LocalEditAnnotation[];
   initialFeather?: number;
-  onApply: (maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation[], feather: number, moveGuideDataUrl?: string) => void | Promise<void>;
+  onApply: (maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation[], feather: number, moveGuideDataUrl?: string, moveSourceMaskDataUrl?: string) => void | Promise<void>;
   onCancel: () => void;
 };
 
@@ -1593,7 +1594,22 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       smartMaskPixelsRef.current,
     );
     outputContext.putImageData(imageDataFromPixels(pixels, output.width, output.height), 0, 0);
-    return output.toDataURL('image/png');
+    const sourceMask = document.createElement('canvas');
+    sourceMask.width = imageCanvas.width;
+    sourceMask.height = imageCanvas.height;
+    const sourceMaskContext = sourceMask.getContext('2d');
+    if (!sourceMaskContext) throw new Error('移动原位置范围导出失败，请重试');
+    const sourceMaskPixels = composeLocalEditMoveSourceMask(
+      imageCanvas.width,
+      imageCanvas.height,
+      annotationsRef.current,
+      smartMaskPixelsRef.current,
+    );
+    sourceMaskContext.putImageData(imageDataFromPixels(sourceMaskPixels, sourceMask.width, sourceMask.height), 0, 0);
+    return {
+      guideDataUrl: output.toDataURL('image/png'),
+      sourceMaskDataUrl: sourceMask.toDataURL('image/png'),
+    };
   }
 
   async function applyLocalEdit() {
@@ -1608,13 +1624,15 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
         setError('请先指定编辑区域，再应用局部编辑');
         return;
       }
+      const moveAssets = exportMoveGuideImage();
       await onApply(
         exported.dataUrl,
         exported.coverage,
         compileLocalEditPrompt(prompt, annotations),
         annotations,
         exported.feather,
-        exportMoveGuideImage(),
+        moveAssets?.guideDataUrl,
+        moveAssets?.sourceMaskDataUrl,
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '局部编辑范围导出失败，图片可能受跨域保护');

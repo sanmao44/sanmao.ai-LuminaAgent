@@ -6222,6 +6222,7 @@ export default function SuperCanvas() {
             : undefined,
         ...(params.mask ? { maskUrl: params.mask.url } : {}),
         ...(params.mask?.sourceUrl ? { moveGuideUrl: params.mask.sourceUrl } : {}),
+        ...(params.mask?.moveSourceMaskUrl ? { moveSourceMaskUrl: params.mask.moveSourceMaskUrl } : {}),
         references: apiReferences,
       });
       if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
@@ -7266,6 +7267,7 @@ export default function SuperCanvas() {
                 : undefined,
           maskUrl: imageParams.mask?.url,
           moveGuideUrl: imageParams.mask?.sourceUrl,
+          moveSourceMaskUrl: imageParams.mask?.moveSourceMaskUrl,
           references: refs,
         });
         if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
@@ -8993,7 +8995,7 @@ export default function SuperCanvas() {
   );
 
   const applyCanvasMask = useCallback(
-    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0, moveGuideDataUrl?: string) => {
+    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0, moveGuideDataUrl?: string, moveSourceMaskDataUrl?: string) => {
       const projectTask = captureProjectTask();
       const { updateDoc, readDocument, setSelectedIds, setSelectedGroupId, setReuseDraft } = projectTask;
       const node = maskNodeId
@@ -9029,6 +9031,9 @@ export default function SuperCanvas() {
         const moveGuide = moveGuideDataUrl
           ? await uploadCanvasAsset(canvasFileFromDataUrl(moveGuideDataUrl, `move-guide-${node.id}.png`))
           : undefined;
+        const moveSourceMask = moveSourceMaskDataUrl
+          ? await uploadCanvasAsset(canvasFileFromDataUrl(moveSourceMaskDataUrl, `move-source-mask-${node.id}.png`))
+          : undefined;
         const liveDraft = editorDrafts[node.id];
         const settings = copyCanvasGenerationParams(
           liveDraft?.params || existingDraft.params,
@@ -9042,6 +9047,7 @@ export default function SuperCanvas() {
             assetId: uploaded.id,
             url: uploaded.url,
             ...(moveGuide ? { sourceAssetId: moveGuide.id, sourceUrl: moveGuide.url } : {}),
+            ...(moveSourceMask ? { moveSourceMaskAssetId: moveSourceMask.id, moveSourceMaskUrl: moveSourceMask.url } : {}),
             ...(annotations.length ? { annotations } : {}),
             feather: maskFeather,
           },
@@ -9055,6 +9061,7 @@ export default function SuperCanvas() {
           assetId: uploaded.id,
           url: uploaded.url,
           ...(moveGuide ? { sourceAssetId: moveGuide.id, sourceUrl: moveGuide.url } : {}),
+          ...(moveSourceMask ? { moveSourceMaskAssetId: moveSourceMask.id, moveSourceMaskUrl: moveSourceMask.url } : {}),
           status: "pending",
           coverage: maskCoverage,
           ...(annotations.length ? { annotations } : {}),
@@ -13936,7 +13943,7 @@ export default function SuperCanvas() {
           initialPrompt={editorPromptFor(maskNode)}
           initialAnnotations={maskNode.data.mask?.annotations || maskSettings?.mask?.annotations || []}
           initialFeather={maskNode.data.mask?.feather ?? maskSettings?.mask?.feather ?? 0}
-          onApply={(value, coverage, prompt, annotations, feather, moveGuideDataUrl) => applyCanvasMask(value, coverage, prompt, annotations, feather, moveGuideDataUrl)}
+          onApply={(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl) => applyCanvasMask(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl)}
           onCancel={() => setMaskNodeId(null)}
         />
       )}

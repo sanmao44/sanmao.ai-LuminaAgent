@@ -39,6 +39,9 @@ export function canvasVariantImageRequest(input: {
           : undefined,
     maskUrl: params.mask?.url,
     moveGuideUrl: params.mask?.sourceUrl,
+    ...(params.mask?.moveSourceMaskUrl
+      ? { moveSourceMaskUrl: params.mask.moveSourceMaskUrl }
+      : {}),
     references: input.references.map((reference) => ({ ...reference })),
   };
 }

@@ -7,6 +7,7 @@ export const GENERATE_TASK_REFERENCE_BUDGET = 2500000;
 /** 局部编辑任务的蒙版单独设限，避免超大源图挤掉可恢复的蒙版。 */
 export const GENERATE_TASK_EDIT_MASK_BUDGET = 350000;
 export const GENERATE_TASK_MOVE_GUIDE_BUDGET = 250000;
+export const GENERATE_TASK_MOVE_SOURCE_MASK_BUDGET = 180000;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -48,6 +49,11 @@ function compactTask(task: unknown, keepReferences: boolean) {
     if (guide.length > GENERATE_TASK_MOVE_GUIDE_BUDGET) {
       delete mask.sourceImageDataUrl;
       request = { ...request, mask, moveGuideOmitted: true };
+    }
+    const moveSourceMask = typeof mask.moveSourceMaskDataUrl === 'string' ? mask.moveSourceMaskDataUrl : '';
+    if (moveSourceMask.length > GENERATE_TASK_MOVE_SOURCE_MASK_BUDGET) {
+      delete mask.moveSourceMaskDataUrl;
+      request = { ...request, mask, moveSourceMaskOmitted: true };
     }
     const maskData = typeof mask.dataUrl === 'string' ? mask.dataUrl : '';
     if (maskData.length > GENERATE_TASK_EDIT_MASK_BUDGET) {

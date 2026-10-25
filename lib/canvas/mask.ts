@@ -42,6 +42,12 @@ export function normalizeCanvasMaskState(value: unknown, fallback?: unknown): Ca
     ...(typeof (raw.sourceUrl ?? fallbackRaw.sourceUrl) === 'string'
       ? { sourceUrl: String(raw.sourceUrl ?? fallbackRaw.sourceUrl) }
       : {}),
+    ...(typeof (raw.moveSourceMaskAssetId ?? fallbackRaw.moveSourceMaskAssetId) === 'string'
+      ? { moveSourceMaskAssetId: String(raw.moveSourceMaskAssetId ?? fallbackRaw.moveSourceMaskAssetId) }
+      : {}),
+    ...(typeof (raw.moveSourceMaskUrl ?? fallbackRaw.moveSourceMaskUrl) === 'string'
+      ? { moveSourceMaskUrl: String(raw.moveSourceMaskUrl ?? fallbackRaw.moveSourceMaskUrl) }
+      : {}),
     ...(typeof (raw.sourceImageDataUrl ?? fallbackRaw.sourceImageDataUrl) === 'string'
       ? { sourceImageDataUrl: String(raw.sourceImageDataUrl ?? fallbackRaw.sourceImageDataUrl) }
       : {}),

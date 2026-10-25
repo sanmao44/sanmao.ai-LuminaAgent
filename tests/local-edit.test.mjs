@@ -287,7 +287,7 @@ test("moving a selection edits its source and target fusion ring while protectin
   assert.match(compiled, /补充说明：把物体移到右侧/);
 });
 
-test("move preview is a transparent foreground while the provider guide repairs the source", () => {
+test("move preview shows the repaired source background and moved object as one opaque image", () => {
   const source = Uint8ClampedArray.from([
     1, 0, 0, 255,
     2, 0, 0, 255,
@@ -327,10 +327,10 @@ test("move preview is a transparent foreground while the provider guide repairs 
   const reference = raster.composeLocalEditMoveReference(source, 10, 1, annotations, smartMasks);
 
   assert.deepEqual([...source], [...original]);
-  assert.notDeepEqual([...preview], [...reference]);
-  assert.equal(preview[1 * 4 + 3], 0, "interaction preview must not paint over the original location");
-  assert.equal(preview[4 * 4 + 3], 0, "past source locations stay on the untouched base layer");
-  assert.ok(preview[6 * 4 + 3] > 0, "the moved object appears at its target");
+  assert.deepEqual([...preview], [...reference]);
+  assert.equal(preview[1 * 4 + 3], 255, "the repaired source location must cover the original base");
+  assert.equal(preview[4 * 4 + 3], 255, "past source locations must remain fully covered");
+  assert.equal(preview[6 * 4 + 3], 255, "the moved object appears at its target");
   for (let index = 3; index < reference.length; index += 4) assert.equal(reference[index], 255);
   assert.notDeepEqual([...reference.subarray(4, 8)], [...source.subarray(4, 8)]);
   assert.notDeepEqual([...reference.subarray(12, 16)], [...source.subarray(12, 16)]);
@@ -343,7 +343,7 @@ test("move preview is a transparent foreground while the provider guide repairs 
   assert.notEqual(repeatedOnly[6 * 4], source[6 * 4]);
 });
 
-test("move preview keeps the source image intact and feathers the inserted object's edge", () => {
+test("move preview repairs the source image and feathers the inserted object's color edge", () => {
   const width = 64;
   const height = 32;
   const source = new Uint8ClampedArray(width * height * 4);
@@ -367,8 +367,9 @@ test("move preview keeps the source image intact and feathers the inserted objec
   const alphaAt = (x, y) => preview[(y * width + x) * 4 + 3];
 
   assert.deepEqual([...source], [...original], "preview composition must not mutate its source");
-  assert.equal(alphaAt(16, 16), 0, "the source remains visible on the untouched base image");
-  assert.ok(alphaAt(40, 16) > 0 && alphaAt(40, 16) < 255, "target edge has a transparent transition");
+  assert.equal(alphaAt(16, 16), 255, "the source is covered by the repaired background");
+  assert.equal(alphaAt(40, 16), 255, "the preview remains opaque at the target edge");
+  assert.notDeepEqual([...preview.slice((16 * width + 40) * 4, (16 * width + 40) * 4 + 3)], [230, 40, 30], "target edge color is feathered");
   assert.equal(alphaAt(48, 16), 255, "the target object's interior remains opaque");
   assert.deepEqual([...preview.slice((16 * width + 48) * 4, (16 * width + 48) * 4 + 4)], [230, 40, 30, 255]);
 
@@ -413,7 +414,7 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /event\.preventDefault\(\);/);
   assert.match(editor, /onLostPointerCapture=\{handleLostPointerCapture\}/);
   assert.match(editor, /context\.clearRect\(0, 0, canvas\.width, canvas\.height\);/);
-  assert.match(editor, /onApply: \(maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation\[\], feather: number, moveGuideDataUrl\?: string\)/);
+  assert.match(editor, /onApply: \(maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation\[\], feather: number, moveGuideDataUrl\?: string, moveSourceMaskDataUrl\?: string\)/);
   assert.match(editor, /initialPrompt\?: string/);
   assert.match(editor, /const \[prompt, setPrompt\] = useState\(''\)/);
   assert.doesNotMatch(editor, /setPrompt\(initialPrompt\)/);
@@ -464,6 +465,7 @@ test("local edit exposes reliable pointer tools, free lasso selection, and a fix
   assert.match(editor, /composeLocalEditMovePreview\(/);
   assert.match(editor, /composeLocalEditMoveReference\(/);
   assert.match(editor, /function exportMoveGuideImage\(\)/);
+  assert.match(editor, /composeLocalEditMoveSourceMask\(/);
   assert.match(editor, /const source = sourceImageRef\.current/);
   assert.match(editor, /createSeamlessLocalEditMask\(/);
   assert.match(editor, /原位置 · 待修补/);
@@ -514,6 +516,7 @@ test("all image entry points use local edit wording while persisted field remain
     customHeight: 1024,
     mask: "data:image/png;base64,MASK",
     sourceImageDataUrl: "data:image/png;base64,MOVE",
+    moveSourceMaskDataUrl: "data:image/png;base64,MOVE_SOURCE_MASK",
     scale: 2,
     targetSize: "auto",
     seed: 42,
@@ -524,8 +527,10 @@ test("all image entry points use local edit wording while persisted field remain
   }, "task-1", null, null);
   assert.equal(request.body.mask, "data:image/png;base64,MASK");
   assert.equal(request.body.moveGuide, "data:image/png;base64,MOVE");
-  assert.match(page, /onApply: \(dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl\)=>/);
+  assert.equal(request.body.moveSourceMask, "data:image/png;base64,MOVE_SOURCE_MASK");
+  assert.match(page, /onApply: \(dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl\)=>/);
   assert.match(page, /\.\.\.\(moveGuideDataUrl \? \{ sourceImageDataUrl: moveGuideDataUrl \} : \{\}\)/);
+  assert.match(page, /moveSourceMaskDataUrl/);
   assert.match(page, /sourceImageDataUrl: moveGuideDataUrl \|\| undefined/);
   assert.match(canvas, /initialAnnotations=/);
   assert.match(canvas, /annotations\.length \? \{ annotations \} : \{\}/);

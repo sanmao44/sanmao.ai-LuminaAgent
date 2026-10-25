@@ -688,6 +688,7 @@ export async function generateCanvasImage(input: {
   intentPreview?: CanvasImageIntentPreview;
   maskUrl?: string;
   moveGuideUrl?: string;
+  moveSourceMaskUrl?: string;
   references?: Array<{ url: string; name?: string }>;
   /** Allow a single-source continuation to fall back to ordinary generation
    * when the provider has no image-edit endpoint. */
@@ -702,6 +703,7 @@ export async function generateCanvasImage(input: {
   }
   const mask = input.maskUrl ? await asDataUrl(input.maskUrl) : undefined;
   const moveGuide = input.moveGuideUrl ? await asDataUrl(input.moveGuideUrl) : undefined;
+  const moveSourceMask = input.moveSourceMaskUrl ? await asDataUrl(input.moveSourceMaskUrl) : undefined;
   const references = await Promise.all(
     sourceReferences.map(async (item, index) => {
       const dataUrl = await asDataUrl(item.url);
@@ -774,6 +776,7 @@ export async function generateCanvasImage(input: {
       ...(input.angleGuide !== undefined ? { angleGuide: input.angleGuide } : {}),
       ...(mask ? { mask } : {}),
       ...(moveGuide ? { moveGuide } : {}),
+      ...(moveSourceMask ? { moveSourceMask } : {}),
       ...(input.fallbackToGenerationOnEdit404 ? { fallbackToGenerationOnEdit404: true } : {}),
       references,
       referenceImages: sourceReferences.map((item, index) => ({

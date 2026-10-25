@@ -127,6 +127,56 @@ test('move compositing keeps the precomposed target object while regenerating it
   assert.deepEqual([...output.data.subarray(7 * 4, 8 * 4)], [0, 0, 200, 255], 'unmarked content stays unchanged');
 });
 
+test('move compositing removes a color-shifted Provider duplicate from the old position without changing the destination', async () => {
+  const width = 4;
+  const height = 1;
+  const originalPixels = Buffer.from([
+    30, 30, 30, 255,
+    220, 0, 0, 255,
+    30, 30, 30, 255,
+    30, 30, 30, 255,
+  ]);
+  const guidePixels = Buffer.from([
+    30, 30, 30, 255,
+    30, 160, 30, 255,
+    30, 30, 30, 255,
+    220, 0, 0, 255,
+  ]);
+  const providerPixels = Buffer.from([
+    90, 90, 90, 255,
+    250, 30, 30, 255,
+    90, 90, 90, 255,
+    80, 80, 220, 255,
+  ]);
+  const maskPixels = Buffer.from([
+    255, 255, 255, 255,
+    255, 255, 255, 0,
+    255, 255, 255, 255,
+    255, 255, 255, 255,
+  ]);
+  const sourceMaskPixels = Buffer.from([
+    255, 255, 255, 255,
+    255, 255, 255, 0,
+    255, 255, 255, 255,
+    255, 255, 255, 255,
+  ]);
+  const png = async (pixels) => sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer();
+  const result = await composite.enforceLocalEditMask(
+    [{ url: dataUrl(await png(providerPixels)) }],
+    dataUrl(await png(guidePixels)),
+    dataUrl(await png(maskPixels)),
+    {
+      moveSourceMaskReference: dataUrl(await png(sourceMaskPixels)),
+      moveSourceOriginalReference: dataUrl(await png(originalPixels)),
+    },
+  );
+  const output = await raw(Buffer.from(result[0].url.split(',')[1], 'base64'));
+
+  assert.deepEqual([...output.data.subarray(1 * 4, 2 * 4)], [30, 160, 30, 255], 'a retained duplicate is replaced by the repaired source guide');
+  assert.deepEqual([...output.data.subarray(3 * 4, 4 * 4)], [220, 0, 0, 255], 'the moved object remains at the destination');
+  assert.deepEqual([...output.data.subarray(0, 4)], [...guidePixels.subarray(0, 4)], 'protected pixels stay unchanged from the move guide');
+});
+
 test('feathered masks are blended and differently sized inputs are aligned to the Provider result', async () => {
   const source = await solid(2, 2, { r: 200, g: 0, b: 0, alpha: 1 });
   const providerResult = await solid(4, 4, { r: 0, g: 0, b: 200, alpha: 1 });

@@ -386,7 +386,7 @@ export function calculateEditableCoverage(pixels: Uint8ClampedArray): number {
   return editable / (pixels.length / 4);
 }
 
-function repairLocalEditMoveSource(
+export function repairLocalEditMoveSource(
   source: Uint8ClampedArray,
   selectionMask: Uint8ClampedArray,
   width: number,
@@ -548,7 +548,7 @@ function pasteLocalEditPixels(
   return output;
 }
 
-/** Build a transparent, feathered foreground layer for move interaction previews. */
+/** Build the opaque move preview: repaired source background plus the moved object. */
 export function composeLocalEditMovePreview(
   source: Uint8ClampedArray,
   width: number,
@@ -560,12 +560,29 @@ export function composeLocalEditMovePreview(
     throw new Error("Local-edit move preview must match the canvas dimensions");
   }
 
-  const { moves } = localEditMoveOperations(width, height, annotations, smartMasks);
-  let preview = new Uint8ClampedArray(source.length);
-  for (const move of moves) {
-    preview = pasteLocalEditPixels(preview, source, move.selection, width, height, move.dx, move.dy);
+  return composeLocalEditMoveReference(source, width, height, annotations, smartMasks);
+}
+
+/** Return the feathered source-only edit mask used to remove a retained duplicate. */
+export function composeLocalEditMoveSourceMask(
+  width: number,
+  height: number,
+  annotations: LocalEditAnnotation[] = [],
+  smartMasks?: ReadonlyMap<string, Uint8ClampedArray>,
+) {
+  if (width < 1 || height < 1) {
+    throw new Error("Local-edit move source mask must match the canvas dimensions");
   }
-  return preview;
+  const { sourceRepairMask } = localEditMoveOperations(width, height, annotations, smartMasks, true);
+  if (!sourceRepairMask) throw new Error("Local-edit move source mask is unavailable");
+  return sourceRepairMask;
+}
+
+/** Clamp the slider value while always reserving a small fusion zone. */
+export function localEditFusionFeather(radius: number) {
+  const numeric = Number(radius);
+  const requested = Number.isFinite(numeric) ? numeric : 0;
+  return Math.max(LOCAL_EDIT_MIN_FUSION_FEATHER, Math.min(48, Math.round(requested)));
 }
 
 export function localEditMoveGuideFeatherRadius(width: number, height: number) {
@@ -618,7 +635,6 @@ function localEditMoveOperations(
     });
     if (!pasteSelection) continue;
     moves.push({
-      // Repeated drags repair every source, but keep the original object only once.
       selection: pasteSelection,
       dx: ((targetBounds.x + targetBounds.width / 2) - (sourceBounds.x + sourceBounds.width / 2)) * width,
       dy: ((targetBounds.y + targetBounds.height / 2) - (sourceBounds.y + sourceBounds.height / 2)) * height,
@@ -627,12 +643,7 @@ function localEditMoveOperations(
   return { moves, sourceRepairMask };
 }
 
-/**
- * Build the move reference sent to an image provider. It removes every source
- * selection from the guide, reconstructs an opaque background placeholder,
- * then pastes the original object at the requested destination. The submitted
- * mask still asks the provider to repair both areas at full quality.
- */
+/** Build the opaque reference sent to the image provider. */
 export function composeLocalEditMoveReference(
   source: Uint8ClampedArray,
   width: number,
@@ -651,13 +662,6 @@ export function composeLocalEditMoveReference(
     output = pasteLocalEditPixels(output, source, move.selection, width, height, move.dx, move.dy);
   }
   return preserveLocalEditAlphaFloor(output, source);
-}
-
-/** Clamp the slider value while always reserving a small fusion zone. */
-export function localEditFusionFeather(radius: number) {
-  const numeric = Number(radius);
-  const requested = Number.isFinite(numeric) ? numeric : 0;
-  return Math.max(LOCAL_EDIT_MIN_FUSION_FEATHER, Math.min(48, Math.round(requested)));
 }
 
 /** Expand editable pixels before feathering so providers can blend both sides of an edge. */

@@ -20,6 +20,8 @@ export type CanvasMaskAsset = {
   /** A locally composed move guide sent to the provider beside the original source. */
   sourceAssetId?: string;
   sourceUrl?: string;
+  moveSourceMaskAssetId?: string;
+  moveSourceMaskUrl?: string;
   /** Inline form of the locally composed move guide for non-canvas requests. */
   sourceImageDataUrl?: string;
   referenceId?: string;

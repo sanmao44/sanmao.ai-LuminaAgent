@@ -20,6 +20,7 @@ export type EditorRequestState = {
   customHeight: number;
   mask: string | null;
   sourceImageDataUrl?: string;
+  moveSourceMaskDataUrl?: string;
   annotations?: readonly unknown[];
   feather?: number;
   scale: number;
@@ -115,6 +116,7 @@ export function buildEditorRequest(
       referenceImages: [editorReference],
       mask: editor.mask || undefined,
       moveGuide: editor.sourceImageDataUrl || undefined,
+      moveSourceMask: editor.moveSourceMaskDataUrl || undefined,
     },
   };
 }

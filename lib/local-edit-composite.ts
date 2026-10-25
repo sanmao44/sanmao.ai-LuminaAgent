@@ -74,9 +74,24 @@ export function compositeLocalEditPixels(
   source: Uint8Array,
   generated: Uint8Array,
   mask: Uint8Array,
+  moveSource?: { mask: Uint8Array; original: Uint8Array },
 ) {
   if (source.length !== generated.length || source.length !== mask.length || source.length % 4 !== 0) {
     throw new Error('Local-edit images must have matching RGBA buffers');
+  }
+  if (moveSource && (moveSource.mask.length !== source.length || moveSource.original.length !== source.length)) {
+    throw new Error('Move source images must have matching RGBA buffers');
+  }
+  let generatedPixels = generated;
+  if (moveSource && moveSourceMaskRetainsSource(generated, moveSource.original, source, moveSource.mask)) {
+    generatedPixels = Uint8Array.from(generated);
+    for (let index = 3; index < moveSource.mask.length; index += 4) {
+      if (moveSource.mask[index] >= 253) continue;
+      generatedPixels[index - 3] = source[index - 3];
+      generatedPixels[index - 2] = source[index - 2];
+      generatedPixels[index - 1] = source[index - 1];
+      generatedPixels[index] = source[index];
+    }
   }
   const output = new Uint8ClampedArray(source.length);
   for (let index = 0; index < source.length; index += 4) {
@@ -89,26 +104,62 @@ export function compositeLocalEditPixels(
       continue;
     }
     if (protection <= 0) {
-      output[index] = generated[index];
-      output[index + 1] = generated[index + 1];
-      output[index + 2] = generated[index + 2];
-      output[index + 3] = generated[index + 3];
+      output[index] = generatedPixels[index];
+      output[index + 1] = generatedPixels[index + 1];
+      output[index + 2] = generatedPixels[index + 2];
+      output[index + 3] = generatedPixels[index + 3];
       continue;
     }
     const editWeight = 1 - protection;
     for (let channel = 0; channel < 4; channel += 1) {
       output[index + channel] = Math.round(
-        source[index + channel] * protection + generated[index + channel] * editWeight,
+        source[index + channel] * protection + generatedPixels[index + channel] * editWeight,
       );
     }
   }
   return output;
 }
 
+function moveSourceMaskRetainsSource(
+  generated: Uint8Array,
+  original: Uint8Array,
+  repaired: Uint8Array,
+  moveMask: Uint8Array,
+) {
+  let objectPixels = 0;
+  let retainedPixels = 0;
+  for (let index = 3; index < moveMask.length; index += 4) {
+    if (moveMask[index] >= 32) continue;
+    const repairedDifference = (
+      Math.abs(original[index - 3] - repaired[index - 3])
+      + Math.abs(original[index - 2] - repaired[index - 2])
+      + Math.abs(original[index - 1] - repaired[index - 1])
+    ) / 3;
+    // The repaired guide is a cheap background estimate. Pixels that differ
+    // materially from it are the useful object core for duplicate detection.
+    if (repairedDifference < 24) continue;
+    objectPixels += 1;
+    const generatedOriginalDifference = (
+      Math.abs(generated[index - 3] - original[index - 3])
+      + Math.abs(generated[index - 2] - original[index - 2])
+      + Math.abs(generated[index - 1] - original[index - 1])
+    ) / 3;
+    const generatedRepairedDifference = (
+      Math.abs(generated[index - 3] - repaired[index - 3])
+      + Math.abs(generated[index - 2] - repaired[index - 2])
+      + Math.abs(generated[index - 1] - repaired[index - 1])
+    ) / 3;
+    if (generatedOriginalDifference + 8 <= generatedRepairedDifference) retainedPixels += 1;
+  }
+  return objectPixels > 0 && retainedPixels / objectPixels >= 0.45;
+}
+
 async function compositeLocalEditImage(
   image: GeneratedImage,
   sourceBytes: Buffer,
   maskBytes: Buffer,
+  moveSourceMaskBytes?: Buffer,
+  moveSourceOriginalBytes?: Buffer,
   storagePath?: string,
   signal?: AbortSignal,
 ) {
@@ -116,14 +167,23 @@ async function compositeLocalEditImage(
   const generated = await toRawRgba(await readImageBytes(image.url, storagePath, signal));
   const width = Math.max(1, generated.info.width);
   const height = Math.max(1, generated.info.height);
-  const [source, mask] = await Promise.all([
+  const [source, mask, moveSourceMask, moveSourceOriginal] = await Promise.all([
     toRawRgba(sourceBytes, width, height),
     toRawRgba(maskBytes, width, height, true),
+    moveSourceMaskBytes ? toRawRgba(moveSourceMaskBytes, width, height, true) : Promise.resolve(undefined),
+    moveSourceOriginalBytes ? toRawRgba(moveSourceOriginalBytes, width, height) : Promise.resolve(undefined),
   ]);
   if (source.info.channels !== 4 || generated.info.channels !== 4 || mask.info.channels !== 4) {
     throw new Error('Local-edit images could not be decoded as RGBA');
   }
-  const pixels = compositeLocalEditPixels(source.data, generated.data, mask.data);
+  const pixels = compositeLocalEditPixels(
+    source.data,
+    generated.data,
+    mask.data,
+    moveSourceMask && moveSourceOriginal
+      ? { mask: moveSourceMask.data, original: moveSourceOriginal.data }
+      : undefined,
+  );
   const output = await sharp(Buffer.from(pixels), {
     raw: { width, height, channels: 4 },
   }).png().toBuffer();
@@ -139,12 +199,31 @@ export async function enforceLocalEditMask(
   images: GeneratedImage[],
   sourceReference: string,
   maskReference: string,
-  options: { storagePath?: string; signal?: AbortSignal } = {},
+  options: {
+    storagePath?: string;
+    signal?: AbortSignal;
+    moveSourceMaskReference?: string;
+    moveSourceOriginalReference?: string;
+  } = {},
 ) {
   if (!images.length) return images;
-  const [sourceBytes, maskBytes] = await Promise.all([
+  const [sourceBytes, maskBytes, moveSourceMaskBytes, moveSourceOriginalBytes] = await Promise.all([
     readImageBytes(sourceReference, options.storagePath, options.signal),
     readImageBytes(maskReference, options.storagePath, options.signal),
+    options.moveSourceMaskReference
+      ? readImageBytes(options.moveSourceMaskReference, options.storagePath, options.signal)
+      : Promise.resolve(undefined),
+    options.moveSourceOriginalReference
+      ? readImageBytes(options.moveSourceOriginalReference, options.storagePath, options.signal)
+      : Promise.resolve(undefined),
   ]);
-  return Promise.all(images.map((image) => compositeLocalEditImage(image, sourceBytes, maskBytes, options.storagePath, options.signal)));
+  return Promise.all(images.map((image) => compositeLocalEditImage(
+    image,
+    sourceBytes,
+    maskBytes,
+    moveSourceMaskBytes,
+    moveSourceOriginalBytes,
+    options.storagePath,
+    options.signal,
+  )));
 }

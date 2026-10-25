@@ -866,7 +866,7 @@ test("mask removal clears both current and persisted generation parameters", () 
 });
 
 test("local edit editor reports saving state and passes coverage into the attached image state", () => {
-  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, feather, moveGuideDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, feather, moveGuideDataUrl\)\}/);
+  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl\)\}/);
   assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
   assert.match(component, /initialFeather=\{maskNode\.data\.mask\?\.feather \?\? maskSettings\?\.mask\?\.feather \?\? 0\}/);
   assert.match(component, /status: "pending"/);

@@ -41,8 +41,8 @@ function createEditRoute(resolveReference) {
     "@/lib/auth": { isTrustedAppRequest: () => true },
     "@/lib/reference-images": { referenceRecordsForLog: () => [] },
     "@/lib/local-edit-composite": {
-      enforceLocalEditMask: async (images, sourceReference, maskReference) => {
-        calls.compositeInputs.push({ sourceReference, maskReference });
+      enforceLocalEditMask: async (images, sourceReference, maskReference, options) => {
+        calls.compositeInputs.push({ sourceReference, maskReference, options });
         return images;
       },
     },
@@ -105,12 +105,16 @@ test("source resolution failures finish the pre-existing edit record", async () 
 
 test("move edits use the move guide for both Provider conditioning and protected-pixel compositing", async () => {
   const moveGuide = "data:image/png;base64,bW92ZS1ndWlkZQ==";
+  const moveSourceMask = "data:image/png;base64,bW92ZS1zb3VyY2UtbWFzaw==";
   const mask = "data:image/png;base64,bW92ZS1tYXNr";
   const route = createEditRoute(async (reference) => reference);
 
-  const response = await route.POST(editRequest({ moveGuide, mask }));
+  const response = await route.POST(editRequest({ moveGuide, moveSourceMask, mask }));
 
   assert.equal(response.status, 200);
   assert.deepEqual(route.calls.editInputs[0].references, [moveGuide]);
-  assert.deepEqual(route.calls.compositeInputs[0], { sourceReference: moveGuide, maskReference: mask });
+  assert.equal(route.calls.compositeInputs[0].sourceReference, moveGuide);
+  assert.equal(route.calls.compositeInputs[0].maskReference, mask);
+  assert.equal(route.calls.compositeInputs[0].options.moveSourceMaskReference, moveSourceMask);
+  assert.equal(route.calls.compositeInputs[0].options.moveSourceOriginalReference, "https://example.test/source.png");
 });
