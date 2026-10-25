@@ -3,8 +3,14 @@ import { createHmac } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import sharp from 'sharp';
 import test, { after, afterEach } from 'node:test';
 import ts from 'typescript';
+
+const relayTestPngBytes = await sharp({
+  create: { width: 1, height: 1, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } },
+}).png().toBuffer();
+const relayTestPng = `data:image/png;base64,${relayTestPngBytes.toString('base64')}`;
 
 async function importTypeScript(sourceUrl, source, fileName = sourceUrl.pathname) {
   const compiled = ts.transpileModule(source, {
@@ -40,13 +46,16 @@ const video = await importTypeScript(videoUrl, `${videoPlatformSource}\n${(await
 
 const signedUrl = new URL('../lib/signed-media.ts', import.meta.url);
 const signedSource = await readFile(signedUrl, 'utf8');
+globalThis.__providerTestSharp = sharp;
 const signed = await importTypeScript(signedUrl, signedSource
+  .replace("import sharp from 'sharp';", 'const sharp = globalThis.__providerTestSharp;')
   .replace(/import \{ resolveStoredFileWithFallback \} from '\.\/image-storage';\r?\n/, 'const resolveStoredFileWithFallback = () => null;\n')
   .replace(/import \{ resolveStoredVideoFileWithFallback \} from '\.\/video-storage';\r?\n/, 'const resolveStoredVideoFileWithFallback = () => null;\n')
   .replace(/import \{ resolveStoredAudioFileWithFallback \} from '\.\/audio-storage';\r?\n/, 'const resolveStoredAudioFileWithFallback = () => null;\n')
   .replace(/import \{ isSqliteActive \} from '\.\/database\/sqlite';\r?\n/, 'const isSqliteActive = () => false;\n')
   .replace(/import \{ readAuthoritativeProviderSettings \} from '\.\/repositories\/server-provider-config';\r?\n/, 'const readAuthoritativeProviderSettings = () => null;\n')
   .replace(/import \{ resolveLocalDataDir, resolveProviderConfigDir \} from '\.\/data-paths';\r?\n/, 'const resolveLocalDataDir = () => process.env.SANMAO_DATA_DIR || path.join(process.cwd(), ".data"); const resolveProviderConfigDir = resolveLocalDataDir;\n'));
+delete globalThis.__providerTestSharp;
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -382,12 +391,14 @@ test('uses the latest automatically recovered relay URL without restarting the s
   const calls = [];
   globalThis.fetch = async (url) => {
     calls.push(String(url));
-    return new Response(JSON.stringify({ ok: true, url: 'https://recovered.trycloudflare.com/api/relay/media/signed-token' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ service: 'sanmao-ai-studio', ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   try {
-    const url = await signed.prepareAgnesMediaUrl('data:image/png;base64,AAECAw==', 'image');
-    assert.equal(url, 'https://recovered.trycloudflare.com/api/relay/media/signed-token');
-    assert.deepEqual(calls, ['https://recovered.trycloudflare.com/api/relay/media']);
+    const url = await signed.prepareAgnesMediaUrl(relayTestPng, 'image');
+    assert.match(url, /^https:\/\/recovered\.trycloudflare\.com\/api\/relay\/media\/[A-Za-z0-9_.-]+$/);
+    assert.deepEqual(calls, ['https://recovered.trycloudflare.com/api/health']);
+    const stored = await signed.readSignedMedia(url.split('/').at(-1));
+    assert.deepEqual(stored.data, relayTestPngBytes);
   } finally {
     if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
     if (previous.mode === undefined) delete process.env.SANMAO_RELAY_MODE; else process.env.SANMAO_RELAY_MODE = previous.mode;
@@ -412,26 +423,22 @@ test('retries an image upload after the automatic relay recovers from an outage'
   await mkdir(path.join(root, 'free-relay'), { recursive: true });
   await writeFile(path.join(root, 'free-relay', 'public-url.txt'), 'https://stale.relay.example\n');
   const calls = [];
+  const relayFile = path.join(root, 'free-relay', 'public-url.txt');
   globalThis.fetch = async (url) => {
-    calls.push(String(url));
-    if (calls.length === 3) {
-      await writeFile(path.join(root, 'free-relay', 'public-url.txt'), 'https://recovered.relay.example\n');
+    const current = String(url);
+    calls.push(current);
+    if (calls.length === 1) {
+      await writeFile(relayFile, 'https://recovered.trycloudflare.com\n');
+      return new Response('{}', { status: 502 });
     }
-    if (calls.length <= 3) throw new Error('relay temporarily unavailable');
-    return new Response(JSON.stringify({
-      ok: true,
-      url: 'https://recovered.relay.example/api/relay/media/recovered-token',
-      expiresAt: '2099-01-01T00:30:00.000Z',
-    }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ service: 'sanmao-ai-studio', ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   try {
-    const url = await signed.preparePublicMediaUrl('data:image/png;base64,AAECAw==', 'image');
-    assert.equal(url, 'https://recovered.relay.example/api/relay/media/recovered-token');
+    const url = await signed.preparePublicMediaUrl(relayTestPng, 'image');
+    assert.match(url, /^https:\/\/recovered\.trycloudflare\.com\/api\/relay\/media\/[A-Za-z0-9_.-]+$/);
     assert.deepEqual(calls, [
-      'https://stale.relay.example/api/relay/media',
-      'https://stale.relay.example/api/relay/media',
-      'https://stale.relay.example/api/relay/media',
-      'https://recovered.relay.example/api/relay/media',
+      'https://stale.relay.example/api/health',
+      'https://recovered.trycloudflare.com/api/health',
     ]);
   } finally {
     if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
@@ -442,7 +449,7 @@ test('retries an image upload after the automatic relay recovers from an outage'
   }
 });
 
-test('keeps waiting when the first recovered tunnel also fails its image upload', async () => {
+test('keeps waiting when the first recovered tunnel still fails its health check', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-relay-repeated-recovery-'));
   const previous = {
     dataDir: process.env.SANMAO_DATA_DIR,
@@ -464,25 +471,24 @@ test('keeps waiting when the first recovered tunnel also fails its image upload'
   globalThis.fetch = async (url) => {
     const current = String(url);
     calls.push(current);
-    if (calls.length === 3) await writeFile(relayFile, `${firstRecovery}\n`);
-    if (calls.length === 6) await writeFile(relayFile, `${secondRecovery}\n`);
-    if (current.startsWith(`${secondRecovery}/`)) {
-      return new Response(JSON.stringify({
-        ok: true,
-        url: `${secondRecovery}/api/relay/media/recovered-token`,
-        expiresAt: '2099-01-01T00:30:00.000Z',
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (calls.length === 1) {
+      await writeFile(relayFile, `${firstRecovery}\n`);
+      return new Response('{}', { status: 502 });
     }
-    throw new Error('relay tunnel disconnected');
+    if (calls.length === 2) {
+      await writeFile(relayFile, `${secondRecovery}\n`);
+      return new Response('{}', { status: 502 });
+    }
+    return new Response(JSON.stringify({ service: 'sanmao-ai-studio', ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
 
   try {
-    const url = await signed.preparePublicMediaUrl('data:image/png;base64,AAECAw==', 'image');
-    assert.equal(url, `${secondRecovery}/api/relay/media/recovered-token`);
+    const url = await signed.preparePublicMediaUrl(relayTestPng, 'image');
+    assert.match(url, new RegExp(`^${secondRecovery}/api/relay/media/[A-Za-z0-9_.-]+$`));
     assert.deepEqual(calls, [
-      ...Array(3).fill(`${initialRelay}/api/relay/media`),
-      ...Array(3).fill(`${firstRecovery}/api/relay/media`),
-      `${secondRecovery}/api/relay/media`,
+      `${initialRelay}/api/health`,
+      `${firstRecovery}/api/health`,
+      `${secondRecovery}/api/health`,
     ]);
   } finally {
     if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
@@ -506,18 +512,18 @@ test('waits briefly for the automatic relay during tunnel startup', async () => 
   delete process.env.SANMAO_MEDIA_RELAY_URL;
   delete process.env.SANMAO_PUBLIC_BASE_URL;
   await mkdir(path.join(root, 'free-relay'), { recursive: true });
-  let uploadCalls = 0;
+  let healthChecks = 0;
   globalThis.fetch = async (url) => {
-    uploadCalls += 1;
-    assert.equal(String(url), 'https://ready.trycloudflare.com/api/relay/media');
-    return new Response(JSON.stringify({ ok: true, url: 'https://ready.trycloudflare.com/api/relay/media/startup-token', expiresAt: '2099-01-01T00:30:00.000Z' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    healthChecks += 1;
+    assert.equal(String(url), 'https://ready.trycloudflare.com/api/health');
+    return new Response(JSON.stringify({ service: 'sanmao-ai-studio', ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   try {
-    const pending = signed.prepareAgnesMediaUrl('data:image/png;base64,AAECAw==', 'image');
+    const pending = signed.prepareAgnesMediaUrl(relayTestPng, 'image');
     await new Promise((resolve) => setTimeout(resolve, 100));
     await writeFile(path.join(root, 'free-relay', 'public-url.txt'), 'https://ready.trycloudflare.com\n');
-    assert.equal(await pending, 'https://ready.trycloudflare.com/api/relay/media/startup-token');
-    assert.equal(uploadCalls, 1);
+    assert.match(await pending, /^https:\/\/ready\.trycloudflare\.com\/api\/relay\/media\/[A-Za-z0-9_.-]+$/);
+    assert.equal(healthChecks, 1);
   } finally {
     if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
     if (previous.mode === undefined) delete process.env.SANMAO_RELAY_MODE; else process.env.SANMAO_RELAY_MODE = previous.mode;
@@ -543,15 +549,11 @@ test('waits through an automatic relay watchdog restart before rejecting image i
   const calls = [];
   globalThis.fetch = async (url) => {
     calls.push(String(url));
-    return new Response(JSON.stringify({
-      ok: true,
-      url: 'https://watchdog-recovered.trycloudflare.com/api/relay/media/watchdog-token',
-      expiresAt: '2099-01-01T00:30:00.000Z',
-    }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ service: 'sanmao-ai-studio', ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
   try {
-    const pending = signed.preparePublicMediaUrl('data:image/png;base64,AAECAw==', 'image');
+    const pending = signed.preparePublicMediaUrl(relayTestPng, 'image');
     const outcome = pending.then((value) => ({ value }), (error) => ({ error }));
 
     // The launcher watchdog can take over 15 seconds to publish a replacement URL.
@@ -567,8 +569,8 @@ test('waits through an automatic relay watchdog restart before rejecting image i
 
     const result = await outcome;
     assert.equal(result.error, undefined);
-    assert.equal(result.value, 'https://watchdog-recovered.trycloudflare.com/api/relay/media/watchdog-token');
-    assert.deepEqual(calls, ['https://watchdog-recovered.trycloudflare.com/api/relay/media']);
+    assert.match(result.value, /^https:\/\/watchdog-recovered\.trycloudflare\.com\/api\/relay\/media\/[A-Za-z0-9_.-]+$/);
+    assert.deepEqual(calls, ['https://watchdog-recovered.trycloudflare.com/api/health']);
   } finally {
     t.mock.timers.reset();
     if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
