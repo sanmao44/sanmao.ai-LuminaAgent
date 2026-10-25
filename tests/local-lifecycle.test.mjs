@@ -136,3 +136,34 @@ test('media relay policy includes enabled vision chats and keeps native video lo
   assert.equal(requiresMediaRelay({ providers: [visionProvider], models: [{ providerId: 'deepseek', kind: 'video', capabilities: ['video-generate'] }] }), true);
   assert.match(relayPolicySource, /capabilities\.includes\('vision'\)/);
 });
+
+test('media relay policy enables the public relay for URL-based image references', () => {
+  const model = {
+    providerId: 'image-gateway',
+    kind: 'image',
+    enabled: true,
+    published: true,
+    capabilities: ['generate', 'edit'],
+  };
+
+  assert.equal(requiresMediaRelay({
+    providers: [{ id: 'image-gateway', platform: '65535', apiKey: 'configured' }],
+    models: [model],
+  }), true);
+  assert.equal(requiresMediaRelay({
+    providers: [{ id: 'image-gateway', baseUrl: 'https://api.apimart.ai/v1', apiKey: 'configured' }],
+    models: [{ ...model, capabilities: ['generate', 'reference'] }],
+  }), true);
+  assert.equal(requiresMediaRelay({
+    providers: [{ id: 'image-gateway', platform: '65535', apiKey: 'configured' }],
+    models: [{ ...model, enabled: false }],
+  }), false);
+  assert.equal(requiresMediaRelay({
+    providers: [{ id: 'image-gateway', platform: 'openai', apiKey: 'configured' }],
+    models: [model],
+  }), false);
+  assert.equal(requiresMediaRelay({
+    providers: [{ id: 'image-gateway', platform: '65535', apiKey: 'configured' }],
+    models: [{ ...model, capabilities: ['generate'] }],
+  }), false);
+});

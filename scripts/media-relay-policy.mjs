@@ -14,6 +14,29 @@ function hasVisionChatModel(provider, models) {
     && model.capabilities.includes('vision'));
 }
 
+function providerUsesPublicImageInputs(provider) {
+  const platform = String(provider?.platform || '').toLowerCase();
+  if (platform === '65535' || platform === 'apimart') return true;
+
+  for (const value of [provider?.baseUrl, provider?.videoBaseUrl]) {
+    try {
+      const hostname = new URL(String(value || '')).hostname.toLowerCase();
+      if (hostname === '65535.space' || hostname.endsWith('.65535.space')
+        || hostname === 'api.apimart.ai' || hostname.endsWith('.api.apimart.ai')) return true;
+    } catch {}
+  }
+  return false;
+}
+
+function hasReferenceImageModel(provider, models) {
+  return models.some((model) => model?.providerId === provider?.id
+    && model?.kind === 'image'
+    && model?.enabled === true
+    && model?.published === true
+    && Array.isArray(model?.capabilities)
+    && (model.capabilities.includes('edit') || model.capabilities.includes('reference')));
+}
+
 export function requiresMediaRelay(state) {
   const cloudUpscaleReady = (state?.upscaleConnections || []).some((connection) => connection?.status === 'healthy'
     && ((connection.encryptedSecretId && connection.encryptedSecretKey)
@@ -24,6 +47,7 @@ export function requiresMediaRelay(state) {
   const providers = Array.isArray(state?.providers) ? state.providers : [];
   return providers.some((provider) => {
     if (!hasProviderCredential(provider)) return false;
+    if (providerUsesPublicImageInputs(provider) && hasReferenceImageModel(provider, models)) return true;
     const transport = String(provider.videoTransport || '').toLowerCase();
     if (transport === 'agnes-videos' || transport === 'openai-videos') return true;
     if (transport === 'auto' || !transport) {
