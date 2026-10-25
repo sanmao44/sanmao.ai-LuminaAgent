@@ -94,6 +94,39 @@ test('transparent selection uses the generated image and a rectangular mask pres
   }
 });
 
+test('move compositing keeps the precomposed target object while regenerating its source and edge', async () => {
+  const width = 8;
+  const height = 1;
+  const sourcePixels = Buffer.alloc(width * height * 4);
+  const guidePixels = Buffer.alloc(width * height * 4);
+  const generatedPixels = Buffer.alloc(width * height * 4);
+  const maskPixels = Buffer.alloc(width * height * 4);
+  for (let x = 0; x < width; x += 1) {
+    const offset = x * 4;
+    sourcePixels.set([0, 0, 200, 255], offset);
+    guidePixels.set([0, 0, 200, 255], offset);
+    generatedPixels.set([220, 220, 0, 255], offset);
+    maskPixels.set([255, 255, 255, 255], offset);
+  }
+  sourcePixels.set([220, 0, 0, 255], 1 * 4);
+  guidePixels.set([220, 0, 0, 255], 5 * 4);
+  maskPixels[1 * 4 + 3] = 0;
+  maskPixels[4 * 4 + 3] = 0;
+
+  const png = async (pixels) => sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer();
+  const result = await composite.enforceLocalEditMask(
+    [{ url: dataUrl(await png(generatedPixels)) }],
+    dataUrl(await png(guidePixels)),
+    dataUrl(await png(maskPixels)),
+  );
+  const output = await raw(Buffer.from(result[0].url.split(',')[1], 'base64'));
+
+  assert.deepEqual([...output.data.subarray(1 * 4, 2 * 4)], [220, 220, 0, 255], 'the editable source is filled from generation');
+  assert.deepEqual([...output.data.subarray(4 * 4, 5 * 4)], [220, 220, 0, 255], 'the target edge is blended from generation');
+  assert.deepEqual([...output.data.subarray(5 * 4, 6 * 4)], [220, 0, 0, 255], 'the moved object is retained from the guide');
+  assert.deepEqual([...output.data.subarray(7 * 4, 8 * 4)], [0, 0, 200, 255], 'unmarked content stays unchanged');
+});
+
 test('feathered masks are blended and differently sized inputs are aligned to the Provider result', async () => {
   const source = await solid(2, 2, { r: 200, g: 0, b: 0, alpha: 1 });
   const providerResult = await solid(4, 4, { r: 0, g: 0, b: 200, alpha: 1 });
@@ -120,11 +153,11 @@ test('invalid local-edit media fails closed instead of returning the unconstrain
   );
 });
 
-test('both image-generation entry points use the move guide only for the Provider and retain the original for compositing', async () => {
+test('both image-generation entry points use the move guide for Provider conditioning and compositing', async () => {
   const editRoute = await readFile(new URL('../app/api/edit/route.ts', import.meta.url), 'utf8');
   const generateRoute = await readFile(new URL('../app/api/generate/route.ts', import.meta.url), 'utf8');
   assert.match(editRoute, /const providerReferences = moveGuide \? \[moveGuide, \.\.\.resolvedReferences\.slice\(1\)\] : resolvedReferences/);
   assert.match(generateRoute, /const providerReferences = moveGuide \? \[moveGuide, \.\.\.references\.slice\(1\)\] : references/);
-  assert.match(editRoute, /enforceLocalEditMask\(providerImages, resolvedReferences\[0\], mask/);
-  assert.match(generateRoute, /enforceLocalEditMask\(providerImages, references\[0\], mask/);
+  assert.match(editRoute, /enforceLocalEditMask\(providerImages, moveGuide \|\| resolvedReferences\[0\], mask/);
+  assert.match(generateRoute, /enforceLocalEditMask\(providerImages, moveGuide \|\| references\[0\], mask/);
 });

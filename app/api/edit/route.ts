@@ -118,7 +118,7 @@ export async function POST(request: Request) {
       { allowFallbackBeforeProviderSubmission: requestedModelId === 'auto' },
     );
     const maskSafeImages = mask
-      ? await enforceLocalEditMask(providerImages, resolvedReferences[0], mask, {
+      ? await enforceLocalEditMask(providerImages, moveGuide || resolvedReferences[0], mask, {
           storagePath,
           signal: requestController.signal,
         })

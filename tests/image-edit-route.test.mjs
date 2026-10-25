@@ -4,13 +4,17 @@ import { createTsRequire } from "./ts-require.mjs";
 
 function createEditRoute(resolveReference) {
   const logs = new Map();
+  const calls = { editInputs: [], compositeInputs: [] };
   const runtimeModel = {
     model: { id: "common-image-model", rawId: "raw-common-image-model", displayName: "Common Image" },
     provider: { id: "common-provider", name: "Common Provider", platform: "custom", baseUrl: "https://provider.example/v1" },
   };
   const modules = {
     "@/lib/providers": {
-      editImage: async () => [{ url: "https://example.test/result.png" }],
+      editImage: async (_provider, _model, input) => {
+        calls.editInputs.push(input);
+        return [{ url: "https://example.test/result.png" }];
+      },
       imageDownloadAuth: () => undefined,
     },
     "@/lib/image-storage": { resolveStoredImageReference: resolveReference },
@@ -36,7 +40,12 @@ function createEditRoute(resolveReference) {
     },
     "@/lib/auth": { isTrustedAppRequest: () => true },
     "@/lib/reference-images": { referenceRecordsForLog: () => [] },
-    "@/lib/local-edit-composite": { enforceLocalEditMask: async (images) => images },
+    "@/lib/local-edit-composite": {
+      enforceLocalEditMask: async (images, sourceReference, maskReference) => {
+        calls.compositeInputs.push({ sourceReference, maskReference });
+        return images;
+      },
+    },
     "@/lib/runtime-operation": {
       beginRuntimeRequest: async () => async () => {},
       RuntimeDrainingError: class RuntimeDrainingError extends Error {},
@@ -50,10 +59,10 @@ function createEditRoute(resolveReference) {
     },
   };
   const { POST } = createTsRequire(process.cwd(), modules)("./app/api/edit/route");
-  return { POST, logs };
+  return { POST, logs, calls };
 }
 
-function editRequest() {
+function editRequest(overrides = {}) {
   return new Request("http://localhost:3210/api/edit", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -65,6 +74,7 @@ function editRequest() {
       referenceImages: [{ id: "source-1", name: "source", url: "https://example.test/source.png" }],
       count: 1,
       aspectRatio: "1:1",
+      ...overrides,
     }),
   });
 }
@@ -91,4 +101,16 @@ test("source resolution failures finish the pre-existing edit record", async () 
   assert.equal(route.logs.get("local-edit-task-1").status, "error");
   assert.match(route.logs.get("local-edit-task-1").error, /source image unavailable/);
   assert.equal(route.logs.get("local-edit-task-1").errorCode, undefined);
+});
+
+test("move edits use the move guide for both Provider conditioning and protected-pixel compositing", async () => {
+  const moveGuide = "data:image/png;base64,bW92ZS1ndWlkZQ==";
+  const mask = "data:image/png;base64,bW92ZS1tYXNr";
+  const route = createEditRoute(async (reference) => reference);
+
+  const response = await route.POST(editRequest({ moveGuide, mask }));
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(route.calls.editInputs[0].references, [moveGuide]);
+  assert.deepEqual(route.calls.compositeInputs[0], { sourceReference: moveGuide, maskReference: mask });
 });

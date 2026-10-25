@@ -242,16 +242,13 @@ test("submitted masks expand both edit locations and keep a minimum fusion trans
   assert.ok(alphaAt(seamless, 18, 10) > 0 && alphaAt(seamless, 18, 10) < 255);
 });
 
-test("moving a selection masks both source and target while compiling a visual-guide prompt", () => {
-  const source = Uint8ClampedArray.from([
-    255, 0, 0, 255,
-    0, 255, 0, 255,
-    0, 0, 255, 255,
-    255, 255, 255, 255,
-  ]);
-  const originalSource = new Uint8ClampedArray(source);
-  const sourceGeometry = { kind: "rectangle", x: 0.1, y: 0.25, width: 0.2, height: 0.5 };
-  const targetGeometry = { kind: "rectangle", x: 0.6, y: 0.25, width: 0.2, height: 0.5 };
+test("moving a selection edits its source and target fusion ring while protecting the inserted object", () => {
+  const width = 64;
+  const height = 32;
+  const source = new Uint8ClampedArray(width * height * 4);
+  const sourceGeometry = { kind: "rectangle", x: 0.1, y: 0.25, width: 0.125, height: 0.25 };
+  const targetGeometry = { kind: "rectangle", x: 0.65, y: 0.25, width: 0.125, height: 0.25 };
+  const alphaAt = (pixels, x, y) => pixels[(y * width + x) * 4 + 3];
   const moved = {
     id: "moved",
     kind: "rectangle",
@@ -260,21 +257,28 @@ test("moving a selection masks both source and target while compiling a visual-g
     move: { from: [sourceGeometry] },
     createdAt: 1,
   };
-  const mask = raster.rasterizeLocalEditAnnotations(10, 4, [moved]);
-  assert.equal(mask[(1 * 10 + 1) * 4 + 3], 0);
-  assert.equal(mask[(1 * 10 + 6) * 4 + 3], 0);
-  assert.equal(mask[(1 * 10 + 4) * 4 + 3], 255);
-  assert.deepEqual([...source], [...originalSource]);
+  const mask = raster.rasterizeLocalEditAnnotations(width, height, [moved]);
+  assert.equal(alphaAt(mask, 8, 12), 0, "source object must be removed");
+  assert.equal(alphaAt(mask, 44, 12), 255, "inserted object pixels must remain protected");
+  assert.equal(alphaAt(mask, 40, 12), 0, "target edge must remain editable for blending");
+  const submittedMask = raster.preserveLocalEditMoveTargets(
+    raster.createSeamlessLocalEditMask(mask, width, height, 2),
+    width,
+    height,
+    [moved],
+  );
+  assert.equal(alphaAt(submittedMask, 44, 12), 255, "feathering must not make the inserted object editable");
+  assert.ok(alphaAt(submittedMask, 39, 12) < 255, "the target edge must keep a fusion transition");
 
   const repeated = {
     ...moved,
-    geometry: { kind: "rectangle", x: 0.8, y: 0.25, width: 0.2, height: 0.5 },
+    geometry: { kind: "rectangle", x: 0.82, y: 0.25, width: 0.125, height: 0.25 },
     move: { from: [sourceGeometry, targetGeometry] },
   };
-  const repeatedMask = raster.rasterizeLocalEditAnnotations(10, 4, [repeated]);
-  assert.equal(repeatedMask[(1 * 10 + 1) * 4 + 3], 0);
-  assert.equal(repeatedMask[(1 * 10 + 6) * 4 + 3], 0);
-  assert.equal(repeatedMask[(1 * 10 + 8) * 4 + 3], 0);
+  const repeatedMask = raster.rasterizeLocalEditAnnotations(width, height, [repeated]);
+  assert.equal(alphaAt(repeatedMask, 8, 12), 0);
+  assert.equal(alphaAt(repeatedMask, 44, 12), 0, "previous target becomes the next source");
+  assert.equal(alphaAt(repeatedMask, 55, 12), 255, "final inserted object remains protected");
   const compiled = raster.compileLocalEditPrompt("保持光影自然", [moved]);
   assert.match(compiled, /移动参考图已经标出最终摆放/);
   assert.match(compiled, /将圈选物体完整迁移到目标位置/);
@@ -424,7 +428,7 @@ test("moving a smart selection masks its original and translated smart pixels", 
   ]);
   const merged = raster.rasterizeLocalEditAnnotations(6, 4, [annotation], masks);
   assert.equal(merged[(1 * 6 + 1) * 4 + 3], 0);
-  assert.equal(merged[(1 * 6 + 4) * 4 + 3], 0);
+  assert.equal(merged[(1 * 6 + 4) * 4 + 3], 255, "translated smart-object pixels must be protected");
   assert.equal(merged[(1 * 6 + 2) * 4 + 3], 255);
 });
 

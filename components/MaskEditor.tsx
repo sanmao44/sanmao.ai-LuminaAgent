@@ -18,6 +18,7 @@ import {
   localEditMoveGuideFeatherRadius,
   moveLocalEditPixels,
   normalizeLocalEditAnnotations,
+  preserveLocalEditMoveTargets,
   recoverLocalEditProtectedPixels,
   rasterizeLocalEditAnnotations,
   type LocalEditAnnotation,
@@ -1570,7 +1571,13 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     if (!sourceContext) throw new Error('局部编辑范围导出失败，请重试');
     const sourcePixels = sourceContext.getImageData(0, 0, source.width, source.height).data;
     const fusionFeather = localEditFusionFeather(feather);
-    const pixels = createSeamlessLocalEditMask(sourcePixels, source.width, source.height, fusionFeather);
+    const pixels = preserveLocalEditMoveTargets(
+      createSeamlessLocalEditMask(sourcePixels, source.width, source.height, fusionFeather),
+      source.width,
+      source.height,
+      annotationsRef.current,
+      smartMaskPixelsRef.current,
+    );
     outputContext.putImageData(imageDataFromPixels(pixels, output.width, output.height), 0, 0);
     return {
       dataUrl: output.toDataURL('image/png'),

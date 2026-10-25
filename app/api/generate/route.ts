@@ -351,7 +351,7 @@ export async function POST(request: Request) {
       await finishGenerationLog(logId, { mode: modeForLog, operation: operationForLog }).catch(() => undefined);
     }
     const maskSafeImages = mask
-      ? await enforceLocalEditMask(providerImages, references[0], mask, {
+      ? await enforceLocalEditMask(providerImages, moveGuide || references[0], mask, {
           storagePath,
           signal: requestController.signal,
         })

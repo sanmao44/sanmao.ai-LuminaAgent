@@ -243,7 +243,8 @@ export function applyLocalEditAnnotationMask(
   smartMaskPixels?: Uint8ClampedArray,
   moveSmartMaskPixels?: ReadonlyArray<Uint8ClampedArray | undefined>,
 ) {
-  annotation.move?.from.forEach((geometry, index) => {
+  const moveSources = annotation.move?.from || [];
+  moveSources.forEach((geometry, index) => {
     applyLocalEditGeometryMask(
       pixels,
       width,
@@ -253,6 +254,25 @@ export function applyLocalEditAnnotationMask(
       moveSmartMaskPixels?.[index],
     );
   });
+  if (mode === "edit" && moveSources.length) {
+    const target = createProtectedMask(width, height);
+    applyLocalEditGeometryMask(target, width, height, annotation.geometry, "edit", smartMaskPixels);
+    const expandedTarget = expandLocalEditMask(target, width, height, 1);
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (target[index] < 128) {
+        pixels[index - 3] = 255;
+        pixels[index - 2] = 255;
+        pixels[index - 1] = 255;
+        pixels[index] = 255;
+      } else if (expandedTarget[index] < 128) {
+        pixels[index - 3] = 255;
+        pixels[index - 2] = 255;
+        pixels[index - 1] = 255;
+        pixels[index] = 0;
+      }
+    }
+    return pixels;
+  }
   return applyLocalEditGeometryMask(pixels, width, height, annotation.geometry, mode, smartMaskPixels);
 }
 
@@ -706,6 +726,47 @@ export function createSeamlessLocalEditMask(
     height,
     fusionFeather,
   );
+}
+
+/** Keep final move destinations intact after the editable mask is expanded and feathered. */
+export function preserveLocalEditMoveTargets(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  annotations: LocalEditAnnotation[] = [],
+  smartMasks?: ReadonlyMap<string, Uint8ClampedArray>,
+) {
+  if (width < 1 || height < 1 || pixels.length !== width * height * 4) return pixels;
+  const protection = new Uint8ClampedArray(pixels.length);
+  for (const annotation of normalizeLocalEditAnnotations(annotations)) {
+    const sources = annotation.move?.from || [];
+    sources.forEach((geometry, index) => {
+      applyLocalEditGeometryMask(
+        protection,
+        width,
+        height,
+        geometry,
+        "edit",
+        smartMasks?.get(`${annotation.id}:from:${index}`),
+      );
+    });
+    applyLocalEditGeometryMask(
+      protection,
+      width,
+      height,
+      annotation.geometry,
+      sources.length ? "protect" : "edit",
+      smartMasks?.get(annotation.id),
+    );
+  }
+  for (let index = 3; index < pixels.length; index += 4) {
+    if (protection[index] < 128) continue;
+    pixels[index - 3] = 255;
+    pixels[index - 2] = 255;
+    pixels[index - 1] = 255;
+    pixels[index] = 255;
+  }
+  return pixels;
 }
 
 /**
