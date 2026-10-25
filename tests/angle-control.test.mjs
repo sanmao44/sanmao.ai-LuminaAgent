@@ -334,6 +334,31 @@ test('builds reference-relative universal viewpoint prompts', () => {
   assert.doesNotMatch(prompt, /Image 2 is/);
 });
 
+test('anchors left and right camera moves to the source frame and preserves scene landmarks', () => {
+  const right = angle.createViewpointCamera();
+  right.yaw = 90;
+  const rightPrompt = angle.compileAngleTargetPrompt('', right);
+  const rightInstruction = angle.buildAngleTargetSemantic(right).horizontal_view.instruction;
+  assert.match(rightInstruction, /RIGHT edge of Image 1 as seen by its original viewer/);
+  assert.match(rightInstruction, /camera position, not the subject's anatomical side/);
+  assert.match(rightPrompt, /show the side of the unchanged subject that faces this camera position/);
+  assert.match(rightPrompt, /preserving their identity, count, depth order and relationships/);
+  assert.match(rightPrompt, /Reproject their screen positions with coherent parallax/);
+  assert.match(rightPrompt, /Never mirror, duplicate, relocate, erase or replace a landmark or prop/);
+
+  const left = angle.createViewpointCamera();
+  left.yaw = -90;
+  const leftInstruction = angle.buildAngleTargetSemantic(left).horizontal_view.instruction;
+  assert.match(leftInstruction, /LEFT edge of Image 1 as seen by its original viewer/);
+  assert.match(leftInstruction, /camera position, not the subject's anatomical side/);
+
+  const rear = angle.createViewpointCamera();
+  rear.yaw = 180;
+  const rearInstruction = angle.buildAngleTargetSemantic(rear).horizontal_view.instruction;
+  assert.match(rearInstruction, /directly behind the reference camera viewpoint by 180 degrees/);
+  assert.doesNotMatch(rearInstruction, /RIGHT edge|LEFT edge/);
+});
+
 test('builds scene-camera semantics and explicit lighting instructions', () => {
   const state = angle.normalizeAngleState({
     yaw: -90,
@@ -404,7 +429,13 @@ test('new relative directions cover both sides without anatomical assumptions', 
     state.yaw = yaw;
     const prompt = angle.compileAngleTargetPrompt('保留所有标识', state);
     assert.match(prompt, /Zero means the reference view/);
-    if (yaw) assert.ok(prompt.includes(`${Math.abs(yaw)} degrees to the ${yaw < 0 ? 'LEFT' : 'RIGHT'}`));
+    if (Math.abs(yaw) === 180) {
+      assert.match(prompt, /directly behind the reference camera viewpoint by 180 degrees/);
+    } else if (yaw) {
+      const side = yaw < 0 ? 'LEFT' : 'RIGHT';
+      assert.ok(prompt.includes(`${Math.abs(yaw)} degrees to the ${side}`));
+      assert.ok(prompt.includes(`${side} edge of Image 1 as seen by its original viewer`));
+    }
     if (Math.abs(yaw) > 90) assert.match(prompt, /Infer unseen surfaces conservatively/);
     assert.equal(prompt.match(/保留所有标识/g).length, 1);
   }

@@ -578,8 +578,10 @@ export function buildAngleTargetSemantic(camera: Pick<AngleCameraState, 'yaw' | 
     const yaw = effectiveAngle(target.yaw);
     horizontal.side = Math.abs(yaw) < 0.1 ? 'front' : yaw >= 0 ? 'reference_right' : 'reference_left';
     horizontal.instruction = Math.abs(yaw) < 0.1
-      ? 'Keep the horizontal camera direction of the reference image.'
-      : `Move the CAMERA approximately ${recordNumber(Math.abs(yaw))} degrees to the ${yaw > 0 ? 'RIGHT' : 'LEFT'} relative to the reference camera viewpoint, not the subject's assumed front.`;
+      ? 'Keep the horizontal camera position of the reference image.'
+      : yaw === 180
+        ? 'Move the CAMERA directly behind the reference camera viewpoint by 180 degrees. This is the opposite view, not a left or right turn of the subject.'
+        : `Move the CAMERA approximately ${recordNumber(Math.abs(yaw))} degrees to the ${yaw > 0 ? 'RIGHT' : 'LEFT'} relative to the reference camera viewpoint, toward the ${yaw > 0 ? 'RIGHT' : 'LEFT'} edge of Image 1 as seen by its original viewer. This means camera position, not the subject's anatomical side; do not mirror the image or turn the subject.`;
     vertical.instruction = Math.abs(target.pitch) < 0.1
       ? 'Keep the camera elevation of the reference image.'
       : `Move the camera ${target.pitch < 0 ? 'HIGHER, looking DOWNWARD' : 'LOWER, looking UPWARD'} by approximately ${recordNumber(Math.abs(target.pitch))} degrees relative to the reference viewpoint.`;
@@ -667,6 +669,9 @@ export function buildReferenceViewpointPrompt(note: string, input: AngleCameraSt
         : 'Move the CAMERA within the same physical environment and redirect its view toward overlapping scene landmarks. Do not rotate the room, furniture, landscape or entire scene as an object.',
       semantic.horizontal_view.instruction,
       semantic.vertical_view.instruction,
+      Math.abs(camera.yaw) >= 60 && Math.abs(camera.yaw) <= 105
+        ? 'At this near-side camera angle, show the side of the unchanged subject that faces this camera position. Do not rotate the head or body to keep the face aimed at the camera, and do not choose the profile direction merely from screen-left or screen-right.'
+        : '',
       'This is a camera change, not a head turn, subject rotation, mirror flip, flat image rotation, crop or perspective warp.',
     ].join('\n') : '',
     view.changeView ? [
@@ -675,6 +680,7 @@ export function buildReferenceViewpointPrompt(note: string, input: AngleCameraSt
       'The only intentional edit is the FINAL CAMERA position, elevation, lens, distance and framing requested above. Do not beautify, restyle, redraw, replace, simplify or add content.',
       'Do not change the subject into a different person, alter age or ethnicity, invent a new outfit, move hands or limbs, change the expression, remove distinctive details, add text or logos, or replace the setting.',
       'If a detail is not visible from the final camera, let it become naturally occluded. If a newly exposed surface must be inferred, reconstruct only the minimum continuation implied by Image 1; never use inference as permission to redesign the scene.',
+      'Keep distinctive foreground, middle-ground and background objects fixed in world space, preserving their identity, count, depth order and relationships. Reproject their screen positions with coherent parallax; only hide an object when target-view occlusion or framing explains it. Never mirror, duplicate, relocate, erase or replace a landmark or prop.',
     ].join('\n') : '',
     view.changeView ? [
       'DISTANCE AND FRAMING',
