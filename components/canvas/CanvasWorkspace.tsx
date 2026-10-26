@@ -8995,7 +8995,7 @@ export default function SuperCanvas() {
   );
 
   const applyCanvasMask = useCallback(
-    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0, moveGuideDataUrl?: string, moveSourceMaskDataUrl?: string) => {
+    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0, moveSourceMaskDataUrl?: string) => {
       const projectTask = captureProjectTask();
       const { updateDoc, readDocument, setSelectedIds, setSelectedGroupId, setReuseDraft } = projectTask;
       const node = maskNodeId
@@ -9028,9 +9028,6 @@ export default function SuperCanvas() {
         const uploaded = await uploadCanvasAsset(
           canvasFileFromDataUrl(maskDataUrl, `mask-${node.id}.png`),
         );
-        const moveGuide = moveGuideDataUrl
-          ? await uploadCanvasAsset(canvasFileFromDataUrl(moveGuideDataUrl, `move-guide-${node.id}.png`))
-          : undefined;
         const moveSourceMask = moveSourceMaskDataUrl
           ? await uploadCanvasAsset(canvasFileFromDataUrl(moveSourceMaskDataUrl, `move-source-mask-${node.id}.png`))
           : undefined;
@@ -9046,7 +9043,6 @@ export default function SuperCanvas() {
           mask: {
             assetId: uploaded.id,
             url: uploaded.url,
-            ...(moveGuide ? { sourceAssetId: moveGuide.id, sourceUrl: moveGuide.url } : {}),
             ...(moveSourceMask ? { moveSourceMaskAssetId: moveSourceMask.id, moveSourceMaskUrl: moveSourceMask.url } : {}),
             ...(annotations.length ? { annotations } : {}),
             feather: maskFeather,
@@ -9060,7 +9056,6 @@ export default function SuperCanvas() {
         const mask: CanvasMaskState = {
           assetId: uploaded.id,
           url: uploaded.url,
-          ...(moveGuide ? { sourceAssetId: moveGuide.id, sourceUrl: moveGuide.url } : {}),
           ...(moveSourceMask ? { moveSourceMaskAssetId: moveSourceMask.id, moveSourceMaskUrl: moveSourceMask.url } : {}),
           status: "pending",
           coverage: maskCoverage,
@@ -13943,7 +13938,8 @@ export default function SuperCanvas() {
           initialPrompt={editorPromptFor(maskNode)}
           initialAnnotations={maskNode.data.mask?.annotations || maskSettings?.mask?.annotations || []}
           initialFeather={maskNode.data.mask?.feather ?? maskSettings?.mask?.feather ?? 0}
-          onApply={(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl) => applyCanvasMask(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl)}
+          initialMoveGuide={Boolean(maskNode.data.mask?.sourceUrl || maskSettings?.mask?.sourceUrl)}
+          onApply={(value, coverage, prompt, annotations, feather, moveSourceMaskDataUrl) => applyCanvasMask(value, coverage, prompt, annotations, feather, moveSourceMaskDataUrl)}
           onCancel={() => setMaskNodeId(null)}
         />
       )}

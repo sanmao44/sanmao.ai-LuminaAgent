@@ -70,6 +70,22 @@ test("edit task state restores its source, mask and supported model selection", 
   assert.deepEqual(restored.annotations, [{ id: "region-1" }]);
 });
 
+test("restoring a task with an omitted legacy move guide unlocks the old destination mask", () => {
+  const task = editorTask.buildEditorTaskDraft({
+    ...baseEditor,
+    mode: "edit",
+    mask: "data:image/png;base64,MASK",
+    annotations: [{ id: "move-1", move: { from: [{ kind: "rectangle", x: 0.1, y: 0.1, width: 0.2, height: 0.2 }] } }],
+  }, "task-legacy-move", 123);
+  const restored = editorTask.restoreEditorTaskState({
+    ...task,
+    request: { ...task.request, moveGuideOmitted: true },
+  }, editorTask.findEditorTaskSource(task, []), []);
+
+  assert.equal(restored.legacyMoveTargetsProtected, true);
+  assert.equal(restored.sourceImageDataUrl, undefined);
+});
+
 test("editor task source recovery uses server-log references when local task references are omitted", () => {
   const source = editorTask.findEditorTaskSource(
     { id: "task-legacy", mode: "edit", prompt: "restore", request: { fidelity: "high" } },

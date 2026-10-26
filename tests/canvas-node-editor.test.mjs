@@ -866,7 +866,7 @@ test("mask removal clears both current and persisted generation parameters", () 
 });
 
 test("local edit editor reports saving state and passes coverage into the attached image state", () => {
-  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl\)\}/);
+  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, feather, moveSourceMaskDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, feather, moveSourceMaskDataUrl\)\}/);
   assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
   assert.match(component, /initialFeather=\{maskNode\.data\.mask\?\.feather \?\? maskSettings\?\.mask\?\.feather \?\? 0\}/);
   assert.match(component, /status: "pending"/);
@@ -882,8 +882,8 @@ test("applying a local edit returns to the node editor with the saved mask ready
   assert.ok(applyStart >= 0 && applyEnd > applyStart, "canvas mask apply handler should be present");
   assert.match(apply, /setExpandedEditorId\(node\.id\)/);
   assert.match(apply, /setMaskNodeId\(null\)/);
-  assert.match(apply, /const moveGuide = moveGuideDataUrl/);
-  assert.match(apply, /sourceAssetId: moveGuide\.id, sourceUrl: moveGuide\.url/);
+  assert.match(apply, /const moveSourceMask = moveSourceMaskDataUrl/);
+  assert.doesNotMatch(apply, /moveGuideDataUrl|sourceAssetId: moveGuide/);
   assert.match(apply, /const liveDraft = editorDrafts\[node\.id\]/);
   assert.match(apply, /liveDraft\?\.params \|\| existingDraft\.params/);
   assert.match(apply, /const nextPrompt = compileLocalEditPrompt\([\s\S]*prompt\?\.trim\(\) \|\| liveDraft\?\.prompt\?\.trim\(\) \|\| existingDraft\.prompt,[\s\S]*annotations/);

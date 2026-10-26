@@ -10,7 +10,6 @@ import {
   canResetLocalEditMask,
   calculateEditableCoverage as calculateLocalEditableCoverage,
   composeLocalEditMovePreview,
-  composeLocalEditMoveReference,
   composeLocalEditMoveSourceMask,
   compileLocalEditPrompt,
   createSeamlessLocalEditMask,
@@ -18,7 +17,6 @@ import {
   localEditFusionFeather,
   localEditMoveFusionFeather,
   normalizeLocalEditAnnotations,
-  preserveLocalEditMoveTargets,
   recoverLocalEditProtectedPixels,
   rasterizeLocalEditAnnotations,
   type LocalEditAnnotation,
@@ -48,7 +46,8 @@ export type LocalEditEditorProps = {
   initialPrompt?: string;
   initialAnnotations?: LocalEditAnnotation[];
   initialFeather?: number;
-  onApply: (maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation[], feather: number, moveGuideDataUrl?: string, moveSourceMaskDataUrl?: string) => void | Promise<void>;
+  initialMoveGuide?: boolean;
+  onApply: (maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation[], feather: number, moveSourceMaskDataUrl?: string) => void | Promise<void>;
   onCancel: () => void;
 };
 
@@ -288,7 +287,7 @@ function normalizeFeather(value: unknown) {
  * OpenAI-compatible mask: transparent pixels are regenerated and opaque
  * pixels are protected. The UI deliberately calls this a local edit.
  */
-export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialAnnotations = [], initialFeather = 0, onApply, onCancel }: LocalEditEditorProps) {
+export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialAnnotations = [], initialFeather = 0, initialMoveGuide = false, onApply, onCancel }: LocalEditEditorProps) {
   useBodyScrollLock(true);
   const canvasStageRef = useRef<HTMLDivElement | null>(null);
   const imageCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -588,6 +587,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
               mask.height,
               restoredAnnotations,
               smartMaskPixelsRef.current,
+              initialMoveGuide,
             )
             : new Uint8Array(mask.width * mask.height);
         } else {
@@ -631,7 +631,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       smartOperationRevisionRef.current += 1;
       smartBusyRef.current = false;
     };
-  }, [imageUrl, initialMaskDataUrl, initialFeather]);
+  }, [imageUrl, initialMaskDataUrl, initialFeather, initialMoveGuide]);
 
   function point(event: React.PointerEvent<HTMLCanvasElement>): Point {
     const canvas = overlayCanvasRef.current;
@@ -1561,13 +1561,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     const fusionFeather = hasMoves
       ? localEditMoveFusionFeather(feather, source.width, source.height)
       : localEditFusionFeather(feather);
-    const pixels = preserveLocalEditMoveTargets(
-      createSeamlessLocalEditMask(sourcePixels, source.width, source.height, fusionFeather),
-      source.width,
-      source.height,
-      annotationsRef.current,
-      smartMaskPixelsRef.current,
-    );
+    const pixels = createSeamlessLocalEditMask(sourcePixels, source.width, source.height, fusionFeather);
     outputContext.putImageData(imageDataFromPixels(pixels, output.width, output.height), 0, 0);
     return {
       dataUrl: output.toDataURL('image/png'),
@@ -1576,24 +1570,10 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     };
   }
 
-  function exportMoveGuideImage() {
+  function exportMoveSourceMask() {
     if (!annotationsRef.current.some((annotation) => annotation.move?.from.length)) return undefined;
-    const source = sourceImageRef.current;
     const imageCanvas = imageCanvasRef.current;
-    if (!source || !imageCanvas) throw new Error('移动参考图导出失败，请重试');
-    const output = document.createElement('canvas');
-    output.width = imageCanvas.width;
-    output.height = imageCanvas.height;
-    const outputContext = output.getContext('2d');
-    if (!outputContext) throw new Error('移动参考图导出失败，请重试');
-    const pixels = composeLocalEditMoveReference(
-      source.data,
-      imageCanvas.width,
-      imageCanvas.height,
-      annotationsRef.current,
-      smartMaskPixelsRef.current,
-    );
-    outputContext.putImageData(imageDataFromPixels(pixels, output.width, output.height), 0, 0);
+    if (!imageCanvas) throw new Error('移动原位置范围导出失败，请重试');
     const sourceMask = document.createElement('canvas');
     sourceMask.width = imageCanvas.width;
     sourceMask.height = imageCanvas.height;
@@ -1606,10 +1586,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       smartMaskPixelsRef.current,
     );
     sourceMaskContext.putImageData(imageDataFromPixels(sourceMaskPixels, sourceMask.width, sourceMask.height), 0, 0);
-    return {
-      guideDataUrl: output.toDataURL('image/png'),
-      sourceMaskDataUrl: sourceMask.toDataURL('image/png'),
-    };
+    return sourceMask.toDataURL('image/png');
   }
 
   async function applyLocalEdit() {
@@ -1624,15 +1601,14 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
         setError('请先指定编辑区域，再应用局部编辑');
         return;
       }
-      const moveAssets = exportMoveGuideImage();
+      const moveSourceMaskDataUrl = exportMoveSourceMask();
       await onApply(
         exported.dataUrl,
         exported.coverage,
         compileLocalEditPrompt(prompt, annotations),
         annotations,
         exported.feather,
-        moveAssets?.guideDataUrl,
-        moveAssets?.sourceMaskDataUrl,
+        moveSourceMaskDataUrl,
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '局部编辑范围导出失败，图片可能受跨域保护');

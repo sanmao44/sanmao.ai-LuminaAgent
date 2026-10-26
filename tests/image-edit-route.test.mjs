@@ -103,7 +103,23 @@ test("source resolution failures finish the pre-existing edit record", async () 
   assert.equal(route.logs.get("local-edit-task-1").errorCode, undefined);
 });
 
-test("move edits use the move guide for both Provider conditioning and protected-pixel compositing", async () => {
+test("move edits without a guide condition the Provider and composite against the original image", async () => {
+  const moveSourceMask = "data:image/png;base64,bW92ZS1zb3VyY2UtbWFzaw==";
+  const mask = "data:image/png;base64,bW92ZS1tYXNr";
+  const source = "https://example.test/source.png";
+  const route = createEditRoute(async (reference) => reference);
+
+  const response = await route.POST(editRequest({ moveSourceMask, mask }));
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(route.calls.editInputs[0].references, [source]);
+  assert.equal(route.calls.compositeInputs[0].sourceReference, source);
+  assert.equal(route.calls.compositeInputs[0].maskReference, mask);
+  assert.equal(route.calls.compositeInputs[0].options.moveSourceMaskReference, moveSourceMask);
+  assert.equal(route.calls.compositeInputs[0].options.moveSourceOriginalReference, source);
+});
+
+test("legacy move guides remain supported for persisted edit requests", async () => {
   const moveGuide = "data:image/png;base64,bW92ZS1ndWlkZQ==";
   const moveSourceMask = "data:image/png;base64,bW92ZS1zb3VyY2UtbWFzaw==";
   const mask = "data:image/png;base64,bW92ZS1tYXNr";

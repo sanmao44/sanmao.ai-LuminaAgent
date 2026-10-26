@@ -20,6 +20,7 @@ export type EditorRequestState = {
   customHeight: number;
   mask: string | null;
   sourceImageDataUrl?: string;
+  legacyMoveTargetsProtected?: boolean;
   moveSourceMaskDataUrl?: string;
   annotations?: readonly unknown[];
   feather?: number;

@@ -5281,7 +5281,7 @@ export default function Page() {
             setEditor(restoredEditor);
             setSection('generate');
             if (request.maskOmitted) return notify('任务结果仍可恢复，但原蒙版未能随任务保存；请重新绘制编辑范围后再提交。');
-            if (request.moveGuideOmitted) return notify('任务结果仍可恢复，但移动引导图未能随任务保存；请重新确认移动范围后再提交。');
+            if (request.moveGuideOmitted) return notify('旧任务的移动引导图未能随任务保存；请在局部编辑器中重新确认并应用移动范围后再提交。');
             if (request.moveSourceMaskOmitted) return notify('任务结果仍可恢复，但移动原位置范围未能随任务保存；请重新确认移动范围后再提交。');
             notify('已恢复局部编辑参数；不会自动重新提交。');
             return;
@@ -5325,7 +5325,10 @@ export default function Page() {
         if (request.upscaleOutputFormat === 'png' || request.upscaleOutputFormat === 'jpg' || request.upscaleOutputFormat === 'bmp') setGenerateUpscaleOutputFormat(request.upscaleOutputFormat);
         if (typeof request.upscaleOutputQuality === 'number' && request.upscaleOutputQuality >= 30 && request.upscaleOutputQuality <= 100) setGenerateUpscaleOutputQuality(Math.round(request.upscaleOutputQuality));
         setGenerateRefs(request.references || []);
-        setGenerateMask(request.mask || null);
+        setGenerateMask(request.mask ? {
+            ...request.mask,
+            ...(request.moveGuideOmitted ? { legacyMoveTargetsProtected: true } : {})
+        } : null);
         setSection('generate');
         notify(request.referencesOmitted ? '参数已恢复，但参考图较大未能随任务保存，请重新添加参考图' : '已恢复这一轮的生图参数');
     }
@@ -5438,9 +5441,6 @@ export default function Page() {
         const requestedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
         const submittedModelId = requestedModelId;
         const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : submittedImageModelOptions.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : selectAutomaticModel(submittedImageModelOptions, state.settings.defaultProviderId, state.settings.defaultImageModelId);
-        const moveGuideDataUrl = !isAngleGeneration && submittedImageRefs.length === 1
-            ? (savedRequest ? savedRequest.mask?.sourceImageDataUrl : generateMask?.sourceImageDataUrl) || ''
-            : '';
         const moveSourceMaskDataUrl = !isAngleGeneration && submittedImageRefs.length === 1
             ? (savedRequest ? savedRequest.mask?.moveSourceMaskDataUrl : generateMask?.moveSourceMaskDataUrl) || ''
             : '';
@@ -5460,7 +5460,7 @@ export default function Page() {
         const taskId = uid('generate-task');
         const taskPrompt = submittedPrompt || 'Upscale this image';
         const taskRefs = submittedRefs;
-        const taskReferenceBytes = submittedImageReferenceUrls.reduce((total, reference)=>total + reference.length, 0) + (isAngleGeneration ? 0 : (savedRequest ? savedRequest.mask?.dataUrl.length || 0 : generateMask?.dataUrl.length || 0) + moveGuideDataUrl.length + moveSourceMaskDataUrl.length);
+        const taskReferenceBytes = submittedImageReferenceUrls.reduce((total, reference)=>total + reference.length, 0) + (isAngleGeneration ? 0 : (savedRequest ? savedRequest.mask?.dataUrl.length || 0 : generateMask?.dataUrl.length || 0) + moveSourceMaskDataUrl.length);
         if (taskReferenceBytes > 7000000) return notify('参考图和局部编辑范围总大小过大，已停止提交；请减少图片数量或重新上传后再试');
         if (submittedUpscaleMode && (submittedRefs.some((reference)=>reference.kind !== 'image') || submittedImageRefs.length !== 1)) return notify('本地超分需要恰好 1 张图片引用，文本或视频不能用于超分');
         const taskMode = savedRequest ? overrides?.mode || (submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate') : submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate';
@@ -5714,7 +5714,6 @@ export default function Page() {
                                     outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
                                      background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
                                      mask: taskMask,
-                                     moveGuide: moveGuideDataUrl || undefined,
                                      moveSourceMask: moveSourceMaskDataUrl || undefined,
                                       references: submittedImageReferenceUrls,
                                     referenceImages: referenceRecords,
@@ -5815,7 +5814,6 @@ export default function Page() {
                     outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
                     background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
                     mask: taskMask,
-                    moveGuide: moveGuideDataUrl || undefined,
                     moveSourceMask: moveSourceMaskDataUrl || undefined,
                     references: submittedImageReferenceUrls,
                     referenceImages: referenceRecords,
@@ -9967,15 +9965,15 @@ export default function Page() {
                                 initialPrompt: generatePrompt,
                                 initialAnnotations: generateMask?.referenceId === generateRefs[0].id ? generateMask.annotations || [] : [],
                                 initialFeather: generateMask?.referenceId === generateRefs[0].id ? generateMask.feather || 0 : 0,
+                initialMoveGuide: Boolean(generateMask?.sourceImageDataUrl || generateMask?.legacyMoveTargetsProtected),
                                 onCancel: ()=>setMaskEditorOpen(false),
-                                onApply: (dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl)=>{
+                                onApply: (dataUrl, coverage, prompt, annotations, feather, moveSourceMaskDataUrl)=>{
                                     setGenerateMask({
                                         referenceId: generateRefs[0].id,
                                         dataUrl,
                                         coverage,
                                         annotations,
                                         feather,
-                                        ...(moveGuideDataUrl ? { sourceImageDataUrl: moveGuideDataUrl } : {}),
                                         ...(moveSourceMaskDataUrl ? { moveSourceMaskDataUrl } : {})
                                     });
                                     setGenerateModelId((current)=>current === 'auto' || availableEditModels.some((model)=>model.id === current) ? current : 'auto');
@@ -12734,15 +12732,16 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 initialPrompt: editor.prompt,
                 initialAnnotations: editor.annotations || [],
                 initialFeather: editor.feather || 0,
+                initialMoveGuide: Boolean(editor.sourceImageDataUrl || editor.legacyMoveTargetsProtected),
                 onCancel: ()=>setEditorMaskOpen(false),
-                onApply: (dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl)=>{
+                onApply: (dataUrl, coverage, prompt, annotations, feather, moveSourceMaskDataUrl)=>{
                     setEditor((current)=>current ? {
                             ...current,
                             mask: dataUrl,
                             prompt,
                             annotations,
                             feather,
-                            sourceImageDataUrl: moveGuideDataUrl || undefined,
+                            sourceImageDataUrl: undefined,
                             moveSourceMaskDataUrl: moveSourceMaskDataUrl || undefined,
                             sourceUrl: undefined
                         } : current);

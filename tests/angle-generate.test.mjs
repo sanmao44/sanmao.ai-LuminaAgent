@@ -28,7 +28,7 @@ test('model capability matching requires every capability and rejects incomplete
 });
 
 function harness(options = {}) {
-  const calls = { edits: [], generations: [], logs: [], finishes: [], persisted: [], releases: 0, modelLookups: [], generationLookups: [], capabilityLookups: [], candidateLookups: [], intentInputs: [] };
+  const calls = { edits: [], generations: [], composites: [], logs: [], finishes: [], persisted: [], releases: 0, modelLookups: [], generationLookups: [], capabilityLookups: [], candidateLookups: [], intentInputs: [] };
   const runtime = options.runtime || { provider: { id: 'test-provider', name: 'Test' }, model: { id: 'test-edit', rawId: 'gpt-image-2', displayName: 'Test Edit', capabilities: ['generate', 'edit', 'reference'] } };
   const route = load(routeSource, {
     '@/lib/angle-control': angle,
@@ -81,7 +81,8 @@ function harness(options = {}) {
     '@/lib/reference-images': { referenceRecordsForLog: value => value || [] },
     '@/lib/generation-source': { normalizeGenerationSource: value => value || 'workspace' },
     '@/lib/local-edit-composite': {
-      enforceLocalEditMask: async images => {
+      enforceLocalEditMask: async (images, sourceReference, maskReference, compositeOptions) => {
+        calls.composites.push({ sourceReference, maskReference, options: compositeOptions });
         if (options.localEditError) throw options.localEditError;
         return images;
       },
@@ -137,6 +138,27 @@ test('single-reference viewpoint request reaches editImage with the original and
   assert.equal(api.calls.logs[0].angle.camera.coordinate_system, 'reference-relative-v2');
   assert.equal(api.calls.logs[0].angle.camera.viewpoint.lighting.temperature, 3200);
   assert.equal(api.calls.releases, 1);
+});
+
+test('text-guided move edits send the original image and source mask without a synthetic guide', async () => {
+  const api = harness({ editImages: [{ url: 'https://example.test/result.png' }] });
+  const mask = 'data:image/png;base64,bWFzaw==';
+  const moveSourceMask = 'data:image/png;base64,c291cmNlLW1hc2s=';
+  const response = await api.post({
+    imageOperation: 'edit',
+    references: [reference],
+    mask,
+    moveSourceMask,
+    prompt: 'Move the object from source box [10%, 20%]-[30%, 40%] to target box [60%, 20%]-[80%, 40%].',
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(api.calls.edits[0].references, [reference]);
+  assert.equal(api.calls.edits[0].mask, mask);
+  assert.equal(api.calls.composites[0].sourceReference, reference);
+  assert.equal(api.calls.composites[0].maskReference, mask);
+  assert.equal(api.calls.composites[0].options.moveSourceMaskReference, moveSourceMask);
+  assert.equal(api.calls.composites[0].options.moveSourceOriginalReference, reference);
 });
 
 test('optional guide preserves original-first ordering and original-light instructions', async () => {

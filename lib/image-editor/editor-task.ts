@@ -196,6 +196,7 @@ export function restoreEditorTaskState(
     annotations,
     feather: Number.isFinite(feather) ? Math.max(0, Math.min(48, Math.round(feather))) : 0,
     ...(typeof mask?.sourceImageDataUrl === "string" ? { sourceImageDataUrl: mask.sourceImageDataUrl } : {}),
+    ...(request.moveGuideOmitted === true ? { legacyMoveTargetsProtected: true } : {}),
     ...(typeof mask?.moveSourceMaskDataUrl === "string" ? { moveSourceMaskDataUrl: mask.moveSourceMaskDataUrl } : {}),
     scale: 2,
     targetSize: "auto",

@@ -152,6 +152,15 @@ export function localEditGeometryBounds(geometry: LocalEditAnnotationGeometry) {
   return { x: 0, y: 0, width: 0.01, height: 0.01 };
 }
 
+function localEditGeometryLocation(geometry: LocalEditAnnotationGeometry) {
+  const bounds = localEditGeometryBounds(geometry);
+  const left = clampUnit(bounds.x);
+  const top = clampUnit(bounds.y);
+  const right = clampUnit(bounds.x + bounds.width);
+  const bottom = clampUnit(bounds.y + bounds.height);
+  return `[${(left * 100).toFixed(1)}%, ${(top * 100).toFixed(1)}%]-[${(right * 100).toFixed(1)}%, ${(bottom * 100).toFixed(1)}%]`;
+}
+
 function sourcePoint(point: LocalEditPoint, width: number, height: number) {
   return { x: clampUnit(point.x) * width, y: clampUnit(point.y) * height };
 }
@@ -259,17 +268,11 @@ export function applyLocalEditAnnotationMask(
     applyLocalEditGeometryMask(target, width, height, annotation.geometry, "edit", smartMaskPixels);
     const expandedTarget = expandLocalEditMask(target, width, height, 1);
     for (let index = 3; index < pixels.length; index += 4) {
-      if (target[index] < 128) {
-        pixels[index - 3] = 255;
-        pixels[index - 2] = 255;
-        pixels[index - 1] = 255;
-        pixels[index] = 255;
-      } else if (expandedTarget[index] < 128) {
-        pixels[index - 3] = 255;
-        pixels[index - 2] = 255;
-        pixels[index - 1] = 255;
-        pixels[index] = 0;
-      }
+      if (expandedTarget[index] >= 128) continue;
+      pixels[index - 3] = 255;
+      pixels[index - 2] = 255;
+      pixels[index - 1] = 255;
+      pixels[index] = 0;
     }
     return pixels;
   }
@@ -298,6 +301,7 @@ export function recoverLocalEditProtectedPixels(
   height: number,
   annotations: LocalEditAnnotation[],
   smartMasks?: ReadonlyMap<string, Uint8ClampedArray>,
+  legacyMoveTargetsProtected = false,
 ) {
   const annotationPixels = rasterizeLocalEditAnnotations(width, height, annotations, smartMasks);
   const pixelCount = Math.min(
@@ -310,6 +314,16 @@ export function recoverLocalEditProtectedPixels(
     const alpha = pixel * 4 + 3;
     if (persistedPixels[alpha] >= 250 && annotationPixels[alpha] < 250) {
       protectedPixels[pixel] = 1;
+    }
+  }
+  if (legacyMoveTargetsProtected) {
+    const targets = createProtectedMask(width, height);
+    for (const annotation of normalizeLocalEditAnnotations(annotations)) {
+      if (!annotation.move?.from.length) continue;
+      applyLocalEditGeometryMask(targets, width, height, annotation.geometry, "edit", smartMasks?.get(annotation.id));
+    }
+    for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+      if (targets[pixel * 4 + 3] < 128) protectedPixels[pixel] = 0;
     }
   }
   return protectedPixels;
@@ -353,10 +367,13 @@ export function compileLocalEditPrompt(prompt: string, annotations: LocalEditAnn
     .map((annotation, index) => {
       const description = annotation.description.trim();
       if (annotation.move?.from.length) {
-        const sourceLocations = annotation.move.from.length > 1 ? "所有记录的原位置" : "原位置";
+        const sourceLocations = annotation.move.from
+          .map((geometry, sourceIndex) => `源框 ${sourceIndex + 1} ${localEditGeometryLocation(geometry)}`)
+          .join("、");
+        const targetLocation = localEditGeometryLocation(annotation.geometry);
         return {
           index: index + 1,
-          text: `移动命令（按顺序执行）：1. 完整清除${sourceLocations}的物体及其残影，并依据周围纹理、透视、光照和景深重建被遮挡背景；2. 将移动参考图中已放到目标位置的同一物体完整保留，保持外观、比例、姿态和光影，不要重新复制或改造；3. 让源位置补景和目标位置边缘都与邻近画面自然融合。不要移动选区外的人物、主体或画面构图，不要留下重复物体、矩形边界、硬边、透明洞或拼接痕迹。${description ? `补充说明：${description}` : ""}`,
+          text: `移动命令（基于原图、蒙版和拖动位置执行）：在原图中识别 ${sourceLocations} 内的对象，物体身份与外观以原图内容为准；将同一对象移入目标框 ${targetLocation}，保持大小、比例、姿态和光影，不要复制或改造对象。清除每个源框内的对象及残影，并根据邻近纹理、透视、光照和景深补全旧位置；让旧位置补景和目标框边缘与周围画面自然融合。不要移动选区外的人物、主体或画面构图，不要留下重复物体、矩形边界、硬边、透明洞或拼接痕迹。${description ? `补充说明：${description}` : ""}`,
         };
       }
       return { index: index + 1, text: description };
@@ -821,47 +838,6 @@ export function createSeamlessLocalEditMask(
     height,
     fusionFeather,
   );
-}
-
-/** Keep final move destinations intact after the editable mask is expanded and feathered. */
-export function preserveLocalEditMoveTargets(
-  pixels: Uint8ClampedArray,
-  width: number,
-  height: number,
-  annotations: LocalEditAnnotation[] = [],
-  smartMasks?: ReadonlyMap<string, Uint8ClampedArray>,
-) {
-  if (width < 1 || height < 1 || pixels.length !== width * height * 4) return pixels;
-  const protection = new Uint8ClampedArray(pixels.length);
-  for (const annotation of normalizeLocalEditAnnotations(annotations)) {
-    const sources = annotation.move?.from || [];
-    sources.forEach((geometry, index) => {
-      applyLocalEditGeometryMask(
-        protection,
-        width,
-        height,
-        geometry,
-        "edit",
-        smartMasks?.get(`${annotation.id}:from:${index}`),
-      );
-    });
-    applyLocalEditGeometryMask(
-      protection,
-      width,
-      height,
-      annotation.geometry,
-      sources.length ? "protect" : "edit",
-      smartMasks?.get(annotation.id),
-    );
-  }
-  for (let index = 3; index < pixels.length; index += 4) {
-    if (protection[index] < 128) continue;
-    pixels[index - 3] = 255;
-    pixels[index - 2] = 255;
-    pixels[index - 1] = 255;
-    pixels[index] = 255;
-  }
-  return pixels;
 }
 
 /**
