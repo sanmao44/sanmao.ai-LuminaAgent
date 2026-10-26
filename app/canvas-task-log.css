@@ -5,3 +5,8 @@
   .canvas-task-log-card{grid-template-columns:54px minmax(0,1fr) auto;grid-template-areas:"preview main status" "preview meta actions";gap:6px}
   .canvas-task-log-card>.canvas-task-log-meta time{margin-left:0}
 }
+
+.canvas-task-log-panel > .canvas-side-panel-body {
+  flex: 1 1 0;
+  scrollbar-gutter: stable;
+}
