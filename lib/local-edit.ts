@@ -356,7 +356,7 @@ export function compileLocalEditPrompt(prompt: string, annotations: LocalEditAnn
         const sourceLocations = annotation.move.from.length > 1 ? "所有记录的原位置" : "原位置";
         return {
           index: index + 1,
-          text: `移动参考图已经标出最终摆放：将圈选物体完整迁移到目标位置，严格保持其外观、比例、姿态和光影；移除${sourceLocations}的该物体并自然补全背景。不要移动选区外的人物、主体或画面构图，不要留下重复物体、矩形边界、硬边、透明洞或拼接痕迹。${description ? `补充说明：${description}` : ""}`,
+          text: `移动命令（按顺序执行）：1. 完整清除${sourceLocations}的物体及其残影，并依据周围纹理、透视、光照和景深重建被遮挡背景；2. 将移动参考图中已放到目标位置的同一物体完整保留，保持外观、比例、姿态和光影，不要重新复制或改造；3. 让源位置补景和目标位置边缘都与邻近画面自然融合。不要移动选区外的人物、主体或画面构图，不要留下重复物体、矩形边界、硬边、透明洞或拼接痕迹。${description ? `补充说明：${description}` : ""}`,
         };
       }
       return { index: index + 1, text: description };
@@ -683,7 +683,8 @@ export function localEditMoveGuideFeatherRadius(width: number, height: number) {
 }
 
 export function localEditMoveFusionFeather(radius: number, width: number, height: number) {
-  return Math.max(localEditFusionFeather(radius), localEditMoveGuideFeatherRadius(width, height));
+  const transitionRadius = Math.max(4, Math.min(32, Math.round(Math.max(width, height) * 0.01)));
+  return Math.max(localEditFusionFeather(radius), transitionRadius);
 }
 
 function localEditMoveOperations(

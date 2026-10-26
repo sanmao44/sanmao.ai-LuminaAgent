@@ -22,8 +22,8 @@ const source = (await readFile(sourceUrl, 'utf8'))
     'const resolveStoredImageReference = async () => { throw new Error("stored image is unavailable"); };',
   )
   .replace(
-    "import { repairLocalEditMoveSource } from './local-edit';",
-    `const { repairLocalEditMoveSource } = await import(${JSON.stringify(localEditRuntime)});`,
+    /import \{[\s\S]*?\} from '\.\/local-edit';/u,
+    `const { expandLocalEditMask, featherLocalEditMask, localEditMoveGuideFeatherRadius, repairLocalEditMoveSource } = await import(${JSON.stringify(localEditRuntime)});`,
   );
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -182,10 +182,59 @@ test('move compositing inpaints a retained Provider duplicate from its surroundi
   );
   const output = await raw(Buffer.from(result[0].url.split(',')[1], 'base64'));
 
-  assert.deepEqual([...output.data.subarray(1 * 4, 2 * 4)], [90, 90, 90, 255], 'a retained duplicate is repaired from the Provider background');
+  assert.ok(output.data[1 * 4] < providerPixels[1 * 4], 'a retained duplicate is softened toward the Provider background');
+  assert.notDeepEqual([...output.data.subarray(1 * 4, 2 * 4)], [...providerPixels.subarray(1 * 4, 2 * 4)], 'the retained subject core is repaired');
   assert.notDeepEqual([...output.data.subarray(1 * 4, 2 * 4)], [...guidePixels.subarray(1 * 4, 2 * 4)], 'the rough synthetic guide must not replace the whole source region');
   assert.deepEqual([...output.data.subarray(3 * 4, 4 * 4)], [220, 0, 0, 255], 'the moved object remains at the destination');
   assert.deepEqual([...output.data.subarray(0, 4)], [...guidePixels.subarray(0, 4)], 'protected pixels stay unchanged from the move guide');
+});
+
+test('move compositing removes a retained subject with a feathered source repair halo', async () => {
+  const width = 48;
+  const height = 32;
+  const originalPixels = Buffer.alloc(width * height * 4);
+  const guidePixels = Buffer.alloc(width * height * 4);
+  const providerPixels = Buffer.alloc(width * height * 4);
+  const editMaskPixels = Buffer.alloc(width * height * 4);
+  const sourceMaskPixels = Buffer.alloc(width * height * 4);
+  const subjectAt = (x, y, centerX) => ((x - centerX) / 4) ** 2 + ((y - 16) / 6) ** 2 <= 1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      const background = [40 + x * 2, 70 + y, 120 + x];
+      const originalSubject = subjectAt(x, y, 10);
+      const targetSubject = subjectAt(x, y, 36);
+      originalPixels.set([...(originalSubject ? [220, 24, 32] : background), 255], index);
+      guidePixels.set([...(targetSubject ? [220, 24, 32] : background), 255], index);
+      providerPixels.set([...(originalSubject || targetSubject ? [220, 24, 32] : background), 255], index);
+      const sourceEdit = subjectAt(x, y, 10) || (Math.abs(x - 10) <= 5 && Math.abs(y - 16) <= 7);
+      const targetRing = !targetSubject && Math.abs(x - 36) <= 5 && Math.abs(y - 16) <= 7;
+      editMaskPixels.set([255, 255, 255, sourceEdit || targetRing ? 0 : 255], index);
+      sourceMaskPixels.set([255, 255, 255, originalSubject ? 0 : 255], index);
+    }
+  }
+
+  const png = async (pixels) => sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer();
+  const [original, guide, provider, editMask, sourceMask] = await Promise.all([
+    png(originalPixels), png(guidePixels), png(providerPixels), png(editMaskPixels), png(sourceMaskPixels),
+  ]);
+  const result = await composite.enforceLocalEditMask(
+    [{ url: dataUrl(provider) }],
+    dataUrl(guide),
+    dataUrl(editMask),
+    {
+      moveSourceMaskReference: dataUrl(sourceMask),
+      moveSourceOriginalReference: dataUrl(original),
+    },
+  );
+  const output = await raw(Buffer.from(result[0].url.split(',')[1], 'base64'));
+  const pixelAt = (x, y) => [...output.data.subarray((y * width + x) * 4, (y * width + x) * 4 + 3)];
+
+  assert.ok(pixelAt(10, 16)[0] < 120, 'the old subject core is removed instead of surviving as a duplicate');
+  assert.ok(pixelAt(10, 10)[0] < 120, 'the subject edge is repaired without a red silhouette rim');
+  assert.ok(Math.abs(pixelAt(9, 16)[0] - pixelAt(8, 16)[0]) < 20, 'the reconstructed background follows its neighboring gradient');
+  assert.deepEqual(pixelAt(36, 16), [220, 24, 32], 'the moved subject remains at the destination');
+  assert.deepEqual(pixelAt(2, 2), [44, 72, 122], 'pixels outside both edit regions remain unchanged');
 });
 
 test('feathered masks are blended and differently sized inputs are aligned to the Provider result', async () => {

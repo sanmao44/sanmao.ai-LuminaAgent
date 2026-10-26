@@ -150,6 +150,11 @@ test("annotation descriptions compile once without duplicating the generated sec
   };
   const movePrompt = raster.compileLocalEditPrompt("保持主体、姿态和构图不变，只编辑指定范围。", [moved]);
   assert.doesNotMatch(movePrompt, /保持主体、姿态和构图不变/);
+  assert.match(movePrompt, /移动命令（按顺序执行）/);
+  assert.match(movePrompt, /完整清除原位置的物体及其残影/);
+  assert.match(movePrompt, /依据周围纹理、透视、光照和景深重建被遮挡背景/);
+  assert.match(movePrompt, /目标位置的同一物体完整保留/);
+  assert.match(movePrompt, /源位置补景和目标位置边缘都与邻近画面自然融合/);
   assert.match(movePrompt, /不要移动选区外的人物、主体或画面构图/);
   const noBaseCompiled = raster.compileLocalEditPrompt("", [moved]);
   assert.equal(raster.compileLocalEditPrompt(noBaseCompiled, [moved]), noBaseCompiled);
@@ -279,8 +284,8 @@ test("moving a selection edits its source and target fusion ring while protectin
   assert.equal(alphaAt(repeatedMask, 44, 12), 0, "previous target becomes the next source");
   assert.equal(alphaAt(repeatedMask, 55, 12), 255, "final inserted object remains protected");
   const compiled = raster.compileLocalEditPrompt("保持光影自然", [moved]);
-  assert.match(compiled, /移动参考图已经标出最终摆放/);
-  assert.match(compiled, /将圈选物体完整迁移到目标位置/);
+  assert.match(compiled, /移动命令（按顺序执行）/);
+  assert.match(compiled, /将移动参考图中已放到目标位置的同一物体完整保留/);
   assert.match(compiled, /不要移动选区外的人物、主体或画面构图/);
   assert.match(compiled, /透明洞或拼接痕迹/);
   assert.doesNotMatch(compiled, /移动方向/);
@@ -397,7 +402,9 @@ test("move preview repairs the source image and feathers the inserted object's c
   const guide = raster.composeLocalEditMoveReference(source, width, height, [annotation]);
   assert.equal(guide[(16 * width + 16) * 4 + 3], 255, "provider guide remains fully opaque");
   assert.notDeepEqual([...guide.slice((16 * width + 16) * 4, (16 * width + 16) * 4 + 3)], [230, 40, 30]);
-  assert.equal(raster.localEditMoveFusionFeather(0, 1024, 512), 4, "move masks reserve enough fusion for the guide edge");
+  assert.equal(raster.localEditMoveGuideFeatherRadius(1920, 1080), 8, "the copied subject keeps a tighter matte edge");
+  assert.equal(raster.localEditMoveFusionFeather(0, 1024, 512), 10, "the background transition is wider than the subject matte edge");
+  assert.equal(raster.localEditMoveFusionFeather(0, 1920, 1080), 19, "large images receive a proportionate fusion band");
 });
 
 test("moving a smart selection masks its original and translated smart pixels", () => {
