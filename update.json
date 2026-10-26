@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.101/SANMAO.AI-0.7.101.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.101/SANMAO.AI-0.7.101.zip"
   ],
-  "sha256": "42def9c265e938fc1e2fdce10537f7db72e2b68759f467d8559ba79b90cf311d",
+  "sha256": "ae19d052e2800309f1191e4d1b2d0e8a80465f377447d66859ad9209e9598e4d",
   "notes": [
     "修复画布局部移动编辑中的蒙版参数丢失、旧位置残留和背景补全合成问题。",
     "优化大角度人物视角转换的控制方向与场景保真，并加强编辑提示约束。",
