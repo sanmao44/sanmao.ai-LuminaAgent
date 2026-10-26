@@ -11,13 +11,14 @@ import {
   calculateEditableCoverage as calculateLocalEditableCoverage,
   composeLocalEditMovePreview,
   composeLocalEditMoveReference,
+  composeLocalEditMoveSourceMask,
   compileLocalEditPrompt,
   createSeamlessLocalEditMask,
   featherLocalEditMask,
   localEditFusionFeather,
-  localEditMoveGuideFeatherRadius,
-  moveLocalEditPixels,
+  localEditMoveFusionFeather,
   normalizeLocalEditAnnotations,
+  preserveLocalEditMoveTargets,
   recoverLocalEditProtectedPixels,
   rasterizeLocalEditAnnotations,
   type LocalEditAnnotation,
@@ -47,7 +48,7 @@ export type LocalEditEditorProps = {
   initialPrompt?: string;
   initialAnnotations?: LocalEditAnnotation[];
   initialFeather?: number;
-  onApply: (maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation[], feather: number, moveGuideDataUrl?: string) => void | Promise<void>;
+  onApply: (maskDataUrl: string, coverage: number, prompt: string, annotations: LocalEditAnnotation[], feather: number, moveGuideDataUrl?: string, moveSourceMaskDataUrl?: string) => void | Promise<void>;
   onCancel: () => void;
 };
 
@@ -97,8 +98,6 @@ type MovingAnnotation = {
   startY: number;
   initial: LocalEditAnnotation;
   before: HistorySnapshot;
-  dragImage: ImageData;
-  selectionMask: Uint8ClampedArray;
   sourceGeometry: LocalEditAnnotationGeometry;
   isPendingDraft: boolean;
   pendingIsExisting: boolean;
@@ -293,6 +292,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   useBodyScrollLock(true);
   const canvasStageRef = useRef<HTMLDivElement | null>(null);
   const imageCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const movePreviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -538,7 +538,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     const image = new Image();
     image.onload = () => {
       if (cancelled) return;
-      const canvases = [imageCanvasRef.current, overlayCanvasRef.current, maskCanvasRef.current];
+      const canvases = [imageCanvasRef.current, movePreviewCanvasRef.current, overlayCanvasRef.current, maskCanvasRef.current];
       canvases.forEach((canvas) => {
         if (canvas) {
           canvas.width = image.naturalWidth;
@@ -875,22 +875,25 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     return featherLocalEditMask(selection.data, width, height, featherRadius);
   }
 
-  function renderMovePreview(nextAnnotations = annotationsRef.current) {
+  function renderMovePreview(
+    nextAnnotations = annotationsRef.current,
+    smartMasks: ReadonlyMap<string, Uint8ClampedArray> = smartMaskPixelsRef.current,
+  ) {
     const source = sourceImageRef.current;
-    const imageCanvas = imageCanvasRef.current;
-    const imageContext = imageCanvas?.getContext('2d');
-    if (!source || !imageCanvas || !imageContext) return false;
+    const previewCanvas = movePreviewCanvasRef.current;
+    const previewContext = previewCanvas?.getContext('2d');
+    if (!source || !previewCanvas || !previewContext) return false;
     const hasMove = nextAnnotations.some((annotation) => annotation.move?.from.length);
     const pixels = hasMove
       ? composeLocalEditMovePreview(
           source.data,
-          imageCanvas.width,
-          imageCanvas.height,
+          previewCanvas.width,
+          previewCanvas.height,
           nextAnnotations,
-          smartMaskPixelsRef.current,
+          smartMasks,
         )
-      : new Uint8ClampedArray(source.data);
-    imageContext.putImageData(imageDataFromPixels(pixels, imageCanvas.width, imageCanvas.height), 0, 0);
+      : new Uint8ClampedArray(source.data.length);
+    previewContext.putImageData(imageDataFromPixels(pixels, previewCanvas.width, previewCanvas.height), 0, 0);
     return hasMove;
   }
 
@@ -1014,10 +1017,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     event.preventDefault();
     event.stopPropagation();
     const canvas = overlayCanvasRef.current;
-    const maskCanvas = maskCanvasRef.current;
     const imageCanvas = imageCanvasRef.current;
-    const imageContext = imageCanvas?.getContext('2d');
-    if (!canvas || !maskCanvas || !imageCanvas || !imageContext) return;
+    if (!canvas || !imageCanvas) return;
     const before = captureSnapshot();
     if (!before) return;
     setMoveSourceId(annotation.id);
@@ -1029,14 +1030,6 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       startY: event.clientY,
       initial: annotation,
       before,
-      dragImage: imageContext.getImageData(0, 0, imageCanvas.width, imageCanvas.height),
-      selectionMask: selectionMaskForGeometry(
-        annotation.geometry,
-        maskCanvas.width,
-        maskCanvas.height,
-        initialSmartMask,
-        localEditMoveGuideFeatherRadius(maskCanvas.width, maskCanvas.height),
-      ),
       sourceGeometry: copyGeometry(annotation.geometry),
       isPendingDraft: false,
       pendingIsExisting: false,
@@ -1052,10 +1045,8 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     event.preventDefault();
     event.stopPropagation();
     const canvas = overlayCanvasRef.current;
-    const maskCanvas = maskCanvasRef.current;
     const imageCanvas = imageCanvasRef.current;
-    const imageContext = imageCanvas?.getContext('2d');
-    if (!canvas || !maskCanvas || !imageCanvas || !imageContext) return;
+    if (!canvas || !imageCanvas) return;
     const sourceGeometry = pending.sourceGeometry || pending.annotation.move?.from.at(-1) || pending.annotation.geometry;
     const initialSmartMask = smartMaskPixelsRef.current.get(pending.annotation.id);
     setMovingAnnotation({
@@ -1065,14 +1056,6 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       startY: event.clientY,
       initial: pending.annotation,
       before: pending.before,
-      dragImage: imageContext.getImageData(0, 0, imageCanvas.width, imageCanvas.height),
-      selectionMask: selectionMaskForGeometry(
-        pending.annotation.geometry,
-        maskCanvas.width,
-        maskCanvas.height,
-        initialSmartMask,
-        localEditMoveGuideFeatherRadius(maskCanvas.width, maskCanvas.height),
-      ),
       sourceGeometry: copyGeometry(sourceGeometry),
       isPendingDraft: true,
       pendingIsExisting: pending.isExisting,
@@ -1101,8 +1084,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     if (!movingAnnotation) return;
     const canvas = overlayCanvasRef.current;
     const imageCanvas = imageCanvasRef.current;
-    const imageContext = imageCanvas?.getContext('2d');
-    if (!canvas || !imageCanvas || !imageContext) return;
+    if (!canvas || !imageCanvas) return;
     const move = (event: PointerEvent) => {
       if (event.pointerId !== movingAnnotation.pointerId) return;
       const rawDx = (event.clientX - movingAnnotation.startX) / Math.max(1, canvas.getBoundingClientRect().width);
@@ -1110,15 +1092,6 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       const bounds = annotationPreviewBounds(movingAnnotation.initial);
       const dx = Math.max(-bounds.x, Math.min(1 - bounds.x - bounds.width, rawDx));
       const dy = Math.max(-bounds.y, Math.min(1 - bounds.y - bounds.height, rawDy));
-      const movedPixels = moveLocalEditPixels(
-        movingAnnotation.dragImage.data,
-        movingAnnotation.selectionMask,
-        imageCanvas.width,
-        imageCanvas.height,
-        dx * imageCanvas.width,
-        dy * imageCanvas.height,
-      );
-      imageContext.putImageData(imageDataFromPixels(movedPixels, imageCanvas.width, imageCanvas.height), 0, 0);
       let targetGeometry = moveGeometry(movingAnnotation.initial.geometry, dx, dy);
       if (targetGeometry.kind === 'smart' && movingAnnotation.initialSmartMask) {
         const translated = translateMaskPixels(
@@ -1131,6 +1104,20 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
         smartMaskPixelsRef.current.set(movingAnnotation.id, translated);
         targetGeometry = { ...targetGeometry, maskDataUrl: maskPixelsToDataUrl(translated, canvas.width, canvas.height) };
       }
+      const existingSources = movingAnnotation.initial.move?.from || [];
+      const previewAnnotation: LocalEditAnnotation = {
+        ...movingAnnotation.initial,
+        geometry: targetGeometry,
+        move: { from: existingSources.length ? existingSources : [movingAnnotation.sourceGeometry] },
+      };
+      const previewAnnotations = annotationsRef.current.some((item) => item.id === movingAnnotation.id)
+        ? annotationsRef.current.map((item) => item.id === movingAnnotation.id ? previewAnnotation : item)
+        : [...annotationsRef.current, previewAnnotation];
+      const previewSmartMasks = new Map(smartMaskPixelsRef.current);
+      if (!existingSources.length && movingAnnotation.initialSmartMask) {
+        previewSmartMasks.set(`${movingAnnotation.id}:from:0`, movingAnnotation.initialSmartMask);
+      }
+      renderMovePreview(previewAnnotations, previewSmartMasks);
       const preview = { id: movingAnnotation.id, geometry: targetGeometry, dx, dy };
       movePreviewRef.current = preview;
       setMovePreview(preview);
@@ -1259,6 +1246,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     annotationsRef.current = next;
     setAnnotations(next);
     if (pendingAnnotation.stage !== 'modify') setMoveSourceId(confirmed.id);
+    renderMovePreview(next);
     rebuildMask(next);
     pushHistory(pendingAnnotation.before);
     setPendingAnnotation(null);
@@ -1569,8 +1557,17 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
     const sourceContext = source.getContext('2d');
     if (!sourceContext) throw new Error('局部编辑范围导出失败，请重试');
     const sourcePixels = sourceContext.getImageData(0, 0, source.width, source.height).data;
-    const fusionFeather = localEditFusionFeather(feather);
-    const pixels = createSeamlessLocalEditMask(sourcePixels, source.width, source.height, fusionFeather);
+    const hasMoves = annotationsRef.current.some((annotation) => annotation.move?.from.length);
+    const fusionFeather = hasMoves
+      ? localEditMoveFusionFeather(feather, source.width, source.height)
+      : localEditFusionFeather(feather);
+    const pixels = preserveLocalEditMoveTargets(
+      createSeamlessLocalEditMask(sourcePixels, source.width, source.height, fusionFeather),
+      source.width,
+      source.height,
+      annotationsRef.current,
+      smartMaskPixelsRef.current,
+    );
     outputContext.putImageData(imageDataFromPixels(pixels, output.width, output.height), 0, 0);
     return {
       dataUrl: output.toDataURL('image/png'),
@@ -1597,7 +1594,22 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
       smartMaskPixelsRef.current,
     );
     outputContext.putImageData(imageDataFromPixels(pixels, output.width, output.height), 0, 0);
-    return output.toDataURL('image/png');
+    const sourceMask = document.createElement('canvas');
+    sourceMask.width = imageCanvas.width;
+    sourceMask.height = imageCanvas.height;
+    const sourceMaskContext = sourceMask.getContext('2d');
+    if (!sourceMaskContext) throw new Error('移动原位置范围导出失败，请重试');
+    const sourceMaskPixels = composeLocalEditMoveSourceMask(
+      imageCanvas.width,
+      imageCanvas.height,
+      annotationsRef.current,
+      smartMaskPixelsRef.current,
+    );
+    sourceMaskContext.putImageData(imageDataFromPixels(sourceMaskPixels, sourceMask.width, sourceMask.height), 0, 0);
+    return {
+      guideDataUrl: output.toDataURL('image/png'),
+      sourceMaskDataUrl: sourceMask.toDataURL('image/png'),
+    };
   }
 
   async function applyLocalEdit() {
@@ -1612,13 +1624,15 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
         setError('请先指定编辑区域，再应用局部编辑');
         return;
       }
+      const moveAssets = exportMoveGuideImage();
       await onApply(
         exported.dataUrl,
         exported.coverage,
         compileLocalEditPrompt(prompt, annotations),
         annotations,
         exported.feather,
-        exportMoveGuideImage(),
+        moveAssets?.guideDataUrl,
+        moveAssets?.sourceMaskDataUrl,
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '局部编辑范围导出失败，图片可能受跨域保护');
@@ -1630,6 +1644,10 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
   const history = historyRef.current;
   const imageCanvas = imageCanvasRef.current;
   const ratio = imageCanvas ? `${imageCanvas.width} / ${imageCanvas.height}` : '16 / 9';
+  const hasMoveAnnotations = annotations.some((annotation) => annotation.move?.from.length);
+  const displayedFeather = imageCanvas && hasMoveAnnotations
+    ? localEditMoveFusionFeather(feather, imageCanvas.width, imageCanvas.height)
+    : localEditFusionFeather(feather);
   const segmentationProvider = getLocalSegmentationProvider();
   const segmentationStatus = segmentationProvider?.status() || 'unavailable';
   const segmentationProgress = Math.round(segmentationProvider?.progress?.() || 0);
@@ -1687,6 +1705,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
             {!ready && <div className="mask-loading">正在读取图片…</div>}
             <div className="local-edit-canvas-stack" data-tool={tool} data-mode={mode} style={{ aspectRatio: ratio, width: fitSize.width || undefined, height: fitSize.height || undefined, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
               <canvas ref={imageCanvasRef} className="mask-canvas base" aria-label="原图预览" />
+              <canvas ref={movePreviewCanvasRef} className="mask-canvas move-preview" aria-hidden="true" />
               <canvas ref={overlayCanvasRef} className="mask-canvas overlay" aria-label="局部编辑范围" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp} onLostPointerCapture={handleLostPointerCapture} />
               <canvas ref={maskCanvasRef} className="mask-canvas mask-data" aria-hidden="true" />
               <div className="local-edit-annotation-layer" aria-label="局部标记">
@@ -1764,7 +1783,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
             </section>
             <div className="local-edit-workbench-controls">
               <label><span>画笔大小</span><input type="range" min="8" max="180" value={brushSize} disabled={!ready || saving || smartBusy} onChange={(event) => setBrushSize(Number(event.target.value))} /><b>{brushSize}px</b></label>
-              <label><span>边缘融合</span><input type="range" min="0" max="48" value={feather} disabled={!ready || saving || smartBusy} onChange={(event) => setFeather(Number(event.target.value))} /><b>{feather > 0 ? `${feather}px` : '自动 2px'}</b></label>
+              <label><span>边缘融合</span><input type="range" min="0" max="48" value={feather} disabled={!ready || saving || smartBusy} onChange={(event) => setFeather(Number(event.target.value))} /><b>{feather > 0 ? `${displayedFeather}px` : `自动 ${displayedFeather}px`}</b></label>
             </div>
        <section className="local-edit-segmentation-card" aria-label="本地智能点选模型">
               <div className="local-edit-segmentation-head"><span>本地智能点选（SAM）</span><b>{segmentationStatus === 'ready' ? '已安装' : segmentationCached ? '已缓存' : '免费可用'}</b></div>

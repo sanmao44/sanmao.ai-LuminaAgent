@@ -71,12 +71,11 @@ test("node context menu has no duplicate exact type branches or stale selection 
       || !ts.isStringLiteral(condition.right)) return [];
     return [condition.right.text];
   });
-  assert.ok(types.length > 0, "node type branches must be checked");
   assert.equal(new Set(types).size, types.length, "duplicate type branches can become unreachable");
   assert.ok(ts.isArrayLiteralExpression(dependencies));
   const names = dependencies.elements.map((element) => element.getText(source));
   assert.equal(new Set(names).size, names.length, "memo dependencies must not be duplicated");
-  assert.ok(names.includes("deleteSelection"), "menu must track the current selection handler");
+  assert.ok(names.includes("copySelection"), "menu must track the current clipboard handler");
 });
 
 test("card context menus select the target and preserve selected multi-actions", () => {
@@ -91,11 +90,6 @@ test("card context menus select the target and preserve selected multi-actions",
   const renderedGroupMenu = contextMenu;
   const groupQuickActionsStart = component.indexOf("const groupQuickActions = useMemo");
   const groupQuickActions = component.slice(groupQuickActionsStart, groupContextMenuStart);
-  const audioMenuStart = contextMenu.indexOf('if (node.type === "media" && node.data.kind === "audio")');
-  const audioMenuEnd = contextMenu.indexOf('if (node.type === "media" && node.data.kind === "image")', audioMenuStart);
-  assert.ok(audioMenuStart >= 0 && audioMenuEnd > audioMenuStart, "audio context menu should have its own branch");
-  const audioContextMenu = contextMenu.slice(audioMenuStart, audioMenuEnd);
-  const ordinaryContextMenu = `${contextMenu.slice(0, audioMenuStart)}${contextMenu.slice(audioMenuEnd)}`;
   const quickActionsStart = component.indexOf("const quickActions = useMemo");
   const quickActionsEnd = component.indexOf("// Below this threshold", quickActionsStart);
   assert.ok(quickActionsStart >= 0 && quickActionsEnd > quickActionsStart, "node quick toolbar builder should exist");
@@ -115,25 +109,21 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.match(component, /label: "创建副本"/);
   assert.match(component, /保留组内及边界连线/);
   assert.match(contextMenu, /label: "复制图片"/);
-  assert.match(contextMenu, /label: "图片编辑"/);
-  assert.match(contextMenu, /label: "生成新视角"/);
-  assert.match(contextMenu, /label: "继续生成 \/ 变体"/);
-  assert.match(contextMenu, /label: "下载"/);
-  assert.match(contextMenu, /label: "加入资产"/);
+  assert.doesNotMatch(contextMenu, /label: "问 Agent"/);
+  assert.doesNotMatch(contextMenu, /label: "图片编辑"/);
+  assert.doesNotMatch(contextMenu, /label: "生成新视角"/);
+  assert.doesNotMatch(contextMenu, /label: "继续生成 \/ 变体"/);
+  assert.doesNotMatch(contextMenu, /label: "剪辑视频"/);
+  assert.doesNotMatch(contextMenu, /label: "转图片"/);
+  assert.doesNotMatch(contextMenu, /label: "下载"/);
+  assert.doesNotMatch(contextMenu, /label: "加入资产"/);
+  assert.doesNotMatch(contextMenu, /label: "删除"/);
   assert.match(contextMenuComponent, /groups\.filter\(\(group\) => group\.actions\.length > 0\)/);
   assert.doesNotMatch(contextMenu, /label: "预览"/);
   assert.doesNotMatch(contextMenu, /label: "放大查看"/);
   assert.doesNotMatch(contextMenu, /label: "调整参数"/);
   assert.doesNotMatch(contextMenu, /局部编辑/);
   assert.doesNotMatch(contextMenu, /label: "作为参考"/);
-  assert.doesNotMatch(ordinaryContextMenu, /id: "delete"/);
-  assert.doesNotMatch(ordinaryContextMenu, /label: "删除"/);
-  assert.doesNotMatch(ordinaryContextMenu, /label: selectedIds\.size > 1 \? `删除/);
-  assert.match(audioContextMenu, /label: hasMedia \? "编辑 \/ 替换" : "添加音频"/);
-  assert.match(audioContextMenu, /label: "播放"/);
-  assert.match(audioContextMenu, /label: "下载"/);
-  assert.match(audioContextMenu, /label: "加入资产"/);
-  assert.match(audioContextMenu, /label: "删除"/);
   assert.match(quickActions, /useMemo<CanvasQuickToolbarActions>/);
   assert.match(quickActions, /id: "mask"/);
   assert.match(quickActions, /局部编辑/);
@@ -180,11 +170,10 @@ test("card context menus select the target and preserve selected multi-actions",
   assert.doesNotMatch(groupContextMenu, /图片编辑|局部编辑|复制图片|作为参考|继续生成/);
   assert.match(quickToolbar, /target: CanvasQuickToolbarTarget/);
   assert.match(component, /target=\{\{ kind: "group", group: selectedGroup \}\}/);
-  // 「问 Agent」要能从每条选中路径进：节点工具栏、多选工具栏、对象组工具栏、两种右键菜单。
+  // 「问 Agent」要能从每条快捷工具栏选中路径进入。
   assert.match(menuActions, /export function appendCanvasAgentAction/);
-  assert.match(component, /const contextMenuGroupsWithAgent = useMemo<CanvasContextMenuGroup\[]>/);
-  assert.match(component, /nodeGroups=\{contextMenuGroupsWithAgent\}/);
-  assert.match(menuActions, /export function prependCanvasAgentContextMenuGroup/);
+  assert.match(component, /nodeGroups=\{contextMenuGroups\}/);
+  assert.doesNotMatch(component, /contextMenuGroupsWithAgent/);
   assert.match(component, /const runImageAngleGeneration = useCallback/);
   assert.match(component, /const pendingOutput = (?:createPendingNode \? )?createMedia\("image", "", "角度控制结果"/);
   assert.match(component, /status: "running"[\s\S]*?processingStartedAt: startedAt[\s\S]*?jobId: taskId/);

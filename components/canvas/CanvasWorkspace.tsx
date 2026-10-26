@@ -239,7 +239,7 @@ import CanvasEdgeLayer from "@/components/canvas/CanvasEdgeLayer";
 import CanvasTextLightbox from "@/components/canvas/CanvasTextLightbox";
 import CanvasQuickToolbar from "@/components/canvas/CanvasQuickToolbar";
 import CanvasSelectionToolbar from "@/components/canvas/CanvasSelectionToolbar";
-import { appendCanvasAgentAction, prependCanvasAgentContextMenuGroup, projectCanvasGroupContextMenuGroups, type CanvasContextMenuGroup, type CanvasQuickAction, type CanvasQuickToolbarActions } from "@/components/canvas/CanvasContextMenu";
+import { appendCanvasAgentAction, projectCanvasGroupContextMenuGroups, type CanvasContextMenuGroup, type CanvasQuickAction, type CanvasQuickToolbarActions } from "@/components/canvas/CanvasContextMenu";
 import { canvasRightOverlayInset, canvasVisibleStageWidth } from "@/lib/canvas/menu-layout";
 import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/lib/canvas/node-editor";
 import { canvasUpscaleSource, maskStateForNode, nodeStatus, progressValue, variantStatesFor } from "@/lib/canvas/node-card";
@@ -6222,6 +6222,7 @@ export default function SuperCanvas() {
             : undefined,
         ...(params.mask ? { maskUrl: params.mask.url } : {}),
         ...(params.mask?.sourceUrl ? { moveGuideUrl: params.mask.sourceUrl } : {}),
+        ...(params.mask?.moveSourceMaskUrl ? { moveSourceMaskUrl: params.mask.moveSourceMaskUrl } : {}),
         references: apiReferences,
       });
       if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
@@ -7266,6 +7267,7 @@ export default function SuperCanvas() {
                 : undefined,
           maskUrl: imageParams.mask?.url,
           moveGuideUrl: imageParams.mask?.sourceUrl,
+          moveSourceMaskUrl: imageParams.mask?.moveSourceMaskUrl,
           references: refs,
         });
         if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
@@ -8993,7 +8995,7 @@ export default function SuperCanvas() {
   );
 
   const applyCanvasMask = useCallback(
-    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0, moveGuideDataUrl?: string) => {
+    async (maskDataUrl: string, coverage = 0, prompt?: string, annotations: LocalEditAnnotation[] = [], feather = 0, moveGuideDataUrl?: string, moveSourceMaskDataUrl?: string) => {
       const projectTask = captureProjectTask();
       const { updateDoc, readDocument, setSelectedIds, setSelectedGroupId, setReuseDraft } = projectTask;
       const node = maskNodeId
@@ -9029,6 +9031,9 @@ export default function SuperCanvas() {
         const moveGuide = moveGuideDataUrl
           ? await uploadCanvasAsset(canvasFileFromDataUrl(moveGuideDataUrl, `move-guide-${node.id}.png`))
           : undefined;
+        const moveSourceMask = moveSourceMaskDataUrl
+          ? await uploadCanvasAsset(canvasFileFromDataUrl(moveSourceMaskDataUrl, `move-source-mask-${node.id}.png`))
+          : undefined;
         const liveDraft = editorDrafts[node.id];
         const settings = copyCanvasGenerationParams(
           liveDraft?.params || existingDraft.params,
@@ -9042,6 +9047,7 @@ export default function SuperCanvas() {
             assetId: uploaded.id,
             url: uploaded.url,
             ...(moveGuide ? { sourceAssetId: moveGuide.id, sourceUrl: moveGuide.url } : {}),
+            ...(moveSourceMask ? { moveSourceMaskAssetId: moveSourceMask.id, moveSourceMaskUrl: moveSourceMask.url } : {}),
             ...(annotations.length ? { annotations } : {}),
             feather: maskFeather,
           },
@@ -9055,6 +9061,7 @@ export default function SuperCanvas() {
           assetId: uploaded.id,
           url: uploaded.url,
           ...(moveGuide ? { sourceAssetId: moveGuide.id, sourceUrl: moveGuide.url } : {}),
+          ...(moveSourceMask ? { moveSourceMaskAssetId: moveSourceMask.id, moveSourceMaskUrl: moveSourceMask.url } : {}),
           status: "pending",
           coverage: maskCoverage,
           ...(annotations.length ? { annotations } : {}),
@@ -12515,8 +12522,6 @@ export default function SuperCanvas() {
   const contextMenuGroups = useMemo<CanvasContextMenuGroup[]>(() => {
     const node = contextNode;
     if (!node) return [];
-    const hasMedia = node.type === "media" && Boolean(node.data.url);
-    const canAddAsset = canAddCanvasAsset(node);
     const close = (action: () => void) => () => {
       setContextMenu(null);
       action();
@@ -12581,194 +12586,17 @@ export default function SuperCanvas() {
       },
     ];
     const layerGroup: CanvasContextMenuGroup = { label: "层级", actions: layerActions };
-    if (node.type === "media" && node.data.kind === "audio") {
-      const audioActions: CanvasQuickAction[] = [
-        { id: "edit-audio", icon: "✎", label: hasMedia ? "编辑 / 替换" : "添加音频", onClick: close(() => openCanvasAudioPanel(node.id)) },
-        { id: "play-audio", icon: "▶", label: "播放", disabled: !hasMedia, onClick: close(() => openCanvasAudioPanel(node.id)) },
-        { id: "download-audio", icon: "↓", label: "下载", disabled: !hasMedia, onClick: close(() => downloadCanvasNode(node)) },
-        { id: "asset-audio", icon: "★", label: "加入资产", disabled: !canAddAsset, onClick: close(() => openAssetCollectionPicker(node)) },
-        { id: "delete-audio", icon: "×", label: "删除", danger: true, onClick: close(deleteSelection) },
-      ];
-      return [{ label: "音频操作", actions: audioActions }];
-    }
     if (node.type === "media" && node.data.kind === "image") {
-      const mediaActions: CanvasQuickAction[] = [
-        {
-          id: "angle-view",
-          icon: "◈",
-          label: "生成新视角",
-          title: "基于当前图片打开视角与光影工作台",
-          disabled: !isCanvasReadyImageSource(node),
-          onClick: close(() => openImageAngleConsole(node.id)),
-        },
-        {
-          id: "image-operations",
-          icon: "✦",
-          label: "图片编辑",
-          disabled: !hasMedia,
-          onClick: close(() => openImageOperations(node)),
-        },
-        {
-          id: "copy-image",
-          icon: "▣",
-          label: "复制图片",
-          title: "将图片复制到系统图片剪贴板",
-          disabled: !hasMedia,
-          onClick: close(() => void copyCanvasImage(node)),
-        },
-        {
-          id: "download",
-          icon: "↓",
-          label: "下载",
-          disabled: !hasMedia,
-          onClick: close(() => downloadCanvasNode(node)),
-        },
-        {
-          id: "asset",
-          icon: "★",
-          label: "加入资产",
-          disabled: !canAddAsset,
-          onClick: close(() => openAssetCollectionPicker(node)),
-        },
-      ];
+      const copyImageAction: CanvasQuickAction = {
+        id: "copy-image",
+        icon: "▣",
+        label: "复制图片",
+        title: "将图片复制到系统图片剪贴板",
+        disabled: !node.data.url,
+        onClick: close(() => void copyCanvasImage(node)),
+      };
       return [
-        { label: "快速操作", actions: mediaActions },
-        { label: "复制与整理", actions: canvasActions },
-        layerGroup,
-      ];
-    }
-    if (node.type === "media" && node.data.kind === "video") {
-      const mediaActions: CanvasQuickAction[] = [
-        {
-          id: "trim-video",
-          icon: "✂",
-          label: "剪辑视频",
-          disabled: !hasMedia,
-          onClick: close(() => openCanvasVideoClipEditor(node.id)),
-        },
-        {
-          id: "continue",
-          icon: "▶",
-          label: "继续生成 / 变体",
-          disabled: !hasMedia,
-          onClick: close(() => continueFromMedia(node)),
-        },
-        {
-          id: "download",
-          icon: "↓",
-          label: "下载",
-          disabled: !hasMedia,
-          onClick: close(() => downloadCanvasNode(node)),
-        },
-        {
-          id: "asset",
-          icon: "★",
-          label: "加入资产",
-          disabled: !canAddAsset,
-          onClick: close(() => openAssetCollectionPicker(node)),
-        },
-      ];
-      return [
-        { label: "快速操作", actions: mediaActions },
-        { label: "复制与整理", actions: canvasActions },
-        layerGroup,
-      ];
-    }
-    if (node.type === "prompt") {
-      const hasResponse = Boolean(String(node.data.agentResponse || node.data.text || "").trim());
-      const promptActions: CanvasQuickAction[] = [
-        {
-          id: "image",
-          icon: "✦",
-          label: "转图片",
-          disabled: !hasResponse,
-          onClick: close(() => useAgentResponseAsImagePrompt(node)),
-        },
-      ];
-      return [
-        { label: "快速操作", actions: promptActions },
-        { label: "复制与整理", actions: canvasActions },
-        layerGroup,
-      ];
-    }
-    if (node.type === "generator") {
-      const failedCount = variantStatesFor(node).filter((state) => state.status === "failed").length;
-      return [
-        {
-          label: "快速操作",
-          actions: [
-            {
-              id: "retry",
-              icon: "↻",
-              label: failedCount ? `重试失败项 (${failedCount})` : "重试失败项",
-              disabled: failedCount === 0 || generationKeys.has(node.id),
-              onClick: close(() => retryFailedVariants(node.id)),
-            },
-          ],
-        },
-        { label: "复制与整理", actions: canvasActions },
-        layerGroup,
-      ];
-    }
-    if (node.type === "upscale") {
-      const hasResult = Boolean(node.data.url);
-      return [
-        {
-          label: "快速操作",
-          actions: [
-            {
-              id: "download",
-              icon: "↓",
-              label: "下载",
-              title: "下载超分节点生成的图片",
-              disabled: !hasResult,
-              onClick: close(() => downloadCanvasNode(node)),
-            },
-          ],
-        },
-        { label: "复制与整理", actions: canvasActions },
-        layerGroup,
-      ];
-    }
-    if (node.type === "video-editor") {
-      return [
-        {
-          label: "编辑计划",
-          actions: [
-            {
-              id: "open-video-editor",
-              icon: "✂",
-              label: "打开编辑器",
-              onClick: close(() => openCanvasVideoEditor(node.id)),
-            },
-          ],
-        },
-        { label: "复制与整理", actions: canvasActions },
-        layerGroup,
-      ];
-    }
-    if (node.type === "angle") {
-      const pending = node.data.status === "queued" || node.data.status === "running";
-      return [
-        {
-          label: "角度控制",
-          actions: [
-            {
-              id: "open-angle",
-              icon: "◈",
-              label: "打开角度工作台",
-              onClick: close(() => openCanvasAngleConsole(node.id)),
-            },
-            {
-              id: "cancel-angle",
-              icon: "×",
-              label: "取消生成",
-              disabled: !pending,
-              onClick: close(() => cancelAngleGeneration(node.id)),
-            },
-          ],
-        },
-        { label: "复制与整理", actions: canvasActions },
+        { label: "复制与整理", actions: [...canvasActions, copyImageAction] },
         layerGroup,
       ];
     }
@@ -12777,43 +12605,16 @@ export default function SuperCanvas() {
       layerGroup,
     ];
   }, [
-    openAssetCollectionPicker,
-    openCanvasAudioPanel,
-    openCanvasVideoClipEditor,
-    openCanvasVideoEditor,
-    openCanvasAngleConsole,
-    openImageAngleConsole,
-    closeAngleWorkbench,
-    cancelAngleGeneration,
     contextNode,
     contextMenu?.world,
-    continueFromMedia,
     copyCanvasImage,
     copySelection,
-    createUpscaleFromSource,
-    deleteSelection,
-    openImageOperations,
-    downloadCanvasNode,
     duplicateSelection,
-    generationKeys,
     pasteFromClipboard,
-    retryFailedVariants,
-    useAgentResponseAsImagePrompt,
+    requestNodeRename,
     reorderSelection,
     selectedIds,
   ]);
-  /* 节点右键菜单也补上同一入口：右键会把节点选中，所以上下文就是刚点的这些节点。 */
-  const contextMenuGroupsWithAgent = useMemo<CanvasContextMenuGroup[]>(
-    () => prependCanvasAgentContextMenuGroup(
-      contextMenuGroups,
-      () => {
-        setContextMenu(null);
-        askAgentAboutSelection();
-      },
-      "打开 Agent 助手并聚焦输入框，选中的节点会自动作为上下文",
-    ),
-    [askAgentAboutSelection, contextMenuGroups],
-  );
 
   const groupContextMenuGroups = useMemo<CanvasContextMenuGroup[]>(() => {
     if (!contextGroup) return [];
@@ -12821,12 +12622,11 @@ export default function SuperCanvas() {
       setContextMenu(null);
       action();
     };
-    return projectCanvasGroupContextMenuGroups(groupQuickActionsWithAgent, {
+    return projectCanvasGroupContextMenuGroups(groupQuickActions, {
       onCopy: () => void copySelection(),
-      onArrange: arrangeCanvasAction,
       closeAction: close,
     });
-  }, [arrangeCanvasAction, contextGroup, copySelection, groupQuickActionsWithAgent]);
+  }, [contextGroup, copySelection, groupQuickActions]);
 
   // Below this threshold the canvas is an overview, not a reading surface.
   // The CSS tier removes filters and animation-heavy decoration while keeping
@@ -14024,7 +13824,7 @@ export default function SuperCanvas() {
           node={contextNode || null}
           group={contextGroup || null}
           selectionCount={selectedIds.size}
-          nodeGroups={contextMenuGroupsWithAgent}
+          nodeGroups={contextMenuGroups}
           groupGroups={groupContextMenuGroups}
           canUndo={Boolean(canvasHistory.past.length)}
           canRedo={Boolean(canvasHistory.future.length)}
@@ -14143,7 +13943,7 @@ export default function SuperCanvas() {
           initialPrompt={editorPromptFor(maskNode)}
           initialAnnotations={maskNode.data.mask?.annotations || maskSettings?.mask?.annotations || []}
           initialFeather={maskNode.data.mask?.feather ?? maskSettings?.mask?.feather ?? 0}
-          onApply={(value, coverage, prompt, annotations, feather, moveGuideDataUrl) => applyCanvasMask(value, coverage, prompt, annotations, feather, moveGuideDataUrl)}
+          onApply={(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl) => applyCanvasMask(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl)}
           onCancel={() => setMaskNodeId(null)}
         />
       )}

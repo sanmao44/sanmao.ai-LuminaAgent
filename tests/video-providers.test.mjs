@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import sharp from 'sharp';
 import test, { afterEach } from 'node:test';
 import ts from 'typescript';
 
@@ -7,7 +8,9 @@ const sourceUrl = new URL('../lib/video-providers.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
 const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
 const signedSource = await readFile(new URL('../lib/signed-media.ts', import.meta.url), 'utf8');
+globalThis.__providerTestSharp = sharp;
 const signedCompiled = ts.transpileModule(signedSource
+  .replace("import sharp from 'sharp';", 'const sharp = globalThis.__providerTestSharp;')
   .replace(/import \{ resolveStoredFileWithFallback \} from '\.\/image-storage';\r?\n/, 'const resolveStoredFileWithFallback = () => null;\n')
   .replace(/import \{ resolveStoredVideoFileWithFallback \} from '\.\/video-storage';\r?\n/, 'const resolveStoredVideoFileWithFallback = () => null;\n')
   .replace(/import \{ resolveStoredAudioFileWithFallback \} from '\.\/audio-storage';\r?\n/, 'const resolveStoredAudioFileWithFallback = () => null;\n')
@@ -26,6 +29,7 @@ const compiled = ts.transpileModule(bundledSource, {
   fileName: sourceUrl.pathname,
 }).outputText;
 const video = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+delete globalThis.__providerTestSharp;
 
 const cliSourceUrl = new URL('../lib/jimeng-cli.ts', import.meta.url);
 const cliSource = await readFile(cliSourceUrl, 'utf8');

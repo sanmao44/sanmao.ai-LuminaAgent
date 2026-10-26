@@ -33,19 +33,7 @@ test("appends the Agent action without changing existing quick action order", ()
   assert.deepEqual(calls, ["agent"]);
 });
 
-test("prepends one Agent context group and preserves the original groups", () => {
-  const calls = [];
-  const existing = [{ label: "Canvas", actions: [] }];
-  const result = menuActions.prependCanvasAgentContextMenuGroup(existing, () => calls.push("agent"), "Context title");
-
-  assert.deepEqual(result.map((group) => group.label), ["Agent", "Canvas"]);
-  assert.equal(result[1], existing[0]);
-  assert.equal(result[0].actions[0].title, "Context title");
-  result[0].actions[0].onClick();
-  assert.deepEqual(calls, ["agent"]);
-});
-
-test("projects group quick actions into context groups with close wrappers", () => {
+test("projects only unique group context actions with close wrappers", () => {
   const calls = [];
   const actions = {
     primaryActions: [
@@ -64,17 +52,14 @@ test("projects group quick actions into context groups with close wrappers", () 
   };
   const result = menuActions.projectCanvasGroupContextMenuGroups(actions, {
     onCopy: () => calls.push("copy"),
-    onArrange: () => calls.push("arrange"),
     closeAction: (action) => () => { calls.push("close"); action(); },
   });
 
   assert.deepEqual(result.map((group) => group.label), ["组操作", "层级", "删除"]);
-  assert.deepEqual(result[0].actions.map((action) => action.id), [
-    "copy-group", "arrange-group", "focus-group", "download-group",
-  ]);
-  result[0].actions[1].onClick();
-  result[0].actions[3].onClick();
+  assert.deepEqual(result[0].actions.map((action) => action.id), ["copy-group"]);
+  assert.deepEqual(result[1].actions.map((action) => action.id), ["raise"]);
+  result[0].actions[0].onClick();
   result[1].actions[0].onClick();
   result[2].actions[0].onClick();
-  assert.deepEqual(calls, ["close", "arrange", "close", "download", "close", "raise", "close", "delete"]);
+  assert.deepEqual(calls, ["close", "copy", "close", "raise", "close", "delete"]);
 });

@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import sharp from 'sharp';
 import { resolveStoredFileWithFallback } from './image-storage';
 import { resolveStoredVideoFileWithFallback } from './video-storage';
 import { resolveStoredAudioFileWithFallback } from './audio-storage';
@@ -147,10 +148,10 @@ async function waitForAutomaticRelay(timeoutMs = AUTOMATIC_RELAY_WAIT_MS) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const relay = runningRelayUrl();
-    if (relay) return relay;
+    if (relay && await publicRelayReachable(relay)) return relay;
     await new Promise((resolve) => setTimeout(resolve, AUTOMATIC_RELAY_POLL_MS));
   }
-  return runningRelayUrl();
+  return '';
 }
 
 function isPrivateOrLocalHostname(hostname: string) {
@@ -193,6 +194,22 @@ function ensureAutomaticRelayBypass(value: string) {
       }
     }
   } catch {}
+}
+
+async function publicRelayReachable(relay: string, timeoutMs = 2_500) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    ensureAutomaticRelayBypass(relay);
+    const response = await fetch(`${relay}/api/health`, { cache: 'no-store', signal: controller.signal });
+    if (!response.ok) return false;
+    const payload = await response.json().catch(() => null) as { service?: unknown; ok?: unknown } | null;
+    return payload?.service === 'sanmao-ai-studio' && payload.ok === true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function assertUsablePublicBaseUrl(value: string, code = AGNES_PUBLIC_MEDIA_URL_INVALID) {
@@ -249,6 +266,20 @@ function tokenFor(entry: MediaManifestEntry, key: string) {
 function kindForMime(mime: string): 'image' | 'video' | 'audio' | null {
   const kind = cleanMime(mime).split('/', 1)[0];
   return MEDIA_KINDS.has(kind) ? kind as 'image' | 'video' | 'audio' : null;
+}
+
+async function validateRelayImage(data: Buffer) {
+  if (!data.length || data.byteLength > 4 * 1024 * 1024) {
+    throw new PublicMediaError('图片不能超过 4 MiB。', MEDIA_RELAY_REJECTED);
+  }
+  const metadata = await sharp(data, { failOn: 'error' }).metadata().catch(() => null);
+  const mime = metadata?.format === 'jpeg' ? 'image/jpeg'
+    : metadata?.format === 'png' ? 'image/png'
+      : metadata?.format === 'webp' ? 'image/webp'
+        : metadata?.format === 'gif' ? 'image/gif'
+          : '';
+  if (!mime) throw new PublicMediaError('只支持 JPG、PNG、WebP 或 GIF 图片。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
+  return mime;
 }
 
 function safeMediaFile(filename: unknown) {
@@ -444,31 +475,6 @@ async function uploadToPublicMediaRelay(data: Buffer, mime: string, kind: 'image
   return pending;
 }
 
-async function uploadImageWithAutomaticRelayRecovery(data: Buffer, mime: string) {
-  try {
-    return await uploadToPublicMediaRelay(data, mime, 'image');
-  } catch (error) {
-    if (process.env.SANMAO_RELAY_MODE !== '1'
-      || !(error instanceof PublicMediaError)
-      || error.code !== MEDIA_RELAY_UNAVAILABLE) throw error;
-
-    const deadline = Date.now() + AUTOMATIC_RELAY_RECOVERY_WAIT_MS;
-    let lastError: unknown = error;
-    while (Date.now() < deadline) {
-      if (!await waitForAutomaticRelay(deadline - Date.now())) throw lastError;
-      try {
-        const recovered = await uploadToPublicMediaRelay(data, mime, 'image');
-        if (recovered) return recovered;
-        throw lastError;
-      } catch (retryError) {
-        if (!(retryError instanceof PublicMediaError) || retryError.code !== MEDIA_RELAY_UNAVAILABLE) throw retryError;
-        lastError = retryError;
-      }
-    }
-    throw lastError;
-  }
-}
-
 export function getPublicMediaTransportStatus() {
   const relay = mediaRelayUrl();
   const publicBase = publicBaseUrl();
@@ -488,21 +494,7 @@ export async function getPublicMediaTransportStatusLive() {
   const status = getPublicMediaTransportStatus();
   const relay = mediaRelayUrl();
   if (!relay) return status;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2_500);
-  let reachable = false;
-  try {
-    ensureAutomaticRelayBypass(relay);
-    const response = await fetch(`${relay}/api/health`, {
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    if (response.ok) {
-      const payload = await response.json().catch(() => null) as { service?: unknown; ok?: unknown } | null;
-      reachable = payload?.service === 'sanmao-ai-studio' && payload?.ok === true;
-    }
-  } catch {}
-  clearTimeout(timeout);
+  const reachable = await publicRelayReachable(relay);
   return {
     ...status,
     mode: reachable ? 'relay' : 'unavailable',
@@ -524,16 +516,23 @@ export async function preparePublicMediaUrl(value: string, kind: 'image' | 'vide
   if (!loaded) throw new PublicMediaError('当前服务商需要可公开访问的媒体地址；请提供有效的本地媒体或公网 URL。');
   const mime = cleanMime(loaded.mime);
   if (!MIME_PATTERN.test(mime) || kindForMime(mime) !== kind) throw new PublicMediaError('当前服务商只接受与媒体类型匹配的图片、视频或音频文件。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
-  // Match the launcher's recovery window when its watchdog is replacing a tunnel.
-  const relay = kind === 'image'
-    ? mediaRelayUrl() || await waitForAutomaticRelay(
-      process.env.SANMAO_RELAY_MODE === '1'
-        ? AUTOMATIC_RELAY_RECOVERY_WAIT_MS
-        : AUTOMATIC_RELAY_WAIT_MS,
-    )
-    : mediaRelayUrl();
+  if (kind === 'image' && process.env.SANMAO_RELAY_MODE === '1') {
+    const configuredBase = publicBaseUrl();
+    const relay = configuredBase ? '' : await waitForAutomaticRelay(AUTOMATIC_RELAY_RECOVERY_WAIT_MS);
+    const base = configuredBase || relay;
+    if (!base) throw new PublicMediaError('图片暂时无法提交：自动中转服务不可用，请稍后重试；也可以在高级设置中配置自己的公网图片地址。', MEDIA_RELAY_UNAVAILABLE);
+    const relayMime = await validateRelayImage(loaded.data);
+    const stored = await storeSignedMedia(loaded.data, relayMime, kind, {
+      ttlMs,
+      publicBase: base,
+      pathPrefix: configuredBase ? '/api/media' : '/api/relay/media',
+    });
+    return stored.url;
+  }
+
+  const relay = mediaRelayUrl();
   if (relay && kind === 'image') {
-    const uploaded = await uploadImageWithAutomaticRelayRecovery(loaded.data, mime);
+    const uploaded = await uploadToPublicMediaRelay(loaded.data, mime, kind);
     if (uploaded) return uploaded.url;
   }
   const base = publicBaseUrl();

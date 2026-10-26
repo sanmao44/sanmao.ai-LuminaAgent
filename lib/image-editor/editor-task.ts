@@ -12,6 +12,7 @@ export type EditorMaskProjection = {
   annotations: readonly unknown[];
   feather: number;
   sourceImageDataUrl?: string;
+  moveSourceMaskDataUrl?: string;
 };
 
 export type EditorTaskDraft = {
@@ -74,6 +75,7 @@ export function editorMaskProjection(editor: EditorRequestState): EditorMaskProj
     annotations: editor.annotations || [],
     feather,
     ...(editor.sourceImageDataUrl ? { sourceImageDataUrl: editor.sourceImageDataUrl } : {}),
+    ...(editor.moveSourceMaskDataUrl ? { moveSourceMaskDataUrl: editor.moveSourceMaskDataUrl } : {}),
   };
 }
 
@@ -194,6 +196,7 @@ export function restoreEditorTaskState(
     annotations,
     feather: Number.isFinite(feather) ? Math.max(0, Math.min(48, Math.round(feather))) : 0,
     ...(typeof mask?.sourceImageDataUrl === "string" ? { sourceImageDataUrl: mask.sourceImageDataUrl } : {}),
+    ...(typeof mask?.moveSourceMaskDataUrl === "string" ? { moveSourceMaskDataUrl: mask.moveSourceMaskDataUrl } : {}),
     scale: 2,
     targetSize: "auto",
     seed: 42,

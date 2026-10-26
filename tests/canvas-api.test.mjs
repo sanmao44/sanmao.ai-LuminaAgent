@@ -481,6 +481,7 @@ test('canvas local editing keeps the original source for compositing and sends a
       imageOperation: 'edit',
       maskUrl: 'data:image/png;base64,MASK',
       moveGuideUrl: 'data:image/png;base64,MOVE_GUIDE',
+      moveSourceMaskUrl: 'data:image/png;base64,MOVE_SOURCE_MASK',
       references: [{ url: 'data:image/png;base64,SOURCE' }],
     }));
 
@@ -488,6 +489,7 @@ test('canvas local editing keeps the original source for compositing and sends a
     assert.deepEqual(payload.references, ['data:image/png;base64,SOURCE']);
     assert.equal(payload.mask, 'data:image/png;base64,MASK');
     assert.equal(payload.moveGuide, 'data:image/png;base64,MOVE_GUIDE');
+    assert.equal(payload.moveSourceMask, 'data:image/png;base64,MOVE_SOURCE_MASK');
     assert.deepEqual(mocks.encodedTypes, []);
   } finally {
     mocks.restore();

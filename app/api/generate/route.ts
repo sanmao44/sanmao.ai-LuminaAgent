@@ -180,6 +180,7 @@ export async function POST(request: Request) {
     const rawMask = typeof body.mask === 'string' ? body.mask.trim() : '';
     localMaskSubmitted = rawMask.startsWith('data:image/png');
     const rawMoveGuide = typeof body.moveGuide === 'string' ? body.moveGuide.trim() : '';
+    const rawMoveSourceMask = typeof body.moveSourceMask === 'string' ? body.moveSourceMask.trim() : '';
     const requestedImageOperation = body.imageOperation;
     if (requestedImageOperation !== undefined && requestedImageOperation !== 'generate' && requestedImageOperation !== 'edit' && requestedImageOperation !== 'reference-generate' && requestedImageOperation !== 'auto') {
       return Response.json({ error: '图片操作必须是 generate、edit、reference-generate 或 auto。' }, { status: 400 });
@@ -191,10 +192,13 @@ export async function POST(request: Request) {
     }
     const mask = rawMask.startsWith('data:image/png') ? rawMask : undefined;
     const moveGuide = rawMoveGuide.startsWith('data:image/') ? rawMoveGuide : undefined;
+    const moveSourceMask = rawMoveSourceMask.startsWith('data:image/png') ? rawMoveSourceMask : undefined;
     if (rawMask && !mask) return Response.json({ error: '局部编辑范围必须是 PNG 格式。' }, { status: 400 });
     if (mask && !references.length) return Response.json({ error: '使用局部编辑前请先添加一张参考图。' }, { status: 400 });
     if (rawMoveGuide && !moveGuide) return Response.json({ error: '移动引导图必须是图片数据。' }, { status: 400 });
+    if (rawMoveSourceMask && !moveSourceMask) return Response.json({ error: '移动原位置范围必须是 PNG 图片。' }, { status: 400 });
     if (moveGuide && (!mask || !references.length)) return Response.json({ error: '移动引导图需要同时提交原图和局部编辑范围。' }, { status: 400 });
+    if (moveSourceMask && !moveGuide) return Response.json({ error: '移动原位置范围需要同时提交移动引导图。' }, { status: 400 });
     if (requestedMode === 'reference-generate' && (mask || moveGuide || camera)) {
       return Response.json({ error: '参考图生成不能同时提供局部编辑或角度控制。' }, { status: 400 });
     }
@@ -351,10 +355,14 @@ export async function POST(request: Request) {
       await finishGenerationLog(logId, { mode: modeForLog, operation: operationForLog }).catch(() => undefined);
     }
     const maskSafeImages = mask
-      ? await enforceLocalEditMask(providerImages, references[0], mask, {
-          storagePath,
-          signal: requestController.signal,
-        })
+      ? await enforceLocalEditMask(providerImages, moveGuide || references[0], mask, {
+        storagePath,
+        signal: requestController.signal,
+        ...(moveSourceMask && moveGuide ? {
+          moveSourceMaskReference: moveSourceMask,
+          moveSourceOriginalReference: references[0],
+        } : {}),
+      })
       : providerImages;
     const orientationSafeImages = await normalizeStarApiLandscapeImages(runtime.provider, runtime.model.rawId, input, maskSafeImages, requestController.signal);
     const normalizedImages = camera && angleOutput

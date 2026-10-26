@@ -54,35 +54,13 @@ export function appendCanvasAgentAction(
   };
 }
 
-export function prependCanvasAgentContextMenuGroup(
-  groups: CanvasContextMenuGroup[],
-  onClick: () => void,
-  title: string,
-): CanvasContextMenuGroup[] {
-  return [
-    {
-      label: "Agent",
-      actions: [createCanvasAgentAction(onClick, title)],
-    },
-    ...groups,
-  ];
-}
-
 export function projectCanvasGroupContextMenuGroups(
   actions: CanvasQuickToolbarActions,
   options: {
     onCopy: () => void;
-    onArrange: () => void;
     closeAction: (action: () => void) => () => void;
   },
 ): CanvasContextMenuGroup[] {
-  const primary = actions.primaryActions.map((action) => ({
-    ...action,
-    onClick: options.closeAction(
-      action.id === "arrange-group" ? options.onArrange : action.onClick,
-    ),
-  }));
-  const groupOperations = actions.menuGroups.find((group) => group.id === "group-actions");
   const layer = actions.menuGroups.find((group) => group.id === "layer");
   const wrapActions = (items: CanvasQuickAction[]) =>
     items.map((action) => ({ ...action, onClick: options.closeAction(action.onClick) }));
@@ -98,8 +76,6 @@ export function projectCanvasGroupContextMenuGroups(
           title: "复制组到剪贴板",
           onClick: options.closeAction(options.onCopy),
         },
-        ...primary,
-        ...wrapActions(groupOperations?.actions || []),
       ],
     },
     { label: "层级", actions: wrapActions(layer?.actions || []) },

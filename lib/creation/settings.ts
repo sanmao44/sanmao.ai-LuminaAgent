@@ -20,6 +20,8 @@ export type CanvasMaskAsset = {
   /** A locally composed move guide sent to the provider beside the original source. */
   sourceAssetId?: string;
   sourceUrl?: string;
+  moveSourceMaskAssetId?: string;
+  moveSourceMaskUrl?: string;
   /** Inline form of the locally composed move guide for non-canvas requests. */
   sourceImageDataUrl?: string;
   referenceId?: string;
@@ -323,6 +325,12 @@ export function normalizeImageCreationSettings(
             : {}),
           ...(typeof maskRaw.sourceUrl === "string"
             ? { sourceUrl: maskRaw.sourceUrl }
+            : {}),
+          ...(typeof maskRaw.moveSourceMaskAssetId === "string"
+            ? { moveSourceMaskAssetId: maskRaw.moveSourceMaskAssetId }
+            : {}),
+          ...(typeof maskRaw.moveSourceMaskUrl === "string"
+            ? { moveSourceMaskUrl: maskRaw.moveSourceMaskUrl }
             : {}),
           ...(typeof maskRaw.sourceImageDataUrl === "string"
             ? { sourceImageDataUrl: maskRaw.sourceImageDataUrl }

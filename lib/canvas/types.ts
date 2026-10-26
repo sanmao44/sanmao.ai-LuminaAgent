@@ -337,6 +337,8 @@ export type CanvasMaskState = {
   /** A locally composed move guide sent to the provider beside the original source. */
   sourceAssetId?: string;
   sourceUrl?: string;
+  moveSourceMaskAssetId?: string;
+  moveSourceMaskUrl?: string;
   /** Inline move guide retained for older canvas documents. */
   sourceImageDataUrl?: string;
   status: CanvasMaskStatus;

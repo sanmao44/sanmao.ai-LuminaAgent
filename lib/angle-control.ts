@@ -578,8 +578,10 @@ export function buildAngleTargetSemantic(camera: Pick<AngleCameraState, 'yaw' | 
     const yaw = effectiveAngle(target.yaw);
     horizontal.side = Math.abs(yaw) < 0.1 ? 'front' : yaw >= 0 ? 'reference_right' : 'reference_left';
     horizontal.instruction = Math.abs(yaw) < 0.1
-      ? 'Keep the horizontal camera direction of the reference image.'
-      : `Move the CAMERA approximately ${recordNumber(Math.abs(yaw))} degrees to the ${yaw > 0 ? 'RIGHT' : 'LEFT'} relative to the reference camera viewpoint, not the subject's assumed front.`;
+      ? 'Keep the horizontal camera position of the reference image.'
+      : yaw === 180
+        ? 'Move the CAMERA directly behind the reference camera viewpoint by 180 degrees. This is the opposite view, not a left or right turn of the subject.'
+        : `Move the CAMERA approximately ${recordNumber(Math.abs(yaw))} degrees to the ${yaw > 0 ? 'RIGHT' : 'LEFT'} relative to the reference camera viewpoint, toward the ${yaw > 0 ? 'RIGHT' : 'LEFT'} edge of Image 1 as seen by its original viewer. This means camera position, not the subject's anatomical side; do not mirror the image or turn the subject.`;
     vertical.instruction = Math.abs(target.pitch) < 0.1
       ? 'Keep the camera elevation of the reference image.'
       : `Move the camera ${target.pitch < 0 ? 'HIGHER, looking DOWNWARD' : 'LOWER, looking UPWARD'} by approximately ${recordNumber(Math.abs(target.pitch))} degrees relative to the reference viewpoint.`;
@@ -647,6 +649,7 @@ export function buildReferenceViewpointPrompt(note: string, input: AngleCameraSt
   const view = normalizeViewpointOptions(camera.viewpoint);
   const hasGuideReference = view.changeView && view.guide && options?.hasGuideReference === true;
   const semantic = buildAngleTargetSemantic(camera, options?.output);
+  const yawMagnitude = Math.abs(camera.yaw);
   const magnitude = Math.max(Math.abs(camera.yaw), Math.abs(camera.pitch));
   const distance = camera.distance / ANGLE_DEFAULTS.distance;
   return [
@@ -667,14 +670,25 @@ export function buildReferenceViewpointPrompt(note: string, input: AngleCameraSt
         : 'Move the CAMERA within the same physical environment and redirect its view toward overlapping scene landmarks. Do not rotate the room, furniture, landscape or entire scene as an object.',
       semantic.horizontal_view.instruction,
       semantic.vertical_view.instruction,
+      'The final image MUST visibly reproject the subject and scene for this target camera. Keeping the original camera-facing projection while only changing crop, scale or lighting is incorrect.',
+      yawMagnitude >= 60 && yawMagnitude <= 105
+        ? [
+          'This is a near-profile target: camera-facing side geometry must visibly dominate and the original frontal projection must be strongly foreshortened.',
+          'At this near-side camera angle, show the side of the unchanged subject that faces this camera position. Do not rotate the head or body to keep the face aimed at the camera, and do not choose the profile direction merely from screen-left or screen-right.',
+          view.subjectType === 'person' || view.subjectType === 'character'
+            ? 'For a person or character, produce a genuine near-profile facial projection. The far-side eye and facial features should be naturally hidden or strongly foreshortened when this camera position requires it; preserve identity through the visible profile, not by retaining the source frontal face.'
+            : '',
+        ].filter(Boolean).join(' ')
+        : '',
       'This is a camera change, not a head turn, subject rotation, mirror flip, flat image rotation, crop or perspective warp.',
     ].join('\n') : '',
     view.changeView ? [
-      'CONTENT LOCK (HIGHEST PRIORITY)',
-      'Treat Image 1 as a locked scene bible. Keep the same person or object identity, facial features, hair, clothing, accessories, pose, expression, proportions, materials, colors, props, environment, background landmarks and lighting style.',
-      'The only intentional edit is the FINAL CAMERA position, elevation, lens, distance and framing requested above. Do not beautify, restyle, redraw, replace, simplify or add content.',
+      'IDENTITY PRESERVATION (CAMERA GEOMETRY TAKES PRIORITY)',
+      'Treat Image 1 as the identity and scene reference. Preserve the same person or object and recognizable details where visible from the target camera. This locks identity, not the original 2D visibility, facial projection or screen positions.',
+      'The intended edit is the FINAL CAMERA position, elevation, lens, distance and framing requested above. Match that camera before preserving appearance; do not beautify, restyle, replace or add unrelated content.',
       'Do not change the subject into a different person, alter age or ethnicity, invent a new outfit, move hands or limbs, change the expression, remove distinctive details, add text or logos, or replace the setting.',
-      'If a detail is not visible from the final camera, let it become naturally occluded. If a newly exposed surface must be inferred, reconstruct only the minimum continuation implied by Image 1; never use inference as permission to redesign the scene.',
+      'Do not keep a face or front surface visible by turning the subject toward the camera. Let details become naturally foreshortened or occluded; if a newly exposed surface must be inferred, reconstruct only the minimum continuation implied by Image 1.',
+      'Keep distinctive foreground, middle-ground and background objects fixed in world space, preserving their identity, count, depth order and relationships. Reproject their screen positions with coherent parallax; only hide an object when target-view occlusion or framing explains it. Never mirror, duplicate, relocate, erase or replace a landmark or prop.',
     ].join('\n') : '',
     view.changeView ? [
       'DISTANCE AND FRAMING',

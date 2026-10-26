@@ -398,7 +398,7 @@ test('workbench keeps timeline gestures local and exposes professional timeline 
   assert.match(workbenchSource, /onClick=\{\(event\) => event\.stopPropagation\(\)\}/);
 });
 
-test('node context menu handles each exact node type once and closes the editor action', () => {
+test('node context menu keeps editor-specific actions in the quick toolbar', () => {
   const source = ts.createSourceFile(
     'SuperCanvas.tsx', componentSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX,
   );
@@ -425,13 +425,9 @@ test('node context menu handles each exact node type once and closes the editor 
   });
   const types = branches.map((branch) => branch.expression.right.text);
   assert.equal(new Set(types).size, types.length, 'duplicate type branches can become unreachable');
-  const editorBranches = branches.filter((branch) => branch.expression.right.text === 'video-editor');
-  assert.equal(editorBranches.length, 1, 'video editor must have exactly one menu branch');
-  const actions = editorBranches[0].thenStatement.getText(source);
-  assert.match(actions, /id: "open-video-editor"/);
-  assert.match(actions, /onClick: close\(\(\) => openCanvasVideoEditor\(node\.id\)\)/);
+  assert.doesNotMatch(builder.body.getText(source), /open-video-editor/);
   assert.ok(ts.isArrayLiteralExpression(dependencies));
   const names = dependencies.elements.map((element) => element.getText(source));
-  assert.equal(names.filter((name) => name === 'openCanvasVideoEditor').length, 1);
-  assert.ok(names.includes('deleteSelection'), 'menu must track the current selection handler');
+  assert.equal(names.filter((name) => name === 'openCanvasVideoEditor').length, 0);
+  assert.ok(names.includes('copySelection'), 'menu must track the current clipboard handler');
 });
