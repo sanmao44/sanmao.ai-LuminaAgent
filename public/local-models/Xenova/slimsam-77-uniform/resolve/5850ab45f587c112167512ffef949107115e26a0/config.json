@@ -1,0 +1,20 @@
+{
+  "_name_or_path": "nielsr/slimsam-77-uniform",
+  "architectures": [
+    "SamModel"
+  ],
+  "initializer_range": 0.02,
+  "mask_decoder_config": {
+    "model_type": ""
+  },
+  "model_type": "sam",
+  "prompt_encoder_config": {
+    "model_type": ""
+  },
+  "transformers_version": "4.36.2",
+  "vision_config": {
+    "hidden_size": 168,
+    "mlp_dim": 696,
+    "model_type": ""
+  }
+}

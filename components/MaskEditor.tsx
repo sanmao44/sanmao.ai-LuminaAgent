@@ -1787,7 +1787,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
             </div>
        <section className="local-edit-segmentation-card" aria-label="本地智能点选模型">
               <div className="local-edit-segmentation-head"><span>本地智能点选（SAM）</span><b>{segmentationStatus === 'ready' ? '已安装' : segmentationCached ? '已缓存' : '免费可用'}</b></div>
-              <p>首次使用下载{LOCAL_SEGMENTATION_BROWSER_INFO.estimatedLabel}，模型只保存在此浏览器，图片不会上传；未安装时仍可用框选和画笔。</p>
+              <p>模型文件随应用提供，首次使用会缓存{LOCAL_SEGMENTATION_BROWSER_INFO.estimatedLabel}到此浏览器；图片不会上传，未安装时仍可用框选和画笔。</p>
               {segmentationStatus === 'loading' && <div className="local-edit-segmentation-progress" aria-live="polite"><progress max="100" value={segmentationProgress} /><span>正在安装 {segmentationProgress}%</span></div>}
               {segmentationProviderError && segmentationStatus === 'error' && <div className="local-edit-segmentation-error" role="alert">{segmentationProviderError}</div>}
               <div className="local-edit-segmentation-actions">
