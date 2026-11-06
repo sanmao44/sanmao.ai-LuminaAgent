@@ -65,6 +65,10 @@ test('video task API exposes page metadata and filter parameters', async () => {
   assert.match(route, /media,/);
   assert.match(route, /return Response\.json\(\{ \.\.\.result, tasks:/);
   assert.match(page, /const DEFAULT_HISTORY_PAGE_SIZE = 12/);
+  assert.match(page, /const HISTORY_PAGE_SIZE_MODE_STORAGE_KEY = 'sanmao-history-page-size-mode'/);
+  assert.match(page, /const videoGridRef = useRef\(null\)/);
+  assert.match(page, /historyMediaFilter === 'video'[\s\S]*?videoGridRef\.current/);
+  assert.match(page, /className: "creative-video-grid", ref: videoGridRef/);
   assert.match(page, /const videoTotalPages = Math\.max\(1, Math\.ceil\(videoTotal \/ pageSize\)\)/);
   assert.match(page, /listVideoTasksPage\(\{ page: requestedPage, pageSize, source, media, search: historySearch \}\)/);
   assert.match(page, /每页 \$\{pageSize\} 项/);
