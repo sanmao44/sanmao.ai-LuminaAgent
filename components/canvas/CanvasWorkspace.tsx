@@ -109,6 +109,7 @@ import {
   generateCanvasImage,
   previewCanvasImageIntent,
   stopCanvasVideoTaskTracking,
+  retryCanvasVideoTask,
   generateCanvasUpscale,
   getCanvasUpscaleTask,
   generateCanvasVideo,
@@ -11563,6 +11564,31 @@ export default function SuperCanvas() {
     }
     throw new Error("此任务类型不支持从画布停止。");
   }, [notify, refreshGenerationLogs]);
+  const retryGenerationLog = useCallback(async (log: CanvasGenerationLog) => {
+    const taskId = String(log.taskId || log.id);
+    const kind = generationLogKind(log);
+    if (kind === "video") {
+      await retryCanvasVideoTask(taskId);
+      await refreshGenerationLogs();
+      notify("已创建视频重试任务，原失败记录已保留。", "ok");
+      return;
+    }
+    throw new Error("当前任务没有可复用的完整参数，请恢复上下文后重新提交。");
+  }, [notify, refreshGenerationLogs]);
+  const continueGenerationLog = useCallback((log: CanvasGenerationLog) => {
+    const kind = generationLogKind(log);
+    if (kind !== "image" && kind !== "video") {
+      notify("当前任务没有可继续创作的媒体结果。", "error");
+      return;
+    }
+    const node = canvasNodeForGenerationLog(canvasCoreRef.current.document(), log);
+    if (!node || node.type !== "media" || !node.data.url) {
+      notify("当前结果还没有对应的画布节点，请先打开结果或定位节点。", "error");
+      return;
+    }
+    continueFromMedia(node);
+    setActivePanel(null);
+  }, [continueFromMedia, notify]);
   const restoreGenerationLogContext = useCallback(
     (log: CanvasGenerationLog) => {
       const kind = generationLogKind(log);
@@ -13985,6 +14011,8 @@ export default function SuperCanvas() {
         onFocusTask={focusGenerationLog}
         onFocusNode={focusLogNode}
         onRestoreTaskContext={restoreGenerationLogContext}
+        onRetryTask={retryGenerationLog}
+        onContinueTask={continueGenerationLog}
         onCancelTask={stopGenerationLog}
         cancellableImageTaskIds={cancellableImageTaskIds}
         onRememberActivityScroll={(scrollTop) => {

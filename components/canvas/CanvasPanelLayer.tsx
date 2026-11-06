@@ -34,6 +34,8 @@ export type CanvasPanelLayerProps = {
   onFocusTask: (log: GenerationLog, openMedia?: boolean) => void;
   onFocusNode: (nodeId: string, openMedia?: boolean) => void;
   onRestoreTaskContext: (log: GenerationLog) => void;
+  onRetryTask: (log: GenerationLog) => Promise<void>;
+  onContinueTask: (log: GenerationLog) => void;
   onCancelTask: (log: GenerationLog) => Promise<void>;
   cancellableImageTaskIds: ReadonlySet<string>;
   onRememberActivityScroll: (scrollTop: number) => void;
@@ -73,6 +75,8 @@ export default function CanvasPanelLayer({
   onFocusTask,
   onFocusNode,
   onRestoreTaskContext,
+  onRetryTask,
+  onContinueTask,
   onCancelTask,
   cancellableImageTaskIds,
   onRememberActivityScroll,
@@ -116,6 +120,8 @@ export default function CanvasPanelLayer({
         onFocusTask={onFocusTask}
         onFocusNode={onFocusNode}
         onRestoreTaskContext={onRestoreTaskContext}
+        onRetryTask={onRetryTask}
+        onContinueTask={onContinueTask}
         onCancelTask={onCancelTask}
         cancellableImageTaskIds={cancellableImageTaskIds}
         onClose={onClose}

@@ -1198,6 +1198,26 @@ export async function stopCanvasVideoTaskTracking(id: string) {
   });
 }
 
+/** Retry a failed video task through the Worker-owned lifecycle endpoint. */
+export async function retryCanvasVideoTask(id: string) {
+  return request<{
+    task: {
+      id: string;
+      status: string;
+      progress?: number;
+      videoUrls?: string[];
+      remoteVideoUrls?: string[];
+      error?: string;
+      modelId?: string;
+      retryOf?: string;
+    };
+  }>(`/api/video/tasks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "retry" }),
+  });
+}
+
 /** Prefer a local archive, but never discard a provider result when archiving failed. */
 export function canvasVideoTaskOutputUrl(task: {
   videoUrls?: readonly string[];

@@ -1103,3 +1103,16 @@ test('canvas video cancellation uses the existing Worker-owned task control rout
   assert.deepEqual(JSON.parse(request.options.body), { action: 'cancel' });
   assert.equal(result.task.status, 'cancelled');
 });
+
+test('canvas video retry uses the existing Worker-owned task control route', async () => {
+  let request;
+  const result = await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ task: { id: 'video-task-2', status: 'pending', retryOf: 'video-task-1' } });
+  }, () => api.retryCanvasVideoTask('video-task-1'));
+
+  assert.equal(request.input, '/api/video/tasks/video-task-1');
+  assert.equal(request.options.method, 'PATCH');
+  assert.deepEqual(JSON.parse(request.options.body), { action: 'retry' });
+  assert.equal(result.task.retryOf, 'video-task-1');
+});
