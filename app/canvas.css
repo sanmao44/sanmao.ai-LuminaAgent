@@ -1208,6 +1208,13 @@ html[data-theme="dark"] .canvas-workspace{
   .canvas-current-image-reference-copy small{white-space:normal}
 }
 
+.canvas-node-editor-popover.is-audio-editor.is-prompt-expanded{height:min(500px,calc(100dvh - 32px));max-height:min(500px,calc(100dvh - 32px))}
+.canvas-node-editor-popover.is-audio-editor.is-prompt-expanded .canvas-node-editor-body{display:flex;flex:1;overflow:hidden;min-height:0}
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-audio-editor.is-prompt-expanded{height:min(620px,calc(100dvh - 96px));max-height:calc(100dvh - 96px)}
+  .canvas-node-editor-popover.is-audio-editor.is-prompt-expanded .canvas-node-editor-body{overflow:auto}
+}
+
 /* Compact canvas parameters: the regular card keeps only the model and one
    summary row in view. The detailed controls live in an anchored collection
    drawer, so zooming the canvas does not leave a tall form floating over it. */

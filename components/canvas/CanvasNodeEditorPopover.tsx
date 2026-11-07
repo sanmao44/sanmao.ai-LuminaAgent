@@ -185,7 +185,9 @@ function CanvasNodeEditorPopover({
   });
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
   const [isCompact, setIsCompact] = useState(false);
-  const [promptExpanded, setPromptExpanded] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(
+    node.type === "media" && node.data.kind === "audio",
+  );
   const [promptOptimizing, setPromptOptimizing] = useState(false);
   const [promptBeforeOptimization, setPromptBeforeOptimization] = useState<string | null>(null);
   const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
@@ -200,6 +202,9 @@ function CanvasNodeEditorPopover({
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
   const data = node.data;
   const audioNode = node.type === "media" && data.kind === "audio";
+  useEffect(() => {
+    setPromptExpanded(audioNode);
+  }, [audioNode, node.id]);
   const isImageNode = !audioNode && node.type !== "prompt" && node.type !== "upscale" && data.kind !== "video";
   const isVariantGenerator = node.type === "generator" && data.kind === "video";
   const isDockNode = isImageNode || isVariantGenerator;
@@ -738,7 +743,7 @@ function CanvasNodeEditorPopover({
   return portalRoot ? createPortal(
     <div
       ref={popoverRef}
-      className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
+      className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${audioNode ? " is-audio-editor" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
       data-placement={position.placement}
       data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
@@ -1170,7 +1175,7 @@ function CanvasNodeEditorPopover({
           </div>
          </div>}
        </div>
-        {(audioNode || !audioNode && (promptExpanded || !isDockNode)) && <div className="canvas-node-editor-actions">
+        {!audioNode && (promptExpanded || !isDockNode) && <div className="canvas-node-editor-actions">
           <span>{promptExpanded ? "编辑完成后点击保存" : node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 生成新视频" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
           <div className="canvas-node-editor-action-buttons">
             {isAgentNode && !promptExpanded && readyOneTakeReferences.length >= 2 && (

@@ -4010,4 +4010,4 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 
 @media(max-width:980px) and (min-width:781px){.creative-flow-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:780px){.agent-page:has(> .agent-welcome){padding:16px 14px calc(var(--agent-composer-height,150px) + 44px)}.agent-page:has(> .agent-welcome) .agent-welcome{width:100%}.agent-example-fallback{display:none}}
-@media(max-height:720px){.agent-page:has(> .agent-welcome){justify-content:flex-start}.agent-example-fallback{display:none}}
+@media(max-height:720px){.agent-page:has(> .agent-welcome){justify-content:flex-start;padding-top:12px}.agent-example-fallback{display:none}}

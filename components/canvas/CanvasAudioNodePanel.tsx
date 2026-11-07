@@ -28,6 +28,9 @@ export default function CanvasAudioNodePanel({
   const [generatingSpeech, setGeneratingSpeech] = useState(false);
   const data = node.data;
   const hasAudio = Boolean(data.url);
+  const speechServiceLabel = data.speechGeneration?.engine === "offline"
+    ? "本机离线语音"
+    : data.speechGeneration?.modelName || "自动选择可用配音引擎";
 
   useEffect(() => {
     setSpeechText(node.data.speechGeneration?.text || node.data.speechDraft?.text || "");
@@ -87,75 +90,24 @@ export default function CanvasAudioNodePanel({
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
     >
-      <div className="canvas-audio-panel-intro">
-        <div className="canvas-audio-panel-intro-copy">
-          <span className="canvas-audio-panel-icon" aria-hidden="true">♫</span>
-          <div>
-            <b>{hasAudio ? "参考音频" : "导入参考音频"}</b>
-            <small>独立素材 · 仅连接到视频节点</small>
-          </div>
-        </div>
-        <span className={`canvas-audio-panel-state${hasAudio ? " ready" : " empty"}`}>
-          {hasAudio ? "已就绪" : "待导入"}
-        </span>
-      </div>
-      {hasAudio ? (
-        <div className="canvas-audio-panel-player">
-          <CanvasAudioPlayer
-            src={String(data.url)}
-            name={String(data.name || "音频素材")}
-            onDuration={(duration) => onDurationChange(node.id, duration)}
-          />
-          <div className="canvas-audio-panel-meta">
-            <b title={String(data.name || "音频素材")}>{String(data.name || "音频素材")}</b>
-            <div className="canvas-audio-panel-meta-chips">
-              <span>{String(data.mimeType || "audio/*")}</span>
-              <span>{formatCanvasAudioDuration(data.durationMs)}</span>
-              {data.assetId && <span title={String(data.assetId)}>资产 {String(data.assetId)}</span>}
+      <div className="canvas-audio-panel-main">
+        <section className="canvas-audio-speech" aria-label="文本转配音">
+          <div className="canvas-audio-speech-heading">
+            <div>
+              <label htmlFor={`canvas-audio-speech-${node.id}`}>文本配音</label>
+              <small>旁白、台词或解说词</small>
             </div>
+            <small className="canvas-audio-speech-count">{speechText.length} / {SPEECH_TEXT_LIMIT}</small>
           </div>
-        </div>
-      ) : (
-        <div className="canvas-audio-panel-empty">
-          <span>还没有音频</span>
-          <small>导入现有素材，或输入旁白文本直接生成配音</small>
-        </div>
-      )}
-      {data.speechGeneration && (
-        <details className="canvas-audio-generation">
-          <summary>配音生成记录</summary>
-          <p>{data.speechGeneration.text}</p>
-          <small>
-            {data.speechGeneration.engine === "offline" ? "本机离线语音" : data.speechGeneration.modelName || "在线配音模型"}
-            {data.speechGeneration.voice ? ` · ${data.speechGeneration.voice}` : ""}
-            {` · ${new Date(data.speechGeneration.createdAt).toLocaleString("zh-CN", { hour12: false })}`}
-          </small>
-        </details>
-      )}
-      <section className="canvas-audio-speech" aria-label="文本转配音">
-        <label htmlFor={`canvas-audio-speech-${node.id}`}>配音文本</label>
         <textarea
           id={`canvas-audio-speech-${node.id}`}
           value={speechText}
           maxLength={SPEECH_TEXT_LIMIT}
-          rows={3}
+          rows={8}
           placeholder="输入旁白、台词或解说词…"
           onChange={(event) => setSpeechText(event.target.value)}
           disabled={generatingSpeech}
         />
-        <small className="canvas-audio-speech-hint">生成后保留文本，可微调文案或音色继续试听。</small>
-        <div className="canvas-audio-speech-footer">
-          <small>{speechText.length} / {SPEECH_TEXT_LIMIT}</small>
-          <button
-            type="button"
-            className="canvas-audio-panel-upload canvas-audio-generate"
-            onClick={() => void generateSpeech()}
-            disabled={!speechText.trim() || generatingSpeech}
-            aria-busy={generatingSpeech}
-          >
-            {generatingSpeech ? "正在生成…" : hasAudio ? "生成并替换音频" : "生成配音"}
-          </button>
-        </div>
         <details className="canvas-audio-advanced">
           <summary>音色设置（可选）</summary>
           <label htmlFor={`canvas-audio-voice-${node.id}`}>音色名称</label>
@@ -168,13 +120,80 @@ export default function CanvasAudioNodePanel({
             disabled={generatingSpeech}
           />
         </details>
-        <small className="canvas-audio-speech-hint">使用已配置的配音模型；本机语音引擎是否可用取决于运行环境。</small>
-      </section>
+        </section>
+        <aside className="canvas-audio-panel-source" aria-label="音频素材与生成记录">
+          <div className="canvas-audio-panel-intro">
+            <div className="canvas-audio-panel-intro-copy">
+              <span className="canvas-audio-panel-icon" aria-hidden="true">♫</span>
+              <div>
+                <b>音频素材</b>
+                <small>试听、替换或连接到视频节点</small>
+              </div>
+            </div>
+            <span className={`canvas-audio-panel-state${hasAudio ? " ready" : " empty"}`}>
+              {hasAudio ? "已就绪" : "待导入"}
+            </span>
+          </div>
+          {hasAudio ? (
+            <div className="canvas-audio-panel-player">
+              <CanvasAudioPlayer
+                src={String(data.url)}
+                name={String(data.name || "音频素材")}
+                onDuration={(duration) => onDurationChange(node.id, duration)}
+              />
+              <div className="canvas-audio-panel-meta">
+                <b title={String(data.name || "音频素材")}>{String(data.name || "音频素材")}</b>
+                <div className="canvas-audio-panel-meta-chips">
+                  <span>{String(data.mimeType || "audio/*")}</span>
+                  <span>{formatCanvasAudioDuration(data.durationMs)}</span>
+                  {data.assetId && <span title={String(data.assetId)}>资产 {String(data.assetId)}</span>}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="canvas-audio-panel-empty">
+              <span>还没有音频</span>
+              <small>生成配音或导入素材后，可在此试听</small>
+            </div>
+          )}
+          {data.speechGeneration && (
+            <details className="canvas-audio-generation">
+              <summary>配音生成记录</summary>
+              <p>{data.speechGeneration.text}</p>
+              <small>
+                {data.speechGeneration.engine === "offline" ? "本机离线语音" : data.speechGeneration.modelName || "在线配音模型"}
+                {data.speechGeneration.voice ? ` · ${data.speechGeneration.voice}` : ""}
+                {` · ${new Date(data.speechGeneration.createdAt).toLocaleString("zh-CN", { hour12: false })}`}
+              </small>
+            </details>
+          )}
+        </aside>
+      </div>
       <div className="canvas-audio-panel-actions">
-        <button type="button" className="canvas-audio-panel-upload" onClick={() => inputRef.current?.click()}>
-          {hasAudio ? "替换音频" : "添加音频"}
+        <div className="canvas-audio-panel-service" title={speechServiceLabel}>
+          <span className="canvas-audio-panel-service-dot" aria-hidden="true" />
+          <div>
+            <b>配音服务</b>
+            <small>{speechServiceLabel}</small>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="canvas-audio-panel-upload"
+          onClick={() => inputRef.current?.click()}
+          disabled={generatingSpeech}
+        >
+          {hasAudio ? "替换音频" : "导入音频"}
         </button>
-        <span>{hasAudio ? "替换成功后会保留节点、分组和视频连线" : "导入后即可拖动右侧端口连接视频"}</span>
+        <button
+          type="button"
+          className="canvas-node-editor-generate canvas-audio-generate"
+          onClick={() => void generateSpeech()}
+          disabled={!speechText.trim() || generatingSpeech}
+          aria-busy={generatingSpeech}
+        >
+          {generatingSpeech ? "正在生成…" : hasAudio ? "生成并替换" : "生成配音"}
+        </button>
       </div>
       <input
         ref={inputRef}

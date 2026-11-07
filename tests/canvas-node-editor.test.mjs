@@ -834,14 +834,23 @@ test("audio nodes use the branded rounded player instead of browser gray control
   assert.match(audioPanelStyles, /\.canvas-audio-panel-meta-chips span\{[^}]*border-radius:999px/);
 });
 
-test("audio editor stays compact and scrolls within the panel", () => {
+test("audio editor opens in the image-editor frame without a desktop body scrollbar", () => {
   assert.match(component + audioPanel, /className="canvas-audio-panel"/);
+  assert.match(nodeEditor, /useState\(\s*node\.type === "media" && node\.data\.kind === "audio"/);
+  assert.match(nodeEditor, /audioNode \? " is-audio-editor"/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-audio-editor\.is-prompt-expanded\{height:min\(500px,calc\(100dvh - 32px\)\);max-height:min\(500px,calc\(100dvh - 32px\)\)\}/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-audio-editor\.is-prompt-expanded \.canvas-node-editor-body\{display:flex;flex:1;overflow:hidden;min-height:0\}/);
+  assert.match(component, /!audioNode && \(promptExpanded \|\| !isDockNode\)/);
   assert.doesNotMatch(component, /estimatedPopoverHeight/);
   assert.doesNotMatch(component, /naturalHeight = \(head\?\.offsetHeight/);
   assert.match(styles, /\.canvas-node-editor-popover\.canvas-node-editor-popover\[data-node-kind="audio"\]:not\(\.is-prompt-expanded\)\[data-density\]\{[\s\S]*?width:min\(520px,calc\(100vw - 32px\)\)!important;[\s\S]*?max-height:none!important;[\s\S]*?overflow:visible!important/);
-  assert.match(audioPanelStyles, /\.canvas-audio-panel\{display:grid;gap:8px;min-width:0\}/);
-  assert.match(audioPanelStyles, /\.canvas-audio-panel-empty\{[^}]*padding:13px 12px/);
-  assert.match(audioPanelStyles, /\.canvas-audio-speech textarea\{min-height:56px;max-height:180px\}/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel\{display:flex;flex:1;flex-direction:column;gap:0;min-width:0;min-height:0;height:100%\}/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel-main\{display:grid;flex:1;grid-template-columns:minmax\(0,1\.4fr\) minmax\(250px,\.8fr\)/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel-actions\{display:grid;grid-template-columns:minmax\(0,1fr\) auto auto/);
+  assert.match(audioPanelStyles, /@media\(max-width:720px\)\{\.canvas-audio-panel-main\{grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel-empty\{[^}]*padding:20px 12px/);
+  assert.match(audioPanel, /className="canvas-node-editor-generate canvas-audio-generate"/);
+  assert.match(audioPanel, /className="canvas-audio-panel-upload"[\s\S]*?disabled=\{generatingSpeech\}/);
 });
 
 test("image node editing persists parameters without turning uploads into generated media", () => {
