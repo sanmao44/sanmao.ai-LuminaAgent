@@ -28,7 +28,11 @@ import type {
   CanvasUpscaleParams,
 } from "@/lib/canvas/types";
 import type { CanvasReferenceDraft, CanvasReuseDraft } from "@/lib/canvas/reuse";
-import type { GenerationReference, ProjectVisualReference } from "@/lib/canvas/project-visual-references";
+import {
+  projectDefaultReferenceMode,
+  type GenerationReference,
+  type ProjectVisualReference,
+} from "@/lib/canvas/project-visual-references";
 import { BUILTIN_IMAGE_PRESETS, type CustomImagePreset, type ImagePreset, visibleImagePresetPrompt } from "@/lib/creation/image-presets";
 import { IMAGE_QUALITY_OPTIONS, resolveAvailableCreationModel, type CreationSettings, type VideoCreationSettings } from "@/lib/creation/settings";
 import { requestPromptOptimization } from "@/lib/creation/agent";
@@ -455,16 +459,24 @@ function CanvasNodeEditorPopover({
     name: String(reference.data.name || "参考素材"),
     url: String(reference.data.url || ""),
   }));
-  const projectDefaultsEnabled = projectReferencePreviewKind === "视频"
-    || (!imageReferenceResolution.hasMentions && imageRequestOperation !== "edit");
-  const projectDefaultsDisabledReason = projectReferencePreviewKind === "图片"
-    ? imageReferenceResolution.hasMentions
-      ? "本次使用 @ 引用，项目默认图不会附加。"
-      : imageRequestOperation === "edit"
-        ? "当前为改图操作，项目默认图不会附加。"
-        : imageRequestOperation === "auto" && imageReferenceIds.size > 0
-          ? "自动判定为改图时，项目默认图不会附加。"
-          : undefined
+  const projectDefaultsMode = projectReferencePreviewKind === "视频"
+    ? "included"
+    : projectReferencePreviewKind === "图片"
+      ? projectDefaultReferenceMode({
+          operation: imageRequestOperation,
+          imageReferenceCount: imageReferenceIds.size,
+          hasMentions: imageReferenceResolution.hasMentions,
+          hasMask: Boolean(imageParams?.mask || maskState?.url),
+        })
+      : "disabled";
+  const projectDefaultsModeNote = projectReferencePreviewKind === "图片"
+    ? projectDefaultsMode === "conditional"
+      ? "自动模式会先判断改图或参考图生成；只有参考图生成分支会附加项目图。可取消勾选排除候选图。"
+      : projectDefaultsMode === "disabled"
+        ? imageReferenceResolution.hasMentions
+          ? "本次使用 @ 引用，项目默认图不会附加。"
+          : "当前为改图操作，项目默认图不会附加。"
+        : undefined
     : undefined;
   const previewExplicitReferences = projectReferencePreviewKind === "视频"
     ? videoPreviewReferences
@@ -648,7 +660,9 @@ function CanvasNodeEditorPopover({
     const microEditor = zoom < 0.35;
     if (nextCompact !== isCompact) setIsCompact(nextCompact);
     const popover = popoverRef.current;
-    const popoverWidth = popover?.offsetWidth || (microEditor ? 360 : nextCompact ? 510 : 640);
+    const popoverWidth = promptExpanded
+      ? Math.min(860, window.innerWidth - 32)
+      : popover?.offsetWidth || (microEditor ? 360 : nextCompact ? 510 : 640);
     const stageRect = stage.getBoundingClientRect();
     const nodeElement = Array.from(
       stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
@@ -757,7 +771,7 @@ function CanvasNodeEditorPopover({
         </div>
         <div className="canvas-node-editor-head-actions">
           <span>编辑中</span>
-           {!audioNode && node.type !== "upscale" && <button
+           {(audioNode || node.type !== "upscale") && <button
             type="button"
             className="canvas-node-editor-expand"
             title={promptExpanded ? "收回编辑" : "放大编辑"}
@@ -903,8 +917,8 @@ function CanvasNodeEditorPopover({
               onToggle={toggleProjectReferenceForRun}
               mediaKind={projectReferencePreviewKind}
               maxReferences={previewReferenceLimit}
-              projectDefaultsEnabled={projectDefaultsEnabled}
-              disabledReason={projectDefaultsDisabledReason}
+              projectDefaultsMode={projectDefaultsMode}
+              modeNote={projectDefaultsModeNote}
             />}
             {!isUpscaleNode && (
             <div className="canvas-node-editor-prompt-wrap">
@@ -1040,8 +1054,8 @@ function CanvasNodeEditorPopover({
               onToggle={toggleProjectReferenceForRun}
               mediaKind={projectReferencePreviewKind}
               maxReferences={previewReferenceLimit}
-              projectDefaultsEnabled={projectDefaultsEnabled}
-              disabledReason={projectDefaultsDisabledReason}
+              projectDefaultsMode={projectDefaultsMode}
+              modeNote={projectDefaultsModeNote}
             />}
             <div className="canvas-node-editor-prompt-wrap">
               <div className="canvas-node-editor-prompt-label">
@@ -1156,7 +1170,7 @@ function CanvasNodeEditorPopover({
           </div>
          </div>}
        </div>
-        {!audioNode && (promptExpanded || !isDockNode) && <div className="canvas-node-editor-actions">
+        {(audioNode || !audioNode && (promptExpanded || !isDockNode)) && <div className="canvas-node-editor-actions">
           <span>{promptExpanded ? "编辑完成后点击保存" : node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 生成新视频" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
           <div className="canvas-node-editor-action-buttons">
             {isAgentNode && !promptExpanded && readyOneTakeReferences.length >= 2 && (

@@ -317,6 +317,10 @@
   color: var(--muted);
 }
 
+.canvas-project-reference-preview-list > label.conditional > span > small {
+  color: var(--accent-text);
+}
+
 .canvas-project-reference-preview-list input {
   width: 13px;
   height: 13px;

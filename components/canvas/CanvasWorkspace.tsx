@@ -510,7 +510,12 @@ import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
 import { canvasProjectDraftPrompt, seedCanvasProjectIntent } from "@/lib/canvas/project-progress";
 import { projectWorkflowScaffold } from "@/lib/canvas/project-workflow";
 import { ensureCanvasProjectReferenceAsset, resolveCanvasProjectReferenceAssets } from "@/lib/canvas/asset-library-service";
-import { mergeProjectVisualReferences, projectVisualReferenceAssetId, type ProjectVisualReference } from "@/lib/canvas/project-visual-references";
+import {
+  mergeProjectVisualReferences,
+  projectDefaultReferenceMode,
+  projectVisualReferenceAssetId,
+  type ProjectVisualReference,
+} from "@/lib/canvas/project-visual-references";
 import { createProvenanceEdge, provenanceDraftsForSources } from "@/lib/provenance/normalize";
 import VideoEditorNode from "@/components/VideoEditorNode";
 import VideoEditorWorkbench from "@/components/VideoEditorWorkbench";
@@ -7331,10 +7336,13 @@ export default function SuperCanvas() {
       } catch (error) {
         return notify(error instanceof Error ? error.message : "图片操作预检失败，请检查模型和参考素材。", "error");
       }
-      const canUseProjectDefaults = !preparedImageRequest.resolution.hasMentions
-        && !preparedImageRequest.params.mask
-        && imageIntent.operation !== "edit";
-      if (canUseProjectDefaults && projectVisualReferences.length) {
+      const projectDefaultsMode = projectDefaultReferenceMode({
+        operation: imageIntent.operation,
+        imageReferenceCount: explicitImageRefs.length,
+        hasMentions: preparedImageRequest.resolution.hasMentions,
+        hasMask: Boolean(preparedImageRequest.params.mask),
+      });
+      if (projectDefaultsMode === "included" && projectVisualReferences.length) {
         refs = mergeProjectVisualReferences(
           explicitImageRefs,
           projectVisualReferences,

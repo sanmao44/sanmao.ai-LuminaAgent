@@ -128,7 +128,43 @@ test('project reference preview explains disabled defaults and explicit duplicat
   assert.deepEqual(duplicatePlan.items.map((item) => item.status), ['duplicate', 'included']);
   assert.equal(duplicatePlan.projectCount, 1);
 
-  const disabledPlan = references.planProjectVisualReferenceSubmission(explicit, project, [], 4, false);
+  const disabledPlan = references.planProjectVisualReferenceSubmission(explicit, project, [], 4, 'disabled');
   assert.deepEqual(disabledPlan.references, explicit);
   assert.deepEqual(disabledPlan.items.map((item) => item.status), ['defaults-disabled', 'defaults-disabled']);
+});
+
+test('project defaults stay conditional until automatic image intent is known', () => {
+  const mode = references.projectDefaultReferenceMode;
+
+  assert.equal(mode({ operation: 'auto', imageReferenceCount: 1, hasMentions: false, hasMask: false }), 'conditional');
+  assert.equal(mode({ operation: 'auto', imageReferenceCount: 0, hasMentions: false, hasMask: false }), 'included');
+  assert.equal(mode({ operation: 'edit', imageReferenceCount: 1, hasMentions: false, hasMask: false }), 'disabled');
+  assert.equal(mode({ operation: 'reference-generate', imageReferenceCount: 1, hasMentions: false, hasMask: false }), 'included');
+  assert.equal(mode({ operation: 'auto', imageReferenceCount: 1, hasMentions: true, hasMask: false }), 'disabled');
+  assert.equal(mode({ operation: 'auto', imageReferenceCount: 1, hasMentions: false, hasMask: true }), 'disabled');
+});
+
+test('conditional project reference preview preserves explicit refs and reports candidates honestly', () => {
+  const explicit = [{ kind: 'image', name: 'explicit', url: '/same.png' }];
+  const project = [
+    { assetId: 'duplicate', name: 'duplicate', url: '/same.png' },
+    { assetId: 'candidate', name: 'candidate', url: '/candidate.png' },
+    { assetId: 'over-limit', name: 'over limit', url: '/over-limit.png' },
+    { assetId: 'excluded', name: 'excluded', url: '/excluded.png' },
+  ];
+
+  const plan = references.planProjectVisualReferenceSubmission(
+    explicit,
+    project,
+    ['excluded'],
+    2,
+    'conditional',
+  );
+
+  assert.deepEqual(plan.references, explicit);
+  assert.equal(plan.explicitCount, 1);
+  assert.equal(plan.projectCount, 0);
+  assert.deepEqual(plan.items.map((item) => item.status), [
+    'duplicate', 'conditional', 'model-limit', 'excluded',
+  ]);
 });
