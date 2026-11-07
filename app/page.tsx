@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import AngleConsole from '@/components/AngleConsole';
 import ModelPicker from '@/components/ModelPicker';
 import UpdateNotice from '@/components/UpdateNotice';
+import { useImageStudioDraft } from '@/components/creation/useImageStudioDraft';
 import RuntimeServiceControl from '@/components/RuntimeServiceControl';
 import SettingsWorkspace from '@/components/settings/SettingsWorkspace';
 import ImageStorageSettings from '@/components/settings/ImageStorageSettings';
@@ -2590,13 +2591,11 @@ export default function Page() {
             URL.revokeObjectURL(sharePreview.url);
         };
     }, [sharePreview]);
-    const [generatePrompt, setGeneratePrompt] = useState('');
     const [generatePromptOptimizing, setGeneratePromptOptimizing] = useState(false);
     const [generatePromptBeforeOptimization, setGeneratePromptBeforeOptimization] = useState(null);
     const generatePromptRef = useRef(null);
     const [generateModelId, setGenerateModelId] = useState('auto');
     const [generateUpscaleModelId, setGenerateUpscaleModelId] = useState('auto');
-    const [generateWorkflow, setGenerateWorkflow] = useState('generate');
     const [ratio, setRatio] = useState('1:1');
     const [customRatioWidth, setCustomRatioWidth] = useState(16);
     const [customRatioHeight, setCustomRatioHeight] = useState(9);
@@ -2639,6 +2638,19 @@ export default function Page() {
     const [outputFormat, setOutputFormat] = useState('png');
     const [backgroundMode, setBackgroundMode] = useState('auto');
     const [generateSettingsReady, setGenerateSettingsReady] = useState(false);
+    const {
+        prompt: generatePrompt,
+        setPrompt: setGeneratePrompt,
+        workflow: generateWorkflow,
+        setWorkflow: setGenerateWorkflow,
+        status: generateDraftStatus,
+        referencesNoticeVisible: generateDraftReferencesNoticeVisible,
+        markInteraction: markGenerateDraftInteraction,
+        dismissReferencesNotice: dismissGenerateDraftReferencesNotice
+    } = useImageStudioDraft({
+        ready: generateSettingsReady,
+        hasUnpersistedReferences: generateRefs.length > 0 || Boolean(generateMask)
+    });
     const modelPreferencesRestoredRef = useRef(false);
     const [generateTasks, setGenerateTasks] = useState([]);
     const [generateTaskView, setGenerateTaskView] = useState('current');
@@ -4816,6 +4828,10 @@ export default function Page() {
                     compressForChat: true,
                     target
                 })));
+            if (target === 'generate' && refs.length) {
+                markGenerateDraftInteraction();
+                dismissGenerateDraftReferencesNotice();
+            }
             if (target === 'agent') setAgentRefs((old)=>[
                     ...old,
                     ...refs
@@ -5403,6 +5419,7 @@ export default function Page() {
             notify(request.referencesOmitted ? '视角参数已恢复，但参考图较大未能随任务保存，请重新添加参考图' : request.angle.viewpoint?.version === 2 ? '已恢复这一轮的视角与光影参数' : '旧版参数无法换算相对视角，已回到原图机位');
             return;
         }
+        dismissGenerateDraftReferencesNotice();
         setGeneratePrompt(task.prompt === 'Upscale this image' ? '' : task.prompt);
         setGeneratePromptBeforeOptimization(null);
         const restoringUpscale = task.mode === 'upscale';
@@ -5459,6 +5476,7 @@ export default function Page() {
             notify('这条记录暂时没有可直接恢复的完整生图参数，请复制提示词后到对应工作台确认。');
             return;
         }
+        dismissGenerateDraftReferencesNotice();
         setGenerateWorkflow('generate');
         setGeneratePrompt(draft.prompt);
         setGeneratePromptBeforeOptimization(null);
@@ -9076,6 +9094,22 @@ export default function Page() {
                                                                     }),
                                                                     !generateUpscaleMode && generatePromptBeforeOptimization !== null && /*#__PURE__*/ _jsx("small", {
                                                                         children: "已保留原文"
+                                                                    }),
+                                                                    generateDraftStatus === 'checking' && /*#__PURE__*/ _jsx("small", {
+                                                                        role: "status",
+                                                                        "aria-live": "polite",
+                                                                        children: "正在恢复草稿"
+                                                                    }),
+                                                                    generateDraftStatus === 'saved' && /*#__PURE__*/ _jsx("small", {
+                                                                        role: "status",
+                                                                        "aria-live": "polite",
+                                                                        children: "草稿已保存"
+                                                                    }),
+                                                                    generateDraftStatus === 'error' && /*#__PURE__*/ _jsx("small", {
+                                                                        role: "status",
+                                                                        "aria-live": "polite",
+                                                                        title: "浏览器会话存储不可用，请保持当前页面以免丢失提示词",
+                                                                        children: "草稿未保存"
                                                                     })
                                                                 ]
                                                             }),
@@ -9105,6 +9139,20 @@ export default function Page() {
                                                                         ]
                                                                     })
                                                                 ]
+                                                            })
+                                                        ]
+                                                    }),
+                                                    generateDraftReferencesNoticeVisible && !generateRefs.length && !generateMask && /*#__PURE__*/ _jsxs("div", {
+                                                        className: "image-draft-notice",
+                                                        role: "status",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                children: "已恢复提示词和工作流；上次参考图或蒙版未保存，请重新添加。"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                onClick: dismissGenerateDraftReferencesNotice,
+                                                                children: "知道了"
                                                             })
                                                         ]
                                                     }),
@@ -9143,11 +9191,13 @@ export default function Page() {
                                                 onLocalUpscale: toggleLocalUpscaleMode,
                                                 localUpscaleActive: generateUpscaleMode,
                                                 onRemove: (id)=>{
+                                                    dismissGenerateDraftReferencesNotice();
                                                     setGenerateRefs((old)=>old.filter((x)=>x.id !== id));
                                                     if (generateMask?.referenceId === id) setGenerateMask(null);
                                                 },
                                                 onReorder: (fromIndex, toIndex)=>setGenerateRefs((old)=>reorderCreativeReferences(old, fromIndex, toIndex)),
                                                 onClear: ()=>{
+                                                    dismissGenerateDraftReferencesNotice();
                                                     setGenerateRefs([]);
                                                     setGenerateMask(null);
                                                 }

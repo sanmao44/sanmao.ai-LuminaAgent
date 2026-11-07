@@ -189,6 +189,21 @@ test('Alibaba generative VIAPI exposes asynchronous resolution failures', async 
   });
 });
 
+test('Alibaba async polling preserves the Retry-After delay for rate-limit handling', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ Code: 'Throttling' }), {
+    status: 429,
+    headers: { 'content-type': 'application/json', 'retry-after': '5' },
+  });
+  const client = provider.createUpscaleProvider('aliyun-viapi', { provider: 'aliyun-viapi', accessKeyId: 'LTAIexample', accessKeySecret: 'SECRET' });
+
+  await assert.rejects(() => client.poll('job-1', { modelId: 'aliyun-generative-super-resolution' }), (error) => {
+    assert.equal(error.code, 'UPSTREAM_ERROR');
+    assert.equal(error.status, 429);
+    assert.equal(error.retryAfterMs, 5000);
+    return true;
+  });
+});
+
 test('cloud failures are mapped to actionable Chinese messages', async () => {
   globalThis.fetch = async () => new Response('<Error><Code>SignatureDoesNotMatch</Code><Message>secret</Message></Error>', { status: 403, headers: { 'content-type': 'application/xml' } });
   const client = provider.createUpscaleProvider('tencent-ci', { provider: 'tencent-ci', secretId: 'AKID', secretKey: 'SECRET', bucket: 'demo', region: 'ap-shanghai' });

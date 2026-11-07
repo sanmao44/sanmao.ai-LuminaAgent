@@ -3,8 +3,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { CREATIVE_PROJECT_DELIVERABLE_OPTIONS, type CreativeProjectBrief, type CreativeProjectDeliverable } from "@/packages/contracts/creative";
 import type { ProjectVisualReference } from "@/lib/canvas/project-visual-references";
+import SelectMenu from "@/components/SelectMenu";
 
 const EMPTY_BRIEF: CreativeProjectBrief = { intent: "", style: "", audience: "", constraints: "", deliverable: "auto" };
+const DELIVERABLE_OPTIONS = CREATIVE_PROJECT_DELIVERABLE_OPTIONS.map(({ value, label, description }) => ({ value, label, description }));
 
 export default function CanvasProjectBriefEditor({
   brief,
@@ -71,14 +73,14 @@ export default function CanvasProjectBriefEditor({
         </label>
         <label>
           <span>交付目标</span>
-          <select
+          <SelectMenu
+            className="canvas-project-deliverable-select"
+            menuClassName="canvas-project-deliverable-menu"
             value={draft.deliverable || "auto"}
-            onChange={(event) => setDraft((value) => ({ ...value, deliverable: event.target.value as CreativeProjectDeliverable }))}
-          >
-            {CREATIVE_PROJECT_DELIVERABLE_OPTIONS.map((option) => (
-              <option value={option.value} key={option.value}>{option.label}</option>
-            ))}
-          </select>
+            ariaLabel="交付目标"
+            options={DELIVERABLE_OPTIONS}
+            onChange={(deliverable: CreativeProjectDeliverable) => setDraft((value) => ({ ...value, deliverable }))}
+          />
           <small>{selectedDeliverable?.description}</small>
         </label>
         <label>

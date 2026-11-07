@@ -1350,6 +1350,9 @@ html:has(.angle-app-shell),body:has(.angle-app-shell){height:100%;min-height:0;o
 
 /* AI prompt optimization controls in the generation workspace. */
 .prompt-field-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;padding:0 1px}
+.image-draft-notice{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--text-2);font-size:11px;line-height:1.45}
+.image-draft-notice span{min-width:0;overflow-wrap:anywhere}
+.image-draft-notice button{flex:none;border:0;background:transparent;color:var(--accent-text);font:inherit;font-weight:750;cursor:pointer}
 .prompt-field-label{display:flex;align-items:center;gap:7px;min-width:0}
 .prompt-field-label>span{font-size:10px;font-weight:850;color:var(--text-2)}
 .prompt-field-label>small{padding:3px 6px;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));border-radius:999px;background:var(--accent-soft);color:var(--accent-text);font-size:7px;font-weight:800;white-space:nowrap}

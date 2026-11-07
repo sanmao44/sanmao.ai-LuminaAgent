@@ -15,6 +15,29 @@ import { upscaleTaskOutputUrl, upscaleTaskStatus } from './upscale-task-output';
 
 const activePolls = new Set<string>();
 const TASK_TIMEOUT_ERROR = '高清处理时间较长，请稍后重试。';
+const MAX_POLL_RETRY_DELAY_MS = 15 * 60_000;
+
+function isRetryableUpscalePollError(error: unknown) {
+  if (isUpscaleProviderError(error)) {
+    return error.code === 'UPSTREAM_ERROR'
+      && (error.status === 408 || error.status === 425 || error.status === 429 || (error.status !== undefined && error.status >= 500));
+  }
+  const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : '';
+  if (/^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE)$/i.test(code)) return true;
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /timeout|timed out|network|fetch failed|connection reset|socket hang up/i.test(message);
+}
+
+function upscalePollRetryDelay(task: UpscaleTask, error: unknown) {
+  if (isUpscaleProviderError(error) && Number.isFinite(error.retryAfterMs) && Number(error.retryAfterMs) > 0) {
+    return Math.min(MAX_POLL_RETRY_DELAY_MS, Math.max(1000, Number(error.retryAfterMs)));
+  }
+  const attempt = Math.max(0, Math.floor(Number(task.pollCount) || 0));
+  const baseDelay = Math.min(60_000, 2000 * 2 ** Math.min(5, attempt));
+  return Math.round(baseDelay * (0.8 + Math.random() * 0.4));
+}
 
 export function scaleValue(value: unknown): 1 | 2 | 3 | 4 {
   const number = Number(value);
@@ -205,9 +228,24 @@ export async function refreshUpscaleTask(id: string) {
       await finishTaskLog(failed || task, { status: 'error', error, errorCode: 'POLL_UNSUPPORTED' });
       return failed || task;
     }
-    const result = await provider.poll(task.providerTaskId, { modelId: task.model });
+    let result;
+    try {
+      result = await provider.poll(task.providerTaskId, { modelId: task.model });
+    } catch (error) {
+      if (!isRetryableUpscalePollError(error)) throw error;
+      const failure = friendlyError(error);
+      const pollCount = task.pollCount + 1;
+      return await updateUpscaleTask(id, {
+        status: task.status,
+        pollCount,
+        nextPollAt: Date.now() + upscalePollRetryDelay(task, error),
+        errorCode: 'POLL_RETRY',
+        error: `云端查询暂时失败，任务仍在进行，系统将在稍后自动重试：${failure.message}`,
+        completedAt: undefined,
+      });
+    }
     if (result.status === 'succeeded') return await saveResult(task, result);
-    return await updateUpscaleTask(id, { status: result.status, pollCount: task.pollCount + 1, nextPollAt: Date.now() + Math.min(15_000, 1500 + task.pollCount * 500) });
+    return await updateUpscaleTask(id, { status: result.status, pollCount: task.pollCount + 1, nextPollAt: Date.now() + Math.min(15_000, 1500 + task.pollCount * 500), error: undefined, errorCode: undefined });
   } catch (error) {
     const failure = friendlyError(error) as UpscaleProviderError;
     const next = await updateUpscaleTask(id, { status: 'failed', errorCode: isUpscaleProviderError(failure) ? failure.code : 'UPSTREAM_ERROR', error: failure.message, completedAt: new Date().toISOString() });

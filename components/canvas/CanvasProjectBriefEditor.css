@@ -147,25 +147,50 @@
   line-height: 1.45;
 }
 
-.canvas-project-brief select {
-  box-sizing: border-box;
+.canvas-project-deliverable-select {
   width: 100%;
-  min-height: 30px;
+}
+
+.canvas-project-deliverable-select .select-menu-trigger {
+  min-height: 32px;
   padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel-2);
-  color: var(--text);
-  font: inherit;
+  border-radius: 7px;
+}
+
+.canvas-project-deliverable-select .select-menu-trigger-copy {
+  font-size: 9px;
+}
+
+.canvas-project-deliverable-select .select-menu-chevron {
+  font-size: 14px;
+}
+
+.canvas-project-deliverable-menu {
+  padding: 4px;
+  border-radius: 8px;
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+  background: var(--panel);
+}
+
+.canvas-project-deliverable-menu .select-menu-option {
+  min-height: 32px;
+  padding: 5px 7px;
+  border-radius: 5px;
+}
+
+.canvas-project-deliverable-menu .select-menu-option-copy {
+  gap: 2px;
+}
+
+.canvas-project-deliverable-menu .select-menu-option-copy strong {
+  font-size: 9px;
+}
+
+.canvas-project-deliverable-menu .select-menu-option-copy small {
+  font-size: 8px;
 }
 
 .canvas-project-brief textarea:focus-visible {
-  border-color: var(--accent);
-  outline: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
-  outline-offset: 1px;
-}
-
-.canvas-project-brief select:focus-visible {
   border-color: var(--accent);
   outline: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
   outline-offset: 1px;
