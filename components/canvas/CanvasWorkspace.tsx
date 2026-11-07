@@ -505,6 +505,7 @@ import type { CanvasAgentRunContext } from "@/lib/canvas/run-context";
 import { generationLogKind, generationLogOutputUrls } from "@/lib/canvas/activity-log";
 import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
 import { canvasProjectDraftPrompt, seedCanvasProjectIntent } from "@/lib/canvas/project-progress";
+import { projectWorkflowScaffold } from "@/lib/canvas/project-workflow";
 import { createProvenanceEdge, provenanceDraftsForSources } from "@/lib/provenance/normalize";
 import VideoEditorNode from "@/components/VideoEditorNode";
 import VideoEditorWorkbench from "@/components/VideoEditorWorkbench";
@@ -8831,6 +8832,52 @@ export default function SuperCanvas() {
     }
   }, [addNode, commit, connectCanvasNodes, projectBrief?.intent]);
 
+  const scaffoldProject = useCallback(() => {
+    const before = canvasCoreRef.current.document();
+    if (before.nodes.length) {
+      notify("当前画布已有节点，请继续使用项目进度中的分步操作", "error");
+      return;
+    }
+    const steps = projectWorkflowScaffold(projectBrief?.deliverable || "auto");
+    if (!steps.length) return;
+    const origin = screenToWorld(
+      Math.max(120, stageSize.width / 2 - 260),
+      Math.max(120, stageSize.height / 2 - 150),
+    );
+    let next = before;
+    const created: CanvasNode[] = steps.map((step, index) => {
+      const position = { x: origin.x + index * 500, y: origin.y };
+      const node = step.kind === "text"
+        ? createPrompt(position, projectBrief?.intent?.trim() || "")
+        : step.kind === "workflowImage"
+          ? createGenerator("image", position, defaultCanvasGenerationParams("image", runtime))
+          : step.kind === "workflowVideo"
+            ? createGenerator("video", position, defaultCanvasGenerationParams("video", runtime))
+            : step.kind === "audio"
+              ? createEmptyMedia("audio", position)
+              : createVideoEditorNode(position);
+      next = { ...next, nodes: [...next.nodes, node] };
+      return node;
+    });
+    for (let index = 1; index < created.length; index += 1) {
+      const source = created[index - 1];
+      const target = created[index];
+      // Audio is an independent source until it has a real output. The editor
+      // also waits for completed media, so it stays visible as the next step.
+      if (target.data.kind === "audio" || target.type === "video-editor") continue;
+      const connected = connectCanvasNodesInDocument(next, source.id, target.id, "right", "left", runtime);
+      if (connected.ok) next = connected.document;
+    }
+    commit(() => next);
+    const ids = created.map((node) => node.id);
+    setSelectedIds(new Set(ids));
+    setSelectedGroupId(null);
+    setActivePanel(null);
+    fitView(ids);
+    addLog(`已按${projectBrief?.deliverable || "自动"}交付目标搭建 ${created.length} 步项目骨架`);
+    notify(`已搭建 ${created.length} 步项目流程骨架，接下来填充提示词并生成`, "ok");
+  }, [addLog, commit, fitView, notify, projectBrief?.deliverable, projectBrief?.intent, runtime, screenToWorld, stageSize.height, stageSize.width]);
+
   const startProjectDraft = useCallback(() => {
     setActivePanel(null);
     setAgentDockDraftPrompt(canvasProjectDraftPrompt(projectBrief));
@@ -14209,6 +14256,7 @@ export default function SuperCanvas() {
           saveProjectVersion();
         }}
         onImportWorkflow={() => workflowInputRef.current?.click()}
+        onScaffoldProject={scaffoldProject}
       />
       {notice && (
         <div

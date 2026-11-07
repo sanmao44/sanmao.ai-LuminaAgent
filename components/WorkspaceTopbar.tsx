@@ -8,11 +8,13 @@ type WorkspaceTopbarProps = {
   section: string;
   sidebarOpen: boolean;
   theme: 'light' | 'dark';
+  syncStatus: 'idle' | 'syncing' | 'synced' | 'offline' | 'error' | 'conflict';
   Icon: ComponentType<IconProps>;
   onOpenSidebar: () => void;
   onGoAgent: () => void;
   onGoGenerate: () => void;
   onGoVideo: () => void;
+  onGoTasks: () => void;
   onToggleTheme: () => void;
   onCanvasClick: () => void;
 };
@@ -22,15 +24,36 @@ export default function WorkspaceTopbar({
   section,
   sidebarOpen,
   theme,
+  syncStatus,
   Icon,
   onOpenSidebar,
   onGoAgent,
   onGoGenerate,
   onGoVideo,
+  onGoTasks,
   onToggleTheme,
   onCanvasClick,
 }: WorkspaceTopbarProps) {
   const { imageActive, videoActive, agentActive } = workspaceTopbarModes(section);
+  const syncLabel = syncStatus === 'syncing'
+    ? '保存中'
+    : syncStatus === 'offline'
+      ? '离线'
+      : syncStatus === 'conflict'
+        ? '同步冲突'
+        : syncStatus === 'error'
+          ? '保存异常'
+          : syncStatus === 'synced'
+            ? '已保存'
+            : '待同步';
+  const syncTone = syncStatus === 'offline' || syncStatus === 'error' || syncStatus === 'conflict'
+    ? 'attention'
+    : syncStatus === 'syncing'
+      ? 'working'
+      : syncStatus === 'idle'
+        ? 'pending'
+        : 'ready';
+  const syncTitle = `工作区${syncLabel}`;
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -42,7 +65,7 @@ export default function WorkspaceTopbar({
           <strong>SANMAO.AI</strong>
         </button>
       </div>
-      <nav className="top-mode-nav" aria-label="创作类型">
+      <nav className="top-mode-nav" aria-label="创作模式">
         <button type="button" className={imageActive ? 'active' : ''} aria-pressed={imageActive} onClick={onGoGenerate}>
           <Icon name="image" size={15} /><span>图片</span>
         </button>
@@ -57,6 +80,11 @@ export default function WorkspaceTopbar({
         </button>
       </nav>
       <div className="top-actions">
+        <button type="button" className={`topbar-task-status ${section === 'logs' ? 'active' : ''}`} onClick={onGoTasks} aria-label={`打开任务记录，${syncTitle}`} title={syncTitle}>
+          <span className={`topbar-status-dot ${syncTone}`} aria-hidden="true" />
+          <Icon name="logs" size={15} />
+          <span className="topbar-task-copy"><strong>任务记录</strong><small>{syncLabel}</small></span>
+        </button>
         <Link href="/canvas" className="super-canvas-entry" aria-label="超级画布" data-tooltip="超级画布 · 无限画布" onClick={onCanvasClick}>
           <Icon name="canvas" size={16} /><span>超级画布</span><small className="super-canvas-entry-badge">NEW</small>
         </Link>

@@ -11,7 +11,6 @@ export function projectWorkflowScaffold(deliverable: CreativeProjectDeliverable)
   if (deliverable === "image") return [
     { kind: "text", label: "内容草案" },
     { kind: "workflowImage", label: "图片生成" },
-    { kind: "upscale", label: "清晰度增强" },
   ];
   if (deliverable === "audio") return [
     { kind: "text", label: "旁白草案" },

@@ -83,7 +83,7 @@ import {
 } from '@/lib/generation-log-presentation';
 import { compressReferenceDataUrl } from '@/lib/canvas/api';
 import { loadImageDimensions, upscaleTargetDimensions } from '@/lib/canvas/upscale';
-import { startWorkspaceSync } from '@/lib/workspace';
+import { startWorkspaceSync, type WorkspaceSyncStatus } from '@/lib/workspace';
 import { workspaceRepository } from '@/lib/repositories/workspace-repository';
 import { conversationRepository } from '@/lib/repositories/conversation-repository';
 import { requestAdminSession } from '@/lib/admin-session';
@@ -203,6 +203,7 @@ const HISTORY_PAGE_SIZE_OPTIONS = [
     96
 ];
 const DEFAULT_HISTORY_PAGE_SIZE = 12;
+const TASK_STATUS_REFRESH_INTERVAL_MS = 10_000;
 const HISTORY_PAGE_SIZE_STORAGE_KEY = 'sanmao-history-page-size';
 const HISTORY_PAGE_SIZE_MODE_STORAGE_KEY = 'sanmao-history-page-size-mode';
 const PROVIDER_SETUP_DISMISSED_STORAGE_KEY = 'sanmao-provider-setup-dismissed';
@@ -2324,6 +2325,7 @@ export default function Page() {
     const successAudioRef = useRef(null);
     const [state, setState] = useState(emptyState);
     const [loadingState, setLoadingState] = useState(true);
+    const [workspaceSyncStatus, setWorkspaceSyncStatus] = useState<WorkspaceSyncStatus>('idle');
     const [toast, setToast] = useState('');
     const toastTimerRef = useRef(null);
     const [confirmState, setConfirmState] = useState(null);
@@ -3276,7 +3278,7 @@ export default function Page() {
                 })
                 .catch(() => undefined)
                 .finally(() => {
-                    if (!cancelled) stopWorkspaceSync = startWorkspaceSync();
+                    if (!cancelled) stopWorkspaceSync = startWorkspaceSync({ onStatus: setWorkspaceSyncStatus });
                 });
         };
         void start();
@@ -3673,14 +3675,36 @@ export default function Page() {
         if (!generateBusy && !activeAgentBusy && section !== 'logs') return;
         const timer = window.setInterval(()=>{
             setGenerateClock(Date.now());
-            if (generateBusy || section === 'logs') void refreshGenerationLogs();
-            if (section === 'logs') void refreshVideoTasks();
         }, 1000);
         return ()=>window.clearInterval(timer);
     }, [
         generateBusy,
         activeAgentBusy,
         section
+    ]);
+    useEffect(()=>{
+        if (section !== 'logs' || recordTab !== 'tasks') return;
+        let refreshing = false;
+        const refreshTasks = async ()=>{
+            if (refreshing) return;
+            refreshing = true;
+            try {
+                await Promise.all([refreshGenerationLogs(), refreshVideoTasks()]);
+            } finally {
+                refreshing = false;
+            }
+        };
+        void refreshTasks();
+        const timer = window.setInterval(()=>void refreshTasks(), TASK_STATUS_REFRESH_INTERVAL_MS);
+        return ()=>window.clearInterval(timer);
+    }, [
+        section,
+        recordTab,
+        historyFilter,
+        historyMediaFilter,
+        historySearch,
+        pageSize,
+        videoPage
     ]);
     useEffect(()=>{
         if (!generateMask) return;
@@ -8204,6 +8228,7 @@ export default function Page() {
                         section: section,
                         sidebarOpen: sidebarOpen,
                         theme: theme,
+                        syncStatus: workspaceSyncStatus,
                         Icon: Icon,
                         onOpenSidebar: ()=>setSidebarOpen(true),
                         onGoAgent: ()=>setSection('agent'),
@@ -8213,6 +8238,12 @@ export default function Page() {
                         },
                         onGoVideo: ()=>{
                             setSection('video');
+                            closeSidebarOnMobile();
+                        },
+                        onGoTasks: ()=>{
+                            setRecordTab('tasks');
+                            markLogErrorNoticeSeen();
+                            setSection('logs');
                             closeSidebarOnMobile();
                         },
                         onToggleTheme: toggleTheme,
@@ -10031,7 +10062,7 @@ export default function Page() {
                                                 "aria-label": "创作记录视图",
                                                 children: [
                                                     /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'works', className: recordTab === 'works' ? 'active' : '', onClick: ()=>{ setRecordTab('works'); setSection('history'); void refreshGallery(); void refreshVideoTasks(); }, children: "作品" }),
-                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); markLogErrorNoticeSeen(); void refreshGenerationLogs(); void refreshVideoTasks(); }, children: "任务" })
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); markLogErrorNoticeSeen(); }, children: "任务" })
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("div", {
@@ -10403,7 +10434,7 @@ export default function Page() {
                                                 "aria-label": "创作记录视图",
                                                 children: [
                                                     /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'works', className: recordTab === 'works' ? 'active' : '', onClick: ()=>{ setRecordTab('works'); setSection('history'); void refreshGallery(); void refreshVideoTasks(); }, children: "作品" }),
-                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); void refreshGenerationLogs(); void refreshVideoTasks(); }, children: "任务" })
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); }, children: "任务" })
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("div", {

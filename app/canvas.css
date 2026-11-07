@@ -4262,6 +4262,34 @@ html:not([data-theme="light"]) .canvas-group-label-layer>.canvas-group-world-lab
 /* Keep the menu's transparent positioning wrapper from blocking topbar controls. */
 .canvas-project-popover-wrap{pointer-events:none}
 .canvas-project-popover-wrap>.canvas-project-popover{pointer-events:auto}
+.canvas-project-popover{height:auto;max-height:min(760px,calc(100vh - 86px));box-sizing:border-box;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.canvas-project-popover>.canvas-project-footer{position:sticky;bottom:0;padding-bottom:8px;background:color-mix(in srgb,var(--panel) 97%,transparent)}
+@media(max-width:720px){.canvas-project-popover-wrap{display:block;left:10px;right:10px;padding-top:70px}.canvas-project-popover{width:min(360px,calc(100vw - 20px))}}
+
+/* Project menu hierarchy and keyboard-friendly controls. */
+.canvas-project-popover{width:320px}
+.canvas-popover-title{display:grid;gap:3px;font-size:10px}
+.canvas-popover-title small{color:var(--muted);font-size:9px;font-weight:600}
+.canvas-project-search{display:flex;align-items:center;gap:6px;height:32px;margin:0 0 9px;padding:0 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--muted)}
+.canvas-project-search:focus-within{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent)}
+.canvas-project-search span{font-size:14px;line-height:1}
+.canvas-project-search input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:10px}
+.canvas-project-search input::placeholder{color:var(--muted)}
+.canvas-project-search button{width:20px;height:20px;border:0;background:transparent;color:var(--muted);font-size:16px;cursor:pointer}
+.canvas-project-section-title{padding:5px 8px 4px;color:var(--muted);font-size:9px;font-weight:850;letter-spacing:.02em}
+.canvas-project-empty{padding:9px 8px 11px;color:var(--muted);font-size:10px}
+.canvas-project-row small{font-size:9px}
+.canvas-popover-actions button,.canvas-rename-row button{font-size:10px}
+.canvas-project-primary-action{border-color:color-mix(in srgb,var(--accent) 42%,var(--line))!important;color:var(--accent-text)!important}
+.canvas-project-more{flex:0 0 auto!important;padding-inline:10px}
+.canvas-project-actions-menu{display:flex;justify-content:flex-end;padding-top:6px}
+.canvas-project-actions-menu button{min-height:30px;padding:0 10px;border:1px solid color-mix(in srgb,var(--danger) 40%,var(--line));border-radius:8px;background:var(--danger-soft);color:var(--danger);font-size:10px;cursor:pointer}
+.canvas-project-actions-menu button:hover,.canvas-project-actions-menu button:focus-visible{border-color:var(--danger);outline:none}
+@media(max-width:720px){.canvas-project-popover{width:min(360px,calc(100vw - 20px))}}
+
+/* Keep the search field's focus ring on the rounded shell, not on a square
+   input nested inside it. */
+.canvas-project-search input:focus,.canvas-project-search input:focus-visible{border-color:transparent;box-shadow:none;outline:0}
 
 .canvas-minimap.is-collapsed{display:flex;align-items:center;gap:8px}
 .canvas-minimap-fit{display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
