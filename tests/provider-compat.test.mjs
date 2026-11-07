@@ -29,7 +29,13 @@ const presets = await import(`data:text/javascript;base64,${Buffer.from(presetCo
 
 test('provider picker uses real local logos for visible providers', async () => {
   const visiblePresets = presets.providerPresets.filter((preset) => preset.showInPicker !== false && preset.value !== 'custom');
-  assert.equal(visiblePresets.length, 13);
+  assert.equal(visiblePresets.length, 14);
+  const a6api = presets.providerPresets.find((preset) => preset.value === 'a6api');
+  assert.deepEqual({ baseUrl: a6api.baseUrl, apiKeyUrl: a6api.apiKeyUrl, type: a6api.type }, {
+    baseUrl: 'https://api.a6api.vip/v1',
+    apiKeyUrl: 'https://a6api.ai/?auth=register&aff=XIcW',
+    type: 'openai-compatible',
+  });
   assert.ok(visiblePresets.every((preset) => typeof preset.logo === 'string' && preset.logo.startsWith('/brand/providers/')) || visiblePresets.every((preset) => typeof preset.logo === 'string'));
   assert.match(providerPickerSource, /className=\{preset\.logo \? "platform-logo" : ""\}/);
   assert.match(providerPickerSource, /preset\.logo \? <img src=\{preset\.logo\} alt="" \/> : preset\.short\.slice\(0, 2\)/);

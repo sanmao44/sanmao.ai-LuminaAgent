@@ -34,4 +34,16 @@ test('AgentWelcome renders the empty conversation prompt and examples', () => {
   assert.match(markup, /例子一/);
   assert.match(markup, /例子二/);
   assert.match(markup, /agent-welcome-orb/);
+  assert.match(markup, /选择一键成片工作流/);
+});
+
+test('AgentWelcome exposes the recent creative draft when available', () => {
+  const markup = renderToStaticMarkup(createElement(AgentWelcome, {
+    orbState: 'idle',
+    examples: [],
+    recentDraft: { title: '产品海报', prompt: '恢复这张产品海报' },
+    onSelectExample: () => {},
+  }));
+  assert.match(markup, /继续最近创作/);
+  assert.match(markup, /产品海报/);
 });

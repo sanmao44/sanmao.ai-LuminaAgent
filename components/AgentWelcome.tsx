@@ -4,7 +4,8 @@ import AgentOrb from '@/components/AgentOrb';
 type AgentWelcomeProps = {
   orbState: AgentOrbState;
   examples: string[];
-  onSelectExample: (example: string) => void;
+  recentDraft?: { title: string; prompt: string } | null;
+  onSelectExample: (example: string, label: string) => void;
 };
 
 const creativeFlows = [
@@ -35,7 +36,7 @@ const creativeFlows = [
 ] as const;
 
 /** Empty Agent conversation state; input state remains owned by Page. */
-export default function AgentWelcome({ orbState, examples, onSelectExample }: AgentWelcomeProps) {
+export default function AgentWelcome({ orbState, examples, recentDraft, onSelectExample }: AgentWelcomeProps) {
   return (
     <div className="agent-welcome">
       <AgentOrb state={orbState} label="" className="agent-welcome-orb" />
@@ -47,7 +48,8 @@ export default function AgentWelcome({ orbState, examples, onSelectExample }: Ag
             key={flow.key}
             className="creative-flow-card"
             type="button"
-            onClick={() => onSelectExample(flow.prompt)}
+            aria-label={`选择${flow.title}工作流`}
+            onClick={() => onSelectExample(flow.prompt, flow.title)}
           >
             <span className="creative-flow-card-head">
               <strong>{flow.title}</strong>
@@ -57,9 +59,23 @@ export default function AgentWelcome({ orbState, examples, onSelectExample }: Ag
           </button>
         ))}
       </div>
+      {recentDraft ? (
+        <button
+          type="button"
+          className="agent-recent-draft"
+          aria-label={`继续${recentDraft.title}`}
+          onClick={() => onSelectExample(recentDraft.prompt, '继续最近创作')}
+        >
+          <span className="agent-recent-draft-copy">
+            <strong>继续最近创作</strong>
+            <small>{recentDraft.title}</small>
+          </span>
+          <span aria-hidden="true">→</span>
+        </button>
+      ) : null}
       <div className="example-grid agent-example-fallback" aria-label="更多示例">
         {examples.slice(0, 2).map((example) => (
-          <button key={example} type="button" onClick={() => onSelectExample(example)}>{example}</button>
+          <button key={example} type="button" onClick={() => onSelectExample(example, '示例提示词')}>{example}</button>
         ))}
       </div>
     </div>

@@ -1,4 +1,5 @@
 import type { GenerationLog } from "@/lib/generation-log";
+import { normalizeReferenceRecords } from "@/lib/reference-images";
 import { IMAGE_RATIOS } from "@/lib/creation/settings";
 
 export const ratios = [...IMAGE_RATIOS] as string[];
@@ -79,6 +80,36 @@ export function generationMediaKind(log: GenerationLog): GenerationLogPresentati
     if (log.mediaKind === 'audio' || log.mode === 'audio') return 'audio';
     if (log.mediaKind === 'video' || log.mode === 'video') return 'video';
     return 'image';
+}
+
+/** The subset of a generation log that can be safely restored into the image composer. */
+export type GenerationLogComposerDraft = {
+    prompt: string;
+    modelId?: string;
+    aspectRatio?: string;
+    count: number;
+    references: ReturnType<typeof normalizeReferenceRecords>;
+};
+
+export function generationLogComposerDraft(log: GenerationLog): GenerationLogComposerDraft | null {
+    if (generationMediaKind(log) !== "image" || log.mode !== "generate") return null;
+    const prompt = String(log.prompt || "").trim();
+    if (!prompt) return null;
+    const rawCount = Number(log.count ?? log.imageCount ?? 1);
+    const count = Number.isFinite(rawCount) ? Math.max(1, Math.min(8, Math.round(rawCount))) : 1;
+    return {
+        prompt,
+        ...(log.modelId ? { modelId: log.modelId } : {}),
+        ...(log.aspectRatio ? { aspectRatio: log.aspectRatio } : {}),
+        count,
+        references: normalizeReferenceRecords(log.references),
+    };
+}
+
+export function generationLogMatchesTask(log: Pick<GenerationLog, 'id' | 'taskId' | 'providerTaskId'>, task: { id?: unknown; taskId?: unknown; providerTaskId?: unknown }) {
+    const logIds = new Set([log.id, log.taskId, log.providerTaskId].filter(Boolean).map(String));
+    const taskIds = [task.id, task.taskId, task.providerTaskId].filter(Boolean).map(String);
+    return logIds.size > 0 && taskIds.some((id) => logIds.has(id));
 }
 export function generationLogIsLlm(log: GenerationLog): boolean {
     return generationMediaKind(log) === 'llm';

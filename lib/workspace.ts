@@ -35,6 +35,7 @@ const META_KEY = 'sanmao.workspace.sync.meta.v1';
 const CLIENT_ID_KEY = 'sanmao.workspace.client-id.v1';
 const SYNC_INTERVAL_MS = 5000;
 const SYNC_DEBOUNCE_MS = 700;
+const CONFLICT_RETRY_MS = 2000;
 const MAX_WORKSPACE_BYTES = 80 * 1024 * 1024;
 
 export const WORKSPACE_PREFERENCE_KEYS = [
@@ -626,7 +627,17 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
   let timer: number | null = null;
   let retryTimer: number | null = null;
   let syncing = false;
+  let conflictRetryAttempt = 0;
   const setStatus = (status: WorkspaceSyncStatus) => options.onStatus?.(status);
+  const scheduleConflictRetry = () => {
+    if (retryTimer) window.clearTimeout(retryTimer);
+    const delay = Math.min(30_000, CONFLICT_RETRY_MS * 2 ** Math.min(conflictRetryAttempt, 4));
+    conflictRetryAttempt = Math.min(conflictRetryAttempt + 1, 4);
+    retryTimer = window.setTimeout(() => {
+      retryTimer = null;
+      void reconcile();
+    }, delay);
+  };
 
   const reconcile = async () => {
     if (stopped || syncing) return;
@@ -638,10 +649,12 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
       if (stopped) return;
       const synced = await reconcileWorkspace(options.onRestored, () => stopped);
       completed = true;
+      conflictRetryAttempt = 0;
       setStatus(synced ? 'synced' : 'idle');
     } catch (error) {
       if (error instanceof WorkspaceConflictError) {
         setStatus('conflict');
+        scheduleConflictRetry();
         return;
       }
       setStatus('offline');
@@ -662,11 +675,17 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
     try {
       const synced = await uploadLocalWorkspace(keepalive);
       completed = true;
+      conflictRetryAttempt = 0;
       setStatus(synced ? 'synced' : 'idle');
     } catch (error) {
       const current = readMeta();
       if (current) writeMeta({ ...current, pending: true });
-      setStatus(error instanceof WorkspaceConflictError ? 'conflict' : 'error');
+      if (error instanceof WorkspaceConflictError) {
+        setStatus('conflict');
+        scheduleConflictRetry();
+      } else {
+        setStatus('error');
+      }
     } finally {
       syncing = false;
       if (completed) schedulePendingPush();

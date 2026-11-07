@@ -64,6 +64,8 @@ import {
     generationLogIsLlm,
     generationLogSourceLabel,
     generationLogTitle,
+    generationLogComposerDraft,
+    generationLogMatchesTask,
     gallerySourceLabel,
     generationMediaKind,
     generationMediaLabel,
@@ -91,7 +93,7 @@ import { readWorkspaceContext } from '@/lib/workspace-context';
 import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import OneTakeDurationPicker from '@/components/OneTakeDurationPicker';
-import { appendTextReferenceContext, creativeReferenceUrl, normalizeCreativeReference, referenceMentionOptions, referencePreviewText, referenceTextBadge, reorderCreativeReferences, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import { appendTextReferenceContext, creativeReferenceUrl, normalizeCreativeReference, normalizeCreativeReferences, referenceMentionOptions, referencePreviewText, referenceTextBadge, reorderCreativeReferences, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from '@/lib/theme';
 import AgentApprovalCard from '@/components/AgentApprovalCard';
@@ -2660,6 +2662,9 @@ export default function Page() {
     const [gallery, setGallery] = useState([]);
     const [videoTasks, setVideoTasks] = useState([]);
     const [generationLogs, setGenerationLogs] = useState([]);
+    const generationLogsRefreshRef = useRef<Promise<void> | null>(null);
+    const videoTasksRefreshRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
+    const videoTasksRequestIdRef = useRef(0);
     const [historyNotice, setHistoryNotice] = useState(false);
     const [logErrorNotice, setLogErrorNotice] = useState(false);
     const navNoticeSeenRef = useRef({
@@ -2903,6 +2908,20 @@ export default function Page() {
     }, [
         generationLogs
     ]);
+    const workspaceTaskSummary = useMemo(() => ({
+        total: generationLogs.length,
+        pending: generationLogs.filter((log) => log.status === 'pending').length,
+        error: generationLogs.filter((log) => log.status === 'error').length,
+    }), [generationLogs]);
+    const recentAgentDraft = useMemo(() => {
+        const candidate = [...gallery]
+            .filter((item) => (item.source === 'generate' || item.source === 'agent') && String(item.prompt || '').trim())
+            .sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0))[0];
+        if (!candidate) return null;
+        const prompt = String(candidate.prompt).trim();
+        const title = prompt.replace(/\s+/g, ' ').slice(0, 44);
+        return { title: title || '最近的创作', prompt };
+    }, [gallery]);
     const filteredGenerationLogs = useMemo(()=>{
         const query = logSearch.trim().toLowerCase();
         const filtered = generationLogs.filter((log)=>{
@@ -3264,9 +3283,6 @@ export default function Page() {
             void refreshAdmin();
             void refreshGallery();
             void refreshChatSessions();
-            void refreshGenerationLogs();
-            void refreshVideoTasks();
-            void refreshStorageMaintenance();
             void loadLocalDirectory();
             // Local preferences and IndexedDB are available immediately. The
             // server workspace is reconciled after the shell is interactive.
@@ -3859,6 +3875,12 @@ export default function Page() {
             toastTimerRef.current = null;
         }, 3000);
     }
+    function selectAgentExample(example, label) {
+        setAgentInput(example);
+        setAgentInputBeforeOptimization(null);
+        window.setTimeout(()=>focusContentEditableToEnd(agentInputRef.current), 0);
+        notify(`${label}已准备，按 Enter 开始`);
+    }
     function openChatFilePreview(file) {
         if (!isPreviewableChatFile(file)) return;
         if (isVideoChatFile(file)) {
@@ -4181,23 +4203,44 @@ export default function Page() {
         });
     }
     async function refreshGenerationLogs() {
+        if (generationLogsRefreshRef.current) return generationLogsRefreshRef.current;
+        const request = (async () => {
+            try {
+                const logs = await listGenerationLogs(200);
+                const uniqueLogs = logs.filter((log, index, all) => index === all.findIndex((candidate) => candidate.id === log.id));
+                setGenerationLogs(uniqueLogs);
+                syncLogErrorNotice(uniqueLogs);
+            } catch {}
+        })();
+        generationLogsRefreshRef.current = request;
         try {
-            const logs = await listGenerationLogs(200);
-            setGenerationLogs(logs);
-            syncLogErrorNotice(logs);
-        } catch {}
+            await request;
+        } finally {
+            if (generationLogsRefreshRef.current === request) generationLogsRefreshRef.current = null;
+        }
     }
     async function refreshVideoTasks(requestedPage = videoPage) {
+        const source = historyFilter === 'canvas' ? 'canvas' : historyFilter === 'agent' ? 'agent' : historyFilter === 'generate' ? 'workspace' : historyFilter === 'all' ? 'all' : 'none';
+        const media = historyMediaFilter === 'all' || historyMediaFilter === 'video' ? 'video' : 'none';
+        const requestKey = `${requestedPage}:${pageSize}:${source}:${media}:${historySearch}`;
+        if (videoTasksRefreshRef.current?.key === requestKey) return videoTasksRefreshRef.current.promise;
+        const requestId = ++videoTasksRequestIdRef.current;
+        const request = (async () => {
+            try {
+                const data = await listVideoTasksPage({ page: requestedPage, pageSize, source, media, search: historySearch });
+                if (!data || requestId !== videoTasksRequestIdRef.current) return;
+                setVideoTasks(data.tasks);
+                setVideoTotal(Math.max(0, data.total));
+                const nextPage = Math.max(1, data.page);
+                if (nextPage !== videoPage) setVideoPage(nextPage);
+            } catch  {}
+        })();
+        videoTasksRefreshRef.current = { key: requestKey, promise: request };
         try {
-            const source = historyFilter === 'canvas' ? 'canvas' : historyFilter === 'agent' ? 'agent' : historyFilter === 'generate' ? 'workspace' : historyFilter === 'all' ? 'all' : 'none';
-            const media = historyMediaFilter === 'all' || historyMediaFilter === 'video' ? 'video' : 'none';
-            const data = await listVideoTasksPage({ page: requestedPage, pageSize, source, media, search: historySearch });
-            if (!data) return;
-            setVideoTasks(data.tasks);
-            setVideoTotal(Math.max(0, data.total));
-            const nextPage = Math.max(1, data.page);
-            if (nextPage !== videoPage) setVideoPage(nextPage);
-        } catch  {}
+            await request;
+        } finally {
+            if (videoTasksRefreshRef.current?.promise === request) videoTasksRefreshRef.current = null;
+        }
     }
     async function deleteVideoTask(task) {
         try {
@@ -4245,6 +4288,9 @@ export default function Page() {
             setLocalSnapshots(data.snapshots);
         } catch {}
     }
+    useEffect(()=>{
+        if (section === 'settings') void refreshStorageMaintenance();
+    }, [section]);
     async function createManualSnapshot() {
         setBackupBusy(true);
         try {
@@ -5392,6 +5438,54 @@ export default function Page() {
         } : null);
         setSection('generate');
         notify(request.referencesOmitted ? '参数已恢复，但参考图较大未能随任务保存，请重新添加参考图' : '已恢复这一轮的生图参数');
+    }
+    function findGenerateTaskForLog(log) {
+        const identifiers = new Set([log?.id, log?.taskId].filter(Boolean).map((value) => String(value)));
+        if (!identifiers.size) return null;
+        return generateTasks.find((task) => identifiers.has(String(task.id)) || identifiers.has(String(task.request?.taskId))) || null;
+    }
+    function findVideoTaskForLog(log) {
+        if (generationMediaKind(log) !== 'video') return null;
+        return videoTasks.find((task) => generationLogMatchesTask(log, task)) || null;
+    }
+    function canRestoreGenerationLogContext(log) {
+        return Boolean(findGenerateTaskForLog(log)?.request || generationLogComposerDraft(log));
+    }
+    function restoreGenerationLogContext(log) {
+        const videoTask = findVideoTaskForLog(log);
+        if (videoTask) {
+            setSelectedLog(null);
+            restoreVideoTask(videoTask);
+            notify('已恢复视频任务参数；请检查内容后再提交，不会自动调用模型。');
+            return;
+        }
+        const localTask = findGenerateTaskForLog(log);
+        if (localTask?.request) {
+            setSelectedLog(null);
+            restoreGenerateTask(localTask);
+            return;
+        }
+        const draft = generationLogComposerDraft(log);
+        if (!draft) {
+            notify('这条记录暂时没有可直接恢复的完整生图参数，请复制提示词后到对应工作台确认。');
+            return;
+        }
+        setGenerateWorkflow('generate');
+        setGeneratePrompt(draft.prompt);
+        setGeneratePromptBeforeOptimization(null);
+        setGenerateModelId(draft.modelId && availableGenerationModels.some((model) => model.id === draft.modelId) ? draft.modelId : 'auto');
+        setRatio(ratios.includes(draft.aspectRatio) ? draft.aspectRatio : '自动');
+        setCount(draft.count);
+        const restoredReferences = normalizeCreativeReferences(draft.references);
+        setGenerateRefs(restoredReferences);
+        setGenerateMask(null);
+        setSection('generate');
+        setSelectedLog(null);
+        notify(draft.references.length && restoredReferences.length < draft.references.length
+            ? '已恢复生图参数，但部分参考素材已不可用；请重新添加后再提交。'
+            : restoredReferences.length
+                ? '已恢复生图参数和参考图；请检查素材后再提交，不会自动调用模型。'
+            : '已恢复生图参数；请检查内容后再提交，不会自动调用模型。');
     }
     async function retryGenerateTask(task) {
         if (isEditorImageTask(task)) return retryEditorTask(task);
@@ -8229,6 +8323,7 @@ export default function Page() {
                         sidebarOpen: sidebarOpen,
                         theme: theme,
                         syncStatus: workspaceSyncStatus,
+                        taskSummary: workspaceTaskSummary,
                         Icon: Icon,
                         onOpenSidebar: ()=>setSidebarOpen(true),
                         onGoAgent: ()=>setSection('agent'),
@@ -8272,7 +8367,8 @@ export default function Page() {
                                     !messages.length ? /*#__PURE__*/ _jsx(AgentWelcome, {
                                         orbState: agentOrbStatus.phase,
                                         examples: examples,
-                                        onSelectExample: (example)=>setAgentInput(example)
+                                        recentDraft: recentAgentDraft,
+                                        onSelectExample: (example, label)=>selectAgentExample(example, label)
                                     }) : /*#__PURE__*/ _jsxs(_Fragment, {
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", {
@@ -12432,7 +12528,16 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                     ]
                                 })
                             ]
-                        })
+                        }),
+                        canRestoreGenerationLogContext(selectedLog) || findVideoTaskForLog(selectedLog) ? /*#__PURE__*/ _jsx("div", {
+                            className: "log-detail-actions",
+                            children: /*#__PURE__*/ _jsx("button", {
+                                type: "button",
+                                className: "primary-action compact",
+                                onClick: ()=>restoreGenerationLogContext(selectedLog),
+                                children: findVideoTaskForLog(selectedLog) ? "恢复到视频工作台" : "恢复基础参数"
+                            })
+                        }) : null
                     ]
                 })
             }),

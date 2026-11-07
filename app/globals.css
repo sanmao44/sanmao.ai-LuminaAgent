@@ -3976,3 +3976,5 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .agent-web-mode-menu button,.agent-web-mode-menu strong,.agent-web-mode-menu small{white-space:nowrap}
 .composer-left:has(.agent-web-mode-menu){overflow:visible}
 .composer-left>.agent-web-toggle-wrap{min-width:112px;flex:0 0 auto;position:relative;z-index:30}
+.log-detail-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.agent-recent-draft{display:flex;align-items:center;justify-content:space-between;gap:12px;width:min(100%,680px);margin:16px auto 0;padding:12px 14px;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent-soft) 44%,var(--panel));color:var(--text);font:inherit;text-align:left;cursor:pointer}.agent-recent-draft:hover,.agent-recent-draft:focus-visible{border-color:var(--accent);background:var(--accent-soft);outline:0}.agent-recent-draft-copy{display:grid;gap:3px;min-width:0}.agent-recent-draft-copy strong{font-size:11px}.agent-recent-draft-copy small{overflow:hidden;color:var(--muted);font-size:10px;text-overflow:ellipsis;white-space:nowrap}
