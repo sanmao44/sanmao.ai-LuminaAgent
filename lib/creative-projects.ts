@@ -1,4 +1,5 @@
 import type { CanvasProject, CanvasSnapshot } from './canvas/types';
+import { normalizeCreativeProjectBrief, type CreativeProjectBrief } from '../packages/contracts/creative';
 
 export const CREATIVE_PROJECTS_KEY = 'sanmao.creative.projects.v1';
 export const CREATIVE_PROJECT_MAX_VERSIONS = 50;
@@ -10,6 +11,8 @@ export type CreativeProjectVersion = {
   label: string;
   createdAt: number;
   parentVersionId?: string;
+  /** Creative rules are part of the versioned project state, not global UI preferences. */
+  brief?: CreativeProjectBrief | null;
   snapshot: CanvasSnapshot;
 };
 
@@ -19,7 +22,17 @@ export type CreativeProject = {
   createdAt: number;
   updatedAt: number;
   canvasIds: string[];
+  brief?: CreativeProjectBrief;
   versions?: CreativeProjectVersion[];
+};
+
+export type ImportedCreativeProjectVersion = {
+  id: string;
+  label: string;
+  createdAt: number;
+  parentVersionId?: string;
+  brief?: CreativeProjectBrief | null;
+  snapshot: CanvasSnapshot;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -47,6 +60,10 @@ function normalizeSnapshot(value: unknown): CanvasSnapshot | null {
   return value as unknown as CanvasSnapshot;
 }
 
+export function creativeProjectSnapshotsEqual(left: CanvasSnapshot, right: CanvasSnapshot) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function normalizeVersion(value: unknown, projectId: string): CreativeProjectVersion | null {
   if (!isRecord(value)) return null;
   const id = cleanId(value.id);
@@ -54,6 +71,8 @@ function normalizeVersion(value: unknown, projectId: string): CreativeProjectVer
   const snapshot = normalizeSnapshot(value.snapshot);
   if (!id || !canvasId || !snapshot) return null;
   const createdAt = finiteTimestamp(value.createdAt, Date.now());
+  const hasBrief = Object.prototype.hasOwnProperty.call(value, 'brief');
+  const brief = normalizeCreativeProjectBrief(value.brief);
   return {
     id,
     projectId,
@@ -61,6 +80,7 @@ function normalizeVersion(value: unknown, projectId: string): CreativeProjectVer
     label: String(value.label || '未命名版本').trim().slice(0, 80) || '未命名版本',
     createdAt,
     ...(cleanId(value.parentVersionId) ? { parentVersionId: cleanId(value.parentVersionId) } : {}),
+    ...(hasBrief ? { brief: brief || null } : {}),
     snapshot,
   };
 }
@@ -85,15 +105,31 @@ export function normalizeCreativeProjects(value: unknown): CreativeProject[] {
         .sort((left, right) => left.createdAt - right.createdAt)
         .slice(-CREATIVE_PROJECT_MAX_VERSIONS)
       : [];
+    const brief = normalizeCreativeProjectBrief(item.brief);
     return [{
       id,
       name: String(item.name || '未命名项目').trim().slice(0, 120) || '未命名项目',
       createdAt,
       updatedAt: finiteTimestamp(item.updatedAt, createdAt),
       canvasIds: cleanIds(item.canvasIds),
+      ...(brief ? { brief } : {}),
       ...(versions.length ? { versions } : {}),
     }];
   });
+}
+
+export function updateCreativeProjectBrief(
+  projects: readonly CreativeProject[],
+  projectId: string,
+  value: unknown,
+  updatedAt = Date.now(),
+) {
+  const normalized = normalizeCreativeProjects(projects);
+  if (!normalized.some((project) => project.id === projectId)) return null;
+  const brief = normalizeCreativeProjectBrief(value);
+  return normalizeCreativeProjects(normalized.map((project) => project.id === projectId
+    ? { ...project, updatedAt, ...(brief ? { brief } : { brief: undefined }) }
+    : project));
 }
 
 /**
@@ -173,6 +209,48 @@ export function appendCreativeProjectVersion(
   return normalizeCreativeProjects(projects.map((item) => item.id === project.id
     ? { ...item, updatedAt: version.createdAt, versions }
     : item));
+}
+
+export function appendImportedCreativeProjectVersions(
+  projects: readonly CreativeProject[],
+  projectId: string,
+  canvasId: string,
+  incoming: readonly ImportedCreativeProjectVersion[],
+  now = Date.now(),
+) {
+  const normalized = normalizeCreativeProjects(projects);
+  const project = normalized.find((item) => item.id === projectId);
+  if (!project || !incoming.length) return null;
+
+  const existingIds = new Set((project.versions || []).map((version) => version.id));
+  const importedIds = new Map<string, string>();
+  const candidates = incoming.map((version, index) => {
+    const baseId = `imported-${cleanId(version.id) || `version-${index + 1}`}`;
+    let id = baseId;
+    let suffix = 2;
+    while (existingIds.has(id)) id = `${baseId}-${suffix++}`;
+    existingIds.add(id);
+    importedIds.set(version.id, id);
+    return { version, index, id };
+  });
+  const imported = candidates.map(({ version, index, id }) => {
+    return {
+      id,
+      projectId,
+      canvasId,
+      label: String(version.label || '未命名版本').trim().slice(0, 80) || '未命名版本',
+      createdAt: finiteTimestamp(version.createdAt, now + index),
+      ...(version.parentVersionId && importedIds.has(version.parentVersionId)
+        ? { parentVersionId: importedIds.get(version.parentVersionId) }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(version, 'brief') ? { brief: normalizeCreativeProjectBrief(version.brief) } : {}),
+      snapshot: version.snapshot,
+    } satisfies CreativeProjectVersion;
+  });
+  const next = normalizeCreativeProjects(normalized.map((item) => item.id === projectId
+    ? { ...item, updatedAt: now, versions: [...(item.versions || []), ...imported] }
+    : item));
+  return { projects: next, importedCount: imported.length };
 }
 
 export function removeCreativeProjectVersion(

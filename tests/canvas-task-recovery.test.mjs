@@ -5,7 +5,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const load = createTsRequire(path.join(process.cwd(), 'lib'));
 const { normalizeDocument, createMedia, createPrompt } = load('./canvas/model');
-const { recoverCanvasTask, mergeCanvasTaskImages } = load('./canvas/task-recovery');
+const { canvasNodeForGenerationLog, recoverCanvasTask, mergeCanvasTaskImages } = load('./canvas/task-recovery');
 const params = { kind: 'image', model: 'test', aspect: '1:1' };
 const input = { nodeId: 'pending', taskId: 'task-a', status: 'success', urls: ['/one.png', '/two.png', '/three.png'], imageParams: params };
 function fixture(type = 'media') {
@@ -94,4 +94,13 @@ test('video recovery updates only its video placeholder', () => {
   assert.equal(result.nodes.length, 1);
   assert.equal(result.nodes[0].data.url, '/video.mp4');
   assert.equal(result.nodes[0].data.kind, 'video');
+});
+
+test('audio generation logs resolve their existing audio node by task and node lineage', () => {
+  const audio = createMedia('audio', '/voice.mp3', '配音', { x: 10, y: 20 });
+  audio.id = 'audio-node';
+  audio.data.jobId = 'audio-task';
+  const document = normalizeDocument({ nodes: [audio], edges: [], groups: [] });
+  assert.equal(canvasNodeForGenerationLog(document, { id: 'log-1', taskId: 'audio-task', mode: 'audio', mediaKind: 'audio', prompt: '旁白' })?.id, 'audio-node');
+  assert.equal(canvasNodeForGenerationLog(document, { id: 'log-2', mode: 'audio', mediaKind: 'audio', nodeId: 'audio-node', prompt: '旁白' })?.id, 'audio-node');
 });

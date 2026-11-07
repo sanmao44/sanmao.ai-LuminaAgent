@@ -44,6 +44,7 @@ import {
 } from "@/lib/canvas/run-context";
 import type { PublicState } from "@/lib/types";
 import type { WorkspaceContext } from "@/lib/workspace-context";
+import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { CanvasDocument } from "@/lib/canvas/types";
 import type { CanvasPatch } from "@/lib/canvas/patch";
 import { filterModelsByActiveProviders } from "@/lib/provider-availability";
@@ -127,6 +128,9 @@ type Props = {
   references: CanvasAgentDockReference[];
   selectedNodeIds?: string[];
   context: WorkspaceContext;
+  projectBrief?: CreativeProjectBrief | null;
+  draftPrompt?: string;
+  draftPromptKey?: number;
   canvasDocument: CanvasDocument;
   onApplyCanvasPatch: (patch: CanvasPatch, runContext?: CanvasAgentRunContext) => CanvasAgentDockPlanResult;
   /* 画布上真实的选中数量：芯片只渲染前几个，头部要报完整数字。 */
@@ -579,6 +583,9 @@ export default function CanvasAgentDock({
   references,
   selectedNodeIds = [],
   context,
+  projectBrief,
+  draftPrompt,
+  draftPromptKey,
   canvasDocument,
   selectedTotal,
   contextBlock,
@@ -922,6 +929,16 @@ export default function CanvasAgentDock({
     if (!open || !focusSignal) return;
     focusEditorEnd();
   }, [focusEditorEnd, focusSignal, open]);
+
+  useEffect(() => {
+    const prompt = draftPrompt?.trim();
+    if (!prompt) return;
+    setEditingMessageId(null);
+    setDraftImages([]);
+    setInput(prompt);
+    setHelpOpen(false);
+    focusEditorEnd();
+  }, [draftPrompt, draftPromptKey, focusEditorEnd]);
 
   const applySkill = useCallback(
     (skill: SkillPickerEntry) => {
@@ -1281,6 +1298,7 @@ export default function CanvasAgentDock({
             creativeRoute,
             runId: progressRunId,
             context,
+            ...(projectBrief ? { projectBrief } : {}),
             canvasDocument,
             canvasTarget: {
               nodeIds: [...runContext.targetNodeIds],

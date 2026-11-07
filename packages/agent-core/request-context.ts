@@ -1,4 +1,5 @@
 import type { CanvasAgentTargetKind, CanvasAgentTargetOperation, GenerationSource, WorkspaceContext } from '../contracts/context';
+import { normalizeCreativeProjectBrief, type CreativeProjectBrief } from '../contracts/creative';
 
 type CanvasDocument = unknown;
 
@@ -13,6 +14,7 @@ export type AgentRequestContextInput = {
 /** Transport-neutral request context preparation used by the Agent application entry. */
 export function prepareAgentRequestContext(input: AgentRequestContextInput) {
   const body = input.body;
+  const creativeProjectBrief: CreativeProjectBrief | null = normalizeCreativeProjectBrief(body.projectBrief);
   const workspaceContext = body.context && typeof body.context === 'object' ? input.normalizeWorkspaceContext(body.context) : null;
   const canvasDocument = body.canvasDocument && typeof body.canvasDocument === 'object' ? input.normalizeDocument(body.canvasDocument) : null;
   const canvasTarget = body.canvasTarget && typeof body.canvasTarget === 'object' ? body.canvasTarget as { nodeIds?: unknown; kind?: unknown; operation?: unknown } : null;
@@ -43,5 +45,5 @@ export function prepareAgentRequestContext(input: AgentRequestContextInput) {
     } : {}),
     ...(input.runId ? { taskId: input.runId } : {}),
   };
-  return { workspaceContext, canvasDocument, canvasTargetNodeIds, canvasTargetKind, canvasTargetOperation, sourceForLog, isCanvasSource, isCanvasNodeExecution, taskContext };
+  return { workspaceContext, canvasDocument, creativeProjectBrief, canvasTargetNodeIds, canvasTargetKind, canvasTargetOperation, sourceForLog, isCanvasSource, isCanvasNodeExecution, taskContext };
 }

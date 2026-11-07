@@ -3,11 +3,16 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { GenerationLog } from "@/lib/generation-log";
 import { activityTaskFromGenerationLog } from "@/lib/task-activity/adapters";
-import { generationLogDuration, generationLogKind, generationLogKindLabel, generationLogOutputUrls, generationLogStatusLabel } from "@/lib/canvas/activity-log";
+import { canvasTaskBelongsToProject, generationLogDuration, generationLogKind, generationLogKindLabel, generationLogOutputUrls, generationLogStatusLabel } from "@/lib/canvas/activity-log";
+import { canvasNodeForGenerationLog } from "@/lib/canvas/task-recovery";
 import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
 import { canvasLineageForTask, type CanvasLineageRecord } from "@/lib/provenance/normalize";
-import type { CanvasDocument } from "@/lib/canvas/types";
+import type { CanvasDocument, CanvasNodeCreationKind } from "@/lib/canvas/types";
 import { CanvasPanelShell } from "@/components/canvas/CanvasPanels";
+import CanvasProjectProgressPanel from "@/components/canvas/CanvasProjectProgressPanel";
+import { deriveCanvasProjectProgress, type CanvasProjectProgressAction } from "@/lib/canvas/project-progress";
+import { deriveCanvasProjectQuality } from "@/lib/canvas/project-quality";
+import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 
 
 export default function CanvasActivityDrawer({
@@ -27,6 +32,19 @@ export default function CanvasActivityDrawer({
   onNotify,
   restoreScrollTop,
   onRememberScrollPosition,
+  creativeProjectId,
+  canvasId,
+  canvasNodeIds,
+  canvasTaskIds,
+  projectName,
+  projectBrief,
+  projectVersionCount,
+  onOpenProjectBrief,
+  onDraftProject,
+  onCreateProjectNode,
+  onSaveProjectVersion,
+  onExportProjectPackage,
+  onScaffoldProject,
 }: {
   taskLogs: GenerationLog[];
   activityLogs: CanvasActivityLog[];
@@ -44,11 +62,25 @@ export default function CanvasActivityDrawer({
   onNotify: (message: string, kind?: "ok" | "error") => void;
   restoreScrollTop: number | null;
   onRememberScrollPosition: (scrollTop: number) => void;
+  creativeProjectId?: string;
+  canvasId?: string;
+  canvasNodeIds: ReadonlySet<string>;
+  canvasTaskIds: ReadonlySet<string>;
+  projectName: string;
+  projectBrief: CreativeProjectBrief | null;
+  projectVersionCount: number;
+  onOpenProjectBrief: () => void;
+  onDraftProject: () => void;
+  onCreateProjectNode: (kind: CanvasNodeCreationKind, sourceNodeIds?: string[]) => void;
+  onSaveProjectVersion: () => void;
+  onExportProjectPackage: () => void;
+  onScaffoldProject: () => void;
 }) {
-  const [tab, setTab] = useState<"tasks" | "activity">("tasks");
+  const [tab, setTab] = useState<"project" | "tasks" | "activity">("project");
   const [status, setStatus] = useState<"all" | GenerationLog["status"]>("all");
-  const [media, setMedia] = useState<"all" | "image" | "video" | "llm">("all");
+  const [media, setMedia] = useState<"all" | "image" | "video" | "audio" | "llm">("all");
   const [query, setQuery] = useState("");
+  const [projectOnly, setProjectOnly] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
   const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null);
@@ -63,9 +95,17 @@ export default function CanvasActivityDrawer({
   const rememberScrollBeforeMediaOpen = (openMedia: boolean) => {
     if (openMedia) onRememberScrollPosition(scrollBodyRef.current?.scrollTop || 0);
   };
+  const scopedTasks = useMemo(() => projectOnly
+    ? taskLogs.filter((log) => canvasTaskBelongsToProject(log, {
+      projectId: creativeProjectId,
+      canvasId,
+      nodeIds: canvasNodeIds,
+      taskIds: canvasTaskIds,
+    }))
+    : taskLogs, [canvasId, canvasNodeIds, canvasTaskIds, creativeProjectId, projectOnly, taskLogs]);
   const filteredTasks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return taskLogs.filter((log) => {
+    return scopedTasks.filter((log) => {
       const matchesStatus = status === "all" || log.status === status;
       const kind = generationLogKind(log);
       const matchesMedia = media === "all" || kind === media;
@@ -76,31 +116,75 @@ export default function CanvasActivityDrawer({
           .includes(normalized);
       return matchesStatus && matchesMedia && matchesQuery;
     });
-  }, [media, query, status, taskLogs]);
-  const selected = taskLogs.find((log) => log.id === selectedId);
+  }, [media, query, scopedTasks, status]);
+  const selected = scopedTasks.find((log) => log.id === selectedId);
   const summary = useMemo(
     () => ({
-      total: taskLogs.length,
-      pending: taskLogs.filter((log) => log.status === "pending").length,
-      success: taskLogs.filter((log) => log.status === "success").length,
-      error: taskLogs.filter((log) => log.status === "error").length,
+      total: scopedTasks.length,
+      pending: scopedTasks.filter((log) => log.status === "pending").length,
+      success: scopedTasks.filter((log) => log.status === "success").length,
+      error: scopedTasks.filter((log) => log.status === "error").length,
     }),
-    [taskLogs],
+    [scopedTasks],
   );
+  const progress = useMemo(() => deriveCanvasProjectProgress({
+    document: canvasDocument,
+    brief: projectBrief,
+    versionCount: projectVersionCount,
+    taskLogs,
+    projectId: creativeProjectId,
+    canvasId,
+  }), [canvasDocument, canvasId, creativeProjectId, projectBrief, projectVersionCount, taskLogs]);
+  const quality = useMemo(() => deriveCanvasProjectQuality({
+    document: canvasDocument,
+    brief: projectBrief,
+    versionCount: projectVersionCount,
+    taskLogs,
+    projectId: creativeProjectId,
+    canvasId,
+  }), [canvasDocument, canvasId, creativeProjectId, projectBrief, projectVersionCount, taskLogs]);
+  const runNextAction = (action: CanvasProjectProgressAction) => {
+    if (action.kind === "review-task") {
+      setTab("tasks");
+      setStatus(action.taskStatus);
+      setMedia("all");
+      setProjectOnly(true);
+      setQuery("");
+      setSelectedId(action.taskId);
+      return;
+    }
+    if (action.kind === "edit-brief") onOpenProjectBrief();
+    else if (action.kind === "draft-content") onDraftProject();
+    else if (action.kind === "create-node") onCreateProjectNode(action.nodeKind, action.sourceNodeIds);
+    else if (action.kind === "save-version") onSaveProjectVersion();
+    else onFocusNode(action.nodeId);
+  };
 
   return (
     <CanvasPanelShell
-      title="任务日志"
-      subtitle="与主界面统一的生成任务记录"
+      title="项目工作台"
+      subtitle={`${projectName || "当前项目"} · 进度、任务与活动`}
       onClose={onClose}
       className="canvas-activity-panel canvas-task-log-panel"
       bodyRef={scrollBodyRef}
     >
-      <div className="canvas-log-tabs" role="tablist" aria-label="日志类型">
-        <button type="button" className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>任务 <b>{summary.total}</b></button>
-         <button type="button" className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>活动 <b>{activityLogs.length}</b></button>
+      <div className="canvas-log-tabs" role="tablist" aria-label="项目工作台视图">
+        <button type="button" role="tab" aria-selected={tab === "project"} className={tab === "project" ? "active" : ""} onClick={() => setTab("project")}>进度</button>
+        <button type="button" role="tab" aria-selected={tab === "tasks"} className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>任务 <b>{summary.total}</b></button>
+        <button type="button" role="tab" aria-selected={tab === "activity"} className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>活动 <b>{activityLogs.length}</b></button>
       </div>
-      {tab === "tasks" ? (
+      {tab === "project" ? (
+        <CanvasProjectProgressPanel
+          projectName={projectName}
+          progress={progress}
+          quality={quality}
+          canExport={Boolean(creativeProjectId)}
+          onAction={runNextAction}
+          onOpenNode={onFocusNode}
+          onExportPackage={onExportProjectPackage}
+          onScaffold={onScaffoldProject}
+        />
+      ) : tab === "tasks" ? (
         <>
           <div className="canvas-log-summary-grid">
             <button type="button" className={status === "all" ? "active" : ""} onClick={() => setStatus("all")}><b>{summary.total}</b><small>全部</small></button>
@@ -111,17 +195,21 @@ export default function CanvasActivityDrawer({
           <div className="canvas-log-toolbar">
             <label className="canvas-log-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索提示词、模型或服务商…" /></label>
             <div className="canvas-log-filter-row" role="group" aria-label="任务媒体类型">
+              <button type="button" className={projectOnly ? "active" : ""} onClick={() => setProjectOnly(true)}>本项目</button>
+              <button type="button" className={!projectOnly ? "active" : ""} onClick={() => setProjectOnly(false)}>全部项目</button>
               <button type="button" className={media === "all" ? "active" : ""} onClick={() => setMedia("all")}>全部</button>
               <button type="button" className={media === "image" ? "active" : ""} onClick={() => setMedia("image")}>图片</button>
        <button type="button" className={media === "video" ? "active" : ""} onClick={() => setMedia("video")}>视频</button>
+              <button type="button" className={media === "audio" ? "active" : ""} onClick={() => setMedia("audio")}>音频</button>
        <button type="button" className={media === "llm" ? "active" : ""} onClick={() => setMedia("llm")}>LLM</button>
               <button type="button" className="refresh" onClick={onRefresh} disabled={loading}>{loading ? "读取中…" : "↻ 刷新"}</button>
             </div>
           </div>
-          {loading && !taskLogs.length ? <div className="canvas-side-empty"><span>◌</span><b>正在读取任务日志</b><small>与主界面服务端日志保持同步。</small></div> : filteredTasks.length ? <div className="canvas-task-log-list">
+          {loading && !scopedTasks.length ? <div className="canvas-side-empty"><span>◌</span><b>正在读取任务日志</b><small>与主界面服务端日志保持同步。</small></div> : filteredTasks.length ? <div className="canvas-task-log-list">
             {filteredTasks.map((log) => {
               const urls = generationLogOutputUrls(log);
               const kind = generationLogKind(log);
+              const taskNode = kind === "llm" ? undefined : canvasNodeForGenerationLog(canvasDocument, log);
               const taskId = String(log.taskId || log.id);
               const canStopTask = log.status === "pending" && (
                 kind === "video" || (kind === "image" && cancellableImageTaskIds.has(taskId))
@@ -138,6 +226,7 @@ export default function CanvasActivityDrawer({
                 const node = canvasDocument.nodes.find((item) => item.id === nodeId);
                 return node?.type === "media" && Boolean(node.data.url);
               };
+              const canOpenTaskMedia = Boolean(taskNode?.type === "media" && taskNode.data.url);
               const relationLabel = (relation: string) => ({
                 edited_from: "编辑自",
                 upscaled_from: "超分自",
@@ -160,12 +249,12 @@ export default function CanvasActivityDrawer({
                 </div>
                 <div className="canvas-task-log-status">{generationLogStatusLabel(log.status)}</div>
                 <div className="canvas-task-log-main"><strong>{log.prompt || "未填写提示词"}</strong><small>{log.presetName ? `预设：${log.presetName} · ` : ""}{log.source === "agent" ? "Agent" : "画布生成"} · {log.modelName || "自动选择模型"} · {log.providerName || "等待服务商响应"}</small>{log.status === "pending" && <small className="pending-note">任务正在后台生成，可继续使用画布</small>}{log.error && <small className="error-note">{log.error}</small>}</div>
-                <div className="canvas-task-log-meta"><span className="canvas-task-log-meta-count">{kind === "llm" ? `${log.llmCallCount || 0} 次调用` : kind === "video" ? `${urls.length || (log.status === "pending" ? 1 : 0)} 段视频` : `${log.status === "pending" ? log.count || 1 : log.imageCount || urls.length} 张`}</span><span className="canvas-task-log-meta-duration">{generationLogDuration(log)}</span><span className="canvas-task-log-meta-size">{kind === "llm" ? `${log.task || "普通对话"} · ${log.responseChars || 0} 字响应 · 联网 ${log.webSearchStatus || "未检索"}` : kind === "video" ? `${log.operation === "edit" ? "编辑" : log.operation === "extend" ? "扩展" : "生成"} · ${log.resolution || "自动"}` : `${log.outputSize || "自动尺寸"} · ${log.aspectRatio || "自动比例"}`}</span><time>{new Date(log.createdAt).toLocaleString("zh-CN", { hour12: false })}</time></div>
-                <div className="canvas-task-log-actions"><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId((value) => value === log.id ? null : log.id); }}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>{canContinueTask && <button type="button" title="沿用当前结果的参数和参考素材创建下一条分支。" onClick={(event) => { event.stopPropagation(); onContinueTask(log); }}>继续创作</button>}{canRetryTask && <button type="button" disabled={retryingTaskId === log.id} title="保留原任务记录，并按原参数创建一条新任务。" onClick={(event) => { event.stopPropagation(); setRetryingTaskId(log.id); void onRetryTask(log).catch((error) => onNotify(error instanceof Error ? error.message : "重试任务失败", "error")).finally(() => setRetryingTaskId((current) => current === log.id ? null : current)); }}>{retryingTaskId === log.id ? "正在重试…" : "重试任务"}</button>}{canStopTask && <button type="button" disabled={cancellingTaskId === log.id} title={kind === "video" ? "只停止本地跟踪；服务商可能仍在生成或计费。" : "停止等待图片结果；服务商若已受理，仍可能继续生成或计费。"} onClick={(event) => { event.stopPropagation(); setCancellingTaskId(log.id); void onCancelTask(log).catch((error) => onNotify(error instanceof Error ? error.message : "停止任务失败", "error")).finally(() => setCancellingTaskId((current) => current === log.id ? null : current)); }}>{cancellingTaskId === log.id ? "正在停止…" : kind === "video" ? "停止跟踪" : "停止等待"}</button>}{log.status === "error" && (kind === "image" || kind === "video") && <button type="button" onClick={(event) => { event.stopPropagation(); onRestoreTaskContext(log); }}>恢复上下文</button>}{kind !== "llm" && <button type="button" onClick={(event) => { event.stopPropagation(); const openMedia = Boolean(urls.length); rememberScrollBeforeMediaOpen(openMedia); onFocusTask(log, openMedia); }}>{urls.length ? "打开结果" : "定位节点"}</button>}</div>
+                <div className="canvas-task-log-meta"><span className="canvas-task-log-meta-count">{kind === "llm" ? `${log.llmCallCount || 0} 次调用` : kind === "video" ? `${urls.length || (log.status === "pending" ? 1 : 0)} 段视频` : kind === "audio" ? "1 条音频" : `${log.status === "pending" ? log.count || 1 : log.imageCount || urls.length} 张`}</span><span className="canvas-task-log-meta-duration">{generationLogDuration(log)}</span><span className="canvas-task-log-meta-size">{kind === "llm" ? `${log.task || "普通对话"} · ${log.responseChars || 0} 字响应 · 联网 ${log.webSearchStatus || "未检索"}` : kind === "video" ? `${log.operation === "edit" ? "编辑" : log.operation === "extend" ? "扩展" : "生成"} · ${log.resolution || "自动"}` : kind === "audio" ? `${log.modelName || "本机语音"} · 配音` : `${log.outputSize || "自动尺寸"} · ${log.aspectRatio || "自动比例"}`}</span><time>{new Date(log.createdAt).toLocaleString("zh-CN", { hour12: false })}</time></div>
+                <div className="canvas-task-log-actions"><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId((value) => value === log.id ? null : log.id); }}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>{canContinueTask && <button type="button" title="沿用当前结果的参数和参考素材创建下一条分支。" onClick={(event) => { event.stopPropagation(); onContinueTask(log); }}>继续创作</button>}{canRetryTask && <button type="button" disabled={retryingTaskId === log.id} title="保留原任务记录，并按原参数创建一条新任务。" onClick={(event) => { event.stopPropagation(); setRetryingTaskId(log.id); void onRetryTask(log).catch((error) => onNotify(error instanceof Error ? error.message : "重试任务失败", "error")).finally(() => setRetryingTaskId((current) => current === log.id ? null : current)); }}>{retryingTaskId === log.id ? "正在重试…" : "重试任务"}</button>}{canStopTask && <button type="button" disabled={cancellingTaskId === log.id} title={kind === "video" ? "停止本地视频任务跟踪；服务商可能仍在生成或计费。" : "停止等待图片结果；服务商若已受理，仍可能继续生成或计费。"} onClick={(event) => { event.stopPropagation(); setCancellingTaskId(log.id); void onCancelTask(log).catch((error) => onNotify(error instanceof Error ? error.message : "停止任务失败", "error")).finally(() => setCancellingTaskId((current) => current === log.id ? null : current)); }}>{cancellingTaskId === log.id ? "正在停止…" : kind === "video" ? "停止跟踪" : "停止等待"}</button>}{log.status === "error" && (kind === "image" || kind === "video" || kind === "audio") && <button type="button" onClick={(event) => { event.stopPropagation(); onRestoreTaskContext(log); }}>恢复上下文</button>}{kind !== "llm" && <button type="button" onClick={(event) => { event.stopPropagation(); const openMedia = Boolean(urls.length) || canOpenTaskMedia; rememberScrollBeforeMediaOpen(openMedia); onFocusTask(log, openMedia); }}>{Boolean(urls.length) || canOpenTaskMedia ? "打开结果" : "定位节点"}</button>}</div>
                 {selectedId === log.id && <div className="canvas-task-log-detail"><div><b>任务详情</b><small>{log.id}</small></div><p>{log.prompt || "未填写提示词"}</p>{kind === "llm" && <small>模型调用：{log.llmCallCount || 0} 次 · 响应：{log.responseChars || 0} 字 · 联网：{log.webSearchStatus || "未检索"}</small>}{log.references?.length ? <small>参考图：{log.references.map((reference) => reference.name || "参考素材").join("、")}</small> : null}{log.providerTaskId && <small>服务商任务：{log.providerTaskId}</small>}{log.error && <strong className="error-note">失败原因：{log.error}</strong>}</div>}
                 </article>;
             })}
-          </div> : <div className="canvas-side-empty"><span>▱</span><b>{taskLogs.length ? "没有符合条件的任务" : "还没有生成任务"}</b><small>{taskLogs.length ? "调整状态、媒体类型或搜索条件。" : "从画布生成图片、视频或 Agent 结果后会出现在这里。"}</small></div>}
+          </div> : <div className="canvas-side-empty"><span>▱</span><b>{scopedTasks.length ? "没有符合条件的任务" : projectOnly ? "当前项目还没有任务" : "还没有生成任务"}</b><small>{scopedTasks.length ? "调整状态、媒体类型或搜索条件。" : projectOnly ? "切换到“全部项目”可查看其它项目的历史任务。" : "从画布生成图片、视频或 Agent 结果后会出现在这里。"}</small></div>}
         </>
       ) : (
         <>

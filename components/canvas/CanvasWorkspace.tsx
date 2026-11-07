@@ -131,6 +131,7 @@ import {
   renameCanvasProject,
 } from "@/lib/canvas/storage";
 import { CanvasProjectSession } from "@/lib/canvas/project-session";
+import { parseCanvasProjectPackage, serializeCanvasProjectPackage } from "@/lib/canvas/project-package";
 import { emitWorkspaceChange, registerWorkspaceDraft } from "@/lib/workspace-events";
 import { canvasSourceColorKey } from "@/lib/canvas/appearance";
 import { formatCanvasAudioDuration, formatCanvasVideoDuration } from "@/lib/canvas/media";
@@ -305,6 +306,7 @@ import CanvasGroupComposeDialog, {
   type CanvasGroupComposeSource,
 } from "@/components/canvas/CanvasGroupComposeDialog";
 import type {
+  CanvasAudioGenerationMeta,
   CanvasCamera,
   CanvasAngleParams,
   CanvasConnectionStyle,
@@ -487,16 +489,22 @@ import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 import { readWorkspaceContext, updateWorkspaceContext, type WorkspaceContext } from "@/lib/workspace-context";
 import {
   appendCreativeProjectVersion,
+  appendImportedCreativeProjectVersions,
   creativeProjectVersion,
   creativeProjectIdForCanvas,
+  creativeProjectSnapshotsEqual,
   readCreativeProjects,
   removeCreativeProjectVersion,
   saveCreativeProjects,
+  updateCreativeProjectBrief,
+  type CreativeProject,
   type CreativeProjectVersion,
 } from "@/lib/creative-projects";
+import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { CanvasAgentRunContext } from "@/lib/canvas/run-context";
 import { generationLogKind, generationLogOutputUrls } from "@/lib/canvas/activity-log";
 import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
+import { canvasProjectDraftPrompt, seedCanvasProjectIntent } from "@/lib/canvas/project-progress";
 import { createProvenanceEdge, provenanceDraftsForSources } from "@/lib/provenance/normalize";
 import VideoEditorNode from "@/components/VideoEditorNode";
 import VideoEditorWorkbench from "@/components/VideoEditorWorkbench";
@@ -785,15 +793,18 @@ export default function SuperCanvas() {
   const cloneRunningIdRef = useRef("");
   const [runtimeError, setRuntimeError] = useState("");
   const [projects, setProjects] = useState<CanvasProject[]>([]);
+  const [creativeProjects, setCreativeProjects] = useState<CreativeProject[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("");
   const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext>(() => readWorkspaceContext());
+  const projectBriefRef = useRef<CreativeProjectBrief | null>(null);
   const runTrackedCanvasImageRequest = useCallback(async (input: Parameters<typeof generateCanvasImage>[0]) => {
+    const requestInput = { ...input, projectBrief: input.projectBrief ?? projectBriefRef.current };
     const taskId = String(input.taskId || "").trim();
-    if (!taskId) return generateCanvasImage(input);
+    if (!taskId) return generateCanvasImage(requestInput);
 
     const controller = new AbortController();
-    const signal = input.signal
-      ? AbortSignal.any([input.signal, controller.signal])
+    const signal = requestInput.signal
+      ? AbortSignal.any([requestInput.signal, controller.signal])
       : controller.signal;
     let markSettled = () => {};
     const settled = new Promise<void>((resolve) => { markSettled = resolve; });
@@ -801,10 +812,10 @@ export default function SuperCanvas() {
     imageRequestAbortControllersRef.current.set(taskId, activeRequest);
     setCancellableImageTaskIds(new Set(imageRequestAbortControllersRef.current.keys()));
     try {
-      return await generateCanvasImage({ ...input, signal });
+      return await generateCanvasImage({ ...requestInput, signal });
     } catch (error) {
       if (!signal.aborted) throw error;
-      if (input.signal?.aborted) throw error;
+      if (requestInput.signal?.aborted) throw error;
       const stopped = new Error(
         "已停止等待图片结果。服务商若已受理请求，仍可能继续生成或计费。",
       ) as Error & { canvasWaitStopped: true; taskId: string; generationPending?: true };
@@ -831,6 +842,19 @@ export default function SuperCanvas() {
     getCanvasSelection,
   );
   const selectedIds = useMemo(() => new Set(canvasSelection.nodeIds), [canvasSelection.nodeIds]);
+  const canvasNodeIds = useMemo(
+    () => new Set(document.nodes.map((node) => node.id)),
+    [document.nodes],
+  );
+  const canvasTaskIds = useMemo(
+    () => new Set(
+      document.nodes.flatMap((node) => [
+        String(node.data.jobId || "").trim(),
+        String(node.data.generation?.taskId || "").trim(),
+      ].filter(Boolean)),
+    ),
+    [document.nodes],
+  );
   const selectedGroupId = canvasSelection.groupId || null;
   const selectedEdgeId = canvasSelection.edgeId || null;
   const setSelectedIds = useCallback(
@@ -1215,6 +1239,8 @@ export default function SuperCanvas() {
   const currentProject = projects.find(
     (project) => project.id === activeProjectId,
   );
+  const projectBrief = creativeProjects.find((project) => project.id === currentProject?.projectId)?.brief || null;
+  projectBriefRef.current = projectBrief;
   useEffect(() => {
     const projectId = currentProject?.projectId;
     setProjectVersions(projectId
@@ -1282,6 +1308,8 @@ export default function SuperCanvas() {
   const [agentDockBusy, setAgentDockBusy] = useState(false);
   /* 画布上的「问 Agent」只递增这个信号，聚焦输入框交给面板自己处理。 */
   const [agentDockFocusSignal, setAgentDockFocusSignal] = useState(0);
+  const [agentDockDraftPrompt, setAgentDockDraftPrompt] = useState("");
+  const [agentDockDraftPromptKey, setAgentDockDraftPromptKey] = useState(0);
   const applyAgentDockOpen = useCallback(
     (open: boolean) => {
       if (open) closeCanvasOverlayConflicts();
@@ -1867,6 +1895,7 @@ export default function SuperCanvas() {
       const restoreLocalCanvas = (showRecoveryNotice = false) => {
         const storage = canvasProjectSessionRef.current.refresh(canvasCoreRef.current.document());
         setProjects(storage.projects);
+        setCreativeProjects(readCreativeProjects());
         setActiveProjectId(storage.activeId);
         const recovered = storage.document ? recoverInterruptedCanvasDocument(storage.document) : null;
         if (recovered) {
@@ -2182,29 +2211,16 @@ export default function SuperCanvas() {
       if (key) registeredAssetKeysRef.current.add(key);
     });
     void Promise.all(
-      pending.map((node) =>
-        registerCanvasAsset({
-          id: String(
-            node.data.assetId || `canvas-${activeProjectId}-${node.id}`,
-          ),
-          kind: node.data.kind || "image",
-          url: String(node.data.url),
-          ...(typeof node.data.storageKey === "string" ? { storageKey: node.data.storageKey } : {}),
-          name: String(
-            node.data.name ||
-              (node.data.kind === "video" ? "画布视频" : node.data.kind === "audio" ? "画布音频" : "画布图片"),
-          ),
-          source: node.data.generation ? "canvas-output" : "canvas-upload",
-          createdAt: Number(node.data.generation?.createdAt || Date.now()),
-          prompt: node.data.generation?.prompt,
-          modelId: node.data.generation?.params.model,
-          modelName:
-            typeof node.data.model === "string" ? node.data.model : undefined,
-          width: Number(node.data.nativeWidth) || undefined,
-          height: Number(node.data.nativeHeight) || undefined,
-          projectIds: [currentProject?.projectId || activeProjectId],
-        }),
-      ),
+      pending.flatMap((node) => {
+        const asset = canvasNodeAssetRecord(node, {
+          activeProjectId,
+          projectId: currentProject?.projectId || activeProjectId,
+        });
+        return asset ? [registerCanvasAsset({
+          ...asset,
+          id: String(node.data.assetId || `canvas-${activeProjectId}-${node.id}`),
+        })] : [];
+      }),
     )
       .then(() => setAssetRefresh((value) => value + 1))
       .catch(() => {
@@ -4102,6 +4118,18 @@ export default function SuperCanvas() {
     notify("项目名称已更新");
     return true;
   }, [notify]);
+  const saveProjectBrief = useCallback((brief: CreativeProjectBrief) => {
+    if (!currentProject?.projectId) return false;
+    const next = updateCreativeProjectBrief(readCreativeProjects(), currentProject.projectId, brief);
+    if (!next || !saveCreativeProjects(next)) {
+      notify("项目创作设定保存失败，请检查本地存储空间", "error");
+      return false;
+    }
+    setCreativeProjects(next);
+    emitWorkspaceChange();
+    notify("项目创作设定已保存", "ok");
+    return true;
+  }, [currentProject?.projectId, notify]);
   const saveProjectVersion = useCallback(() => {
     if (!currentProject?.projectId || !activeProjectId) return;
     const storedProjects = readCreativeProjects();
@@ -4114,6 +4142,7 @@ export default function SuperCanvas() {
       label: `V${nextIndex}`,
       createdAt: now,
       ...(project?.versions?.at(-1)?.id ? { parentVersionId: project.versions.at(-1)!.id } : {}),
+      brief: project?.brief || null,
       snapshot: snapshot(canvasCoreRef.current.document()),
     });
     if (!next) return notify("当前项目还没有可保存的版本", "error");
@@ -4127,11 +4156,23 @@ export default function SuperCanvas() {
     if (!currentProject?.projectId) return;
     const version = creativeProjectVersion(readCreativeProjects(), currentProject.projectId, versionId);
     if (!version) return notify("找不到这个项目版本", "error");
+    const currentSnapshot = snapshot(canvasCoreRef.current.document());
+    if (!creativeProjectSnapshotsEqual(currentSnapshot, version.snapshot)
+      && !window.confirm(`当前画布包含未保存到“${version.label}”的内容，恢复后会替换当前画布。继续恢复吗？`)) return;
+    const currentProjects = readCreativeProjects();
+    const shouldRestoreBrief = Object.prototype.hasOwnProperty.call(version, "brief");
+    const nextProjects = shouldRestoreBrief
+      ? updateCreativeProjectBrief(currentProjects, currentProject.projectId, version.brief, Date.now())
+      : currentProjects;
+    if (shouldRestoreBrief && (!nextProjects || !saveCreativeProjects(nextProjects))) {
+      return notify("项目设定恢复失败，当前画布未改变", "error");
+    }
     commit(() => normalizeDocument(version.snapshot));
+    if (nextProjects) setCreativeProjects(nextProjects);
     clearSelection();
     setProjectMenuOpen(false);
-    notify(`已恢复到 ${version.label}`);
-  }, [clearSelection, commit, currentProject?.projectId, notify]);
+    notify(`已恢复到 ${version.label}${shouldRestoreBrief ? "（含项目设定）" : ""}`);
+  }, [clearSelection, commit, currentProject, notify]);
   const deleteProjectVersion = useCallback((versionId: string) => {
     if (!currentProject?.projectId) return;
     const version = projectVersions.find((item) => item.id === versionId);
@@ -4193,19 +4234,75 @@ export default function SuperCanvas() {
     addLog("已导出工作流 JSON");
     notify("工作流已导出");
   }, [addLog, currentProject?.name, document, notify]);
+  const exportProjectPackage = useCallback(() => {
+    const currentBrief = creativeProjects.find((project) => project.id === currentProject?.projectId)?.brief;
+    const content = serializeCanvasProjectPackage({
+      name: currentProject?.name || "SANMAO 无限画布",
+      projectId: currentProject?.projectId,
+      brief: currentBrief,
+      versions: projectVersions.map((version) => ({
+        id: version.id,
+        canvasId: version.canvasId,
+        label: version.label,
+        createdAt: version.createdAt,
+        ...(version.parentVersionId ? { parentVersionId: version.parentVersionId } : {}),
+        ...(Object.prototype.hasOwnProperty.call(version, "brief") ? { brief: version.brief } : {}),
+        snapshot: version.snapshot,
+      })),
+      document,
+    });
+    const blob = new Blob([content], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = window.document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${currentProject?.name || "SANMAO项目"}-项目包.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    addLog("已导出项目包 JSON");
+    notify("项目包已导出，包含项目设定与素材来源索引");
+  }, [addLog, creativeProjects, currentProject?.name, currentProject?.projectId, document, notify, projectVersions]);
   const importWorkflow = useCallback(
     async (file: File) => {
       const projectTask = captureProjectTask();
       const { commit } = projectTask;
       try {
-        const next = normalizeDocument(JSON.parse(await file.text()));
+        const payload: unknown = JSON.parse(await file.text());
+        const projectPackage = parseCanvasProjectPackage(payload);
+        const next = normalizeDocument(projectPackage?.document || payload);
         if (!commit(() => next)) return;
+        let importedBrief = false;
+        if (projectPackage?.project.brief && currentProject?.projectId) {
+          const nextProjects = updateCreativeProjectBrief(readCreativeProjects(), currentProject.projectId, projectPackage.project.brief);
+          if (nextProjects && saveCreativeProjects(nextProjects)) {
+            setCreativeProjects(nextProjects);
+            importedBrief = true;
+          }
+        }
+        let importedVersions = 0;
+        const importProjectId = currentProject?.projectId;
+        if (projectPackage?.project.versions?.length && importProjectId) {
+          const merged = appendImportedCreativeProjectVersions(
+            readCreativeProjects(),
+            importProjectId,
+            activeProjectId,
+            projectPackage.project.versions,
+          );
+          if (merged && saveCreativeProjects(merged.projects)) {
+            const restoredProjects = readCreativeProjects();
+            const saved = restoredProjects.find((project) => project.id === importProjectId);
+            setCreativeProjects(restoredProjects);
+            setProjectVersions(saved?.versions || []);
+            importedVersions = merged.importedCount;
+          }
+        }
         if (projectTask.isActive()) {
           clearSelection();
           fitView();
         }
         addLog(`已导入工作流：${file.name}`);
-        notify("工作流已导入");
+        notify(projectPackage
+          ? `项目包已导入${importedBrief ? "，项目设定已同步" : ""}${importedVersions ? `，恢复 ${importedVersions} 个版本` : ""}`
+          : "工作流已导入");
       } catch (error) {
         notify(
           error instanceof Error ? error.message : "工作流 JSON 无效。",
@@ -4213,7 +4310,7 @@ export default function SuperCanvas() {
         );
       }
     },
-    [captureProjectTask, addLog, clearSelection, commit, fitView, notify],
+    [activeProjectId, captureProjectTask, addLog, clearSelection, commit, currentProject?.projectId, fitView, notify],
   );
 
   const handleFiles = useCallback(
@@ -5851,6 +5948,7 @@ export default function SuperCanvas() {
         [],
         runtime?.settings.agentModelId || undefined,
         "polish_text",
+        projectBrief || undefined,
       );
       setReusePromptBeforeOptimization(reuseDraft.prompt);
       setReuseDraft((current) => current ? { ...current, prompt: value, dirty: true } : current);
@@ -5860,7 +5958,7 @@ export default function SuperCanvas() {
     } finally {
       setCanvasPromptOptimizing(false);
     }
-  }, [canvasPromptOptimizing, notify, reuseDraft, runtime]);
+  }, [canvasPromptOptimizing, notify, projectBrief, reuseDraft, runtime]);
 
   const undoReusePromptOptimization = useCallback(() => {
     if (reusePromptBeforeOptimization === null) return;
@@ -5882,6 +5980,7 @@ export default function SuperCanvas() {
         [],
         runtime?.settings.agentModelId || undefined,
         "polish_text",
+        projectBrief || undefined,
       );
       updatePrompt(value);
       setDeckPromptBeforeOptimization(activeDeckPrompt);
@@ -5891,7 +5990,7 @@ export default function SuperCanvas() {
     } finally {
       setCanvasPromptOptimizing(false);
     }
-  }, [activeDeckPrompt, canvasPromptOptimizing, notify, optimizeReusePrompt, reuseDraft, runtime, updatePrompt]);
+  }, [activeDeckPrompt, canvasPromptOptimizing, notify, optimizeReusePrompt, projectBrief, reuseDraft, runtime, updatePrompt]);
 
   const undoDeckPromptOptimization = useCallback(() => {
     if (reuseDraft) return undoReusePromptOptimization();
@@ -6482,6 +6581,7 @@ export default function SuperCanvas() {
       const generationStartedAt = Date.now();
       const task = await generateCanvasVideo({
         prompt,
+        projectBrief,
         model: resolvedVideoModel.model?.id || "auto",
         modelRawId: resolvedVideoModel.model?.rawId,
         operation: params.operation,
@@ -6808,6 +6908,7 @@ export default function SuperCanvas() {
           ...(request?.durationSeconds !== undefined ? { durationSeconds: request.durationSeconds } : {}),
           deliverable: request?.agentTask === "one_take_video_prompt" ? "TEXT" : intentDecision.deliverable,
           intentReason: request?.agentTask === "one_take_video_prompt" ? "一镜到底只需要返回可复制的视频 Prompt" : intentDecision.reason,
+          ...(projectBrief ? { projectBrief } : {}),
           references: agentReferenceNodes.map((node) => node.type === "prompt"
             ? { id: `node-ref:${node.id}`, nodeId: node.id, kind: "text" as const, name: String(node.data.name || node.data.role || "文本上下文"), text: String(node.data.text || node.data.agentResponse || "") }
             : { id: `node-ref:${node.id}`, nodeId: node.id, kind: node.data.kind as "image" | "video", name: String(node.data.name || (node.data.kind === "video" ? "参考视频" : "参考图")), url: String(node.data.url || "") }),
@@ -7471,6 +7572,7 @@ export default function SuperCanvas() {
             : undefined;
         const task = await generateCanvasVideo({
           prompt,
+          projectBrief,
           model: effectiveParams.model,
           modelRawId: resolvedModel.model?.rawId,
           operation: videoParams.operation,
@@ -7789,6 +7891,7 @@ export default function SuperCanvas() {
           runId: directorRunId,
           deliverable: "TEXT",
           intentReason: "一键成片自动导演",
+          ...(projectBrief ? { projectBrief } : {}),
           references: [{
             id: source.id,
             nodeId: source.id,
@@ -7810,6 +7913,7 @@ export default function SuperCanvas() {
             runId: directorRunId,
             deliverable: "TEXT",
             intentReason: "cinematic director retry",
+            ...(projectBrief ? { projectBrief } : {}),
             references: [{ id: source.id, nodeId: source.id, kind: "image", name: sourceName, url: sourceUrl, ...(source.data.mimeType ? { mimeType: String(source.data.mimeType) } : {}) }],
           });
           try {
@@ -8711,6 +8815,30 @@ export default function SuperCanvas() {
     [connectCanvasNodes],
   );
 
+  const createProjectProgressNode = useCallback((kind: CanvasNodeCreationKind, sourceNodeIds?: string[]) => {
+    const before = canvasCoreRef.current.document();
+    const existingIds = new Set(before.nodes.map((node) => node.id));
+    setActivePanel(null);
+    addNode(kind);
+    const created = canvasCoreRef.current.document().nodes.find((node) => !existingIds.has(node.id));
+    if (!created) return;
+    const projectIntent = kind === "text" ? projectBrief?.intent?.trim() : "";
+    if (projectIntent) {
+      commit((value) => seedCanvasProjectIntent(value, created.id, projectIntent));
+    }
+    for (const sourceNodeId of sourceNodeIds || []) {
+      if (nodeById(canvasCoreRef.current.document(), sourceNodeId)) connectCanvasNodes(sourceNodeId, created.id);
+    }
+  }, [addNode, commit, connectCanvasNodes, projectBrief?.intent]);
+
+  const startProjectDraft = useCallback(() => {
+    setActivePanel(null);
+    setAgentDockDraftPrompt(canvasProjectDraftPrompt(projectBrief));
+    setAgentDockDraftPromptKey((value) => value + 1);
+    applyAgentDockOpen(true);
+    setAgentDockFocusSignal((value) => value + 1);
+  }, [applyAgentDockOpen, projectBrief]);
+
   const lockVideoInputMode = useCallback(
     (node: CanvasNode) => {
       if (node.data.kind !== "video") return;
@@ -8824,14 +8952,14 @@ export default function SuperCanvas() {
   );
 
   const replaceAudioNode = useCallback(
-    async (nodeId: string, file: File) => {
+    async (nodeId: string, file: File, speechGeneration?: CanvasAudioGenerationMeta) => {
       const projectTask = captureProjectTask();
       const { commit, readDocument } = projectTask;
       const node = nodeById(readDocument(), nodeId);
-      if (!node || node.type !== "media" || node.data.kind !== "audio") return;
+      if (!node || node.type !== "media" || node.data.kind !== "audio") return false;
       if (!isCanvasAudioFile(file)) {
         notify("音频节点只接受音频文件。", "error");
-        return;
+        return false;
       }
       try {
         const asset = await uploadCanvasAsset(file);
@@ -8848,6 +8976,7 @@ export default function SuperCanvas() {
               progress: _progress,
               processingStartedAt: _processingStartedAt,
               durationMs: _durationMs,
+              speechDraft: _speechDraft,
               ...baseData
             } = item.data;
             return {
@@ -8863,13 +8992,16 @@ export default function SuperCanvas() {
                 assetId: asset.id,
                 sourceAssetId: asset.id,
                 mimeType: asset.mime || file.type || undefined,
+                speechGeneration,
               },
             };
           }),
         }));
         notify(node.data.url ? "音频已替换，原有视频连线已保留" : "音频已添加，可连接到视频节点");
+        return true;
       } catch (error) {
         notify(error instanceof Error ? error.message : "音频上传失败，原音频未改变。", "error");
+        return false;
       }
     },
     [captureProjectTask, commit, notify],
@@ -11514,12 +11646,9 @@ export default function SuperCanvas() {
         notify("LLM 任务没有对应的画布媒体节点，请在主界面的助手会话中查看。", "error");
         return;
       }
-      const node = canvasCoreRef.current.document().nodes.find(
-        (item) =>
-          (item.type === "media" && item.data.url && outputUrls.has(String(item.data.url))) ||
-          (item.data.generation?.prompt === log.prompt &&
-            (item.data.kind || "image") === (kind === "audio" ? "image" : kind)),
-      );
+      const document = canvasCoreRef.current.document();
+      const node = canvasNodeForGenerationLog(document, log)
+        || document.nodes.find((item) => item.type === "media" && item.data.url && outputUrls.has(String(item.data.url)));
       if (!node) {
         if (openMedia && outputUrls.size) {
           window.open([...outputUrls][0], "_blank", "noopener,noreferrer");
@@ -11597,7 +11726,31 @@ export default function SuperCanvas() {
         return;
       }
       if (kind === "audio") {
-        notify("音频任务请回到主界面任务日志重试。", "error");
+        const node = canvasNodeForGenerationLog(canvasCoreRef.current.document(), log);
+        if (node?.type === "media" && node.data.kind === "audio") {
+          commit((value) => ({
+            ...value,
+            nodes: value.nodes.map((item) => item.id === node.id && item.type === "media" && item.data.kind === "audio"
+              ? {
+                ...item,
+                data: {
+                  ...item.data,
+                  speechDraft: {
+                    text: log.prompt,
+                    ...(item.data.speechGeneration?.voice ? { voice: item.data.speechGeneration.voice } : {}),
+                  },
+                },
+              }
+              : item),
+          }));
+          setSelectedIds(new Set([node.id]));
+          setSelectedGroupId(null);
+          setExpandedEditorId(node.id);
+          setActivePanel(null);
+          notify("已恢复配音文本到音频节点，请检查文本后重新生成。", "ok");
+          return;
+        }
+        notify("已恢复配音文本，请打开音频节点后重新生成。", "ok");
         return;
       }
       const node = canvasNodeForGenerationLog(canvasCoreRef.current.document(), log);
@@ -11620,7 +11773,7 @@ export default function SuperCanvas() {
           : "已恢复提示词到生成面板。参数和参考素材需要重新核对后再提交；不会自动重放。",
       );
     },
-    [notify],
+    [commit, notify],
   );
   const updateDeckPrompt = useCallback(
     (value: string, cursor: number) => {
@@ -12334,6 +12487,7 @@ export default function SuperCanvas() {
         deliverable: "TEXT",
         webMode: "off",
         signal: controller.signal,
+        ...(projectBrief ? { projectBrief } : {}),
         messages: [{ role: "user", content: smartVariantPlanningPrompt(sourceUnits, sharedPrompt) }],
       });
       let plan: SmartVariantPlan;
@@ -12347,6 +12501,7 @@ export default function SuperCanvas() {
           deliverable: "TEXT",
           webMode: "off",
           signal: controller.signal,
+          ...(projectBrief ? { projectBrief } : {}),
           messages: [{ role: "user", content: smartVariantPlanningPrompt(sourceUnits, sharedPrompt, repairReason) }],
         });
         plan = parseSmartVariantPlan(repairResponse.message, sourceUnits);
@@ -12961,7 +13116,7 @@ export default function SuperCanvas() {
         if (projectMenuOpen) setProjectMenuOpen(false);
       }}
     >
-      <CanvasWorkspaceHeader currentProject={currentProject} projects={projects} activeProjectId={activeProjectId} projectMenuOpen={projectMenuOpen} onProjectMenuOpenChange={setProjectMenuOpen} topbarCollapsed={topbarCollapsed} onToggleTopbar={() => setTopbarCollapsed((value) => { const next=!value; try { window.localStorage.setItem("sanmao.canvas.topbar.collapsed",String(next)); } catch {} return next; })} canUndo={Boolean(canvasHistory.past.length)} canRedo={Boolean(canvasHistory.future.length)} onNavigateHome={navigateHome} onUndo={undo} onRedo={redo} snapEnabled={snapEnabled} onToggleSnap={toggleSnap} onOpenFilePicker={() => openFilePicker()} activePanel={activePanel} onTogglePanel={(panel) => activePanel === panel ? setActivePanel(null) : openCanvasPanel(panel)} onToggleAssetLibrary={toggleAssetLibrary} agentDockOpen={agentDockOpen} agentDockBusy={agentDockBusy} onToggleAgentDock={() => applyAgentDockOpen(!agentDockOpen)} theme={theme} onToggleTheme={toggleTheme} saving={saving} saveError={saveError} workspaceSyncStatus={workspaceSyncStatus} onOpenProject={openProject} onNewProject={newProject} onSaveProjectVersion={saveProjectVersion} projectVersions={projectVersions} onRestoreProjectVersion={restoreProjectVersion} onDeleteProjectVersion={deleteProjectVersion} onDeleteProject={deleteProject} onSaveProjectName={saveProjectName} />
+      <CanvasWorkspaceHeader currentProject={currentProject} projects={projects} activeProjectId={activeProjectId} projectMenuOpen={projectMenuOpen} onProjectMenuOpenChange={setProjectMenuOpen} topbarCollapsed={topbarCollapsed} onToggleTopbar={() => setTopbarCollapsed((value) => { const next=!value; try { window.localStorage.setItem("sanmao.canvas.topbar.collapsed",String(next)); } catch {} return next; })} canUndo={Boolean(canvasHistory.past.length)} canRedo={Boolean(canvasHistory.future.length)} onNavigateHome={navigateHome} onUndo={undo} onRedo={redo} snapEnabled={snapEnabled} onToggleSnap={toggleSnap} onOpenFilePicker={() => openFilePicker()} activePanel={activePanel} onTogglePanel={(panel) => activePanel === panel ? setActivePanel(null) : openCanvasPanel(panel)} onToggleAssetLibrary={toggleAssetLibrary} agentDockOpen={agentDockOpen} agentDockBusy={agentDockBusy} onToggleAgentDock={() => applyAgentDockOpen(!agentDockOpen)} theme={theme} onToggleTheme={toggleTheme} saving={saving} saveError={saveError} workspaceSyncStatus={workspaceSyncStatus} onOpenProject={openProject} onNewProject={newProject} onSaveProjectVersion={saveProjectVersion} projectVersions={projectVersions} onRestoreProjectVersion={restoreProjectVersion} onDeleteProjectVersion={deleteProjectVersion} onDeleteProject={deleteProject} onSaveProjectName={saveProjectName} projectBrief={projectBrief} onSaveProjectBrief={saveProjectBrief} />
       {composeDialogGroupId && (() => {
         const composeGroup = groupById(document, composeDialogGroupId);
         if (!composeGroup) return null;
@@ -13544,6 +13699,8 @@ export default function SuperCanvas() {
                 durationSeconds,
                 String(nodeById(document, nodeId)?.data.url || ""),
               )}
+              projectId={currentProject?.projectId}
+              canvasId={activeProjectId}
               resolveInputRoles={canvasInputRolesForTarget}
               resolveVideoCapabilities={canvasVideoInputCapabilities}
             />
@@ -13802,6 +13959,9 @@ export default function SuperCanvas() {
           chips={agentDockChips}
           references={agentDockReferences}
           context={agentWorkspaceContext}
+          projectBrief={projectBrief}
+          draftPrompt={agentDockDraftPrompt}
+          draftPromptKey={agentDockDraftPromptKey}
           canvasDocument={document}
           selectedNodeIds={agentDockContext.nodeIds}
           selectedTotal={agentDockContext.nodeIds.length}
@@ -13990,12 +14150,17 @@ export default function SuperCanvas() {
       <CanvasPanelLayer
         activePanel={activePanel}
         canvasAssets={canvasAssets}
+        creativeProjectId={currentProject?.projectId}
+        projectName={currentProject?.name || "当前画布"}
+        projectBrief={projectBrief}
+        projectVersionCount={projectVersions.length}
         assetRefresh={assetRefresh}
         assetLibraryCollectionId={assetLibraryCollectionId}
         canReferenceAssets={Boolean(selectedGroupId || selectedSingle)}
         generationLogs={generationLogs}
         activityLogs={logs}
         canvasDocument={document}
+        canvasId={activeProjectId}
         generationLogsLoading={generationLogsLoading}
         theme={theme}
         connectionStyle={connectionStyle}
@@ -14018,6 +14183,8 @@ export default function SuperCanvas() {
         onRememberActivityScroll={(scrollTop) => {
           activityPanelScrollTopRef.current = scrollTop;
         }}
+        canvasNodeIds={canvasNodeIds}
+        canvasTaskIds={canvasTaskIds}
         onNotify={notify}
         onClose={() => setActivePanel(null)}
         onOpenAssetWorkbench={() => {
@@ -14029,6 +14196,18 @@ export default function SuperCanvas() {
         onEdgesVisibleChange={setEdgesVisible}
         onDepthQualityChange={setDepthQuality}
         onExportWorkflow={exportWorkflow}
+        onExportProjectPackage={exportProjectPackage}
+        onOpenProjectBrief={() => {
+          setActivePanel(null);
+          setProjectMenuOpen(true);
+        }}
+        onDraftProject={startProjectDraft}
+        onCreateProjectNode={createProjectProgressNode}
+        onSaveProjectVersion={() => {
+          setActivePanel(null);
+          setProjectMenuOpen(true);
+          saveProjectVersion();
+        }}
         onImportWorkflow={() => workflowInputRef.current?.click()}
       />
       {notice && (

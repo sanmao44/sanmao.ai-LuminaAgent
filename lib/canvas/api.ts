@@ -3,7 +3,7 @@ import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
-import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeRoute, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
+import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeProjectBrief, type CreativeRoute, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import {
@@ -663,10 +663,27 @@ function waitForCanvasImagePoll(delayMs: number, signal?: AbortSignal) {
   });
 }
 
+function appendCreativeProjectBrief(
+  prompt: string,
+  brief: CreativeProjectBrief | null | undefined,
+  mediaKind: "图片" | "视频",
+) {
+  if (!brief) return prompt;
+  const context = [
+    brief.intent?.trim() ? `创作意图：${brief.intent.trim()}` : "",
+    brief.style.trim() ? `风格：${brief.style.trim()}` : "",
+    brief.audience.trim() ? `受众：${brief.audience.trim()}` : "",
+    brief.constraints.trim() ? `约束：${brief.constraints.trim()}` : "",
+  ].filter(Boolean).join("\n");
+  if (!context) return prompt;
+  return `${prompt}\n\n【项目创作简报】\n${context}\n请将以上信息作为本项目${mediaKind}创作的一致性参考；若与本次提示词冲突，以本次提示词为准。`;
+}
+
 export async function generateCanvasImage(input: {
   taskId?: string;
   imageOperation: ImageRequestMode;
   prompt: string;
+  projectBrief?: CreativeProjectBrief | null;
   presetId?: string;
   presetName?: string;
   model?: string;
@@ -756,7 +773,7 @@ export async function generateCanvasImage(input: {
       ...(input.taskId ? { taskId: input.taskId } : {}),
       imageOperation: input.imageOperation,
       ...(input.intentPreview ? { imageIntentPreview: input.intentPreview } : {}),
-      prompt: input.prompt,
+      prompt: appendCreativeProjectBrief(input.prompt, input.projectBrief, "图片"),
       ...(input.presetId ? { presetId: input.presetId } : {}),
       ...(input.presetName ? { presetName: input.presetName } : {}),
       model: input.model || "auto",
@@ -820,6 +837,7 @@ export async function generateCanvasImage(input: {
 
 export async function generateCanvasVideo(input: {
   prompt: string;
+  projectBrief?: CreativeProjectBrief | null;
   idempotencyKey?: string;
   model?: string;
   modelRawId?: string;
@@ -885,6 +903,7 @@ export async function generateCanvasVideo(input: {
     ? input.referenceVideo
     : undefined;
   const idempotencyKey = input.idempotencyKey || crypto.randomUUID();
+  const prompt = appendCreativeProjectBrief(input.prompt, input.projectBrief, "视频");
   const submit = () => request<{
     task: {
       id: string;
@@ -906,7 +925,7 @@ export async function generateCanvasVideo(input: {
       model: input.model || "auto",
       operation: input.operation || "generate",
       input: {
-        prompt: input.prompt,
+        prompt,
         ...(input.operation ? { operation: input.operation } : {}),
         ...(videoMode ? { videoMode } : {}),
         ...(!usesAgnesV20
@@ -1058,6 +1077,7 @@ export async function generateCanvasAgent(
     intentText?: string;
     runId?: string;
     context?: WorkspaceContext;
+    projectBrief?: CreativeProjectBrief;
     canvasDocument?: CanvasDocument;
     canvasTarget?: CanvasAgentTarget;
     signal?: AbortSignal;
@@ -1108,6 +1128,7 @@ export async function generateCanvasAgent(
           ...(input.intentText ? { intentText: input.intentText } : {}),
           ...(input.runId ? { runId: input.runId } : {}),
           ...(input.context ? { context: input.context } : {}),
+          ...(input.projectBrief ? { projectBrief: input.projectBrief } : {}),
           ...(input.canvasDocument ? { canvasDocument: input.canvasDocument } : {}),
           ...(input.canvasTarget ? { canvasTarget: input.canvasTarget } : {}),
         },

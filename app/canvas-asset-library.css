@@ -6,3 +6,8 @@
 }@media(max-width:380px){
   .canvas-asset-drawer .canvas-asset-new-collection{grid-template-columns:1fr}
 }
+.canvas-asset-project-filter{min-height:28px;display:flex;align-items:center;gap:8px}
+.canvas-asset-project-filter button{height:28px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--text-2);font-size:9px;cursor:pointer}
+.canvas-asset-project-filter button.active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text);font-weight:800}
+.canvas-asset-project-filter button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.canvas-asset-project-filter span{color:var(--muted);font-size:9px}

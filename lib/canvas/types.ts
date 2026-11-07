@@ -94,6 +94,10 @@ export type CanvasVideoEditorClip = {
   /** Semantic clone role (performance, B-roll, graphic, transition, ...). */
   role?: string;
   sourceNodeId?: string;
+  /** Audio node that supplied the text for an auto-generated caption draft. */
+  generatedFromNodeId?: string;
+  /** Timeline audio instance whose edits carry these caption cues with it. */
+  generatedFromClipId?: string;
   /** Semantic media retained when a clone graphics clip is copied into editorState. */
   url?: string;
   mediaKind?: 'image' | 'video';
@@ -307,6 +311,21 @@ export type CanvasGenerationMeta = {
   provenance?: ProvenanceEdge[];
 };
 
+/** Reproducibility details for text-to-speech audio nodes. */
+export type CanvasAudioGenerationMeta = {
+  text: string;
+  engine: 'provider' | 'offline';
+  modelName?: string;
+  voice?: string;
+  createdAt: number;
+};
+
+/** User-editable text retained when a narration task fails before producing audio. */
+export type CanvasAudioDraft = {
+  text: string;
+  voice?: string;
+};
+
 export type CanvasHistoryEntry = {
   id: string;
   operation: "generate" | "edit" | "inpaint" | "outpaint" | "upscale" | "extend";
@@ -395,6 +414,8 @@ export type CanvasNodeData = {
   resultSource?: "upscale-node";
   referenceOrder?: string[];
   generation?: CanvasGenerationMeta;
+  speechGeneration?: CanvasAudioGenerationMeta;
+  speechDraft?: CanvasAudioDraft;
   /** One line per requested batch variation on a generator node. */
   variantRequirements?: string[];
   /** Editing buffer that preserves empty lines while the user types. */

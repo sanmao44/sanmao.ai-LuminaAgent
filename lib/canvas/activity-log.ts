@@ -10,6 +10,27 @@ export type CanvasActivityLog = {
   status: "ok" | "error";
 };
 
+export function canvasTaskBelongsToProject(
+  log: Pick<GenerationLog, "projectId" | "canvasId" | "nodeId" | "taskId">,
+  scope: {
+    projectId?: string;
+    canvasId?: string;
+    nodeIds?: ReadonlySet<string>;
+    taskIds?: ReadonlySet<string>;
+  },
+) {
+  const projectId = scope.projectId?.trim();
+  const canvasId = scope.canvasId?.trim();
+  const nodeId = String(log.nodeId || "").trim();
+  const taskId = String(log.taskId || "").trim();
+  return Boolean(
+    (projectId && log.projectId === projectId) ||
+    (canvasId && log.canvasId === canvasId) ||
+    (nodeId && scope.nodeIds?.has(nodeId)) ||
+    (taskId && scope.taskIds?.has(taskId)),
+  );
+}
+
 export function generationLogKind(log: GenerationLog): CanvasGenerationLogKind {
   if (log.taskKind === "llm" || log.mode === "llm") return "llm";
   if (log.mediaKind) return log.mediaKind;
@@ -35,5 +56,5 @@ export function generationLogDuration(log: GenerationLog) {
 
 export function generationLogOutputUrls(log: GenerationLog) {
   const kind = generationLogKind(log);
-  return kind === "video" ? log.videoUrls || [] : kind === "llm" ? [] : log.imageUrls || [];
+  return kind === "video" ? log.videoUrls || [] : kind === "llm" || kind === "audio" ? [] : log.imageUrls || [];
 }

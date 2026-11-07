@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildLibModules } from './lib-build.mjs';
+import { createTsRequire } from './ts-require.mjs';
 
-const { main: projects } = await buildLibModules(['lib/creative-projects'], 'creative-projects');
+const load = createTsRequire(process.cwd());
+const projects = load('./lib/creative-projects');
 
 function canvas(id, name = id, projectId) {
   return { id, name, ...(projectId ? { projectId } : {}), createdAt: 10, updatedAt: 20 };
@@ -25,6 +26,52 @@ test('existing canvases receive one stable creative project identity', () => {
   const second = projects.reconcileCreativeProjects(first.canvasProjects, first.creativeProjects);
   assert.deepEqual(second.canvasProjects, first.canvasProjects);
   assert.deepEqual(second.creativeProjects, first.creativeProjects);
+});
+
+test('project briefs normalize legacy data, update fields, and clear when empty', () => {
+  const legacy = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  assert.equal(legacy.creativeProjects[0].brief, undefined);
+
+  const projectId = legacy.creativeProjects[0].id;
+  const updated = projects.updateCreativeProjectBrief(legacy.creativeProjects, projectId, {
+    intent: '为户外品牌制作春季主视觉',
+    style: '  纪实风格  ',
+    audience: '户外用户',
+    constraints: '保持产品外观',
+    deliverable: 'image',
+  }, 50);
+  assert.deepEqual(updated[0].brief, {
+    intent: '为户外品牌制作春季主视觉',
+    style: '纪实风格',
+    audience: '户外用户',
+    constraints: '保持产品外观',
+    deliverable: 'image',
+  });
+  assert.equal(updated[0].updatedAt, 50);
+  const versioned = projects.appendCreativeProjectVersion(updated, projectId, {
+    id: 'target-version', canvasId: 'canvas-a', label: '图像版本', createdAt: 55,
+    brief: updated[0].brief, snapshot: snapshot('target'),
+  });
+  assert.equal(versioned[0].versions[0].brief.deliverable, 'image');
+
+  const cleared = projects.updateCreativeProjectBrief(updated, projectId, {
+    style: '', audience: '', constraints: '',
+  }, 60);
+  assert.equal(cleared[0].brief, undefined);
+  assert.equal(projects.updateCreativeProjectBrief(updated, 'missing', {}), null);
+});
+
+test('project deliverables normalize explicit targets while legacy and auto remain automatic', () => {
+  const { normalizeCreativeProjectBrief } = load('./packages/contracts/creative');
+  assert.equal(normalizeCreativeProjectBrief({ style: '', audience: '', constraints: '' }), null);
+  assert.equal(normalizeCreativeProjectBrief({ deliverable: 'auto' }), null);
+  assert.deepEqual(normalizeCreativeProjectBrief({ deliverable: 'video' }), {
+    style: '', audience: '', constraints: '', deliverable: 'video',
+  });
+  assert.equal(normalizeCreativeProjectBrief({ deliverable: 'unknown' }), null);
+  assert.deepEqual(normalizeCreativeProjectBrief({ intent: '  做一张海报  ' }), {
+    intent: '做一张海报', style: '', audience: '', constraints: '',
+  });
 });
 
 test('reconciliation preserves projects and versions when a canvas is renamed', () => {
@@ -65,6 +112,51 @@ test('version records form a bounded parent chain and remain queryable', () => {
   assert.equal(project.versions[0].label, 'V6');
   assert.equal(projects.creativeProjectVersion(current, project.id, 'version-55').label, 'V55');
   assert.equal(projects.creativeProjectVersion(current, project.id, 'version-55').parentVersionId, 'version-54');
+});
+
+test('version snapshot equality distinguishes a safe restore from unsaved canvas changes', () => {
+  const first = snapshot('same');
+  assert.equal(projects.creativeProjectSnapshotsEqual(first, snapshot('same')), true);
+  assert.equal(projects.creativeProjectSnapshotsEqual(first, snapshot('changed')), false);
+});
+
+test('version snapshots retain and explicitly clear project creative rules', () => {
+  const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const projectId = base.canvasProjects[0].projectId;
+  const withBrief = projects.updateCreativeProjectBrief(base.creativeProjects, projectId, {
+    style: '电影感', audience: '旅行者', constraints: '保持角色一致',
+  }, 20);
+  const withVersion = projects.appendCreativeProjectVersion(withBrief, projectId, {
+    id: 'version-brief', canvasId: 'canvas-a', label: 'V1', createdAt: 30,
+    brief: withBrief[0].brief,
+    snapshot: snapshot('brief'),
+  });
+  assert.deepEqual(withVersion[0].versions[0].brief, withBrief[0].brief);
+  const cleared = projects.appendCreativeProjectVersion(withVersion, projectId, {
+    id: 'version-cleared', canvasId: 'canvas-a', label: 'V2', createdAt: 40,
+    brief: null,
+    snapshot: snapshot('cleared'),
+  });
+  assert.equal(cleared[0].versions[1].brief, null);
+  assert.equal(projects.normalizeCreativeProjects(cleared)[0].versions[1].brief, null);
+});
+
+test('imported project versions are deduplicated and remapped to the current canvas', () => {
+  const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const projectId = base.canvasProjects[0].projectId;
+  const existing = projects.appendCreativeProjectVersion(base.creativeProjects, projectId, {
+    id: 'existing', canvasId: 'canvas-a', label: '旧版本', createdAt: 1, snapshot: snapshot('existing'),
+  });
+  const result = projects.appendImportedCreativeProjectVersions(existing, projectId, 'canvas-current', [
+    { id: 'v1', label: '导入 V1', createdAt: 10, snapshot: snapshot('v1') },
+    { id: 'v2', label: '导入 V2', createdAt: 11, parentVersionId: 'v1', snapshot: snapshot('v2') },
+  ], 20);
+  assert.equal(result.importedCount, 2);
+  const versions = result.projects[0].versions;
+  assert.equal(versions.at(-2).id, 'imported-v1');
+  assert.equal(versions.at(-1).id, 'imported-v2');
+  assert.equal(versions.at(-1).canvasId, 'canvas-current');
+  assert.equal(versions.at(-1).parentVersionId, 'imported-v1');
 });
 
 test('a selected version can be removed without changing the project canvas identity', () => {

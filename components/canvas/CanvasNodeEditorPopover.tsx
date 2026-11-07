@@ -17,6 +17,7 @@ import { incomingReferences, isCanvasReadyImageSource, nodeSize } from "@/lib/ca
 import { canvasImageReferencesForContinuation } from "@/lib/canvas/reference-edges";
 import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/lib/canvas/node-editor";
 import type {
+  CanvasAudioGenerationMeta,
   CanvasDocument,
   CanvasGenerationParams,
   CanvasInputRole,
@@ -103,8 +104,10 @@ export type CanvasNodeEditorPopoverProps = {
   upscaleParams?: CanvasUpscaleParams;
   upscaleSourceUrl?: string;
   onUpscaleParamsChange?: (params: CanvasUpscaleParams) => void;
-  onReplaceAudio: (nodeId: string, file: File) => void;
+  onReplaceAudio: (nodeId: string, file: File, generation?: CanvasAudioGenerationMeta) => Promise<boolean>;
   onAudioDurationChange: (nodeId: string, durationSeconds: number) => void;
+  projectId?: string;
+  canvasId?: string;
   resolveInputRoles: (document: CanvasDocument, targetId: string) => ReadonlyMap<string, CanvasInputRole | undefined>;
   resolveVideoCapabilities: (settings: VideoCreationSettings, runtime: CanvasRuntimeState | null) => { supportsAudio: boolean };
 };
@@ -150,6 +153,8 @@ function CanvasNodeEditorPopover({
   onUpscaleParamsChange,
   onReplaceAudio,
   onAudioDurationChange,
+  projectId,
+  canvasId,
   imagePresets,
   onImagePresetSelect,
   onImagePresetClear,
@@ -703,6 +708,9 @@ function CanvasNodeEditorPopover({
              node={node}
              onReplaceAudio={onReplaceAudio}
              onDurationChange={onAudioDurationChange}
+             onNotify={onNotify}
+             projectId={projectId}
+             canvasId={canvasId}
            />
           ) : isDockNode ? (
            <div className="canvas-node-editor-image-dock">

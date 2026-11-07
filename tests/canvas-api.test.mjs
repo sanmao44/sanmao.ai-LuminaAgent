@@ -164,6 +164,45 @@ test('canvas image generation follows SANMAO response protocol', async () => {
   });
 });
 
+test('canvas image generation includes saved project style and constraints in its prompt', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ images: [{ url: '/generated-project-image.png' }] });
+  }, () => api.generateCanvasImage({
+    prompt: '雨后的老街',
+    imageOperation: 'generate',
+    projectBrief: { style: '水彩绘本', audience: '亲子读者', constraints: '不出现文字' },
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.equal(request.input, '/api/generate');
+  assert.equal(payload.prompt, [
+    '雨后的老街',
+    '',
+    '【项目创作简报】',
+    '风格：水彩绘本',
+    '受众：亲子读者',
+    '约束：不出现文字',
+    '请将以上信息作为本项目图片创作的一致性参考；若与本次提示词冲突，以本次提示词为准。',
+  ].join('\n'));
+});
+
+test('canvas image generation includes the project intent before shared style context', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ images: [{ url: '/generated-intent-image.png' }] });
+  }, () => api.generateCanvasImage({
+    prompt: '咖啡馆外景',
+    imageOperation: 'generate',
+    projectBrief: { intent: '为春季上新制作主视觉', style: '清透自然', audience: '', constraints: '' },
+  }));
+  const payload = JSON.parse(request.options.body);
+  assert.match(payload.prompt, /创作意图：为春季上新制作主视觉/);
+  assert.match(payload.prompt, /风格：清透自然/);
+});
+
 test('canvas image generation forwards the preflight operation metadata', async () => {
   let request;
   const intentPreview = {
@@ -369,6 +408,29 @@ test('canvas video generation creates a task without leaking boolean audio', asy
   assert.equal(payload.model, 'video-model');
   assert.deepEqual(payload.input, { prompt: '镜头推进', seconds: 8, aspectRatio: '16:9', resolution: '720p', referenceImages: [] });
   assert.equal('audio' in payload.input, false);
+});
+
+test('canvas video generation includes saved project style and constraints in its prompt', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ task: { id: 'video-project-brief', status: 'pending' } });
+  }, () => api.generateCanvasVideo({
+    prompt: '黄昏时的城市街道',
+    projectBrief: { style: '写实电影感', audience: '城市旅行者', constraints: '不出现品牌标志' },
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.equal(request.input, '/api/video/generate');
+  assert.equal(payload.input.prompt, [
+    '黄昏时的城市街道',
+    '',
+    '【项目创作简报】',
+    '风格：写实电影感',
+    '受众：城市旅行者',
+    '约束：不出现品牌标志',
+    '请将以上信息作为本项目视频创作的一致性参考；若与本次提示词冲突，以本次提示词为准。',
+  ].join('\n'));
 });
 
 test('canvas video generation retries a lost response with the same idempotency key', async () => {

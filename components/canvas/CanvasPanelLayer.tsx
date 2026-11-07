@@ -2,9 +2,10 @@
 
 import type { AssetRecord } from "@/lib/assets";
 import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
-import type { CanvasConnectionStyle, CanvasDocument } from "@/lib/canvas/types";
+import type { CanvasConnectionStyle, CanvasDocument, CanvasNodeCreationKind } from "@/lib/canvas/types";
 import type { DepthQuality } from "@/lib/canvas/depth-settings";
 import type { GenerationLog } from "@/lib/generation-log";
+import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import CanvasActivityDrawer from "@/components/canvas/CanvasActivityDrawer";
 import CanvasAssetDrawer from "@/components/canvas/CanvasAssetDrawer";
 import type { CanvasPanel } from "@/components/canvas/CanvasWorkspaceHeader";
@@ -13,12 +14,17 @@ import { CanvasSettingsPanel, CanvasShortcutsPanel } from "@/components/canvas/C
 export type CanvasPanelLayerProps = {
   activePanel: CanvasPanel | null;
   canvasAssets: AssetRecord[];
+  creativeProjectId?: string;
+  projectName: string;
+  projectBrief: CreativeProjectBrief | null;
+  projectVersionCount: number;
   assetRefresh: number;
   assetLibraryCollectionId: string;
   canReferenceAssets: boolean;
   generationLogs: GenerationLog[];
   activityLogs: CanvasActivityLog[];
   canvasDocument: CanvasDocument;
+  canvasId?: string;
   generationLogsLoading: boolean;
   theme: "light" | "dark";
   connectionStyle: CanvasConnectionStyle;
@@ -39,6 +45,8 @@ export type CanvasPanelLayerProps = {
   onCancelTask: (log: GenerationLog) => Promise<void>;
   cancellableImageTaskIds: ReadonlySet<string>;
   onRememberActivityScroll: (scrollTop: number) => void;
+  canvasNodeIds: ReadonlySet<string>;
+  canvasTaskIds: ReadonlySet<string>;
   onNotify: (message: string, kind?: "ok" | "error") => void;
   onClose: () => void;
   onOpenAssetWorkbench: () => void;
@@ -47,19 +55,30 @@ export type CanvasPanelLayerProps = {
   onEdgesVisibleChange: (value: boolean) => void;
   onDepthQualityChange: (value: DepthQuality) => void;
   onExportWorkflow: () => void;
+  onExportProjectPackage: () => void;
+  onOpenProjectBrief: () => void;
+  onDraftProject: () => void;
+  onCreateProjectNode: (kind: CanvasNodeCreationKind, sourceNodeIds?: string[]) => void;
+  onSaveProjectVersion: () => void;
   onImportWorkflow: () => void;
+  onScaffoldProject: () => void;
 };
 
 /** Composes the existing canvas side panels without owning their state or actions. */
 export default function CanvasPanelLayer({
   activePanel,
   canvasAssets,
+  creativeProjectId,
+  projectName,
+  projectBrief,
+  projectVersionCount,
   assetRefresh,
   assetLibraryCollectionId,
   canReferenceAssets,
   generationLogs,
   activityLogs,
   canvasDocument,
+  canvasId,
   generationLogsLoading,
   theme,
   connectionStyle,
@@ -80,6 +99,8 @@ export default function CanvasPanelLayer({
   onCancelTask,
   cancellableImageTaskIds,
   onRememberActivityScroll,
+  canvasNodeIds,
+  canvasTaskIds,
   onNotify,
   onClose,
   onOpenAssetWorkbench,
@@ -88,12 +109,19 @@ export default function CanvasPanelLayer({
   onEdgesVisibleChange,
   onDepthQualityChange,
   onExportWorkflow,
+  onExportProjectPackage,
+  onOpenProjectBrief,
+  onDraftProject,
+  onCreateProjectNode,
+  onSaveProjectVersion,
   onImportWorkflow,
+  onScaffoldProject,
 }: CanvasPanelLayerProps) {
   if (activePanel === "assets") {
     return (
       <CanvasAssetDrawer
         extraAssets={canvasAssets}
+        creativeProjectId={creativeProjectId}
         refresh={assetRefresh}
         collectionSelection={assetLibraryCollectionId}
         onCollectionSelectionChange={onCollectionSelectionChange}
@@ -128,6 +156,19 @@ export default function CanvasPanelLayer({
         onNotify={onNotify}
         restoreScrollTop={activityPanelScrollTop}
         onRememberScrollPosition={onRememberActivityScroll}
+        creativeProjectId={creativeProjectId}
+        projectName={projectName}
+        projectBrief={projectBrief}
+        projectVersionCount={projectVersionCount}
+        canvasId={canvasId}
+        canvasNodeIds={canvasNodeIds}
+        canvasTaskIds={canvasTaskIds}
+        onOpenProjectBrief={onOpenProjectBrief}
+        onDraftProject={onDraftProject}
+        onCreateProjectNode={onCreateProjectNode}
+        onSaveProjectVersion={onSaveProjectVersion}
+        onExportProjectPackage={onExportProjectPackage}
+        onScaffoldProject={onScaffoldProject}
       />
     );
   }
@@ -144,6 +185,7 @@ export default function CanvasPanelLayer({
         onEdgesVisibleChange={onEdgesVisibleChange}
         onDepthQualityChange={onDepthQualityChange}
         onExportWorkflow={onExportWorkflow}
+        onExportProjectPackage={onExportProjectPackage}
         onImportWorkflow={onImportWorkflow}
         onClose={onClose}
       />

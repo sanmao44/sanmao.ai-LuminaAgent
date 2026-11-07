@@ -24,6 +24,7 @@ type Notice = { message: string; kind: "ok" | "error" };
 
 export default function CanvasAssetDrawer({
   extraAssets,
+  creativeProjectId,
   refresh,
   collectionSelection,
   onCollectionSelectionChange,
@@ -37,6 +38,7 @@ export default function CanvasAssetDrawer({
   onNotify,
 }: {
   extraAssets: AssetRecord[];
+  creativeProjectId?: string;
   refresh: number;
   collectionSelection: string;
   onCollectionSelectionChange: (collectionId: string) => void;
@@ -61,6 +63,7 @@ export default function CanvasAssetDrawer({
   const [kind, setKind] = useState<"all" | "image" | "video" | "audio">("all");
   const [source, setSource] = useState<"all" | AssetSource>("all");
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [projectOnly, setProjectOnly] = useState(true);
   const [sort, setSort] = useState<"newest" | "oldest" | "name">("newest");
   const [preview, setPreview] = useState<AssetRecord | null>(null);
   const [collapsed, setCollapsed] = useState(false);
@@ -185,6 +188,7 @@ export default function CanvasAssetDrawer({
     query,
     tagFilter,
     sort,
+    ...(projectOnly && creativeProjectId ? { projectId: creativeProjectId } : {}),
   });
 
   const createCollection = async () => {
@@ -401,6 +405,19 @@ export default function CanvasAssetDrawer({
               ★ 收藏
             </button>
           </div>
+          {creativeProjectId && (
+            <div className="canvas-asset-project-filter">
+              <button
+                type="button"
+                className={projectOnly ? "active" : ""}
+                aria-pressed={projectOnly}
+                onClick={() => setProjectOnly((value) => !value)}
+              >
+                本项目
+              </button>
+              <span>{projectOnly ? "仅显示当前项目资产" : "显示全部项目资产"}</span>
+            </div>
+          )}
           <div className="canvas-asset-filters">
             <div className="canvas-asset-collection-picker">
               <SelectMenu

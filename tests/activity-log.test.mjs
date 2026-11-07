@@ -24,9 +24,38 @@ test("generation log kind labels describe each output type", () => {
   assert.equal(activityLog.generationLogKindLabel({ mode: "llm", taskKind: "llm" }), "LLM");
 });
 
+test("audio task logs do not pretend to have image output URLs", () => {
+  assert.deepEqual(activityLog.generationLogOutputUrls({ mode: "audio", mediaKind: "audio", imageUrls: ["wrong-image.png"] }), []);
+});
+
 test("generation log duration distinguishes active, missing, and recorded time", () => {
   assert.equal(activityLog.generationLogDuration({ status: "pending" }), "计时中");
   assert.equal(activityLog.generationLogDuration({ status: "success" }), "未记录");
   assert.equal(activityLog.generationLogDuration({ status: "error", durationMs: 0 }), "0.0s");
   assert.equal(activityLog.generationLogDuration({ status: "success", durationMs: 1250 }), "1.3s");
+});
+
+test("canvas task scope matches project, canvas, node, or task lineage", () => {
+  const scope = {
+    projectId: "project-1",
+    canvasId: "canvas-1",
+    nodeIds: new Set(["node-1"]),
+    taskIds: new Set(["task-1"]),
+  };
+  assert.equal(activityLog.canvasTaskBelongsToProject({ projectId: "project-1" }, scope), true);
+  assert.equal(activityLog.canvasTaskBelongsToProject({ canvasId: "canvas-1" }, scope), true);
+  assert.equal(activityLog.canvasTaskBelongsToProject({ nodeId: "node-1" }, scope), true);
+  assert.equal(activityLog.canvasTaskBelongsToProject({ taskId: "task-1" }, scope), true);
+});
+
+test("canvas task scope does not match unrelated or empty lineage", () => {
+  const scope = {
+    projectId: "project-1",
+    canvasId: "canvas-1",
+    nodeIds: new Set(["node-1"]),
+    taskIds: new Set(["task-1"]),
+  };
+  assert.equal(activityLog.canvasTaskBelongsToProject({ projectId: "project-2", canvasId: "canvas-2", nodeId: "node-2", taskId: "task-2" }, scope), false);
+  assert.equal(activityLog.canvasTaskBelongsToProject({ projectId: "project-1" }, {}), false);
+  assert.equal(activityLog.canvasTaskBelongsToProject({ nodeId: "node-1" }, { nodeIds: new Set() }), false);
 });

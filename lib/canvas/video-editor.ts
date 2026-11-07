@@ -107,6 +107,12 @@ function normalizeClip(value: unknown, index: number): CanvasVideoEditorClip | n
     ...(raw.componentId ? { componentId: String(raw.componentId) } : {}),
     ...(typeof raw.role === "string" && raw.role.trim() ? { role: raw.role.trim().slice(0, 48) } : {}),
     ...(raw.sourceNodeId ? { sourceNodeId: String(raw.sourceNodeId) } : {}),
+    ...(typeof raw.generatedFromNodeId === "string" && raw.generatedFromNodeId.trim()
+      ? { generatedFromNodeId: raw.generatedFromNodeId.trim() }
+      : {}),
+    ...(typeof raw.generatedFromClipId === "string" && raw.generatedFromClipId.trim()
+      ? { generatedFromClipId: raw.generatedFromClipId.trim() }
+      : {}),
     ...(typeof raw.url === "string" && raw.url.trim() ? { url: raw.url.trim().slice(0, 2000) } : {}),
     ...(raw.mediaKind === "image" || raw.mediaKind === "video" ? { mediaKind: raw.mediaKind } : {}),
     ...(raw.source === "reference-video" || raw.source === "generated-media" ? { source: raw.source } : {}),
@@ -288,7 +294,7 @@ export function syncVideoEditorInputs(
   const retainedBySource = new Map(
     retained.filter((clip) => clip.sourceNodeId).map((clip) => [clip.sourceNodeId!, clip]),
   );
-  const next = [...retained];
+  const next = [...carrySpeechCaptions(current.clips, retained)];
   const trackEnd = (track: CanvasVideoEditorTrack) => next
     .filter((clip) => clip.track === track)
     .reduce((end, clip) => Math.max(end, clip.start + clip.duration), 0);
@@ -308,6 +314,48 @@ export function syncVideoEditorInputs(
 
 export function clipEnd(clip: Pick<CanvasVideoEditorClip, "start" | "duration">) {
   return clip.start + clip.duration;
+}
+
+function isSpeechAudio(clip: CanvasVideoEditorClip) {
+  return clip.type === "audio" && (clip.track === "audio" || clip.track === "reference-audio");
+}
+
+/** Project saved cue ranges through audio edits, preserving authored text/style. */
+function carrySpeechCaptions(
+  before: readonly CanvasVideoEditorClip[],
+  after: CanvasVideoEditorClip[],
+  fragments = new Map<string, CanvasVideoEditorClip[]>(),
+) {
+  const changed = new Map<string, { source: CanvasVideoEditorClip; targets: CanvasVideoEditorClip[] }>();
+  for (const source of before.filter(isSpeechAudio)) {
+    const targets = fragments.get(source.id) ?? after.filter((clip) => clip.id === source.id && isSpeechAudio(clip));
+    const target = targets[0];
+    if (targets.length === 1 && target.start === source.start && target.duration === source.duration
+      && target.sourceOffset === source.sourceOffset && clipPlaybackRate(target) === clipPlaybackRate(source)) continue;
+    changed.set(source.id, { source, targets });
+  }
+  if (!changed.size) return after;
+  const projected = before.flatMap((caption) => {
+    const change = caption.track === "caption" && caption.generatedFromClipId
+      ? changed.get(caption.generatedFromClipId) : undefined;
+    if (!change) return [];
+    const sourceStart = change.source.sourceOffset + (caption.start - change.source.start) * clipPlaybackRate(change.source);
+    const sourceEnd = sourceStart + caption.duration * clipPlaybackRate(change.source);
+    return change.targets.flatMap((target, index) => {
+      const rate = clipPlaybackRate(target);
+      const start = Math.max(sourceStart, target.sourceOffset);
+      const end = Math.min(sourceEnd, target.sourceOffset + target.duration * rate);
+      if ((end - start) / rate < MIN_CLIP_DURATION - 1e-8) return [];
+      return [{
+        ...caption,
+        id: index === 0 ? caption.id : `${caption.id}-audio-${target.id}`,
+        generatedFromClipId: target.id,
+        start: target.start + (start - target.sourceOffset) / rate,
+        duration: (end - start) / rate,
+      }];
+    });
+  });
+  return [...after.filter((clip) => !(clip.track === "caption" && clip.generatedFromClipId && changed.has(clip.generatedFromClipId))), ...projected];
 }
 
 export function clipsAtTime(state: CanvasVideoEditorState, time: number) {
@@ -426,7 +474,7 @@ export function updateVideoEditorClip(
   clipId: string,
   patch: Partial<CanvasVideoEditorClip>,
 ): CanvasVideoEditorState {
-  const clips = state.clips.map((clip) => {
+  const clips = carrySpeechCaptions(state.clips, state.clips.map((clip) => {
     if (clip.id !== clipId) return clip;
     const currentRate = clipPlaybackRate(clip);
     const nextRate = clipPlaybackRate({ playbackRate: patch.playbackRate ?? currentRate });
@@ -440,7 +488,7 @@ export function updateVideoEditorClip(
       24 * 60 * 60,
     );
     return normalizeClip({ ...clip, ...patch, duration }, 0) || clip;
-  });
+  }));
   const projectDuration = clips.reduce((max, clip) => Math.max(max, clipEnd(clip)), 0);
   return { ...state, clips, projectDuration };
 }
@@ -477,9 +525,15 @@ export function removeVideoEditorClip(state: CanvasVideoEditorState, clipId: str
     const rangeStart = removed.start;
     const rangeEnd = clipEnd(removed);
     const rangeDuration = removed.duration;
-    const clips = state.clips
+    const fragments = new Map<string, CanvasVideoEditorClip[]>();
+    const remaining = state.clips
       .filter((clip) => clip.id !== clipId)
-      .flatMap((clip) => subtractTimelineRange(clip, rangeStart, rangeEnd, rangeDuration));
+      .flatMap((clip) => {
+        const parts = subtractTimelineRange(clip, rangeStart, rangeEnd, rangeDuration);
+        if (isSpeechAudio(clip)) fragments.set(clip.id, parts);
+        return parts;
+      });
+    const clips = carrySpeechCaptions(state.clips, remaining, fragments);
     return {
       ...state,
       clips,
@@ -488,12 +542,12 @@ export function removeVideoEditorClip(state: CanvasVideoEditorState, clipId: str
     };
   }
   const removedEnd = clipEnd(removed);
-  const clips = state.clips
+  const clips = carrySpeechCaptions(state.clips, state.clips
     .filter((clip) => clip.id !== clipId)
     .map((clip) => {
       if (clip.track !== removed.track || clip.start < removedEnd) return clip;
       return { ...clip, start: Math.max(0, clip.start - removed.duration) };
-    });
+    }));
   return {
     ...state,
     clips,
@@ -555,14 +609,17 @@ export function splitVideoEditorClip(
   const point = Number(splitAt);
   const relative = point - clip.start;
   if (!Number.isFinite(relative) || relative <= 0.05 || relative >= clip.duration - 0.05) return state;
-  const clips = state.clips.flatMap((item) => {
-    if (item.id === clipId) return splitAtTimelinePoint(item, point);
+  const fragments = new Map<string, CanvasVideoEditorClip[]>();
+  const splitClips = state.clips.flatMap((item) => {
     // Keep linked A1/A2 and text overlays aligned with a split video shot.
-    if (clip.track === "video" && item.shotIndex === clip.shotIndex && item.track !== "video") {
-      return splitAtTimelinePoint(item, point);
+    if (item.id === clipId || (clip.track === "video" && item.shotIndex === clip.shotIndex && item.track !== "video")) {
+      const parts = splitAtTimelinePoint(item, point);
+      if (isSpeechAudio(item)) fragments.set(item.id, parts);
+      return parts;
     }
     return [item];
   });
+  const clips = carrySpeechCaptions(state.clips, splitClips, fragments);
   return {
     ...state,
     clips,
@@ -605,12 +662,12 @@ export function reorderVideoEditorClips(
     return (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER);
   });
   let cursor = 0;
-  const positioned = clips.map((clip) => {
+  const positioned = carrySpeechCaptions(state.clips, clips.map((clip) => {
     if (clip.track !== track) return clip;
     const next = { ...clip, start: cursor };
     cursor += next.duration;
     return next;
-  });
+  }));
   return { ...state, clips: positioned, projectDuration: positioned.reduce((max, clip) => Math.max(max, clipEnd(clip)), 0) };
 }
 
@@ -650,6 +707,156 @@ export function addVideoEditorCaption(
   };
   const clips = [...state.clips, clip];
   return { ...state, clips, projectDuration: Math.max(state.projectDuration, clipEnd(clip)) };
+}
+
+const SPEECH_CAPTION_MAX_CODE_POINTS = 24;
+const SPEECH_CAPTION_MIN_CUE_SECONDS = 0.25;
+
+export type VideoEditorSpeechCaptionDraftResult = {
+  state: CanvasVideoEditorState;
+  clipIds: string[];
+  reason?: "empty-text" | "invalid-source" | "invalid-duration" | "caption-overlap";
+};
+
+function speechCaptionWeight(text: string) {
+  return Math.max(1, Array.from(text.replace(/\s/gu, "")).length);
+}
+
+function splitLongSpeechCaption(text: string) {
+  const remaining = Array.from(text.trim());
+  const chunks: string[] = [];
+  while (remaining.length > SPEECH_CAPTION_MAX_CODE_POINTS) {
+    const windowText = remaining.slice(0, SPEECH_CAPTION_MAX_CODE_POINTS).join("");
+    const breakPoint = Array.from(windowText.matchAll(/[，,、\s]/gu))
+      .filter((match) => (match.index ?? 0) >= Math.floor(SPEECH_CAPTION_MAX_CODE_POINTS / 2))
+      .at(-1);
+    const splitAt = breakPoint
+      ? (breakPoint.index ?? 0) + (/^[，,、]$/u.test(breakPoint[0]) ? 1 : 0)
+      : SPEECH_CAPTION_MAX_CODE_POINTS;
+    const safeSplitAt = Math.max(1, Math.min(SPEECH_CAPTION_MAX_CODE_POINTS, splitAt));
+    const chunk = remaining.slice(0, safeSplitAt).join("").trim();
+    if (chunk) chunks.push(chunk);
+    remaining.splice(0, safeSplitAt);
+    while (remaining.length && /\s/u.test(remaining[0] ?? "")) remaining.shift();
+  }
+  const last = remaining.join("").trim();
+  if (last) chunks.push(last);
+  return chunks;
+}
+
+function splitSpeechCaptionText(text: string) {
+  const runs = text.replace(/\r\n?/gu, "\n").match(/[^。！？!?；;\n]+[。！？!?；;\n]?/gu) ?? [];
+  return runs.flatMap((run) => splitLongSpeechCaption(run)).filter(Boolean);
+}
+
+function joinSpeechCaptionText(left: string, right: string) {
+  const needsSpace = /[,.;:!?]$/u.test(left) && /^[A-Za-z0-9]/u.test(right);
+  return `${left}${needsSpace ? " " : ""}${right}`;
+}
+
+function mergeSpeechCaptionSegments(segments: readonly string[], maxCount: number) {
+  if (segments.length <= maxCount) return [...segments];
+  const merged: string[] = [];
+  let offset = 0;
+  for (let index = 0; index < maxCount; index += 1) {
+    const groupsLeft = maxCount - index;
+    const segmentsLeft = segments.length - offset;
+    const take = Math.ceil(segmentsLeft / groupsLeft);
+    const group = segments.slice(offset, offset + take);
+    if (group.length) merged.push(group.slice(1).reduce(joinSpeechCaptionText, group[0]));
+    offset += take;
+  }
+  return merged;
+}
+
+export function addVideoEditorSpeechCaptions(
+  value: CanvasVideoEditorState,
+  input: {
+    sourceNodeId: string;
+    sourceClipId?: string;
+    start: number;
+    durationSeconds: number;
+    sourceOffset?: number;
+    sourceDurationSeconds?: number;
+    playbackRate?: CanvasVideoEditorClip["playbackRate"];
+    text: string;
+  },
+): VideoEditorSpeechCaptionDraftResult {
+  const state = normalizeVideoEditorState(value);
+  const sourceNodeId = input.sourceNodeId.trim();
+  const text = input.text.trim();
+  if (!sourceNodeId) return { state, clipIds: [], reason: "invalid-source" };
+  if (!text) return { state, clipIds: [], reason: "empty-text" };
+
+  const durationSeconds = finite(input.durationSeconds, 0);
+  if (durationSeconds < 0.05) return { state, clipIds: [], reason: "invalid-duration" };
+  const sourceClipId = input.sourceClipId?.trim();
+  const rate = clipPlaybackRate({ playbackRate: input.playbackRate });
+  const sourceOffset = Math.max(0, finite(input.sourceOffset, 0));
+  const sourceDuration = finite(input.sourceDurationSeconds, sourceOffset + durationSeconds * rate);
+  if (sourceDuration <= sourceOffset) return { state, clipIds: [], reason: "invalid-duration" };
+  const sourceEnd = Math.min(sourceDuration, sourceOffset + durationSeconds * rate);
+  const start = Math.max(0, finite(input.start, 0));
+  const end = start + (sourceEnd - sourceOffset) / rate;
+  const isSourceDraft = (clip: CanvasVideoEditorClip) => clip.track === "caption"
+    && clip.generatedFromNodeId === sourceNodeId
+    && (sourceClipId ? clip.generatedFromClipId === sourceClipId : !clip.generatedFromClipId);
+  const overlapsOtherCaption = state.clips.some((clip) =>
+    clip.track === "caption"
+      && !isSourceDraft(clip)
+      && start < clipEnd(clip)
+      && end > clip.start,
+  );
+  if (overlapsOtherCaption) return { state, clipIds: [], reason: "caption-overlap" };
+
+  const parsedSegments = splitSpeechCaptionText(text);
+  if (!parsedSegments.length) return { state, clipIds: [], reason: "empty-text" };
+  const maxCueCount = Math.max(1, Math.floor(sourceDuration / SPEECH_CAPTION_MIN_CUE_SECONDS));
+  const segments = mergeSpeechCaptionSegments(parsedSegments, maxCueCount);
+  const weights = segments.map(speechCaptionWeight);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const minimumDuration = Math.min(SPEECH_CAPTION_MIN_CUE_SECONDS, sourceDuration / segments.length);
+  const distributableDuration = Math.max(0, sourceDuration - minimumDuration * segments.length);
+  const styleSource = state.clips.find(isSourceDraft)
+    || state.clips.find((clip) => clip.track === "caption");
+  const generationId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  let elapsed = 0;
+  const captions = segments.flatMap((segment, index) => {
+    const cueDuration = index === segments.length - 1
+      ? sourceDuration - elapsed
+      : minimumDuration + distributableDuration * (weights[index] / totalWeight);
+    const cueStart = Math.max(sourceOffset, elapsed);
+    const cueEnd = Math.min(sourceEnd, elapsed + cueDuration);
+    elapsed += cueDuration;
+    if ((cueEnd - cueStart) / rate < MIN_CLIP_DURATION - 1e-8) return [];
+    const clip: CanvasVideoEditorClip = {
+      id: `speech-caption-${generationId}-${index + 1}`,
+      generatedFromNodeId: sourceNodeId,
+      ...(sourceClipId ? { generatedFromClipId: sourceClipId } : {}),
+      track: "caption",
+      type: "caption",
+      name: `旁白字幕 ${index + 1}`,
+      start: start + (cueStart - sourceOffset) / rate,
+      duration: (cueEnd - cueStart) / rate,
+      sourceOffset: 0,
+      text: segment,
+      textRole: "caption",
+      fontSize: styleSource?.fontSize ?? 42,
+      captionBackgroundOpacity: styleSource?.captionBackgroundOpacity ?? 0.68,
+      scale: styleSource?.scale ?? 1,
+      opacity: styleSource?.opacity ?? 1,
+      x: styleSource?.x ?? 0,
+      y: styleSource?.y ?? 0.35,
+    };
+    return [clip];
+  });
+  const retained = state.clips.filter((clip) => !isSourceDraft(clip));
+  const next = normalizeVideoEditorState({
+    ...state,
+    clips: [...retained, ...captions],
+    projectDuration: Math.max(state.projectDuration, end),
+  });
+  return { state: next, clipIds: captions.map((clip) => clip.id) };
 }
 
 export function toggleVideoEditorTrackMute(

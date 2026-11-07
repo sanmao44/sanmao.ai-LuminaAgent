@@ -3,8 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import AgentOrb, { busyOrbState } from "@/components/AgentOrb";
 import type { CanvasProject } from "@/lib/canvas/types";
+import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { CreativeProjectVersion } from "@/lib/creative-projects";
 import type { WorkspaceSyncStatus } from "@/lib/workspace";
+import CanvasProjectBriefEditor from "./CanvasProjectBriefEditor";
+import "@/components/canvas/CanvasProjectBriefEditor.css";
 
 export type CanvasPanel = "assets" | "activity" | "settings" | "shortcuts";
 
@@ -16,9 +19,10 @@ export type CanvasWorkspaceHeaderProps = {
   saving: boolean; saveError: boolean; workspaceSyncStatus: WorkspaceSyncStatus; onOpenProject: (projectId: string) => void; onNewProject: () => void; onSaveProjectVersion: () => void;
   projectVersions: CreativeProjectVersion[]; onRestoreProjectVersion: (versionId: string) => void; onDeleteProjectVersion: (versionId: string) => void; onDeleteProject: (projectId: string) => void;
   onSaveProjectName: (projectId: string, name: string) => boolean;
+  projectBrief?: CreativeProjectBrief | null; onSaveProjectBrief: (brief: CreativeProjectBrief) => boolean;
 };
 
-export default function CanvasWorkspaceHeader({currentProject, projects, activeProjectId, projectMenuOpen, onProjectMenuOpenChange, topbarCollapsed, onToggleTopbar, canUndo, canRedo, onNavigateHome, onUndo, onRedo, snapEnabled, onToggleSnap, onOpenFilePicker, activePanel, onTogglePanel, onToggleAssetLibrary, agentDockOpen, agentDockBusy, onToggleAgentDock, theme, onToggleTheme, saving, saveError, workspaceSyncStatus, onOpenProject, onNewProject, onSaveProjectVersion, projectVersions, onRestoreProjectVersion, onDeleteProjectVersion, onDeleteProject, onSaveProjectName}: CanvasWorkspaceHeaderProps) {
+export default function CanvasWorkspaceHeader({currentProject, projects, activeProjectId, projectMenuOpen, onProjectMenuOpenChange, topbarCollapsed, onToggleTopbar, canUndo, canRedo, onNavigateHome, onUndo, onRedo, snapEnabled, onToggleSnap, onOpenFilePicker, activePanel, onTogglePanel, onToggleAssetLibrary, agentDockOpen, agentDockBusy, onToggleAgentDock, theme, onToggleTheme, saving, saveError, workspaceSyncStatus, onOpenProject, onNewProject, onSaveProjectVersion, projectVersions, onRestoreProjectVersion, onDeleteProjectVersion, onDeleteProject, onSaveProjectName, projectBrief, onSaveProjectBrief}: CanvasWorkspaceHeaderProps) {
   const [projectRenameId, setProjectRenameId] = useState<string | null>(null);
   const [projectRenameValue, setProjectRenameValue] = useState("");
   const projectPopoverRef = useRef<HTMLDivElement>(null);
@@ -145,9 +149,11 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
           <button
             type="button"
             className={`canvas-soft-button canvas-panel-button canvas-activity-button ${activePanel === "activity" ? "active" : ""}`}
+            aria-label="打开项目工作台"
+            title="项目进度、生成任务和活动记录"
             onClick={() => onTogglePanel("activity")}
           >
-            ≡ 日志
+            ◫ 项目
           </button>
           <button
             type="button"
@@ -248,6 +254,7 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
                 </div>
               ) : <small className="canvas-project-versions-empty">保存后可从这里恢复项目版本</small>}
             </div>
+            <CanvasProjectBriefEditor brief={projectBrief} onSave={onSaveProjectBrief} />
             <div className="canvas-popover-actions">
               <button type="button" onClick={onNewProject}>＋ 新建画布</button>
               <button

@@ -10,3 +10,71 @@
   flex: 1 1 0;
   scrollbar-gutter: stable;
 }
+
+.canvas-log-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}
+.canvas-project-progress{display:grid;gap:14px;min-width:0}
+.canvas-project-progress-heading{display:grid;gap:4px}
+.canvas-project-progress-heading>span,.canvas-project-progress-eyebrow{color:var(--accent-text);font-size:8px;font-weight:850;text-transform:uppercase}
+.canvas-project-progress-heading h2{margin:0;overflow-wrap:anywhere;color:var(--text);font-size:17px;line-height:1.3}
+.canvas-project-progress-heading p{margin:0;color:var(--muted);font-size:9px;line-height:1.5}
+.canvas-project-progress-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.canvas-project-progress-metrics>div{display:grid;gap:3px;min-width:0;padding:8px 7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}
+.canvas-project-progress-metrics b{overflow:hidden;color:var(--text);font-size:14px;font-variant-numeric:tabular-nums;text-overflow:ellipsis}
+.canvas-project-progress-metrics span{color:var(--muted);font-size:8px;white-space:nowrap}
+.canvas-project-progress-metrics .tone-pending b{color:var(--warning)}
+.canvas-project-progress-metrics .tone-error b{color:var(--danger)}
+.canvas-project-progress-next{display:grid;gap:7px;padding:11px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent-soft) 42%,var(--panel))}
+.canvas-project-progress-next>button{display:grid;grid-template-columns:25px minmax(0,1fr) 14px;align-items:start;gap:8px;width:100%;padding:0;border:0;background:transparent;color:var(--text);text-align:left;cursor:pointer}
+.canvas-project-progress-next-mark{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:var(--accent);color:#fff;font-size:15px;font-weight:800;line-height:1}
+.canvas-project-progress-next-copy{display:grid;gap:4px;min-width:0}
+.canvas-project-progress-next-copy b{font-size:11px;line-height:1.4}
+.canvas-project-progress-next-copy small{color:var(--text-2);font-size:9px;line-height:1.55;overflow-wrap:anywhere}
+.canvas-project-progress-next-arrow{align-self:center;color:var(--accent-text);font-size:20px;line-height:1}
+.canvas-project-progress-next>button:hover .canvas-project-progress-next-copy b,.canvas-project-progress-next>button:focus-visible .canvas-project-progress-next-copy b{color:var(--accent-text)}
+.canvas-project-quality{display:grid;gap:9px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}
+.canvas-project-quality.blocked{border-color:color-mix(in srgb,var(--danger) 38%,var(--line))}
+.canvas-project-quality.attention{border-color:color-mix(in srgb,var(--warning) 35%,var(--line))}
+.canvas-project-quality-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.canvas-project-quality-heading>div{display:grid;gap:4px;min-width:0}
+.canvas-project-quality-heading b{color:var(--text);font-size:10px}
+.canvas-project-quality-state{flex:none;color:var(--muted);font-size:8px}
+.canvas-project-quality.blocked .canvas-project-quality-state{color:var(--danger)}
+.canvas-project-quality.attention .canvas-project-quality-state{color:var(--warning)}
+.canvas-project-quality-list{display:grid;gap:0;margin:0;padding:0;list-style:none}
+.canvas-project-quality-list li{border-top:1px solid var(--line)}
+.canvas-project-quality-list button,.canvas-project-quality-list li>div{display:grid;grid-template-columns:18px minmax(0,1fr) 12px;align-items:start;gap:7px;width:100%;padding:8px 0 2px;border:0;background:transparent;color:var(--text);text-align:left}
+.canvas-project-quality-list button{cursor:pointer}
+.canvas-project-quality-list button:hover b,.canvas-project-quality-list button:focus-visible b{color:var(--accent-text)}
+.canvas-project-quality-list button>span:last-child{color:var(--muted);font-size:16px;line-height:1}
+.canvas-project-quality-mark{display:grid;place-items:center;width:16px;height:16px;border:1px solid var(--line-strong);border-radius:50%;color:var(--muted);font-size:9px;font-weight:850}
+.canvas-project-quality-list li.error .canvas-project-quality-mark{border-color:color-mix(in srgb,var(--danger) 55%,var(--line));color:var(--danger)}
+.canvas-project-quality-list li.warning .canvas-project-quality-mark{border-color:color-mix(in srgb,var(--warning) 55%,var(--line));color:var(--warning)}
+.canvas-project-quality-list li>button>span:nth-child(2),.canvas-project-quality-list li>div>span:nth-child(2){display:grid;gap:3px;min-width:0}
+.canvas-project-quality-list b{font-size:9px;line-height:1.35}
+.canvas-project-quality-list small,.canvas-project-quality-empty{margin:0;color:var(--muted);font-size:8px;line-height:1.45;overflow-wrap:anywhere}
+.canvas-project-quality-empty{padding:2px 0 0}
+.canvas-project-progress-section-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px}
+.canvas-project-progress-section-heading b{color:var(--text);font-size:10px}
+.canvas-project-progress-section-heading span{color:var(--muted);font-size:8px}
+.canvas-project-progress-stages{display:grid;gap:0;margin:0;padding:0;list-style:none}
+.canvas-project-progress-stages>li{border-bottom:1px solid var(--line)}
+.canvas-project-progress-stages>li>div,.canvas-project-progress-stages>li>button{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:48px;padding:7px 2px;border:0;background:transparent;color:var(--text);text-align:left}
+.canvas-project-progress-stages>li>button{cursor:pointer}
+.canvas-project-progress-stages>li>button:hover .canvas-project-progress-stage-copy b,.canvas-project-progress-stages>li>button:focus-visible .canvas-project-progress-stage-copy b{color:var(--accent-text)}
+.canvas-project-progress-stage-mark{display:grid;place-items:center;width:20px;height:20px;border:1px solid var(--line-strong);border-radius:50%;color:var(--muted);font-size:11px;font-weight:850}
+.canvas-project-progress-stages>li.done .canvas-project-progress-stage-mark{border-color:color-mix(in srgb,var(--success) 48%,var(--line));background:color-mix(in srgb,var(--success) 12%,var(--panel));color:var(--success)}
+.canvas-project-progress-stages>li.next .canvas-project-progress-stage-mark{border-color:color-mix(in srgb,var(--accent) 48%,var(--line));color:var(--accent-text)}
+.canvas-project-progress-stage-copy{display:grid;gap:3px;min-width:0}
+.canvas-project-progress-stage-copy b{font-size:9px;line-height:1.3}
+.canvas-project-progress-stage-copy small{color:var(--muted);font-size:8px;line-height:1.45;overflow-wrap:anywhere}
+.canvas-project-progress-stage-status{padding:3px 6px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:7px;white-space:nowrap}
+.canvas-project-progress-stage-status.done{border-color:color-mix(in srgb,var(--success) 35%,var(--line));color:var(--success)}
+.canvas-project-progress-stage-status.next{border-color:color-mix(in srgb,var(--accent) 36%,var(--line));color:var(--accent-text)}
+.canvas-project-progress-export{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:11px;border-top:1px solid var(--line)}
+.canvas-project-progress-export>div{display:grid;gap:4px;min-width:0}
+.canvas-project-progress-export b{color:var(--text);font-size:9px}
+.canvas-project-progress-export small{color:var(--muted);font-size:8px;line-height:1.45}
+.canvas-project-progress-export button{flex:none;min-height:30px;padding:0 9px;border:1px solid var(--line-strong);border-radius:8px;background:var(--panel-2);color:var(--text-2);font-size:8px;font-weight:800;cursor:pointer}
+.canvas-project-progress-export button:hover:not(:disabled){border-color:var(--accent);color:var(--accent-text)}
+.canvas-project-progress-export button:disabled{opacity:.5;cursor:not-allowed}
+@media(max-width:720px){.canvas-log-tabs button{font-size:8px}.canvas-project-progress-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.canvas-project-progress-export{align-items:stretch;flex-direction:column}.canvas-project-progress-export button{width:100%;min-height:34px}}

@@ -2,6 +2,7 @@
 
 import type { AgentDeliverable } from "./agent-intent";
 import type { CreativeRoute } from "@/packages/contracts/creative";
+import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { CreativeReference } from "./creative-references";
 import type { WorkspaceContext } from "./workspace-context";
 import type { CanvasDocument } from "./canvas/types";
@@ -59,6 +60,7 @@ export type AgentRequestPayload = {
   /** 长任务进度 id：服务端按它记录阶段快照，前端轮询 /api/agent/progress 读取。 */
   runId?: string;
   context?: WorkspaceContext;
+  projectBrief?: CreativeProjectBrief;
   /** Current Canvas document used only to validate an Agent-proposed patch. */
   canvasDocument?: CanvasDocument;
   /** The selected canvas nodes are an explicit target, not incidental prompt context. */

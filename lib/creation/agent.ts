@@ -6,6 +6,7 @@ import {
   normalizeOneTakeDuration,
   ONE_TAKE_DEFAULT_DURATION,
 } from "@/lib/one-take-video-duration";
+import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 
 export type AgentReference = { url: string; name?: string };
 export type AgentMessage = { role: "user" | "assistant"; content: string };
@@ -55,6 +56,7 @@ async function runAgentTask(
   references: AgentReference[] = [],
   model?: string,
   durationSeconds?: number,
+  projectBrief?: CreativeProjectBrief,
 ) {
   const preparedReferences = await prepareCanvasAgentReferences(references);
   const response = await fetch("/api/agent", {
@@ -75,6 +77,7 @@ async function runAgentTask(
       model: model || "auto",
       task,
       ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+      ...(projectBrief ? { projectBrief } : {}),
       stream: true,
     }),
   });
@@ -113,10 +116,11 @@ export function requestPromptOptimization(
   references: AgentReference[] = [],
   model?: string,
   task: PromptOptimizationTask = "optimize_prompt",
+  projectBrief?: CreativeProjectBrief,
 ) {
   if (!prompt.trim()) return Promise.reject(new Error("请输入需要优化的提示词"));
   const request = task === "polish_text"
     ? `${SIMPLE_TEXT_POLISH_PROMPT}\n[原文]\n${prompt}`
     : prompt;
-  return runAgentTask(task, request, references, model);
+  return runAgentTask(task, request, references, model, undefined, projectBrief);
 }

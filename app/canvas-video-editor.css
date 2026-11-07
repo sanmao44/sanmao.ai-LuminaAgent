@@ -153,6 +153,12 @@
 .canvas-video-editor-track-label .canvas-video-editor-track-mute{margin-left:0}
 .canvas-video-editor-track-label button[aria-pressed="false"]{border-color:color-mix(in srgb,var(--muted) 45%,var(--line));color:var(--muted);opacity:.72}
 .canvas-video-editor-track-lane.disabled .canvas-video-editor-clip{opacity:.42}
+.canvas-video-editor-speech-captions{display:grid;gap:6px;padding:9px 10px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--accent-soft) 45%,var(--panel-2));min-width:0}
+.canvas-video-editor-speech-caption-button{min-height:30px;padding:0 10px;border:1px solid var(--accent);border-radius:7px;background:var(--accent);color:#fff;font:800 9px inherit;cursor:pointer;white-space:normal;text-align:center}
+.canvas-video-editor-speech-caption-button:hover:not(:disabled),.canvas-video-editor-speech-caption-button:focus-visible{filter:brightness(1.08);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent);outline:none}
+.canvas-video-editor-speech-caption-button:disabled{opacity:.48;cursor:not-allowed}
+.canvas-video-editor-speech-caption-hint,.canvas-video-editor-speech-caption-message{color:var(--muted);font-size:8px;line-height:1.45;overflow-wrap:anywhere}
+.canvas-video-editor-speech-caption-message{color:var(--accent-text)}
 .canvas-video-editor-icon-button{width:27px!important;min-width:27px!important;height:27px!important;padding:0!important;font:900 11px ui-monospace,SFMono-Regular,Consolas,monospace!important}
 .canvas-video-editor-icon-button:disabled{opacity:.4}
 .canvas-video-editor-caption-preview{right:auto;z-index:var(--canvas-z-local-editor);box-sizing:border-box;pointer-events:none;white-space:pre-wrap;overflow-wrap:anywhere}
