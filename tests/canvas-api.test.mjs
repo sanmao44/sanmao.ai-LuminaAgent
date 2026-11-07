@@ -1125,7 +1125,7 @@ test('canvas video polling uses the SANMAO task endpoint', async () => {
     return jsonResponse({ task: { id: 'task/1', status: 'done', videoUrls: ['/video.mp4'] } });
   }, () => api.getCanvasVideoTask('task/1'));
 
-  assert.equal(request.input, '/api/video/tasks/task%2F1');
+  assert.equal(request.input, '/api/video/tasks/task%2F1?refresh=false');
   assert.deepEqual(request.options, { cache: 'no-store' });
   assert.deepEqual(result.task.videoUrls, ['/video.mp4']);
 });

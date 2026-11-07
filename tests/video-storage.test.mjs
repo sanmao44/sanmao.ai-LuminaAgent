@@ -46,6 +46,91 @@ test('stores provider video bytes under a local storage URL', async () => {
   }
 });
 
+test('retries a transient network failure and stores the successful response', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadVideoStorage(dataDir);
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) throw new TypeError('fetch failed');
+    return new Response(video, { status: 200, headers: { 'content-type': 'video/mp4' } });
+  };
+  try {
+    const result = await storage.persistGeneratedVideos([{ url: 'https://provider.example/retry.mp4' }]);
+    assert.equal(calls, 2);
+    assert.equal(result.storageError, undefined);
+    assert.equal(result.videos.length, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('retries rate limits and honors a bounded Retry-After delay', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadVideoStorage(dataDir);
+  let calls = 0;
+  const startedAt = Date.now();
+  globalThis.fetch = async () => {
+    calls += 1;
+    return calls === 1
+      ? new Response('slow down', { status: 429, headers: { 'retry-after': '0.04' } })
+      : new Response(video, { status: 200, headers: { 'content-type': 'video/mp4' } });
+  };
+  try {
+    const result = await storage.persistGeneratedVideos([{ url: 'https://provider.example/rate-limited.mp4' }]);
+    assert.equal(calls, 2);
+    assert.ok(Date.now() - startedAt >= 30);
+    assert.equal(result.storageError, undefined);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('retries server errors up to the attempt limit and reports the final status', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadVideoStorage(dataDir);
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response('unavailable', { status: 503 });
+  };
+  try {
+    const result = await storage.persistGeneratedVideos([{ url: 'https://provider.example/unavailable.mp4' }]);
+    assert.equal(calls, 3);
+    assert.deepEqual(result.videos, []);
+    assert.match(result.storageError, /HTTP 503/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('does not retry authorization or missing-result errors', async () => {
+  for (const status of [401, 404, 410]) {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-storage-'));
+    const previousFetch = globalThis.fetch;
+    const storage = loadVideoStorage(dataDir);
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response('unavailable', { status });
+    };
+    try {
+      const result = await storage.persistGeneratedVideos([{ url: 'https://provider.example/unavailable.mp4' }]);
+      assert.equal(calls, 1, `HTTP ${status} should fail without retrying`);
+      assert.match(result.storageError, new RegExp(`HTTP ${status}`));
+    } finally {
+      globalThis.fetch = previousFetch;
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  }
+});
+
 test('does not return remote URLs or leave partial files when one video cannot be saved', async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-storage-'));
   const previousFetch = globalThis.fetch;

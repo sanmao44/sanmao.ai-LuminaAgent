@@ -7,7 +7,7 @@ const source = await readFile(new URL('../components/workspace-topbar-model.ts',
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { workspaceTaskSummaryLabel, workspaceTaskSummaryTone, workspaceTopbarModes, workspaceTopbarStatusTone } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { workspaceSyncStatusLabel, workspaceSyncStatusTone, workspaceTaskSummaryLabel, workspaceTaskSummaryTone, workspaceTopbarModes, workspaceTopbarStatusTone } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 
 test('WorkspaceTopbar keeps image, video and Agent active mode semantics', () => {
   assert.deepEqual(workspaceTopbarModes('generate'), { imageActive: true, videoActive: false, agentActive: false });
@@ -33,4 +33,13 @@ test('WorkspaceTopbar keeps sync failures visible above task completion state', 
   assert.equal(workspaceTopbarStatusTone(done, 'conflict'), 'attention');
   assert.equal(workspaceTopbarStatusTone(done, 'syncing'), 'working');
   assert.equal(workspaceTopbarStatusTone(done, 'synced'), 'ready');
+});
+
+test('WorkspaceTopbar exposes a distinct workspace save status', () => {
+  assert.equal(workspaceSyncStatusLabel('syncing'), '保存中');
+  assert.equal(workspaceSyncStatusLabel('offline'), '离线待同步');
+  assert.equal(workspaceSyncStatusLabel('conflict'), '同步冲突');
+  assert.equal(workspaceSyncStatusTone('error'), 'attention');
+  assert.equal(workspaceSyncStatusTone('syncing'), 'working');
+  assert.equal(workspaceSyncStatusTone('synced'), 'ready');
 });

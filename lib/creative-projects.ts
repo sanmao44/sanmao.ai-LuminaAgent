@@ -1,5 +1,5 @@
 import type { CanvasProject, CanvasSnapshot } from './canvas/types';
-import { normalizeCreativeProjectBrief, type CreativeProjectBrief } from '../packages/contracts/creative';
+import { MAX_CREATIVE_PROJECT_REFERENCE_ASSETS, normalizeCreativeProjectBrief, type CreativeProjectBrief } from '../packages/contracts/creative';
 
 export const CREATIVE_PROJECTS_KEY = 'sanmao.creative.projects.v1';
 export const CREATIVE_PROJECT_MAX_VERSIONS = 50;
@@ -13,6 +13,8 @@ export type CreativeProjectVersion = {
   parentVersionId?: string;
   /** Creative rules are part of the versioned project state, not global UI preferences. */
   brief?: CreativeProjectBrief | null;
+  /** Stable asset identities used as project defaults for eligible generation modes. */
+  referenceAssetIds?: string[];
   snapshot: CanvasSnapshot;
 };
 
@@ -23,6 +25,7 @@ export type CreativeProject = {
   updatedAt: number;
   canvasIds: string[];
   brief?: CreativeProjectBrief;
+  referenceAssetIds?: string[];
   versions?: CreativeProjectVersion[];
 };
 
@@ -32,6 +35,7 @@ export type ImportedCreativeProjectVersion = {
   createdAt: number;
   parentVersionId?: string;
   brief?: CreativeProjectBrief | null;
+  referenceAssetIds?: string[];
   snapshot: CanvasSnapshot;
 };
 
@@ -48,6 +52,12 @@ function cleanIds(value: unknown) {
   return [...new Set(Array.isArray(value)
     ? value.map(cleanId).filter((item): item is string => Boolean(item))
     : [])].slice(0, 128);
+}
+
+function cleanReferenceAssetIds(value: unknown) {
+  return [...new Set(Array.isArray(value)
+    ? value.map(cleanId).filter((item): item is string => Boolean(item))
+    : [])].slice(0, MAX_CREATIVE_PROJECT_REFERENCE_ASSETS);
 }
 
 function finiteTimestamp(value: unknown, fallback: number) {
@@ -73,6 +83,7 @@ function normalizeVersion(value: unknown, projectId: string): CreativeProjectVer
   const createdAt = finiteTimestamp(value.createdAt, Date.now());
   const hasBrief = Object.prototype.hasOwnProperty.call(value, 'brief');
   const brief = normalizeCreativeProjectBrief(value.brief);
+  const referenceAssetIds = cleanReferenceAssetIds(value.referenceAssetIds);
   return {
     id,
     projectId,
@@ -81,6 +92,7 @@ function normalizeVersion(value: unknown, projectId: string): CreativeProjectVer
     createdAt,
     ...(cleanId(value.parentVersionId) ? { parentVersionId: cleanId(value.parentVersionId) } : {}),
     ...(hasBrief ? { brief: brief || null } : {}),
+    ...(referenceAssetIds.length ? { referenceAssetIds } : {}),
     snapshot,
   };
 }
@@ -106,6 +118,7 @@ export function normalizeCreativeProjects(value: unknown): CreativeProject[] {
         .slice(-CREATIVE_PROJECT_MAX_VERSIONS)
       : [];
     const brief = normalizeCreativeProjectBrief(item.brief);
+    const referenceAssetIds = cleanReferenceAssetIds(item.referenceAssetIds);
     return [{
       id,
       name: String(item.name || '未命名项目').trim().slice(0, 120) || '未命名项目',
@@ -113,6 +126,7 @@ export function normalizeCreativeProjects(value: unknown): CreativeProject[] {
       updatedAt: finiteTimestamp(item.updatedAt, createdAt),
       canvasIds: cleanIds(item.canvasIds),
       ...(brief ? { brief } : {}),
+      ...(referenceAssetIds.length ? { referenceAssetIds } : {}),
       ...(versions.length ? { versions } : {}),
     }];
   });
@@ -129,6 +143,20 @@ export function updateCreativeProjectBrief(
   const brief = normalizeCreativeProjectBrief(value);
   return normalizeCreativeProjects(normalized.map((project) => project.id === projectId
     ? { ...project, updatedAt, ...(brief ? { brief } : { brief: undefined }) }
+    : project));
+}
+
+export function updateCreativeProjectReferences(
+  projects: readonly CreativeProject[],
+  projectId: string,
+  assetIds: readonly string[],
+  updatedAt = Date.now(),
+) {
+  const normalized = normalizeCreativeProjects(projects);
+  if (!normalized.some((project) => project.id === projectId)) return null;
+  const referenceAssetIds = cleanReferenceAssetIds(assetIds);
+  return normalizeCreativeProjects(normalized.map((project) => project.id === projectId
+    ? { ...project, updatedAt, ...(referenceAssetIds.length ? { referenceAssetIds } : { referenceAssetIds: undefined }) }
     : project));
 }
 
@@ -244,6 +272,7 @@ export function appendImportedCreativeProjectVersions(
         ? { parentVersionId: importedIds.get(version.parentVersionId) }
         : {}),
       ...(Object.prototype.hasOwnProperty.call(version, 'brief') ? { brief: normalizeCreativeProjectBrief(version.brief) } : {}),
+      ...(Object.prototype.hasOwnProperty.call(version, 'referenceAssetIds') ? { referenceAssetIds: cleanReferenceAssetIds(version.referenceAssetIds) } : {}),
       snapshot: version.snapshot,
     } satisfies CreativeProjectVersion;
   });

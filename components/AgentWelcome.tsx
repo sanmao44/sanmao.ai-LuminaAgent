@@ -11,7 +11,7 @@ type AgentWelcomeProps = {
 const creativeFlows = [
   {
     key: 'film',
-    title: '一键成片',
+    title: '规划短片',
     detail: '脚本、分镜、画面、配音和字幕',
     prompt: '我想做一条完整的短视频。请先理解我的目标，给出脚本、分镜、画面、配音和字幕的执行计划，确认后再逐步生成。',
   },

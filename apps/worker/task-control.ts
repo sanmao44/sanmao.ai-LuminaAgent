@@ -9,7 +9,7 @@ import { cloneTaskRuntime } from '../../lib/clone/task-runtime';
 import type { CloneJob } from '../../lib/clone/types';
 import { moveMediaToTrash } from '../../lib/generation-log';
 import { saveVideoTaskLocally as saveVideoTaskService } from '../../lib/video-task-service';
-import { findVideoTask, listVideoTasks, updateVideoTask } from '../../lib/video-task-store';
+import { findVideoTask, listVideoTasks, listVideoTasksPage, updateVideoTask } from '../../lib/video-task-store';
 import { findUpscaleTask, updateUpscaleTask } from '../../lib/upscale-task-store';
 import { videoTaskRuntime } from '../../lib/video-task-runtime';
 import { videoTaskOutputUrls, videoTaskStatus } from '../../lib/video-task-output';
@@ -42,6 +42,15 @@ export async function refreshVideoTask(id: string, observer?: RuntimeObserver) {
 }
 export async function refreshUpscaleTask(id: string, observer?: RuntimeObserver) {
   return refreshUpscaleTaskEntry(id, async () => refreshUpscaleTaskService(id), observer || undefined);
+}
+export async function getVideoTaskSnapshot(id: string) {
+  return findVideoTask(id);
+}
+export async function getVideoTaskSnapshotsPage(options: Parameters<typeof listVideoTasksPage>[0]) {
+  return listVideoTasksPage(options);
+}
+export async function getUpscaleTaskSnapshot(id: string) {
+  return findUpscaleTask(id);
 }
 export async function getVideoTask(id: string, observer?: RuntimeObserver) {
   const task = await findVideoTask(id);

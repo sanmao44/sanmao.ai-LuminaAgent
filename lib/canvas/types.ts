@@ -291,6 +291,7 @@ export type CanvasGenerationMeta = {
   };
   operation?: "generate" | "edit" | "reference-generate" | "upscale" | "extend";
   referenceIds?: string[];
+  projectReferenceAssetIds?: string[];
   sourceGeneratorId?: string;
   parentNodeId?: string;
   /** The completed media node whose prompt/parameters were copied for a new branch. */

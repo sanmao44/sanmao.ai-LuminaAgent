@@ -1,4 +1,5 @@
 import { normalizeCreativeProjectBrief, type CreativeProjectBrief } from "@/packages/contracts/creative";
+import { MAX_CREATIVE_PROJECT_REFERENCE_ASSETS } from "@/packages/contracts/creative";
 import type { CanvasDocument, CanvasMediaKind, CanvasSnapshot } from "@/lib/canvas/types";
 
 export const CANVAS_PROJECT_PACKAGE_SCHEMA = "sanmao.canvas.project";
@@ -23,6 +24,7 @@ export type CanvasProjectPackageVersion = {
   createdAt: number;
   parentVersionId?: string;
   brief?: CreativeProjectBrief | null;
+  referenceAssetIds?: string[];
   snapshot: CanvasSnapshot;
 };
 
@@ -34,6 +36,7 @@ export type CanvasProjectPackage = {
     name: string;
     projectId?: string;
     brief?: CreativeProjectBrief;
+    referenceAssetIds?: string[];
     versions?: CanvasProjectPackageVersion[];
   };
   document: CanvasDocument;
@@ -76,6 +79,9 @@ function versionManifest(value: unknown): CanvasProjectPackageVersion | null {
     ...(Object.prototype.hasOwnProperty.call(value, "brief")
       ? { brief: normalizeCreativeProjectBrief(value.brief) }
       : {}),
+    ...(Array.isArray(value.referenceAssetIds)
+      ? { referenceAssetIds: [...new Set(value.referenceAssetIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim().slice(0, 300)))].slice(0, MAX_CREATIVE_PROJECT_REFERENCE_ASSETS) }
+      : {}),
     snapshot: versionSnapshot,
   };
 }
@@ -110,6 +116,7 @@ export function canvasProjectPackageFromDocument(input: {
   name: string;
   projectId?: string;
   brief?: CreativeProjectBrief | null;
+  referenceAssetIds?: readonly string[];
   versions?: readonly CanvasProjectPackageVersion[];
   document: CanvasDocument;
   exportedAt?: string;
@@ -128,6 +135,7 @@ export function canvasProjectPackageFromDocument(input: {
       name: cleanText(input.name, 120) || "SANMAO 无限画布",
       ...(cleanText(input.projectId, 300) ? { projectId: cleanText(input.projectId, 300) } : {}),
       ...(brief ? { brief } : {}),
+      ...(input.referenceAssetIds?.length ? { referenceAssetIds: [...new Set(input.referenceAssetIds)].slice(0, MAX_CREATIVE_PROJECT_REFERENCE_ASSETS) } : {}),
       ...(versions.length ? { versions } : {}),
     },
     document: input.document,
@@ -155,6 +163,9 @@ export function parseCanvasProjectPackage(value: unknown): CanvasProjectPackage 
   const name = cleanText(value.project.name, 120) || "SANMAO 无限画布";
   const projectId = cleanText(value.project.projectId, 300);
   const brief = normalizeCreativeProjectBrief(value.project.brief);
+  const referenceAssetIds = Array.isArray(value.project.referenceAssetIds)
+    ? [...new Set(value.project.referenceAssetIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim().slice(0, 300)))].slice(0, MAX_CREATIVE_PROJECT_REFERENCE_ASSETS)
+    : [];
   const versions = Array.isArray(value.project.versions)
     ? value.project.versions
       .map(versionManifest)
@@ -187,6 +198,7 @@ export function parseCanvasProjectPackage(value: unknown): CanvasProjectPackage 
       name,
       ...(projectId ? { projectId } : {}),
       ...(brief ? { brief } : {}),
+      ...(referenceAssetIds.length ? { referenceAssetIds } : {}),
       ...(versions.length ? { versions } : {}),
     },
     document: value.document as unknown as CanvasDocument,

@@ -34,6 +34,8 @@ export type CanvasPanelLayerProps = {
   onCollectionSelectionChange: (collectionId: string) => void;
   onAddAsset: (asset: AssetRecord) => void;
   onReferenceAsset: (asset: AssetRecord) => void;
+  projectReferenceAssetIds?: readonly string[];
+  onSetProjectReference: (asset: AssetRecord) => void;
   onLocateAsset: (asset: AssetRecord) => void;
   onAddNodeToCollection: (nodeId: string, collectionId: string) => void;
   onRefreshGenerationLogs: () => void;
@@ -88,6 +90,8 @@ export default function CanvasPanelLayer({
   onCollectionSelectionChange,
   onAddAsset,
   onReferenceAsset,
+  projectReferenceAssetIds,
+  onSetProjectReference,
   onLocateAsset,
   onAddNodeToCollection,
   onRefreshGenerationLogs,
@@ -128,6 +132,8 @@ export default function CanvasPanelLayer({
         canReference={canReferenceAssets}
         onAdd={onAddAsset}
         onReference={onReferenceAsset}
+        projectReferenceAssetIds={projectReferenceAssetIds}
+        onSetProjectReference={onSetProjectReference}
         onLocate={onLocateAsset}
         onAddNodeToCollection={onAddNodeToCollection}
         onClose={onClose}

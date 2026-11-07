@@ -575,6 +575,13 @@ body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
 
 /* Long video prompts can be edited in a focused, viewport-sized workspace. */
 .video-prompt-heading-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0;flex-wrap:wrap}
+.video-prompt-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:-4px}
+.video-prompt-meta small{margin:0;text-align:left;font-size:10px;line-height:1.4}
+.video-prompt-meta .video-draft-status{min-width:0;overflow:hidden;text-align:right;text-overflow:ellipsis;white-space:nowrap}
+.video-prompt-meta .video-draft-status[data-state="error"]{color:var(--danger)}
+.video-draft-notice{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-top:8px;padding:8px 10px;border:1px solid color-mix(in srgb,var(--accent) 25%,var(--line));border-radius:9px;background:color-mix(in srgb,var(--accent-soft) 38%,var(--panel));color:var(--text-2);font-size:10px;line-height:1.5}
+.video-draft-notice span{min-width:0;overflow-wrap:anywhere}
+.video-draft-notice button{flex:none;border:0;background:transparent;color:var(--accent-text);font:inherit;font-weight:800;cursor:pointer}
 .video-prompt-optimize,.video-prompt-undo{height:27px;display:inline-flex;align-items:center;gap:5px;padding:0 9px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:8px;background:var(--accent-soft);color:var(--accent-text);font-size:9px;font-weight:850;cursor:pointer;white-space:nowrap;transition:border-color .16s,background .16s,opacity .16s,transform .16s}
 .video-prompt-optimize:hover,.video-prompt-undo:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent-soft) 78%,var(--panel-2));transform:translateY(-1px)}
 .video-prompt-optimize:disabled,.video-prompt-undo:disabled{opacity:.52;cursor:not-allowed;transform:none}

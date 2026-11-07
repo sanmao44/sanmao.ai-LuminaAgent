@@ -6,6 +6,7 @@ import type { CanvasProject } from "@/lib/canvas/types";
 import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { CreativeProjectVersion } from "@/lib/creative-projects";
 import type { WorkspaceSyncStatus } from "@/lib/workspace";
+import type { AssetRecord } from "@/lib/assets";
 import CanvasProjectBriefEditor from "./CanvasProjectBriefEditor";
 import "@/components/canvas/CanvasProjectBriefEditor.css";
 
@@ -20,9 +21,10 @@ export type CanvasWorkspaceHeaderProps = {
   projectVersions: CreativeProjectVersion[]; onRestoreProjectVersion: (versionId: string) => void; onDeleteProjectVersion: (versionId: string) => void; onDeleteProject: (projectId: string) => void;
   onSaveProjectName: (projectId: string, name: string) => boolean;
   projectBrief?: CreativeProjectBrief | null; onSaveProjectBrief: (brief: CreativeProjectBrief) => boolean;
+  projectReferenceAssetIds?: readonly string[]; projectReferenceAssets?: readonly AssetRecord[]; onRemoveProjectReference?: (assetId: string) => void;
 };
 
-export default function CanvasWorkspaceHeader({currentProject, projects, activeProjectId, projectMenuOpen, onProjectMenuOpenChange, topbarCollapsed, onToggleTopbar, canUndo, canRedo, onNavigateHome, onUndo, onRedo, snapEnabled, onToggleSnap, onOpenFilePicker, activePanel, onTogglePanel, onToggleAssetLibrary, agentDockOpen, agentDockBusy, onToggleAgentDock, theme, onToggleTheme, saving, saveError, workspaceSyncStatus, onOpenProject, onNewProject, onSaveProjectVersion, projectVersions, onRestoreProjectVersion, onDeleteProjectVersion, onDeleteProject, onSaveProjectName, projectBrief, onSaveProjectBrief}: CanvasWorkspaceHeaderProps) {
+export default function CanvasWorkspaceHeader({currentProject, projects, activeProjectId, projectMenuOpen, onProjectMenuOpenChange, topbarCollapsed, onToggleTopbar, canUndo, canRedo, onNavigateHome, onUndo, onRedo, snapEnabled, onToggleSnap, onOpenFilePicker, activePanel, onTogglePanel, onToggleAssetLibrary, agentDockOpen, agentDockBusy, onToggleAgentDock, theme, onToggleTheme, saving, saveError, workspaceSyncStatus, onOpenProject, onNewProject, onSaveProjectVersion, projectVersions, onRestoreProjectVersion, onDeleteProjectVersion, onDeleteProject, onSaveProjectName, projectBrief, onSaveProjectBrief, projectReferenceAssetIds, projectReferenceAssets, onRemoveProjectReference}: CanvasWorkspaceHeaderProps) {
   const [projectRenameId, setProjectRenameId] = useState<string | null>(null);
   const [projectRenameValue, setProjectRenameValue] = useState("");
   const [projectQuery, setProjectQuery] = useState("");
@@ -318,7 +320,7 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
                 </div>
               ) : <small className="canvas-project-versions-empty">保存后可从这里恢复项目版本</small>}
             </div>
-            <CanvasProjectBriefEditor brief={projectBrief} onSave={onSaveProjectBrief} />
+            <CanvasProjectBriefEditor brief={projectBrief} referenceAssetIds={projectReferenceAssetIds} referenceAssets={projectReferenceAssets} onRemoveReference={onRemoveProjectReference} onSave={onSaveProjectBrief} />
             <div className="canvas-project-footer">
               <div className="canvas-project-section-title">项目操作</div>
               <div className="canvas-popover-actions">

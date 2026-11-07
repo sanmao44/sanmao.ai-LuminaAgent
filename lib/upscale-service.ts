@@ -8,13 +8,12 @@ import { finishGenerationLog, startGenerationLog, type GenerationLog } from './g
 import { normalizeGenerationSource, type GenerationSource } from './generation-source';
 import { ALIYUN_GENERATIVE_UPSCALE_MAX_ASPECT_RATIO, prepareAliyunUpscaleImage, prepareTencentUpscaleImage } from './upscale-image';
 import { createUpscaleProvider, isUpscaleProviderError, uploadAliyunImageToOss, uploadTencentImageToCos, type UpscaleProviderError } from './upscale-providers';
-import { createUpscaleTask, findUpscaleTask, updateUpscaleTask, type UpscaleTask } from './upscale-task-store';
+import { createUpscaleTask, findUpscaleTask, updateUpscaleTask, UPSCALE_TASK_TIMEOUT_MS, type UpscaleTask } from './upscale-task-store';
 import type { ReferenceImageRecord, UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
 import { canRetryUpscaleTask, upscaleTaskRuntime } from './upscale-task-runtime';
 import { upscaleTaskOutputUrl, upscaleTaskStatus } from './upscale-task-output';
 
 const activePolls = new Set<string>();
-const TASK_TIMEOUT_MS = 20 * 60 * 1000;
 const TASK_TIMEOUT_ERROR = '高清处理时间较长，请稍后重试。';
 
 export function scaleValue(value: unknown): 1 | 2 | 3 | 4 {
@@ -188,19 +187,24 @@ export async function startCloudUpscale(input: { reference: string; sourceImageI
 export async function refreshUpscaleTask(id: string) {
   const task = await findUpscaleTask(id);
   if (!task || !upscaleTaskRuntime.isActive(task.status)) return task;
-  if (!task.providerTaskId) return task;
-  if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
-  if (Date.parse(task.createdAt) + TASK_TIMEOUT_MS < Date.now()) {
+  if (Date.parse(task.createdAt) + UPSCALE_TASK_TIMEOUT_MS <= Date.now()) {
     const timedOut = await updateUpscaleTask(id, { status: 'failed', errorCode: 'TASK_TIMEOUT', error: TASK_TIMEOUT_ERROR, completedAt: new Date().toISOString() });
     await finishTaskLog(timedOut || task, { status: 'error', error: TASK_TIMEOUT_ERROR, errorCode: 'TASK_TIMEOUT' });
     return timedOut;
   }
+  if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
+  if (!task.providerTaskId) return task;
   if (activePolls.has(id)) return task;
   activePolls.add(id);
   try {
     const credentials = await credentialsFor(task.provider);
     const provider = createUpscaleProvider(task.provider, credentials);
-    if (!provider.poll) return task;
+    if (!provider.poll) {
+      const error = '服务商未提供任务查询能力，无法继续跟踪这条高清任务。';
+      const failed = await updateUpscaleTask(id, { status: 'failed', errorCode: 'POLL_UNSUPPORTED', error, completedAt: new Date().toISOString() });
+      await finishTaskLog(failed || task, { status: 'error', error, errorCode: 'POLL_UNSUPPORTED' });
+      return failed || task;
+    }
     const result = await provider.poll(task.providerTaskId, { modelId: task.model });
     if (result.status === 'succeeded') return await saveResult(task, result);
     return await updateUpscaleTask(id, { status: result.status, pollCount: task.pollCount + 1, nextPollAt: Date.now() + Math.min(15_000, 1500 + task.pollCount * 500) });

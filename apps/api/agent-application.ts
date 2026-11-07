@@ -69,6 +69,7 @@ const AGENT_AUTO_FAILOVER_TIMEOUT_MS = 40_000;
 // A manually selected model must still fail visibly instead of holding the
 // composer in a pending state for the provider's 180s transport timeout.
 const AGENT_MODEL_CALL_TIMEOUT_MS = 60_000;
+const CINEMATIC_DIRECTOR_CANDIDATE_TIMEOUT_MS = 75_000;
 // Search is a pre-answer dependency. It must not inherit the provider's long
 // request timeout, otherwise a stalled search blocks the whole chat surface.
 const AGENT_WEB_SEARCH_TOTAL_TIMEOUT_MS = 30_000;
@@ -1398,21 +1399,26 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         ...directorModels.filter((model) => model.providerId !== agentRuntime.model.providerId),
         ...directorModels.filter((model) => model.providerId === agentRuntime.model.providerId),
       ].slice(0, 2);
-      const directorCandidates: Array<typeof agentRuntime> = [agentRuntime];
+      const directorCandidates: Array<typeof agentRuntime> = agentRuntime.model.capabilities.includes('vision')
+        ? [agentRuntime]
+        : [];
       for (const model of directorFallbackModels) {
         try {
           const runtime = await getRuntimeModel(model.id, 'chat');
-          if (runtime) directorCandidates.push(runtime);
+          if (runtime?.model.capabilities.includes('vision')) directorCandidates.push(runtime);
         } catch {
           // 读取备用模型凭据失败时跳过它，继续尝试下一个候选。
         }
       }
 
+      if (!directorCandidates.length) {
+        throw new Error('未找到支持图片分析的对话模型，请先启用视觉模型。');
+      }
       if (requestController.signal.aborted) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
       const response = await composition.invokeCandidateChatModels(directorCandidates, {
         messages: llmMessages,
         tool_choice: 'none',
-      }, requestController.signal);
+      }, requestController.signal, CINEMATIC_DIRECTOR_CANDIDATE_TIMEOUT_MS);
       const content = chatContentText(response?.choices?.[0]?.message?.content);
       if (!content) throw new Error(`导演模型未返回可执行方案。已尝试 ${directorCandidates.length} 个视觉模型`);
       llmResponseChars = content.length;

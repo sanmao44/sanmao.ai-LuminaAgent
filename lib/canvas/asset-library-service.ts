@@ -8,6 +8,7 @@ import {
   updateUnifiedAssetMetadata,
   type AssetRecord,
 } from "@/lib/assets";
+import { projectVisualReferenceAssetId, resolveProjectVisualReferences, type ProjectVisualReference } from "@/lib/canvas/project-visual-references";
 import { assetKey } from "@/lib/asset-catalog";
 import type { AssetCollection } from "@/lib/client-history";
 import {
@@ -22,6 +23,28 @@ export type CanvasAssetCollectionResult =
 
 export function loadCanvasAssets(extraAssets: AssetRecord[] = []) {
   return listUnifiedAssets(extraAssets);
+}
+
+export async function ensureCanvasProjectReferenceAsset(asset: AssetRecord) {
+  if (asset.kind !== "image" || !asset.url || /^data:/i.test(asset.url))
+    throw new Error("项目参考需要已保存的图片素材，请先将图片上传到素材库。");
+  const assets = await listUnifiedAssets([asset]);
+  const match = assets.find((item) => assetKey(item.kind, item.url, item.storageKey) === assetKey(asset.kind, asset.url, asset.storageKey));
+  if (match?.indexId || match?.galleryId || match?.taskId) return projectVisualReferenceAssetId(match);
+  if (match?.id.startsWith("canvas:")) {
+    await registerCanvasAsset({ ...match, id: match.id });
+    return `index:${match.id}`;
+  }
+  if (match) return projectVisualReferenceAssetId(match);
+  throw new Error("这个图片素材已不存在，请刷新素材库后重试。");
+}
+
+export async function resolveCanvasProjectReferenceAssets(
+  assetIds: readonly string[],
+  extraAssets: AssetRecord[] = [],
+): Promise<ProjectVisualReference[]> {
+  if (!assetIds.length) return [];
+  return resolveProjectVisualReferences(assetIds, await listUnifiedAssets(extraAssets));
 }
 
 export function loadCanvasAssetCollections() {

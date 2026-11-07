@@ -27,6 +27,22 @@ export function workspaceTaskSummaryTone(summary: WorkspaceTaskSummary) {
   return 'ready';
 }
 
+export function workspaceSyncStatusLabel(status: WorkspaceSyncIndicatorStatus) {
+  if (status === 'syncing') return '保存中';
+  if (status === 'offline') return '离线待同步';
+  if (status === 'conflict') return '同步冲突';
+  if (status === 'error') return '保存异常';
+  if (status === 'synced') return '已保存';
+  return '待同步';
+}
+
+export function workspaceSyncStatusTone(status: WorkspaceSyncIndicatorStatus) {
+  if (status === 'offline' || status === 'error' || status === 'conflict') return 'attention';
+  if (status === 'syncing') return 'working';
+  if (status === 'synced') return 'ready';
+  return 'pending';
+}
+
 export function workspaceTopbarStatusTone(summary: WorkspaceTaskSummary, syncStatus: WorkspaceSyncIndicatorStatus) {
   if (syncStatus === 'offline' || syncStatus === 'error' || syncStatus === 'conflict') return 'attention';
   if (syncStatus === 'syncing') return 'working';

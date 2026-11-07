@@ -497,15 +497,18 @@ import {
   removeCreativeProjectVersion,
   saveCreativeProjects,
   updateCreativeProjectBrief,
+  updateCreativeProjectReferences,
   type CreativeProject,
   type CreativeProjectVersion,
 } from "@/lib/creative-projects";
-import type { CreativeProjectBrief } from "@/packages/contracts/creative";
+import { MAX_CREATIVE_PROJECT_REFERENCE_ASSETS, type CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { CanvasAgentRunContext } from "@/lib/canvas/run-context";
 import { generationLogKind, generationLogOutputUrls } from "@/lib/canvas/activity-log";
 import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
 import { canvasProjectDraftPrompt, seedCanvasProjectIntent } from "@/lib/canvas/project-progress";
 import { projectWorkflowScaffold } from "@/lib/canvas/project-workflow";
+import { ensureCanvasProjectReferenceAsset, resolveCanvasProjectReferenceAssets } from "@/lib/canvas/asset-library-service";
+import { mergeProjectVisualReferences, projectVisualReferenceAssetId, type ProjectVisualReference } from "@/lib/canvas/project-visual-references";
 import { createProvenanceEdge, provenanceDraftsForSources } from "@/lib/provenance/normalize";
 import VideoEditorNode from "@/components/VideoEditorNode";
 import VideoEditorWorkbench from "@/components/VideoEditorWorkbench";
@@ -592,6 +595,7 @@ type CanvasGenerationRequest = {
   useCurrentImageAsReference?: boolean;
   presetId?: string;
   presetName?: string;
+  excludedProjectReferenceAssetIds?: string[];
 };
 
 type Interaction =
@@ -795,6 +799,7 @@ export default function SuperCanvas() {
   const [runtimeError, setRuntimeError] = useState("");
   const [projects, setProjects] = useState<CanvasProject[]>([]);
   const [creativeProjects, setCreativeProjects] = useState<CreativeProject[]>([]);
+  const [projectVisualReferences, setProjectVisualReferences] = useState<ProjectVisualReference[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("");
   const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext>(() => readWorkspaceContext());
   const projectBriefRef = useRef<CreativeProjectBrief | null>(null);
@@ -1240,8 +1245,20 @@ export default function SuperCanvas() {
   const currentProject = projects.find(
     (project) => project.id === activeProjectId,
   );
-  const projectBrief = creativeProjects.find((project) => project.id === currentProject?.projectId)?.brief || null;
+  const creativeProject = creativeProjects.find((project) => project.id === currentProject?.projectId);
+  const projectBrief = creativeProject?.brief || null;
+  const projectReferenceAssetIds = creativeProject?.referenceAssetIds || [];
+  const projectReferenceKey = projectReferenceAssetIds.join("\n");
   projectBriefRef.current = projectBrief;
+  useEffect(() => {
+    let active = true;
+    void resolveCanvasProjectReferenceAssets(projectReferenceAssetIds).then((references) => {
+      if (active) setProjectVisualReferences(references);
+    }).catch(() => {
+      if (active) setProjectVisualReferences([]);
+    });
+    return () => { active = false; };
+  }, [currentProject?.projectId, projectReferenceKey]);
   useEffect(() => {
     const projectId = currentProject?.projectId;
     setProjectVersions(projectId
@@ -4131,6 +4148,42 @@ export default function SuperCanvas() {
     notify("项目创作设定已保存", "ok");
     return true;
   }, [currentProject?.projectId, notify]);
+  const setProjectReference = useCallback(async (asset: AssetRecord) => {
+    const projectId = currentProject?.projectId;
+    if (!projectId) return;
+    try {
+      const storedProjects = readCreativeProjects();
+      const project = storedProjects.find((item) => item.id === projectId);
+      if (!project) return notify("找不到当前项目，请重新打开项目", "error");
+      const candidateId = projectVisualReferenceAssetId(asset);
+      const existingIds = project.referenceAssetIds || [];
+      const assetId = existingIds.includes(candidateId)
+        ? candidateId
+        : await ensureCanvasProjectReferenceAsset(asset);
+      if (!existingIds.includes(assetId) && existingIds.length >= MAX_CREATIVE_PROJECT_REFERENCE_ASSETS)
+        return notify(`项目最多保存 ${MAX_CREATIVE_PROJECT_REFERENCE_ASSETS} 张默认参考图`, "error");
+      const nextIds = existingIds.includes(assetId)
+        ? existingIds.filter((id) => id !== assetId)
+        : [...existingIds, assetId];
+      const next = updateCreativeProjectReferences(storedProjects, projectId, nextIds);
+      if (!next || !saveCreativeProjects(next)) return notify("项目参考保存失败，请检查存储空间", "error");
+      setCreativeProjects(next);
+      emitWorkspaceChange();
+      notify(existingIds.includes(assetId) ? "已移除项目参考" : "已加入项目默认参考");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "项目参考保存失败", "error");
+    }
+  }, [currentProject?.projectId, notify]);
+  const removeProjectReference = useCallback((assetId: string) => {
+    const projectId = currentProject?.projectId;
+    if (!projectId) return;
+    const next = updateCreativeProjectReferences(readCreativeProjects(), projectId,
+      projectReferenceAssetIds.filter((id) => id !== assetId));
+    if (!next || !saveCreativeProjects(next)) return notify("项目参考移除失败，请重试", "error");
+    setCreativeProjects(next);
+    emitWorkspaceChange();
+    notify("已移除项目参考");
+  }, [currentProject?.projectId, notify, projectReferenceAssetIds]);
   const saveProjectVersion = useCallback(() => {
     if (!currentProject?.projectId || !activeProjectId) return;
     const storedProjects = readCreativeProjects();
@@ -4144,6 +4197,7 @@ export default function SuperCanvas() {
       createdAt: now,
       ...(project?.versions?.at(-1)?.id ? { parentVersionId: project.versions.at(-1)!.id } : {}),
       brief: project?.brief || null,
+      referenceAssetIds: project?.referenceAssetIds || [],
       snapshot: snapshot(canvasCoreRef.current.document()),
     });
     if (!next) return notify("当前项目还没有可保存的版本", "error");
@@ -4162,17 +4216,21 @@ export default function SuperCanvas() {
       && !window.confirm(`当前画布包含未保存到“${version.label}”的内容，恢复后会替换当前画布。继续恢复吗？`)) return;
     const currentProjects = readCreativeProjects();
     const shouldRestoreBrief = Object.prototype.hasOwnProperty.call(version, "brief");
-    const nextProjects = shouldRestoreBrief
+    const shouldRestoreReferences = Object.prototype.hasOwnProperty.call(version, "referenceAssetIds");
+    const projectsWithBrief = shouldRestoreBrief
       ? updateCreativeProjectBrief(currentProjects, currentProject.projectId, version.brief, Date.now())
       : currentProjects;
-    if (shouldRestoreBrief && (!nextProjects || !saveCreativeProjects(nextProjects))) {
+    const nextProjects = shouldRestoreReferences && projectsWithBrief
+      ? updateCreativeProjectReferences(projectsWithBrief, currentProject.projectId, version.referenceAssetIds || [], Date.now())
+      : projectsWithBrief;
+    if ((shouldRestoreBrief || shouldRestoreReferences) && (!nextProjects || !saveCreativeProjects(nextProjects))) {
       return notify("项目设定恢复失败，当前画布未改变", "error");
     }
     commit(() => normalizeDocument(version.snapshot));
     if (nextProjects) setCreativeProjects(nextProjects);
     clearSelection();
     setProjectMenuOpen(false);
-    notify(`已恢复到 ${version.label}${shouldRestoreBrief ? "（含项目设定）" : ""}`);
+    notify(`已恢复到 ${version.label}${shouldRestoreBrief || shouldRestoreReferences ? "（含项目设定）" : ""}`);
   }, [clearSelection, commit, currentProject, notify]);
   const deleteProjectVersion = useCallback((versionId: string) => {
     if (!currentProject?.projectId) return;
@@ -4236,11 +4294,13 @@ export default function SuperCanvas() {
     notify("工作流已导出");
   }, [addLog, currentProject?.name, document, notify]);
   const exportProjectPackage = useCallback(() => {
-    const currentBrief = creativeProjects.find((project) => project.id === currentProject?.projectId)?.brief;
+    const currentCreativeProject = creativeProjects.find((project) => project.id === currentProject?.projectId);
+    const currentBrief = currentCreativeProject?.brief;
     const content = serializeCanvasProjectPackage({
       name: currentProject?.name || "SANMAO 无限画布",
       projectId: currentProject?.projectId,
       brief: currentBrief,
+      referenceAssetIds: currentCreativeProject?.referenceAssetIds,
       versions: projectVersions.map((version) => ({
         id: version.id,
         canvasId: version.canvasId,
@@ -4248,6 +4308,7 @@ export default function SuperCanvas() {
         createdAt: version.createdAt,
         ...(version.parentVersionId ? { parentVersionId: version.parentVersionId } : {}),
         ...(Object.prototype.hasOwnProperty.call(version, "brief") ? { brief: version.brief } : {}),
+        ...(Object.prototype.hasOwnProperty.call(version, "referenceAssetIds") ? { referenceAssetIds: version.referenceAssetIds } : {}),
         snapshot: version.snapshot,
       })),
       document,
@@ -4272,11 +4333,17 @@ export default function SuperCanvas() {
         const next = normalizeDocument(projectPackage?.document || payload);
         if (!commit(() => next)) return;
         let importedBrief = false;
-        if (projectPackage?.project.brief && currentProject?.projectId) {
-          const nextProjects = updateCreativeProjectBrief(readCreativeProjects(), currentProject.projectId, projectPackage.project.brief);
+        if ((projectPackage?.project.brief || projectPackage?.project.referenceAssetIds) && currentProject?.projectId) {
+          const currentProjects = readCreativeProjects();
+          const withBrief = projectPackage.project.brief
+            ? updateCreativeProjectBrief(currentProjects, currentProject.projectId, projectPackage.project.brief)
+            : currentProjects;
+          const nextProjects = projectPackage.project.referenceAssetIds
+            ? updateCreativeProjectReferences(withBrief || currentProjects, currentProject.projectId, projectPackage.project.referenceAssetIds)
+            : withBrief;
           if (nextProjects && saveCreativeProjects(nextProjects)) {
             setCreativeProjects(nextProjects);
-            importedBrief = true;
+            importedBrief = Boolean(projectPackage.project.brief);
           }
         }
         let importedVersions = 0;
@@ -7207,9 +7274,21 @@ export default function SuperCanvas() {
           { maxReferenceImages: videoLimits.maxReferenceImages, maxReferenceVideos: videoLimits.maxReferenceVideos, maxAudios: videoLimits.maxAudios, supportsAudio: canvasVideoInputCapabilities(videoParams, runtime).supportsAudio },
         )
       : undefined;
+    const mergedVideoRefs = kind === "video" && videoParams?.operation === "generate" && videoParams.inputMode === "reference"
+      ? mergeProjectVisualReferences(
+          (videoInputs?.referenceImages || []).map((node) => ({ kind: "image" as const, url: String(node.data.url || ""), name: String(node.data.name || "参考素材") })),
+          projectVisualReferences,
+          request?.excludedProjectReferenceAssetIds,
+          videoLimits?.maxReferenceImages,
+        )
+      : [];
     if (kind === "video" && videoParams && videoLimits && videoInputs) {
       const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits, videoParams.operation);
-      if (videoInputError) return notify(videoInputError, "error");
+      const projectImagesSatisfyReferenceMode = videoParams.operation === "generate"
+        && videoParams.inputMode === "reference"
+        && mergedVideoRefs.length > 0;
+      if (videoInputError && !(projectImagesSatisfyReferenceMode && !videoInputs.referenceImages.length && !videoInputs.referenceVideo))
+        return notify(videoInputError, "error");
     }
     const imageReferenceNodes = preparedImageRequest?.ok
       ? preparedImageRequest.references
@@ -7217,16 +7296,10 @@ export default function SuperCanvas() {
           .map((reference) => nodeById(readDocument(), reference.nodeId || reference.id))
           .filter((node): node is CanvasNode => isCanvasReadyImageSource(node))
       : [];
-    const refs = (kind === "video"
-      ? videoInputs?.referenceImages || []
-      : preparedImageRequest?.ok
-        ? imageReferenceNodes
-        : inputSemantics.imageReferences)
-      .map((node) => ({
-          url: String(node.data.url || ""),
-          name: String(node.data.name || "参考素材"),
-        }))
-      .filter((item) => item.url);
+    const explicitImageRefs = preparedImageRequest?.ok
+      ? preparedImageRequest.imageReferences.map((reference) => ({ kind: "image" as const, url: reference.url, name: reference.name }))
+      : [];
+    let refs = kind === "video" ? mergedVideoRefs : explicitImageRefs;
     let imageIntent: Awaited<ReturnType<typeof resolveCanvasImageIntentForSubmit>> | undefined;
     if (kind === "image" && preparedImageRequest?.ok) {
       try {
@@ -7242,8 +7315,34 @@ export default function SuperCanvas() {
       } catch (error) {
         return notify(error instanceof Error ? error.message : "图片操作预检失败，请检查模型和参考素材。", "error");
       }
+      const canUseProjectDefaults = !preparedImageRequest.resolution.hasMentions
+        && !preparedImageRequest.params.mask
+        && imageIntent.operation !== "edit";
+      if (canUseProjectDefaults && projectVisualReferences.length) {
+        refs = mergeProjectVisualReferences(
+          explicitImageRefs,
+          projectVisualReferences,
+          request?.excludedProjectReferenceAssetIds,
+        );
+        const operation = imageIntent.operation === "generate" ? "reference-generate" : imageIntent.operation;
+        try {
+          const validatedIntent = await resolveCanvasImageIntentForSubmit({
+            requestMode: operation,
+            prompt,
+            imageReferenceCount: refs.length,
+            hasMask: false,
+            modelId: preparedImageRequest.params.model,
+            models: runtime?.models,
+            preview: previewCanvasImageIntent,
+          });
+          imageIntent = { ...validatedIntent, ...(imageIntent.intentPreview ? { intentPreview: imageIntent.intentPreview } : {}) };
+        } catch (error) {
+          return notify(error instanceof Error ? error.message : "项目参考与当前图片模型不兼容，请调整参考或模型。", "error");
+        }
+      }
       if (imageIntent.intentPreview) notify(canvasImageIntentSummary(imageIntent, refs));
     }
+    const projectReferenceIdsUsed = refs.flatMap((reference) => "projectAssetId" in reference && reference.projectAssetId ? [reference.projectAssetId] : []);
     const sourceNode = source.node;
     let targetId = sourceTarget?.id || "";
     const activeKey = canvasGenerationKey(source);
@@ -7320,6 +7419,7 @@ export default function SuperCanvas() {
                 ...(presetId ? { presetId } : {}),
                 ...(presetName ? { presetName } : {}),
                 referenceIds: imageReferenceNodes.map((node) => node.id),
+                projectReferenceAssetIds: projectReferenceIdsUsed,
                 taskId,
                 createdAt: Date.now(),
               },
@@ -7371,7 +7471,7 @@ export default function SuperCanvas() {
           maskUrl: imageParams.mask?.url,
           moveGuideUrl: imageParams.mask?.sourceUrl,
           moveSourceMaskUrl: imageParams.mask?.moveSourceMaskUrl,
-          references: refs,
+          references: refs.map((reference) => ({ url: reference.url, name: reference.name })),
         });
         if (!result.images?.length) throw new Error("服务端没有返回图片结果。");
         const actualImageOperation = result.operation ?? (
@@ -7410,6 +7510,7 @@ export default function SuperCanvas() {
                 ...(presetName ? { presetName } : {}),
                 operation: actualImageOperation,
                 referenceIds: imageReferenceNodes.map((node) => node.id),
+                projectReferenceAssetIds: projectReferenceIdsUsed,
                 sourceGeneratorId: sourceNode?.id,
                 parentNodeId: undefined,
                 taskId,
@@ -7585,12 +7686,7 @@ export default function SuperCanvas() {
           agnesHeight: videoParams.agnesHeight,
           agnesNumFrames: videoParams.agnesNumFrames,
           agnesFrameRate: videoParams.agnesFrameRate,
-          references: (videoInputs?.referenceImages || [])
-            .filter((item) => item.data.url)
-            .map((item) => ({
-              url: String(item.data.url),
-              name: String(item.data.name || "参考图片"),
-            })),
+          references: mergedVideoRefs.map((item) => ({ url: item.url, name: item.name })),
           referenceVideos: (videoInputs?.referenceVideos || [])
             .filter((item) => item.data.url)
             .map((item) => ({ url: String(item.data.url), name: String(item.data.name || "参考视频") })),
@@ -9057,7 +9153,7 @@ export default function SuperCanvas() {
   const runEditorGeneration = useCallback(
     (
       node: CanvasNode,
-      options?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference" | "presetId" | "presetName" | "userPrompt">,
+      options?: Pick<CanvasGenerationRequest, "useCurrentImageAsReference" | "presetId" | "presetName" | "userPrompt" | "excludedProjectReferenceAssetIds">,
     ) => {
       if (node.type === "media" && node.data.kind === "audio") {
         notify("音频节点是独立素材输入，请将它连接到视频节点后生成。", "error");
@@ -9109,6 +9205,7 @@ export default function SuperCanvas() {
         ...(options?.useCurrentImageAsReference !== undefined
           ? { useCurrentImageAsReference: options.useCurrentImageAsReference }
           : {}),
+        ...(options?.excludedProjectReferenceAssetIds?.length ? { excludedProjectReferenceAssetIds: options.excludedProjectReferenceAssetIds } : {}),
       };
       if (draft) {
         commit((valueDoc) => ({
@@ -13163,7 +13260,7 @@ export default function SuperCanvas() {
         if (projectMenuOpen) setProjectMenuOpen(false);
       }}
     >
-      <CanvasWorkspaceHeader currentProject={currentProject} projects={projects} activeProjectId={activeProjectId} projectMenuOpen={projectMenuOpen} onProjectMenuOpenChange={setProjectMenuOpen} topbarCollapsed={topbarCollapsed} onToggleTopbar={() => setTopbarCollapsed((value) => { const next=!value; try { window.localStorage.setItem("sanmao.canvas.topbar.collapsed",String(next)); } catch {} return next; })} canUndo={Boolean(canvasHistory.past.length)} canRedo={Boolean(canvasHistory.future.length)} onNavigateHome={navigateHome} onUndo={undo} onRedo={redo} snapEnabled={snapEnabled} onToggleSnap={toggleSnap} onOpenFilePicker={() => openFilePicker()} activePanel={activePanel} onTogglePanel={(panel) => activePanel === panel ? setActivePanel(null) : openCanvasPanel(panel)} onToggleAssetLibrary={toggleAssetLibrary} agentDockOpen={agentDockOpen} agentDockBusy={agentDockBusy} onToggleAgentDock={() => applyAgentDockOpen(!agentDockOpen)} theme={theme} onToggleTheme={toggleTheme} saving={saving} saveError={saveError} workspaceSyncStatus={workspaceSyncStatus} onOpenProject={openProject} onNewProject={newProject} onSaveProjectVersion={saveProjectVersion} projectVersions={projectVersions} onRestoreProjectVersion={restoreProjectVersion} onDeleteProjectVersion={deleteProjectVersion} onDeleteProject={deleteProject} onSaveProjectName={saveProjectName} projectBrief={projectBrief} onSaveProjectBrief={saveProjectBrief} />
+      <CanvasWorkspaceHeader currentProject={currentProject} projects={projects} activeProjectId={activeProjectId} projectMenuOpen={projectMenuOpen} onProjectMenuOpenChange={setProjectMenuOpen} topbarCollapsed={topbarCollapsed} onToggleTopbar={() => setTopbarCollapsed((value) => { const next=!value; try { window.localStorage.setItem("sanmao.canvas.topbar.collapsed",String(next)); } catch {} return next; })} canUndo={Boolean(canvasHistory.past.length)} canRedo={Boolean(canvasHistory.future.length)} onNavigateHome={navigateHome} onUndo={undo} onRedo={redo} snapEnabled={snapEnabled} onToggleSnap={toggleSnap} onOpenFilePicker={() => openFilePicker()} activePanel={activePanel} onTogglePanel={(panel) => activePanel === panel ? setActivePanel(null) : openCanvasPanel(panel)} onToggleAssetLibrary={toggleAssetLibrary} agentDockOpen={agentDockOpen} agentDockBusy={agentDockBusy} onToggleAgentDock={() => applyAgentDockOpen(!agentDockOpen)} theme={theme} onToggleTheme={theme === "light" ? toggleTheme : toggleTheme} saving={saving} saveError={saveError} workspaceSyncStatus={workspaceSyncStatus} onOpenProject={openProject} onNewProject={newProject} onSaveProjectVersion={saveProjectVersion} projectVersions={projectVersions} onRestoreProjectVersion={restoreProjectVersion} onDeleteProjectVersion={deleteProjectVersion} onDeleteProject={deleteProject} onSaveProjectName={saveProjectName} projectBrief={projectBrief} onSaveProjectBrief={saveProjectBrief} projectReferenceAssetIds={projectReferenceAssetIds} projectReferenceAssets={canvasAssets} onRemoveProjectReference={removeProjectReference} />
       {composeDialogGroupId && (() => {
         const composeGroup = groupById(document, composeDialogGroupId);
         if (!composeGroup) return null;
@@ -14200,6 +14297,7 @@ export default function SuperCanvas() {
         creativeProjectId={currentProject?.projectId}
         projectName={currentProject?.name || "当前画布"}
         projectBrief={projectBrief}
+        projectReferenceAssetIds={projectReferenceAssetIds}
         projectVersionCount={projectVersions.length}
         assetRefresh={assetRefresh}
         assetLibraryCollectionId={assetLibraryCollectionId}
@@ -14217,6 +14315,8 @@ export default function SuperCanvas() {
         onCollectionSelectionChange={setAssetLibraryCollectionId}
         onAddAsset={addAssetToCanvas}
         onReferenceAsset={addAssetAsReference}
+        onSetProjectReference={(asset) => void setProjectReference(asset)}
+        onSetProjectReference={setProjectReference}
         onLocateAsset={locateAsset}
         onAddNodeToCollection={addNodeToCollection}
         onRefreshGenerationLogs={() => void refreshGenerationLogs()}

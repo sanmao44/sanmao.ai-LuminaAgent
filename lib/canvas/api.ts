@@ -1029,7 +1029,7 @@ export async function getCanvasUpscaleTask(taskId: string) {
     task: { id: string; status: "queued" | "processing" | "succeeded" | "failed" | "cancelled"; error?: string; errorCode?: string; sourceImageId?: string };
     images: Array<{ url: string; revisedPrompt?: string }>;
     model?: { id?: string; name?: string; provider?: string };
-  }>(`/api/upscale/tasks/${encodeURIComponent(taskId)}`, { cache: "no-store" });
+  }>(`/api/upscale/tasks/${encodeURIComponent(taskId)}?refresh=false`, { cache: "no-store" });
 }
 
 export type CanvasAgentResponse = AgentResponse;
@@ -1202,7 +1202,7 @@ export async function getCanvasVideoTask(id: string) {
       error?: string;
       modelId?: string;
     };
-  }>(`/api/video/tasks/${encodeURIComponent(id)}`);
+  }>(`/api/video/tasks/${encodeURIComponent(id)}?refresh=false`);
 }
 
 export async function stopCanvasVideoTaskTracking(id: string) {

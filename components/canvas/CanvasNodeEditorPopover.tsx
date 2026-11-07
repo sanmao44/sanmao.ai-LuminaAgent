@@ -27,6 +27,7 @@ import type {
   CanvasUpscaleParams,
 } from "@/lib/canvas/types";
 import type { CanvasReferenceDraft, CanvasReuseDraft } from "@/lib/canvas/reuse";
+import type { ProjectVisualReference } from "@/lib/canvas/project-visual-references";
 import { BUILTIN_IMAGE_PRESETS, type CustomImagePreset, type ImagePreset, visibleImagePresetPrompt } from "@/lib/creation/image-presets";
 import { IMAGE_QUALITY_OPTIONS, type CreationSettings, type VideoCreationSettings } from "@/lib/creation/settings";
 import { requestPromptOptimization } from "@/lib/creation/agent";
@@ -52,6 +53,7 @@ import { CanvasGeneratorHelp, CanvasVariantRequirementsEditor } from "@/componen
 import CanvasImagePresetControl, { CanvasImagePresetBadge } from "@/components/canvas/CanvasImagePresetControl";
 import CanvasMaskSummary from "@/components/canvas/CanvasMaskSummary";
 import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStrip";
+import CanvasProjectReferencePreview from "@/components/canvas/CanvasProjectReferencePreview";
 import CanvasUpscaleSettingsPanel from "@/components/canvas/CanvasUpscaleSettingsPanel";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 
@@ -69,6 +71,7 @@ export type CanvasNodeEditorPopoverProps = {
   onSaveImagePreset: (preset: CustomImagePreset) => void;
   onDeleteImagePreset: (presetId: string) => void;
   currentImageReference?: boolean;
+  projectVisualReferences?: readonly ProjectVisualReference[];
   onCurrentImageReferenceChange?: (value: boolean) => void;
   maskState?: CanvasMaskState;
   onLocalEdit?: () => void;
@@ -76,7 +79,7 @@ export type CanvasNodeEditorPopoverProps = {
   onToggleEditor: (node: CanvasNode) => void;
   onGenerate: (
     node: CanvasNode,
-    options?: { useCurrentImageAsReference?: boolean; presetId?: string; presetName?: string },
+    options?: { useCurrentImageAsReference?: boolean; presetId?: string; presetName?: string; excludedProjectReferenceAssetIds?: string[] },
   ) => void;
   onOneTake: (node: CanvasNode, durationSeconds: number) => void;
   onNotify: (message: string, kind?: "ok" | "error") => void;
@@ -125,6 +128,7 @@ function CanvasNodeEditorPopover({
   onLocalEditRemove,
   onToggleEditor,
   onGenerate,
+  projectVisualReferences = [],
   onOneTake,
   onNotify,
   onEditorPromptChange,
@@ -181,6 +185,7 @@ function CanvasNodeEditorPopover({
   const [useCurrentImageAsReference, setUseCurrentImageAsReference] = useState(
     canvasCurrentImageReferenceDefault(currentImageReference, Boolean(maskState?.url)),
   );
+  const [excludedProjectReferenceAssetIds, setExcludedProjectReferenceAssetIds] = useState<string[]>([]);
   const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
   const imageDockParamsRef = useRef<HTMLDivElement | null>(null);
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
@@ -349,7 +354,7 @@ function CanvasNodeEditorPopover({
     onNotify(imageModelCompatibilityError, "error");
     return true;
   };
-  const submitEditorGeneration = (options?: { useCurrentImageAsReference?: boolean; presetId?: string; presetName?: string }) => {
+  const submitEditorGeneration = (options?: { useCurrentImageAsReference?: boolean; presetId?: string; presetName?: string; excludedProjectReferenceAssetIds?: string[] }) => {
     if (blockIncompatibleImageModel()) return;
     onGenerate(node, options);
   };
@@ -398,7 +403,13 @@ function CanvasNodeEditorPopover({
     ...(canUseCurrentImageAsReference ? { useCurrentImageAsReference } : {}),
     ...(supportsImagePresets && selectedPresetId ? { presetId: selectedPresetId } : {}),
     ...(supportsImagePresets && selectedPresetName ? { presetName: selectedPresetName } : {}),
+    ...(excludedProjectReferenceAssetIds.length ? { excludedProjectReferenceAssetIds } : {}),
   };
+  const projectReferencePreviewKind = !branchDraft && node.type === "media" && data.kind === "image" && !maskState?.url
+    ? "图片" as const
+    : !branchDraft && node.type === "media" && data.kind === "video" && videoEditorParams?.operation === "generate" && videoEditorParams.inputMode === "reference"
+      ? "视频" as const
+      : null;
   const editorSubtitle = node.type === "generator"
     ? (data.kind === "video" ? "视频变体 · 生成新视频" : "变体 · 生成新图")
     : node.type === "prompt"

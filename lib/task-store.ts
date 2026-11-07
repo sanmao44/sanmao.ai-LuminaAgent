@@ -19,6 +19,8 @@ export type TaskPageOptions<T> = {
   maxPageSize?: number;
   /** 领域过滤（按来源、关键词等），分页计算由存储层统一负责。 */
   matches?: (task: T) => boolean;
+  /** 匹配后、分页前的稳定排序。 */
+  compare?: (left: T, right: T) => number;
 };
 
 export type TaskPage<T> = { tasks: T[]; total: number; page: number; pageSize: number; totalPages: number };
@@ -103,7 +105,8 @@ export function createTaskStore<T extends TaskRecord>(options: { fileName: strin
       const maxPageSize = Math.max(1, pageOptions.maxPageSize ?? 100);
       const pageSize = Math.min(maxPageSize, Math.max(1, Math.round(Number(pageOptions.pageSize) || pageOptions.defaultPageSize || 12)));
       const tasks = await readAll();
-      const filtered = pageOptions.matches ? tasks.filter(pageOptions.matches) : tasks;
+      const matched = pageOptions.matches ? tasks.filter(pageOptions.matches) : tasks;
+      const filtered = pageOptions.compare ? [...matched].sort(pageOptions.compare) : matched;
       const total = filtered.length;
       const totalPages = Math.max(1, Math.ceil(total / pageSize));
       const page = Math.min(Math.max(1, Math.round(Number(pageOptions.page) || 1)), totalPages);

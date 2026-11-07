@@ -23,6 +23,7 @@ import JimengProviderCard from '@/components/JimengProviderCard';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import UpscaleConnectionGuide from '@/components/UpscaleConnectionGuide';
 import VideoRecordCard from '@/components/VideoRecordCard';
+import GenerationLogRestoreAction from '@/components/GenerationLogRestoreAction';
 import { getFavoriteModelIds, getLastModelCall, getRecentModelIds, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { filterModelsByActiveProviders, isProviderModelLibraryEnabled } from '@/lib/provider-availability';
@@ -65,7 +66,6 @@ import {
     generationLogSourceLabel,
     generationLogTitle,
     generationLogComposerDraft,
-    generationLogMatchesTask,
     gallerySourceLabel,
     generationMediaKind,
     generationMediaLabel,
@@ -5444,21 +5444,10 @@ export default function Page() {
         if (!identifiers.size) return null;
         return generateTasks.find((task) => identifiers.has(String(task.id)) || identifiers.has(String(task.request?.taskId))) || null;
     }
-    function findVideoTaskForLog(log) {
-        if (generationMediaKind(log) !== 'video') return null;
-        return videoTasks.find((task) => generationLogMatchesTask(log, task)) || null;
-    }
     function canRestoreGenerationLogContext(log) {
         return Boolean(findGenerateTaskForLog(log)?.request || generationLogComposerDraft(log));
     }
     function restoreGenerationLogContext(log) {
-        const videoTask = findVideoTaskForLog(log);
-        if (videoTask) {
-            setSelectedLog(null);
-            restoreVideoTask(videoTask);
-            notify('已恢复视频任务参数；请检查内容后再提交，不会自动调用模型。');
-            return;
-        }
         const localTask = findGenerateTaskForLog(log);
         if (localTask?.request) {
             setSelectedLog(null);
@@ -7518,7 +7507,7 @@ export default function Page() {
         let lastData = initialData;
         for (let attempt = 0; attempt < 120; attempt += 1) {
             await new Promise((resolve)=>window.setTimeout(resolve, attempt === 0 ? 800 : 2000));
-            const response = await fetch(`/api/upscale/tasks/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+            const response = await fetch(`/api/upscale/tasks/${encodeURIComponent(taskId)}?refresh=false`, { cache: 'no-store' });
             const data = await response.json().catch(()=>({}));
             if (!response.ok) throw new Error(data.error || '读取高清任务状态失败');
             lastData = { ...lastData, ...data, taskId, status: data.task?.status || data.status, images: data.images || lastData.images };
@@ -8225,6 +8214,7 @@ export default function Page() {
                     }),
                     section === 'agent' && /*#__PURE__*/ _jsxs("button", {
                         className: "new-chat",
+                        "aria-label": "新对话",
                         "data-tooltip": "新对话",
                         onClick: ()=>{
                             startNewChat();
@@ -12529,15 +12519,16 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                 })
                             ]
                         }),
-                        canRestoreGenerationLogContext(selectedLog) || findVideoTaskForLog(selectedLog) ? /*#__PURE__*/ _jsx("div", {
-                            className: "log-detail-actions",
-                            children: /*#__PURE__*/ _jsx("button", {
-                                type: "button",
-                                className: "primary-action compact",
-                                onClick: ()=>restoreGenerationLogContext(selectedLog),
-                                children: findVideoTaskForLog(selectedLog) ? "恢复到视频工作台" : "恢复基础参数"
-                            })
-                        }) : null
+                        /*#__PURE__*/ _jsx(GenerationLogRestoreAction, {
+                            log: selectedLog,
+                            videoTasks,
+                            canRestoreImage: canRestoreGenerationLogContext(selectedLog),
+                            onRestoreImage: ()=>restoreGenerationLogContext(selectedLog),
+                            onRestoreVideo: (task)=>{
+                                setSelectedLog(null);
+                                restoreVideoTask(task);
+                            }
+                        }, selectedLog.id)
                     ]
                 })
             }),

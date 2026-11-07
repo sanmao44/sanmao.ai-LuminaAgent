@@ -22,6 +22,43 @@ async function readJson<T>(response: Response, fallback = '\u89c6\u9891\u4efb\u5
   return data as T;
 }
 
+function isVideoTaskSnapshot(value: unknown): value is VideoTask {
+  if (!value || typeof value !== 'object') return false;
+  const task = value as Record<string, unknown>;
+  const input = task.input;
+  return typeof task.id === 'string' && task.id.length > 0
+    && typeof task.providerId === 'string'
+    && typeof task.modelId === 'string' && task.modelId.length > 0
+    && ['generate', 'edit', 'extend'].includes(String(task.operation))
+    && ['pending', 'running', 'done', 'failed', 'cancelled'].includes(String(task.status))
+    && typeof task.idempotencyKey === 'string'
+    && typeof task.createdAt === 'string'
+    && typeof task.pollCount === 'number' && Number.isFinite(task.pollCount)
+    && [task.videoUrls, task.remoteVideoUrls, task.localVideoPaths].every(
+      (urls) => Array.isArray(urls) && urls.every((url) => typeof url === 'string'),
+    )
+    && input !== null && typeof input === 'object'
+    && 'prompt' in input && typeof input.prompt === 'string';
+}
+
+export async function getVideoTask(id: string, options: { signal?: AbortSignal } = {}): Promise<VideoTask | null> {
+  const response = await fetch(`/api/video/tasks/${encodeURIComponent(id)}?refresh=false`, {
+    cache: 'no-store',
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  if (response.status === 404) return null;
+  const data: unknown = await response.json().catch(() => null);
+  const body = data && typeof data === 'object' ? data as Record<string, unknown> : null;
+  if (!response.ok) {
+    const message = typeof body?.error === 'string' ? body.error.trim() : '';
+    throw new Error(message || '读取视频任务失败');
+  }
+  if (!isVideoTaskSnapshot(body?.task) || body.task.id !== id) {
+    throw new Error('视频任务响应无效，请稍后重试');
+  }
+  return body.task;
+}
+
 export async function listVideoTasksPage(query: VideoTaskPageQuery): Promise<VideoTaskPage | null> {
   const params = new URLSearchParams({
     page: String(Math.max(1, Math.round(Number(query.page) || 1))),

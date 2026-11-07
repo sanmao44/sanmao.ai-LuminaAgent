@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import Link from 'next/link';
-import { workspaceTaskSummaryLabel, workspaceTopbarModes, workspaceTopbarStatusTone, type WorkspaceTaskSummary, type WorkspaceSyncIndicatorStatus } from './workspace-topbar-model';
+import { workspaceSyncStatusLabel, workspaceSyncStatusTone, workspaceTaskSummaryLabel, workspaceTaskSummaryTone, workspaceTopbarModes, type WorkspaceTaskSummary, type WorkspaceSyncIndicatorStatus } from './workspace-topbar-model';
 
 type IconProps = { name: string; size?: number };
 
@@ -37,20 +37,11 @@ export default function WorkspaceTopbar({
   onCanvasClick,
 }: WorkspaceTopbarProps) {
   const { imageActive, videoActive, agentActive } = workspaceTopbarModes(section);
-  const syncLabel = syncStatus === 'syncing'
-    ? '保存中'
-    : syncStatus === 'offline'
-      ? '离线'
-      : syncStatus === 'conflict'
-        ? '同步冲突'
-        : syncStatus === 'error'
-          ? '保存异常'
-          : syncStatus === 'synced'
-            ? '已保存'
-            : '待同步';
+  const syncLabel = workspaceSyncStatusLabel(syncStatus);
+  const syncTone = workspaceSyncStatusTone(syncStatus);
   const syncTitle = `工作区${syncLabel}`;
   const taskLabel = workspaceTaskSummaryLabel(taskSummary);
-  const taskTone = workspaceTopbarStatusTone(taskSummary, syncStatus);
+  const taskTone = workspaceTaskSummaryTone(taskSummary);
   const taskTitle = `任务记录：${taskLabel}；${syncTitle}`;
   return (
     <header className="topbar">
@@ -78,6 +69,10 @@ export default function WorkspaceTopbar({
         </button>
       </nav>
       <div className="top-actions">
+        <span className={`topbar-sync-status ${syncTone}`} role="status" aria-live="polite" aria-label={syncTitle} title={`${syncTitle}。${syncStatus === 'conflict' ? '系统会自动重试同步。' : syncStatus === 'error' ? '请检查本地服务后重试。' : ''}`}>
+          <span className="topbar-status-dot" aria-hidden="true" />
+          <span className="topbar-sync-copy"><strong>工作区</strong><small>{syncLabel}</small></span>
+        </span>
         <button type="button" className={`topbar-task-status ${section === 'logs' ? 'active' : ''}`} onClick={onGoTasks} aria-label={`打开任务记录，${taskTitle}`} title={taskTitle} aria-live="polite">
           <span className={`topbar-status-dot ${taskTone}`} aria-hidden="true" />
           <Icon name="logs" size={15} />

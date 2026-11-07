@@ -2,14 +2,21 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { CREATIVE_PROJECT_DELIVERABLE_OPTIONS, type CreativeProjectBrief, type CreativeProjectDeliverable } from "@/packages/contracts/creative";
+import type { AssetRecord } from "@/lib/assets";
 
 const EMPTY_BRIEF: CreativeProjectBrief = { intent: "", style: "", audience: "", constraints: "", deliverable: "auto" };
 
 export default function CanvasProjectBriefEditor({
   brief,
+  referenceAssetIds = [],
+  referenceAssets = [],
+  onRemoveReference,
   onSave,
 }: {
   brief?: CreativeProjectBrief | null;
+  referenceAssetIds?: readonly string[];
+  referenceAssets?: readonly AssetRecord[];
+  onRemoveReference?: (assetId: string) => void;
   onSave: (value: CreativeProjectBrief) => boolean;
 }) {
   const [draft, setDraft] = useState<CreativeProjectBrief>(brief || EMPTY_BRIEF);
@@ -32,6 +39,26 @@ export default function CanvasProjectBriefEditor({
     <details className="canvas-project-brief">
       <summary>项目创作设定</summary>
       <form onSubmit={submit}>
+        <div className="canvas-project-reference-summary">
+          <div>
+            <span>项目默认参考</span>
+            <small>{referenceAssetIds.length ? `后续普通生图会自动带入 ${referenceAssetIds.length} 张` : "还没有默认参考图"}</small>
+          </div>
+          {referenceAssetIds.length > 0 && (
+            <div className="canvas-project-reference-list">
+              {referenceAssetIds.map((assetId) => {
+                const asset = referenceAssets.find((item) => item.id === assetId || item.indexId === assetId || item.sourceAssetId === assetId);
+                return (
+                  <span key={assetId} className="canvas-project-reference-chip">
+                    {asset?.url ? <img src={asset.url} alt="" /> : null}
+                    <b>{asset?.name || "已保存参考图"}</b>
+                    {onRemoveReference && <button type="button" aria-label={`移除${asset?.name || "项目参考图"}`} onClick={() => onRemoveReference(assetId)}>×</button>}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
         <label>
           <span>创作意图</span>
           <textarea

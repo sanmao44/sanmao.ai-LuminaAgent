@@ -34,7 +34,7 @@ test('AgentWelcome renders the empty conversation prompt and examples', () => {
   assert.match(markup, /例子一/);
   assert.match(markup, /例子二/);
   assert.match(markup, /agent-welcome-orb/);
-  assert.match(markup, /选择一键成片工作流/);
+  assert.match(markup, /选择规划短片工作流/);
 });
 
 test('AgentWelcome exposes the recent creative draft when available', () => {

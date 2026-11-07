@@ -16,9 +16,10 @@ function harness(options = {}) {
   const images = [];
   const imageRuntimeRequests = [];
   const modelCalls = [];
+  const candidateCalls = [];
   const bundledSkillInstalls = [];
   const spreadsheetCalls = [];
-  const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: [], kind: 'chat' };
+  const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: options.chatCapabilities || [], kind: 'chat' };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
   const runtime = { model, provider };
@@ -205,7 +206,10 @@ function harness(options = {}) {
           },
           invokeChatModelStream: async (payload) => providerApi.chatCompletionStream(options.candidates[0].provider, options.candidates[0].model.rawId, payload, options.signal),
           invokeSpecificChatModel: async (runtime, payload, signal) => providerApi.chatCompletion(runtime.provider, runtime.model.rawId, payload, signal),
-          invokeCandidateChatModels: async (candidates, payload, signal) => providerApi.chatCompletion(candidates[0].provider, candidates[0].model.rawId, payload, signal),
+          invokeCandidateChatModels: async (candidates, payload, signal, timeoutMs) => {
+            candidateCalls.push({ modelIds: candidates.map((candidate) => candidate.model.id), payload, timeoutMs });
+            return providerApi.chatCompletion(candidates[0].provider, candidates[0].model.rawId, payload, signal);
+          },
         };
       },
     },
@@ -230,7 +234,7 @@ function harness(options = {}) {
       imageDownloadAuth: () => undefined,
     },
     '@/lib/store': {
-      getRuntimeModel: async (_id, kind) => kind === 'image' ? { provider, model: imageModel } : runtime,
+      getRuntimeModel: async (id, kind) => kind === 'image' ? { provider, model: imageModel } : options.runtimeForModel?.(id) || runtime,
       getRuntimeImageGenerationModel: async (id) => { imageRuntimeRequests.push({ capability: 'generate', id }); return { provider, model: imageModel }; },
       getRuntimeImageModelForCapability: async (id, capability) => {
         imageRuntimeRequests.push({ capability, id });
@@ -239,7 +243,7 @@ function harness(options = {}) {
         return supportsCapability ? { provider, model: { ...imageModel, capabilities: [capability] } } : null;
       },
       getRuntimeImageModelCandidates: async () => [{ provider, model: imageModel }],
-      getPublicState: async () => ({ settings: {}, models: options.availableImageModels ?? [imageModel], providers: [provider] }),
+      getPublicState: async () => ({ settings: {}, models: options.availableModels ?? options.availableImageModels ?? [imageModel], providers: [provider, ...(options.availableProviders || [])] }),
     },
     '@/lib/auth': { isTrustedAppRequest: () => true },
     '@/lib/runtime-operation': { beginRuntimeRequest: async () => noOp, RuntimeDrainingError: class extends Error {} },
@@ -304,7 +308,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-    calls, modelCalls, mcpCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls,
+    calls, modelCalls, candidateCalls, mcpCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -317,6 +321,33 @@ function harness(options = {}) {
     },
   };
 }
+
+test('cinematic director passes custom requirements to a vision-capable model with an extended deadline', async () => {
+  const visionProvider = { id: 'vision-provider', name: 'Vision', platform: 'openai', enabled: true };
+  const visionRuntime = {
+    provider: visionProvider,
+    model: { id: 'vision-chat', rawId: 'vision-chat-1', displayName: 'Vision Chat', capabilities: ['chat', 'vision'], kind: 'chat' },
+  };
+  const agent = harness({
+    availableModels: [{ id: visionRuntime.model.id, kind: 'chat', enabled: true, published: true, capabilities: ['vision'], providerId: visionProvider.id }],
+    availableProviders: [visionProvider],
+    runtimeForModel: (id) => id === visionRuntime.model.id ? visionRuntime : undefined,
+  });
+  await agent.post([{
+    role: 'user',
+    content: '导演参数：用户补充要求：镜头更快，保留产品 Logo。',
+    references: [{ id: 'product-reference', kind: 'image', name: '产品图', url: 'https://assets.test/product.png' }],
+  }], { model: 'test-chat', task: 'cinematic_shock_opening_director', deliverable: 'TEXT' });
+
+  assert.equal(agent.candidateCalls.length, 1);
+  assert.deepEqual(agent.candidateCalls[0].modelIds, ['vision-chat']);
+  assert.equal(agent.candidateCalls[0].timeoutMs, 75_000);
+  assert.equal(agent.modelCalls[0].model, 'vision-chat-1');
+  const userMessage = agent.candidateCalls[0].payload.messages.find((message) => message.role === 'user');
+  assert.equal(Array.isArray(userMessage.content), true);
+  assert.match(userMessage.content[0].text, /镜头更快，保留产品 Logo/);
+  assert.equal(userMessage.content[1].type, 'image_url');
+});
 
 test('不支持原生工具调用的模型仍能通过本地 Excel 兜底生成真实 artifact', async () => {
   const agent = harness({

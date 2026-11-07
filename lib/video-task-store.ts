@@ -57,6 +57,24 @@ export async function createVideoTask(input: Omit<VideoTask, 'id' | 'createdAt' 
 
 export async function findVideoTask(id: string) { return store.find(id); }
 export async function listVideoTasks(limit = 100) { return store.list(limit); }
+export async function listRunnableVideoTasks(now = Date.now(), limit = 100) {
+  return (await store.page({
+    page: 1,
+    pageSize: limit,
+    maxPageSize: limit,
+    matches: (task) => (task.status === 'pending' || task.status === 'running')
+      && (!Number.isFinite(task.nextPollAt) || Number(task.nextPollAt) <= now),
+    compare: (left, right) => {
+      const leftCreatedAt = Date.parse(left.createdAt);
+      const rightCreatedAt = Date.parse(right.createdAt);
+      const leftPollAt = Number.isFinite(left.nextPollAt) ? Number(left.nextPollAt) : leftCreatedAt;
+      const rightPollAt = Number.isFinite(right.nextPollAt) ? Number(right.nextPollAt) : rightCreatedAt;
+      return (Number.isFinite(leftPollAt) ? leftPollAt : 0) - (Number.isFinite(rightPollAt) ? rightPollAt : 0)
+        || (Number.isFinite(leftCreatedAt) ? leftCreatedAt : 0) - (Number.isFinite(rightCreatedAt) ? rightCreatedAt : 0)
+        || left.id.localeCompare(right.id);
+    },
+  })).tasks;
+}
 
 export async function listVideoTasksPage(options: {
   page?: number;

@@ -80,6 +80,7 @@ export type CanvasImageIntentPreview = {
   classifierMs?: number;
 };
 export const MAX_IMAGE_REFERENCES = 16;
+export const MAX_CREATIVE_PROJECT_REFERENCE_ASSETS = 8;
 export type CreativeExecution = 'none' | 'preview' | 'run';
 
 export type CreativeRoute = {

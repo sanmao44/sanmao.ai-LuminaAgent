@@ -31,6 +31,8 @@ export default function CanvasAssetDrawer({
   canReference,
   onAdd,
   onReference,
+  projectReferenceAssetIds = [],
+  onSetProjectReference,
   onLocate,
   onAddNodeToCollection,
   onClose,
@@ -45,6 +47,8 @@ export default function CanvasAssetDrawer({
   canReference: boolean;
   onAdd: (asset: AssetRecord) => void;
   onReference: (asset: AssetRecord) => void;
+  projectReferenceAssetIds?: readonly string[];
+  onSetProjectReference: (asset: AssetRecord) => void;
   onLocate: (asset: AssetRecord) => void;
   onAddNodeToCollection: (nodeId: string, collectionId: string) => void;
   onClose: () => void;
@@ -551,6 +555,13 @@ export default function CanvasAssetDrawer({
                     >
                       ⌁ 参考
                     </button>
+                    {asset.kind === "image" && <button
+                      type="button"
+                      className={projectReferenceAssetIds.includes(asset.id) || (asset.indexId ? projectReferenceAssetIds.includes(`index:${asset.indexId}`) : false) ? "active" : ""}
+                      title="设为项目默认参考"
+                      aria-label={`${projectReferenceAssetIds.includes(asset.id) ? "移除" : "设为"}${asset.name}的项目默认参考`}
+                      onClick={() => onSetProjectReference(asset)}
+                    >{projectReferenceAssetIds.includes(asset.id) || (asset.indexId ? projectReferenceAssetIds.includes(`index:${asset.indexId}`) : false) ? "★ 项目" : "☆ 项目"}</button>}
                     <button
                       type="button"
                       title="在画布中定位此资产"

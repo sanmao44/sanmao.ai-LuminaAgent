@@ -114,6 +114,7 @@ export class ProviderCoordinator<T extends ProviderRuntime> {
     candidates: readonly T[],
     signal: AbortSignal,
     operation: (runtime: T, callSignal: AbortSignal) => Promise<TResponse>,
+    timeoutMs = this.options.failoverTimeoutMs,
   ) {
     const primary = candidates[0];
     if (!primary) throw new Error('No provider candidate available');
@@ -133,7 +134,7 @@ export class ProviderCoordinator<T extends ProviderRuntime> {
       signal,
       operation: (runtime, callSignal) => withProviderResponseDeadline({
         signal,
-        timeoutMs: this.options.failoverTimeoutMs,
+        timeoutMs,
         idleTimeoutMs: this.options.idleTimeoutMs,
         operation: (deadlineSignal) => operation(runtime, deadlineSignal || callSignal),
         timeoutError: this.options.timeoutError,
