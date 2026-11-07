@@ -20,6 +20,110 @@
   padding-top: 4px;
 }
 
+.canvas-project-reference-summary {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-soft) 48%, var(--panel-2));
+}
+
+.canvas-project-reference-summary > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.canvas-project-reference-summary > div:first-child > span,
+.canvas-project-reference-summary > div:first-child > small {
+  min-width: 0;
+}
+
+.canvas-project-reference-summary > div:first-child > span {
+  color: var(--text);
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.canvas-project-reference-summary > div:first-child > small {
+  color: var(--muted);
+  font-size: 8px;
+  text-align: right;
+}
+
+.canvas-project-reference-list {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.canvas-project-reference-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 170px;
+  padding: 3px 5px 3px 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+}
+
+.canvas-project-reference-chip img {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 5px;
+  object-fit: cover;
+  background: var(--panel-3);
+}
+
+.canvas-project-reference-chip b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: 8px;
+}
+
+.canvas-project-reference-chip button {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.canvas-project-reference-chip button:hover,
+.canvas-project-reference-chip button:focus-visible {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.canvas-project-reference-chip button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--danger) 34%, transparent);
+  outline-offset: 1px;
+}
+
 .canvas-project-brief label {
   display: grid;
   gap: 4px;
@@ -100,4 +204,134 @@
 .canvas-project-brief form > button:disabled {
   opacity: .5;
   cursor: not-allowed;
+}
+
+.canvas-project-reference-preview {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 0 8px;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--panel-2));
+}
+
+.canvas-project-reference-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.canvas-project-reference-preview-head > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.canvas-project-reference-preview-head b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.canvas-project-reference-preview-head small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.canvas-project-reference-preview-note {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.canvas-project-reference-preview-list {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 1px 1px 3px;
+  scrollbar-width: thin;
+}
+
+.canvas-project-reference-preview-list > label {
+  display: grid;
+  grid-template-columns: 13px 34px minmax(0, 84px);
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+  cursor: pointer;
+}
+
+.canvas-project-reference-preview-list > label.included {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+}
+
+.canvas-project-reference-preview-list > label.excluded {
+  opacity: .62;
+}
+
+.canvas-project-reference-preview-list > label.model-limit > span > small {
+  color: var(--danger);
+}
+
+.canvas-project-reference-preview-list > label.duplicate > span > small,
+.canvas-project-reference-preview-list > label.defaults-disabled > span > small {
+  color: var(--muted);
+}
+
+.canvas-project-reference-preview-list input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.canvas-project-reference-preview-list img {
+  width: 34px;
+  height: 34px;
+  display: block;
+  border-radius: 5px;
+  object-fit: cover;
+  background: var(--panel-3);
+}
+
+.canvas-project-reference-preview-list label > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: 9px;
+}
+
+.canvas-project-reference-preview-list label > span > small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+@media (max-width: 560px) {
+  .canvas-project-reference-summary > div:first-child {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .canvas-project-reference-summary > div:first-child > small {
+    text-align: left;
+  }
 }

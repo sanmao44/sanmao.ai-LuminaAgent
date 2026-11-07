@@ -3,16 +3,16 @@ import type { RuntimeObserver } from '../../packages/contracts/observability';
 import { FileRuntimeObserver } from '../../packages/observability/runtime-sink';
 import { resolveLocalDataDir } from '../../lib/data-paths';
 import path from 'node:path';
-import type { UpscaleTask } from '../../lib/upscale-task-store';
 import type { startCloudUpscale } from '../../lib/upscale-service';
 import type { CloneBlueprintVariantSpec, CloneShot } from '../../lib/clone/types';
 import type { CanvasVideoEditorState } from '../../lib/canvas/types';
 import { runTaskLifecycle } from './task-lifecycle';
 export { runVideoTask, refreshVideoTask, runVideoGeneration } from './video-task';
 export type { VideoTaskRunner, VideoGenerationOptions, VideoGenerationResult, VideoGenerationRunner } from './video-task';
+export { runUpscaleTask, refreshUpscaleTask } from './upscale-task';
+export type { UpscaleTaskRunner } from './upscale-task';
 
 export type CloneTaskRunner = (jobId: string) => Promise<unknown>;
-export type UpscaleTaskRunner = (taskId: string) => Promise<UpscaleTask | null>;
 export type CloneReaper = () => Promise<number>;
 type CloneReassemblyResult = Awaited<ReturnType<typeof import('../../lib/clone/pipeline').rerenderCloneJob>>;
 type CloneVariantResult = Awaited<ReturnType<typeof import('../../lib/clone/pipeline').renderBlueprintVariant>>;
@@ -39,11 +39,6 @@ async function defaultCloneTaskRunner(jobId: string) {
 async function defaultCloneExecutionRunner(jobId: string) {
   const { runCloneJob } = await import('../../lib/clone/pipeline');
   return runCloneJob(jobId);
-}
-
-async function defaultUpscaleTaskRunner(taskId: string): Promise<UpscaleTask | null> {
-  const { refreshUpscaleTask: refresh } = await import('../../lib/upscale-service');
-  return refresh(taskId);
 }
 
 async function defaultCloneReaper() {
@@ -92,16 +87,6 @@ export function dispatchCloneJob(jobId: string): void {
 /** Worker entry for a confirmed or resumed clone execution. */
 export function dispatchCloneExecutionJob(jobId: string): void {
   void runCloneJob(jobId, defaultCloneExecutionRunner).catch(() => undefined);
-}
-
-/** Worker boundary for a single upscale task reconciliation/poll. */
-export async function runUpscaleTask(taskId: string, runner: UpscaleTaskRunner = defaultUpscaleTaskRunner, observer: RuntimeObserver = createTaskObserver()): Promise<UpscaleTask | null> {
-  return runTaskBoundary(taskId, 'upscale', runner, observer);
-}
-
-/** Worker-owned reconciliation used by control and long-running execution. */
-export async function refreshUpscaleTask(taskId: string, runner: UpscaleTaskRunner = defaultUpscaleTaskRunner, observer: RuntimeObserver = createTaskObserver()): Promise<UpscaleTask | null> {
-  return runTaskBoundary(taskId, 'upscale', runner, observer);
 }
 
 async function runTaskBoundary<T>(taskId: string, identity: 'video' | 'upscale', runner: (taskId: string) => Promise<T>, observer: RuntimeObserver): Promise<T> {

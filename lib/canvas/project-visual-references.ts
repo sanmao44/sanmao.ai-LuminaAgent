@@ -17,6 +17,19 @@ export type GenerationReference = {
   storageKey?: string;
 };
 
+export type ProjectVisualReferencePreviewItem = {
+  reference: ProjectVisualReference;
+  status: "included" | "excluded" | "model-limit" | "duplicate" | "defaults-disabled";
+};
+
+export type ProjectVisualReferenceSubmissionPlan = {
+  references: Array<GenerationReference & { projectAssetId?: string }>;
+  items: ProjectVisualReferencePreviewItem[];
+  explicitCount: number;
+  projectCount: number;
+  limit: number;
+};
+
 export function projectVisualReferenceAssetId(asset: AssetRecord) {
   if (asset.indexId) return `index:${asset.indexId}`;
   if (asset.sourceAssetId) return asset.sourceAssetId;
@@ -68,8 +81,53 @@ export function mergeProjectVisualReferences(
   explicit.forEach((reference) => append(reference));
   project.forEach((reference) => {
     if (!excluded.has(reference.assetId)) {
-      append({ kind: "image", name: reference.name, url: reference.url, storageKey: reference.storageKey }, reference.assetId);
+      append({
+        kind: "image",
+        name: reference.name,
+        url: reference.url,
+        ...(reference.storageKey ? { storageKey: reference.storageKey } : {}),
+      }, reference.assetId);
     }
   });
   return result;
+}
+
+export function planProjectVisualReferenceSubmission(
+  explicit: readonly GenerationReference[],
+  project: readonly ProjectVisualReference[],
+  excludedProjectAssetIds: readonly string[] = [],
+  maxReferences = MAX_IMAGE_REFERENCES,
+  includeProjectDefaults = true,
+): ProjectVisualReferenceSubmissionPlan {
+  const limit = Math.max(0, Math.floor(maxReferences));
+  const excluded = new Set(excludedProjectAssetIds);
+  const submitted = mergeProjectVisualReferences(
+    explicit,
+    includeProjectDefaults ? project : [],
+    includeProjectDefaults ? excludedProjectAssetIds : [],
+    limit,
+  );
+  const submittedProjectIds = new Set(
+    submitted.flatMap((reference) => reference.projectAssetId ? [reference.projectAssetId] : []),
+  );
+  const submittedExplicitKeys = new Set(
+    mergeProjectVisualReferences(explicit, [], [], limit)
+      .map((reference) => assetKey(reference.kind, reference.url, reference.storageKey)),
+  );
+  const projectCount = submitted.filter((reference) => Boolean(reference.projectAssetId)).length;
+
+  return {
+    references: submitted,
+    explicitCount: submitted.length - projectCount,
+    projectCount,
+    limit,
+    items: project.map((reference) => {
+      if (!includeProjectDefaults) return { reference, status: "defaults-disabled" };
+      if (excluded.has(reference.assetId)) return { reference, status: "excluded" };
+      if (submittedProjectIds.has(reference.assetId)) return { reference, status: "included" };
+      if (submittedExplicitKeys.has(assetKey("image", reference.url, reference.storageKey)))
+        return { reference, status: "duplicate" };
+      return { reference, status: "model-limit" };
+    }),
+  };
 }

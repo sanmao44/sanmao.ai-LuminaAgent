@@ -51,6 +51,14 @@ function cleanText(value: unknown, maxLength: number) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+function normalizeReferenceAssetIds(value: unknown) {
+  return Array.isArray(value)
+    ? [...new Set(value
+      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .map((item) => item.trim().slice(0, 300)))].slice(0, MAX_CREATIVE_PROJECT_REFERENCE_ASSETS)
+    : [];
+}
+
 function mediaKind(value: unknown): CanvasMediaKind {
   return value === "video" ? "video" : value === "audio" ? "audio" : "image";
 }
@@ -79,9 +87,7 @@ function versionManifest(value: unknown): CanvasProjectPackageVersion | null {
     ...(Object.prototype.hasOwnProperty.call(value, "brief")
       ? { brief: normalizeCreativeProjectBrief(value.brief) }
       : {}),
-    ...(Array.isArray(value.referenceAssetIds)
-      ? { referenceAssetIds: [...new Set(value.referenceAssetIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim().slice(0, 300)))].slice(0, MAX_CREATIVE_PROJECT_REFERENCE_ASSETS) }
-      : {}),
+    ...(normalizeReferenceAssetIds(value.referenceAssetIds).length ? { referenceAssetIds: normalizeReferenceAssetIds(value.referenceAssetIds) } : {}),
     snapshot: versionSnapshot,
   };
 }
@@ -122,6 +128,7 @@ export function canvasProjectPackageFromDocument(input: {
   exportedAt?: string;
 }) {
   const brief = normalizeCreativeProjectBrief(input.brief);
+  const referenceAssetIds = normalizeReferenceAssetIds(input.referenceAssetIds);
   const versions = (input.versions || [])
     .map(versionManifest)
     .filter((version): version is CanvasProjectPackageVersion => Boolean(version))
@@ -135,7 +142,7 @@ export function canvasProjectPackageFromDocument(input: {
       name: cleanText(input.name, 120) || "SANMAO 无限画布",
       ...(cleanText(input.projectId, 300) ? { projectId: cleanText(input.projectId, 300) } : {}),
       ...(brief ? { brief } : {}),
-      ...(input.referenceAssetIds?.length ? { referenceAssetIds: [...new Set(input.referenceAssetIds)].slice(0, MAX_CREATIVE_PROJECT_REFERENCE_ASSETS) } : {}),
+      ...(referenceAssetIds.length ? { referenceAssetIds } : {}),
       ...(versions.length ? { versions } : {}),
     },
     document: input.document,
@@ -163,9 +170,7 @@ export function parseCanvasProjectPackage(value: unknown): CanvasProjectPackage 
   const name = cleanText(value.project.name, 120) || "SANMAO 无限画布";
   const projectId = cleanText(value.project.projectId, 300);
   const brief = normalizeCreativeProjectBrief(value.project.brief);
-  const referenceAssetIds = Array.isArray(value.project.referenceAssetIds)
-    ? [...new Set(value.project.referenceAssetIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim().slice(0, 300)))].slice(0, MAX_CREATIVE_PROJECT_REFERENCE_ASSETS)
-    : [];
+  const referenceAssetIds = normalizeReferenceAssetIds(value.project.referenceAssetIds);
   const versions = Array.isArray(value.project.versions)
     ? value.project.versions
       .map(versionManifest)

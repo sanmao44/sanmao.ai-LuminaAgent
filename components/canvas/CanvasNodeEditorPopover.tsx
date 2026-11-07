@@ -15,6 +15,7 @@ import { createPortal } from "react-dom";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import { incomingReferences, isCanvasReadyImageSource, nodeSize } from "@/lib/canvas/model";
 import { canvasImageReferencesForContinuation } from "@/lib/canvas/reference-edges";
+import { resolveCanvasVideoInputs } from "@/lib/canvas/references";
 import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/lib/canvas/node-editor";
 import type {
   CanvasAudioGenerationMeta,
@@ -27,9 +28,9 @@ import type {
   CanvasUpscaleParams,
 } from "@/lib/canvas/types";
 import type { CanvasReferenceDraft, CanvasReuseDraft } from "@/lib/canvas/reuse";
-import type { ProjectVisualReference } from "@/lib/canvas/project-visual-references";
+import type { GenerationReference, ProjectVisualReference } from "@/lib/canvas/project-visual-references";
 import { BUILTIN_IMAGE_PRESETS, type CustomImagePreset, type ImagePreset, visibleImagePresetPrompt } from "@/lib/creation/image-presets";
-import { IMAGE_QUALITY_OPTIONS, type CreationSettings, type VideoCreationSettings } from "@/lib/creation/settings";
+import { IMAGE_QUALITY_OPTIONS, resolveAvailableCreationModel, type CreationSettings, type VideoCreationSettings } from "@/lib/creation/settings";
 import { requestPromptOptimization } from "@/lib/creation/agent";
 import { canvasNodeSupportsImagePresets } from "@/lib/canvas/image-presets";
 import { placeCanvasNodeEditorDock } from "@/lib/canvas/editor-layout";
@@ -42,6 +43,8 @@ import {
   canvasImageRequestOperation,
 } from "@/lib/canvas/image-reference-request";
 import { modelSupportsCapabilityRequirements } from "@/lib/model-picker";
+import { MAX_IMAGE_REFERENCES } from "@/packages/contracts/creative";
+import { getVideoModelLimits } from "@/lib/video-model-limits";
 import type { ModelCapability } from "@/lib/types";
 import { canvasMentionOption } from "@/components/canvas/mention-options";
 import CanvasReferenceDraftStrip from "@/components/CanvasReferenceDraftStrip";
@@ -186,6 +189,8 @@ function CanvasNodeEditorPopover({
     canvasCurrentImageReferenceDefault(currentImageReference, Boolean(maskState?.url)),
   );
   const [excludedProjectReferenceAssetIds, setExcludedProjectReferenceAssetIds] = useState<string[]>([]);
+  const projectReferenceAssetKey = projectVisualReferences.map((reference) => reference.assetId).join("\n");
+  useEffect(() => setExcludedProjectReferenceAssetIds([]), [node.id, projectReferenceAssetKey]);
   const [imageDockPanel, setImageDockPanel] = useState<"params" | "variant" | null>(null);
   const imageDockParamsRef = useRef<HTMLDivElement | null>(null);
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
@@ -410,6 +415,68 @@ function CanvasNodeEditorPopover({
     : !branchDraft && node.type === "media" && data.kind === "video" && videoEditorParams?.operation === "generate" && videoEditorParams.inputMode === "reference"
       ? "视频" as const
       : null;
+  const videoPreviewModel = videoEditorParams ? resolveAvailableCreationModel(videoEditorParams, runtime).model : null;
+  const videoPreviewProvider = runtime?.providers.find((provider) => provider.id === videoPreviewModel?.providerId);
+  const videoPreviewLimits = videoEditorParams
+    ? getVideoModelLimits(videoPreviewModel || undefined, videoPreviewProvider)
+    : undefined;
+  const videoPreviewReferenceNodes = imageReferenceResolution.hasMentions
+    ? imageReferenceResolution.references
+        .map((reference) => mentionCandidates.find((candidate) => candidate.id === (reference.nodeId || reference.id)))
+        .filter((candidate): candidate is CanvasNode => Boolean(candidate && isCanvasReadyImageSource(candidate)))
+    : editorReferences;
+  const videoPreviewInputs = videoEditorParams
+    ? resolveCanvasVideoInputs(
+        videoPreviewReferenceNodes,
+        videoEditorParams.inputMode,
+        resolveInputRoles(document, node.id),
+        { maxReferenceImages: videoPreviewLimits?.maxReferenceImages },
+      )
+    : undefined;
+  const imagePreviewReferences: GenerationReference[] = submittedImageReferences
+    .filter((reference) => reference.kind === "image" && Boolean(reference.url))
+    .map((reference) => ({
+      id: reference.id,
+      kind: "image",
+      name: reference.name,
+      url: reference.url || "",
+    }));
+  if (canUseCurrentImageAsReference && useCurrentImageAsReference && data.url) {
+    imagePreviewReferences.push({
+      id: node.id,
+      kind: "image",
+      name: String(data.name || "当前图片"),
+      url: String(data.url),
+    });
+  }
+  const videoPreviewReferences: GenerationReference[] = (videoPreviewInputs?.referenceImages || []).map((reference) => ({
+    id: reference.id,
+    kind: "image",
+    name: String(reference.data.name || "参考素材"),
+    url: String(reference.data.url || ""),
+  }));
+  const projectDefaultsEnabled = projectReferencePreviewKind === "视频"
+    || (!imageReferenceResolution.hasMentions && imageRequestOperation !== "edit");
+  const projectDefaultsDisabledReason = projectReferencePreviewKind === "图片"
+    ? imageReferenceResolution.hasMentions
+      ? "本次使用 @ 引用，项目默认图不会附加。"
+      : imageRequestOperation === "edit"
+        ? "当前为改图操作，项目默认图不会附加。"
+        : imageRequestOperation === "auto" && imageReferenceIds.size > 0
+          ? "自动判定为改图时，项目默认图不会附加。"
+          : undefined
+    : undefined;
+  const previewExplicitReferences = projectReferencePreviewKind === "视频"
+    ? videoPreviewReferences
+    : imagePreviewReferences;
+  const previewReferenceLimit = projectReferencePreviewKind === "视频"
+    ? videoPreviewLimits?.maxReferenceImages ?? MAX_IMAGE_REFERENCES
+    : MAX_IMAGE_REFERENCES;
+  const toggleProjectReferenceForRun = (assetId: string, included: boolean) => {
+    setExcludedProjectReferenceAssetIds((current) => included
+      ? current.filter((id) => id !== assetId)
+      : current.includes(assetId) ? current : [...current, assetId]);
+  };
   const editorSubtitle = node.type === "generator"
     ? (data.kind === "video" ? "视频变体 · 生成新视频" : "变体 · 生成新图")
     : node.type === "prompt"
@@ -829,6 +896,16 @@ function CanvasNodeEditorPopover({
               {smartVariantAction}
               <span className="canvas-node-editor-dock-hint">{dockHint}</span>
             </div>
+            {projectReferencePreviewKind && <CanvasProjectReferencePreview
+              references={projectVisualReferences}
+              explicitReferences={previewExplicitReferences}
+              excludedAssetIds={excludedProjectReferenceAssetIds}
+              onToggle={toggleProjectReferenceForRun}
+              mediaKind={projectReferencePreviewKind}
+              maxReferences={previewReferenceLimit}
+              projectDefaultsEnabled={projectDefaultsEnabled}
+              disabledReason={projectDefaultsDisabledReason}
+            />}
             {!isUpscaleNode && (
             <div className="canvas-node-editor-prompt-wrap">
               <div className="canvas-node-editor-prompt-label">
@@ -956,6 +1033,16 @@ function CanvasNodeEditorPopover({
            </div>
           ) : <div className="canvas-node-editor-columns">
           <div className="canvas-node-editor-copy">
+            {projectReferencePreviewKind && <CanvasProjectReferencePreview
+              references={projectVisualReferences}
+              explicitReferences={previewExplicitReferences}
+              excludedAssetIds={excludedProjectReferenceAssetIds}
+              onToggle={toggleProjectReferenceForRun}
+              mediaKind={projectReferencePreviewKind}
+              maxReferences={previewReferenceLimit}
+              projectDefaultsEnabled={projectDefaultsEnabled}
+              disabledReason={projectDefaultsDisabledReason}
+            />}
             <div className="canvas-node-editor-prompt-wrap">
               <div className="canvas-node-editor-prompt-label">
                 <span>{node.type === "prompt" ? "Agent 任务" : "提示词"}</span>

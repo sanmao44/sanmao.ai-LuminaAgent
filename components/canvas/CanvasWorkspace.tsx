@@ -7639,6 +7639,7 @@ export default function SuperCanvas() {
                 userPrompt,
                 params: clone(videoParams),
                 referenceIds: linked.map((item) => item.id),
+                projectReferenceAssetIds: projectReferenceIdsUsed,
                 sourceGeneratorId: sourceNode?.id,
                 parentNodeId: undefined,
                 createdAt: generationStartedAt,
@@ -7726,6 +7727,7 @@ export default function SuperCanvas() {
                       userPrompt,
                       params: clone(videoParams),
                       referenceIds: linked.map((item) => item.id),
+                      projectReferenceAssetIds: projectReferenceIdsUsed,
                       sourceGeneratorId: sourceNode?.id,
                       parentNodeId: undefined,
                       taskId: task.id,
@@ -13260,7 +13262,7 @@ export default function SuperCanvas() {
         if (projectMenuOpen) setProjectMenuOpen(false);
       }}
     >
-      <CanvasWorkspaceHeader currentProject={currentProject} projects={projects} activeProjectId={activeProjectId} projectMenuOpen={projectMenuOpen} onProjectMenuOpenChange={setProjectMenuOpen} topbarCollapsed={topbarCollapsed} onToggleTopbar={() => setTopbarCollapsed((value) => { const next=!value; try { window.localStorage.setItem("sanmao.canvas.topbar.collapsed",String(next)); } catch {} return next; })} canUndo={Boolean(canvasHistory.past.length)} canRedo={Boolean(canvasHistory.future.length)} onNavigateHome={navigateHome} onUndo={undo} onRedo={redo} snapEnabled={snapEnabled} onToggleSnap={toggleSnap} onOpenFilePicker={() => openFilePicker()} activePanel={activePanel} onTogglePanel={(panel) => activePanel === panel ? setActivePanel(null) : openCanvasPanel(panel)} onToggleAssetLibrary={toggleAssetLibrary} agentDockOpen={agentDockOpen} agentDockBusy={agentDockBusy} onToggleAgentDock={() => applyAgentDockOpen(!agentDockOpen)} theme={theme} onToggleTheme={theme === "light" ? toggleTheme : toggleTheme} saving={saving} saveError={saveError} workspaceSyncStatus={workspaceSyncStatus} onOpenProject={openProject} onNewProject={newProject} onSaveProjectVersion={saveProjectVersion} projectVersions={projectVersions} onRestoreProjectVersion={restoreProjectVersion} onDeleteProjectVersion={deleteProjectVersion} onDeleteProject={deleteProject} onSaveProjectName={saveProjectName} projectBrief={projectBrief} onSaveProjectBrief={saveProjectBrief} projectReferenceAssetIds={projectReferenceAssetIds} projectReferenceAssets={canvasAssets} onRemoveProjectReference={removeProjectReference} />
+      <CanvasWorkspaceHeader currentProject={currentProject} projects={projects} activeProjectId={activeProjectId} projectMenuOpen={projectMenuOpen} onProjectMenuOpenChange={setProjectMenuOpen} topbarCollapsed={topbarCollapsed} onToggleTopbar={() => setTopbarCollapsed((value) => { const next=!value; try { window.localStorage.setItem("sanmao.canvas.topbar.collapsed",String(next)); } catch {} return next; })} canUndo={Boolean(canvasHistory.past.length)} canRedo={Boolean(canvasHistory.future.length)} onNavigateHome={navigateHome} onUndo={undo} onRedo={redo} snapEnabled={snapEnabled} onToggleSnap={toggleSnap} onOpenFilePicker={() => openFilePicker()} activePanel={activePanel} onTogglePanel={(panel) => activePanel === panel ? setActivePanel(null) : openCanvasPanel(panel)} onToggleAssetLibrary={toggleAssetLibrary} agentDockOpen={agentDockOpen} agentDockBusy={agentDockBusy} onToggleAgentDock={() => applyAgentDockOpen(!agentDockOpen)} theme={theme} onToggleTheme={toggleTheme} saving={saving} saveError={saveError} workspaceSyncStatus={workspaceSyncStatus} onOpenProject={openProject} onNewProject={newProject} onSaveProjectVersion={saveProjectVersion} projectVersions={projectVersions} onRestoreProjectVersion={restoreProjectVersion} onDeleteProjectVersion={deleteProjectVersion} onDeleteProject={deleteProject} onSaveProjectName={saveProjectName} projectBrief={projectBrief} onSaveProjectBrief={saveProjectBrief} projectReferenceAssetIds={projectReferenceAssetIds} projectReferenceAssets={projectVisualReferences} onRemoveProjectReference={removeProjectReference} />
       {composeDialogGroupId && (() => {
         const composeGroup = groupById(document, composeDialogGroupId);
         if (!composeGroup) return null;
@@ -13715,6 +13717,7 @@ export default function SuperCanvas() {
               document={document}
               stageRef={stageRef}
               runtime={runtime}
+              projectVisualReferences={projectVisualReferences}
               editorPrompt={
                 reuseDraft?.sourceNodeId === editorNode.id
                   ? reuseDraft.prompt
@@ -14297,10 +14300,10 @@ export default function SuperCanvas() {
         creativeProjectId={currentProject?.projectId}
         projectName={currentProject?.name || "当前画布"}
         projectBrief={projectBrief}
-        projectReferenceAssetIds={projectReferenceAssetIds}
         projectVersionCount={projectVersions.length}
         assetRefresh={assetRefresh}
         assetLibraryCollectionId={assetLibraryCollectionId}
+        projectReferenceAssetIds={projectReferenceAssetIds}
         canReferenceAssets={Boolean(selectedGroupId || selectedSingle)}
         generationLogs={generationLogs}
         activityLogs={logs}
@@ -14315,7 +14318,6 @@ export default function SuperCanvas() {
         onCollectionSelectionChange={setAssetLibraryCollectionId}
         onAddAsset={addAssetToCanvas}
         onReferenceAsset={addAssetAsReference}
-        onSetProjectReference={(asset) => void setProjectReference(asset)}
         onSetProjectReference={setProjectReference}
         onLocateAsset={locateAsset}
         onAddNodeToCollection={addNodeToCollection}

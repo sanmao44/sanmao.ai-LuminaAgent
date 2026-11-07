@@ -1,5 +1,4 @@
-export async function register() {
-  if (process.env.NEXT_RUNTIME !== 'nodejs') return;
-  const { startTaskReconciler } = await import('./apps/worker/task-reconciler');
-  startTaskReconciler();
+export function register() {
+  if (process.env.NEXT_RUNTIME !== 'nodejs' || process.env.NODE_ENV !== 'production') return;
+  return require('./instrumentation.node').register();
 }

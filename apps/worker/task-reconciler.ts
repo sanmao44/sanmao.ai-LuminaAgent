@@ -1,4 +1,5 @@
-import { refreshUpscaleTask, refreshVideoTask } from './task-control';
+import { refreshVideoTask } from './video-task';
+import { refreshUpscaleTask } from './upscale-task';
 import { listRunnableUpscaleTasks } from '../../lib/upscale-task-store';
 import { listRunnableVideoTasks } from '../../lib/video-task-store';
 

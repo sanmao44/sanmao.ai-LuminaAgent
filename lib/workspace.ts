@@ -576,7 +576,7 @@ async function bootstrapWorkspaceInternal() {
 }
 
 /** Automatic sync only replaces a stable, persisted local baseline. */
-async function reconcileWorkspace(onRestored?: () => void, stopped = () => false) {
+async function reconcileWorkspace(onRestored?: () => void, stopped = () => false, onSyncing?: () => void) {
   const meta = currentWorkspaceMeta();
   if (hasWorkspaceDraftPending() || stopped()) return false;
   const state = captureLocalState();
@@ -589,15 +589,20 @@ async function reconcileWorkspace(onRestored?: () => void, stopped = () => false
   // a fresh remote revision must never turn a CAS conflict into an overwrite.
   // The one exception is the pre-bootstrap placeholder written by older LAN
   // clients; it has no baseline or user data and must be replaced by GET.
-  if (meta.pending && !isLegacyInitialCanvasPlaceholder(local, meta)) return uploadLocalWorkspace(false, onRestored);
+  if (meta.pending && !isLegacyInitialCanvasPlaceholder(local, meta)) {
+    onSyncing?.();
+    return uploadLocalWorkspace(false, onRestored);
+  }
   if (meta.contentSignature && meta.contentSignature !== workspaceContentSignature(local)) {
     writeMeta({ ...meta, localUpdatedAt: Date.now(), pending: true });
+    onSyncing?.();
     return uploadLocalWorkspace(false, onRestored);
   }
   // Collect even on metadata-only polls: preferences or another tab can change
   // the persisted cache without delivering this tab's workspace event.
   if (meta.contentSignature && meta.serverUpdatedAt === metadata.updatedAt && (meta.revision ?? 0) === metadata.revision) return true;
 
+  onSyncing?.();
   const server = await requestWorkspace('GET');
   if (localStateChanged(state) || stopped()) {
     preserveLocalChanges(state);
@@ -613,7 +618,10 @@ async function reconcileWorkspace(onRestored?: () => void, stopped = () => false
     if (restored && !stopped() && !hasWorkspaceDraftPending() && state.generation === getWorkspaceMutationGeneration()) onRestored?.();
     return restored && !currentWorkspaceMeta().pending;
   }
-  if (workspaceHasData(local)) return uploadLocalWorkspace(false, onRestored);
+  if (workspaceHasData(local)) {
+    onSyncing?.();
+    return uploadLocalWorkspace(false, onRestored);
+  }
   writeMeta({ ...meta, revision, pending: false });
   acknowledgedMutationGeneration = state.generation;
   return true;
@@ -628,7 +636,12 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
   let retryTimer: number | null = null;
   let syncing = false;
   let conflictRetryAttempt = 0;
-  const setStatus = (status: WorkspaceSyncStatus) => options.onStatus?.(status);
+  let reportedStatus: WorkspaceSyncStatus | undefined;
+  const setStatus = (status: WorkspaceSyncStatus) => {
+    if (reportedStatus === status) return;
+    reportedStatus = status;
+    options.onStatus?.(status);
+  };
   const scheduleConflictRetry = () => {
     if (retryTimer) window.clearTimeout(retryTimer);
     const delay = Math.min(30_000, CONFLICT_RETRY_MS * 2 ** Math.min(conflictRetryAttempt, 4));
@@ -643,11 +656,10 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
     if (stopped || syncing) return;
     syncing = true;
     let completed = false;
-    setStatus('syncing');
     try {
       if (bootstrapPromise) await bootstrapPromise;
       if (stopped) return;
-      const synced = await reconcileWorkspace(options.onRestored, () => stopped);
+      const synced = await reconcileWorkspace(options.onRestored, () => stopped, () => setStatus('syncing'));
       completed = true;
       conflictRetryAttempt = 0;
       setStatus(synced ? 'synced' : 'idle');

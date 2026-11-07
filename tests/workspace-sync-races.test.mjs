@@ -247,9 +247,25 @@ test('edits before startup are tracked and uploaded only against the known revis
   h.mutateCanvas();
   h.start();
   await waitFor(() => h.statuses.at(-1) === 'synced');
+  assert.deepEqual(h.statuses, ['syncing', 'synced']);
   assert.equal(h.requests.find((request) => request.method === 'PUT').payload.expectedRevision, 1);
   assert.equal(h.restoreCount, 0);
   assert.equal(h.remote.canvas.activeId, 'new');
+});
+
+test('metadata-only background polls keep a saved workspace status stable', async (t) => {
+  const h = harness(t);
+  h.seedBaseline();
+  h.start();
+  await waitFor(() => h.statuses.at(-1) === 'synced');
+  const statusCount = h.statuses.length;
+
+  h.poll();
+  await waitFor(() => h.requests.filter((request) => request.url.includes('?meta=1')).length === 2);
+
+  assert.deepEqual(h.statuses, ['synced']);
+  assert.equal(h.statuses.length, statusCount);
+  assert.equal(h.requests.filter((request) => request.method === 'PUT').length, 0);
 });
 
 test('PUT acknowledgement keeps same-timestamp edits pending and reschedules a consumed debounce', async (t) => {

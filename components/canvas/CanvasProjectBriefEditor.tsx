@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { CREATIVE_PROJECT_DELIVERABLE_OPTIONS, type CreativeProjectBrief, type CreativeProjectDeliverable } from "@/packages/contracts/creative";
-import type { AssetRecord } from "@/lib/assets";
+import type { ProjectVisualReference } from "@/lib/canvas/project-visual-references";
 
 const EMPTY_BRIEF: CreativeProjectBrief = { intent: "", style: "", audience: "", constraints: "", deliverable: "auto" };
 
@@ -15,7 +15,7 @@ export default function CanvasProjectBriefEditor({
 }: {
   brief?: CreativeProjectBrief | null;
   referenceAssetIds?: readonly string[];
-  referenceAssets?: readonly AssetRecord[];
+  referenceAssets?: readonly ProjectVisualReference[];
   onRemoveReference?: (assetId: string) => void;
   onSave: (value: CreativeProjectBrief) => boolean;
 }) {
@@ -42,12 +42,12 @@ export default function CanvasProjectBriefEditor({
         <div className="canvas-project-reference-summary">
           <div>
             <span>项目默认参考</span>
-            <small>{referenceAssetIds.length ? `后续普通生图会自动带入 ${referenceAssetIds.length} 张` : "还没有默认参考图"}</small>
+            <small>{referenceAssetIds.length ? "普通生图优先附加；@引用、改图和模型上限可能影响本次使用" : "还没有默认参考图"}</small>
           </div>
           {referenceAssetIds.length > 0 && (
             <div className="canvas-project-reference-list">
               {referenceAssetIds.map((assetId) => {
-                const asset = referenceAssets.find((item) => item.id === assetId || item.indexId === assetId || item.sourceAssetId === assetId);
+                const asset = referenceAssets.find((item) => item.assetId === assetId);
                 return (
                   <span key={assetId} className="canvas-project-reference-chip">
                     {asset?.url ? <img src={asset.url} alt="" /> : null}

@@ -94,6 +94,15 @@ test('project package round trips explicit project deliverable and target-only b
   assert.deepEqual(value.project.brief, { style: '', audience: '', constraints: '', deliverable: 'image' });
 });
 
+test('project package export normalizes reference asset ids before serialization', () => {
+  const value = packageApi.canvasProjectPackageFromDocument({
+    name: 'Reference package',
+    referenceAssetIds: ['  asset-a  ', '', 'asset-a', 'asset-b'],
+    document: documentFixture(),
+  });
+  assert.deepEqual(value.project.referenceAssetIds, ['asset-a', 'asset-b']);
+});
+
 test('project package round trips through JSON and rejects legacy workflow payloads', () => {
   const serialized = packageApi.serializeCanvasProjectPackage({
     name: '项目',

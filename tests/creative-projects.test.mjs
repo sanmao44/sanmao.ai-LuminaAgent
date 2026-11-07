@@ -61,6 +61,51 @@ test('project briefs normalize legacy data, update fields, and clear when empty'
   assert.equal(projects.updateCreativeProjectBrief(updated, 'missing', {}), null);
 });
 
+test('project reference asset ids normalize, deduplicate, and are bounded', () => {
+  const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const projectId = base.canvasProjects[0].projectId;
+  const { MAX_CREATIVE_PROJECT_REFERENCE_ASSETS } = load('./packages/contracts/creative');
+  const input = ['  asset-1  ', 'asset-1', '', ...Array.from(
+    { length: MAX_CREATIVE_PROJECT_REFERENCE_ASSETS + 2 },
+    (_, index) => `asset-${index + 2}`,
+  )];
+
+  const updated = projects.updateCreativeProjectReferences(base.creativeProjects, projectId, input, 75);
+  assert.equal(updated[0].updatedAt, 75);
+  assert.equal(updated[0].referenceAssetIds.length, MAX_CREATIVE_PROJECT_REFERENCE_ASSETS);
+  assert.equal(updated[0].referenceAssetIds[0], 'asset-1');
+  assert.equal(new Set(updated[0].referenceAssetIds).size, updated[0].referenceAssetIds.length);
+
+  const restored = projects.normalizeCreativeProjects(updated);
+  assert.deepEqual(restored[0].referenceAssetIds, updated[0].referenceAssetIds);
+  const cleared = projects.updateCreativeProjectReferences(updated, projectId, [], 80);
+  assert.equal(cleared[0].referenceAssetIds, undefined);
+});
+
+test('project versions preserve the reference set at capture time', () => {
+  const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const projectId = base.canvasProjects[0].projectId;
+  const withReferences = projects.updateCreativeProjectReferences(base.creativeProjects, projectId, ['asset-a', 'asset-b'], 20);
+  const versioned = projects.appendCreativeProjectVersion(withReferences, projectId, {
+    id: 'version-reference',
+    canvasId: 'canvas-a',
+    label: 'Reference set',
+    createdAt: 30,
+    referenceAssetIds: withReferences[0].referenceAssetIds,
+    snapshot: snapshot('reference'),
+  });
+
+  assert.deepEqual(versioned[0].versions[0].referenceAssetIds, ['asset-a', 'asset-b']);
+  const imported = projects.appendImportedCreativeProjectVersions(
+    versioned,
+    projectId,
+    'canvas-current',
+    [{ id: 'imported', label: 'Imported', createdAt: 40, referenceAssetIds: ['asset-c'], snapshot: snapshot('imported') }],
+    50,
+  );
+  assert.deepEqual(imported.projects[0].versions.at(-1).referenceAssetIds, ['asset-c']);
+});
+
 test('project deliverables normalize explicit targets while legacy and auto remain automatic', () => {
   const { normalizeCreativeProjectBrief } = load('./packages/contracts/creative');
   assert.equal(normalizeCreativeProjectBrief({ style: '', audience: '', constraints: '' }), null);

@@ -6,7 +6,7 @@ import type { CanvasProject } from "@/lib/canvas/types";
 import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { CreativeProjectVersion } from "@/lib/creative-projects";
 import type { WorkspaceSyncStatus } from "@/lib/workspace";
-import type { AssetRecord } from "@/lib/assets";
+import type { ProjectVisualReference } from "@/lib/canvas/project-visual-references";
 import CanvasProjectBriefEditor from "./CanvasProjectBriefEditor";
 import "@/components/canvas/CanvasProjectBriefEditor.css";
 
@@ -21,7 +21,7 @@ export type CanvasWorkspaceHeaderProps = {
   projectVersions: CreativeProjectVersion[]; onRestoreProjectVersion: (versionId: string) => void; onDeleteProjectVersion: (versionId: string) => void; onDeleteProject: (projectId: string) => void;
   onSaveProjectName: (projectId: string, name: string) => boolean;
   projectBrief?: CreativeProjectBrief | null; onSaveProjectBrief: (brief: CreativeProjectBrief) => boolean;
-  projectReferenceAssetIds?: readonly string[]; projectReferenceAssets?: readonly AssetRecord[]; onRemoveProjectReference?: (assetId: string) => void;
+  projectReferenceAssetIds?: readonly string[]; projectReferenceAssets?: readonly ProjectVisualReference[]; onRemoveProjectReference?: (assetId: string) => void;
 };
 
 export default function CanvasWorkspaceHeader({currentProject, projects, activeProjectId, projectMenuOpen, onProjectMenuOpenChange, topbarCollapsed, onToggleTopbar, canUndo, canRedo, onNavigateHome, onUndo, onRedo, snapEnabled, onToggleSnap, onOpenFilePicker, activePanel, onTogglePanel, onToggleAssetLibrary, agentDockOpen, agentDockBusy, onToggleAgentDock, theme, onToggleTheme, saving, saveError, workspaceSyncStatus, onOpenProject, onNewProject, onSaveProjectVersion, projectVersions, onRestoreProjectVersion, onDeleteProjectVersion, onDeleteProject, onSaveProjectName, projectBrief, onSaveProjectBrief, projectReferenceAssetIds, projectReferenceAssets, onRemoveProjectReference}: CanvasWorkspaceHeaderProps) {

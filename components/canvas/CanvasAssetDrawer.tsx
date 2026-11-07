@@ -19,6 +19,7 @@ import {
 } from "@/lib/canvas/asset-library-service";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import SelectMenu from "@/components/SelectMenu";
+import { projectVisualReferenceAssetId } from "@/lib/canvas/project-visual-references";
 
 type Notice = { message: string; kind: "ok" | "error" };
 
@@ -491,8 +492,11 @@ export default function CanvasAssetDrawer({
             </div>
           ) : filtered.length ? (
             <div className="canvas-global-asset-grid">
-              {filtered.map((asset) => (
-                <article
+              {filtered.map((asset) => {
+                const referenceAssetId = projectVisualReferenceAssetId(asset);
+                const isProjectReference = projectReferenceAssetIds.includes(referenceAssetId)
+                  || projectReferenceAssetIds.includes(asset.id);
+                return <article
                   key={asset.id}
                   className="canvas-global-asset-card"
                   draggable
@@ -557,11 +561,12 @@ export default function CanvasAssetDrawer({
                     </button>
                     {asset.kind === "image" && <button
                       type="button"
-                      className={projectReferenceAssetIds.includes(asset.id) || (asset.indexId ? projectReferenceAssetIds.includes(`index:${asset.indexId}`) : false) ? "active" : ""}
+                      className={isProjectReference ? "active" : ""}
                       title="设为项目默认参考"
-                      aria-label={`${projectReferenceAssetIds.includes(asset.id) ? "移除" : "设为"}${asset.name}的项目默认参考`}
+                      aria-pressed={isProjectReference}
+                      aria-label={`${isProjectReference ? "移除" : "设为"}${asset.name}的项目默认参考`}
                       onClick={() => onSetProjectReference(asset)}
-                    >{projectReferenceAssetIds.includes(asset.id) || (asset.indexId ? projectReferenceAssetIds.includes(`index:${asset.indexId}`) : false) ? "★ 项目" : "☆ 项目"}</button>}
+                    >{isProjectReference ? "★ 项目" : "☆ 项目"}</button>}
                     <button
                       type="button"
                       title="在画布中定位此资产"
@@ -603,8 +608,8 @@ export default function CanvasAssetDrawer({
                       ×
                     </button>
                   </div>
-                </article>
-              ))}
+                </article>;
+              })}
             </div>
           ) : (
             <div className="canvas-asset-empty">
