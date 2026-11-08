@@ -1,9 +1,15 @@
 import { addEdge, createMedia, nodeById, nodeSize } from './model';
 import type { CanvasDocument, CanvasNode, CanvasNodeParams } from './types';
 import type { GenerationLog } from '@/lib/generation-log';
+import { displayGenerationLogStatus } from './activity-log';
 
 export function canvasNodeHasTask(node: CanvasNode | undefined, taskId: string) {
   return Boolean(node && taskId && String(node.data.jobId || node.data.generation?.taskId || '') === taskId);
+}
+
+/** A provider receipt timeout is still waiting for confirmation, not a failed generation. */
+export function canvasGenerationLogRecoveryStatus(log: { status?: string; errorCode?: string }) {
+  return displayGenerationLogStatus(log);
 }
 
 export function canvasNodeForGenerationLog(document: CanvasDocument, log: Pick<GenerationLog, 'id' | 'taskId' | 'nodeId' | 'prompt' | 'mode' | 'mediaKind'>) {
@@ -59,6 +65,67 @@ export function mergeCanvasTaskImages(document: CanvasDocument, nodeId: string, 
   };
   additions.forEach((node) => { next = addEdge(next, nodeId, node.id, 'right', 'left', fillsTarget ? 'variant' : 'generated'); });
   return next;
+}
+
+/** Project a read-only Worker snapshot onto its existing upscale node. */
+export function recoverCanvasUpscaleTask(document: CanvasDocument, input: {
+  nodeId: string;
+  taskId: string;
+  requestId: string;
+  status: 'queued' | 'processing' | 'succeeded' | 'failed' | 'cancelled';
+  imageUrl?: string;
+  modelName?: string;
+  error?: string;
+}) {
+  const current = nodeById(document, input.nodeId);
+  if (current?.type !== 'upscale'
+    || String(current.data.jobId || '') !== input.taskId
+    || String(current.data.upscaleRequestId || '') !== input.requestId) return document;
+
+  const imageUrl = String(input.imageUrl || '').trim();
+  if (imageUrl) {
+    if (current.data.url === imageUrl && current.data.status === 'completed') return document;
+    return {
+      ...document,
+      nodes: document.nodes.map((node) => node.id === current.id ? {
+        ...node,
+        data: {
+          ...node.data,
+          kind: 'image' as const,
+          url: imageUrl,
+          role: '超分结果',
+          resultSource: 'upscale-node' as const,
+          ...(input.modelName ? { model: input.modelName } : {}),
+          status: 'completed' as const,
+          statusLabel: '超分节点生成的结果',
+          progress: 100,
+          processingStartedAt: undefined,
+          generation: node.data.generation ? {
+            ...node.data.generation,
+            taskId: input.requestId,
+            updatedAt: Date.now(),
+          } : node.data.generation,
+        },
+      } : node),
+    };
+  }
+
+  if (input.status === 'queued' || input.status === 'processing' || input.status === 'succeeded') return document;
+  const error = String(input.error || (input.status === 'cancelled' ? '超分任务已取消' : '超分处理失败'));
+  if (current.data.status === 'failed' && current.data.statusLabel === error) return document;
+  return {
+    ...document,
+    nodes: document.nodes.map((node) => node.id === current.id ? {
+      ...node,
+      data: {
+        ...node.data,
+        status: 'failed' as const,
+        statusLabel: error,
+        progress: undefined,
+        processingStartedAt: undefined,
+      },
+    } : node),
+  };
 }
 
 /** A document operation; callers apply it through CanvasCore, without owning task lifecycle. */

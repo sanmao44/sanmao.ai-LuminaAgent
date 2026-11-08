@@ -6,6 +6,7 @@ import type { MediaKind, ReferenceImageRecord } from './types';
 import type { GenerationSource } from './generation-source';
 import { resolveLocalDataDir } from './data-paths';
 import { projectResultStatus } from './task-result-projection';
+import type { UpscaleRetryDisposition } from './upscale-task-retry-policy';
 
 export type GenerationLog = {
   id: string;
@@ -21,7 +22,11 @@ export type GenerationLog = {
   presetId?: string;
   presetName?: string;
   modelId?: string;
+  /** User selection at submission time; modelId may later hold the resolved model. */
+  requestedModelId?: string;
   modelName?: string;
+  /** Voice requested by synchronous speech synthesis. */
+  voice?: string;
   providerName?: string;
   resolution?: string;
   aspectRatio?: string;
@@ -44,6 +49,8 @@ export type GenerationLog = {
   idempotencyKey?: string;
   costUsd?: number;
   errorCode?: string;
+  /** UI projection only; the Upscale Task Repository remains authoritative. */
+  retryDisposition?: UpscaleRetryDisposition;
   task?: string;
   llmCallCount?: number;
   /** Real provider-reported usage when the upstream response exposes it. */
@@ -146,25 +153,27 @@ export async function finishGenerationLog(id: string, patch: Partial<Omit<Genera
   await appendFile(logPath, `${JSON.stringify({ ...patch, id })}\n`, 'utf8');
 }
 
+function staleGenerationLogPatch(log: GenerationLog, now: number) {
+  return {
+    status: 'error' as const,
+    durationMs: Math.max(0, now - new Date(log.createdAt).getTime()),
+    error: '任务超时或服务中断，未收到服务商完成回执',
+    ...(log.mode === 'generate' || log.mode === 'edit' || log.mode === 'audio'
+      ? { errorCode: 'provider_result_unconfirmed' }
+      : {}),
+  };
+}
+
 export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> {
   const logs = (await readAllGenerationLogs()).map(normalizeCompletedMediaLog);
   const now = Date.now();
   const staleLogs = logs.filter((log) => log.status === 'pending' && now - new Date(log.createdAt).getTime() > STALE_PENDING_MS);
   if (staleLogs.length) {
-    const error = '任务超时或服务中断，未收到服务商完成回执';
-    await Promise.all(staleLogs.map((log) => finishGenerationLog(log.id, {
-      status: 'error',
-      durationMs: Math.max(0, now - new Date(log.createdAt).getTime()),
-      error,
-      ...(log.mode === 'edit' ? { errorCode: 'provider_result_unconfirmed' } : {}),
-    }).catch(() => undefined)));
+    await Promise.all(staleLogs.map((log) => finishGenerationLog(log.id, staleGenerationLogPatch(log, now)).catch(() => undefined)));
     const staleIds = new Set(staleLogs.map((log) => log.id));
     return logs.map((log): GenerationLog => staleIds.has(log.id) ? {
       ...log,
-      status: 'error',
-      durationMs: Math.max(0, now - new Date(log.createdAt).getTime()),
-      error,
-      ...(log.mode === 'edit' ? { errorCode: 'provider_result_unconfirmed' } : {}),
+      ...staleGenerationLogPatch(log, now),
     } : log).reverse().slice(0, limit);
   }
   return logs.reverse().slice(0, limit);

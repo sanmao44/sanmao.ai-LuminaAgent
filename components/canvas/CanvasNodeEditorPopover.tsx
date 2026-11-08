@@ -19,6 +19,7 @@ import { resolveCanvasVideoInputs } from "@/lib/canvas/references";
 import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/lib/canvas/node-editor";
 import type {
   CanvasAudioGenerationMeta,
+  CanvasAudioDraft,
   CanvasDocument,
   CanvasGenerationParams,
   CanvasInputRole,
@@ -115,6 +116,7 @@ export type CanvasNodeEditorPopoverProps = {
   upscaleSourceUrl?: string;
   onUpscaleParamsChange?: (params: CanvasUpscaleParams) => void;
   onReplaceAudio: (nodeId: string, file: File, generation?: CanvasAudioGenerationMeta) => Promise<boolean>;
+  onSpeechDraftChange: (nodeId: string, draft: CanvasAudioDraft) => void;
   onAudioDurationChange: (nodeId: string, durationSeconds: number) => void;
   projectId?: string;
   canvasId?: string;
@@ -163,6 +165,7 @@ function CanvasNodeEditorPopover({
   upscaleSourceUrl,
   onUpscaleParamsChange,
   onReplaceAudio,
+  onSpeechDraftChange,
   onAudioDurationChange,
   projectId,
   canvasId,
@@ -804,8 +807,12 @@ function CanvasNodeEditorPopover({
            <CanvasAudioNodePanel
              node={node}
              onReplaceAudio={onReplaceAudio}
+             onSpeechDraftChange={onSpeechDraftChange}
              onDurationChange={onAudioDurationChange}
              onNotify={onNotify}
+             models={runtime?.models || []}
+             defaultProviderId={runtime?.settings.defaultProviderId}
+             defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
              projectId={projectId}
              canvasId={canvasId}
            />

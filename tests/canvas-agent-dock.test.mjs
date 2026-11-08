@@ -59,13 +59,18 @@ function writebackFixture() {
   const load = createTsRequire(process.cwd());
   const model = load('./lib/canvas/model');
   const storage = load('./lib/canvas/storage');
+  const creativeProjects = load('./lib/creative-projects');
   const { CanvasProjectSession } = load('./lib/canvas/project-session');
   const { CanvasCore } = load('./packages/canvas-core/runtime');
   const project = (id) => ({ id, name: id, createdAt: 1, updatedAt: 1 });
   storage.createCanvasProject(project('a'), model.normalizeDocument(null));
+  const reconciled = creativeProjects.reconcileCreativeProjects(storage.readCanvasProjects(), []);
+  creativeProjects.saveCreativeProjects(reconciled.creativeProjects);
+  const creativeProjectId = reconciled.canvasProjects.find((item) => item.id === 'a').projectId;
   const session = new CanvasProjectSession();
   const core = new CanvasCore(session.open('a'));
   const focused = [];
+  const queuedCheckpoints = [];
   const noop = () => {};
   const bindings = {
     ...model,
@@ -76,11 +81,50 @@ function writebackFixture() {
     commit: (updater) => core.apply({ id: 'writeback', label: 'writeback', apply: updater }),
     setSaveError: () => assert.fail('Unexpected save error'), describeCanvasSaveFailure: storage.describeCanvasSaveFailure,
     notify: noop, setSelectedIds: noop, setSelectedGroupId: noop, setReuseDraft: noop, setContextMenu: noop,
+    agentWorkspaceContext: { creativeProjectId, canvasId: 'a' },
+    queueAgentProjectCheckpoint: (...args) => queuedCheckpoints.push(args),
     selectedSingle: null, selectedNodes: [], stageSize: { width: 900, height: 600 }, screenToWorld: (x, y) => ({ x, y }),
     fitView: (ids) => focused.push(ids),
   };
   bindings.captureProjectTask = canvasCallback('captureProjectTask', bindings);
-  return { bindings, core, session, storage, model, project, focused };
+  return { bindings, core, session, storage, model, creativeProjects, creativeProjectId, project, focused, queuedCheckpoints };
+}
+
+function enableAutomaticCheckpoints(h) {
+  let nextTimerId = 0;
+  const timers = new Map();
+  window.setTimeout = (callback) => {
+    const id = ++nextTimerId;
+    timers.set(id, callback);
+    return id;
+  };
+  window.clearTimeout = (id) => timers.delete(id);
+  Object.assign(h.bindings, {
+    autoCheckpointQueueRef: { current: new Map() },
+    autoCheckpointTimerRef: { current: null },
+    appendAutomaticCreativeProjectVersion: h.creativeProjects.appendAutomaticCreativeProjectVersion,
+    readCreativeProjects: h.creativeProjects.readCreativeProjects,
+    readCanvasProjects: h.storage.readCanvasProjects,
+    loadCanvasDocument: h.storage.loadCanvasDocument,
+    saveCreativeProjects: h.creativeProjects.saveCreativeProjects,
+    snapshot: h.model.snapshot,
+    emitWorkspaceChange: () => {},
+    mountedRef: { current: true },
+    setCreativeProjects: () => {},
+    setProjectVersions: () => {},
+  });
+  h.bindings.agentCheckpointTriggerId = createTsRequire(process.cwd())('./lib/canvas/auto-project-checkpoint').agentCheckpointTriggerId;
+  h.bindings.queueAutomaticProjectCheckpoint = canvasCallback('queueAutomaticProjectCheckpoint', h.bindings);
+  const enqueueAgentCheckpoint = canvasCallback('queueAgentProjectCheckpoint', h.bindings);
+  h.bindings.queueAgentProjectCheckpoint = (...args) => {
+    h.queuedCheckpoints.push(args);
+    enqueueAgentCheckpoint(...args);
+  };
+  return () => {
+    const callback = [...timers.values()].at(-1);
+    timers.clear();
+    callback?.();
+  };
 }
 
 test("the canvas agent dock mounts in SuperCanvas and is bound to the selection", () => {
@@ -843,21 +887,81 @@ test("canvas overlays step aside for the open agent panel", () => {
 test("storing a reply as a node brings it into view", () => {
   const h = writebackFixture();
   const apply = canvasCallback('applyAgentDockText', h.bindings);
-  const ids = apply('reply', { prompt: 'prompt', runContext: { canvasId: 'a' } });
+  const ids = apply('reply', { prompt: 'prompt', runContext: { canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-1' } });
   assert.deepEqual(h.focused, [ids]);
   assert.equal(h.core.document().nodes[0].data.text, 'reply');
+  assert.equal(h.queuedCheckpoints.length, 1);
+  assert.deepEqual(h.queuedCheckpoints[0].slice(0, 4), [h.creativeProjectId, 'a', 'run-1', 'text']);
+  assert.deepEqual(h.queuedCheckpoints[0][4].nodes.map((node) => node.id), ids);
   assert.equal(h.session.save(h.core.document()), true);
   h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
   h.core.replace(h.session.open('b'));
-  const backgroundIds = apply('background reply', { prompt: 'prompt', runContext: { canvasId: 'a' } });
+  const backgroundIds = apply('background reply', { prompt: 'prompt', runContext: { canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-2' } });
   assert.equal(backgroundIds.length, 1);
   assert.equal(h.core.document().nodes.length, 0);
   assert.equal(h.storage.loadCanvasDocument('a').nodes.length, 2);
+  assert.equal(h.queuedCheckpoints.length, 2);
+  assert.deepEqual(h.queuedCheckpoints[1].slice(0, 4), [h.creativeProjectId, 'a', 'run-2', 'text']);
+  assert.equal(h.queuedCheckpoints[1][4].nodes.length, 2);
   assert.deepEqual(h.focused, [ids]);
   assert.equal(h.storage.deleteCanvasProject('a'), true);
-  const deletedIds = apply('late reply', { prompt: 'prompt', runContext: { canvasId: 'a' } });
+  const deletedIds = apply('late reply', { prompt: 'prompt', runContext: { canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-3' } });
   assert.deepEqual(deletedIds, []);
+  assert.equal(h.queuedCheckpoints.length, 2);
   assert.deepEqual(h.focused, [ids]);
+});
+
+test("Agent canvas patches checkpoint successful updates even when they add no nodes", () => {
+  const h = writebackFixture();
+  const sourceNode = h.model.createPrompt({ x: 1, y: 2 }, 'before');
+  h.core.replace({ ...h.core.document(), nodes: [sourceNode] });
+  assert.equal(h.session.save(h.core.document()), true);
+  h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
+  h.core.replace(h.session.open('b'));
+
+  const apply = canvasCallback('applyAgentCanvasPatch', h.bindings);
+  const result = apply({ version: 1, operations: [{ op: 'update_node', id: sourceNode.id, patch: { x: 42 } }] }, {
+    canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-patch',
+  });
+
+  assert.deepEqual(result.ids, []);
+  assert.equal(h.core.document().nodes.length, 0);
+  assert.equal(h.storage.loadCanvasDocument('a').nodes[0].x, 42);
+  assert.equal(h.queuedCheckpoints.length, 1);
+  assert.deepEqual(h.queuedCheckpoints[0].slice(0, 4), [h.creativeProjectId, 'a', 'run-patch', 'patch:update_node']);
+  assert.equal(h.queuedCheckpoints[0][4].nodes[0].x, 42);
+
+  const failed = apply({ version: 1, operations: [{ op: 'update_node', id: 'missing-node', patch: { x: 50 } }] }, {
+    canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-failed',
+  });
+  assert.ok(failed.error);
+  assert.equal(h.queuedCheckpoints.length, 1);
+});
+
+test("delayed Agent checkpoints preserve the source canvas after switching projects", () => {
+  const h = writebackFixture();
+  const flushCheckpoints = enableAutomaticCheckpoints(h);
+  const apply = canvasCallback('applyAgentDockText', h.bindings);
+  const firstIds = apply('A canvas reply', { prompt: 'prompt', runContext: {
+    canvasId: 'a', creativeProjectId: h.creativeProjectId, runId: 'run-active',
+  } });
+  flushCheckpoints();
+
+  assert.equal(h.session.save(h.core.document()), true);
+  h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
+  h.core.replace(h.session.open('b'));
+  const backgroundIds = apply('A later reply', { prompt: 'prompt', runContext: {
+    canvasId: 'a', creativeProjectId: h.creativeProjectId, runId: 'run-background',
+  } });
+  flushCheckpoints();
+
+  const savedProject = h.creativeProjects.readCreativeProjects().find((item) => item.id === h.creativeProjectId);
+  assert.deepEqual(savedProject.versions.map((version) => version.snapshot.nodes.map((node) => node.id)), [
+    firstIds,
+    [...firstIds, ...backgroundIds],
+  ]);
+  assert.equal(savedProject.versions[1].snapshot.nodes.some((node) => node.data.text?.includes('canvas b')), false);
+  assert.equal(h.core.document().nodes.length, 0);
 });
 
 test("a waiting approval on the canvas gets the same confirm card as the main chat", () => {

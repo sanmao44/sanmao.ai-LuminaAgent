@@ -1,5 +1,5 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { cancelVideoTask, getVideoTask, getVideoTaskSnapshot, removeVideoTask, retryVideoTask, saveVideoTask, TaskControlConflictError } from '@/apps/worker/task-control';
+import { cancelVideoTask, getVideoTask, getVideoTaskSnapshot, removeVideoTask, retryFailedVideoTask, retryVideoTask, saveVideoTask, TaskControlConflictError } from '@/apps/worker/task-control';
 
 export const runtime = 'nodejs';
 
@@ -28,13 +28,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const { id } = await context.params;
   let action = '';
   try { action = String((await request.json() as { action?: unknown })?.action || ''); } catch {}
-  if (action !== 'cancel' && action !== 'retry') return Response.json({ error: '不支持的操作。' }, { status: 400 });
+  if (action !== 'cancel' && action !== 'retry' && action !== 'retry-failed') return Response.json({ error: '不支持的操作。' }, { status: 400 });
   try {
-    const task = action === 'cancel' ? await cancelVideoTask(id) : await retryVideoTask(id);
+    const task = action === 'cancel'
+      ? await cancelVideoTask(id)
+      : action === 'retry-failed'
+        ? await retryFailedVideoTask(id)
+        : await retryVideoTask(id);
     if (!task) return Response.json({ error: '视频任务不存在' }, { status: 404 });
     return Response.json({ ok: true, task }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : '操作失败' }, { status: 400 });
+    const status = action === 'retry-failed' && error instanceof TaskControlConflictError ? 409 : 400;
+    return Response.json({ error: error instanceof Error ? error.message : '操作失败' }, { status });
   }
 }
 

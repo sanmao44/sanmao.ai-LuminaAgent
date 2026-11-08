@@ -138,7 +138,7 @@ test('due-task queries reach old active jobs beyond recent-list limits', async (
   ]));
 
   const { load } = await buildLibModules(
-    ['lib/task-store', 'lib/repositories/task-repository', 'lib/video-task-store', 'lib/upscale-task-store'],
+    ['lib/task-store', 'lib/repositories/task-repository', 'lib/video-task-store', 'lib/upscale-task-retry-policy', 'lib/upscale-task-store'],
     'video-task-store',
   );
   const videoStore = await load('video-task-store');
@@ -186,7 +186,7 @@ test('reconciler reaches older due tasks across repeated scheduling passes', asy
   await writeFile(path.join(dataDir, 'upscale-tasks.json'), JSON.stringify(upscaleTasks));
 
   const { load } = await buildLibModules(
-    ['lib/task-store', 'lib/repositories/task-repository', 'lib/video-task-store', 'lib/upscale-task-store'],
+    ['lib/task-store', 'lib/repositories/task-repository', 'lib/video-task-store', 'lib/upscale-task-retry-policy', 'lib/upscale-task-store'],
     'video-task-store',
   );
   const videoStore = await load('video-task-store');

@@ -335,6 +335,93 @@ for (const entry of ['bootstrap', 'reconcile']) {
   });
 }
 
+test('pending local workspace recovers onto an empty server after its old revision conflicts', async (t) => {
+  const local = snapshot('restored-local', 300);
+  local.canvas.documents['restored-local'].nodes = [{
+    id: 'local-image', type: 'media', x: 24, y: 48,
+    data: { kind: 'image', url: '/stored/local.png' },
+  }];
+  const h = harness(t, { remote: null, revision: 0 });
+  h.seedBaseline(local, 8, true);
+
+  h.start();
+  await waitFor(() => h.statuses.at(-1) === 'synced');
+
+  const puts = h.requests.filter((request) => request.method === 'PUT');
+  assert.deepEqual(puts.map((request) => request.payload.expectedRevision), [8, 0]);
+  assert.equal(h.remote.canvas.documents['restored-local'].nodes[0].id, 'local-image');
+  assert.equal(h.meta.pending, false);
+  assert.equal(h.meta.revision, 1);
+  assert.equal(h.statuses.at(-1), 'synced');
+  assert.equal(h.timers.size, 0);
+});
+
+test('empty-server recovery keeps CAS protection if another workspace appears before retry', async (t) => {
+  const local = snapshot('restored-local', 300);
+  local.canvas.documents['restored-local'].nodes = [{
+    id: 'local-image', type: 'media', x: 24, y: 48,
+    data: { kind: 'image', url: '/stored/local.png' },
+  }];
+  const concurrent = snapshot('concurrent-canvas', 400);
+  concurrent.canvas.documents['concurrent-canvas'].nodes = [{
+    id: 'concurrent-image', type: 'media', x: 80, y: 90,
+    data: { kind: 'image', url: '/stored/concurrent.png' },
+  }];
+  const h = harness(t, { remote: null, revision: 0 });
+  h.seedBaseline(local, 8, true);
+  let insertedConcurrentWorkspace = false;
+  h.setFetchHook((request) => {
+    if (!insertedConcurrentWorkspace && request.method === 'PUT' && request.payload.expectedRevision === 0) {
+      insertedConcurrentWorkspace = true;
+      h.setRemote(concurrent, 1);
+    }
+  });
+
+  h.start();
+  await waitFor(() => h.statuses.at(-1) === 'conflict');
+  const retry = [...h.timers.entries()].find(([, timer]) => timer.delay === 2000);
+  assert.ok(retry, 'a racing workspace write uses the existing conflict backoff');
+  h.timers.delete(retry[0]);
+  retry[1].callback();
+  await waitFor(() => h.statuses.at(-1) === 'synced');
+
+  const puts = h.requests.filter((request) => request.method === 'PUT');
+  assert.deepEqual(puts.map((request) => request.payload.expectedRevision), [8, 0, 0, 1]);
+  assert.equal(h.remote.canvas.projects.some((project) => project.id === 'restored-local'), true);
+  assert.equal(h.remote.canvas.projects.some((project) => project.id === 'concurrent-canvas'), true);
+  assert.equal(h.remote.canvas.documents['restored-local'].nodes[0].id, 'local-image');
+  assert.equal(h.remote.canvas.documents['concurrent-canvas'].nodes[0].id, 'concurrent-image');
+  assert.equal(h.meta.pending, false);
+  assert.equal(h.meta.revision, 2);
+});
+
+test('pending local workspace merges with a server snapshot after its revision rewinds', async (t) => {
+  const local = snapshot('restored-local', 300);
+  local.canvas.documents['restored-local'].nodes = [{
+    id: 'local-image', type: 'media', x: 24, y: 48,
+    data: { kind: 'image', url: '/stored/local.png' },
+  }];
+  const remote = snapshot('retained-server', 400);
+  remote.canvas.documents['retained-server'].nodes = [{
+    id: 'server-image', type: 'media', x: 80, y: 90,
+    data: { kind: 'image', url: '/stored/server.png' },
+  }];
+  const h = harness(t, { remote, revision: 1 });
+  h.seedBaseline(local, 8, true);
+
+  h.start();
+  await waitFor(() => h.statuses.at(-1) === 'synced');
+
+  const puts = h.requests.filter((request) => request.method === 'PUT');
+  assert.deepEqual(puts.map((request) => request.payload.expectedRevision), [8, 1]);
+  assert.equal(h.remote.canvas.projects.some((project) => project.id === 'restored-local'), true);
+  assert.equal(h.remote.canvas.projects.some((project) => project.id === 'retained-server'), true);
+  assert.equal(h.remote.canvas.documents['restored-local'].nodes[0].id, 'local-image');
+  assert.equal(h.remote.canvas.documents['retained-server'].nodes[0].id, 'server-image');
+  assert.equal(h.meta.pending, false);
+  assert.equal(h.meta.revision, 2);
+});
+
 test('clean first startup restores the actual GET revision rather than metadata revision', async (t) => {
   const h = harness(t, { revision: 8 });
   h.setFetchHook((request) => request.url.includes('?meta=1') ? response({ updatedAt: 100, revision: 7 }) : undefined);

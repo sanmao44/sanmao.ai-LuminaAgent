@@ -6,6 +6,7 @@ type GenerationLogSnapshot = {
   modelId?: string;
   modelName?: string;
   providerName?: string;
+  errorCode?: string;
   aspectRatio?: string;
   outputSize?: string;
   source?: string;
@@ -28,6 +29,28 @@ export type AcceptedGenerationRecoveryProjection = {
   error?: string;
 };
 
+export type AcceptedGenerationTaskCandidate = {
+  id?: unknown;
+  status?: unknown;
+  providerPossiblyAccepted?: unknown;
+  checkingAcceptedGeneration?: unknown;
+};
+
+/** Return accepted tasks that are safe to inspect once in the background. */
+export function acceptedGenerationTaskIdsForAutoCheck(
+  tasks: readonly AcceptedGenerationTaskCandidate[],
+  alreadyChecked: ReadonlySet<string> = new Set(),
+) {
+  const seen = new Set(alreadyChecked);
+  return tasks.flatMap((task) => {
+    const id = typeof task.id === 'string' ? task.id.trim() : '';
+    if (!id || task.status !== 'error' || task.providerPossiblyAccepted !== true
+      || task.checkingAcceptedGeneration === true || seen.has(id)) return [];
+    seen.add(id);
+    return [id];
+  });
+}
+
 export function isProviderAcceptanceResponse(status: number, body: unknown) {
   if (status === 202) return true;
   return typeof body === 'object' && body !== null && 'pending' in body && body.pending === true;
@@ -45,6 +68,7 @@ export async function inspectAcceptedGenerationLogs(
       if (log.status === 'success' && imageUrls.length) {
         return { taskId, status: 'success', log, imageUrls };
       }
+      if (log.errorCode === 'provider_result_unconfirmed') return { taskId, status: 'pending' };
       if (log.status === 'error' || log.status === 'success') return { taskId, status: 'error', error: log.error };
       return { taskId, status: 'pending' };
     } catch {

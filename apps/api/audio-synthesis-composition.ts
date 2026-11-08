@@ -5,7 +5,15 @@ import { AudioSynthesisUnavailableError, synthesizeAudioRequest } from './audio-
 
 const audioSynthesisPort: AudioSynthesisPort = {
   async synthesize(input, signal) {
-    const runtime = await resolveSpeechRuntime();
+    const selectedModelId = input.modelId || null;
+    const runtime = await resolveSpeechRuntime(selectedModelId);
+    if (selectedModelId && (
+      !runtime
+      || runtime.model.id !== selectedModelId
+      || !runtime.model.capabilities.includes('speech')
+    )) {
+      throw new AudioSynthesisUnavailableError('所选配音模型当前不可用或不支持配音，请重新选择。');
+    }
     if (runtime) {
       const audio = await synthesizeSpeech(runtime, {
         text: input.text,
@@ -18,6 +26,7 @@ const audioSynthesisPort: AudioSynthesisPort = {
         extension: audioExtension(audio.contentType),
         engine: 'provider',
         modelName: runtime.model.displayName,
+        modelId: runtime.model.id,
       };
     }
     if (offlineSpeechSupported()) {

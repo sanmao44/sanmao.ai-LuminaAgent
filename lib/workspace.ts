@@ -415,9 +415,14 @@ async function restoreWorkspaceSnapshotInternal(
   contentHash?: string,
   automaticState?: ReturnType<typeof captureLocalState>,
   stopped = () => false,
+  allowRevisionRewindFrom?: number,
 ) {
   const generation = getWorkspaceMutationGeneration();
   const restoreGeneration = explicitRestoreGeneration;
+  const revisionIsRestorable = () => {
+    const currentRevision = readMeta()?.revision ?? 0;
+    return currentRevision <= revision || currentRevision === allowRevisionRewindFrom;
+  };
   const restoreCanvas = () => withWorkspaceRestoreSuppressed(() => {
     if (!restoreCanvasWorkspace(snapshot.canvas)) throw new Error('恢复画布失败');
   });
@@ -426,7 +431,7 @@ async function restoreWorkspaceSnapshotInternal(
     // must leave the editor's optimistic-save baseline untouched during I/O.
     if (!automaticState) restoreCanvas();
     const canWrite = automaticState ? () => !localStateChanged(automaticState) && !stopped()
-      && restoreGeneration === explicitRestoreGeneration && (readMeta()?.revision ?? 0) <= revision : undefined;
+      && restoreGeneration === explicitRestoreGeneration && revisionIsRestorable() : undefined;
     await assetRepository.replaceGallery(snapshot.gallery, canWrite);
     await replaceChatSessions(snapshot.chatSessions, canWrite);
     await assetRepository.replaceIndex(snapshot.assetIndex, canWrite);
@@ -437,7 +442,7 @@ async function restoreWorkspaceSnapshotInternal(
     }
     const current = readMeta();
     const changed = generation !== getWorkspaceMutationGeneration() || hasWorkspaceDraftPending();
-    if (restoreGeneration !== explicitRestoreGeneration || (current?.revision ?? 0) > revision) {
+    if (restoreGeneration !== explicitRestoreGeneration || !revisionIsRestorable()) {
       if (changed && current) writeMeta({ ...current, pending: true });
       return false;
     }
@@ -503,7 +508,43 @@ async function rebaseWorkspaceAfterConflict(
   const server = await requestWorkspace('GET');
   const remote = server.workspace ? validateWorkspaceShape(server.workspace) as unknown as WorkspaceSnapshot : null;
   const revision = Number(server.revision ?? 0);
-  if (!remote || revision < (readMeta()?.revision ?? 0)) {
+  const localMeta = readMeta() || currentWorkspaceMeta();
+  if (!remote && revision === 0) {
+    if (localStateChanged(state)) {
+      preserveLocalChanges(state);
+      return { synced: false, rebased: false };
+    }
+    // A missing server snapshot has no competing data; re-establish the CAS baseline at zero.
+    const baseline = readMeta() || currentWorkspaceMeta();
+    const synced = await saveWorkspace(local, {
+      ...baseline,
+      serverUpdatedAt: 0,
+      revision: 0,
+      contentHash: undefined,
+      pending: true,
+    }, state.generation, keepalive);
+    return { synced, rebased: true };
+  }
+  if (remote && revision < (localMeta.revision ?? 0) && localMeta.pending) {
+    if (localStateChanged(state)) {
+      preserveLocalChanges(state);
+      return { synced: false, rebased: false };
+    }
+    const merged = mergeWorkspaceSnapshots(local, remote, readCanvasDeletionTombstones());
+    const restored = await restoreWorkspaceSnapshotInternal(
+      merged,
+      revision,
+      server.contentHash || undefined,
+      state,
+      () => false,
+      localMeta.revision ?? 0,
+    );
+    if (!restored) return { synced: false, rebased: false };
+    const baseline = readMeta() || currentWorkspaceMeta();
+    const synced = await saveWorkspace(merged, { ...baseline, revision, pending: true }, state.generation, keepalive);
+    return { synced, rebased: true };
+  }
+  if (!remote || revision < (localMeta.revision ?? 0)) {
     throw new WorkspaceConflictError('工作区版本变化过快，请刷新后再保存');
   }
   if (localStateChanged(state)) {

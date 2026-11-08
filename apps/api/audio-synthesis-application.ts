@@ -17,6 +17,27 @@ export class AudioSynthesisUnavailableError extends Error {
   }
 }
 
+/**
+ * A synchronous speech request has no provider task id to query after the
+ * HTTP response is lost. Transport failures therefore stay explicitly
+ * unconfirmed so the activity drawer does not encourage a duplicate charge.
+ * Validation and model-availability errors remain ordinary, recoverable
+ * failures.
+ */
+export function audioSynthesisFailureCode(error: unknown) {
+  const value = error as { name?: unknown; message?: unknown; status?: unknown; statusCode?: unknown } | null;
+  const name = String(value?.name || '');
+  const message = String(value?.message || error || '');
+  const status = Number(value?.status ?? value?.statusCode ?? NaN);
+  if (name === 'AbortError' || name === 'TimeoutError' || status >= 500 && status <= 599) {
+    return 'provider_result_unconfirmed' as const;
+  }
+  if (/HTTP\s+5\d{2}|timeout|timed[ -]?out|超时|fetch failed|network|ECONNRESET|ECONNREFUSED|ETIMEDOUT|连接中断|没有返回完整响应|请求已取消/i.test(message)) {
+    return 'provider_result_unconfirmed' as const;
+  }
+  return undefined;
+}
+
 function parseRequest(input: unknown): AudioSynthesisRequest {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new AudioSynthesisInputError('配音请求格式无效。');
@@ -31,6 +52,11 @@ function parseRequest(input: unknown): AudioSynthesisRequest {
   }
   const voice = typeof source.voice === 'string' ? source.voice.trim() : '';
   if (voice.length > 100) throw new AudioSynthesisInputError('音色名称最多 100 个字符。');
+  if (source.modelId !== undefined && typeof source.modelId !== 'string') {
+    throw new AudioSynthesisInputError('配音模型无效。');
+  }
+  const modelId = typeof source.modelId === 'string' ? source.modelId.trim() : '';
+  if (modelId.length > 160) throw new AudioSynthesisInputError('配音模型 ID 最多 160 个字符。');
   const sourceName = source.source === 'workspace' || source.source === 'agent' || source.source === 'canvas'
     ? source.source
     : undefined;
@@ -40,10 +66,20 @@ function parseRequest(input: unknown): AudioSynthesisRequest {
   return {
     text,
     ...(voice ? { voice } : {}),
+    ...(modelId && modelId !== 'auto' ? { modelId } : {}),
     ...(sourceName ? { source: sourceName } : {}),
     ...(projectId ? { projectId } : {}),
     ...(canvasId ? { canvasId } : {}),
     ...(nodeId ? { nodeId } : {}),
+  };
+}
+
+export function audioSynthesisLogMetadata(input: unknown) {
+  const request = parseRequest(input);
+  return {
+    prompt: request.text,
+    requestedModelId: request.modelId || 'auto',
+    ...(request.voice ? { voice: request.voice } : {}),
   };
 }
 

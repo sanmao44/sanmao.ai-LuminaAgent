@@ -845,7 +845,8 @@ test("audio editor opens in the image-editor frame without a desktop body scroll
   assert.doesNotMatch(component, /naturalHeight = \(head\?\.offsetHeight/);
   assert.match(styles, /\.canvas-node-editor-popover\.canvas-node-editor-popover\[data-node-kind="audio"\]:not\(\.is-prompt-expanded\)\[data-density\]\{[\s\S]*?width:min\(520px,calc\(100vw - 32px\)\)!important;[\s\S]*?max-height:none!important;[\s\S]*?overflow:visible!important/);
   assert.match(audioPanelStyles, /\.canvas-audio-panel\{display:flex;flex:1;flex-direction:column;gap:0;min-width:0;min-height:0;height:100%\}/);
-  assert.match(audioPanelStyles, /\.canvas-audio-panel-main\{display:grid;flex:1;grid-template-columns:minmax\(0,1\.4fr\) minmax\(250px,\.8fr\)/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel-main\{display:grid;flex:1;grid-template-columns:minmax\(0,1\.4fr\) minmax\(250px,\.8fr\)[^}]*overflow:visible\}/);
+  assert.match(audioPanelStyles, /\.canvas-audio-speech\{[^}]*padding:6px 8px;box-sizing:border-box\}/);
   assert.match(audioPanelStyles, /\.canvas-audio-panel-actions\{display:grid;grid-template-columns:minmax\(0,1fr\) auto auto/);
   assert.match(audioPanelStyles, /@media\(max-width:720px\)\{\.canvas-audio-panel-main\{grid-template-columns:minmax\(0,1fr\)/);
   assert.match(audioPanelStyles, /\.canvas-audio-panel-empty\{[^}]*padding:20px 12px/);

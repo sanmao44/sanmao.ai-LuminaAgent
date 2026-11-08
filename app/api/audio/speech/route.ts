@@ -1,4 +1,4 @@
-import { AudioSynthesisInputError, AudioSynthesisUnavailableError } from '@/apps/api/audio-synthesis-application';
+import { AudioSynthesisInputError, AudioSynthesisUnavailableError, audioSynthesisFailureCode, audioSynthesisLogMetadata } from '@/apps/api/audio-synthesis-application';
 import { synthesizeCanvasNarration } from '@/apps/api/audio-synthesis-composition';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
@@ -30,12 +30,13 @@ export async function POST(request: Request) {
     const prompt = typeof raw.text === 'string' ? raw.text.trim() : '';
     const source = normalizeGenerationSource(raw.source, 'workspace');
     if (prompt) {
+      const speechMetadata = audioSynthesisLogMetadata(raw);
       logId = await startGenerationLog({
         mode: 'audio',
         mediaKind: 'audio',
         taskKind: 'media',
         source,
-        prompt,
+        ...speechMetadata,
         projectId: typeof raw.projectId === 'string' ? raw.projectId.trim().slice(0, 160) || undefined : undefined,
         canvasId: typeof raw.canvasId === 'string' ? raw.canvasId.trim().slice(0, 160) || undefined : undefined,
         nodeId: typeof raw.nodeId === 'string' ? raw.nodeId.trim().slice(0, 160) || undefined : undefined,
@@ -47,6 +48,7 @@ export async function POST(request: Request) {
     if (logId) await finishGenerationLog(logId, {
       status: 'success',
       durationMs: Date.now() - startedAt,
+      modelId: result.modelId,
       modelName: result.modelName,
     }).catch(() => undefined);
     return new Response(Buffer.from(result.data), {
@@ -57,6 +59,7 @@ export async function POST(request: Request) {
         'X-Audio-Extension': result.extension,
         'X-Audio-Engine': result.engine,
         ...(result.modelName ? { 'X-Audio-Model': result.modelName } : {}),
+        ...(result.modelId ? { 'X-Audio-Model-Id': result.modelId } : {}),
         ...(logId ? { 'X-Audio-Log-Id': logId } : {}),
       },
     });
@@ -65,6 +68,7 @@ export async function POST(request: Request) {
       status: 'error',
       durationMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : '配音生成失败。',
+      ...(audioSynthesisFailureCode(error) ? { errorCode: audioSynthesisFailureCode(error) } : {}),
     }).catch(() => undefined);
     if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     if (error instanceof AudioSynthesisInputError) return Response.json({ error: error.message }, { status: 400 });

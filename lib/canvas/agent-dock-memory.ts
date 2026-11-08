@@ -10,6 +10,13 @@ import type { WorkspaceContext } from "@/lib/workspace-context";
 export const CANVAS_AGENT_DOCK_SESSION_KEY = "sanmao.canvas.agentdock.session.v1";
 export const LEGACY_CANVAS_AGENT_DOCK_SESSION_KEY = CANVAS_AGENT_DOCK_SESSION_KEY;
 export const CANVAS_AGENT_DOCK_MAX_MESSAGES = 40;
+export const CANVAS_AGENT_DOCK_MAX_DRAFT_LENGTH = 16_000;
+
+export function normalizeCanvasAgentDockDraft(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const draft = value.slice(0, CANVAS_AGENT_DOCK_MAX_DRAFT_LENGTH);
+  return draft.trim() ? draft : undefined;
+}
 
 export type CanvasAgentDockMemory = ConversationMemory & {
   /** Number of summarized messages archived from the visible transcript. */

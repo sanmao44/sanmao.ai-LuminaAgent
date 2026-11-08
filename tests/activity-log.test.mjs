@@ -17,6 +17,33 @@ test("generation log status labels describe each task state", () => {
   assert.equal(activityLog.generationLogStatusLabel("error"), "失败");
 });
 
+test("activity navigation prefers an explicit node target", () => {
+  const result = activityLog.resolveCanvasActivityNavigation(
+    { nodeId: "node-7", taskId: "task-7" },
+    [{ id: "task-7", taskId: "task-7", status: "success" }],
+  );
+  assert.deepEqual(result, { kind: "node", nodeId: "node-7" });
+});
+
+test("activity navigation falls back to the matching task record", () => {
+  const log = { id: "log-8", taskId: "task-8", status: "error" };
+  const result = activityLog.resolveCanvasActivityNavigation({ taskId: "task-8" }, [log]);
+  assert.deepEqual(result, { kind: "task", log });
+});
+
+test("activity navigation reports no target when the record is stale", () => {
+  assert.deepEqual(
+    activityLog.resolveCanvasActivityNavigation({ taskId: "missing" }, []),
+    { kind: "none" },
+  );
+});
+
+test("unconfirmed provider receipts display as pending instead of failed", () => {
+  assert.equal(activityLog.generationLogDisplayStatus({ status: "error", errorCode: "provider_result_unconfirmed" }), "pending");
+  assert.equal(activityLog.generationLogDisplayStatus({ status: "error", errorCode: "provider_rejected" }), "error");
+  assert.equal(activityLog.generationLogDisplayStatus({ status: "success" }), "success");
+});
+
 test("generation log kind labels describe each output type", () => {
   assert.equal(activityLog.generationLogKindLabel({ mode: "generate" }), "图片");
   assert.equal(activityLog.generationLogKindLabel({ mode: "generate", mediaKind: "video" }), "视频");
@@ -30,6 +57,7 @@ test("audio task logs do not pretend to have image output URLs", () => {
 
 test("generation log duration distinguishes active, missing, and recorded time", () => {
   assert.equal(activityLog.generationLogDuration({ status: "pending" }), "计时中");
+  assert.equal(activityLog.generationLogDuration({ status: "error", errorCode: "provider_result_unconfirmed", durationMs: 1200 }), "计时中");
   assert.equal(activityLog.generationLogDuration({ status: "success" }), "未记录");
   assert.equal(activityLog.generationLogDuration({ status: "error", durationMs: 0 }), "0.0s");
   assert.equal(activityLog.generationLogDuration({ status: "success", durationMs: 1250 }), "1.3s");

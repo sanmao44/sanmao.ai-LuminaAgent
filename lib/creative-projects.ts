@@ -3,6 +3,7 @@ import { MAX_CREATIVE_PROJECT_REFERENCE_ASSETS, normalizeCreativeProjectBrief, t
 
 export const CREATIVE_PROJECTS_KEY = 'sanmao.creative.projects.v1';
 export const CREATIVE_PROJECT_MAX_VERSIONS = 50;
+export const CREATIVE_PROJECT_MAX_AUTOMATIC_VERSIONS = 8;
 
 export type CreativeProjectVersion = {
   id: string;
@@ -239,6 +240,51 @@ export function appendCreativeProjectVersion(
     : item));
 }
 
+export function appendAutomaticCreativeProjectVersion(
+  projects: readonly CreativeProject[],
+  projectId: string,
+  input: Omit<CreativeProjectVersion, 'id' | 'projectId'>,
+  triggerIds: readonly string[],
+) {
+  const normalized = normalizeCreativeProjects(projects);
+  const project = normalized.find((item) => item.id === projectId);
+  const normalizedTriggerIds = [...new Set(triggerIds.map(cleanId).filter((id): id is string => Boolean(id)))].sort();
+  if (!project || !normalizedTriggerIds.length) return null;
+
+  const id = `auto_${normalizedTriggerIds[0]}`;
+  const versions = project.versions || [];
+  if (versions.some((version) => version.id === id)) return null;
+  if (versions.at(-1) && creativeProjectSnapshotsEqual(versions.at(-1)!.snapshot, input.snapshot)) return null;
+
+  const manualVersions = versions.filter((version) => !version.id.startsWith('auto_'));
+  const automaticVersions = versions.filter((version) => version.id.startsWith('auto_'));
+  const automaticCapacity = Math.min(
+    CREATIVE_PROJECT_MAX_AUTOMATIC_VERSIONS - 1,
+    CREATIVE_PROJECT_MAX_VERSIONS - manualVersions.length - 1,
+  );
+  if (automaticCapacity < 0) return null;
+
+  const retainedAutomaticVersions = automaticCapacity > 0
+    ? automaticVersions.slice(-automaticCapacity)
+    : [];
+  const retainedVersions = [...manualVersions, ...retainedAutomaticVersions]
+    .sort((left, right) => left.createdAt - right.createdAt);
+  const parentVersionId = retainedVersions.at(-1)?.id;
+  const version: CreativeProjectVersion = {
+    ...input,
+    id,
+    projectId: project.id,
+    ...(parentVersionId ? { parentVersionId } : { parentVersionId: undefined }),
+  };
+  const nextVersions = [...retainedVersions, version]
+    .sort((left, right) => left.createdAt - right.createdAt);
+  if (nextVersions.length > CREATIVE_PROJECT_MAX_VERSIONS) return null;
+
+  return normalizeCreativeProjects(normalized.map((item) => item.id === project.id
+    ? { ...item, updatedAt: version.createdAt, versions: nextVersions }
+    : item));
+}
+
 export function appendImportedCreativeProjectVersions(
   projects: readonly CreativeProject[],
   projectId: string,
@@ -253,7 +299,8 @@ export function appendImportedCreativeProjectVersions(
   const existingIds = new Set((project.versions || []).map((version) => version.id));
   const importedIds = new Map<string, string>();
   const candidates = incoming.map((version, index) => {
-    const baseId = `imported-${cleanId(version.id) || `version-${index + 1}`}`;
+    const incomingId = cleanId(version.id) || `version-${index + 1}`;
+    const baseId = `${incomingId.startsWith('auto_') ? 'auto_imported_' : 'imported-'}${incomingId}`;
     let id = baseId;
     let suffix = 2;
     while (existingIds.has(id)) id = `${baseId}-${suffix++}`;

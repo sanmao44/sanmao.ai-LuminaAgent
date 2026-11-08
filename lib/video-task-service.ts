@@ -311,7 +311,7 @@ async function keepVideoSubmissionPending(task: VideoTask, error: unknown, provi
   });
 }
 
-export async function createVideoGeneration(options: { modelId?: string; input: VideoGenerationInput; idempotencyKey?: string; source?: GenerationSource }) {
+export async function createVideoGeneration(options: { modelId?: string; input: VideoGenerationInput; idempotencyKey?: string; source?: GenerationSource; retryOf?: string }) {
   const runtime = await getRuntimeVideoModel(options.modelId || 'auto');
   if (!runtime) throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
   assertGenericInputLimits(options.input);
@@ -346,6 +346,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
     status: 'pending',
     idempotencyKey: key,
     input,
+    ...(options.retryOf ? { retryOf: options.retryOf } : {}),
   });
   if (!created.created) return created.task;
   const task = created.task;
@@ -528,7 +529,16 @@ export async function retryVideoTask(id: string) {
   const task = await findVideoTask(id);
   if (!task) return null;
   if (!canRetryVideoTask(task.status)) throw new Error('视频还在生成中，先取消才能重试。');
-  const created = await createVideoGeneration({ modelId: task.modelId, input: task.input, source: task.source });
-  if (!created || created.id === task.id) return created;
-  return updateVideoTask(created.id, { retryOf: task.id });
+  return createVideoGeneration({ modelId: task.modelId, input: task.input, source: task.source, retryOf: task.id });
+}
+
+/** Batch retries require a Worker-claimed failed snapshot and use a stable attempt key. */
+export async function retryFailedVideoTask(task: VideoTask, idempotencyKey: string) {
+  return createVideoGeneration({
+    modelId: task.modelId,
+    input: task.input,
+    source: task.source,
+    retryOf: task.id,
+    idempotencyKey,
+  });
 }

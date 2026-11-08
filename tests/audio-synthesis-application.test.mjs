@@ -7,6 +7,13 @@ const { main: application } = await buildLibModules(
   'audio-synthesis-application',
 );
 
+test('audio synthesis classifies transport failures as provider-result-unconfirmed', () => {
+  assert.equal(application.audioSynthesisFailureCode(Object.assign(new Error('服务商在约 2 分钟内没有返回结果'), { name: 'TimeoutError' })), 'provider_result_unconfirmed');
+  assert.equal(application.audioSynthesisFailureCode(new Error('配音接口失败：HTTP 502')), 'provider_result_unconfirmed');
+  assert.equal(application.audioSynthesisFailureCode(new Error('所选配音模型当前不可用')), undefined);
+  assert.equal(application.audioSynthesisFailureCode(new Error('配音文本为空。')), undefined);
+});
+
 test('audio synthesis trims the script and optional voice before calling the provider port', async () => {
   const signal = new AbortController().signal;
   let received;
@@ -22,6 +29,42 @@ test('audio synthesis trims the script and optional voice before calling the pro
   assert.equal(received.signal, signal);
   assert.equal(result.contentType, 'audio/wav');
   assert.equal(result.engine, 'offline');
+});
+
+test('audio generation log metadata preserves the requested voice and automatic model preference', () => {
+  assert.deepEqual(application.audioSynthesisLogMetadata({
+    text: '  配音草稿  ',
+    voice: ' 温柔女声 ',
+  }), {
+    prompt: '配音草稿',
+    requestedModelId: 'auto',
+    voice: '温柔女声',
+  });
+});
+
+test('audio generation log metadata preserves an explicit model and rejects invalid retry parameters', () => {
+  assert.deepEqual(application.audioSynthesisLogMetadata({
+    text: '保留配置',
+    voice: '清晰女声',
+    modelId: 'speech-model-a',
+  }), {
+    prompt: '保留配置',
+    requestedModelId: 'speech-model-a',
+    voice: '清晰女声',
+  });
+  assert.throws(() => application.audioSynthesisLogMetadata({ text: '超长音色', voice: 'v'.repeat(101) }), /音色名称最多 100 个字符/);
+});
+
+test('audio synthesis preserves an explicit speech model selection through the application contract', async () => {
+  let received;
+  await application.synthesizeAudioRequest(
+    { text: '指定模型配音', voice: '清晰女声', modelId: 'provider-a:speech-v1' },
+    { synthesize: async (input) => {
+      received = input;
+      return { data: new Uint8Array([1]), contentType: 'audio/mpeg', extension: 'mp3', engine: 'provider', modelId: 'provider-a:speech-v1' };
+    } },
+  );
+  assert.deepEqual(received, { text: '指定模型配音', voice: '清晰女声', modelId: 'provider-a:speech-v1' });
 });
 
 test('audio synthesis preserves project and canvas provenance metadata without changing spoken text', async () => {
@@ -54,6 +97,8 @@ test('audio synthesis rejects empty and oversized scripts before contacting the 
   await assert.rejects(application.synthesizeAudioRequest({ text: '   ' }, port), /输入配音文本/);
   await assert.rejects(application.synthesizeAudioRequest({ text: 'x'.repeat(5001) }, port), /最多 5000 个字符/);
   await assert.rejects(application.synthesizeAudioRequest({ text: '有效文本', voice: 'v'.repeat(101) }, port), /音色名称最多 100 个字符/);
+  await assert.rejects(application.synthesizeAudioRequest({ text: '有效文本', modelId: 12 }, port), /配音模型无效/);
+  await assert.rejects(application.synthesizeAudioRequest({ text: '有效文本', modelId: 'm'.repeat(161) }, port), /模型 ID 最多 160 个字符/);
   assert.equal(calls, 0);
 });
 

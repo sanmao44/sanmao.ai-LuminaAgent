@@ -1042,7 +1042,7 @@ export async function generateCanvasUpscale(input: {
 
 export async function getCanvasUpscaleTask(taskId: string) {
   return request<{
-    task: { id: string; status: "queued" | "processing" | "succeeded" | "failed" | "cancelled"; error?: string; errorCode?: string; sourceImageId?: string };
+    task: { id: string; status: "queued" | "processing" | "succeeded" | "failed" | "cancelled"; error?: string; errorCode?: string; sourceImageId?: string; localImageUrl?: string; remoteImageUrl?: string };
     images: Array<{ url: string; revisedPrompt?: string }>;
     model?: { id?: string; name?: string; provider?: string };
   }>(`/api/upscale/tasks/${encodeURIComponent(taskId)}?refresh=false`, { cache: "no-store" });
@@ -1056,7 +1056,7 @@ export const CANVAS_AGENT_MAX_WAIT_MS = 5 * 60 * 1000;
 export async function getCanvasAgentGeneration(taskId: string) {
   const response = await fetch(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`, { cache: "no-store" });
   if (!response.ok) return null;
-  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; imageUrls?: string[]; error?: string; operation?: ImageRequestOperation } | null } | null;
+  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; imageUrls?: string[]; error?: string; errorCode?: string; operation?: ImageRequestOperation } | null } | null;
   return body?.log || null;
 }
 
@@ -1258,6 +1258,36 @@ export async function retryCanvasVideoTask(id: string) {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "retry" }),
+  });
+}
+
+/** Batch retries use a Worker action that validates and claims the current failed task. */
+export async function retryFailedCanvasVideoTask(id: string) {
+  return request<{
+    task: {
+      id: string;
+      status: string;
+      retryOf?: string;
+    };
+  }>(`/api/video/tasks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "retry-failed" }),
+  });
+}
+
+/** Batch upscale retries require an explicit provider rejection and a current Worker claim. */
+export async function retryFailedCanvasUpscaleTask(id: string) {
+  return request<{
+    task: {
+      id: string;
+      status: string;
+      retryOf?: string;
+    };
+  }>(`/api/upscale/tasks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "retry-failed" }),
   });
 }
 

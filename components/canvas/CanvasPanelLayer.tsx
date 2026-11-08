@@ -5,6 +5,8 @@ import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
 import type { CanvasConnectionStyle, CanvasDocument, CanvasNodeCreationKind } from "@/lib/canvas/types";
 import type { DepthQuality } from "@/lib/canvas/depth-settings";
 import type { GenerationLog } from "@/lib/generation-log";
+import type { CanvasVideoRetryResult } from "@/lib/canvas/batch-video-retry";
+import type { CanvasUpscaleRetryResult } from "@/lib/canvas/batch-upscale-retry";
 import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import CanvasActivityDrawer from "@/components/canvas/CanvasActivityDrawer";
 import CanvasAssetDrawer from "@/components/canvas/CanvasAssetDrawer";
@@ -42,7 +44,16 @@ export type CanvasPanelLayerProps = {
   onFocusTask: (log: GenerationLog, openMedia?: boolean) => void;
   onFocusNode: (nodeId: string, openMedia?: boolean) => void;
   onRestoreTaskContext: (log: GenerationLog) => void;
+  onCheckTaskRecord: (log: GenerationLog) => Promise<void>;
   onRetryTask: (log: GenerationLog) => Promise<void>;
+  onBatchRetryVideoTasks: (
+    logs: GenerationLog[],
+    onProgress: (completed: number, total: number) => void,
+  ) => Promise<CanvasVideoRetryResult>;
+  onBatchRetryUpscaleTasks: (
+    logs: GenerationLog[],
+    onProgress: (completed: number, total: number) => void,
+  ) => Promise<CanvasUpscaleRetryResult>;
   onContinueTask: (log: GenerationLog) => void;
   onCancelTask: (log: GenerationLog) => Promise<void>;
   cancellableImageTaskIds: ReadonlySet<string>;
@@ -98,7 +109,10 @@ export default function CanvasPanelLayer({
   onFocusTask,
   onFocusNode,
   onRestoreTaskContext,
+  onCheckTaskRecord,
   onRetryTask,
+  onBatchRetryVideoTasks,
+  onBatchRetryUpscaleTasks,
   onContinueTask,
   onCancelTask,
   cancellableImageTaskIds,
@@ -154,7 +168,10 @@ export default function CanvasPanelLayer({
         onFocusTask={onFocusTask}
         onFocusNode={onFocusNode}
         onRestoreTaskContext={onRestoreTaskContext}
+        onCheckTaskRecord={onCheckTaskRecord}
         onRetryTask={onRetryTask}
+        onBatchRetryVideoTasks={onBatchRetryVideoTasks}
+        onBatchRetryUpscaleTasks={onBatchRetryUpscaleTasks}
         onContinueTask={onContinueTask}
         onCancelTask={onCancelTask}
         cancellableImageTaskIds={cancellableImageTaskIds}

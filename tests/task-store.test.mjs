@@ -8,7 +8,7 @@ import { buildLibModules } from './lib-build.mjs';
 const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-task-store-'));
 process.env.SANMAO_DATA_DIR = dataDir;
 const { load } = await buildLibModules(
-  ['lib/task-store', 'lib/repositories/task-repository', 'lib/video-task-store', 'lib/upscale-task-store', 'lib/task-result-projection'],
+  ['lib/task-store', 'lib/repositories/task-repository', 'lib/video-task-store', 'lib/upscale-task-retry-policy', 'lib/upscale-task-store', 'lib/task-result-projection'],
   'task-store',
 );
 const videoStore = await load('video-task-store');
@@ -121,6 +121,58 @@ test('更新与删除保留 id，并支持取消/重试需要的字段', async (
   assert.equal(await videoStore.removeVideoTask(created.task.id), null);
 });
 
+test('批量视频重试 claim 原子地限制状态、结果和并发请求', async () => {
+  const failed = await videoStore.createVideoTask({ ...videoTask('明确失败', 40), status: 'failed' });
+  const claimTime = Date.now();
+  const claims = await Promise.all([
+    videoStore.claimFailedVideoTaskRetry(failed.task.id, claimTime),
+    videoStore.claimFailedVideoTaskRetry(failed.task.id, claimTime + 1),
+  ]);
+
+  assert.equal(claims.filter((claim) => claim.claimed).length, 1);
+  assert.equal(claims.find((claim) => !claim.claimed).reason, 'already_claimed');
+  const acceptedClaim = claims.find((claim) => claim.claimed);
+  assert.equal(acceptedClaim.retryAttempt, 1);
+  assert.equal(await videoStore.releaseFailedVideoTaskRetry(failed.task.id, acceptedClaim.claimedAt), true);
+
+  const cancelled = await videoStore.createVideoTask({ ...videoTask('已取消', 44), status: 'cancelled' });
+  const cancelledClaim = await videoStore.claimFailedVideoTaskRetry(cancelled.task.id, claimTime + 2);
+  assert.equal(cancelledClaim.claimed, true, '无结果的已取消任务仍可显式重试');
+  await videoStore.releaseFailedVideoTaskRetry(cancelled.task.id, cancelledClaim.claimedAt);
+
+  const completed = await videoStore.createVideoTask({
+    ...videoTask('已有结果', 41),
+    status: 'failed',
+  });
+  await videoStore.updateVideoTask(completed.task.id, { remoteVideoUrls: ['https://media.example/result.mp4'] });
+  assert.deepEqual(await videoStore.claimFailedVideoTaskRetry(completed.task.id), {
+    claimed: false,
+    reason: 'not_retryable',
+  });
+
+  const child = await videoStore.createVideoTask({
+    ...videoTask('第一次重试失败', 42),
+    status: 'failed',
+    retryOf: failed.task.id,
+  });
+  assert.equal(child.task.retryOf, failed.task.id);
+  const nextAttempt = await videoStore.claimFailedVideoTaskRetry(failed.task.id, claimTime + 3);
+  assert.equal(nextAttempt.claimed, true);
+  assert.equal(nextAttempt.retryAttempt, 2);
+  await videoStore.releaseFailedVideoTaskRetry(failed.task.id, nextAttempt.claimedAt);
+
+  const retrying = await videoStore.createVideoTask({
+    ...videoTask('重试仍在进行', 43),
+    status: 'running',
+    retryOf: failed.task.id,
+  });
+  assert.equal(retrying.task.status, 'running');
+  assert.deepEqual(await videoStore.claimFailedVideoTaskRetry(failed.task.id, claimTime + 4), {
+    claimed: false,
+    reason: 'retry_in_progress',
+  });
+});
+
 test('高清任务沿用同一套存储，并额外维护 updatedAt', async () => {
   const created = await upscaleStore.createUpscaleTask({
     provider: 'tencent-ci',
@@ -139,12 +191,85 @@ test('高清任务沿用同一套存储，并额外维护 updatedAt', async () =
   assert.equal(await upscaleStore.listUpscaleTasks(5).then((tasks) => tasks.length), 1);
 });
 
+const batchRetryableUpscaleTask = (id, overrides = {}) => ({
+  provider: 'aliyun-viapi',
+  model: 'aliyun-generative-super-resolution',
+  scale: 2,
+  sourceImageId: `image-${id}`,
+  reference: `/stored/${id}.png`,
+  status: 'failed',
+  errorCode: 'INVALID_IMAGE',
+  retryDisposition: 'explicit_rejection',
+  idempotencyKey: `batch-upscale-${id}`,
+  ...overrides,
+});
+
+test('批量超分重试 claim 原子限制明确拒绝任务并发', async () => {
+  const parent = await upscaleStore.createUpscaleTask(batchRetryableUpscaleTask('claim'));
+  const claimTime = Date.now();
+  const claims = await Promise.all([
+    upscaleStore.claimFailedUpscaleTaskRetry(parent.task.id, claimTime),
+    upscaleStore.claimFailedUpscaleTaskRetry(parent.task.id, claimTime + 1),
+  ]);
+
+  assert.equal(claims.filter((claim) => claim.claimed).length, 1);
+  assert.equal(claims.find((claim) => !claim.claimed).reason, 'already_claimed');
+  const accepted = claims.find((claim) => claim.claimed);
+  assert.equal(accepted.retryAttempt, 1);
+  assert.equal(await upscaleStore.releaseFailedUpscaleTaskRetry(parent.task.id, accepted.claimedAt + 1), false, '旧 lease token 不能释放新 claim');
+  assert.equal(await upscaleStore.releaseFailedUpscaleTaskRetry(parent.task.id, accepted.claimedAt), true);
+});
+
+test('批量超分重试拒绝状态不明、已取消、有远端任务号或已有结果的任务', async () => {
+  const rejected = [
+    ['upstream', { errorCode: 'UPSTREAM_ERROR', retryDisposition: 'unknown' }],
+    ['timeout', { errorCode: 'TASK_TIMEOUT', retryDisposition: 'unknown' }],
+    ['cancelled', { status: 'cancelled' }],
+    ['provider-id', { providerTaskId: 'provider-task-1' }],
+    ['local-output', { localImageUrl: '/stored/result.png' }],
+    ['remote-output', { remoteImageUrl: 'https://provider.example/result.png' }],
+    ['legacy', { retryDisposition: undefined }],
+  ];
+
+  for (const [id, overrides] of rejected) {
+    const task = await upscaleStore.createUpscaleTask(batchRetryableUpscaleTask(id, overrides));
+    assert.deepEqual(await upscaleStore.claimFailedUpscaleTaskRetry(task.task.id), {
+      claimed: false,
+      reason: 'not_retryable',
+    }, id);
+  }
+});
+
+test('不确定的子重试会阻止后续提交，明确拒绝的子重试会递增 attempt', async () => {
+  const uncertainParent = await upscaleStore.createUpscaleTask(batchRetryableUpscaleTask('uncertain-parent'));
+  await upscaleStore.createUpscaleTask(batchRetryableUpscaleTask('uncertain-child', {
+    retryOf: uncertainParent.task.id,
+    errorCode: 'UPSTREAM_ERROR',
+    retryDisposition: 'unknown',
+  }));
+  assert.deepEqual(await upscaleStore.claimFailedUpscaleTaskRetry(uncertainParent.task.id), {
+    claimed: false,
+    reason: 'retry_in_progress',
+  });
+
+  const retryableParent = await upscaleStore.createUpscaleTask(batchRetryableUpscaleTask('retryable-parent'));
+  await upscaleStore.createUpscaleTask(batchRetryableUpscaleTask('retryable-child', {
+    retryOf: retryableParent.task.id,
+  }));
+  const next = await upscaleStore.claimFailedUpscaleTaskRetry(retryableParent.task.id);
+  assert.equal(next.claimed, true);
+  assert.equal(next.retryAttempt, 2);
+  await upscaleStore.releaseFailedUpscaleTaskRetry(retryableParent.task.id, next.claimedAt);
+});
+
 test('task controls are exposed through Worker control boundary', async () => {
   const worker = (await import('./ts-require.mjs')).createTsRequire(process.cwd())('./apps/worker/task-control');
   assert.equal(typeof worker.cancelVideoTask, 'function');
   assert.equal(typeof worker.retryVideoTask, 'function');
+  assert.equal(typeof worker.retryFailedVideoTask, 'function');
   assert.equal(typeof worker.cancelUpscaleTask, 'function');
   assert.equal(typeof worker.retryUpscaleTask, 'function');
+  assert.equal(typeof worker.retryFailedUpscaleTask, 'function');
   assert.equal(typeof worker.removeVideoTask, 'function');
   assert.equal(typeof worker.removeUpscaleTask, 'function');
   assert.equal(new worker.TaskControlConflictError('busy').name, 'TaskControlConflictError');

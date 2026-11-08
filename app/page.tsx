@@ -52,7 +52,7 @@ import { normalizeConversationPersona, personaBadgeLabel } from '@/lib/agent-per
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS } from '@/lib/creation/settings';
 import { requestPromptOptimization } from '@/lib/creation/agent';
-import { acceptedGenerationGalleryItemId, inspectAcceptedGenerationLogs, isGenerateRetryBlocked, isProviderAcceptanceResponse, projectAcceptedGenerationRecovery } from '@/lib/creation/generation-recovery';
+import { acceptedGenerationGalleryItemId, acceptedGenerationTaskIdsForAutoCheck, inspectAcceptedGenerationLogs, isGenerateRetryBlocked, isProviderAcceptanceResponse, projectAcceptedGenerationRecovery } from '@/lib/creation/generation-recovery';
 import { cleanupGenerationLogs, getGenerationLog, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
 import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVideoTask as patchVideoTaskRequest, saveVideoTaskLocally as saveVideoTaskLocallyRequest } from '@/lib/video-task-client';
 import { videoTaskStatus } from '@/lib/video-task-output';
@@ -2654,9 +2654,12 @@ export default function Page() {
     });
     const modelPreferencesRestoredRef = useRef(false);
     const [generateTasks, setGenerateTasks] = useState([]);
+    const generateTasksRef = useRef(generateTasks);
     const [generateTaskView, setGenerateTaskView] = useState('current');
     const upscaleRecoveryRef = useRef(new Set());
     const acceptedGenerationRecoveryRef = useRef(new Set());
+    const automaticAcceptedGenerationCheckRef = useRef(new Set<string>());
+    const automaticAcceptedGenerationTimersRef = useRef(new Map<string, number>());
     const editorRecoveryRef = useRef(new Map());
     const [generateTasksReady, setGenerateTasksReady] = useState(false);
     const [generateClock, setGenerateClock] = useState(Date.now());
@@ -3499,6 +3502,31 @@ export default function Page() {
             }
         };
     }, [generateTasksReady]);
+    useEffect(()=>{
+        if (!generateTasksReady) return;
+        generateTasksRef.current = generateTasks;
+        const alreadyScheduled = new Set([
+            ...automaticAcceptedGenerationCheckRef.current,
+            ...automaticAcceptedGenerationTimersRef.current.keys(),
+        ]);
+        const taskIds = acceptedGenerationTaskIdsForAutoCheck(generateTasks, alreadyScheduled);
+        for (const taskId of taskIds) {
+            const task = generateTasks.find((candidate)=>candidate.id === taskId);
+            if (!task || isEditorImageTask(task)) continue;
+            const timer = window.setTimeout(()=>{
+                automaticAcceptedGenerationTimersRef.current.delete(taskId);
+                automaticAcceptedGenerationCheckRef.current.add(taskId);
+                const currentTask = generateTasksRef.current.find((candidate)=>candidate.id === taskId);
+                if (!currentTask || !isGenerateRetryBlocked(currentTask)) return;
+                if (!currentTask.checkingAcceptedGeneration) void checkAcceptedGenerateTask(currentTask);
+            }, 1500);
+            automaticAcceptedGenerationTimersRef.current.set(taskId, timer);
+        }
+    }, [generateTasksReady, generateTasks]);
+    useEffect(()=>()=>{
+        for (const timer of automaticAcceptedGenerationTimersRef.current.values()) window.clearTimeout(timer);
+        automaticAcceptedGenerationTimersRef.current.clear();
+    }, []);
     useEffect(()=>{
         const updateChatScrollState = ()=>{
             const nearBottom = isChatNearBottom();

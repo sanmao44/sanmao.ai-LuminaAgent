@@ -2,6 +2,7 @@
 export type AudioSynthesisRequest = {
   text: string;
   voice?: string;
+  modelId?: string;
   source?: 'workspace' | 'agent' | 'canvas';
   projectId?: string;
   canvasId?: string;
@@ -14,6 +15,7 @@ export type AudioSynthesisResult = {
   extension: string;
   engine: 'provider' | 'offline';
   modelName?: string;
+  modelId?: string;
 };
 
 export interface AudioSynthesisPort {

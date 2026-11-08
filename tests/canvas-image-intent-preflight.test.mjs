@@ -35,6 +35,9 @@ const taskRecovery = await loadTypeScript('../lib/canvas/task-recovery.ts', {
     nodeById: (document, id) => document.nodes.find(node => node.id === id),
     nodeSize: () => ({ w: 0, h: 0 }),
   },
+  './activity-log': {
+    displayGenerationLogStatus: log => log.status === 'error' && log.errorCode === 'provider_result_unconfirmed' ? 'pending' : log.status,
+  },
 });
 
 test('Canvas image preflight calls JEV once and returns the same operation metadata for submission', async () => {

@@ -51,6 +51,7 @@ import { filterModelsByActiveProviders } from "@/lib/provider-availability";
 import { memoryContextMessage } from "@/lib/agent-memory";
 import {
   canvasAgentDockSessionKey,
+  normalizeCanvasAgentDockDraft,
   prepareCanvasAgentDockMemory,
   pruneCanvasAgentDockMessages,
   selectCanvasAgentDockContext,
@@ -117,6 +118,7 @@ type CanvasAgentDockSession = {
   webMode: AgentWebMode;
   autoApply: boolean;
   messages: CanvasAgentDockMessage[];
+  draftInput?: string;
   memory?: CanvasAgentDockMemory;
 };
 
@@ -568,6 +570,7 @@ function readSession(context: WorkspaceContext): CanvasAgentDockSession | null {
       webMode: parsed.webMode === "auto" || parsed.webMode === "always" ? parsed.webMode : "off",
       autoApply: parsed.autoApply !== false,
       messages,
+      ...(normalizeCanvasAgentDockDraft(parsed.draftInput) ? { draftInput: normalizeCanvasAgentDockDraft(parsed.draftInput) } : {}),
       ...(parsed.memory && validCanvasAgentDockMemory(parsed.memory, messages) ? { memory: parsed.memory } : {}),
     };
   } catch {
@@ -605,6 +608,7 @@ export default function CanvasAgentDock({
 }: Props) {
   const [messages, setMessages] = useState<CanvasAgentDockMessage[]>([]);
   const [input, setInput] = useState("");
+  const [draftRestored, setDraftRestored] = useState(false);
   const [draftImages, setDraftImages] = useState<DraftPastedImage[]>([]);
   const [uploadingPastedImages, setUploadingPastedImages] = useState(false);
   const uploadingPastedImagesRef = useRef(false);
@@ -641,6 +645,8 @@ export default function CanvasAgentDock({
   const abortRef = useRef<AbortController | null>(null);
   /* 失败后要能重试，所以留一份最近一次发送的原话。 */
   const lastUserTextRef = useRef("");
+  const inputRef = useRef("");
+  inputRef.current = input;
   /* 停止时不能丢掉已经流回来的内容，所以流式文本同时记一份在 ref 里。 */
   const streamTextRef = useRef("");
   /* 一个 token 一次 setState，长回复会把重排堆满主线程；流式文本按帧合并。 */
@@ -658,6 +664,8 @@ export default function CanvasAgentDock({
     setLoadedScopeKey(null);
     const stored = readSession(context);
     setMessages(stored?.messages || []);
+    setInput(stored?.draftInput || "");
+    setDraftRestored(Boolean(stored?.draftInput?.trim()));
     setModel(stored?.model || "auto");
     setImageModelId(stored?.imageModelId || "auto");
     setWebMode(stored?.webMode || "off");
@@ -674,14 +682,36 @@ export default function CanvasAgentDock({
     if (!hydrated || loadedScopeKey !== sessionScopeKey || typeof window === "undefined") return;
     try {
       const CANVAS_AGENT_DOCK_SESSION_KEY = canvasAgentDockSessionKey(context);
+      const draftInput = normalizeCanvasAgentDockDraft(inputRef.current);
       window.localStorage.setItem(
         CANVAS_AGENT_DOCK_SESSION_KEY,
-        JSON.stringify({ model, imageModelId, webMode, autoApply, messages: messages.slice(-MESSAGE_LIMIT), ...(memory ? { memory } : {}) }),
+        JSON.stringify({ model, imageModelId, webMode, autoApply, messages: messages.slice(-MESSAGE_LIMIT), ...(draftInput ? { draftInput } : {}), ...(memory ? { memory } : {}) }),
       );
     } catch {
       /* session persistence is best effort */
     }
   }, [context, hydrated, loadedScopeKey, memory, messages, model, imageModelId, sessionScopeKey, webMode, autoApply]);
+
+  /* Keep the unsent prompt recoverable without serializing pasted File objects or
+     writing the full conversation on every keystroke. */
+  useEffect(() => {
+    if (!hydrated || loadedScopeKey !== sessionScopeKey || typeof window === "undefined") return;
+    const timer = window.setTimeout(() => {
+      try {
+        const key = canvasAgentDockSessionKey(context);
+        const raw = window.localStorage.getItem(key);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const draftInput = normalizeCanvasAgentDockDraft(input);
+        if (draftInput) parsed.draftInput = draftInput;
+        else delete parsed.draftInput;
+        window.localStorage.setItem(key, JSON.stringify(parsed));
+      } catch {
+        /* Draft persistence is best effort; the live editor remains usable. */
+      }
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [context, hydrated, input, loadedScopeKey, sessionScopeKey]);
 
   // Kept as a named dependency contract for the persistence regression guard.
   // Context-scoped storage is the actual key; this expression makes the
@@ -935,6 +965,7 @@ export default function CanvasAgentDock({
     if (!prompt) return;
     setEditingMessageId(null);
     setDraftImages([]);
+    setDraftRestored(false);
     setInput(prompt);
     setHelpOpen(false);
     focusEditorEnd();
@@ -943,6 +974,7 @@ export default function CanvasAgentDock({
   const applySkill = useCallback(
     (skill: SkillPickerEntry) => {
       setInput((value) => skillMessageValue(value, skill.name));
+      setDraftRestored(false);
       closeSkillMenu();
       focusEditorEnd();
     },
@@ -955,6 +987,7 @@ export default function CanvasAgentDock({
       inputBeforeEditRef.current = input;
       inputBeforeEditImagesRef.current = draftImages;
       setEditingMessageId(message.id);
+      setDraftRestored(false);
       setInput(message.content);
       setDraftImages((message.pastedReferences || []).flatMap((reference) => reference.kind === "image" && reference.url
         ? [{ id: reference.id, name: reference.name, url: reference.url, previewUrl: reference.url }]
@@ -967,6 +1000,7 @@ export default function CanvasAgentDock({
   /* 取消编辑＝放弃这次改写，输入框还原成点「编辑」之前的内容。 */
   const cancelEditMessage = useCallback(() => {
     setEditingMessageId(null);
+    setDraftRestored(false);
     setInput(inputBeforeEditRef.current);
     setDraftImages(inputBeforeEditImagesRef.current);
     focusEditorEnd();
@@ -1139,6 +1173,7 @@ export default function CanvasAgentDock({
       setMessages(history);
       if (raw === undefined) {
         setInput("");
+        setDraftRestored(false);
         attachmentObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
         attachmentObjectUrlsRef.current.clear();
         setDraftImages([]);
@@ -1488,6 +1523,7 @@ export default function CanvasAgentDock({
 
   const useHelpExample = useCallback(
     (prompt: string) => {
+      setDraftRestored(false);
       setInput(prompt);
       setHelpOpen(false);
       focusEditorEnd();
@@ -1507,6 +1543,8 @@ export default function CanvasAgentDock({
     stop();
     setMessages([]);
     setMemory(undefined);
+    setDraftRestored(false);
+    setInput("");
     setStreamText("");
     setExpandedMessages(new Set());
     notify("已开始新的 Agent 对话");
@@ -1870,7 +1908,7 @@ export default function CanvasAgentDock({
           <div className="canvas-agent-dock-empty">
             <b>可以这样问</b>
             {EMPTY_SAMPLES.map((sample) => (
-              <button key={sample} type="button" onClick={() => setInput(sample)}>
+              <button key={sample} type="button" onClick={() => { setDraftRestored(false); setInput(sample); }}>
                 {sample}
               </button>
             ))}
@@ -2215,6 +2253,7 @@ export default function CanvasAgentDock({
             title={action.title}
             onClick={() => {
               if (action.ids.length) onFocusNodes(action.ids);
+              setDraftRestored(false);
               setInput(action.prompt);
             }}
             disabled={busy || action.disabled}
@@ -2223,6 +2262,12 @@ export default function CanvasAgentDock({
           </button>
         ))}
       </div>
+      {draftRestored && !editingMessageId ? (
+        <div className="canvas-agent-dock-draft-status" role="status">
+          <span>已恢复未发送内容</span>
+          <button type="button" onClick={() => { setDraftRestored(false); setInput(""); }}>清除</button>
+        </div>
+      ) : null}
       {editingMessageId ? (
         <div className="canvas-agent-dock-editing">
           <span>正在编辑这条提问 · 发送后会替换它之后的回答</span>
@@ -2272,6 +2317,7 @@ export default function CanvasAgentDock({
           placeholder="问这只画布的 Agent，Enter 发送 / Shift+Enter 换行；可粘贴图片、输入 @ 引用节点；生成中按 Esc 停止"
           transformPastedText={(value) => replaceNaturalReferenceLabels(value, mentionOptions).value}
           onChange={(value) => {
+            setDraftRestored(false);
             setInput(value);
             const slashQuery = skillSlashQuery(value);
             if (slashQuery !== null) {

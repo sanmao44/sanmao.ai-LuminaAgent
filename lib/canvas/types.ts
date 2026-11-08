@@ -317,6 +317,9 @@ export type CanvasAudioGenerationMeta = {
   text: string;
   engine: 'provider' | 'offline';
   modelName?: string;
+  /** Requested model preference (`auto` or a stable registry model ID). */
+  requestedModelId?: string;
+  modelId?: string;
   voice?: string;
   createdAt: number;
 };
@@ -325,6 +328,8 @@ export type CanvasAudioGenerationMeta = {
 export type CanvasAudioDraft = {
   text: string;
   voice?: string;
+  modelId?: string;
+  updatedAt?: number;
 };
 
 export type CanvasHistoryEntry = {

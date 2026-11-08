@@ -159,6 +159,62 @@ test('version records form a bounded parent chain and remain queryable', () => {
   assert.equal(projects.creativeProjectVersion(current, project.id, 'version-55').parentVersionId, 'version-54');
 });
 
+test('automatic project checkpoints deduplicate tasks and stay within their own retention limit', () => {
+  const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const projectId = base.canvasProjects[0].projectId;
+  let current = base.creativeProjects;
+  for (let index = 1; index <= projects.CREATIVE_PROJECT_MAX_AUTOMATIC_VERSIONS + 2; index += 1) {
+    current = projects.appendAutomaticCreativeProjectVersion(current, projectId, {
+      canvasId: 'canvas-a', label: '自动检查点', createdAt: 100 + index, snapshot: snapshot(`auto-${index}`),
+    }, [`task-${index}`]);
+  }
+
+  const versions = current[0].versions;
+  assert.equal(versions.length, projects.CREATIVE_PROJECT_MAX_AUTOMATIC_VERSIONS);
+  assert.equal(versions[0].id, 'auto_task-3');
+  assert.equal(projects.appendAutomaticCreativeProjectVersion(current, projectId, {
+    canvasId: 'canvas-a', label: '重复任务', createdAt: 999, snapshot: snapshot('duplicate'),
+  }, ['task-10']), null);
+  assert.equal(projects.appendAutomaticCreativeProjectVersion(current, projectId, {
+    canvasId: 'canvas-a', label: '相同快照', createdAt: 1000, snapshot: snapshot('auto-10'),
+  }, ['task-11']), null);
+});
+
+test('automatic checkpoints preserve manual versions and respect the shared version limit', () => {
+  const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const projectId = base.canvasProjects[0].projectId;
+  let current = base.creativeProjects;
+  for (let index = 1; index <= projects.CREATIVE_PROJECT_MAX_VERSIONS; index += 1) {
+    current = projects.appendCreativeProjectVersion(current, projectId, {
+      id: `version-${index}`, canvasId: 'canvas-a', label: `V${index}`, createdAt: index, snapshot: snapshot(`manual-${index}`),
+    });
+  }
+
+  const unchanged = projects.appendAutomaticCreativeProjectVersion(current, projectId, {
+    canvasId: 'canvas-a', label: '自动检查点', createdAt: 100, snapshot: snapshot('automatic'),
+  }, ['task-1']);
+  assert.equal(unchanged, null);
+  assert.equal(current[0].versions.length, projects.CREATIVE_PROJECT_MAX_VERSIONS);
+  assert.equal(current[0].versions[0].id, 'version-1');
+});
+
+test('project package import keeps automatic checkpoints eligible for automatic retention', () => {
+  const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const projectId = base.canvasProjects[0].projectId;
+  const automatic = projects.appendAutomaticCreativeProjectVersion(base.creativeProjects, projectId, {
+    canvasId: 'canvas-a', label: '自动检查点', createdAt: 30, snapshot: snapshot('automatic'),
+  }, ['task-1']);
+  const imported = projects.appendImportedCreativeProjectVersions(
+    automatic,
+    projectId,
+    'canvas-current',
+    [{ id: automatic[0].versions[0].id, label: '自动检查点', createdAt: 40, snapshot: snapshot('automatic') }],
+    50,
+  );
+
+  assert.match(imported.projects[0].versions.at(-1).id, /^auto_imported_/);
+});
+
 test('version snapshot equality distinguishes a safe restore from unsaved canvas changes', () => {
   const first = snapshot('same');
   assert.equal(projects.creativeProjectSnapshotsEqual(first, snapshot('same')), true);

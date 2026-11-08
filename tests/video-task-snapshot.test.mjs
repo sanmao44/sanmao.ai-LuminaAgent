@@ -10,13 +10,21 @@ const pendingTask = {
   input: { prompt: 'A quiet landscape' },
 };
 
-function createHarness(task = pendingTask, trusted = true) {
+function createHarness(task = pendingTask, trusted = true, claimResult = { claimed: true, task: { ...pendingTask, status: 'failed' }, retryAttempt: 1, claimedAt: 123 }) {
   const calls = [];
   const worker = createTsRequire(process.cwd(), {
     '../../lib/video-task-store': {
+      claimFailedVideoTaskRetry: async (id) => {
+        calls.push(['claim-retry', id]);
+        return claimResult;
+      },
       findVideoTask: async (id) => {
         calls.push(['find', id]);
         return task;
+      },
+      releaseFailedVideoTaskRetry: async (id, claimedAt) => {
+        calls.push(['release-retry', id, claimedAt]);
+        return true;
       },
       updateVideoTask: async (id, patch) => {
         calls.push(['update', id, patch]);
@@ -24,6 +32,14 @@ function createHarness(task = pendingTask, trusted = true) {
       },
     },
     '../../lib/video-task-service': {
+      retryVideoTask: async (id) => {
+        calls.push(['manual-retry', id]);
+        return { id: 'manual-retry-task', retryOf: id, status: 'pending' };
+      },
+      retryFailedVideoTask: async (source, key) => {
+        calls.push(['batch-retry-service', source.id, key]);
+        return { id: 'batch-retry-task', retryOf: source.id, status: 'pending' };
+      },
       refreshVideoTask: async (id) => {
         calls.push(['provider-refresh', id]);
         return { ...task, status: 'running', providerTaskId: 'upstream-video-1' };
@@ -44,7 +60,7 @@ function createHarness(task = pendingTask, trusted = true) {
     '../../lib/upscale-task-store': {},
     '../../lib/upscale-task-output': {},
     '../../lib/upscale-task-runtime': {},
-    './task-lifecycle': {},
+    './task-lifecycle': { runTaskLifecycle: async (_identity, _id, operation) => operation() },
   })('./apps/worker/task-control');
   const route = createTsRequire(process.cwd(), {
     '@/lib/auth': { isTrustedAppRequest: () => trusted },
@@ -54,7 +70,15 @@ function createHarness(task = pendingTask, trusted = true) {
     new Request(`http://localhost/api/video/tasks/${pendingTask.id}${query}`),
     { params: Promise.resolve({ id: pendingTask.id }) },
   );
-  return { worker, calls, get };
+  const patch = (action) => route.PATCH(
+    new Request(`http://localhost/api/video/tasks/${pendingTask.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    }),
+    { params: Promise.resolve({ id: pendingTask.id }) },
+  );
+  return { worker, calls, get, patch };
 }
 
 test('video snapshot reads pending tasks without submitting or refreshing the provider', async () => {
@@ -79,6 +103,39 @@ test('video snapshot returns null for a missing task', async () => {
 
   assert.equal(await worker.getVideoTaskSnapshot('missing-task'), null);
   assert.deepEqual(calls, [['find', 'missing-task']]);
+});
+
+test('batch retry uses the Worker claim and stable attempt key', async () => {
+  const { calls, patch } = createHarness();
+  const response = await patch('retry-failed');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    task: { id: 'batch-retry-task', retryOf: pendingTask.id, status: 'pending' },
+  });
+  assert.deepEqual(calls, [
+    ['claim-retry', pendingTask.id],
+    ['batch-retry-service', pendingTask.id, `canvas-video-retry:${pendingTask.id}:1`],
+    ['release-retry', pendingTask.id, 123],
+  ]);
+});
+
+test('batch retry maps a stale or completed source task to conflict without provider submission', async () => {
+  const { calls, patch } = createHarness(pendingTask, true, { claimed: false, reason: 'not_retryable' });
+  const response = await patch('retry-failed');
+
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).error, /状态已变化/u);
+  assert.deepEqual(calls, [['claim-retry', pendingTask.id]]);
+});
+
+test('legacy manual retry remains a separate Worker action', async () => {
+  const { calls, patch } = createHarness();
+  const response = await patch('retry');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls, [['manual-retry', pendingTask.id]]);
 });
 
 test('video GET refresh=false returns a stored snapshot with no lifecycle work', async () => {

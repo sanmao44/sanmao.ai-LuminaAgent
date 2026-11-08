@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { GenerationSource } from './generation-source';
 import type { UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
 import { createTaskRepository } from './repositories/task-repository';
+import { canBatchRetryUpscaleTask, type UpscaleRetryDisposition } from './upscale-task-retry-policy';
 
 export type UpscaleTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'cancelled';
 
@@ -28,6 +29,9 @@ export type UpscaleTask = {
   storageError?: string;
   errorCode?: string;
   error?: string;
+  retryDisposition?: UpscaleRetryDisposition;
+  /** Internal lease that serializes batch retries of a failed task. */
+  retryClaimedAt?: number;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -47,6 +51,11 @@ export type UpscaleTask = {
 // 高清任务里带原图引用，沿用原有 0600 权限，避免局域网其它账号读到路径。
 const store = createTaskRepository<UpscaleTask>({ fileName: 'upscale-tasks.json', fileMode: 0o600 });
 export const UPSCALE_TASK_TIMEOUT_MS = 20 * 60 * 1000;
+export const UPSCALE_TASK_RETRY_CLAIM_TTL_MS = 15 * 60 * 1000;
+
+export type UpscaleTaskRetryClaimResult =
+  | { claimed: true; task: UpscaleTask; retryAttempt: number; claimedAt: number }
+  | { claimed: false; reason: 'not_found' | 'not_retryable' | 'already_claimed' | 'retry_in_progress' };
 
 export async function createUpscaleTask(input: Omit<UpscaleTask, 'id' | 'createdAt' | 'updatedAt' | 'pollCount'>) {
   const now = new Date().toISOString();
@@ -54,6 +63,34 @@ export async function createUpscaleTask(input: Omit<UpscaleTask, 'id' | 'created
 }
 
 export async function findUpscaleTask(id: string) { return store.find(id); }
+export async function claimFailedUpscaleTaskRetry(id: string, now = Date.now()): Promise<UpscaleTaskRetryClaimResult> {
+  return store.mutate((tasks) => {
+    const task = tasks.find((item) => item.id === id);
+    if (!task) return { claimed: false, reason: 'not_found' };
+    if (!canBatchRetryUpscaleTask(task)) return { claimed: false, reason: 'not_retryable' };
+    if (Number.isFinite(task.retryClaimedAt) && now - Number(task.retryClaimedAt) < UPSCALE_TASK_RETRY_CLAIM_TTL_MS) {
+      return { claimed: false, reason: 'already_claimed' };
+    }
+
+    const retries = tasks.filter((item) => item.retryOf === id);
+    if (retries.some((item) => !canBatchRetryUpscaleTask(item))) {
+      return { claimed: false, reason: 'retry_in_progress' };
+    }
+
+    task.retryClaimedAt = now;
+    return { claimed: true, task, retryAttempt: retries.length + 1, claimedAt: now };
+  });
+}
+
+export async function releaseFailedUpscaleTaskRetry(id: string, claimedAt: number) {
+  return store.mutate((tasks) => {
+    const task = tasks.find((item) => item.id === id);
+    if (!task || task.retryClaimedAt !== claimedAt) return false;
+    delete task.retryClaimedAt;
+    return true;
+  });
+}
+
 export async function listUpscaleTasks(limit = 100) { return store.list(limit); }
 export async function listRunnableUpscaleTasks(now = Date.now(), limit = 100) {
   return (await store.page({

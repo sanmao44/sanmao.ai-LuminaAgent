@@ -911,6 +911,9 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-editing{display:flex;align-items:center;justify-content:space-between;gap:6px;flex:none;padding:5px 8px;border:1px dashed color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent) 8%,var(--panel));color:var(--accent-text);font-size:9px}
 .canvas-agent-dock-editing button{height:20px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text-2);font-size:8px;cursor:pointer}
 .canvas-agent-dock-editing button:hover{border-color:var(--accent);color:var(--accent-text)}
+.canvas-agent-dock-draft-status{display:flex;align-items:center;justify-content:space-between;gap:6px;flex:none;padding:5px 8px;border:1px solid color-mix(in srgb,var(--warning) 34%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--warning) 8%,var(--panel));color:var(--warning);font-size:9px}
+.canvas-agent-dock-draft-status button{height:20px;padding:0 8px;border:1px solid color-mix(in srgb,var(--warning) 44%,var(--line));border-radius:6px;background:var(--panel);color:var(--text-2);font-size:8px;cursor:pointer}
+.canvas-agent-dock-draft-status button:hover{border-color:var(--warning);color:var(--warning)}
 .canvas-agent-dock-composer{position:relative;display:grid;gap:7px;flex:none;padding:8px;border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--panel-2) 90%,transparent);transition:border-color .16s,box-shadow .16s}
 .canvas-agent-dock-composer:focus-within{border-color:color-mix(in srgb,var(--accent) 62%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}
 /* 输入框是 @ 引用编辑器（内容可编辑），高度自适应到上限后才在内部滚动。 */

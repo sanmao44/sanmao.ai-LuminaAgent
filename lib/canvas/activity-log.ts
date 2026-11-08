@@ -8,7 +8,36 @@ export type CanvasActivityLog = {
   createdAt: string;
   type: "canvas" | "generation" | "agent" | "asset" | "project" | "system";
   status: "ok" | "error";
+  /** Optional navigation target captured when the activity is created. */
+  taskId?: string;
+  nodeId?: string;
 };
+
+export type CanvasActivityTarget = Pick<CanvasActivityLog, "taskId" | "nodeId">;
+
+export function canvasActivityTarget(log: Pick<CanvasActivityLog, "taskId" | "nodeId">): CanvasActivityTarget | null {
+  const taskId = String(log.taskId || "").trim();
+  const nodeId = String(log.nodeId || "").trim();
+  return taskId || nodeId ? { ...(taskId ? { taskId } : {}), ...(nodeId ? { nodeId } : {}) } : null;
+}
+
+export type CanvasActivityNavigation =
+  | { kind: "node"; nodeId: string }
+  | { kind: "task"; log: GenerationLog }
+  | { kind: "none" };
+
+export function resolveCanvasActivityNavigation(
+  activity: Pick<CanvasActivityLog, "taskId" | "nodeId">,
+  taskLogs: GenerationLog[],
+): CanvasActivityNavigation {
+  const target = canvasActivityTarget(activity);
+  if (target?.nodeId) return { kind: "node", nodeId: target.nodeId };
+  if (target?.taskId) {
+    const log = taskLogs.find((item) => String(item.taskId || item.id).trim() === target.taskId);
+    if (log) return { kind: "task", log };
+  }
+  return { kind: "none" };
+}
 
 export function canvasTaskBelongsToProject(
   log: Pick<GenerationLog, "projectId" | "canvasId" | "nodeId" | "taskId">,
@@ -48,8 +77,26 @@ export function generationLogStatusLabel(status: GenerationLog["status"]) {
   return status === "pending" ? "进行中" : status === "success" ? "成功" : "失败";
 }
 
+export function displayGenerationLogStatus<T extends string>(
+  log: { status: T; errorCode?: string },
+): T | "pending";
+export function displayGenerationLogStatus<T extends string>(
+  log: { status?: T; errorCode?: string },
+): T | "pending" | undefined;
+export function displayGenerationLogStatus<T extends string>(
+  log: { status?: T; errorCode?: string },
+): T | "pending" | undefined {
+  return log.status === "error" && log.errorCode === "provider_result_unconfirmed"
+    ? "pending"
+    : log.status;
+}
+
+export function generationLogDisplayStatus(log: Pick<GenerationLog, "status" | "errorCode">): GenerationLog["status"] {
+  return displayGenerationLogStatus(log);
+}
+
 export function generationLogDuration(log: GenerationLog) {
-  if (log.status === "pending") return "计时中";
+  if (displayGenerationLogStatus(log) === "pending") return "计时中";
   if (log.durationMs == null) return "未记录";
   return `${(log.durationMs / 1000).toFixed(1)}s`;
 }

@@ -1201,3 +1201,16 @@ test('canvas video retry uses the existing Worker-owned task control route', asy
   assert.deepEqual(JSON.parse(request.options.body), { action: 'retry' });
   assert.equal(result.task.retryOf, 'video-task-1');
 });
+
+test('canvas batch video retry uses the explicit failure-only Worker action', async () => {
+  let request;
+  const result = await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ task: { id: 'video-task-2', status: 'pending', retryOf: 'video-task-1' } });
+  }, () => api.retryFailedCanvasVideoTask('video-task-1'));
+
+  assert.equal(request.input, '/api/video/tasks/video-task-1');
+  assert.equal(request.options.method, 'PATCH');
+  assert.deepEqual(JSON.parse(request.options.body), { action: 'retry-failed' });
+  assert.equal(result.task.retryOf, 'video-task-1');
+});
