@@ -67,6 +67,11 @@ export function canRestoreCanvasTaskContext(log: Pick<GenerationLog, 'status' | 
     && (kind === 'image' || kind === 'video' || kind === 'audio');
 }
 
+export function canPreserveCanvasAudioDraft(log: Pick<GenerationLog, 'mode' | 'mediaKind' | 'errorCode'>) {
+  const kind = log.mediaKind || (log.mode === 'audio' ? 'audio' : undefined);
+  return kind === 'audio' && log.errorCode === 'provider_result_unconfirmed';
+}
+
 export function canvasAudioGenerationRecoveryDraft(
   log: Pick<GenerationLog, 'prompt' | 'createdAt' | 'requestedModelId' | 'voice'>,
   currentDraft?: CanvasAudioDraft,
@@ -90,7 +95,7 @@ export function canvasAudioGenerationRecoveryDraft(
 }
 
 export function createCanvasAudioRecoveryDraftNode(
-  log: Pick<GenerationLog, 'prompt' | 'createdAt' | 'requestedModelId' | 'voice'>,
+  log: Pick<GenerationLog, 'id' | 'taskId' | 'prompt' | 'createdAt' | 'requestedModelId' | 'voice'>,
   position: { x: number; y: number },
   now = Date.now(),
 ) {
@@ -98,6 +103,7 @@ export function createCanvasAudioRecoveryDraftNode(
     role: '待编辑',
     status: 'draft',
     statusLabel: '配音文本已恢复',
+    recoveryTaskId: String(log.taskId || log.id || '').trim() || undefined,
     referenceOrder: [],
     speechDraft: canvasAudioGenerationRecoveryDraft(log, undefined, undefined, now),
   });

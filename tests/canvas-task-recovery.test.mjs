@@ -273,3 +273,21 @@ test('audio generation logs resolve their existing audio node by task and node l
   assert.equal(canvasNodeForGenerationLog(document, { id: 'log-1', taskId: 'audio-task', mode: 'audio', mediaKind: 'audio', prompt: '旁白' })?.id, 'audio-node');
   assert.equal(canvasNodeForGenerationLog(document, { id: 'log-2', mode: 'audio', mediaKind: 'audio', nodeId: 'audio-node', prompt: '旁白' })?.id, 'audio-node');
 });
+
+test('audio generation logs resolve their preserved recovery draft by source task', () => {
+  const recoveryDraft = createMedia('audio', '', '恢复的配音草稿', { x: 10, y: 20 }, {
+    status: 'draft',
+    recoveryTaskId: 'audio-task-unknown',
+    speechDraft: { text: '旁白', modelId: 'auto' },
+  });
+  recoveryDraft.id = 'audio-recovery-node';
+  const document = normalizeDocument({ nodes: [recoveryDraft], edges: [], groups: [] });
+
+  assert.equal(canvasNodeForGenerationLog(document, {
+    id: 'audio-log',
+    taskId: 'audio-task-unknown',
+    mode: 'audio',
+    mediaKind: 'audio',
+    prompt: '旁白',
+  })?.id, 'audio-recovery-node');
+});

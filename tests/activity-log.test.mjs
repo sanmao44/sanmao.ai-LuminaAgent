@@ -87,3 +87,21 @@ test("canvas task scope does not match unrelated or empty lineage", () => {
   assert.equal(activityLog.canvasTaskBelongsToProject({ projectId: "project-1" }, {}), false);
   assert.equal(activityLog.canvasTaskBelongsToProject({ nodeId: "node-1" }, { nodeIds: new Set() }), false);
 });
+
+test("task log filters apply media and search before status counts", () => {
+  const tasks = [
+    { id: "image-1", mode: "generate", mediaKind: "image", status: "success", prompt: "blue village" },
+    { id: "video-1", mode: "video", mediaKind: "video", status: "success", prompt: "blue village flythrough" },
+    { id: "video-2", mode: "video", mediaKind: "video", status: "error", prompt: "night highway" },
+  ];
+  const matching = activityLog.filterCanvasGenerationLogs(tasks, { media: "video", query: "blue" });
+  assert.deepEqual(matching.map((task) => task.id), ["video-1"]);
+  assert.deepEqual(
+    activityLog.filterCanvasGenerationLogs(tasks, { media: "video", status: "success" }).map((task) => task.id),
+    ["video-1"],
+  );
+  assert.deepEqual(
+    activityLog.filterCanvasGenerationLogs(tasks, { status: "recoverable", recoverableTaskIds: new Set(["video-2"]) }).map((task) => task.id),
+    ["video-2"],
+  );
+});

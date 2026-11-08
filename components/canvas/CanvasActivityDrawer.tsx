@@ -3,9 +3,9 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { GenerationLog } from "@/lib/generation-log";
 import { activityTaskFromGenerationLog } from "@/lib/task-activity/adapters";
-import { resolveCanvasActivityNavigation, canvasTaskBelongsToProject, generationLogDisplayStatus, generationLogDuration, generationLogKind, generationLogKindLabel, generationLogOutputUrls, generationLogStatusLabel } from "@/lib/canvas/activity-log";
+import { resolveCanvasActivityNavigation, canvasTaskBelongsToProject, filterCanvasGenerationLogs, generationLogDisplayStatus, generationLogDuration, generationLogKind, generationLogKindLabel, generationLogOutputUrls, generationLogStatusLabel } from "@/lib/canvas/activity-log";
 import { canvasNodeForGenerationLog } from "@/lib/canvas/task-recovery";
-import { canRestoreCanvasTaskContext, restorableCanvasTaskLogs } from "@/lib/canvas/task-context-recovery";
+import { canPreserveCanvasAudioDraft, canRestoreCanvasTaskContext, restorableCanvasTaskLogs } from "@/lib/canvas/task-context-recovery";
 import { deriveCanvasTaskNextAction } from "@/lib/canvas/task-next-action";
 import { canRetryCanvasVideoLog, canvasVideoRetryTaskId, retryableCanvasVideoLogs, type CanvasVideoRetryResult } from "@/lib/canvas/batch-video-retry";
 import { canvasUpscaleRetryTaskId, retryableCanvasUpscaleLogs, type CanvasUpscaleRetryResult } from "@/lib/canvas/batch-upscale-retry";
@@ -28,6 +28,7 @@ export default function CanvasActivityDrawer({
   onFocusTask,
   onFocusNode,
   onRestoreTaskContext,
+  onPreserveAudioDraft,
   onCheckTaskRecord,
   onRetryTask,
   onBatchRetryVideoTasks,
@@ -61,6 +62,7 @@ export default function CanvasActivityDrawer({
   onFocusTask: (log: GenerationLog, openMedia?: boolean) => void;
   onFocusNode: (nodeId: string, openMedia?: boolean) => void;
   onRestoreTaskContext: (log: GenerationLog) => void;
+  onPreserveAudioDraft: (log: GenerationLog) => void;
   onCheckTaskRecord: (log: GenerationLog) => Promise<void>;
   onRetryTask: (log: GenerationLog) => Promise<void>;
   onBatchRetryVideoTasks: (
@@ -131,21 +133,14 @@ export default function CanvasActivityDrawer({
     () => new Set(restorableCanvasTaskLogs(scopedTasks).map((log) => log.id)),
     [scopedTasks],
   );
-  const filteredTasks = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return scopedTasks.filter((log) => {
-      const matchesStatus = status === "all"
-        || (status === "recoverable" ? restorableTaskIds.has(log.id) : generationLogDisplayStatus(log) === status);
-      const kind = generationLogKind(log);
-      const matchesMedia = media === "all" || kind === media;
-      const matchesQuery =
-        !normalized ||
-        `${log.prompt} ${log.presetName || ""} ${log.modelName || ""} ${log.providerName || ""}`
-          .toLowerCase()
-          .includes(normalized);
-      return matchesStatus && matchesMedia && matchesQuery;
-    });
-  }, [media, query, restorableTaskIds, scopedTasks, status]);
+  const matchingTasks = useMemo(
+    () => filterCanvasGenerationLogs(scopedTasks, { media, query }),
+    [media, query, scopedTasks],
+  );
+  const filteredTasks = useMemo(
+    () => filterCanvasGenerationLogs(scopedTasks, { media, query, status, recoverableTaskIds: restorableTaskIds }),
+    [media, query, restorableTaskIds, scopedTasks, status],
+  );
   const selected = scopedTasks.find((log) => log.id === selectedId);
   const batchRetryCandidates = useMemo(
     () => retryableCanvasVideoLogs(scopedTasks, batchRetriedTaskIds),
@@ -158,12 +153,12 @@ export default function CanvasActivityDrawer({
   const nextAction = useMemo(() => deriveCanvasTaskNextAction(scopedTasks), [scopedTasks]);
   const summary = useMemo(
     () => ({
-      total: scopedTasks.length,
-      pending: scopedTasks.filter((log) => generationLogDisplayStatus(log) === "pending").length,
-      success: scopedTasks.filter((log) => log.status === "success").length,
-      error: scopedTasks.filter((log) => generationLogDisplayStatus(log) === "error").length,
+      total: matchingTasks.length,
+      pending: matchingTasks.filter((log) => generationLogDisplayStatus(log) === "pending").length,
+      success: matchingTasks.filter((log) => generationLogDisplayStatus(log) === "success").length,
+      error: matchingTasks.filter((log) => generationLogDisplayStatus(log) === "error").length,
     }),
-    [scopedTasks],
+    [matchingTasks],
   );
   const progress = useMemo(() => deriveCanvasProjectProgress({
     document: canvasDocument,
@@ -369,6 +364,7 @@ export default function CanvasActivityDrawer({
               const displayStatus = generationLogDisplayStatus(log);
               const resultUnconfirmed = displayStatus === "pending" && log.errorCode === "provider_result_unconfirmed";
               const needsRecordCheck = kind === "image" && resultUnconfirmed;
+              const canPreserveAudio = canPreserveCanvasAudioDraft(log);
               const activityTask = activityTaskFromGenerationLog(log);
               const lineage = canvasLineageForTask(canvasDocument, activityTask.sourceId || log.id);
               const nodeLabel = (nodeId: string) => {
@@ -403,11 +399,11 @@ export default function CanvasActivityDrawer({
                 <div className="canvas-task-log-status">{resultUnconfirmed ? "结果待确认" : generationLogStatusLabel(log.status)}</div>
                 <div className="canvas-task-log-main"><strong>{log.prompt || "未填写提示词"}</strong><small>{log.presetName ? `预设：${log.presetName} · ` : ""}{log.source === "agent" ? "Agent" : "画布生成"} · {log.modelName || "自动选择模型"} · {log.providerName || "等待服务商响应"}</small>{displayStatus === "pending" && <small className="pending-note">{resultUnconfirmed ? kind === "image" ? "服务商可能已接收，结果待核对；不会重复提交" : "服务商可能已接收，请先检查音频素材和生成记录，再决定是否重试" : "任务正在后台生成，可继续使用画布"}</small>}{log.error && !resultUnconfirmed && <small className="error-note">{log.error}</small>}</div>
                 <div className="canvas-task-log-meta"><span className="canvas-task-log-meta-count">{kind === "llm" ? `${log.llmCallCount || 0} 次调用` : kind === "video" ? `${urls.length || (log.status === "pending" ? 1 : 0)} 段视频` : kind === "audio" ? "1 条音频" : `${log.status === "pending" ? log.count || 1 : log.imageCount || urls.length} 张`}</span><span className="canvas-task-log-meta-duration">{generationLogDuration(log)}</span><span className="canvas-task-log-meta-size">{kind === "llm" ? `${log.task || "普通对话"} · ${log.responseChars || 0} 字响应 · 联网 ${log.webSearchStatus || "未检索"}` : kind === "video" ? `${log.operation === "edit" ? "编辑" : log.operation === "extend" ? "扩展" : "生成"} · ${log.resolution || "自动"}` : kind === "audio" ? `${log.modelName || "本机语音"} · 配音` : `${log.outputSize || "自动尺寸"} · ${log.aspectRatio || "自动比例"}`}</span><time>{new Date(log.createdAt).toLocaleString("zh-CN", { hour12: false })}</time></div>
-                <div className="canvas-task-log-actions"><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId((value) => value === log.id ? null : log.id); }}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>{needsRecordCheck && <button type="button" disabled={checkingTaskId === log.id} title="只读取原任务记录并回填已确认结果，不会重新提交。" onClick={(event) => { event.stopPropagation(); setCheckingTaskId(log.id); void onCheckTaskRecord(log).catch((error) => onNotify(error instanceof Error ? error.message : "核对任务记录失败", "error")).finally(() => setCheckingTaskId((current) => current === log.id ? null : current)); }}>{checkingTaskId === log.id ? "正在核对…" : "核对任务记录"}</button>}{canContinueTask && <button type="button" title="沿用当前结果的参数和参考素材创建下一条分支。" onClick={(event) => { event.stopPropagation(); onContinueTask(log); }}>继续创作</button>}{canRetryTask && <button type="button" disabled={batchRetryConfirm !== null || batchRetryRunning || retryingTaskId === log.id} title="保留原任务记录，并按原参数创建一条新任务。" onClick={(event) => { event.stopPropagation(); setRetryingTaskId(log.id); void onRetryTask(log).catch((error) => onNotify(error instanceof Error ? error.message : "重试任务失败", "error")).finally(() => setRetryingTaskId((current) => current === log.id ? null : current)); }}>{retryingTaskId === log.id ? "正在重试…" : "重试任务"}</button>}{canStopTask && <button type="button" disabled={cancellingTaskId === log.id} title={kind === "video" ? "停止本地视频任务跟踪；服务商可能仍在生成或计费。" : "停止等待图片结果；服务商若已受理，仍可能继续生成或计费。"} onClick={(event) => { event.stopPropagation(); setCancellingTaskId(log.id); void onCancelTask(log).catch((error) => onNotify(error instanceof Error ? error.message : "停止任务失败", "error")).finally(() => setCancellingTaskId((current) => current === log.id ? null : current)); }}>{cancellingTaskId === log.id ? "正在停止…" : kind === "video" ? "停止跟踪" : "停止等待"}</button>}{canRestoreTaskContext && <button type="button" onClick={(event) => { event.stopPropagation(); onRestoreTaskContext(log); }}>恢复上下文</button>}{kind !== "llm" && <button type="button" onClick={(event) => { event.stopPropagation(); const openMedia = Boolean(urls.length) || canOpenTaskMedia; rememberScrollBeforeMediaOpen(openMedia); onFocusTask(log, openMedia); }}>{Boolean(urls.length) || canOpenTaskMedia ? "打开结果" : "定位节点"}</button>}</div>
+                <div className="canvas-task-log-actions"><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId((value) => value === log.id ? null : log.id); }}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>{needsRecordCheck && <button type="button" disabled={checkingTaskId === log.id} title="只读取原任务记录并回填已确认结果，不会重新提交。" onClick={(event) => { event.stopPropagation(); setCheckingTaskId(log.id); void onCheckTaskRecord(log).catch((error) => onNotify(error instanceof Error ? error.message : "核对任务记录失败", "error")).finally(() => setCheckingTaskId((current) => current === log.id ? null : current)); }}>{checkingTaskId === log.id ? "正在核对…" : "核对任务记录"}</button>}{canPreserveAudio && <button type="button" title="只保留本地可编辑草稿，不会查询、重试或重新提交原配音请求。" onClick={(event) => { event.stopPropagation(); onPreserveAudioDraft(log); }}>保留配音草稿</button>}{canContinueTask && <button type="button" title="沿用当前结果的参数和参考素材创建下一条分支。" onClick={(event) => { event.stopPropagation(); onContinueTask(log); }}>继续创作</button>}{canRetryTask && <button type="button" disabled={batchRetryConfirm !== null || batchRetryRunning || retryingTaskId === log.id} title="保留原任务记录，并按原参数创建一条新任务。" onClick={(event) => { event.stopPropagation(); setRetryingTaskId(log.id); void onRetryTask(log).catch((error) => onNotify(error instanceof Error ? error.message : "重试任务失败", "error")).finally(() => setRetryingTaskId((current) => current === log.id ? null : current)); }}>{retryingTaskId === log.id ? "正在重试…" : "重试任务"}</button>}{canStopTask && <button type="button" disabled={cancellingTaskId === log.id} title={kind === "video" ? "停止本地视频任务跟踪；服务商可能仍在生成或计费。" : "停止等待图片结果；服务商若已受理，仍可能继续生成或计费。"} onClick={(event) => { event.stopPropagation(); setCancellingTaskId(log.id); void onCancelTask(log).catch((error) => onNotify(error instanceof Error ? error.message : "停止任务失败", "error")).finally(() => setCancellingTaskId((current) => current === log.id ? null : current)); }}>{cancellingTaskId === log.id ? "正在停止…" : kind === "video" ? "停止跟踪" : "停止等待"}</button>}{canRestoreTaskContext && <button type="button" onClick={(event) => { event.stopPropagation(); onRestoreTaskContext(log); }}>恢复上下文</button>}{kind !== "llm" && <button type="button" onClick={(event) => { event.stopPropagation(); const openMedia = Boolean(urls.length) || canOpenTaskMedia; rememberScrollBeforeMediaOpen(openMedia); onFocusTask(log, openMedia); }}>{Boolean(urls.length) || canOpenTaskMedia ? "打开结果" : "定位节点"}</button>}</div>
                 {selectedId === log.id && <div className="canvas-task-log-detail"><div><b>任务详情</b><small>{log.id}</small></div><p>{log.prompt || "未填写提示词"}</p>{kind === "llm" && <small>模型调用：{log.llmCallCount || 0} 次 · 响应：{log.responseChars || 0} 字 · 联网：{log.webSearchStatus || "未检索"}</small>}{log.references?.length ? <small>参考图：{log.references.map((reference) => reference.name || "参考素材").join("、")}</small> : null}{log.providerTaskId && <small>服务商任务：{log.providerTaskId}</small>}{log.error && <strong className="error-note">失败原因：{log.error}</strong>}</div>}
                 </article>;
             })}
-          </div> : <div className="canvas-side-empty"><span>▱</span><b>{scopedTasks.length ? "没有符合条件的任务" : projectOnly ? "当前项目还没有任务" : "还没有生成任务"}</b><small>{scopedTasks.length ? "调整状态、媒体类型或搜索条件。" : projectOnly ? "切换到“全部项目”可查看其它项目的历史任务。" : "从画布生成图片、视频或 Agent 结果后会出现在这里。"}</small></div>}
+          </div> : <div className="canvas-side-empty"><span>▱</span><b>{scopedTasks.length ? "没有符合条件的任务" : projectOnly ? "当前项目还没有任务" : "还没有生成任务"}</b><small>{scopedTasks.length ? "当前筛选针对生成任务记录；画布中的全部素材请从顶部“资产”面板查看。" : projectOnly ? "切换到“全部项目”可查看其它项目的历史任务。" : "从画布生成图片、视频或 Agent 结果后会出现在这里。"}</small></div>}
         </>
       ) : (
         <>

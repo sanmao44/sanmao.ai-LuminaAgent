@@ -9,6 +9,37 @@
 .canvas-task-log-panel > .canvas-side-panel-body {
   flex: 1 1 0;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.canvas-task-log-panel .canvas-log-tabs {
+  position: sticky;
+  z-index: 8;
+  top: 0;
+  margin: -14px -14px 0;
+  padding: 14px 14px 4px;
+  border-radius: 10px 10px 0 0;
+  background: var(--panel);
+}
+
+.canvas-task-log-panel .canvas-log-summary-grid {
+  position: sticky;
+  z-index: 7;
+  top: 60px;
+  margin: 0 -14px;
+  padding: 4px 14px;
+  background: var(--panel);
+}
+
+.canvas-task-log-panel .canvas-log-toolbar {
+  position: sticky;
+  z-index: 6;
+  top: 112px;
+  margin: 0 -14px;
+  padding: 4px 14px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
 }
 
 .canvas-task-next-action{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0 8px;padding:10px 11px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent-soft) 34%,var(--panel-2));color:var(--text)}

@@ -12170,7 +12170,9 @@ export default function SuperCanvas() {
           setSelectedGroupId(null);
           setExpandedEditorId(node.id);
           setActivePanel(null);
-          notify("已恢复配音文本到音频节点，请检查文本后重新生成。", "ok");
+          notify(log.errorCode === "provider_result_unconfirmed"
+            ? "已保留配音草稿；原请求结果仍待确认，不会自动重试。"
+            : "已恢复配音文本到音频节点，请检查文本后重新生成。", "ok");
           return;
         }
         const seed = screenToWorld(stageSize.width / 2, stageSize.height / 2);
@@ -12182,7 +12184,9 @@ export default function SuperCanvas() {
         setSelectedGroupId(null);
         setExpandedEditorId(positionedDraftNode.id);
         setActivePanel(null);
-        notify("已创建配音草稿并恢复原文、音色和模型，请检查后手动生成。", "ok");
+        notify(log.errorCode === "provider_result_unconfirmed"
+          ? "已保留配音草稿；原请求结果仍待确认，不会自动重试。"
+          : "已创建配音草稿并恢复原文、音色和模型，请检查后手动生成。", "ok");
         return;
       }
       const node = canvasNodeForGenerationLog(canvasCoreRef.current.document(), log);
@@ -14612,6 +14616,7 @@ export default function SuperCanvas() {
         onFocusTask={focusGenerationLog}
         onFocusNode={focusLogNode}
         onRestoreTaskContext={restoreGenerationLogContext}
+        onPreserveAudioDraft={restoreGenerationLogContext}
         onCheckTaskRecord={checkCanvasTaskRecord}
         onRetryTask={retryGenerationLog}
         onBatchRetryVideoTasks={retryVideoGenerationLogsInBatch}

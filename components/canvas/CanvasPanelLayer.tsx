@@ -44,6 +44,7 @@ export type CanvasPanelLayerProps = {
   onFocusTask: (log: GenerationLog, openMedia?: boolean) => void;
   onFocusNode: (nodeId: string, openMedia?: boolean) => void;
   onRestoreTaskContext: (log: GenerationLog) => void;
+  onPreserveAudioDraft: (log: GenerationLog) => void;
   onCheckTaskRecord: (log: GenerationLog) => Promise<void>;
   onRetryTask: (log: GenerationLog) => Promise<void>;
   onBatchRetryVideoTasks: (
@@ -109,6 +110,7 @@ export default function CanvasPanelLayer({
   onFocusTask,
   onFocusNode,
   onRestoreTaskContext,
+  onPreserveAudioDraft,
   onCheckTaskRecord,
   onRetryTask,
   onBatchRetryVideoTasks,
@@ -168,6 +170,7 @@ export default function CanvasPanelLayer({
         onFocusTask={onFocusTask}
         onFocusNode={onFocusNode}
         onRestoreTaskContext={onRestoreTaskContext}
+        onPreserveAudioDraft={onPreserveAudioDraft}
         onCheckTaskRecord={onCheckTaskRecord}
         onRetryTask={onRetryTask}
         onBatchRetryVideoTasks={onBatchRetryVideoTasks}

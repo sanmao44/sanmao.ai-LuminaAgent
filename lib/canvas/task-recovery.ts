@@ -16,6 +16,10 @@ export function canvasNodeForGenerationLog(document: CanvasDocument, log: Pick<G
   const taskId = String(log.taskId || log.id || '');
   const taskNode = document.nodes.find((node) => canvasNodeHasTask(node, taskId));
   if (taskNode) return taskNode;
+  const recoveryNode = document.nodes.find((node) =>
+    node.type === 'media' && node.data.kind === 'audio' && node.data.recoveryTaskId === taskId,
+  );
+  if (recoveryNode) return recoveryNode;
 
   const variantNode = document.nodes.find((node) =>
     node.type === 'generator' && node.data.variantStates?.some((state) =>

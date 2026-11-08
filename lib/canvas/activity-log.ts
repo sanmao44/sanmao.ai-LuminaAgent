@@ -68,6 +68,30 @@ export function generationLogKind(log: GenerationLog): CanvasGenerationLogKind {
   return "image";
 }
 
+export function filterCanvasGenerationLogs(
+  logs: GenerationLog[],
+  filters: {
+    status?: "all" | GenerationLog["status"] | "recoverable";
+    media?: "all" | CanvasGenerationLogKind;
+    query?: string;
+    recoverableTaskIds?: ReadonlySet<string>;
+  },
+) {
+  const normalized = filters.query?.trim().toLowerCase() || "";
+  return logs.filter((log) => {
+    const matchesStatus = !filters.status || filters.status === "all"
+      || (filters.status === "recoverable"
+        ? filters.recoverableTaskIds?.has(log.id) === true
+        : generationLogDisplayStatus(log) === filters.status);
+    const matchesMedia = !filters.media || filters.media === "all" || generationLogKind(log) === filters.media;
+    const matchesQuery = !normalized
+      || `${log.prompt} ${log.presetName || ""} ${log.modelName || ""} ${log.providerName || ""}`
+        .toLowerCase()
+        .includes(normalized);
+    return matchesStatus && matchesMedia && matchesQuery;
+  });
+}
+
 export function generationLogKindLabel(log: GenerationLog) {
   const kind = generationLogKind(log);
   return kind === "llm" ? "LLM" : kind === "video" ? "视频" : kind === "audio" ? "音频" : "图片";

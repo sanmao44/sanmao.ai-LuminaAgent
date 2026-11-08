@@ -390,6 +390,8 @@ export type CanvasNodeData = {
   /** Timestamp for the currently active generation, used by the canvas timer. */
   processingStartedAt?: number;
   jobId?: string;
+  /** Local recovery draft origin; it is not an active provider task. */
+  recoveryTaskId?: string;
   text?: string;
   /** Original Agent request kept alongside the visible response for reruns/audit. */
   agentPrompt?: string;

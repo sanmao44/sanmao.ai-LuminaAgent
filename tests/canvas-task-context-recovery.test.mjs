@@ -4,7 +4,7 @@ import test from 'node:test';
 import { createTsRequire } from './ts-require.mjs';
 
 const load = createTsRequire(path.join(process.cwd(), 'lib'));
-const { canRestoreCanvasTaskContext, canvasAudioGenerationRecoveryDraft, canvasImageGenerationRecoveryDraft, createCanvasAudioRecoveryDraftNode, restorableCanvasTaskLogs } = load('./canvas/task-context-recovery');
+const { canPreserveCanvasAudioDraft, canRestoreCanvasTaskContext, canvasAudioGenerationRecoveryDraft, canvasImageGenerationRecoveryDraft, createCanvasAudioRecoveryDraftNode, restorableCanvasTaskLogs } = load('./canvas/task-context-recovery');
 
 const defaults = {
   kind: 'image', model: 'default-model', aspect: '1:1', customAspectWidth: 16,
@@ -61,6 +61,12 @@ test('does not offer context restoration while a provider result is unconfirmed'
   assert.equal(canRestoreCanvasTaskContext({ mode: 'llm', status: 'error' }), false);
 });
 
+test('offers local audio draft preservation for an unconfirmed provider result', () => {
+  assert.equal(canPreserveCanvasAudioDraft({ mode: 'audio', errorCode: 'provider_result_unconfirmed' }), true);
+  assert.equal(canPreserveCanvasAudioDraft({ mode: 'generate', mediaKind: 'image', errorCode: 'provider_result_unconfirmed' }), false);
+  assert.equal(canPreserveCanvasAudioDraft({ mode: 'audio', errorCode: 'provider_rejected' }), false);
+});
+
 test('restores failed audio text, requested voice, and model without submitting a new task', () => {
   const draft = canvasAudioGenerationRecoveryDraft({
     prompt: '恢复这段旁白',
@@ -106,6 +112,8 @@ test('keeps automatic model preference when restoring a new audio failure', () =
 
 test('creates an editable audio recovery node without a generated result or task', () => {
   const node = createCanvasAudioRecoveryDraftNode({
+    id: 'audio-log-1',
+    taskId: 'audio-task-1',
     prompt: '恢复这段旁白',
     createdAt: '2026-11-08T10:00:00.000Z',
     requestedModelId: 'speech-model-a',
@@ -123,6 +131,7 @@ test('creates an editable audio recovery node without a generated result or task
   assert.equal(node.data.speechDraft.modelId, 'speech-model-a');
   assert.equal(node.data.speechGeneration, undefined);
   assert.equal(node.data.jobId, undefined);
+  assert.equal(node.data.recoveryTaskId, 'audio-task-1');
 });
 
 test('filters the recovery queue to explicit image, video, and audio failures', () => {
