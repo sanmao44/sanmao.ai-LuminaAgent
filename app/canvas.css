@@ -666,6 +666,26 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-home-label{display:inline!important;color:var(--accent-text);line-height:1}
 @media(max-width:720px){.canvas-home-button{display:inline-flex!important;width:32px;min-width:32px;height:32px;padding:0;gap:0}.canvas-home-label{display:none!important}.canvas-home-icon{width:22px;height:22px}.canvas-brand{flex:0 0 184px;min-width:184px}.canvas-brand small.canvas-brand-workspace{display:flex;max-width:none}.canvas-brand-chevron{width:32px;height:32px}.canvas-brand-chevron small,.canvas-brand-chevron i{display:block}.canvas-brand-project-name{max-width:54px}}
 
+/* Keep mobile canvas tools visible as labeled controls instead of hiding them in an unmarked horizontal scroller. */
+@media(max-width:720px){
+  .canvas-topbar-main{width:calc(100% - 16px);max-width:1360px;height:auto;min-height:52px;flex-wrap:wrap;justify-content:center;overflow:visible;gap:4px}
+  .canvas-topbar-main::-webkit-scrollbar{display:none}
+  .canvas-topbar-spacer,.canvas-save-state,.canvas-workspace-sync-state{display:none}
+  .canvas-topbar .canvas-separator{display:none}
+  .canvas-topbar .canvas-icon-button{display:inline-grid;width:32px;height:32px;flex:none}
+  .canvas-topbar .canvas-soft-button{display:inline-flex;width:auto;min-width:32px;height:32px;padding:0 8px;font-size:9px}
+  .canvas-topbar .canvas-soft-button::before{content:none}
+  .canvas-topbar .canvas-shortcuts-button{display:inline-flex}
+  .canvas-home-button{display:inline-flex!important;min-width:32px;width:32px;height:32px;padding:0;flex:none}
+  .canvas-home-button::before{content:none}
+}
+@media(max-width:420px){
+  .canvas-topbar-main{gap:3px;padding:5px;border-radius:15px}
+  .canvas-brand{flex:0 1 168px;min-width:144px}
+  .canvas-topbar .canvas-icon-button{width:30px;height:30px}
+  .canvas-topbar .canvas-soft-button{height:30px;padding-inline:6px;font-size:8px}
+}
+
 /* Final overrides for the expanded reuse composer and shared viewer. */
 .canvas-deck:has(.canvas-reference-draft-strip){width:min(1320px,calc(100% - 160px));min-width:0}
 .canvas-deck:has(.canvas-reference-draft-strip) .canvas-deck-main{align-items:stretch}
@@ -836,6 +856,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-file-actions button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
 .canvas-agent-dock-file-actions button:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:1px}
 .canvas-agent-dock-message.is-streaming p::after{content:"▍";margin-left:2px;color:var(--accent-text);animation:canvas-agent-dock-caret 1.05s steps(2,end) infinite}
+.canvas-agent-dock-progress{color:var(--accent-text);font-size:9px;line-height:1.4}
 @keyframes canvas-agent-dock-caret{0%,100%{opacity:1}50%{opacity:0}}
 .canvas-agent-dock-message p{margin:0;white-space:pre-wrap;word-break:break-word;color:var(--text-2);font-size:10px;line-height:1.55}
 .canvas-agent-dock-message.user p{color:var(--text)}

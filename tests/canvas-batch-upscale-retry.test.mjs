@@ -8,6 +8,7 @@ const {
   retryCanvasUpscaleLogs,
   retryableCanvasUpscaleLogs,
 } = createTsRequire(process.cwd())('./lib/canvas/batch-upscale-retry');
+const { filterCanvasGenerationLogs } = createTsRequire(process.cwd())('./lib/canvas/activity-log');
 
 const log = (id, overrides = {}) => ({
   id,
@@ -49,6 +50,18 @@ test('previously submitted upscale tasks do not consume the batch limit', () => 
     retryableCanvasUpscaleLogs(candidates, alreadyRetried).map(({ id }) => id),
     ['item-8', 'item-9'],
   );
+});
+
+test('batch retry candidates stay within the visible media, status, and search filters', () => {
+  const logs = [
+    log('visible-upscale', { prompt: 'portrait detail' }),
+    log('hidden-search-upscale', { prompt: 'landscape detail' }),
+    log('hidden-status-upscale', { prompt: 'portrait detail', status: 'success' }),
+    log('hidden-media-video', { prompt: 'portrait detail', mode: 'video' }),
+  ];
+  const visible = filterCanvasGenerationLogs(logs, { media: 'image', status: 'error', query: 'portrait' });
+
+  assert.deepEqual(retryableCanvasUpscaleLogs(visible).map(({ id }) => id), ['visible-upscale']);
 });
 
 test('超分批量执行最多八项、并发两项，并逐项报告失败', async () => {

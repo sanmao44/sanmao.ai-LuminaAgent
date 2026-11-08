@@ -688,6 +688,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     ) => {
       const release = releaseRuntimeRequest;
       const response = createAgentStream(upstream, { ...metadata, ...oneTakeResponseFields, deliverable: requestedDeliverable }, requestController.signal, async (result) => {
+        await finishAgentRun(agentRunId);
         await settleLlmLog?.(result);
         await release();
       });
@@ -2630,9 +2631,8 @@ const auditMcpCall = (
     const cancelled = requestController.signal.aborted || (error instanceof Error && error.message === 'AGENT_CANCELLED');
     return applicationJson({ error: cancelled ? '本轮 Agent 已停止。' : describeProviderFailure(error), cancelled }, { status: cancelled ? 499 : 502 });
   } finally {
-    /* 主管线已经交出响应：正文开始流式返回，进度轮询到此为止。 */
-    await finishAgentRun(agentRunId);
     if (!streamOwnsRuntimeRequest) {
+      await finishAgentRun(agentRunId);
       if (!preserveLlmLogPending && !llmFailure) await settleLlmLog?.({ status: 'success', responseChars: llmResponseChars });
       await releaseRuntimeRequest();
     }

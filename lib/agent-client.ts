@@ -296,7 +296,7 @@ export async function readAgentProgress(
 /**
  * 按 runId 轮询长任务进度：主管线在工具轮里写快照（app/api/agent/progress），前端在这里读。
  *
- * - 正文开始流式返回（isSettled）、用户停止、主管线收尾，轮询都会自己停；
+ * - 用户停止、完成快照（done）或达到轮询上限时，轮询会结束；
  * - 同一步骤超过 3 秒没变就带上秒表：模型单次思考可能很久，秒表让用户看到确实在往前走。
  *
  * 返回手动停止的函数；读进度失败只是没有进度，不会影响这一轮对话。
@@ -305,7 +305,7 @@ export function pollAgentProgress(
   runId: string,
   options: {
     signal?: AbortSignal;
-    /** 已经拿到正文（或已收尾）时返回 true，轮询停止。 */
+    /** 调用方确认本轮已经结束时返回 true，轮询停止。 */
     isSettled?: () => boolean;
     onProgress: (progress: { stage: AgentProgressStage; message: string }) => void;
     intervalMs?: number;

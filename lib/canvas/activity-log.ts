@@ -17,6 +17,39 @@ export type CanvasActivityLog = {
 
 export type CanvasActivityTarget = Pick<CanvasActivityLog, "taskId" | "nodeId">;
 
+export type CanvasActivityEmptyState = {
+  title: string;
+  detail: string;
+  taskScope: "project" | "all" | null;
+};
+
+export function deriveCanvasActivityEmptyState(
+  scopedTaskCount: number,
+  totalTaskCount: number,
+): CanvasActivityEmptyState {
+  if (scopedTaskCount > 0) {
+    return {
+      title: "本次会话暂无独立画布操作",
+      detail: `当前项目有 ${scopedTaskCount} 条创作任务记录，可在任务视图查看结果与恢复操作。`,
+      taskScope: "project",
+    };
+  }
+
+  if (totalTaskCount > 0) {
+    return {
+      title: "本项目暂无画布操作记录",
+      detail: `其他项目有 ${totalTaskCount} 条创作任务记录，可切换范围查看。`,
+      taskScope: "all",
+    };
+  }
+
+  return {
+    title: "暂无活动记录",
+    detail: "生成历史会显示在任务视图；导入素材或整理画布后的操作会记录在这里。",
+    taskScope: null,
+  };
+}
+
 export function canvasActivityTarget(log: Pick<CanvasActivityLog, "taskId" | "nodeId">): CanvasActivityTarget | null {
   const taskId = String(log.taskId || "").trim();
   const nodeId = String(log.nodeId || "").trim();

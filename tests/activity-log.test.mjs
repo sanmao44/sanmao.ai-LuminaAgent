@@ -38,6 +38,30 @@ test("activity navigation reports no target when the record is stale", () => {
   );
 });
 
+test("activity empty state links to current project task history when available", () => {
+  assert.deepEqual(activityLog.deriveCanvasActivityEmptyState(3, 8), {
+    title: "本次会话暂无独立画布操作",
+    detail: "当前项目有 3 条创作任务记录，可在任务视图查看结果与恢复操作。",
+    taskScope: "project",
+  });
+});
+
+test("activity empty state offers all-project task history when current scope is empty", () => {
+  assert.deepEqual(activityLog.deriveCanvasActivityEmptyState(0, 4), {
+    title: "本项目暂无画布操作记录",
+    detail: "其他项目有 4 条创作任务记录，可切换范围查看。",
+    taskScope: "all",
+  });
+});
+
+test("activity empty state stays informational when there is no task history", () => {
+  assert.deepEqual(activityLog.deriveCanvasActivityEmptyState(0, 0), {
+    title: "暂无活动记录",
+    detail: "生成历史会显示在任务视图；导入素材或整理画布后的操作会记录在这里。",
+    taskScope: null,
+  });
+});
+
 test("unconfirmed provider receipts display as pending instead of failed", () => {
   assert.equal(activityLog.generationLogDisplayStatus({ status: "error", errorCode: "provider_result_unconfirmed" }), "pending");
   assert.equal(activityLog.generationLogDisplayStatus({ status: "error", errorCode: "provider_rejected" }), "error");

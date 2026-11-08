@@ -8,6 +8,7 @@ const {
   retryCanvasVideoLogs,
   retryableCanvasVideoLogs,
 } = createTsRequire(process.cwd())('./lib/canvas/batch-video-retry');
+const { filterCanvasGenerationLogs } = createTsRequire(process.cwd())('./lib/canvas/activity-log');
 
 const log = (id, overrides = {}) => ({
   id,
@@ -32,6 +33,18 @@ test('batch candidates include only explicit failed video tasks and de-duplicate
   assert.equal(canRetryCanvasVideoLog(logs[2]), false);
   assert.deepEqual(retryableCanvasVideoLogs(logs).map(({ id }) => id), ['video-1', 'video-2']);
   assert.equal(logs.length, 7);
+});
+
+test('batch candidates stay within the visible media, status, and search filters', () => {
+  const logs = [
+    log('visible-video', { prompt: 'night highway' }),
+    log('hidden-search-video', { prompt: 'day highway' }),
+    log('hidden-status-video', { prompt: 'night road', status: 'success' }),
+    log('hidden-media-image', { prompt: 'night highway', mediaKind: 'image', mode: 'generate' }),
+  ];
+  const visible = filterCanvasGenerationLogs(logs, { media: 'video', status: 'error', query: 'night' });
+
+  assert.deepEqual(retryableCanvasVideoLogs(visible).map(({ id }) => id), ['visible-video']);
 });
 
 test('previously submitted tasks are excluded before applying the batch limit', () => {

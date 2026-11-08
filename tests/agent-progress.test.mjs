@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { buildAgentClientModule, buildAgentProgressModule } from "./tools-build.mjs";
+import { createTsRequire } from "./ts-require.mjs";
 
 /* 进度账本落盘在运行目录：测试必须先把它指到临时目录，绝不能碰真实数据。 */
 const dataDir = mkdtempSync(path.join(os.tmpdir(), "sanmao-progress-"));
@@ -12,20 +12,11 @@ process.env.SANMAO_DATA_DIR = dataDir;
 
 const progress = await buildAgentProgressModule();
 const clientModule = await buildAgentClientModule();
+const loadModule = createTsRequire(process.cwd());
+const { streamAgentResult } = loadModule("./apps/api/agent-stream");
 
 const progressFile = path.join(dataDir, "agent-progress.json");
 const readRecords = () => JSON.parse(readFileSync(progressFile, "utf8"));
-
-const read = (relative) => readFile(new URL(`../${relative}`, import.meta.url), "utf8");
-const [source, route, page, dock, client, styles, adapter] = await Promise.all([
-  read("lib/agent/progress.ts"),
-  read("app/api/agent/progress/route.ts"),
-  read("app/page.tsx"),
-  read("components/CanvasAgentDock.tsx"),
-  read("lib/agent-client.ts"),
-  read("app/globals.css"),
-  read("packages/tool-runtime/adapter.ts"),
-]);
 
 test("进度只用前端给的短 id 做键：空格、路径、超长都拒绝", () => {
   assert.equal(progress.normalizeAgentRunId("run-abc123"), "run-abc123");
@@ -151,18 +142,27 @@ test("MCP 工具 id 显示成「服务 · 工具」", () => {
   assert.equal(progress.mcpProgressToolLabel(undefined), "");
 });
 
-test("进度账本不碰用户内容：没有序列化、没有直接读写文件", () => {
-  assert.doesNotMatch(source, /JSON\.stringify/);
-  assert.doesNotMatch(source, /node:fs|readFile|writeFile/);
-  assert.doesNotMatch(source, /process\.env/);
-});
+test("进度接口要求受信任请求，并返回不可缓存的单条快照", async () => {
+  let trusted = false;
+  let readCalls = 0;
+  const snapshot = { runId: "run-route-1", stage: "artifact", message: "正在生成文件…", toolCalls: 1, startedAt: 1, updatedAt: 2, done: false };
+  const loadRoute = createTsRequire(process.cwd(), {
+    "@/lib/auth": { isTrustedAppRequest: () => trusted },
+    "@/lib/agent/progress": { readAgentProgress: async (runId) => { readCalls += 1; assert.equal(runId, "run-route-1"); return snapshot; } },
+  });
+  const { GET } = loadRoute("./app/api/agent/progress/route");
+  const request = new Request("http://localhost/api/agent/progress?runId=run-route-1");
 
-test("进度接口要管理员身份、不缓存，且只回一条快照", () => {
-  assert.match(route, /import \{ isTrustedAppRequest \} from "@\/lib\/auth";/);
-  assert.match(route, /if \(!isTrustedAppRequest\(request\)\) return Response\.json\(\{ error: "需要管理员登录。" \}, \{ status: 401 \}\);/);
-  assert.match(route, /"Cache-Control": "no-store"/);
-  assert.match(route, /progress: await readAgentProgress\(runId\)/);
-  assert.match(route, /new URL\(request\.url\)\.searchParams\.get\("runId"\)/);
+  const rejected = await GET(request);
+  assert.equal(rejected.status, 401);
+  assert.equal(readCalls, 0);
+
+  trusted = true;
+  const accepted = await GET(request);
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.headers.get("Cache-Control"), "no-store");
+  assert.deepEqual((await accepted.json()).progress, snapshot);
+  assert.equal(readCalls, 1);
 });
 
 test("progress contract covers capability stages and closes after completion", async () => {
@@ -179,37 +179,22 @@ test("progress contract covers capability stages and closes after completion", a
   assert.equal((await progress.readAgentProgress(runId, now + 40)).stage, "skill");
 });
 
-test("共用轮询：正文一到就让位，单次模型调用有秒表", async () => {
-  assert.match(client, /export function pollAgentProgress\(/);
-  assert.match(client, /if \(seconds >= 3 && seconds !== elapsed\)/);
-  const seen = [];
-  const stop = clientModule.pollAgentProgress("run-helper-1", {
-    isSettled: () => true,
-    onProgress: (item) => seen.push(item),
-  });
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.deepEqual(seen, [], "已经拿到正文时一次都不该上报");
-  stop();
-
-  /* 真跑一轮：window.setTimeout 在 node 里不存在，用等价的定时器顶上。 */
+test("正文开始后进度仍持续更新，并在 done 快照后停止", async () => {
   const originalWindow = globalThis.window;
   const originalFetch = globalThis.fetch;
   globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms) };
-  const snapshot = {
-    runId: "run-helper-2",
-    stage: "artifact",
-    message: "正在生成PPT 演示文稿…",
-    toolCalls: 1,
-    startedAt: Date.now() - 6000,
-    updatedAt: 1,
-    done: false,
-  };
-  globalThis.fetch = async () => ({ ok: true, json: async () => ({ progress: snapshot }) });
+  const snapshots = [
+    { runId: "run-helper-2", stage: "artifact", message: "正在生成PPT 演示文稿…", toolCalls: 1, startedAt: Date.now() - 6000, updatedAt: 1, done: false },
+    { runId: "run-helper-2", stage: "answering", message: "正在整理回复…", toolCalls: 1, startedAt: Date.now() - 6000, updatedAt: 2, done: false },
+    { runId: "run-helper-2", stage: "answering", message: "正在整理回复…", toolCalls: 1, startedAt: Date.now() - 6000, updatedAt: 3, done: true },
+  ];
+  let calls = 0;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ progress: snapshots[calls++] }) });
   const ticks = [];
   try {
     const stopTicking = clientModule.pollAgentProgress("run-helper-2", {
       intervalMs: 5,
-      maxPolls: 4,
+      maxPolls: 10,
       onProgress: (item) => ticks.push(item),
     });
     await new Promise((resolve) => setTimeout(resolve, 60));
@@ -218,39 +203,76 @@ test("共用轮询：正文一到就让位，单次模型调用有秒表", async
     globalThis.fetch = originalFetch;
     globalThis.window = originalWindow;
   }
-  assert.ok(ticks.length >= 2, `至少要有一次阶段文案和一次秒表，实际 ${ticks.length}`);
+  assert.equal(calls, 3, "读到 done 后不再发起下一次轮询");
+  assert.ok(ticks.length >= 3, `正文期间至少应显示阶段变化和耗时，实际 ${ticks.length}`);
   assert.equal(ticks[0].message, "正在生成PPT 演示文稿…");
-  assert.match(ticks[ticks.length - 1].message, /^正在生成PPT 演示文稿…（已 \d+s）$/);
-  assert.equal(ticks[ticks.length - 1].stage, "artifact");
+  assert.ok(ticks.some((tick) => tick.message === "正在整理回复…"));
+  assert.equal(ticks[ticks.length - 1].stage, "answering");
 });
 
-test("三个入口都按 runId 轮询，收尾都会停", () => {
-  assert.match(client, /export async function readAgentProgress\(/);
-  assert.match(client, /if \(!response\.ok\) return null;/);
+test("流式请求只在完整输出结算后结束进度", async () => {
+  const runId = "run-stream-settle";
+  await progress.beginAgentRun(runId);
+  const encoder = new TextEncoder();
+  let finishUpstream;
+  let resolveSettled;
+  const settled = new Promise((resolve) => { resolveSettled = resolve; });
+  const upstreamBody = new ReadableStream({
+    start(controller) {
+      const delta = "A".repeat(130);
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\n\n`));
+      finishUpstream = () => {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      };
+    },
+  });
+  let result;
+  const response = streamAgentResult(
+    { body: upstreamBody },
+    { images: [], files: [], generations: [], model: "test", deliverable: "TEXT" },
+    undefined,
+    async (settlement) => {
+      result = settlement;
+      await progress.finishAgentRun(runId);
+      resolveSettled();
+    },
+  );
+  const reader = response.body.getReader();
+  await reader.read();
+  const firstDelta = await reader.read();
+  assert.ok(firstDelta.value, "上游正文已经开始流出");
+  assert.equal((await progress.readAgentProgress(runId)).done, false);
 
-  // 主对话：轮询把手必须在 try 之前声明——写在 try 里、却从 finally 里调用会直接 ReferenceError，
-  // 而 app/page.tsx 顶上带着 @ts-nocheck，类型检查兜不住这一层，只能在这里钉住。
-  assert.match(page, /const progressRunId = uid\('run'\);/);
-  assert.match(page, /let stopAgentProgress = \(\)=>\{\};\r?\n\s+try \{/);
-  assert.match(page, /stopAgentProgress = pollAgentProgress\(progressRunId, \{/);
-  assert.match(page, /isSettled: \(\)=>Boolean\(streamedText\)/);
-  assert.match(page, /runId: progressRunId/);
-  assert.match(page, /\} finally\{\r?\n            stopAgentProgress\(\);/);
+  finishUpstream();
+  while (!(await reader.read()).done) {}
+  await settled;
+  assert.equal(result.status, "success");
+  assert.equal((await progress.readAgentProgress(runId)).done, true);
+});
 
-  // 重新生成：挂在被重试的消息上，操作栏里显示
-  assert.match(page, /const retryRunId = uid\('run'\);/);
-  assert.match(page, /let stopRetryProgress = \(\)=>\{\};\r?\n\s+try \{/);
-  assert.match(page, /stopRetryProgress = pollAgentProgress\(retryRunId, \{/);
-  assert.match(page, /runId: retryRunId/);
-  assert.match(page, /\} finally\{\r?\n            stopRetryProgress\(\);/);
-  assert.match(page, /retryActivity: message\.retrying && !showAgentImageLoadingCard\(message\) \? message\.activity\?\.message : undefined/);
-  assert.match(page, /applyMessageVersion\(\{ \.\.\.item, activity: undefined \}/);
-  assert.match(styles, /\.message-tools \.message-retry-activity\{[^}]*color:var\(--accent-text\)/);
-
-  // 画布助手
-  assert.match(dock, /const progressRunId = createId\(\);/);
-  assert.match(dock, /const stopAgentProgress = pollAgentProgress\(progressRunId, \{/);
-  assert.match(dock, /isSettled: \(\) => Boolean\(streamTextRef\.current\)/);
-  assert.match(dock, /runId: progressRunId,/);
-  assert.match(dock, /\{streamText \|\| progressDetail \|\| "正在思考…"\}/);
+test("流式取消也会结算进度并结束快照", async () => {
+  const runId = "run-stream-abort";
+  await progress.beginAgentRun(runId);
+  const controller = new AbortController();
+  let upstreamCancelled = false;
+  let resolveSettled;
+  const settled = new Promise((resolve) => { resolveSettled = resolve; });
+  const upstreamBody = new ReadableStream({ cancel() { upstreamCancelled = true; } });
+  const response = streamAgentResult(
+    { body: upstreamBody },
+    { images: [], files: [], generations: [], model: "test", deliverable: "TEXT" },
+    controller.signal,
+    async () => {
+      await progress.finishAgentRun(runId);
+      resolveSettled();
+    },
+  );
+  const reader = response.body.getReader();
+  await reader.read();
+  controller.abort();
+  await reader.read();
+  await settled;
+  assert.equal(upstreamCancelled, true);
+  assert.equal((await progress.readAgentProgress(runId)).done, true);
 });

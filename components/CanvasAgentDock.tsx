@@ -614,7 +614,7 @@ export default function CanvasAgentDock({
   const uploadingPastedImagesRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [streamText, setStreamText] = useState("");
-  /* 长任务阶段文案：主管线写快照，面板按 runId 轮询，正文开始流式返回就让位。 */
+  /* 长任务阶段文案：主管线写快照，面板按 runId 轮询到流式响应结算。 */
   const [progressDetail, setProgressDetail] = useState("");
   const [model, setModel] = useState("auto");
   const [imageModelId, setImageModelId] = useState("auto");
@@ -1299,7 +1299,6 @@ export default function CanvasAgentDock({
       }
       const stopAgentProgress = pollAgentProgress(progressRunId, {
         signal: controller.signal,
-        isSettled: () => Boolean(streamTextRef.current),
         onProgress: (progress) => setProgressDetail(progress.message),
       });
       const selectedHistory = selectCanvasAgentDockContext(memoryMessages, promptText);
@@ -2212,7 +2211,8 @@ export default function CanvasAgentDock({
         ))}
         {busy ? (
           <div className="canvas-agent-dock-message assistant is-streaming">
-            <p>{streamText || progressDetail || "正在思考…"}</p>
+            {progressDetail ? <small className="canvas-agent-dock-progress" role="status" aria-live="off">{progressDetail}</small> : null}
+            {streamText ? <p>{streamText}</p> : !progressDetail ? <p>正在思考…</p> : null}
           </div>
         ) : null}
         {!atBottom ? (

@@ -21,7 +21,7 @@ export type AgentProgressSnapshot = {
   toolCalls: number;
   startedAt: number;
   updatedAt: number;
-  /** 主管线已经交出响应（正文开始流式返回）：前端可以停止轮询。 */
+  /** 主管线已经完成流式响应结算：前端可以停止轮询。 */
   done: boolean;
 };
 
@@ -122,7 +122,7 @@ export async function reportAgentProgress(runId: unknown, patch: AgentProgressPa
   }), false);
 }
 
-/** 主管线交出响应时收尾：前端看到 done 就停止轮询，不会一直问下去。 */
+/** 响应结算后收尾：前端看到 done 就停止轮询，不会一直问下去。 */
 export async function finishAgentRun(runId: unknown, now = Date.now()): Promise<void> {
   const id = normalizeAgentRunId(runId);
   if (!id) return;
