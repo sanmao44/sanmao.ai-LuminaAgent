@@ -268,10 +268,33 @@ export default function CanvasActivityDrawer({
       className="canvas-activity-panel canvas-task-log-panel"
       bodyRef={scrollBodyRef}
     >
-      <div className="canvas-log-tabs" role="tablist" aria-label="项目工作台视图">
-        <button type="button" role="tab" aria-selected={tab === "project"} className={tab === "project" ? "active" : ""} onClick={() => setTab("project")}>进度</button>
-        <button type="button" role="tab" aria-selected={tab === "tasks"} className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>任务 <b>{summary.total}</b></button>
-        <button type="button" role="tab" aria-selected={tab === "activity"} className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>活动 <b>{activityLogs.length}</b></button>
+      <div className="canvas-log-sticky-header">
+        <div className="canvas-log-tabs" role="tablist" aria-label="项目工作台视图">
+          <button type="button" role="tab" aria-selected={tab === "project"} className={tab === "project" ? "active" : ""} onClick={() => setTab("project")}>进度</button>
+          <button type="button" role="tab" aria-selected={tab === "tasks"} className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>任务 <b>{summary.total}</b></button>
+          <button type="button" role="tab" aria-selected={tab === "activity"} className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>活动 <b>{activityLogs.length}</b></button>
+        </div>
+        {tab === "tasks" && <>
+          <div className="canvas-log-summary-grid">
+            <button type="button" className={status === "all" ? "active" : ""} onClick={() => setStatus("all")}><b>{summary.matching}</b><small>{media === "all" && !query.trim() ? "全部" : "筛选结果"}</small></button>
+            <button type="button" className={status === "pending" ? "active pending" : "pending"} onClick={() => setStatus("pending")}><b>{summary.pending}</b><small>进行中</small></button>
+            <button type="button" className={status === "success" ? "active success" : "success"} onClick={() => setStatus("success")}><b>{summary.success}</b><small>成功</small></button>
+            <button type="button" className={status === "error" ? "active error" : "error"} onClick={() => setStatus("error")}><b>{summary.error}</b><small>失败</small></button>
+          </div>
+          <div className="canvas-log-toolbar">
+            <label className="canvas-log-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索提示词、模型或服务商…" /></label>
+            <div className="canvas-log-filter-row" role="group" aria-label="任务媒体类型">
+              <button type="button" className={projectOnly ? "active" : ""} onClick={() => setProjectOnly(true)}>本项目</button>
+              <button type="button" className={!projectOnly ? "active" : ""} onClick={() => setProjectOnly(false)}>全部项目</button>
+              <button type="button" className={media === "all" ? "active" : ""} onClick={() => setMedia("all")}>全部</button>
+              <button type="button" className={media === "image" ? "active" : ""} onClick={() => setMedia("image")}>图片</button>
+              <button type="button" className={media === "video" ? "active" : ""} onClick={() => setMedia("video")}>视频</button>
+              <button type="button" className={media === "audio" ? "active" : ""} onClick={() => setMedia("audio")}>音频</button>
+              <button type="button" className={media === "llm" ? "active" : ""} onClick={() => setMedia("llm")}>LLM</button>
+              <button type="button" className="refresh" onClick={onRefresh} disabled={loading}>{loading ? "读取中…" : "↻ 刷新"}</button>
+            </div>
+          </div>
+        </>}
       </div>
       {tab === "project" ? (
         <CanvasProjectProgressPanel
@@ -330,25 +353,6 @@ export default function CanvasActivityDrawer({
               {batchRetryResult.failed.length > 0 && <ul>{batchRetryResult.failed.map(({ log, message }) => <li key={log.id}><b title={log.prompt || log.id}>{log.prompt || log.id}</b><small>{message}</small></li>)}</ul>}
             </div>}
           </section>}
-          <div className="canvas-log-summary-grid">
-            <button type="button" className={status === "all" ? "active" : ""} onClick={() => setStatus("all")}><b>{summary.matching}</b><small>{media === "all" && !query.trim() ? "全部" : "筛选结果"}</small></button>
-            <button type="button" className={status === "pending" ? "active pending" : "pending"} onClick={() => setStatus("pending")}><b>{summary.pending}</b><small>进行中</small></button>
-            <button type="button" className={status === "success" ? "active success" : "success"} onClick={() => setStatus("success")}><b>{summary.success}</b><small>成功</small></button>
-            <button type="button" className={status === "error" ? "active error" : "error"} onClick={() => setStatus("error")}><b>{summary.error}</b><small>失败</small></button>
-          </div>
-          <div className="canvas-log-toolbar">
-            <label className="canvas-log-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索提示词、模型或服务商…" /></label>
-            <div className="canvas-log-filter-row" role="group" aria-label="任务媒体类型">
-              <button type="button" className={projectOnly ? "active" : ""} onClick={() => setProjectOnly(true)}>本项目</button>
-              <button type="button" className={!projectOnly ? "active" : ""} onClick={() => setProjectOnly(false)}>全部项目</button>
-              <button type="button" className={media === "all" ? "active" : ""} onClick={() => setMedia("all")}>全部</button>
-              <button type="button" className={media === "image" ? "active" : ""} onClick={() => setMedia("image")}>图片</button>
-       <button type="button" className={media === "video" ? "active" : ""} onClick={() => setMedia("video")}>视频</button>
-              <button type="button" className={media === "audio" ? "active" : ""} onClick={() => setMedia("audio")}>音频</button>
-       <button type="button" className={media === "llm" ? "active" : ""} onClick={() => setMedia("llm")}>LLM</button>
-              <button type="button" className="refresh" onClick={onRefresh} disabled={loading}>{loading ? "读取中…" : "↻ 刷新"}</button>
-            </div>
-          </div>
           {loading && !scopedTasks.length ? <div className="canvas-side-empty"><span>◌</span><b>正在读取任务日志</b><small>与主界面服务端日志保持同步。</small></div> : filteredTasks.length ? <div className="canvas-task-log-list">
             {filteredTasks.map((log) => {
               const urls = generationLogOutputUrls(log);
