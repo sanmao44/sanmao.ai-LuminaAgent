@@ -748,7 +748,7 @@ function CanvasNodeEditorPopover({
       ref={popoverRef}
       className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${audioNode ? " is-audio-editor" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
       data-placement={position.placement}
-      data-density={document.camera.zoom < 0.35 ? "micro" : isCompact ? "compact" : "comfortable"}
+      data-density={isCompact ? "compact" : "comfortable"}
       data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
       data-prompt-expanded={promptExpanded ? "true" : "false"}
       data-node-id={node.id}

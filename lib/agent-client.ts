@@ -305,8 +305,6 @@ export function pollAgentProgress(
   runId: string,
   options: {
     signal?: AbortSignal;
-    /** 调用方确认本轮已经结束时返回 true，轮询停止。 */
-    isSettled?: () => boolean;
     onProgress: (progress: { stage: AgentProgressStage; message: string }) => void;
     intervalMs?: number;
     maxPolls?: number;
@@ -314,7 +312,6 @@ export function pollAgentProgress(
 ): () => void {
   const intervalMs = options.intervalMs ?? 900;
   const maxPolls = options.maxPolls ?? 400;
-  const settled = () => options.isSettled?.() === true;
   let stopped = false;
   let polls = 0;
   let updatedAt = 0;
@@ -328,13 +325,10 @@ export function pollAgentProgress(
   if (options.signal?.aborted) stop();
   else options.signal?.addEventListener("abort", stop, { once: true });
   const tick = async () => {
-    if (stopped || settled()) {
-      stopped = true;
-      return;
-    }
+    if (stopped) return;
     polls += 1;
     const snapshot = await readAgentProgress(runId, options.signal);
-    if (stopped || settled()) return;
+    if (stopped) return;
     if (snapshot) {
       if (snapshot.updatedAt !== updatedAt) {
         updatedAt = snapshot.updatedAt;

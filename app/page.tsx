@@ -6812,7 +6812,6 @@ export default function Page() {
             };
             stopRetryProgress = pollAgentProgress(retryRunId, {
                 signal: requestController.signal,
-                isSettled: ()=>Boolean(streamedText),
                 onProgress: (progress)=>updateRetryActivity({
                         stage: progress.stage,
                         message: progress.message
@@ -7118,13 +7117,12 @@ export default function Page() {
             let streamedText = '';
             /*
              * 长任务进度：主管线在工具轮里写快照（app/api/agent/progress），这里按 runId 轮询。
-             * 正文一开始流式返回就停：那时候用户看的是字，不该再被阶段文案顶掉。
+             * 正文与阶段提示并行显示，进度轮询会持续到本轮结算。
              * 单次模型调用可能很久，所以同一步骤超过 3 秒会带上秒表（见 lib/agent-client）。
              */
             const progressRunId = uid('run');
             stopAgentProgress = pollAgentProgress(progressRunId, {
                 signal: requestController.signal,
-                isSettled: ()=>Boolean(streamedText),
                 onProgress: (progress)=>updatePendingActivity({
                         stage: progress.stage,
                         message: progress.message

@@ -210,6 +210,47 @@ test("正文开始后进度仍持续更新，并在 done 快照后停止", async
   assert.equal(ticks[ticks.length - 1].stage, "answering");
 });
 
+test("用户取消后进度轮询停止读取快照", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms) };
+  const controller = new AbortController();
+  let calls = 0;
+  let resolveFirstProgress;
+  const firstProgress = new Promise((resolve) => { resolveFirstProgress = resolve; });
+  globalThis.fetch = async () => {
+    calls += 1;
+    return {
+      ok: true,
+      json: async () => ({
+        progress: {
+          runId: "run-cancel-poll",
+          stage: "artifact",
+          message: "正在生成文件…",
+          toolCalls: 1,
+          startedAt: Date.now(),
+          updatedAt: calls,
+          done: false,
+        },
+      }),
+    };
+  };
+  try {
+    clientModule.pollAgentProgress("run-cancel-poll", {
+      signal: controller.signal,
+      intervalMs: 5,
+      onProgress: () => resolveFirstProgress(),
+    });
+    await firstProgress;
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+  }
+  assert.equal(calls, 1);
+});
+
 test("流式请求只在完整输出结算后结束进度", async () => {
   const runId = "run-stream-settle";
   await progress.beginAgentRun(runId);

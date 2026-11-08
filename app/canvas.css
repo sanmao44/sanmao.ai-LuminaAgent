@@ -4348,3 +4348,33 @@ html:not([data-theme="light"]) .canvas-group-label-layer>.canvas-group-world-lab
 @media(max-width:1000px){
   .canvas-minimap-fit-mobile{position:absolute;z-index:var(--canvas-z-selection);right:16px;bottom:calc(var(--canvas-deck-height,0px) + 14px);display:inline-flex;min-height:40px;padding:0 11px!important;border-radius:10px!important;font-size:9px!important;font-weight:850}
 }
+
+/* The editor stays viewport-sized while the canvas zooms; preserve readable controls. */
+.canvas-node-editor-popover{font-size:12px}
+.canvas-node-editor-popover .canvas-node-editor-identity b{font-size:13px}
+.canvas-node-editor-popover .canvas-node-editor-identity small{font-size:11px}
+.canvas-node-editor-popover .canvas-node-editor-head-actions>span{font-size:10px}
+.canvas-node-editor-popover .canvas-node-editor-head button{width:36px;height:36px}
+.canvas-node-editor-popover .canvas-node-editor-prompt-label{font-size:11px}
+.canvas-node-editor-popover .canvas-node-editor-prompt-label small{font-size:10px}
+.canvas-node-editor-popover .canvas-node-editor-prompt-wrap>textarea{font-size:12px;line-height:1.55}
+.canvas-node-editor-popover .creation-field>small,
+.canvas-node-editor-popover .creation-pixel-fields small{font-size:10px}
+.canvas-node-editor-popover .creation-field .model-picker-trigger,
+.canvas-node-editor-popover .creation-field .select-menu-trigger{height:38px;min-height:38px}
+.canvas-node-editor-popover .creation-field .model-picker-trigger-copy,
+.canvas-node-editor-popover .creation-field .select-menu-trigger-copy{font-size:11px}
+.canvas-node-editor-popover .creation-pixel-fields input,
+.canvas-node-editor-popover .creation-custom-ratio input{font-size:12px}
+.canvas-node-editor-popover .creation-advanced-toggle{min-height:36px}
+.canvas-node-editor-popover .creation-advanced-toggle span{font-size:11px}
+.canvas-node-editor-popover .creation-advanced-toggle small{font-size:10px}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-chip{height:auto;min-height:36px;padding-inline:11px;font-size:11px}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-local-edit .canvas-node-editor-dock-chip-edit{height:auto;min-height:36px}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-local-edit .canvas-node-editor-dock-chip-remove{width:36px;height:36px;min-height:36px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density] .canvas-node-editor-actions>span{font-size:10px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density] .canvas-node-editor-generate{height:40px;min-height:40px;font-size:12px}
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-chips{flex-wrap:wrap}
+  .canvas-node-editor-popover .canvas-node-editor-head button{width:38px;height:38px}
+}
