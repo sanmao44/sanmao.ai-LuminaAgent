@@ -133,6 +133,7 @@ test('Claude Code tool_use is handed to SANMAO before any SDK tool handler runs'
     assert.equal(capturedOptions.env.ANTHROPIC_AUTH_TOKEN, 'local-test-key');
     assert.equal(capturedOptions.env.SANMAO_PROVIDER_TEST_SECRET, undefined);
     assert.equal(capturedOptions.tools.length, 0);
+    assert.equal(capturedOptions.maxTurns, 5);
     assert.deepEqual(capturedOptions.settingSources, []);
     assert.deepEqual(capturedOptions.allowedTools, ['mcp__sanmao__tool_0']);
     assert.equal(capturedOptions.permissionMode, 'dontAsk');
@@ -152,4 +153,38 @@ test('Claude Code tool_use is handed to SANMAO before any SDK tool handler runs'
   } finally {
     delete process.env.SANMAO_PROVIDER_TEST_SECRET;
   }
+});
+
+test('Claude Code SDK turn-limit results are returned as provider failures', async () => {
+  const schema = await compileTypeScriptModule(schemaPath);
+  const sdk = {
+    tool() { throw new Error('No tools are expected for this response.'); },
+    createSdkMcpServer() { throw new Error('No MCP server is expected for this response.'); },
+    query(params) {
+      assert.equal(params.options.maxTurns, 5);
+      return (async function* messages() {
+        yield {
+          type: 'result',
+          subtype: 'error_max_turns',
+          is_error: true,
+          errors: ['Reached maximum number of turns (5)'],
+        };
+      })();
+    },
+  };
+  const { invokeClaudeCodeProvider } = await compileTypeScriptModule(providerPath, {
+    '@anthropic-ai/claude-agent-sdk': sdk,
+    './claude-code-tool-schema': schema,
+  });
+
+  await assert.rejects(invokeClaudeCodeProvider({
+    id: 'claude-provider',
+    name: '65535-Claude',
+    type: 'openai-compatible',
+    platform: '65535',
+    baseUrl: 'https://api2-cn.65535.space/v1',
+    apiKey: 'local-test-key',
+  }, 'claude-sonnet-5-5', {
+    messages: [{ role: 'user', content: 'Generate an animated SVG file.' }],
+  }), /Reached maximum number of turns \(5\)/);
 });

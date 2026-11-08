@@ -254,6 +254,7 @@ export type AgentApplicationCompositionOptions<TRuntime extends AgentComposition
   isCancelled?: (error: unknown) => boolean;
   timeoutMs: number;
   failoverTimeoutMs: number;
+  timeoutFor?: (runtime: TRuntime, mode: 'manual' | 'failover') => number;
   idleTimeoutMs: number | null;
   timeoutError: (phase: 'initial' | 'idle', timeoutMs: number) => Error;
   orderCandidates: (candidates: readonly TRuntime[]) => readonly TRuntime[];
@@ -300,6 +301,7 @@ export function createAgentApplicationComposition<TRuntime extends AgentComposit
     isCancelled: options.isCancelled,
     timeoutMs: options.timeoutMs,
     failoverTimeoutMs: options.failoverTimeoutMs,
+    timeoutFor: options.timeoutFor,
     idleTimeoutMs: options.idleTimeoutMs,
     timeoutError: options.timeoutError,
     health: {

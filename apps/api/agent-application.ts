@@ -52,6 +52,7 @@ import type { AgentHttpInput } from '@/apps/api/agent-http-contract';
 import { applicationJson } from '@/apps/api/agent-application-contract';
 import { formatAgentCapabilitySnapshot } from '@/packages/agent-core/capability-snapshot';
 import type { YtDlpDownloadRequest } from '@/lib/yt-dlp-adapter';
+import { is65535ClaudeModelProvider } from '@/lib/providers';
 
 async function safeDiscoverMcpForRequest(discover: AgentMcpDiscovery, options: Parameters<AgentMcpDiscovery>[0]) {
   try {
@@ -66,9 +67,10 @@ async function safeDiscoverMcpForRequest(discover: AgentMcpDiscovery, options: P
 }
 
 const AGENT_AUTO_FAILOVER_TIMEOUT_MS = 40_000;
-// A manually selected model must still fail visibly instead of holding the
-// composer in a pending state for the provider's 180s transport timeout.
+// Default manually selected models still fail visibly instead of holding the
+// composer in a pending state for the provider's longer transport timeout.
 const AGENT_MODEL_CALL_TIMEOUT_MS = 60_000;
+const AGENT_CLAUDE_MODEL_CALL_TIMEOUT_MS = 180_000;
 const CINEMATIC_DIRECTOR_CANDIDATE_TIMEOUT_MS = 75_000;
 // Search is a pre-answer dependency. It must not inherit the provider's long
 // request timeout, otherwise a stalled search blocks the whole chat surface.
@@ -509,6 +511,11 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       isCancelled: isAgentRequestCancelled,
       timeoutMs: AGENT_MODEL_CALL_TIMEOUT_MS,
       failoverTimeoutMs: AGENT_AUTO_FAILOVER_TIMEOUT_MS,
+      timeoutFor: (runtime, mode) => mode === 'failover'
+        ? AGENT_AUTO_FAILOVER_TIMEOUT_MS
+        : is65535ClaudeModelProvider(runtime.provider, runtime.model.rawId)
+          ? AGENT_CLAUDE_MODEL_CALL_TIMEOUT_MS
+          : AGENT_MODEL_CALL_TIMEOUT_MS,
       // Let an established response stream finish regardless of pauses between chunks.
       idleTimeoutMs: null,
       timeoutError: (phase, durationMs) => Object.assign(new Error(phase === 'idle' ? `模型流式响应在 ${Math.round(durationMs / 1000)} 秒内没有新内容` : `模型在 ${Math.round(durationMs / 1000)} 秒内没有返回响应`), { name: 'TimeoutError', providerFailureKind: 'timeout' as const }),

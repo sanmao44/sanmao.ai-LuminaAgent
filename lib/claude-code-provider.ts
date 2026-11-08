@@ -12,6 +12,7 @@ type ClaudeResponse = {
 };
 
 const HANDOFF_ABORT = 'SANMAO_CLAUDE_TOOL_HANDOFF';
+const MAX_CLAUDE_AGENT_TURNS = 5;
 const ENVIRONMENT_KEYS = ['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA', 'ComSpec', 'PATHEXT'] as const;
 
 function childEnvironment(provider: RuntimeProvider, configDirectory: string) {
@@ -127,6 +128,7 @@ export async function invokeClaudeCodeProvider(
 
   let capturedCall: ToolCall | undefined;
   let assistantText = '';
+  let sdkFailure: string | undefined;
   const handoffHook = async (input: HookInput) => {
     if (input.hook_event_name !== 'PreToolUse') return { continue: true };
     const name = handoffTools.get(input.tool_name);
@@ -158,7 +160,7 @@ export async function invokeClaudeCodeProvider(
         systemPrompt: { type: 'custom', prompt: system || 'You are SANMAO.AI, a helpful assistant.' },
         settingSources: [],
         persistSession: false,
-        maxTurns: 1,
+        maxTurns: MAX_CLAUDE_AGENT_TURNS,
         tools: [],
         allowedTools: sdkTools.map((item) => `mcp__sanmao__${item.name}`),
         permissionMode: 'dontAsk',
@@ -171,6 +173,13 @@ export async function invokeClaudeCodeProvider(
 
     try {
       for await (const message of stream) {
+        if (message.type === 'result') {
+          if (message.subtype !== 'success') {
+            sdkFailure = message.errors.filter(Boolean).join('; ') || `Claude Code stopped with ${message.subtype}.`;
+          } else if (!assistantText && message.result) {
+            assistantText = message.result;
+          }
+        }
         for (const block of assistantBlocks(message)) {
           if (block.type === 'text' && typeof block.text === 'string') assistantText += block.text;
         }
@@ -179,6 +188,7 @@ export async function invokeClaudeCodeProvider(
       if (!capturedCall || !controller.signal.aborted || signal?.aborted) throw error;
     }
     if (signal?.aborted) throw signal.reason || new Error('Claude Code request was cancelled.');
+    if (sdkFailure) throw new Error(sdkFailure);
     const toolCalls = capturedCall ? [capturedCall] : undefined;
     return {
       model: rawModelId,

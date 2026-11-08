@@ -68,6 +68,36 @@ test('provider coordinator applies a capability-specific timeout to candidate fa
   assert.deepEqual(attempts, ['one', 'two']);
 });
 
+test('provider coordinator applies a per-runtime deadline to Claude Std calls', async () => {
+  const { createProviderCoordinator } = load('./packages/model-runtime/provider-coordinator');
+  const runtime = {
+    model: { id: 'claude-sonnet-5-5', displayName: 'Claude Sonnet 5.5' },
+    provider: { id: 'claude', name: '65535 Claude Std' },
+  };
+  const coordinator = createProviderCoordinator({
+    requestedModelId: runtime.model.id,
+    candidates: [runtime],
+    signal: new AbortController().signal,
+    operationIdPrefix: 'claude-timeout-test',
+    nextAttempt: () => 1,
+    observer: undefined,
+    timeoutMs: 5,
+    failoverTimeoutMs: 5,
+    timeoutFor: (candidate, mode) => candidate.provider.id === 'claude' && mode === 'manual' ? 50 : 5,
+    idleTimeoutMs: null,
+    timeoutError: (_phase, timeoutMs) => new Error(`timeout:${timeoutMs}`),
+    isCancelled: () => false,
+  });
+  const result = await coordinator.invoke({ tools: [{ function: { name: 'file_generate' } }] }, new AbortController().signal, (_candidate, signal) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve('generated'), 20);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }, { once: true });
+  }));
+  assert.equal(result, 'generated');
+});
+
 test('provider coordinator keeps explicitly selected model single-homed', async () => {
   const { createProviderCoordinator } = load('./packages/model-runtime/provider-coordinator');
   const candidates = [
