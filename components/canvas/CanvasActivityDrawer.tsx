@@ -153,12 +153,13 @@ export default function CanvasActivityDrawer({
   const nextAction = useMemo(() => deriveCanvasTaskNextAction(scopedTasks), [scopedTasks]);
   const summary = useMemo(
     () => ({
-      total: matchingTasks.length,
+      total: scopedTasks.length,
+      matching: matchingTasks.length,
       pending: matchingTasks.filter((log) => generationLogDisplayStatus(log) === "pending").length,
       success: matchingTasks.filter((log) => generationLogDisplayStatus(log) === "success").length,
       error: matchingTasks.filter((log) => generationLogDisplayStatus(log) === "error").length,
     }),
-    [matchingTasks],
+    [matchingTasks, scopedTasks],
   );
   const progress = useMemo(() => deriveCanvasProjectProgress({
     document: canvasDocument,
@@ -330,7 +331,7 @@ export default function CanvasActivityDrawer({
             </div>}
           </section>}
           <div className="canvas-log-summary-grid">
-            <button type="button" className={status === "all" ? "active" : ""} onClick={() => setStatus("all")}><b>{summary.total}</b><small>全部</small></button>
+            <button type="button" className={status === "all" ? "active" : ""} onClick={() => setStatus("all")}><b>{summary.matching}</b><small>{media === "all" && !query.trim() ? "全部" : "筛选结果"}</small></button>
             <button type="button" className={status === "pending" ? "active pending" : "pending"} onClick={() => setStatus("pending")}><b>{summary.pending}</b><small>进行中</small></button>
             <button type="button" className={status === "success" ? "active success" : "success"} onClick={() => setStatus("success")}><b>{summary.success}</b><small>成功</small></button>
             <button type="button" className={status === "error" ? "active error" : "error"} onClick={() => setStatus("error")}><b>{summary.error}</b><small>失败</small></button>
