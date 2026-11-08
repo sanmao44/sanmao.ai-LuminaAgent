@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  serverExternalPackages: ['@anthropic-ai/claude-agent-sdk'],
   outputFileTracingRoot: path.resolve(process.cwd()),
   outputFileTracingIncludes: {
     '/api/canvas/video-trim': ['./node_modules/ffmpeg-static/ffmpeg*'],

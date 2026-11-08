@@ -5073,7 +5073,7 @@ export default function Page() {
                 throw new Error(`${data.error || '连接测试失败'}${hint}`);
             }
             const names = Array.isArray(data.sample) ? data.sample.map((m)=>m.id).slice(0, 4).join('、') : '';
-            setProviderTestResult(data.message || `连接成功，发现 ${data.count} 个模型${names ? `：${names}${data.count > 4 ? '…' : ''}` : ''}`);
+            setProviderTestResult(data.message || `${data.verified === false ? '配置就绪' : '连接成功'}，发现 ${data.count} 个模型${names ? `：${names}${data.count > 4 ? '…' : ''}` : ''}`);
             return true;
         } catch (error) {
             setProviderTestResult(`连接失败：${error instanceof Error ? error.message : '请求失败'}`);
@@ -12069,7 +12069,7 @@ export default function Page() {
                                             }),
                                             providerTestResult && /*#__PURE__*/ _jsx("div", {
                                                 ref: providerTestResultRef,
-                                                className: `connection-result ${providerTestResult.startsWith('连接成功') ? 'success' : 'error'}`,
+                                                className: `connection-result ${providerTestResult.startsWith('连接成功') || providerTestResult.startsWith('Claude Std 模型清单已载入') || providerTestResult.startsWith('配置就绪') ? 'success' : 'error'}`,
                                                 children: providerTestResult
                                             }),
                                             /*#__PURE__*/ _jsxs("div", {

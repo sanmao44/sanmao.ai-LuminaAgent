@@ -29,7 +29,7 @@ const presets = await import(`data:text/javascript;base64,${Buffer.from(presetCo
 
 test('provider picker uses real local logos for visible providers', async () => {
   const visiblePresets = presets.providerPresets.filter((preset) => preset.showInPicker !== false && preset.value !== 'custom');
-  assert.equal(visiblePresets.length, 14);
+  assert.equal(visiblePresets.length, 15);
   const a6api = presets.providerPresets.find((preset) => preset.value === 'a6api');
   assert.deepEqual({ baseUrl: a6api.baseUrl, apiKeyUrl: a6api.apiKeyUrl, type: a6api.type }, {
     baseUrl: 'https://api.a6api.vip/v1',
@@ -46,6 +46,21 @@ test('provider picker uses real local logos for visible providers', async () => 
   }
   const custom = presets.providerPresets.find((preset) => preset.value === 'custom');
   assert.equal(custom.logo, undefined);
+  const claudeStd = presets.providerPresets.find((preset) => preset.value === '65535-claude-code');
+  assert.deepEqual({ baseUrl: claudeStd.baseUrl, type: claudeStd.type, needsBaseUrl: claudeStd.needsBaseUrl }, {
+    baseUrl: 'https://api2.65535.space',
+    type: 'openai-compatible',
+    needsBaseUrl: false,
+  });
+  const claudeModels = await providers.discoverModels({ platform: '65535-claude-code' });
+  assert.deepEqual(claudeModels.map((model) => model.id), [
+    'claude-haiku-5-5', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-opus-5-5',
+    'claude-sonnet-4-6', 'claude-sonnet-5', 'claude-sonnet-5-5',
+  ]);
+  assert.ok(claudeModels.every((model) => model.capabilities?.includes('chat') && model.capabilities.includes('vision')));
+  assert.equal(providers.is65535ClaudeModelProvider({ platform: '65535', baseUrl: 'https://api2-cn.65535.space/v1' }, 'claude-sonnet-5-5'), true);
+  assert.equal(providers.is65535ClaudeModelProvider({ platform: '65535', baseUrl: 'https://api2-cn.65535.space/v1' }, 'gpt-5.6-sol'), false);
+  assert.equal(providers.is65535ClaudeModelProvider({ platform: '65535', baseUrl: 'https://task-api-1-cn.65535.space/v1' }, 'claude-sonnet-5-5'), false);
 });
 
 test('normalizes common model list response shapes', () => {
