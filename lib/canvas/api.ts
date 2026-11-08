@@ -1056,7 +1056,7 @@ export const CANVAS_AGENT_MAX_WAIT_MS = 5 * 60 * 1000;
 export async function getCanvasAgentGeneration(taskId: string) {
   const response = await fetch(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`, { cache: "no-store" });
   if (!response.ok) return null;
-  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; imageUrls?: string[]; error?: string; errorCode?: string; operation?: ImageRequestOperation } | null } | null;
+  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; createdAt?: string; imageUrls?: string[]; error?: string; errorCode?: string; operation?: ImageRequestOperation } | null } | null;
   return body?.log || null;
 }
 
@@ -1066,13 +1066,26 @@ export function canvasImageTaskOutputUrls(log: { imageUrls?: readonly unknown[] 
     .filter((url, index, urls) => Boolean(url) && urls.indexOf(url) === index);
 }
 
-export async function waitForCanvasAgentGeneration(taskId: string, maxWaitMs = 30_000) {
+export async function waitForCanvasAgentGeneration(taskId: string, maxWaitMs = 30_000, signal?: AbortSignal) {
   const deadline = Date.now() + Math.max(0, maxWaitMs);
   while (Date.now() < deadline) {
+    if (signal?.aborted) throw signal.reason || new DOMException("等待任务已停止", "AbortError");
     const log = await getCanvasAgentGeneration(taskId).catch(() => null);
     if (log?.status === "success" || log?.status === "error") return log;
-    await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", abort);
+        resolve();
+      }, 1_000);
+      const abort = () => {
+        clearTimeout(timer);
+        reject(signal?.reason || new DOMException("等待任务已停止", "AbortError"));
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+    });
   }
+  if (signal?.aborted) throw signal.reason || new DOMException("等待任务已停止", "AbortError");
   return getCanvasAgentGeneration(taskId).catch(() => null);
 }
 
@@ -1151,6 +1164,7 @@ export async function generateCanvasAgent(
         { signal: controller.signal, onEvent },
       );
     } catch (error) {
+      if (input.signal?.aborted) throw input.signal.reason || error;
       const pendingTaskId = String((error as { agentPending?: boolean; taskId?: unknown } | null)?.agentPending ? (error as { taskId?: unknown }).taskId || input.runId || "" : "").trim();
       const transportPending = timedOut || /Agent 流式响应不完整|连接中断|fetch failed/i.test(String((error as Error)?.message || error));
       let recoverTaskId = pendingTaskId || (transportPending ? String(input.runId || "").trim() : "");
@@ -1176,7 +1190,7 @@ export async function generateCanvasAgent(
         }
       }
       if (!recoverTaskId) throw error;
-      const log = await waitForCanvasAgentGeneration(recoverTaskId, 30 * 60 * 1000);
+      const log = await waitForCanvasAgentGeneration(recoverTaskId, 30 * 60 * 1000, input.signal);
       const images = canvasImageTaskOutputUrls(log);
       if (images.length) {
         return {

@@ -2,6 +2,8 @@ import type { GenerationLog } from "@/lib/generation-log";
 
 export type CanvasGenerationLogKind = "image" | "video" | "audio" | "llm";
 
+export const CANVAS_TASK_STALE_AFTER_MS = 15 * 60 * 1000;
+
 export type CanvasActivityLog = {
   id: string;
   message: string;
@@ -40,7 +42,7 @@ export function resolveCanvasActivityNavigation(
 }
 
 export function canvasTaskBelongsToProject(
-  log: Pick<GenerationLog, "projectId" | "canvasId" | "nodeId" | "taskId">,
+  log: Pick<GenerationLog, "id" | "projectId" | "canvasId" | "nodeId" | "taskId">,
   scope: {
     projectId?: string;
     canvasId?: string;
@@ -51,7 +53,7 @@ export function canvasTaskBelongsToProject(
   const projectId = scope.projectId?.trim();
   const canvasId = scope.canvasId?.trim();
   const nodeId = String(log.nodeId || "").trim();
-  const taskId = String(log.taskId || "").trim();
+  const taskId = String(log.taskId || log.id || "").trim();
   return Boolean(
     (projectId && log.projectId === projectId) ||
     (canvasId && log.canvasId === canvasId) ||
@@ -71,7 +73,7 @@ export function generationLogKind(log: GenerationLog): CanvasGenerationLogKind {
 export function filterCanvasGenerationLogs(
   logs: GenerationLog[],
   filters: {
-    status?: "all" | GenerationLog["status"] | "recoverable";
+    status?: "all" | GenerationLog["status"] | "recoverable" | "attention";
     media?: "all" | CanvasGenerationLogKind;
     query?: string;
     recoverableTaskIds?: ReadonlySet<string>;
@@ -82,7 +84,11 @@ export function filterCanvasGenerationLogs(
     const matchesStatus = !filters.status || filters.status === "all"
       || (filters.status === "recoverable"
         ? filters.recoverableTaskIds?.has(log.id) === true
-        : generationLogDisplayStatus(log) === filters.status);
+        : filters.status === "attention"
+          ? generationLogNeedsAttention(log)
+          : filters.status === "pending"
+            ? generationLogDisplayStatus(log) === "pending" && !generationLogNeedsAttention(log)
+          : generationLogDisplayStatus(log) === filters.status);
     const matchesMedia = !filters.media || filters.media === "all" || generationLogKind(log) === filters.media;
     const matchesQuery = !normalized
       || `${log.prompt} ${log.presetName || ""} ${log.modelName || ""} ${log.providerName || ""}`
@@ -119,8 +125,27 @@ export function generationLogDisplayStatus(log: Pick<GenerationLog, "status" | "
   return displayGenerationLogStatus(log);
 }
 
-export function generationLogDuration(log: GenerationLog) {
-  if (displayGenerationLogStatus(log) === "pending") return "计时中";
+export function generationLogNeedsAttention(
+  log: Pick<GenerationLog, "status" | "errorCode" | "createdAt">,
+  now = Date.now(),
+) {
+  if (displayGenerationLogStatus(log) !== "pending") return false;
+  const createdAt = Date.parse(log.createdAt);
+  return Number.isFinite(createdAt) && now - createdAt >= CANVAS_TASK_STALE_AFTER_MS;
+}
+
+export function generationLogDuration(log: GenerationLog, now = Date.now()) {
+  if (displayGenerationLogStatus(log) === "pending") {
+    if (!generationLogNeedsAttention(log, now)) return "计时中";
+    const elapsedSeconds = Math.max(0, Math.floor((now - Date.parse(log.createdAt)) / 1000));
+    const hours = Math.floor(elapsedSeconds / 3600);
+    const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+    const seconds = elapsedSeconds % 60;
+    const elapsed = hours > 0
+      ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+      : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    return `等待 ${elapsed}`;
+  }
   if (log.durationMs == null) return "未记录";
   return `${(log.durationMs / 1000).toFixed(1)}s`;
 }

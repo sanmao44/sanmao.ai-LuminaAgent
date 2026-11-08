@@ -5,7 +5,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const load = createTsRequire(path.join(process.cwd(), 'lib'));
 const { normalizeDocument, createMedia, createPrompt } = load('./canvas/model');
-const { canvasGenerationLogRecoveryStatus, canvasNodeForGenerationLog, recoverCanvasTask, recoverCanvasUpscaleTask, mergeCanvasTaskImages } = load('./canvas/task-recovery');
+const { canvasGenerationLogRecoveryStatus, canvasNodeForGenerationLog, canvasVideoTaskSnapshotExpired, canvasVideoTaskSnapshotRetryDelayMs, recoverCanvasTask, recoverCanvasUpscaleTask, mergeCanvasTaskImages, retainCanvasVideoTaskAfterMissingSnapshot, stopCanvasTaskTracking } = load('./canvas/task-recovery');
 const { applyCanvasTaskRecordRecovery } = load('./canvas/task-record-recovery');
 const params = { kind: 'image', model: 'test', aspect: '1:1' };
 const input = { nodeId: 'pending', taskId: 'task-a', status: 'success', urls: ['/one.png', '/two.png', '/three.png'], imageParams: params };
@@ -126,6 +126,44 @@ test('recovery retains every image, the placeholder identity, and its placement'
   assert.equal(document.nodes[0].data.status, 'completed');
   assert.ok(document.nodes.every((node) => node.data.generation.taskId === 'task-a'));
   assert.equal(document.edges.length, 2);
+});
+
+test('stale tasks stop showing as running but can still recover a late result', () => {
+  const stalled = recoverCanvasTask(fixture(), {
+    ...input,
+    status: 'stalled',
+    error: '长时间未收到回执，结果状态待确认',
+  });
+  assert.equal(stalled.nodes[0].data.status, 'failed');
+  assert.equal(stalled.nodes[0].data.taskTracking, 'stale');
+  assert.equal(stalled.nodes[0].data.processingStartedAt, undefined);
+  assert.equal(stalled.nodes[0].data.statusLabel, '长时间未收到回执，结果状态待确认');
+  assert.equal(recoverCanvasTask(stalled, { ...input, status: 'pending' }), stalled);
+
+  const completed = recoverCanvasTask(stalled, input);
+  assert.equal(completed.nodes[0].data.status, 'completed');
+  assert.equal(completed.nodes[0].data.taskTracking, undefined);
+});
+
+test('a manually stopped local tracker is not restarted by a pending server snapshot', () => {
+  const stopped = stopCanvasTaskTracking(fixture(), {
+    nodeId: 'pending',
+    taskId: 'task-a',
+    statusLabel: '已停止画布等待；远端状态待确认',
+  });
+  assert.equal(stopped.nodes[0].data.status, 'failed');
+  assert.equal(stopped.nodes[0].data.taskTracking, 'stopped');
+  assert.equal(recoverCanvasTask(stopped, { ...input, status: 'pending' }), stopped);
+});
+
+test('a late successful result still fills a manually stopped task node', () => {
+  const stopped = fixture();
+  stopped.nodes[0].data.status = 'failed';
+  stopped.nodes[0].data.taskTracking = 'stopped';
+  const completed = recoverCanvasTask(stopped, input);
+  assert.equal(completed.nodes[0].data.status, 'completed');
+  assert.equal(completed.nodes[0].data.url, '/one.png');
+  assert.equal(completed.nodes[0].data.taskTracking, undefined);
 });
 
 test('repeated recovery and HTTP completion keep node identities without duplicate images', () => {
@@ -263,6 +301,35 @@ test('a missing video task record ends local tracking without claiming provider 
   assert.equal(result.nodes[0].data.progress, undefined);
   assert.equal(result.nodes[0].data.processingStartedAt, undefined);
   assert.equal(result.nodes[0].data.statusLabel, message);
+});
+
+test('a temporarily missing video snapshot stays queued and can recover the original task', () => {
+  const video = fixture();
+  video.nodes[0].data.kind = 'video';
+  video.nodes[0].data.status = 'queued';
+  video.nodes[0].data.statusLabel = '服务商已接收，等待排队';
+
+  const unavailable = retainCanvasVideoTaskAfterMissingSnapshot(video, { nodeId: 'pending', taskId: 'task-a' });
+  assert.equal(unavailable.nodes[0].data.status, 'queued');
+  assert.equal(unavailable.nodes[0].data.statusLabel, '任务状态暂不可用，正在重新查询');
+  assert.equal(retainCanvasVideoTaskAfterMissingSnapshot(unavailable, { nodeId: 'pending', taskId: 'task-a' }), unavailable);
+
+  const observedPending = recoverCanvasTask(unavailable, { ...input, status: 'pending', urls: [] });
+  assert.equal(observedPending.nodes[0].data.status, 'running');
+  const completed = recoverCanvasTask(observedPending, { ...input, status: 'success', urls: ['/finished.mp4'] });
+  assert.equal(completed.nodes[0].data.status, 'completed');
+  assert.equal(completed.nodes[0].data.url, '/finished.mp4');
+});
+
+test('video snapshot retry delay backs off and caps at thirty seconds', () => {
+  assert.deepEqual([1, 2, 3, 4, 20].map(canvasVideoTaskSnapshotRetryDelayMs), [5000, 10000, 20000, 30000, 30000]);
+});
+
+test('a missing video snapshot becomes stale after the shared task attention window', () => {
+  const startedAt = 1_000;
+  assert.equal(canvasVideoTaskSnapshotExpired(startedAt, startedAt + 15 * 60_000 - 1), false);
+  assert.equal(canvasVideoTaskSnapshotExpired(startedAt, startedAt + 15 * 60_000), true);
+  assert.equal(canvasVideoTaskSnapshotExpired(0, startedAt + 15 * 60_000), false);
 });
 
 test('audio generation logs resolve their existing audio node by task and node lineage', () => {

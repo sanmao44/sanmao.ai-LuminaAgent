@@ -20,7 +20,7 @@ import {
   type SetStateAction,
 } from "react";
 import { useRouter } from "next/navigation";
-import { canvasGenerationLogRecoveryStatus, canvasNodeForGenerationLog, canvasNodeHasTask, mergeCanvasTaskImages, recoverCanvasTask, recoverCanvasUpscaleTask } from "@/lib/canvas/task-recovery";
+import { canvasGenerationLogRecoveryStatus, canvasNodeForGenerationLog, canvasNodeHasTask, canvasVideoTaskSnapshotExpired, canvasVideoTaskSnapshotRetryDelayMs, mergeCanvasTaskImages, recoverCanvasTask, recoverCanvasUpscaleTask, retainCanvasVideoTaskAfterMissingSnapshot, stopCanvasTaskTracking } from "@/lib/canvas/task-recovery";
 import { canvasAudioGenerationRecoveryDraft, canvasImageGenerationRecoveryDraft, createCanvasAudioRecoveryDraftNode } from "@/lib/canvas/task-context-recovery";
 import { retryCanvasVideoLogs, type CanvasVideoRetryResult } from "@/lib/canvas/batch-video-retry";
 import { retryCanvasUpscaleLogs, type CanvasUpscaleRetryResult } from "@/lib/canvas/batch-upscale-retry";
@@ -515,7 +515,7 @@ import {
 } from "@/lib/creative-projects";
 import { MAX_CREATIVE_PROJECT_REFERENCE_ASSETS, type CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { CanvasAgentRunContext } from "@/lib/canvas/run-context";
-import { generationLogKind, generationLogOutputUrls } from "@/lib/canvas/activity-log";
+import { CANVAS_TASK_STALE_AFTER_MS, generationLogKind, generationLogNeedsAttention, generationLogOutputUrls } from "@/lib/canvas/activity-log";
 import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
 import { canvasProjectDraftPrompt, seedCanvasProjectIntent } from "@/lib/canvas/project-progress";
 import { projectWorkflowScaffold } from "@/lib/canvas/project-workflow";
@@ -804,13 +804,17 @@ export default function SuperCanvas() {
     controller: AbortController;
     settled: Promise<void>;
   }>>(new Map());
+  const agentRequestAbortControllersRef = useRef<Map<string, {
+    controller: AbortController;
+    settled: Promise<void>;
+  }>>(new Map());
   const pendingMediaNaturalSizesRef = useRef<CanvasMediaNaturalSize[]>([]);
   const mediaNaturalSizeFrameRef = useRef<number | null>(null);
   const registeredAssetKeysRef = useRef<Set<string>>(new Set());
   const spaceHeldRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [runtime, setRuntime] = useState<CanvasRuntimeState | null>(null);
-  const [cancellableImageTaskIds, setCancellableImageTaskIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [cancellableCanvasTaskIds, setCancellableCanvasTaskIds] = useState<ReadonlySet<string>>(() => new Set());
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   // 只展示已进入生成队列的后台任务。planned 是待用户确认的编辑状态，不能误报为「进行中」。
   const [cloneTask, setCloneTask] = useState<{ id: string; message: string; progress: number } | null>(null);
@@ -835,7 +839,10 @@ export default function SuperCanvas() {
     const settled = new Promise<void>((resolve) => { markSettled = resolve; });
     const activeRequest = { controller, settled };
     imageRequestAbortControllersRef.current.set(taskId, activeRequest);
-    setCancellableImageTaskIds(new Set(imageRequestAbortControllersRef.current.keys()));
+    setCancellableCanvasTaskIds(new Set([
+      ...imageRequestAbortControllersRef.current.keys(),
+      ...agentRequestAbortControllersRef.current.keys(),
+    ]));
     try {
       return await generateCanvasImage({ ...requestInput, signal });
     } catch (error) {
@@ -852,7 +859,10 @@ export default function SuperCanvas() {
       markSettled();
       if (imageRequestAbortControllersRef.current.get(taskId) === activeRequest) {
         imageRequestAbortControllersRef.current.delete(taskId);
-        setCancellableImageTaskIds(new Set(imageRequestAbortControllersRef.current.keys()));
+        setCancellableCanvasTaskIds(new Set([
+          ...imageRequestAbortControllersRef.current.keys(),
+          ...agentRequestAbortControllersRef.current.keys(),
+        ]));
       }
     }
   }, []);
@@ -2137,7 +2147,10 @@ export default function SuperCanvas() {
       if (node.type !== "prompt" && node.type !== "media") return false;
       if (node.type === "media" && node.data.kind === "video") return false;
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "").trim();
-      return Boolean(taskId) && (node.data.status === "queued" || node.data.status === "running") && !node.data.url;
+      return Boolean(taskId)
+        && (node.data.status === "queued" || node.data.status === "running"
+          || node.data.taskTracking === "stale" || node.data.taskTracking === "stopped")
+        && !node.data.url;
     });
     for (const node of candidates) {
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "").trim();
@@ -2166,17 +2179,43 @@ export default function SuperCanvas() {
         const log = isVideo ? null : await getCanvasAgentGeneration(taskId);
         const videoTask = isVideo ? await getCanvasVideoTask(taskId).catch(() => null) : null;
         if (isVideo && !videoTask?.task) continue;
-        if (!isVideo && !log) continue;
+        if (!isVideo && !log) {
+          const startedAt = Math.max(
+            Number(currentNode.data.taskUpdatedAt) || 0,
+            Number(currentNode.data.processingStartedAt) || 0,
+            Number(currentNode.data.generation?.updatedAt) || 0,
+            Number(currentNode.data.generation?.createdAt) || 0,
+          );
+          if (startedAt && Date.now() - startedAt >= 15 * 60 * 1000) {
+            updateDoc((value) => recoverCanvasTask(value, {
+              nodeId: node.id,
+              taskId,
+              status: "stalled",
+              urls: [],
+              error: "超过 15 分钟未收到任务记录；远端状态待确认",
+              imageParams: readSharedCreationSettings("image", runtime),
+            }));
+          }
+          continue;
+        }
         const urls = isVideo
           ? [canvasVideoTaskOutputUrl(videoTask!.task)].filter(Boolean)
           : canvasImageTaskOutputUrls(log);
         const videoProgress = isVideo ? canvasVideoTaskProgress(videoTask!.task) : null;
+        const lastActivityAt = isVideo ? 0 : Math.max(
+          Number(currentNode.data.taskUpdatedAt) || 0,
+          Number(currentNode.data.processingStartedAt) || 0,
+          Number(currentNode.data.generation?.updatedAt) || 0,
+          Number(currentNode.data.generation?.createdAt) || 0,
+          Date.parse(log!.createdAt || "") || 0,
+        );
+        const stale = !isVideo && Date.now() - lastActivityAt >= 15 * 60 * 1000;
         const status = isVideo
           ? (videoProgress?.status === "completed" ? "success" : videoProgress?.status === "failed" ? "error" : "pending")
-          : (urls.length ? "success" : canvasGenerationLogRecoveryStatus(log!));
+          : urls.length ? "success" : stale ? "stalled" : canvasGenerationLogRecoveryStatus(log!);
         updateDoc((value) => recoverCanvasTask(value, {
           nodeId: node.id, taskId, status, urls,
-          error: String(isVideo ? videoTask?.task.error || "视频生成失败" : log?.error || "图片生成失败"),
+          error: String(isVideo ? videoTask?.task.error || "视频生成失败" : stale ? "超过 15 分钟未收到完成回执；服务商可能仍在处理" : log?.error || "图片生成失败"),
           imageParams: readSharedCreationSettings("image", runtime),
         }));
       } finally {
@@ -5258,20 +5297,35 @@ export default function SuperCanvas() {
         const node = nodeById(document, nodeId);
         return node && String(node.data.jobId || node.data.generation?.taskId || "") === taskId;
       };
+      const locallyTracked = (document: CanvasDocument) => {
+        const node = nodeById(document, nodeId);
+        return Boolean(taskMatches(document)
+          && node
+          && !node.data.taskTracking
+          && ["queued", "running"].includes(String(node.data.status || "")));
+      };
       const clearPoll = () => {
         pollAttemptsRef.current.delete(pollKey);
         pollStartedAtRef.current.delete(pollKey);
       };
-      if (!mountedRef.current || !taskMatches(readDocument())) { clearPoll(); return; }
-      const startedAt =
-        pollStartedAtRef.current.get(pollKey) || Date.now();
+      const initialDocument = readDocument();
+      const initialNode = nodeById(initialDocument, nodeId);
+      if (!mountedRef.current || !locallyTracked(initialDocument) || !initialNode) { clearPoll(); return; }
+      const persistedActivityAt = Math.max(
+        Number(initialNode.data.taskUpdatedAt) || 0,
+        Number(initialNode.data.processingStartedAt) || 0,
+        Number(initialNode.data.generation?.updatedAt) || 0,
+        Number(initialNode.data.generation?.createdAt) || 0,
+      );
+      const startedAt = pollStartedAtRef.current.get(pollKey) || persistedActivityAt || Date.now();
       pollStartedAtRef.current.set(pollKey, startedAt);
       const attempts = (pollAttemptsRef.current.get(pollKey) || 0) + 1;
       pollAttemptsRef.current.set(pollKey, attempts);
       try {
         const result = await getCanvasVideoTask(taskId);
-        if (!mountedRef.current || !taskMatches(readDocument())) { clearPoll(); return; }
+        if (!mountedRef.current || !locallyTracked(readDocument())) { clearPoll(); return; }
         const task = result.task;
+        pollStartedAtRef.current.set(pollKey, Date.now());
         const progress = canvasVideoTaskProgress(task);
         updateDoc((value) => {
           if (!taskMatches(value)) return value;
@@ -5349,20 +5403,29 @@ export default function SuperCanvas() {
           );
         }
       } catch (error) {
-        if (!mountedRef.current || !taskMatches(readDocument())) { clearPoll(); return; }
-        if (isMissingCanvasVideoTaskError(error)) {
-          const message = "后台任务记录已丢失，服务商状态未知；请核对生成记录后再操作，避免重复提交";
-          const imageParams = readSharedCreationSettings("image", runtime);
+        if (!mountedRef.current || !locallyTracked(readDocument())) { clearPoll(); return; }
+        if (canvasVideoTaskSnapshotExpired(startedAt)) {
+          const staleMinutes = Math.ceil(CANVAS_TASK_STALE_AFTER_MS / 60_000);
+          const message = `超过 ${staleMinutes} 分钟未能读取后台视频任务状态；服务商状态待确认`;
           updateDoc((value) => recoverCanvasTask(value, {
             nodeId,
             taskId,
-            status: "error",
+            status: "stalled",
             urls: [],
             error: message,
-            imageParams,
+            imageParams: readSharedCreationSettings("image", runtime),
           }));
           clearPoll();
           addLog(message);
+          return;
+        }
+        if (isMissingCanvasVideoTaskError(error)) {
+          updateDoc((value) => retainCanvasVideoTaskAfterMissingSnapshot(value, { nodeId, taskId }));
+          const timer = window.setTimeout(() => {
+            pollTimersRef.current.delete(timer);
+            void pollVideo(nodeId, taskId, projectId);
+          }, canvasVideoTaskSnapshotRetryDelayMs(attempts));
+          pollTimersRef.current.add(timer);
           return;
         }
         addLog(
@@ -7049,6 +7112,7 @@ export default function SuperCanvas() {
             params: clone(effectiveSettings),
             status: "running",
             processingStartedAt: Date.now(),
+            taskUpdatedAt: Date.now(),
             statusLabel: "Agent 思考中",
           },
         };
@@ -7073,6 +7137,8 @@ export default function SuperCanvas() {
                     role: "Agent 输入",
                     status: "running",
                     processingStartedAt: Date.now(),
+                    taskUpdatedAt: Date.now(),
+                    taskTracking: undefined,
                     statusLabel: "Agent 思考中",
                   },
                 }
@@ -7085,9 +7151,18 @@ export default function SuperCanvas() {
       updateDoc((value) => ({
         ...value,
         nodes: value.nodes.map((node) => node.id === inputId
-          ? { ...node, data: { ...node.data, jobId: agentRunId, generation: node.data.generation ? { ...node.data.generation, taskId: agentRunId } : node.data.generation } }
+          ? { ...node, data: { ...node.data, jobId: agentRunId, taskTracking: undefined, taskUpdatedAt: Date.now(), generation: node.data.generation ? { ...node.data.generation, taskId: agentRunId } : node.data.generation } }
           : node),
       }));
+      const agentRequestController = new AbortController();
+      let markAgentRequestSettled = () => {};
+      const agentRequestSettled = new Promise<void>((resolve) => { markAgentRequestSettled = resolve; });
+      const activeAgentRequest = { controller: agentRequestController, settled: agentRequestSettled };
+      agentRequestAbortControllersRef.current.set(agentRunId, activeAgentRequest);
+      setCancellableCanvasTaskIds(new Set([
+        ...imageRequestAbortControllersRef.current.keys(),
+        ...agentRequestAbortControllersRef.current.keys(),
+      ]));
       try {
         const generationStartedAt = Date.now();
         let finalEventReceived = false;
@@ -7099,6 +7174,7 @@ export default function SuperCanvas() {
           webMode: effectiveSettings.webMode,
           task: request?.agentTask || inferCanvasAgentTask(prompt, agentReferenceNodes.some((node) => node.data.kind === "image")),
           runId: agentRunId,
+          signal: agentRequestController.signal,
           ...(request?.durationSeconds !== undefined ? { durationSeconds: request.durationSeconds } : {}),
           deliverable: request?.agentTask === "one_take_video_prompt" ? "TEXT" : intentDecision.deliverable,
           intentReason: request?.agentTask === "one_take_video_prompt" ? "一镜到底只需要返回可复制的视频 Prompt" : intentDecision.reason,
@@ -7117,6 +7193,7 @@ export default function SuperCanvas() {
                       data: {
                         ...node.data,
                         status: "running" as const,
+                        taskUpdatedAt: Date.now(),
                         statusLabel: String(event.message),
                       },
                     }
@@ -7202,6 +7279,8 @@ export default function SuperCanvas() {
                         model: responseModel,
                         params: clone(effectiveSettings),
                         status: "completed" as const,
+                        taskTracking: undefined,
+                        taskUpdatedAt: undefined,
                         statusLabel: "Agent 已回复",
                       },
                     }
@@ -7254,6 +7333,8 @@ export default function SuperCanvas() {
                       ? { generation: { ...node.data.generation, taskId: recoveryTaskId } }
                       : {}),
                     status: "running" as const,
+                    taskUpdatedAt: Date.now(),
+                    taskTracking: undefined,
                     statusLabel: "任务仍在后台处理中，请勿重复提交",
                   },
                 }
@@ -7281,6 +7362,8 @@ export default function SuperCanvas() {
                     agentResponse: undefined,
                     role: "Agent 输入",
                     status: "failed",
+                    taskTracking: undefined,
+                    taskUpdatedAt: undefined,
                     statusLabel: message,
                   },
                 }
@@ -7289,6 +7372,14 @@ export default function SuperCanvas() {
         }));
         notify(message, "error");
       } finally {
+        markAgentRequestSettled();
+        if (agentRequestAbortControllersRef.current.get(agentRunId) === activeAgentRequest) {
+          agentRequestAbortControllersRef.current.delete(agentRunId);
+          setCancellableCanvasTaskIds(new Set([
+            ...imageRequestAbortControllersRef.current.keys(),
+            ...agentRequestAbortControllersRef.current.keys(),
+          ]));
+        }
         generationKeysRef.current.delete(activeKey);
         setGenerationKeys(new Set(generationKeysRef.current));
       }
@@ -11983,30 +12074,60 @@ export default function SuperCanvas() {
   const stopGenerationLog = useCallback(async (log: GenerationLog) => {
     const taskId = String(log.taskId || log.id);
     const kind = generationLogKind(log);
-    if (kind === "image") {
-      const activeRequest = imageRequestAbortControllersRef.current.get(taskId);
-      if (!activeRequest) throw new Error("当前页面已不再等待这条图片请求，无法从这里停止。");
-      activeRequest.controller.abort(new DOMException("Stopped waiting for image generation", "AbortError"));
-      imageRequestAbortControllersRef.current.delete(taskId);
-      setCancellableImageTaskIds(new Set(imageRequestAbortControllersRef.current.keys()));
-      await activeRequest.settled;
-      await refreshGenerationLogs();
-      notify("已停止等待图片结果。服务商若已受理请求，仍可能继续生成或计费。");
-      return;
-    }
     if (kind === "video") {
-      const { task } = await stopCanvasVideoTaskTracking(taskId);
-      notify(task.status === "cancelled"
-        ? "已停止本地视频任务跟踪；服务商可能仍在生成或计费。"
-        : "视频任务已结束或不可取消，当前状态未更改。");
+      try {
+        const { task } = await stopCanvasVideoTaskTracking(taskId);
+        notify(task.status === "cancelled"
+          ? "已停止本地视频任务跟踪；服务商可能仍在生成或计费。"
+          : "视频任务已结束或不可取消，当前状态未更改。");
+      } catch (error) {
+        if (!isMissingCanvasVideoTaskError(error)) throw error;
+        const canvasId = String(log.canvasId || activeProjectId || "").trim();
+        const projectTask = captureProjectTask(canvasId || undefined);
+        const currentNode = projectTask.readDocument().nodes.find((node) => canvasNodeHasTask(node, taskId));
+        if (currentNode) {
+          projectTask.updateDoc((document) => stopCanvasTaskTracking(document, {
+            nodeId: currentNode.id,
+            taskId,
+            statusLabel: "已停止本机视频查询；服务商状态待确认",
+          }));
+        }
+        notify("后台视频任务记录已不存在；已停止本机查询，服务商状态待确认。", "ok");
+      }
       await refreshGenerationLogs();
       return;
     }
-    throw new Error("此任务类型不支持从画布停止。");
-  }, [notify, refreshGenerationLogs]);
+    if (kind !== "image" && kind !== "llm") throw new Error("此任务类型不支持从画布停止。");
+
+    const activeRequest = kind === "image"
+      ? imageRequestAbortControllersRef.current.get(taskId)
+      : agentRequestAbortControllersRef.current.get(taskId);
+    if (activeRequest) {
+      activeRequest.controller.abort(new DOMException("Stopped waiting for canvas task", "AbortError"));
+      await activeRequest.settled;
+    }
+
+    const canvasId = String(log.canvasId || activeProjectId || "").trim();
+    const projectTask = captureProjectTask(canvasId || undefined);
+    const currentNode = projectTask.readDocument().nodes.find((node) =>
+      String(node.data.jobId || node.data.generation?.taskId || "") === taskId,
+    );
+    if (!activeRequest && !currentNode) throw new Error("当前画布中找不到这条仍在等待的任务。");
+    projectTask.updateDoc((document) => stopCanvasTaskTracking(document, {
+      nodeId: currentNode?.id || "",
+      taskId,
+      statusLabel: "已停止画布等待；远端状态仍待确认",
+    }));
+    await refreshGenerationLogs();
+    notify(activeRequest
+      ? "已停止本机等待；服务商若已受理，仍可能继续生成或计费。"
+      : "已停止画布中的等待；服务端任务状态未更改，远端结果仍可能返回。");
+  }, [activeProjectId, captureProjectTask, notify, refreshGenerationLogs]);
   const checkCanvasTaskRecord = useCallback(async (log: CanvasGenerationLog) => {
     const taskId = String(log.taskId || log.id || "").trim();
-    if (generationLogKind(log) !== "image" || log.errorCode !== "provider_result_unconfirmed" || !taskId) {
+    if (generationLogKind(log) !== "image"
+      || (log.errorCode !== "provider_result_unconfirmed" && !generationLogNeedsAttention(log))
+      || !taskId) {
       throw new Error("当前任务不需要核对原任务记录。");
     }
     const canvasId = String(log.canvasId || activeProjectId || "").trim();
@@ -14623,7 +14744,7 @@ export default function SuperCanvas() {
         onBatchRetryUpscaleTasks={retryUpscaleGenerationLogsInBatch}
         onContinueTask={continueGenerationLog}
         onCancelTask={stopGenerationLog}
-        cancellableImageTaskIds={cancellableImageTaskIds}
+        cancellableCanvasTaskIds={cancellableCanvasTaskIds}
         onRememberActivityScroll={(scrollTop) => {
           activityPanelScrollTopRef.current = scrollTop;
         }}

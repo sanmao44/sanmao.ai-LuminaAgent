@@ -166,6 +166,7 @@ export type CanvasVideoEditorState = {
 };
 export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
+export type CanvasTaskTracking = 'stale' | 'stopped';
 export type CanvasVariantStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type CanvasMaskStatus = 'pending' | 'running' | 'used' | 'failed';
 /** Local, non-generative image operations available from an image node. */
@@ -386,9 +387,13 @@ export type CanvasNodeData = {
   providerName?: string;
   status?: CanvasGenerationStatus;
   statusLabel?: string;
+  /** Local observation state; it never claims that a remote provider was cancelled. */
+  taskTracking?: CanvasTaskTracking;
   progress?: number;
   /** Timestamp for the currently active generation, used by the canvas timer. */
   processingStartedAt?: number;
+  /** Last meaningful local progress signal; polling does not refresh it. */
+  taskUpdatedAt?: number;
   jobId?: string;
   /** Local recovery draft origin; it is not an active provider task. */
   recoveryTaskId?: string;

@@ -57,7 +57,7 @@ export type CanvasPanelLayerProps = {
   ) => Promise<CanvasUpscaleRetryResult>;
   onContinueTask: (log: GenerationLog) => void;
   onCancelTask: (log: GenerationLog) => Promise<void>;
-  cancellableImageTaskIds: ReadonlySet<string>;
+  cancellableCanvasTaskIds: ReadonlySet<string>;
   onRememberActivityScroll: (scrollTop: number) => void;
   canvasNodeIds: ReadonlySet<string>;
   canvasTaskIds: ReadonlySet<string>;
@@ -117,7 +117,7 @@ export default function CanvasPanelLayer({
   onBatchRetryUpscaleTasks,
   onContinueTask,
   onCancelTask,
-  cancellableImageTaskIds,
+  cancellableCanvasTaskIds,
   onRememberActivityScroll,
   canvasNodeIds,
   canvasTaskIds,
@@ -177,7 +177,7 @@ export default function CanvasPanelLayer({
         onBatchRetryUpscaleTasks={onBatchRetryUpscaleTasks}
         onContinueTask={onContinueTask}
         onCancelTask={onCancelTask}
-        cancellableImageTaskIds={cancellableImageTaskIds}
+        cancellableCanvasTaskIds={cancellableCanvasTaskIds}
         onClose={onClose}
         onNotify={onNotify}
         restoreScrollTop={activityPanelScrollTop}

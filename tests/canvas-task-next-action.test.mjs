@@ -61,3 +61,19 @@ test('task action reports background work and an idle project clearly', () => {
   ]).kind, 'running');
   assert.equal(deriveCanvasTaskNextAction([]).kind, 'ready');
 });
+
+test('task action directs old pending tasks to review instead of implying active progress', () => {
+  const now = Date.now();
+  const action = deriveCanvasTaskNextAction([
+    image({ status: 'pending', createdAt: new Date(now - 20 * 60_000).toISOString() }),
+    image({ id: 'recent', status: 'pending', createdAt: new Date(now - 2 * 60_000).toISOString() }),
+  ]);
+  assert.deepEqual(action, {
+    kind: 'stale',
+    count: 1,
+    filter: 'pending',
+    title: '1 个任务长时间没有回执',
+    detail: '先核对原任务或停止本机等待；服务商可能仍在处理，重试会创建新任务。',
+    buttonLabel: '查看并处理',
+  });
+});

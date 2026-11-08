@@ -1,9 +1,9 @@
 import type { GenerationLog } from '@/lib/generation-log';
-import { generationLogDisplayStatus, generationLogKind } from './activity-log';
+import { generationLogDisplayStatus, generationLogKind, generationLogNeedsAttention } from './activity-log';
 import { restorableCanvasTaskLogs } from './task-context-recovery';
 
 export type CanvasTaskNextAction = {
-  kind: 'check' | 'restore' | 'running' | 'ready';
+  kind: 'check' | 'stale' | 'restore' | 'running' | 'ready';
   count: number;
   filter: 'pending' | 'error' | 'recoverable' | null;
   title: string;
@@ -29,6 +29,18 @@ export function deriveCanvasTaskNextAction(logs: readonly GenerationLog[]): Canv
         ? '服务商可能已接收配音请求；先检查音频节点和记录，再决定是否重试。'
         : '只读取原任务记录，确认前不会重复提交。',
       buttonLabel: '查看待确认',
+    };
+  }
+
+  const stale = logs.filter((log) => generationLogNeedsAttention(log));
+  if (stale.length) {
+    return {
+      kind: 'stale',
+      count: stale.length,
+      filter: 'pending',
+      title: `${stale.length} 个任务长时间没有回执`,
+      detail: '先核对原任务或停止本机等待；服务商可能仍在处理，重试会创建新任务。',
+      buttonLabel: '查看并处理',
     };
   }
 

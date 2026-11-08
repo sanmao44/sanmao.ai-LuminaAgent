@@ -732,6 +732,22 @@ test('canvas agent generation marks the request as canvas-originated', async () 
   });
 });
 
+test('waiting for a background canvas task responds to local cancellation', async () => {
+  const controller = new AbortController();
+  const abortReason = new DOMException('Stopped waiting', 'AbortError');
+  const abortTimer = setTimeout(() => controller.abort(abortReason), 20);
+  try {
+    await withFetch(async () => jsonResponse({ log: { status: 'pending' } }), () =>
+      assert.rejects(
+        () => api.waitForCanvasAgentGeneration('pending-agent-task', 30_000, controller.signal),
+        (error) => error === abortReason,
+      ),
+    );
+  } finally {
+    clearTimeout(abortTimer);
+  }
+});
+
 test('canvas agent preserves image references on earlier user turns', async () => {
   let request;
   await withFetch(async (input, options) => {

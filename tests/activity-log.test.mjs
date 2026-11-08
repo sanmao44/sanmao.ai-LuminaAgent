@@ -63,6 +63,16 @@ test("generation log duration distinguishes active, missing, and recorded time",
   assert.equal(activityLog.generationLogDuration({ status: "success", durationMs: 1250 }), "1.3s");
 });
 
+test("long-running records need attention and show elapsed time instead of an endless timer", () => {
+  const now = Date.parse("2026-11-09T00:00:00.000Z");
+  const stale = { status: "pending", createdAt: new Date(now - 65 * 60_000).toISOString() };
+  const recent = { status: "pending", createdAt: new Date(now - 5 * 60_000).toISOString() };
+  assert.equal(activityLog.generationLogNeedsAttention(stale, now), true);
+  assert.equal(activityLog.generationLogNeedsAttention(recent, now), false);
+  assert.equal(activityLog.generationLogDuration(stale, now), "等待 1:05:00");
+  assert.equal(activityLog.generationLogNeedsAttention({ ...stale, status: "success" }, now), false);
+});
+
 test("canvas task scope matches project, canvas, node, or task lineage", () => {
   const scope = {
     projectId: "project-1",
@@ -88,6 +98,12 @@ test("canvas task scope does not match unrelated or empty lineage", () => {
   assert.equal(activityLog.canvasTaskBelongsToProject({ nodeId: "node-1" }, { nodeIds: new Set() }), false);
 });
 
+test("canvas task scope falls back to the log id when taskId is absent", () => {
+  const scope = { taskIds: new Set(["canvas-task-1"]) };
+  assert.equal(activityLog.canvasTaskBelongsToProject({ id: "canvas-task-1" }, scope), true);
+  assert.equal(activityLog.canvasTaskBelongsToProject({ id: "other-task", projectId: "other-project" }, scope), false);
+});
+
 test("task log filters apply media and search before status counts", () => {
   const tasks = [
     { id: "image-1", mode: "generate", mediaKind: "image", status: "success", prompt: "blue village" },
@@ -104,4 +120,14 @@ test("task log filters apply media and search before status counts", () => {
     activityLog.filterCanvasGenerationLogs(tasks, { status: "recoverable", recoverableTaskIds: new Set(["video-2"]) }).map((task) => task.id),
     ["video-2"],
   );
+});
+
+test("task attention filter separates old pending requests from active work", () => {
+  const now = Date.now();
+  const tasks = [
+    { id: "old", mode: "generate", status: "pending", createdAt: new Date(now - 60 * 60_000).toISOString() },
+    { id: "recent", mode: "generate", status: "pending", createdAt: new Date(now - 60_000).toISOString() },
+  ];
+  assert.deepEqual(activityLog.filterCanvasGenerationLogs(tasks, { status: "attention" }).map((task) => task.id), ["old"]);
+  assert.deepEqual(activityLog.filterCanvasGenerationLogs(tasks, { status: "pending" }).map((task) => task.id), ["recent"]);
 });
