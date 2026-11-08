@@ -35,30 +35,68 @@ test("normalizes pending, failed, done, and returned video task results", () => 
     hasVideoResult: false,
     terminal: false,
     status: "running",
+    waiting: false,
     progress: 42,
+    statusLabel: "视频生成中",
     url: undefined,
   });
   assert.deepEqual(batch.canvasVideoTaskProgress({ status: "failed", error: "provider" }), {
     hasVideoResult: false,
     terminal: true,
     status: "failed",
+    waiting: false,
     progress: 0,
+    statusLabel: "provider",
     url: undefined,
   });
   assert.deepEqual(batch.canvasVideoTaskProgress({ status: "done", videoUrls: ["/video.mp4"] }), {
     hasVideoResult: true,
     terminal: true,
     status: "completed",
+    waiting: false,
     progress: 100,
+    statusLabel: "视频已完成",
     url: "/video.mp4",
   });
   assert.deepEqual(batch.canvasVideoTaskProgress({ status: "processing", remoteVideoUrls: ["https://provider.example/result.mp4"] }), {
     hasVideoResult: true,
     terminal: true,
     status: "completed",
+    waiting: false,
     progress: 100,
+    statusLabel: "视频已完成",
     url: "https://provider.example/result.mp4",
   });
+});
+
+test("keeps provider queue and unknown progress distinct from a reported zero", () => {
+  assert.deepEqual(batch.canvasVideoTaskProgress({
+    status: "pending",
+    providerStatus: "queued",
+    providerTaskId: "upstream-1",
+  }), {
+    hasVideoResult: false,
+    terminal: false,
+    status: "running",
+    waiting: true,
+    progress: undefined,
+    statusLabel: "服务商已接收，等待排队",
+    url: undefined,
+  });
+
+  assert.equal(batch.canvasVideoTaskProgress({ status: "running" }).progress, undefined);
+  assert.equal(batch.canvasVideoTaskProgress({ status: "running" }).statusLabel, "服务商处理中，进度暂不可用");
+  assert.equal(batch.canvasVideoTaskProgress({ status: "running", providerProgress: 0 }).progress, 0);
+  assert.equal(batch.canvasVideoTaskProgress({ status: "running", providerProgress: 38 }).progress, 38);
+});
+
+test("maps queued video variants to pending runtime state", () => {
+  assert.equal(batch.canvasVariantVideoTaskStatus({
+    status: "pending",
+    providerStatus: "queued",
+    providerTaskId: "upstream-1",
+  }), "pending");
+  assert.equal(batch.canvasVariantVideoTaskStatus({ status: "running" }), "running");
 });
 
 test("treats provider failure spellings as terminal failures", () => {
@@ -125,9 +163,10 @@ test("keeps a pending variant video task running without duration", () => {
     now: 1100,
   });
 
-  assert.equal(pending.status, "running");
+  assert.equal(pending.status, "queued");
   assert.equal(pending.processingStartedAt, 1100);
   assert.equal(pending.progress, 10);
+  assert.equal(pending.statusLabel, "服务商已接收，等待排队");
   assert.equal(pending.generation?.durationMs, undefined);
 });
 
@@ -147,6 +186,20 @@ test("projects a polled video task onto existing node data", () => {
   assert.equal(data.progress, 100);
   assert.equal(data.url, "/finished.mp4");
   assert.equal(data.generation?.durationMs, 750);
+});
+
+test("does not create a new canvas node projection when a video task snapshot is unchanged", () => {
+  const data = {
+    kind: "video",
+    status: "running",
+    progress: undefined,
+    statusLabel: "服务商处理中，进度暂不可用",
+    generation: { kind: "video", createdAt: 1000 },
+  };
+  assert.equal(
+    batch.canvasVariantVideoTaskData(data, { status: "running" }, 1750),
+    data,
+  );
 });
 
 test("projects image variant provenance and duration without owning node creation", () => {

@@ -4259,6 +4259,24 @@ html:not([data-theme="light"]) .canvas-group-label-layer>.canvas-group-world-lab
   line-height:1;
 }
 
+@media (min-width:721px){
+  .canvas-node-editor-popover.canvas-node-editor-popover[data-node-kind="audio"]:not(.is-prompt-expanded)[data-density]{
+    width:min(520px,calc(100vw - 32px))!important;
+    max-width:min(520px,calc(100vw - 32px))!important;
+    max-height:none!important;
+    overflow:visible!important;
+  }
+}
+
+@media (max-width:720px){
+  .canvas-node-editor-popover.canvas-node-editor-popover[data-node-kind="audio"]:not(.is-prompt-expanded)[data-density]{
+    width:calc(100vw - 16px)!important;
+    max-width:calc(100vw - 16px)!important;
+    max-height:none!important;
+    overflow:visible!important;
+  }
+}
+
 /* Keep the menu's transparent positioning wrapper from blocking topbar controls. */
 .canvas-project-popover-wrap{pointer-events:none}
 .canvas-project-popover-wrap>.canvas-project-popover{pointer-events:auto}

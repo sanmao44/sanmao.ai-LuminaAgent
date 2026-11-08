@@ -1122,12 +1122,35 @@ test('canvas video polling uses the SANMAO task endpoint', async () => {
   let request;
   const result = await withFetch(async (input, options) => {
     request = { input, options };
-    return jsonResponse({ task: { id: 'task/1', status: 'done', videoUrls: ['/video.mp4'] } });
+    return jsonResponse({ task: { id: 'task/1', status: 'done', providerProgress: 37, providerStatus: 'RUNNING', providerTaskId: 'upstream-1', videoUrls: ['/video.mp4'] } });
   }, () => api.getCanvasVideoTask('task/1'));
 
   assert.equal(request.input, '/api/video/tasks/task%2F1?refresh=false');
   assert.deepEqual(request.options, { cache: 'no-store' });
+  assert.equal(result.task.providerProgress, 37);
+  assert.equal(result.task.providerStatus, 'RUNNING');
+  assert.equal(result.task.providerTaskId, 'upstream-1');
   assert.deepEqual(result.task.videoUrls, ['/video.mp4']);
+});
+
+test('distinguishes a missing video task from transient canvas API errors', async () => {
+  await withFetch(async () => jsonResponse({ error: '视频任务不存在' }, 404), async () => {
+    await assert.rejects(api.getCanvasVideoTask('missing'), (error) => {
+      assert.ok(error instanceof api.CanvasApiError);
+      assert.equal(error.status, 404);
+      assert.equal(api.isMissingCanvasVideoTaskError(error), true);
+      return true;
+    });
+  });
+
+  await withFetch(async () => jsonResponse({ error: '任务存储暂不可用' }, 500), async () => {
+    await assert.rejects(api.getCanvasVideoTask('task-1'), (error) => {
+      assert.ok(error instanceof api.CanvasApiError);
+      assert.equal(error.status, 500);
+      assert.equal(api.isMissingCanvasVideoTaskError(error), false);
+      return true;
+    });
+  });
 });
 
 test('canvas image intent preview forwards the prompt, reference count, and cancellation signal', async () => {

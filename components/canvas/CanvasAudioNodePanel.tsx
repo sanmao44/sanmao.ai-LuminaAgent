@@ -138,7 +138,7 @@ export default function CanvasAudioNodePanel({
           id={`canvas-audio-speech-${node.id}`}
           value={speechText}
           maxLength={SPEECH_TEXT_LIMIT}
-          rows={4}
+          rows={3}
           placeholder="输入旁白、台词或解说词…"
           onChange={(event) => setSpeechText(event.target.value)}
           disabled={generatingSpeech}

@@ -834,11 +834,14 @@ test("audio nodes use the branded rounded player instead of browser gray control
   assert.match(audioPanelStyles, /\.canvas-audio-panel-meta-chips span\{[^}]*border-radius:999px/);
 });
 
-test("audio editor keeps its natural height without a panel height clamp", () => {
+test("audio editor stays compact and scrolls within the panel", () => {
   assert.match(component + audioPanel, /className="canvas-audio-panel"/);
   assert.doesNotMatch(component, /estimatedPopoverHeight/);
   assert.doesNotMatch(component, /naturalHeight = \(head\?\.offsetHeight/);
-  assert.match(audioPanelStyles, /\.canvas-audio-panel\{display:grid;gap:11px;min-width:0\}/);
+  assert.match(styles, /\.canvas-node-editor-popover\.canvas-node-editor-popover\[data-node-kind="audio"\]:not\(\.is-prompt-expanded\)\[data-density\]\{[\s\S]*?width:min\(520px,calc\(100vw - 32px\)\)!important;[\s\S]*?max-height:none!important;[\s\S]*?overflow:visible!important/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel\{display:grid;gap:8px;min-width:0\}/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel-empty\{[^}]*padding:13px 12px/);
+  assert.match(audioPanelStyles, /\.canvas-audio-speech textarea\{min-height:56px;max-height:180px\}/);
 });
 
 test("image node editing persists parameters without turning uploads into generated media", () => {

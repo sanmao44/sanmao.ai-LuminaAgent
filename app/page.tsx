@@ -52,6 +52,7 @@ import { normalizeConversationPersona, personaBadgeLabel } from '@/lib/agent-per
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS } from '@/lib/creation/settings';
 import { requestPromptOptimization } from '@/lib/creation/agent';
+import { acceptedGenerationGalleryItemId, inspectAcceptedGenerationLogs, isGenerateRetryBlocked, isProviderAcceptanceResponse, projectAcceptedGenerationRecovery } from '@/lib/creation/generation-recovery';
 import { cleanupGenerationLogs, getGenerationLog, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
 import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVideoTask as patchVideoTaskRequest, saveVideoTaskLocally as saveVideoTaskLocallyRequest } from '@/lib/video-task-client';
 import { videoTaskStatus } from '@/lib/video-task-output';
@@ -2655,6 +2656,7 @@ export default function Page() {
     const [generateTasks, setGenerateTasks] = useState([]);
     const [generateTaskView, setGenerateTaskView] = useState('current');
     const upscaleRecoveryRef = useRef(new Set());
+    const acceptedGenerationRecoveryRef = useRef(new Set());
     const editorRecoveryRef = useRef(new Map());
     const [generateTasksReady, setGenerateTasksReady] = useState(false);
     const [generateClock, setGenerateClock] = useState(Date.now());
@@ -3280,6 +3282,7 @@ export default function Page() {
                         providerPossiblyAccepted: Boolean(task.providerPossiblyAccepted),
                         providerResultWithheld: Boolean(task.providerResultWithheld),
                         resultRecoveryRequired: Boolean(task.resultRecoveryRequired),
+                        unconfirmedTaskIds: Array.isArray(task.unconfirmedTaskIds) ? task.unconfirmedTaskIds.filter((id)=>typeof id === 'string').slice(0, 8) : undefined,
                         providerTaskId: typeof task.providerTaskId === 'string' ? task.providerTaskId : undefined,
                         items: [],
                         itemIds: Array.isArray(task.itemIds) ? task.itemIds.filter((id)=>typeof id === 'string') : [],
@@ -5342,7 +5345,7 @@ export default function Page() {
         }
         return normalized;
     }
-    async function recordImages(images, meta, editorTaskId, editorImageIndexes) {
+    async function recordImages(images, meta, editorTaskId, editorImageIndexes, recoveryTaskId) {
         const storedImages = await Promise.all(images.map(async (image)=>{
             return persistHistoryImage(image);
         }));
@@ -5359,7 +5362,7 @@ export default function Page() {
             },
             {
                 createdAt: now,
-                createId: (_image, index)=>editorTaskId ? editorTaskGalleryItemId(editorTaskId, editorImageIndexes?.[index] ?? index) : uid('img'),
+                createId: (_image, index)=>editorTaskId ? editorTaskGalleryItemId(editorTaskId, editorImageIndexes?.[index] ?? index) : recoveryTaskId ? acceptedGenerationGalleryItemId(recoveryTaskId, index) : uid('img'),
                 includeCompareReference: true
             }
         );
@@ -5494,8 +5497,90 @@ export default function Page() {
                 ? '已恢复生图参数和参考图；请检查素材后再提交，不会自动调用模型。'
             : '已恢复生图参数；请检查内容后再提交，不会自动调用模型。');
     }
+    async function checkAcceptedGenerateTask(task) {
+        if (acceptedGenerationRecoveryRef.current.has(task.id)) return;
+        const taskIds = Array.isArray(task.unconfirmedTaskIds) && task.unconfirmedTaskIds.length
+            ? task.unconfirmedTaskIds
+            : [task.id];
+        acceptedGenerationRecoveryRef.current.add(task.id);
+        patchGenerateTask(task.id, { checkingAcceptedGeneration: true });
+        try {
+            const results = await inspectAcceptedGenerationLogs(taskIds, (taskId)=>getGenerationLog(taskId));
+            let recoveredCount = 0;
+            let resultRecoveryFailed = false;
+            const failedRecoveryIds = new Set();
+            for (const result of results) {
+                if (result.status !== 'success') continue;
+                try {
+                    const log = result.log;
+                    const items = await recordImages(result.imageUrls.map((url)=>({ url })), {
+                        prompt: log.prompt || task.prompt,
+                        modelId: log.modelId,
+                        modelName: log.modelName,
+                        providerName: log.providerName,
+                        aspectRatio: log.aspectRatio || task.request?.ratio,
+                        outputSize: log.outputSize,
+                        outputFormat: task.request?.outputFormat,
+                        source: log.source || (task.mode === 'edit' ? 'edit' : 'generate'),
+                        references: log.references || task.request?.references,
+                        angle: task.request?.angle,
+                        angleNote: task.request?.angleNote,
+                        annotations: task.request?.mask?.annotations,
+                        mask: task.request?.mask?.dataUrl ? task.request.mask : undefined,
+                    }, undefined, undefined, result.taskId);
+                    appendGenerateTaskItems(task.id, items);
+                    setResultItems((old)=>[...items, ...old]);
+                    recoveredCount += items.length;
+                    if (task.request?.angle && items[0]) {
+                        setAngleResults((old)=>[...items, ...old].slice(0, 100));
+                        setAngleResultToast(items[0]);
+                        setAngleSuppressAutoOpenId(items[0].id);
+                    }
+                } catch {
+                    failedRecoveryIds.add(result.taskId);
+                    resultRecoveryFailed = true;
+                }
+            }
+            const projectedResults = results.map((result)=>failedRecoveryIds.has(result.taskId)
+                ? { taskId: result.taskId, status: 'unavailable' }
+                : result);
+            const projection = projectAcceptedGenerationRecovery(
+                Math.max(1, Number(task.expectedCount) || 1),
+                task.items?.length || 0,
+                projectedResults,
+            );
+            patchGenerateTask(task.id, {
+                status: projection.status,
+                completedAt: Date.now(),
+                providerPossiblyAccepted: projection.providerPossiblyAccepted,
+                resultRecoveryRequired: resultRecoveryFailed,
+                unconfirmedTaskIds: projection.unconfirmedTaskIds,
+                checkingAcceptedGeneration: false,
+                error: resultRecoveryFailed
+                    ? '原任务结果已找到，但保存到本机图库失败。可再次核对并找回，不会重新调用模型。'
+                    : projection.error,
+                info: `${task.info || '图片生成'} · ${projection.phase === 'waiting' ? `${projection.unconfirmedTaskIds.length} 项待核对` : projection.phase === 'retryable' ? '已确认可重试剩余项' : '已从原任务记录找回'}`,
+            });
+            if (recoveredCount) notify(`已从原任务记录找回 ${recoveredCount} 张图片。`);
+            else if (projection.phase === 'waiting') notify(`仍有 ${projection.unconfirmedTaskIds.length} 项等待服务端确认，没有重新提交。`);
+            else notify('原任务已确认结束；现在可重试未完成的图片。');
+            void refreshGenerationLogs();
+        } catch (error) {
+            patchGenerateTask(task.id, {
+                status: 'error',
+                providerPossiblyAccepted: true,
+                checkingAcceptedGeneration: false,
+                error: error instanceof Error ? `无法读取服务端任务记录：${error.message}` : '无法读取服务端任务记录；没有重新提交。',
+                info: `${task.info || '图片生成'} · 状态待核对`,
+            });
+            notify('当前无法读取原任务记录；没有重新提交图片模型，请稍后再核对。');
+        } finally {
+            acceptedGenerationRecoveryRef.current.delete(task.id);
+        }
+    }
     async function retryGenerateTask(task) {
         if (isEditorImageTask(task)) return retryEditorTask(task);
+        if (isGenerateRetryBlocked(task)) return checkAcceptedGenerateTask(task);
         const request = task.request;
         if (!request) return notify('这轮任务没有保存完整参数，无法重试');
         if (request.referencesOmitted) return notify('这轮任务的参考图过大未保存，请先点击“恢复参数”并重新添加参考图');
@@ -5744,6 +5829,9 @@ export default function Page() {
             });
         };
         const requestStartedAt = performance.now();
+        let imageSubmissionStarted = false;
+        let imageResponseParsed = false;
+        let imageResponseHasImages = false;
         primeSuccessSound();
         setGenerateTasks((old)=>[
                 {
@@ -5849,11 +5937,14 @@ export default function Page() {
                 let transparentFailures = 0;
                 let resolvedModelName = taskModel?.displayName || '图片模型';
                 const failures = [];
+                const unconfirmedTaskIds = [];
                 const runs = Array.from({
                     length: taskCount
                 }, (_, index)=>(async ()=>{
                         const childTaskId = `${taskId}-${index + 1}`;
                         const childStartedAt = performance.now();
+                        let childResponseParsed = false;
+                        let childResponseHasImages = false;
                         try {
                             const childRes = await fetch('/api/generate', {
                                 method: 'POST',
@@ -5886,10 +5977,31 @@ export default function Page() {
                                 })
                             });
                             const childData = await childRes.json();
+                            childResponseParsed = true;
+                            childResponseHasImages = Array.isArray(childData.images) && childData.images.length > 0;
+                            if (isProviderAcceptanceResponse(childRes.status, childData)) {
+                                unconfirmedTaskIds.push(childTaskId);
+                                patchGenerateTask(taskId, {
+                                    providerPossiblyAccepted: true,
+                                    unconfirmedTaskIds: [...unconfirmedTaskIds],
+                                    info: `${resolvedModelName} · ${unconfirmedTaskIds.length} 张状态待核对`,
+                                });
+                                void refreshGenerationLogs();
+                                return;
+                            }
                             if (!childRes.ok) throw new Error(childData.error || `第 ${index + 1} 张生成失败`);
                             recordImagePreference(childData.model?.id);
                             let returnedImages = childData.images || [];
-                            if (!returnedImages.length) throw new Error(`第 ${index + 1} 张没有返回图片`);
+                            if (!returnedImages.length) {
+                                unconfirmedTaskIds.push(childTaskId);
+                                patchGenerateTask(taskId, {
+                                    providerPossiblyAccepted: true,
+                                    unconfirmedTaskIds: [...unconfirmedTaskIds],
+                                    info: `${resolvedModelName} · ${unconfirmedTaskIds.length} 张结果待核对`,
+                                });
+                                void refreshGenerationLogs();
+                                return;
+                            }
                             if (taskBackgroundMode === 'local-transparent') {
                                 let failuresForImage = 0;
                                 returnedImages = await Promise.all(returnedImages.map(async (image)=>{
@@ -5932,6 +6044,16 @@ export default function Page() {
                             if (items.length) playSuccessSound();
                             void refreshGenerationLogs();
                         } catch (error) {
+                            if (!childResponseParsed || childResponseHasImages) {
+                                unconfirmedTaskIds.push(childTaskId);
+                                patchGenerateTask(taskId, {
+                                    providerPossiblyAccepted: true,
+                                    unconfirmedTaskIds: [...unconfirmedTaskIds],
+                                    info: `${resolvedModelName} · ${unconfirmedTaskIds.length} 张状态待核对`,
+                                });
+                                void refreshGenerationLogs();
+                                return;
+                            }
                             failedCount += 1;
                             failures.push(`第 ${index + 1} 张：${error instanceof Error ? error.message : '生成失败'}`);
                             registerGenerationFailure();
@@ -5941,13 +6063,15 @@ export default function Page() {
                 void refreshGenerationLogs();
                 await Promise.all(runs);
                 const durationMs = Math.round(performance.now() - requestStartedAt);
-                const info = `${resolvedModelName} · ${outputSize || '自动分辨率'} · ${submittedImageRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${completedCount}/${taskCount} 张已返回${failedCount ? `，${failedCount} 张失败` : ''}`;
+                const info = `${resolvedModelName} · ${outputSize || '自动分辨率'} · ${submittedImageRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${completedCount}/${taskCount} 张已返回${failedCount ? `，${failedCount} 张失败` : ''}${unconfirmedTaskIds.length ? `，${unconfirmedTaskIds.length} 张待核对` : ''}`;
                 const errorMessage = failures.length ? failures.join('；') : undefined;
                 patchGenerateTask(taskId, {
-                    status: failedCount ? 'error' : 'success',
+                    status: failedCount || unconfirmedTaskIds.length ? 'error' : 'success',
                     completedAt: Date.now(),
                     info,
-                    error: errorMessage
+                    error: unconfirmedTaskIds.length ? '部分请求已被服务端接收，结果待核对；确认前不会开放重试。' : errorMessage,
+                    providerPossiblyAccepted: unconfirmedTaskIds.length > 0,
+                    unconfirmedTaskIds: [...unconfirmedTaskIds],
                 });
                 if (transparentFailures) notify(`${transparentFailures} 张图片受到跨域限制，已保留原背景；可改用“API 透明”`);
                 if (failedCount) notify(`本轮已返回 ${completedCount} 张，${failedCount} 张失败`);
@@ -5955,6 +6079,7 @@ export default function Page() {
                 void refreshGenerationLogs();
                 return;
             }
+            imageSubmissionStarted = true;
             const res = await fetch('/api/generate', {
                 method: 'POST',
                 headers: {
@@ -5986,10 +6111,39 @@ export default function Page() {
                 })
             });
             const data = await res.json();
+            imageResponseParsed = true;
+            imageResponseHasImages = Array.isArray(data.images) && data.images.length > 0;
+            if (isProviderAcceptanceResponse(res.status, data)) {
+                const message = data.message || '服务商可能已接收任务，图片结果尚未确认。';
+                patchGenerateTask(taskId, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    providerPossiblyAccepted: true,
+                    unconfirmedTaskIds: [taskId],
+                    error: message,
+                    info: `${taskModel?.displayName || '图片模型'} · 服务商状态待核对`,
+                });
+                void refreshGenerationLogs();
+                notify('服务商可能已接收这次生成；结果确认前不会重提。请在任务卡中核对记录。');
+                return;
+            }
             if (!res.ok) throw new Error(data.error || '生成失败');
             recordImagePreference(data.model?.id);
             const durationMs = Math.round(performance.now() - requestStartedAt);
             let returnedImages = data.images || [];
+            if (!returnedImages.length) {
+                patchGenerateTask(taskId, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    providerPossiblyAccepted: true,
+                    unconfirmedTaskIds: [taskId],
+                    error: '服务端没有返回可用图片，原请求状态需要核对后才能重试。',
+                    info: `${taskModel?.displayName || '图片模型'} · 结果待核对`,
+                });
+                void refreshGenerationLogs();
+                notify('服务端没有返回图片；已保留原任务，请先核对记录，避免重复提交。');
+                return;
+            }
             if (taskBackgroundMode === 'local-transparent') {
                 let failures = 0;
                 returnedImages = await Promise.all(returnedImages.map(async (image)=>{
@@ -6043,6 +6197,33 @@ export default function Page() {
         } catch (error) {
             const message = error instanceof Error ? error.message : '生成失败';
             const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
+            if (imageSubmissionStarted && !imageResponseParsed) {
+                patchGenerateTask(taskId, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    providerPossiblyAccepted: true,
+                    unconfirmedTaskIds: [taskId],
+                    error: `未能确认服务端是否完成响应：${message}`,
+                    info: `${taskModel?.displayName || '图片模型'} · 状态待核对`,
+                });
+                void refreshGenerationLogs();
+                notify('连接在收到生成结果前中断；已保留原任务，请先核对记录再决定后续操作。');
+                return;
+            }
+            if (imageSubmissionStarted && imageResponseParsed && imageResponseHasImages) {
+                patchGenerateTask(taskId, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    providerPossiblyAccepted: true,
+                    resultRecoveryRequired: true,
+                    unconfirmedTaskIds: [taskId],
+                    error: `服务端已返回图片，但本机归档未完成：${message}`,
+                    info: `${taskModel?.displayName || '图片模型'} · 结果待保存`,
+                });
+                void refreshGenerationLogs();
+                notify('图片服务已返回结果，但本机保存未完成。请核对原任务并找回图片，不会再次调用模型。');
+                return;
+            }
             patchGenerateTask(taskId, {
                 status: 'error',
                 completedAt: Date.now(),
@@ -9991,7 +10172,7 @@ export default function Page() {
                                                                                         }),
                                                                                         "进行中"
                                                                                     ]
-                                                                                }) : task.status === 'success' ? '已完成' : task.cancelled ? '已取消' : task.interrupted ? '已中断' : '部分失败'
+                                                                                }) : task.status === 'success' ? '已完成' : task.providerPossiblyAccepted ? '待核对' : task.cancelled ? '已取消' : task.interrupted ? '已中断' : '部分失败'
                                                                             }),
                                                                             /*#__PURE__*/ _jsx("time", {
                                                                                 children: ((task.status === 'pending' ? generateClock : task.completedAt || generateClock) - task.startedAt) / 1000 < 0.1 ? '0.1s' : `${(((task.status === 'pending' ? generateClock : task.completedAt || generateClock) - task.startedAt) / 1000).toFixed(1)}s`
@@ -10009,7 +10190,14 @@ export default function Page() {
                                                                                 onClick: ()=>void cancelGenerateTask(task),
                                                                                 children: "停止跟踪"
                                                                             }),
-                                                                            task.request && task.status === 'error' && /*#__PURE__*/ _jsxs("button", {
+                                                                            task.status === 'error' && isGenerateRetryBlocked(task) && !isEditorImageTask(task) && /*#__PURE__*/ _jsx("button", {
+                                                                                type: "button",
+                                                                                className: "task-retry-button",
+                                                                                disabled: Boolean(task.checkingAcceptedGeneration),
+                                                                                onClick: ()=>void checkAcceptedGenerateTask(task),
+                                                                                children: task.checkingAcceptedGeneration ? '正在核对…' : task.resultRecoveryRequired ? '找回原结果' : '核对任务记录'
+                                                                            }),
+                                                                            task.request && task.status === 'error' && !isGenerateRetryBlocked(task) && /*#__PURE__*/ _jsxs("button", {
                                                                                 type: "button",
                                                                                 className: "task-retry-button",
                                                                                 onClick: ()=>void retryGenerateTask(task),
@@ -10094,10 +10282,10 @@ export default function Page() {
                                                                     /*#__PURE__*/ _jsxs("div", {
                                                                         children: [
                                                                             /*#__PURE__*/ _jsx("strong", {
-                                                                                children: task.cancelled ? '本轮任务已取消' : task.interrupted ? '本轮任务已中断' : '本轮部分生成失败'
+                                                                                children: task.providerPossiblyAccepted ? '任务状态待核对' : task.cancelled ? '本轮任务已取消' : task.interrupted ? '本轮任务已中断' : '本轮部分生成失败'
                                                                             }),
                                                                             /*#__PURE__*/ _jsx("small", {
-                                                                                children: task.resultRecoveryRequired ? '原任务已返回图片，但本机图库保存未完成；可找回原结果，不会再次调用模型。' : task.providerPossiblyAccepted && task.providerResultWithheld ? '服务商已返回图片，但蒙版保护失败，结果未应用；请先恢复参数修正蒙版。' : task.providerPossiblyAccepted ? '服务商可能已接收任务，为避免重复扣费不会自动重提；请先核对服务商任务或用量记录。' : task.cancelled ? '任务已停止，已返回的图片仍会保留。' : task.interrupted ? '页面状态中断，可恢复参数后重新提交。' : task.items.length ? `${task.items.length} / ${task.expectedCount} 张已完成，可重试失败部分。` : '未收到可用图片，请检查模型连接或稍后重试。'
+                                                                                children: task.resultRecoveryRequired ? '原任务已返回图片，但本机图库保存未完成；可找回原结果，不会再次调用模型。' : task.providerPossiblyAccepted && task.providerResultWithheld ? '服务商已返回图片，但蒙版保护失败，结果未应用；请先恢复参数修正蒙版。' : task.providerPossiblyAccepted ? `服务商可能已接收${task.unconfirmedTaskIds?.length > 1 ? ` ${task.unconfirmedTaskIds.length} 项` : ''}任务，结果待核对。核对前不会重提，避免重复调用。` : task.cancelled ? '任务已停止，已返回的图片仍会保留。' : task.interrupted ? '页面状态中断，可恢复参数后重新提交。' : task.items.length ? `${task.items.length} / ${task.expectedCount} 张已完成，可重试失败部分。` : '未收到可用图片，请检查模型连接或稍后重试。'
                                                                             }),
                                                                             task.error && /*#__PURE__*/ _jsxs("details", {
                                                                                 className: "generation-error-details",

@@ -77,6 +77,7 @@ export function recoverCanvasTask(document: CanvasDocument, input: {
     if (node.data.url || node.data.status === 'completed' || !input.status || !['pending', 'error'].includes(input.status)) return document;
     return { ...document, nodes: document.nodes.map((item) => item.id === node.id
       ? { ...item, data: { ...item.data, status: input.status === 'error' ? 'failed' as const : 'running' as const,
+        ...(input.status === 'error' ? { progress: undefined, processingStartedAt: undefined } : {}),
         statusLabel: input.status === 'error' ? input.error || '生成失败' : '服务商仍在生成，请稍候' } } : item) };
   }
   const urls = [...new Set(input.urls.filter(Boolean))];

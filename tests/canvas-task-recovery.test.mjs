@@ -96,6 +96,25 @@ test('video recovery updates only its video placeholder', () => {
   assert.equal(result.nodes[0].data.kind, 'video');
 });
 
+test('a missing video task record ends local tracking without claiming provider failure', () => {
+  const video = fixture();
+  video.nodes[0].data.kind = 'video';
+  video.nodes[0].data.progress = 0;
+  video.nodes[0].data.processingStartedAt = 123;
+  const message = '后台任务记录已丢失，服务商状态未知；请核对生成记录后再操作，避免重复提交';
+  const result = recoverCanvasTask(video, {
+    ...input,
+    status: 'error',
+    urls: [],
+    error: message,
+  });
+
+  assert.equal(result.nodes[0].data.status, 'failed');
+  assert.equal(result.nodes[0].data.progress, undefined);
+  assert.equal(result.nodes[0].data.processingStartedAt, undefined);
+  assert.equal(result.nodes[0].data.statusLabel, message);
+});
+
 test('audio generation logs resolve their existing audio node by task and node lineage', () => {
   const audio = createMedia('audio', '/voice.mp3', '配音', { x: 10, y: 20 });
   audio.id = 'audio-node';

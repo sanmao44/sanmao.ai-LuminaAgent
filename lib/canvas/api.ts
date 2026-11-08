@@ -333,6 +333,19 @@ export async function optimizeCanvasUploadFile(
   }
 }
 
+export class CanvasApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "CanvasApiError";
+  }
+}
+
+export function isMissingCanvasVideoTaskError(error: unknown) {
+  return error instanceof CanvasApiError
+    && error.status === 404
+    && error.message === "视频任务不存在";
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { cache: "no-store", ...options });
   let body: unknown = null;
@@ -349,7 +362,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
               (body as { message?: unknown }).message,
           )
         : `请求失败：${response.status}`;
-    throw new Error(message);
+    throw new CanvasApiError(message, response.status);
   }
   return body as T;
 }
@@ -909,6 +922,9 @@ export async function generateCanvasVideo(input: {
       id: string;
       status: string;
       progress?: number;
+      providerProgress?: number;
+      providerStatus?: string;
+      providerTaskId?: string;
       videoUrls?: string[];
       remoteVideoUrls?: string[];
       error?: string;
@@ -1197,6 +1213,9 @@ export async function getCanvasVideoTask(id: string) {
       id: string;
       status: string;
       progress?: number;
+      providerProgress?: number;
+      providerStatus?: string;
+      providerTaskId?: string;
       videoUrls?: string[];
       remoteVideoUrls?: string[];
       error?: string;
@@ -1226,6 +1245,9 @@ export async function retryCanvasVideoTask(id: string) {
       id: string;
       status: string;
       progress?: number;
+      providerProgress?: number;
+      providerStatus?: string;
+      providerTaskId?: string;
       videoUrls?: string[];
       remoteVideoUrls?: string[];
       error?: string;

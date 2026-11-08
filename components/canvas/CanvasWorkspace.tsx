@@ -104,6 +104,7 @@ import {
   canvasVideoTaskOutputUrl,
   getCanvasAgentGeneration,
   getCanvasVideoTask,
+  isMissingCanvasVideoTaskError,
   isCanvasImageWaitStopped,
   generateCanvasAgent,
   generateCanvasImage,
@@ -420,9 +421,10 @@ import {
   applyCanvasVariantStatePatch,
   canvasVariantImageNodeData,
   canvasVideoTaskProgress,
+  canvasVariantVideoTaskStatus,
+  canvasVariantVideoTaskData,
   canvasVariantImageRequest,
   canvasVariantVideoRequest,
-  canvasVariantVideoTaskData,
   canvasVariantVideoNodeData,
   prepareCanvasVariantBatch,
 } from "@/lib/canvas/variant-batch";
@@ -1532,8 +1534,12 @@ export default function SuperCanvas() {
     stageRef.current?.focus({ preventScroll: true });
   }, []);
   const updateDoc = useCallback(
-    (updater: (value: CanvasDocument) => CanvasDocument) =>
-      setDoc(updater(canvasCoreRef.current.document())),
+    (updater: (value: CanvasDocument) => CanvasDocument) => {
+      const current = canvasCoreRef.current.document();
+      const next = updater(current);
+      if (next === current) return;
+      setDoc(next);
+    },
     [setDoc],
   );
   const commit = useCallback(
@@ -2026,6 +2032,7 @@ export default function SuperCanvas() {
     if (!ready || !mountedRef.current) return;
     const candidates = readDocument().nodes.filter((node) => {
       if (node.type !== "prompt" && node.type !== "media") return false;
+      if (node.type === "media" && node.data.kind === "video") return false;
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "").trim();
       return Boolean(taskId) && !node.data.url;
     });
@@ -5160,49 +5167,42 @@ export default function SuperCanvas() {
           const variantIndex = targetNode?.data.generation?.variantIndex;
           const sourceGeneratorId = targetNode?.data.generation
             ?.sourceGeneratorId;
-          return {
-            ...value,
-            nodes: value.nodes.map((node) => {
+          let changed = false;
+          const nodes = value.nodes.map((node) => {
               if (node.id === nodeId) {
-                const generationDurationMs = progress.terminal && node.data.generation?.createdAt
-                  ? Math.max(0, Date.now() - node.data.generation.createdAt)
-                  : undefined;
+                const nextData = canvasVariantVideoTaskData(node.data, task, Date.now());
+                if (nextData === node.data) return node;
+                changed = true;
                 return {
                   ...node,
-                  data: {
-                    ...node.data,
-                    status: progress.status,
-                    progress: progress.progress,
-                    url: progress.url || node.data.url,
-                    statusLabel:
-                      task.error ||
-                      (progress.status === "completed"
-                        ? "视频已完成"
-                        : progress.terminal
-                          ? "视频任务已中断"
-                          : "视频生成中"),
-                    ...(progress.terminal ? { processingStartedAt: undefined } : {}),
-                    ...(generationDurationMs !== undefined && node.data.generation
-                      ? { generation: { ...node.data.generation, durationMs: generationDurationMs } }
-                      : {}),
-                  },
+                  data: nextData,
                 };
               }
               if (
                 node.id === sourceGeneratorId &&
                 typeof variantIndex === "number"
               ) {
-                const states = variantStatesFor(node).map((state, index) =>
+                const currentStates = variantStatesFor(node);
+                const currentState = currentStates[variantIndex];
+                const nextError = task.error || undefined;
+                const variantStatus = canvasVariantVideoTaskStatus(task);
+                if (
+                  currentState?.status === variantStatus
+                  && currentState.progress === progress.progress
+                  && currentState.error === nextError
+                ) return node;
+                const states = currentStates.map((state, index) =>
                   index === variantIndex
                     ? {
                         ...state,
-                        status: progress.status,
+                        status: variantStatus,
                         progress: progress.progress,
-                        ...(task.error ? { error: task.error } : {}),
+                        error: nextError,
                         updatedAt: Date.now(),
                       }
                     : state,
                 );
+                changed = true;
                 return {
                   ...node,
                   data: {
@@ -5219,8 +5219,8 @@ export default function SuperCanvas() {
                 };
               }
               return node;
-            }),
-          };
+            });
+          return changed ? { ...value, nodes } : value;
         });
         if (!progress.terminal) {
           const timer = window.setTimeout(() => {
@@ -5238,6 +5238,21 @@ export default function SuperCanvas() {
         }
       } catch (error) {
         if (!mountedRef.current || !taskMatches(readDocument())) { clearPoll(); return; }
+        if (isMissingCanvasVideoTaskError(error)) {
+          const message = "后台任务记录已丢失，服务商状态未知；请核对生成记录后再操作，避免重复提交";
+          const imageParams = readSharedCreationSettings("image", runtime);
+          updateDoc((value) => recoverCanvasTask(value, {
+            nodeId,
+            taskId,
+            status: "error",
+            urls: [],
+            error: message,
+            imageParams,
+          }));
+          clearPoll();
+          addLog(message);
+          return;
+        }
         addLog(
           `视频进度查询失败：${error instanceof Error ? error.message : "网络错误"}`,
         );
@@ -5248,7 +5263,7 @@ export default function SuperCanvas() {
         pollTimersRef.current.add(timer);
       }
     },
-    [addLog, captureProjectTask],
+    [addLog, captureProjectTask, runtime],
   );
 
   useEffect(() => {
@@ -5459,8 +5474,9 @@ export default function SuperCanvas() {
           ),
         };
         const progress = canvasVideoTaskProgress(task);
+        const variantStatus = canvasVariantVideoTaskStatus(task);
         next = updateVariantState(next, index, {
-          status: progress.status,
+          status: variantStatus,
           progress: progress.progress,
           ...(task.error ? { error: task.error } : {}),
         });
@@ -6687,10 +6703,10 @@ export default function SuperCanvas() {
               data: {
                 ...node.data,
                 jobId: task.id,
-                status: taskProgress.status,
+                status: taskProgress.waiting ? "queued" : taskProgress.status,
                 progress: taskProgress.progress,
                 url: canvasVideoTaskOutputUrl(task) || node.data.url,
-                statusLabel: taskProgress.status === "completed" ? "视频已完成" : task.error || (taskProgress.status === "failed" ? "视频任务已中断" : "视频生成中"),
+                statusLabel: taskProgress.statusLabel,
                 generation: {
                   kind: "video",
                   prompt,
@@ -7716,11 +7732,10 @@ export default function SuperCanvas() {
                   data: {
                     ...node.data,
                     jobId: task.id,
-                    status: taskProgress.status,
+                    status: taskProgress.waiting ? "queued" : taskProgress.status,
                     progress: taskProgress.progress,
                     url: canvasVideoTaskOutputUrl(task) || node.data.url,
-                    statusLabel:
-                      taskProgress.status === "completed" ? "视频已完成" : task.error || (taskProgress.status === "failed" ? "视频任务已中断" : "视频生成中"),
+                    statusLabel: taskProgress.statusLabel,
                     generation: {
                       kind: "video",
                       prompt,
@@ -8050,10 +8065,10 @@ export default function SuperCanvas() {
         updateOutput(
           {
             jobId: task.id,
-            status: taskProgress.status,
+            status: taskProgress.waiting ? "queued" : taskProgress.status,
             progress: taskProgress.progress,
             url: canvasVideoTaskOutputUrl(task) || undefined,
-            statusLabel: taskProgress.status === "completed" ? "样片完成" : task.error || (taskProgress.status === "failed" ? "视频任务已中断" : "视频生成中"),
+            statusLabel: taskProgress.statusLabel,
           },
           { taskId: task.id, updatedAt: Date.now() },
         );
