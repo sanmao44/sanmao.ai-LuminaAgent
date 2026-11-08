@@ -73,7 +73,12 @@ test('Claude Code tool_use is handed to SANMAO before any SDK tool handler runs'
           tool_use_id: 'sdk-call-1',
         }, 'sdk-call-1', { signal: params.options.abortController.signal });
         assert.equal(result.hookSpecificOutput.permissionDecision, 'deny');
-        throw new Error('SDK query interrupted after host handoff');
+        yield {
+          type: 'result',
+          subtype: 'error_max_turns',
+          is_error: true,
+          errors: ['Reached maximum number of turns (1)'],
+        };
       }
       return messages();
     },

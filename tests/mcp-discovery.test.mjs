@@ -92,6 +92,21 @@ test('cancelled discovery does not select or authorize a service', async () => {
   }), /abort/i);
 });
 
+test('selection timeout aborts the model request so it cannot overlap the main Agent call', async () => {
+  let selectionSignal;
+  const discovery = discoverMcpForRequest({
+    servers: servers.slice(0, 2),
+    load,
+    select: async (_capabilities, signal) => {
+      selectionSignal = signal;
+      return await new Promise(() => {});
+    },
+  });
+
+  await assert.rejects(discovery, /MCP capability discovery timed out/);
+  assert.equal(selectionSignal.aborted, true);
+});
+
 test('an alternate successful call stays visible without falsely declaring task completion', () => {
   const text = toolOutcomeText('完成', [
     { name: 'App', ok: false, error: 'Executable does not exist' },

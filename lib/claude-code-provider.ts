@@ -188,7 +188,7 @@ export async function invokeClaudeCodeProvider(
       if (!capturedCall || !controller.signal.aborted || signal?.aborted) throw error;
     }
     if (signal?.aborted) throw signal.reason || new Error('Claude Code request was cancelled.');
-    if (sdkFailure) throw new Error(sdkFailure);
+    if (sdkFailure && !capturedCall) throw new Error(sdkFailure);
     const toolCalls = capturedCall ? [capturedCall] : undefined;
     return {
       model: rawModelId,
