@@ -2781,6 +2781,12 @@ export default function Page() {
     const availableChatModels = useMemo(()=>activeProviderModels.filter((m)=>!isIntentClassifierModel(m) && m.enabled && m.published && m.kind === 'chat' && !m.capabilities.includes('generate') && !m.capabilities.includes('upscale')), [
         activeProviderModels
     ]);
+    const availableIntentClassifiers = useMemo(()=>activeProviderModels.filter((m)=>isIntentClassifierModel(m) && m.enabled && m.published && m.kind === 'chat'), [
+        activeProviderModels
+    ]);
+    const intentClassifierModel = state.settings.intentClassifierModelId
+        ? availableIntentClassifiers.find((model)=>model.id === state.settings.intentClassifierModelId)
+        : availableIntentClassifiers[0];
     const availableImageModels = useMemo(()=>activeProviderModels.filter((m)=>m.enabled && m.published && (m.kind === 'image' || m.capabilities.includes('generate') || m.capabilities.includes('upscale'))), [
         activeProviderModels
     ]);
@@ -12315,6 +12321,39 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                         ]
                                                     })
                                                 ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "model-library-jev surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "model-library-jev-copy",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "model-library-jev-title",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("strong", { children: "JEV 智能路由" }),
+                                                            /*#__PURE__*/ _jsx("span", { className: intentClassifierModel ? "ready" : "offline", children: intentClassifierModel ? "已启用" : "未启用" })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", { children: intentClassifierModel ? `当前使用 ${intentClassifierModel.rawId}，仅在歧义意图、视频下载和 Canvas 参考图判定时调用。明确请求会直接执行。` : "启用模型库中的 jev-1.14 后，助手会在歧义请求和 Canvas 参考图场景提供更准确的意图判定；明确请求不会增加额外调用。" }),
+                                                    /*#__PURE__*/ _jsx("small", { children: "JEV 是内部路由模型，不会出现在普通对话模型选择中。不可用时系统会回退到当前助手模型。" })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "model-library-jev-action",
+                                                children: availableIntentClassifiers.length ? /*#__PURE__*/ _jsx(Dropdown, {
+                                                    value: state.settings.intentClassifierModelId || availableIntentClassifiers[0].id,
+                                                    options: [{ value: '', label: "自动选择", meta: "优先使用已启用的 jev-1.14" }, ...availableIntentClassifiers.map((model)=>({ value: model.id, label: model.rawId, meta: model.providerName }))],
+                                                    onChange: (value)=>void patchSettings({ intentClassifierModelId: value || null }),
+                                                    placeholder: "选择 JEV"
+                                                }) : /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: "ghost-button",
+                                                    onClick: ()=>setModelSearch('jev-1.14'),
+                                                    children: "在模型列表中查找 jev-1.14"
+                                                })
                                             })
                                         ]
                                     }),

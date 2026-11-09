@@ -5,7 +5,12 @@ import type { RegistryModel } from './types';
  * normal conversation model, even though the provider catalog reports it as
  * a chat model.
  */
-export const INTENT_CLASSIFIER_MODEL_RAW_ID = 'jev-1.13';
+export const INTENT_CLASSIFIER_MODEL_RAW_ID = 'jev-1.14';
+
+/** New catalog entries for the internal router are active by default. */
+export function isIntentClassifierEnabledByDefault(rawId: string, explicit?: boolean) {
+  return explicit === true || isIntentClassifierModel({ rawId });
+}
 
 export function isIntentClassifierModel(model: Pick<RegistryModel, 'rawId'> | null | undefined) {
   const rawId = String(model?.rawId || '').trim().toLowerCase();

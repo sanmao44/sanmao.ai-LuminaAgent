@@ -742,7 +742,7 @@ function unwrapProviderData(provider: RuntimeProvider, data: any) {
 
 function isJevModelId(rawId: string) {
   const value = String(rawId || '').trim().toLowerCase();
-  return value === 'jev-1.13' || value.endsWith('/jev-1.13');
+  return value === 'jev-1.14' || value.endsWith('/jev-1.14');
 }
 
 function jevSystemOneEndpoint(provider: RuntimeProvider) {

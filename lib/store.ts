@@ -11,7 +11,7 @@ import { buildPublicUpscaleModels } from './upscale-catalog';
 import { resolveProviderConfigDir } from './data-paths';
 import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
 import { providerStateRepository } from './repositories/server-provider-repository';
-import { isIntentClassifierModel } from './intent-classifier';
+import { isIntentClassifierEnabledByDefault, isIntentClassifierModel } from './intent-classifier';
 import { isRetiredAgnesModel } from './agnes';
 import { prepareImageStoragePath } from './image-storage';
 
@@ -181,7 +181,7 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
   // 与 inferModelKind 共用同一套判据，避免两边正则各自漂移导致「模型库认、弹窗不认」。
   // JEV is intentionally classified as an internal chat-compatible model here.
   // Its name contains “classifier”, so the generic non-conversational guard
-  // would otherwise mark a discovered `jev-1.13` record as unknown and the
+  // would otherwise mark a discovered `jev-1.14` record as unknown and the
   // runtime resolver could never select it after a model refresh.
   if (isIntentClassifierModel({ rawId })) return { kind: 'chat', capabilities: ['chat'] };
   if (isSpeechModelId(id) || inferredKind === 'audio') return { kind: 'audio', capabilities: ['speech'] };
@@ -574,7 +574,7 @@ export async function replaceProviderModels(providerId: string, providerName: st
         return normalizeModel({ ...previous, providerName, displayName: raw.name?.split('/').pop() || previous.displayName, ...(raw.billing ? { billing: raw.billing } : {}), ...(raw.enabledByDefault !== undefined ? { enabledByDefault: raw.enabledByDefault } : {}), ...(raw.contextWindow !== undefined ? { contextWindow: raw.contextWindow } : {}), ...(raw.maxInputTokens !== undefined ? { maxInputTokens: raw.maxInputTokens } : {}), ...(raw.maxOutputTokens !== undefined ? { maxOutputTokens: raw.maxOutputTokens } : {}), ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}), ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}), capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) }, platform);
       }
       const inferred = inferModel(raw.id, platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities ? [...raw.capabilities] : undefined });
-      const enabledByDefault = raw.enabledByDefault === true;
+      const enabledByDefault = isIntentClassifierEnabledByDefault(raw.id, raw.enabledByDefault);
       return normalizeModel({
         id: randomUUID(), providerId, providerName, rawId: raw.id, source: 'discovered',
         displayName: raw.name?.split('/').pop() || raw.id.split('/').pop() || raw.id,
