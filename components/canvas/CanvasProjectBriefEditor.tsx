@@ -65,7 +65,6 @@ export default function CanvasProjectBriefEditor({
           <span>创作意图</span>
           <textarea
             value={draft.intent || ""}
-            maxLength={500}
             rows={3}
             placeholder="描述这次想完成什么，例如：为新款咖啡设计一组春季上新视觉"
             onChange={(event) => setDraft((value) => ({ ...value, intent: event.target.value }))}
@@ -87,7 +86,6 @@ export default function CanvasProjectBriefEditor({
           <span>风格</span>
           <textarea
             value={draft.style}
-            maxLength={500}
             rows={2}
             placeholder="例如：克制写实、自然光、低饱和"
             onChange={(event) => setDraft((value) => ({ ...value, style: event.target.value }))}
@@ -97,7 +95,6 @@ export default function CanvasProjectBriefEditor({
           <span>目标受众</span>
           <textarea
             value={draft.audience}
-            maxLength={500}
             rows={2}
             placeholder="例如：关注户外生活的年轻家庭"
             onChange={(event) => setDraft((value) => ({ ...value, audience: event.target.value }))}
@@ -107,7 +104,6 @@ export default function CanvasProjectBriefEditor({
           <span>必须遵守</span>
           <textarea
             value={draft.constraints}
-            maxLength={500}
             rows={2}
             placeholder="例如：产品外观保持一致，不出现竞品标志"
             onChange={(event) => setDraft((value) => ({ ...value, constraints: event.target.value }))}

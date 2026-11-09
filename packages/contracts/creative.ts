@@ -35,16 +35,14 @@ export const CREATIVE_PROJECT_DELIVERABLE_OPTIONS: ReadonlyArray<{
   { value: 'freeform', label: '自由创作', description: '保留辅助推荐，不强制固定媒介链路' },
 ];
 
-export const CREATIVE_PROJECT_BRIEF_FIELD_MAX_LENGTH = 500;
-
 export function normalizeCreativeProjectBrief(value: unknown): CreativeProjectBrief | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
-  const intent = typeof source.intent === 'string' ? source.intent.trim().slice(0, CREATIVE_PROJECT_BRIEF_FIELD_MAX_LENGTH) : '';
+  const intent = typeof source.intent === 'string' ? source.intent.trim() : '';
   const brief: CreativeProjectBrief = {
-    style: typeof source.style === 'string' ? source.style.trim().slice(0, CREATIVE_PROJECT_BRIEF_FIELD_MAX_LENGTH) : '',
-    audience: typeof source.audience === 'string' ? source.audience.trim().slice(0, CREATIVE_PROJECT_BRIEF_FIELD_MAX_LENGTH) : '',
-    constraints: typeof source.constraints === 'string' ? source.constraints.trim().slice(0, CREATIVE_PROJECT_BRIEF_FIELD_MAX_LENGTH) : '',
+    style: typeof source.style === 'string' ? source.style.trim() : '',
+    audience: typeof source.audience === 'string' ? source.audience.trim() : '',
+    constraints: typeof source.constraints === 'string' ? source.constraints.trim() : '',
   };
   const deliverable = source.deliverable === 'video'
     || source.deliverable === 'image'

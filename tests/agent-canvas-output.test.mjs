@@ -32,7 +32,7 @@ test('Agent request context derives stable task ownership fields from workspace 
   assert.deepEqual(result.taskContext, { projectId: 'p', chatId: 'c', canvasId: 'cv', nodeId: 'n', taskId: 'agent-run' });
 });
 
-test('Agent request context normalizes project brief data and bounds each field', () => {
+test('Agent request context preserves complete project brief fields', () => {
   const { prepareAgentRequestContext } = load('./packages/agent-core/request-context');
   const result = prepareAgentRequestContext({
     body: { projectBrief: { style: `  ${'x'.repeat(510)}  `, audience: '创作者', constraints: 42, deliverable: 'video' } },
@@ -40,13 +40,13 @@ test('Agent request context normalizes project brief data and bounds each field'
     normalizeDocument: (value) => value,
     normalizeGenerationSource: () => 'canvas',
   });
-  assert.equal(result.creativeProjectBrief.style.length, 500);
+  assert.equal(result.creativeProjectBrief.style.length, 510);
   assert.equal(result.creativeProjectBrief.audience, '创作者');
   assert.equal(result.creativeProjectBrief.constraints, '');
   assert.equal(result.creativeProjectBrief.deliverable, 'video');
 });
 
-test('Agent request context preserves the bounded project intent', () => {
+test('Agent request context preserves project intent beyond 500 characters', () => {
   const { prepareAgentRequestContext } = load('./packages/agent-core/request-context');
   const result = prepareAgentRequestContext({
     body: { projectBrief: { intent: `  ${'x'.repeat(510)}  ` } },
@@ -54,7 +54,7 @@ test('Agent request context preserves the bounded project intent', () => {
     normalizeDocument: (value) => value,
     normalizeGenerationSource: () => 'canvas',
   });
-  assert.equal(result.creativeProjectBrief.intent.length, 500);
+  assert.equal(result.creativeProjectBrief.intent.length, 510);
 });
 
 test('project brief instruction frames saved fields as bounded creative data', () => {

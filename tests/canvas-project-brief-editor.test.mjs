@@ -41,8 +41,32 @@ function editorHarness(brief) {
     }
     return undefined;
   };
-  return { Editor, SelectMenu, find, render, saved };
+  const findAll = (tree, predicate) => {
+    if (Array.isArray(tree)) return tree.flatMap((child) => findAll(child, predicate));
+    if (!tree || typeof tree !== 'object') return [];
+    return [ ...(predicate(tree) ? [tree] : []), ...findAll(tree.props?.children, predicate) ];
+  };
+  return { Editor, SelectMenu, find, findAll, render, saved };
 }
+
+test('project brief fields accept and save text longer than 500 characters', () => {
+  const { find, findAll, render, saved } = editorHarness({
+    intent: '', style: '', audience: '', constraints: '', deliverable: 'auto',
+  });
+  const fields = findAll(render(), (element) => element.type === 'textarea');
+  const longText = '风'.repeat(1200);
+
+  assert.equal(fields.length, 4);
+  assert.ok(fields.every((field) => field.props.maxLength === undefined));
+  fields.forEach((field) => field.props.onChange({ target: { value: longText } }));
+  find(render(), (element) => element.type === 'form').props.onSubmit({ preventDefault() {} });
+
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].intent.length, longText.length);
+  assert.equal(saved[0].style.length, longText.length);
+  assert.equal(saved[0].audience.length, longText.length);
+  assert.equal(saved[0].constraints.length, longText.length);
+});
 
 test('project brief deliverable selection updates the saved project settings', () => {
   const { SelectMenu, find, render, saved } = editorHarness({
