@@ -14,3 +14,12 @@ export function completeHistoryGridPageSizes(
     ...(columns.videos === undefined ? {} : { videos: completeHistoryPageSize(columns.videos, minimumPageSize) }),
   };
 }
+
+export function completeHistoryColumnCount(maxColumnCount: number, pageSize: number): number {
+  const maximum = Number.isFinite(maxColumnCount) ? Math.max(1, Math.floor(maxColumnCount)) : 1;
+  const size = Number.isFinite(pageSize) ? Math.max(1, Math.floor(pageSize)) : 1;
+  for (let columns = maximum; columns > 1; columns -= 1) {
+    if (size % columns === 0) return columns;
+  }
+  return 1;
+}

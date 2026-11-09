@@ -58,7 +58,7 @@ import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVid
 import { videoTaskStatus } from '@/lib/video-task-output';
 import { createManualStorageSnapshot, loadStorageMaintenance, restoreLocalStorageSnapshot } from '@/lib/storage-maintenance-client';
 import { formatStorageBytes } from '@/lib/storage-presentation';
-import { completeHistoryGridPageSizes } from '@/lib/creation/history-layout';
+import { completeHistoryColumnCount, completeHistoryGridPageSizes, completeHistoryPageSize } from '@/lib/creation/history-layout';
 import {
     chatHistoryGroupLabel,
     editorRatio,
@@ -2713,6 +2713,8 @@ export default function Page() {
     const [pageSizeMode, setPageSizeMode] = useState('auto');
     const historyGridRef = useRef(null);
     const videoGridRef = useRef(null);
+    const [historyGridColumnCount, setHistoryGridColumnCount] = useState(null);
+    const [videoGridColumnCount, setVideoGridColumnCount] = useState(null);
     const [page, setPage] = useState(1);
     const [videoPage, setVideoPage] = useState(1);
     const [videoTotal, setVideoTotal] = useState(0);
@@ -3569,19 +3571,41 @@ export default function Page() {
         chatScrollAfterCommitRef.current = false;
     }, [section]);
     useEffect(()=>{
-        if (pageSizeMode !== 'auto' || section !== 'history' || recordTab !== 'works') return;
+        if (section !== 'history' || recordTab !== 'works') return;
         const getColumns = (grid: HTMLDivElement | null)=>{
             if (!grid) return undefined;
-            const columns = getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length;
-            return columns;
+            const isVideoGrid = grid.classList.contains('creative-video-grid');
+            if (window.innerWidth <= (isVideoGrid ? 480 : 520)) return 1;
+            if (window.innerWidth <= (isVideoGrid ? 760 : 780)) return 2;
+            const style = getComputedStyle(grid);
+            const minimum = Number.parseFloat(style.getPropertyValue(isVideoGrid ? '--creative-video-grid-min-column-width' : '--history-grid-min-column-width')) || (isVideoGrid ? 230 : 235);
+            const gap = Number.parseFloat(style.columnGap) || 13;
+            const widthCapacity = Math.max(1, Math.floor((grid.clientWidth + gap) / (minimum + gap)));
+            return isVideoGrid && window.innerWidth >= 1600 ? 6 : widthCapacity;
         };
         const syncPageSizes = ()=>{
-            const sizes = completeHistoryGridPageSizes({
-                images: historyMediaFilter === 'video' ? undefined : getColumns(historyGridRef.current),
-                videos: historyMediaFilter === 'image' ? undefined : getColumns(videoGridRef.current),
-            }, DEFAULT_HISTORY_PAGE_SIZE);
-            if (sizes.images !== undefined) setPageSize((current)=>current === sizes.images ? current : sizes.images);
-            if (sizes.videos !== undefined) setVideoPageSize((current)=>current === sizes.videos ? current : sizes.videos);
+            const imageColumns = historyMediaFilter === 'video' ? undefined : getColumns(historyGridRef.current);
+            if (imageColumns !== undefined) {
+                if (pageSizeMode === 'auto') {
+                    const nextPageSize = completeHistoryPageSize(imageColumns, DEFAULT_HISTORY_PAGE_SIZE);
+                    setPageSize((current)=>current === nextPageSize ? current : nextPageSize);
+                    setHistoryGridColumnCount(null);
+                } else {
+                    const nextColumns = completeHistoryColumnCount(imageColumns, pageSize);
+                    setHistoryGridColumnCount((current)=>current === nextColumns ? current : nextColumns);
+                }
+            }
+            const videoColumns = historyMediaFilter === 'image' ? undefined : getColumns(videoGridRef.current);
+            if (videoColumns !== undefined) {
+                if (pageSizeMode === 'auto') {
+                    const nextPageSize = completeHistoryGridPageSizes({ videos: videoColumns }, DEFAULT_HISTORY_PAGE_SIZE).videos;
+                    if (nextPageSize !== undefined) setVideoPageSize((current)=>current === nextPageSize ? current : nextPageSize);
+                    setVideoGridColumnCount(null);
+                } else {
+                    const nextColumns = completeHistoryColumnCount(videoColumns, pageSize);
+                    setVideoGridColumnCount((current)=>current === nextColumns ? current : nextColumns);
+                }
+            }
         };
         const observers: ResizeObserver[] = [];
         for (const grid of [historyGridRef.current, videoGridRef.current]) {
@@ -3596,7 +3620,7 @@ export default function Page() {
             observers.forEach((observer)=>observer.disconnect());
             window.removeEventListener('resize', syncPageSizes);
         };
-    }, [section, recordTab, historyMediaFilter, filteredGallery.length, videoTotal, pageSizeMode]);
+    }, [section, recordTab, historyMediaFilter, filteredGallery.length, videoTotal, pageSizeMode, pageSize]);
     useEffect(()=>{
         setPage(1);
         setVideoPage(1);
@@ -10586,7 +10610,7 @@ export default function Page() {
                                                 /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: `已完成的视频会自动保存在这里 · 每页 ${effectiveVideoPageSize} 项` })] }),
                                                 /*#__PURE__*/ _jsx("span", { children: `${videoTotal} 段` })
                                             ] }),
-                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", ref: videoGridRef, children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task), onSaveLocally: ()=>saveVideoTaskLocally(task), onCancel: ()=>patchVideoTask(task, 'cancel'), onRetry: ()=>patchVideoTask(task, 'retry') }, task.id)) }),
+                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", ref: videoGridRef, style: videoGridColumnCount ? { gridTemplateColumns: `repeat(${videoGridColumnCount}, minmax(0, 1fr))` } : undefined, children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task), onSaveLocally: ()=>saveVideoTaskLocally(task), onCancel: ()=>patchVideoTask(task, 'cancel'), onRetry: ()=>patchVideoTask(task, 'retry') }, task.id)) }),
                                             /*#__PURE__*/ _jsxs("div", { className: "pagination creative-video-pagination", children: [
                                                 /*#__PURE__*/ _jsxs("span", { children: ["共 ", videoTotal, " 段 · 第 ", visibleVideoPage, " / ", videoTotalPages, " 页"] }),
                                                 /*#__PURE__*/ _jsxs("div", { children: [
@@ -10606,6 +10630,7 @@ export default function Page() {
                                             /*#__PURE__*/ _jsx("div", {
                                                 className: "history-grid",
                                                 ref: historyGridRef,
+                                                style: historyGridColumnCount ? { gridTemplateColumns: `repeat(${historyGridColumnCount}, minmax(0, 1fr))` } : undefined,
                                                 children: pagedGallery.map((item, index)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                         Icon,
                                                         sourceLabel: gallerySourceLabel,

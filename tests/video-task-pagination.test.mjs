@@ -68,7 +68,9 @@ test('video task API exposes page metadata and filter parameters', async () => {
   assert.match(page, /const DEFAULT_HISTORY_PAGE_SIZE = 12/);
   assert.match(page, /const HISTORY_PAGE_SIZE_MODE_STORAGE_KEY = 'sanmao-history-page-size-mode'/);
   assert.match(page, /const videoGridRef = useRef\(null\)/);
-  assert.match(page, /completeHistoryGridPageSizes\(\{[\s\S]*images: historyMediaFilter === 'video'[\s\S]*videos: historyMediaFilter === 'image'/);
+  assert.match(page, /const imageColumns = historyMediaFilter === 'video' \? undefined : getColumns\(historyGridRef\.current\)/);
+  assert.match(page, /completeHistoryColumnCount\(imageColumns, pageSize\)/);
+  assert.match(page, /const videoColumns = historyMediaFilter === 'image' \? undefined : getColumns\(videoGridRef\.current\)/);
   assert.match(page, /className: "creative-video-grid", ref: videoGridRef/);
   assert.match(page, /const effectiveVideoPageSize = pageSizeMode === 'auto' \? videoPageSize : pageSize/);
   assert.match(page, /const videoTotalPages = Math\.max\(1, Math\.ceil\(videoTotal \/ effectiveVideoPageSize\)\)/);
