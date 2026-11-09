@@ -11,7 +11,7 @@ import { buildPublicUpscaleModels } from './upscale-catalog';
 import { resolveProviderConfigDir } from './data-paths';
 import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
 import { providerStateRepository } from './repositories/server-provider-repository';
-import { isIntentClassifierEnabledByDefault, isIntentClassifierModel } from './intent-classifier';
+import { isIntentClassifierEnabledByDefault, isIntentClassifierModel, isInternalIntentModel } from './intent-classifier';
 import { isRetiredAgnesModel } from './agnes';
 import { prepareImageStoragePath } from './image-storage';
 
@@ -127,6 +127,16 @@ async function readState(): Promise<StoreData> {
         settings[key] = null;
         settingsChanged = true;
       }
+    }
+    const configuredAgentModel = models.find((model) => model.id === settings.agentModelId);
+    if (configuredAgentModel && isInternalIntentModel(configuredAgentModel)) {
+      settings.agentModelId = null;
+      settingsChanged = true;
+    }
+    const configuredIntentModel = models.find((model) => model.id === settings.intentClassifierModelId);
+    if (configuredIntentModel && !isIntentClassifierModel(configuredIntentModel)) {
+      settings.intentClassifierModelId = null;
+      settingsChanged = true;
     }
     const nextState: StoreData = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -669,7 +679,7 @@ export async function patchSettings(patch: Partial<AppSettings>) {
     if ('agentModelId' in patch) {
       const id = patch.agentModelId;
       if (id) {
-        const model = state.models.find((m) => m.id === id && m.enabled && m.published && m.kind === 'chat' && !isIntentClassifierModel(m));
+        const model = state.models.find((m) => m.id === id && m.enabled && m.published && m.kind === 'chat' && !isInternalIntentModel(m));
         if (!model) throw new Error('请选择已启用、已发布的对话模型');
       }
       state.settings.agentModelId = id ?? null;
@@ -734,14 +744,14 @@ export async function getRuntimeModelCandidates(id: string | null | undefined, k
   const state = await readState();
   const models = state.models.map((model) => normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform));
   const explicitCandidate = id && id !== 'auto' ? models.find((model) => model.id === id) : undefined;
-  const explicitId = explicitCandidate && !isIntentClassifierModel(explicitCandidate) ? id : null;
+  const explicitId = explicitCandidate && !isInternalIntentModel(explicitCandidate) ? id : null;
   const compatible = models.filter((m) => {
     const provider = state.providers.find((item) => item.id === m.providerId);
     return isProviderModelLibraryEnabled(provider)
       && m.kind === kind
       && m.enabled
       && m.published
-      && (kind !== 'chat' || !isIntentClassifierModel(m));
+      && (kind !== 'chat' || !isInternalIntentModel(m));
   });
   let model = explicitId ? compatible.find((m) => m.id === explicitId) : undefined;
   if (!explicitId) {
@@ -864,7 +874,7 @@ export async function getRuntimeVisionModel(id: string | null | undefined) {
       && item.kind === 'chat'
       && item.enabled
       && item.published
-      && !isIntentClassifierModel(item);
+      && !isInternalIntentModel(item);
   });
   const explicit = id && id !== 'auto' ? compatible.find((item) => item.id === id) : undefined;
   const visionModels = compatible.filter((item) => item.capabilities.includes('vision'));

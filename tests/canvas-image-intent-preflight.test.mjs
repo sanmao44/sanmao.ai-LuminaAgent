@@ -18,7 +18,10 @@ async function loadTypeScript(path, dependencies) {
   return loaded.exports;
 }
 
-const modelPicker = await loadTypeScript('../lib/model-picker.ts', {});
+const intentClassifier = await loadTypeScript('../lib/intent-classifier.ts', {});
+const modelPicker = await loadTypeScript('../lib/model-picker.ts', {
+  './intent-classifier': intentClassifier,
+});
 const imageRequest = await loadTypeScript('../lib/canvas/image-reference-request.ts', {
   '../creative-references': {
     appendTextReferenceContext: value => value,

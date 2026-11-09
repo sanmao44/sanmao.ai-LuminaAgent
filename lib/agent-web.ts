@@ -417,7 +417,8 @@ export function likelyFileGenerationRequest(input: string) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
   return /(?:导出|下载|保存|生成|创建|制作|整理).{0,16}(?:文件|附件|csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|代码文件|脚本文件|报告文件|文档文件)/i.test(text)
-    || /(?:给我|提供|返回).{0,12}(?:一个|一份|可下载的)?.{0,12}(?:csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|文件|附件)/i.test(text);
+    || /(?:给我|提供|返回).{0,12}(?:一个|一份|可下载的)?.{0,12}(?:csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|文件|附件)/i.test(text)
+    || /(?:html?|css|svg|xml|yaml|json|csv|tsv|markdown|md|txt)\s*(?:交付|输出|下载|导出|保存|提供|返回)/i.test(text);
 }
 
 type VideoDownloadContextMessage = { role?: string; content?: unknown };

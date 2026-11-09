@@ -12,6 +12,17 @@ export function modelSupportsCapabilityRequirements(
   });
 }
 
+export function modelPickerModelIsAvailable(
+  model: RegistryModel,
+  requiredCapabilities: readonly ModelCapability[],
+  isExcluded: (model: RegistryModel) => boolean = () => false,
+) {
+  return !isExcluded(model)
+    && model.enabled
+    && model.published
+    && modelSupportsCapabilityRequirements(model, requiredCapabilities);
+}
+
 export function modelPickerMatches(model: RegistryModel, query: string) {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return true;

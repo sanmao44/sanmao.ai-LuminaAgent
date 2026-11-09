@@ -2402,83 +2402,62 @@ export default function CanvasAgentDock({
           }}
         />
         <div className="canvas-agent-dock-composer-row">
-          <details
-            className="canvas-agent-dock-settings"
-            onToggle={(event) => {
-              if (!event.currentTarget.open && skillMenuOpen && !skillMenuFromSlashRef.current) closeSkillMenu();
-            }}
-          >
-            <summary className="canvas-agent-dock-settings-summary">
-              <span>本轮设置</span>
-              <small>{model === "auto" && imageModelId === "auto" ? "自动选模" : "自选模型"} · {WEB_MODE_LABELS[webMode]}</small>
-            </summary>
-            <div className="canvas-agent-dock-composer-selectors" role="group" aria-label="本轮设置">
-              {/* 模型选择复用全站同一套 ModelPicker：搜索、收藏、最近调用、按服务商筛选都在里面。 */}
-              <div className={`canvas-agent-dock-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
-                <ModelPicker
-                  models={runtime?.models || []}
-                  value={model}
-                  capability="chat"
-                  portalZIndex={CANVAS_Z_INDEX.modalPopover}
-                  dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
-                  defaultProviderId={runtime?.settings.defaultProviderId}
-                  defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
-                  defaultModelId={runtime?.settings.agentModelId}
-                  placeholder="选择对话模型"
-                  onChange={setModel}
-                  className="canvas-agent-dock-model"
-                />
-              </div>
-              <div className={`canvas-agent-dock-model-wrap canvas-agent-dock-creative-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
-                <ModelPicker
-                  models={availableCreativeModels}
-                  value={imageModelId}
-                  capability={liveCreativeCapability}
-                  portalZIndex={CANVAS_Z_INDEX.modalPopover}
-                  dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
-                  defaultProviderId={runtime?.settings.defaultProviderId}
-                  defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
-                  defaultModelId={runtime?.settings.defaultImageModelId}
-                  automaticHint="自动按当前生图或改图任务选择模型"
-                  triggerPrefix="创作"
-                  placeholder="选择创作模型"
-                  onChange={setImageModelId}
-                  className="canvas-agent-dock-model canvas-agent-dock-creative-model"
-                />
-              </div>
-              <button
-                type="button"
-                className={`canvas-agent-dock-skill ${skillMenuOpen ? "is-active" : ""}`}
-                onClick={() => (skillMenuOpen ? closeSkillMenu() : openSkillMenu(""))}
-                title="选择技能：把某个技能指定给本轮任务"
-                aria-haspopup="listbox"
-                aria-expanded={skillMenuOpen}
-              >
-                <SkillIcon size={14} />
-                <span>技能</span>
-              </button>
-              <button
-                type="button"
-                className={`canvas-agent-dock-web ${webMode}`}
-                onClick={cycleWebMode}
-                disabled={busy}
-                aria-label={`联网模式：${WEB_MODE_LABELS[webMode]}`}
-                title={`联网：${WEB_MODE_LABELS[webMode]} · ${WEB_MODE_HINTS[webMode]} · 点击切换到「${WEB_MODE_LABELS[nextWebMode]}」`}
-              >
-                {WEB_MODE_LABELS[webMode]}
-              </button>
+          <div className="canvas-agent-dock-composer-selectors" role="group" aria-label="本轮设置">
+            {/* 模型选择复用全站同一套 ModelPicker：搜索、收藏、最近调用、按服务商筛选都在里面。 */}
+            <div className={`canvas-agent-dock-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
+              <ModelPicker
+                models={runtime?.models || []}
+                value={model}
+                capability="chat"
+                portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
+                defaultProviderId={runtime?.settings.defaultProviderId}
+                defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
+                defaultModelId={runtime?.settings.agentModelId}
+                placeholder="选择对话模型"
+                onChange={setModel}
+                className="canvas-agent-dock-model"
+              />
             </div>
-            <AgentSkillMenu
-              open={skillMenuOpen && !skillMenuFromSlashRef.current}
-              skills={skills}
-              query={skillQuery}
-              activeIndex={skillActive}
-              onActiveIndexChange={setSkillActive}
-              onSelect={applySkill}
-              onClose={closeSkillMenu}
-              emptyHint="还没有启用中的技能。点右上角的「技能」按钮可以安装或启用。"
-            />
-          </details>
+            <div className={`canvas-agent-dock-model-wrap canvas-agent-dock-creative-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
+              <ModelPicker
+                models={availableCreativeModels}
+                value={imageModelId}
+                capability={liveCreativeCapability}
+                portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
+                defaultProviderId={runtime?.settings.defaultProviderId}
+                defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
+                defaultModelId={runtime?.settings.defaultImageModelId}
+                automaticHint="自动按当前生图或改图任务选择模型"
+                triggerPrefix="创作"
+                placeholder="选择创作模型"
+                onChange={setImageModelId}
+                className="canvas-agent-dock-model canvas-agent-dock-creative-model"
+              />
+            </div>
+            <button
+              type="button"
+              className={`canvas-agent-dock-skill ${skillMenuOpen ? "is-active" : ""}`}
+              onClick={() => (skillMenuOpen ? closeSkillMenu() : openSkillMenu(""))}
+              title="选择技能：把某个技能指定给本轮任务"
+              aria-haspopup="listbox"
+              aria-expanded={skillMenuOpen}
+            >
+              <SkillIcon size={14} />
+              <span>技能</span>
+            </button>
+            <button
+              type="button"
+              className={`canvas-agent-dock-web ${webMode}`}
+              onClick={cycleWebMode}
+              disabled={busy}
+              aria-label={`联网模式：${WEB_MODE_LABELS[webMode]}`}
+              title={`联网：${WEB_MODE_LABELS[webMode]} · ${WEB_MODE_HINTS[webMode]} · 点击切换到「${WEB_MODE_LABELS[nextWebMode]}」`}
+            >
+              {WEB_MODE_LABELS[webMode]}
+            </button>
+          </div>
           <div className="canvas-agent-dock-composer-actions" role="group" aria-label="结果处理与发送">
             <label className="canvas-agent-dock-auto" title="开启后，图片和不含删除的 Patch 会自动写入；删除操作与复杂画布计划始终需要确认。明确要求保存时，文字回复也会创建节点。">
               <input
@@ -2493,6 +2472,16 @@ export default function CanvasAgentDock({
             </button>
           </div>
         </div>
+        <AgentSkillMenu
+          open={skillMenuOpen && !skillMenuFromSlashRef.current}
+          skills={skills}
+          query={skillQuery}
+          activeIndex={skillActive}
+          onActiveIndexChange={setSkillActive}
+          onSelect={applySkill}
+          onClose={closeSkillMenu}
+          emptyHint="还没有启用中的技能。点右上角的「技能」按钮可以安装或启用。"
+        />
         <AgentSkillMenu
           open={skillMenuOpen && skillMenuFromSlashRef.current}
           skills={skills}

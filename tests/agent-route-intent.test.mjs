@@ -224,7 +224,7 @@ function harness(options = {}) {
         return reply(options.reply?.(payload, calls.length, _model) || { content: '已经完成。' });
       },
       chatCompletionStream: async () => { throw new Error('unexpected direct stream'); },
-      describeProviderFailure: () => 'provider failure',
+      describeProviderFailure: options.describeProviderFailure || (() => 'provider failure'),
       generateImage: async (_provider, _model, args) => {
         images.push({ mode: 'generate', ...args });
         if (options.pendingImage) throw Object.assign(new Error('provider accepted'), { providerPossiblyAccepted: true, providerTaskId: 'provider-task-1' });
@@ -1043,6 +1043,33 @@ test('filesystem success prose is rejected when no tool has executed', async () 
   const data = await agent.post([{ role: 'user', content: '把项目中的 INTJ.png 改名为 INTJ_极简风.png' }]);
   assert.match(data.message, /尚未执行/);
   assert.doesNotMatch(data.message, /已经完成/);
+});
+
+test('HTML delivery fails as a retryable request when the model describes a temporary file but returns no file', async () => {
+  const agent = harness({
+    describeProviderFailure: (error) => error instanceof Error ? error.message : String(error),
+    reply: () => ({ content: '保存失败：C:/Users/ADMINI~1/AppData/Local/Temp/sanmao-claude-EfcS6L/pelican-bike.html 写入失败，文件没有生成。' }),
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+  assert.match(data.error, /没有生成可下载文件/);
+  assert.equal(data.files?.length || 0, 0);
+  assert.equal(agent.modelCalls.length, 2, 'the application requests a tool-backed file generation retry before returning failure');
+});
+
+test('HTML delivery returns a downloadable chat file after file_generate succeeds', async () => {
+  const content = '<!doctype html><html><body><svg aria-label="鹅骑自行车"></svg></body></html>';
+  const agent = harness({
+    reply: (payload) => payload.tools?.some((tool) => tool.function.name === 'file_generate')
+      ? { tool_calls: [{ id: 'html-file', function: { name: 'file_generate', arguments: JSON.stringify({ files: [{ filename: 'pelican-bike.html', content }] }) } }] }
+      : { content: '文件已生成。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+
+  assert.equal(data.files.length, 1);
+  assert.equal(data.files[0].name, 'pelican-bike.html');
+  assert.equal(data.files[0].mimeType, 'text/html;charset=utf-8');
+  assert.equal(data.files[0].content, content);
+  assert.match(data.message, /1 个文件/);
 });
 
 test('an accepted image plan is resolved semantically within this conversation', async () => {

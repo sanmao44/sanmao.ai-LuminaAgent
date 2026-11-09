@@ -4,6 +4,13 @@ import test from "node:test";
 import ts from "typescript";
 
 async function loadImageReferenceRequest() {
+  const intentClassifierUrl = new URL("../lib/intent-classifier.ts", import.meta.url);
+  const intentClassifierSource = await readFile(intentClassifierUrl, "utf8");
+  const intentClassifierCompiled = ts.transpileModule(intentClassifierSource, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    fileName: intentClassifierUrl.pathname,
+  }).outputText;
+  const intentClassifierModuleUrl = `data:text/javascript;base64,${Buffer.from(intentClassifierCompiled).toString("base64")}`;
   const referencesUrl = new URL("../lib/creative-references.ts", import.meta.url);
   const referencesSource = await readFile(referencesUrl, "utf8");
   const referencesCompiled = ts.transpileModule(referencesSource, {
@@ -16,7 +23,7 @@ async function loadImageReferenceRequest() {
   const modelPickerCompiled = ts.transpileModule(modelPickerSource, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: modelPickerUrl.pathname,
-  }).outputText;
+  }).outputText.replace(/from ["']\.\/intent-classifier["']/, `from "${intentClassifierModuleUrl}"`);
   const modelPickerModuleUrl = `data:text/javascript;base64,${Buffer.from(modelPickerCompiled).toString("base64")}`;
   const requestUrl = new URL("../lib/canvas/image-reference-request.ts", import.meta.url);
   const requestSource = await readFile(requestUrl, "utf8");

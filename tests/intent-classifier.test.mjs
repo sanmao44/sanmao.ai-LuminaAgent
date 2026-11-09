@@ -14,6 +14,16 @@ const classifier = await import(`data:text/javascript;base64,${Buffer.from(compi
 test('new JEV catalog entries default to enabled while other model defaults remain unchanged', () => {
   assert.equal(classifier.isIntentClassifierEnabledByDefault('jev-1.14'), true);
   assert.equal(classifier.isIntentClassifierEnabledByDefault('provider/jev-1.14'), true);
+  assert.equal(classifier.isIntentClassifierEnabledByDefault('jev-1.13'), false);
   assert.equal(classifier.isIntentClassifierEnabledByDefault('gpt-5'), false);
   assert.equal(classifier.isIntentClassifierEnabledByDefault('gpt-5', true), true);
+});
+
+test('legacy JEV router models stay internal while only the current model can classify intent', () => {
+  assert.equal(classifier.isInternalIntentModel({ rawId: 'jev-1.13' }), true);
+  assert.equal(classifier.isInternalIntentModel({ rawId: 'provider/jev-1.13' }), true);
+  assert.equal(classifier.isIntentClassifierModel({ rawId: 'jev-1.13' }), false);
+  assert.equal(classifier.isInternalIntentModel({ rawId: 'jev-1.14' }), true);
+  assert.equal(classifier.isIntentClassifierModel({ rawId: 'jev-1.14' }), true);
+  assert.equal(classifier.isInternalIntentModel({ rawId: 'gpt-5' }), false);
 });

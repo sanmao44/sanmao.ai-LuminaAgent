@@ -7,10 +7,10 @@ import type { ModelCapability, RegistryModel } from '@/lib/types';
 import type { AgentModelHealthRecord } from '@/lib/agent/model-health';
 import { getFavoriteModelIds, getRecentModelIds, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
-import { MODEL_PICKER_QUICK_LIMIT, modelPickerMatches, modelSupportsCapabilityRequirements, takeUniqueModelSlice } from '@/lib/model-picker';
+import { MODEL_PICKER_QUICK_LIMIT, modelPickerMatches, modelPickerModelIsAvailable, modelSupportsCapabilityRequirements, takeUniqueModelSlice } from '@/lib/model-picker';
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
-import { isIntentClassifierModel } from '@/lib/intent-classifier';
+import { isInternalIntentModel } from '@/lib/intent-classifier';
 
 type ModelPickerProps = {
   models: RegistryModel[];
@@ -94,11 +94,7 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   // locking; the quick picker already tracks page scrolling while it is open.
   useBodyScrollLock(dialogOpen);
 
-  const availableModels = useMemo(() => models.filter((model) => {
-    if (isIntentClassifierModel(model)) return false;
-    if (!model.enabled || !model.published) return false;
-    return modelSupportsCapabilityRequirements(model, requiredCapabilities);
-  }), [models, capability]);
+  const availableModels = useMemo(() => models.filter((model) => modelPickerModelIsAvailable(model, requiredCapabilities, isInternalIntentModel)), [models, capability]);
   const healthByModel = useMemo(() => new Map(health.map((item) => [item.modelId, item])), [health]);
   const selected = value !== 'auto' ? availableModels.find((model) => model.id === value) : null;
   const unavailableSelectedModel = value && value !== 'auto' && !selected

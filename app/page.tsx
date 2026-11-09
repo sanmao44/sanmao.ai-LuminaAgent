@@ -28,7 +28,7 @@ import GenerationLogRestoreAction from '@/components/GenerationLogRestoreAction'
 import { getFavoriteModelIds, getLastModelCall, getRecentModelIds, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { filterModelsByActiveProviders, isProviderModelLibraryEnabled } from '@/lib/provider-availability';
-import { isIntentClassifierModel } from '@/lib/intent-classifier';
+import { isIntentClassifierModel, isInternalIntentModel } from '@/lib/intent-classifier';
 import { galleryReferences, normalizeReferenceRecords, referenceCount } from '@/lib/reference-images';
 import { createShareConversationPreview } from '@/lib/share-conversation-workflow';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
@@ -2778,7 +2778,7 @@ export default function Page() {
         state.models,
         state.providers
     ]);
-    const availableChatModels = useMemo(()=>activeProviderModels.filter((m)=>!isIntentClassifierModel(m) && m.enabled && m.published && m.kind === 'chat' && !m.capabilities.includes('generate') && !m.capabilities.includes('upscale')), [
+    const availableChatModels = useMemo(()=>activeProviderModels.filter((m)=>!isInternalIntentModel(m) && m.enabled && m.published && m.kind === 'chat' && !m.capabilities.includes('generate') && !m.capabilities.includes('upscale')), [
         activeProviderModels
     ]);
     const availableIntentClassifiers = useMemo(()=>activeProviderModels.filter((m)=>isIntentClassifierModel(m) && m.enabled && m.published && m.kind === 'chat'), [
@@ -4830,7 +4830,7 @@ export default function Page() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || '读取配置失败');
             setState(data);
-            const selectedChat = filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>!isIntentClassifierModel(model) && model.id === data.settings?.agentModelId && model.enabled && model.published && model.kind === 'chat') || filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>!isIntentClassifierModel(model) && model.enabled && model.published && model.kind === 'chat');
+            const selectedChat = filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>!isInternalIntentModel(model) && model.id === data.settings?.agentModelId && model.enabled && model.published && model.kind === 'chat') || filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>!isInternalIntentModel(model) && model.enabled && model.published && model.kind === 'chat');
             if (!data.settings?.webSearchConfigured && !selectedChat?.capabilities.includes('web-search')) {
                 setAgentWebMode('off');
                 setAgentWebModeMenuOpen(false);
@@ -5315,7 +5315,7 @@ export default function Page() {
         });
         if (!data?.state || !nextUse) return;
         const nextState = data.state;
-        if (model.kind === 'chat' && !nextState.settings.agentModelId) await patchSettings({
+        if (model.kind === 'chat' && !isInternalIntentModel(model) && !nextState.settings.agentModelId) await patchSettings({
             agentModelId: model.id
         });
         if (model.kind === 'image' && model.capabilities.includes('generate') && !nextState.settings.defaultImageModelId) await patchSettings({
@@ -8764,11 +8764,17 @@ export default function Page() {
                                                                     activity: message.activity
                                                                 }) : message.role === 'assistant' && !message.pending ? message.agentError ? /*#__PURE__*/ _jsx(AgentMessageError, {
                                                                     message: message.content,
+                                                                    retrying: Boolean(message.retrying),
+                                                                    disabled: activeAgentBusy || Boolean(message.retrying),
                                                                     onRetryAutomatic: ()=>{
+                                                                        if (activeAgentBusy || message.retrying) return;
                                                                         setAgentModelId('auto');
                                                                         void retryAgentMessage(message, 'auto');
                                                                     },
-                                                                    onRetryCurrent: ()=>void retryAgentMessage(message)
+                                                                    onRetryCurrent: ()=>{
+                                                                        if (activeAgentBusy || message.retrying) return;
+                                                                        void retryAgentMessage(message);
+                                                                    }
                                                                 }) : /*#__PURE__*/ _jsx(AssistantMarkdown, {
                                                                     content: message.content,
                                                                     Icon,

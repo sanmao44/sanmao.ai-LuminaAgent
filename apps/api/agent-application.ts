@@ -2022,6 +2022,9 @@ const auditMcpCall = (
         }
       }
       if (!toolCalls.length) {
+        if (artifactGenerationRequest) {
+          throw new Error('本轮没有生成可下载文件。请重试，或切换到支持文件工具的对话模型。');
+        }
         plainMessage = filesystemActionRequest || browserAutomationRequest || mcpExecutionRequest || artifactGenerationRequest || hasInlineToolCallMarkup(plainMessage)
           ? '本次操作尚未执行，模型没有成功调用所需工具。请检查对应服务是否已启用、目录是否已授权，或切换支持工具调用的模型。'
           : cleanedMessage || '当前对话模型没有返回内容。';
@@ -2556,6 +2559,9 @@ const auditMcpCall = (
       await settleLlmLog?.({ status: 'error', responseChars: failure.length, error: failure });
       if (wantsStream) return streamResult(null, { fallback: failure, images: [], files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName });
       return applicationJson({ ok: true, message: failure, images: [], files: generatedFiles, generations, deliverable: requestedDeliverable });
+    }
+    if (fileGenerationRequest && !generatedFiles.length) {
+      throw new Error('本轮没有生成可下载文件。请重试，或切换到支持文件工具的对话模型。');
     }
     let finalText = generated.length || generatedFiles.length
       ? `已完成${generated.length ? ` ${generated.length} 张图片` : ''}${generated.length && generatedFiles.length ? '，' : ''}${generatedFiles.length ? ` ${generatedFiles.length} 个文件` : ''}。`
