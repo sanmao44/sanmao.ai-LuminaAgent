@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.102/SANMAO.AI-0.7.102.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.102/SANMAO.AI-0.7.102.zip"
   ],
-  "sha256": "ae19d052e2800309f1191e4d1b2d0e8a80465f377447d66859ad9209e9598e4d",
+  "sha256": "b940197e9a50b8917262be3214fce38400bd500f11ce4f4f31dbc28d0d52dbcc",
   "notes": [
     "集成 65535 Claude Std，并改进 Claude 工具结果交接与 MCP 发现超时恢复。",
     "增强 Canvas 长任务恢复、状态导航、失败重试和任务日志交互。",
