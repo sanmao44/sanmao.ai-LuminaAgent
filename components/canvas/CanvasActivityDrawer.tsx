@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { GenerationLog } from "@/lib/generation-log";
 import { activityTaskFromGenerationLog } from "@/lib/task-activity/adapters";
 import { deriveCanvasActivityEmptyState, resolveCanvasActivityNavigation, canvasTaskBelongsToProject, filterCanvasGenerationLogs, generationLogDisplayStatus, generationLogDuration, generationLogKind, generationLogKindLabel, generationLogNeedsAttention, generationLogOutputUrls, generationLogStatusLabel } from "@/lib/canvas/activity-log";
@@ -14,10 +14,27 @@ import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
 import { canvasLineageForTask, type CanvasLineageRecord } from "@/lib/provenance/normalize";
 import type { CanvasDocument, CanvasNodeCreationKind } from "@/lib/canvas/types";
 import { CanvasPanelShell } from "@/components/canvas/CanvasPanels";
+import SelectMenu, { type SelectMenuOption } from "@/components/SelectMenu";
 import CanvasProjectProgressPanel from "@/components/canvas/CanvasProjectProgressPanel";
 import { deriveCanvasProjectProgress, type CanvasProjectProgressAction } from "@/lib/canvas/project-progress";
 import { deriveCanvasProjectQuality } from "@/lib/canvas/project-quality";
+import { deriveCanvasWorkspaceRecommendation } from "@/lib/canvas/workspace-recommendation";
 import type { CreativeProjectBrief } from "@/packages/contracts/creative";
+
+type TaskMediaFilter = "all" | "image" | "video" | "audio" | "llm";
+
+const taskScopeOptions: SelectMenuOption<"project" | "all">[] = [
+  { value: "project", label: "本项目" },
+  { value: "all", label: "全部项目" },
+];
+
+const taskMediaOptions: SelectMenuOption<TaskMediaFilter>[] = [
+  { value: "all", label: "全部类型" },
+  { value: "image", label: "图片" },
+  { value: "video", label: "视频" },
+  { value: "audio", label: "音频" },
+  { value: "llm", label: "LLM" },
+];
 
 
 export default function CanvasActivityDrawer({
@@ -97,9 +114,10 @@ export default function CanvasActivityDrawer({
 }) {
   const [tab, setTab] = useState<"project" | "tasks" | "activity">("project");
   const [status, setStatus] = useState<"all" | GenerationLog["status"] | "recoverable" | "attention">("all");
-  const [media, setMedia] = useState<"all" | "image" | "video" | "audio" | "llm">("all");
+  const [media, setMedia] = useState<TaskMediaFilter>("all");
   const [query, setQuery] = useState("");
   const [projectOnly, setProjectOnly] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
   const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null);
@@ -112,6 +130,8 @@ export default function CanvasActivityDrawer({
   const [batchRetryResultKind, setBatchRetryResultKind] = useState<"video" | "upscale" | null>(null);
   const [batchRetriedTaskIds, setBatchRetriedTaskIds] = useState<ReadonlySet<string>>(new Set());
   const scrollBodyRef = useRef<HTMLDivElement | null>(null);
+  const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const tabOrder = ["project", "tasks", "activity"] as const;
   useLayoutEffect(() => {
     if (restoreScrollTop === null) return;
     const frame = requestAnimationFrame(() => {
@@ -164,6 +184,7 @@ export default function CanvasActivityDrawer({
     [matchingTasks, scopedTasks],
   );
   const activityEmptyState = deriveCanvasActivityEmptyState(scopedTasks.length, taskLogs.length);
+  const activeFilterCount = Number(!projectOnly) + Number(media !== "all") + Number(status !== "all") + Number(Boolean(query.trim()));
   const progress = useMemo(() => deriveCanvasProjectProgress({
     document: canvasDocument,
     brief: projectBrief,
@@ -180,6 +201,10 @@ export default function CanvasActivityDrawer({
     projectId: creativeProjectId,
     canvasId,
   }), [canvasDocument, canvasId, creativeProjectId, projectBrief, projectVersionCount, taskLogs]);
+  const recommendation = useMemo(
+    () => deriveCanvasWorkspaceRecommendation(progress.nextAction, nextAction),
+    [nextAction, progress.nextAction],
+  );
   const runNextAction = (action: CanvasProjectProgressAction) => {
     if (action.kind === "review-task") {
       setTab("tasks");
@@ -196,13 +221,30 @@ export default function CanvasActivityDrawer({
     else if (action.kind === "save-version") onSaveProjectVersion();
     else onFocusNode(action.nodeId);
   };
-  const runTaskNextAction = () => {
-    if (!nextAction.filter) return;
-    setQuery("");
-    setMedia("all");
-    setProjectOnly(true);
-    setStatus(nextAction.filter);
-    setSelectedId(null);
+  const runRecommendation = () => {
+    if (recommendation.kind === "task") {
+      setTab("tasks");
+      setQuery("");
+      setMedia("all");
+      setProjectOnly(true);
+      setStatus(recommendation.filter);
+      setSelectedId(null);
+      return;
+    }
+    runNextAction(recommendation.action);
+  };
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const currentIndex = tabOrder.indexOf(tab);
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = (currentIndex + 1) % tabOrder.length;
+    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") nextIndex = (currentIndex - 1 + tabOrder.length) % tabOrder.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = tabOrder.length - 1;
+    else return;
+    event.preventDefault();
+    const nextTab = tabOrder[nextIndex];
+    setTab(nextTab);
+    requestAnimationFrame(() => tabButtonRefs.current[nextIndex]?.focus());
   };
   const runBatchVideoRetry = async () => {
     if (!batchRetryCandidates.length || batchRetryRunning) return;
@@ -273,9 +315,9 @@ export default function CanvasActivityDrawer({
     >
       <div className="canvas-log-sticky-header">
         <div className="canvas-log-tabs" role="tablist" aria-label="项目工作台视图">
-          <button type="button" role="tab" aria-selected={tab === "project"} className={tab === "project" ? "active" : ""} onClick={() => setTab("project")}>进度</button>
-          <button type="button" role="tab" aria-selected={tab === "tasks"} className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>任务 <b>{summary.total}</b></button>
-          <button type="button" role="tab" aria-selected={tab === "activity"} className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>活动 <b>{activityLogs.length}</b></button>
+          <button ref={(element) => { tabButtonRefs.current[0] = element; }} id="canvas-tab-project" type="button" role="tab" aria-selected={tab === "project"} aria-controls="canvas-tabpanel-project" tabIndex={tab === "project" ? 0 : -1} className={tab === "project" ? "active" : ""} onClick={() => setTab("project")} onKeyDown={handleTabKeyDown}>进度</button>
+          <button ref={(element) => { tabButtonRefs.current[1] = element; }} id="canvas-tab-tasks" type="button" role="tab" aria-selected={tab === "tasks"} aria-controls="canvas-tabpanel-tasks" tabIndex={tab === "tasks" ? 0 : -1} className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")} onKeyDown={handleTabKeyDown}>任务 <b>{summary.total}</b></button>
+          <button ref={(element) => { tabButtonRefs.current[2] = element; }} id="canvas-tab-activity" type="button" role="tab" aria-selected={tab === "activity"} aria-controls="canvas-tabpanel-activity" tabIndex={tab === "activity" ? 0 : -1} className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")} onKeyDown={handleTabKeyDown}>活动 <b>{activityLogs.length}</b></button>
         </div>
         {tab === "tasks" && <>
           <div className="canvas-log-summary-grid">
@@ -286,46 +328,62 @@ export default function CanvasActivityDrawer({
             <button type="button" className={status === "error" ? "active error" : "error"} onClick={() => setStatus("error")}><b>{summary.error}</b><small>失败</small></button>
           </div>
           <div className="canvas-log-toolbar">
-            <label className="canvas-log-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索提示词、模型或服务商…" /></label>
-            <div className="canvas-log-filter-row">
-              <label className="canvas-log-filter-control">
-                <span>范围</span>
-                <select aria-label="任务范围" value={projectOnly ? "project" : "all"} onChange={(event) => setProjectOnly(event.target.value === "project")}>
-                  <option value="project">本项目</option>
-                  <option value="all">全部项目</option>
-                </select>
-              </label>
-              <label className="canvas-log-filter-control">
-                <span>类型</span>
-                <select aria-label="任务媒体类型" value={media} onChange={(event) => setMedia(event.target.value as typeof media)}>
-                  <option value="all">全部类型</option>
-                  <option value="image">图片</option>
-                  <option value="video">视频</option>
-                  <option value="audio">音频</option>
-                  <option value="llm">LLM</option>
-                </select>
-              </label>
-              <button type="button" className="refresh" onClick={onRefresh} disabled={loading}>{loading ? "读取中…" : "↻ 刷新"}</button>
+            <div className="canvas-log-search-row">
+              <label className="canvas-log-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索提示词、模型或服务商…" /></label>
+              <button type="button" className={`canvas-log-filter-toggle${filtersOpen ? " active" : ""}`} aria-expanded={filtersOpen} aria-controls="canvas-task-filters" onClick={() => setFiltersOpen((open) => !open)}>
+                筛选{activeFilterCount > 0 ? <b>{activeFilterCount}</b> : null}
+              </button>
             </div>
+            {filtersOpen && <div id="canvas-task-filters" className="canvas-log-filter-row">
+              <div className="canvas-log-filter-control">
+                <span>范围</span>
+                <SelectMenu
+                  className="canvas-log-filter-select"
+                  menuClassName="canvas-log-filter-popover"
+                  menuWidth={172}
+                  ariaLabel="任务范围"
+                  value={projectOnly ? "project" : "all"}
+                  options={taskScopeOptions}
+                  onChange={(value) => setProjectOnly(value === "project")}
+                />
+              </div>
+              <div className="canvas-log-filter-control">
+                <span>类型</span>
+                <SelectMenu
+                  className="canvas-log-filter-select"
+                  menuClassName="canvas-log-filter-popover"
+                  menuWidth={172}
+                  ariaLabel="任务媒体类型"
+                  value={media}
+                  options={taskMediaOptions}
+                  onChange={setMedia}
+                />
+              </div>
+              <button type="button" className="refresh" onClick={onRefresh} disabled={loading}>{loading ? "读取中…" : "↻ 刷新"}</button>
+            </div>}
           </div>
         </>}
       </div>
       {tab === "project" ? (
-        <CanvasProjectProgressPanel
-          projectName={projectName}
-          progress={progress}
-          quality={quality}
-          canExport={Boolean(creativeProjectId)}
-          onAction={runNextAction}
-          onOpenNode={onFocusNode}
-          onExportPackage={onExportProjectPackage}
-          onScaffold={onScaffoldProject}
-        />
+        <div id="canvas-tabpanel-project" role="tabpanel" aria-labelledby="canvas-tab-project" tabIndex={0}>
+          <CanvasProjectProgressPanel
+            projectName={projectName}
+            progress={progress}
+            quality={quality}
+            recommendation={recommendation}
+            canExport={Boolean(creativeProjectId)}
+            onRecommendation={runRecommendation}
+            onAction={runNextAction}
+            onOpenNode={onFocusNode}
+            onExportPackage={onExportProjectPackage}
+            onScaffold={onScaffoldProject}
+          />
+        </div>
       ) : tab === "tasks" ? (
-        <>
-          <div className={`canvas-task-next-action ${nextAction.kind}`} role="status" aria-live="polite">
-            <div><strong>{nextAction.title}</strong><small>{nextAction.detail}</small></div>
-            {nextAction.filter && <button type="button" onClick={runTaskNextAction}>{nextAction.buttonLabel}</button>}
+        <div id="canvas-tabpanel-tasks" role="tabpanel" aria-labelledby="canvas-tab-tasks" tabIndex={0}>
+          <div className={`canvas-task-next-action ${recommendation.kind === "task" ? nextAction.kind : "ready"}`} role="status" aria-live="polite">
+            <div><strong>{recommendation.title}</strong><small>{recommendation.detail}</small></div>
+            <button type="button" onClick={runRecommendation}>{recommendation.kind === "task" ? recommendation.buttonLabel : "继续这一步"}</button>
           </div>
           {(batchRetryCandidates.length > 0 || batchRetryResultKind === "video") && <section className="canvas-batch-video-retry" aria-label="批量重试视频任务">
             <div className="canvas-batch-video-retry-copy">
@@ -501,9 +559,9 @@ export default function CanvasActivityDrawer({
                 </article>;
             })}
           </div> : <div className="canvas-side-empty"><span>▱</span><b>{scopedTasks.length ? "没有符合条件的任务" : projectOnly ? "当前项目还没有任务" : "还没有生成任务"}</b><small>{scopedTasks.length ? "当前筛选针对生成任务记录；画布中的全部素材请从顶部“资产”面板查看。" : projectOnly ? "切换到“全部项目”可查看其它项目的历史任务。" : "从画布生成图片、视频或 Agent 结果后会出现在这里。"}</small></div>}
-        </>
+        </div>
       ) : (
-        <>
+        <div id="canvas-tabpanel-activity" role="tabpanel" aria-labelledby="canvas-tab-activity" tabIndex={0}>
           <div className="canvas-activity-summary"><b>{activityLogs.length}</b><span>条画布操作</span></div>
           {activityLogs.length ? <div className="canvas-activity-list">{activityLogs.map((log) => {
             const navigation = resolveCanvasActivityNavigation(log, taskLogs);
@@ -521,7 +579,7 @@ export default function CanvasActivityDrawer({
             setSelectedId(null);
             setTab("tasks");
           }}>{activityEmptyState.taskScope === "project" ? "查看本项目任务" : "查看全部项目任务"}<span aria-hidden="true">→</span></button>}</div>}
-        </>
+        </div>
       )}
     </CanvasPanelShell>
   );

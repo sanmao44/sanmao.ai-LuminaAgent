@@ -2,13 +2,16 @@
 
 import type { CanvasProjectProgress, CanvasProjectProgressAction } from "@/lib/canvas/project-progress";
 import type { CanvasProjectQuality } from "@/lib/canvas/project-quality";
+import type { CanvasWorkspaceRecommendation } from "@/lib/canvas/workspace-recommendation";
 import { CREATIVE_PROJECT_DELIVERABLE_OPTIONS } from "@/packages/contracts/creative";
 
 export default function CanvasProjectProgressPanel({
   projectName,
   progress,
   quality,
+  recommendation,
   canExport,
+  onRecommendation,
   onAction,
   onOpenNode,
   onExportPackage,
@@ -17,7 +20,9 @@ export default function CanvasProjectProgressPanel({
   projectName: string;
   progress: CanvasProjectProgress;
   quality: CanvasProjectQuality;
+  recommendation: CanvasWorkspaceRecommendation;
   canExport: boolean;
+  onRecommendation: () => void;
   onAction: (action: CanvasProjectProgressAction) => void;
   onOpenNode: (nodeId: string) => void;
   onExportPackage: () => void;
@@ -50,11 +55,11 @@ export default function CanvasProjectProgressPanel({
 
       <section className="canvas-project-progress-next" aria-labelledby="canvas-project-progress-next-title">
         <div className="canvas-project-progress-eyebrow">推荐下一步</div>
-        <button type="button" onClick={() => onAction(progress.nextAction)}>
+        <button type="button" onClick={onRecommendation}>
           <span className="canvas-project-progress-next-mark" aria-hidden="true">→</span>
           <span className="canvas-project-progress-next-copy">
-            <b id="canvas-project-progress-next-title">{progress.nextAction.label}</b>
-            <small>{progress.nextAction.detail}</small>
+            <b id="canvas-project-progress-next-title">{recommendation.title}</b>
+            <small>{recommendation.detail}</small>
           </span>
           <span className="canvas-project-progress-next-arrow" aria-hidden="true">›</span>
         </button>
@@ -71,7 +76,8 @@ export default function CanvasProjectProgressPanel({
         <div className="canvas-project-quality-heading">
           <div>
             <span className="canvas-project-progress-eyebrow">交付前检查</span>
-            <b id="canvas-project-quality-title">项目健康度 {quality.score}</b>
+            <b id="canvas-project-quality-title">项目健康度 {quality.score} / 100</b>
+            <small className="canvas-project-quality-scoring">阻塞 −{quality.scoreDeductions.error} · 优化 −{quality.scoreDeductions.warning} · 提示 −{quality.scoreDeductions.info}</small>
           </div>
           <span className="canvas-project-quality-state">{quality.status === "ready" ? "可以继续交付" : quality.status === "blocked" ? "先处理阻塞项" : "还有优化项"}</span>
         </div>

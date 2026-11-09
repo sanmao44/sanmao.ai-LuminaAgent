@@ -17,7 +17,14 @@ export type CanvasProjectQualityCheck = {
 export type CanvasProjectQuality = {
   status: "ready" | "attention" | "blocked";
   score: number;
+  scoreDeductions: Readonly<Record<CanvasProjectQualitySeverity, number>>;
   checks: CanvasProjectQualityCheck[];
+};
+
+const SCORE_DEDUCTIONS: Record<CanvasProjectQualitySeverity, number> = {
+  error: 35,
+  warning: 15,
+  info: 4,
 };
 
 function readyAsset(node: CanvasNode) {
@@ -139,10 +146,11 @@ export function deriveCanvasProjectQuality(input: {
   }
 
   const hasError = checks.some((check) => check.severity === "error");
-  const score = Math.max(0, 100 - checks.reduce((total, check) => total + (check.severity === "error" ? 35 : check.severity === "warning" ? 15 : 4), 0));
+  const score = Math.max(0, 100 - checks.reduce((total, check) => total + SCORE_DEDUCTIONS[check.severity], 0));
   return {
     status: hasError ? "blocked" : checks.some((check) => check.severity === "warning") ? "attention" : "ready",
     score,
+    scoreDeductions: { ...SCORE_DEDUCTIONS },
     checks,
   };
 }

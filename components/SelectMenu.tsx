@@ -49,7 +49,6 @@ export default function SelectMenu<T extends string | number>({ value, options, 
 
   useIsomorphicLayoutEffect(() => {
     if (!open) return;
-    setHighlighted(value);
     function positionMenu() {
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
@@ -83,9 +82,9 @@ export default function SelectMenu<T extends string | number>({ value, options, 
     positionMenu();
     firstFrame = window.requestAnimationFrame(() => {
       positionMenu();
+      menuRef.current?.focus({ preventScroll: true });
       secondFrame = window.requestAnimationFrame(positionMenu);
     });
-    menuRef.current?.focus({ preventScroll: true });
     const handlePointerDown = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setOpen(false);
     };
@@ -114,7 +113,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
     };
   }, [menuWidth, open, value]);
 
-  function openMenu() {
+  function openMenu(initialHighlight: T = value) {
     setMenuStyle({
       position: 'fixed',
       visibility: 'hidden',
@@ -124,6 +123,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
       bottom: 'auto',
       width: 0,
     });
+    setHighlighted(initialHighlight);
     setOpen(true);
   }
 
@@ -143,6 +143,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
     const option = options.find((item) => item.value === nextValue);
     if (!option || option.disabled) return;
     onChange(nextValue);
+    setHighlighted(nextValue);
     setOpen(false);
     triggerRef.current?.focus();
   }
@@ -150,8 +151,14 @@ export default function SelectMenu<T extends string | number>({ value, options, 
   function handleTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
-      if (!open) openMenu();
-      moveHighlight(event.key === 'ArrowDown' ? 1 : -1);
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      if (!open && enabledOptions.length) {
+        const selectedIndex = enabledOptions.findIndex((option) => option.value === value);
+        const currentIndex = Math.max(0, selectedIndex);
+        const nextIndex = (currentIndex + direction + enabledOptions.length) % enabledOptions.length;
+        openMenu(enabledOptions[nextIndex].value);
+      } else if (!open) openMenu();
+      else moveHighlight(direction);
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       toggleMenu();

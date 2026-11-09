@@ -30,6 +30,8 @@ test('quality check reports actionable project risks', () => {
   }));
   assert.equal(result.status, 'blocked');
   assert.ok(result.score < 60);
+  assert.deepEqual(result.scoreDeductions, { error: 35, warning: 15, info: 4 });
+  assert.equal(result.score, Math.max(0, 100 - result.checks.reduce((score, check) => score + result.scoreDeductions[check.severity], 0)));
   assert.equal(result.checks.find((check) => check.id === 'failed-task').action.taskId, 'failed');
   assert.equal(result.checks.some((check) => check.id === 'missing-audio'), true);
   assert.equal(result.checks.some((check) => check.id === 'empty-generator'), true);
@@ -47,6 +49,7 @@ test('quality check scopes task failures and recognizes a clean project', () => 
     ],
   }));
   assert.equal(result.status, 'attention');
+  assert.equal(result.score, 85);
   assert.equal(result.checks.some((check) => check.id === 'failed-task'), false);
   assert.equal(result.checks.some((check) => check.id === 'orphan-asset'), true);
   assert.equal(result.checks.find((check) => check.id === 'orphan-asset').action.nodeId, 'image');

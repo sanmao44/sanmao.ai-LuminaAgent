@@ -17,6 +17,14 @@ test('automatic history pages end on complete grid rows', () => {
   assert.equal(layout.completeHistoryPageSize(4, 12), 12);
 });
 
+test('automatic image and video pages use their own responsive column counts', () => {
+  assert.deepEqual(layout.completeHistoryGridPageSizes({ images: 7, videos: 6 }, 12), {
+    images: 14,
+    videos: 12,
+  });
+  assert.deepEqual(layout.completeHistoryGridPageSizes({ videos: 2 }, 12), { videos: 12 });
+});
+
 test('automatic history page sizing handles invalid column counts', () => {
   assert.equal(layout.completeHistoryPageSize(0, 12), 12);
   assert.equal(layout.completeHistoryPageSize(Number.NaN, 12), 12);

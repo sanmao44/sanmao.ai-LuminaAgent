@@ -45,6 +45,12 @@
   background: var(--panel);
 }
 
+.canvas-task-log-panel .canvas-log-search-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;min-width:0}
+.canvas-task-log-panel .canvas-log-filter-toggle{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:58px;height:34px;padding:0 9px;border:1px solid var(--line);border-radius:7px;background:var(--panel-2);color:var(--text-2);font-size:10px;font-weight:750;cursor:pointer}
+.canvas-task-log-panel .canvas-log-filter-toggle:hover,.canvas-task-log-panel .canvas-log-filter-toggle.active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+.canvas-task-log-panel .canvas-log-filter-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.canvas-task-log-panel .canvas-log-filter-toggle b{display:grid;place-items:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--accent);color:var(--on-accent,#fff);font-size:8px;font-variant-numeric:tabular-nums;line-height:1}
+
 .canvas-task-next-action{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0 10px;padding:8px 10px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line));border-radius:6px;background:var(--panel-2);color:var(--text)}
 .canvas-task-next-action>div{display:grid;gap:3px;min-width:0}
 .canvas-task-next-action strong{font-size:10px;line-height:1.35}
@@ -127,6 +133,7 @@
 .canvas-project-quality-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .canvas-project-quality-heading>div{display:grid;gap:4px;min-width:0}
 .canvas-project-quality-heading b{color:var(--text);font-size:10px}
+.canvas-project-quality-scoring{color:var(--muted);font-size:8px;line-height:1.4}
 .canvas-project-quality-state{flex:none;color:var(--muted);font-size:8px}
 .canvas-project-quality.blocked .canvas-project-quality-state{color:var(--danger)}
 .canvas-project-quality.attention .canvas-project-quality-state{color:var(--warning)}
@@ -171,8 +178,15 @@
 
 .canvas-task-log-panel .canvas-log-filter-row{grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) auto;align-items:stretch;gap:6px}
 .canvas-task-log-panel .canvas-log-filter-control{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:6px;min-width:0;padding:0 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel-2);color:var(--muted);font-size:10px}
-.canvas-task-log-panel .canvas-log-filter-control select{width:100%;min-width:0;height:34px;border:0;background:transparent;color:var(--text);font:inherit;cursor:pointer}
-.canvas-task-log-panel .canvas-log-filter-control select:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:4px}
+.canvas-task-log-panel .canvas-log-filter-select{width:100%;min-width:0}
+.canvas-task-log-panel .canvas-log-filter-select .select-menu-trigger{width:100%;height:34px;min-height:34px;padding:0 2px;border:0;border-radius:5px;background:transparent;color:var(--text);font:inherit;gap:4px}
+.canvas-task-log-panel .canvas-log-filter-select .select-menu-trigger:hover,.canvas-task-log-panel .canvas-log-filter-select.open .select-menu-trigger{border-color:transparent;background:transparent;box-shadow:none}
+.canvas-task-log-panel .canvas-log-filter-select .select-menu-trigger:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.canvas-task-log-panel .canvas-log-filter-select .select-menu-trigger-copy{font-size:10px}
+.canvas-task-log-panel .canvas-log-filter-select .select-menu-chevron{font-size:14px}
+.canvas-log-filter-popover{padding:4px;border-radius:10px}
+.canvas-log-filter-popover .select-menu-option{min-height:32px;padding:6px 8px;border-radius:7px}
+.canvas-log-filter-popover .select-menu-option-copy strong{font-size:10px}
 .canvas-task-log-panel .canvas-log-filter-row .refresh{height:36px;min-height:36px;padding-inline:10px;border-radius:7px;font-size:10px}
 .canvas-task-log-panel .canvas-task-log-main strong{font-size:12px;line-height:1.45}
 .canvas-task-log-panel .canvas-task-log-main small{font-size:10px;line-height:1.45}
@@ -202,10 +216,11 @@
 .canvas-task-log-panel .canvas-activity-empty-action:hover{filter:brightness(1.06)}
 .canvas-task-log-panel .canvas-activity-empty-action:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 @media(max-width:720px){
+  .canvas-task-log-panel .canvas-log-filter-toggle{min-width:52px;padding-inline:7px;font-size:9px}
   .canvas-task-log-panel .canvas-log-filter-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto}
   .canvas-task-log-panel .canvas-log-filter-control{grid-template-columns:minmax(0,1fr);gap:0;padding-inline:7px;font-size:9px}
   .canvas-task-log-panel .canvas-log-filter-control span{padding-top:4px}
-  .canvas-task-log-panel .canvas-log-filter-control select{height:28px;font-size:10px}
+  .canvas-task-log-panel .canvas-log-filter-select .select-menu-trigger{height:28px;min-height:28px}
   .canvas-task-log-panel .canvas-log-filter-row .refresh{align-self:end;min-width:40px;padding-inline:7px;font-size:9px}
   .canvas-task-log-panel .canvas-task-log-actions{gap:5px}
   .canvas-task-log-panel .canvas-task-log-actions>button,.canvas-task-log-panel .canvas-task-log-more>summary{min-height:34px;padding-inline:8px;font-size:10px}

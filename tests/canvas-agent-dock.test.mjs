@@ -205,7 +205,7 @@ test("agent text and images land on the canvas through the shared undostack", ()
   assert.match(canvas, /role: "Agent 回复"/);
 });
 
-test("text references stay contextual and text replies never auto-write back", () => {
+test("text intent distinguishes explicit saves from ordinary, negative, and open-ended requests", () => {
   assert.equal(agentDock.canvasAgentDockHasVisualReferences([
     { id: "copy", kind: "text", name: "原文", text: "原始文案" },
   ]), false);
@@ -214,17 +214,63 @@ test("text references stay contextual and text replies never auto-write back", (
   ]), true);
   assert.equal(agentDock.canvasAgentDockShouldAutoApplyText("请优化选中文案的排版"), false);
   assert.equal(agentDock.canvasAgentDockShouldAutoApplyText("请把结果存为节点"), true);
-  assert.doesNotMatch(component, /runContext.operation === "edit" && runContext.targetKind === "text"/);
-  assert.match(component, /onApplyText\(content, \{ prompt: mentionText \}\)/);
+  for (const request of [
+    "不要把结果存为节点",
+    "别把结果加入画布",
+    "能不能把结果存为节点？",
+    "请不要保存到画布",
+    "这个结果不应该写入节点",
+  ]) {
+    assert.equal(agentDock.canvasAgentDockShouldAutoApplyText(request), false, request);
+  }
   assert.doesNotMatch(canvas, /已按选中文字节点更新内容/);
+
+  const runContext = { canvasId: "canvas-a", creativeProjectId: "project-a", runId: "run-a" };
+  assert.deepEqual(agentDock.canvasAgentDockTextWritebackRequest({
+    enabled: true,
+    sourceText: "请把结果存为节点",
+    responseText: "优化后的结果",
+    prompt: "请把结果存为节点",
+    runContext,
+  }), {
+    text: "优化后的结果",
+    meta: { prompt: "请把结果存为节点", runContext },
+  });
+  assert.equal(agentDock.canvasAgentDockTextWritebackRequest({
+    enabled: false,
+    sourceText: "请把结果存为节点",
+    responseText: "优化后的结果",
+    prompt: "请把结果存为节点",
+    runContext,
+  }), null);
+});
+
+test("Canvas Patch auto-apply pauses for deletions and ignores empty operations", () => {
+  const safePatch = { version: 1, operations: [{ op: "update_node", id: "node-a", patch: { text: "Updated" } }] };
+  const deletionPatch = { version: 1, operations: [{ op: "remove_nodes", ids: ["node-a"] }] };
+  const emptyPatch = { version: 1, operations: [] };
+
+  assert.equal(agentDock.canvasAgentDockShouldAutoApplyPatch(true, safePatch), true);
+  assert.equal(agentDock.canvasAgentDockShouldAutoApplyPatch(false, safePatch), false);
+  assert.equal(agentDock.canvasAgentDockPatchRequiresConfirmation(deletionPatch), true);
+  assert.equal(agentDock.canvasAgentDockShouldAutoApplyPatch(true, deletionPatch), false);
+  assert.equal(agentDock.canvasAgentDockShouldAutoApplyPatch(true, emptyPatch), false);
 });
 
 test("smart canvas apply only promotes explicit canvas-directed replies", () => {
-  assert.match(context, /export function canvasAgentDockShouldAutoApplyText/);
-  assert.match(component, /canvasAgentDockShouldAutoApplyText\(text\)/);
-  assert.match(component, /textNodeId: appliedIds\[0\]/);
-  assert.ok(component.includes("开启后，出图结果自动加入画布；明确说保存、加入或放到画布时，文字回复也会创建节点"));
-  assert.match(context, /ordinary answers or web-search results/);
+  assert.equal(agentDock.canvasAgentDockTextWritebackRequest({
+    enabled: true,
+    sourceText: "请把优化结果存为节点",
+    responseText: "优化结果",
+    prompt: "请把优化结果存为节点",
+  })?.text, "优化结果");
+  assert.equal(agentDock.canvasAgentDockTextWritebackRequest({
+    enabled: true,
+    sourceText: "请优化这段文案",
+    responseText: "优化结果",
+    prompt: "请优化这段文案",
+  }), null);
+  assert.ok(component.includes("开启后，图片和不含删除的 Patch 会自动写入；删除操作与复杂画布计划始终需要确认。明确要求保存时，文字回复也会创建节点。"));
 });
 
 test("explicit reuse commands stay local and do not call the model again", () => {
@@ -377,8 +423,8 @@ test("the dock guide explains the canvas workflow and inserts usable examples", 
   assert.match(component, /id="canvas-agent-dock-help"/);
   assert.ok(component.includes("选择对象"));
   assert.ok(component.includes("输入 @1、@2 精确引用"));
-  assert.ok(component.includes("结构操作确认后执行；出图完成后自动加入画布"));
-  assert.ok(component.includes("Agent 不会自动删除画布内容"));
+  assert.ok(component.includes("删除类 Patch 始终需要确认；其他图片和 Patch 可按本轮设置自动写回。"));
+  assert.ok(component.includes("删除类 Patch 会等待你确认后应用"));
   assert.match(component, /HELP_EXAMPLES\.map\(\(example\) =>/);
   assert.match(component, /const disabled = selectedNodeTotal < example\.minimumSelection/);
   assert.match(component, /onClick=\{\(\) => useHelpExample\(example\.prompt\)\}/);
@@ -448,7 +494,7 @@ test("the dock picks the agent model with the shared model picker", () => {
   assert.doesNotMatch(component, /<SelectMenu/);
   // 生成中不给换模型：ModelPicker 没有 disabled，用 inert 把整块挡住。
   assert.match(component, /canvas-agent-dock-model-wrap\$\{busy \? " is-busy" : ""\}`\} inert=\{busy \? true : undefined\}/);
-  assert.match(styles, /\.canvas-agent-dock-model \.model-picker-trigger\{height:30px/);
+  assert.match(styles, /\.canvas-agent-dock-model \.model-picker-trigger\{height:36px/);
 });
 
 test("the dock composer is the same @ reference editor as the rest of the app", () => {
@@ -459,7 +505,7 @@ test("the dock composer is the same @ reference editor as the rest of the app", 
   assert.match(component, /const mentionOptions = useMemo<ReferenceMentionOption\[\]>/);
   assert.match(component, /transformPastedText=\{\(value\) => replaceNaturalReferenceLabels\(value, mentionOptions\)\.value\}/);
   // Enter 发送 / Shift+Enter 换行，以及 / 技能菜单的回车选中都必须保留。
-  assert.match(component, /if \(event\.key === "Enter" && !event\.shiftKey && !event\.nativeEvent\.isComposing\)/);
+  assert.match(component, /if \(shouldSubmitCanvasAgentDockEnter\(event\.nativeEvent\)\)/);
   // 生成中回车不能既不发也不说：先提示怎么停。
   assert.ok(component.includes('if (busy) notify("Agent 正在生成，按 Esc 可以停止当前回答");'));
   assert.match(component, /else void send\(\);/);

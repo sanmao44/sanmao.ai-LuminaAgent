@@ -68,11 +68,12 @@ test('video task API exposes page metadata and filter parameters', async () => {
   assert.match(page, /const DEFAULT_HISTORY_PAGE_SIZE = 12/);
   assert.match(page, /const HISTORY_PAGE_SIZE_MODE_STORAGE_KEY = 'sanmao-history-page-size-mode'/);
   assert.match(page, /const videoGridRef = useRef\(null\)/);
-  assert.match(page, /historyMediaFilter === 'video'[\s\S]*?videoGridRef\.current/);
+  assert.match(page, /completeHistoryGridPageSizes\(\{[\s\S]*images: historyMediaFilter === 'video'[\s\S]*videos: historyMediaFilter === 'image'/);
   assert.match(page, /className: "creative-video-grid", ref: videoGridRef/);
-  assert.match(page, /const videoTotalPages = Math\.max\(1, Math\.ceil\(videoTotal \/ pageSize\)\)/);
-  assert.match(page, /listVideoTasksPage\(\{ page: requestedPage, pageSize, source, media, search: historySearch \}\)/);
-  assert.match(page, /每页 \$\{pageSize\} 项/);
+  assert.match(page, /const effectiveVideoPageSize = pageSizeMode === 'auto' \? videoPageSize : pageSize/);
+  assert.match(page, /const videoTotalPages = Math\.max\(1, Math\.ceil\(videoTotal \/ effectiveVideoPageSize\)\)/);
+  assert.match(page, /listVideoTasksPage\(\{ page: requestedPage, pageSize: effectiveVideoPageSize, source, media, search: historySearch \}\)/);
+  assert.match(page, /每页 \$\{effectiveVideoPageSize\} 项/);
   assert.match(page, /setVideoPage\(1\)/);
   assert.match(page, /className: "pagination creative-video-pagination"/);
   assert.match(page, /共 ", videoTotal, " 段 · 第 ", visibleVideoPage/);

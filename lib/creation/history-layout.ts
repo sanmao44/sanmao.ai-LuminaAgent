@@ -4,3 +4,13 @@ export function completeHistoryPageSize(columnCount: number, minimumPageSize: nu
   const minimum = Number.isFinite(minimumPageSize) ? Math.max(1, Math.floor(minimumPageSize)) : 1;
   return Math.max(columns, Math.ceil(minimum / columns) * columns);
 }
+
+export function completeHistoryGridPageSizes(
+  columns: { images?: number; videos?: number },
+  minimumPageSize: number,
+): { images?: number; videos?: number } {
+  return {
+    ...(columns.images === undefined ? {} : { images: completeHistoryPageSize(columns.images, minimumPageSize) }),
+    ...(columns.videos === undefined ? {} : { videos: completeHistoryPageSize(columns.videos, minimumPageSize) }),
+  };
+}

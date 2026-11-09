@@ -913,12 +913,14 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-plan.is-applied{border-color:color-mix(in srgb,var(--success) 38%,var(--line));background:color-mix(in srgb,var(--success-soft) 38%,var(--panel))}
 .canvas-agent-dock-plan.is-dismissed{border-color:var(--line);background:var(--panel-2);opacity:.72}
 .canvas-agent-dock-plan.is-failed{border-color:color-mix(in srgb,var(--danger) 38%,var(--line));background:color-mix(in srgb,var(--danger-soft) 34%,var(--panel))}
+.canvas-agent-dock-plan.is-confirmation-required{border-color:color-mix(in srgb,var(--danger) 36%,var(--line));background:color-mix(in srgb,var(--danger-soft) 20%,var(--panel))}
 .canvas-agent-dock-plan-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .canvas-agent-dock-plan-head strong{font-size:9px;color:var(--text)}
 .canvas-agent-dock-plan-head span{font-size:8px;color:var(--accent-text)}
 .canvas-agent-dock-plan>b{font-size:10px;color:var(--text)}
 .canvas-agent-dock-plan ol{margin:0;padding-left:18px;color:var(--text-2);font-size:9px;line-height:1.5}
 .canvas-agent-dock-plan-error{color:var(--danger);font-size:9px;line-height:1.4}
+.canvas-agent-dock-confirmation-note{color:var(--danger);font-size:9px;line-height:1.45}
 .canvas-agent-dock-plan-actions{display:flex;gap:5px;flex-wrap:wrap}
 .canvas-agent-dock-plan-actions button{height:24px;padding:0 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text-2);font-size:9px}
 .canvas-agent-dock-plan-actions button.primary{border-color:transparent;background:var(--accent);color:#fff}
@@ -955,8 +957,19 @@ html[data-theme="dark"] .canvas-workspace{
 /* 面板贴在屏幕底部，@ 菜单必须向上展开，并贴着输入框宽度。 */
 .canvas-agent-dock-mention-menu{min-width:0;max-width:100%}
 .canvas-agent-dock-composer:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
-.canvas-agent-dock-composer-row{display:flex;align-items:center;gap:6px;min-width:0}
-.canvas-agent-dock-composer-selectors,.canvas-agent-dock-composer-actions{display:contents}
+.canvas-agent-dock-composer-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:7px;min-width:0}
+.canvas-agent-dock-settings{min-width:0}
+.canvas-agent-dock-settings-summary{min-height:36px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2);font-size:10px;cursor:pointer;list-style:none}
+.canvas-agent-dock-settings-summary::-webkit-details-marker{display:none}
+.canvas-agent-dock-settings-summary::after{content:"";flex:none;width:6px;height:6px;margin-left:2px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);transition:transform .16s}
+.canvas-agent-dock-settings[open] .canvas-agent-dock-settings-summary::after{transform:rotate(225deg) translate(-1px,-1px)}
+.canvas-agent-dock-settings-summary:hover{border-color:var(--accent);color:var(--accent-text)}
+.canvas-agent-dock-settings-summary:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
+.canvas-agent-dock-settings-summary>small{min-width:0;margin-left:auto;overflow:hidden;color:var(--muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.canvas-agent-dock-composer-row:has(.canvas-agent-dock-settings[open]){grid-template-columns:minmax(0,1fr);align-items:stretch}
+.canvas-agent-dock-composer-selectors{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:center;gap:6px;min-width:0}
+.canvas-agent-dock-settings>.canvas-agent-dock-composer-selectors{margin-top:7px}
+.canvas-agent-dock-composer-actions{display:flex;align-items:center;gap:7px;min-width:0}
 .canvas-agent-dock-model-wrap{display:flex;flex:1 1 0;min-width:0}
 .canvas-agent-dock-creative-model-wrap{flex:1.18 1 0;min-width:0}
 .canvas-agent-dock-model-wrap.is-busy{opacity:.5}
@@ -964,12 +977,12 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-model .model-picker{min-width:0;width:100%}
 .canvas-agent-dock-model .model-picker-trigger{min-width:0;width:100%}
 /* 面板里的模型选择沿用节点编辑器那套紧凑触发器尺寸。 */
-.canvas-agent-dock-model .model-picker-trigger{height:30px;padding:0 9px;gap:6px;border-radius:9px;background:var(--panel-2)}
+.canvas-agent-dock-model .model-picker-trigger{height:36px;padding:0 9px;gap:6px;border-radius:9px;background:var(--panel-2)}
 .canvas-agent-dock-model .model-picker-trigger-copy>b{padding:2px 5px;font-size:7px}
 .canvas-agent-dock-model .model-picker-trigger-copy>span{font-size:9px}
 .canvas-agent-dock-model .model-picker-trigger i{width:7px;height:7px}
-.canvas-agent-dock-web{height:30px;display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:calc(20px + 4em);padding:0 9px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2);font-size:9px}
-.canvas-agent-dock-skill{height:30px;display:inline-flex;align-items:center;gap:4px;flex:none;padding:0 9px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2);font-size:9px;transition:border-color .16s,background .16s,color .16s}
+.canvas-agent-dock-web{height:36px;display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:calc(20px + 4em);padding:0 9px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2);font-size:10px}
+.canvas-agent-dock-skill{height:36px;display:inline-flex;align-items:center;gap:4px;flex:none;padding:0 9px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2);font-size:10px;transition:border-color .16s,background .16s,color .16s}
 .canvas-agent-dock-skill svg{color:var(--accent-text)}
 .canvas-agent-dock-skill:hover,.canvas-agent-dock-skill.is-active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
 .canvas-agent-dock-composer .agent-skill-menu{left:0;right:0;width:auto;bottom:calc(100% + 7px);max-height:min(240px,42vh);border-radius:14px}
@@ -978,8 +991,10 @@ html[data-theme="dark"] .canvas-workspace{
 /* 和主对话页一样：只有「始终联网」带颜色，一眼看出这轮一定会检索。
    写成 :not(:disabled) 是为了压过上面的 :hover 规则，悬停时状态色也不该被顶掉。 */
 .canvas-agent-dock-web.always:not(:disabled){border-color:color-mix(in srgb,#2e9b68 55%,var(--line));background:color-mix(in srgb,#2e9b68 9%,var(--panel-2));color:#2f946b}
-.canvas-agent-dock-auto{display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:9px}
-.canvas-agent-dock-send{margin-left:auto;height:31px;min-width:76px;padding:0 15px;border:1px solid transparent;border-radius:11px;background:linear-gradient(145deg,var(--accent),var(--accent-2));color:#fff;font-size:10px;font-weight:850;box-shadow:0 7px 18px color-mix(in srgb,var(--accent) 26%,transparent);transition:transform .16s,filter .16s,box-shadow .16s}
+.canvas-agent-dock-auto{display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2);font-size:10px;white-space:nowrap;cursor:pointer}
+.canvas-agent-dock-auto input{width:15px;height:15px;margin:0;accent-color:var(--accent)}
+.canvas-agent-dock-auto:has(input:checked){border-color:color-mix(in srgb,var(--accent) 42%,var(--line));background:var(--accent-soft);color:var(--accent-text)}
+.canvas-agent-dock-send{margin-left:auto;height:38px;min-width:80px;padding:0 15px;border:1px solid transparent;border-radius:11px;background:linear-gradient(145deg,var(--accent),var(--accent-2));color:#fff;font-size:11px;font-weight:850;box-shadow:0 7px 18px color-mix(in srgb,var(--accent) 26%,transparent);transition:transform .16s,filter .16s,box-shadow .16s}
 .canvas-agent-dock-send:hover:not(:disabled){filter:brightness(1.06)}
 .canvas-agent-dock-send:active{transform:translateY(1px)}
 .canvas-agent-dock-send.is-busy{background:linear-gradient(145deg,var(--danger),color-mix(in srgb,var(--danger) 74%,#7d1c10));box-shadow:0 7px 18px color-mix(in srgb,var(--danger) 26%,transparent)}
@@ -1002,7 +1017,8 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 230px);width:min(880px,calc(100% - 512px))}
 @media(max-width:1280px){:root{--canvas-panel-width:min(430px,calc(100vw - 32px))}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 210px);width:min(820px,calc(100% - 472px))}}
 @media(max-width:1000px){.canvas-agent-dock{left:10px;right:10px;top:auto;bottom:10px;height:min(64vh,540px);width:auto}.canvas-agent-dock-rail{right:10px;top:auto;bottom:96px;transform:none}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:50%;width:calc(100% - 32px)}}
-@media(max-width:620px){.canvas-agent-dock-composer-row{gap:4px}.canvas-agent-dock-skill{padding-inline:7px}.canvas-agent-dock-model .model-picker-trigger{padding-inline:7px;gap:4px}.canvas-agent-dock-model .model-picker-trigger-copy>b{display:none}.canvas-agent-dock-web{min-width:48px;padding-inline:7px;font-size:8px}.canvas-agent-dock-auto{gap:3px;font-size:8px;white-space:nowrap}.canvas-agent-dock-send{min-width:60px;padding-inline:9px;font-size:9px}}
+@media(max-width:620px){.canvas-agent-dock-composer-selectors{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.canvas-agent-dock-composer-actions{flex-wrap:wrap;gap:6px}.canvas-agent-dock-skill{padding-inline:8px}.canvas-agent-dock-model .model-picker-trigger{padding-inline:7px;gap:4px}.canvas-agent-dock-model .model-picker-trigger-copy>b{display:none}.canvas-agent-dock-web{min-width:48px;padding-inline:7px;font-size:9px}.canvas-agent-dock-auto{gap:6px;font-size:10px}.canvas-agent-dock-send{min-width:70px;padding-inline:10px;font-size:10px}}
+@media(max-width:360px){.canvas-agent-dock-settings-summary{gap:5px;padding-inline:7px;font-size:9px}.canvas-agent-dock-settings-summary>small{display:none}}
 @media(max-width:540px){.canvas-agent-dock-help-steps{grid-template-columns:1fr}.canvas-agent-dock-help-examples>div{grid-template-columns:1fr}}
 
 /* Node-first editor surface: the canvas remains the layout, each node owns
