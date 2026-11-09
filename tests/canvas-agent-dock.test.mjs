@@ -90,7 +90,7 @@ function writebackFixture() {
   return { bindings, core, session, storage, model, creativeProjects, creativeProjectId, project, focused, queuedCheckpoints };
 }
 
-function enableAutomaticCheckpoints(h) {
+function enableAutomaticCheckpoints(h, intervalMinutes = 0) {
   let nextTimerId = 0;
   const timers = new Map();
   window.setTimeout = (callback) => {
@@ -102,6 +102,9 @@ function enableAutomaticCheckpoints(h) {
   Object.assign(h.bindings, {
     autoCheckpointQueueRef: { current: new Map() },
     autoCheckpointTimerRef: { current: null },
+    autoCheckpointFlushRef: { current: () => {} },
+    autoCheckpointIntervalMinutesRef: { current: intervalMinutes },
+    automaticProjectCheckpointDelay: createTsRequire(process.cwd())('./lib/canvas/auto-project-checkpoint').automaticProjectCheckpointDelay,
     appendAutomaticCreativeProjectVersion: h.creativeProjects.appendAutomaticCreativeProjectVersion,
     readCreativeProjects: h.creativeProjects.readCreativeProjects,
     readCanvasProjects: h.storage.readCanvasProjects,
@@ -113,7 +116,10 @@ function enableAutomaticCheckpoints(h) {
     setCreativeProjects: () => {},
     setProjectVersions: () => {},
   });
-  h.bindings.agentCheckpointTriggerId = createTsRequire(process.cwd())('./lib/canvas/auto-project-checkpoint').agentCheckpointTriggerId;
+  const checkpointHelpers = createTsRequire(process.cwd())('./lib/canvas/auto-project-checkpoint');
+  h.bindings.agentCheckpointTriggerId = checkpointHelpers.agentCheckpointTriggerId;
+  h.bindings.flushAutomaticProjectCheckpoints = canvasCallback('flushAutomaticProjectCheckpoints', h.bindings);
+  h.bindings.autoCheckpointFlushRef.current = h.bindings.flushAutomaticProjectCheckpoints;
   h.bindings.queueAutomaticProjectCheckpoint = canvasCallback('queueAutomaticProjectCheckpoint', h.bindings);
   const enqueueAgentCheckpoint = canvasCallback('queueAgentProjectCheckpoint', h.bindings);
   h.bindings.queueAgentProjectCheckpoint = (...args) => {
@@ -1008,6 +1014,53 @@ test("delayed Agent checkpoints preserve the source canvas after switching proje
   ]);
   assert.equal(savedProject.versions[1].snapshot.nodes.some((node) => node.data.text?.includes('canvas b')), false);
   assert.equal(h.core.document().nodes.length, 0);
+});
+
+test("automatic checkpoint interval batches Agent results until the cooldown expires", () => {
+  const h = writebackFixture();
+  const flushCheckpoints = enableAutomaticCheckpoints(h, 5);
+  const initialProjects = h.creativeProjects.readCreativeProjects();
+  const initialVersion = h.creativeProjects.appendAutomaticCreativeProjectVersion(
+    initialProjects,
+    h.creativeProjectId,
+    {
+      canvasId: 'a',
+      label: 'existing checkpoint',
+      createdAt: Date.now(),
+      snapshot: h.model.snapshot(h.core.document()),
+    },
+    ['existing-task'],
+  );
+  assert.ok(initialVersion);
+  assert.equal(h.creativeProjects.saveCreativeProjects(initialVersion), true);
+
+  const apply = canvasCallback('applyAgentDockText', h.bindings);
+  apply('First result', { prompt: 'first', runContext: {
+    canvasId: 'a', creativeProjectId: h.creativeProjectId, runId: 'run-first',
+  } });
+  apply('Second result', { prompt: 'second', runContext: {
+    canvasId: 'a', creativeProjectId: h.creativeProjectId, runId: 'run-second',
+  } });
+  flushCheckpoints();
+
+  assert.equal(h.creativeProjects.readCreativeProjects()[0].versions.length, 1);
+  assert.equal(h.bindings.autoCheckpointQueueRef.current.size, 1);
+  const queued = [...h.bindings.autoCheckpointQueueRef.current.values()][0];
+  assert.equal(queued.triggerIds.size, 2);
+
+  const delayedProjects = h.creativeProjects.readCreativeProjects().map((project) => ({
+    ...project,
+    versions: project.versions?.map((version) => version.id === 'auto_existing-task'
+      ? { ...version, createdAt: Date.now() - 6 * 60_000 }
+      : version),
+  }));
+  assert.equal(h.creativeProjects.saveCreativeProjects(delayedProjects), true);
+  flushCheckpoints();
+
+  const savedProject = h.creativeProjects.readCreativeProjects().find((item) => item.id === h.creativeProjectId);
+  assert.equal(savedProject.versions.length, 2);
+  assert.equal(savedProject.versions[1].label, '自动检查点 · 2 项生成');
+  assert.equal(h.bindings.autoCheckpointQueueRef.current.size, 0);
 });
 
 test("a waiting approval on the canvas gets the same confirm card as the main chat", () => {

@@ -107,3 +107,26 @@ test('Agent checkpoint keys are stable per run, canvas, action and resulting sta
   assert.notEqual(triggerId, checkpoint.agentCheckpointTriggerId('run-1', 'canvas-b', 'images', first));
   assert.match(triggerId, /^agent_[a-z0-9]+$/);
 });
+
+test('automatic checkpoint interval settings normalize to supported choices', () => {
+  assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(0), 0);
+  assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(1), 1);
+  assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(5), 5);
+  assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(15), 15);
+  assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(30), 0);
+  assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes('5'), 0);
+});
+
+test('automatic checkpoint delay uses the latest checkpoint for the same canvas only', () => {
+  const versions = [
+    { id: 'manual-1', canvasId: 'canvas-a', createdAt: 100_000 },
+    { id: 'auto_task-b', canvasId: 'canvas-b', createdAt: 200_000 },
+    { id: 'auto_task-a-old', canvasId: 'canvas-a', createdAt: 300_000 },
+    { id: 'auto_task-a-new', canvasId: 'canvas-a', createdAt: 400_000 },
+  ];
+
+  assert.equal(checkpoint.automaticProjectCheckpointDelay(versions, 'canvas-a', 5, 500_000), 200_000);
+  assert.equal(checkpoint.automaticProjectCheckpointDelay(versions, 'canvas-a', 5, 700_000), 0);
+  assert.equal(checkpoint.automaticProjectCheckpointDelay(versions, 'canvas-a', 0, 400_000), 0);
+  assert.equal(checkpoint.automaticProjectCheckpointDelay(versions, 'canvas-c', 15, 0), 0);
+});

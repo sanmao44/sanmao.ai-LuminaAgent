@@ -1444,6 +1444,8 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
   if (input.outputFormat) body.output_format = input.outputFormat;
   if (input.background) body.background = input.background;
   if (provider.type === 'google-gemini') body.response_format = 'b64_json';
+  else if (input.responseFormat) body.response_format = input.responseFormat;
+  else if (/^gpt-image-2\.5(?:$|[-_.])/i.test(rawModelId.trim())) body.response_format = 'b64_json';
   if (providerReferences.length) {
     if (isModelScopeProvider(provider)) body.image_url = providerReferences.length === 1 ? providerReferences[0] : providerReferences;
     else if (is65535Provider(provider) || isApimartProvider(provider)) body.image_urls = providerReferences;

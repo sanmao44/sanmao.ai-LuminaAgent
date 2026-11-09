@@ -929,7 +929,31 @@ test('does not change generic image size mapping for other models and providers'
   assert.equal(providers.mapImageRequestSize(provider, 'gpt-image-2-lite', '16:9', 4096, 2304), '3840x2304');
 });
 
-test('sends a manually registered image model raw ID to the real generation request', async () => {
+test('requests inline image bytes for GPT Image 2.5 responses', async () => {
+  let requestBody;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ data: [{ b64_json: 'iVBORw0KGgoAAAAAAAAAAAAA' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const images = await providers.generateImage({
+      type: 'openai-compatible',
+      platform: 'custom',
+      baseUrl: 'https://images.example.test/v1',
+      apiKey: 'test-key',
+    }, 'gpt-image-2.5', { prompt: 'test', count: 1 });
+    assert.equal(requestBody.response_format, 'b64_json');
+    assert.match(images[0].url, /^data:image\/png;base64,/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('honors an explicit image response format and preserves the manually registered model ID', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
@@ -945,9 +969,10 @@ test('sends a manually registered image model raw ID to the real generation requ
       platform: 'custom',
       baseUrl: 'https://images.example.test/v1',
       apiKey: 'test-key',
-    }, 'gpt-image-2-4K', { prompt: 'test', count: 1, aspectRatio: '1:1' });
+    }, 'gpt-image-2-4K', { prompt: 'test', count: 1, aspectRatio: '1:1', responseFormat: 'url' });
     assert.equal(images.length, 1);
     assert.equal(JSON.parse(calls[0].init.body).model, 'gpt-image-2-4K');
+    assert.equal(JSON.parse(calls[0].init.body).response_format, 'url');
     assert.match(calls[0].url, /\/images\/generations$/);
   } finally {
     globalThis.fetch = previousFetch;

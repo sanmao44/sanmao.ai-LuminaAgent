@@ -47,7 +47,7 @@ export async function persistGenerationResult(options: BackgroundPersistenceOpti
       imageUrls: stored.images.map((image) => image.url),
       storagePath: stored.path,
       ...(stored.remoteFallbacks?.length ? {
-        storageError: `本地归档失败，已保留服务商图片地址：${stored.remoteFallbacks.map((item) => `第 ${item.index + 1} 张`).join('、')}`,
+        storageError: `本地归档失败，已保留服务商图片地址：${stored.remoteFallbacks.map((item) => `第 ${item.index + 1} 张（${item.error}）`).join('；')}`,
       } : {}),
     };
     try {

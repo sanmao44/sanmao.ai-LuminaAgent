@@ -84,7 +84,7 @@ import {
 } from "@/lib/canvas/model";
 import { applyCanvasPatch, validateCanvasPatch, type CanvasPatch } from "@/lib/canvas/patch";
 import { CanvasCore } from "@/packages/canvas-core/runtime";
-import { agentCheckpointTriggerId, completedGeneratedTaskIds, speechCheckpointTriggerId } from "@/lib/canvas/auto-project-checkpoint";
+import { agentCheckpointTriggerId, automaticProjectCheckpointDelay, completedGeneratedTaskIds, DEFAULT_AUTO_PROJECT_CHECKPOINT_INTERVAL_MINUTES, normalizeAutoProjectCheckpointIntervalMinutes, speechCheckpointTriggerId, type AutoProjectCheckpointIntervalMinutes } from "@/lib/canvas/auto-project-checkpoint";
 import {
   CANVAS_Z_INDEX,
   canvasGroupPaintZIndex,
@@ -785,6 +785,8 @@ export default function SuperCanvas() {
   const saveTimerRef = useRef<number | null>(null);
   const autoCheckpointTimerRef = useRef<number | null>(null);
   const autoCheckpointQueueRef = useRef<Map<string, { projectId: string; canvasId: string; triggerIds: Set<string> }>>(new Map());
+  const autoCheckpointFlushRef = useRef<() => void>(() => {});
+  const autoCheckpointIntervalMinutesRef = useRef<AutoProjectCheckpointIntervalMinutes>(DEFAULT_AUTO_PROJECT_CHECKPOINT_INTERVAL_MINUTES);
   const zoomFrameRef = useRef<number | null>(null);
   const pendingZoomCameraRef = useRef<CanvasCamera | null>(null);
   const zoomBusyTimerRef = useRef<number | null>(null);
@@ -1049,6 +1051,7 @@ export default function SuperCanvas() {
     useState<ConnectionStyle>("curve");
   const [edgesVisible, setEdgesVisible] = useState(true);
   const [depthQuality, setDepthQuality] = useState<DepthQuality>(DEFAULT_DEPTH_QUALITY);
+  const [autoCheckpointIntervalMinutes, setAutoCheckpointIntervalMinutes] = useState<AutoProjectCheckpointIntervalMinutes>(DEFAULT_AUTO_PROJECT_CHECKPOINT_INTERVAL_MINUTES);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [theme, setTheme] = useState<CanvasTheme>(readStoredTheme);
   const [mentionState, setMentionState] = useState<MentionState>(null);
@@ -1525,47 +1528,82 @@ export default function SuperCanvas() {
       kind === "error" ? 5200 : 2800,
     );
   }, []);
+  const flushAutomaticProjectCheckpoints = useCallback(() => {
+    autoCheckpointTimerRef.current = null;
+    let nextDelayMs: number | null = null;
+    const pending = [...autoCheckpointQueueRef.current.entries()];
+    for (const [key, checkpoint] of pending) {
+      if (!readCanvasProjects().some((canvas) => canvas.id === checkpoint.canvasId)) {
+        autoCheckpointQueueRef.current.delete(key);
+        continue;
+      }
+      const storedProjects = readCreativeProjects();
+      const project = storedProjects.find((item) => item.id === checkpoint.projectId);
+      if (!project) {
+        autoCheckpointQueueRef.current.delete(key);
+        continue;
+      }
+      const now = Date.now();
+      const delayMs = automaticProjectCheckpointDelay(
+        project.versions || [],
+        checkpoint.canvasId,
+        autoCheckpointIntervalMinutesRef.current,
+        now,
+      );
+      if (delayMs > 0) {
+        nextDelayMs = nextDelayMs === null ? delayMs : Math.min(nextDelayMs, delayMs);
+        continue;
+      }
+      autoCheckpointQueueRef.current.delete(key);
+      const document = canvasProjectSessionRef.current.activeId === checkpoint.canvasId
+        ? canvasCoreRef.current.document()
+        : loadCanvasDocument(checkpoint.canvasId);
+      const next = appendAutomaticCreativeProjectVersion(storedProjects, checkpoint.projectId, {
+        canvasId: checkpoint.canvasId,
+        label: `自动检查点 · ${checkpoint.triggerIds.size} 项生成`,
+        createdAt: now,
+        brief: project.brief || null,
+        referenceAssetIds: project.referenceAssetIds || [],
+        snapshot: snapshot(document),
+      }, [...checkpoint.triggerIds]);
+      if (!next) continue;
+      if (!saveCreativeProjects(next)) {
+        notify("自动检查点保存失败，当前画布仍可继续使用。", "error");
+        continue;
+      }
+      const savedProject = next.find((item) => item.id === checkpoint.projectId);
+      if (mountedRef.current) {
+        setCreativeProjects(next);
+        setProjectVersions(savedProject?.versions || []);
+      }
+      emitWorkspaceChange();
+    }
+    if (autoCheckpointQueueRef.current.size && nextDelayMs !== null) {
+      autoCheckpointTimerRef.current = window.setTimeout(
+        () => autoCheckpointFlushRef.current(),
+        Math.max(1, nextDelayMs),
+      );
+    }
+  }, [notify]);
+  useEffect(() => {
+    autoCheckpointFlushRef.current = flushAutomaticProjectCheckpoints;
+  }, [flushAutomaticProjectCheckpoints]);
   const queueAutomaticProjectCheckpoint = useCallback((projectId: string, canvasId: string, triggerIds: readonly string[]) => {
     const key = `${projectId}:${canvasId}`;
     const queued = autoCheckpointQueueRef.current.get(key) || { projectId, canvasId, triggerIds: new Set<string>() };
     triggerIds.forEach((triggerId) => queued.triggerIds.add(triggerId));
     autoCheckpointQueueRef.current.set(key, queued);
     if (autoCheckpointTimerRef.current !== null) window.clearTimeout(autoCheckpointTimerRef.current);
-    autoCheckpointTimerRef.current = window.setTimeout(() => {
-      autoCheckpointTimerRef.current = null;
-      const pending = [...autoCheckpointQueueRef.current.values()];
-      autoCheckpointQueueRef.current.clear();
-      for (const checkpoint of pending) {
-        if (!readCanvasProjects().some((canvas) => canvas.id === checkpoint.canvasId)) continue;
-        const storedProjects = readCreativeProjects();
-        const project = storedProjects.find((item) => item.id === checkpoint.projectId);
-        if (!project) continue;
-        const document = canvasProjectSessionRef.current.activeId === checkpoint.canvasId
-          ? canvasCoreRef.current.document()
-          : loadCanvasDocument(checkpoint.canvasId);
-        const now = Date.now();
-        const next = appendAutomaticCreativeProjectVersion(storedProjects, checkpoint.projectId, {
-          canvasId: checkpoint.canvasId,
-          label: `自动检查点 · ${checkpoint.triggerIds.size} 项生成`,
-          createdAt: now,
-          brief: project.brief || null,
-          referenceAssetIds: project.referenceAssetIds || [],
-          snapshot: snapshot(document),
-        }, [...checkpoint.triggerIds]);
-        if (!next) continue;
-        if (!saveCreativeProjects(next)) {
-          notify("自动检查点保存失败，当前画布仍可继续使用。", "error");
-          continue;
-        }
-        const savedProject = next.find((item) => item.id === checkpoint.projectId);
-        if (mountedRef.current) {
-          setCreativeProjects(next);
-          setProjectVersions(savedProject?.versions || []);
-        }
-        emitWorkspaceChange();
-      }
-    }, 900);
-  }, [notify]);
+    autoCheckpointTimerRef.current = window.setTimeout(() => autoCheckpointFlushRef.current(), 900);
+  }, []);
+  const updateAutoCheckpointIntervalMinutes = useCallback((value: AutoProjectCheckpointIntervalMinutes) => {
+    autoCheckpointIntervalMinutesRef.current = value;
+    setAutoCheckpointIntervalMinutes(value);
+    if (autoCheckpointTimerRef.current !== null) window.clearTimeout(autoCheckpointTimerRef.current);
+    if (autoCheckpointQueueRef.current.size) {
+      autoCheckpointTimerRef.current = window.setTimeout(() => autoCheckpointFlushRef.current(), 900);
+    }
+  }, []);
   const queueAgentProjectCheckpoint = useCallback((
     projectId: string,
     canvasId: string,
@@ -2115,10 +2153,13 @@ export default function SuperCanvas() {
     const projectTask = captureProjectTask();
     const { updateDoc, readDocument } = projectTask;
     const remoteUrls = canvasRemoteMediaUrls(readDocument().nodes)
-      .filter((url) => !healedRemoteMediaRef.current.has(url));
+      .filter((url) => !healedRemoteMediaRef.current.has(url))
+      .slice(0, 16);
     if (!remoteUrls.length) return;
-    remoteUrls.slice(0, 16).forEach((url) => healedRemoteMediaRef.current.add(url));
     const archived = await archiveCanvasRemoteImages(remoteUrls);
+    remoteUrls.forEach((url) => {
+      if (archived.has(url)) healedRemoteMediaRef.current.add(url);
+    });
     if (!archived.size) return;
     updateDoc((value) => ({
       ...value,
@@ -2289,6 +2330,7 @@ export default function SuperCanvas() {
         edgesVisible?: unknown;
         snapEnabled?: unknown;
         depthQuality?: unknown;
+        autoCheckpointIntervalMinutes?: unknown;
       } | null;
       if (
         CONNECTION_STYLE_OPTIONS.some(
@@ -2299,6 +2341,9 @@ export default function SuperCanvas() {
       if (typeof raw?.snapEnabled === "boolean") setSnapEnabled(raw.snapEnabled);
       if (typeof raw?.edgesVisible === "boolean") setEdgesVisible(raw.edgesVisible);
       setDepthQuality(normalizeDepthQuality(raw?.depthQuality));
+      const checkpointInterval = normalizeAutoProjectCheckpointIntervalMinutes(raw?.autoCheckpointIntervalMinutes);
+      autoCheckpointIntervalMinutesRef.current = checkpointInterval;
+      setAutoCheckpointIntervalMinutes(checkpointInterval);
     } catch {
       /* 使用默认设置 */
     }
@@ -2309,12 +2354,12 @@ export default function SuperCanvas() {
     try {
       window.localStorage.setItem(
         CANVAS_SETTINGS_KEY,
-        JSON.stringify({ connectionStyle, edgesVisible, snapEnabled, depthQuality }),
+        JSON.stringify({ connectionStyle, edgesVisible, snapEnabled, depthQuality, autoCheckpointIntervalMinutes }),
       );
     } catch {
       /* 设置保存失败不应阻断画布 */
     }
-  }, [connectionStyle, depthQuality, edgesVisible, ready, snapEnabled]);
+  }, [autoCheckpointIntervalMinutes, connectionStyle, depthQuality, edgesVisible, ready, snapEnabled]);
 
   useEffect(() => {
     if (!ready || !activeProjectId) return;
@@ -14726,6 +14771,7 @@ export default function SuperCanvas() {
         connectionStyle={connectionStyle}
         edgesVisible={edgesVisible}
         depthQuality={depthQuality}
+        autoCheckpointIntervalMinutes={autoCheckpointIntervalMinutes}
         activityPanelScrollTop={activityPanelScrollTopRef.current}
         onCollectionSelectionChange={setAssetLibraryCollectionId}
         onAddAsset={addAssetToCanvas}
@@ -14760,6 +14806,7 @@ export default function SuperCanvas() {
         onConnectionStyleChange={setConnectionStyle}
         onEdgesVisibleChange={setEdgesVisible}
         onDepthQualityChange={setDepthQuality}
+        onAutoCheckpointIntervalMinutesChange={updateAutoCheckpointIntervalMinutes}
         onExportWorkflow={exportWorkflow}
         onExportProjectPackage={exportProjectPackage}
         onOpenProjectBrief={() => {

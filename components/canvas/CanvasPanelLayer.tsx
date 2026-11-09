@@ -4,6 +4,7 @@ import type { AssetRecord } from "@/lib/assets";
 import type { CanvasActivityLog } from "@/lib/canvas/activity-log";
 import type { CanvasConnectionStyle, CanvasDocument, CanvasNodeCreationKind } from "@/lib/canvas/types";
 import type { DepthQuality } from "@/lib/canvas/depth-settings";
+import type { AutoProjectCheckpointIntervalMinutes } from "@/lib/canvas/auto-project-checkpoint";
 import type { GenerationLog } from "@/lib/generation-log";
 import type { CanvasVideoRetryResult } from "@/lib/canvas/batch-video-retry";
 import type { CanvasUpscaleRetryResult } from "@/lib/canvas/batch-upscale-retry";
@@ -32,6 +33,7 @@ export type CanvasPanelLayerProps = {
   connectionStyle: CanvasConnectionStyle;
   edgesVisible: boolean;
   depthQuality: DepthQuality;
+  autoCheckpointIntervalMinutes: AutoProjectCheckpointIntervalMinutes;
   activityPanelScrollTop: number | null;
   onCollectionSelectionChange: (collectionId: string) => void;
   onAddAsset: (asset: AssetRecord) => void;
@@ -68,6 +70,7 @@ export type CanvasPanelLayerProps = {
   onConnectionStyleChange: (value: CanvasConnectionStyle) => void;
   onEdgesVisibleChange: (value: boolean) => void;
   onDepthQualityChange: (value: DepthQuality) => void;
+  onAutoCheckpointIntervalMinutesChange: (value: AutoProjectCheckpointIntervalMinutes) => void;
   onExportWorkflow: () => void;
   onExportProjectPackage: () => void;
   onOpenProjectBrief: () => void;
@@ -98,6 +101,7 @@ export default function CanvasPanelLayer({
   connectionStyle,
   edgesVisible,
   depthQuality,
+  autoCheckpointIntervalMinutes,
   activityPanelScrollTop,
   onCollectionSelectionChange,
   onAddAsset,
@@ -128,6 +132,7 @@ export default function CanvasPanelLayer({
   onConnectionStyleChange,
   onEdgesVisibleChange,
   onDepthQualityChange,
+  onAutoCheckpointIntervalMinutesChange,
   onExportWorkflow,
   onExportProjectPackage,
   onOpenProjectBrief,
@@ -206,10 +211,12 @@ export default function CanvasPanelLayer({
         connectionStyle={connectionStyle}
         edgesVisible={edgesVisible}
         depthQuality={depthQuality}
+        autoCheckpointIntervalMinutes={autoCheckpointIntervalMinutes}
         onTheme={onTheme}
         onConnectionStyleChange={onConnectionStyleChange}
         onEdgesVisibleChange={onEdgesVisibleChange}
         onDepthQualityChange={onDepthQualityChange}
+        onAutoCheckpointIntervalMinutesChange={onAutoCheckpointIntervalMinutesChange}
         onExportWorkflow={onExportWorkflow}
         onExportProjectPackage={onExportProjectPackage}
         onImportWorkflow={onImportWorkflow}
