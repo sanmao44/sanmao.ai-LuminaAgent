@@ -1,3 +1,11 @@
+# 0.7.103 搜索时区与 Canvas 工作流改进
+
+- 固定搜索默认时区为 `Asia/Shanghai`，修复 UTC 环境下相对日期新闻查询偏移一天的问题。
+- 改进 Canvas Agent 技能选择器、文件生成空结果处理与任务重试。
+- 增强 Canvas 检查点间隔、图片持久化和项目恢复。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.103](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.103)。
+
 # 0.7.102 Agent、Canvas 与媒体工作流改进
 
 - 集成 65535 Claude Std，并改进 Claude 工具结果交接与 MCP 发现超时恢复。
