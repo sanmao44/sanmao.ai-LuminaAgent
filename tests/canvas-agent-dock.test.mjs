@@ -500,7 +500,7 @@ test("the dock picks the agent model with the shared model picker", () => {
   assert.doesNotMatch(component, /<SelectMenu/);
   // 生成中不给换模型：ModelPicker 没有 disabled，用 inert 把整块挡住。
   assert.match(component, /canvas-agent-dock-model-wrap\$\{busy \? " is-busy" : ""\}`\} inert=\{busy \? true : undefined\}/);
-  assert.match(styles, /\.canvas-agent-dock-model \.model-picker-trigger\{height:36px/);
+  assert.match(styles, /\.canvas-agent-dock-model \.model-picker-trigger\{height:30px/);
 });
 
 test("the dock composer is the same @ reference editor as the rest of the app", () => {

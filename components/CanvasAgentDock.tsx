@@ -2403,6 +2403,17 @@ export default function CanvasAgentDock({
         />
         <div className="canvas-agent-dock-composer-row">
           <div className="canvas-agent-dock-composer-selectors" role="group" aria-label="本轮设置">
+            <button
+              type="button"
+              className={`canvas-agent-dock-skill ${skillMenuOpen ? "is-active" : ""}`}
+              onClick={() => (skillMenuOpen ? closeSkillMenu() : openSkillMenu(""))}
+              title="选择技能：把某个技能指定给本轮任务"
+              aria-haspopup="listbox"
+              aria-expanded={skillMenuOpen}
+            >
+              <SkillIcon size={14} />
+              <span>技能</span>
+            </button>
             {/* 模型选择复用全站同一套 ModelPicker：搜索、收藏、最近调用、按服务商筛选都在里面。 */}
             <div className={`canvas-agent-dock-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
               <ModelPicker
@@ -2436,17 +2447,6 @@ export default function CanvasAgentDock({
                 className="canvas-agent-dock-model canvas-agent-dock-creative-model"
               />
             </div>
-            <button
-              type="button"
-              className={`canvas-agent-dock-skill ${skillMenuOpen ? "is-active" : ""}`}
-              onClick={() => (skillMenuOpen ? closeSkillMenu() : openSkillMenu(""))}
-              title="选择技能：把某个技能指定给本轮任务"
-              aria-haspopup="listbox"
-              aria-expanded={skillMenuOpen}
-            >
-              <SkillIcon size={14} />
-              <span>技能</span>
-            </button>
             <button
               type="button"
               className={`canvas-agent-dock-web ${webMode}`}
