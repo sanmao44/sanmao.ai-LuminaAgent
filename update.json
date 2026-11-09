@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.103/SANMAO.AI-0.7.103.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.103/SANMAO.AI-0.7.103.zip"
   ],
-  "sha256": "b940197e9a50b8917262be3214fce38400bd500f11ce4f4f31dbc28d0d52dbcc",
+  "sha256": "0c376cdec1c62fbdb1ec7ee932d89c019d7b092f54d10c9aabec77049c932847",
   "notes": [
     "固定搜索默认时区为 Asia/Shanghai，修复跨时区日期覆盖判断。",
     "改进 Canvas Agent 技能选择器、文件生成空结果处理与任务重试。",
