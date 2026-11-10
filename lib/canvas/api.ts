@@ -509,26 +509,27 @@ async function cachedCanvasAgentReference(url: string) {
 }
 
 /**
- * 画布文档里需要补归档的远端图片地址：本地存储/中转地址跳过，同一地址只留一次。
- * 这些地址只活一小段时间，节点一直用它们的话，图片会挂、参考素材也会读不到。
+ * 画布文档里需要补归档的图片地址：本地地址跳过，同一地址只留一次。
+ * 临时远端地址会过期，内嵌图片数据会撑大 localStorage；两者都归档为本地文件。
  */
-export function canvasRemoteMediaUrls(nodes: readonly CanvasNode[]) {
+export function canvasMediaUrlsToArchive(nodes: readonly CanvasNode[]) {
   const urls = nodes
     .filter((node) => node.data.kind !== "video" && node.data.kind !== "audio")
     .map((node) => String(node.data.url || "").trim())
-    .filter((url) => /^https?:\/\//i.test(url) && !/\/api\/(?:storage|media)\//i.test(url));
+    .filter((url) => /^data:image\/(?:png|jpeg|webp|gif|bmp);base64,/i.test(url)
+      || (/^https?:\/\//i.test(url) && !/\/api\/(?:storage|media)\//i.test(url)));
   return Array.from(new Set(urls));
 }
 
 /**
- * 把画布节点上的远端图片补归档成本地存储地址。
+ * 把画布节点上的图片补归档成本地存储地址。
  * 服务商临时地址只活一小段时间，节点一直用它的话，图片会挂、参考素材也会读不到；
  * 本地存储地址不会过期，画布和参考素材都能直接读。归档不到的地址不会出现在结果里。
  */
-export async function archiveCanvasRemoteImages(urls: readonly string[]) {
+export async function archiveCanvasImages(urls: readonly string[]) {
   const archived = new Map<string, string>();
   for (const url of Array.from(new Set(urls)).slice(0, 16)) {
-    if (!/^https?:\/\//i.test(url)) continue;
+    if (!/^https?:\/\//i.test(url) && !/^data:image\/(?:png|jpeg|webp|gif|bmp);base64,/i.test(url)) continue;
     try {
       const response = await fetch("/api/storage/images", {
         cache: "no-store",
@@ -547,7 +548,7 @@ export async function archiveCanvasRemoteImages(urls: readonly string[]) {
 
 /* 参考素材在浏览器里读不到时的兜底：先让服务端归档一份本地副本，再按本地地址读。 */
 async function archiveRemoteCanvasReference(url: string) {
-  const archived = await archiveCanvasRemoteImages([url]);
+  const archived = await archiveCanvasImages([url]);
   const local = archived.get(url);
   return local ? cachedCanvasAgentReference(local).catch(() => "") : "";
 }

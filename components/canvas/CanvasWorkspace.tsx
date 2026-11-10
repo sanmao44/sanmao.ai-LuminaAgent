@@ -103,8 +103,8 @@ import {
 } from "@/lib/canvas/asset-library";
 import type { GenerationLog } from "@/lib/generation-log";
 import {
-  archiveCanvasRemoteImages,
-  canvasRemoteMediaUrls,
+  archiveCanvasImages,
+  canvasMediaUrlsToArchive,
   canvasImageTaskOutputUrls,
   canvasVideoTaskOutputUrl,
   getCanvasAgentGeneration,
@@ -2145,30 +2145,36 @@ export default function SuperCanvas() {
   }, [notify]);
 
   /*
-   * 服务商临时地址只活一小段时间，节点一直用它的话，图片会挂、参考素材也会读不到。
-   * 画布打开时补一次，之后每分钟看一次，把远端图片归档成本地存储地址；同一地址一个会话只试一次。
+   * 服务商临时地址会过期，内嵌图片会占用 localStorage。
+   * 画布打开时补一次，之后每分钟检查，将这些图片归档为本地文件地址。
    */
-  const healedRemoteMediaRef = useRef(new Set<string>());
-  const healRemoteNodeMedia = useCallback(async () => {
+  const healedCanvasMediaRef = useRef(new Set<string>());
+  const archivingCanvasMediaRef = useRef(new Set<string>());
+  const healCanvasNodeMedia = useCallback(async () => {
     const projectTask = captureProjectTask();
     const { updateDoc, readDocument } = projectTask;
-    const remoteUrls = canvasRemoteMediaUrls(readDocument().nodes)
-      .filter((url) => !healedRemoteMediaRef.current.has(url))
+    const mediaUrls = canvasMediaUrlsToArchive(readDocument().nodes)
+      .filter((url) => !healedCanvasMediaRef.current.has(url) && !archivingCanvasMediaRef.current.has(url))
       .slice(0, 16);
-    if (!remoteUrls.length) return;
-    const archived = await archiveCanvasRemoteImages(remoteUrls);
-    remoteUrls.forEach((url) => {
-      if (archived.has(url)) healedRemoteMediaRef.current.add(url);
-    });
-    if (!archived.size) return;
-    updateDoc((value) => ({
-      ...value,
-      nodes: value.nodes.map((node) => {
-        const local = archived.get(String(node.data.url || "").trim());
-        return local ? { ...node, data: { ...node.data, url: local } } : node;
-      }),
-    }));
-    addLog(`已把 ${archived.size} 张远端图片保存到本地`);
+    if (!mediaUrls.length) return;
+    mediaUrls.forEach((url) => archivingCanvasMediaRef.current.add(url));
+    try {
+      const archived = await archiveCanvasImages(mediaUrls);
+      if (!archived.size) return;
+      const updated = updateDoc((value) => ({
+        ...value,
+        nodes: value.nodes.map((node) => {
+          const local = archived.get(String(node.data.url || "").trim());
+          return local ? { ...node, data: { ...node.data, url: local } } : node;
+        }),
+      }));
+      if (updated) {
+        archived.forEach((_local, url) => healedCanvasMediaRef.current.add(url));
+        addLog(`已把 ${archived.size} 张画布图片归档成本地文件`);
+      }
+    } finally {
+      mediaUrls.forEach((url) => archivingCanvasMediaRef.current.delete(url));
+    }
   }, [captureProjectTask, addLog, updateDoc]);
 
   // A browser refresh or a dropped Agent stream must not turn a still-running
@@ -2267,10 +2273,10 @@ export default function SuperCanvas() {
 
   useEffect(() => {
     if (!ready) return;
-    void healRemoteNodeMedia();
-    const timer = window.setInterval(() => void healRemoteNodeMedia(), 60_000);
+    void healCanvasNodeMedia();
+    const timer = window.setInterval(() => void healCanvasNodeMedia(), 60_000);
     return () => window.clearInterval(timer);
-  }, [healRemoteNodeMedia, ready]);
+  }, [healCanvasNodeMedia, ready]);
 
   useEffect(() => {
     if (!ready) return;

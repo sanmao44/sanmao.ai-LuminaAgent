@@ -41,12 +41,13 @@ import './canvas-compose.css';
 import './runtime-service.css';
 import './shadow-tuning.css';
 import './cursor.css';
+import './modern-ui.css';
 import LocalLifecycle from '@/components/LocalLifecycle';
 import MotionPreference from '@/components/MotionPreference';
 
 export const viewport: Viewport = {
   colorScheme: 'light dark',
-  themeColor: '#f5f6f8',
+  themeColor: '#f4f5f8',
 };
 
 export const metadata: Metadata = {
@@ -66,7 +67,7 @@ const themeBootScript = `
     var motion = localStorage.getItem('sanmao-motion-preference');
     document.documentElement.dataset.motion = motion === 'off' ? 'off' : 'on';
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0f1117' : '#f5f6f8');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0d0f14' : '#f4f5f8');
   } catch (e) {
     document.documentElement.dataset.theme = 'light';
   }

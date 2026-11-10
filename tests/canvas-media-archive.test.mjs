@@ -5,7 +5,7 @@ import test from 'node:test';
 const canvas = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
 
 /* 画布节点上的服务商临时地址会过期：这条补归档链路掉了，图会挂、参考素材也会读不到。 */
-test('the canvas re-archives remote node media while it is idle', () => {
-  assert.match(canvas, /const archived = await archiveCanvasRemoteImages\(remoteUrls\);/);
-  assert.match(canvas, /window\.setInterval\(\(\) => void healRemoteNodeMedia\(\), 60_000\)/);
+test('the canvas archives inline and temporary remote node media while it is idle', () => {
+  assert.match(canvas, /const archived = await archiveCanvasImages\(mediaUrls\);/);
+  assert.match(canvas, /window\.setInterval\(\(\) => void healCanvasNodeMedia\(\), 60_000\)/);
 });

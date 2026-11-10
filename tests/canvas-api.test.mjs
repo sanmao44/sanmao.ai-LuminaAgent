@@ -1037,23 +1037,26 @@ test('canvas media archiving keeps only the addresses the server could store', a
     return options.body.includes('gone.png')
       ? jsonResponse({ error: '图片保存失败' }, 400)
       : jsonResponse({ ok: true, images: [{ url: '/api/storage/file?name=kept.png' }] });
-  }, () => api.archiveCanvasRemoteImages([
+  }, () => api.archiveCanvasImages([
     'https://task-cdn.example.com/?url=fresh.png',
     'https://task-cdn.example.com/?url=gone.png',
+    'data:image/png;base64,AA==',
     '/api/storage/file?name=already-local.png',
   ]));
 
   assert.deepEqual(requests.map((request) => request.body.images[0].url), [
     'https://task-cdn.example.com/?url=fresh.png',
     'https://task-cdn.example.com/?url=gone.png',
+    'data:image/png;base64,AA==',
   ]);
   assert.deepEqual([...archived.entries()], [
     ['https://task-cdn.example.com/?url=fresh.png', '/api/storage/file?name=kept.png'],
+    ['data:image/png;base64,AA==', '/api/storage/file?name=kept.png'],
   ]);
 });
 
-test('canvas media archiving targets only remote image addresses', () => {
-  assert.deepEqual(api.canvasRemoteMediaUrls([
+test('canvas media archiving includes inline images and temporary remote image addresses', () => {
+  assert.deepEqual(api.canvasMediaUrlsToArchive([
     { data: { kind: 'image', url: 'https://task-cdn.example.com/?url=fresh.png' } },
     { data: { kind: 'image', url: 'https://task-cdn.example.com/?url=fresh.png' } },
     { data: { kind: 'image', url: '/api/storage/file?name=local.png' } },
@@ -1061,7 +1064,7 @@ test('canvas media archiving targets only remote image addresses', () => {
     { data: { kind: 'video', url: 'https://task-cdn.example.com/?url=clip.mp4' } },
     { data: { kind: 'audio', url: 'https://task-cdn.example.com/?url=voice.mp3' } },
     { data: { url: 'data:image/png;base64,AA==' } },
-  ]), ['https://task-cdn.example.com/?url=fresh.png']);
+  ]), ['https://task-cdn.example.com/?url=fresh.png', 'data:image/png;base64,AA==']);
 });
 
 test('canvas upscale marks the request as canvas-originated', async () => {

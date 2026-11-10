@@ -23,7 +23,7 @@ export function applyTheme(theme: AppTheme): void {
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme;
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", theme === "dark" ? "#0f1117" : "#f5f6f8");
+  if (meta) meta.setAttribute("content", theme === "dark" ? "#0d0f14" : "#f4f5f8");
 }
 
 export function saveTheme(theme: AppTheme): void {
