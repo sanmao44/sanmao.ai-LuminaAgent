@@ -1,3 +1,11 @@
+# 0.7.104 Canvas 图片与界面体验改进
+
+- 改进 Canvas 图片生成连续性、任务恢复与图片持久化，提升长流程的稳定性。
+- 新增图片查看器全屏模式，优化不同主题下文本选中的可读性。
+- 恢复桌面 Agent 单行输入布局，并细化界面主题颜色。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.104](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.104)。
+
 # 0.7.103 搜索时区与 Canvas 工作流改进
 
 - 固定搜索默认时区为 `Asia/Shanghai`，修复 UTC 环境下相对日期新闻查询偏移一天的问题。
