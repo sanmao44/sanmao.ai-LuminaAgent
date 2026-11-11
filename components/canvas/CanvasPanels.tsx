@@ -4,6 +4,7 @@ import { useEffect, type ReactNode, type RefObject } from "react";
 import type { CanvasConnectionStyle } from "@/lib/canvas/types";
 import SelectMenu from "@/components/SelectMenu";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
+import { AUTO_PROJECT_CHECKPOINT_INTERVAL_OPTIONS, type AutoProjectCheckpointIntervalMinutes } from "@/lib/canvas/auto-project-checkpoint";
 import { DEPTH_QUALITY_OPTIONS, type DepthQuality } from "@/lib/canvas/depth-settings";
 
 type ConnectionStyle = CanvasConnectionStyle;
@@ -107,14 +108,16 @@ export function CanvasPanelShell({ title, subtitle, onClose, children, className
   </div>;
 }
 
-export function CanvasSettingsPanel({ theme, connectionStyle, edgesVisible, depthQuality, onTheme, onConnectionStyleChange, onEdgesVisibleChange, onDepthQualityChange, onExportWorkflow, onImportWorkflow, onClose }: { theme: CanvasTheme; connectionStyle: ConnectionStyle; edgesVisible: boolean; depthQuality: DepthQuality; onTheme: () => void; onConnectionStyleChange: (value: ConnectionStyle) => void; onEdgesVisibleChange: (value: boolean) => void; onDepthQualityChange: (value: DepthQuality) => void; onExportWorkflow: () => void; onImportWorkflow: () => void; onClose: () => void }) {
+export function CanvasSettingsPanel({ theme, connectionStyle, edgesVisible, depthQuality, autoCheckpointIntervalMinutes, onTheme, onConnectionStyleChange, onEdgesVisibleChange, onDepthQualityChange, onAutoCheckpointIntervalMinutesChange, onExportWorkflow, onExportProjectPackage, onImportWorkflow, onClose }: { theme: CanvasTheme; connectionStyle: ConnectionStyle; edgesVisible: boolean; depthQuality: DepthQuality; autoCheckpointIntervalMinutes: AutoProjectCheckpointIntervalMinutes; onTheme: () => void; onConnectionStyleChange: (value: ConnectionStyle) => void; onEdgesVisibleChange: (value: boolean) => void; onDepthQualityChange: (value: DepthQuality) => void; onAutoCheckpointIntervalMinutesChange: (value: AutoProjectCheckpointIntervalMinutes) => void; onExportWorkflow: () => void; onExportProjectPackage: () => void; onImportWorkflow: () => void; onClose: () => void }) {
   return <CanvasPanelShell title="画布设置" subtitle="只保留画布与应用配置" onClose={onClose} className="canvas-settings-panel">
     <section className="canvas-setting-section"><b>界面主题</b><button type="button" onClick={onTheme}>{theme === "light" ? "☾ 切换深色" : "☀ 切换浅色"}</button></section>
     <section className="canvas-setting-section"><b>连线样式</b><SelectMenu value={connectionStyle} portalZIndex={CANVAS_Z_INDEX.modalPopover} onChange={onConnectionStyleChange} ariaLabel="连线样式" options={CONNECTION_STYLE_OPTIONS.map((item) => ({ value: item.value, label: item.label, icon: <ConnectionOptionIcon value={item.value} /> }))} /></section>
     <section className="canvas-setting-section"><b>节点线条</b><button type="button" className={edgesVisible ? "active" : ""} aria-pressed={edgesVisible} onClick={() => onEdgesVisibleChange(!edgesVisible)}>{edgesVisible ? "显示全部" : "隐藏（选中时显示关系）"}</button></section>
+    <section className="canvas-setting-section"><b>自动检查点间隔</b><SelectMenu value={autoCheckpointIntervalMinutes} portalZIndex={CANVAS_Z_INDEX.modalPopover} onChange={onAutoCheckpointIntervalMinutesChange} ariaLabel="自动检查点间隔" options={AUTO_PROJECT_CHECKPOINT_INTERVAL_OPTIONS} /></section>
     <section className="canvas-setting-section"><b>深度图性能</b><SelectMenu value={depthQuality} portalZIndex={CANVAS_Z_INDEX.modalPopover} onChange={onDepthQualityChange} ariaLabel="深度图性能档位" options={DEPTH_QUALITY_OPTIONS} /></section>
     <section className="canvas-setting-section"><b>导出工作流</b><button type="button" onClick={onExportWorkflow}>导出 JSON</button></section>
-    <section className="canvas-setting-section"><b>导入工作流</b><button type="button" onClick={onImportWorkflow}>选择 JSON 文件</button></section>
+    <section className="canvas-setting-section"><b>导出项目包</b><small>包含项目设定、当前画布和素材来源索引</small><button type="button" onClick={onExportProjectPackage}>导出项目包</button></section>
+    <section className="canvas-setting-section"><b>导入工作流</b><small>同时支持项目包 JSON</small><button type="button" onClick={onImportWorkflow}>选择 JSON 文件</button></section>
   </CanvasPanelShell>;
 }
 

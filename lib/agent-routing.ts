@@ -48,13 +48,13 @@ function isGithubRepositoryQuery(text: string, messages: AgentIntentMessage[]) {
   if (/(?:pull request|\bpr\b|issue|commit|提交|分支|branch|release)/i.test(text)) return true;
   return messages.some((message) => /github(?:\.com)?/i.test(String(message.content || '')));
 }
-function artifactKindFor(text: string) {
-  if (!creationVerbPattern.test(text)) return 'none' as const;
+function artifactKindFor(text: string, fileDeliveryRequested: boolean) {
+  if (!creationVerbPattern.test(text) && !fileDeliveryRequested) return 'none' as const;
   if (archivePattern.test(text)) return 'archive' as const;
   if (pptPattern.test(text)) return 'ppt' as const;
   if (excelPattern.test(text) && !/(?:封面图|图片|配图)/i.test(text)) return 'excel' as const;
   if (wordPattern.test(text) && !/(?:封面图|图片|配图)/i.test(text)) return 'word' as const;
-  if (filePattern.test(text)) return 'file' as const;
+  if (fileDeliveryRequested || filePattern.test(text)) return 'file' as const;
   return 'none' as const;
 }
 
@@ -83,7 +83,8 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   const intent = options.intent || classifyAgentDeliverable(text, context);
   const requestMode = intent.mode || inferAgentRequestMode(text);
   const executable = requestMode === 'execute' || requestMode === 'follow_up';
-  const artifactKindCandidate = artifactKindFor(text);
+  const fileDeliveryRequested = likelyFileGenerationRequest(text);
+  const artifactKindCandidate = artifactKindFor(text, fileDeliveryRequested);
   const desktopIntent = classifyDesktopAutomation(text);
   const browserIntent = classifyBrowserAutomation(text);
   const skillInstallation = executable && !/[?？]\s*$/.test(text) && /(?:skill|技能)/i.test(text)
@@ -191,7 +192,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   const useFilesystemMcp = filesystem;
   const useSkills = !browserAutomation && !filesystem && !intent.deliverable.toString().match(/^(IMAGE|BOTH)$/) && (skillActivation || skillInstallation);
   const useNativeWeb = web.shouldSearch && !browserAutomation && !filesystem && route === 'web';
-  const useNativeArtifact = !skillInstallation && (artifactRouteIsGenerated(route) || likelyFileGenerationRequest(text) || likelyArtifactGenerationRequest(text));
+  const useNativeArtifact = !skillInstallation && (artifactRouteIsGenerated(route) || fileDeliveryRequested || likelyArtifactGenerationRequest(text));
   const reason = useMcp ? '检测到外部服务或本地执行动作，优先使用受控 MCP。'
     : useSkills ? '检测到流程/模板/规范需求，先按需检索技能。'
       : useNativeWeb ? '检测到需要外部事实，先联网再回答。'

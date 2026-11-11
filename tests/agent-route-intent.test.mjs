@@ -16,9 +16,10 @@ function harness(options = {}) {
   const images = [];
   const imageRuntimeRequests = [];
   const modelCalls = [];
+  const candidateCalls = [];
   const bundledSkillInstalls = [];
   const spreadsheetCalls = [];
-  const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: [], kind: 'chat' };
+  const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: options.chatCapabilities || [], kind: 'chat' };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
   const runtime = { model, provider };
@@ -205,7 +206,10 @@ function harness(options = {}) {
           },
           invokeChatModelStream: async (payload) => providerApi.chatCompletionStream(options.candidates[0].provider, options.candidates[0].model.rawId, payload, options.signal),
           invokeSpecificChatModel: async (runtime, payload, signal) => providerApi.chatCompletion(runtime.provider, runtime.model.rawId, payload, signal),
-          invokeCandidateChatModels: async (candidates, payload, signal) => providerApi.chatCompletion(candidates[0].provider, candidates[0].model.rawId, payload, signal),
+          invokeCandidateChatModels: async (candidates, payload, signal, timeoutMs) => {
+            candidateCalls.push({ modelIds: candidates.map((candidate) => candidate.model.id), payload, timeoutMs });
+            return providerApi.chatCompletion(candidates[0].provider, candidates[0].model.rawId, payload, signal);
+          },
         };
       },
     },
@@ -220,7 +224,7 @@ function harness(options = {}) {
         return reply(options.reply?.(payload, calls.length, _model) || { content: '已经完成。' });
       },
       chatCompletionStream: async () => { throw new Error('unexpected direct stream'); },
-      describeProviderFailure: () => 'provider failure',
+      describeProviderFailure: options.describeProviderFailure || (() => 'provider failure'),
       generateImage: async (_provider, _model, args) => {
         images.push({ mode: 'generate', ...args });
         if (options.pendingImage) throw Object.assign(new Error('provider accepted'), { providerPossiblyAccepted: true, providerTaskId: 'provider-task-1' });
@@ -230,8 +234,11 @@ function harness(options = {}) {
       imageDownloadAuth: () => undefined,
     },
     '@/lib/store': {
-      getRuntimeModel: async (_id, kind) => kind === 'image' ? { provider, model: imageModel } : runtime,
-      getRuntimeImageGenerationModel: async (id) => { imageRuntimeRequests.push({ capability: 'generate', id }); return { provider, model: imageModel }; },
+      getRuntimeModel: async (id, kind) => kind === 'image' ? { provider, model: imageModel } : options.runtimeForModel?.(id) || runtime,
+      getRuntimeImageGenerationModel: async (id) => {
+        imageRuntimeRequests.push({ capability: 'generate', id });
+        return imageModel.capabilities.includes('generate') ? { provider, model: imageModel } : null;
+      },
       getRuntimeImageModelForCapability: async (id, capability) => {
         imageRuntimeRequests.push({ capability, id });
         const supportsCapability = imageModel.capabilities.includes(capability)
@@ -239,7 +246,7 @@ function harness(options = {}) {
         return supportsCapability ? { provider, model: { ...imageModel, capabilities: [capability] } } : null;
       },
       getRuntimeImageModelCandidates: async () => [{ provider, model: imageModel }],
-      getPublicState: async () => ({ settings: {}, models: options.availableImageModels ?? [imageModel], providers: [provider] }),
+      getPublicState: async () => ({ settings: {}, models: options.availableModels ?? options.availableImageModels ?? [imageModel], providers: [provider, ...(options.availableProviders || [])] }),
     },
     '@/lib/auth': { isTrustedAppRequest: () => true },
     '@/lib/runtime-operation': { beginRuntimeRequest: async () => noOp, RuntimeDrainingError: class extends Error {} },
@@ -304,7 +311,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-    calls, modelCalls, mcpCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls,
+    calls, modelCalls, candidateCalls, mcpCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -317,6 +324,33 @@ function harness(options = {}) {
     },
   };
 }
+
+test('cinematic director passes custom requirements to a vision-capable model with an extended deadline', async () => {
+  const visionProvider = { id: 'vision-provider', name: 'Vision', platform: 'openai', enabled: true };
+  const visionRuntime = {
+    provider: visionProvider,
+    model: { id: 'vision-chat', rawId: 'vision-chat-1', displayName: 'Vision Chat', capabilities: ['chat', 'vision'], kind: 'chat' },
+  };
+  const agent = harness({
+    availableModels: [{ id: visionRuntime.model.id, kind: 'chat', enabled: true, published: true, capabilities: ['vision'], providerId: visionProvider.id }],
+    availableProviders: [visionProvider],
+    runtimeForModel: (id) => id === visionRuntime.model.id ? visionRuntime : undefined,
+  });
+  await agent.post([{
+    role: 'user',
+    content: '导演参数：用户补充要求：镜头更快，保留产品 Logo。',
+    references: [{ id: 'product-reference', kind: 'image', name: '产品图', url: 'https://assets.test/product.png' }],
+  }], { model: 'test-chat', task: 'cinematic_shock_opening_director', deliverable: 'TEXT' });
+
+  assert.equal(agent.candidateCalls.length, 1);
+  assert.deepEqual(agent.candidateCalls[0].modelIds, ['vision-chat']);
+  assert.equal(agent.candidateCalls[0].timeoutMs, 75_000);
+  assert.equal(agent.modelCalls[0].model, 'vision-chat-1');
+  const userMessage = agent.candidateCalls[0].payload.messages.find((message) => message.role === 'user');
+  assert.equal(Array.isArray(userMessage.content), true);
+  assert.match(userMessage.content[0].text, /镜头更快，保留产品 Logo/);
+  assert.equal(userMessage.content[1].type, 'image_url');
+});
 
 test('不支持原生工具调用的模型仍能通过本地 Excel 兜底生成真实 artifact', async () => {
   const agent = harness({
@@ -633,12 +667,12 @@ test('canvas text target stays a text-only optimization conversation', async () 
 
 test('Canvas JEV review cannot turn an explicit image description into generation', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const agent = harness({
     intentClassifierRuntime: classifierRuntime,
-    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.14'
       ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"误读了选中图片"}' }
       : { content: '画面描绘了一处临水的古镇，前景有船只，远处是暖色天空。' },
   });
@@ -659,7 +693,7 @@ test('Canvas JEV review cannot turn an explicit image description into generatio
       nodes: [{ id: 'image-1', type: 'media', x: 0, y: 0, data: { kind: 'image', name: '选中图片', url: 'data:image/png;base64,dGVzdA==' } }],
     },
   });
-  const classifierCalls = agent.modelCalls.filter((call) => call.model === 'jev-1.13');
+  const classifierCalls = agent.modelCalls.filter((call) => call.model === 'jev-1.14');
   assert.equal(classifierCalls.length, 1);
   assert.match(classifierCalls[0].payload.messages[0].content, /target\.operation is not the user request/);
   assert.equal(JSON.parse(classifierCalls[0].payload.messages[1].content).localIntent.deliverable, 'TEXT');
@@ -721,13 +755,13 @@ test('canvas Agent treats a first-turn replacement instruction as an image edit'
 
 test('Canvas selected node snapshots reach both the assistant context and image generation references', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const agent = harness({
     intentClassifierRuntime: classifierRuntime,
     imageCapabilities: ['generate', 'reference'],
-    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.14'
       ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"用户明确要求将所选角色素材编排为海报图片"}' }
       : { content: '正在为你生成海报。' },
   });
@@ -762,18 +796,18 @@ test('Canvas selected node snapshots reach both the assistant context and image 
   assert.ok(userTurn.content.some((part) => part.type === 'image_url' && part.image_url.url === 'https://assets.test/character-2.png'));
   assert.match(userTurn.content[0].text, /两位角色并肩站立/);
   assert.match(userTurn.content[0].text, /角色设定/);
-  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 1);
 });
 
 test('JEV clarification cannot downgrade an explicit Canvas poster request', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const agent = harness({
     intentClassifierRuntime: classifierRuntime,
     imageCapabilities: ['generate', 'edit', 'reference'],
-    reply: (_payload, _callNumber, rawModel) => rawModel === 'jev-1.13'
+    reply: (_payload, _callNumber, rawModel) => rawModel === 'jev-1.14'
       ? { content: '{"mode":"unknown","deliverable":"CLARIFY","confidence":"high","reason":"模型无法确定"}' }
       : { content: '海报已完成。' },
   });
@@ -793,18 +827,18 @@ test('JEV clarification cannot downgrade an explicit Canvas poster request', asy
   assert.equal(agent.images[0].mode, 'generate');
   assert.equal(agent.images[0].references.length, 4);
   assert.match(agent.images[0].prompt, /16:9|海报/);
-  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 1);
 });
 
 test('Canvas short image confirmation carries the original poster task and all selected images', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const agent = harness({
     intentClassifierRuntime: classifierRuntime,
     imageCapabilities: ['generate', 'edit', 'reference'],
-    reply: (_payload, _callNumber, rawModel) => rawModel === 'jev-1.13'
+    reply: (_payload, _callNumber, rawModel) => rawModel === 'jev-1.14'
       ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"确认上一轮海报任务"}' }
       : { content: '已按上一轮海报要求生成。' },
   });
@@ -829,8 +863,8 @@ test('Canvas short image confirmation carries the original poster task and all s
   assert.equal(agent.images[0].mode, 'generate');
   assert.deepEqual(agent.images[0].references, selectedIds.map((id) => `https://assets.test/${id}.png`));
   assert.match(agent.images[0].prompt, /16:9|海报/);
-  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
-  const classifierCall = agent.modelCalls.find((call) => call.model === 'jev-1.13');
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 1);
+  const classifierCall = agent.modelCalls.find((call) => call.model === 'jev-1.14');
   const classifierInput = JSON.parse(classifierCall.payload.messages[1].content);
   assert.equal(classifierInput.referenceImages, 4);
   assert.equal(classifierInput.request, '生成图片！');
@@ -848,7 +882,7 @@ test('Canvas short image confirmation carries the original poster task and all s
 
 test('Canvas semantic classification failure asks for clarification instead of inventing model availability', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const agent = harness({ intentClassifierRuntime: classifierRuntime, reply: () => ({ content: 'invalid classifier output' }) });
@@ -864,17 +898,17 @@ test('Canvas semantic classification failure asks for clarification instead of i
   assert.equal(data.deliverable, 'CLARIFY');
   assert.match(data.message, /无法可靠判断/);
   assert.equal(agent.images.length, 0);
-  assert.equal(agent.modelCalls.filter((call) => call.model !== 'jev-1.13').length, 0);
+  assert.equal(agent.modelCalls.filter((call) => call.model !== 'jev-1.14').length, 0);
 });
 
 test('Canvas follow-up conversation stays conversational with selected image nodes', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const agent = harness({
     intentClassifierRuntime: classifierRuntime,
-    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.14'
       ? { content: '{"mode":"discuss","deliverable":"OTHER","confidence":"high","reason":"这是普通跟进对话"}' }
       : { content: '在的，我在。你可以继续说。' },
   });
@@ -901,7 +935,7 @@ test('Canvas follow-up conversation stays conversational with selected image nod
     assert.equal(data.deliverable, 'OTHER');
   }
 
-  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 3);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 3);
   assert.equal(agent.images.length, 0);
   assert.equal(agent.modelCalls.filter((call) => call.model === 'test-chat').length, 3);
 });
@@ -925,7 +959,7 @@ test('Canvas without a selection does not turn greetings, identity questions, or
 
 test('Canvas semantic image intent reports actual missing image capability before chat can guess', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const agent = harness({
@@ -942,18 +976,142 @@ test('Canvas semantic image intent reports actual missing image capability befor
   });
   assert.equal(data.ok, false);
   assert.match(data.message, /当前没有可用生图模型/);
-  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
-  assert.equal(agent.modelCalls.filter((call) => call.model !== 'jev-1.13').length, 0);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 1);
+  assert.equal(agent.modelCalls.filter((call) => call.model !== 'jev-1.14').length, 0);
   assert.equal(agent.images.length, 0);
 });
 
-test('client image model selection reaches Agent generation explicitly', async () => {
-  const agent = harness({ reply: (payload) => payload.tools
+test('client image model selection reaches Agent generation even when the public catalog is temporarily empty', async () => {
+  const agent = harness({ availableImageModels: [], reply: (payload) => payload.tools
     ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"客户端旧参数测试","modelId":"stale-client-model"}}</tool_call>' }
     : { content: '图片已完成。' } });
   const data = await agent.post([{ role: 'user', content: '生成一张客户端选择测试图' }], { imageModelId: 'test-image' });
   assert.equal(data.images.length, 1);
   assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'test-image' }]);
+});
+
+test('Canvas bare image follow-up carries the prior subject and ratio across model-setting turns', async () => {
+  const agent = harness({ reply: () => ({ content: '准备生成。' }) });
+  const messages = [
+    { role: 'user', content: '按这个风格来张晓组织团队成员的图片' },
+    { role: 'assistant', content: '以黑白厚磨砂玻璃般的雾化质感，呈现晓组织成员群像。' },
+    { role: 'user', content: '我要21:9的图' },
+    { role: 'assistant', content: '当前没有可用的生图模型。' },
+    { role: 'user', content: '有模型啊!' },
+    { role: 'assistant', content: '请确认图片模型已启用。' },
+    { role: 'user', content: '启用了' },
+    { role: 'assistant', content: '按黑白雾化质感生成21:9宽幅晓组织群像。' },
+    { role: 'user', content: '出图啊!' },
+  ];
+  const data = await agent.post(messages, {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '出图啊!',
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+
+  assert.equal(data.deliverable, 'IMAGE');
+  assert.equal(agent.images.length, 1);
+  assert.match(agent.images[0].prompt, /晓组织/);
+  assert.match(agent.images[0].prompt, /黑白厚磨砂玻璃/);
+  assert.match(agent.images[0].prompt, /21:9/);
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'test-image' }]);
+});
+
+test('Canvas ratio correction reruns the prior image and overrides a stale model ratio', async () => {
+  const agent = harness({
+    reply: (payload) => payload.tools
+      ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"葫芦娃七兄弟电影海报","aspectRatio":"1:1"}}</tool_call>' }
+      : { content: '图片已完成。' },
+  });
+  const data = await agent.post([
+    { role: 'user', content: '生成一张葫芦娃动漫海报，比例1:1' },
+    { role: 'assistant', content: '图片已生成。' },
+    { role: 'user', content: '图片比例不对！我要21:9的比例' },
+  ], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '图片比例不对！我要21:9的比例',
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+
+  assert.equal(data.deliverable, 'IMAGE');
+  assert.equal(agent.images.length, 1);
+  assert.match(agent.images[0].prompt, /葫芦娃/);
+  assert.equal(agent.images[0].aspectRatio, '21:9');
+  assert.match(JSON.stringify(agent.calls[0].messages), /葫芦娃/);
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'test-image' }]);
+});
+
+test('Canvas exact ratio correction resumes image generation after an earlier refusal', async () => {
+  const agent = harness({
+    reply: (payload) => payload.tools
+      ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"葫芦娃成年人版电影海报","aspectRatio":"1:1"}}</tool_call>' }
+      : { content: '图片已完成。' },
+  });
+  const refusal = '很抱歉，我目前无法直接生成或修正图片文件；图片生成能力存在限制，无法保证直接生成符合你要求的21:9比例图片。';
+  const data = await agent.post([
+    { role: 'user', content: '生成一张葫芦娃动漫海报，将角色现代化为成年人版，穿着潮流时尚，比例21:9' },
+    { role: 'assistant', content: '图片已生成。' },
+    { role: 'user', content: '图片比例不对！我要21:9的比例' },
+    { role: 'assistant', content: refusal },
+    { role: 'user', content: '我要21:9的图片比例!' },
+  ], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '我要21:9的图片比例!',
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+
+  assert.equal(data.deliverable, 'IMAGE');
+  assert.equal(agent.images.length, 1);
+  assert.match(agent.images[0].prompt, /葫芦娃/);
+  assert.equal(agent.images[0].aspectRatio, '21:9');
+  assert.doesNotMatch(JSON.stringify(agent.calls[0].messages), /无法直接生成/);
+});
+
+test('Canvas ratio prompt request stays text-only after an image was generated', async () => {
+  const agent = harness({ reply: () => ({ content: '葫芦娃海报提示词，21:9 横向宽幅构图。' }) });
+  const data = await agent.post([
+    { role: 'user', content: '生成一张葫芦娃动漫海报' },
+    { role: 'assistant', content: '图片已生成。' },
+    { role: 'user', content: '给我这张图的21:9提示词' },
+  ], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '给我这张图的21:9提示词',
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+
+  assert.equal(data.deliverable, 'TEXT');
+  assert.equal(agent.images.length, 0);
+  assert.equal(agent.imageRuntimeRequests.length, 0);
+  assert.equal(agent.calls.length, 1);
+  assert.match(data.message, /21:9/);
+});
+
+test('Canvas bare image command does not resume a previous image after an explicit question', async () => {
+  const agent = harness({ reply: () => ({ content: '普通回答。' }) });
+  const data = await agent.post([
+    { role: 'user', content: '生成一张黑白雾化风格的晓组织群像图片' },
+    { role: 'assistant', content: '已生成。' },
+    { role: 'user', content: '图片怎么保存？' },
+    { role: 'assistant', content: '可以从图片卡片保存。' },
+    { role: 'user', content: '出图啊!' },
+  ], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '出图啊!',
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+
+  assert.equal(data.deliverable, 'CLARIFY');
+  assert.equal(agent.images.length, 0);
 });
 
 test('承接上一轮编号生图方案时直接批量执行，不只回复生成计划', async () => {
@@ -1014,6 +1172,33 @@ test('filesystem success prose is rejected when no tool has executed', async () 
   assert.doesNotMatch(data.message, /已经完成/);
 });
 
+test('HTML delivery fails as a retryable request when the model describes a temporary file but returns no file', async () => {
+  const agent = harness({
+    describeProviderFailure: (error) => error instanceof Error ? error.message : String(error),
+    reply: () => ({ content: '保存失败：C:/Users/ADMINI~1/AppData/Local/Temp/sanmao-claude-EfcS6L/pelican-bike.html 写入失败，文件没有生成。' }),
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+  assert.match(data.error, /没有生成可下载文件/);
+  assert.equal(data.files?.length || 0, 0);
+  assert.equal(agent.modelCalls.length, 2, 'the application requests a tool-backed file generation retry before returning failure');
+});
+
+test('HTML delivery returns a downloadable chat file after file_generate succeeds', async () => {
+  const content = '<!doctype html><html><body><svg aria-label="鹅骑自行车"></svg></body></html>';
+  const agent = harness({
+    reply: (payload) => payload.tools?.some((tool) => tool.function.name === 'file_generate')
+      ? { tool_calls: [{ id: 'html-file', function: { name: 'file_generate', arguments: JSON.stringify({ files: [{ filename: 'pelican-bike.html', content }] }) } }] }
+      : { content: '文件已生成。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+
+  assert.equal(data.files.length, 1);
+  assert.equal(data.files[0].name, 'pelican-bike.html');
+  assert.equal(data.files[0].mimeType, 'text/html;charset=utf-8');
+  assert.equal(data.files[0].content, content);
+  assert.match(data.message, /1 个文件/);
+});
+
 test('an accepted image plan is resolved semantically within this conversation', async () => {
   const agent = harness({ reply: (payload) => String(payload.messages[0]?.content).includes('只判断当前用户')
     ? { content: '{"deliverable":"IMAGE","confidence":"high","reason":"用户确认刚才的海报方案"}' }
@@ -1030,12 +1215,12 @@ test('an accepted image plan is resolved semantically within this conversation',
 
 test('configured JEV classifies an ambiguous confirmation before image execution', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const agent = harness({
     intentClassifierRuntime: classifierRuntime,
-    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.14'
       ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"用户确认上一轮海报方案"}' }
       : { content: '已经完成。' },
   });
@@ -1044,7 +1229,7 @@ test('configured JEV classifies an ambiguous confirmation before image execution
     { role: 'assistant', content: '海报画面是月球书店，是否按这个生成？' },
     { role: 'user', content: '好的' },
   ]);
-  const classifierCalls = agent.modelCalls.filter((call) => call.model === 'jev-1.13');
+  const classifierCalls = agent.modelCalls.filter((call) => call.model === 'jev-1.14');
   assert.equal(classifierCalls.length, 1);
   assert.equal(classifierCalls[0].payload.tool_choice, 'none');
   assert.equal('tools' in classifierCalls[0].payload, false);
@@ -1080,12 +1265,12 @@ test('Canvas multi-image composition requires reference capability, not edit cap
 
 test('invalid JEV output falls back to the selected chat model semantic planner', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const agent = harness({
     intentClassifierRuntime: classifierRuntime,
-    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.14'
       ? { content: 'not-json' }
       : { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"主模型回退确认"}' },
   });
@@ -1094,24 +1279,40 @@ test('invalid JEV output falls back to the selected chat model semantic planner'
     { role: 'assistant', content: '海报画面是月球书店，是否按这个生成？' },
     { role: 'user', content: '好的' },
   ]);
-  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 1);
   assert.ok(agent.modelCalls.filter((call) => call.model === 'test-chat').length >= 1);
+  assert.equal(data.images.length, 1);
+});
+
+test('an ambiguous image confirmation stays usable when JEV is not configured', async () => {
+  const agent = harness({
+    reply: (payload) => String(payload.messages[0]?.content).includes('只判断当前用户')
+      ? { content: '{"mode":"execute","deliverable":"IMAGE","confidence":"high","reason":"主模型回退确认海报任务"}' }
+      : { content: '已经完成。' },
+  });
+  const data = await agent.post([
+    { role: 'user', content: '先构思一个太空书店的海报，9:16' },
+    { role: 'assistant', content: '海报画面是月球书店，是否按这个生成？' },
+    { role: 'user', content: '好的' },
+  ]);
+  assert.equal(agent.modelCalls.some((call) => call.model === 'jev-1.14'), false);
+  assert.ok(agent.modelCalls.some((call) => call.model === 'test-chat'));
   assert.equal(data.images.length, 1);
 });
 
 test('configured JEV is skipped for a clear ordinary conversation turn', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const agent = harness({ intentClassifierRuntime: classifierRuntime });
   await agent.post([{ role: 'user', content: '你好，你能做什么？' }]);
-  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 0);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 0);
 });
 
 test('video download uses JEV before exposing the native downloader', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const downloaded = [];
@@ -1122,7 +1323,7 @@ test('video download uses JEV before exposing the native downloader', async () =
       return { filePath: 'C:\\media\\example.mp4', bytes: 1234 };
     },
     reply: (payload, _callCount, rawModel) => {
-      if (rawModel === 'jev-1.13') return { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"用户明确要求下载视频"}' };
+      if (rawModel === 'jev-1.14') return { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"用户明确要求下载视频"}' };
       if (payload.messages.some((message) => message.role === 'tool')) return { content: '已完成下载。' };
       if (payload.tools?.some((tool) => tool.function.name === 'video_download')) {
         return { content: null, tool_calls: [{ id: 'video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4', cookiesFromBrowser: 'chrome' }) } }] };
@@ -1135,7 +1336,7 @@ test('video download uses JEV before exposing the native downloader', async () =
     { role: 'assistant', content: '我收到这个链接了。' },
     { role: 'user', content: '下载' },
   ]);
-  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 1);
   assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'video_download')));
   assert.deepEqual(downloaded.map((request) => request.url), ['https://www.youtube.com/watch?v=example123']);
   assert.equal(downloaded[0].cookiesFromBrowser, undefined);
@@ -1144,7 +1345,7 @@ test('video download uses JEV before exposing the native downloader', async () =
 
 test('browser cookies are passed only after the user authorizes the matching video URL and browser', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const downloaded = [];
@@ -1155,7 +1356,7 @@ test('browser cookies are passed only after the user authorizes the matching vid
       return { filePath: 'C:\\media\\authorized.mp4', bytes: 1234 };
     },
     reply: (payload, _callCount, rawModel) => {
-      if (rawModel === 'jev-1.13') return { content: '{"mode":"follow_up","deliverable":"OTHER","confidence":"high","reason":"用户明确授权本次浏览器会话"}' };
+      if (rawModel === 'jev-1.14') return { content: '{"mode":"follow_up","deliverable":"OTHER","confidence":"high","reason":"用户明确授权本次浏览器会话"}' };
       if (payload.messages.some((message) => message.role === 'tool')) return { content: 'Download completed.' };
       if (payload.tools?.some((tool) => tool.function.name === 'video_download')) {
         return { content: null, tool_calls: [{ id: 'authorized-video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4', cookiesFromBrowser: 'firefox' }) } }] };
@@ -1177,7 +1378,7 @@ test('browser cookies are passed only after the user authorizes the matching vid
 
 test('HTTP 403 asks for browser-session consent and a separate download turn resumes the same URL', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const downloaded = [];
@@ -1189,7 +1390,7 @@ test('HTTP 403 asks for browser-session consent and a separate download turn res
       return { filePath: 'C:\\media\\authorized.mp4', bytes: 1234 };
     },
     reply: (payload, _callCount, rawModel) => {
-      if (rawModel === 'jev-1.13') return { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"明确的视频下载或会话授权"}' };
+      if (rawModel === 'jev-1.14') return { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"明确的视频下载或会话授权"}' };
       if (payload.messages.some((message) => message.role === 'tool')) return { content: 'Download completed.' };
       if (payload.tools?.some((tool) => tool.function.name === 'video_download')) {
         return { content: null, tool_calls: [{ id: 'video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4', cookiesFromBrowser: 'firefox' }) } }] };
@@ -1225,7 +1426,7 @@ test('HTTP 403 asks for browser-session consent and a separate download turn res
 
 test('a bare video URL follows the prior download-on-link instruction through JEV and the native tool', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const downloaded = [];
@@ -1235,7 +1436,7 @@ test('a bare video URL follows the prior download-on-link instruction through JE
       downloaded.push(request);
       return { filePath: 'C:\\media\\follow-up.mp4', bytes: 1234 };
     },
-    reply: (payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+    reply: (payload, _callCount, rawModel) => rawModel === 'jev-1.14'
       ? { content: '{"mode":"follow_up","deliverable":"OTHER","confidence":"high","reason":"承接用户此前给视频链接就下载的要求"}' }
       : payload.messages.some((message) => message.role === 'tool')
         ? { content: '已完成下载。' }
@@ -1247,7 +1448,7 @@ test('a bare video URL follows the prior download-on-link instruction through JE
     { role: 'assistant', content: '视频下载能力已接入，发视频链接即可下载。' },
     { role: 'user', content: url },
   ]);
-  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.13').length, 1);
+  assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 1);
   assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'video_download')));
   assert.deepEqual(downloaded.map((request) => request.url), [url]);
   assert.match(data.message, /完成下载/);
@@ -1271,7 +1472,7 @@ test('GitHub executable project can be installed as the bundled Skill without MC
 
 test('video download falls back to the canonical native call when the model returns prose', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   const downloaded = [];
@@ -1281,7 +1482,7 @@ test('video download falls back to the canonical native call when the model retu
       downloaded.push(request);
       return { filePath: 'C:\\media\\fallback.mp4', bytes: 4567 };
     },
-    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.14'
       ? { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"明确下载请求"}' }
       : { content: '我会帮你下载。' },
   });
@@ -1290,16 +1491,40 @@ test('video download falls back to the canonical native call when the model retu
   assert.match(data.message, /已经|完成|下载/);
 });
 
+test('video download remains available when JEV is not configured', async () => {
+  const downloaded = [];
+  const agent = harness({
+    downloadWithYtDlp: async (request) => {
+      downloaded.push(request);
+      return { filePath: 'C:\\media\\no-jev.mp4', bytes: 2048 };
+    },
+    reply: (payload) => {
+      if (String(payload.messages[0]?.content).includes('只判断当前用户')) {
+        return { content: '{"mode":"execute","deliverable":"OTHER","confidence":"high","reason":"明确的视频下载请求"}' };
+      }
+      if (payload.messages.some((message) => message.role === 'tool')) return { content: '已完成下载。' };
+      if (payload.tools?.some((tool) => tool.function.name === 'video_download')) {
+        return { content: null, tool_calls: [{ id: 'no-jev-video-call', type: 'function', function: { name: 'video_download', arguments: JSON.stringify({ url: 'https://example.invalid/wrong.mp4' }) } }] };
+      }
+      return { content: '准备下载。' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '下载 https://www.youtube.com/watch?v=noJev123' }]);
+  assert.equal(agent.modelCalls.some((call) => call.model === 'jev-1.14'), false);
+  assert.deepEqual(downloaded.map((request) => request.url), ['https://www.youtube.com/watch?v=noJev123']);
+  assert.match(data.message, /完成下载/);
+});
+
 test('JEV can reject a video-shaped question without running the downloader', async () => {
   const classifierRuntime = {
-    model: { id: 'jev-runtime', rawId: 'jev-1.13', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
   };
   let downloads = 0;
   const agent = harness({
     intentClassifierRuntime: classifierRuntime,
     downloadWithYtDlp: async () => { downloads += 1; return { filePath: 'C:\\media\\never.mp4', bytes: 1 }; },
-    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.13'
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.14'
       ? { content: '{"mode":"ask","deliverable":"OTHER","confidence":"high","reason":"用户是在询问是否支持下载"}' }
       : { content: '支持下载公开视频，但这句话是在询问能力。' },
   });

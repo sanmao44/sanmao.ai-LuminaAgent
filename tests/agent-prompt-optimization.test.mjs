@@ -32,6 +32,7 @@ test("prompt optimization uses the shared Agent task boundary", async () => {
     [{ url: "image.png", name: "Reference" }],
     "chat-model",
     "polish_text",
+    { style: "纪实自然光", audience: "户外用户", constraints: "保留产品外观" },
   ));
 
   assert.equal(result, "polished copy");
@@ -41,6 +42,9 @@ test("prompt optimization uses the shared Agent task boundary", async () => {
   assert.equal(payload.model, "chat-model");
   assert.equal(payload.task, "polish_text");
   assert.equal(payload.stream, true);
+  assert.deepEqual(payload.projectBrief, {
+    style: "纪实自然光", audience: "户外用户", constraints: "保留产品外观",
+  });
   assert.deepEqual(payload.messages[0].references, [{
     id: "polish_text-1", kind: "image", name: "Reference", url: "prepared:image.png",
   }]);

@@ -3,7 +3,7 @@ import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
-import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeRoute, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
+import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeProjectBrief, type CreativeRoute, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import {
@@ -333,6 +333,19 @@ export async function optimizeCanvasUploadFile(
   }
 }
 
+export class CanvasApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "CanvasApiError";
+  }
+}
+
+export function isMissingCanvasVideoTaskError(error: unknown) {
+  return error instanceof CanvasApiError
+    && error.status === 404
+    && error.message === "视频任务不存在";
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { cache: "no-store", ...options });
   let body: unknown = null;
@@ -349,7 +362,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
               (body as { message?: unknown }).message,
           )
         : `请求失败：${response.status}`;
-    throw new Error(message);
+    throw new CanvasApiError(message, response.status);
   }
   return body as T;
 }
@@ -496,26 +509,67 @@ async function cachedCanvasAgentReference(url: string) {
 }
 
 /**
- * 画布文档里需要补归档的远端图片地址：本地存储/中转地址跳过，同一地址只留一次。
- * 这些地址只活一小段时间，节点一直用它们的话，图片会挂、参考素材也会读不到。
+ * 画布文档里需要补归档的图片地址：本地地址跳过，同一地址只留一次。
+ * 临时远端地址会过期，内嵌图片数据会撑大 localStorage；两者都归档为本地文件。
  */
-export function canvasRemoteMediaUrls(nodes: readonly CanvasNode[]) {
-  const urls = nodes
+export function canvasMediaUrlsToArchive(nodes: readonly CanvasNode[]) {
+  const remoteUrls = nodes
     .filter((node) => node.data.kind !== "video" && node.data.kind !== "audio")
     .map((node) => String(node.data.url || "").trim())
     .filter((url) => /^https?:\/\//i.test(url) && !/\/api\/(?:storage|media)\//i.test(url));
-  return Array.from(new Set(urls));
+  return Array.from(new Set([...remoteUrls, ...canvasInlineImageUrls(nodes)]));
+}
+
+const CANVAS_INLINE_IMAGE_DATA_URL = /^data:image\/(?:png|jpeg|webp|gif|bmp);base64,/i;
+
+export function canvasInlineImageUrls(nodes: readonly CanvasNode[]) {
+  const urls = new Set<string>();
+  const seen = new WeakSet<object>();
+  const visit = (value: unknown) => {
+    if (typeof value === "string") {
+      if (CANVAS_INLINE_IMAGE_DATA_URL.test(value)) urls.add(value);
+      return;
+    }
+    if (!value || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) value.forEach(visit);
+    else Object.values(value).forEach(visit);
+  };
+  nodes.forEach((node) => visit(node.data));
+  return [...urls];
+}
+
+export function replaceCanvasMediaUrls<T>(value: T, archived: ReadonlyMap<string, string>): T {
+  if (typeof value === "string") return (archived.get(value) || value) as T;
+  if (Array.isArray(value)) {
+    let changed = false;
+    const result = value.map((item) => {
+      const next = replaceCanvasMediaUrls(item, archived);
+      changed ||= next !== item;
+      return next;
+    });
+    return (changed ? result : value) as T;
+  }
+  if (!value || typeof value !== "object") return value;
+  let changed = false;
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    const next = replaceCanvasMediaUrls(item, archived);
+    changed ||= next !== item;
+    result[key] = next;
+  }
+  return (changed ? result : value) as T;
 }
 
 /**
- * 把画布节点上的远端图片补归档成本地存储地址。
+ * 把画布节点上的图片补归档成本地存储地址。
  * 服务商临时地址只活一小段时间，节点一直用它的话，图片会挂、参考素材也会读不到；
  * 本地存储地址不会过期，画布和参考素材都能直接读。归档不到的地址不会出现在结果里。
  */
-export async function archiveCanvasRemoteImages(urls: readonly string[]) {
+export async function archiveCanvasImages(urls: readonly string[]) {
   const archived = new Map<string, string>();
-  for (const url of Array.from(new Set(urls)).slice(0, 16)) {
-    if (!/^https?:\/\//i.test(url)) continue;
+  for (const url of Array.from(new Set(urls))) {
+    if (!/^https?:\/\//i.test(url) && !/^data:image\/(?:png|jpeg|webp|gif|bmp);base64,/i.test(url)) continue;
     try {
       const response = await fetch("/api/storage/images", {
         cache: "no-store",
@@ -534,7 +588,7 @@ export async function archiveCanvasRemoteImages(urls: readonly string[]) {
 
 /* 参考素材在浏览器里读不到时的兜底：先让服务端归档一份本地副本，再按本地地址读。 */
 async function archiveRemoteCanvasReference(url: string) {
-  const archived = await archiveCanvasRemoteImages([url]);
+  const archived = await archiveCanvasImages([url]);
   const local = archived.get(url);
   return local ? cachedCanvasAgentReference(local).catch(() => "") : "";
 }
@@ -663,10 +717,27 @@ function waitForCanvasImagePoll(delayMs: number, signal?: AbortSignal) {
   });
 }
 
+function appendCreativeProjectBrief(
+  prompt: string,
+  brief: CreativeProjectBrief | null | undefined,
+  mediaKind: "图片" | "视频",
+) {
+  if (!brief) return prompt;
+  const context = [
+    brief.intent?.trim() ? `创作意图：${brief.intent.trim()}` : "",
+    brief.style.trim() ? `风格：${brief.style.trim()}` : "",
+    brief.audience.trim() ? `受众：${brief.audience.trim()}` : "",
+    brief.constraints.trim() ? `约束：${brief.constraints.trim()}` : "",
+  ].filter(Boolean).join("\n");
+  if (!context) return prompt;
+  return `${prompt}\n\n【项目创作简报】\n${context}\n请将以上信息作为本项目${mediaKind}创作的一致性参考；若与本次提示词冲突，以本次提示词为准。`;
+}
+
 export async function generateCanvasImage(input: {
   taskId?: string;
   imageOperation: ImageRequestMode;
   prompt: string;
+  projectBrief?: CreativeProjectBrief | null;
   presetId?: string;
   presetName?: string;
   model?: string;
@@ -756,7 +827,7 @@ export async function generateCanvasImage(input: {
       ...(input.taskId ? { taskId: input.taskId } : {}),
       imageOperation: input.imageOperation,
       ...(input.intentPreview ? { imageIntentPreview: input.intentPreview } : {}),
-      prompt: input.prompt,
+      prompt: appendCreativeProjectBrief(input.prompt, input.projectBrief, "图片"),
       ...(input.presetId ? { presetId: input.presetId } : {}),
       ...(input.presetName ? { presetName: input.presetName } : {}),
       model: input.model || "auto",
@@ -820,6 +891,7 @@ export async function generateCanvasImage(input: {
 
 export async function generateCanvasVideo(input: {
   prompt: string;
+  projectBrief?: CreativeProjectBrief | null;
   idempotencyKey?: string;
   model?: string;
   modelRawId?: string;
@@ -885,11 +957,15 @@ export async function generateCanvasVideo(input: {
     ? input.referenceVideo
     : undefined;
   const idempotencyKey = input.idempotencyKey || crypto.randomUUID();
+  const prompt = appendCreativeProjectBrief(input.prompt, input.projectBrief, "视频");
   const submit = () => request<{
     task: {
       id: string;
       status: string;
       progress?: number;
+      providerProgress?: number;
+      providerStatus?: string;
+      providerTaskId?: string;
       videoUrls?: string[];
       remoteVideoUrls?: string[];
       error?: string;
@@ -906,7 +982,7 @@ export async function generateCanvasVideo(input: {
       model: input.model || "auto",
       operation: input.operation || "generate",
       input: {
-        prompt: input.prompt,
+        prompt,
         ...(input.operation ? { operation: input.operation } : {}),
         ...(videoMode ? { videoMode } : {}),
         ...(!usesAgnesV20
@@ -1007,10 +1083,10 @@ export async function generateCanvasUpscale(input: {
 
 export async function getCanvasUpscaleTask(taskId: string) {
   return request<{
-    task: { id: string; status: "queued" | "processing" | "succeeded" | "failed" | "cancelled"; error?: string; errorCode?: string; sourceImageId?: string };
+    task: { id: string; status: "queued" | "processing" | "succeeded" | "failed" | "cancelled"; error?: string; errorCode?: string; sourceImageId?: string; localImageUrl?: string; remoteImageUrl?: string };
     images: Array<{ url: string; revisedPrompt?: string }>;
     model?: { id?: string; name?: string; provider?: string };
-  }>(`/api/upscale/tasks/${encodeURIComponent(taskId)}`, { cache: "no-store" });
+  }>(`/api/upscale/tasks/${encodeURIComponent(taskId)}?refresh=false`, { cache: "no-store" });
 }
 
 export type CanvasAgentResponse = AgentResponse;
@@ -1021,7 +1097,7 @@ export const CANVAS_AGENT_MAX_WAIT_MS = 5 * 60 * 1000;
 export async function getCanvasAgentGeneration(taskId: string) {
   const response = await fetch(`/api/generation-logs?taskId=${encodeURIComponent(taskId)}`, { cache: "no-store" });
   if (!response.ok) return null;
-  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; imageUrls?: string[]; error?: string; operation?: ImageRequestOperation } | null } | null;
+  const body = await response.json().catch(() => null) as { log?: { status?: string; mode?: string; taskKind?: string; createdAt?: string; imageUrls?: string[]; error?: string; errorCode?: string; operation?: ImageRequestOperation } | null } | null;
   return body?.log || null;
 }
 
@@ -1031,13 +1107,26 @@ export function canvasImageTaskOutputUrls(log: { imageUrls?: readonly unknown[] 
     .filter((url, index, urls) => Boolean(url) && urls.indexOf(url) === index);
 }
 
-export async function waitForCanvasAgentGeneration(taskId: string, maxWaitMs = 30_000) {
+export async function waitForCanvasAgentGeneration(taskId: string, maxWaitMs = 30_000, signal?: AbortSignal) {
   const deadline = Date.now() + Math.max(0, maxWaitMs);
   while (Date.now() < deadline) {
+    if (signal?.aborted) throw signal.reason || new DOMException("等待任务已停止", "AbortError");
     const log = await getCanvasAgentGeneration(taskId).catch(() => null);
     if (log?.status === "success" || log?.status === "error") return log;
-    await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", abort);
+        resolve();
+      }, 1_000);
+      const abort = () => {
+        clearTimeout(timer);
+        reject(signal?.reason || new DOMException("等待任务已停止", "AbortError"));
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+    });
   }
+  if (signal?.aborted) throw signal.reason || new DOMException("等待任务已停止", "AbortError");
   return getCanvasAgentGeneration(taskId).catch(() => null);
 }
 
@@ -1058,6 +1147,7 @@ export async function generateCanvasAgent(
     intentText?: string;
     runId?: string;
     context?: WorkspaceContext;
+    projectBrief?: CreativeProjectBrief;
     canvasDocument?: CanvasDocument;
     canvasTarget?: CanvasAgentTarget;
     signal?: AbortSignal;
@@ -1108,12 +1198,14 @@ export async function generateCanvasAgent(
           ...(input.intentText ? { intentText: input.intentText } : {}),
           ...(input.runId ? { runId: input.runId } : {}),
           ...(input.context ? { context: input.context } : {}),
+          ...(input.projectBrief ? { projectBrief: input.projectBrief } : {}),
           ...(input.canvasDocument ? { canvasDocument: input.canvasDocument } : {}),
           ...(input.canvasTarget ? { canvasTarget: input.canvasTarget } : {}),
         },
         { signal: controller.signal, onEvent },
       );
     } catch (error) {
+      if (input.signal?.aborted) throw input.signal.reason || error;
       const pendingTaskId = String((error as { agentPending?: boolean; taskId?: unknown } | null)?.agentPending ? (error as { taskId?: unknown }).taskId || input.runId || "" : "").trim();
       const transportPending = timedOut || /Agent 流式响应不完整|连接中断|fetch failed/i.test(String((error as Error)?.message || error));
       let recoverTaskId = pendingTaskId || (transportPending ? String(input.runId || "").trim() : "");
@@ -1139,7 +1231,7 @@ export async function generateCanvasAgent(
         }
       }
       if (!recoverTaskId) throw error;
-      const log = await waitForCanvasAgentGeneration(recoverTaskId, 30 * 60 * 1000);
+      const log = await waitForCanvasAgentGeneration(recoverTaskId, 30 * 60 * 1000, input.signal);
       const images = canvasImageTaskOutputUrls(log);
       if (images.length) {
         return {
@@ -1176,12 +1268,15 @@ export async function getCanvasVideoTask(id: string) {
       id: string;
       status: string;
       progress?: number;
+      providerProgress?: number;
+      providerStatus?: string;
+      providerTaskId?: string;
       videoUrls?: string[];
       remoteVideoUrls?: string[];
       error?: string;
       modelId?: string;
     };
-  }>(`/api/video/tasks/${encodeURIComponent(id)}`);
+  }>(`/api/video/tasks/${encodeURIComponent(id)}?refresh=false`);
 }
 
 export async function stopCanvasVideoTaskTracking(id: string) {
@@ -1195,6 +1290,59 @@ export async function stopCanvasVideoTaskTracking(id: string) {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "cancel" }),
+  });
+}
+
+/** Retry a failed video task through the Worker-owned lifecycle endpoint. */
+export async function retryCanvasVideoTask(id: string) {
+  return request<{
+    task: {
+      id: string;
+      status: string;
+      progress?: number;
+      providerProgress?: number;
+      providerStatus?: string;
+      providerTaskId?: string;
+      videoUrls?: string[];
+      remoteVideoUrls?: string[];
+      error?: string;
+      modelId?: string;
+      retryOf?: string;
+    };
+  }>(`/api/video/tasks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "retry" }),
+  });
+}
+
+/** Batch retries use a Worker action that validates and claims the current failed task. */
+export async function retryFailedCanvasVideoTask(id: string) {
+  return request<{
+    task: {
+      id: string;
+      status: string;
+      retryOf?: string;
+    };
+  }>(`/api/video/tasks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "retry-failed" }),
+  });
+}
+
+/** Batch upscale retries require an explicit provider rejection and a current Worker claim. */
+export async function retryFailedCanvasUpscaleTask(id: string) {
+  return request<{
+    task: {
+      id: string;
+      status: string;
+      retryOf?: string;
+    };
+  }>(`/api/upscale/tasks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "retry-failed" }),
   });
 }
 

@@ -1,15 +1,57 @@
 import { addEdge, createMedia, nodeById, nodeSize } from './model';
 import type { CanvasDocument, CanvasNode, CanvasNodeParams } from './types';
 import type { GenerationLog } from '@/lib/generation-log';
+import { CANVAS_TASK_STALE_AFTER_MS, displayGenerationLogStatus } from './activity-log';
 
 export function canvasNodeHasTask(node: CanvasNode | undefined, taskId: string) {
   return Boolean(node && taskId && String(node.data.jobId || node.data.generation?.taskId || '') === taskId);
+}
+
+/** A missing task snapshot is not a provider failure; keep tracking the same video task. */
+export function retainCanvasVideoTaskAfterMissingSnapshot(document: CanvasDocument, input: {
+  nodeId: string;
+  taskId: string;
+}) {
+  const node = nodeById(document, input.nodeId);
+  if (!canvasNodeHasTask(node, input.taskId)
+    || node?.type !== 'media'
+    || node.data.kind !== 'video'
+    || node.data.url
+    || !['queued', 'running'].includes(String(node.data.status || ''))
+    || node.data.taskTracking) return document;
+
+  const statusLabel = '任务状态暂不可用，正在重新查询';
+  if (node.data.statusLabel === statusLabel) return document;
+  return {
+    ...document,
+    nodes: document.nodes.map((item) => item.id === node.id
+      ? { ...item, data: { ...item.data, statusLabel } }
+      : item),
+  };
+}
+
+export function canvasVideoTaskSnapshotRetryDelayMs(attempt: number) {
+  const retryIndex = Math.max(0, Math.floor(Number(attempt) || 1) - 1);
+  return Math.min(30_000, 5_000 * 2 ** Math.min(3, retryIndex));
+}
+
+export function canvasVideoTaskSnapshotExpired(since: number, now = Date.now()) {
+  return Number.isFinite(since) && since > 0 && now - since >= CANVAS_TASK_STALE_AFTER_MS;
+}
+
+/** A provider receipt timeout is still waiting for confirmation, not a failed generation. */
+export function canvasGenerationLogRecoveryStatus(log: { status?: string; errorCode?: string }) {
+  return displayGenerationLogStatus(log);
 }
 
 export function canvasNodeForGenerationLog(document: CanvasDocument, log: Pick<GenerationLog, 'id' | 'taskId' | 'nodeId' | 'prompt' | 'mode' | 'mediaKind'>) {
   const taskId = String(log.taskId || log.id || '');
   const taskNode = document.nodes.find((node) => canvasNodeHasTask(node, taskId));
   if (taskNode) return taskNode;
+  const recoveryNode = document.nodes.find((node) =>
+    node.type === 'media' && node.data.kind === 'audio' && node.data.recoveryTaskId === taskId,
+  );
+  if (recoveryNode) return recoveryNode;
 
   const variantNode = document.nodes.find((node) =>
     node.type === 'generator' && node.data.variantStates?.some((state) =>
@@ -54,11 +96,74 @@ export function mergeCanvasTaskImages(document: CanvasDocument, nodeId: string, 
     nodes: document.nodes.map((node) => {
       const output = fillsTarget && node.id === nodeId ? targetOutput
         : uniqueOutputs.find((candidate) => candidate.data.url === node.data.url && node.data.generation?.taskId === taskId);
-      return output ? { ...node, data: { ...node.data, ...output.data, status: 'completed' as const, statusLabel: '图片已完成', progress: 100, processingStartedAt: undefined } } : node;
+      return output ? { ...node, data: { ...node.data, ...output.data, status: 'completed' as const, statusLabel: '图片已完成', taskTracking: undefined, taskUpdatedAt: undefined, progress: 100, processingStartedAt: undefined } } : node;
     }).concat(additions),
   };
   additions.forEach((node) => { next = addEdge(next, nodeId, node.id, 'right', 'left', fillsTarget ? 'variant' : 'generated'); });
   return next;
+}
+
+/** Project a read-only Worker snapshot onto its existing upscale node. */
+export function recoverCanvasUpscaleTask(document: CanvasDocument, input: {
+  nodeId: string;
+  taskId: string;
+  requestId: string;
+  status: 'queued' | 'processing' | 'succeeded' | 'failed' | 'cancelled';
+  imageUrl?: string;
+  modelName?: string;
+  error?: string;
+}) {
+  const current = nodeById(document, input.nodeId);
+  if (current?.type !== 'upscale'
+    || String(current.data.jobId || '') !== input.taskId
+    || String(current.data.upscaleRequestId || '') !== input.requestId) return document;
+
+  const imageUrl = String(input.imageUrl || '').trim();
+  if (imageUrl) {
+    if (current.data.url === imageUrl && current.data.status === 'completed') return document;
+    return {
+      ...document,
+      nodes: document.nodes.map((node) => node.id === current.id ? {
+        ...node,
+        data: {
+          ...node.data,
+          kind: 'image' as const,
+          url: imageUrl,
+          role: '超分结果',
+          resultSource: 'upscale-node' as const,
+          ...(input.modelName ? { model: input.modelName } : {}),
+          status: 'completed' as const,
+          statusLabel: '超分节点生成的结果',
+          taskTracking: undefined,
+          taskUpdatedAt: undefined,
+          progress: 100,
+          processingStartedAt: undefined,
+          generation: node.data.generation ? {
+            ...node.data.generation,
+            taskId: input.requestId,
+            updatedAt: Date.now(),
+          } : node.data.generation,
+        },
+      } : node),
+    };
+  }
+
+  if (input.status === 'queued' || input.status === 'processing' || input.status === 'succeeded') return document;
+  const error = String(input.error || (input.status === 'cancelled' ? '超分任务已取消' : '超分处理失败'));
+  if (current.data.status === 'failed' && current.data.statusLabel === error) return document;
+  return {
+    ...document,
+    nodes: document.nodes.map((node) => node.id === current.id ? {
+      ...node,
+      data: {
+        ...node.data,
+        status: 'failed' as const,
+        statusLabel: error,
+        progress: undefined,
+        processingStartedAt: undefined,
+      },
+    } : node),
+  };
 }
 
 /** A document operation; callers apply it through CanvasCore, without owning task lifecycle. */
@@ -73,17 +178,24 @@ export function recoverCanvasTask(document: CanvasDocument, input: {
   const current = nodeById(document, input.nodeId);
   if (!canvasNodeHasTask(current, input.taskId)) return document;
   const node = current!;
+  if (input.status === 'stalled') {
+    if (node.data.url || node.data.status === 'completed' || node.data.taskTracking === 'stopped' || node.data.taskTracking === 'stale') return document;
+    return { ...document, nodes: document.nodes.map((item) => item.id === node.id
+      ? { ...item, data: { ...item.data, status: 'failed' as const, statusLabel: input.error || '长时间未收到回执，结果状态待确认', taskTracking: 'stale' as const, taskUpdatedAt: undefined, progress: undefined, processingStartedAt: undefined } } : item) };
+  }
   if (input.status !== 'success') {
     if (node.data.url || node.data.status === 'completed' || !input.status || !['pending', 'error'].includes(input.status)) return document;
+    if (input.status === 'pending' && node.data.taskTracking) return document;
     return { ...document, nodes: document.nodes.map((item) => item.id === node.id
       ? { ...item, data: { ...item.data, status: input.status === 'error' ? 'failed' as const : 'running' as const,
+        ...(input.status === 'error' ? { progress: undefined, processingStartedAt: undefined, taskTracking: undefined, taskUpdatedAt: undefined } : {}),
         statusLabel: input.status === 'error' ? input.error || '生成失败' : '服务商仍在生成，请稍候' } } : item) };
   }
   const urls = [...new Set(input.urls.filter(Boolean))];
   if (node.data.kind === 'video') {
     if (!urls[0]) return document;
     return { ...document, nodes: document.nodes.map((item) => item.id === node.id
-      ? { ...item, data: { ...item.data, url: urls[0], status: 'completed' as const, statusLabel: '视频已完成', progress: 100, processingStartedAt: undefined } } : item) };
+      ? { ...item, data: { ...item.data, url: urls[0], status: 'completed' as const, statusLabel: '视频已完成', taskTracking: undefined, taskUpdatedAt: undefined, progress: 100, processingStartedAt: undefined } } : item) };
   }
   const outputs = urls.map((url, index) => createMedia('image', url, `生成图片 ${index + 1}`, {
     x: node.x + (node.type === 'media' ? 0 : nodeSize(node).w + 90) + (index % 2) * 400,
@@ -98,5 +210,34 @@ export function recoverCanvasTask(document: CanvasDocument, input: {
   const next = mergeCanvasTaskImages(document, node.id, input.taskId, outputs);
   if (node.type !== 'prompt') return next;
   return { ...next, nodes: next.nodes.map((item) => item.id === node.id
-    ? { ...item, data: { ...item.data, status: 'completed' as const, statusLabel: 'Agent 已回复', processingStartedAt: undefined } } : item) };
+    ? { ...item, data: { ...item.data, status: 'completed' as const, statusLabel: 'Agent 已回复', taskTracking: undefined, taskUpdatedAt: undefined, processingStartedAt: undefined } } : item) };
+}
+
+/** End local observation while keeping the task identity for later result recovery. */
+export function stopCanvasTaskTracking(document: CanvasDocument, input: {
+  nodeId: string;
+  taskId: string;
+  statusLabel: string;
+}) {
+  const node = nodeById(document, input.nodeId);
+  if (!node
+    || !canvasNodeHasTask(node, input.taskId)
+    || node.data.url
+    || node.data.status === 'completed'
+    || node.data.taskTracking === 'stopped') return document;
+  return {
+    ...document,
+    nodes: document.nodes.map((item) => item.id === node.id ? {
+      ...item,
+      data: {
+        ...item.data,
+        status: 'failed' as const,
+        statusLabel: input.statusLabel,
+        taskTracking: 'stopped' as const,
+        taskUpdatedAt: undefined,
+        processingStartedAt: undefined,
+        progress: undefined,
+      },
+    } : item),
+  };
 }

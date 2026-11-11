@@ -1,5 +1,7 @@
 import { nodeById, nodeSize } from "./model";
 import type { CanvasDocument, CanvasGenerationStatus, CanvasNode } from "./types";
+import type { CanvasPatch } from "./patch";
+import type { CanvasAgentRunContext } from "./run-context";
 
 /** The dock sends a compact snapshot instead of the whole document. */
 export const CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES = 12;
@@ -290,11 +292,40 @@ export function canvasAgentDockAcceptsImages(deliverable?: string) {
 export function canvasAgentDockShouldAutoApplyText(input: string) {
   const text = String(input || "").replace(/\s+/g, " ").trim();
   if (!text) return false;
-  const canvasTarget = /(?:画布|画板|节点)/;
   const saveAction = /(?:保存|存成|存为|加入|添加|放到|落到|落入|落地|同步|写入|创建)/;
+  if (/[?？]/.test(text)) return false;
+  if (/(?:不要|别|请勿|无需|不必|不用|不需要|不希望|不想|避免|禁止|取消|不应|不该).{0,24}(?:保存|存成|存为|加入|添加|放到|落到|落入|落地|同步|写入|创建)/.test(text)) {
+    return false;
+  }
+  const canvasTarget = /(?:画布|画板|节点)/;
   const directInstruction = /(?:把|将|请|帮我|直接|自动|结果|回复|回答|这段|它).{0,24}(?:保存|存成|存为|加入|添加|放到|落到|落入|落地|同步|写入|创建).{0,24}(?:画布|画板|节点)/;
   const reverseInstruction = /(?:保存|存成|存为|加入|添加|放到|落到|落入|落地|同步|写入|创建).{0,24}(?:画布|画板|节点)/;
   return canvasTarget.test(text) && saveAction.test(text) && (directInstruction.test(text) || reverseInstruction.test(text));
+}
+
+export function canvasAgentDockTextWritebackRequest(input: {
+  enabled: boolean;
+  sourceText: string;
+  responseText: string;
+  prompt: string;
+  runContext?: CanvasAgentRunContext;
+}) {
+  if (!input.enabled || !canvasAgentDockShouldAutoApplyText(input.sourceText)) return null;
+  return {
+    text: input.responseText,
+    meta: {
+      prompt: input.prompt,
+      ...(input.runContext ? { runContext: input.runContext } : {}),
+    },
+  };
+}
+
+export function canvasAgentDockPatchRequiresConfirmation(patch?: CanvasPatch | null) {
+  return patch?.operations.some((operation) => operation.op === "remove_nodes") ?? false;
+}
+
+export function canvasAgentDockShouldAutoApplyPatch(enabled: boolean, patch?: CanvasPatch | null) {
+  return enabled && Boolean(patch?.operations.length) && !canvasAgentDockPatchRequiresConfirmation(patch);
 }
 
 /** A low-risk local command: reuse the latest Agent image without another model call. */

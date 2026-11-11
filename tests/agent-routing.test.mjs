@@ -122,6 +122,15 @@ test('chooses bounded artifact routes before generic text or visual nouns', () =
   assert.equal(routing.classifyAgentRequest('生成一张海报').route, 'image');
 });
 
+test('explicit HTML delivery selects the file route when the request also describes a visual scene', () => {
+  const request = '画只鹅骑自行车的svg动画，html交付，带交互控件！';
+  const decision = routing.classifyAgentRequest(request);
+  assert.equal(modules.web.exports.likelyFileGenerationRequest(request), true);
+  assert.equal(decision.route, 'file');
+  assert.equal(decision.tools.useNativeArtifact, true);
+  assert.equal(routing.routeDeliverable(decision.route, decision.intent.deliverable), 'TEXT');
+});
+
 test('compact plain turns stay out of every executable path', () => {
   const base = {
     isCanvasSource: false,

@@ -1,6 +1,5 @@
 import { isTrustedAppRequest } from '@/lib/auth';
-import { listVideoTasksPage } from '@/lib/video-task-store';
-import { getVideoTasks } from '@/apps/worker/task-control';
+import { getVideoTaskSnapshotsPage } from '@/apps/worker/task-control';
 
 export const runtime = 'nodejs';
 
@@ -12,13 +11,12 @@ export async function GET(request: Request) {
   const page = Math.max(1, Number(params.get('page') || 1));
   const source = params.get('source') || 'all';
   const media = params.get('media') || 'video';
-  const result = await listVideoTasksPage({
+  const result = await getVideoTaskSnapshotsPage({
     page,
     pageSize,
     search: params.get('search') || '',
     source,
     media,
   });
-  const refreshed = await getVideoTasks(result.tasks);
-  return Response.json({ ...result, tasks: refreshed.filter(Boolean) }, { headers: { 'Cache-Control': 'no-store' } });
+  return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
 }

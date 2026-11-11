@@ -24,8 +24,8 @@ export function createAgentModelInvoker<TRuntime extends ProviderRuntime, TPaylo
   const invoke = (payload: TPayload, signal = options.defaultSignal) => invokeWith(payload, (runtime, callSignal) => options.invoke(runtime, payload, callSignal), signal);
   const invokeSpecificWith = <TResult>(runtime: TRuntime, payload: TPayload, operation: (runtime: TRuntime, signal: AbortSignal) => Promise<TResult>, signal = options.defaultSignal) => options.coordinator.invokeSpecific(runtime, signal, operation);
   const invokeSpecific = (runtime: TRuntime, payload: TPayload, signal = options.defaultSignal) => invokeSpecificWith(runtime, payload, (selected, callSignal) => options.invoke(selected, payload, callSignal), signal);
-  const invokeCandidates = async (candidates: readonly TRuntime[], payload: TPayload, signal = options.defaultSignal) => {
-    const response = await options.coordinator.invokeCandidates(candidates, signal, (runtime, callSignal) => options.invoke(runtime, payload, callSignal));
+  const invokeCandidates = async (candidates: readonly TRuntime[], payload: TPayload, signal = options.defaultSignal, timeoutMs?: number) => {
+    const response = await options.coordinator.invokeCandidates(candidates, signal, (runtime, callSignal) => options.invoke(runtime, payload, callSignal), timeoutMs);
     options.onCurrent?.(options.coordinator.current);
     options.onUsage?.(response as unknown as TResponse);
     return response;

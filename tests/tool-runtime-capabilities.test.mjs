@@ -156,7 +156,6 @@ test('reference image generation keeps its operation on an accepted async task',
       trackedChatCompletion: async () => ({ choices: [{ message: { content: '' } }] }),
       agentRuntime: { provider: { name: 'chat' }, model: { rawId: 'chat-model' } },
       requestedAgentImageModelId: 'auto',
-      imageModels: [{ id: 'image-model', capabilities: ['generate', 'reference'] }],
       getRuntimeImageGenerationModel: async () => { throw new Error('reference work must use the reference capability lookup'); },
       getRuntimeImageModelForCapability: async (_id, capability) => {
         assert.equal(capability, 'reference');

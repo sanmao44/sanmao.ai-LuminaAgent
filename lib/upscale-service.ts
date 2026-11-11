@@ -8,14 +8,37 @@ import { finishGenerationLog, startGenerationLog, type GenerationLog } from './g
 import { normalizeGenerationSource, type GenerationSource } from './generation-source';
 import { ALIYUN_GENERATIVE_UPSCALE_MAX_ASPECT_RATIO, prepareAliyunUpscaleImage, prepareTencentUpscaleImage } from './upscale-image';
 import { createUpscaleProvider, isUpscaleProviderError, uploadAliyunImageToOss, uploadTencentImageToCos, type UpscaleProviderError } from './upscale-providers';
-import { createUpscaleTask, findUpscaleTask, updateUpscaleTask, type UpscaleTask } from './upscale-task-store';
+import { createUpscaleTask, findUpscaleTask, updateUpscaleTask, UPSCALE_TASK_TIMEOUT_MS, type UpscaleTask } from './upscale-task-store';
 import type { ReferenceImageRecord, UpscaleModelId, UpscaleOutputFormat, UpscaleProviderId } from './types';
 import { canRetryUpscaleTask, upscaleTaskRuntime } from './upscale-task-runtime';
 import { upscaleTaskOutputUrl, upscaleTaskStatus } from './upscale-task-output';
+import { canBatchRetryUpscaleTask, isExplicitUpscaleRejection } from './upscale-task-retry-policy';
 
 const activePolls = new Set<string>();
-const TASK_TIMEOUT_MS = 20 * 60 * 1000;
 const TASK_TIMEOUT_ERROR = '高清处理时间较长，请稍后重试。';
+const MAX_POLL_RETRY_DELAY_MS = 15 * 60_000;
+
+function isRetryableUpscalePollError(error: unknown) {
+  if (isUpscaleProviderError(error)) {
+    return error.code === 'UPSTREAM_ERROR'
+      && (error.status === 408 || error.status === 425 || error.status === 429 || (error.status !== undefined && error.status >= 500));
+  }
+  const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : '';
+  if (/^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE)$/i.test(code)) return true;
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /timeout|timed out|network|fetch failed|connection reset|socket hang up/i.test(message);
+}
+
+function upscalePollRetryDelay(task: UpscaleTask, error: unknown) {
+  if (isUpscaleProviderError(error) && Number.isFinite(error.retryAfterMs) && Number(error.retryAfterMs) > 0) {
+    return Math.min(MAX_POLL_RETRY_DELAY_MS, Math.max(1000, Number(error.retryAfterMs)));
+  }
+  const attempt = Math.max(0, Math.floor(Number(task.pollCount) || 0));
+  const baseDelay = Math.min(60_000, 2000 * 2 ** Math.min(5, attempt));
+  return Math.round(baseDelay * (0.8 + Math.random() * 0.4));
+}
 
 export function scaleValue(value: unknown): 1 | 2 | 3 | 4 {
   const number = Number(value);
@@ -46,7 +69,21 @@ const DEFAULT_UPSCALE_PROMPT = 'Upscale this image';
 async function finishTaskLog(task: UpscaleTask | null, patch: Partial<Omit<GenerationLog, 'id' | 'createdAt'>>) {
   if (!task?.logId) return;
   const durationMs = Math.max(0, Date.now() - new Date(task.createdAt).getTime());
-  await finishGenerationLog(task.logId, { durationMs, ...patch }).catch(() => undefined);
+  await finishGenerationLog(task.logId, {
+    taskId: task.id,
+    ...(task.providerTaskId ? { providerTaskId: task.providerTaskId } : {}),
+    ...(task.retryDisposition ? { retryDisposition: task.retryDisposition } : {}),
+    durationMs,
+    ...patch,
+  }).catch(() => undefined);
+}
+
+async function setRetryParentDisposition(task: UpscaleTask, retryDisposition: 'explicit_rejection' | 'blocked') {
+  if (!task.retryOf) return;
+  const parentTask = await findUpscaleTask(task.retryOf);
+  if (!parentTask || parentTask.status !== 'failed' || parentTask.providerTaskId || parentTask.localImageUrl || parentTask.remoteImageUrl || !isExplicitUpscaleRejection(parentTask.errorCode)) return;
+  const parent = await updateUpscaleTask(task.retryOf, { retryDisposition });
+  await finishTaskLog(parent, { retryDisposition });
 }
 
 async function credentialsFor(provider: UpscaleProviderId) {
@@ -124,7 +161,7 @@ async function saveResult(task: UpscaleTask, result: { buffer: Buffer; mime: str
   return updated;
 }
 
-export async function startCloudUpscale(input: { reference: string; sourceImageId?: string; requestedModel?: unknown; scale?: unknown; outputFormat?: unknown; outputQuality?: unknown; idempotencyKey?: string; prompt?: string; source?: GenerationSource; logId?: string; references?: ReferenceImageRecord[] }) {
+export async function startCloudUpscale(input: { reference: string; sourceImageId?: string; requestedModel?: unknown; scale?: unknown; outputFormat?: unknown; outputQuality?: unknown; idempotencyKey?: string; prompt?: string; source?: GenerationSource; logId?: string; references?: ReferenceImageRecord[]; retryOf?: string }) {
   const state = await getPublicState();
   const connected = new Set(state.upscaleConnections.filter((connection) => connection.connected).map((connection) => connection.provider));
   const modelId = pickUpscaleModel(input.requestedModel, connected);
@@ -142,8 +179,9 @@ export async function startCloudUpscale(input: { reference: string; sourceImageI
   const connection = await credentialsFor(model.provider);
   const provider = createUpscaleProvider(model.provider, connection);
   const key = input.idempotencyKey || idempotencyKey(sourceImageId, reference, modelId, scale, outputFormat, outputQuality);
-  const inserted = await createUpscaleTask({ provider: model.provider, model: modelId, scale, outputFormat, outputQuality, sourceImageId, reference, status: 'processing', idempotencyKey: key, prompt: input.prompt?.trim() || DEFAULT_UPSCALE_PROMPT, source: normalizeGenerationSource(input.source, 'workspace') });
+  const inserted = await createUpscaleTask({ provider: model.provider, model: modelId, scale, outputFormat, outputQuality, sourceImageId, reference, status: 'processing', idempotencyKey: key, prompt: input.prompt?.trim() || DEFAULT_UPSCALE_PROMPT, source: normalizeGenerationSource(input.source, 'workspace'), ...(input.retryOf ? { retryOf: input.retryOf } : {}) });
   let existing = inserted.task;
+  if (input.retryOf) await setRetryParentDisposition(existing, 'blocked');
   const existingStatus = upscaleTaskStatus(existing);
   if (!inserted.created && existingStatus === 'succeeded') {
     const repaired = existing.status === 'succeeded'
@@ -164,11 +202,14 @@ export async function startCloudUpscale(input: { reference: string; sourceImageI
       count: 1,
       references: input.references?.length ? input.references : undefined,
       idempotencyKey: key,
+      taskId: existing.id,
     }, input.logId);
     existing = await updateUpscaleTask(existing.id, { logId }) || existing;
   }
+  let providerSubmissionStarted = false;
   try {
     const imageUrl = await publicImageUrl(reference, model.provider, state.settings.imageStoragePath, connection, modelId);
+    providerSubmissionStarted = true;
     const result = await provider.upscale({ imageUrl, scale, modelId, outputFormat, outputQuality });
     if (result.status === 'succeeded') {
       const task = await saveResult(existing, result);
@@ -178,8 +219,13 @@ export async function startCloudUpscale(input: { reference: string; sourceImageI
     return { task: task || existing, model };
   } catch (error) {
     const failure = friendlyError(error) as UpscaleProviderError;
-    const failed = await updateUpscaleTask(existing.id, { status: 'failed', errorCode: isUpscaleProviderError(failure) ? failure.code : 'UPSTREAM_ERROR', error: failure.message, completedAt: new Date().toISOString() });
-    await finishTaskLog(failed || existing, { status: 'error', error: failure.message, errorCode: isUpscaleProviderError(failure) ? failure.code : 'UPSTREAM_ERROR' });
+    const errorCode = isUpscaleProviderError(failure) ? failure.code : 'UPSTREAM_ERROR';
+    const retryDisposition = providerSubmissionStarted && isUpscaleProviderError(failure) && isExplicitUpscaleRejection(failure.code)
+      ? 'explicit_rejection'
+      : 'unknown';
+    const failed = await updateUpscaleTask(existing.id, { status: 'failed', errorCode, error: failure.message, retryDisposition, completedAt: new Date().toISOString() });
+    await finishTaskLog(failed || existing, { status: 'error', error: failure.message, errorCode, retryDisposition });
+    if (existing.retryOf) await setRetryParentDisposition(existing, retryDisposition === 'explicit_rejection' ? 'explicit_rejection' : 'blocked');
     if (isUpscaleProviderError(failure) && (failure.code === 'INVALID_CREDENTIAL' || failure.code === 'SIGNATURE_INVALID')) await setUpscaleConnectionStatus(model.provider, 'error', failure.code).catch(() => undefined);
     throw failure;
   }
@@ -188,22 +234,42 @@ export async function startCloudUpscale(input: { reference: string; sourceImageI
 export async function refreshUpscaleTask(id: string) {
   const task = await findUpscaleTask(id);
   if (!task || !upscaleTaskRuntime.isActive(task.status)) return task;
-  if (!task.providerTaskId) return task;
-  if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
-  if (Date.parse(task.createdAt) + TASK_TIMEOUT_MS < Date.now()) {
+  if (Date.parse(task.createdAt) + UPSCALE_TASK_TIMEOUT_MS <= Date.now()) {
     const timedOut = await updateUpscaleTask(id, { status: 'failed', errorCode: 'TASK_TIMEOUT', error: TASK_TIMEOUT_ERROR, completedAt: new Date().toISOString() });
     await finishTaskLog(timedOut || task, { status: 'error', error: TASK_TIMEOUT_ERROR, errorCode: 'TASK_TIMEOUT' });
     return timedOut;
   }
+  if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
+  if (!task.providerTaskId) return task;
   if (activePolls.has(id)) return task;
   activePolls.add(id);
   try {
     const credentials = await credentialsFor(task.provider);
     const provider = createUpscaleProvider(task.provider, credentials);
-    if (!provider.poll) return task;
-    const result = await provider.poll(task.providerTaskId, { modelId: task.model });
+    if (!provider.poll) {
+      const error = '服务商未提供任务查询能力，无法继续跟踪这条高清任务。';
+      const failed = await updateUpscaleTask(id, { status: 'failed', errorCode: 'POLL_UNSUPPORTED', error, completedAt: new Date().toISOString() });
+      await finishTaskLog(failed || task, { status: 'error', error, errorCode: 'POLL_UNSUPPORTED' });
+      return failed || task;
+    }
+    let result;
+    try {
+      result = await provider.poll(task.providerTaskId, { modelId: task.model });
+    } catch (error) {
+      if (!isRetryableUpscalePollError(error)) throw error;
+      const failure = friendlyError(error);
+      const pollCount = task.pollCount + 1;
+      return await updateUpscaleTask(id, {
+        status: task.status,
+        pollCount,
+        nextPollAt: Date.now() + upscalePollRetryDelay(task, error),
+        errorCode: 'POLL_RETRY',
+        error: `云端查询暂时失败，任务仍在进行，系统将在稍后自动重试：${failure.message}`,
+        completedAt: undefined,
+      });
+    }
     if (result.status === 'succeeded') return await saveResult(task, result);
-    return await updateUpscaleTask(id, { status: result.status, pollCount: task.pollCount + 1, nextPollAt: Date.now() + Math.min(15_000, 1500 + task.pollCount * 500) });
+    return await updateUpscaleTask(id, { status: result.status, pollCount: task.pollCount + 1, nextPollAt: Date.now() + Math.min(15_000, 1500 + task.pollCount * 500), error: undefined, errorCode: undefined });
   } catch (error) {
     const failure = friendlyError(error) as UpscaleProviderError;
     const next = await updateUpscaleTask(id, { status: 'failed', errorCode: isUpscaleProviderError(failure) ? failure.code : 'UPSTREAM_ERROR', error: failure.message, completedAt: new Date().toISOString() });
@@ -267,7 +333,26 @@ export async function retryUpscaleTask(id: string) {
     outputQuality: task.outputQuality,
     prompt: task.prompt,
     source: task.source,
+    retryOf: task.id,
     idempotencyKey: `${task.idempotencyKey}-retry-${Date.now()}`,
   });
-  return updateUpscaleTask(retried.task.id, { retryOf: task.id });
+  return retried.task;
+}
+
+export async function retryFailedUpscaleTask(task: UpscaleTask, idempotencyKey: string) {
+  if (!canBatchRetryUpscaleTask(task)) throw new Error('这条超分任务未确认被服务商拒绝，已跳过批量重试。');
+  if (!task.reference) throw new Error('这条超分任务没有保存原图引用，已跳过批量重试。');
+  const retried = await startCloudUpscale({
+    reference: task.reference,
+    sourceImageId: task.sourceImageId,
+    requestedModel: task.model,
+    scale: task.scale,
+    outputFormat: task.outputFormat,
+    outputQuality: task.outputQuality,
+    prompt: task.prompt,
+    source: task.source,
+    retryOf: task.id,
+    idempotencyKey,
+  });
+  return retried.task;
 }

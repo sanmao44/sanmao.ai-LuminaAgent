@@ -8,6 +8,7 @@ import ModelPicker from '@/components/ModelPicker';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
+import { clearVideoStudioDraft, hasVideoStudioDraftContent, loadVideoStudioDraft, saveVideoStudioDraft } from '@/lib/video-studio-draft';
 import { is65535Provider, isJimengProvider, isAgnesProvider, requiresPublicMediaRelay } from '@/lib/video-platform';
 import { replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { nearestOneTakeVideoDuration, normalizeOneTakeDuration } from '@/lib/one-take-video-duration';
@@ -357,6 +358,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
 }
 
 export default function VideoStudio({ models, providers, defaultModelId, promptPrefill, onPromptPrefillConsumed, taskPrefill, onTaskPrefillConsumed, durationPrefill, onDurationPrefillConsumed, mediaPrefill, mediaPrefillToken, onMediaPrefillConsumed, agentAvailable, agentModelId, onOpenModels, onOpenProviders, onNotify }: Props) {
+  const explicitPrefillAtMount = useRef(Boolean(promptPrefill?.trim() || taskPrefill || durationPrefill !== undefined && durationPrefill !== null || mediaPrefillToken && mediaPrefill?.length));
   const [prompt, setPrompt] = useState('');
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [promptOptimizing, setPromptOptimizing] = useState(false);
@@ -371,6 +373,11 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [agnesHeight, setAgnesHeight] = useState(768);
   const [agnesNumFrames, setAgnesNumFrames] = useState(81);
   const [agnesFrameRate, setAgnesFrameRate] = useState(24);
+  const [draftReady, setDraftReady] = useState(false);
+  const draftInteractionStarted = useRef(false);
+  const [draftStatus, setDraftStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+  const [draftHadMedia, setDraftHadMedia] = useState(false);
+  const [draftNoticeVisible, setDraftNoticeVisible] = useState(false);
   const [firstFrame, setFirstFrame] = useState<UploadSlot | null>(null);
   const [lastFrame, setLastFrame] = useState<UploadSlot | null>(null);
   const [referenceImages, setReferenceImages] = useState<UploadSlot[]>([]);
@@ -676,6 +683,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   // model cannot accept the full set.
   useEffect(() => {
     if (!mediaPrefillToken || !mediaPrefill?.length) return;
+    setDraftHadMedia(false);
+    setDraftNoticeVisible(false);
     const images = mediaPrefill.filter((item) => item.kind === 'image');
     if (!images.length) {
       onMediaPrefillConsumed?.();
@@ -809,20 +818,20 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   }
 
   function hasDraft() {
-    return Boolean(
-      prompt.trim()
-      || firstFrame
-      || lastFrame
-      || referenceImages.length
-      || referenceVideo
-      || audios.length
-      || operation !== 'generate'
-      || inputMode !== 'text'
-      || seconds !== 5
-      || ratio !== '16:9'
-      || resolution !== '720p'
-      || (modelId !== 'auto' && modelId !== defaultModelId),
-    );
+    return hasVideoStudioDraftContent({
+      prompt,
+      modelId,
+      operation,
+      inputMode,
+      seconds,
+      ratio,
+      resolution,
+      agnesWidth,
+      agnesHeight,
+      agnesNumFrames,
+      agnesFrameRate,
+      hasUnpersistedMedia: Boolean(firstFrame || lastFrame || referenceImages.length || referenceVideo || audios.length || draftHadMedia),
+    }, defaultModelId || 'auto');
   }
 
   function restoreTask(task: VideoTask, confirmed = false) {
@@ -850,6 +859,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setAgnesHeight(plan.agnesHeight);
     setAgnesNumFrames(plan.agnesNumFrames);
     setAgnesFrameRate(plan.agnesFrameRate);
+    setDraftHadMedia(false);
+    setDraftNoticeVisible(false);
     setPreviewImage(null);
     setTasks((current) => current.some((item) => item.id === task.id) ? current : [task, ...current].slice(0, 30));
     setSelectedTaskId(task.id);
@@ -867,6 +878,69 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     restoreTask(taskPrefill);
     onTaskPrefillConsumed?.();
   }, [taskPrefill]);
+
+  useEffect(() => {
+    const draft = explicitPrefillAtMount.current ? null : loadVideoStudioDraft();
+    if (draft) {
+      setPrompt(draft.prompt);
+      setModelId(draft.modelId);
+      setOperation(draft.operation);
+      setInputMode('text');
+      setSeconds(draft.seconds);
+      setRatio(draft.ratio);
+      setResolution(draft.resolution);
+      setAgnesWidth(draft.agnesWidth);
+      setAgnesHeight(draft.agnesHeight);
+      setAgnesNumFrames(draft.agnesNumFrames);
+      setAgnesFrameRate(draft.agnesFrameRate);
+      setDraftHadMedia(draft.hasUnpersistedMedia);
+      setDraftNoticeVisible(draft.hasUnpersistedMedia);
+    }
+    setDraftReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    if (explicitPrefillAtMount.current && !draftInteractionStarted.current) return;
+    const hasMedia = Boolean(firstFrame || lastFrame || referenceImages.length || referenceVideo || audios.length);
+    const hasMediaIntent = hasMedia || inputMode !== 'text' || draftHadMedia;
+    const hasContent = Boolean(
+      prompt.trim()
+      || modelId !== (defaultModelId || 'auto')
+      || operation !== 'generate'
+      || inputMode !== 'text'
+      || seconds !== 5
+      || ratio !== '16:9'
+      || resolution !== '720p'
+      || agnesWidth !== 1152
+      || agnesHeight !== 768
+      || agnesNumFrames !== 81
+      || agnesFrameRate !== 24
+      || hasMediaIntent
+      || draftHadMedia,
+    );
+    if (!hasContent) {
+      clearVideoStudioDraft();
+      setDraftStatus('idle');
+      return;
+    }
+
+    const saved = saveVideoStudioDraft({
+      prompt,
+      modelId,
+      operation,
+      inputMode,
+      seconds,
+      ratio,
+      resolution,
+      agnesWidth,
+      agnesHeight,
+      agnesNumFrames,
+      agnesFrameRate,
+      hasUnpersistedMedia: hasMediaIntent,
+    });
+    setDraftStatus(saved ? 'saved' : 'error');
+  }, [draftReady, prompt, modelId, operation, inputMode, seconds, ratio, resolution, agnesWidth, agnesHeight, agnesNumFrames, agnesFrameRate, firstFrame, lastFrame, referenceImages, referenceVideo, audios, draftHadMedia, defaultModelId]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -991,7 +1065,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
           {hero}
           {jimengProvider && <JimengAccountSummary account={jimengAccount} checkedAt={jimengAccountCheckedAt} error={jimengAccountError} loading={jimengAccountBusy} onRefresh={() => void refreshJimengAccount()} />}
         </div>
-         <form className="video-compose-card" onSubmit={submit}>
+         <form className="video-compose-card" onSubmit={submit} onPointerDownCapture={() => { draftInteractionStarted.current = true; }} onKeyDownCapture={() => { draftInteractionStarted.current = true; }} onChangeCapture={() => { draftInteractionStarted.current = true; }}>
         <div className="video-compose-scroll">
            <div className="video-card-heading"><div><span>创作参数</span><small>先写画面，再补充镜头输入</small></div><span className={`video-live-pill ${usesAgnes && !selectedProvider?.credentialVerifiedAt ? 'needs-verification' : ''}`}>{usesAgnes ? selectedProvider?.credentialVerifiedAt ? '● Agnes Key 已验证' : '● Agnes Key 待验证' : '● 已连接'}</span></div>
           <div className="video-field video-prompt-field"><div className="video-prompt-heading"><span>提示词</span><div className="video-prompt-heading-actions">{prompt && <button type="button" className="video-prompt-optimize" title={agentAvailable ? '使用 AI 优化提示词' : '请先在模型库启用对话模型'} aria-label="AI 优化提示词" aria-busy={promptOptimizing} disabled={!agentAvailable || promptOptimizing} onClick={() => void optimizePrompt()}><span aria-hidden="true">✦</span><span>{promptOptimizing ? '优化中…' : 'AI 优化'}</span></button>}{promptBeforeOptimization !== null && <button type="button" className="video-prompt-undo" title="撤销 AI 优化" aria-label="撤销 AI 优化" disabled={promptOptimizing} onClick={undoPromptOptimization}><span aria-hidden="true">↶</span><span>撤销</span></button>}<button type="button" className="video-prompt-expand" title="放大编辑提示词" aria-label="放大编辑提示词" aria-expanded={promptExpanded} onClick={() => setPromptExpanded(true)}><span aria-hidden="true">⛶</span><span>放大编辑</span></button>{prompt && <button type="button" className="video-prompt-clear" title="一键清空提示词" aria-label="一键清空提示词" onClick={() => { setPrompt(''); setPromptBeforeOptimization(null); window.setTimeout(() => promptRef.current?.focus(), 0); }}>清空文本</button>}</div></div><ReferenceMentionEditor
@@ -1005,7 +1079,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
             placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片、视频或文本'}
             onChange={(value) => { setPrompt(value.slice(0, 6000)); setPromptBeforeOptimization(null); }}
             transformPastedText={(value) => replaceNaturalReferenceLabels(value, referenceCandidates).value}
-          /><small>{prompt.length}/6000</small></div>
+          /><div className="video-prompt-meta"><small>{prompt.length}/6000</small><small className="video-draft-status" data-state={draftStatus} role="status" aria-live="polite">{!draftReady ? '正在检查草稿…' : draftStatus === 'saved' ? '已自动保存' : draftStatus === 'error' ? '保存失败，请保持当前页面' : '自动保存至本会话'}</small></div></div>
+          {draftNoticeVisible && <div className="video-draft-notice" role="status"><span>已恢复提示词和参数；上次的图片、视频或音频附件未保存，请按需重新添加。</span><button type="button" onClick={() => { setDraftHadMedia(false); setDraftNoticeVisible(false); }}>知道了</button></div>}
           <div className={`video-creation-selects ${showOperationField ? '' : 'without-operation'}`}>
             <label className="video-field video-model-field">
               <span>视频模型</span>

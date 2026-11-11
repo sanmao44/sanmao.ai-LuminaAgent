@@ -3,8 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import AgentOrb, { busyOrbState } from "@/components/AgentOrb";
 import type { CanvasProject } from "@/lib/canvas/types";
+import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { CreativeProjectVersion } from "@/lib/creative-projects";
 import type { WorkspaceSyncStatus } from "@/lib/workspace";
+import type { ProjectVisualReference } from "@/lib/canvas/project-visual-references";
+import CanvasProjectBriefEditor from "./CanvasProjectBriefEditor";
+import "@/components/canvas/CanvasProjectBriefEditor.css";
 
 export type CanvasPanel = "assets" | "activity" | "settings" | "shortcuts";
 
@@ -16,22 +20,64 @@ export type CanvasWorkspaceHeaderProps = {
   saving: boolean; saveError: boolean; workspaceSyncStatus: WorkspaceSyncStatus; onOpenProject: (projectId: string) => void; onNewProject: () => void; onSaveProjectVersion: () => void;
   projectVersions: CreativeProjectVersion[]; onRestoreProjectVersion: (versionId: string) => void; onDeleteProjectVersion: (versionId: string) => void; onDeleteProject: (projectId: string) => void;
   onSaveProjectName: (projectId: string, name: string) => boolean;
+  projectBrief?: CreativeProjectBrief | null; onSaveProjectBrief: (brief: CreativeProjectBrief) => boolean;
+  projectReferenceAssetIds?: readonly string[]; projectReferenceAssets?: readonly ProjectVisualReference[]; onRemoveProjectReference?: (assetId: string) => void;
 };
 
-export default function CanvasWorkspaceHeader({currentProject, projects, activeProjectId, projectMenuOpen, onProjectMenuOpenChange, topbarCollapsed, onToggleTopbar, canUndo, canRedo, onNavigateHome, onUndo, onRedo, snapEnabled, onToggleSnap, onOpenFilePicker, activePanel, onTogglePanel, onToggleAssetLibrary, agentDockOpen, agentDockBusy, onToggleAgentDock, theme, onToggleTheme, saving, saveError, workspaceSyncStatus, onOpenProject, onNewProject, onSaveProjectVersion, projectVersions, onRestoreProjectVersion, onDeleteProjectVersion, onDeleteProject, onSaveProjectName}: CanvasWorkspaceHeaderProps) {
+export default function CanvasWorkspaceHeader({currentProject, projects, activeProjectId, projectMenuOpen, onProjectMenuOpenChange, topbarCollapsed, onToggleTopbar, canUndo, canRedo, onNavigateHome, onUndo, onRedo, snapEnabled, onToggleSnap, onOpenFilePicker, activePanel, onTogglePanel, onToggleAssetLibrary, agentDockOpen, agentDockBusy, onToggleAgentDock, theme, onToggleTheme, saving, saveError, workspaceSyncStatus, onOpenProject, onNewProject, onSaveProjectVersion, projectVersions, onRestoreProjectVersion, onDeleteProjectVersion, onDeleteProject, onSaveProjectName, projectBrief, onSaveProjectBrief, projectReferenceAssetIds, projectReferenceAssets, onRemoveProjectReference}: CanvasWorkspaceHeaderProps) {
   const [projectRenameId, setProjectRenameId] = useState<string | null>(null);
   const [projectRenameValue, setProjectRenameValue] = useState("");
+  const [projectQuery, setProjectQuery] = useState("");
+  const [projectActionsOpen, setProjectActionsOpen] = useState(false);
   const projectPopoverRef = useRef<HTMLDivElement>(null);
+  const projectTriggerRef = useRef<HTMLButtonElement>(null);
+  const projectSearchRef = useRef<HTMLInputElement>(null);
+  const projectSearchVisible = projects.length > 4;
+  const projectSearchTerm = projectQuery.trim().toLocaleLowerCase();
+  const visibleProjects = projectSearchTerm
+    ? projects.filter((project) => project.name.toLocaleLowerCase().includes(projectSearchTerm))
+    : projects;
+
+  const closeProjectMenu = () => {
+    setProjectActionsOpen(false);
+    setProjectQuery("");
+    setProjectRenameId(null);
+    onProjectMenuOpenChange(false);
+    window.requestAnimationFrame(() => projectTriggerRef.current?.focus());
+  };
+
+  useEffect(() => {
+    if (!projectMenuOpen) {
+      setProjectQuery("");
+      setProjectActionsOpen(false);
+      setProjectRenameId(null);
+      return;
+    }
+  }, [projectMenuOpen]);
+
   useEffect(() => {
     if (!projectMenuOpen) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && projectPopoverRef.current?.contains(target)) return;
-      onProjectMenuOpenChange(false);
+      if (target instanceof Node && projectTriggerRef.current?.contains(target)) return;
+      closeProjectMenu();
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeProjectMenu();
     };
     document.addEventListener("pointerdown", closeOnOutsidePointer);
-    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
-  }, [onProjectMenuOpenChange, projectMenuOpen]);
+    document.addEventListener("keydown", closeOnEscape);
+    window.requestAnimationFrame(() => {
+      if (projectSearchVisible) projectSearchRef.current?.focus();
+    });
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onProjectMenuOpenChange, projectMenuOpen, projectSearchVisible]);
   const saveProjectName = () => {
     if (projectRenameId && onSaveProjectName(projectRenameId, projectRenameValue)) setProjectRenameId(null);
   };
@@ -41,13 +87,16 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
           <button
             type="button"
             className={`canvas-brand ${projectMenuOpen ? "open" : ""}`}
-            aria-haspopup="menu"
+            ref={projectTriggerRef}
+            aria-haspopup="dialog"
             aria-expanded={projectMenuOpen}
             aria-label={`编辑画布：${currentProject?.name || "无限画布"}，点击切换画布项目`}
             title="编辑画布 · 点击切换或新建画布"
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
-              onProjectMenuOpenChange(!projectMenuOpen);
+              if (projectMenuOpen) closeProjectMenu();
+              else onProjectMenuOpenChange(true);
             }}
           >
             <span className="canvas-logo-mark">
@@ -145,9 +194,11 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
           <button
             type="button"
             className={`canvas-soft-button canvas-panel-button canvas-activity-button ${activePanel === "activity" ? "active" : ""}`}
+            aria-label="打开项目工作台"
+            title="项目进度、生成任务和活动记录"
             onClick={() => onTogglePanel("activity")}
           >
-            ≡ 日志
+            ◫ 项目
           </button>
           <button
             type="button"
@@ -199,10 +250,29 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
           <div
             ref={projectPopoverRef}
             className="canvas-project-popover"
+            role="dialog"
+            aria-label="画布项目管理"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="canvas-popover-title">我的画布项目</div>
-            {projects.map((project) => (
+            <div className="canvas-popover-title">
+              <strong>我的画布项目</strong>
+              <small>{projects.length} 个项目 · 当前：{currentProject?.name || "无限画布"}</small>
+            </div>
+            {projectSearchVisible && (
+              <label className="canvas-project-search">
+                <span aria-hidden="true">⌕</span>
+                <input
+                  ref={projectSearchRef}
+                  value={projectQuery}
+                  aria-label="搜索项目"
+                  placeholder="搜索项目名称…"
+                  onChange={(event) => setProjectQuery(event.target.value)}
+                />
+                {projectQuery && <button type="button" aria-label="清空项目搜索" onClick={() => setProjectQuery("")}>×</button>}
+              </label>
+            )}
+            <div className="canvas-project-section-title">切换项目</div>
+            {visibleProjects.map((project) => (
               <div
                 className={`canvas-project-row ${project.id === activeProjectId ? "active" : ""}`}
                 key={project.id}
@@ -217,7 +287,9 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
                 {project.id === activeProjectId && <i>✓</i>}
               </div>
             ))}
+            {!visibleProjects.length && <div className="canvas-project-empty">没有匹配的项目</div>}
             <div className="canvas-project-versions">
+              <div className="canvas-project-section-title">版本与创作设定</div>
               <div className="canvas-project-versions-head">
                 <span>项目版本</span>
                 <button type="button" onClick={onSaveProjectVersion} disabled={!currentProject}>保存当前版本</button>
@@ -248,47 +320,62 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
                 </div>
               ) : <small className="canvas-project-versions-empty">保存后可从这里恢复项目版本</small>}
             </div>
-            <div className="canvas-popover-actions">
-              <button type="button" onClick={onNewProject}>＋ 新建画布</button>
-              <button
-                type="button"
-                disabled={!currentProject}
-                onClick={() => {
-                  if (!currentProject) return;
-                  setProjectRenameValue(currentProject.name);
-                  setProjectRenameId(currentProject.id);
-                }}
-              >
-                重命名
-              </button>
-              <button
-                type="button"
-                className="canvas-popover-danger"
-                title="删除当前画布"
-                onClick={() => {
-                  if (activeProjectId) onDeleteProject(activeProjectId);
-                }}
-              >
-                删除
-              </button>
-            </div>
-            {projectRenameId && (
-              <div className="canvas-rename-row">
-                <input
-                  value={projectRenameValue}
-                  aria-label="画布名称"
-                  maxLength={60}
-                  onChange={(event) => setProjectRenameValue(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                    if (event.key === "Enter") { event.preventDefault(); saveProjectName(); }
-                    if (event.key === "Escape") setProjectRenameId(null);
+            <CanvasProjectBriefEditor brief={projectBrief} referenceAssetIds={projectReferenceAssetIds} referenceAssets={projectReferenceAssets} onRemoveReference={onRemoveProjectReference} onSave={onSaveProjectBrief} />
+            <div className="canvas-project-footer">
+              <div className="canvas-project-section-title">项目操作</div>
+              <div className="canvas-popover-actions">
+                <button type="button" className="canvas-project-primary-action" onClick={onNewProject}>＋ 新建画布</button>
+                <button
+                  type="button"
+                  disabled={!currentProject}
+                  onClick={() => {
+                    if (!currentProject) return;
+                    setProjectRenameValue(currentProject.name);
+                    setProjectRenameId(currentProject.id);
+                    setProjectActionsOpen(false);
                   }}
-                  autoFocus
-                />
-                <button type="button" onClick={saveProjectName}>保存</button>
+                >
+                  重命名
+                </button>
+                <button
+                  type="button"
+                  className="canvas-project-more"
+                  aria-expanded={projectActionsOpen}
+                  onClick={() => setProjectActionsOpen((value) => !value)}
+                >
+                  更多操作
+                </button>
               </div>
-            )}
+              {projectActionsOpen && <div className="canvas-project-actions-menu">
+                <button
+                  type="button"
+                  className="canvas-popover-danger"
+                  onClick={() => {
+                    if (activeProjectId) onDeleteProject(activeProjectId);
+                    setProjectActionsOpen(false);
+                  }}
+                >
+                  删除当前项目
+                </button>
+              </div>}
+              {projectRenameId && (
+                <div className="canvas-rename-row">
+                  <input
+                    value={projectRenameValue}
+                    aria-label="画布名称"
+                    maxLength={60}
+                    onChange={(event) => setProjectRenameValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                      if (event.key === "Enter") { event.preventDefault(); saveProjectName(); }
+                      if (event.key === "Escape") setProjectRenameId(null);
+                    }}
+                    autoFocus
+                  />
+                  <button type="button" onClick={saveProjectName}>保存</button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

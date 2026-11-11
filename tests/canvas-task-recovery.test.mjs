@@ -5,9 +5,111 @@ import { createTsRequire } from './ts-require.mjs';
 
 const load = createTsRequire(path.join(process.cwd(), 'lib'));
 const { normalizeDocument, createMedia, createPrompt } = load('./canvas/model');
-const { recoverCanvasTask, mergeCanvasTaskImages } = load('./canvas/task-recovery');
+const { canvasGenerationLogRecoveryStatus, canvasNodeForGenerationLog, canvasVideoTaskSnapshotExpired, canvasVideoTaskSnapshotRetryDelayMs, recoverCanvasTask, recoverCanvasUpscaleTask, mergeCanvasTaskImages, retainCanvasVideoTaskAfterMissingSnapshot, stopCanvasTaskTracking } = load('./canvas/task-recovery');
+const { applyCanvasTaskRecordRecovery } = load('./canvas/task-record-recovery');
 const params = { kind: 'image', model: 'test', aspect: '1:1' };
 const input = { nodeId: 'pending', taskId: 'task-a', status: 'success', urls: ['/one.png', '/two.png', '/three.png'], imageParams: params };
+
+test('provider receipt timeout remains pending so the canvas does not claim a failure', () => {
+  assert.equal(canvasGenerationLogRecoveryStatus({ status: 'error', errorCode: 'provider_result_unconfirmed' }), 'pending');
+  assert.equal(canvasGenerationLogRecoveryStatus({ status: 'error', errorCode: 'provider_rejected' }), 'error');
+  assert.equal(canvasGenerationLogRecoveryStatus({ status: 'success' }), 'success');
+  assert.equal(canvasGenerationLogRecoveryStatus({}), undefined);
+  assert.equal(canvasGenerationLogRecoveryStatus({ status: 'queued', errorCode: 'provider_result_unconfirmed' }), 'queued');
+});
+
+test('successful task records require image URLs before updating the canvas or checkpointing', async () => {
+  let updated = false;
+  let checkpointed = false;
+  const result = await applyCanvasTaskRecordRecovery({
+    record: { status: 'success', imageUrls: [] },
+    nodeId: 'pending',
+    taskId: 'task-a',
+    imageParams: params,
+    updateDocument: () => { updated = true; return true; },
+    queueCheckpoint: () => { checkpointed = true; },
+  });
+
+  assert.deepEqual(result, { kind: 'missing_output' });
+  assert.equal(updated, false);
+  assert.equal(checkpointed, false);
+});
+
+test('a failed background document save does not queue an automatic checkpoint', async () => {
+  const events = [];
+  const result = await applyCanvasTaskRecordRecovery({
+    record: { status: 'success', imageUrls: ['/recovered.png'] },
+    nodeId: 'pending',
+    taskId: 'task-a',
+    imageParams: params,
+    updateDocument: (updater) => {
+      updater(fixture());
+      events.push('save-failed');
+      return false;
+    },
+    queueCheckpoint: () => events.push('checkpoint'),
+  });
+
+  assert.deepEqual(result, { kind: 'save_failed', taskState: 'recovered' });
+  assert.deepEqual(events, ['save-failed']);
+});
+
+test('a recovered result is checkpointed only after the canvas update succeeds', async () => {
+  const events = [];
+  const result = await applyCanvasTaskRecordRecovery({
+    record: { status: 'success', imageUrls: ['/recovered.png', '/recovered.png'] },
+    nodeId: 'pending',
+    taskId: 'task-a',
+    imageParams: params,
+    updateDocument: (updater) => {
+      assert.equal(updater(fixture()).nodes[0].data.url, '/recovered.png');
+      events.push('saved');
+      return true;
+    },
+    queueCheckpoint: () => events.push('checkpoint'),
+  });
+
+  assert.deepEqual(result, { kind: 'recovered', imageCount: 1 });
+  assert.deepEqual(events, ['saved', 'checkpoint']);
+});
+
+test('unconfirmed task records remain pending and do not create checkpoints', async () => {
+  let checkpointed = false;
+  let updatedStatus;
+  const result = await applyCanvasTaskRecordRecovery({
+    record: { status: 'error', errorCode: 'provider_result_unconfirmed' },
+    nodeId: 'pending',
+    taskId: 'task-a',
+    imageParams: params,
+    updateDocument: (updater) => {
+      updatedStatus = updater(fixture()).nodes[0].data.status;
+      return true;
+    },
+    queueCheckpoint: () => { checkpointed = true; },
+  });
+
+  assert.deepEqual(result, { kind: 'pending' });
+  assert.equal(updatedStatus, 'running');
+  assert.equal(checkpointed, false);
+});
+
+test('a result for a replaced task does not update the canvas or queue a checkpoint', async () => {
+  let checkpointed = false;
+  const replacedTask = fixture();
+  replacedTask.nodes[0].data.jobId = 'new-task';
+  const result = await applyCanvasTaskRecordRecovery({
+    record: { status: 'success', imageUrls: ['/old-result.png'] },
+    nodeId: 'pending',
+    taskId: 'task-a',
+    imageParams: params,
+    updateDocument: (updater) => updater(replacedTask) === replacedTask,
+    queueCheckpoint: () => { checkpointed = true; },
+  });
+
+  assert.deepEqual(result, { kind: 'stale' });
+  assert.equal(checkpointed, false);
+});
+
 function fixture(type = 'media') {
   const node = type === 'media' ? createMedia('image', '', '等待', { x: 10, y: 20 }) : createPrompt({ x: 10, y: 20 });
   node.id = 'pending';
@@ -24,6 +126,44 @@ test('recovery retains every image, the placeholder identity, and its placement'
   assert.equal(document.nodes[0].data.status, 'completed');
   assert.ok(document.nodes.every((node) => node.data.generation.taskId === 'task-a'));
   assert.equal(document.edges.length, 2);
+});
+
+test('stale tasks stop showing as running but can still recover a late result', () => {
+  const stalled = recoverCanvasTask(fixture(), {
+    ...input,
+    status: 'stalled',
+    error: '长时间未收到回执，结果状态待确认',
+  });
+  assert.equal(stalled.nodes[0].data.status, 'failed');
+  assert.equal(stalled.nodes[0].data.taskTracking, 'stale');
+  assert.equal(stalled.nodes[0].data.processingStartedAt, undefined);
+  assert.equal(stalled.nodes[0].data.statusLabel, '长时间未收到回执，结果状态待确认');
+  assert.equal(recoverCanvasTask(stalled, { ...input, status: 'pending' }), stalled);
+
+  const completed = recoverCanvasTask(stalled, input);
+  assert.equal(completed.nodes[0].data.status, 'completed');
+  assert.equal(completed.nodes[0].data.taskTracking, undefined);
+});
+
+test('a manually stopped local tracker is not restarted by a pending server snapshot', () => {
+  const stopped = stopCanvasTaskTracking(fixture(), {
+    nodeId: 'pending',
+    taskId: 'task-a',
+    statusLabel: '已停止画布等待；远端状态待确认',
+  });
+  assert.equal(stopped.nodes[0].data.status, 'failed');
+  assert.equal(stopped.nodes[0].data.taskTracking, 'stopped');
+  assert.equal(recoverCanvasTask(stopped, { ...input, status: 'pending' }), stopped);
+});
+
+test('a late successful result still fills a manually stopped task node', () => {
+  const stopped = fixture();
+  stopped.nodes[0].data.status = 'failed';
+  stopped.nodes[0].data.taskTracking = 'stopped';
+  const completed = recoverCanvasTask(stopped, input);
+  assert.equal(completed.nodes[0].data.status, 'completed');
+  assert.equal(completed.nodes[0].data.url, '/one.png');
+  assert.equal(completed.nodes[0].data.taskTracking, undefined);
 });
 
 test('repeated recovery and HTTP completion keep node identities without duplicate images', () => {
@@ -94,4 +234,127 @@ test('video recovery updates only its video placeholder', () => {
   assert.equal(result.nodes.length, 1);
   assert.equal(result.nodes[0].data.url, '/video.mp4');
   assert.equal(result.nodes[0].data.kind, 'video');
+});
+
+test('upscale task snapshots update the existing node only after a retained output is available', () => {
+  const upscale = load('./canvas/model').createUpscaleNode({ x: 40, y: 60 });
+  upscale.id = 'upscale-node';
+  upscale.data.status = 'running';
+  upscale.data.jobId = 'worker-task';
+  upscale.data.upscaleRequestId = 'request-key';
+  const document = normalizeDocument({ nodes: [upscale], edges: [], groups: [] });
+  const pending = recoverCanvasUpscaleTask(document, {
+    nodeId: 'upscale-node', taskId: 'worker-task', requestId: 'request-key', status: 'processing',
+  });
+  assert.equal(pending, document);
+
+  const completed = recoverCanvasUpscaleTask(document, {
+    nodeId: 'upscale-node', taskId: 'worker-task', requestId: 'request-key', status: 'succeeded',
+    imageUrl: '/upscaled.png', modelName: 'Cloud Upscaler',
+  });
+  assert.equal(completed.nodes.length, 1);
+  assert.equal(completed.edges, document.edges);
+  assert.equal(completed.nodes[0].id, 'upscale-node');
+  assert.equal(completed.nodes[0].data.url, '/upscaled.png');
+  assert.equal(completed.nodes[0].data.model, 'Cloud Upscaler');
+  assert.equal(completed.nodes[0].data.resultSource, 'upscale-node');
+  assert.equal(completed.nodes[0].data.status, 'completed');
+  assert.equal(completed.nodes[0].data.generation.taskId, 'request-key');
+  assert.equal(recoverCanvasUpscaleTask(completed, {
+    nodeId: 'upscale-node', taskId: 'worker-task', requestId: 'request-key', status: 'succeeded', imageUrl: '/upscaled.png',
+  }), completed);
+});
+
+test('upscale failures preserve the node and stale task snapshots are ignored', () => {
+  const upscale = load('./canvas/model').createUpscaleNode();
+  upscale.id = 'upscale-node';
+  upscale.data.status = 'running';
+  upscale.data.jobId = 'new-worker-task';
+  upscale.data.upscaleRequestId = 'new-request-key';
+  const document = normalizeDocument({ nodes: [upscale], edges: [], groups: [] });
+  assert.equal(recoverCanvasUpscaleTask(document, {
+    nodeId: 'upscale-node', taskId: 'old-worker-task', requestId: 'new-request-key', status: 'succeeded', imageUrl: '/old.png',
+  }), document);
+  const failed = recoverCanvasUpscaleTask(document, {
+    nodeId: 'upscale-node', taskId: 'new-worker-task', requestId: 'new-request-key', status: 'failed', error: 'Provider failed',
+  });
+  assert.equal(failed.nodes[0].id, 'upscale-node');
+  assert.equal(failed.nodes[0].data.status, 'failed');
+  assert.equal(failed.nodes[0].data.statusLabel, 'Provider failed');
+  assert.equal(failed.nodes[0].data.progress, undefined);
+});
+
+test('a missing video task record ends local tracking without claiming provider failure', () => {
+  const video = fixture();
+  video.nodes[0].data.kind = 'video';
+  video.nodes[0].data.progress = 0;
+  video.nodes[0].data.processingStartedAt = 123;
+  const message = '后台任务记录已丢失，服务商状态未知；请核对生成记录后再操作，避免重复提交';
+  const result = recoverCanvasTask(video, {
+    ...input,
+    status: 'error',
+    urls: [],
+    error: message,
+  });
+
+  assert.equal(result.nodes[0].data.status, 'failed');
+  assert.equal(result.nodes[0].data.progress, undefined);
+  assert.equal(result.nodes[0].data.processingStartedAt, undefined);
+  assert.equal(result.nodes[0].data.statusLabel, message);
+});
+
+test('a temporarily missing video snapshot stays queued and can recover the original task', () => {
+  const video = fixture();
+  video.nodes[0].data.kind = 'video';
+  video.nodes[0].data.status = 'queued';
+  video.nodes[0].data.statusLabel = '服务商已接收，等待排队';
+
+  const unavailable = retainCanvasVideoTaskAfterMissingSnapshot(video, { nodeId: 'pending', taskId: 'task-a' });
+  assert.equal(unavailable.nodes[0].data.status, 'queued');
+  assert.equal(unavailable.nodes[0].data.statusLabel, '任务状态暂不可用，正在重新查询');
+  assert.equal(retainCanvasVideoTaskAfterMissingSnapshot(unavailable, { nodeId: 'pending', taskId: 'task-a' }), unavailable);
+
+  const observedPending = recoverCanvasTask(unavailable, { ...input, status: 'pending', urls: [] });
+  assert.equal(observedPending.nodes[0].data.status, 'running');
+  const completed = recoverCanvasTask(observedPending, { ...input, status: 'success', urls: ['/finished.mp4'] });
+  assert.equal(completed.nodes[0].data.status, 'completed');
+  assert.equal(completed.nodes[0].data.url, '/finished.mp4');
+});
+
+test('video snapshot retry delay backs off and caps at thirty seconds', () => {
+  assert.deepEqual([1, 2, 3, 4, 20].map(canvasVideoTaskSnapshotRetryDelayMs), [5000, 10000, 20000, 30000, 30000]);
+});
+
+test('a missing video snapshot becomes stale after the shared task attention window', () => {
+  const startedAt = 1_000;
+  assert.equal(canvasVideoTaskSnapshotExpired(startedAt, startedAt + 15 * 60_000 - 1), false);
+  assert.equal(canvasVideoTaskSnapshotExpired(startedAt, startedAt + 15 * 60_000), true);
+  assert.equal(canvasVideoTaskSnapshotExpired(0, startedAt + 15 * 60_000), false);
+});
+
+test('audio generation logs resolve their existing audio node by task and node lineage', () => {
+  const audio = createMedia('audio', '/voice.mp3', '配音', { x: 10, y: 20 });
+  audio.id = 'audio-node';
+  audio.data.jobId = 'audio-task';
+  const document = normalizeDocument({ nodes: [audio], edges: [], groups: [] });
+  assert.equal(canvasNodeForGenerationLog(document, { id: 'log-1', taskId: 'audio-task', mode: 'audio', mediaKind: 'audio', prompt: '旁白' })?.id, 'audio-node');
+  assert.equal(canvasNodeForGenerationLog(document, { id: 'log-2', mode: 'audio', mediaKind: 'audio', nodeId: 'audio-node', prompt: '旁白' })?.id, 'audio-node');
+});
+
+test('audio generation logs resolve their preserved recovery draft by source task', () => {
+  const recoveryDraft = createMedia('audio', '', '恢复的配音草稿', { x: 10, y: 20 }, {
+    status: 'draft',
+    recoveryTaskId: 'audio-task-unknown',
+    speechDraft: { text: '旁白', modelId: 'auto' },
+  });
+  recoveryDraft.id = 'audio-recovery-node';
+  const document = normalizeDocument({ nodes: [recoveryDraft], edges: [], groups: [] });
+
+  assert.equal(canvasNodeForGenerationLog(document, {
+    id: 'audio-log',
+    taskId: 'audio-task-unknown',
+    mode: 'audio',
+    mediaKind: 'audio',
+    prompt: '旁白',
+  })?.id, 'audio-recovery-node');
 });

@@ -374,6 +374,53 @@ test('uses the shared media relay for local images without sending API credentia
   }
 });
 
+test('uses the stable default relay raw stream instead of a running quick tunnel', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-default-relay-'));
+  const previous = {
+    dataDir: process.env.SANMAO_DATA_DIR,
+    mode: process.env.SANMAO_RELAY_MODE,
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+  };
+  process.env.SANMAO_DATA_DIR = root;
+  process.env.SANMAO_RELAY_MODE = '1';
+  process.env.SANMAO_MEDIA_RELAY_URL = 'https://stale.trycloudflare.com';
+  process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = 'https://shared-relay.example';
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  await mkdir(path.join(root, 'free-relay'), { recursive: true });
+  await writeFile(path.join(root, 'free-relay', 'public-url.txt'), 'https://stale.trycloudflare.com\n');
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({
+      ok: true,
+      url: 'https://shared-relay.example/api/relay/media/shared-token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  try {
+    const url = await signed.preparePublicMediaUrl(relayTestPng, 'image');
+    assert.equal(url, 'https://shared-relay.example/api/relay/media/shared-token');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://shared-relay.example/api/relay/media');
+    assert.equal(calls[0].init.headers['content-type'], 'image/png');
+    assert.ok(calls[0].init.body instanceof Blob);
+    assert.deepEqual(await calls[0].init.body.arrayBuffer(), relayTestPngBytes.buffer.slice(
+      relayTestPngBytes.byteOffset,
+      relayTestPngBytes.byteOffset + relayTestPngBytes.byteLength,
+    ));
+  } finally {
+    if (previous.dataDir === undefined) delete process.env.SANMAO_DATA_DIR; else process.env.SANMAO_DATA_DIR = previous.dataDir;
+    if (previous.mode === undefined) delete process.env.SANMAO_RELAY_MODE; else process.env.SANMAO_RELAY_MODE = previous.mode;
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('uses the latest automatically recovered relay URL without restarting the server', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-relay-refresh-'));
   const previous = {

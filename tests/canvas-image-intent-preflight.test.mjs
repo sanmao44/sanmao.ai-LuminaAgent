@@ -18,7 +18,10 @@ async function loadTypeScript(path, dependencies) {
   return loaded.exports;
 }
 
-const modelPicker = await loadTypeScript('../lib/model-picker.ts', {});
+const intentClassifier = await loadTypeScript('../lib/intent-classifier.ts', {});
+const modelPicker = await loadTypeScript('../lib/model-picker.ts', {
+  './intent-classifier': intentClassifier,
+});
 const imageRequest = await loadTypeScript('../lib/canvas/image-reference-request.ts', {
   '../creative-references': {
     appendTextReferenceContext: value => value,
@@ -34,6 +37,9 @@ const taskRecovery = await loadTypeScript('../lib/canvas/task-recovery.ts', {
     createMedia: () => ({}),
     nodeById: (document, id) => document.nodes.find(node => node.id === id),
     nodeSize: () => ({ w: 0, h: 0 }),
+  },
+  './activity-log': {
+    displayGenerationLogStatus: log => log.status === 'error' && log.errorCode === 'provider_result_unconfirmed' ? 'pending' : log.status,
   },
 });
 

@@ -1,6 +1,11 @@
 import sharp from 'sharp';
 import { resolveStoredImageReference } from './image-storage';
-import { repairLocalEditMoveSource } from './local-edit';
+import {
+  expandLocalEditMask,
+  featherLocalEditMask,
+  localEditMoveGuideFeatherRadius,
+  repairLocalEditMoveSource,
+} from './local-edit';
 import type { GeneratedImage } from './types';
 
 const MAX_IMAGE_BYTES = 100 * 1024 * 1024;
@@ -90,6 +95,9 @@ export function compositeLocalEditPixels(
       moveSource.original,
       source,
       moveSource.mask,
+      mask,
+      moveSource.width,
+      moveSource.height,
     );
     if (duplicateMask) {
       // Keep the Provider's surrounding pixels as the background and repair
@@ -138,6 +146,9 @@ function moveSourceDuplicateMask(
   original: Uint8Array,
   repaired: Uint8Array,
   moveMask: Uint8Array,
+  editMask: Uint8Array,
+  width: number,
+  height: number,
 ): Uint8ClampedArray | undefined {
   const duplicateMask = new Uint8ClampedArray(moveMask.length);
   for (let index = 0; index < duplicateMask.length; index += 4) {
@@ -149,7 +160,7 @@ function moveSourceDuplicateMask(
   let objectPixels = 0;
   let retainedPixels = 0;
   for (let index = 3; index < moveMask.length; index += 4) {
-    if (moveMask[index] >= 32) continue;
+    if (moveMask[index] >= 253) continue;
     const repairedDifference = (
       Math.abs(original[index - 3] - repaired[index - 3])
       + Math.abs(original[index - 2] - repaired[index - 2])
@@ -177,9 +188,23 @@ function moveSourceDuplicateMask(
       duplicateMask[index] = 0;
     }
   }
-  return objectPixels > 0 && retainedPixels / objectPixels >= 0.45
-    ? duplicateMask
-    : undefined;
+  if (objectPixels === 0 || retainedPixels / objectPixels < 0.45) return undefined;
+
+  // Extend the cleanup beyond the detected object core, but only where both
+  // the source neighborhood and final edit mask allow regeneration. Feather
+  // the repair boundary so a provider-retained silhouette cannot leave a rim.
+  const radius = localEditMoveGuideFeatherRadius(width, height);
+  const sourceNeighborhood = expandLocalEditMask(Uint8ClampedArray.from(moveMask), width, height, radius * 2);
+  const expandedDuplicate = expandLocalEditMask(duplicateMask, width, height, radius * 2);
+  for (let index = 3; index < expandedDuplicate.length; index += 4) {
+    if (sourceNeighborhood[index] >= 128 || editMask[index] >= 253) {
+      expandedDuplicate[index - 3] = 255;
+      expandedDuplicate[index - 2] = 255;
+      expandedDuplicate[index - 1] = 255;
+      expandedDuplicate[index] = 255;
+    }
+  }
+  return featherLocalEditMask(Uint8ClampedArray.from(expandedDuplicate), width, height, radius);
 }
 
 async function compositeLocalEditImage(

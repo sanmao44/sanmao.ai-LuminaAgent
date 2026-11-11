@@ -834,11 +834,24 @@ test("audio nodes use the branded rounded player instead of browser gray control
   assert.match(audioPanelStyles, /\.canvas-audio-panel-meta-chips span\{[^}]*border-radius:999px/);
 });
 
-test("audio editor keeps its natural height without a panel height clamp", () => {
+test("audio editor opens in the image-editor frame without a desktop body scrollbar", () => {
   assert.match(component + audioPanel, /className="canvas-audio-panel"/);
+  assert.match(nodeEditor, /useState\(\s*node\.type === "media" && node\.data\.kind === "audio"/);
+  assert.match(nodeEditor, /audioNode \? " is-audio-editor"/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-audio-editor\.is-prompt-expanded\{height:min\(500px,calc\(100dvh - 32px\)\);max-height:min\(500px,calc\(100dvh - 32px\)\)\}/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-audio-editor\.is-prompt-expanded \.canvas-node-editor-body\{display:flex;flex:1;overflow:hidden;min-height:0\}/);
+  assert.match(component, /!audioNode && \(promptExpanded \|\| !isDockNode\)/);
   assert.doesNotMatch(component, /estimatedPopoverHeight/);
   assert.doesNotMatch(component, /naturalHeight = \(head\?\.offsetHeight/);
-  assert.match(audioPanelStyles, /\.canvas-audio-panel\{display:grid;gap:11px;min-width:0\}/);
+  assert.match(styles, /\.canvas-node-editor-popover\.canvas-node-editor-popover\[data-node-kind="audio"\]:not\(\.is-prompt-expanded\)\[data-density\]\{[\s\S]*?width:min\(520px,calc\(100vw - 32px\)\)!important;[\s\S]*?max-height:none!important;[\s\S]*?overflow:visible!important/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel\{display:flex;flex:1;flex-direction:column;gap:0;min-width:0;min-height:0;height:100%\}/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel-main\{display:grid;flex:1;grid-template-columns:minmax\(0,1\.4fr\) minmax\(250px,\.8fr\)[^}]*overflow:visible\}/);
+  assert.match(audioPanelStyles, /\.canvas-audio-speech\{[^}]*padding:6px 8px;box-sizing:border-box\}/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel-actions\{display:grid;grid-template-columns:minmax\(0,1fr\) auto auto/);
+  assert.match(audioPanelStyles, /@media\(max-width:720px\)\{\.canvas-audio-panel-main\{grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel-empty\{[^}]*padding:20px 12px/);
+  assert.match(audioPanel, /className="canvas-node-editor-generate canvas-audio-generate"/);
+  assert.match(audioPanel, /className="canvas-audio-panel-upload"[\s\S]*?disabled=\{generatingSpeech\}/);
 });
 
 test("image node editing persists parameters without turning uploads into generated media", () => {
@@ -866,7 +879,7 @@ test("mask removal clears both current and persisted generation parameters", () 
 });
 
 test("local edit editor reports saving state and passes coverage into the attached image state", () => {
-  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl\)\}/);
+  assert.match(component, /onApply=\{\(value, coverage, prompt, annotations, feather, moveSourceMaskDataUrl\) => applyCanvasMask\(value, coverage, prompt, annotations, feather, moveSourceMaskDataUrl\)\}/);
   assert.match(component, /initialMaskDataUrl=\{maskNode\.data\.mask\?\.url \|\| maskSettings\?\.mask\?\.url\}/);
   assert.match(component, /initialFeather=\{maskNode\.data\.mask\?\.feather \?\? maskSettings\?\.mask\?\.feather \?\? 0\}/);
   assert.match(component, /status: "pending"/);
@@ -882,8 +895,8 @@ test("applying a local edit returns to the node editor with the saved mask ready
   assert.ok(applyStart >= 0 && applyEnd > applyStart, "canvas mask apply handler should be present");
   assert.match(apply, /setExpandedEditorId\(node\.id\)/);
   assert.match(apply, /setMaskNodeId\(null\)/);
-  assert.match(apply, /const moveGuide = moveGuideDataUrl/);
-  assert.match(apply, /sourceAssetId: moveGuide\.id, sourceUrl: moveGuide\.url/);
+  assert.match(apply, /const moveSourceMask = moveSourceMaskDataUrl/);
+  assert.doesNotMatch(apply, /moveGuideDataUrl|sourceAssetId: moveGuide/);
   assert.match(apply, /const liveDraft = editorDrafts\[node\.id\]/);
   assert.match(apply, /liveDraft\?\.params \|\| existingDraft\.params/);
   assert.match(apply, /const nextPrompt = compileLocalEditPrompt\([\s\S]*prompt\?\.trim\(\) \|\| liveDraft\?\.prompt\?\.trim\(\) \|\| existingDraft\.prompt,[\s\S]*annotations/);

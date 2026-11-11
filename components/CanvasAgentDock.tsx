@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { ClipboardEvent as ReactClipboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import AgentApprovalCard, { type AgentApprovalOutcome } from "@/components/AgentApprovalCard";
 import ModelPicker from "@/components/ModelPicker";
+import { isCanvasAgentDockCompositionEvent, shouldSubmitCanvasAgentDockEnter } from "@/components/canvas/agent-dock-keyboard";
 import SkillManager from "@/components/SkillManager";
 import SkillIcon from "@/components/SkillIcon";
 import AgentSkillMenu from "@/components/AgentSkillMenu";
@@ -25,8 +26,10 @@ import {
   canvasAgentDockHasVisualReferences,
   canvasAgentDockAcceptsImages,
   canvasAgentDockRequestsPreviousImageApply,
+  canvasAgentDockPatchRequiresConfirmation,
+  canvasAgentDockShouldAutoApplyPatch,
+  canvasAgentDockTextWritebackRequest,
   composeCanvasAgentDockMessage,
-  canvasAgentDockShouldAutoApplyText,
   buildCanvasAgentDockPlan,
   type CanvasAgentDockChip,
   type CanvasAgentDockPlan,
@@ -44,12 +47,14 @@ import {
 } from "@/lib/canvas/run-context";
 import type { PublicState } from "@/lib/types";
 import type { WorkspaceContext } from "@/lib/workspace-context";
+import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { CanvasDocument } from "@/lib/canvas/types";
 import type { CanvasPatch } from "@/lib/canvas/patch";
 import { filterModelsByActiveProviders } from "@/lib/provider-availability";
 import { memoryContextMessage } from "@/lib/agent-memory";
 import {
   canvasAgentDockSessionKey,
+  normalizeCanvasAgentDockDraft,
   prepareCanvasAgentDockMemory,
   pruneCanvasAgentDockMessages,
   selectCanvasAgentDockContext,
@@ -108,6 +113,7 @@ export type CanvasAgentDockMessage = {
   files?: AgentGeneratedFile[];
   canvasPatch?: CanvasPatch;
   canvasPatchApplied?: boolean;
+  canvasPatchError?: string;
 };
 
 type CanvasAgentDockSession = {
@@ -116,6 +122,7 @@ type CanvasAgentDockSession = {
   webMode: AgentWebMode;
   autoApply: boolean;
   messages: CanvasAgentDockMessage[];
+  draftInput?: string;
   memory?: CanvasAgentDockMemory;
 };
 
@@ -127,6 +134,9 @@ type Props = {
   references: CanvasAgentDockReference[];
   selectedNodeIds?: string[];
   context: WorkspaceContext;
+  projectBrief?: CreativeProjectBrief | null;
+  draftPrompt?: string;
+  draftPromptKey?: number;
   canvasDocument: CanvasDocument;
   onApplyCanvasPatch: (patch: CanvasPatch, runContext?: CanvasAgentRunContext) => CanvasAgentDockPlanResult;
   /* 画布上真实的选中数量：芯片只渲染前几个，头部要报完整数字。 */
@@ -475,6 +485,7 @@ function readStoredMessageExtras(message: unknown): Partial<CanvasAgentDockMessa
     ...(files.length ? { files } : {}),
     ...(canvasPatch ? { canvasPatch } : {}),
     ...(source.canvasPatchApplied === true ? { canvasPatchApplied: true } : {}),
+    ...(typeof source.canvasPatchError === "string" ? { canvasPatchError: source.canvasPatchError.slice(0, 400) } : {}),
     ...(source.approvalResult ? { approvalResult: String(source.approvalResult) } : {}),
   };
 }
@@ -564,6 +575,7 @@ function readSession(context: WorkspaceContext): CanvasAgentDockSession | null {
       webMode: parsed.webMode === "auto" || parsed.webMode === "always" ? parsed.webMode : "off",
       autoApply: parsed.autoApply !== false,
       messages,
+      ...(normalizeCanvasAgentDockDraft(parsed.draftInput) ? { draftInput: normalizeCanvasAgentDockDraft(parsed.draftInput) } : {}),
       ...(parsed.memory && validCanvasAgentDockMemory(parsed.memory, messages) ? { memory: parsed.memory } : {}),
     };
   } catch {
@@ -579,6 +591,9 @@ export default function CanvasAgentDock({
   references,
   selectedNodeIds = [],
   context,
+  projectBrief,
+  draftPrompt,
+  draftPromptKey,
   canvasDocument,
   selectedTotal,
   contextBlock,
@@ -598,12 +613,13 @@ export default function CanvasAgentDock({
 }: Props) {
   const [messages, setMessages] = useState<CanvasAgentDockMessage[]>([]);
   const [input, setInput] = useState("");
+  const [draftRestored, setDraftRestored] = useState(false);
   const [draftImages, setDraftImages] = useState<DraftPastedImage[]>([]);
   const [uploadingPastedImages, setUploadingPastedImages] = useState(false);
   const uploadingPastedImagesRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [streamText, setStreamText] = useState("");
-  /* 长任务阶段文案：主管线写快照，面板按 runId 轮询，正文开始流式返回就让位。 */
+  /* 长任务阶段文案：主管线写快照，面板按 runId 轮询到流式响应结算。 */
   const [progressDetail, setProgressDetail] = useState("");
   const [model, setModel] = useState("auto");
   const [imageModelId, setImageModelId] = useState("auto");
@@ -634,6 +650,8 @@ export default function CanvasAgentDock({
   const abortRef = useRef<AbortController | null>(null);
   /* 失败后要能重试，所以留一份最近一次发送的原话。 */
   const lastUserTextRef = useRef("");
+  const inputRef = useRef("");
+  inputRef.current = input;
   /* 停止时不能丢掉已经流回来的内容，所以流式文本同时记一份在 ref 里。 */
   const streamTextRef = useRef("");
   /* 一个 token 一次 setState，长回复会把重排堆满主线程；流式文本按帧合并。 */
@@ -651,6 +669,8 @@ export default function CanvasAgentDock({
     setLoadedScopeKey(null);
     const stored = readSession(context);
     setMessages(stored?.messages || []);
+    setInput(stored?.draftInput || "");
+    setDraftRestored(Boolean(stored?.draftInput?.trim()));
     setModel(stored?.model || "auto");
     setImageModelId(stored?.imageModelId || "auto");
     setWebMode(stored?.webMode || "off");
@@ -667,14 +687,36 @@ export default function CanvasAgentDock({
     if (!hydrated || loadedScopeKey !== sessionScopeKey || typeof window === "undefined") return;
     try {
       const CANVAS_AGENT_DOCK_SESSION_KEY = canvasAgentDockSessionKey(context);
+      const draftInput = normalizeCanvasAgentDockDraft(inputRef.current);
       window.localStorage.setItem(
         CANVAS_AGENT_DOCK_SESSION_KEY,
-        JSON.stringify({ model, imageModelId, webMode, autoApply, messages: messages.slice(-MESSAGE_LIMIT), ...(memory ? { memory } : {}) }),
+        JSON.stringify({ model, imageModelId, webMode, autoApply, messages: messages.slice(-MESSAGE_LIMIT), ...(draftInput ? { draftInput } : {}), ...(memory ? { memory } : {}) }),
       );
     } catch {
       /* session persistence is best effort */
     }
   }, [context, hydrated, loadedScopeKey, memory, messages, model, imageModelId, sessionScopeKey, webMode, autoApply]);
+
+  /* Keep the unsent prompt recoverable without serializing pasted File objects or
+     writing the full conversation on every keystroke. */
+  useEffect(() => {
+    if (!hydrated || loadedScopeKey !== sessionScopeKey || typeof window === "undefined") return;
+    const timer = window.setTimeout(() => {
+      try {
+        const key = canvasAgentDockSessionKey(context);
+        const raw = window.localStorage.getItem(key);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const draftInput = normalizeCanvasAgentDockDraft(input);
+        if (draftInput) parsed.draftInput = draftInput;
+        else delete parsed.draftInput;
+        window.localStorage.setItem(key, JSON.stringify(parsed));
+      } catch {
+        /* Draft persistence is best effort; the live editor remains usable. */
+      }
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [context, hydrated, input, loadedScopeKey, sessionScopeKey]);
 
   // Kept as a named dependency contract for the persistence regression guard.
   // Context-scoped storage is the actual key; this expression makes the
@@ -780,16 +822,10 @@ export default function CanvasAgentDock({
     liveCreativeRoute.operation === "edit" ? "edit" : "generate",
     hasSelectedCanvasImageReference,
   );
-  const availableCreativeModels = useMemo(
-    () => filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
-      kind: "image",
-      capability: liveCreativeCapability,
-    }),
-    [liveCreativeCapability, runtime?.models, runtime?.providers],
+  const creativeModelPickerModels = useMemo(
+    () => filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], { kind: "image" }),
+    [runtime?.models, runtime?.providers],
   );
-  useEffect(() => {
-    if (imageModelId !== "auto" && !availableCreativeModels.some((candidate) => candidate.id === imageModelId)) setImageModelId("auto");
-  }, [availableCreativeModels, imageModelId]);
   const chipMentionIndexes = useMemo(
     () => new Map(orderedReferences.map((reference, index) => [referenceOrderKey(reference), index + 1] as const)),
     [orderedReferences],
@@ -923,9 +959,21 @@ export default function CanvasAgentDock({
     focusEditorEnd();
   }, [focusEditorEnd, focusSignal, open]);
 
+  useEffect(() => {
+    const prompt = draftPrompt?.trim();
+    if (!prompt) return;
+    setEditingMessageId(null);
+    setDraftImages([]);
+    setDraftRestored(false);
+    setInput(prompt);
+    setHelpOpen(false);
+    focusEditorEnd();
+  }, [draftPrompt, draftPromptKey, focusEditorEnd]);
+
   const applySkill = useCallback(
     (skill: SkillPickerEntry) => {
       setInput((value) => skillMessageValue(value, skill.name));
+      setDraftRestored(false);
       closeSkillMenu();
       focusEditorEnd();
     },
@@ -938,6 +986,7 @@ export default function CanvasAgentDock({
       inputBeforeEditRef.current = input;
       inputBeforeEditImagesRef.current = draftImages;
       setEditingMessageId(message.id);
+      setDraftRestored(false);
       setInput(message.content);
       setDraftImages((message.pastedReferences || []).flatMap((reference) => reference.kind === "image" && reference.url
         ? [{ id: reference.id, name: reference.name, url: reference.url, previewUrl: reference.url }]
@@ -950,6 +999,7 @@ export default function CanvasAgentDock({
   /* 取消编辑＝放弃这次改写，输入框还原成点「编辑」之前的内容。 */
   const cancelEditMessage = useCallback(() => {
     setEditingMessageId(null);
+    setDraftRestored(false);
     setInput(inputBeforeEditRef.current);
     setDraftImages(inputBeforeEditImagesRef.current);
     focusEditorEnd();
@@ -1093,17 +1143,7 @@ export default function CanvasAgentDock({
       const hasSelectedImageReferences = turnNodeReferences.some((reference) =>
         reference.kind === "image" && turnNodeIds.includes(reference.nodeId || reference.id),
       );
-      const creativeModelCapability = canvasAgentImageCapability(
-        creativeRoute.operation === "edit" ? "edit" : "generate",
-        hasSelectedImageReferences,
-      );
-      const selectedCreativeModel = imageModelId !== "auto"
-        && filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
-          kind: "image",
-          capability: creativeModelCapability,
-        }).some((candidate) => candidate.id === imageModelId)
-        ? imageModelId
-        : "auto";
+      const selectedCreativeModel = imageModelId || "auto";
       const requestCreativeModel = options.retry && sourceMessage?.imageModelId
         ? sourceMessage.imageModelId
         : selectedCreativeModel;
@@ -1122,6 +1162,7 @@ export default function CanvasAgentDock({
       setMessages(history);
       if (raw === undefined) {
         setInput("");
+        setDraftRestored(false);
         attachmentObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
         attachmentObjectUrlsRef.current.clear();
         setDraftImages([]);
@@ -1247,7 +1288,6 @@ export default function CanvasAgentDock({
       }
       const stopAgentProgress = pollAgentProgress(progressRunId, {
         signal: controller.signal,
-        isSettled: () => Boolean(streamTextRef.current),
         onProgress: (progress) => setProgressDetail(progress.message),
       });
       const selectedHistory = selectCanvasAgentDockContext(memoryMessages, promptText);
@@ -1281,6 +1321,7 @@ export default function CanvasAgentDock({
             creativeRoute,
             runId: progressRunId,
             context,
+            ...(projectBrief ? { projectBrief } : {}),
             canvasDocument,
             canvasTarget: {
               nodeIds: [...runContext.targetNodeIds],
@@ -1330,6 +1371,12 @@ export default function CanvasAgentDock({
         const files = readStoredFiles(response.files);
         const canvasPatch = readStoredCanvasPatch(response.canvasPatch);
         if (approval && !openRef.current) notify("助手有个操作等你确认，展开面板处理。");
+        const shouldAutoApplyPatch = canvasAgentDockShouldAutoApplyPatch(autoApply, canvasPatch);
+        if (canvasPatch && !shouldAutoApplyPatch && !openRef.current) {
+          notify(canvasAgentDockPatchRequiresConfirmation(canvasPatch)
+            ? "画布操作包含删除，已暂停自动写回；展开面板核对后确认。"
+            : "Agent 提出了一项画布操作，展开面板检查后应用。");
+        }
         const shouldAutoApply = images.length > 0 && autoApply && (!plan || !plan.requiresConfirmation);
         let appliedImageIds: string[] = [];
         if (shouldAutoApply) {
@@ -1361,7 +1408,7 @@ export default function CanvasAgentDock({
             ...(canvasPatch ? { canvasPatch } : {}),
           },
         ]);
-        if (canvasPatch && autoApply) {
+        if (canvasPatch && shouldAutoApplyPatch) {
           const applied = onApplyCanvasPatch(canvasPatch, runContext);
           if (applied.error) {
             notify(`画布 Patch 未应用：${applied.error}`, "error");
@@ -1371,9 +1418,16 @@ export default function CanvasAgentDock({
               : message));
           }
         }
-        if (autoApply && canvasAgentDockShouldAutoApplyText(text)) {
+        const textWriteback = canvasAgentDockTextWritebackRequest({
+          enabled: autoApply,
+          sourceText: text,
+          responseText: content,
+          prompt: mentionText,
+          runContext,
+        });
+        if (textWriteback) {
           // 文案优化只留在面板；明确要求保存时也创建新节点，绝不覆盖引用的原节点。
-          const appliedIds = onApplyText(content, { prompt: mentionText });
+          const appliedIds = onApplyText(textWriteback.text, textWriteback.meta);
           if (appliedIds.length) {
             setMessages((value) =>
               value.map((message) => (message.id === assistantMessageId ? { ...message, textNodeId: appliedIds[0] } : message)),
@@ -1470,6 +1524,7 @@ export default function CanvasAgentDock({
 
   const useHelpExample = useCallback(
     (prompt: string) => {
+      setDraftRestored(false);
       setInput(prompt);
       setHelpOpen(false);
       focusEditorEnd();
@@ -1489,6 +1544,8 @@ export default function CanvasAgentDock({
     stop();
     setMessages([]);
     setMemory(undefined);
+    setDraftRestored(false);
+    setInput("");
     setStreamText("");
     setExpandedMessages(new Set());
     notify("已开始新的 Agent 对话");
@@ -1763,7 +1820,7 @@ export default function CanvasAgentDock({
           <ol className="canvas-agent-dock-help-steps">
             <li><b>1</b><span><strong>选择对象</strong><small>选中节点后再提问；未选中时读取整张画布概况。</small></span></li>
             <li><b>2</b><span><strong>说明目标</strong><small>输入 @1、@2 精确引用；拖动顶部卡片可调整处理顺序。</small></span></li>
-            <li><b>3</b><span><strong>确认执行</strong><small>结构操作确认后执行；出图完成后自动加入画布，均支持撤销。</small></span></li>
+            <li><b>3</b><span><strong>确认执行</strong><small>删除类 Patch 始终需要确认；其他图片和 Patch 可按本轮设置自动写回。</small></span></li>
           </ol>
           <div className="canvas-agent-dock-help-examples">
             <b>点一个示例开始</b>
@@ -1790,7 +1847,7 @@ export default function CanvasAgentDock({
           </div>
           <div className="canvas-agent-dock-help-notes">
             <span><b>智能落画布</b> 开启后，“画、生成、做一张”等指令会生成图片并加入画布；普通文字仅在明确要求保存时创建节点。</span>
-            <span><b>安全边界</b> Agent 不会自动删除画布内容。</span>
+            <span><b>安全边界</b> 删除类 Patch 会等待你确认后应用。</span>
             <span><kbd>Ctrl/⌘ K</kbd> 打开 Agent　<kbd>Esc</kbd> 停止生成或关闭指南</span>
           </div>
         </section>
@@ -1852,7 +1909,7 @@ export default function CanvasAgentDock({
           <div className="canvas-agent-dock-empty">
             <b>可以这样问</b>
             {EMPTY_SAMPLES.map((sample) => (
-              <button key={sample} type="button" onClick={() => setInput(sample)}>
+              <button key={sample} type="button" onClick={() => { setDraftRestored(false); setInput(sample); }}>
                 {sample}
               </button>
             ))}
@@ -2058,19 +2115,23 @@ export default function CanvasAgentDock({
               </div>
             ) : null}
             {message.canvasPatch ? (
-              <div className={`canvas-agent-dock-plan${message.canvasPatchApplied ? " is-applied" : ""}`}>
-                <div className="canvas-agent-dock-plan-head"><strong>画布 Patch</strong><span>{message.canvasPatchApplied ? "已应用" : "待应用"}</span></div>
+              <div className={`canvas-agent-dock-plan${message.canvasPatchApplied ? " is-applied" : message.canvasPatchError ? " is-failed" : canvasAgentDockPatchRequiresConfirmation(message.canvasPatch) ? " is-confirmation-required" : ""}`}>
+                <div className="canvas-agent-dock-plan-head"><strong>画布 Patch</strong><span>{message.canvasPatchApplied ? "已应用" : message.canvasPatchError ? "应用失败" : canvasAgentDockPatchRequiresConfirmation(message.canvasPatch) ? "需要确认" : "待应用"}</span></div>
                 <b>Agent 提出了 {message.canvasPatch.operations.length} 个画布操作</b>
+                {canvasAgentDockPatchRequiresConfirmation(message.canvasPatch) ? (
+                  <small className="canvas-agent-dock-confirmation-note">包含删除节点操作。确认前请检查本轮画布变更。</small>
+                ) : null}
+                {message.canvasPatchError ? <small className="canvas-agent-dock-plan-error">{message.canvasPatchError}</small> : null}
                 {!message.canvasPatchApplied ? (
                   <div className="canvas-agent-dock-plan-actions">
                     <button type="button" className="primary" onClick={() => {
                       const result = onApplyCanvasPatch(message.canvasPatch!, message.runContext);
                       setMessages((value) => value.map((item) => item.id === message.id
                         ? result.error
-                          ? { ...item, error: result.error }
-                          : { ...item, canvasPatchApplied: true }
+                          ? { ...item, canvasPatchError: result.error }
+                          : { ...item, canvasPatchApplied: true, canvasPatchError: undefined }
                         : item));
-                    }}>应用到画布</button>
+                    }}>{canvasAgentDockPatchRequiresConfirmation(message.canvasPatch) ? "确认删除并应用" : "应用到画布"}</button>
                   </div>
                 ) : null}
               </div>
@@ -2156,7 +2217,8 @@ export default function CanvasAgentDock({
         ))}
         {busy ? (
           <div className="canvas-agent-dock-message assistant is-streaming">
-            <p>{streamText || progressDetail || "正在思考…"}</p>
+            {progressDetail ? <small className="canvas-agent-dock-progress" role="status" aria-live="off">{progressDetail}</small> : null}
+            {streamText ? <p>{streamText}</p> : !progressDetail ? <p>正在思考…</p> : null}
           </div>
         ) : null}
         {!atBottom ? (
@@ -2197,6 +2259,7 @@ export default function CanvasAgentDock({
             title={action.title}
             onClick={() => {
               if (action.ids.length) onFocusNodes(action.ids);
+              setDraftRestored(false);
               setInput(action.prompt);
             }}
             disabled={busy || action.disabled}
@@ -2205,6 +2268,12 @@ export default function CanvasAgentDock({
           </button>
         ))}
       </div>
+      {draftRestored && !editingMessageId ? (
+        <div className="canvas-agent-dock-draft-status" role="status">
+          <span>已恢复未发送内容</span>
+          <button type="button" onClick={() => { setDraftRestored(false); setInput(""); }}>清除</button>
+        </div>
+      ) : null}
       {editingMessageId ? (
         <div className="canvas-agent-dock-editing">
           <span>正在编辑这条提问 · 发送后会替换它之后的回答</span>
@@ -2254,6 +2323,7 @@ export default function CanvasAgentDock({
           placeholder="问这只画布的 Agent，Enter 发送 / Shift+Enter 换行；可粘贴图片、输入 @ 引用节点；生成中按 Esc 停止"
           transformPastedText={(value) => replaceNaturalReferenceLabels(value, mentionOptions).value}
           onChange={(value) => {
+            setDraftRestored(false);
             setInput(value);
             const slashQuery = skillSlashQuery(value);
             if (slashQuery !== null) {
@@ -2287,7 +2357,7 @@ export default function CanvasAgentDock({
               if (
                 skillMenuFromSlashRef.current &&
                 (event.key === "Enter" || event.key === "Tab") &&
-                !event.nativeEvent.isComposing &&
+                !isCanvasAgentDockCompositionEvent(event.nativeEvent) &&
                 visibleSkills.length
               ) {
                 event.preventDefault();
@@ -2307,7 +2377,7 @@ export default function CanvasAgentDock({
               cancelEditMessage();
               return;
             }
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            if (shouldSubmitCanvasAgentDockEnter(event.nativeEvent)) {
               event.preventDefault();
               /* 生成中回车不再默默吞掉：告诉用户怎么停。 */
               if (busy) notify("Agent 正在生成，按 Esc 可以停止当前回答");
@@ -2316,78 +2386,88 @@ export default function CanvasAgentDock({
           }}
         />
         <div className="canvas-agent-dock-composer-row">
-          <div className="canvas-agent-dock-composer-selectors">
-          <button
-            type="button"
-            className={`canvas-agent-dock-skill ${skillMenuOpen ? "is-active" : ""}`}
-            onClick={() => (skillMenuOpen ? closeSkillMenu() : openSkillMenu(""))}
-            title="选择技能：把某个技能指定给本轮任务"
-            aria-haspopup="listbox"
-            aria-expanded={skillMenuOpen}
-          >
-            <SkillIcon size={14} />
-            <span>技能</span>
-          </button>
-          {/* 模型选择复用全站同一套 ModelPicker：搜索、收藏、最近调用、按服务商筛选都在里面。 */}
-          <div className={`canvas-agent-dock-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
-            <ModelPicker
-              models={runtime?.models || []}
-              value={model}
-              capability="chat"
-              portalZIndex={CANVAS_Z_INDEX.modalPopover}
-              dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
-              defaultProviderId={runtime?.settings.defaultProviderId}
-              defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
-              defaultModelId={runtime?.settings.agentModelId}
-              placeholder="选择对话模型"
-              onChange={setModel}
-              className="canvas-agent-dock-model"
-            />
+          <div className="canvas-agent-dock-composer-selectors" role="group" aria-label="本轮设置">
+            <button
+              type="button"
+              className={`canvas-agent-dock-skill ${skillMenuOpen ? "is-active" : ""}`}
+              onClick={() => (skillMenuOpen ? closeSkillMenu() : openSkillMenu(""))}
+              title="选择技能：把某个技能指定给本轮任务"
+              aria-haspopup="listbox"
+              aria-expanded={skillMenuOpen}
+            >
+              <SkillIcon size={14} />
+              <span>技能</span>
+            </button>
+            {/* 模型选择复用全站同一套 ModelPicker：搜索、收藏、最近调用、按服务商筛选都在里面。 */}
+            <div className={`canvas-agent-dock-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
+              <ModelPicker
+                models={runtime?.models || []}
+                value={model}
+                capability="chat"
+                portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
+                defaultProviderId={runtime?.settings.defaultProviderId}
+                defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
+                defaultModelId={runtime?.settings.agentModelId}
+                placeholder="选择对话模型"
+                onChange={setModel}
+                className="canvas-agent-dock-model"
+              />
+            </div>
+            <div className={`canvas-agent-dock-model-wrap canvas-agent-dock-creative-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
+              <ModelPicker
+                models={creativeModelPickerModels}
+                value={imageModelId}
+                capability={liveCreativeCapability}
+                portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
+                defaultProviderId={runtime?.settings.defaultProviderId}
+                defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
+                defaultModelId={runtime?.settings.defaultImageModelId}
+                automaticHint="自动按当前生图或改图任务选择模型"
+                triggerPrefix="创作"
+                placeholder="选择创作模型"
+                onChange={setImageModelId}
+                className="canvas-agent-dock-model canvas-agent-dock-creative-model"
+              />
+            </div>
+            <button
+              type="button"
+              className={`canvas-agent-dock-web ${webMode}`}
+              onClick={cycleWebMode}
+              disabled={busy}
+              aria-label={`联网模式：${WEB_MODE_LABELS[webMode]}`}
+              title={`联网：${WEB_MODE_LABELS[webMode]} · ${WEB_MODE_HINTS[webMode]} · 点击切换到「${WEB_MODE_LABELS[nextWebMode]}」`}
+            >
+              {WEB_MODE_LABELS[webMode]}
+            </button>
           </div>
-          <div className={`canvas-agent-dock-model-wrap canvas-agent-dock-creative-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
-            <ModelPicker
-              models={availableCreativeModels}
-              value={imageModelId}
-              capability={liveCreativeCapability}
-              portalZIndex={CANVAS_Z_INDEX.modalPopover}
-              dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
-              defaultProviderId={runtime?.settings.defaultProviderId}
-              defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
-              defaultModelId={runtime?.settings.defaultImageModelId}
-              automaticHint="自动按当前生图或改图任务选择模型"
-              triggerPrefix="创作"
-              placeholder="选择创作模型"
-              onChange={setImageModelId}
-              className="canvas-agent-dock-model canvas-agent-dock-creative-model"
-            />
-          </div>
-          <button
-            type="button"
-            className={`canvas-agent-dock-web ${webMode}`}
-            onClick={cycleWebMode}
-            disabled={busy}
-            aria-label={`联网模式：${WEB_MODE_LABELS[webMode]}`}
-            title={`联网：${WEB_MODE_LABELS[webMode]} · ${WEB_MODE_HINTS[webMode]} · 点击切换到「${WEB_MODE_LABELS[nextWebMode]}」`}
-          >
-            {WEB_MODE_LABELS[webMode]}
-          </button>
-          </div>
-          <div className="canvas-agent-dock-composer-actions">
-          <label className="canvas-agent-dock-auto" title="开启后，出图结果自动加入画布；明确说保存、加入或放到画布时，文字回复也会创建节点">
-            <input
-              type="checkbox"
-              checked={autoApply}
-              onChange={(event) => setAutoApply(event.target.checked)}
-            />
-            <span>智能落画布</span>
-          </label>
-          <button type="submit" className={`canvas-agent-dock-send ${busy ? "is-busy" : ""}`} disabled={uploadingPastedImages}>
-            {busy ? "停止" : uploadingPastedImages ? "上传图片…" : "发送"}
-          </button>
+          <div className="canvas-agent-dock-composer-actions" role="group" aria-label="结果处理与发送">
+            <label className="canvas-agent-dock-auto" title="开启后，图片和不含删除的 Patch 会自动写入；删除操作与复杂画布计划始终需要确认。明确要求保存时，文字回复也会创建节点。">
+              <input
+                type="checkbox"
+                checked={autoApply}
+                onChange={(event) => setAutoApply(event.target.checked)}
+              />
+              <span>自动写回</span>
+            </label>
+            <button type="submit" className={`canvas-agent-dock-send ${busy ? "is-busy" : ""}`} disabled={uploadingPastedImages}>
+              {busy ? "停止" : uploadingPastedImages ? "上传图片…" : "发送"}
+            </button>
           </div>
         </div>
         <AgentSkillMenu
-          open={skillMenuOpen}
+          open={skillMenuOpen && !skillMenuFromSlashRef.current}
+          skills={skills}
+          query={skillQuery}
+          activeIndex={skillActive}
+          onActiveIndexChange={setSkillActive}
+          onSelect={applySkill}
+          onClose={closeSkillMenu}
+          emptyHint="还没有启用中的技能。点右上角的「技能」按钮可以安装或启用。"
+        />
+        <AgentSkillMenu
+          open={skillMenuOpen && skillMenuFromSlashRef.current}
           skills={skills}
           query={skillQuery}
           activeIndex={skillActive}

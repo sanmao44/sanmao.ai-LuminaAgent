@@ -1,6 +1,6 @@
 /** Worker-owned task lifecycle controls. */
-import { cancelVideoTask as cancelVideoTaskService, retryVideoTask as retryVideoTaskService, refreshVideoTask as refreshVideoTaskService } from '../../lib/video-task-service';
-import { cancelUpscaleTask as cancelUpscaleTaskService, retryUpscaleTask as retryUpscaleTaskService, refreshUpscaleTask as refreshUpscaleTaskService } from '../../lib/upscale-service';
+import { cancelVideoTask as cancelVideoTaskService, retryVideoTask as retryVideoTaskService, retryFailedVideoTask as retryFailedVideoTaskService, refreshVideoTask as refreshVideoTaskService } from '../../lib/video-task-service';
+import { cancelUpscaleTask as cancelUpscaleTaskService, retryUpscaleTask as retryUpscaleTaskService, retryFailedUpscaleTask as retryFailedUpscaleTaskService, refreshUpscaleTask as refreshUpscaleTaskService } from '../../lib/upscale-service';
 import { refreshVideoTask as refreshVideoTaskEntry } from './video-task';
 import { refreshUpscaleTask as refreshUpscaleTaskEntry } from './task-entry';
 import { cleanupCloneJobDirectory } from '../../lib/clone/pipeline';
@@ -9,8 +9,8 @@ import { cloneTaskRuntime } from '../../lib/clone/task-runtime';
 import type { CloneJob } from '../../lib/clone/types';
 import { moveMediaToTrash } from '../../lib/generation-log';
 import { saveVideoTaskLocally as saveVideoTaskService } from '../../lib/video-task-service';
-import { findVideoTask, listVideoTasks, updateVideoTask } from '../../lib/video-task-store';
-import { findUpscaleTask, updateUpscaleTask } from '../../lib/upscale-task-store';
+import { claimFailedVideoTaskRetry, findVideoTask, listVideoTasks, listVideoTasksPage, releaseFailedVideoTaskRetry, updateVideoTask } from '../../lib/video-task-store';
+import { claimFailedUpscaleTaskRetry, findUpscaleTask, releaseFailedUpscaleTaskRetry, updateUpscaleTask } from '../../lib/upscale-task-store';
 import { videoTaskRuntime } from '../../lib/video-task-runtime';
 import { videoTaskOutputUrls, videoTaskStatus } from '../../lib/video-task-output';
 import { upscaleTaskOutputUrl, upscaleTaskStatus } from '../../lib/upscale-task-output';
@@ -31,17 +31,62 @@ export async function cancelVideoTask(id: string, observer?: RuntimeObserver) {
 export async function retryVideoTask(id: string, observer?: RuntimeObserver) {
   return runTaskLifecycle('video', id, () => retryVideoTaskService(id), observer);
 }
+export async function retryFailedVideoTask(id: string, observer?: RuntimeObserver) {
+  return runTaskLifecycle('video', id, async () => {
+    const claim = await claimFailedVideoTaskRetry(id);
+    if (!claim.claimed) {
+      if (claim.reason === 'not_found') return null;
+      if (claim.reason === 'retry_in_progress') throw new TaskControlConflictError('已有重试任务仍在处理或已获得结果，已避免重复提交。');
+      if (claim.reason === 'already_claimed') throw new TaskControlConflictError('该任务正在提交重试，请稍后查看任务状态。');
+      throw new TaskControlConflictError('任务状态已变化或已有结果，未重复提交。');
+    }
+
+    try {
+      const key = `canvas-video-retry:${id}:${claim.retryAttempt}`;
+      return await retryFailedVideoTaskService(claim.task, key);
+    } finally {
+      await releaseFailedVideoTaskRetry(id, claim.claimedAt);
+    }
+  }, observer);
+}
 export async function cancelUpscaleTask(id: string, observer?: RuntimeObserver) {
   return runTaskLifecycle('upscale', id, () => cancelUpscaleTaskService(id), observer);
 }
 export async function retryUpscaleTask(id: string, observer?: RuntimeObserver) {
   return runTaskLifecycle('upscale', id, () => retryUpscaleTaskService(id), observer);
 }
+export async function retryFailedUpscaleTask(id: string, observer?: RuntimeObserver) {
+  return runTaskLifecycle('upscale', id, async () => {
+    const claim = await claimFailedUpscaleTaskRetry(id);
+    if (!claim.claimed) {
+      if (claim.reason === 'not_found') return null;
+      if (claim.reason === 'retry_in_progress') throw new TaskControlConflictError('已有重试任务尚未明确失败，或已有结果；为避免重复计费，已停止批量重提。');
+      if (claim.reason === 'already_claimed') throw new TaskControlConflictError('该超分任务正在提交重试，请稍后查看状态。');
+      throw new TaskControlConflictError('该超分任务不是已确认拒绝且无结果的失败任务，未重新提交。');
+    }
+
+    try {
+      const key = `canvas-upscale-retry:${id}:${claim.retryAttempt}`;
+      return await retryFailedUpscaleTaskService(claim.task, key);
+    } finally {
+      await releaseFailedUpscaleTaskRetry(id, claim.claimedAt);
+    }
+  }, observer);
+}
 export async function refreshVideoTask(id: string, observer?: RuntimeObserver) {
   return refreshVideoTaskEntry(id, async () => refreshVideoTaskService(id), observer || undefined);
 }
 export async function refreshUpscaleTask(id: string, observer?: RuntimeObserver) {
   return refreshUpscaleTaskEntry(id, async () => refreshUpscaleTaskService(id), observer || undefined);
+}
+export async function getVideoTaskSnapshot(id: string) {
+  return findVideoTask(id);
+}
+export async function getVideoTaskSnapshotsPage(options: Parameters<typeof listVideoTasksPage>[0]) {
+  return listVideoTasksPage(options);
+}
+export async function getUpscaleTaskSnapshot(id: string) {
+  return findUpscaleTask(id);
 }
 export async function getVideoTask(id: string, observer?: RuntimeObserver) {
   const task = await findVideoTask(id);

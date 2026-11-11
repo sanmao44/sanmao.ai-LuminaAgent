@@ -35,6 +35,7 @@ const META_KEY = 'sanmao.workspace.sync.meta.v1';
 const CLIENT_ID_KEY = 'sanmao.workspace.client-id.v1';
 const SYNC_INTERVAL_MS = 5000;
 const SYNC_DEBOUNCE_MS = 700;
+const CONFLICT_RETRY_MS = 2000;
 const MAX_WORKSPACE_BYTES = 80 * 1024 * 1024;
 
 export const WORKSPACE_PREFERENCE_KEYS = [
@@ -414,9 +415,14 @@ async function restoreWorkspaceSnapshotInternal(
   contentHash?: string,
   automaticState?: ReturnType<typeof captureLocalState>,
   stopped = () => false,
+  allowRevisionRewindFrom?: number,
 ) {
   const generation = getWorkspaceMutationGeneration();
   const restoreGeneration = explicitRestoreGeneration;
+  const revisionIsRestorable = () => {
+    const currentRevision = readMeta()?.revision ?? 0;
+    return currentRevision <= revision || currentRevision === allowRevisionRewindFrom;
+  };
   const restoreCanvas = () => withWorkspaceRestoreSuppressed(() => {
     if (!restoreCanvasWorkspace(snapshot.canvas)) throw new Error('恢复画布失败');
   });
@@ -425,7 +431,7 @@ async function restoreWorkspaceSnapshotInternal(
     // must leave the editor's optimistic-save baseline untouched during I/O.
     if (!automaticState) restoreCanvas();
     const canWrite = automaticState ? () => !localStateChanged(automaticState) && !stopped()
-      && restoreGeneration === explicitRestoreGeneration && (readMeta()?.revision ?? 0) <= revision : undefined;
+      && restoreGeneration === explicitRestoreGeneration && revisionIsRestorable() : undefined;
     await assetRepository.replaceGallery(snapshot.gallery, canWrite);
     await replaceChatSessions(snapshot.chatSessions, canWrite);
     await assetRepository.replaceIndex(snapshot.assetIndex, canWrite);
@@ -436,7 +442,7 @@ async function restoreWorkspaceSnapshotInternal(
     }
     const current = readMeta();
     const changed = generation !== getWorkspaceMutationGeneration() || hasWorkspaceDraftPending();
-    if (restoreGeneration !== explicitRestoreGeneration || (current?.revision ?? 0) > revision) {
+    if (restoreGeneration !== explicitRestoreGeneration || !revisionIsRestorable()) {
       if (changed && current) writeMeta({ ...current, pending: true });
       return false;
     }
@@ -502,7 +508,43 @@ async function rebaseWorkspaceAfterConflict(
   const server = await requestWorkspace('GET');
   const remote = server.workspace ? validateWorkspaceShape(server.workspace) as unknown as WorkspaceSnapshot : null;
   const revision = Number(server.revision ?? 0);
-  if (!remote || revision < (readMeta()?.revision ?? 0)) {
+  const localMeta = readMeta() || currentWorkspaceMeta();
+  if (!remote && revision === 0) {
+    if (localStateChanged(state)) {
+      preserveLocalChanges(state);
+      return { synced: false, rebased: false };
+    }
+    // A missing server snapshot has no competing data; re-establish the CAS baseline at zero.
+    const baseline = readMeta() || currentWorkspaceMeta();
+    const synced = await saveWorkspace(local, {
+      ...baseline,
+      serverUpdatedAt: 0,
+      revision: 0,
+      contentHash: undefined,
+      pending: true,
+    }, state.generation, keepalive);
+    return { synced, rebased: true };
+  }
+  if (remote && revision < (localMeta.revision ?? 0) && localMeta.pending) {
+    if (localStateChanged(state)) {
+      preserveLocalChanges(state);
+      return { synced: false, rebased: false };
+    }
+    const merged = mergeWorkspaceSnapshots(local, remote, readCanvasDeletionTombstones());
+    const restored = await restoreWorkspaceSnapshotInternal(
+      merged,
+      revision,
+      server.contentHash || undefined,
+      state,
+      () => false,
+      localMeta.revision ?? 0,
+    );
+    if (!restored) return { synced: false, rebased: false };
+    const baseline = readMeta() || currentWorkspaceMeta();
+    const synced = await saveWorkspace(merged, { ...baseline, revision, pending: true }, state.generation, keepalive);
+    return { synced, rebased: true };
+  }
+  if (!remote || revision < (localMeta.revision ?? 0)) {
     throw new WorkspaceConflictError('工作区版本变化过快，请刷新后再保存');
   }
   if (localStateChanged(state)) {
@@ -575,7 +617,7 @@ async function bootstrapWorkspaceInternal() {
 }
 
 /** Automatic sync only replaces a stable, persisted local baseline. */
-async function reconcileWorkspace(onRestored?: () => void, stopped = () => false) {
+async function reconcileWorkspace(onRestored?: () => void, stopped = () => false, onSyncing?: () => void) {
   const meta = currentWorkspaceMeta();
   if (hasWorkspaceDraftPending() || stopped()) return false;
   const state = captureLocalState();
@@ -588,15 +630,20 @@ async function reconcileWorkspace(onRestored?: () => void, stopped = () => false
   // a fresh remote revision must never turn a CAS conflict into an overwrite.
   // The one exception is the pre-bootstrap placeholder written by older LAN
   // clients; it has no baseline or user data and must be replaced by GET.
-  if (meta.pending && !isLegacyInitialCanvasPlaceholder(local, meta)) return uploadLocalWorkspace(false, onRestored);
+  if (meta.pending && !isLegacyInitialCanvasPlaceholder(local, meta)) {
+    onSyncing?.();
+    return uploadLocalWorkspace(false, onRestored);
+  }
   if (meta.contentSignature && meta.contentSignature !== workspaceContentSignature(local)) {
     writeMeta({ ...meta, localUpdatedAt: Date.now(), pending: true });
+    onSyncing?.();
     return uploadLocalWorkspace(false, onRestored);
   }
   // Collect even on metadata-only polls: preferences or another tab can change
   // the persisted cache without delivering this tab's workspace event.
   if (meta.contentSignature && meta.serverUpdatedAt === metadata.updatedAt && (meta.revision ?? 0) === metadata.revision) return true;
 
+  onSyncing?.();
   const server = await requestWorkspace('GET');
   if (localStateChanged(state) || stopped()) {
     preserveLocalChanges(state);
@@ -612,7 +659,10 @@ async function reconcileWorkspace(onRestored?: () => void, stopped = () => false
     if (restored && !stopped() && !hasWorkspaceDraftPending() && state.generation === getWorkspaceMutationGeneration()) onRestored?.();
     return restored && !currentWorkspaceMeta().pending;
   }
-  if (workspaceHasData(local)) return uploadLocalWorkspace(false, onRestored);
+  if (workspaceHasData(local)) {
+    onSyncing?.();
+    return uploadLocalWorkspace(false, onRestored);
+  }
   writeMeta({ ...meta, revision, pending: false });
   acknowledgedMutationGeneration = state.generation;
   return true;
@@ -626,22 +676,38 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
   let timer: number | null = null;
   let retryTimer: number | null = null;
   let syncing = false;
-  const setStatus = (status: WorkspaceSyncStatus) => options.onStatus?.(status);
+  let conflictRetryAttempt = 0;
+  let reportedStatus: WorkspaceSyncStatus | undefined;
+  const setStatus = (status: WorkspaceSyncStatus) => {
+    if (reportedStatus === status) return;
+    reportedStatus = status;
+    options.onStatus?.(status);
+  };
+  const scheduleConflictRetry = () => {
+    if (retryTimer) window.clearTimeout(retryTimer);
+    const delay = Math.min(30_000, CONFLICT_RETRY_MS * 2 ** Math.min(conflictRetryAttempt, 4));
+    conflictRetryAttempt = Math.min(conflictRetryAttempt + 1, 4);
+    retryTimer = window.setTimeout(() => {
+      retryTimer = null;
+      void reconcile();
+    }, delay);
+  };
 
   const reconcile = async () => {
     if (stopped || syncing) return;
     syncing = true;
     let completed = false;
-    setStatus('syncing');
     try {
       if (bootstrapPromise) await bootstrapPromise;
       if (stopped) return;
-      const synced = await reconcileWorkspace(options.onRestored, () => stopped);
+      const synced = await reconcileWorkspace(options.onRestored, () => stopped, () => setStatus('syncing'));
       completed = true;
+      conflictRetryAttempt = 0;
       setStatus(synced ? 'synced' : 'idle');
     } catch (error) {
       if (error instanceof WorkspaceConflictError) {
         setStatus('conflict');
+        scheduleConflictRetry();
         return;
       }
       setStatus('offline');
@@ -662,11 +728,17 @@ export function startWorkspaceSync(options: WorkspaceSyncOptions = {}) {
     try {
       const synced = await uploadLocalWorkspace(keepalive);
       completed = true;
+      conflictRetryAttempt = 0;
       setStatus(synced ? 'synced' : 'idle');
     } catch (error) {
       const current = readMeta();
       if (current) writeMeta({ ...current, pending: true });
-      setStatus(error instanceof WorkspaceConflictError ? 'conflict' : 'error');
+      if (error instanceof WorkspaceConflictError) {
+        setStatus('conflict');
+        scheduleConflictRetry();
+      } else {
+        setStatus('error');
+      }
     } finally {
       syncing = false;
       if (completed) schedulePendingPush();

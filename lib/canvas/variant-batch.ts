@@ -85,6 +85,9 @@ export function canvasVariantVideoRequest(input: {
 export function canvasVideoTaskProgress(task: {
   status: string;
   progress?: number;
+  providerProgress?: number;
+  providerStatus?: string;
+  providerTaskId?: string;
   videoUrls?: readonly string[];
   remoteVideoUrls?: readonly string[];
   error?: string;
@@ -96,18 +99,51 @@ export function canvasVideoTaskProgress(task: {
     || /(?:fail|error|reject|cancel|expire|abort|deny)/.test(rawStatus);
   const completedStatus = /^(?:done|success(?:ful)?|succeed(?:ed)?|completed?|finished|ready)$/.test(rawStatus);
   const terminal = hasVideoResult || failedStatus || completedStatus;
+  const providerStatus = String(task.providerStatus || "").trim().toLowerCase();
+  const waiting = !terminal && (
+    /^(?:queued|pending|submitted|waiting|accepted|created)$/.test(rawStatus)
+    || /^(?:queued|pending|submitted|waiting|accepted|created)$/.test(providerStatus)
+  );
+  const providerAccepted = Boolean(task.providerTaskId)
+    || /^(?:queued|accepted|created)$/.test(rawStatus)
+    || /^(?:queued|accepted|created)$/.test(providerStatus);
+  const reportedProgress = Number.isFinite(task.progress)
+    ? task.progress
+    : Number.isFinite(task.providerProgress)
+      ? task.providerProgress
+      : undefined;
   const status = hasVideoResult || completedStatus
     ? ("completed" as const)
       : terminal
       ? ("failed" as const)
       : ("running" as const);
+  const statusLabel = task.error || (status === "completed"
+    ? "视频已完成"
+    : status === "failed"
+      ? "视频任务已中断"
+      : waiting
+        ? providerAccepted
+          ? "服务商已接收，等待排队"
+          : "等待服务商接收任务"
+        : reportedProgress === undefined
+          ? "服务商处理中，进度暂不可用"
+          : "视频生成中");
   return {
     hasVideoResult,
     terminal,
     status,
-    progress: Number(task.progress || (status === "completed" ? 100 : 0)),
+    waiting,
+    progress: status === "completed" ? 100 : status === "failed" ? 0 : reportedProgress,
+    statusLabel,
     url: url || undefined,
   };
+}
+
+export function canvasVariantVideoTaskStatus(
+  task: Parameters<typeof canvasVideoTaskProgress>[0],
+): CanvasVariantState["status"] {
+  const progress = canvasVideoTaskProgress(task);
+  return progress.waiting ? "pending" : progress.status;
 }
 
 /** Projects one polled video task into the existing media node data shape. */
@@ -116,6 +152,9 @@ export function canvasVariantVideoTaskData(
   task: {
     status: string;
     progress?: number;
+    providerProgress?: number;
+    providerStatus?: string;
+    providerTaskId?: string;
     videoUrls?: readonly string[];
     remoteVideoUrls?: readonly string[];
     error?: string;
@@ -126,18 +165,24 @@ export function canvasVariantVideoTaskData(
   const generationDurationMs = progress.terminal && data.generation?.createdAt
     ? Math.max(0, now - data.generation.createdAt)
     : undefined;
+  const status = progress.waiting ? "queued" : progress.status;
+  const generationDurationUnchanged = generationDurationMs === undefined
+    || data.generation?.durationMs === generationDurationMs;
+  if (
+    data.status === status
+    && data.progress === progress.progress
+    && data.url === (progress.url || data.url)
+    && data.statusLabel === progress.statusLabel
+    && (!progress.terminal || data.processingStartedAt === undefined)
+    && generationDurationUnchanged
+  ) return data;
   return {
     ...data,
-    status: progress.status,
+    status,
     progress: progress.progress,
     url: progress.url || data.url,
-    statusLabel:
-      task.error ||
-      (progress.status === "completed"
-        ? "瑙嗛宸插畬鎴?"
-        : progress.terminal
-          ? "瑙嗛浠诲姟宸蹭腑鏂?"
-          : "瑙嗛鐢熸垚涓?"),
+    statusLabel: progress.statusLabel,
+    ...(progress.terminal ? { processingStartedAt: undefined } : {}),
     ...(generationDurationMs !== undefined && data.generation
       ? { generation: { ...data.generation, durationMs: generationDurationMs } }
       : {}),
@@ -149,6 +194,9 @@ export function canvasVariantVideoNodeData(input: {
     id: string;
     status: string;
     progress?: number;
+    providerProgress?: number;
+    providerStatus?: string;
+    providerTaskId?: string;
     videoUrls?: readonly string[];
     remoteVideoUrls?: readonly string[];
     error?: string;
@@ -172,10 +220,10 @@ export function canvasVariantVideoNodeData(input: {
     role: "变体结果",
     model: input.task.modelId || input.params.model,
     jobId: input.task.id,
-    status: progress.status,
-    processingStartedAt: progress.status === "running" ? input.now : undefined,
+    status: progress.waiting ? "queued" : progress.status,
+    processingStartedAt: !progress.terminal ? input.now : undefined,
     progress: progress.progress,
-    statusLabel: progress.status === "completed" ? "视频已完成" : input.task.error || (progress.status === "failed" ? "视频任务已中断" : "视频生成中"),
+    statusLabel: progress.statusLabel,
     ...(progress.url ? { url: progress.url } : {}),
     generation: {
       kind: "video",

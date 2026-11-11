@@ -254,6 +254,7 @@ export type AgentApplicationCompositionOptions<TRuntime extends AgentComposition
   isCancelled?: (error: unknown) => boolean;
   timeoutMs: number;
   failoverTimeoutMs: number;
+  timeoutFor?: (runtime: TRuntime, mode: 'manual' | 'failover') => number;
   idleTimeoutMs: number | null;
   timeoutError: (phase: 'initial' | 'idle', timeoutMs: number) => Error;
   orderCandidates: (candidates: readonly TRuntime[]) => readonly TRuntime[];
@@ -273,7 +274,7 @@ export type AgentApplicationComposition<TRuntime extends AgentCompositionRuntime
   invokeChatModelStream: (payload: ChatPayload, signal?: AbortSignal) => Promise<StreamResponse>;
   invokeSpecificChatModel: (runtime: TRuntime, payload: ChatPayload, signal: AbortSignal) => Promise<ChatResponse>;
   invokeIntentClassifier?: (runtime: TRuntime, payload: ChatPayload, signal: AbortSignal) => Promise<ChatResponse>;
-  invokeCandidateChatModels: (candidates: readonly TRuntime[], payload: ChatPayload, signal: AbortSignal) => Promise<ChatResponse>;
+  invokeCandidateChatModels: (candidates: readonly TRuntime[], payload: ChatPayload, signal: AbortSignal, timeoutMs?: number) => Promise<ChatResponse>;
 };
 
 /**
@@ -300,6 +301,7 @@ export function createAgentApplicationComposition<TRuntime extends AgentComposit
     isCancelled: options.isCancelled,
     timeoutMs: options.timeoutMs,
     failoverTimeoutMs: options.failoverTimeoutMs,
+    timeoutFor: options.timeoutFor,
     idleTimeoutMs: options.idleTimeoutMs,
     timeoutError: options.timeoutError,
     health: {
@@ -338,6 +340,6 @@ export function createAgentApplicationComposition<TRuntime extends AgentComposit
         : chatCompletion(selectedRuntime.provider, selectedRuntime.model.rawId, payload, invokeSignal),
       signal,
     ),
-    invokeCandidateChatModels: (candidates, payload, signal) => invoker.invokeCandidates(candidates, payload, signal),
+    invokeCandidateChatModels: (candidates, payload, signal, timeoutMs) => invoker.invokeCandidates(candidates, payload, signal, timeoutMs),
   };
 }

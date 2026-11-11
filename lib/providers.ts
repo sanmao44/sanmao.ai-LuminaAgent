@@ -54,6 +54,34 @@ export type DiscoveredModel = {
   maxOutputTokens?: number;
 };
 
+const CLAUDE_STD_MODELS: DiscoveredModel[] = [
+  'claude-haiku-5-5',
+  'claude-opus-4-6',
+  'claude-opus-4-7',
+  'claude-opus-4-8',
+  'claude-opus-5',
+  'claude-opus-5-5',
+  'claude-sonnet-4-6',
+  'claude-sonnet-5',
+  'claude-sonnet-5-5',
+].map((id) => ({ id, name: id, capabilities: ['chat', 'vision'] }));
+
+export function is65535ClaudeCodeProvider(provider: Pick<RuntimeProvider, 'platform'>) {
+  return provider.platform === '65535-claude-code';
+}
+
+export function is65535ClaudeModelProvider(provider: Pick<RuntimeProvider, 'platform' | 'baseUrl'>, rawModelId: string) {
+  if (!/^claude-/i.test(rawModelId)) return false;
+  if (is65535ClaudeCodeProvider(provider)) return true;
+  try {
+    const endpoint = new URL(provider.baseUrl);
+    const supportedHost = endpoint.hostname === 'api2.65535.space' || endpoint.hostname === 'api2-cn.65535.space';
+    return supportedHost && /^\/(?:v1\/?)?$/.test(endpoint.pathname);
+  } catch {
+    return false;
+  }
+}
+
 async function preparePublicMediaUrl(value: string, kind: 'image' | 'video' | 'audio') {
   const input = String(value || '').trim();
   if (!input || (/^https?:\/\//i.test(input) && !isLocalProviderMediaUrl(input))) return input;
@@ -714,7 +742,7 @@ function unwrapProviderData(provider: RuntimeProvider, data: any) {
 
 function isJevModelId(rawId: string) {
   const value = String(rawId || '').trim().toLowerCase();
-  return value === 'jev-1.13' || value.endsWith('/jev-1.13');
+  return value === 'jev-1.14' || value.endsWith('/jev-1.14');
 }
 
 function jevSystemOneEndpoint(provider: RuntimeProvider) {
@@ -879,6 +907,7 @@ export function normalizeDiscoveredModels(data: any, provider?: RuntimeProvider)
 }
 
 export async function discoverModels(provider: RuntimeProvider) {
+  if (is65535ClaudeCodeProvider(provider)) return CLAUDE_STD_MODELS;
   if (isAgnesProvider(provider)) {
     // The Agnes catalog is intentionally curated because the service may not
     // publish every image/video model through /models.  The request itself is
@@ -969,6 +998,15 @@ async function mergeVideoDiscoveredModels(provider: RuntimeProvider, models: Dis
 }
 
 export async function testProviderConnection(provider: RuntimeProvider) {
+  if (is65535ClaudeCodeProvider(provider)) {
+    return {
+      mode: 'models' as const,
+      verified: false,
+      count: CLAUDE_STD_MODELS.length,
+      sample: CLAUDE_STD_MODELS.slice(0, 8),
+      message: 'Claude Std 模型清单已载入；尚未发送 API 请求，Key 会在首次聊天时验证。',
+    };
+  }
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') {
     const command = jimengCommand(provider.jimengCliPath);
     const cli = await new Promise<{ installed: boolean; version: string; loginHint: string }>((resolve) => {
@@ -1406,6 +1444,8 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
   if (input.outputFormat) body.output_format = input.outputFormat;
   if (input.background) body.background = input.background;
   if (provider.type === 'google-gemini') body.response_format = 'b64_json';
+  else if (input.responseFormat) body.response_format = input.responseFormat;
+  else if (/^gpt-image-2\.5(?:$|[-_.])/i.test(rawModelId.trim())) body.response_format = 'b64_json';
   if (providerReferences.length) {
     if (isModelScopeProvider(provider)) body.image_url = providerReferences.length === 1 ? providerReferences[0] : providerReferences;
     else if (is65535Provider(provider) || isApimartProvider(provider)) body.image_urls = providerReferences;
@@ -1811,6 +1851,11 @@ async function agnesChatRequest(provider: RuntimeProvider, rawModelId: string, p
 }
 
 export async function chatCompletion(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, signal?: AbortSignal) {
+  if (is65535ClaudeModelProvider(provider, rawModelId)) {
+    const { invokeClaudeCodeProvider } = await import('./claude-code-provider');
+    const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: false });
+    return invokeClaudeCodeProvider(provider, rawModelId, { ...payload, messages }, signal);
+  }
   if (isAgnesProvider(provider)) {
     const request = await agnesChatRequest(provider, rawModelId, payload);
     const data = await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000, signal);
@@ -1903,6 +1948,26 @@ async function fetchStreamingResponse(url: string, init: RequestInit, timeout: n
 export { fetchStreamingResponse };
 
 export async function chatCompletionStream(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, signal?: AbortSignal) {
+  if (is65535ClaudeModelProvider(provider, rawModelId)) {
+    const data = await chatCompletion(provider, rawModelId, payload, signal);
+    const encoder = new TextEncoder();
+    const message = data?.choices?.[0]?.message;
+    const chunks: unknown[] = [];
+    if (typeof message?.content === 'string' && message.content) {
+      chunks.push({ model: data?.model || rawModelId, choices: [{ index: 0, delta: { content: message.content }, finish_reason: null }] });
+    }
+    for (const [index, call] of (Array.isArray(message?.tool_calls) ? message.tool_calls : []).entries()) {
+      chunks.push({ model: data?.model || rawModelId, choices: [{ index: 0, delta: { tool_calls: [{ index, id: call.id, type: 'function', function: { name: call.function.name, arguments: call.function.arguments } }] }, finish_reason: null }] });
+    }
+    chunks.push({ model: data?.model || rawModelId, choices: [{ index: 0, delta: {}, finish_reason: message?.tool_calls?.length ? 'tool_calls' : 'stop' }] });
+    return new Response(new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    }), { headers: { 'Content-Type': 'text/event-stream' } });
+  }
   if (isAgnesProvider(provider) && agnesTextProtocol(provider) !== 'chat-completions') {
     const data = await chatCompletion(provider, rawModelId, payload, signal);
     const encoder = new TextEncoder();

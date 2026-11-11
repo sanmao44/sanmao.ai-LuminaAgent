@@ -1,0 +1,29 @@
+{
+  "$schema": "https://unpkg.com/wrangler@latest/config-schema.json",
+  "name": "sanmao-media-relay",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-11-11",
+  "workers_dev": true,
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "sanmao-media-relay"
+    }
+  ],
+  "vars": {
+    "MEDIA_UPLOADS_ENABLED": "true"
+  },
+  "ratelimits": [
+    {
+      "name": "UPLOAD_LIMITER",
+      "namespace_id": "9642183751",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

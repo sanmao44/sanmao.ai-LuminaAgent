@@ -37,6 +37,7 @@ export function filterCanvasAssets(
     query: string;
     tagFilter: string;
     sort: CanvasAssetSort;
+    projectId?: string;
     now?: number;
   },
 ) {
@@ -61,6 +62,7 @@ export function filterCanvasAssets(
     .filter((asset) =>
       (options.kind === "all" || asset.kind === options.kind) &&
       (options.source === "all" || asset.source === options.source) &&
+      (!options.projectId || asset.projectIds?.includes(options.projectId)) &&
       (!options.favoritesOnly || asset.favorite) &&
       matchesCollection(asset) &&
       (!tagSearch || asset.tags?.some((tag) => tag.toLowerCase().includes(tagSearch))) &&
@@ -133,12 +135,12 @@ export function canvasNodeAssetRecord(
       ? { sourceAssetId: node.data.sourceAssetId.trim() }
       : {}),
     name: String(node.data.name || "画布素材"),
-    source: (node.data.generation ? "canvas-output" : "canvas-upload") as AssetSource,
-    createdAt: Number(node.data.generation?.createdAt || fallbackCreatedAt),
+    source: (node.data.generation || node.data.speechGeneration ? "canvas-output" : "canvas-upload") as AssetSource,
+    createdAt: Number(node.data.generation?.createdAt || node.data.speechGeneration?.createdAt || fallbackCreatedAt),
     favorite: false,
-    prompt: node.data.generation?.prompt,
+    prompt: node.data.generation?.prompt || node.data.speechGeneration?.text,
     modelId: node.data.generation?.params.model,
-    modelName: typeof node.data.model === "string" ? node.data.model : undefined,
+    modelName: typeof node.data.model === "string" ? node.data.model : node.data.speechGeneration?.modelName,
     width: Number(node.data.nativeWidth) || undefined,
     height: Number(node.data.nativeHeight) || undefined,
     projectIds: context.projectId ? [context.projectId] : [],

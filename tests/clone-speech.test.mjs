@@ -75,6 +75,7 @@ test('按响应头与文件头判断真实音频容器', () => {
   assert.equal(speech.speechContentType(mp3, 'application/octet-stream'), 'audio/mpeg');
   assert.equal(speech.audioExtension('audio/wav'), 'wav');
   assert.equal(speech.audioExtension('audio/mpeg'), 'mp3');
+  assert.equal(speech.audioExtension('audio/webm'), 'webm');
 });
 
 test('服务商用 200 回 JSON 报错时不能当音频存盘', async () => {

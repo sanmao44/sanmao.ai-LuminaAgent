@@ -25,6 +25,8 @@ export type ProviderCoordinatorOptions<T extends ProviderRuntime> = {
   isCancelled?: (error: unknown) => boolean;
   timeoutMs: number;
   failoverTimeoutMs: number;
+  /** Optional per-runtime deadline for providers with different latency profiles. */
+  timeoutFor?: (runtime: T, mode: 'manual' | 'failover') => number;
   idleTimeoutMs: number | null;
   timeoutError: (phase: 'initial' | 'idle', timeoutMs: number) => Error;
   health?: ProviderHealthPort<T>;
@@ -73,7 +75,8 @@ export class ProviderCoordinator<T extends ProviderRuntime> {
       signal,
       operation: (runtime, callSignal) => withProviderResponseDeadline({
         signal,
-        timeoutMs: canFailover ? this.options.failoverTimeoutMs : this.options.timeoutMs,
+        timeoutMs: this.options.timeoutFor?.(runtime, canFailover ? 'failover' : 'manual')
+          || (canFailover ? this.options.failoverTimeoutMs : this.options.timeoutMs),
         idleTimeoutMs: this.options.idleTimeoutMs,
         operation: (deadlineSignal) => operation(runtime, deadlineSignal || callSignal),
         timeoutError: this.options.timeoutError,
@@ -95,7 +98,7 @@ export class ProviderCoordinator<T extends ProviderRuntime> {
       signal,
       operation: (_runtime, callSignal) => withProviderResponseDeadline({
         signal,
-        timeoutMs: this.options.timeoutMs,
+        timeoutMs: this.options.timeoutFor?.(runtime, 'manual') || this.options.timeoutMs,
         idleTimeoutMs: this.options.idleTimeoutMs,
         operation: (deadlineSignal) => operation(runtime, deadlineSignal || callSignal),
         timeoutError: this.options.timeoutError,
@@ -114,6 +117,7 @@ export class ProviderCoordinator<T extends ProviderRuntime> {
     candidates: readonly T[],
     signal: AbortSignal,
     operation: (runtime: T, callSignal: AbortSignal) => Promise<TResponse>,
+    timeoutMs = this.options.failoverTimeoutMs,
   ) {
     const primary = candidates[0];
     if (!primary) throw new Error('No provider candidate available');
@@ -133,7 +137,7 @@ export class ProviderCoordinator<T extends ProviderRuntime> {
       signal,
       operation: (runtime, callSignal) => withProviderResponseDeadline({
         signal,
-        timeoutMs: this.options.failoverTimeoutMs,
+        timeoutMs,
         idleTimeoutMs: this.options.idleTimeoutMs,
         operation: (deadlineSignal) => operation(runtime, deadlineSignal || callSignal),
         timeoutError: this.options.timeoutError,

@@ -53,7 +53,7 @@ export async function POST(request: Request) {
     if (!references.length) return Response.json({ error: '请至少添加一张参考图。' }, { status: 400 });
     if (body.mask && !mask) return Response.json({ error: '局部编辑范围必须是 PNG 格式。' }, { status: 400 });
     if (rawMoveGuide && !mask) return Response.json({ error: '移动引导图需要同时提交局部编辑范围。' }, { status: 400 });
-    if (rawMoveSourceMask && (!rawMoveSourceMask.startsWith('data:image/png') || !rawMoveGuide)) return Response.json({ error: '移动原位置范围需要 PNG 格式的移动引导图。' }, { status: 400 });
+    if (rawMoveSourceMask && (!rawMoveSourceMask.startsWith('data:image/png') || !mask)) return Response.json({ error: '移动原位置范围需要 PNG 格式的局部编辑范围。' }, { status: 400 });
     const requestedModelId = String(body.model || 'auto');
     let runtime = await getRuntimeImageModelForCapability(requestedModelId, 'edit');
     if (!runtime) return Response.json({ error: '没有支持图片修改的可用模型。' }, { status: 400 });

@@ -2,6 +2,7 @@
 
 import type { AgentDeliverable } from "./agent-intent";
 import type { CreativeRoute } from "@/packages/contracts/creative";
+import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { CreativeReference } from "./creative-references";
 import type { WorkspaceContext } from "./workspace-context";
 import type { CanvasDocument } from "./canvas/types";
@@ -59,6 +60,7 @@ export type AgentRequestPayload = {
   /** 长任务进度 id：服务端按它记录阶段快照，前端轮询 /api/agent/progress 读取。 */
   runId?: string;
   context?: WorkspaceContext;
+  projectBrief?: CreativeProjectBrief;
   /** Current Canvas document used only to validate an Agent-proposed patch. */
   canvasDocument?: CanvasDocument;
   /** The selected canvas nodes are an explicit target, not incidental prompt context. */
@@ -294,7 +296,7 @@ export async function readAgentProgress(
 /**
  * 按 runId 轮询长任务进度：主管线在工具轮里写快照（app/api/agent/progress），前端在这里读。
  *
- * - 正文开始流式返回（isSettled）、用户停止、主管线收尾，轮询都会自己停；
+ * - 用户停止、完成快照（done）或达到轮询上限时，轮询会结束；
  * - 同一步骤超过 3 秒没变就带上秒表：模型单次思考可能很久，秒表让用户看到确实在往前走。
  *
  * 返回手动停止的函数；读进度失败只是没有进度，不会影响这一轮对话。
@@ -303,8 +305,6 @@ export function pollAgentProgress(
   runId: string,
   options: {
     signal?: AbortSignal;
-    /** 已经拿到正文（或已收尾）时返回 true，轮询停止。 */
-    isSettled?: () => boolean;
     onProgress: (progress: { stage: AgentProgressStage; message: string }) => void;
     intervalMs?: number;
     maxPolls?: number;
@@ -312,7 +312,6 @@ export function pollAgentProgress(
 ): () => void {
   const intervalMs = options.intervalMs ?? 900;
   const maxPolls = options.maxPolls ?? 400;
-  const settled = () => options.isSettled?.() === true;
   let stopped = false;
   let polls = 0;
   let updatedAt = 0;
@@ -326,13 +325,10 @@ export function pollAgentProgress(
   if (options.signal?.aborted) stop();
   else options.signal?.addEventListener("abort", stop, { once: true });
   const tick = async () => {
-    if (stopped || settled()) {
-      stopped = true;
-      return;
-    }
+    if (stopped) return;
     polls += 1;
     const snapshot = await readAgentProgress(runId, options.signal);
-    if (stopped || settled()) return;
+    if (stopped) return;
     if (snapshot) {
       if (snapshot.updatedAt !== updatedAt) {
         updatedAt = snapshot.updatedAt;

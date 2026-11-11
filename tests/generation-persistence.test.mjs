@@ -3,6 +3,38 @@ import test from 'node:test';
 import path from 'node:path';
 import { createTsRequire } from './ts-require.mjs';
 
+test('records a safe download failure when a remote provider image is retained', async () => {
+  const root = process.cwd();
+  const generationLogPath = path.resolve(root, 'lib/generation-log');
+  const imageStoragePath = path.resolve(root, 'lib/image-storage');
+  const logs = [];
+  const providerUrl = 'https://provider.example/result.png?signature=private';
+  const load = createTsRequire(root, {
+    [generationLogPath]: {
+      appendGenerationLog: async (log) => logs.push(log),
+      finishGenerationLog: async (_id, patch) => logs.push(patch),
+    },
+    [imageStoragePath]: {
+      persistGeneratedImages: async () => ({
+        images: [{ url: providerUrl }],
+        path: '/images',
+        remoteFallbacks: [{ index: 0, url: providerUrl, error: 'download failed: provider.example (ECONNRESET)' }],
+      }),
+    },
+  });
+  const persistence = load('./lib/generation-persistence');
+
+  await persistence.persistGenerationResult({
+    images: [{ url: providerUrl }],
+    startedAt: 100,
+    providerFinishedAt: 200,
+    log: { mode: 'generate', taskKind: 'media', prompt: 'test' },
+  });
+
+  assert.match(logs[0].storageError, /ECONNRESET/);
+  assert.doesNotMatch(logs[0].storageError, /signature=private/);
+});
+
 test('keeps provider image results deliverable when local persistence throws', async () => {
   const root = process.cwd();
   const generationLogPath = path.resolve(root, 'lib/generation-log');

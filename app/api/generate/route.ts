@@ -198,7 +198,7 @@ export async function POST(request: Request) {
     if (rawMoveGuide && !moveGuide) return Response.json({ error: '移动引导图必须是图片数据。' }, { status: 400 });
     if (rawMoveSourceMask && !moveSourceMask) return Response.json({ error: '移动原位置范围必须是 PNG 图片。' }, { status: 400 });
     if (moveGuide && (!mask || !references.length)) return Response.json({ error: '移动引导图需要同时提交原图和局部编辑范围。' }, { status: 400 });
-    if (moveSourceMask && !moveGuide) return Response.json({ error: '移动原位置范围需要同时提交移动引导图。' }, { status: 400 });
+    if (moveSourceMask && !mask) return Response.json({ error: '移动原位置范围需要同时提交局部编辑范围。' }, { status: 400 });
     if (requestedMode === 'reference-generate' && (mask || moveGuide || camera)) {
       return Response.json({ error: '参考图生成不能同时提供局部编辑或角度控制。' }, { status: 400 });
     }
@@ -358,7 +358,7 @@ export async function POST(request: Request) {
       ? await enforceLocalEditMask(providerImages, moveGuide || references[0], mask, {
         storagePath,
         signal: requestController.signal,
-        ...(moveSourceMask && moveGuide ? {
+        ...(moveSourceMask ? {
           moveSourceMaskReference: moveSourceMask,
           moveSourceOriginalReference: references[0],
         } : {}),

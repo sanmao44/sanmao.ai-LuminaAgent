@@ -61,6 +61,32 @@ test("canvas asset filtering keeps collection, text, tag, favorite and sort sema
   assert.deepEqual(assetLibrary.filterCanvasAssets(assets, { ...options, collection: "all", kind: "all", query: "", tagFilter: "", sort: "name" }).map((asset) => asset.id), ["old-video", "mid-image", "new-image"]);
 });
 
+test("canvas asset project filter includes only assets linked to the selected project", () => {
+  const assets = [
+    { id: "in-project", name: "Project asset", createdAt: 3, projectIds: ["project-1"] },
+    { id: "other-project", name: "Other asset", createdAt: 2, projectIds: ["project-2"] },
+    { id: "unassigned", name: "Unassigned asset", createdAt: 1, projectIds: [] },
+  ];
+  const options = {
+    collection: "all",
+    kind: "all",
+    source: "all",
+    favoritesOnly: false,
+    query: "",
+    tagFilter: "",
+    sort: "newest",
+  };
+
+  assert.deepEqual(
+    assetLibrary.filterCanvasAssets(assets, { ...options, projectId: "project-1" }).map((asset) => asset.id),
+    ["in-project"],
+  );
+  assert.deepEqual(
+    assetLibrary.filterCanvasAssets(assets, options).map((asset) => asset.id),
+    ["in-project", "other-project", "unassigned"],
+  );
+});
+
 test("canvas asset eligibility requires ready media nodes", () => {
   const base = { type: "media", data: { kind: "image", url: "https://example.test/a.png" } };
   assert.equal(assetLibrary.canAddCanvasAsset(base), true);
@@ -144,6 +170,38 @@ test("canvas nodes project to the existing asset record contract", () => {
   assert.equal(assetLibrary.canvasNodeAssetRecord({ ...node, type: "prompt" }, {
     activeProjectId: "active-project",
   }), null);
+});
+
+test("generated speech nodes project their source text and model into the asset record", () => {
+  const record = assetLibrary.canvasNodeAssetRecord({
+    id: "voice-node",
+    type: "media",
+    data: {
+      kind: "audio",
+      url: "/api/storage/audio?name=narration.wav",
+      name: "旁白",
+      speechGeneration: {
+        text: "欢迎来到项目介绍。",
+        engine: "offline",
+        modelName: "系统中文女声",
+        createdAt: 456,
+      },
+    },
+  }, { activeProjectId: "canvas-1", projectId: "project-1" });
+
+  assert.deepEqual(record && {
+    source: record.source,
+    createdAt: record.createdAt,
+    prompt: record.prompt,
+    modelName: record.modelName,
+    projectIds: record.projectIds,
+  }, {
+    source: "canvas-output",
+    createdAt: 456,
+    prompt: "欢迎来到项目介绍。",
+    modelName: "系统中文女声",
+    projectIds: ["project-1"],
+  });
 });
 
 test("canvas asset projections preserve the explicit storage identity", () => {

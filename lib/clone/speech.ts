@@ -45,6 +45,7 @@ export function audioExtension(contentType: string) {
   if (mime === 'audio/aac') return 'aac';
   if (mime === 'audio/flac') return 'flac';
   if (mime === 'audio/opus') return 'opus';
+  if (mime === 'audio/webm') return 'webm';
   return 'mp3';
 }
 

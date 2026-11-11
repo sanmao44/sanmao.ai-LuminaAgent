@@ -34,6 +34,12 @@ in the compatibility column.
 | Architecture enforcement | locked | `tests/architecture-enforcement.test.mjs` | Machine-checks contract purity, core dependency direction, transport boundary, worker task boundary and the single SQLite opener |
 | Physical boundary | settled | Modular Next Monolith with in-process worker dispatch | Separate Web/API/Worker deployables are intentionally deferred until deployment needs justify them |
 
+Canvas browser storage migration keeps `sanmao.canvas.nova-backup` as the full
+rollback snapshot. It may remove only the matching `nova.v1` source index and
+documents after both the migration marker and backup validate and the source
+values still match the snapshot. Preserve changed, incomplete, or unbacked
+legacy values; retire the snapshot only with an explicit recovery path.
+
 ## Data safety
 
 SQLite activation requires write drain, migration, validation and application

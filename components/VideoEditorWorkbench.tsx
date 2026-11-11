@@ -12,6 +12,7 @@ import type {
 import SelectMenu from "@/components/SelectMenu";
 import {
   addVideoEditorCaption,
+  addVideoEditorSpeechCaptions,
   clipEnd,
   clipsAtTime,
   moveVideoEditorClip,
@@ -161,6 +162,7 @@ export default function VideoEditorWorkbench({ node, document, onClose, onChange
   const [history, setHistory] = useState<CanvasVideoEditorState[]>([]);
   const [future, setFuture] = useState<CanvasVideoEditorState[]>([]);
   const [creating, setCreating] = useState(false);
+  const [speechCaptionMessage, setSpeechCaptionMessage] = useState<string | null>(null);
   const [previewBounds, setPreviewBounds] = useState({ width: 0, viewportWidth: 0, viewportHeight: 0 });
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const brollVideoRefs = useRef(new Map<string, HTMLVideoElement>());
@@ -175,6 +177,17 @@ export default function VideoEditorWorkbench({ node, document, onClose, onChange
   const suppressNextClipClickRef = useRef(false);
   const duration = Math.max(1, draft.projectDuration);
   const selectedClip = draft.clips.find((clip) => clip.id === selectedClipId) || null;
+  const selectedSpeechSource = selectedClip && (selectedClip.track === "audio" || selectedClip.track === "reference-audio")
+    ? sourceNodeForClip(document, selectedClip)
+    : undefined;
+  const selectedSpeechText = selectedSpeechSource?.data.speechGeneration?.text?.trim() || "";
+  const selectedSpeechDurationMs = Number(selectedSpeechSource?.data.sourceDurationMs || selectedSpeechSource?.data.durationMs);
+  const selectedSpeechDuration = Number.isFinite(selectedSpeechDurationMs) && selectedSpeechDurationMs > 0
+    ? Math.max(0, Math.min(
+      selectedClip?.duration || 0,
+      Math.max(0, selectedSpeechDurationMs / 1000 - (selectedClip?.sourceOffset || 0)) / (selectedClip?.playbackRate || 1),
+    ))
+    : 0;
   const activeClips = clipsAtTime(draft, currentTime);
   const activeVideo = activeClips.find((clip) => clip.track === "video");
   const activeAudio = activeClips.find((clip) => clip.track === "audio" || clip.track === "reference-audio");
@@ -385,6 +398,38 @@ export default function VideoEditorWorkbench({ node, document, onClose, onChange
     commitHistory(draftRef.current, normalized);
     applyDraft(normalized);
     persistDraft(normalized);
+  };
+  const generateSpeechCaptions = () => {
+    if (!selectedClip || !selectedSpeechSource || !selectedSpeechText) {
+      setSpeechCaptionMessage("这个音频片段没有可用的配音原文。");
+      return;
+    }
+    if (selectedSpeechDuration < MIN_CLIP_DURATION) {
+      setSpeechCaptionMessage("先播放一次音频，让系统读取时长后再生成字幕。");
+      return;
+    }
+    const result = addVideoEditorSpeechCaptions(draft, {
+      sourceNodeId: selectedClip.sourceNodeId || "",
+      sourceClipId: selectedClip.id,
+      start: selectedClip.start,
+      durationSeconds: selectedSpeechDuration,
+      sourceOffset: selectedClip.sourceOffset,
+      sourceDurationSeconds: selectedSpeechDurationMs / 1000,
+      playbackRate: selectedClip.playbackRate,
+      text: selectedSpeechText,
+    });
+    if (result.reason) {
+      const message = result.reason === "caption-overlap"
+        ? "当前时间段已有其他字幕，请先移动或删除它们。"
+        : result.reason === "invalid-duration"
+          ? "音频时长还不可用，请稍后重试。"
+          : "这条配音没有可生成的字幕文本。";
+      setSpeechCaptionMessage(message);
+      return;
+    }
+    emit(result.state);
+    setSelectedClipId(result.clipIds[0] || null);
+    setSpeechCaptionMessage("字幕时间按原文长度估算；再次生成会替换此音频片段的自动草稿。");
   };
   const undo = () => {
     const previous = history.at(-1);
@@ -922,6 +967,22 @@ export default function VideoEditorWorkbench({ node, document, onClose, onChange
               {selectedClip.track === "effect" && <div className="canvas-video-editor-effect-inspector"><div className="canvas-video-editor-section-title"><b>动效事件</b><small>与最终成片同步渲染</small></div><label><span>效果名称</span><input value={selectedClip.effect || selectedClip.name} onChange={(event) => setClipPatch({ effect: event.target.value, name: event.target.value })} /></label><label className="canvas-video-editor-toggle"><input type="checkbox" checked={selectedClip.enabled !== false} onChange={(event) => setClipPatch({ enabled: event.target.checked })} /><span>启用此动效</span></label></div>}
               <div className="canvas-video-editor-field-grid"><label><span>开始时间</span><output>{timecodeLabel(selectedClip.start, true)}</output></label><label><span>结束时间</span><output>{timecodeLabel(clipEnd(selectedClip), true)}</output></label><label><span>时长</span><output>{timecodeLabel(selectedClip.duration, true)}</output></label><label><span>源起点</span><output>{timecodeLabel(selectedClip.sourceOffset, true)}</output></label></div>
               {selectedClip.track !== "caption" && selectedClip.track !== "graphics" && <label className="canvas-video-editor-range-field"><span>音量</span><div><input aria-label="音量" type="range" min="0" max="1" step="0.05" value={Math.min(1, selectedClip.volume ?? 1)} onChange={(event) => setClipPatch({ volume: Number(event.target.value) })} /><output>{Math.round(Math.min(1, selectedClip.volume ?? 1) * 100)}%</output></div></label>}
+              {selectedSpeechSource && <div className="canvas-video-editor-speech-captions">
+                <div className="canvas-video-editor-section-title"><b>智能字幕</b><small>从配音原文生成可编辑草稿</small></div>
+                <button
+                  type="button"
+                  className="canvas-video-editor-speech-caption-button"
+                  onClick={generateSpeechCaptions}
+                  disabled={!selectedSpeechText || selectedSpeechDuration < MIN_CLIP_DURATION}
+                  title="字幕时间按原文长度估算；再次生成会替换此音频片段的自动草稿"
+                >
+                  {draft.clips.some((clip) => clip.generatedFromClipId === selectedClip.id) ? "重新生成字幕草稿" : "生成字幕草稿"}
+                </button>
+                <small className="canvas-video-editor-speech-caption-hint">
+                  {!selectedSpeechText ? "这条音频没有保存配音原文。" : selectedSpeechDuration < MIN_CLIP_DURATION ? "等待音频时长读取完成。" : "时间按原文长度估算，可继续逐条校准和编辑。"}
+                </small>
+                {speechCaptionMessage && <small className="canvas-video-editor-speech-caption-message" role="status">{speechCaptionMessage}</small>}
+              </div>}
               {selectedClip.track === "caption" && <div className="canvas-video-editor-caption-settings"><div className="canvas-video-editor-section-title"><b>字幕样式</b><small>可直接拖动预览调整位置</small></div><label className="canvas-video-editor-range-field"><span>字号</span><div><input aria-label="字幕字号" type="range" min="20" max="120" step="1" value={selectedClip.fontSize ?? 42} onChange={(event) => setClipPatch({ fontSize: Number(event.target.value) })} /><output>{selectedClip.fontSize ?? 42}px</output></div></label><label className="canvas-video-editor-range-field"><span>背景</span><div><input aria-label="字幕背景透明度" type="range" min="0" max="1" step="0.05" value={selectedClip.captionBackgroundOpacity ?? 0.68} onChange={(event) => setClipPatch({ captionBackgroundOpacity: Number(event.target.value) })} /><output>{Math.round((selectedClip.captionBackgroundOpacity ?? 0.68) * 100)}%</output></div></label><label className="canvas-video-editor-range-field"><span>X 位置</span><div><input aria-label="字幕 X 位置" type="range" min="-1" max="1" step="0.01" value={selectedClip.x ?? 0} onChange={(event) => setClipPatch({ x: Number(event.target.value) })} /><output>{(selectedClip.x ?? 0).toFixed(2)}</output></div></label><label className="canvas-video-editor-range-field"><span>Y 位置</span><div><input aria-label="字幕 Y 位置" type="range" min="-1" max="1" step="0.01" value={selectedClip.y ?? 0.35} onChange={(event) => setClipPatch({ y: Number(event.target.value) })} /><output>{(selectedClip.y ?? 0.35).toFixed(2)}</output></div></label><label className="canvas-video-editor-range-field"><span>不透明度</span><div><input aria-label="字幕不透明度" type="range" min="0" max="1" step="0.05" value={selectedClip.opacity ?? 1} onChange={(event) => setClipPatch({ opacity: Number(event.target.value) })} /><output>{Math.round((selectedClip.opacity ?? 1) * 100)}%</output></div></label><div className="canvas-video-editor-choice"><span>位置预设</span><div><button type="button" className={(selectedClip.y ?? 0.35) > 0.9 ? "active" : ""} onClick={() => setClipPatch({ y: 1 })}>上</button><button type="button" className={Math.abs((selectedClip.y ?? 0.35) - 0.73) < 0.08 ? "active" : ""} onClick={() => setClipPatch({ y: 0.73 })}>中</button><button type="button" className={(selectedClip.y ?? 0.35) < 0.2 ? "active" : ""} onClick={() => setClipPatch({ y: 0 })}>下</button></div></div><button type="button" className="canvas-video-editor-reset-transform" onClick={() => setClipPatch({ fontSize: 42, captionBackgroundOpacity: 0.68, x: 0, y: 0.35, opacity: 1, scale: 1 })}>重置字幕样式</button></div>}
               {selectedClip.track === "graphics" && <div className="canvas-video-editor-caption-settings canvas-video-editor-graphics-settings"><div className="canvas-video-editor-section-title"><b>画面字卡样式</b><small>独立于口播字幕，可直接拖动预览</small></div><div className="canvas-video-editor-choice"><span>预设</span><div><button type="button" className={!selectedClip.graphicsStyle ? "active" : ""} onClick={() => setClipPatch({ graphicsStyle: "plain" })}>纯文字</button><button type="button" className={graphicsStyleFlags(selectedClip.graphicsStyle).outline ? "active" : ""} onClick={() => setClipPatch({ graphicsStyle: "outlined" })}>描边</button><button type="button" className={graphicsStyleFlags(selectedClip.graphicsStyle).card ? "active" : ""} onClick={() => setClipPatch({ graphicsStyle: "card", captionBackgroundOpacity: selectedClip.captionBackgroundOpacity ?? 0.72 })}>色块卡</button></div></div><label className="canvas-video-editor-range-field"><span>字号</span><div><input aria-label="画面字卡字号" type="range" min="20" max="160" step="1" value={selectedClip.fontSize ?? 48} onChange={(event) => setClipPatch({ fontSize: Number(event.target.value) })} /><output>{selectedClip.fontSize ?? 48}px</output></div></label><label className="canvas-video-editor-range-field"><span>底板透明度</span><div><input aria-label="画面字卡底板透明度" type="range" min="0" max="1" step="0.05" value={selectedClip.captionBackgroundOpacity ?? 0} onChange={(event) => setClipPatch({ captionBackgroundOpacity: Number(event.target.value) })} /><output>{Math.round((selectedClip.captionBackgroundOpacity ?? 0) * 100)}%</output></div></label><label className="canvas-video-editor-range-field"><span>缩放</span><div><input aria-label="画面字卡缩放" type="range" min="0.5" max="2.5" step="0.05" value={selectedClip.scale ?? 1} onChange={(event) => setClipPatch({ scale: Number(event.target.value) })} /><output>{Math.round((selectedClip.scale ?? 1) * 100)}%</output></div></label><label className="canvas-video-editor-range-field"><span>X 位置</span><div><input aria-label="画面字卡 X 位置" type="range" min="-1" max="1" step="0.01" value={selectedClip.x ?? 0} onChange={(event) => setClipPatch({ x: Number(event.target.value) })} /><output>{(selectedClip.x ?? 0).toFixed(2)}</output></div></label><label className="canvas-video-editor-range-field"><span>Y 位置</span><div><input aria-label="画面字卡 Y 位置" type="range" min="-1" max="1" step="0.01" value={selectedClip.y ?? 0.73} onChange={(event) => setClipPatch({ y: Number(event.target.value) })} /><output>{(selectedClip.y ?? 0.73).toFixed(2)}</output></div></label><label className="canvas-video-editor-range-field"><span>不透明度</span><div><input aria-label="画面字卡不透明度" type="range" min="0" max="1" step="0.05" value={selectedClip.opacity ?? 1} onChange={(event) => setClipPatch({ opacity: Number(event.target.value) })} /><output>{Math.round((selectedClip.opacity ?? 1) * 100)}%</output></div></label><button type="button" className="canvas-video-editor-reset-transform" onClick={() => setClipPatch({ graphicsStyle: "plain", fontSize: 48, captionBackgroundOpacity: 0, scale: 1, x: 0, y: 0.73, opacity: 1 })}>重置字卡样式</button></div>}
               {selectedClip.track === "video" && selectedClip.layout && <div className="canvas-video-editor-transform canvas-video-editor-layout-settings"><div className="canvas-video-editor-section-title"><b>参考构图</b><small>布局与最终成片保持一致，可继续调整素材区域</small></div><div className="canvas-video-editor-choice"><span>版式</span><div>{(["full", "split-horizontal", "split-vertical", "picture-in-picture", "card"] as CanvasVideoEditorLayoutMode[]).map((mode) => <button type="button" key={mode} className={selectedClip.layout?.mode === mode ? "active" : ""} onClick={() => setClipPatch({ layout: { ...(selectedClip.layout || { mode: "full" }), mode } })}>{mode === "full" ? "全画面" : mode === "split-horizontal" ? "左右分栏" : mode === "split-vertical" ? "上下分区" : mode === "picture-in-picture" ? "画中画" : "卡片"}</button>)}</div></div><label className="canvas-video-editor-range-field"><span>内边距</span><div><input aria-label="参考构图内边距" type="range" min="0" max="0.2" step="0.01" value={selectedClip.layout.padding ?? 0.06} onChange={(event) => setClipPatch({ layout: { ...selectedClip.layout!, padding: Number(event.target.value) } })} /><output>{Math.round((selectedClip.layout.padding ?? 0.06) * 100)}%</output></div></label><label className="canvas-video-editor-range-field"><span>圆角</span><div><input aria-label="参考构图圆角" type="range" min="0" max="0.2" step="0.01" value={selectedClip.layout.radius ?? 0} onChange={(event) => setClipPatch({ layout: { ...selectedClip.layout!, radius: Number(event.target.value) } })} /><output>{Math.round((selectedClip.layout.radius ?? 0) * 100)}%</output></div></label></div>}

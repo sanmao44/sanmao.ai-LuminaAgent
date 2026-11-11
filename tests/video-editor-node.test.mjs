@@ -82,6 +82,75 @@ test('removes disconnected source clips but preserves internal captions', () => 
   assert.equal(synced.clips.some((clip) => clip.type === 'caption'), true);
 });
 
+test('generates timed caption drafts from speech text and preserves the audio range', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 8,
+    clips: [
+      { id: 'voice', track: 'audio', type: 'audio', name: '旁白', start: 2, duration: 6, sourceOffset: 0 },
+      { id: 'manual', track: 'caption', type: 'caption', name: '手工字幕', start: 0, duration: 1, sourceOffset: 0, text: '片头', },
+    ],
+  });
+  const result = editor.addVideoEditorSpeechCaptions(state, {
+    sourceNodeId: 'voice-node',
+    start: 2,
+    durationSeconds: 6,
+    text: '第一句。第二句！第三句？',
+  });
+  assert.equal(result.reason, undefined);
+  assert.equal(result.clipIds.length, 3);
+  const generated = result.state.clips.filter((clip) => clip.generatedFromNodeId === 'voice-node');
+  assert.equal(generated.length, 3);
+  assert.equal(generated[0].start, 2);
+  assert.equal(generated.at(-1).start + generated.at(-1).duration, 8);
+  assert.deepEqual(generated.map((clip) => clip.text), ['第一句。', '第二句！', '第三句？']);
+  assert.equal(result.state.clips.find((clip) => clip.id === 'manual').text, '片头');
+});
+
+test('re-generating speech captions replaces only that source draft and keeps manual captions', () => {
+  const initial = editor.addVideoEditorSpeechCaptions(editor.normalizeVideoEditorState({
+    projectDuration: 5,
+    clips: [
+      { id: 'voice-a', track: 'audio', type: 'audio', name: 'A', start: 0, duration: 5, sourceOffset: 0 },
+      { id: 'voice-b', track: 'audio', type: 'audio', name: 'B', start: 5, duration: 2, sourceOffset: 0 },
+      { id: 'manual', track: 'caption', type: 'caption', name: '手工', start: 7, duration: 1, sourceOffset: 0, text: '保留', },
+    ],
+  }), { sourceNodeId: 'audio-a', start: 0, durationSeconds: 5, text: '旧文案。' });
+  const withOther = editor.addVideoEditorSpeechCaptions(initial.state, {
+    sourceNodeId: 'audio-b', start: 5, durationSeconds: 2, text: '另一条。',
+  });
+  const regenerated = editor.addVideoEditorSpeechCaptions(withOther.state, {
+    sourceNodeId: 'audio-a', start: 0, durationSeconds: 5, text: '新文案。',
+  });
+  assert.equal(regenerated.state.clips.filter((clip) => clip.generatedFromNodeId === 'audio-a').length, 1);
+  assert.equal(regenerated.state.clips.find((clip) => clip.generatedFromNodeId === 'audio-a').text, '新文案。');
+  assert.equal(regenerated.state.clips.find((clip) => clip.generatedFromNodeId === 'audio-b').text, '另一条。');
+  assert.equal(regenerated.state.clips.find((clip) => clip.id === 'manual').text, '保留');
+});
+
+test('rejects speech caption drafts that overlap another source without changing state', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 6,
+    clips: [{ id: 'existing', generatedFromNodeId: 'other-audio', track: 'caption', type: 'caption', name: '已有', start: 2, duration: 2, sourceOffset: 0, text: '已有字幕' }],
+  });
+  const result = editor.addVideoEditorSpeechCaptions(state, {
+    sourceNodeId: 'new-audio', start: 1, durationSeconds: 3, text: '冲突字幕。',
+  });
+  assert.equal(result.reason, 'caption-overlap');
+  assert.deepEqual(result.state, state);
+  assert.deepEqual(result.clipIds, []);
+});
+
+test('normalizes generated caption source ids and rejects unusable speech inputs', () => {
+  const state = editor.normalizeVideoEditorState({
+    projectDuration: 1,
+    clips: [{ id: 'caption', generatedFromNodeId: '  voice-a  ', track: 'caption', type: 'caption', name: '字幕', start: 0, duration: 1, sourceOffset: 0, text: 'x' }],
+  });
+  assert.equal(state.clips[0].generatedFromNodeId, 'voice-a');
+  assert.equal(editor.addVideoEditorSpeechCaptions(state, { sourceNodeId: '', start: 0, durationSeconds: 1, text: 'x' }).reason, 'invalid-source');
+  assert.equal(editor.addVideoEditorSpeechCaptions(state, { sourceNodeId: 'voice', start: 0, durationSeconds: 0, text: 'x' }).reason, 'invalid-duration');
+  assert.equal(editor.addVideoEditorSpeechCaptions(state, { sourceNodeId: 'voice', start: 0, durationSeconds: 1, text: '   ' }).reason, 'empty-text');
+});
+
 test('keeps an explicitly deleted source clip excluded during later input sync', () => {
   let state = editor.createVideoEditorState([{ nodeId: 'video-1', kind: 'video' }]);
   state = editor.removeVideoEditorClip(state, 'clip-video-1');

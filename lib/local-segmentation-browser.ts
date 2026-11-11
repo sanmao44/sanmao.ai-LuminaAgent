@@ -105,15 +105,23 @@ function modelFileUrl(file: string) {
   return `https://huggingface.co/${MODEL_ID}/resolve/${MODEL_REVISION}/${file}`;
 }
 
-function sameOriginModelFileUrl(file: string) {
-  if (typeof window === 'undefined') return null;
-  const path = [
+function modelFilePath(file: string) {
+  return [
     ...MODEL_ID.split('/'),
     'resolve',
     MODEL_REVISION,
     ...file.split('/'),
   ].map(encodeURIComponent).join('/');
-  return new URL(`/api/local-segmentation/${path}`, window.location.origin).toString();
+}
+
+function sameOriginModelFileUrl(file: string) {
+  if (typeof window === 'undefined') return null;
+  return new URL(`/local-models/${modelFilePath(file)}`, window.location.origin).toString();
+}
+
+function legacySameOriginModelFileUrl(file: string) {
+  if (typeof window === 'undefined') return null;
+  return new URL(`/api/local-segmentation/${modelFilePath(file)}`, window.location.origin).toString();
 }
 
 async function migrateLegacyBrowserCache() {
@@ -123,7 +131,9 @@ async function migrateLegacyBrowserCache() {
     await Promise.all(REQUIRED_CACHE_FILES.map(async (file) => {
       const sameOriginUrl = sameOriginModelFileUrl(file);
       if (!sameOriginUrl || await cache.match(sameOriginUrl)) return;
-      const legacyResponse = await cache.match(modelFileUrl(file));
+      const legacySameOriginUrl = legacySameOriginModelFileUrl(file);
+      const legacyResponse = (legacySameOriginUrl && await cache.match(legacySameOriginUrl))
+        || await cache.match(modelFileUrl(file));
       if (legacyResponse) await cache.put(sameOriginUrl, legacyResponse);
     }));
     const entries = await Promise.all(REQUIRED_CACHE_FILES.map(async (file) => {
@@ -159,7 +169,7 @@ function configureTransformers(transformersEnv: TransformerRuntime['env']) {
   transformersEnv.useWasmCache = typeof caches !== 'undefined';
   transformersEnv.cacheKey = MODEL_CACHE_NAME;
   if (typeof window !== 'undefined') {
-    transformersEnv.remoteHost = `${window.location.origin}/api/local-segmentation/`;
+    transformersEnv.remoteHost = `${window.location.origin}/local-models/`;
     transformersEnv.remotePathTemplate = '{model}/resolve/{revision}/';
   }
   transformersEnv.allowRemoteModels = true;

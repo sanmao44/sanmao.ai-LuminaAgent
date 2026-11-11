@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import Link from 'next/link';
-import { workspaceTopbarModes } from './workspace-topbar-model';
+import { workspaceSyncStatusLabel, workspaceSyncStatusTone, workspaceTaskSummaryLabel, workspaceTaskSummaryTone, workspaceTopbarModes, type WorkspaceTaskSummary, type WorkspaceSyncIndicatorStatus } from './workspace-topbar-model';
 
 type IconProps = { name: string; size?: number };
 
@@ -8,11 +8,14 @@ type WorkspaceTopbarProps = {
   section: string;
   sidebarOpen: boolean;
   theme: 'light' | 'dark';
+  syncStatus: WorkspaceSyncIndicatorStatus;
+  taskSummary: WorkspaceTaskSummary;
   Icon: ComponentType<IconProps>;
   onOpenSidebar: () => void;
   onGoAgent: () => void;
   onGoGenerate: () => void;
   onGoVideo: () => void;
+  onGoTasks: () => void;
   onToggleTheme: () => void;
   onCanvasClick: () => void;
 };
@@ -22,15 +25,24 @@ export default function WorkspaceTopbar({
   section,
   sidebarOpen,
   theme,
+  syncStatus,
+  taskSummary,
   Icon,
   onOpenSidebar,
   onGoAgent,
   onGoGenerate,
   onGoVideo,
+  onGoTasks,
   onToggleTheme,
   onCanvasClick,
 }: WorkspaceTopbarProps) {
   const { imageActive, videoActive, agentActive } = workspaceTopbarModes(section);
+  const syncLabel = workspaceSyncStatusLabel(syncStatus);
+  const syncTone = workspaceSyncStatusTone(syncStatus);
+  const syncTitle = `工作区${syncLabel}`;
+  const taskLabel = workspaceTaskSummaryLabel(taskSummary);
+  const taskTone = workspaceTaskSummaryTone(taskSummary);
+  const taskTitle = `任务记录：${taskLabel}；${syncTitle}`;
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -42,7 +54,7 @@ export default function WorkspaceTopbar({
           <strong>SANMAO.AI</strong>
         </button>
       </div>
-      <nav className="top-mode-nav" aria-label="创作类型">
+      <nav className="top-mode-nav" aria-label="创作模式">
         <button type="button" className={imageActive ? 'active' : ''} aria-pressed={imageActive} onClick={onGoGenerate}>
           <Icon name="image" size={15} /><span>图片</span>
         </button>
@@ -57,6 +69,15 @@ export default function WorkspaceTopbar({
         </button>
       </nav>
       <div className="top-actions">
+        <span className={`topbar-sync-status ${syncTone}`} role="status" aria-live="polite" aria-label={syncTitle} title={`${syncTitle}。${syncStatus === 'conflict' ? '系统会自动重试同步。' : syncStatus === 'error' ? '请检查本地服务后重试。' : ''}`}>
+          <span className="topbar-status-dot" aria-hidden="true" />
+          <span className="topbar-sync-copy"><strong>工作区</strong><small>{syncLabel}</small></span>
+        </span>
+        <button type="button" className={`topbar-task-status ${section === 'logs' ? 'active' : ''}`} onClick={onGoTasks} aria-label={`打开任务记录，${taskTitle}`} title={taskTitle} aria-live="polite">
+          <span className={`topbar-status-dot ${taskTone}`} aria-hidden="true" />
+          <Icon name="logs" size={15} />
+          <span className="topbar-task-copy"><strong>任务记录</strong><small>{taskLabel}</small></span>
+        </button>
         <Link href="/canvas" className="super-canvas-entry" aria-label="超级画布" data-tooltip="超级画布 · 无限画布" onClick={onCanvasClick}>
           <Icon name="canvas" size={16} /><span>超级画布</span><small className="super-canvas-entry-badge">NEW</small>
         </Link>

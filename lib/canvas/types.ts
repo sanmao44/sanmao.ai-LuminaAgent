@@ -94,6 +94,10 @@ export type CanvasVideoEditorClip = {
   /** Semantic clone role (performance, B-roll, graphic, transition, ...). */
   role?: string;
   sourceNodeId?: string;
+  /** Audio node that supplied the text for an auto-generated caption draft. */
+  generatedFromNodeId?: string;
+  /** Timeline audio instance whose edits carry these caption cues with it. */
+  generatedFromClipId?: string;
   /** Semantic media retained when a clone graphics clip is copied into editorState. */
   url?: string;
   mediaKind?: 'image' | 'video';
@@ -162,6 +166,7 @@ export type CanvasVideoEditorState = {
 };
 export type CanvasConnectionStyle = 'curve' | 'straight' | 'orthogonal';
 export type CanvasGenerationStatus = 'idle' | 'draft' | 'queued' | 'running' | 'completed' | 'failed';
+export type CanvasTaskTracking = 'stale' | 'stopped';
 export type CanvasVariantStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type CanvasMaskStatus = 'pending' | 'running' | 'used' | 'failed';
 /** Local, non-generative image operations available from an image node. */
@@ -287,6 +292,7 @@ export type CanvasGenerationMeta = {
   };
   operation?: "generate" | "edit" | "reference-generate" | "upscale" | "extend";
   referenceIds?: string[];
+  projectReferenceAssetIds?: string[];
   sourceGeneratorId?: string;
   parentNodeId?: string;
   /** The completed media node whose prompt/parameters were copied for a new branch. */
@@ -305,6 +311,26 @@ export type CanvasGenerationMeta = {
   durationMs?: number;
   updatedAt?: number;
   provenance?: ProvenanceEdge[];
+};
+
+/** Reproducibility details for text-to-speech audio nodes. */
+export type CanvasAudioGenerationMeta = {
+  text: string;
+  engine: 'provider' | 'offline';
+  modelName?: string;
+  /** Requested model preference (`auto` or a stable registry model ID). */
+  requestedModelId?: string;
+  modelId?: string;
+  voice?: string;
+  createdAt: number;
+};
+
+/** User-editable text retained when a narration task fails before producing audio. */
+export type CanvasAudioDraft = {
+  text: string;
+  voice?: string;
+  modelId?: string;
+  updatedAt?: number;
 };
 
 export type CanvasHistoryEntry = {
@@ -361,10 +387,16 @@ export type CanvasNodeData = {
   providerName?: string;
   status?: CanvasGenerationStatus;
   statusLabel?: string;
+  /** Local observation state; it never claims that a remote provider was cancelled. */
+  taskTracking?: CanvasTaskTracking;
   progress?: number;
   /** Timestamp for the currently active generation, used by the canvas timer. */
   processingStartedAt?: number;
+  /** Last meaningful local progress signal; polling does not refresh it. */
+  taskUpdatedAt?: number;
   jobId?: string;
+  /** Local recovery draft origin; it is not an active provider task. */
+  recoveryTaskId?: string;
   text?: string;
   /** Original Agent request kept alongside the visible response for reruns/audit. */
   agentPrompt?: string;
@@ -395,6 +427,8 @@ export type CanvasNodeData = {
   resultSource?: "upscale-node";
   referenceOrder?: string[];
   generation?: CanvasGenerationMeta;
+  speechGeneration?: CanvasAudioGenerationMeta;
+  speechDraft?: CanvasAudioDraft;
   /** One line per requested batch variation on a generator node. */
   variantRequirements?: string[];
   /** Editing buffer that preserves empty lines while the user types. */

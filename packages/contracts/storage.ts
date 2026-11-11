@@ -69,6 +69,7 @@ export interface TaskRepository<TTask extends TaskRecord = TaskRecord> {
     defaultPageSize?: number;
     maxPageSize?: number;
     matches?: (task: TTask) => boolean;
+    compare?: (left: TTask, right: TTask) => number;
   }): Promise<TaskPage<TTask>>;
   insert(task: TTask): Promise<TaskInsertResult<TTask>>;
   update(id: string, patch: Partial<TTask>): Promise<TTask | null>;

@@ -30,3 +30,38 @@ test("generation log metadata fallbacks stay deterministic", () => {
   assert.equal(presentation.logDurationTone(5000), "fast");
   assert.equal(presentation.logDurationTone(45000), "slow");
 });
+
+test("generation log composer drafts restore only safe image-generation parameters", () => {
+  const draft = presentation.generationLogComposerDraft({
+    mode: "generate",
+    status: "error",
+    prompt: "  product scene  ",
+    modelId: "image-model",
+    aspectRatio: "16:9",
+    count: 12,
+    references: [{ id: "ref-1", name: "source", url: "/api/storage/file?name=source.png" }],
+  });
+  assert.equal(draft.prompt, "product scene");
+  assert.equal(draft.modelId, "image-model");
+  assert.equal(draft.aspectRatio, "16:9");
+  assert.equal(draft.count, 8);
+  assert.deepEqual(draft.references[0], {
+    id: "ref-1",
+    name: "source",
+    url: "/api/storage/file?name=source.png",
+    kind: "image",
+  });
+  assert.equal(presentation.generationLogComposerDraft({ mode: "edit", status: "error", prompt: "edit" }), null);
+  assert.equal(presentation.generationLogComposerDraft({ mode: "generate", status: "error", prompt: "" }), null);
+});
+
+test("generation logs match persisted task identifiers without coupling to task storage", () => {
+  assert.equal(presentation.generationLogMatchesTask(
+    { id: "video-1", taskId: "run-1" },
+    { id: "video-1", providerTaskId: "provider-1" },
+  ), true);
+  assert.equal(presentation.generationLogMatchesTask(
+    { id: "video-1", taskId: "run-1" },
+    { id: "video-2", providerTaskId: "provider-2" },
+  ), false);
+});

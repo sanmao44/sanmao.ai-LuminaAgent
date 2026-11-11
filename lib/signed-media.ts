@@ -30,6 +30,7 @@ const MIME_PATTERN = /^(image|video|audio)\/[a-z0-9.+-]+$/i;
 let manifestMutationChain: Promise<unknown> = Promise.resolve();
 const RELAY_CACHE_SKEW_MS = 15_000;
 const RELAY_UPLOAD_CACHE_MAX = 128;
+const RELAY_UPLOAD_TIMEOUT_MS = 30_000;
 const AUTOMATIC_RELAY_WAIT_MS = 15_000;
 const AUTOMATIC_RELAY_RECOVERY_WAIT_MS = 120_000;
 const AUTOMATIC_RELAY_POLL_MS = 250;
@@ -133,9 +134,14 @@ function runningRelayUrl() {
   } catch { return ''; }
 }
 
+function defaultMediaRelayUrl() {
+  const value = String(process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL || '').trim().replace(/\/+$/, '');
+  return isUsablePublicBaseUrl(value) ? value : '';
+}
+
 function mediaRelayUrl() {
-  if (process.env.SANMAO_RELAY_MODE === '1') return runningRelayUrl();
-  return String(process.env.SANMAO_MEDIA_RELAY_URL || process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL || '').trim().replace(/\/+$/, '');
+  if (process.env.SANMAO_RELAY_MODE === '1') return defaultMediaRelayUrl() || runningRelayUrl();
+  return String(process.env.SANMAO_MEDIA_RELAY_URL || defaultMediaRelayUrl()).trim().replace(/\/+$/, '');
 }
 
 function relayPublicBaseUrl() {
@@ -394,17 +400,27 @@ async function uploadToPublicMediaRelayUncached(data: Buffer, mime: string, kind
     try {
       const endpoint = assertUsablePublicBaseUrl(candidate, AGNES_MEDIA_RELAY_UNAVAILABLE);
       ensureAutomaticRelayBypass(endpoint);
-      const form = new FormData();
       const blobBytes = new Uint8Array(data.byteLength);
       blobBytes.set(data);
-      form.append('file', new Blob([blobBytes.buffer], { type: mime }), `agnes-input.${extensionForMime(mime)}`);
-      form.append('kind', kind);
+      const useRawImageUpload = kind === 'image' && endpoint === defaultMediaRelayUrl();
+      let body: FormData | Blob;
+      const headers: Record<string, string> = {};
+      if (uploadToken) headers['x-sanmao-relay-token'] = uploadToken;
+      if (useRawImageUpload) {
+        body = new Blob([blobBytes.buffer], { type: mime });
+        headers['content-type'] = mime;
+      } else {
+        const form = new FormData();
+        form.append('file', new Blob([blobBytes.buffer], { type: mime }), `agnes-input.${extensionForMime(mime)}`);
+        form.append('kind', kind);
+        body = form;
+      }
       const controller = new AbortController();
-      timeout = setTimeout(() => controller.abort(), 8_000);
+      timeout = setTimeout(() => controller.abort(), RELAY_UPLOAD_TIMEOUT_MS);
       const response = await fetch(`${endpoint}/api/relay/media`, {
         method: 'POST',
-        ...(uploadToken ? { headers: { 'x-sanmao-relay-token': uploadToken } } : {}),
-        body: form,
+        ...(Object.keys(headers).length ? { headers } : {}),
+        body,
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -516,6 +532,12 @@ export async function preparePublicMediaUrl(value: string, kind: 'image' | 'vide
   if (!loaded) throw new PublicMediaError('当前服务商需要可公开访问的媒体地址；请提供有效的本地媒体或公网 URL。');
   const mime = cleanMime(loaded.mime);
   if (!MIME_PATTERN.test(mime) || kindForMime(mime) !== kind) throw new PublicMediaError('当前服务商只接受与媒体类型匹配的图片、视频或音频文件。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
+  const configuredRelay = mediaRelayUrl();
+  if (kind === 'image' && defaultMediaRelayUrl() && configuredRelay) {
+    const relayMime = await validateRelayImage(loaded.data);
+    const uploaded = await uploadToPublicMediaRelay(loaded.data, relayMime, kind);
+    if (uploaded) return uploaded.url;
+  }
   if (kind === 'image' && process.env.SANMAO_RELAY_MODE === '1') {
     const configuredBase = publicBaseUrl();
     const relay = configuredBase ? '' : await waitForAutomaticRelay(AUTOMATIC_RELAY_RECOVERY_WAIT_MS);

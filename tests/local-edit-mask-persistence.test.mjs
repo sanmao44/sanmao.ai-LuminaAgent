@@ -38,3 +38,29 @@ test("restoring annotations retains pixels protected by the eraser", () => {
   assert.equal(protectedPixels[4 * width + 5], 0);
   assert.deepEqual([...restored], [...persisted]);
 });
+
+test("restoring a legacy move mask unlocks its old protected destination", () => {
+  const width = 20;
+  const height = 10;
+  const source = { kind: "rectangle", x: 0.1, y: 0.2, width: 0.2, height: 0.5 };
+  const target = { kind: "rectangle", x: 0.6, y: 0.2, width: 0.2, height: 0.5 };
+  const annotation = {
+    id: "move-1",
+    kind: "rectangle",
+    description: "move object",
+    geometry: target,
+    move: { from: [source] },
+    createdAt: 1,
+  };
+  const legacyMask = localEdit.rasterizeLocalEditAnnotations(width, height, [annotation]);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 12; x < 16; x += 1) legacyMask[(y * width + x) * 4 + 3] = 255;
+  }
+
+  const legacyProtected = localEdit.recoverLocalEditProtectedPixels(legacyMask, width, height, [annotation], undefined, true);
+  const currentProtected = localEdit.recoverLocalEditProtectedPixels(legacyMask, width, height, [annotation]);
+
+  assert.equal(legacyProtected[4 * width + 13], 0, "legacy target protection is removed");
+  assert.equal(currentProtected[4 * width + 13], 1, "new masks preserve explicit eraser protection");
+  assert.equal(legacyProtected[4 * width + 4], 0, "the source remains editable");
+});

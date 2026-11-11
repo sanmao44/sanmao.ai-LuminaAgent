@@ -32,7 +32,7 @@ test("canvas exposes a visible node-snap toggle with an accessible state", () =>
 test("turning off node snap bypasses alignment while retaining the normal drag path", () => {
   assert.match(component, /const snapResult = snapEnabled\s*\n\s*\? snapCanvasNodePositions\(/);
   assert.match(component, /: \{ positions: proposedPositions, guides: \[\] as CanvasSnapGuide\[\] \}/);
-  assert.match(component, /JSON\.stringify\(\{ connectionStyle, edgesVisible, snapEnabled, depthQuality \}\)/);
+  assert.match(component, /JSON\.stringify\(\{ connectionStyle, edgesVisible, snapEnabled, depthQuality, autoCheckpointIntervalMinutes \}\)/);
   assert.match(styles, /\.canvas-snap-button\.active\{/);
   assert.match(styles, /\.canvas-snap-button:not\(\.active\)/);
 });

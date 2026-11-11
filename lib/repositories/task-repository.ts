@@ -76,7 +76,8 @@ function createSqliteTaskRepository<TTask extends TaskRecord>(options: TaskRepos
       const maxPageSize = Math.max(1, pageOptions.maxPageSize ?? 100);
       const pageSize = Math.min(maxPageSize, Math.max(1, Math.round(Number(pageOptions.pageSize) || pageOptions.defaultPageSize || 12)));
       const all = await readAll();
-      const filtered = pageOptions.matches ? all.filter(pageOptions.matches) : all;
+      const matched = pageOptions.matches ? all.filter(pageOptions.matches) : all;
+      const filtered = pageOptions.compare ? [...matched].sort(pageOptions.compare) : matched;
       const total = filtered.length;
       const totalPages = Math.max(1, Math.ceil(total / pageSize));
       const page = Math.min(Math.max(1, Math.round(Number(pageOptions.page) || 1)), totalPages);

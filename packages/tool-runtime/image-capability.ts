@@ -17,7 +17,6 @@ export type ImageCapabilityPorts = {
   trackedChatCompletion: (provider: unknown, model: string, payload: Record<string, unknown>, signal?: AbortSignal) => Promise<{ choices?: Array<{ message?: { content?: unknown } }> } | null>;
   agentRuntime: { provider: unknown; model: { rawId: string } };
   requestedAgentImageModelId?: string;
-  imageModels: readonly { id?: string; capabilities?: readonly string[] }[];
   getRuntimeImageGenerationModel: (id?: string | null) => Promise<{ provider: unknown; model: { id: string; rawId: string; displayName: string } } | null>;
   getRuntimeImageModelForCapability: (id: string | null | undefined, capability: string) => Promise<{ provider: unknown; model: { id: string; rawId: string; displayName: string } } | null>;
   appendGenerationLog: (log: Record<string, unknown>) => Promise<void>;
@@ -62,7 +61,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
   const {
     observer, latest, requestController, imageToolsAllowed, batchPlanContent,
     isBareImageExecution, extractBatchPrompts, fallbackImagePrompt, requestedImageCapability, latestRefs,
-    trackedChatCompletion, agentRuntime, requestedAgentImageModelId, imageModels, getRuntimeImageGenerationModel,
+    trackedChatCompletion, agentRuntime, requestedAgentImageModelId, getRuntimeImageGenerationModel,
     getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog,
     referenceRecords, getRuntimeImageModelCandidates, editImage, generateImage,
     persistGenerationResult, imageDownloadAuth, finishGenerationLog, latestInstruction, agentRunId, skipCaption, executionPublicState,
@@ -71,7 +70,12 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
       const startedAt = Date.now();
       const promptBatch = normalizeImagePromptBatch({ args, latestInstruction: latestInstruction || '', batchPlanContent, fallbackImagePrompt, isBareImageExecution, extractBatchPrompts });
       const { effectiveRequestedPrompts, prompts, prompt, count } = promptBatch;
-      const aspectRatio = String(args.aspectRatio || fallbackImagePrompt.match(/\b(?:1:1|2:3|3:2|3:4|4:3|9:16|16:9|21:9)\b/g)?.at(-1) || '自动');
+      const aspectRatio = String(
+        latestInstruction?.match(/\b(?:1:1|2:3|3:2|3:4|4:3|9:16|16:9|21:9)\b/g)?.at(-1)
+          || fallbackImagePrompt.match(/\b(?:1:1|2:3|3:2|3:4|4:3|9:16|16:9|21:9)\b/g)?.at(-1)
+          || args.aspectRatio
+          || '自动',
+      );
       // References are not enough to turn a new-image batch into an edit. The
       // server-side intent decision is authoritative over the model's tool name.
       const mode = requestedImageCapability
@@ -103,12 +107,6 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
       const requiredImageCapability = requestedImageCapability || (mode === 'edit' ? 'edit' : 'generate');
       const operation = requiredImageCapability === 'reference' ? 'reference-generate' : mode;
       const explicitlyRequestedImageModel = requestedImageModelId !== 'auto';
-      if (explicitlyRequestedImageModel && !imageModels.some((model: { id?: string; capabilities?: readonly string[] }) => model.id === requestedImageModelId
-        && (model.capabilities || []).includes(requiredImageCapability))) {
-        const error = '本轮选择的生图模型不支持当前任务，请重新选择或改用自动选择。';
-        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error }) });
-        return { results };
-      }
       // The server-side intent decides the capability. Do not let a model
       // emit an edit tool name and bypass the configured generation model.
       let imageRuntime = requiredImageCapability === 'generate'

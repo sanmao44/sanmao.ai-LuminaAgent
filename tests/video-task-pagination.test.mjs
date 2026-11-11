@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { buildLibModules } from './lib-build.mjs';
+import { createTsRequire } from './ts-require.mjs';
 
 const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-pagination-'));
 process.env.SANMAO_DATA_DIR = dataDir;
@@ -63,14 +64,39 @@ test('video task API exposes page metadata and filter parameters', async () => {
   assert.match(route, /search: params\.get\('search'\)/);
   assert.match(route, /source,/);
   assert.match(route, /media,/);
-  assert.match(route, /return Response\.json\(\{ \.\.\.result, tasks:/);
+  assert.match(route, /return Response\.json\(result,/);
   assert.match(page, /const DEFAULT_HISTORY_PAGE_SIZE = 12/);
-  assert.match(page, /const videoTotalPages = Math\.max\(1, Math\.ceil\(videoTotal \/ pageSize\)\)/);
-  assert.match(page, /listVideoTasksPage\(\{ page: requestedPage, pageSize, source, media, search: historySearch \}\)/);
-  assert.match(page, /每页 \$\{pageSize\} 项/);
+  assert.match(page, /const HISTORY_PAGE_SIZE_MODE_STORAGE_KEY = 'sanmao-history-page-size-mode'/);
+  assert.match(page, /const videoGridRef = useRef\(null\)/);
+  assert.match(page, /const imageColumns = historyMediaFilter === 'video' \? undefined : getColumns\(historyGridRef\.current\)/);
+  assert.match(page, /completeHistoryColumnCount\(imageColumns, pageSize\)/);
+  assert.match(page, /const videoColumns = historyMediaFilter === 'image' \? undefined : getColumns\(videoGridRef\.current\)/);
+  assert.match(page, /className: "creative-video-grid", ref: videoGridRef/);
+  assert.match(page, /const effectiveVideoPageSize = pageSizeMode === 'auto' \? videoPageSize : pageSize/);
+  assert.match(page, /const videoTotalPages = Math\.max\(1, Math\.ceil\(videoTotal \/ effectiveVideoPageSize\)\)/);
+  assert.match(page, /listVideoTasksPage\(\{ page: requestedPage, pageSize: effectiveVideoPageSize, source, media, search: historySearch \}\)/);
+  assert.match(page, /每页 \$\{effectiveVideoPageSize\} 项/);
   assert.match(page, /setVideoPage\(1\)/);
   assert.match(page, /className: "pagination creative-video-pagination"/);
   assert.match(page, /共 ", videoTotal, " 段 · 第 ", visibleVideoPage/);
+});
+
+test('video task history reads persisted rows without refreshing provider tasks', async () => {
+  const page = {
+    tasks: [{ id: 'video-1', status: 'running' }],
+    total: 1,
+    page: 1,
+    pageSize: 12,
+    totalPages: 1,
+  };
+  const route = createTsRequire(process.cwd(), {
+    '@/lib/auth': { isTrustedAppRequest: () => true },
+    '@/apps/worker/task-control': { getVideoTaskSnapshotsPage: async () => page },
+  })('./app/api/video/tasks/route');
+  const response = await route.GET(new Request('http://localhost/api/video/tasks'));
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), page);
 });
 
 test('video polling uses Worker control boundary', async () => {

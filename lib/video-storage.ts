@@ -10,8 +10,19 @@ import { normalizeVideoAspect } from './video-aspect-normalizer';
 const dataDir = resolveLocalDataDir();
 const MAX_VIDEO_BYTES = 1024 * 1024 * 1024;
 const MAX_DATA_URI_BYTES = 64 * 1024 * 1024;
+const VIDEO_DOWNLOAD_MAX_ATTEMPTS = 3;
+const VIDEO_DOWNLOAD_TOTAL_TIMEOUT_MS = 180_000;
+const VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS = 120_000;
+const VIDEO_DOWNLOAD_MAX_RETRY_AFTER_MS = 5_000;
 type PersistedVideo = GeneratedVideo & { localPath: string };
 type LoadedVideo = { buffer: Buffer; ext: string };
+
+class VideoDownloadHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`视频下载失败：HTTP ${status}`);
+    this.name = 'VideoDownloadHttpError';
+  }
+}
 
 function configuredRoot() {
   // 默认固定到用户级媒体库，换运行目录不再换掉素材。
@@ -52,13 +63,61 @@ async function loadVideo(url: string): Promise<LoadedVideo> {
     return { buffer, ext: extensionFromContentType(match[1] || 'video/mp4') };
   }
   if (!/^https?:\/\//i.test(url)) throw new Error('视频结果不是可读取的 data URL 或 HTTP 地址，无法保存到本地');
-  const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(120_000) });
-  if (!response.ok) throw new Error(`视频下载失败：HTTP ${response.status}`);
-  const length = Number(response.headers.get('content-length') || 0);
-  if (length > MAX_VIDEO_BYTES) throw new Error('视频超过 1 GiB，无法保存');
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.byteLength > MAX_VIDEO_BYTES) throw new Error('视频超过 1 GiB，无法保存');
-  return { buffer, ext: extensionFromContentType(response.headers.get('content-type') || '') || extensionFromUrl(url) || 'mp4' };
+  const startedAt = Date.now();
+  let lastError: unknown;
+  for (let attempt = 0; attempt < VIDEO_DOWNLOAD_MAX_ATTEMPTS; attempt += 1) {
+    const remainingMs = VIDEO_DOWNLOAD_TOTAL_TIMEOUT_MS - (Date.now() - startedAt);
+    if (remainingMs <= 0) break;
+    try {
+      const response = await fetch(url, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(Math.min(VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS, remainingMs)),
+      });
+      if (!response.ok) {
+        const error = new VideoDownloadHttpError(response.status);
+        if (!isRetryableVideoDownloadError(error) || attempt + 1 >= VIDEO_DOWNLOAD_MAX_ATTEMPTS) throw error;
+        await waitBeforeVideoDownloadRetry(retryAfterDelay(response.headers.get('retry-after'), attempt), startedAt);
+        continue;
+      }
+      const length = Number(response.headers.get('content-length') || 0);
+      if (length > MAX_VIDEO_BYTES) throw new Error('视频超过 1 GiB，无法保存');
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength > MAX_VIDEO_BYTES) throw new Error('视频超过 1 GiB，无法保存');
+      return { buffer, ext: extensionFromContentType(response.headers.get('content-type') || '') || extensionFromUrl(url) || 'mp4' };
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableVideoDownloadError(error) || attempt + 1 >= VIDEO_DOWNLOAD_MAX_ATTEMPTS) throw error;
+      await waitBeforeVideoDownloadRetry(retryAfterDelay(undefined, attempt), startedAt);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('视频下载超时');
+}
+
+function isRetryableVideoDownloadError(error: unknown) {
+  if (error instanceof VideoDownloadHttpError) {
+    return error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+  }
+  if (!(error instanceof Error)) return false;
+  if (error.name === 'AbortError' || error.name === 'TimeoutError' || error instanceof TypeError) return true;
+  const code = (error as Error & { code?: unknown }).code;
+  return typeof code === 'string' && /^(ECONNRESET|ETIMEDOUT|EAI_AGAIN|ECONNREFUSED|UND_ERR_CONNECT_TIMEOUT)$/.test(code);
+}
+
+function retryAfterDelay(value: string | null | undefined, attempt: number) {
+  if (value) {
+    const seconds = Number(value.trim());
+    const retryAt = Number.isFinite(seconds) ? Date.now() + Math.max(0, seconds * 1000) : Date.parse(value);
+    if (Number.isFinite(retryAt)) return Math.min(VIDEO_DOWNLOAD_MAX_RETRY_AFTER_MS, Math.max(0, retryAt - Date.now()));
+  }
+  return Math.min(VIDEO_DOWNLOAD_MAX_RETRY_AFTER_MS, 250 * (2 ** attempt));
+}
+
+async function waitBeforeVideoDownloadRetry(delayMs: number, startedAt: number) {
+  const remainingMs = VIDEO_DOWNLOAD_TOTAL_TIMEOUT_MS - (Date.now() - startedAt);
+  if (remainingMs <= 0) throw new Error('视频下载超过 3 分钟总时限');
+  const boundedDelay = Math.min(delayMs, remainingMs);
+  if (boundedDelay > 0) await new Promise<void>((resolve) => setTimeout(resolve, boundedDelay));
+  if (Date.now() - startedAt >= VIDEO_DOWNLOAD_TOTAL_TIMEOUT_MS) throw new Error('视频下载超过 3 分钟总时限');
 }
 
 export async function persistGeneratedVideos(videos: GeneratedVideo[], configuredPath?: string, options: { aspectRatio?: string } = {}) {

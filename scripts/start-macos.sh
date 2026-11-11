@@ -100,8 +100,15 @@ media_relay_required() {
   node "$SCRIPT_DIR/media-relay-policy.mjs" "$STATE_PATH"
 }
 
+shared_media_relay_configured() {
+  command -v node >/dev/null 2>&1 || return 1
+  node "$SCRIPT_DIR/media-relay-policy.mjs" --has-default-relay
+}
+
 MEDIA_RELAY_REQUIRED=0
 if media_relay_required; then MEDIA_RELAY_REQUIRED=1; fi
+SHARED_MEDIA_RELAY_CONFIGURED=0
+if shared_media_relay_configured; then SHARED_MEDIA_RELAY_CONFIGURED=1; fi
 
 BUILD_ID="$ROOT_DIR/.next/BUILD_ID"
 RUNNING_BUILD_MARKER="$ROOT_DIR/.next/.sanmao-running-build-id"
@@ -285,11 +292,14 @@ if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && ! server_lifecycle_enabled "$EXISTI
 fi
 if [ "$EXISTING_PORT" -gt 0 ] 2>/dev/null && server_lifecycle_enabled "$EXISTING_PORT"; then
   EXISTING_RELAY_MODE=`server_media_relay_mode "$EXISTING_PORT"`
-  if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && [ "$EXISTING_RELAY_MODE" = relay ] && ! free_relay_is_running "$ROOT_DIR"; then
+  if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && [ "$SHARED_MEDIA_RELAY_CONFIGURED" -eq 0 ] && [ "$EXISTING_RELAY_MODE" = relay ] && ! free_relay_is_running "$ROOT_DIR"; then
     sanmao_log "检测到免费临时通道已退出，正在重启端口 $EXISTING_PORT" WARN
     sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
   elif [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && { [ "$EXISTING_RELAY_MODE" = unavailable ] || [ "$EXISTING_RELAY_MODE" = unknown ]; }; then
     sanmao_log "检测到旧服务没有媒体中转通道，正在重启端口 $EXISTING_PORT" WARN
+    sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
+  elif { [ "$MEDIA_RELAY_REQUIRED" -eq 0 ] || [ "$SHARED_MEDIA_RELAY_CONFIGURED" -eq 1 ]; } && [ "$EXISTING_RELAY_MODE" = relay ] && free_relay_is_running "$ROOT_DIR"; then
+    sanmao_log "检测到旧临时通道，正在切换到固定媒体中转并重启端口 $EXISTING_PORT" INFO
     sanmao_clear_stale "$EXISTING_PORT" "$EXISTING_PORT"
   elif [ "$MEDIA_RELAY_REQUIRED" -eq 0 ] && [ "$EXISTING_RELAY_MODE" = relay ]; then
     sanmao_log "检测到当前服务不需要媒体中转，正在关闭临时通道并重启端口 $EXISTING_PORT" INFO
@@ -627,7 +637,7 @@ if [ -n "$(sanmao_listening_pid_on_port "$PORT")" ]; then
   fail "固定端口 $PORT 已被占用。为避免启动到另一套浏览器数据，已停止自动换端口；请关闭占用进程后重试。"
 fi
 
-if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
+if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && [ "$SHARED_MEDIA_RELAY_CONFIGURED" -eq 0 ]; then
   unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL
   export SANMAO_RELAY_MODE=1
   case "${SANMAO_MEDIA_RELAY_URL:-}" in
@@ -641,6 +651,9 @@ else
     https://*.trycloudflare.com|https://*.trycloudflare.com/) unset SANMAO_MEDIA_RELAY_URL ;;
   esac
   free_relay_stop "$ROOT_DIR"
+  if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && [ "$SHARED_MEDIA_RELAY_CONFIGURED" -eq 1 ]; then
+    sanmao_log '已配置固定媒体中转地址，跳过本机临时通道。' INFO
+  fi
 fi
 
 URL=http://127.0.0.1:$PORT
@@ -661,7 +674,7 @@ fi
 SERVER_PID=$!
 
 RELAY_WATCH_PID=''
-if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
+if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && [ "$SHARED_MEDIA_RELAY_CONFIGURED" -eq 0 ]; then
   free_relay_watch "$ROOT_DIR" "$SERVER_PID" "$PORT" &
   RELAY_WATCH_PID=$!
 fi
@@ -693,7 +706,7 @@ if [ -f "$BUILT_SOURCE_MARKER" ]; then
   cp "$BUILT_SOURCE_MARKER" "$RUNNING_SOURCE_MARKER"
 fi
 
-if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
+if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && [ "$SHARED_MEDIA_RELAY_CONFIGURED" -eq 0 ]; then
   if RELAY_URL=$(free_relay_start "$ROOT_DIR" "$PORT"); then
     export SANMAO_RELAY_MODE=1
     export SANMAO_RELAY_PUBLIC_BASE_URL="$RELAY_URL"

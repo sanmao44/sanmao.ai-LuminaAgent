@@ -87,7 +87,7 @@ type SearchAttempt = { provider: WebSearchProvider; results: WebSearchResult[]; 
 type CacheEntry = { expiresAt: number; response: SearchResponse };
 type ApiConfig = { provider: WebSearchApiProvider; apiKey: string };
 
-const SEARCH_TIMEZONE = process.env.SANMAO_SEARCH_TIMEZONE || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai';
+const SEARCH_TIMEZONE = process.env.SANMAO_SEARCH_TIMEZONE || 'Asia/Shanghai';
 const MAX_SEARCH_ROUNDS = 3;
 const MAX_QUERIES_PER_ROUND = 3;
 

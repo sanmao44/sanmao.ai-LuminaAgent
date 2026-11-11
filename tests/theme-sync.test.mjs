@@ -46,7 +46,7 @@ test('theme changes update the document and notify same-page subscribers', () =>
   assert.equal(theme.readStoredTheme(), 'dark');
   assert.equal(documentElement.dataset.theme, 'dark');
   assert.equal(documentElement.style.colorScheme, 'dark');
-  assert.equal(themeMeta.content, '#0f1117');
+  assert.equal(themeMeta.content, '#0d0f14');
   assert.deepEqual(changes, ['dark']);
 
   unsubscribe();
@@ -64,7 +64,7 @@ test('cross-document storage changes update subscribed pages', () => {
   events.dispatchEvent(event);
 
   assert.equal(documentElement.dataset.theme, 'light');
-  assert.equal(themeMeta.content, '#f5f6f8');
+  assert.equal(themeMeta.content, '#f4f5f8');
   assert.deepEqual(changes, ['light']);
   unsubscribe();
 });

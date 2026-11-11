@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import AngleConsole from '@/components/AngleConsole';
 import ModelPicker from '@/components/ModelPicker';
 import UpdateNotice from '@/components/UpdateNotice';
+import { useImageStudioDraft } from '@/components/creation/useImageStudioDraft';
 import RuntimeServiceControl from '@/components/RuntimeServiceControl';
 import SettingsWorkspace from '@/components/settings/SettingsWorkspace';
 import ImageStorageSettings from '@/components/settings/ImageStorageSettings';
@@ -23,10 +24,11 @@ import JimengProviderCard from '@/components/JimengProviderCard';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import UpscaleConnectionGuide from '@/components/UpscaleConnectionGuide';
 import VideoRecordCard from '@/components/VideoRecordCard';
+import GenerationLogRestoreAction from '@/components/GenerationLogRestoreAction';
 import { getFavoriteModelIds, getLastModelCall, getRecentModelIds, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
 import { filterModelsByActiveProviders, isProviderModelLibraryEnabled } from '@/lib/provider-availability';
-import { isIntentClassifierModel } from '@/lib/intent-classifier';
+import { isIntentClassifierModel, isInternalIntentModel } from '@/lib/intent-classifier';
 import { galleryReferences, normalizeReferenceRecords, referenceCount } from '@/lib/reference-images';
 import { createShareConversationPreview } from '@/lib/share-conversation-workflow';
 import { buildShareConversationGroups, flattenSelectedShareMessages } from '@/lib/share-conversation-selection';
@@ -50,11 +52,13 @@ import { normalizeConversationPersona, personaBadgeLabel } from '@/lib/agent-per
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { IMAGE_QUALITY_OPTIONS } from '@/lib/creation/settings';
 import { requestPromptOptimization } from '@/lib/creation/agent';
+import { acceptedGenerationGalleryItemId, acceptedGenerationTaskIdsForAutoCheck, inspectAcceptedGenerationLogs, isGenerateRetryBlocked, isProviderAcceptanceResponse, projectAcceptedGenerationRecovery } from '@/lib/creation/generation-recovery';
 import { cleanupGenerationLogs, getGenerationLog, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
 import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVideoTask as patchVideoTaskRequest, saveVideoTaskLocally as saveVideoTaskLocallyRequest } from '@/lib/video-task-client';
 import { videoTaskStatus } from '@/lib/video-task-output';
 import { createManualStorageSnapshot, loadStorageMaintenance, restoreLocalStorageSnapshot } from '@/lib/storage-maintenance-client';
 import { formatStorageBytes } from '@/lib/storage-presentation';
+import { completeHistoryColumnCount, completeHistoryGridPageSizes, completeHistoryPageSize } from '@/lib/creation/history-layout';
 import {
     chatHistoryGroupLabel,
     editorRatio,
@@ -63,6 +67,7 @@ import {
     generationLogIsLlm,
     generationLogSourceLabel,
     generationLogTitle,
+    generationLogComposerDraft,
     gallerySourceLabel,
     generationMediaKind,
     generationMediaLabel,
@@ -82,7 +87,7 @@ import {
 } from '@/lib/generation-log-presentation';
 import { compressReferenceDataUrl } from '@/lib/canvas/api';
 import { loadImageDimensions, upscaleTargetDimensions } from '@/lib/canvas/upscale';
-import { startWorkspaceSync } from '@/lib/workspace';
+import { startWorkspaceSync, type WorkspaceSyncStatus } from '@/lib/workspace';
 import { workspaceRepository } from '@/lib/repositories/workspace-repository';
 import { conversationRepository } from '@/lib/repositories/conversation-repository';
 import { requestAdminSession } from '@/lib/admin-session';
@@ -90,7 +95,7 @@ import { readWorkspaceContext } from '@/lib/workspace-context';
 import { persistGenerateTasks } from '@/lib/generate-tasks-storage';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import OneTakeDurationPicker from '@/components/OneTakeDurationPicker';
-import { appendTextReferenceContext, creativeReferenceUrl, normalizeCreativeReference, referenceMentionOptions, referencePreviewText, referenceTextBadge, reorderCreativeReferences, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
+import { appendTextReferenceContext, creativeReferenceUrl, normalizeCreativeReference, normalizeCreativeReferences, referenceMentionOptions, referencePreviewText, referenceTextBadge, reorderCreativeReferences, replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from '@/lib/theme';
 import AgentApprovalCard from '@/components/AgentApprovalCard';
@@ -202,12 +207,17 @@ const HISTORY_PAGE_SIZE_OPTIONS = [
     96
 ];
 const DEFAULT_HISTORY_PAGE_SIZE = 12;
+const TASK_STATUS_REFRESH_INTERVAL_MS = 10_000;
 const HISTORY_PAGE_SIZE_STORAGE_KEY = 'sanmao-history-page-size';
+const HISTORY_PAGE_SIZE_MODE_STORAGE_KEY = 'sanmao-history-page-size-mode';
 const PROVIDER_SETUP_DISMISSED_STORAGE_KEY = 'sanmao-provider-setup-dismissed';
-const pageSizeOptions = HISTORY_PAGE_SIZE_OPTIONS.map((value)=>({
+const pageSizeOptions = [
+    { value: 'auto', label: '自适应' },
+    ...HISTORY_PAGE_SIZE_OPTIONS.map((value)=>({
         value: String(value),
         label: `每页 ${value} 项`
-    }));
+    }))
+];
 const generationLogPageSize = 16;
 function emptyProviderForm() {
     const preset = getProviderPreset('custom');
@@ -717,6 +727,11 @@ function Icon({ name, size = 18 }) {
         full: /*#__PURE__*/ _jsx(_Fragment, {
             children: /*#__PURE__*/ _jsx("path", {
                 d: "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"
+            })
+        }),
+        shrink: /*#__PURE__*/ _jsx(_Fragment, {
+            children: /*#__PURE__*/ _jsx("path", {
+                d: "M8 3v5H3m18 0h-5V3M16 21v-5h5M3 16h5v5"
             })
         }),
         user: /*#__PURE__*/ _jsxs(_Fragment, {
@@ -2319,6 +2334,7 @@ export default function Page() {
     const successAudioRef = useRef(null);
     const [state, setState] = useState(emptyState);
     const [loadingState, setLoadingState] = useState(true);
+    const [workspaceSyncStatus, setWorkspaceSyncStatus] = useState<WorkspaceSyncStatus>('idle');
     const [toast, setToast] = useState('');
     const toastTimerRef = useRef(null);
     const [confirmState, setConfirmState] = useState(null);
@@ -2581,13 +2597,11 @@ export default function Page() {
             URL.revokeObjectURL(sharePreview.url);
         };
     }, [sharePreview]);
-    const [generatePrompt, setGeneratePrompt] = useState('');
     const [generatePromptOptimizing, setGeneratePromptOptimizing] = useState(false);
     const [generatePromptBeforeOptimization, setGeneratePromptBeforeOptimization] = useState(null);
     const generatePromptRef = useRef(null);
     const [generateModelId, setGenerateModelId] = useState('auto');
     const [generateUpscaleModelId, setGenerateUpscaleModelId] = useState('auto');
-    const [generateWorkflow, setGenerateWorkflow] = useState('generate');
     const [ratio, setRatio] = useState('1:1');
     const [customRatioWidth, setCustomRatioWidth] = useState(16);
     const [customRatioHeight, setCustomRatioHeight] = useState(9);
@@ -2630,10 +2644,27 @@ export default function Page() {
     const [outputFormat, setOutputFormat] = useState('png');
     const [backgroundMode, setBackgroundMode] = useState('auto');
     const [generateSettingsReady, setGenerateSettingsReady] = useState(false);
+    const {
+        prompt: generatePrompt,
+        setPrompt: setGeneratePrompt,
+        workflow: generateWorkflow,
+        setWorkflow: setGenerateWorkflow,
+        status: generateDraftStatus,
+        referencesNoticeVisible: generateDraftReferencesNoticeVisible,
+        markInteraction: markGenerateDraftInteraction,
+        dismissReferencesNotice: dismissGenerateDraftReferencesNotice
+    } = useImageStudioDraft({
+        ready: generateSettingsReady,
+        hasUnpersistedReferences: generateRefs.length > 0 || Boolean(generateMask)
+    });
     const modelPreferencesRestoredRef = useRef(false);
     const [generateTasks, setGenerateTasks] = useState([]);
+    const generateTasksRef = useRef(generateTasks);
     const [generateTaskView, setGenerateTaskView] = useState('current');
     const upscaleRecoveryRef = useRef(new Set());
+    const acceptedGenerationRecoveryRef = useRef(new Set());
+    const automaticAcceptedGenerationCheckRef = useRef(new Set<string>());
+    const automaticAcceptedGenerationTimersRef = useRef(new Map<string, number>());
     const editorRecoveryRef = useRef(new Map());
     const [generateTasksReady, setGenerateTasksReady] = useState(false);
     const [generateClock, setGenerateClock] = useState(Date.now());
@@ -2653,6 +2684,9 @@ export default function Page() {
     const [gallery, setGallery] = useState([]);
     const [videoTasks, setVideoTasks] = useState([]);
     const [generationLogs, setGenerationLogs] = useState([]);
+    const generationLogsRefreshRef = useRef<Promise<void> | null>(null);
+    const videoTasksRefreshRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
+    const videoTasksRequestIdRef = useRef(0);
     const [historyNotice, setHistoryNotice] = useState(false);
     const [logErrorNotice, setLogErrorNotice] = useState(false);
     const navNoticeSeenRef = useRef({
@@ -2680,12 +2714,20 @@ export default function Page() {
     const [historyMediaFilter, setHistoryMediaFilter] = useState('all');
     const [recordTab, setRecordTab] = useState('works');
     const [pageSize, setPageSize] = useState(DEFAULT_HISTORY_PAGE_SIZE);
+    const [videoPageSize, setVideoPageSize] = useState(DEFAULT_HISTORY_PAGE_SIZE);
+    const [pageSizeMode, setPageSizeMode] = useState('auto');
+    const historyGridRef = useRef(null);
+    const videoGridRef = useRef(null);
+    const [historyGridColumnCount, setHistoryGridColumnCount] = useState(null);
+    const [videoGridColumnCount, setVideoGridColumnCount] = useState(null);
     const [page, setPage] = useState(1);
     const [videoPage, setVideoPage] = useState(1);
     const [videoTotal, setVideoTotal] = useState(0);
+    const effectiveVideoPageSize = pageSizeMode === 'auto' ? videoPageSize : pageSize;
     const [selectionMode, setSelectionMode] = useState(false);
     const [selectedHistory, setSelectedHistory] = useState(new Set());
     const [viewerId, setViewerId] = useState(null);
+    const [viewerExpanded, setViewerExpanded] = useState(false);
     const [viewerZoom, setViewerZoom] = useState(1);
     const [viewerPan, setViewerPan] = useState({
         x: 0,
@@ -2742,9 +2784,15 @@ export default function Page() {
         state.models,
         state.providers
     ]);
-    const availableChatModels = useMemo(()=>activeProviderModels.filter((m)=>!isIntentClassifierModel(m) && m.enabled && m.published && m.kind === 'chat' && !m.capabilities.includes('generate') && !m.capabilities.includes('upscale')), [
+    const availableChatModels = useMemo(()=>activeProviderModels.filter((m)=>!isInternalIntentModel(m) && m.enabled && m.published && m.kind === 'chat' && !m.capabilities.includes('generate') && !m.capabilities.includes('upscale')), [
         activeProviderModels
     ]);
+    const availableIntentClassifiers = useMemo(()=>activeProviderModels.filter((m)=>isIntentClassifierModel(m) && m.enabled && m.published && m.kind === 'chat'), [
+        activeProviderModels
+    ]);
+    const intentClassifierModel = state.settings.intentClassifierModelId
+        ? availableIntentClassifiers.find((model)=>model.id === state.settings.intentClassifierModelId)
+        : availableIntentClassifiers[0];
     const availableImageModels = useMemo(()=>activeProviderModels.filter((m)=>m.enabled && m.published && (m.kind === 'image' || m.capabilities.includes('generate') || m.capabilities.includes('upscale'))), [
         activeProviderModels
     ]);
@@ -2893,6 +2941,20 @@ export default function Page() {
     }, [
         generationLogs
     ]);
+    const workspaceTaskSummary = useMemo(() => ({
+        total: generationLogs.length,
+        pending: generationLogs.filter((log) => log.status === 'pending').length,
+        error: generationLogs.filter((log) => log.status === 'error').length,
+    }), [generationLogs]);
+    const recentAgentDraft = useMemo(() => {
+        const candidate = [...gallery]
+            .filter((item) => (item.source === 'generate' || item.source === 'agent') && String(item.prompt || '').trim())
+            .sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0))[0];
+        if (!candidate) return null;
+        const prompt = String(candidate.prompt).trim();
+        const title = prompt.replace(/\s+/g, ' ').slice(0, 44);
+        return { title: title || '最近的创作', prompt };
+    }, [gallery]);
     const filteredGenerationLogs = useMemo(()=>{
         const query = logSearch.trim().toLowerCase();
         const filtered = generationLogs.filter((log)=>{
@@ -3083,7 +3145,7 @@ export default function Page() {
         if (agentImageModelId !== 'auto' && !availableAgentImageModels.some((model)=>model.id === agentImageModelId)) setAgentImageModelId('auto');
     }, [agentImageModelId, availableAgentImageModels]);
     const totalPages = Math.max(1, Math.ceil(filteredGallery.length / pageSize));
-    const videoTotalPages = Math.max(1, Math.ceil(videoTotal / pageSize));
+    const videoTotalPages = Math.max(1, Math.ceil(videoTotal / effectiveVideoPageSize));
     const visibleVideoPage = Math.min(videoPage, videoTotalPages);
     const pagedGallery = useMemo(()=>filteredGallery.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize), [
         filteredGallery,
@@ -3184,7 +3246,12 @@ export default function Page() {
             if (savedWebMode === 'auto' || savedWebMode === 'always' || savedWebMode === 'off') setAgentWebMode(savedWebMode);
             else if (savedWebSearch !== null) setAgentWebMode(savedWebSearch === '0' ? 'off' : 'auto');
             const savedSize = Number(localStorage.getItem(HISTORY_PAGE_SIZE_STORAGE_KEY) || DEFAULT_HISTORY_PAGE_SIZE);
-            if (HISTORY_PAGE_SIZE_OPTIONS.includes(savedSize)) setPageSize(savedSize);
+            const savedPageSizeMode = localStorage.getItem(HISTORY_PAGE_SIZE_MODE_STORAGE_KEY);
+            const useManualPageSize = savedPageSizeMode === 'manual' || (!savedPageSizeMode && savedSize !== DEFAULT_HISTORY_PAGE_SIZE);
+            if (useManualPageSize && HISTORY_PAGE_SIZE_OPTIONS.includes(savedSize)) {
+                setPageSizeMode('manual');
+                setPageSize(savedSize);
+            }
             const savedGeneration = JSON.parse(localStorage.getItem('sanmao-generate-settings') || 'null');
             if (savedGeneration) {
                 // 模型选择由提交后的统一偏好记录恢复；不能因为旧版参数缓存而覆盖“自动”模式。
@@ -3234,6 +3301,7 @@ export default function Page() {
                         providerPossiblyAccepted: Boolean(task.providerPossiblyAccepted),
                         providerResultWithheld: Boolean(task.providerResultWithheld),
                         resultRecoveryRequired: Boolean(task.resultRecoveryRequired),
+                        unconfirmedTaskIds: Array.isArray(task.unconfirmedTaskIds) ? task.unconfirmedTaskIds.filter((id)=>typeof id === 'string').slice(0, 8) : undefined,
                         providerTaskId: typeof task.providerTaskId === 'string' ? task.providerTaskId : undefined,
                         items: [],
                         itemIds: Array.isArray(task.itemIds) ? task.itemIds.filter((id)=>typeof id === 'string') : [],
@@ -3249,9 +3317,6 @@ export default function Page() {
             void refreshAdmin();
             void refreshGallery();
             void refreshChatSessions();
-            void refreshGenerationLogs();
-            void refreshVideoTasks();
-            void refreshStorageMaintenance();
             void loadLocalDirectory();
             // Local preferences and IndexedDB are available immediately. The
             // server workspace is reconciled after the shell is interactive.
@@ -3263,7 +3328,7 @@ export default function Page() {
                 })
                 .catch(() => undefined)
                 .finally(() => {
-                    if (!cancelled) stopWorkspaceSync = startWorkspaceSync();
+                    if (!cancelled) stopWorkspaceSync = startWorkspaceSync({ onStatus: setWorkspaceSyncStatus });
                 });
         };
         void start();
@@ -3454,6 +3519,31 @@ export default function Page() {
         };
     }, [generateTasksReady]);
     useEffect(()=>{
+        if (!generateTasksReady) return;
+        generateTasksRef.current = generateTasks;
+        const alreadyScheduled = new Set([
+            ...automaticAcceptedGenerationCheckRef.current,
+            ...automaticAcceptedGenerationTimersRef.current.keys(),
+        ]);
+        const taskIds = acceptedGenerationTaskIdsForAutoCheck(generateTasks, alreadyScheduled);
+        for (const taskId of taskIds) {
+            const task = generateTasks.find((candidate)=>candidate.id === taskId);
+            if (!task || isEditorImageTask(task)) continue;
+            const timer = window.setTimeout(()=>{
+                automaticAcceptedGenerationTimersRef.current.delete(taskId);
+                automaticAcceptedGenerationCheckRef.current.add(taskId);
+                const currentTask = generateTasksRef.current.find((candidate)=>candidate.id === taskId);
+                if (!currentTask || !isGenerateRetryBlocked(currentTask)) return;
+                if (!currentTask.checkingAcceptedGeneration) void checkAcceptedGenerateTask(currentTask);
+            }, 1500);
+            automaticAcceptedGenerationTimersRef.current.set(taskId, timer);
+        }
+    }, [generateTasksReady, generateTasks]);
+    useEffect(()=>()=>{
+        for (const timer of automaticAcceptedGenerationTimersRef.current.values()) window.clearTimeout(timer);
+        automaticAcceptedGenerationTimersRef.current.clear();
+    }, []);
+    useEffect(()=>{
         const updateChatScrollState = ()=>{
             const nearBottom = isChatNearBottom();
             const pendingScroll = chatScrollAfterCommitRef.current;
@@ -3493,13 +3583,65 @@ export default function Page() {
         chatScrollAfterCommitRef.current = false;
     }, [section]);
     useEffect(()=>{
+        if (section !== 'history' || recordTab !== 'works') return;
+        const getColumns = (grid: HTMLDivElement | null)=>{
+            if (!grid) return undefined;
+            const isVideoGrid = grid.classList.contains('creative-video-grid');
+            if (window.innerWidth <= (isVideoGrid ? 480 : 520)) return 1;
+            if (window.innerWidth <= (isVideoGrid ? 760 : 780)) return 2;
+            const style = getComputedStyle(grid);
+            const minimum = Number.parseFloat(style.getPropertyValue(isVideoGrid ? '--creative-video-grid-min-column-width' : '--history-grid-min-column-width')) || (isVideoGrid ? 230 : 235);
+            const gap = Number.parseFloat(style.columnGap) || 13;
+            const widthCapacity = Math.max(1, Math.floor((grid.clientWidth + gap) / (minimum + gap)));
+            return isVideoGrid && window.innerWidth >= 1600 ? 6 : widthCapacity;
+        };
+        const syncPageSizes = ()=>{
+            const imageColumns = historyMediaFilter === 'video' ? undefined : getColumns(historyGridRef.current);
+            if (imageColumns !== undefined) {
+                if (pageSizeMode === 'auto') {
+                    const nextPageSize = completeHistoryPageSize(imageColumns, DEFAULT_HISTORY_PAGE_SIZE);
+                    setPageSize((current)=>current === nextPageSize ? current : nextPageSize);
+                    setHistoryGridColumnCount(null);
+                } else {
+                    const nextColumns = completeHistoryColumnCount(imageColumns, pageSize);
+                    setHistoryGridColumnCount((current)=>current === nextColumns ? current : nextColumns);
+                }
+            }
+            const videoColumns = historyMediaFilter === 'image' ? undefined : getColumns(videoGridRef.current);
+            if (videoColumns !== undefined) {
+                if (pageSizeMode === 'auto') {
+                    const nextPageSize = completeHistoryGridPageSizes({ videos: videoColumns }, DEFAULT_HISTORY_PAGE_SIZE).videos;
+                    if (nextPageSize !== undefined) setVideoPageSize((current)=>current === nextPageSize ? current : nextPageSize);
+                    setVideoGridColumnCount(null);
+                } else {
+                    const nextColumns = completeHistoryColumnCount(videoColumns, pageSize);
+                    setVideoGridColumnCount((current)=>current === nextColumns ? current : nextColumns);
+                }
+            }
+        };
+        const observers: ResizeObserver[] = [];
+        for (const grid of [historyGridRef.current, videoGridRef.current]) {
+            if (!grid) continue;
+            const observer = new ResizeObserver(syncPageSizes);
+            observer.observe(grid);
+            observers.push(observer);
+        }
+        syncPageSizes();
+        window.addEventListener('resize', syncPageSizes);
+        return ()=>{
+            observers.forEach((observer)=>observer.disconnect());
+            window.removeEventListener('resize', syncPageSizes);
+        };
+    }, [section, recordTab, historyMediaFilter, filteredGallery.length, videoTotal, pageSizeMode, pageSize]);
+    useEffect(()=>{
         setPage(1);
         setVideoPage(1);
     }, [
         historySearch,
         historyFilter,
         historyMediaFilter,
-        pageSize
+        pageSize,
+        effectiveVideoPageSize
     ]);
     useEffect(()=>{
         if (section !== 'history' || recordTab !== 'works') return;
@@ -3510,7 +3652,7 @@ export default function Page() {
         historySearch,
         historyFilter,
         historyMediaFilter,
-        pageSize
+        effectiveVideoPageSize
     ]);
     useEffect(()=>{
         setLogPage(1);
@@ -3638,14 +3780,36 @@ export default function Page() {
         if (!generateBusy && !activeAgentBusy && section !== 'logs') return;
         const timer = window.setInterval(()=>{
             setGenerateClock(Date.now());
-            if (generateBusy || section === 'logs') void refreshGenerationLogs();
-            if (section === 'logs') void refreshVideoTasks();
         }, 1000);
         return ()=>window.clearInterval(timer);
     }, [
         generateBusy,
         activeAgentBusy,
         section
+    ]);
+    useEffect(()=>{
+        if (section !== 'logs' || recordTab !== 'tasks') return;
+        let refreshing = false;
+        const refreshTasks = async ()=>{
+            if (refreshing) return;
+            refreshing = true;
+            try {
+                await Promise.all([refreshGenerationLogs(), refreshVideoTasks()]);
+            } finally {
+                refreshing = false;
+            }
+        };
+        void refreshTasks();
+        const timer = window.setInterval(()=>void refreshTasks(), TASK_STATUS_REFRESH_INTERVAL_MS);
+        return ()=>window.clearInterval(timer);
+    }, [
+        section,
+        recordTab,
+        historyFilter,
+        historyMediaFilter,
+        historySearch,
+        pageSize,
+        videoPage
     ]);
     useEffect(()=>{
         if (!generateMask) return;
@@ -3713,6 +3877,7 @@ export default function Page() {
         generateRefs
     ]);
     useEffect(()=>{
+        if (!viewerId) setViewerExpanded(false);
         setViewerZoom(1);
         setViewerImageSize({
             width: 0,
@@ -3799,6 +3964,12 @@ export default function Page() {
             setToast('');
             toastTimerRef.current = null;
         }, 3000);
+    }
+    function selectAgentExample(example, label) {
+        setAgentInput(example);
+        setAgentInputBeforeOptimization(null);
+        window.setTimeout(()=>focusContentEditableToEnd(agentInputRef.current), 0);
+        notify(`${label}已准备，按 Enter 开始`);
     }
     function openChatFilePreview(file) {
         if (!isPreviewableChatFile(file)) return;
@@ -4122,23 +4293,44 @@ export default function Page() {
         });
     }
     async function refreshGenerationLogs() {
+        if (generationLogsRefreshRef.current) return generationLogsRefreshRef.current;
+        const request = (async () => {
+            try {
+                const logs = await listGenerationLogs(200);
+                const uniqueLogs = logs.filter((log, index, all) => index === all.findIndex((candidate) => candidate.id === log.id));
+                setGenerationLogs(uniqueLogs);
+                syncLogErrorNotice(uniqueLogs);
+            } catch {}
+        })();
+        generationLogsRefreshRef.current = request;
         try {
-            const logs = await listGenerationLogs(200);
-            setGenerationLogs(logs);
-            syncLogErrorNotice(logs);
-        } catch {}
+            await request;
+        } finally {
+            if (generationLogsRefreshRef.current === request) generationLogsRefreshRef.current = null;
+        }
     }
     async function refreshVideoTasks(requestedPage = videoPage) {
+        const source = historyFilter === 'canvas' ? 'canvas' : historyFilter === 'agent' ? 'agent' : historyFilter === 'generate' ? 'workspace' : historyFilter === 'all' ? 'all' : 'none';
+        const media = historyMediaFilter === 'all' || historyMediaFilter === 'video' ? 'video' : 'none';
+        const requestKey = `${requestedPage}:${effectiveVideoPageSize}:${source}:${media}:${historySearch}`;
+        if (videoTasksRefreshRef.current?.key === requestKey) return videoTasksRefreshRef.current.promise;
+        const requestId = ++videoTasksRequestIdRef.current;
+        const request = (async () => {
+            try {
+                const data = await listVideoTasksPage({ page: requestedPage, pageSize: effectiveVideoPageSize, source, media, search: historySearch });
+                if (!data || requestId !== videoTasksRequestIdRef.current) return;
+                setVideoTasks(data.tasks);
+                setVideoTotal(Math.max(0, data.total));
+                const nextPage = Math.max(1, data.page);
+                if (nextPage !== videoPage) setVideoPage(nextPage);
+            } catch  {}
+        })();
+        videoTasksRefreshRef.current = { key: requestKey, promise: request };
         try {
-            const source = historyFilter === 'canvas' ? 'canvas' : historyFilter === 'agent' ? 'agent' : historyFilter === 'generate' ? 'workspace' : historyFilter === 'all' ? 'all' : 'none';
-            const media = historyMediaFilter === 'all' || historyMediaFilter === 'video' ? 'video' : 'none';
-            const data = await listVideoTasksPage({ page: requestedPage, pageSize, source, media, search: historySearch });
-            if (!data) return;
-            setVideoTasks(data.tasks);
-            setVideoTotal(Math.max(0, data.total));
-            const nextPage = Math.max(1, data.page);
-            if (nextPage !== videoPage) setVideoPage(nextPage);
-        } catch  {}
+            await request;
+        } finally {
+            if (videoTasksRefreshRef.current?.promise === request) videoTasksRefreshRef.current = null;
+        }
     }
     async function deleteVideoTask(task) {
         try {
@@ -4186,6 +4378,9 @@ export default function Page() {
             setLocalSnapshots(data.snapshots);
         } catch {}
     }
+    useEffect(()=>{
+        if (section === 'settings') void refreshStorageMaintenance();
+    }, [section]);
     async function createManualSnapshot() {
         setBackupBusy(true);
         try {
@@ -4279,6 +4474,7 @@ export default function Page() {
                 'sanmao-theme',
                 'sanmao-success-sound',
                 HISTORY_PAGE_SIZE_STORAGE_KEY,
+                HISTORY_PAGE_SIZE_MODE_STORAGE_KEY,
                 'sanmao-generate-settings',
                 'sanmao-generate-tasks',
                 'sanmao-image-presets-v1',
@@ -4332,6 +4528,7 @@ export default function Page() {
             'sanmao-theme',
             'sanmao-success-sound',
             HISTORY_PAGE_SIZE_STORAGE_KEY,
+            HISTORY_PAGE_SIZE_MODE_STORAGE_KEY,
             'sanmao-generate-settings',
             'sanmao-generate-tasks',
             'sanmao-image-presets-v1',
@@ -4640,7 +4837,7 @@ export default function Page() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || '读取配置失败');
             setState(data);
-            const selectedChat = filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>!isIntentClassifierModel(model) && model.id === data.settings?.agentModelId && model.enabled && model.published && model.kind === 'chat') || filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>!isIntentClassifierModel(model) && model.enabled && model.published && model.kind === 'chat');
+            const selectedChat = filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>!isInternalIntentModel(model) && model.id === data.settings?.agentModelId && model.enabled && model.published && model.kind === 'chat') || filterModelsByActiveProviders(data.models || [], data.providers || []).find((model)=>!isInternalIntentModel(model) && model.enabled && model.published && model.kind === 'chat');
             if (!data.settings?.webSearchConfigured && !selectedChat?.capabilities.includes('web-search')) {
                 setAgentWebMode('off');
                 setAgentWebModeMenuOpen(false);
@@ -4709,6 +4906,10 @@ export default function Page() {
                     compressForChat: true,
                     target
                 })));
+            if (target === 'generate' && refs.length) {
+                markGenerateDraftInteraction();
+                dismissGenerateDraftReferencesNotice();
+            }
             if (target === 'agent') setAgentRefs((old)=>[
                     ...old,
                     ...refs
@@ -4919,7 +5120,7 @@ export default function Page() {
                 throw new Error(`${data.error || '连接测试失败'}${hint}`);
             }
             const names = Array.isArray(data.sample) ? data.sample.map((m)=>m.id).slice(0, 4).join('、') : '';
-            setProviderTestResult(data.message || `连接成功，发现 ${data.count} 个模型${names ? `：${names}${data.count > 4 ? '…' : ''}` : ''}`);
+            setProviderTestResult(data.message || `${data.verified === false ? '配置就绪' : '连接成功'}，发现 ${data.count} 个模型${names ? `：${names}${data.count > 4 ? '…' : ''}` : ''}`);
             return true;
         } catch (error) {
             setProviderTestResult(`连接失败：${error instanceof Error ? error.message : '请求失败'}`);
@@ -5121,7 +5322,7 @@ export default function Page() {
         });
         if (!data?.state || !nextUse) return;
         const nextState = data.state;
-        if (model.kind === 'chat' && !nextState.settings.agentModelId) await patchSettings({
+        if (model.kind === 'chat' && !isInternalIntentModel(model) && !nextState.settings.agentModelId) await patchSettings({
             agentModelId: model.id
         });
         if (model.kind === 'image' && model.capabilities.includes('generate') && !nextState.settings.defaultImageModelId) await patchSettings({
@@ -5219,7 +5420,7 @@ export default function Page() {
         }
         return normalized;
     }
-    async function recordImages(images, meta, editorTaskId, editorImageIndexes) {
+    async function recordImages(images, meta, editorTaskId, editorImageIndexes, recoveryTaskId) {
         const storedImages = await Promise.all(images.map(async (image)=>{
             return persistHistoryImage(image);
         }));
@@ -5236,7 +5437,7 @@ export default function Page() {
             },
             {
                 createdAt: now,
-                createId: (_image, index)=>editorTaskId ? editorTaskGalleryItemId(editorTaskId, editorImageIndexes?.[index] ?? index) : uid('img'),
+                createId: (_image, index)=>editorTaskId ? editorTaskGalleryItemId(editorTaskId, editorImageIndexes?.[index] ?? index) : recoveryTaskId ? acceptedGenerationGalleryItemId(recoveryTaskId, index) : uid('img'),
                 includeCompareReference: true
             }
         );
@@ -5281,7 +5482,7 @@ export default function Page() {
             setEditor(restoredEditor);
             setSection('generate');
             if (request.maskOmitted) return notify('任务结果仍可恢复，但原蒙版未能随任务保存；请重新绘制编辑范围后再提交。');
-            if (request.moveGuideOmitted) return notify('任务结果仍可恢复，但移动引导图未能随任务保存；请重新确认移动范围后再提交。');
+            if (request.moveGuideOmitted) return notify('旧任务的移动引导图未能随任务保存；请在局部编辑器中重新确认并应用移动范围后再提交。');
             if (request.moveSourceMaskOmitted) return notify('任务结果仍可恢复，但移动原位置范围未能随任务保存；请重新确认移动范围后再提交。');
             notify('已恢复局部编辑参数；不会自动重新提交。');
             return;
@@ -5296,6 +5497,7 @@ export default function Page() {
             notify(request.referencesOmitted ? '视角参数已恢复，但参考图较大未能随任务保存，请重新添加参考图' : request.angle.viewpoint?.version === 2 ? '已恢复这一轮的视角与光影参数' : '旧版参数无法换算相对视角，已回到原图机位');
             return;
         }
+        dismissGenerateDraftReferencesNotice();
         setGeneratePrompt(task.prompt === 'Upscale this image' ? '' : task.prompt);
         setGeneratePromptBeforeOptimization(null);
         const restoringUpscale = task.mode === 'upscale';
@@ -5325,12 +5527,135 @@ export default function Page() {
         if (request.upscaleOutputFormat === 'png' || request.upscaleOutputFormat === 'jpg' || request.upscaleOutputFormat === 'bmp') setGenerateUpscaleOutputFormat(request.upscaleOutputFormat);
         if (typeof request.upscaleOutputQuality === 'number' && request.upscaleOutputQuality >= 30 && request.upscaleOutputQuality <= 100) setGenerateUpscaleOutputQuality(Math.round(request.upscaleOutputQuality));
         setGenerateRefs(request.references || []);
-        setGenerateMask(request.mask || null);
+        setGenerateMask(request.mask ? {
+            ...request.mask,
+            ...(request.moveGuideOmitted ? { legacyMoveTargetsProtected: true } : {})
+        } : null);
         setSection('generate');
         notify(request.referencesOmitted ? '参数已恢复，但参考图较大未能随任务保存，请重新添加参考图' : '已恢复这一轮的生图参数');
     }
+    function findGenerateTaskForLog(log) {
+        const identifiers = new Set([log?.id, log?.taskId].filter(Boolean).map((value) => String(value)));
+        if (!identifiers.size) return null;
+        return generateTasks.find((task) => identifiers.has(String(task.id)) || identifiers.has(String(task.request?.taskId))) || null;
+    }
+    function canRestoreGenerationLogContext(log) {
+        return Boolean(findGenerateTaskForLog(log)?.request || generationLogComposerDraft(log));
+    }
+    function restoreGenerationLogContext(log) {
+        const localTask = findGenerateTaskForLog(log);
+        if (localTask?.request) {
+            setSelectedLog(null);
+            restoreGenerateTask(localTask);
+            return;
+        }
+        const draft = generationLogComposerDraft(log);
+        if (!draft) {
+            notify('这条记录暂时没有可直接恢复的完整生图参数，请复制提示词后到对应工作台确认。');
+            return;
+        }
+        dismissGenerateDraftReferencesNotice();
+        setGenerateWorkflow('generate');
+        setGeneratePrompt(draft.prompt);
+        setGeneratePromptBeforeOptimization(null);
+        setGenerateModelId(draft.modelId && availableGenerationModels.some((model) => model.id === draft.modelId) ? draft.modelId : 'auto');
+        setRatio(ratios.includes(draft.aspectRatio) ? draft.aspectRatio : '自动');
+        setCount(draft.count);
+        const restoredReferences = normalizeCreativeReferences(draft.references);
+        setGenerateRefs(restoredReferences);
+        setGenerateMask(null);
+        setSection('generate');
+        setSelectedLog(null);
+        notify(draft.references.length && restoredReferences.length < draft.references.length
+            ? '已恢复生图参数，但部分参考素材已不可用；请重新添加后再提交。'
+            : restoredReferences.length
+                ? '已恢复生图参数和参考图；请检查素材后再提交，不会自动调用模型。'
+            : '已恢复生图参数；请检查内容后再提交，不会自动调用模型。');
+    }
+    async function checkAcceptedGenerateTask(task) {
+        if (acceptedGenerationRecoveryRef.current.has(task.id)) return;
+        const taskIds = Array.isArray(task.unconfirmedTaskIds) && task.unconfirmedTaskIds.length
+            ? task.unconfirmedTaskIds
+            : [task.id];
+        acceptedGenerationRecoveryRef.current.add(task.id);
+        patchGenerateTask(task.id, { checkingAcceptedGeneration: true });
+        try {
+            const results = await inspectAcceptedGenerationLogs(taskIds, (taskId)=>getGenerationLog(taskId));
+            let recoveredCount = 0;
+            let resultRecoveryFailed = false;
+            const failedRecoveryIds = new Set();
+            for (const result of results) {
+                if (result.status !== 'success') continue;
+                try {
+                    const log = result.log;
+                    const items = await recordImages(result.imageUrls.map((url)=>({ url })), {
+                        prompt: log.prompt || task.prompt,
+                        modelId: log.modelId,
+                        modelName: log.modelName,
+                        providerName: log.providerName,
+                        aspectRatio: log.aspectRatio || task.request?.ratio,
+                        outputSize: log.outputSize,
+                        outputFormat: task.request?.outputFormat,
+                        source: log.source || (task.mode === 'edit' ? 'edit' : 'generate'),
+                        references: log.references || task.request?.references,
+                        angle: task.request?.angle,
+                        angleNote: task.request?.angleNote,
+                        annotations: task.request?.mask?.annotations,
+                        mask: task.request?.mask?.dataUrl ? task.request.mask : undefined,
+                    }, undefined, undefined, result.taskId);
+                    appendGenerateTaskItems(task.id, items);
+                    setResultItems((old)=>[...items, ...old]);
+                    recoveredCount += items.length;
+                    if (task.request?.angle && items[0]) {
+                        setAngleResults((old)=>[...items, ...old].slice(0, 100));
+                        setAngleResultToast(items[0]);
+                        setAngleSuppressAutoOpenId(items[0].id);
+                    }
+                } catch {
+                    failedRecoveryIds.add(result.taskId);
+                    resultRecoveryFailed = true;
+                }
+            }
+            const projectedResults = results.map((result)=>failedRecoveryIds.has(result.taskId)
+                ? { taskId: result.taskId, status: 'unavailable' }
+                : result);
+            const projection = projectAcceptedGenerationRecovery(
+                Math.max(1, Number(task.expectedCount) || 1),
+                task.items?.length || 0,
+                projectedResults,
+            );
+            patchGenerateTask(task.id, {
+                status: projection.status,
+                completedAt: Date.now(),
+                providerPossiblyAccepted: projection.providerPossiblyAccepted,
+                resultRecoveryRequired: resultRecoveryFailed,
+                unconfirmedTaskIds: projection.unconfirmedTaskIds,
+                checkingAcceptedGeneration: false,
+                error: resultRecoveryFailed
+                    ? '原任务结果已找到，但保存到本机图库失败。可再次核对并找回，不会重新调用模型。'
+                    : projection.error,
+                info: `${task.info || '图片生成'} · ${projection.phase === 'waiting' ? `${projection.unconfirmedTaskIds.length} 项待核对` : projection.phase === 'retryable' ? '已确认可重试剩余项' : '已从原任务记录找回'}`,
+            });
+            if (recoveredCount) notify(`已从原任务记录找回 ${recoveredCount} 张图片。`);
+            else if (projection.phase === 'waiting') notify(`仍有 ${projection.unconfirmedTaskIds.length} 项等待服务端确认，没有重新提交。`);
+            else notify('原任务已确认结束；现在可重试未完成的图片。');
+            void refreshGenerationLogs();
+        } catch (error) {
+            patchGenerateTask(task.id, {
+                status: 'error',
+                providerPossiblyAccepted: true,
+                checkingAcceptedGeneration: false,
+                error: error instanceof Error ? `无法读取服务端任务记录：${error.message}` : '无法读取服务端任务记录；没有重新提交。',
+                info: `${task.info || '图片生成'} · 状态待核对`,
+            });
+            notify('当前无法读取原任务记录；没有重新提交图片模型，请稍后再核对。');
+        } finally {
+            acceptedGenerationRecoveryRef.current.delete(task.id);
+        }
+    }
     async function retryGenerateTask(task) {
         if (isEditorImageTask(task)) return retryEditorTask(task);
+        if (isGenerateRetryBlocked(task)) return checkAcceptedGenerateTask(task);
         const request = task.request;
         if (!request) return notify('这轮任务没有保存完整参数，无法重试');
         if (request.referencesOmitted) return notify('这轮任务的参考图过大未保存，请先点击“恢复参数”并重新添加参考图');
@@ -5438,9 +5763,6 @@ export default function Page() {
         const requestedModelId = savedRequest?.modelId || overrides?.modelId || (submittedUpscaleMode ? generateUpscaleModelId : generateModelId);
         const submittedModelId = requestedModelId;
         const submittedModel = submittedModelId !== 'auto' ? (submittedUpscaleMode ? availableUpscaleModels.find((model)=>model.id === submittedModelId) : submittedImageModelOptions.find((model)=>model.id === submittedModelId)) : submittedUpscaleMode ? selectedUpscaleModel : selectAutomaticModel(submittedImageModelOptions, state.settings.defaultProviderId, state.settings.defaultImageModelId);
-        const moveGuideDataUrl = !isAngleGeneration && submittedImageRefs.length === 1
-            ? (savedRequest ? savedRequest.mask?.sourceImageDataUrl : generateMask?.sourceImageDataUrl) || ''
-            : '';
         const moveSourceMaskDataUrl = !isAngleGeneration && submittedImageRefs.length === 1
             ? (savedRequest ? savedRequest.mask?.moveSourceMaskDataUrl : generateMask?.moveSourceMaskDataUrl) || ''
             : '';
@@ -5460,7 +5782,7 @@ export default function Page() {
         const taskId = uid('generate-task');
         const taskPrompt = submittedPrompt || 'Upscale this image';
         const taskRefs = submittedRefs;
-        const taskReferenceBytes = submittedImageReferenceUrls.reduce((total, reference)=>total + reference.length, 0) + (isAngleGeneration ? 0 : (savedRequest ? savedRequest.mask?.dataUrl.length || 0 : generateMask?.dataUrl.length || 0) + moveGuideDataUrl.length + moveSourceMaskDataUrl.length);
+        const taskReferenceBytes = submittedImageReferenceUrls.reduce((total, reference)=>total + reference.length, 0) + (isAngleGeneration ? 0 : (savedRequest ? savedRequest.mask?.dataUrl.length || 0 : generateMask?.dataUrl.length || 0) + moveSourceMaskDataUrl.length);
         if (taskReferenceBytes > 7000000) return notify('参考图和局部编辑范围总大小过大，已停止提交；请减少图片数量或重新上传后再试');
         if (submittedUpscaleMode && (submittedRefs.some((reference)=>reference.kind !== 'image') || submittedImageRefs.length !== 1)) return notify('本地超分需要恰好 1 张图片引用，文本或视频不能用于超分');
         const taskMode = savedRequest ? overrides?.mode || (submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate') : submittedUpscaleMode ? 'upscale' : submittedImageRefs.length ? 'edit' : 'generate';
@@ -5582,6 +5904,9 @@ export default function Page() {
             });
         };
         const requestStartedAt = performance.now();
+        let imageSubmissionStarted = false;
+        let imageResponseParsed = false;
+        let imageResponseHasImages = false;
         primeSuccessSound();
         setGenerateTasks((old)=>[
                 {
@@ -5687,11 +6012,14 @@ export default function Page() {
                 let transparentFailures = 0;
                 let resolvedModelName = taskModel?.displayName || '图片模型';
                 const failures = [];
+                const unconfirmedTaskIds = [];
                 const runs = Array.from({
                     length: taskCount
                 }, (_, index)=>(async ()=>{
                         const childTaskId = `${taskId}-${index + 1}`;
                         const childStartedAt = performance.now();
+                        let childResponseParsed = false;
+                        let childResponseHasImages = false;
                         try {
                             const childRes = await fetch('/api/generate', {
                                 method: 'POST',
@@ -5714,7 +6042,6 @@ export default function Page() {
                                     outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
                                      background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
                                      mask: taskMask,
-                                     moveGuide: moveGuideDataUrl || undefined,
                                      moveSourceMask: moveSourceMaskDataUrl || undefined,
                                       references: submittedImageReferenceUrls,
                                     referenceImages: referenceRecords,
@@ -5725,10 +6052,31 @@ export default function Page() {
                                 })
                             });
                             const childData = await childRes.json();
+                            childResponseParsed = true;
+                            childResponseHasImages = Array.isArray(childData.images) && childData.images.length > 0;
+                            if (isProviderAcceptanceResponse(childRes.status, childData)) {
+                                unconfirmedTaskIds.push(childTaskId);
+                                patchGenerateTask(taskId, {
+                                    providerPossiblyAccepted: true,
+                                    unconfirmedTaskIds: [...unconfirmedTaskIds],
+                                    info: `${resolvedModelName} · ${unconfirmedTaskIds.length} 张状态待核对`,
+                                });
+                                void refreshGenerationLogs();
+                                return;
+                            }
                             if (!childRes.ok) throw new Error(childData.error || `第 ${index + 1} 张生成失败`);
                             recordImagePreference(childData.model?.id);
                             let returnedImages = childData.images || [];
-                            if (!returnedImages.length) throw new Error(`第 ${index + 1} 张没有返回图片`);
+                            if (!returnedImages.length) {
+                                unconfirmedTaskIds.push(childTaskId);
+                                patchGenerateTask(taskId, {
+                                    providerPossiblyAccepted: true,
+                                    unconfirmedTaskIds: [...unconfirmedTaskIds],
+                                    info: `${resolvedModelName} · ${unconfirmedTaskIds.length} 张结果待核对`,
+                                });
+                                void refreshGenerationLogs();
+                                return;
+                            }
                             if (taskBackgroundMode === 'local-transparent') {
                                 let failuresForImage = 0;
                                 returnedImages = await Promise.all(returnedImages.map(async (image)=>{
@@ -5771,6 +6119,16 @@ export default function Page() {
                             if (items.length) playSuccessSound();
                             void refreshGenerationLogs();
                         } catch (error) {
+                            if (!childResponseParsed || childResponseHasImages) {
+                                unconfirmedTaskIds.push(childTaskId);
+                                patchGenerateTask(taskId, {
+                                    providerPossiblyAccepted: true,
+                                    unconfirmedTaskIds: [...unconfirmedTaskIds],
+                                    info: `${resolvedModelName} · ${unconfirmedTaskIds.length} 张状态待核对`,
+                                });
+                                void refreshGenerationLogs();
+                                return;
+                            }
                             failedCount += 1;
                             failures.push(`第 ${index + 1} 张：${error instanceof Error ? error.message : '生成失败'}`);
                             registerGenerationFailure();
@@ -5780,13 +6138,15 @@ export default function Page() {
                 void refreshGenerationLogs();
                 await Promise.all(runs);
                 const durationMs = Math.round(performance.now() - requestStartedAt);
-                const info = `${resolvedModelName} · ${outputSize || '自动分辨率'} · ${submittedImageRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${completedCount}/${taskCount} 张已返回${failedCount ? `，${failedCount} 张失败` : ''}`;
+                const info = `${resolvedModelName} · ${outputSize || '自动分辨率'} · ${submittedImageRefs.length ? '参考图生成' : '文本生成'} · ${(durationMs / 1000).toFixed(1)}s · ${completedCount}/${taskCount} 张已返回${failedCount ? `，${failedCount} 张失败` : ''}${unconfirmedTaskIds.length ? `，${unconfirmedTaskIds.length} 张待核对` : ''}`;
                 const errorMessage = failures.length ? failures.join('；') : undefined;
                 patchGenerateTask(taskId, {
-                    status: failedCount ? 'error' : 'success',
+                    status: failedCount || unconfirmedTaskIds.length ? 'error' : 'success',
                     completedAt: Date.now(),
                     info,
-                    error: errorMessage
+                    error: unconfirmedTaskIds.length ? '部分请求已被服务端接收，结果待核对；确认前不会开放重试。' : errorMessage,
+                    providerPossiblyAccepted: unconfirmedTaskIds.length > 0,
+                    unconfirmedTaskIds: [...unconfirmedTaskIds],
                 });
                 if (transparentFailures) notify(`${transparentFailures} 张图片受到跨域限制，已保留原背景；可改用“API 透明”`);
                 if (failedCount) notify(`本轮已返回 ${completedCount} 张，${failedCount} 张失败`);
@@ -5794,6 +6154,7 @@ export default function Page() {
                 void refreshGenerationLogs();
                 return;
             }
+            imageSubmissionStarted = true;
             const res = await fetch('/api/generate', {
                 method: 'POST',
                 headers: {
@@ -5815,7 +6176,6 @@ export default function Page() {
                     outputFormat: taskBackgroundMode === 'local-transparent' ? 'png' : taskOutputFormat,
                     background: taskBackgroundMode === 'api-transparent' ? 'transparent' : taskBackgroundMode === 'opaque' ? 'opaque' : undefined,
                     mask: taskMask,
-                    moveGuide: moveGuideDataUrl || undefined,
                     moveSourceMask: moveSourceMaskDataUrl || undefined,
                     references: submittedImageReferenceUrls,
                     referenceImages: referenceRecords,
@@ -5826,10 +6186,39 @@ export default function Page() {
                 })
             });
             const data = await res.json();
+            imageResponseParsed = true;
+            imageResponseHasImages = Array.isArray(data.images) && data.images.length > 0;
+            if (isProviderAcceptanceResponse(res.status, data)) {
+                const message = data.message || '服务商可能已接收任务，图片结果尚未确认。';
+                patchGenerateTask(taskId, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    providerPossiblyAccepted: true,
+                    unconfirmedTaskIds: [taskId],
+                    error: message,
+                    info: `${taskModel?.displayName || '图片模型'} · 服务商状态待核对`,
+                });
+                void refreshGenerationLogs();
+                notify('服务商可能已接收这次生成；结果确认前不会重提。请在任务卡中核对记录。');
+                return;
+            }
             if (!res.ok) throw new Error(data.error || '生成失败');
             recordImagePreference(data.model?.id);
             const durationMs = Math.round(performance.now() - requestStartedAt);
             let returnedImages = data.images || [];
+            if (!returnedImages.length) {
+                patchGenerateTask(taskId, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    providerPossiblyAccepted: true,
+                    unconfirmedTaskIds: [taskId],
+                    error: '服务端没有返回可用图片，原请求状态需要核对后才能重试。',
+                    info: `${taskModel?.displayName || '图片模型'} · 结果待核对`,
+                });
+                void refreshGenerationLogs();
+                notify('服务端没有返回图片；已保留原任务，请先核对记录，避免重复提交。');
+                return;
+            }
             if (taskBackgroundMode === 'local-transparent') {
                 let failures = 0;
                 returnedImages = await Promise.all(returnedImages.map(async (image)=>{
@@ -5883,6 +6272,33 @@ export default function Page() {
         } catch (error) {
             const message = error instanceof Error ? error.message : '生成失败';
             const cancelled = message === UPSCALE_CANCELLED_MESSAGE;
+            if (imageSubmissionStarted && !imageResponseParsed) {
+                patchGenerateTask(taskId, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    providerPossiblyAccepted: true,
+                    unconfirmedTaskIds: [taskId],
+                    error: `未能确认服务端是否完成响应：${message}`,
+                    info: `${taskModel?.displayName || '图片模型'} · 状态待核对`,
+                });
+                void refreshGenerationLogs();
+                notify('连接在收到生成结果前中断；已保留原任务，请先核对记录再决定后续操作。');
+                return;
+            }
+            if (imageSubmissionStarted && imageResponseParsed && imageResponseHasImages) {
+                patchGenerateTask(taskId, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    providerPossiblyAccepted: true,
+                    resultRecoveryRequired: true,
+                    unconfirmedTaskIds: [taskId],
+                    error: `服务端已返回图片，但本机归档未完成：${message}`,
+                    info: `${taskModel?.displayName || '图片模型'} · 结果待保存`,
+                });
+                void refreshGenerationLogs();
+                notify('图片服务已返回结果，但本机保存未完成。请核对原任务并找回图片，不会再次调用模型。');
+                return;
+            }
             patchGenerateTask(taskId, {
                 status: 'error',
                 completedAt: Date.now(),
@@ -6443,7 +6859,6 @@ export default function Page() {
             };
             stopRetryProgress = pollAgentProgress(retryRunId, {
                 signal: requestController.signal,
-                isSettled: ()=>Boolean(streamedText),
                 onProgress: (progress)=>updateRetryActivity({
                         stage: progress.stage,
                         message: progress.message
@@ -6749,13 +7164,12 @@ export default function Page() {
             let streamedText = '';
             /*
              * 长任务进度：主管线在工具轮里写快照（app/api/agent/progress），这里按 runId 轮询。
-             * 正文一开始流式返回就停：那时候用户看的是字，不该再被阶段文案顶掉。
+             * 正文与阶段提示并行显示，进度轮询会持续到本轮结算。
              * 单次模型调用可能很久，所以同一步骤超过 3 秒会带上秒表（见 lib/agent-client）。
              */
             const progressRunId = uid('run');
             stopAgentProgress = pollAgentProgress(progressRunId, {
                 signal: requestController.signal,
-                isSettled: ()=>Boolean(streamedText),
                 onProgress: (progress)=>updatePendingActivity({
                         stage: progress.stage,
                         message: progress.message
@@ -7365,7 +7779,7 @@ export default function Page() {
         let lastData = initialData;
         for (let attempt = 0; attempt < 120; attempt += 1) {
             await new Promise((resolve)=>window.setTimeout(resolve, attempt === 0 ? 800 : 2000));
-            const response = await fetch(`/api/upscale/tasks/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+            const response = await fetch(`/api/upscale/tasks/${encodeURIComponent(taskId)}?refresh=false`, { cache: 'no-store' });
             const data = await response.json().catch(()=>({}));
             if (!response.ok) throw new Error(data.error || '读取高清任务状态失败');
             lastData = { ...lastData, ...data, taskId, status: data.task?.status || data.status, images: data.images || lastData.images };
@@ -8072,6 +8486,7 @@ export default function Page() {
                     }),
                     section === 'agent' && /*#__PURE__*/ _jsxs("button", {
                         className: "new-chat",
+                        "aria-label": "新对话",
                         "data-tooltip": "新对话",
                         onClick: ()=>{
                             startNewChat();
@@ -8169,6 +8584,8 @@ export default function Page() {
                         section: section,
                         sidebarOpen: sidebarOpen,
                         theme: theme,
+                        syncStatus: workspaceSyncStatus,
+                        taskSummary: workspaceTaskSummary,
                         Icon: Icon,
                         onOpenSidebar: ()=>setSidebarOpen(true),
                         onGoAgent: ()=>setSection('agent'),
@@ -8178,6 +8595,12 @@ export default function Page() {
                         },
                         onGoVideo: ()=>{
                             setSection('video');
+                            closeSidebarOnMobile();
+                        },
+                        onGoTasks: ()=>{
+                            setRecordTab('tasks');
+                            markLogErrorNoticeSeen();
+                            setSection('logs');
                             closeSidebarOnMobile();
                         },
                         onToggleTheme: toggleTheme,
@@ -8206,7 +8629,8 @@ export default function Page() {
                                     !messages.length ? /*#__PURE__*/ _jsx(AgentWelcome, {
                                         orbState: agentOrbStatus.phase,
                                         examples: examples,
-                                        onSelectExample: (example)=>setAgentInput(example)
+                                        recentDraft: recentAgentDraft,
+                                        onSelectExample: (example, label)=>selectAgentExample(example, label)
                                     }) : /*#__PURE__*/ _jsxs(_Fragment, {
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", {
@@ -8347,11 +8771,17 @@ export default function Page() {
                                                                     activity: message.activity
                                                                 }) : message.role === 'assistant' && !message.pending ? message.agentError ? /*#__PURE__*/ _jsx(AgentMessageError, {
                                                                     message: message.content,
+                                                                    retrying: Boolean(message.retrying),
+                                                                    disabled: activeAgentBusy || Boolean(message.retrying),
                                                                     onRetryAutomatic: ()=>{
+                                                                        if (activeAgentBusy || message.retrying) return;
                                                                         setAgentModelId('auto');
                                                                         void retryAgentMessage(message, 'auto');
                                                                     },
-                                                                    onRetryCurrent: ()=>void retryAgentMessage(message)
+                                                                    onRetryCurrent: ()=>{
+                                                                        if (activeAgentBusy || message.retrying) return;
+                                                                        void retryAgentMessage(message);
+                                                                    }
                                                                 }) : /*#__PURE__*/ _jsx(AssistantMarkdown, {
                                                                     content: message.content,
                                                                     Icon,
@@ -8924,6 +9354,22 @@ export default function Page() {
                                                                     }),
                                                                     !generateUpscaleMode && generatePromptBeforeOptimization !== null && /*#__PURE__*/ _jsx("small", {
                                                                         children: "已保留原文"
+                                                                    }),
+                                                                    generateDraftStatus === 'checking' && /*#__PURE__*/ _jsx("small", {
+                                                                        role: "status",
+                                                                        "aria-live": "polite",
+                                                                        children: "正在恢复草稿"
+                                                                    }),
+                                                                    generateDraftStatus === 'saved' && /*#__PURE__*/ _jsx("small", {
+                                                                        role: "status",
+                                                                        "aria-live": "polite",
+                                                                        children: "草稿已保存"
+                                                                    }),
+                                                                    generateDraftStatus === 'error' && /*#__PURE__*/ _jsx("small", {
+                                                                        role: "status",
+                                                                        "aria-live": "polite",
+                                                                        title: "浏览器会话存储不可用，请保持当前页面以免丢失提示词",
+                                                                        children: "草稿未保存"
                                                                     })
                                                                 ]
                                                             }),
@@ -8953,6 +9399,20 @@ export default function Page() {
                                                                         ]
                                                                     })
                                                                 ]
+                                                            })
+                                                        ]
+                                                    }),
+                                                    generateDraftReferencesNoticeVisible && !generateRefs.length && !generateMask && /*#__PURE__*/ _jsxs("div", {
+                                                        className: "image-draft-notice",
+                                                        role: "status",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("span", {
+                                                                children: "已恢复提示词和工作流；上次参考图或蒙版未保存，请重新添加。"
+                                                            }),
+                                                            /*#__PURE__*/ _jsx("button", {
+                                                                type: "button",
+                                                                onClick: dismissGenerateDraftReferencesNotice,
+                                                                children: "知道了"
                                                             })
                                                         ]
                                                     }),
@@ -8991,11 +9451,13 @@ export default function Page() {
                                                 onLocalUpscale: toggleLocalUpscaleMode,
                                                 localUpscaleActive: generateUpscaleMode,
                                                 onRemove: (id)=>{
+                                                    dismissGenerateDraftReferencesNotice();
                                                     setGenerateRefs((old)=>old.filter((x)=>x.id !== id));
                                                     if (generateMask?.referenceId === id) setGenerateMask(null);
                                                 },
                                                 onReorder: (fromIndex, toIndex)=>setGenerateRefs((old)=>reorderCreativeReferences(old, fromIndex, toIndex)),
                                                 onClear: ()=>{
+                                                    dismissGenerateDraftReferencesNotice();
                                                     setGenerateRefs([]);
                                                     setGenerateMask(null);
                                                 }
@@ -9789,7 +10251,7 @@ export default function Page() {
                                                                                         }),
                                                                                         "进行中"
                                                                                     ]
-                                                                                }) : task.status === 'success' ? '已完成' : task.cancelled ? '已取消' : task.interrupted ? '已中断' : '部分失败'
+                                                                                }) : task.status === 'success' ? '已完成' : task.providerPossiblyAccepted ? '待核对' : task.cancelled ? '已取消' : task.interrupted ? '已中断' : '部分失败'
                                                                             }),
                                                                             /*#__PURE__*/ _jsx("time", {
                                                                                 children: ((task.status === 'pending' ? generateClock : task.completedAt || generateClock) - task.startedAt) / 1000 < 0.1 ? '0.1s' : `${(((task.status === 'pending' ? generateClock : task.completedAt || generateClock) - task.startedAt) / 1000).toFixed(1)}s`
@@ -9807,7 +10269,14 @@ export default function Page() {
                                                                                 onClick: ()=>void cancelGenerateTask(task),
                                                                                 children: "停止跟踪"
                                                                             }),
-                                                                            task.request && task.status === 'error' && /*#__PURE__*/ _jsxs("button", {
+                                                                            task.status === 'error' && isGenerateRetryBlocked(task) && !isEditorImageTask(task) && /*#__PURE__*/ _jsx("button", {
+                                                                                type: "button",
+                                                                                className: "task-retry-button",
+                                                                                disabled: Boolean(task.checkingAcceptedGeneration),
+                                                                                onClick: ()=>void checkAcceptedGenerateTask(task),
+                                                                                children: task.checkingAcceptedGeneration ? '正在核对…' : task.resultRecoveryRequired ? '找回原结果' : '核对任务记录'
+                                                                            }),
+                                                                            task.request && task.status === 'error' && !isGenerateRetryBlocked(task) && /*#__PURE__*/ _jsxs("button", {
                                                                                 type: "button",
                                                                                 className: "task-retry-button",
                                                                                 onClick: ()=>void retryGenerateTask(task),
@@ -9892,10 +10361,10 @@ export default function Page() {
                                                                     /*#__PURE__*/ _jsxs("div", {
                                                                         children: [
                                                                             /*#__PURE__*/ _jsx("strong", {
-                                                                                children: task.cancelled ? '本轮任务已取消' : task.interrupted ? '本轮任务已中断' : '本轮部分生成失败'
+                                                                                children: task.providerPossiblyAccepted ? '任务状态待核对' : task.cancelled ? '本轮任务已取消' : task.interrupted ? '本轮任务已中断' : '本轮部分生成失败'
                                                                             }),
                                                                             /*#__PURE__*/ _jsx("small", {
-                                                                                children: task.resultRecoveryRequired ? '原任务已返回图片，但本机图库保存未完成；可找回原结果，不会再次调用模型。' : task.providerPossiblyAccepted && task.providerResultWithheld ? '服务商已返回图片，但蒙版保护失败，结果未应用；请先恢复参数修正蒙版。' : task.providerPossiblyAccepted ? '服务商可能已接收任务，为避免重复扣费不会自动重提；请先核对服务商任务或用量记录。' : task.cancelled ? '任务已停止，已返回的图片仍会保留。' : task.interrupted ? '页面状态中断，可恢复参数后重新提交。' : task.items.length ? `${task.items.length} / ${task.expectedCount} 张已完成，可重试失败部分。` : '未收到可用图片，请检查模型连接或稍后重试。'
+                                                                                children: task.resultRecoveryRequired ? '原任务已返回图片，但本机图库保存未完成；可找回原结果，不会再次调用模型。' : task.providerPossiblyAccepted && task.providerResultWithheld ? '服务商已返回图片，但蒙版保护失败，结果未应用；请先恢复参数修正蒙版。' : task.providerPossiblyAccepted ? `服务商可能已接收${task.unconfirmedTaskIds?.length > 1 ? ` ${task.unconfirmedTaskIds.length} 项` : ''}任务，结果待核对。核对前不会重提，避免重复调用。` : task.cancelled ? '任务已停止，已返回的图片仍会保留。' : task.interrupted ? '页面状态中断，可恢复参数后重新提交。' : task.items.length ? `${task.items.length} / ${task.expectedCount} 张已完成，可重试失败部分。` : '未收到可用图片，请检查模型连接或稍后重试。'
                                                                             }),
                                                                             task.error && /*#__PURE__*/ _jsxs("details", {
                                                                                 className: "generation-error-details",
@@ -9967,15 +10436,15 @@ export default function Page() {
                                 initialPrompt: generatePrompt,
                                 initialAnnotations: generateMask?.referenceId === generateRefs[0].id ? generateMask.annotations || [] : [],
                                 initialFeather: generateMask?.referenceId === generateRefs[0].id ? generateMask.feather || 0 : 0,
+                initialMoveGuide: Boolean(generateMask?.sourceImageDataUrl || generateMask?.legacyMoveTargetsProtected),
                                 onCancel: ()=>setMaskEditorOpen(false),
-                                onApply: (dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl)=>{
+                                onApply: (dataUrl, coverage, prompt, annotations, feather, moveSourceMaskDataUrl)=>{
                                     setGenerateMask({
                                         referenceId: generateRefs[0].id,
                                         dataUrl,
                                         coverage,
                                         annotations,
                                         feather,
-                                        ...(moveGuideDataUrl ? { sourceImageDataUrl: moveGuideDataUrl } : {}),
                                         ...(moveSourceMaskDataUrl ? { moveSourceMaskDataUrl } : {})
                                     });
                                     setGenerateModelId((current)=>current === 'auto' || availableEditModels.some((model)=>model.id === current) ? current : 'auto');
@@ -9996,7 +10465,7 @@ export default function Page() {
                                                 "aria-label": "创作记录视图",
                                                 children: [
                                                     /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'works', className: recordTab === 'works' ? 'active' : '', onClick: ()=>{ setRecordTab('works'); setSection('history'); void refreshGallery(); void refreshVideoTasks(); }, children: "作品" }),
-                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); markLogErrorNoticeSeen(); void refreshGenerationLogs(); void refreshVideoTasks(); }, children: "任务" })
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); markLogErrorNoticeSeen(); }, children: "任务" })
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("div", {
@@ -10071,12 +10540,21 @@ export default function Page() {
                                                         children: selectionMode ? '退出多选' : '批量选择'
                                                     }),
                                                     /*#__PURE__*/ _jsx(Dropdown, {
-                                                        value: String(pageSize),
+                                                        value: pageSizeMode === 'auto' ? 'auto' : String(pageSize),
                                                         options: pageSizeOptions,
                                                         onChange: (v)=>{
+                                                            if (v === 'auto') {
+                                                                setPageSizeMode('auto');
+                                                                try {
+                                                                    localStorage.setItem(HISTORY_PAGE_SIZE_MODE_STORAGE_KEY, 'auto');
+                                                                } catch  {}
+                                                                return;
+                                                            }
                                                             const n = Number(v);
+                                                            setPageSizeMode('manual');
                                                             setPageSize(n);
                                                             try {
+                                                                localStorage.setItem(HISTORY_PAGE_SIZE_MODE_STORAGE_KEY, 'manual');
                                                                 localStorage.setItem(HISTORY_PAGE_SIZE_STORAGE_KEY, v);
                                                             } catch  {}
                                                         },
@@ -10148,10 +10626,10 @@ export default function Page() {
                                         className: "creative-record-group",
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", { className: "creative-record-group-heading", children: [
-                                                /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: `已完成的视频会自动保存在这里 · 每页 ${pageSize} 项` })] }),
+                                                /*#__PURE__*/ _jsx("div", { children: [/*#__PURE__*/ _jsx("strong", { children: "视频作品" }), /*#__PURE__*/ _jsx("small", { children: `已完成的视频会自动保存在这里 · 每页 ${effectiveVideoPageSize} 项` })] }),
                                                 /*#__PURE__*/ _jsx("span", { children: `${videoTotal} 段` })
                                             ] }),
-                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task), onSaveLocally: ()=>saveVideoTaskLocally(task), onCancel: ()=>patchVideoTask(task, 'cancel'), onRetry: ()=>patchVideoTask(task, 'retry') }, task.id)) }),
+                                            /*#__PURE__*/ _jsx("div", { className: "creative-video-grid", ref: videoGridRef, style: videoGridColumnCount ? { gridTemplateColumns: `repeat(${videoGridColumnCount}, minmax(0, 1fr))` } : undefined, children: visibleVideoTasks.map((task)=>/*#__PURE__*/ _jsx(VideoRecordCard, { task, onNotify: notify, onRestore: ()=>restoreVideoTask(task), onDelete: ()=>askDeleteVideoTask(task), onSaveLocally: ()=>saveVideoTaskLocally(task), onCancel: ()=>patchVideoTask(task, 'cancel'), onRetry: ()=>patchVideoTask(task, 'retry') }, task.id)) }),
                                             /*#__PURE__*/ _jsxs("div", { className: "pagination creative-video-pagination", children: [
                                                 /*#__PURE__*/ _jsxs("span", { children: ["共 ", videoTotal, " 段 · 第 ", visibleVideoPage, " / ", videoTotalPages, " 页"] }),
                                                 /*#__PURE__*/ _jsxs("div", { children: [
@@ -10170,6 +10648,8 @@ export default function Page() {
                                         children: [
                                             /*#__PURE__*/ _jsx("div", {
                                                 className: "history-grid",
+                                                ref: historyGridRef,
+                                                style: historyGridColumnCount ? { gridTemplateColumns: `repeat(${historyGridColumnCount}, minmax(0, 1fr))` } : undefined,
                                                 children: pagedGallery.map((item, index)=>/*#__PURE__*/ _jsx(ImageCard, {
                                                         Icon,
                                                         sourceLabel: gallerySourceLabel,
@@ -10358,7 +10838,7 @@ export default function Page() {
                                                 "aria-label": "创作记录视图",
                                                 children: [
                                                     /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'works', className: recordTab === 'works' ? 'active' : '', onClick: ()=>{ setRecordTab('works'); setSection('history'); void refreshGallery(); void refreshVideoTasks(); }, children: "作品" }),
-                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); void refreshGenerationLogs(); void refreshVideoTasks(); }, children: "任务" })
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); }, children: "任务" })
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsxs("div", {
@@ -11641,7 +12121,7 @@ export default function Page() {
                                             }),
                                             providerTestResult && /*#__PURE__*/ _jsx("div", {
                                                 ref: providerTestResultRef,
-                                                className: `connection-result ${providerTestResult.startsWith('连接成功') ? 'success' : 'error'}`,
+                                                className: `connection-result ${providerTestResult.startsWith('连接成功') || providerTestResult.startsWith('Claude Std 模型清单已载入') || providerTestResult.startsWith('配置就绪') ? 'success' : 'error'}`,
                                                 children: providerTestResult
                                             }),
                                             /*#__PURE__*/ _jsxs("div", {
@@ -11854,6 +12334,39 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                         ]
                                                     })
                                                 ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "model-library-jev surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                className: "model-library-jev-copy",
+                                                children: [
+                                                    /*#__PURE__*/ _jsxs("div", {
+                                                        className: "model-library-jev-title",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("strong", { children: "JEV 智能路由" }),
+                                                            /*#__PURE__*/ _jsx("span", { className: intentClassifierModel ? "ready" : "offline", children: intentClassifierModel ? "已启用" : "未启用" })
+                                                        ]
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("p", { children: intentClassifierModel ? `当前使用 ${intentClassifierModel.rawId}，仅在歧义意图、视频下载和 Canvas 参考图判定时调用。明确请求会直接执行。` : "启用模型库中的 jev-1.14 后，助手会在歧义请求和 Canvas 参考图场景提供更准确的意图判定；明确请求不会增加额外调用。" }),
+                                                    /*#__PURE__*/ _jsx("small", { children: "JEV 是内部路由模型，不会出现在普通对话模型选择中。不可用时系统会回退到当前助手模型。" })
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsx("div", {
+                                                className: "model-library-jev-action",
+                                                children: availableIntentClassifiers.length ? /*#__PURE__*/ _jsx(Dropdown, {
+                                                    value: state.settings.intentClassifierModelId || availableIntentClassifiers[0].id,
+                                                    options: [{ value: '', label: "自动选择", meta: "优先使用已启用的 jev-1.14" }, ...availableIntentClassifiers.map((model)=>({ value: model.id, label: model.rawId, meta: model.providerName }))],
+                                                    onChange: (value)=>void patchSettings({ intentClassifierModelId: value || null }),
+                                                    placeholder: "选择 JEV"
+                                                }) : /*#__PURE__*/ _jsx("button", {
+                                                    type: "button",
+                                                    className: "ghost-button",
+                                                    onClick: ()=>setModelSearch('jev-1.14'),
+                                                    children: "在模型列表中查找 jev-1.14"
+                                                })
                                             })
                                         ]
                                     }),
@@ -12356,15 +12869,25 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                     ]
                                 })
                             ]
-                        })
+                        }),
+                        /*#__PURE__*/ _jsx(GenerationLogRestoreAction, {
+                            log: selectedLog,
+                            videoTasks,
+                            canRestoreImage: canRestoreGenerationLogContext(selectedLog),
+                            onRestoreImage: ()=>restoreGenerationLogContext(selectedLog),
+                            onRestoreVideo: (task)=>{
+                                setSelectedLog(null);
+                                restoreVideoTask(task);
+                            }
+                        }, selectedLog.id)
                     ]
                 })
             }),
             viewerItem && /*#__PURE__*/ _jsx("div", {
-                className: "viewer-backdrop",
+                className: `viewer-backdrop ${viewerExpanded ? 'is-expanded' : ''}`,
                 onClick: ()=>setViewerId(null),
                 children: /*#__PURE__*/ _jsxs("div", {
-                    className: "viewer",
+                    className: `viewer ${viewerExpanded ? 'is-expanded' : ''}`,
                     onClick: (e)=>e.stopPropagation(),
                     children: [
                         /*#__PURE__*/ _jsxs("div", {
@@ -12422,6 +12945,18 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                     })
                                                 })
                                             ]
+                                        }),
+                                        /*#__PURE__*/ _jsx("button", {
+                                            type: "button",
+                                            className: "icon-button viewer-fullscreen-button",
+                                            title: viewerExpanded ? "退出全屏查看" : "全屏查看",
+                                            "aria-label": viewerExpanded ? "退出全屏查看" : "全屏查看",
+                                            "aria-pressed": viewerExpanded,
+                                            onClick: ()=>setViewerExpanded((value)=>!value),
+                                            children: /*#__PURE__*/ _jsx(Icon, {
+                                                name: viewerExpanded ? "shrink" : "full",
+                                                size: 16
+                                            })
                                         }),
                                         /*#__PURE__*/ _jsx("button", {
                                             className: "icon-button",
@@ -12734,15 +13269,16 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 initialPrompt: editor.prompt,
                 initialAnnotations: editor.annotations || [],
                 initialFeather: editor.feather || 0,
+                initialMoveGuide: Boolean(editor.sourceImageDataUrl || editor.legacyMoveTargetsProtected),
                 onCancel: ()=>setEditorMaskOpen(false),
-                onApply: (dataUrl, coverage, prompt, annotations, feather, moveGuideDataUrl, moveSourceMaskDataUrl)=>{
+                onApply: (dataUrl, coverage, prompt, annotations, feather, moveSourceMaskDataUrl)=>{
                     setEditor((current)=>current ? {
                             ...current,
                             mask: dataUrl,
                             prompt,
                             annotations,
                             feather,
-                            sourceImageDataUrl: moveGuideDataUrl || undefined,
+                            sourceImageDataUrl: undefined,
                             moveSourceMaskDataUrl: moveSourceMaskDataUrl || undefined,
                             sourceUrl: undefined
                         } : current);

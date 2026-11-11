@@ -35,6 +35,13 @@ test("task log detail button toggles the currently selected task", () => {
   );
 });
 
+test("unconfirmed audio logs offer local draft preservation without task replay", () => {
+  assert.match(component, /canPreserveCanvasAudioDraft\(log\)/);
+  assert.match(component, /保留配音草稿/);
+  assert.match(component, /只保留本地可编辑草稿，不会查询、重试或重新提交原配音请求/);
+  assert.match(workspace, /onPreserveAudioDraft=\{restoreGenerationLogContext\}/);
+});
+
 test("task log exposes unified activity status and persisted canvas lineage entry points", () => {
   assert.match(component, /activityTaskFromGenerationLog\(log\)/);
   assert.match(component, /canvasLineageForTask\(canvasDocument, activityTask\.sourceId \|\| log\.id\)/);

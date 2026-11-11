@@ -149,6 +149,43 @@ function activeProjectId(projects: CanvasProject[], value: unknown) {
   return projects.some((project) => project.id === activeId) ? activeId : projects[0]?.id || null;
 }
 
+function cleanupBackedUpNovaSources() {
+  try {
+    const migration = readJson<Record<string, unknown> | null>(MIGRATION_KEY, null);
+    const backup = readJson<Record<string, unknown> | null>(MIGRATION_BACKUP_KEY, null);
+    if (migration?.source !== 'nova.v1' || migration.backupKey !== MIGRATION_BACKUP_KEY
+      || backup?.source !== 'nova.v1' || typeof backup.backedUpAt !== 'string'
+      || !Array.isArray(backup.projects) || !backup.documents || typeof backup.documents !== 'object'
+      || Array.isArray(backup.documents)) return;
+
+    const projects = normalizeProjects(backup.projects);
+    const sourceProjects = readJson<unknown>(NOVA_PROJECTS_KEY, null);
+    if (!projects.length || projects.length !== backup.projects.length || !Array.isArray(sourceProjects)
+      || JSON.stringify(normalizeProjects(sourceProjects)) !== JSON.stringify(projects)
+      || readJson<unknown>(NOVA_ACTIVE_KEY, null) !== backup.activeId) return;
+
+    const documents = backup.documents as Record<string, unknown>;
+    const projectIds = new Set(projects.map((project) => project.id));
+    if (Object.keys(documents).some((id) => !projectIds.has(id))) return;
+
+    const sourceDocumentKeys: string[] = [];
+    for (const project of projects) {
+      const sourceKey = `${NOVA_PROJECT_PREFIX}${project.id}`;
+      const sourceRaw = window.localStorage.getItem(sourceKey);
+      if (sourceRaw === null) continue;
+      const sourceDocument = readJson<unknown>(sourceKey, null);
+      if (!Object.prototype.hasOwnProperty.call(documents, project.id)
+        || JSON.stringify(normalizeDocument(sourceDocument)) !== JSON.stringify(normalizeDocument(documents[project.id]))) return;
+      sourceDocumentKeys.push(sourceKey);
+    }
+
+    [NOVA_PROJECTS_KEY, NOVA_ACTIVE_KEY, ...sourceDocumentKeys]
+      .forEach((key) => window.localStorage.removeItem(key));
+  } catch {
+    // The complete migration backup remains available if legacy cleanup fails.
+  }
+}
+
 /** Current selection belongs to this tab; the snapshot activeId is only a startup default. */
 export function retainedCanvasProjectId(projects: CanvasProject[], currentId: string | null, defaultId: string | null) {
   return activeProjectId(projects, currentId && projects.some((project) => project.id === currentId) ? currentId : defaultId);
@@ -266,6 +303,7 @@ export function ensureCanvasStorage() {
     const identity = current.every((project) => project.projectId)
       ? reconcileCreativeProjects(current, readCreativeProjects())
       : persistProjectIdentity(current);
+    cleanupBackedUpNovaSources();
     return { projects: identity.canvasProjects, activeId: tabActiveProjectId(identity.canvasProjects)!, migrated: false };
   }
   const legacy = normalizeProjects(readJson(NOVA_PROJECTS_KEY, []));
@@ -286,6 +324,7 @@ export function ensureCanvasStorage() {
     });
     const identity = persistProjectIdentity(legacy, readCreativeProjects(), entries);
     if (!identity.saved) throw new Error(describeCanvasSaveFailure());
+    cleanupBackedUpNovaSources();
     return { projects: identity.canvasProjects, activeId: tabActiveProjectId(identity.canvasProjects)!, migrated: true };
   }
   const project: CanvasProject = { id: `canvas_${Date.now().toString(36)}`, name: '我的 AI 画布', createdAt: Date.now(), updatedAt: Date.now() };

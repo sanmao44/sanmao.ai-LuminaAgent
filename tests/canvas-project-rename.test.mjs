@@ -13,7 +13,12 @@ function headerHarness() {
     if (!(slot in values)) values[slot] = initial;
     return [values[slot], (value) => { values[slot] = value; }];
   }, useRef(initial) { return { current: initial }; }, useEffect() {} };
-  const load = createTsRequire(process.cwd(), { react, '@/components/AgentOrb': { default: () => null, busyOrbState: () => 'idle' } });
+  const load = createTsRequire(process.cwd(), {
+    react,
+    '@/components/AgentOrb': { default: () => null, busyOrbState: () => 'idle' },
+    './CanvasProjectBriefEditor': { default: () => null },
+    '@/components/canvas/CanvasProjectBriefEditor.css': {},
+  });
   const Header = load(path.join(process.cwd(), 'components/canvas/CanvasWorkspaceHeader.tsx')).default;
   const saved = [];
   const a = { id: 'a', name: '第一张画布', createdAt: 100, updatedAt: 100 };

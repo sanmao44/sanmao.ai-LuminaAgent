@@ -19,17 +19,21 @@ import {
 } from "@/lib/canvas/asset-library-service";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import SelectMenu from "@/components/SelectMenu";
+import { projectVisualReferenceAssetId } from "@/lib/canvas/project-visual-references";
 
 type Notice = { message: string; kind: "ok" | "error" };
 
 export default function CanvasAssetDrawer({
   extraAssets,
+  creativeProjectId,
   refresh,
   collectionSelection,
   onCollectionSelectionChange,
   canReference,
   onAdd,
   onReference,
+  projectReferenceAssetIds = [],
+  onSetProjectReference,
   onLocate,
   onAddNodeToCollection,
   onClose,
@@ -37,12 +41,15 @@ export default function CanvasAssetDrawer({
   onNotify,
 }: {
   extraAssets: AssetRecord[];
+  creativeProjectId?: string;
   refresh: number;
   collectionSelection: string;
   onCollectionSelectionChange: (collectionId: string) => void;
   canReference: boolean;
   onAdd: (asset: AssetRecord) => void;
   onReference: (asset: AssetRecord) => void;
+  projectReferenceAssetIds?: readonly string[];
+  onSetProjectReference: (asset: AssetRecord) => void;
   onLocate: (asset: AssetRecord) => void;
   onAddNodeToCollection: (nodeId: string, collectionId: string) => void;
   onClose: () => void;
@@ -61,6 +68,7 @@ export default function CanvasAssetDrawer({
   const [kind, setKind] = useState<"all" | "image" | "video" | "audio">("all");
   const [source, setSource] = useState<"all" | AssetSource>("all");
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [projectOnly, setProjectOnly] = useState(true);
   const [sort, setSort] = useState<"newest" | "oldest" | "name">("newest");
   const [preview, setPreview] = useState<AssetRecord | null>(null);
   const [collapsed, setCollapsed] = useState(false);
@@ -185,6 +193,7 @@ export default function CanvasAssetDrawer({
     query,
     tagFilter,
     sort,
+    ...(projectOnly && creativeProjectId ? { projectId: creativeProjectId } : {}),
   });
 
   const createCollection = async () => {
@@ -401,6 +410,19 @@ export default function CanvasAssetDrawer({
               ★ 收藏
             </button>
           </div>
+          {creativeProjectId && (
+            <div className="canvas-asset-project-filter">
+              <button
+                type="button"
+                className={projectOnly ? "active" : ""}
+                aria-pressed={projectOnly}
+                onClick={() => setProjectOnly((value) => !value)}
+              >
+                本项目
+              </button>
+              <span>{projectOnly ? "仅显示当前项目资产" : "显示全部项目资产"}</span>
+            </div>
+          )}
           <div className="canvas-asset-filters">
             <div className="canvas-asset-collection-picker">
               <SelectMenu
@@ -470,8 +492,11 @@ export default function CanvasAssetDrawer({
             </div>
           ) : filtered.length ? (
             <div className="canvas-global-asset-grid">
-              {filtered.map((asset) => (
-                <article
+              {filtered.map((asset) => {
+                const referenceAssetId = projectVisualReferenceAssetId(asset);
+                const isProjectReference = projectReferenceAssetIds.includes(referenceAssetId)
+                  || projectReferenceAssetIds.includes(asset.id);
+                return <article
                   key={asset.id}
                   className="canvas-global-asset-card"
                   draggable
@@ -534,6 +559,14 @@ export default function CanvasAssetDrawer({
                     >
                       ⌁ 参考
                     </button>
+                    {asset.kind === "image" && <button
+                      type="button"
+                      className={isProjectReference ? "active" : ""}
+                      title="设为项目默认参考"
+                      aria-pressed={isProjectReference}
+                      aria-label={`${isProjectReference ? "移除" : "设为"}${asset.name}的项目默认参考`}
+                      onClick={() => onSetProjectReference(asset)}
+                    >{isProjectReference ? "★ 项目" : "☆ 项目"}</button>}
                     <button
                       type="button"
                       title="在画布中定位此资产"
@@ -575,8 +608,8 @@ export default function CanvasAssetDrawer({
                       ×
                     </button>
                   </div>
-                </article>
-              ))}
+                </article>;
+              })}
             </div>
           ) : (
             <div className="canvas-asset-empty">

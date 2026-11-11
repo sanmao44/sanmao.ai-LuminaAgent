@@ -49,10 +49,24 @@ export function conversationMessageText(message: ConversationContextMessage) {
   return `${message.content || ''}${descriptions.length ? `\n[本条实际图片产物：${JSON.stringify(descriptions)}]` : ''}`;
 }
 
+const imageAspectRatioPattern = /\b(?:1:1|2:3|3:2|3:4|4:3|9:16|16:9|21:9)\b/;
+const imageAspectRatioCorrectionPattern = /(?:比例|宽高比|图片尺寸|图像尺寸|横版|竖版|横屏|竖屏|宽幅|超宽)/i;
+const imageCorrectionActionPattern = /(?:不对|不正确|错了|错误|不符|(?:^|[，,。！？!])\s*(?:我)?(?:要|想要|需要|给我)|(?:我)?(?:改成|改为|调整|调成|换成|重新生成|重出)|(?:比例|宽高比|尺寸)\s*(?:要|改成|改为|调整|调成|换成))/i;
+
+export function isImageAspectRatioCorrection(input: string) {
+  const text = input.trim();
+  const hasAspectRatio = imageAspectRatioPattern.test(text);
+  if (!text || (!hasAspectRatio && !imageAspectRatioCorrectionPattern.test(text)) || !imageCorrectionActionPattern.test(text)) return false;
+  if (/(?:为什么|怎么|如何|能不能|是否|请问|[?？])/.test(text)) return false;
+  if (/(?:不要|不需要|不想要|别用).{0,12}(?:1:1|2:3|3:2|3:4|4:3|9:16|16:9|21:9|横版|竖版|横屏|竖屏)/i.test(text)) return false;
+  if (/(?:提示词|prompt)/i.test(text) && !/(?:出图|生图|生成图片|重新生成|重出)/i.test(text)) return false;
+  return hasAspectRatio || /(?:比例|宽高比).{0,12}(?:不对|不正确|错了|错误|不符)/i.test(text);
+}
+
 /** The deterministic image fallback must never send just "出图" to an image model. */
 export function contextualImagePrompt(input: string, messages: readonly ConversationContextMessage[]) {
   const text = input.trim();
-  if (!isBareImageExecution(text) && !imagePointer.test(text) && !/^(?:好|好的|可以|就这样|按刚才的做)[吧啊！!。.\s]*$/.test(text)) return text;
+  if (!isBareImageExecution(text) && !imagePointer.test(text) && !isImageAspectRatioCorrection(text) && !/^(?:好|好的|可以|就这样|按刚才的做)[吧啊！!。.\s]*$/.test(text)) return text;
   const history = messages.filter((message) => !message.pending);
   const context = history.slice(-8).map((message) => ({
     role: message.role,

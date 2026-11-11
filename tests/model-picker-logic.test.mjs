@@ -1,18 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
-const sourceUrl = new URL('../lib/model-picker.ts', import.meta.url);
-const source = await readFile(sourceUrl, 'utf8');
-const compiled = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.ESNext,
-    target: ts.ScriptTarget.ES2022,
-  },
-  fileName: sourceUrl.pathname,
-}).outputText;
-const picker = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const picker = createTsRequire(process.cwd())('./lib/model-picker');
+const classifier = createTsRequire(process.cwd())('./lib/intent-classifier');
 
 const model = (id, providerName = '接口 A') => ({
   id,
@@ -46,6 +37,20 @@ test('model capability requirements require every requested capability', () => {
   assert.equal(picker.modelSupportsCapabilityRequirements(referenceModel, ['generate', 'reference']), true);
   assert.equal(picker.modelSupportsCapabilityRequirements(generateOnlyModel, ['generate', 'reference']), false);
   assert.equal(picker.modelSupportsCapabilityRequirements(generateOnlyModel, ['edit']), false);
+});
+
+test('ordinary chat pickers exclude active and legacy internal JEV models', () => {
+  const chatModel = (rawId) => ({
+    ...model(rawId),
+    rawId,
+    kind: 'chat',
+    capabilities: ['chat'],
+  });
+
+  assert.equal(picker.modelPickerModelIsAvailable(chatModel('jev-1.13'), ['chat'], classifier.isInternalIntentModel), false);
+  assert.equal(picker.modelPickerModelIsAvailable(chatModel('provider/jev-1.13'), ['chat'], classifier.isInternalIntentModel), false);
+  assert.equal(picker.modelPickerModelIsAvailable(chatModel('jev-1.14'), ['chat'], classifier.isInternalIntentModel), false);
+  assert.equal(picker.modelPickerModelIsAvailable(chatModel('gpt-5'), ['chat'], classifier.isInternalIntentModel), true);
 });
 
 test('video capability fallback remains limited to non-generation video capabilities', () => {

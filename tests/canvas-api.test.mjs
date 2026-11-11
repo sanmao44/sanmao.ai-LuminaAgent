@@ -164,6 +164,45 @@ test('canvas image generation follows SANMAO response protocol', async () => {
   });
 });
 
+test('canvas image generation includes saved project style and constraints in its prompt', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ images: [{ url: '/generated-project-image.png' }] });
+  }, () => api.generateCanvasImage({
+    prompt: '雨后的老街',
+    imageOperation: 'generate',
+    projectBrief: { style: '水彩绘本', audience: '亲子读者', constraints: '不出现文字' },
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.equal(request.input, '/api/generate');
+  assert.equal(payload.prompt, [
+    '雨后的老街',
+    '',
+    '【项目创作简报】',
+    '风格：水彩绘本',
+    '受众：亲子读者',
+    '约束：不出现文字',
+    '请将以上信息作为本项目图片创作的一致性参考；若与本次提示词冲突，以本次提示词为准。',
+  ].join('\n'));
+});
+
+test('canvas image generation includes the project intent before shared style context', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ images: [{ url: '/generated-intent-image.png' }] });
+  }, () => api.generateCanvasImage({
+    prompt: '咖啡馆外景',
+    imageOperation: 'generate',
+    projectBrief: { intent: '为春季上新制作主视觉', style: '清透自然', audience: '', constraints: '' },
+  }));
+  const payload = JSON.parse(request.options.body);
+  assert.match(payload.prompt, /创作意图：为春季上新制作主视觉/);
+  assert.match(payload.prompt, /风格：清透自然/);
+});
+
 test('canvas image generation forwards the preflight operation metadata', async () => {
   let request;
   const intentPreview = {
@@ -369,6 +408,29 @@ test('canvas video generation creates a task without leaking boolean audio', asy
   assert.equal(payload.model, 'video-model');
   assert.deepEqual(payload.input, { prompt: '镜头推进', seconds: 8, aspectRatio: '16:9', resolution: '720p', referenceImages: [] });
   assert.equal('audio' in payload.input, false);
+});
+
+test('canvas video generation includes saved project style and constraints in its prompt', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ task: { id: 'video-project-brief', status: 'pending' } });
+  }, () => api.generateCanvasVideo({
+    prompt: '黄昏时的城市街道',
+    projectBrief: { style: '写实电影感', audience: '城市旅行者', constraints: '不出现品牌标志' },
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.equal(request.input, '/api/video/generate');
+  assert.equal(payload.input.prompt, [
+    '黄昏时的城市街道',
+    '',
+    '【项目创作简报】',
+    '风格：写实电影感',
+    '受众：城市旅行者',
+    '约束：不出现品牌标志',
+    '请将以上信息作为本项目视频创作的一致性参考；若与本次提示词冲突，以本次提示词为准。',
+  ].join('\n'));
 });
 
 test('canvas video generation retries a lost response with the same idempotency key', async () => {
@@ -670,6 +732,22 @@ test('canvas agent generation marks the request as canvas-originated', async () 
   });
 });
 
+test('waiting for a background canvas task responds to local cancellation', async () => {
+  const controller = new AbortController();
+  const abortReason = new DOMException('Stopped waiting', 'AbortError');
+  const abortTimer = setTimeout(() => controller.abort(abortReason), 20);
+  try {
+    await withFetch(async () => jsonResponse({ log: { status: 'pending' } }), () =>
+      assert.rejects(
+        () => api.waitForCanvasAgentGeneration('pending-agent-task', 30_000, controller.signal),
+        (error) => error === abortReason,
+      ),
+    );
+  } finally {
+    clearTimeout(abortTimer);
+  }
+});
+
 test('canvas agent preserves image references on earlier user turns', async () => {
   let request;
   await withFetch(async (input, options) => {
@@ -959,31 +1037,48 @@ test('canvas media archiving keeps only the addresses the server could store', a
     return options.body.includes('gone.png')
       ? jsonResponse({ error: '图片保存失败' }, 400)
       : jsonResponse({ ok: true, images: [{ url: '/api/storage/file?name=kept.png' }] });
-  }, () => api.archiveCanvasRemoteImages([
+  }, () => api.archiveCanvasImages([
     'https://task-cdn.example.com/?url=fresh.png',
     'https://task-cdn.example.com/?url=gone.png',
+    'data:image/png;base64,AA==',
     '/api/storage/file?name=already-local.png',
   ]));
 
   assert.deepEqual(requests.map((request) => request.body.images[0].url), [
     'https://task-cdn.example.com/?url=fresh.png',
     'https://task-cdn.example.com/?url=gone.png',
+    'data:image/png;base64,AA==',
   ]);
   assert.deepEqual([...archived.entries()], [
     ['https://task-cdn.example.com/?url=fresh.png', '/api/storage/file?name=kept.png'],
+    ['data:image/png;base64,AA==', '/api/storage/file?name=kept.png'],
   ]);
 });
 
-test('canvas media archiving targets only remote image addresses', () => {
-  assert.deepEqual(api.canvasRemoteMediaUrls([
+test('canvas media archiving includes inline images and temporary remote image addresses', () => {
+  const nodes = [
     { data: { kind: 'image', url: 'https://task-cdn.example.com/?url=fresh.png' } },
     { data: { kind: 'image', url: 'https://task-cdn.example.com/?url=fresh.png' } },
     { data: { kind: 'image', url: '/api/storage/file?name=local.png' } },
     { data: { kind: 'image', url: 'http://localhost:3210/api/storage/file?name=local.png' } },
     { data: { kind: 'video', url: 'https://task-cdn.example.com/?url=clip.mp4' } },
     { data: { kind: 'audio', url: 'https://task-cdn.example.com/?url=voice.mp3' } },
-    { data: { url: 'data:image/png;base64,AA==' } },
-  ]), ['https://task-cdn.example.com/?url=fresh.png']);
+    { data: { kind: 'image', url: 'data:image/png;base64,AA==', mask: { sourceImageDataUrl: 'data:image/png;base64,MASK==' } } },
+  ];
+  assert.deepEqual(api.canvasMediaUrlsToArchive(nodes), [
+    'https://task-cdn.example.com/?url=fresh.png',
+    'data:image/png;base64,AA==',
+    'data:image/png;base64,MASK==',
+  ]);
+  assert.deepEqual(api.canvasInlineImageUrls(nodes), ['data:image/png;base64,AA==', 'data:image/png;base64,MASK==']);
+  const original = nodes[6].data;
+  const replaced = api.replaceCanvasMediaUrls(original, new Map([
+    ['data:image/png;base64,AA==', '/api/storage/file?name=image.png'],
+    ['data:image/png;base64,MASK==', '/api/storage/file?name=mask.png'],
+  ]));
+  assert.equal(replaced.url, '/api/storage/file?name=image.png');
+  assert.equal(replaced.mask.sourceImageDataUrl, '/api/storage/file?name=mask.png');
+  assert.equal(original.url, 'data:image/png;base64,AA==');
 });
 
 test('canvas upscale marks the request as canvas-originated', async () => {
@@ -1060,12 +1155,35 @@ test('canvas video polling uses the SANMAO task endpoint', async () => {
   let request;
   const result = await withFetch(async (input, options) => {
     request = { input, options };
-    return jsonResponse({ task: { id: 'task/1', status: 'done', videoUrls: ['/video.mp4'] } });
+    return jsonResponse({ task: { id: 'task/1', status: 'done', providerProgress: 37, providerStatus: 'RUNNING', providerTaskId: 'upstream-1', videoUrls: ['/video.mp4'] } });
   }, () => api.getCanvasVideoTask('task/1'));
 
-  assert.equal(request.input, '/api/video/tasks/task%2F1');
+  assert.equal(request.input, '/api/video/tasks/task%2F1?refresh=false');
   assert.deepEqual(request.options, { cache: 'no-store' });
+  assert.equal(result.task.providerProgress, 37);
+  assert.equal(result.task.providerStatus, 'RUNNING');
+  assert.equal(result.task.providerTaskId, 'upstream-1');
   assert.deepEqual(result.task.videoUrls, ['/video.mp4']);
+});
+
+test('distinguishes a missing video task from transient canvas API errors', async () => {
+  await withFetch(async () => jsonResponse({ error: '视频任务不存在' }, 404), async () => {
+    await assert.rejects(api.getCanvasVideoTask('missing'), (error) => {
+      assert.ok(error instanceof api.CanvasApiError);
+      assert.equal(error.status, 404);
+      assert.equal(api.isMissingCanvasVideoTaskError(error), true);
+      return true;
+    });
+  });
+
+  await withFetch(async () => jsonResponse({ error: '任务存储暂不可用' }, 500), async () => {
+    await assert.rejects(api.getCanvasVideoTask('task-1'), (error) => {
+      assert.ok(error instanceof api.CanvasApiError);
+      assert.equal(error.status, 500);
+      assert.equal(api.isMissingCanvasVideoTaskError(error), false);
+      return true;
+    });
+  });
 });
 
 test('canvas image intent preview forwards the prompt, reference count, and cancellation signal', async () => {
@@ -1102,4 +1220,30 @@ test('canvas video cancellation uses the existing Worker-owned task control rout
   assert.equal(request.options.method, 'PATCH');
   assert.deepEqual(JSON.parse(request.options.body), { action: 'cancel' });
   assert.equal(result.task.status, 'cancelled');
+});
+
+test('canvas video retry uses the existing Worker-owned task control route', async () => {
+  let request;
+  const result = await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ task: { id: 'video-task-2', status: 'pending', retryOf: 'video-task-1' } });
+  }, () => api.retryCanvasVideoTask('video-task-1'));
+
+  assert.equal(request.input, '/api/video/tasks/video-task-1');
+  assert.equal(request.options.method, 'PATCH');
+  assert.deepEqual(JSON.parse(request.options.body), { action: 'retry' });
+  assert.equal(result.task.retryOf, 'video-task-1');
+});
+
+test('canvas batch video retry uses the explicit failure-only Worker action', async () => {
+  let request;
+  const result = await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ task: { id: 'video-task-2', status: 'pending', retryOf: 'video-task-1' } });
+  }, () => api.retryFailedCanvasVideoTask('video-task-1'));
+
+  assert.equal(request.input, '/api/video/tasks/video-task-1');
+  assert.equal(request.options.method, 'PATCH');
+  assert.deepEqual(JSON.parse(request.options.body), { action: 'retry-failed' });
+  assert.equal(result.task.retryOf, 'video-task-1');
 });

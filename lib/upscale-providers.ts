@@ -18,14 +18,16 @@ export class UpscaleProviderError extends Error {
   readonly providerCode?: string;
   readonly status?: number;
   readonly requestId?: string;
+  readonly retryAfterMs?: number;
 
-  constructor(message: string, code: UpscaleProviderErrorCode, details: { providerCode?: string; status?: number; requestId?: string } = {}) {
+  constructor(message: string, code: UpscaleProviderErrorCode, details: { providerCode?: string; status?: number; requestId?: string; retryAfterMs?: number } = {}) {
     super(message);
     this.name = 'UpscaleProviderError';
     this.code = code;
     this.providerCode = details.providerCode;
     this.status = details.status;
     this.requestId = details.requestId;
+    this.retryAfterMs = details.retryAfterMs;
   }
 }
 
@@ -335,9 +337,25 @@ export function buildAliyunRpcSignature(options: { method?: string; action: stri
   return { query, signature, canonicalQuery, stringToSign };
 }
 
-function aliError(payload: JsonObject, status: number, requestId?: string) {
+function aliError(payload: JsonObject, status: number, requestId?: string, retryAfterMs?: number) {
   const code = stringValue(payload.Code || payload.code || nestedValue(payload, ['Code', 'code']));
-  return mapProviderError(code, status, requestId || stringValue(payload.RequestId || payload.requestId), '阿里云图像生产请求失败，请检查服务状态或稍后重试。', 'aliyun-viapi');
+  const error = mapProviderError(code, status, requestId || stringValue(payload.RequestId || payload.requestId), '阿里云图像生产请求失败，请检查服务状态或稍后重试。', 'aliyun-viapi');
+  if (retryAfterMs === undefined) return error;
+  return new UpscaleProviderError(error.message, error.code, {
+    providerCode: error.providerCode,
+    status: error.status,
+    requestId: error.requestId,
+    retryAfterMs,
+  });
+}
+
+function retryAfterMsFromHeaders(headers: Headers) {
+  const value = headers.get('retry-after')?.trim();
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : undefined;
 }
 
 async function aliyunRpc(credentials: UpscaleConnectionCredentials, action: string, params: Record<string, string>, signal?: AbortSignal, rpcOptions?: { endpoint?: string; version?: string }): Promise<{ payload: JsonObject; requestId?: string }> {
@@ -350,7 +368,7 @@ async function aliyunRpc(credentials: UpscaleConnectionCredentials, action: stri
   const text = await response.text();
   let payload: JsonObject = {};
   try { payload = asObject(text ? JSON.parse(text) as unknown : {}); } catch { throw new UpscaleProviderError('阿里云返回了无法解析的结果。', 'UPSTREAM_ERROR', { status: response.status, requestId }); }
-  if (!response.ok || payload.Code || payload.code || payload.ErrorCode) throw aliError(payload, response.status, requestId);
+  if (!response.ok || payload.Code || payload.code || payload.ErrorCode) throw aliError(payload, response.status, requestId, retryAfterMsFromHeaders(response.headers));
   return { payload, requestId: requestId || stringValue(payload.RequestId || payload.requestId) || undefined };
 }
 

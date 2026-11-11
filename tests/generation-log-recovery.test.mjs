@@ -16,11 +16,12 @@ test.after(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("orphaned edit logs retain an explicit provider-acceptance warning", async () => {
+test("stale image logs preserve an unconfirmed provider state instead of implying a terminal failure", async () => {
   const staleDate = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
   const logs = [
     { id: "stale-edit-log", taskId: "edit-client-task", createdAt: staleDate, status: "pending", mode: "edit", prompt: "synthetic edit" },
     { id: "stale-generate-log", createdAt: staleDate, status: "pending", mode: "generate", prompt: "synthetic generation" },
+    { id: "stale-audio-log", createdAt: staleDate, status: "pending", mode: "audio", prompt: "synthetic narration" },
   ];
   await appendFile(path.join(dataDir, "generation-logs.jsonl"), `${logs.map((log) => JSON.stringify(log)).join("\n")}\n`, "utf8");
 
@@ -30,7 +31,10 @@ test("orphaned edit logs retain an explicit provider-acceptance warning", async 
   assert.equal(edit.status, "error");
   assert.equal(edit.errorCode, "provider_result_unconfirmed");
   assert.equal(generate.status, "error");
-  assert.equal(generate.errorCode, undefined);
+  assert.equal(generate.errorCode, "provider_result_unconfirmed");
+  const audio = listed.find((log) => log.id === "stale-audio-log");
+  assert.equal(audio.status, "error");
+  assert.equal(audio.errorCode, "provider_result_unconfirmed");
 
   const recovered = await findGenerationLog("edit-client-task");
   assert.equal(recovered.errorCode, "provider_result_unconfirmed");

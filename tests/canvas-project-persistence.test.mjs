@@ -60,6 +60,65 @@ test('startup selection survives reload after another tab changes the shared def
   assert.equal(storage.ensureCanvasStorage().activeId, 'a');
 });
 
+test('successful Nova migration reclaims only source copies covered by the retained backup', () => {
+  const { storage, model, imageDocument } = fixture();
+  const legacyProjects = [{ id: 'a', name: 'a', createdAt: 100, updatedAt: 100 }];
+  const legacyDocument = imageDocument('legacy');
+  const backup = {
+    backedUpAt: '2026-11-10T00:00:00.000Z',
+    source: 'nova.v1',
+    projects: legacyProjects,
+    activeId: 'a',
+    documents: { a: legacyDocument },
+  };
+  window.localStorage.setItem('nova.v1.projects', JSON.stringify(legacyProjects));
+  window.localStorage.setItem('nova.v1.active', JSON.stringify('a'));
+  window.localStorage.setItem('nova.v1.project.a', JSON.stringify(legacyDocument));
+  window.localStorage.setItem('sanmao.canvas.nova-backup', JSON.stringify(backup));
+  window.localStorage.setItem('sanmao.canvas.nova-migrated', JSON.stringify({
+    migratedAt: '2026-11-10T00:00:00.000Z',
+    source: 'nova.v1',
+    backupKey: 'sanmao.canvas.nova-backup',
+  }));
+  window.localStorage.setItem('sanmao-generate-tasks', 'preserve');
+  window.localStorage.setItem('sanmao.canvas.project.a', JSON.stringify(imageDocument('current')));
+
+  storage.ensureCanvasStorage();
+
+  assert.equal(window.localStorage.getItem('nova.v1.projects'), null);
+  assert.equal(window.localStorage.getItem('nova.v1.active'), null);
+  assert.equal(window.localStorage.getItem('nova.v1.project.a'), null);
+  assert.equal(window.localStorage.getItem('sanmao.canvas.nova-backup'), JSON.stringify(backup));
+  assert.equal(window.localStorage.getItem('sanmao-generate-tasks'), 'preserve');
+  assert.deepEqual(storage.loadCanvasDocument('a'), model.normalizeDocument(imageDocument('current')));
+});
+
+test('Nova source data changed after migration is retained for recovery', () => {
+  const { storage, imageDocument } = fixture();
+  const legacyProjects = [{ id: 'a', name: 'a', createdAt: 100, updatedAt: 100 }];
+  const backup = {
+    backedUpAt: '2026-11-10T00:00:00.000Z',
+    source: 'nova.v1',
+    projects: legacyProjects,
+    activeId: 'a',
+    documents: { a: imageDocument('legacy') },
+  };
+  window.localStorage.setItem('nova.v1.projects', JSON.stringify(legacyProjects));
+  window.localStorage.setItem('nova.v1.active', JSON.stringify('a'));
+  window.localStorage.setItem('nova.v1.project.a', JSON.stringify(imageDocument('later-edit')));
+  window.localStorage.setItem('sanmao.canvas.nova-backup', JSON.stringify(backup));
+  window.localStorage.setItem('sanmao.canvas.nova-migrated', JSON.stringify({
+    migratedAt: '2026-11-10T00:00:00.000Z',
+    source: 'nova.v1',
+    backupKey: 'sanmao.canvas.nova-backup',
+  }));
+
+  storage.ensureCanvasStorage();
+
+  assert.notEqual(window.localStorage.getItem('nova.v1.project.a'), null);
+  assert.notEqual(window.localStorage.getItem('sanmao.canvas.nova-backup'), null);
+});
+
 test('autosave touches only the latest project row, preserving concurrent rename and creation', () => {
   const { storage, project, imageDocument, empty } = fixture();
   storage.createCanvasProject(project('b'), empty);

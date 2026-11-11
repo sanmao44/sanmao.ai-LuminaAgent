@@ -75,7 +75,11 @@ MEDIA_RELAY_REQUIRED=0
 if [ -f "$DATA_ROOT/state.json" ] && node "$SCRIPT_DIR/scripts/media-relay-policy.mjs" "$DATA_ROOT/state.json"; then
   MEDIA_RELAY_REQUIRED=1
 fi
-if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
+SHARED_MEDIA_RELAY_CONFIGURED=0
+if node "$SCRIPT_DIR/scripts/media-relay-policy.mjs" --has-default-relay; then
+  SHARED_MEDIA_RELAY_CONFIGURED=1
+fi
+if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && [ "$SHARED_MEDIA_RELAY_CONFIGURED" -eq 0 ]; then
   unset SANMAO_RELAY_MODE SANMAO_RELAY_PUBLIC_BASE_URL
   export SANMAO_RELAY_MODE=1
   case "${SANMAO_MEDIA_RELAY_URL:-}" in
@@ -89,6 +93,9 @@ else
     https://*.trycloudflare.com|https://*.trycloudflare.com/) unset SANMAO_MEDIA_RELAY_URL ;;
   esac
   free_relay_stop "$ROOT_DIR"
+  if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && [ "$SHARED_MEDIA_RELAY_CONFIGURED" -eq 1 ]; then
+    printf '%s\n' '已配置固定媒体中转地址，跳过本机临时通道。'
+  fi
 fi
 export SANMAO_LIFECYCLE=1
 SANMAO_BUILD_ID=$(tr -d '\r\n' < "$ROOT_DIR/.next/BUILD_ID" 2>/dev/null || true)
@@ -116,7 +123,7 @@ if [ "$READY" -ne 1 ]; then
   printf '%s\n' 'SANMAO.AI 服务启动超时。' >&2
   exit 1
 fi
-if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ]; then
+if [ "$MEDIA_RELAY_REQUIRED" -eq 1 ] && [ "$SHARED_MEDIA_RELAY_CONFIGURED" -eq 0 ]; then
   if RELAY_URL=$(free_relay_start "$ROOT_DIR" "$PORT"); then
     export SANMAO_RELAY_MODE=1
     export SANMAO_RELAY_PUBLIC_BASE_URL="$RELAY_URL"

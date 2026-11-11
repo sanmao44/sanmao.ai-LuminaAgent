@@ -71,11 +71,12 @@ test('submit row sizes to content, mobile footer remains visible, and original i
   assert.match(css, /\.angle-image-frame img\{width:100%;height:100%;object-fit:contain/);
 });
 
-test('page uses edit models, preserves the original and excludes unrelated local-edit state', async () => {
+test('page uses edit models, preserves the original and submits move commands without a synthetic guide', async () => {
   const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
   assert.match(page, /isAngleGeneration \|\| hasLocalEditMask\s*\?\s*availableEditModels/);
   assert.match(page, /const taskMaskAsset = isAngleGeneration \? null/);
-  assert.match(page, /const moveGuideDataUrl = !isAngleGeneration/);
+  assert.match(page, /const moveSourceMaskDataUrl = !isAngleGeneration/);
+  assert.doesNotMatch(page, /const moveGuideDataUrl =|moveGuide:\s*moveGuideDataUrl/);
   assert.match(page, /const originalUrl = item\.angle \? item\.references\?\.\[0\]\?\.url : item\.url/);
   assert.match(page, /setAngleResults\(previous => \[\.\.\.items, \.\.\.previous\]/);
   assert.doesNotMatch(source, /void onUseResult\(viewedResult\)/);

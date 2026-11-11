@@ -29,7 +29,13 @@ const presets = await import(`data:text/javascript;base64,${Buffer.from(presetCo
 
 test('provider picker uses real local logos for visible providers', async () => {
   const visiblePresets = presets.providerPresets.filter((preset) => preset.showInPicker !== false && preset.value !== 'custom');
-  assert.equal(visiblePresets.length, 13);
+  assert.equal(visiblePresets.length, 15);
+  const a6api = presets.providerPresets.find((preset) => preset.value === 'a6api');
+  assert.deepEqual({ baseUrl: a6api.baseUrl, apiKeyUrl: a6api.apiKeyUrl, type: a6api.type }, {
+    baseUrl: 'https://api.a6api.vip/v1',
+    apiKeyUrl: 'https://a6api.ai/?auth=register&aff=XIcW',
+    type: 'openai-compatible',
+  });
   assert.ok(visiblePresets.every((preset) => typeof preset.logo === 'string' && preset.logo.startsWith('/brand/providers/')) || visiblePresets.every((preset) => typeof preset.logo === 'string'));
   assert.match(providerPickerSource, /className=\{preset\.logo \? "platform-logo" : ""\}/);
   assert.match(providerPickerSource, /preset\.logo \? <img src=\{preset\.logo\} alt="" \/> : preset\.short\.slice\(0, 2\)/);
@@ -40,6 +46,21 @@ test('provider picker uses real local logos for visible providers', async () => 
   }
   const custom = presets.providerPresets.find((preset) => preset.value === 'custom');
   assert.equal(custom.logo, undefined);
+  const claudeStd = presets.providerPresets.find((preset) => preset.value === '65535-claude-code');
+  assert.deepEqual({ baseUrl: claudeStd.baseUrl, type: claudeStd.type, needsBaseUrl: claudeStd.needsBaseUrl }, {
+    baseUrl: 'https://api2.65535.space',
+    type: 'openai-compatible',
+    needsBaseUrl: false,
+  });
+  const claudeModels = await providers.discoverModels({ platform: '65535-claude-code' });
+  assert.deepEqual(claudeModels.map((model) => model.id), [
+    'claude-haiku-5-5', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-opus-5-5',
+    'claude-sonnet-4-6', 'claude-sonnet-5', 'claude-sonnet-5-5',
+  ]);
+  assert.ok(claudeModels.every((model) => model.capabilities?.includes('chat') && model.capabilities.includes('vision')));
+  assert.equal(providers.is65535ClaudeModelProvider({ platform: '65535', baseUrl: 'https://api2-cn.65535.space/v1' }, 'claude-sonnet-5-5'), true);
+  assert.equal(providers.is65535ClaudeModelProvider({ platform: '65535', baseUrl: 'https://api2-cn.65535.space/v1' }, 'gpt-5.6-sol'), false);
+  assert.equal(providers.is65535ClaudeModelProvider({ platform: '65535', baseUrl: 'https://task-api-1-cn.65535.space/v1' }, 'claude-sonnet-5-5'), false);
 });
 
 test('normalizes common model list response shapes', () => {
@@ -241,7 +262,7 @@ test('JEV intent classification uses System One and normalizes its choice answer
     requestUrl = String(url);
     requestBody = JSON.parse(init.body);
     return new Response(JSON.stringify({
-      model: 'jev-1.13.0',
+      model: 'jev-1.14.0',
       answers: {
         mode: { type: 'choice', choice: 'follow_up', confidence: 0.97 },
         deliverable: { type: 'choice', choice: 'image', confidence: 0.93 },
@@ -252,9 +273,9 @@ test('JEV intent classification uses System One and normalizes its choice answer
     const response = await providers.intentClassificationCompletion({
       id: 'jev', name: '65535', type: 'openai-compatible', platform: '65535',
       baseUrl: 'https://api2-cn.65535.space/v1', apiKey: 'test-key',
-    }, 'jev-1.13', { messages: [{ role: 'user', content: '按刚才的做' }] });
+    }, 'jev-1.14', { messages: [{ role: 'user', content: '按刚才的做' }] });
     assert.equal(requestUrl, 'https://api2.65535.space/v1/systemone');
-    assert.equal(requestBody.model, 'jev-1.13');
+    assert.equal(requestBody.model, 'jev-1.14');
     assert.match(requestBody.state, /user: 按刚才的做/);
     assert.equal(response.choices[0].message.content, JSON.stringify({
       mode: 'follow_up', deliverable: 'IMAGE', confidence: 'high', reason: 'JEV System One 判定：mode=follow_up，deliverable=IMAGE',
@@ -272,7 +293,7 @@ test('JEV image-intent classification sends prompt metadata only and normalizes 
     requestUrl = String(url);
     requestBody = JSON.parse(init.body);
     return new Response(JSON.stringify({
-      model: 'jev-1.13.0',
+      model: 'jev-1.14.0',
       answers: { imageOperation: { type: 'choice', choice: 'reference_generate', confidence: 0.96 } },
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
@@ -280,16 +301,16 @@ test('JEV image-intent classification sends prompt metadata only and normalizes 
     const response = await providers.canvasImageIntentCompletion({
       id: 'jev', name: '65535', type: 'openai-compatible', platform: '65535',
       baseUrl: 'https://api2-cn.65535.space/v1', apiKey: 'test-key',
-    }, 'jev-1.13', { prompt: 'Use the connected image as a visual reference', imageReferenceCount: 2 });
+    }, 'jev-1.14', { prompt: 'Use the connected image as a visual reference', imageReferenceCount: 2 });
     assert.equal(requestUrl, 'https://api2.65535.space/v1/systemone');
-    assert.equal(requestBody.model, 'jev-1.13');
+    assert.equal(requestBody.model, 'jev-1.14');
     assert.deepEqual(JSON.parse(requestBody.state), {
       prompt: 'Use the connected image as a visual reference',
       connectedImageReferenceCount: 2,
       task: 'Canvas creates a new output node; no input image is mutated in place.',
     });
     assert.equal(JSON.stringify(requestBody).includes('data:image'), false);
-    assert.deepEqual(response, { operation: 'reference-generate', confidence: 'high', model: 'jev-1.13.0' });
+    assert.deepEqual(response, { operation: 'reference-generate', confidence: 'high', model: 'jev-1.14.0' });
     assert.equal(requestBody.questions.imageOperation.criteria.reference_generate.length > 0, true);
     assert.equal(requestBody.questions.imageOperation.criteria.edit.length > 0, true);
   } finally {
@@ -306,8 +327,8 @@ test('JEV image-intent classification normalizes edit and treats low confidence 
     const response = await providers.canvasImageIntentCompletion({
       id: 'jev', name: 'JEV', type: 'openai-compatible', platform: 'openai',
       baseUrl: 'https://jev.example/v1', apiKey: 'test-key',
-    }, 'jev-1.13', { prompt: 'Edit the source image', imageReferenceCount: 1 });
-    assert.deepEqual(response, { operation: 'edit', confidence: 'low', model: 'jev-1.13' });
+    }, 'jev-1.14', { prompt: 'Edit the source image', imageReferenceCount: 1 });
+    assert.deepEqual(response, { operation: 'edit', confidence: 'low', model: 'jev-1.14' });
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -908,7 +929,31 @@ test('does not change generic image size mapping for other models and providers'
   assert.equal(providers.mapImageRequestSize(provider, 'gpt-image-2-lite', '16:9', 4096, 2304), '3840x2304');
 });
 
-test('sends a manually registered image model raw ID to the real generation request', async () => {
+test('requests inline image bytes for GPT Image 2.5 responses', async () => {
+  let requestBody;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ data: [{ b64_json: 'iVBORw0KGgoAAAAAAAAAAAAA' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const images = await providers.generateImage({
+      type: 'openai-compatible',
+      platform: 'custom',
+      baseUrl: 'https://images.example.test/v1',
+      apiKey: 'test-key',
+    }, 'gpt-image-2.5', { prompt: 'test', count: 1 });
+    assert.equal(requestBody.response_format, 'b64_json');
+    assert.match(images[0].url, /^data:image\/png;base64,/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('honors an explicit image response format and preserves the manually registered model ID', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
@@ -924,9 +969,10 @@ test('sends a manually registered image model raw ID to the real generation requ
       platform: 'custom',
       baseUrl: 'https://images.example.test/v1',
       apiKey: 'test-key',
-    }, 'gpt-image-2-4K', { prompt: 'test', count: 1, aspectRatio: '1:1' });
+    }, 'gpt-image-2-4K', { prompt: 'test', count: 1, aspectRatio: '1:1', responseFormat: 'url' });
     assert.equal(images.length, 1);
     assert.equal(JSON.parse(calls[0].init.body).model, 'gpt-image-2-4K');
+    assert.equal(JSON.parse(calls[0].init.body).response_format, 'url');
     assert.match(calls[0].url, /\/images\/generations$/);
   } finally {
     globalThis.fetch = previousFetch;

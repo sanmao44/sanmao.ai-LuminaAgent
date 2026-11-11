@@ -13,8 +13,8 @@
 }
 
 .workspace ::selection {
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  background: var(--modern-selection-bg);
+  color: var(--modern-selection-ink);
 }
 
 .navigation {

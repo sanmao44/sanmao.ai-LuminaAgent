@@ -11,13 +11,17 @@ export type McpCapability = {
 const MCP_DISCOVERY_SERVER_TIMEOUT_MS = 4_000;
 const MCP_DISCOVERY_SELECT_TIMEOUT_MS = 6_000;
 
-async function withTimeout<T>(task: Promise<T>, timeoutMs: number) {
+async function withTimeout<T>(task: Promise<T>, timeoutMs: number, onTimeout?: () => void) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       task,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('MCP capability discovery timed out')), timeoutMs);
+        timer = setTimeout(() => {
+          const error = new Error('MCP capability discovery timed out');
+          onTimeout?.();
+          reject(error);
+        }, timeoutMs);
       }),
     ]);
   } finally {
@@ -29,7 +33,7 @@ async function withTimeout<T>(task: Promise<T>, timeoutMs: number) {
 export async function discoverMcpForRequest(options: {
   servers: readonly McpServerConfig[];
   signal?: AbortSignal;
-  select: (capabilities: McpCapability[]) => Promise<unknown>;
+  select: (capabilities: McpCapability[], signal?: AbortSignal) => Promise<unknown>;
   load?: typeof loadMcpToolRuntime;
   scheduleUpdates?: typeof scheduleManagedGithubMcpUpdates;
 }) {
@@ -59,9 +63,24 @@ export async function discoverMcpForRequest(options: {
     })),
   }] : []);
   if (!capabilities.length) return { serverIds: [] as string[], unavailable: servers.map((server) => server.name) };
-  const result = capabilities.length === 1
-    ? [capabilities[0].id]
-    : await withTimeout(options.select(capabilities), MCP_DISCOVERY_SELECT_TIMEOUT_MS);
+  let result: unknown;
+  if (capabilities.length === 1) {
+    result = [capabilities[0].id];
+  } else {
+    const selectionController = new AbortController();
+    const abortSelectionFromParent = () => selectionController.abort(options.signal?.reason);
+    if (options.signal?.aborted) abortSelectionFromParent();
+    else options.signal?.addEventListener('abort', abortSelectionFromParent, { once: true });
+    try {
+      result = await withTimeout(
+        options.select(capabilities, selectionController.signal),
+        MCP_DISCOVERY_SELECT_TIMEOUT_MS,
+        () => selectionController.abort(new Error('MCP capability discovery timed out')),
+      );
+    } finally {
+      options.signal?.removeEventListener('abort', abortSelectionFromParent);
+    }
+  }
   options.signal?.throwIfAborted();
   if (!Array.isArray(result) || result.some((id) => typeof id !== 'string' || !capabilities.some((item) => item.id === id))) {
     throw new Error('MCP 能力选择结果无效，尚未执行操作，请重试或切换模型');

@@ -1,3 +1,32 @@
+# 0.7.104 Canvas 图片与界面体验改进
+
+- 改进 Canvas 图片生成连续性、任务恢复与图片持久化，提升长流程的稳定性。
+- 新增图片查看器全屏模式，优化不同主题下文本选中的可读性。
+- 恢复桌面 Agent 单行输入布局，并细化界面主题颜色。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.104](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.104)。
+
+# 0.7.103 搜索时区与 Canvas 工作流改进
+
+- 固定搜索默认时区为 `Asia/Shanghai`，修复 UTC 环境下相对日期新闻查询偏移一天的问题。
+- 改进 Canvas Agent 技能选择器、文件生成空结果处理与任务重试。
+- 增强 Canvas 检查点间隔、图片持久化和项目恢复。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.103](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.103)。
+
+# 0.7.102 Agent、Canvas 与媒体工作流改进
+
+- 集成 65535 Claude Std，并改进 Claude 工具结果交接与 MCP 发现超时恢复。
+- 增强 Canvas 长任务恢复、状态导航、失败重试和任务日志交互。
+- 新增创意项目进度、项目参考预览与自动检查点，改善媒体草稿恢复。
+- 改进音频生成面板与已接受任务恢复，补充安全的音频草稿保留。
+- 优化视频与超分任务轮询、恢复和结果交付，并改进画布编辑器体验。
+- 改进项目说明编辑、意图分类器及素材库分页布局。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.102](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.102)。
+
+# 0.7.101 画布局部编辑与媒体工作流稳定性
+
 # 0.7.100 本地图片编辑与任务恢复
 
 - 改进本地图片编辑器与分割蒙版交互，支持历史记录、遮罩持久化和编辑结果恢复。

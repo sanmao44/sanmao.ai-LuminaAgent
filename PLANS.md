@@ -11,6 +11,10 @@ Final Architecture Lock: **complete**.
 Architecture is no longer the active workstream. The next work is product
 quality, not further architecture migration.
 
+The incremental product goal, priorities, acceptance criteria and evaluated
+GitHub design references are recorded in `docs/product-modernization.md`.
+Deliver one verified product slice at a time on the locked boundaries.
+
 ## Current main line
 
 1. Product Regression Recovery

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { dirname } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 function hasProviderCredential(provider) {
   return Boolean(String(provider?.encryptedApiKey || provider?.encryptedVideoApiKey || provider?.apiKey || '').trim());
@@ -59,10 +60,37 @@ export function requiresMediaRelay(state) {
   });
 }
 
+export function hasDefaultMediaRelay(env = process.env) {
+  try {
+    const value = String(env.SANMAO_DEFAULT_MEDIA_RELAY_URL || '').trim();
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return parsed.protocol === 'https:'
+      && !parsed.username
+      && !parsed.password
+      && host !== 'localhost'
+      && host !== '::1'
+      && !host.endsWith('.local')
+      && !/^127\./u.test(host)
+      && !/^10\./u.test(host)
+      && !/^192\.168\./u.test(host)
+      && !/^169\.254\./u.test(host)
+      && !/^172\.(1[6-9]|2\d|3[01])\./u.test(host);
+  } catch {
+    return false;
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const state = JSON.parse(readFileSync(process.argv[2], 'utf8'));
-    process.exitCode = requiresMediaRelay(state) ? 0 : 1;
+    const { loadEnvConfig } = (await import('@next/env')).default;
+    loadEnvConfig(dirname(dirname(fileURLToPath(import.meta.url))), false);
+    if (process.argv[2] === '--has-default-relay') {
+      process.exitCode = hasDefaultMediaRelay() ? 0 : 1;
+    } else {
+      const state = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+      process.exitCode = requiresMediaRelay(state) ? 0 : 1;
+    }
   } catch {
     process.exitCode = 1;
   }

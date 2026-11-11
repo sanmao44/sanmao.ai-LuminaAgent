@@ -666,6 +666,26 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-home-label{display:inline!important;color:var(--accent-text);line-height:1}
 @media(max-width:720px){.canvas-home-button{display:inline-flex!important;width:32px;min-width:32px;height:32px;padding:0;gap:0}.canvas-home-label{display:none!important}.canvas-home-icon{width:22px;height:22px}.canvas-brand{flex:0 0 184px;min-width:184px}.canvas-brand small.canvas-brand-workspace{display:flex;max-width:none}.canvas-brand-chevron{width:32px;height:32px}.canvas-brand-chevron small,.canvas-brand-chevron i{display:block}.canvas-brand-project-name{max-width:54px}}
 
+/* Keep mobile canvas tools visible as labeled controls instead of hiding them in an unmarked horizontal scroller. */
+@media(max-width:720px){
+  .canvas-topbar-main{width:calc(100% - 16px);max-width:1360px;height:auto;min-height:52px;flex-wrap:wrap;justify-content:center;overflow:visible;gap:4px}
+  .canvas-topbar-main::-webkit-scrollbar{display:none}
+  .canvas-topbar-spacer,.canvas-save-state,.canvas-workspace-sync-state{display:none}
+  .canvas-topbar .canvas-separator{display:none}
+  .canvas-topbar .canvas-icon-button{display:inline-grid;width:32px;height:32px;flex:none}
+  .canvas-topbar .canvas-soft-button{display:inline-flex;width:auto;min-width:32px;height:32px;padding:0 8px;font-size:9px}
+  .canvas-topbar .canvas-soft-button::before{content:none}
+  .canvas-topbar .canvas-shortcuts-button{display:inline-flex}
+  .canvas-home-button{display:inline-flex!important;min-width:32px;width:32px;height:32px;padding:0;flex:none}
+  .canvas-home-button::before{content:none}
+}
+@media(max-width:420px){
+  .canvas-topbar-main{gap:3px;padding:5px;border-radius:15px}
+  .canvas-brand{flex:0 1 168px;min-width:144px}
+  .canvas-topbar .canvas-icon-button{width:30px;height:30px}
+  .canvas-topbar .canvas-soft-button{height:30px;padding-inline:6px;font-size:8px}
+}
+
 /* Final overrides for the expanded reuse composer and shared viewer. */
 .canvas-deck:has(.canvas-reference-draft-strip){width:min(1320px,calc(100% - 160px));min-width:0}
 .canvas-deck:has(.canvas-reference-draft-strip) .canvas-deck-main{align-items:stretch}
@@ -836,6 +856,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-file-actions button:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
 .canvas-agent-dock-file-actions button:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:1px}
 .canvas-agent-dock-message.is-streaming p::after{content:"▍";margin-left:2px;color:var(--accent-text);animation:canvas-agent-dock-caret 1.05s steps(2,end) infinite}
+.canvas-agent-dock-progress{color:var(--accent-text);font-size:9px;line-height:1.4}
 @keyframes canvas-agent-dock-caret{0%,100%{opacity:1}50%{opacity:0}}
 .canvas-agent-dock-message p{margin:0;white-space:pre-wrap;word-break:break-word;color:var(--text-2);font-size:10px;line-height:1.55}
 .canvas-agent-dock-message.user p{color:var(--text)}
@@ -892,12 +913,14 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-plan.is-applied{border-color:color-mix(in srgb,var(--success) 38%,var(--line));background:color-mix(in srgb,var(--success-soft) 38%,var(--panel))}
 .canvas-agent-dock-plan.is-dismissed{border-color:var(--line);background:var(--panel-2);opacity:.72}
 .canvas-agent-dock-plan.is-failed{border-color:color-mix(in srgb,var(--danger) 38%,var(--line));background:color-mix(in srgb,var(--danger-soft) 34%,var(--panel))}
+.canvas-agent-dock-plan.is-confirmation-required{border-color:color-mix(in srgb,var(--danger) 36%,var(--line));background:color-mix(in srgb,var(--danger-soft) 20%,var(--panel))}
 .canvas-agent-dock-plan-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .canvas-agent-dock-plan-head strong{font-size:9px;color:var(--text)}
 .canvas-agent-dock-plan-head span{font-size:8px;color:var(--accent-text)}
 .canvas-agent-dock-plan>b{font-size:10px;color:var(--text)}
 .canvas-agent-dock-plan ol{margin:0;padding-left:18px;color:var(--text-2);font-size:9px;line-height:1.5}
 .canvas-agent-dock-plan-error{color:var(--danger);font-size:9px;line-height:1.4}
+.canvas-agent-dock-confirmation-note{color:var(--danger);font-size:9px;line-height:1.45}
 .canvas-agent-dock-plan-actions{display:flex;gap:5px;flex-wrap:wrap}
 .canvas-agent-dock-plan-actions button{height:24px;padding:0 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text-2);font-size:9px}
 .canvas-agent-dock-plan-actions button.primary{border-color:transparent;background:var(--accent);color:#fff}
@@ -911,6 +934,9 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-agent-dock-editing{display:flex;align-items:center;justify-content:space-between;gap:6px;flex:none;padding:5px 8px;border:1px dashed color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent) 8%,var(--panel));color:var(--accent-text);font-size:9px}
 .canvas-agent-dock-editing button{height:20px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text-2);font-size:8px;cursor:pointer}
 .canvas-agent-dock-editing button:hover{border-color:var(--accent);color:var(--accent-text)}
+.canvas-agent-dock-draft-status{display:flex;align-items:center;justify-content:space-between;gap:6px;flex:none;padding:5px 8px;border:1px solid color-mix(in srgb,var(--warning) 34%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--warning) 8%,var(--panel));color:var(--warning);font-size:9px}
+.canvas-agent-dock-draft-status button{height:20px;padding:0 8px;border:1px solid color-mix(in srgb,var(--warning) 44%,var(--line));border-radius:6px;background:var(--panel);color:var(--text-2);font-size:8px;cursor:pointer}
+.canvas-agent-dock-draft-status button:hover{border-color:var(--warning);color:var(--warning)}
 .canvas-agent-dock-composer{position:relative;display:grid;gap:7px;flex:none;padding:8px;border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--panel-2) 90%,transparent);transition:border-color .16s,box-shadow .16s}
 .canvas-agent-dock-composer:focus-within{border-color:color-mix(in srgb,var(--accent) 62%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}
 /* 输入框是 @ 引用编辑器（内容可编辑），高度自适应到上限后才在内部滚动。 */
@@ -954,8 +980,10 @@ html[data-theme="dark"] .canvas-workspace{
 /* 和主对话页一样：只有「始终联网」带颜色，一眼看出这轮一定会检索。
    写成 :not(:disabled) 是为了压过上面的 :hover 规则，悬停时状态色也不该被顶掉。 */
 .canvas-agent-dock-web.always:not(:disabled){border-color:color-mix(in srgb,#2e9b68 55%,var(--line));background:color-mix(in srgb,#2e9b68 9%,var(--panel-2));color:#2f946b}
-.canvas-agent-dock-auto{display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:9px}
-.canvas-agent-dock-send{margin-left:auto;height:31px;min-width:76px;padding:0 15px;border:1px solid transparent;border-radius:11px;background:linear-gradient(145deg,var(--accent),var(--accent-2));color:#fff;font-size:10px;font-weight:850;box-shadow:0 7px 18px color-mix(in srgb,var(--accent) 26%,transparent);transition:transform .16s,filter .16s,box-shadow .16s}
+.canvas-agent-dock-auto{display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2);font-size:10px;white-space:nowrap;cursor:pointer}
+.canvas-agent-dock-auto input{width:15px;height:15px;margin:0;accent-color:var(--accent)}
+.canvas-agent-dock-auto:has(input:checked){border-color:color-mix(in srgb,var(--accent) 42%,var(--line));background:var(--accent-soft);color:var(--accent-text)}
+.canvas-agent-dock-send{margin-left:auto;height:38px;min-width:80px;padding:0 15px;border:1px solid transparent;border-radius:11px;background:linear-gradient(145deg,var(--accent),var(--accent-2));color:#fff;font-size:11px;font-weight:850;box-shadow:0 7px 18px color-mix(in srgb,var(--accent) 26%,transparent);transition:transform .16s,filter .16s,box-shadow .16s}
 .canvas-agent-dock-send:hover:not(:disabled){filter:brightness(1.06)}
 .canvas-agent-dock-send:active{transform:translateY(1px)}
 .canvas-agent-dock-send.is-busy{background:linear-gradient(145deg,var(--danger),color-mix(in srgb,var(--danger) 74%,#7d1c10));box-shadow:0 7px 18px color-mix(in srgb,var(--danger) 26%,transparent)}
@@ -1206,6 +1234,13 @@ html[data-theme="dark"] .canvas-workspace{
   .canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-chips{flex-wrap:wrap}
   .canvas-current-image-reference-toggle{flex:1 1 100%;max-width:none}
   .canvas-current-image-reference-copy small{white-space:normal}
+}
+
+.canvas-node-editor-popover.is-audio-editor.is-prompt-expanded{height:min(500px,calc(100dvh - 32px));max-height:min(500px,calc(100dvh - 32px))}
+.canvas-node-editor-popover.is-audio-editor.is-prompt-expanded .canvas-node-editor-body{display:flex;flex:1;overflow:hidden;min-height:0}
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-audio-editor.is-prompt-expanded{height:min(620px,calc(100dvh - 96px));max-height:calc(100dvh - 96px)}
+  .canvas-node-editor-popover.is-audio-editor.is-prompt-expanded .canvas-node-editor-body{overflow:auto}
 }
 
 /* Compact canvas parameters: the regular card keeps only the model and one
@@ -4259,9 +4294,55 @@ html:not([data-theme="light"]) .canvas-group-label-layer>.canvas-group-world-lab
   line-height:1;
 }
 
+@media (min-width:721px){
+  .canvas-node-editor-popover.canvas-node-editor-popover[data-node-kind="audio"]:not(.is-prompt-expanded)[data-density]{
+    width:min(520px,calc(100vw - 32px))!important;
+    max-width:min(520px,calc(100vw - 32px))!important;
+    max-height:none!important;
+    overflow:visible!important;
+  }
+}
+
+@media (max-width:720px){
+  .canvas-node-editor-popover.canvas-node-editor-popover[data-node-kind="audio"]:not(.is-prompt-expanded)[data-density]{
+    width:calc(100vw - 16px)!important;
+    max-width:calc(100vw - 16px)!important;
+    max-height:none!important;
+    overflow:visible!important;
+  }
+}
+
 /* Keep the menu's transparent positioning wrapper from blocking topbar controls. */
 .canvas-project-popover-wrap{pointer-events:none}
 .canvas-project-popover-wrap>.canvas-project-popover{pointer-events:auto}
+.canvas-project-popover{height:auto;max-height:min(760px,calc(100vh - 86px));box-sizing:border-box;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.canvas-project-popover>.canvas-project-footer{position:sticky;bottom:0;padding-bottom:8px;background:color-mix(in srgb,var(--panel) 97%,transparent)}
+@media(max-width:720px){.canvas-project-popover-wrap{display:block;left:10px;right:10px;padding-top:70px}.canvas-project-popover{width:min(360px,calc(100vw - 20px))}}
+
+/* Project menu hierarchy and keyboard-friendly controls. */
+.canvas-project-popover{width:320px}
+.canvas-popover-title{display:grid;gap:3px;font-size:10px}
+.canvas-popover-title small{color:var(--muted);font-size:9px;font-weight:600}
+.canvas-project-search{display:flex;align-items:center;gap:6px;height:32px;margin:0 0 9px;padding:0 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--muted)}
+.canvas-project-search:focus-within{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent)}
+.canvas-project-search span{font-size:14px;line-height:1}
+.canvas-project-search input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:10px}
+.canvas-project-search input::placeholder{color:var(--muted)}
+.canvas-project-search button{width:20px;height:20px;border:0;background:transparent;color:var(--muted);font-size:16px;cursor:pointer}
+.canvas-project-section-title{padding:5px 8px 4px;color:var(--muted);font-size:9px;font-weight:850;letter-spacing:.02em}
+.canvas-project-empty{padding:9px 8px 11px;color:var(--muted);font-size:10px}
+.canvas-project-row small{font-size:9px}
+.canvas-popover-actions button,.canvas-rename-row button{font-size:10px}
+.canvas-project-primary-action{border-color:color-mix(in srgb,var(--accent) 42%,var(--line))!important;color:var(--accent-text)!important}
+.canvas-project-more{flex:0 0 auto!important;padding-inline:10px}
+.canvas-project-actions-menu{display:flex;justify-content:flex-end;padding-top:6px}
+.canvas-project-actions-menu button{min-height:30px;padding:0 10px;border:1px solid color-mix(in srgb,var(--danger) 40%,var(--line));border-radius:8px;background:var(--danger-soft);color:var(--danger);font-size:10px;cursor:pointer}
+.canvas-project-actions-menu button:hover,.canvas-project-actions-menu button:focus-visible{border-color:var(--danger);outline:none}
+@media(max-width:720px){.canvas-project-popover{width:min(360px,calc(100vw - 20px))}}
+
+/* Keep the search field's focus ring on the rounded shell, not on a square
+   input nested inside it. */
+.canvas-project-search input:focus,.canvas-project-search input:focus-visible{border-color:transparent;box-shadow:none;outline:0}
 
 .canvas-minimap.is-collapsed{display:flex;align-items:center;gap:8px}
 .canvas-minimap-fit{display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
@@ -4270,4 +4351,34 @@ html:not([data-theme="light"]) .canvas-group-label-layer>.canvas-group-world-lab
 .canvas-minimap-fit-mobile{display:none}
 @media(max-width:1000px){
   .canvas-minimap-fit-mobile{position:absolute;z-index:var(--canvas-z-selection);right:16px;bottom:calc(var(--canvas-deck-height,0px) + 14px);display:inline-flex;min-height:40px;padding:0 11px!important;border-radius:10px!important;font-size:9px!important;font-weight:850}
+}
+
+/* The editor stays viewport-sized while the canvas zooms; preserve readable controls. */
+.canvas-node-editor-popover{font-size:12px}
+.canvas-node-editor-popover .canvas-node-editor-identity b{font-size:13px}
+.canvas-node-editor-popover .canvas-node-editor-identity small{font-size:11px}
+.canvas-node-editor-popover .canvas-node-editor-head-actions>span{font-size:10px}
+.canvas-node-editor-popover .canvas-node-editor-head button{width:36px;height:36px}
+.canvas-node-editor-popover .canvas-node-editor-prompt-label{font-size:11px}
+.canvas-node-editor-popover .canvas-node-editor-prompt-label small{font-size:10px}
+.canvas-node-editor-popover .canvas-node-editor-prompt-wrap>textarea{font-size:12px;line-height:1.55}
+.canvas-node-editor-popover .creation-field>small,
+.canvas-node-editor-popover .creation-pixel-fields small{font-size:10px}
+.canvas-node-editor-popover .creation-field .model-picker-trigger,
+.canvas-node-editor-popover .creation-field .select-menu-trigger{height:38px;min-height:38px}
+.canvas-node-editor-popover .creation-field .model-picker-trigger-copy,
+.canvas-node-editor-popover .creation-field .select-menu-trigger-copy{font-size:11px}
+.canvas-node-editor-popover .creation-pixel-fields input,
+.canvas-node-editor-popover .creation-custom-ratio input{font-size:12px}
+.canvas-node-editor-popover .creation-advanced-toggle{min-height:36px}
+.canvas-node-editor-popover .creation-advanced-toggle span{font-size:11px}
+.canvas-node-editor-popover .creation-advanced-toggle small{font-size:10px}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-chip{height:auto;min-height:36px;padding-inline:11px;font-size:11px}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-local-edit .canvas-node-editor-dock-chip-edit{height:auto;min-height:36px}
+.canvas-node-editor-popover.is-image-dock .canvas-node-editor-dock-local-edit .canvas-node-editor-dock-chip-remove{width:36px;height:36px;min-height:36px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density] .canvas-node-editor-actions>span{font-size:10px}
+.canvas-node-editor-popover:not(.is-prompt-expanded)[data-density] .canvas-node-editor-generate{height:40px;min-height:40px;font-size:12px}
+@media(max-width:720px){
+  .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-chips{flex-wrap:wrap}
+  .canvas-node-editor-popover .canvas-node-editor-head button{width:38px;height:38px}
 }

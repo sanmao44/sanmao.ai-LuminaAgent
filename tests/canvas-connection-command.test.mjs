@@ -22,6 +22,18 @@ test("connection command preserves existing validation and returns an immutable 
   assert.equal(result.document.edges[0].target, target.id);
 });
 
+test("connection command carries a prompt draft into a new image generator", () => {
+  const source = model.createPrompt({ x: 0, y: 0 }, "旅途中的晨雾");
+  const target = model.createGenerator("image", { x: 480, y: 0 });
+  const result = command.connectCanvasNodesInDocument(documentWith([source, target]), source.id, target.id, "right", "left", null);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.document.edges.length, 1);
+  assert.equal(result.document.edges[0].source, source.id);
+  assert.equal(result.document.edges[0].target, target.id);
+  assert.equal(result.document.edges[0].inputRole, "context");
+});
+
 test("connection command rejects self connections without mutating the document", () => {
   const source = model.createMedia("image", "/source.png", "Source", { x: 0, y: 0 });
   const document = documentWith([source]);

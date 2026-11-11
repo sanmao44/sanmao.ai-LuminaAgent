@@ -151,8 +151,8 @@ function processingStageLabel(
   waiting: boolean,
   hasProgress: boolean,
 ) {
+  if (kind === "video") return waiting ? "等待服务商" : hasProgress ? "远程渲染" : "服务商处理中";
   if (waiting) return "队列等待";
-  if (kind === "video") return hasProgress ? "远程渲染" : "准备任务";
   if (kind === "agent") return "思考中";
   if (kind === "generator") return "分支处理中";
   if (kind === "angle") return "视角生成中";

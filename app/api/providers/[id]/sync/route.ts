@@ -49,7 +49,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     }
     await replaceProviderModels(provider.id, provider.name, models);
     if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') await enableProviderModels(provider.id);
-    await setProviderStatus(provider.id, 'healthy', new Date().toLocaleString('zh-CN', { hour12: false }));
+    await setProviderStatus(provider.id, provider.platform === '65535-claude-code' ? 'idle' : 'healthy', new Date().toLocaleString('zh-CN', { hour12: false }));
     return Response.json({ ok: true, count: models.length, state: await getPublicState() });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
