@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.104/SANMAO.AI-0.7.104.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.104/SANMAO.AI-0.7.104.zip"
   ],
-  "sha256": "0c376cdec1c62fbdb1ec7ee932d89c019d7b092f54d10c9aabec77049c932847",
+  "sha256": "21c92ad284697afc41adeb41663bc21220bc1e1874584224a1aff5f61eec6c18",
   "notes": [
     "改进 Canvas 图片生成连续性、任务恢复与图片持久化。",
     "新增图片查看器全屏模式，优化主题下的文本选中可读性。",
