@@ -14,6 +14,8 @@ html[data-theme="light"] {
   --modern-accent-2: #7968ee;
   --modern-accent-soft: #eeecff;
   --modern-accent-ink: #4739ba;
+  --modern-selection-bg: #c4bcff;
+  --modern-selection-ink: #171a23;
   --modern-canvas-from: #6554ed;
   --modern-canvas-to: #3e327e;
   --modern-focus: #6658e8;
@@ -40,6 +42,8 @@ html[data-theme="dark"] {
   --modern-accent-2: #c0b7ff;
   --modern-accent-soft: #2b2748;
   --modern-accent-ink: #d8d2ff;
+  --modern-selection-bg: #6556dc;
+  --modern-selection-ink: #ffffff;
   --modern-canvas-from: #7364de;
   --modern-canvas-to: #5948bd;
   --modern-focus: #c0b7ff;
@@ -144,7 +148,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   outline: var(--focus-width) solid var(--modern-focus);
   outline-offset: var(--focus-offset);
 }
-::selection { background: var(--modern-accent-soft); color: var(--modern-ink); }
+::selection { background: var(--modern-selection-bg); color: var(--modern-selection-ink); }
 input, textarea { caret-color: var(--modern-accent); }
 input[type="checkbox"], input[type="radio"], progress { accent-color: var(--modern-accent); }
 
