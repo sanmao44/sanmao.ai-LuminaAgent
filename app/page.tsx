@@ -729,6 +729,11 @@ function Icon({ name, size = 18 }) {
                 d: "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"
             })
         }),
+        shrink: /*#__PURE__*/ _jsx(_Fragment, {
+            children: /*#__PURE__*/ _jsx("path", {
+                d: "M8 3v5H3m18 0h-5V3M16 21v-5h5M3 16h5v5"
+            })
+        }),
         user: /*#__PURE__*/ _jsxs(_Fragment, {
             children: [
                 /*#__PURE__*/ _jsx("circle", { cx: "12", cy: "8", r: "3" }),
@@ -2722,6 +2727,7 @@ export default function Page() {
     const [selectionMode, setSelectionMode] = useState(false);
     const [selectedHistory, setSelectedHistory] = useState(new Set());
     const [viewerId, setViewerId] = useState(null);
+    const [viewerExpanded, setViewerExpanded] = useState(false);
     const [viewerZoom, setViewerZoom] = useState(1);
     const [viewerPan, setViewerPan] = useState({
         x: 0,
@@ -3871,6 +3877,7 @@ export default function Page() {
         generateRefs
     ]);
     useEffect(()=>{
+        if (!viewerId) setViewerExpanded(false);
         setViewerZoom(1);
         setViewerImageSize({
             width: 0,
@@ -12877,10 +12884,10 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                 })
             }),
             viewerItem && /*#__PURE__*/ _jsx("div", {
-                className: "viewer-backdrop",
+                className: `viewer-backdrop ${viewerExpanded ? 'is-expanded' : ''}`,
                 onClick: ()=>setViewerId(null),
                 children: /*#__PURE__*/ _jsxs("div", {
-                    className: "viewer",
+                    className: `viewer ${viewerExpanded ? 'is-expanded' : ''}`,
                     onClick: (e)=>e.stopPropagation(),
                     children: [
                         /*#__PURE__*/ _jsxs("div", {
@@ -12938,6 +12945,18 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                     })
                                                 })
                                             ]
+                                        }),
+                                        /*#__PURE__*/ _jsx("button", {
+                                            type: "button",
+                                            className: "icon-button viewer-fullscreen-button",
+                                            title: viewerExpanded ? "退出全屏查看" : "全屏查看",
+                                            "aria-label": viewerExpanded ? "退出全屏查看" : "全屏查看",
+                                            "aria-pressed": viewerExpanded,
+                                            onClick: ()=>setViewerExpanded((value)=>!value),
+                                            children: /*#__PURE__*/ _jsx(Icon, {
+                                                name: viewerExpanded ? "shrink" : "full",
+                                                size: 16
+                                            })
                                         }),
                                         /*#__PURE__*/ _jsx("button", {
                                             className: "icon-button",
