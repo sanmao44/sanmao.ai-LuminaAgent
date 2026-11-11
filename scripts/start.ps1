@@ -477,7 +477,14 @@ function Test-SanmaoMediaRelayRequired {
   try { & node $policyPath $statePath; return $LASTEXITCODE -eq 0 } catch { return $false }
 }
 
+function Test-SanmaoDefaultMediaRelayConfigured {
+  $policyPath = Join-Path $PSScriptRoot 'media-relay-policy.mjs'
+  if (-not (Test-Path -LiteralPath $policyPath -PathType Leaf)) { return $false }
+  try { & node $policyPath --has-default-relay; return $LASTEXITCODE -eq 0 } catch { return $false }
+}
+
 $script:MediaRelayRequired = Test-SanmaoMediaRelayRequired
+$script:SharedMediaRelayConfigured = Test-SanmaoDefaultMediaRelayConfigured
 
 function Get-SanmaoPackageVersion {
   try {
@@ -1017,13 +1024,15 @@ if ($existing) {
   $buildStale = (Test-SanmaoBuildStale -or Test-SanmaoServedBuildStale -or $identityStale)
   if (($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
   $freeRelayMismatch =
-    ($FreeRelay.IsPresent -and $script:MediaRelayRequired -and (
+    ($FreeRelay.IsPresent -and $script:MediaRelayRequired -and -not $script:SharedMediaRelayConfigured -and (
       $existing.MediaRelayMode -in @('unknown', 'unavailable') -or
       ($existing.MediaRelayMode -eq 'relay' -and (
         -not (Test-SanmaoFreeRelayTunnel -Root $root) -or
         -not (Test-SanmaoFreeRelayReachable -Root $root)
       ))
     )) -or
+    ($script:SharedMediaRelayConfigured -and $script:MediaRelayRequired -and $existing.MediaRelayMode -in @('unknown', 'unavailable')) -or
+    ($script:SharedMediaRelayConfigured -and (Test-SanmaoFreeRelayTunnel -Root $root)) -or
     (-not $script:MediaRelayRequired -and $existing.MediaRelayMode -eq 'relay')
   if ($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent -or $freeRelayMismatch) {
     $reason = if ($freeRelayMismatch -and $script:MediaRelayRequired) { '正在准备免费媒体中转通道' } elseif ($freeRelayMismatch) { '正在关闭不需要的临时通道' } elseif ($ForceRestart.IsPresent) { '正在应用新的局域网管理员密码' } elseif ($modeMismatch) { '正在切换网络共享模式' } elseif ($lifecycleMismatch) { '正在更新本地服务生命周期设置' } elseif ($identityStale) { '检测到当前服务不是本次构建' } else { '检测到源码比当前构建更新' }
@@ -1339,8 +1348,8 @@ if (Test-Port $port) {
   Fail "固定端口 $port 已被占用。为避免启动到另一套浏览器数据，已停止自动换端口；请关闭占用进程后重试。"
 }
 
-$freeRelayRequested = $FreeRelay.IsPresent -and $script:MediaRelayRequired
-if ($FreeRelay.IsPresent -and $script:MediaRelayRequired) {
+$freeRelayRequested = $FreeRelay.IsPresent -and $script:MediaRelayRequired -and -not $script:SharedMediaRelayConfigured
+if ($freeRelayRequested) {
   # Set relay mode before the Next process starts. The tunnel itself is
   # created after the local health endpoint is ready; otherwise cloudflared
   # can publish an address that points at a service which is not listening yet.
@@ -1349,12 +1358,15 @@ if ($FreeRelay.IsPresent -and $script:MediaRelayRequired) {
   if ($env:SANMAO_MEDIA_RELAY_URL -match '^https://[a-z0-9-]+\.trycloudflare\.com/?$') {
     Remove-Item Env:SANMAO_MEDIA_RELAY_URL -ErrorAction SilentlyContinue
   }
-} elseif (-not $script:MediaRelayRequired) {
+} elseif (-not $script:MediaRelayRequired -or $script:SharedMediaRelayConfigured) {
   Remove-Item Env:SANMAO_RELAY_MODE, Env:SANMAO_RELAY_PUBLIC_BASE_URL -ErrorAction SilentlyContinue
   if ($env:SANMAO_MEDIA_RELAY_URL -match '^https://[a-z0-9-]+\.trycloudflare\.com/?$') {
     Remove-Item Env:SANMAO_MEDIA_RELAY_URL -ErrorAction SilentlyContinue
   }
   Stop-SanmaoFreeRelayTunnel -Root $root
+  if ($script:SharedMediaRelayConfigured -and $script:MediaRelayRequired) {
+    Write-SanmaoLauncherLog '已配置固定媒体中转地址，跳过本机临时通道。' 'INFO'
+  }
 }
 
 if ($Lan.IsPresent) {

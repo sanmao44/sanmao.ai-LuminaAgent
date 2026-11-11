@@ -20,7 +20,7 @@ const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher,
   readFile(new URL("../scripts/media-relay-policy.mjs", import.meta.url), "utf8"),
 ]);
 
-const { requiresMediaRelay } = await import('../scripts/media-relay-policy.mjs');
+const { requiresMediaRelay, hasDefaultMediaRelay } = await import('../scripts/media-relay-policy.mjs');
 
 test("local lifecycle is mounted once for both the app and canvas routes", () => {
   assert.match(layout, /import LocalLifecycle from ['"]@\/components\/LocalLifecycle['"]/);
@@ -104,8 +104,9 @@ test("launchers enable free relay only for configured providers that need public
   assert.match(windowsLauncher, /function Test-SanmaoMediaRelayRequired/);
   assert.match(windowsLauncher, /SANMAO_DATA_DIR/);
   assert.match(windowsLauncher, /media-relay-policy\.mjs/);
-  assert.match(windowsLauncher, /if \(\$FreeRelay\.IsPresent -and \$script:MediaRelayRequired\)/);
-  assert.match(windowsLauncher, /elseif \(-not \$script:MediaRelayRequired\)/);
+  assert.match(windowsLauncher, /if \(\$freeRelayRequested\)/);
+  assert.match(windowsLauncher, /Test-SanmaoDefaultMediaRelayConfigured/);
+  assert.match(windowsLauncher, /elseif \(-not \$script:MediaRelayRequired -or \$script:SharedMediaRelayConfigured\)/);
   assert.match(windowsLauncher, /media-relay-policy\.mjs/);
   assert.match(windowsLauncher, /Stop-SanmaoFreeRelayTunnel -Root \$root/);
   assert.match(windowsLauncher, /free-relay-watch\.ps1/);
@@ -113,12 +114,13 @@ test("launchers enable free relay only for configured providers that need public
 
   assert.match(macLauncher, /media_relay_required\(\)/);
   assert.match(macLauncher, /SANMAO_DATA_DIR/);
-  assert.match(macLauncher, /if \[ "\$MEDIA_RELAY_REQUIRED" -eq 1 \]; then/);
+  assert.match(macLauncher, /if \[ "\$MEDIA_RELAY_REQUIRED" -eq 1 \] && \[ "\$SHARED_MEDIA_RELAY_CONFIGURED" -eq 0 \]; then/);
+  assert.match(macLauncher, /shared_media_relay_configured\(\)/);
   assert.match(macLauncher, /media-relay-policy\.mjs/);
   assert.match(macLauncher, /free_relay_stop "\$ROOT_DIR"/);
   assert.match(linuxLauncher, /MEDIA_RELAY_REQUIRED=0/);
   assert.match(linuxLauncher, /SANMAO_DATA_DIR/);
-  assert.match(linuxLauncher, /if \[ "\$MEDIA_RELAY_REQUIRED" -eq 1 \]; then/);
+  assert.match(linuxLauncher, /if \[ "\$MEDIA_RELAY_REQUIRED" -eq 1 \] && \[ "\$SHARED_MEDIA_RELAY_CONFIGURED" -eq 0 \]; then/);
   assert.match(linuxLauncher, /media-relay-policy\.mjs/);
   assert.match(linuxLauncher, /free_relay_stop "\$ROOT_DIR"/);
 
@@ -134,6 +136,9 @@ test('media relay policy includes enabled vision chats and keeps native video lo
   assert.equal(requiresMediaRelay({ providers: [{ ...visionProvider, videoTransport: 'native-task' }], models: [visionModel] }), true);
   assert.equal(requiresMediaRelay({ providers: [{ id: 'native', apiKey: 'configured', videoTransport: 'native-task' }], models: [{ providerId: 'native', kind: 'video', capabilities: ['video-generate'] }] }), false);
   assert.equal(requiresMediaRelay({ providers: [visionProvider], models: [{ providerId: 'deepseek', kind: 'video', capabilities: ['video-generate'] }] }), true);
+  assert.equal(hasDefaultMediaRelay({ SANMAO_DEFAULT_MEDIA_RELAY_URL: 'https://relay.example' }), true);
+  assert.equal(hasDefaultMediaRelay({ SANMAO_DEFAULT_MEDIA_RELAY_URL: 'http://relay.example' }), false);
+  assert.equal(hasDefaultMediaRelay({ SANMAO_DEFAULT_MEDIA_RELAY_URL: 'https://localhost' }), false);
   assert.match(relayPolicySource, /capabilities\.includes\('vision'\)/);
 });
 

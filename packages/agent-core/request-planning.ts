@@ -18,6 +18,7 @@ export type AgentPlanningPorts = {
   agentInstructionText: (intentText: unknown, fallback: unknown) => string;
   classifyAgentDeliverable: (input: string, context?: AgentIntentContext) => AgentIntentDecision;
   isBareImageExecution: (input: string) => boolean;
+  isImageAspectRatioCorrection?: (input: string) => boolean;
   classifyAgentRequest: (input: string, context?: AgentIntentContext, options?: { webMode?: AgentWebMode; previousAssistant?: string; intent?: AgentIntentDecision; skillRoute?: SkillRouteDecision }) => AgentRequestDecision;
   routeSkillRequest?: (input: string, options?: SkillRouteOptions) => SkillRouteDecision;
   routeNeedsSemanticReview: (decision: AgentRequestDecision) => boolean;
@@ -36,6 +37,11 @@ export type AgentRequestPlanningInput = {
   canvasTargetOperation: string;
   ports: AgentPlanningPorts;
 };
+
+function isStaleImageGenerationRefusal(message: AgentPlanningMessage) {
+  if (message.role !== 'assistant') return false;
+  return /(?:无法|不能|不支持|受限|失败|cannot|unable|not able).{0,40}(?:图片|图像|生图|绘图|image)|(?:图片|图像|生图|绘图|image).{0,40}(?:无法|不能|不支持|受限|失败|cannot|unable|not able)/i.test(message.content);
+}
 
 export function planAgentRequest(input: AgentRequestPlanningInput) {
   const { body, messages, isCanvasSource, isCanvasNodeExecution, canvasTargetNodeIds, canvasTargetOperation, ports } = input;
@@ -57,6 +63,40 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     && /(?:^|\n)\s*1[\.\u3002\u3001)]/.test(message.content)
     && isExplicitImageBatchPlan(message.content)
     && extractBatchPrompts(message.content).length >= 2);
+  const imageContinuationContext: AgentPlanningMessage[] = [];
+  const imageAspectRatioCorrection = ports.isImageAspectRatioCorrection?.(latestInstruction) === true;
+  const isCanvasImageContinuation = isCanvasSource
+    && body.executionMode === 'agent-dock'
+    && (ports.isBareImageExecution(latestInstruction) || imageAspectRatioCorrection);
+  let foundPriorImageRequest = false;
+  if (isCanvasImageContinuation) {
+    for (let index = messages.length - 2; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role !== 'user') {
+        if (!isStaleImageGenerationRefusal(message)) imageContinuationContext.unshift(message);
+        continue;
+      }
+      const references = ports.normalizeCreativeReferences(message.references, 16);
+      const decision = ports.classifyAgentDeliverable(message.content, {
+        messages: messages.slice(0, index),
+        hasReferences: references.some((reference) => reference.kind !== 'text'),
+        hasFiles: Boolean(message.files?.length),
+      });
+      if (decision.deliverable === 'TEXT' || decision.deliverable === 'CLARIFY'
+        || decision.mode === 'ask' || decision.mode === 'discuss'
+        || decision.signals.includes('问答/分析')) {
+        if (!foundPriorImageRequest) imageContinuationContext.length = 0;
+        break;
+      }
+      imageContinuationContext.unshift({ role: 'user', content: message.content });
+      if (decision.deliverable === 'IMAGE' || decision.deliverable === 'BOTH') {
+        foundPriorImageRequest = true;
+        break;
+      }
+    }
+  }
+  const continuesImageRequest = isCanvasImageContinuation && foundPriorImageRequest;
+  if (!continuesImageRequest) imageContinuationContext.length = 0;
   const selectedTextBatchPlan = latestRefs
     .filter((reference) => reference.kind === 'text' && typeof reference.text === 'string')
     .map((reference) => reference.text || '')
@@ -82,7 +122,9 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     && Boolean(latestInstruction.trim());
   let requestModeAllowsExecution = intentDecision.mode === 'execute'
     || intentDecision.mode === 'follow_up'
+    || continuesImageRequest
     || Boolean(previousImagePlan && ports.isBareImageExecution(latestInstruction))
+    || Boolean(previousImagePlan && imageAspectRatioCorrection)
     || Boolean(directGithubMcpRepo)
     || canvasTargetExecution;
   const webMode = isCanvasNodeExecution ? 'off' : ports.resolveAgentWebMode(body.webMode, body.webSearch);
@@ -119,7 +161,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     ? latestMessage
     : { ...latestMessage, content: latestInstruction };
   const modelContextMessages = [
-    ...ports.selectAgentContextMessages(messages.slice(0, -1), requestRoute.contextNeed),
+    ...(continuesImageRequest ? imageContinuationContext : ports.selectAgentContextMessages(messages.slice(0, -1), requestRoute.contextNeed)),
     effectiveLatestMessage,
   ];
   const routeSummary = requestRoute.needsTools || ports.routeNeedsSemanticReview(requestRoute)
@@ -129,7 +171,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   let requestedDeliverable: AgentDeliverable = requestModeAllowsExecution && hasExplicitDeliverable
     ? body.deliverable as AgentDeliverable
     : requestRoute.intent.deliverable;
-  if (previousImagePlan && ports.isBareImageExecution(latestInstruction) && requestModeAllowsExecution) requestedDeliverable = 'IMAGE';
+  if ((previousImagePlan || continuesImageRequest) && (ports.isBareImageExecution(latestInstruction) || imageAspectRatioCorrection) && requestModeAllowsExecution) requestedDeliverable = 'IMAGE';
   let requestedIntentReason = hasExplicitDeliverable && typeof body.intentReason === 'string' && body.intentReason.trim()
     ? body.intentReason.trim().slice(0, 320)
     : requestRoute.intent.reason;
@@ -137,7 +179,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     requestedDeliverable = 'TEXT';
     requestedIntentReason = 'canvas node execution is text-only; side effects belong to the Agent dock';
   }
-  return { latest, latestRefs, latestInstruction, latestReferenceImageCount: latestRefs.filter((reference) => reference.kind !== 'text').length, previousImagePlan, batchPlanContent, previousAssistantForRouting, directGithubMcpRepo, intentDecision, requestModeAllowsExecution, setRequestModeAllowsExecution(value: boolean) { requestModeAllowsExecution = value; }, webMode, requestRoute, routerMs, modelContextMessages, routeSummary, requestedDeliverable, setRequestedDeliverable(value: AgentDeliverable) { requestedDeliverable = value; }, requestedIntentReason, setRequestedIntentReason(value: string) { requestedIntentReason = value; } };
+  return { latest, latestRefs, latestInstruction, latestReferenceImageCount: latestRefs.filter((reference) => reference.kind !== 'text').length, previousImagePlan, continuesImageRequest, batchPlanContent, previousAssistantForRouting, directGithubMcpRepo, intentDecision, requestModeAllowsExecution, setRequestModeAllowsExecution(value: boolean) { requestModeAllowsExecution = value; }, webMode, requestRoute, routerMs, modelContextMessages, routeSummary, requestedDeliverable, setRequestedDeliverable(value: AgentDeliverable) { requestedDeliverable = value; }, requestedIntentReason, setRequestedIntentReason(value: string) { requestedIntentReason = value; } };
 }
 
 function extractHttpUrl(input: string): string {

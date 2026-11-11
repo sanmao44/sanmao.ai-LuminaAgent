@@ -128,6 +128,45 @@ test("canvas task scope falls back to the log id when taskId is absent", () => {
   assert.equal(activityLog.canvasTaskBelongsToProject({ id: "other-task", projectId: "other-project" }, scope), false);
 });
 
+test("persisted canvas failures fill missing task logs and participate in the project failure filter", () => {
+  const nodes = [
+    {
+      id: "failed-image-node",
+      type: "media",
+      data: {
+        kind: "image",
+        status: "failed",
+        statusLabel: "服务商额度不足",
+        jobId: "failed-image-task",
+        generation: { kind: "image", taskId: "failed-image-task", prompt: "red fox", createdAt: Date.parse("2026-11-10T00:00:00.000Z") },
+      },
+    },
+    { id: "stopped-node", type: "media", data: { kind: "image", status: "failed", taskTracking: "stopped", generation: { taskId: "stopped-task" } } },
+    { id: "stale-node", type: "media", data: { kind: "image", status: "failed", taskTracking: "stale", generation: { taskId: "stale-task" } } },
+    { id: "completed-node", type: "media", data: { kind: "image", status: "failed", url: "/image.png", generation: { taskId: "completed-task" } } },
+  ];
+  const log = {
+    id: "failed-image-task",
+    taskId: "failed-image-task",
+    createdAt: "2026-11-10T00:00:00.000Z",
+    status: "error",
+    mode: "generate",
+    prompt: "red fox",
+  };
+  const fallback = activityLog.canvasFailureTaskLogs([log], nodes, { projectId: "project-1", canvasId: "canvas-1" });
+  assert.equal(fallback.length, 0, "an existing task log remains authoritative");
+
+  const missing = activityLog.canvasFailureTaskLogs([], nodes, { projectId: "project-1", canvasId: "canvas-1" });
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0].id, "failed-image-task");
+  assert.equal(missing[0].error, "服务商额度不足");
+  assert.equal(missing[0].projectId, "project-1");
+  assert.deepEqual(
+    activityLog.filterCanvasGenerationLogs(missing, { status: "error" }).map((task) => task.id),
+    ["failed-image-task"],
+  );
+});
+
 test("task log filters apply media and search before status counts", () => {
   const tasks = [
     { id: "image-1", mode: "generate", mediaKind: "image", status: "success", prompt: "blue village" },

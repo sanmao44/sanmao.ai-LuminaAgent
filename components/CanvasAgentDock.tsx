@@ -822,16 +822,10 @@ export default function CanvasAgentDock({
     liveCreativeRoute.operation === "edit" ? "edit" : "generate",
     hasSelectedCanvasImageReference,
   );
-  const availableCreativeModels = useMemo(
-    () => filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
-      kind: "image",
-      capability: liveCreativeCapability,
-    }),
-    [liveCreativeCapability, runtime?.models, runtime?.providers],
+  const creativeModelPickerModels = useMemo(
+    () => filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], { kind: "image" }),
+    [runtime?.models, runtime?.providers],
   );
-  useEffect(() => {
-    if (imageModelId !== "auto" && !availableCreativeModels.some((candidate) => candidate.id === imageModelId)) setImageModelId("auto");
-  }, [availableCreativeModels, imageModelId]);
   const chipMentionIndexes = useMemo(
     () => new Map(orderedReferences.map((reference, index) => [referenceOrderKey(reference), index + 1] as const)),
     [orderedReferences],
@@ -1149,17 +1143,7 @@ export default function CanvasAgentDock({
       const hasSelectedImageReferences = turnNodeReferences.some((reference) =>
         reference.kind === "image" && turnNodeIds.includes(reference.nodeId || reference.id),
       );
-      const creativeModelCapability = canvasAgentImageCapability(
-        creativeRoute.operation === "edit" ? "edit" : "generate",
-        hasSelectedImageReferences,
-      );
-      const selectedCreativeModel = imageModelId !== "auto"
-        && filterModelsByActiveProviders(runtime?.models || [], runtime?.providers || [], {
-          kind: "image",
-          capability: creativeModelCapability,
-        }).some((candidate) => candidate.id === imageModelId)
-        ? imageModelId
-        : "auto";
+      const selectedCreativeModel = imageModelId || "auto";
       const requestCreativeModel = options.retry && sourceMessage?.imageModelId
         ? sourceMessage.imageModelId
         : selectedCreativeModel;
@@ -2432,7 +2416,7 @@ export default function CanvasAgentDock({
             </div>
             <div className={`canvas-agent-dock-model-wrap canvas-agent-dock-creative-model-wrap${busy ? " is-busy" : ""}`} inert={busy ? true : undefined}>
               <ModelPicker
-                models={availableCreativeModels}
+                models={creativeModelPickerModels}
                 value={imageModelId}
                 capability={liveCreativeCapability}
                 portalZIndex={CANVAS_Z_INDEX.modalPopover}

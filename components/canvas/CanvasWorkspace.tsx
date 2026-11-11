@@ -104,7 +104,9 @@ import {
 import type { GenerationLog } from "@/lib/generation-log";
 import {
   archiveCanvasImages,
+  canvasInlineImageUrls,
   canvasMediaUrlsToArchive,
+  replaceCanvasMediaUrls,
   canvasImageTaskOutputUrls,
   canvasVideoTaskOutputUrl,
   getCanvasAgentGeneration,
@@ -2154,6 +2156,7 @@ export default function SuperCanvas() {
     const projectTask = captureProjectTask();
     const { updateDoc, readDocument } = projectTask;
     const mediaUrls = canvasMediaUrlsToArchive(readDocument().nodes)
+      .filter((url) => /^https?:\/\//i.test(url))
       .filter((url) => !healedCanvasMediaRef.current.has(url) && !archivingCanvasMediaRef.current.has(url))
       .slice(0, 16);
     if (!mediaUrls.length) return;
@@ -2161,17 +2164,15 @@ export default function SuperCanvas() {
     try {
       const archived = await archiveCanvasImages(mediaUrls);
       if (!archived.size) return;
-      const updated = updateDoc((value) => ({
+      updateDoc((value) => ({
         ...value,
         nodes: value.nodes.map((node) => {
-          const local = archived.get(String(node.data.url || "").trim());
-          return local ? { ...node, data: { ...node.data, url: local } } : node;
+          const data = replaceCanvasMediaUrls(node.data, archived);
+          return data === node.data ? node : { ...node, data };
         }),
       }));
-      if (updated) {
-        archived.forEach((_local, url) => healedCanvasMediaRef.current.add(url));
-        addLog(`已把 ${archived.size} 张画布图片归档成本地文件`);
-      }
+      archived.forEach((_local, url) => healedCanvasMediaRef.current.add(url));
+      addLog(`已把 ${archived.size} 张画布图片归档成本地文件`);
     } finally {
       mediaUrls.forEach((url) => archivingCanvasMediaRef.current.delete(url));
     }
@@ -2374,17 +2375,39 @@ export default function SuperCanvas() {
     setSaveError(false);
     saveTimerRef.current = window.setTimeout(() => {
       if (canvasProjectSessionRef.current.activeId !== activeProjectId) return;
-      const ok = persistCurrentCanvas();
-      setSaving(false);
-      setSaveError(!ok);
-      if (ok)
-        setProjects(readCanvasProjects());
-      else notify(describeCanvasSaveFailure(), "error");
+      const save = async () => {
+        try {
+          const inlineUrls = canvasInlineImageUrls(canvasCoreRef.current.document().nodes);
+          if (inlineUrls.length) {
+            const archived = await archiveCanvasImages(inlineUrls);
+            if (canvasProjectSessionRef.current.activeId !== activeProjectId) return;
+            if (archived.size) {
+              updateDoc((value) => ({
+                ...value,
+                nodes: value.nodes.map((node) => {
+                  const data = replaceCanvasMediaUrls(node.data, archived);
+                  return data === node.data ? node : { ...node, data };
+                }),
+              }));
+            }
+          }
+          const ok = persistCurrentCanvas();
+          setSaving(false);
+          setSaveError(!ok);
+          if (ok) setProjects(readCanvasProjects());
+          else notify(describeCanvasSaveFailure(), "error");
+        } catch {
+          setSaving(false);
+          setSaveError(true);
+          notify(describeCanvasSaveFailure(), "error");
+        }
+      };
+      void save();
     }, 350);
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     };
-  }, [activeProjectId, document, notify, persistCurrentCanvas, ready]);
+  }, [activeProjectId, document, notify, persistCurrentCanvas, ready, updateDoc]);
 
   useEffect(() => {
     if (!ready || !stageRef.current || typeof ResizeObserver === "undefined")

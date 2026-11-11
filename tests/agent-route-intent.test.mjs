@@ -235,7 +235,10 @@ function harness(options = {}) {
     },
     '@/lib/store': {
       getRuntimeModel: async (id, kind) => kind === 'image' ? { provider, model: imageModel } : options.runtimeForModel?.(id) || runtime,
-      getRuntimeImageGenerationModel: async (id) => { imageRuntimeRequests.push({ capability: 'generate', id }); return { provider, model: imageModel }; },
+      getRuntimeImageGenerationModel: async (id) => {
+        imageRuntimeRequests.push({ capability: 'generate', id });
+        return imageModel.capabilities.includes('generate') ? { provider, model: imageModel } : null;
+      },
       getRuntimeImageModelForCapability: async (id, capability) => {
         imageRuntimeRequests.push({ capability, id });
         const supportsCapability = imageModel.capabilities.includes(capability)
@@ -978,13 +981,137 @@ test('Canvas semantic image intent reports actual missing image capability befor
   assert.equal(agent.images.length, 0);
 });
 
-test('client image model selection reaches Agent generation explicitly', async () => {
-  const agent = harness({ reply: (payload) => payload.tools
+test('client image model selection reaches Agent generation even when the public catalog is temporarily empty', async () => {
+  const agent = harness({ availableImageModels: [], reply: (payload) => payload.tools
     ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"客户端旧参数测试","modelId":"stale-client-model"}}</tool_call>' }
     : { content: '图片已完成。' } });
   const data = await agent.post([{ role: 'user', content: '生成一张客户端选择测试图' }], { imageModelId: 'test-image' });
   assert.equal(data.images.length, 1);
   assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'test-image' }]);
+});
+
+test('Canvas bare image follow-up carries the prior subject and ratio across model-setting turns', async () => {
+  const agent = harness({ reply: () => ({ content: '准备生成。' }) });
+  const messages = [
+    { role: 'user', content: '按这个风格来张晓组织团队成员的图片' },
+    { role: 'assistant', content: '以黑白厚磨砂玻璃般的雾化质感，呈现晓组织成员群像。' },
+    { role: 'user', content: '我要21:9的图' },
+    { role: 'assistant', content: '当前没有可用的生图模型。' },
+    { role: 'user', content: '有模型啊!' },
+    { role: 'assistant', content: '请确认图片模型已启用。' },
+    { role: 'user', content: '启用了' },
+    { role: 'assistant', content: '按黑白雾化质感生成21:9宽幅晓组织群像。' },
+    { role: 'user', content: '出图啊!' },
+  ];
+  const data = await agent.post(messages, {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '出图啊!',
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+
+  assert.equal(data.deliverable, 'IMAGE');
+  assert.equal(agent.images.length, 1);
+  assert.match(agent.images[0].prompt, /晓组织/);
+  assert.match(agent.images[0].prompt, /黑白厚磨砂玻璃/);
+  assert.match(agent.images[0].prompt, /21:9/);
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'test-image' }]);
+});
+
+test('Canvas ratio correction reruns the prior image and overrides a stale model ratio', async () => {
+  const agent = harness({
+    reply: (payload) => payload.tools
+      ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"葫芦娃七兄弟电影海报","aspectRatio":"1:1"}}</tool_call>' }
+      : { content: '图片已完成。' },
+  });
+  const data = await agent.post([
+    { role: 'user', content: '生成一张葫芦娃动漫海报，比例1:1' },
+    { role: 'assistant', content: '图片已生成。' },
+    { role: 'user', content: '图片比例不对！我要21:9的比例' },
+  ], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '图片比例不对！我要21:9的比例',
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+
+  assert.equal(data.deliverable, 'IMAGE');
+  assert.equal(agent.images.length, 1);
+  assert.match(agent.images[0].prompt, /葫芦娃/);
+  assert.equal(agent.images[0].aspectRatio, '21:9');
+  assert.match(JSON.stringify(agent.calls[0].messages), /葫芦娃/);
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'test-image' }]);
+});
+
+test('Canvas exact ratio correction resumes image generation after an earlier refusal', async () => {
+  const agent = harness({
+    reply: (payload) => payload.tools
+      ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"葫芦娃成年人版电影海报","aspectRatio":"1:1"}}</tool_call>' }
+      : { content: '图片已完成。' },
+  });
+  const refusal = '很抱歉，我目前无法直接生成或修正图片文件；图片生成能力存在限制，无法保证直接生成符合你要求的21:9比例图片。';
+  const data = await agent.post([
+    { role: 'user', content: '生成一张葫芦娃动漫海报，将角色现代化为成年人版，穿着潮流时尚，比例21:9' },
+    { role: 'assistant', content: '图片已生成。' },
+    { role: 'user', content: '图片比例不对！我要21:9的比例' },
+    { role: 'assistant', content: refusal },
+    { role: 'user', content: '我要21:9的图片比例!' },
+  ], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '我要21:9的图片比例!',
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+
+  assert.equal(data.deliverable, 'IMAGE');
+  assert.equal(agent.images.length, 1);
+  assert.match(agent.images[0].prompt, /葫芦娃/);
+  assert.equal(agent.images[0].aspectRatio, '21:9');
+  assert.doesNotMatch(JSON.stringify(agent.calls[0].messages), /无法直接生成/);
+});
+
+test('Canvas ratio prompt request stays text-only after an image was generated', async () => {
+  const agent = harness({ reply: () => ({ content: '葫芦娃海报提示词，21:9 横向宽幅构图。' }) });
+  const data = await agent.post([
+    { role: 'user', content: '生成一张葫芦娃动漫海报' },
+    { role: 'assistant', content: '图片已生成。' },
+    { role: 'user', content: '给我这张图的21:9提示词' },
+  ], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '给我这张图的21:9提示词',
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+
+  assert.equal(data.deliverable, 'TEXT');
+  assert.equal(agent.images.length, 0);
+  assert.equal(agent.imageRuntimeRequests.length, 0);
+  assert.equal(agent.calls.length, 1);
+  assert.match(data.message, /21:9/);
+});
+
+test('Canvas bare image command does not resume a previous image after an explicit question', async () => {
+  const agent = harness({ reply: () => ({ content: '普通回答。' }) });
+  const data = await agent.post([
+    { role: 'user', content: '生成一张黑白雾化风格的晓组织群像图片' },
+    { role: 'assistant', content: '已生成。' },
+    { role: 'user', content: '图片怎么保存？' },
+    { role: 'assistant', content: '可以从图片卡片保存。' },
+    { role: 'user', content: '出图啊!' },
+  ], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: '出图啊!',
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'generate' },
+  });
+
+  assert.equal(data.deliverable, 'CLARIFY');
+  assert.equal(agent.images.length, 0);
 });
 
 test('承接上一轮编号生图方案时直接批量执行，不只回复生成计划', async () => {

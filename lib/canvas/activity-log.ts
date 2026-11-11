@@ -1,4 +1,5 @@
 import type { GenerationLog } from "@/lib/generation-log";
+import type { CanvasNode } from "@/lib/canvas/types";
 
 export type CanvasGenerationLogKind = "image" | "video" | "audio" | "llm";
 
@@ -93,6 +94,58 @@ export function canvasTaskBelongsToProject(
     (nodeId && scope.nodeIds?.has(nodeId)) ||
     (taskId && scope.taskIds?.has(taskId)),
   );
+}
+
+/** Project persisted Canvas failures that have no matching server task log. */
+export function canvasFailureTaskLogs(
+  logs: readonly GenerationLog[],
+  nodes: readonly CanvasNode[],
+  scope: { projectId?: string; canvasId?: string } = {},
+): GenerationLog[] {
+  const loggedTaskIds = new Set(logs.flatMap((log) => [log.id, log.taskId || ""]));
+  const loggedNodeIds = new Set(logs.map((log) => String(log.nodeId || "").trim()).filter(Boolean));
+
+  return nodes.flatMap((node) => {
+    const data = node.data;
+    if (data.status !== "failed" || data.taskTracking === "stale" || data.taskTracking === "stopped" || data.url) return [];
+    if (loggedNodeIds.has(node.id)) return [];
+
+    const taskId = String(data.generation?.taskId || data.jobId || data.upscaleRequestId || "").trim();
+    if (taskId && loggedTaskIds.has(taskId)) return [];
+
+    const id = taskId || `canvas-node-failure-${node.id}`;
+    const createdAtValue = data.generation?.createdAt || data.speechGeneration?.createdAt || data.processingStartedAt || data.taskUpdatedAt || 0;
+    const createdAt = new Date(Number(createdAtValue) || 0).toISOString();
+    const kind = data.kind === "video" || data.kind === "audio" ? data.kind : node.type === "upscale" ? "image" : data.kind || "image";
+    const mode: GenerationLog["mode"] = node.type === "prompt"
+      ? "agent"
+      : node.type === "upscale" || data.generation?.operation === "upscale"
+        ? "upscale"
+        : kind === "video" || kind === "audio"
+          ? kind
+          : data.generation?.operation === "edit" ? "edit" : "generate";
+    const prompt = String(data.generation?.prompt || data.agentPrompt || data.prompt || data.text || data.name || "").trim();
+
+    return [{
+      id,
+      taskId: id,
+      createdAt,
+      status: "error",
+      mode,
+      ...(node.type === "prompt" ? { taskKind: "llm" as const } : {}),
+      ...(kind === "image" || kind === "video" || kind === "audio" ? { mediaKind: kind } : {}),
+      source: "canvas",
+      prompt,
+      ...(data.generation?.operation ? { operation: data.generation.operation === "upscale" ? "generate" as const : data.generation.operation } : {}),
+      ...(data.model || data.generation?.params?.model ? { modelName: data.model || data.generation?.params?.model } : {}),
+      ...(data.providerName ? { providerName: data.providerName } : {}),
+      ...(scope.projectId ? { projectId: scope.projectId } : {}),
+      ...(scope.canvasId ? { canvasId: scope.canvasId } : {}),
+      nodeId: node.id,
+      ...(data.generation?.durationMs ? { durationMs: data.generation.durationMs } : {}),
+      error: data.statusLabel || "画布任务失败",
+    }];
+  });
 }
 
 export function generationLogKind(log: GenerationLog): CanvasGenerationLogKind {

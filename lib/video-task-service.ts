@@ -279,7 +279,15 @@ function isRetryableVideoProviderError(error: unknown) {
   return /timeout|timed out|network|fetch failed|connection|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(message);
 }
 
+function videoErrorCode(error: unknown) {
+  if (!error || typeof error !== 'object') return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
 function isRetryableVideoSubmissionFailure(error: unknown) {
+  // Missing relay configuration cannot recover through another submission.
+  if (videoErrorCode(error) === 'AGNES_MEDIA_RELAY_REQUIRED') return false;
   const message = error instanceof Error ? error.message : String(error || '');
   return /队列已满|queue\s*(?:is\s*)?full|限流|rate limit|too many requests|稍后再试|稍后重试/i.test(message);
 }
@@ -398,7 +406,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
     if (isRetryableVideoProviderError(error) || isRetryableVideoSubmissionFailure(error)) {
       return keepVideoSubmissionPending(task, error);
     }
-    return failTask(task, error, error instanceof VideoProviderError ? error.code : typeof (error as any)?.code === 'string' ? (error as any).code : undefined);
+    return failTask(task, error, videoErrorCode(error));
   }
 }
 
@@ -481,7 +489,7 @@ async function refreshVideoTaskOnce(id: string) {
         });
       }
       if (isRetryableVideoSubmissionFailure(error)) return keepVideoSubmissionPending(task, error);
-      return failTask(task, error, error instanceof VideoProviderError ? error.code : undefined);
+      return failTask(task, error, videoErrorCode(error));
     }
   }
   const provider = await getProviderWithKey(task.providerId);

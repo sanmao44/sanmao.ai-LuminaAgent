@@ -1056,15 +1056,29 @@ test('canvas media archiving keeps only the addresses the server could store', a
 });
 
 test('canvas media archiving includes inline images and temporary remote image addresses', () => {
-  assert.deepEqual(api.canvasMediaUrlsToArchive([
+  const nodes = [
     { data: { kind: 'image', url: 'https://task-cdn.example.com/?url=fresh.png' } },
     { data: { kind: 'image', url: 'https://task-cdn.example.com/?url=fresh.png' } },
     { data: { kind: 'image', url: '/api/storage/file?name=local.png' } },
     { data: { kind: 'image', url: 'http://localhost:3210/api/storage/file?name=local.png' } },
     { data: { kind: 'video', url: 'https://task-cdn.example.com/?url=clip.mp4' } },
     { data: { kind: 'audio', url: 'https://task-cdn.example.com/?url=voice.mp3' } },
-    { data: { url: 'data:image/png;base64,AA==' } },
-  ]), ['https://task-cdn.example.com/?url=fresh.png', 'data:image/png;base64,AA==']);
+    { data: { kind: 'image', url: 'data:image/png;base64,AA==', mask: { sourceImageDataUrl: 'data:image/png;base64,MASK==' } } },
+  ];
+  assert.deepEqual(api.canvasMediaUrlsToArchive(nodes), [
+    'https://task-cdn.example.com/?url=fresh.png',
+    'data:image/png;base64,AA==',
+    'data:image/png;base64,MASK==',
+  ]);
+  assert.deepEqual(api.canvasInlineImageUrls(nodes), ['data:image/png;base64,AA==', 'data:image/png;base64,MASK==']);
+  const original = nodes[6].data;
+  const replaced = api.replaceCanvasMediaUrls(original, new Map([
+    ['data:image/png;base64,AA==', '/api/storage/file?name=image.png'],
+    ['data:image/png;base64,MASK==', '/api/storage/file?name=mask.png'],
+  ]));
+  assert.equal(replaced.url, '/api/storage/file?name=image.png');
+  assert.equal(replaced.mask.sourceImageDataUrl, '/api/storage/file?name=mask.png');
+  assert.equal(original.url, 'data:image/png;base64,AA==');
 });
 
 test('canvas upscale marks the request as canvas-originated', async () => {

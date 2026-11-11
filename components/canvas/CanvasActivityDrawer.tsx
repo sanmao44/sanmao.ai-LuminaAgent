@@ -3,7 +3,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { GenerationLog } from "@/lib/generation-log";
 import { activityTaskFromGenerationLog } from "@/lib/task-activity/adapters";
-import { deriveCanvasActivityEmptyState, resolveCanvasActivityNavigation, canvasTaskBelongsToProject, filterCanvasGenerationLogs, generationLogDisplayStatus, generationLogDuration, generationLogKind, generationLogKindLabel, generationLogNeedsAttention, generationLogOutputUrls, generationLogStatusLabel } from "@/lib/canvas/activity-log";
+import { deriveCanvasActivityEmptyState, resolveCanvasActivityNavigation, canvasFailureTaskLogs, canvasTaskBelongsToProject, filterCanvasGenerationLogs, generationLogDisplayStatus, generationLogDuration, generationLogKind, generationLogKindLabel, generationLogNeedsAttention, generationLogOutputUrls, generationLogStatusLabel } from "@/lib/canvas/activity-log";
 import { canvasNodeForGenerationLog } from "@/lib/canvas/task-recovery";
 import { canPreserveCanvasAudioDraft, canRestoreCanvasTaskContext, restorableCanvasTaskLogs } from "@/lib/canvas/task-context-recovery";
 import { deriveCanvasTaskNextAction } from "@/lib/canvas/task-next-action";
@@ -142,14 +142,18 @@ export default function CanvasActivityDrawer({
   const rememberScrollBeforeMediaOpen = (openMedia: boolean) => {
     if (openMedia) onRememberScrollPosition(scrollBodyRef.current?.scrollTop || 0);
   };
+  const taskRecords = useMemo(
+    () => [...taskLogs, ...canvasFailureTaskLogs(taskLogs, canvasDocument.nodes, { projectId: creativeProjectId, canvasId })],
+    [canvasDocument.nodes, canvasId, creativeProjectId, taskLogs],
+  );
   const scopedTasks = useMemo(() => projectOnly
-    ? taskLogs.filter((log) => canvasTaskBelongsToProject(log, {
+    ? taskRecords.filter((log) => canvasTaskBelongsToProject(log, {
       projectId: creativeProjectId,
       canvasId,
       nodeIds: canvasNodeIds,
       taskIds: canvasTaskIds,
     }))
-    : taskLogs, [canvasId, canvasNodeIds, canvasTaskIds, creativeProjectId, projectOnly, taskLogs]);
+    : taskRecords, [canvasId, canvasNodeIds, canvasTaskIds, creativeProjectId, projectOnly, taskRecords]);
   const restorableTaskIds = useMemo(
     () => new Set(restorableCanvasTaskLogs(scopedTasks).map((log) => log.id)),
     [scopedTasks],
@@ -183,24 +187,24 @@ export default function CanvasActivityDrawer({
     }),
     [matchingTasks, scopedTasks],
   );
-  const activityEmptyState = deriveCanvasActivityEmptyState(scopedTasks.length, taskLogs.length);
+  const activityEmptyState = deriveCanvasActivityEmptyState(scopedTasks.length, taskRecords.length);
   const activeFilterCount = Number(!projectOnly) + Number(media !== "all") + Number(status !== "all") + Number(Boolean(query.trim()));
   const progress = useMemo(() => deriveCanvasProjectProgress({
     document: canvasDocument,
     brief: projectBrief,
     versionCount: projectVersionCount,
-    taskLogs,
+    taskLogs: taskRecords,
     projectId: creativeProjectId,
     canvasId,
-  }), [canvasDocument, canvasId, creativeProjectId, projectBrief, projectVersionCount, taskLogs]);
+  }), [canvasDocument, canvasId, creativeProjectId, projectBrief, projectVersionCount, taskRecords]);
   const quality = useMemo(() => deriveCanvasProjectQuality({
     document: canvasDocument,
     brief: projectBrief,
     versionCount: projectVersionCount,
-    taskLogs,
+    taskLogs: taskRecords,
     projectId: creativeProjectId,
     canvasId,
-  }), [canvasDocument, canvasId, creativeProjectId, projectBrief, projectVersionCount, taskLogs]);
+  }), [canvasDocument, canvasId, creativeProjectId, projectBrief, projectVersionCount, taskRecords]);
   const recommendation = useMemo(
     () => deriveCanvasWorkspaceRecommendation(progress.nextAction, nextAction),
     [nextAction, progress.nextAction],

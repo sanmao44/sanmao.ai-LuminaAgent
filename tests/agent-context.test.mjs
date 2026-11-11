@@ -57,6 +57,17 @@ test('short image commands retain subject and ratio without leaking another conv
   assert.match(context.contextualImagePrompt('好的', history), /鲁迅/);
 });
 
+test('explicit aspect ratio corrections are recognized as image follow-ups', () => {
+  assert.equal(context.isImageAspectRatioCorrection('我要21:9的图'), true);
+  assert.equal(context.isImageAspectRatioCorrection('我要21:9的图片比例!'), true);
+  assert.equal(context.isImageAspectRatioCorrection('把图片比例改成21:9'), true);
+  assert.equal(context.isImageAspectRatioCorrection('图片比例不对！我要21:9的比例'), true);
+  assert.equal(context.isImageAspectRatioCorrection('21:9是什么意思？'), false);
+  assert.equal(context.isImageAspectRatioCorrection('我只要21:9的图片提示词'), false);
+  assert.equal(context.isImageAspectRatioCorrection('不要21:9比例'), false);
+  assert.match(context.contextualImagePrompt('我要21:9的图', history), /对牛弹琴/);
+});
+
 test('new chat resets current content and drafts, retry keeps the original request', async () => {
   const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
   const reset = page.slice(page.indexOf('function startNewChat()'), page.indexOf('function openChatSession('));
