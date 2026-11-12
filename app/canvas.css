@@ -1007,6 +1007,11 @@ html[data-theme="dark"] .canvas-workspace{
 @media(max-width:1280px){:root{--canvas-panel-width:min(430px,calc(100vw - 32px))}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 210px);width:min(820px,calc(100% - 472px))}}
 @media(max-width:1000px){.canvas-agent-dock{left:10px;right:10px;top:auto;bottom:10px;height:min(64vh,540px);width:auto}.canvas-agent-dock-rail{right:10px;top:auto;bottom:96px;transform:none}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:50%;width:calc(100% - 32px)}}
 @media(max-width:620px){
+  .canvas-agent-dock-head{min-height:44px}
+  .canvas-agent-dock-title{flex:1 1 auto}
+  .canvas-agent-dock-head-actions>button{width:44px;height:44px;flex:none}
+  .canvas-agent-dock-empty button{min-height:44px;display:flex;align-items:center}
+  .canvas-agent-dock-quick button{height:auto;min-height:44px;display:inline-flex;align-items:center;justify-content:center;line-height:1.35}
   .canvas-agent-dock-composer-row{display:grid;grid-template-columns:minmax(0,1fr);gap:6px}
   .canvas-agent-dock-composer-selectors{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(0,1fr) 48px;align-items:center;gap:4px;min-width:0}
   .canvas-agent-dock-composer-selectors>.canvas-agent-dock-skill{grid-column:1;width:44px;min-width:44px;height:44px;justify-content:center;padding:0}
