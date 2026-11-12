@@ -673,7 +673,6 @@ test('failed legacy migration retains its original images and retries without pu
   const storage = load('./canvas/storage');
   const clientHistory = load('./client-history');
   const model = load('./canvas/model');
-  /*
   const original = model.normalizeDocument({ nodes: [model.createMedia('image', '/legacy.png', '原图', { x: 1, y: 2 })] });
   window.localStorage.setItem('nova.v1.projects', JSON.stringify([{ id: 'legacy', name: '旧画布', createdAt: 1, updatedAt: 1 }]));
   window.localStorage.setItem('nova.v1.project.legacy', JSON.stringify(original));
@@ -697,7 +696,10 @@ test('Nova migration completes from IndexedDB when the localStorage backup proje
   const storage = load('./canvas/storage');
   const clientHistory = load('./client-history');
   const model = load('./canvas/model');
+  /*
   const original = model.normalizeDocument({ nodes: [model.createMedia('image', '/legacy.png', '鍘熷浘', { x: 1, y: 2 })] });
+  */
+  const original = model.normalizeDocument({ nodes: [model.createMedia('image', '/legacy.png', 'original', { x: 1, y: 2 })] });
   localStorage.setItem('nova.v1.projects', JSON.stringify([{ id: 'legacy', name: 'legacy-canvas', createdAt: 1, updatedAt: 1 }]));
   localStorage.setItem('nova.v1.active', JSON.stringify('legacy'));
   localStorage.setItem('nova.v1.project.legacy', JSON.stringify(original));

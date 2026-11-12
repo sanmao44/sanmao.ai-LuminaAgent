@@ -353,13 +353,22 @@ function cleanupBackedUpNovaSources(entries: readonly { key: string; value: unkn
   try {
     const databaseMigration = entries.find((entry) => entry.key === DB_NOVA_MIGRATION_KEY)?.value;
     const databaseBackup = entries.find((entry) => entry.key === DB_NOVA_BACKUP_KEY)?.value;
-    const migration = databaseMigration && typeof databaseMigration === 'object'
-      ? databaseMigration as Record<string, unknown>
-      : readJson<Record<string, unknown> | null>(MIGRATION_KEY, null);
-    const backup = databaseMigration && typeof databaseMigration === 'object'
-      && (databaseMigration as Record<string, unknown>).backupKey === DB_NOVA_BACKUP_KEY
-      ? databaseBackup as Record<string, unknown> | null
-      : readJson<Record<string, unknown> | null>(MIGRATION_BACKUP_KEY, null);
+    const localMigration = readJson<Record<string, unknown> | null>(MIGRATION_KEY, null);
+    const localBackup = readJson<Record<string, unknown> | null>(MIGRATION_BACKUP_KEY, null);
+    const hasLocalBackup = localMigration?.source === 'nova.v1'
+      && localMigration.backupKey === MIGRATION_BACKUP_KEY
+      && localBackup?.source === 'nova.v1';
+    const migration = hasLocalBackup
+      ? localMigration
+      : databaseMigration && typeof databaseMigration === 'object'
+        ? databaseMigration as Record<string, unknown>
+        : localMigration;
+    const backup = hasLocalBackup
+      ? localBackup
+      : databaseMigration && typeof databaseMigration === 'object'
+        && (databaseMigration as Record<string, unknown>).backupKey === DB_NOVA_BACKUP_KEY
+        ? databaseBackup as Record<string, unknown> | null
+        : localBackup;
     if (migration?.source !== 'nova.v1' || migration.backupKey !== MIGRATION_BACKUP_KEY
       && migration.backupKey !== DB_NOVA_BACKUP_KEY
       || backup?.source !== 'nova.v1' || typeof backup.backedUpAt !== 'string'
@@ -629,6 +638,7 @@ async function initializeCanvasStorage() {
   cleanupBackedUpNovaSources(entries);
   const projects = readCanvasProjects();
   const selectedId = tabActiveProjectId(projects);
+  storageQuotaExceeded = false;
   return { projects, activeId: selectedId || projects[0]?.id || '', migrated };
 }
 

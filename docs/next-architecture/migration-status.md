@@ -34,11 +34,13 @@ in the compatibility column.
 | Architecture enforcement | locked | `tests/architecture-enforcement.test.mjs` | Machine-checks contract purity, core dependency direction, transport boundary, worker task boundary and the single SQLite opener |
 | Physical boundary | settled | Modular Next Monolith with in-process worker dispatch | Separate Web/API/Worker deployables are intentionally deferred until deployment needs justify them |
 
-Canvas browser storage migration keeps `sanmao.canvas.nova-backup` as the full
-rollback snapshot. It may remove only the matching `nova.v1` source index and
-documents after both the migration marker and backup validate and the source
-values still match the snapshot. Preserve changed, incomplete, or unbacked
-legacy values; retire the snapshot only with an explicit recovery path.
+Canvas browser storage migration keeps a full Nova rollback snapshot in the
+`canvas-state` IndexedDB store before it attempts the optional
+`sanmao.canvas.nova-backup` localStorage compatibility projection. It may
+remove only the matching `nova.v1` source index and documents after both the
+migration marker and backup validate and the source values still match the
+snapshot. Preserve changed, incomplete, or unbacked legacy values; retire the
+snapshot only with an explicit recovery path.
 
 The Canvas IndexedDB migration is idempotent and guarded against a concurrent
 first writer. Document, project identity, creative-project metadata, active
