@@ -1716,6 +1716,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     let previousDesktopInputEnd = -1;
     let previousDesktopInputWasNegated = false;
     let desktopInputRequested = false;
+    const requestedDesktopInputMatches: RegExpMatchArray[] = [];
     for (const match of desktopInputMatches) {
       const prefix = latestInstruction.slice(0, match.index);
       const clause = prefix.split(/[\n。！？；.!?;:]|,(?!\s*(?:and|or|nor)\b)|，(?!\s*(?:和|或|或者|以及|并且))|\b(?:but|however)\b|但是|不过|但/i).at(-1) || '';
@@ -1729,9 +1730,25 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       const negated: boolean = negatedChinese || negatedEnglish || coordinatedNegation;
       previousDesktopInputEnd = match.index + match[0].length;
       previousDesktopInputWasNegated = negated;
-      if (!negated) desktopInputRequested = true;
+      if (!negated) {
+        desktopInputRequested = true;
+        requestedDesktopInputMatches.push(match);
+      }
     }
     const desktopInputExplicitlyForbidden = desktopInputMatches.length > 0 && !desktopInputRequested;
+    const quotedDesktopInputText = (() => {
+      if (desktopInputExplicitlyForbidden || requestedDesktopInputMatches.length !== 1) return undefined;
+      const match = requestedDesktopInputMatches[0];
+      const textAfterIntent = latestInstruction.slice((match.index || 0) + match[0].length);
+      const sentenceEnd = textAfterIntent.search(/[\n。！？；.!?;]/);
+      const candidateArea = sentenceEnd < 0 ? textAfterIntent : textAfterIntent.slice(0, sentenceEnd);
+      const prefix = candidateArea.match(/^\s*(?:(?:以下|如下)(?:文本|文字|内容)?|(?:文本|文字|内容|消息|信息)|(?:(?:the\s+)?(?:following\s+)?(?:text|message|content)))?(?:\s*(?:是|为|is|to\s+be))?\s*[:：=]?\s*/i)?.[0] || '';
+      const quotedText = candidateArea.slice(prefix.length);
+      const quotedLiterals = [...candidateArea.matchAll(/"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|“([^”\r\n]+)”|‘([^’\r\n]+)’/g)];
+      const firstLiteral = quotedText.match(/^(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|“([^”\r\n]+)”|‘([^’\r\n]+)’)(?=$|[\s,，。！？；.!?;])/);
+      if (quotedLiterals.length !== 1 || !firstLiteral) return undefined;
+      return firstLiteral.slice(1).find((value) => value !== undefined);
+    })();
     const desktopCapturePattern = /(?:截图|截屏|屏幕截图|screenshot|screen\s*shot|capture\s+(?:the\s+)?screen)/ig;
     const desktopCaptureRequested = [...latestInstruction.matchAll(desktopCapturePattern)].some((match) => {
       const clause = latestInstruction.slice(0, match.index).split(/[\n。！？；.!?;:]|\b(?:but|however)\b|但是|不过|但/i).at(-1) || '';
@@ -2144,6 +2161,7 @@ const auditMcpCall = (
     const usedSkills: Array<{ id: string; name: string }> = [];
     /** 这一轮真正落到外部 MCP 服务上的调用，回给前端做审计展示。 */
     const usedMcpTools: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }> = [];
+    const successfulDesktopInputTexts: string[] = [];
     const desktopServerNames = new Set(mcpRuntime.servers
       .filter((server) => server.catalogId === 'windows-mcp')
       .map((server) => server.name));
@@ -2151,7 +2169,9 @@ const auditMcpCall = (
       if (!desktopAutomationRequest) return '';
       const desktopUses = usedMcpTools.filter((tool) => desktopServerNames.has(tool.server));
       const normalizeToolName = (name: string) => name.toLowerCase().replace(/[^a-z]/g, '');
-      if (desktopInputRequested && !desktopUses.some((tool) => tool.ok && /^(?:type|sendkeys|keyboardtype)$/.test(normalizeToolName(tool.name)))) return 'input';
+      const successfulInput = desktopUses.some((tool) => tool.ok && /^(?:type|sendkeys|keyboardtype)$/.test(normalizeToolName(tool.name)));
+      if (quotedDesktopInputText !== undefined && !successfulDesktopInputTexts.includes(quotedDesktopInputText)) return 'input';
+      if (desktopInputRequested && !successfulInput) return 'input';
       const lastActionIndex = desktopUses.findLastIndex((tool) => tool.ok && !tool.readOnly);
       if (lastActionIndex < 0 && !desktopCaptureRequested) return '';
       const observationPattern = desktopCaptureRequested
@@ -2163,7 +2183,9 @@ const auditMcpCall = (
       return hasFreshObservation ? '' : 'verify';
     };
     const desktopCompletionPrompt = (gap: 'input' | 'verify' | '') => gap === 'input'
-      ? '用户明确要求在 Windows 应用中输入文字，但还没有成功的 Type 或键盘输入调用。请先观察当前桌面，再完成输入；不要把已打开窗口说成任务完成。'
+      ? quotedDesktopInputText !== undefined && !successfulDesktopInputTexts.includes(quotedDesktopInputText)
+        ? `用户明确要求输入引用的完整文字“${quotedDesktopInputText}”，但还没有成功输入完全一致的内容。请先观察当前桌面，准确输入这段文字，再重新观察核验；不要把其他文本视为完成。`
+        : '用户明确要求在 Windows 应用中输入文字，但还没有成功的 Type 或键盘输入调用。请先观察当前桌面，再完成输入；不要把已打开窗口说成任务完成。'
       : gap === 'verify'
         ? desktopCaptureRequested
           ? '用户要求截图，但最后一次桌面操作后还没有成功调用 Screenshot。请获取截图核对结果，再回复用户；不要猜测成功。'
@@ -2329,9 +2351,28 @@ const auditMcpCall = (
       execute: async ({ call, policy, args, executionContext }) => executeToolCallAdapter({ call, policy, args, executionContext }),
       onExecuted: async ({ call, result }) => {
         webSearchData = toolExecutionState.webSearchData; webSearchError = toolExecutionState.webSearchError; canvasPatch = toolExecutionState.canvasPatch; mcpToolCallCount = toolExecutionState.mcpToolCallCount; mcpTurnBudget = toolExecutionState.mcpTurnBudget; browserRecoveryNeeded = toolExecutionState.browserRecoveryNeeded; browserDownloadCount = toolExecutionState.browserDownloadCount; stalledMcpReason = toolExecutionState.stalledMcpReason; preparedCaption = toolExecutionState.preparedCaption; skillToolCalls = toolExecutionState.skillToolCalls; skillInstalls = toolExecutionState.skillInstalls; generatedArtifactCount = toolExecutionState.generatedArtifactCount;
+        let executionSucceeded = false;
         for (const message of result.results) {
           if (message.tool_call_id !== call.id) continue;
-          try { const outcome = JSON.parse(String(message.content || '')); if (typeof outcome.ok === 'boolean') toolOutcomes.push({ name: String(call.function.name), key: String(call.function.name) + ':' + String(call.function.arguments), ok: outcome.ok, error: outcome.error || (!outcome.ok ? outcome.content : undefined) }); } catch {}
+          try {
+            const outcome = JSON.parse(String(message.content || ''));
+            if (typeof outcome.ok === 'boolean') {
+              executionSucceeded = outcome.ok;
+              toolOutcomes.push({ name: String(call.function.name), key: String(call.function.name) + ':' + String(call.function.arguments), ok: outcome.ok, error: outcome.error || (!outcome.ok ? outcome.content : undefined) });
+            }
+          } catch {}
+        }
+        if (executionSucceeded) {
+          const definition = mcpTools.find((tool) => tool.name === call.function.name);
+          const server = definition?.mcp ? mcpServerById.get(definition.mcp.serverId) : undefined;
+          const toolName = definition?.mcp?.toolName.toLowerCase().replace(/[^a-z]/g, '') || '';
+          if (server?.catalogId === 'windows-mcp' && /^(?:type|sendkeys|keyboardtype)$/.test(toolName)) {
+            const args = parseToolArguments(call.function.arguments);
+            if (args && typeof args === 'object' && !Array.isArray(args)) {
+              const inputText = (args as Record<string, unknown>).text;
+              if (typeof inputText === 'string') successfulDesktopInputTexts.push(inputText);
+            }
+          }
         }
       },
     });

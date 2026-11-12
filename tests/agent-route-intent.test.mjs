@@ -583,6 +583,82 @@ test('desktop Agent does not report success when requested typing is still missi
   assert.match(result.message, /还没有成功的 Type/);
 });
 
+test('desktop Agent requires exact quoted text and a fresh observation after correcting a mismatch', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:windows-test:${name}`, name: `windows-test__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+  const call = (id, name, args = {}) => ({
+    content: null,
+    tool_calls: [{ id, type: 'function', function: { name: `windows-test__${name}`, arguments: JSON.stringify(args) } }],
+  });
+  const responses = [
+    call('desktop-open', 'App'),
+    call('desktop-snapshot-before', 'Snapshot'),
+    call('desktop-type-wrong', 'Type', { text: 'WRONG_TOKEN', loc: [10, 20] }),
+    call('desktop-screenshot-wrong', 'Screenshot'),
+    { content: 'The requested text is present and the screenshot is verified.' },
+    call('desktop-type-correct', 'Type', { text: 'EXPECTED_TOKEN', loc: [10, 20] }),
+    call('desktop-screenshot-correct', 'Screenshot'),
+    { content: 'The exact requested text is now present in the verified screenshot.' },
+  ];
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [tool('App', false), tool('Snapshot', true), tool('Screenshot', true), tool('Type', false)],
+    callMcpTool: async (_server, name) => ({ isError: false, text: `${name} ok` }),
+    reply: (_payload, count) => responses[count - 1],
+  });
+
+  const result = await agent.post([{ role: 'user', content: '请打开记事本，输入 `EXPECTED_TOKEN`，然后截图核验' }]);
+
+  assert.deepEqual(agent.mcpCalls.map((entry) => entry.toolName), ['App', 'Snapshot', 'Type', 'Screenshot', 'Type', 'Screenshot']);
+  assert.deepEqual(agent.mcpCalls.filter((entry) => entry.toolName === 'Type').map((entry) => entry.args.text), ['WRONG_TOKEN', 'EXPECTED_TOKEN']);
+  assert.match(agent.calls[4].messages.map((message) => String(message.content || '')).join('\n'), /还没有成功输入完全一致的内容/);
+  assert.match(agent.calls[4].messages.map((message) => String(message.content || '')).join('\n'), /EXPECTED_TOKEN/);
+  assert.match(result.message, /exact requested text is now present/);
+});
+
+test('desktop Agent keeps the existing completion behavior when quoted input is ambiguous or absent', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:windows-test:${name}`, name: `windows-test__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+
+  for (const instruction of [
+    '请打开记事本，输入 EXPECTED_TOKEN，然后截图核验',
+    '请打开记事本，输入 `EXPECTED_TOKEN` 或 “ALTERNATE_TOKEN”，然后截图核验',
+  ]) {
+    const steps = [
+      { name: 'App', args: {} },
+      { name: 'Snapshot', args: {} },
+      { name: 'Type', args: { text: 'OTHER_TOKEN', loc: [10, 20] } },
+      { name: 'Screenshot', args: {} },
+    ];
+    const agent = harness({
+      mcpServers: [server],
+      mcpTools: [tool('App', false), tool('Snapshot', true), tool('Screenshot', true), tool('Type', false)],
+      callMcpTool: async (_server, name) => ({ isError: false, text: `${name} ok` }),
+      reply: (_payload, count) => {
+        const step = steps[count - 1];
+        return step
+          ? { content: null, tool_calls: [{ id: `desktop-${count}`, type: 'function', function: { name: `windows-test__${step.name}`, arguments: JSON.stringify(step.args) } }] }
+          : { content: 'The desktop action and its screenshot are verified.' };
+      },
+    });
+
+    const result = await agent.post([{ role: 'user', content: instruction }]);
+    assert.deepEqual(agent.mcpCalls.map((entry) => entry.toolName), ['App', 'Snapshot', 'Type', 'Screenshot'], instruction);
+    assert.equal(result.message, 'The desktop action and its screenshot are verified.', instruction);
+    assert.ok(!agent.calls.some((call) => call.messages.some((message) => String(message.content || '').includes('尚未成功输入完全一致的内容'))), instruction);
+  }
+});
+
 test('desktop Agent does not treat explicitly forbidden typing as a missing step', async () => {
   const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
   const tool = (name, readOnly) => ({
