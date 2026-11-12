@@ -1651,6 +1651,34 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     // }).catch(() => ({ servers: [], tools: [] }));
     const mcpTools = tabbitAvailable ? [...mcpRuntime.tools, tabbitBrowserTool] : mcpRuntime.tools;
     const desktopAutomationRequest = mcpExecutionRequest && mcpRuntime.servers.some((server) => server.catalogId === 'windows-mcp');
+    const desktopInputPattern = /(?:输入(?!法|设置)|键入|打字|录入|填写|(?:^|[^a-z0-9_])(?:type(?:\s+in)?|typing|enter\s+(?:any\s+)?(?:text|anything|a\s+message)|input\s+(?:any\s+)?(?:text|anything))(?=$|[^a-z0-9_]))/ig;
+    const desktopInputMatches = [...latestInstruction.matchAll(desktopInputPattern)];
+    let previousDesktopInputEnd = -1;
+    let previousDesktopInputWasNegated = false;
+    let desktopInputRequested = false;
+    for (const match of desktopInputMatches) {
+      const prefix = latestInstruction.slice(0, match.index);
+      const clause = prefix.split(/[\n。！？；.!?;:]|,(?!\s*(?:and|or|nor)\b)|，(?!\s*(?:和|或|或者|以及|并且))|\b(?:but|however)\b|但是|不过|但/i).at(-1) || '';
+      const negatedChinese = /(?:请)?(?:不要|请勿|切勿|禁止|严禁|不准|避免|无需|不需要|不必|不用|不|别)(?:再|给我|帮我|去|进行|获取|拍|制作)?\s*$/i.test(clause);
+      const negatedEnglish = /(?:\b(?:please\s+)?(?:do\s+not|don['’]t|dont|must\s+not|mustn['’]t|should\s+not|shouldn['’]t|never|avoid)|\bno\s+(?:(?:need|reason)\s+to\s+)?|\bwithout)\s*$/i.test(clause);
+      const previousInputText = latestInstruction.slice(previousDesktopInputEnd, match.index);
+      const startsNewClause = /[\n。！？；.!?;:]|,(?!\s*(?:and|or|nor)\b)|，(?!\s*(?:和|或|或者|以及|并且))|\b(?:but|however)\b|但是|不过|但/i.test(previousInputText);
+      const coordinatedNegation: boolean = previousDesktopInputWasNegated
+        && !startsNewClause
+        && /(?:\b(?:and|or|nor)\b|和|或|或者|以及|并且)/i.test(previousInputText);
+      const negated: boolean = negatedChinese || negatedEnglish || coordinatedNegation;
+      previousDesktopInputEnd = match.index + match[0].length;
+      previousDesktopInputWasNegated = negated;
+      if (!negated) desktopInputRequested = true;
+    }
+    const desktopInputExplicitlyForbidden = desktopInputMatches.length > 0 && !desktopInputRequested;
+    const desktopCapturePattern = /(?:截图|截屏|屏幕截图|screenshot|screen\s*shot|capture\s+(?:the\s+)?screen)/ig;
+    const desktopCaptureRequested = [...latestInstruction.matchAll(desktopCapturePattern)].some((match) => {
+      const clause = latestInstruction.slice(0, match.index).split(/[\n。！？；.!?;:]|\b(?:but|however)\b|但是|不过|但/i).at(-1) || '';
+      const negatedChinese = /(?:请)?(?:不要|请勿|无需|不需要|不必|不用|不|别)(?:再|给我|帮我|去|进行|获取|拍|制作)?\s*$/i.test(clause);
+      const negatedEnglish = /(?:\b(?:please\s+)?(?:do\s+not|don['’]t|dont)|\bno\s+(?:(?:need|reason)\s+to\s+)?|\bwithout)\s*(?:(?:take|taking|capture|capturing|get|getting|make|making|snap|snapping)\s+(?:(?:a|the)\s+)?|(?:a|the)\s+)?$/i.test(clause);
+      return !negatedChinese && !negatedEnglish;
+    });
     const mcpServerById = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
 // 授权目录与数据目录在整轮里只读一次：中途用户在面板改授权，下一轮才生效。
 const mcpFilesystemRoots = mcpAllowedThisTurn ? listFilesystemRoots() : [];
@@ -1712,7 +1740,7 @@ const auditMcpCall = (
       llmMessages = boundAgentContext(llmMessages, contextMaxChars);
     }
     if (agentSystemPromptInUse && desktopAutomationRequest) {
-      system += '\n\nWindows 桌面任务必须按顺序执行并核验：打开应用后获取新的 Snapshot，确认目标窗口，再点击或输入，最后重新获取 Snapshot 或 WaitFor 核对结果。Type 必须传入来自最新 Snapshot 的 loc=[x,y] 或 label，不能只传 text。任何工具错误或控制器不可用都表示任务未完成；不要把已打开窗口当作全部任务完成。';
+      system += `\n\nWindows 桌面任务必须按顺序执行并核验：打开应用后获取新的 Snapshot，确认目标窗口，再点击或输入，最后重新获取 ${desktopCaptureRequested ? 'Screenshot' : 'Snapshot、Screenshot 或 WaitFor'} 核对结果。用户明确要求截图时，必须在最后一次操作后调用 Screenshot。若用户明确禁止输入文字，不得调用 Type、SendKeys 或等效键盘输入工具，也不要把未输入当成遗漏步骤。Type 必须传入来自最新 Snapshot 的 loc=[x,y] 或 label，不能只传 text。任何工具错误或控制器不可用都表示任务未完成；不要把已打开窗口当作全部任务完成。`;
       llmMessages[0] = { role: 'system', content: system };
       llmMessages = boundAgentContext(llmMessages, contextMaxChars);
     }
@@ -2056,6 +2084,31 @@ const auditMcpCall = (
     const usedSkills: Array<{ id: string; name: string }> = [];
     /** 这一轮真正落到外部 MCP 服务上的调用，回给前端做审计展示。 */
     const usedMcpTools: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }> = [];
+    const desktopServerNames = new Set(mcpRuntime.servers
+      .filter((server) => server.catalogId === 'windows-mcp')
+      .map((server) => server.name));
+    const desktopCompletionGap = (): 'input' | 'verify' | '' => {
+      if (!desktopAutomationRequest) return '';
+      const desktopUses = usedMcpTools.filter((tool) => desktopServerNames.has(tool.server));
+      const normalizeToolName = (name: string) => name.toLowerCase().replace(/[^a-z]/g, '');
+      if (desktopInputRequested && !desktopUses.some((tool) => tool.ok && /^(?:type|sendkeys|keyboardtype)$/.test(normalizeToolName(tool.name)))) return 'input';
+      const lastActionIndex = desktopUses.findLastIndex((tool) => tool.ok && !tool.readOnly);
+      if (lastActionIndex < 0 && !desktopCaptureRequested) return '';
+      const observationPattern = desktopCaptureRequested
+        ? /^(?:screenshot)$/
+        : /^(?:snapshot|screenshot|waitfor)$/;
+      const hasFreshObservation = lastActionIndex < 0
+        ? desktopUses.some((tool) => tool.ok && observationPattern.test(normalizeToolName(tool.name)))
+        : desktopUses.slice(lastActionIndex + 1).some((tool) => tool.ok && observationPattern.test(normalizeToolName(tool.name)));
+      return hasFreshObservation ? '' : 'verify';
+    };
+    const desktopCompletionPrompt = (gap: 'input' | 'verify' | '') => gap === 'input'
+      ? '用户明确要求在 Windows 应用中输入文字，但还没有成功的 Type 或键盘输入调用。请先观察当前桌面，再完成输入；不要把已打开窗口说成任务完成。'
+      : gap === 'verify'
+        ? desktopCaptureRequested
+          ? '用户要求截图，但最后一次桌面操作后还没有成功调用 Screenshot。请获取截图核对结果，再回复用户；不要猜测成功。'
+          : '桌面操作后还没有成功获取新的 Snapshot、Screenshot 或 WaitFor。请核对最后一次操作的实际结果，再回复用户；不要猜测成功。'
+        : '';
     let preparedCaption: Promise<string> | null = null;
     let skillToolCalls = 0;
     let skillInstalls = 0;
@@ -2196,6 +2249,15 @@ const auditMcpCall = (
       authorize: async ({ policy, args }) => {
         const meta = policy.tool?.mcp;
         if (!meta) return 'allow';
+        const normalizedMcpToolName = meta.toolName.toLowerCase().replace(/[^a-z]/g, '');
+        if (desktopInputExplicitlyForbidden
+          && mcpServerById.get(meta.serverId)?.catalogId === 'windows-mcp'
+          && /^(?:type|sendkeys|keyboardtype|keyboardinput)$/.test(normalizedMcpToolName)) {
+          const reason = '用户明确禁止输入文字，因此桌面输入工具没有执行。请勿改用其他工具输入文字。';
+          usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false });
+          auditMcpCall(meta, { risk: policy.tool?.risk, allowed: false, decision: 'block', ok: false, summary: reason });
+          return { deny: reason };
+        }
         const guard = guardMcpCall(meta, args);
         if (!guard.ok) { usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false }); auditMcpCall(meta, { risk: policy.tool?.risk, allowed: false, decision: 'guard', ok: false, summary: guard.error }); return { deny: guard.error }; }
         const rememberedToolPolicy = policy.tool?.id ? toolApprovalPolicy(policy.tool.id) : 'ask';
@@ -2454,10 +2516,13 @@ const auditMcpCall = (
           return browserContinuationPrompt(recovery);
         },
         continueOnText: ({ text }) => {
-          if (desktopAutomationRequest && /(?:尚未|未完成|无法|失败|继续|正在|还需)/.test(text)) {
+          const verificationGap = desktopCompletionGap();
+          if (desktopAutomationRequest && (verificationGap || /(?:尚未|未完成|无法|失败|继续|正在|还需)/.test(text))) {
             if (stalledMcpReason || desktopCompletionPrompts >= MCP_DESKTOP_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
             desktopCompletionPrompts += 1;
-            return '请重新观察当前桌面状态，继续执行用户命令中尚未完成的步骤；全部验证成功后再回答。';
+            return verificationGap
+              ? desktopCompletionPrompt(verificationGap)
+              : '请重新观察当前桌面状态，继续执行用户命令中尚未完成的步骤；全部验证成功后再回答。';
           }
           if (!browserAutomationRequest || browserExternalBlocker(browserUses) || browserCompletionPrompts >= MCP_BROWSER_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
           const submissionGap = browserTextSubmissionGap(latestInstruction, browserUses);
@@ -2481,7 +2546,10 @@ const auditMcpCall = (
           stopped: '桌面操作达到调用或耗时上限',
         };
         const failedDesktopTool = usedMcpTools.some((tool) => tool.server === mcpRuntime.servers.find((server) => server.catalogId === 'windows-mcp')?.name && !tool.ok);
-        const reason = stalledMcpReason || mcpFollowupFailure || stopReasons[mcpLoop.stopReason]
+        const verificationGap = desktopCompletionGap();
+        const reason = verificationGap
+          ? desktopCompletionPrompt(verificationGap)
+          : stalledMcpReason || mcpFollowupFailure || stopReasons[mcpLoop.stopReason]
           || (failedDesktopTool ? '桌面工具调用失败，结果尚未核验' : '')
           || (!mcpLoop.text ? '模型未能继续或核验剩余桌面操作' : '');
         if (reason) mcpFollowupText = `${reason}。任务未完成；已执行 ${usedMcpTools.filter((tool) => tool.ok).length} 次桌面工具调用，剩余步骤尚未确认。`;

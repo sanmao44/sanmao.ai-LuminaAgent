@@ -39,7 +39,7 @@ export function browserTargetHint(text: unknown): string | null {
  * “现在继续提交评论”。这不是完成信号，路由层需要把它送回浏览器工具循环。
  */
 const BROWSER_INCOMPLETE_TEXT = /(?:未(?:完成|提交|执行|处理)|尚未|仍在|暂时(?:无法|不能)|无法(?:提交|完成|执行)|未能|待(?:加载|处理)|失败|not\s+(?:done|completed|submitted)|still\s+(?:loading|pending)|unable\s+to|could(?:n't| not))/i;
-const BROWSER_PENDING_ACTION_TEXT = /(?:现在|接下来|下一步|然后|继续).{0,32}(?:提交|发送|评论|回复|输入|点击|点赞|收藏|关注|登录|播放)/i;
+const BROWSER_PENDING_ACTION_TEXT = /(?:现在|接下来|下一步|然后|继续).{0,32}(?:提交|发送|评论|回复|输入|点击|点赞|收藏|关注|登录|播放|搜索|查找|打开|访问|导航|下载|保存|导出)/i;
 
 export function browserTextNeedsContinuation(text: unknown) {
   const value = String(text ?? '').replace(/\s+/g, ' ').trim();

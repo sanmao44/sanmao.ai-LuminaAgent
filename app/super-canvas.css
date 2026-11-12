@@ -181,13 +181,13 @@ html[data-theme="dark"] .super-canvas-entry-badge{
 
 /* 超级画布移动端入口与返回按钮。 */
 @media(max-width:780px){
-  .super-canvas-entry{height:32px;padding:0 8px 0 5px;font-size:9px;gap:5px;border-radius:11px}
+  .super-canvas-entry{height:44px;padding:0 8px 0 5px;font-size:9px;gap:5px;border-radius:11px}
   .super-canvas-entry-badge{display:none}
-  .super-canvas-back{height:30px;padding:0 8px;font-size:9px;gap:4px}
+  .super-canvas-back{height:44px;padding:0 8px;font-size:9px;gap:4px}
 }
 @media(max-width:420px){
   .super-canvas-entry span{display:none}
-  .super-canvas-entry{width:34px;padding:0;justify-content:center}
+  .super-canvas-entry{width:44px;height:44px;padding:0;justify-content:center}
 }
 @media(prefers-reduced-motion:reduce){
   html:not([data-motion="on"]) .super-canvas-entry{animation:none;transition:none}

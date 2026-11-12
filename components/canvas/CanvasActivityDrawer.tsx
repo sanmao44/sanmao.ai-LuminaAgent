@@ -107,7 +107,7 @@ export default function CanvasActivityDrawer({
   projectVersionCount: number;
   onOpenProjectBrief: () => void;
   onDraftProject: () => void;
-  onCreateProjectNode: (kind: CanvasNodeCreationKind, sourceNodeIds?: string[]) => void;
+  onCreateProjectNode: (kind: CanvasNodeCreationKind, sourceNodeIds?: string[], speechDraftText?: string) => void;
   onSaveProjectVersion: () => void;
   onExportProjectPackage: () => void;
   onScaffoldProject: () => void;
@@ -221,7 +221,7 @@ export default function CanvasActivityDrawer({
     }
     if (action.kind === "edit-brief") onOpenProjectBrief();
     else if (action.kind === "draft-content") onDraftProject();
-    else if (action.kind === "create-node") onCreateProjectNode(action.nodeKind, action.sourceNodeIds);
+    else if (action.kind === "create-node") onCreateProjectNode(action.nodeKind, action.sourceNodeIds, action.speechDraftText);
     else if (action.kind === "save-version") onSaveProjectVersion();
     else onFocusNode(action.nodeId);
   };

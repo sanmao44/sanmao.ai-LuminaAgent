@@ -154,7 +154,7 @@ input[type="checkbox"], input[type="radio"], progress { accent-color: var(--mode
 
 /* Stable desktop shell. The rail keeps its existing collapsed/expanded state. */
 .main-column { background: var(--modern-bg); }
-.topbar { height: 64px; background: color-mix(in srgb, var(--modern-bg) 92%, transparent); border-color: var(--modern-line); backdrop-filter: blur(18px); }
+.topbar { height: var(--shell-header-height, 64px); background: color-mix(in srgb, var(--modern-bg) 92%, transparent); border-color: var(--modern-line); backdrop-filter: blur(18px); }
 .top-mode-nav { width: 388px; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; background: var(--modern-panel); border: 1px solid var(--modern-line); box-shadow: none; }
 .top-mode-nav button { min-width: 0; padding-inline: 8px; color: var(--modern-secondary); font-size: var(--type-caption); }
 .top-mode-nav button.active { background: var(--modern-accent-soft); border-color: transparent; color: var(--modern-accent-ink); box-shadow: none; transform: none; }
@@ -170,7 +170,6 @@ input[type="checkbox"], input[type="radio"], progress { accent-color: var(--mode
 /* Super Canvas remains the high-salience product differentiator. */
 .super-canvas-entry { border-color: color-mix(in srgb, var(--modern-accent) 72%, var(--modern-line)); background: linear-gradient(135deg, var(--modern-canvas-from), var(--modern-canvas-to)); color: #fff; box-shadow: 0 8px 22px color-mix(in srgb, var(--modern-accent) 27%, transparent), inset 0 1px 0 rgb(255 255 255 / 26%); }
 .super-canvas-entry:hover, .super-canvas-entry:focus-visible { border-color: var(--modern-accent-2); background: linear-gradient(135deg, var(--modern-canvas-from), var(--modern-canvas-to)); color: #fff; box-shadow: 0 10px 28px color-mix(in srgb, var(--modern-accent) 38%, transparent), 0 0 0 3px color-mix(in srgb, var(--modern-accent) 16%, transparent); transform: translateY(-1px); }
-.super-canvas-entry:focus-visible { outline: none; }
 .super-canvas-entry-badge { background: rgb(255 255 255 / 20%); color: #fff; }
 
 /* Light canvas elevation is carried by borders and selection rings first. */
@@ -313,6 +312,7 @@ html[data-theme] .sidebar.expanded.agent-context .chat-history-item.active { box
   .agent-composer-wrap { left: 0; padding: 12px 12px 14px; }
   .top-mode-nav { width: 100%; }
   .topbar-sync-status { display: none; }
+  .theme-toggle { width: 44px; height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

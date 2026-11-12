@@ -103,6 +103,7 @@ import {
 } from "@/lib/canvas/asset-library";
 import type { GenerationLog } from "@/lib/generation-log";
 import {
+  archiveCanvasInlineImages,
   archiveCanvasImages,
   canvasInlineImageUrls,
   canvasMediaUrlsToArchive,
@@ -2379,7 +2380,7 @@ export default function SuperCanvas() {
         try {
           const inlineUrls = canvasInlineImageUrls(canvasCoreRef.current.document().nodes);
           if (inlineUrls.length) {
-            const archived = await archiveCanvasImages(inlineUrls);
+            const { archived } = await archiveCanvasInlineImages(canvasCoreRef.current.document().nodes);
             if (canvasProjectSessionRef.current.activeId !== activeProjectId) return;
             if (archived.size) {
               updateDoc((value) => ({
@@ -2389,6 +2390,13 @@ export default function SuperCanvas() {
                   return data === node.data ? node : { ...node, data };
                 }),
               }));
+            }
+            const remaining = canvasInlineImageUrls(canvasCoreRef.current.document().nodes);
+            if (remaining.length) {
+              setSaving(false);
+              setSaveError(true);
+              notify(`仍有 ${remaining.length} 项内嵌图片未能归档，已暂停本地保存以避免占满浏览器存储。修复图片存储后编辑画布重试，或先导出工作流 JSON。`, "error");
+              return;
             }
           }
           const ok = persistCurrentCanvas();
@@ -9238,13 +9246,17 @@ export default function SuperCanvas() {
     [connectCanvasNodes],
   );
 
-  const createProjectProgressNode = useCallback((kind: CanvasNodeCreationKind, sourceNodeIds?: string[]) => {
+  const createProjectProgressNode = useCallback((kind: CanvasNodeCreationKind, sourceNodeIds?: string[], speechDraftText?: string) => {
     const before = canvasCoreRef.current.document();
     const existingIds = new Set(before.nodes.map((node) => node.id));
     setActivePanel(null);
     addNode(kind);
     const created = canvasCoreRef.current.document().nodes.find((node) => !existingIds.has(node.id));
     if (!created) return;
+    const speechText = speechDraftText?.trim();
+    if (kind === "audio" && speechText) {
+      updateCanvasAudioDraft(created.id, { text: speechText, updatedAt: Date.now() });
+    }
     const projectIntent = kind === "text" ? projectBrief?.intent?.trim() : "";
     if (projectIntent) {
       commit((value) => seedCanvasProjectIntent(value, created.id, projectIntent));
@@ -9252,7 +9264,7 @@ export default function SuperCanvas() {
     for (const sourceNodeId of sourceNodeIds || []) {
       if (nodeById(canvasCoreRef.current.document(), sourceNodeId)) connectCanvasNodes(sourceNodeId, created.id);
     }
-  }, [addNode, commit, connectCanvasNodes, projectBrief?.intent]);
+  }, [addNode, commit, connectCanvasNodes, projectBrief?.intent, updateCanvasAudioDraft]);
 
   const scaffoldProject = useCallback(() => {
     const before = canvasCoreRef.current.document();

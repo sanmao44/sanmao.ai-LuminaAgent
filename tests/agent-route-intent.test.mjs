@@ -460,47 +460,67 @@ test('discovered desktop tools reach the model instead of the compact no-tools p
   }
 });
 
-test('firewall requests load and execute Windows desktop tools without exposing Tabbit or Playwright', async () => {
+test('firewall requests verify the opened app with a fresh desktop observation', async () => {
   const windowsServer = { id: 'windows-test', name: 'Windows Desktop', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazy: true };
   const browserServer = { id: 'playwright-test', name: 'Browser Control', catalogId: 'playwright', enabled: true, allowWrite: true, lazy: true };
+  const tool = (server, name, readOnly) => ({
+    id: `mcp:${server.id}:${name}`, name: `${server.id}__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
   const agent = harness({
     mcpServers: [windowsServer, browserServer],
     discoveredMcpIds: [],
     tabbitAvailable: true,
-    mcpTools: [
-      {
-        id: 'mcp:windows-test:App', name: 'windows-test__App', source: 'mcp',
-        description: 'Open a Windows application', schema: { type: 'object', properties: {} },
-        tags: ['mcp'], risk: 'external_side_effect', permissions: ['process'], gating: () => true,
-        mcp: { serverId: 'windows-test', serverName: 'Windows Desktop', toolName: 'App', readOnly: false, blocked: false },
-      },
-      {
-        id: 'mcp:playwright-test:browser_navigate', name: 'playwright-test__browser_navigate', source: 'mcp',
-        description: 'Navigate a browser page', schema: { type: 'object', properties: {} },
-        tags: ['mcp'], risk: 'external_side_effect', gating: () => true,
-        mcp: { serverId: 'playwright-test', serverName: 'Browser Control', toolName: 'browser_navigate', readOnly: false, blocked: false },
-      },
-    ],
+    mcpTools: [tool(windowsServer, 'App', false), tool(windowsServer, 'Snapshot', true), tool(browserServer, 'browser_navigate', false)],
     callMcpTool: async (_server, toolName) => ({ isError: false, text: `${toolName} opened Windows firewall controls` }),
-    reply: (payload) => {
-      if (payload.messages.some((message) => message.role === 'tool')) return { content: 'Windows firewall controls opened.' };
-      if (payload.tools?.some((tool) => tool.function.name === 'windows-test__App')) {
+    reply: (payload, count) => {
+      if (count === 1 && payload.tools?.some((tool) => tool.function.name === 'windows-test__App')) {
         return { tool_calls: [{ id: 'open-firewall', type: 'function', function: { name: 'windows-test__App', arguments: '{}' } }] };
       }
-      return { content: 'No Windows desktop tool was available.' };
+      if (count === 2) return { content: 'Windows firewall controls opened.' };
+      if (count === 3) {
+        assert.ok(payload.messages.some((message) => String(message.content || '').includes('桌面操作后还没有成功获取新的 Snapshot')));
+        return { tool_calls: [{ id: 'verify-firewall', type: 'function', function: { name: 'windows-test__Snapshot', arguments: '{}' } }] };
+      }
+      return { content: 'Windows firewall controls are visible in the latest snapshot.' };
     },
   });
 
   const result = await agent.post([{ role: 'user', content: '打开防火墙' }]);
   assert.deepEqual(agent.runtimeLoads[0].servers.map((server) => server.id), ['windows-test']);
   assert.ok(agent.mcpSelectionCalls[0].priorityServerIds.includes('windows-test'));
-  assert.deepEqual(agent.mcpCalls.map((call) => [call.server, call.toolName]), [['windows-test', 'App']]);
+  assert.deepEqual(agent.mcpCalls.map((call) => [call.server, call.toolName]), [['windows-test', 'App'], ['windows-test', 'Snapshot']]);
   assert.ok(agent.calls.every((call) => !call.tools?.some((tool) => ['tabbit_browser', 'playwright-test__browser_navigate'].includes(tool.function.name))));
   assert.equal(agent.tabbitCalls.length, 0);
-  assert.match(result.message, /Windows firewall controls opened/);
+  assert.match(result.message, /visible in the latest snapshot/);
 });
 
-test('desktop Agent keeps calling tools after launch until typing and a fresh snapshot are verified', async () => {
+test('desktop Agent reports an unverified write as incomplete when no fresh observation succeeds', async () => {
+  const server = { id: 'windows-test', name: 'Windows Desktop', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazy: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:${server.id}:${name}`, name: `${server.id}__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [tool('App', false), tool('Snapshot', true)],
+    callMcpTool: async (_server, name) => ({ isError: false, text: `${name} ok` }),
+    reply: (_payload, count) => count === 1
+      ? { tool_calls: [{ id: 'open-app', type: 'function', function: { name: 'windows-test__App', arguments: '{}' } }] }
+      : { content: 'The application opened successfully.' },
+  });
+
+  const result = await agent.post([{ role: 'user', content: '打开记事本' }]);
+  assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App']);
+  assert.match(result.message, /任务未完成/);
+  assert.match(result.message, /没有成功获取新的 Snapshot/);
+});
+
+test('desktop Agent keeps calling tools after launch until typing and a fresh screenshot are verified', async () => {
   const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
   const tool = (name, readOnly) => ({
     id: `mcp:windows-test:${name}`, name: `windows-test__${name}`, source: 'mcp',
@@ -512,24 +532,203 @@ test('desktop Agent keeps calling tools after launch until typing and a fresh sn
     { name: 'App', args: { mode: 'launch_executable', executable: 'C:\\Windows\\System32\\notepad.exe' } },
     { name: 'Snapshot', args: {} },
     { name: 'Type', args: { text: 'SANMAO_MCP_AGENT_CHECK', loc: [10, 20] } },
-    { name: 'Snapshot', args: {} },
+    { name: 'Screenshot', args: {} },
   ];
   const agent = harness({
     mcpServers: [server],
-    mcpTools: [tool('App', false), tool('Snapshot', true), tool('Type', false)],
-    callMcpTool: async (_server, name) => ({ isError: false, text: name === 'Snapshot' ? 'Notepad editor SANMAO_MCP_AGENT_CHECK' : `${name} ok` }),
+    mcpTools: [tool('App', false), tool('Snapshot', true), tool('Screenshot', true), tool('Type', false)],
+    callMcpTool: async (_server, name) => ({ isError: false, text: name === 'Screenshot' ? 'Notepad screenshot shows SANMAO_MCP_AGENT_CHECK' : `${name} ok` }),
     reply: (_payload, count) => {
-      const step = steps[count - 1];
+      if (count === 2) return { content: 'Notepad opened successfully.' };
+      const step = steps[count === 1 ? 0 : count - 2];
       return step
         ? { content: null, tool_calls: [{ id: `desktop-${count}`, type: 'function', function: { name: `windows-test__${step.name}`, arguments: JSON.stringify(step.args) } }] }
-        : { content: 'Verified the text in the latest Notepad snapshot.' };
+        : { content: 'Verified the text in the latest Notepad screenshot.' };
     },
   });
   const data = await agent.post([{ role: 'user', content: '请打开Windows桌面的记事本，在窗口输入SANMAO_MCP_AGENT_CHECK，然后截图核验' }]);
-  assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App', 'Snapshot', 'Type', 'Snapshot']);
-  assert.match(data.message, /Verified the text/);
+  assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App', 'Snapshot', 'Type', 'Screenshot']);
+  assert.match(data.message, /latest Notepad screenshot/);
   assert.ok(agent.calls.length >= 5);
   assert.match(agent.calls[0].messages[0].content, /Type 必须传入.*loc=\[x,y\] 或 label/);
+});
+
+test('desktop Agent does not report success when requested typing is still missing', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:windows-test:${name}`, name: `windows-test__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [tool('App', false), tool('Snapshot', true), tool('Type', false)],
+    callMcpTool: async (_server, name) => ({ isError: false, text: `${name} ok` }),
+    reply: (_payload, count) => count === 1
+      ? { content: null, tool_calls: [{ id: 'desktop-open', type: 'function', function: { name: 'windows-test__App', arguments: '{}' } }] }
+      : { content: 'Notepad opened successfully.' },
+  });
+
+  const result = await agent.post([{ role: 'user', content: '请打开记事本，输入 SANMAO_MCP_AGENT_CHECK，然后截图核验' }]);
+  assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App']);
+  assert.match(result.message, /任务未完成/);
+  assert.match(result.message, /还没有成功的 Type/);
+});
+
+test('desktop Agent does not treat explicitly forbidden typing as a missing step', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:windows-test:${name}`, name: `windows-test__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+  const steps = [
+    { name: 'App', args: {} },
+    { name: 'Type', args: { text: 'MUST_NOT_BE_TYPED', loc: [10, 20] } },
+    { name: 'Snapshot', args: {} },
+  ];
+
+  for (const instruction of [
+    '请打开 Windows 桌面的记事本，不要输入任何内容',
+    "请打开 Windows 桌面的记事本，but don't type anything",
+    '请打开 Windows 桌面的记事本，do not enter any text',
+    '请打开 Windows 桌面的记事本，禁止输入文字',
+    '请打开 Windows 桌面的记事本，never type anything',
+    '请打开 Windows 桌面的记事本，不要输入或填写任何内容',
+    "请打开 Windows 桌面的记事本，but don't type or input anything",
+  ]) {
+    const agent = harness({
+      mcpServers: [server],
+      mcpTools: [tool('App', false), tool('Snapshot', true), tool('Type', false)],
+      callMcpTool: async (_server, name) => ({ isError: false, text: `${name} ok` }),
+      reply: (_payload, count) => {
+        const step = steps[count - 1];
+        return step
+          ? { content: null, tool_calls: [{ id: `desktop-${count}`, type: 'function', function: { name: `windows-test__${step.name}`, arguments: JSON.stringify(step.args) } }] }
+          : { content: 'Notepad opened and its current window was checked.' };
+      },
+    });
+
+    const result = await agent.post([{ role: 'user', content: instruction }]);
+    assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App', 'Snapshot'], instruction);
+    assert.match(result.message, /用户明确禁止输入文字.*没有执行/);
+    assert.match(result.message, /Snapshot/);
+    assert.match(agent.calls[0].messages[0].content, /明确禁止输入文字，不得调用 Type、SendKeys/);
+    assert.ok(agent.calls.some((call) => call.messages.some((message) => String(message.content || '').includes('用户明确禁止输入文字，因此桌面输入工具没有执行'))), instruction);
+    assert.ok(!agent.mcpCalls.some((call) => call.args.text === 'MUST_NOT_BE_TYPED'), instruction);
+    assert.ok(agent.calls.every((call) => !call.messages.some((message) => String(message.content || '').includes('用户明确要求在 Windows 应用中输入文字'))), instruction);
+  }
+});
+
+test('desktop Agent requires a requested screenshot after the final action', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:windows-test:${name}`, name: `windows-test__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [tool('App', false), tool('Screenshot', true)],
+    callMcpTool: async (_server, name) => ({ isError: false, text: `${name} ok` }),
+    reply: (_payload, count) => count === 1
+      ? { content: null, tool_calls: [{ id: 'desktop-open', type: 'function', function: { name: 'windows-test__App', arguments: '{}' } }] }
+      : count === 2
+        ? { content: '应用已打开，截图验证通过。' }
+        : count === 3
+          ? { content: null, tool_calls: [{ id: 'desktop-screenshot', type: 'function', function: { name: 'windows-test__Screenshot', arguments: '{}' } }] }
+          : { content: '截图已完成并确认应用状态。' },
+  });
+
+  const result = await agent.post([{ role: 'user', content: '打开计算器并截图核验' }]);
+  assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App', 'Screenshot']);
+  assert.match(result.message, /截图已完成/);
+});
+
+test('desktop Agent accepts a successful screenshot-only request as verified', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const screenshot = {
+    id: 'mcp:windows-test:Screenshot', name: 'windows-test__Screenshot', source: 'mcp',
+    description: 'Capture the current screen', schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: 'read', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: 'Screenshot', readOnly: true, blocked: false },
+  };
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [screenshot],
+    callMcpTool: async () => ({ isError: false, text: 'Screenshot captured.' }),
+    reply: (_payload, count) => count === 1
+      ? { content: null, tool_calls: [{ id: 'desktop-screenshot', type: 'function', function: { name: 'windows-test__Screenshot', arguments: '{}' } }] }
+      : { content: 'The current desktop screenshot was captured successfully.' },
+  });
+
+  const result = await agent.post([{ role: 'user', content: '请截取当前桌面截图' }]);
+  assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['Screenshot']);
+  assert.equal(result.message, 'The current desktop screenshot was captured successfully.');
+});
+
+test('desktop Agent respects explicit Chinese and English requests not to take a screenshot', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:windows-test:${name}`, name: `windows-test__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+  const steps = [
+    { name: 'App', args: {} },
+    { name: 'Snapshot', args: {} },
+    { name: 'Type', args: { text: 'SANMAO_MCP_AGENT_CHECK', loc: [10, 20] } },
+    { name: 'Snapshot', args: {} },
+  ];
+
+  for (const instruction of [
+    '请打开Windows桌面的记事本，在窗口输入SANMAO_MCP_AGENT_CHECK，然后不要截图',
+    "请打开Windows桌面的记事本，输入 SANMAO_MCP_AGENT_CHECK and verify it with a snapshot, but don't take a screenshot",
+  ]) {
+    const agent = harness({
+      mcpServers: [server],
+      mcpTools: [tool('App', false), tool('Snapshot', true), tool('Type', false), tool('Screenshot', true)],
+      callMcpTool: async (_server, name) => ({ isError: false, text: `${name} ok` }),
+      reply: (_payload, count) => {
+        const step = steps[count - 1];
+        return step
+          ? { content: null, tool_calls: [{ id: `desktop-${count}`, type: 'function', function: { name: `windows-test__${step.name}`, arguments: JSON.stringify(step.args) } }] }
+          : { content: 'Text was verified in the latest desktop snapshot.' };
+      },
+    });
+
+    const result = await agent.post([{ role: 'user', content: instruction }]);
+    assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App', 'Snapshot', 'Type', 'Snapshot'], instruction);
+    assert.equal(result.message, 'Text was verified in the latest desktop snapshot.');
+  }
+});
+
+test('desktop Agent does not mistake “prototype” for a typing request', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:windows-test:${name}`, name: `windows-test__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [tool('App', false), tool('Snapshot', true)],
+    callMcpTool: async (_server, name) => ({ isError: false, text: `${name} completed.` }),
+    reply: (_payload, count) => count === 1
+      ? { content: null, tool_calls: [{ id: 'desktop-open', type: 'function', function: { name: 'windows-test__App', arguments: '{}' } }] }
+      : count === 2
+        ? { tool_calls: [{ id: 'desktop-snapshot', type: 'function', function: { name: 'windows-test__Snapshot', arguments: '{}' } }] }
+        : { content: 'Prototype app opened and verified from the latest snapshot.' },
+  });
+
+  const result = await agent.post([{ role: 'user', content: '请打开 prototype 应用' }]);
+  assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App', 'Snapshot']);
+  assert.equal(result.message, 'Prototype app opened and verified from the latest snapshot.');
 });
 
 test('smart variant planning uses the isolated JSON-only route without tools', async () => {

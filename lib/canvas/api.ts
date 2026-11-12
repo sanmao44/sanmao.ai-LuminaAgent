@@ -6,6 +6,8 @@ import type { CreativeReference } from "../creative-references";
 import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeProjectBrief, type CreativeRoute, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
+import { canvasInlineImageUrls, replaceCanvasMediaUrls } from './inline-images';
+export { canvasInlineImageUrls, replaceCanvasMediaUrls } from './inline-images';
 import {
   requestAgent,
   type AgentExecutionMode,
@@ -520,47 +522,6 @@ export function canvasMediaUrlsToArchive(nodes: readonly CanvasNode[]) {
   return Array.from(new Set([...remoteUrls, ...canvasInlineImageUrls(nodes)]));
 }
 
-const CANVAS_INLINE_IMAGE_DATA_URL = /^data:image\/(?:png|jpeg|webp|gif|bmp);base64,/i;
-
-export function canvasInlineImageUrls(nodes: readonly CanvasNode[]) {
-  const urls = new Set<string>();
-  const seen = new WeakSet<object>();
-  const visit = (value: unknown) => {
-    if (typeof value === "string") {
-      if (CANVAS_INLINE_IMAGE_DATA_URL.test(value)) urls.add(value);
-      return;
-    }
-    if (!value || typeof value !== "object" || seen.has(value)) return;
-    seen.add(value);
-    if (Array.isArray(value)) value.forEach(visit);
-    else Object.values(value).forEach(visit);
-  };
-  nodes.forEach((node) => visit(node.data));
-  return [...urls];
-}
-
-export function replaceCanvasMediaUrls<T>(value: T, archived: ReadonlyMap<string, string>): T {
-  if (typeof value === "string") return (archived.get(value) || value) as T;
-  if (Array.isArray(value)) {
-    let changed = false;
-    const result = value.map((item) => {
-      const next = replaceCanvasMediaUrls(item, archived);
-      changed ||= next !== item;
-      return next;
-    });
-    return (changed ? result : value) as T;
-  }
-  if (!value || typeof value !== "object") return value;
-  let changed = false;
-  const result: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    const next = replaceCanvasMediaUrls(item, archived);
-    changed ||= next !== item;
-    result[key] = next;
-  }
-  return (changed ? result : value) as T;
-}
-
 /**
  * 把画布节点上的图片补归档成本地存储地址。
  * 服务商临时地址只活一小段时间，节点一直用它的话，图片会挂、参考素材也会读不到；
@@ -584,6 +545,12 @@ export async function archiveCanvasImages(urls: readonly string[]) {
     } catch { /* 归档失败就保持原地址，由调用方决定怎么呈现 */ }
   }
   return archived;
+}
+
+export async function archiveCanvasInlineImages(nodes: readonly CanvasNode[]) {
+  const urls = canvasInlineImageUrls(nodes);
+  const archived = await archiveCanvasImages(urls);
+  return { archived, remaining: urls.filter((url) => !archived.has(url)) };
 }
 
 /* 参考素材在浏览器里读不到时的兜底：先让服务端归档一份本地副本，再按本地地址读。 */

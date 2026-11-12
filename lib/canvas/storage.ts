@@ -1,5 +1,6 @@
 import type { CanvasDocument, CanvasProject } from './types';
 import { CANVAS_VERSION, normalizeDocument } from './model';
+import { canvasInlineImageUrls } from './inline-images';
 import { emitWorkspaceChange, withWorkspaceRestoreSuppressed } from '../workspace-events';
 import type { CanvasWorkspaceData } from '../workspace-types';
 import {
@@ -38,6 +39,7 @@ function readJson<T>(key: string, fallback: T): T {
 
 let storageQuotaExceeded = false;
 let storageConflict = false;
+let storageInlineImagesPending = false;
 
 function isQuotaExceededError(error: unknown) {
   if (!error || typeof error !== 'object') return false;
@@ -47,6 +49,7 @@ function isQuotaExceededError(error: unknown) {
 }
 
 function writeJson(key: string, value: unknown) {
+  storageInlineImagesPending = false;
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
     storageQuotaExceeded = false;
@@ -59,6 +62,7 @@ function writeJson(key: string, value: unknown) {
 
 /** Synchronous adapter transaction: failed multi-key writes retain the original canvas. */
 function writeCanvasEntries(entries: ReadonlyMap<string, string | null>) {
+  storageInlineImagesPending = false;
   const previous = new Map<string, string | null>();
   try {
     for (const key of entries.keys()) previous.set(key, window.localStorage.getItem(key));
@@ -83,6 +87,7 @@ function writeCanvasEntries(entries: ReadonlyMap<string, string | null>) {
 /** 最近一次画布写入失败的提示：区分浏览器存储配额不足与其它写入失败。 */
 export function describeCanvasSaveFailure() {
   if (storageConflict) return '这个画布已在其他页面更新或删除，当前内容已保留，请先导出工作流 JSON，再重新打开画布。';
+  if (storageInlineImagesPending) return '画布中还有内嵌图片未能归档，已暂停本地保存以避免占满浏览器存储。请修复图片存储后编辑画布重试，或先导出工作流 JSON。';
   return storageQuotaExceeded
     ? '浏览器本地存储已满：请先导出工作流 JSON，再清理生成任务记录或删除无用画布。'
     : '画布保存失败，请先导出工作流 JSON。';
@@ -354,6 +359,11 @@ export function clearCanvasDeletionTombstones() {
 export function saveCanvasDocument(id: string, document: CanvasDocument, expectedDocument?: CanvasDocument) {
   storageQuotaExceeded = false;
   storageConflict = false;
+  storageInlineImagesPending = false;
+  if (canvasInlineImageUrls(document.nodes).length) {
+    storageInlineImagesPending = true;
+    return false;
+  }
   const key = `${CANVAS_PROJECT_PREFIX}${id}`;
   const current = readJson<Record<string, unknown> | null>(key, null);
   const projects = readCanvasProjects();
@@ -385,6 +395,7 @@ export function saveCanvasDocument(id: string, document: CanvasDocument, expecte
     ]),
   ).saved;
   if (ok) emitWorkspaceChange();
+  if (ok) storageInlineImagesPending = false;
   return ok;
 }
 

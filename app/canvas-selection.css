@@ -14,4 +14,9 @@
 .canvas-selection-layout-group button:disabled{cursor:not-allowed;opacity:.38}
 .canvas-selection-layout-group button svg{width:18px;height:18px;display:block}
 .canvas-selection-layout-divider{width:1px;height:28px;flex:none;background:var(--line-strong)}
-@media(max-width:720px){.canvas-selection-layout-toolbar{bottom:calc(var(--canvas-deck-height,0px) + 12px);max-width:calc(100% - 16px);padding:4px}.canvas-selection-layout-group button{width:29px;height:29px}}
+@media(max-width:720px){
+  .canvas-selection-layout-toolbar{bottom:calc(var(--canvas-deck-height,0px) + 12px);max-width:calc(100% - 16px);padding:4px;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+  .canvas-selection-layout-toolbar::-webkit-scrollbar{display:block;height:3px}
+  .canvas-selection-layout-toolbar::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:999px}
+  .canvas-selection-layout-group button{width:44px;height:44px;min-width:44px;min-height:44px;box-sizing:border-box}
+}

@@ -48,7 +48,11 @@ test('Tabbit 提示按 CLI 生命周期创建任务并为新程序生成独立 r
 test('浏览器循环不会把“现在继续提交评论”当成最终回复', () => {
   assert.equal(mcp.browserTextNeedsContinuation('我已完成点赞，现在继续提交评论。'), true);
   assert.equal(mcp.browserTextNeedsContinuation('评论区操作未能继续完成。'), true);
+  assert.equal(mcp.browserTextNeedsContinuation('已打开官网，接下来搜索退款流程。'), true);
+  assert.equal(mcp.browserTextNeedsContinuation('打开网站后，我现在访问帮助中心。'), true);
+  assert.equal(mcp.browserTextNeedsContinuation('已完成搜索，下一步下载报告。'), true);
   assert.equal(mcp.browserTextNeedsContinuation('已完成全部操作，评论已出现在列表中。'), false);
+  assert.equal(mcp.browserTextNeedsContinuation('我已经搜索、打开并下载报告，操作全部完成。'), false);
 });
 
 test('评论/回复必须按输入、发送、验证顺序完成', () => {

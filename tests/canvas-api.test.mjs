@@ -10,6 +10,16 @@ async function loadTypeScript(path) {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: sourceUrl.pathname,
   }).outputText;
+  if (compiled.includes("from './inline-images'")) {
+    const dependencyUrl = new URL('../lib/canvas/inline-images.ts', import.meta.url);
+    const dependencySource = await readFile(dependencyUrl, 'utf8');
+    const dependencyCompiled = ts.transpileModule(dependencySource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: dependencyUrl.pathname,
+    }).outputText;
+    const dependencyDataUrl = `data:text/javascript;base64,${Buffer.from(dependencyCompiled).toString('base64')}`;
+    compiled = compiled.replaceAll(/from ["']\.\/inline-images["']/g, `from "${dependencyDataUrl}"`);
+  }
   if (compiled.includes('from "../agent-client"')) {
     const dependencyUrl = new URL('../lib/agent-client.ts', import.meta.url);
     const dependencySource = await readFile(dependencyUrl, 'utf8');
@@ -1053,6 +1063,25 @@ test('canvas media archiving keeps only the addresses the server could store', a
     ['https://task-cdn.example.com/?url=fresh.png', '/api/storage/file?name=kept.png'],
     ['data:image/png;base64,AA==', '/api/storage/file?name=kept.png'],
   ]);
+});
+
+test('canvas inline archiving reports data URLs that remain after partial archive failure', async () => {
+  const nodes = [{ id: 'image', type: 'media', x: 0, y: 0, data: {
+    kind: 'image',
+    url: 'data:image/png;base64,AA==',
+    mask: { dataUrl: 'data:image/png;base64,MASK==' },
+  } }];
+  const result = await withFetch(async (_input, options) => {
+    const url = JSON.parse(options?.body || '{}').images?.[0]?.url;
+    return url?.includes('MASK')
+      ? jsonResponse({ error: '图片保存失败' }, 400)
+      : jsonResponse({ ok: true, images: [{ url: '/api/storage/file?name=image.png' }] });
+  }, () => api.archiveCanvasInlineImages(nodes));
+
+  assert.deepEqual([...result.archived.entries()], [
+    ['data:image/png;base64,AA==', '/api/storage/file?name=image.png'],
+  ]);
+  assert.deepEqual(result.remaining, ['data:image/png;base64,MASK==']);
 });
 
 test('canvas media archiving includes inline images and temporary remote image addresses', () => {

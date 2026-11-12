@@ -253,3 +253,12 @@
 - 补齐进度、任务、活动三个 Tab 的 `aria-controls` / `tabpanel` 关系及方向键、Home、End 切换，提升键盘和辅助技术的可预测性。
 - 新增工作台推荐投影行为测试；定向测试 27 项通过，全量 `npm test` 为 2,594 项通过、1 项平台相关跳过，`npm run typecheck`、`npm run validate:update` 和 UI detector 通过。隔离生产构建生成 58 个静态页面；390px 视口 body 宽度与 viewport 一致，无横向溢出。
 - 3210 `/api/runtime` 报告 `sourceStale: true`，所以其页面不是当前源码的验收依据。隔离预览有 workspace 409、媒体 404 和请求中断告警，项目工作台打开后的真实交互未验证；没有修改或重启 3210 服务。
+
+### 本轮 Agent 执行体验：遵守明确的禁止输入指令（2026-11-12）
+
+- Windows 桌面 Agent 的完成核验只在用户肯定要求输入时检查 `Type` / 键盘输入；“不要输入任何内容”、`don't type anything`、`do not enter any text` 等明确约束不会再触发强制输入补救提示。
+- 系统提示同时明确禁止调用输入工具，覆盖中文和英文否定以及“不要输入或填写 / don't type or input”的并列表达；肯定输入、输入后核验及截图约束保持原行为。
+- 复用 Agent Application 和现有桌面工具核验路径，没有新增 AgentRun、任务状态或 UI owner。
+- Agent 定向行为测试 7 项通过；全量 `npm test` 为 2,645 项通过、1 项跳过；`npm run typecheck` 与架构约束 12 项通过，`git diff --check` 通过。
+- 生产构建成功并生成 58 个静态页面；尝试将输出重定向到隔离目录时钩子未生效，实际写入共享 `.next`。3210 仍由原 PID 33932 监听，`/api/runtime` 与 `/canvas` 均返回 200，runtime 报告 `sourceStale: true`；本轮未重启服务或调用真实桌面工具。
+- 下一阶段继续审查 Agent 的其他意图约束与任务完成核验；重新构建前必须使用真实隔离的项目目录，并先确认构建输出路径。

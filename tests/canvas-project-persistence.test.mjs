@@ -254,6 +254,23 @@ test('quota failure while creating a canvas does not publish an empty replacemen
   assert.match(storage.describeCanvasSaveFailure(), /存储已满/);
 });
 
+test('canvas persistence refuses inline images and preserves the last saved document', () => {
+  const { storage, model, empty, imageDocument } = fixture();
+  const previous = imageDocument('already-saved');
+  assert.equal(storage.saveCanvasDocument('a', previous, empty), true);
+  const withInlineImage = model.normalizeDocument({
+    ...previous,
+    nodes: [...previous.nodes, {
+      id: 'inline-image', type: 'media', x: 20, y: 20,
+      data: { kind: 'image', url: 'data:image/png;base64,AA==' },
+    }],
+  });
+
+  assert.equal(storage.saveCanvasDocument('a', withInlineImage, previous), false);
+  assert.deepEqual(storage.loadCanvasDocument('a'), previous);
+  assert.match(storage.describeCanvasSaveFailure(), /内嵌图片未能归档/);
+});
+
 test('failed snapshot replacement preserves original canvas documents and removes partial writes', () => {
   const { storage, project, imageDocument, empty } = fixture();
   storage.saveCanvasDocument('a', imageDocument('existing-image'), empty);
