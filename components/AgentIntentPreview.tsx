@@ -62,7 +62,7 @@ export default function AgentIntentPreview({ preview }: { preview: AgentIntentPr
         <span><b>规划路径</b>{routeLabels[preview.route]}</span>
         <span><b>上下文</b>{contextLabels[preview.contextNeed]}</span>
         <span><b>判断置信度</b>{confidenceLabels[preview.confidence]}</span>
-        <p><b>判断依据</b>{preview.reason}</p>
+        <p><b>判断依据</b><span>{preview.reason}</span></p>
       </div>
     </details>
   );

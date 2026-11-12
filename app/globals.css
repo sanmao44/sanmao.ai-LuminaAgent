@@ -2194,7 +2194,8 @@ html[data-theme="light"] .sidebar.expanded{
 .agent-intent-preview-details{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px;max-width:min(620px,calc(100vw - 100px));padding:8px 10px;border:1px solid var(--message-assistant-border);border-radius:0 8px 8px 8px;background:var(--message-meta-bg);color:var(--message-support)}
 .agent-intent-preview-details>span{display:inline-flex;gap:4px;flex-wrap:wrap}
 .agent-intent-preview-details b{color:var(--message-assistant-label);font-weight:800}
-.agent-intent-preview-details p{flex-basis:100%;margin:0;overflow-wrap:anywhere;color:var(--message-body);font-size:10px;line-height:1.55}
+.agent-intent-preview-details p{display:flex;align-items:baseline;flex-wrap:wrap;gap:5px;flex-basis:100%;margin:0;color:var(--message-body);font-size:10px;line-height:1.55}
+.agent-intent-preview-details p span{min-width:0;flex:1;overflow-wrap:anywhere}
 @media(max-width:780px){.agent-intent-preview>summary{min-height:44px}.agent-intent-preview-details{max-width:min(620px,calc(100vw - 88px))}}
 .message-body>p{color:var(--message-body);font-size:14px;line-height:1.85}
 .message-body>p.pending{color:var(--message-support)}
