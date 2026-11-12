@@ -2289,17 +2289,19 @@ const auditMcpCall = (
           const observationText = typeof outcome?.content === 'string' ? outcome.content : '';
           const normalizedEvidence = observationText.replace(/\s+/g, ' ').trim();
           const normalizedRequestedText = (desktopRequestedInputText || '').replace(/\s+/g, ' ').trim();
-          desktopExecutionEvidence.push({
-            name: desktopMeta.toolName,
-            readOnly: desktopMeta.readOnly,
-            ok: outcome?.ok === true,
-            ...(isTypingTool && desktopRequestedInputText !== null
-              ? { inputMatchesRequestedText: typeof args.text === 'string' && args.text === desktopRequestedInputText }
-              : {}),
-            ...(isObservationTool && desktopRequestedInputText !== null
-              ? { observationShowsRequestedText: normalizedRequestedText.length > 0 && normalizedEvidence.includes(normalizedRequestedText) }
-              : {}),
-          });
+          if (!call.id || !desktopInstructionDeniedCallIds.has(call.id)) {
+            desktopExecutionEvidence.push({
+              name: desktopMeta.toolName,
+              readOnly: desktopMeta.readOnly,
+              ok: outcome?.ok === true,
+              ...(isTypingTool && desktopRequestedInputText !== null
+                ? { inputMatchesRequestedText: typeof args.text === 'string' && args.text === desktopRequestedInputText }
+                : {}),
+              ...(isObservationTool && desktopRequestedInputText !== null
+                ? { observationShowsRequestedText: normalizedRequestedText.length > 0 && normalizedEvidence.includes(normalizedRequestedText) }
+                : {}),
+            });
+          }
         }
         for (const message of result.results) {
           if (message.tool_call_id !== call.id) continue;
