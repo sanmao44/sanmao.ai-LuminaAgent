@@ -1653,26 +1653,26 @@ html:has(.app-shell){scrollbar-gutter:stable}
 }
 
 @media(max-width:780px){
-  :root{--shell-rail-width:0px;--shell-drawer-width:min(286px,86vw);--shell-header-height:104px}
+  :root{--shell-rail-width:0px;--shell-drawer-width:min(286px,86vw);--shell-header-height:112px}
   .sidebar{display:flex;width:var(--shell-drawer-width);padding:12px 14px;transform:translateX(-100%);box-shadow:none}
   .sidebar.expanded{width:var(--shell-drawer-width);transform:translateX(0);box-shadow:22px 0 60px rgba(10,12,18,.34)}
   .sidebar.expanded .chat-history-list{max-height:min(300px,34vh)}
   .main-column{margin-left:0;padding-top:var(--shell-header-height);padding-bottom:0}
-  .topbar{left:0;right:0;height:var(--shell-header-height);grid-template-columns:minmax(0,1fr) auto;grid-template-rows:52px 52px;gap:0 10px;padding:0 12px}
+  .topbar{left:0;right:0;height:var(--shell-header-height);grid-template-columns:minmax(0,1fr) auto;grid-template-rows:52px 60px;gap:0 8px;padding:0 12px}
   .topbar-left{grid-column:1;grid-row:1;gap:7px}
-  .mobile-sidebar-toggle{width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text-2)}
+  .mobile-sidebar-toggle{width:44px;height:44px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text-2)}
   .mobile-sidebar-toggle:hover,.mobile-sidebar-toggle:focus-visible{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
   .topbar-brand{height:36px;padding:0}
   .topbar-brand-mark{width:28px;height:28px;border-radius:8px}
   .topbar-brand strong{display:block;font-size:11px}
-  .top-mode-nav{grid-column:1/-1;grid-row:2;width:100%;height:44px;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;padding:4px;align-self:start;transform:none}
-  .top-mode-nav button{height:34px;padding:0 5px;font-size:9px}
+  .top-mode-nav{grid-column:1/-1;grid-row:2;width:100%;height:52px;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;padding:4px;align-self:start;transform:none}
+  .top-mode-nav button{height:44px;padding:0 5px;font-size:9px}
   .top-actions{grid-column:2;grid-row:1}
-  .topbar-task-status{min-width:36px;width:36px;justify-content:center;padding:0}
+  .topbar-task-status{min-width:44px;width:44px;height:44px;justify-content:center;padding:0}
   .topbar-task-copy{display:none}
   .topbar-sync-status{min-width:36px;width:36px;justify-content:center;padding:0}
   .topbar-sync-copy{display:none}
-  .theme-toggle{width:36px;padding:0;justify-content:center}
+  .theme-toggle{width:44px;height:44px;padding:0;justify-content:center}
   .theme-toggle span{display:none}
   .agent-page{min-height:calc(100vh - var(--shell-header-height))}
   .agent-welcome{top:42%}
@@ -3204,6 +3204,8 @@ html[data-theme="dark"] .agent-page{
   .model-picker-dialog-head{padding:16px 16px 13px}
   .model-picker-dialog-head strong{font-size:15px}
   .model-picker-dialog-search{margin:12px 12px 10px}
+  .model-picker-dialog-search input{font-size:16px}
+  .model-picker-dialog-search>button{width:44px;height:44px;border-radius:9px}
   .model-picker-dialog-body{display:flex;flex-direction:column}
   .model-picker-provider-filter{flex:none;flex-direction:row;overflow-x:auto;overflow-y:hidden;border-right:0;border-bottom:1px solid var(--line);padding:9px 10px}
   .model-picker-provider-filter button{min-width:110px;height:34px;min-height:34px}

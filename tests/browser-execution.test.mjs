@@ -8,6 +8,7 @@ const instruction = '打开bilibili，搜索AE实用技巧，给第一个视频�
 const use = (name, args = {}, result = '', ok = true) => ({ name, args, result, ok });
 const input = use('browser_type', { text: '不错！不错！', element: '评论框' });
 const submit = use('browser_click', { element: '发送评论' });
+const baseline = use('browser_snapshot', {}, '### Snapshot\n- textbox "评论"\n- button "发送评论"');
 const verified = use('browser_snapshot', {}, '### Snapshot\n- paragraph: 不错！不错！');
 
 test('搜索输入、点击结果和快照不能冒充评论完成；支持中文/英文单引号', () => {
@@ -23,17 +24,17 @@ test('提交后必须有页面证据；输入框里的文本、工具代码和�
   for (const result of ['', '### Ran Playwright code\n不错！不错！', '### Snapshot\n- generic [ref=e1174]: 不错！不错！', '### Snapshot\n- textbox "评论": 不错！不错！', '### Snapshot\n- textbox "评论":\n  - text: 不错！不错！']) {
     assert.equal(gap(instruction, [input, submit, use('browser_snapshot', {}, result)]), 'verify');
   }
-  assert.equal(gap(instruction, [input, submit, verified]), '');
-  assert.equal(gap(instruction, [input, verified, submit, verified]), 'verify', '既有同文评论不能证明本次发表成功');
-  assert.equal(gap(instruction, [input, submit, use('browser_snapshot', {}, '### Snapshot\n- status: 评论成功')]), '');
+  assert.equal(gap(instruction, [baseline, input, submit, verified]), '');
+  assert.equal(gap(instruction, [baseline, input, verified, submit, verified]), 'verify', '既有同文评论不能证明本次发表成功');
+  assert.equal(gap(instruction, [baseline, input, submit, use('browser_snapshot', {}, '### Snapshot\n- status: 评论成功')]), '');
 });
 
 test('发送超时需要先核验，不能直接重发；支持回车与表单输入', () => {
   const failed = { ...submit, ok: false };
   assert.equal(gap(instruction, [input, failed]), 'verify');
-  assert.equal(gap(instruction, [input, failed, verified]), '');
-  assert.equal(gap(instruction, [use('browser_type', { text: '不错！不错！', submit: true }), verified]), '');
-  assert.equal(gap(instruction, [use('browser_fill_form', { fields: [{ value: '不错！不错！' }] }), use('browser_press_key', { key: 'Control+Enter' }), verified]), '');
+  assert.equal(gap(instruction, [baseline, input, failed, verified]), '');
+  assert.equal(gap(instruction, [baseline, use('browser_type', { text: '不错！不错！', submit: true }), verified]), '');
+  assert.equal(gap(instruction, [baseline, use('browser_fill_form', { fields: [{ value: '不错！不错！' }] }), use('browser_press_key', { key: 'Control+Enter' }), verified]), '');
 });
 
 test('登录和验证码阻塞必须来自最新页面证据，普通登录入口不算阻塞', () => {

@@ -96,6 +96,11 @@ export function isCapabilityQuestion(input: string) {
  * no request frame, so it cannot authorize a side effect.
  */
 const directTaskLeadPattern = /^(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|优化|改|换|去掉|安装|接入|连接|导入|生图|出图|做|出(?:个|一张|张)?|来(?:个|一张|张)?|画)(?=\s|[一二三四五六七八九十百千万\d个只条张幅份位篇猫狗鱼鸟图画字构背景文字\u4e00-\u9fff])/i;
+// Keep English browser commands structural and sentence-initial. A broad
+// English verb search would turn questions such as "Can you open this?" into
+// side-effect requests because the legacy task-verb matcher is intentionally
+// optimized for Chinese commands.
+const englishBrowserTaskLeadPattern = /^(?:please\s+)?(?:open|visit|go\s+to|navigate\s+to)\s+\S/i;
 const contextualTaskPattern = /^(?:根据|按照|基于|用|按|把|将).{0,80}(?:生成|制作|创建|写|撰写|改写|润色|总结|翻译|分析|解释|描述|列出|整理|提取|搜索|查询|打开|访问|点击|填写|提交|下载|导出|保存|读取|修改|删除|运行|部署|打包|压缩|渲染|绘制|生图|出图|改成|改为|换成|替换为|变成|变为)/i;
 const delegatedTaskPattern = /^我(?:只(?:说|提供|给你|告诉你)|仅(?:说|提供|给你|告诉你)).{0,32}(?:目标|要求|想法|描述).{0,32}(?:交给你|由你|你来)/i;
 const declarativeStatePattern = /^(?:(?:我|我的|当前|默认|系统|助手|模型|他|她|它|刚才|上一轮|这次)[^！？?!]{0,96}(?:已经|已|正在|尚未|还没|没有|没|并未|并没有|不需要|不该|误|错误地|居然|竟然|自动|擅自|设置|配置|启用|接入|连接|开启|关闭|完成|失败|报错|生效|调用了|使用了|生成了|生图了|出图了)[^！？?!]{0,96})$/i;
@@ -105,6 +110,7 @@ function hasExplicitExecutionFrame(text: string) {
   if (declarativeStatePattern.test(text) || unwantedActionReportPattern.test(text)) return false;
   return taskLeadPattern.test(text)
     || directTaskLeadPattern.test(text)
+    || englishBrowserTaskLeadPattern.test(text)
     || contextualTaskPattern.test(text)
     || delegatedTaskPattern.test(text)
     || taskVerbPattern.test(text);

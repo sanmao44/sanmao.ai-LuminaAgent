@@ -76,6 +76,37 @@ test('Agent planning carries a public video URL into a short download follow-up'
   assert.equal(plan.modelContextMessages.at(-1).content, plan.latestInstruction);
 });
 
+test('Agent planning authorizes a browser action only when it continues an opened page', () => {
+  const { planAgentRequest } = load('./packages/agent-core/request-planning');
+  const planningPorts = {
+    ...load('./lib/agent-web'),
+    ...load('./lib/agent-intent'),
+    ...load('./lib/agent-context'),
+    ...load('./lib/agent-routing'),
+    ...load('./lib/creative-references'),
+  };
+  const plan = planAgentRequest({
+    body: { webMode: 'off' },
+    messages: [
+      { role: 'user', content: 'Open bilibili' },
+      { role: 'assistant', content: 'Bilibili is open.' },
+      { role: 'user', content: 'Click the first video' },
+    ],
+    isCanvasSource: false,
+    isCanvasNodeExecution: false,
+    canvasTargetNodeIds: [],
+    canvasTargetKind: 'none',
+    canvasTargetOperation: 'generate',
+    ports: planningPorts,
+  });
+  assert.equal(plan.requestRoute.route, 'browser');
+  assert.equal(plan.requestModeAllowsExecution, true);
+  assert.deepEqual(plan.modelContextMessages.slice(0, -1).map((message) => message.content), [
+    'Open bilibili',
+    'Bilibili is open.',
+  ]);
+});
+
 test('Agent execution boundary owns bounded skill and artifact follow-ups', async () => {
   const { runCapabilityFollowups } = load('./apps/api/agent-execution');
   const messages = [{ role: 'user', content: 'prepare delivery' }];

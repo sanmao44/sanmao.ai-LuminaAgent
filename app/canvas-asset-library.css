@@ -11,3 +11,56 @@
 .canvas-asset-project-filter button.active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text);font-weight:800}
 .canvas-asset-project-filter button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .canvas-asset-project-filter span{color:var(--muted);font-size:9px}
+
+@media(max-width:720px){
+  .canvas-asset-drawer>header button,
+  .canvas-asset-drawer .canvas-asset-search,
+  .canvas-asset-drawer .canvas-asset-kind button,
+  .canvas-asset-drawer .canvas-asset-project-filter button,
+  .canvas-asset-drawer .canvas-asset-filters .select-menu-trigger,
+  .canvas-asset-drawer .canvas-asset-collection-picker>button,
+  .canvas-asset-drawer .canvas-asset-new-collection-form input,
+  .canvas-asset-drawer .canvas-asset-new-collection-form button,
+  .canvas-asset-drawer .canvas-asset-bulk-bar button{
+    height:44px;
+    min-height:44px;
+    box-sizing:border-box;
+  }
+  .canvas-asset-drawer .canvas-asset-search button{
+    width:44px;
+    min-width:44px;
+    height:44px;
+  }
+  .canvas-asset-drawer .canvas-asset-kind button{
+    min-width:0;
+    padding-inline:2px;
+    font-size:9px;
+    white-space:nowrap;
+  }
+  .canvas-asset-drawer .canvas-asset-collection-picker{
+    grid-template-columns:minmax(0,1fr) 44px;
+  }
+  .canvas-asset-drawer .canvas-asset-collection-picker>button{
+    width:44px;
+    min-width:44px;
+    padding-inline:0;
+  }
+  .canvas-asset-drawer .canvas-asset-select{min-height:44px}
+  .canvas-asset-drawer .canvas-asset-select input{width:20px;height:20px}
+  .canvas-asset-drawer .canvas-global-asset-actions{gap:6px}
+  .canvas-asset-drawer .canvas-global-asset-actions button,
+  .canvas-asset-drawer .canvas-global-asset-actions a{
+    width:44px;
+    height:44px;
+    min-width:44px;
+    min-height:44px;
+    flex:0 0 44px;
+    box-sizing:border-box;
+    padding-inline:3px;
+    font-size:9px;
+  }
+  .canvas-asset-drawer .canvas-global-asset-actions button:nth-child(-n+2){
+    width:auto;
+    flex:1 1 calc(50% - 3px);
+  }
+}

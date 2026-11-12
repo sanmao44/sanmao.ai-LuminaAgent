@@ -9238,13 +9238,17 @@ export default function SuperCanvas() {
     [connectCanvasNodes],
   );
 
-  const createProjectProgressNode = useCallback((kind: CanvasNodeCreationKind, sourceNodeIds?: string[]) => {
+  const createProjectProgressNode = useCallback((kind: CanvasNodeCreationKind, sourceNodeIds?: string[], speechDraftText?: string) => {
     const before = canvasCoreRef.current.document();
     const existingIds = new Set(before.nodes.map((node) => node.id));
     setActivePanel(null);
     addNode(kind);
     const created = canvasCoreRef.current.document().nodes.find((node) => !existingIds.has(node.id));
     if (!created) return;
+    const speechText = speechDraftText?.trim();
+    if (kind === "audio" && speechText) {
+      updateCanvasAudioDraft(created.id, { text: speechText, updatedAt: Date.now() });
+    }
     const projectIntent = kind === "text" ? projectBrief?.intent?.trim() : "";
     if (projectIntent) {
       commit((value) => seedCanvasProjectIntent(value, created.id, projectIntent));
@@ -9252,7 +9256,7 @@ export default function SuperCanvas() {
     for (const sourceNodeId of sourceNodeIds || []) {
       if (nodeById(canvasCoreRef.current.document(), sourceNodeId)) connectCanvasNodes(sourceNodeId, created.id);
     }
-  }, [addNode, commit, connectCanvasNodes, projectBrief?.intent]);
+  }, [addNode, commit, connectCanvasNodes, projectBrief?.intent, updateCanvasAudioDraft]);
 
   const scaffoldProject = useCallback(() => {
     const before = canvasCoreRef.current.document();

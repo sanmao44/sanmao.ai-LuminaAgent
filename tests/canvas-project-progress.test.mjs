@@ -99,6 +99,9 @@ test('video projects recommend narration, then editing once audio exists', () =>
   const video = node('video', 'media', { kind: 'video', url: '/cut.mp4', status: 'completed' });
   const withoutAudio = deriveCanvasProjectProgress(input({ brief: configuredBrief, nodes: [script, video] }));
   assert.equal(withoutAudio.nextAction.nodeKind, 'audio');
+  assert.equal(withoutAudio.nextAction.speechDraftText, '项目脚本');
+  assert.deepEqual(withoutAudio.nextAction.sourceNodeIds, ['script']);
+  assert.match(withoutAudio.nextAction.detail, /连接最近的内容草案/);
 
   const withAudio = deriveCanvasProjectProgress(input({
     brief: configuredBrief,
@@ -107,6 +110,20 @@ test('video projects recommend narration, then editing once audio exists', () =>
   assert.equal(withAudio.nextAction.nodeKind, 'videoEditor');
   assert.deepEqual(withAudio.nextAction.sourceNodeIds, ['video', 'audio']);
   assert.equal(withAudio.stages.find((stage) => stage.id === 'audio').status, 'done');
+});
+
+test('audio recommendations stay blank when the project has no reusable script text', () => {
+  const brief = { ...configuredBrief, deliverable: 'audio' };
+  const progress = deriveCanvasProjectProgress(input({
+    brief,
+    nodes: [node('instruction-only', 'prompt', { agentPrompt: '请为项目起草旁白' })],
+  }));
+
+  assert.equal(progress.nextAction.kind, 'create-node');
+  assert.equal(progress.nextAction.nodeKind, 'audio');
+  assert.equal('speechDraftText' in progress.nextAction, false);
+  assert.equal('sourceNodeIds' in progress.nextAction, false);
+  assert.match(progress.nextAction.detail, /手动调用/);
 });
 
 test('saved edited output remains reviewable and unbuilt projects keep their next step', () => {

@@ -13,7 +13,7 @@ import type { SkillRouteDecision, SkillRouteOptions } from '../contracts/skill';
 export type { AgentPlanningMessage } from '../contracts/planning';
 
 export type AgentPlanningPorts = {
-  extractGithubMcpInstallRequest: (input: string, previousAssistantText?: string, previousUserText?: string, previousContextText?: string) => string | null;
+  extractGithubMcpInstallRequest: (input: string, previousAssistantText?: string, previousUserText?: string) => string | null;
   resolveAgentWebMode: (value: unknown, legacy?: unknown) => AgentWebMode;
   agentInstructionText: (intentText: unknown, fallback: unknown) => string;
   classifyAgentDeliverable: (input: string, context?: AgentIntentContext) => AgentIntentDecision;
@@ -109,9 +109,8 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   });
   const previousAssistantForRouting = [...messages].reverse().find((message) => message.role === 'assistant')?.content || '';
   const previousUserForGithubInstall = [...messages].slice(0, -1).reverse().find((message) => message.role === 'user')?.content || '';
-  const previousContextForGithubInstall = messages.slice(0, -1).map((message) => message.content).join('\n');
   const directGithubMcpRepo = !isCanvasNodeExecution
-    ? ports.extractGithubMcpInstallRequest(latestInstruction, previousAssistantForRouting, previousUserForGithubInstall, previousContextForGithubInstall)
+    ? ports.extractGithubMcpInstallRequest(latestInstruction, previousAssistantForRouting, previousUserForGithubInstall)
     : null;
   const canvasTargetExecution = isCanvasSource
     && body.executionMode === 'agent-dock'
@@ -147,6 +146,10 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
     hasReferences: hasVisualReferences,
     hasFiles: Boolean(latest?.files?.length),
   }, { webMode: isCanvasNodeExecution ? 'off' : webMode, previousAssistant: previousAssistantForRouting, intent: intentDecision, skillRoute });
+  // Browser continuation is authorized only when the route classifier found
+  // an explicit page action attached to a recent, successful browser task.
+  // This is request-scoped and does not promote browser verbs globally.
+  if (requestRoute.browserAutomation) requestModeAllowsExecution = true;
   if (requestRoute.tools.useSkills && requestRoute.skillRoute.matched) requestModeAllowsExecution = true;
   // Read-only GitHub repository queries are intentionally classified from a
   // question-shaped sentence, but they still need the normal MCP discovery

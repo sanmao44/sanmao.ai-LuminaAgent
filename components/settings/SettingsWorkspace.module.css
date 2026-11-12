@@ -72,7 +72,7 @@
 .contents :global(button:focus-visible),
 .contents :global(a:focus-visible),
 .contents :global(summary:focus-visible) {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--modern-focus);
   outline-offset: 3px;
 }
 
@@ -260,7 +260,7 @@
 }
 
 .contents :global(.settings-switch input:focus-visible + span) {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--modern-focus);
   outline-offset: 3px;
 }
 

@@ -86,6 +86,70 @@ test('Windows system-control requests select desktop MCP and exclude browser aut
   assert.equal(routing.classifyAgentRequest('打开 bilibili').browserAutomation, true);
 });
 
+test('English browser commands select Browser MCP while questions and web search stay separate', () => {
+  for (const input of ['Open bilibili', 'Please open bilibili', 'Visit example.com', 'Go to example.com', 'Navigate to example.com', 'Open https://example.com and click submit']) {
+    const route = routing.classifyAgentRequest(input, {}, { webMode: 'auto' });
+    assert.equal(route.route, 'browser', input);
+    assert.equal(route.browserAutomation, true, input);
+    assert.equal(route.tools.useBrowserMcp, true, input);
+    assert.equal(route.tools.useNativeWeb, false, input);
+  }
+
+  for (const input of ['Can you open bilibili?', 'How do I open bilibili?', 'Should I visit example.com?']) {
+    const route = routing.classifyAgentRequest(input, {}, { webMode: 'auto' });
+    assert.equal(route.route, 'chat', input);
+    assert.equal(route.tools.useMcp, false, input);
+    assert.equal(route.tools.useBrowserMcp, false, input);
+  }
+
+  const search = routing.classifyAgentRequest('Search for the latest OpenAI API version', {}, { webMode: 'auto' });
+  assert.equal(search.route, 'web');
+  assert.equal(search.tools.useNativeWeb, true);
+  assert.equal(search.tools.useBrowserMcp, false);
+});
+
+test('explicit browser action follow-ups inherit only a successful recent browser task', () => {
+  const activeBrowserHistory = [
+    { role: 'user', content: 'Open bilibili' },
+    { role: 'assistant', content: 'Bilibili is open.' },
+  ];
+  const continuation = routing.classifyAgentRequest('Click the first video', { messages: activeBrowserHistory }, { webMode: 'off' });
+  assert.equal(continuation.route, 'browser');
+  assert.equal(continuation.browserAutomation, true);
+  assert.equal(continuation.browserIntent.destination, 'bilibili');
+  assert.equal(continuation.contextNeed, 'required');
+  assert.equal(continuation.tools.useBrowserMcp, true);
+  assert.equal(continuation.policy.allowMcp, true);
+  const chineseContinuation = routing.classifyAgentRequest('点击第一个视频', { messages: activeBrowserHistory }, { webMode: 'off' });
+  assert.equal(chineseContinuation.route, 'browser');
+  assert.equal(chineseContinuation.tools.useBrowserMcp, true);
+
+  const noContext = routing.classifyAgentRequest('Click the first video', {}, { webMode: 'off' });
+  assert.equal(noContext.route, 'chat');
+  assert.equal(noContext.tools.useBrowserMcp, false);
+  assert.equal(routing.classifyAgentRequest('点击第一个视频', {}, { webMode: 'off' }).tools.useBrowserMcp, false);
+
+  const failedHistory = [
+    { role: 'user', content: 'Open bilibili' },
+    { role: 'assistant', content: 'The browser navigation failed; the page was not opened.' },
+  ];
+  assert.equal(routing.classifyAgentRequest('Click the first video', { messages: failedHistory }, { webMode: 'off' }).tools.useBrowserMcp, false);
+
+  const missingToolHistory = [
+    { role: 'user', content: 'Open bilibili' },
+    { role: 'assistant', content: '本次操作尚未执行，模型没有成功调用所需工具。请检查对应服务是否已启用、目录是否已授权，或切换支持工具调用的模型。' },
+  ];
+  assert.equal(routing.classifyAgentRequest('Click the first video', { messages: missingToolHistory }, { webMode: 'off' }).tools.useBrowserMcp, false);
+
+  const searchHistory = [
+    { role: 'user', content: 'Search for the latest OpenAI API version' },
+    { role: 'assistant', content: 'Here are the latest results.' },
+  ];
+  assert.equal(routing.classifyAgentRequest('Click the first video', { messages: searchHistory }, { webMode: 'off' }).tools.useBrowserMcp, false);
+
+  assert.equal(routing.classifyAgentRequest('Can you click the first video?', { messages: activeBrowserHistory }, { webMode: 'off' }).tools.useBrowserMcp, false);
+});
+
 test('shared request mode lets role-voice questions activate the matching skill', () => {
   for (const input of [
     '如果鲁迅能抽上电子烟他会怎么说',

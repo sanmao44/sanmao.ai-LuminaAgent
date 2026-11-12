@@ -8,7 +8,7 @@ export type CanvasProjectProgressAction =
   | { kind: "review-task"; taskId: string; taskStatus: "pending" | "error"; label: string; detail: string }
   | { kind: "edit-brief"; label: string; detail: string }
   | { kind: "draft-content"; label: string; detail: string }
-  | { kind: "create-node"; nodeKind: CanvasNodeCreationKind; sourceNodeIds?: string[]; label: string; detail: string }
+  | { kind: "create-node"; nodeKind: CanvasNodeCreationKind; sourceNodeIds?: string[]; speechDraftText?: string; label: string; detail: string }
   | { kind: "save-version"; label: string; detail: string }
   | { kind: "open-node"; nodeId: string; label: string; detail: string };
 
@@ -91,6 +91,12 @@ function mostRecent(nodes: readonly CanvasNode[]) {
   return nodes.slice().sort((left, right) => nodeCreatedAt(right) - nodeCreatedAt(left))[0];
 }
 
+function reusablePromptText(node: CanvasNode) {
+  return [node.data.text, node.data.agentResponse]
+    .map((value) => String(value || "").trim())
+    .find(Boolean) || "";
+}
+
 function existingCreationNode(nodes: readonly CanvasNode[], kind: CanvasNodeCreationKind) {
   return mostRecent(nodes.filter((node) => {
     if (kind === "text") return node.type === "prompt";
@@ -148,6 +154,8 @@ export function deriveCanvasProjectProgress(input: {
   const latestEditor = mostRecent(videoEditors);
   const latestEditedVideo = mostRecent(editedVideos);
   const latestPrompt = mostRecent(prompts);
+  const latestReusablePrompt = mostRecent(prompts.filter((node) => reusablePromptText(node)));
+  const speechDraftText = latestReusablePrompt ? reusablePromptText(latestReusablePrompt) : "";
   const latestProgressVisualId = latestVisual?.id || latestEditedVideo?.id;
   const editorSourceNodeIds = [latestVideo || latestVisual, latestAudio]
     .filter((node): node is CanvasNode => Boolean(node))
@@ -211,10 +219,16 @@ export function deriveCanvasProjectProgress(input: {
     nextAction = {
       kind: "create-node",
       nodeKind: "audio",
+      ...(speechDraftText && latestReusablePrompt ? {
+        sourceNodeIds: [latestReusablePrompt.id],
+        speechDraftText,
+      } : {}),
       label: deliverable === "audio" ? "生成第一条音频" : "为视频补充配音",
-      detail: deliverable === "audio"
-        ? "在音频节点写入旁白或对白，调用已配置的在线或本机语音引擎。"
-        : "在音频节点写入旁白，调用已配置的在线或本机语音引擎。",
+      detail: speechDraftText
+        ? "已连接最近的内容草案并带入可编辑配音文本；检查并修改后再手动生成。"
+        : deliverable === "audio"
+          ? "在音频节点写入旁白或对白，检查后手动调用已配置的在线或本机语音引擎。"
+          : "在音频节点写入旁白，检查后手动调用已配置的在线或本机语音引擎。",
     };
   } else if ((deliverable === "auto" || deliverable === "video") && (videos.length > 0 || readyAssets.length > 1) && editedVideos.length === 0) {
     nextAction = {

@@ -20,7 +20,7 @@ import type { RuntimeObserver } from '@/packages/contracts/observability';
 import type { VideoDownloadBrowserSession } from '@/packages/contracts/video-download';
 import { AGENT_INLINE_TEXT_MAX_CHARS, boundAgentContext, boundToolResult, modelInputCharBudget } from '@/lib/agent/context-budget';
 import { createBrowserMetricsCollector } from '@/lib/agent/browser-metrics';
-import { browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
+import { browserMutationObservationGap, browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
 import { hasInlineToolCallMarkup, parseInlineToolCalls } from '@/lib/agent/inline-tool-calls';
 import { agentToolProgress, beginAgentRun, finishAgentRun, reportAgentProgress, type AgentProgressStage } from '@/lib/agent/progress';
 import { appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, normalizeMcpApprovalPolicy, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
@@ -53,6 +53,7 @@ import { applicationJson } from '@/apps/api/agent-application-contract';
 import { formatAgentCapabilitySnapshot } from '@/packages/agent-core/capability-snapshot';
 import type { YtDlpDownloadRequest } from '@/lib/yt-dlp-adapter';
 import { is65535ClaudeModelProvider } from '@/lib/providers';
+import { classifyDesktopInstruction, desktopCompletionGap as evaluateDesktopCompletion, isDesktopScreenshotTool, isDesktopTextInputTool, type DesktopCompletionGap, type DesktopExecutionEvidence } from '@/packages/agent-core/desktop-instruction-policy';
 
 async function safeDiscoverMcpForRequest(discover: AgentMcpDiscovery, options: Parameters<AgentMcpDiscovery>[0]) {
   try {
@@ -1651,6 +1652,12 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     // }).catch(() => ({ servers: [], tools: [] }));
     const mcpTools = tabbitAvailable ? [...mcpRuntime.tools, tabbitBrowserTool] : mcpRuntime.tools;
     const desktopAutomationRequest = mcpExecutionRequest && mcpRuntime.servers.some((server) => server.catalogId === 'windows-mcp');
+    const desktopInstructionPolicy = classifyDesktopInstruction(latestInstruction);
+    const desktopInputRequested = desktopInstructionPolicy.inputRequested;
+    const desktopRequestedInputText = desktopInstructionPolicy.requestedInputText;
+    const desktopInputExplicitlyForbidden = desktopInstructionPolicy.inputExplicitlyForbidden;
+    const desktopCaptureRequested = desktopInstructionPolicy.screenshotRequested;
+    const desktopCaptureExplicitlyForbidden = desktopInstructionPolicy.screenshotExplicitlyForbidden;
     const mcpServerById = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
 // 授权目录与数据目录在整轮里只读一次：中途用户在面板改授权，下一轮才生效。
 const mcpFilesystemRoots = mcpAllowedThisTurn ? listFilesystemRoots() : [];
@@ -1712,7 +1719,11 @@ const auditMcpCall = (
       llmMessages = boundAgentContext(llmMessages, contextMaxChars);
     }
     if (agentSystemPromptInUse && desktopAutomationRequest) {
-      system += '\n\nWindows 桌面任务必须按顺序执行并核验：打开应用后获取新的 Snapshot，确认目标窗口，再点击或输入，最后重新获取 Snapshot 或 WaitFor 核对结果。Type 必须传入来自最新 Snapshot 的 loc=[x,y] 或 label，不能只传 text。任何工具错误或控制器不可用都表示任务未完成；不要把已打开窗口当作全部任务完成。';
+      const verificationTools = desktopCaptureRequested
+        ? 'Screenshot'
+        : desktopCaptureExplicitlyForbidden ? 'Snapshot 或 WaitFor' : 'Snapshot、Screenshot 或 WaitFor';
+      system += `\n\nWindows 桌面任务必须按顺序执行并核验：打开应用后获取新的 Snapshot，确认目标窗口，再点击或输入，最后重新获取 ${verificationTools} 核对结果。用户明确要求截图时，必须在最后一次操作后调用 Screenshot。${desktopCaptureExplicitlyForbidden ? '用户明确禁止截图，不得调用 Screenshot，只能用 Snapshot 或 WaitFor 核验。' : ''}${desktopInputExplicitlyForbidden ? '用户明确禁止输入文字，不得调用 Type、MultiEdit、Clipboard 或粘贴快捷键，也不要把未输入当成遗漏步骤。' : ''}Type 必须传入来自最新 Snapshot 的 loc=[x,y] 或 label，不能只传 text。任何工具错误或控制器不可用都表示任务未完成；不要把已打开窗口当作全部任务完成。`;
+      if (desktopRequestedInputText !== null) system += '\n\nFor a user-specified input literal, the Type argument must match it exactly, and the latest desktop observation text must contain it; otherwise the task is incomplete.';
       llmMessages[0] = { role: 'system', content: system };
       llmMessages = boundAgentContext(llmMessages, contextMaxChars);
     }
@@ -2055,7 +2066,42 @@ const auditMcpCall = (
     const toolOutcomes: ToolOutcome[] = [];
     const usedSkills: Array<{ id: string; name: string }> = [];
     /** 这一轮真正落到外部 MCP 服务上的调用，回给前端做审计展示。 */
-    const usedMcpTools: Array<{ server: string; name: string; readOnly: boolean; ok: boolean }> = [];
+    type UsedMcpTool = { server: string; name: string; readOnly: boolean; ok: boolean };
+    const usedMcpTools: UsedMcpTool[] = [];
+    const desktopInstructionDeniedUses = new WeakSet<UsedMcpTool>();
+    const desktopInstructionDeniedCallIds = new Set<string>();
+    const denyDesktopInstructionTool = (callId: string | undefined, meta: { serverId: string; serverName: string; toolName: string; readOnly: boolean }, risk: string | undefined, reason: string) => {
+      const use: UsedMcpTool = { server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false };
+      usedMcpTools.push(use);
+      desktopInstructionDeniedUses.add(use);
+      if (callId) desktopInstructionDeniedCallIds.add(callId);
+      auditMcpCall(meta, { risk, allowed: false, decision: 'block', ok: false, summary: reason });
+      return { deny: reason };
+    };
+    const desktopExecutionEvidence: DesktopExecutionEvidence[] = [];
+    const desktopCompletionGap = () => evaluateDesktopCompletion({
+      active: desktopAutomationRequest,
+      inputRequested: desktopInputRequested,
+      requestedInputText: desktopRequestedInputText,
+      screenshotRequested: desktopCaptureRequested,
+      screenshotExplicitlyForbidden: desktopCaptureExplicitlyForbidden,
+      evidence: desktopExecutionEvidence,
+    });
+    const desktopCompletionPrompt = (gap: DesktopCompletionGap) => gap === 'input-mismatch'
+      ? 'Type 工具虽然成功返回，但实际输入内容与用户指定原文不一致。请先观察当前桌面，再逐字输入用户要求的原文；不能报告完成。'
+      : gap === 'action-failed'
+        ? '桌面写操作返回失败，不能按成功处理。请重新观察当前桌面状态，并如实说明结果；不要报告任务完成。'
+      : gap === 'observation-mismatch'
+        ? '最后一次桌面操作后的观察没有显示用户指定的完整文本。请重新获取最新 Snapshot 或截图并核对可读取内容；只有观察证据明确包含原文才可报告完成。'
+        : gap === 'input'
+      ? '用户明确要求在 Windows 应用中输入文字，但还没有成功的 Type 或键盘输入调用。请先观察当前桌面，再完成输入；不要把已打开窗口说成任务完成。'
+      : gap === 'verify'
+        ? desktopCaptureRequested
+          ? '用户要求截图，但最后一次桌面操作后还没有成功调用 Screenshot。请获取截图核对结果，再回复用户；不要猜测成功。'
+          : desktopCaptureExplicitlyForbidden
+            ? '用户明确禁止截图。请勿调用 Screenshot；使用新的 Snapshot 或 WaitFor 核对最后一次桌面操作，再回复用户。'
+            : '桌面操作后还没有成功获取新的 Snapshot、Screenshot 或 WaitFor。请核对最后一次操作的实际结果，再回复用户；不要猜测成功。'
+        : '';
     let preparedCaption: Promise<string> | null = null;
     let skillToolCalls = 0;
     let skillInstalls = 0;
@@ -2083,12 +2129,20 @@ const auditMcpCall = (
 
     const browserContinuationPrompt = (recovery: boolean) => {
       const prefix = recovery
-        ? '浏览器自动化上一步出现了可恢复错误。先重新获取当前页面快照，确认动作是否已经生效；'
-        : '请重新获取当前页面快照，确认页面真实状态；';
+        ? '浏览器自动化上一步出现了可恢复错误。先重新观察当前页面状态，确认动作是否已经生效；'
+        : '请重新观察当前页面状态，确认页面真实状态；';
       const gap = browserTextSubmissionGap(latestInstruction, browserUses);
-      if (gap === 'input') return `${prefix}用户明确要求评论或回复，但目前没有成功的 browser_type/browser_fill_form。请定位当前编辑框并输入用户要求的完整文字，不能只调用 browser_find，也不能提前回复完成。`;
-      if (gap === 'submit') return `${prefix}评论文字已经输入，但还没有成功点击发送/提交。请按最新快照定位发送按钮并调用 browser_click；先确认页面状态，避免重复发送。`;
-      if (gap === 'verify') return `${prefix}已尝试发送，但尚未确认评论出现在列表或出现成功提示。请重新调用 browser_snapshot 核验用户指定文字；输入框里的文字不算发表成功。不要重复点击发送，先确认上次提交结果。`;
+      const tabbitCommentStage = [...browserUses].reverse().find((use) => use.name === 'tabbit_browser'
+        && use.args?.action === 'nodejs' && use.args.readOnly !== true)?.args?.commentStage;
+      if (gap === 'input') return `${prefix}用户明确要求评论或回复，但当前观察还不能确认编辑框里有用户要求的完整文字。${tabbitAvailable ? '请先用 readOnly=true 的 Tabbit nodejs 脚本同时返回 composerValue 与 comments/replies；若编辑框没有目标原文，再用 readOnly=false、commentStage="fill" 填入完整文字。' : '请使用 browser_type/browser_fill_form 输入用户要求的完整文字。'}不能只调用 browser_find，也不能提前回复完成。`;
+      if (gap === 'submit') return `${prefix}最新只读观察确认编辑框里已有目标原文，而评论列表尚未出现该文字。${tabbitAvailable ? '请仅点击一次发送，并在 Tabbit nodejs 参数中设置 readOnly=false、commentStage="submit"；不要再次填写原文。' : '请按最新快照定位发送按钮并调用 browser_click；先确认页面状态，避免重复发送。'}`;
+      if (gap === 'verify') return `${prefix}尚无足够证据确认评论已发表。${tabbitAvailable ? `请调用独立的 tabbit_browser nodejs 脚本并设置 readOnly=true，只返回相关 comments/replies 列表${tabbitCommentStage === 'fill' ? '和 composerValue；不要重复填写' : '或明确的 successMessage'}${tabbitCommentStage === 'submit' ? '；不得再次提交' : '；若此前写脚本未标明 commentStage，先观察，不要重放副作用'}` : '请重新调用 browser_snapshot 核验用户指定文字；输入框里的文字不算发表成功。不要重复点击发送，先确认上次提交结果。'}`;
+      if (browserMutationObservationGap(browserUses)) {
+        const observationTool = tabbitAvailable
+          ? '如果最近动作由 Tabbit 执行，请调用 tabbit_browser 的 nodejs，设置 readOnly=true 并返回相关页面状态；如果由 Playwright 执行，请调用 browser_snapshot、browser_take_screenshot、browser_find 或 browser_wait_for。'
+          : '请调用 browser_snapshot、browser_take_screenshot、browser_find 或 browser_wait_for。';
+        return `${prefix}最近一次页面变更之后还没有新的成功页面观察。${observationTool}再判断操作是否生效；确认之前不能回复完成。`;
+      }
       return recovery
         ? `${prefix}继续执行用户原始命令；不要提前回复完成。`
         : '浏览器自动化尚未完成。请对照用户原始命令逐项核对，继续执行尚未完成的动作；只有全部目标都已验证成功后才能回复完成。';
@@ -2193,9 +2247,17 @@ const auditMcpCall = (
         const meta = policy.tool?.mcp;
         if (meta) { usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false }); auditMcpCall(meta, { risk: policy.tool?.risk, allowed: false, decision: 'policy', ok: false, summary: policy.reason }); }
       },
-      authorize: async ({ policy, args }) => {
+      authorize: async ({ call, policy, args }) => {
         const meta = policy.tool?.mcp;
         if (!meta) return 'allow';
+        if (mcpServerById.get(meta.serverId)?.catalogId === 'windows-mcp') {
+          if (desktopInputExplicitlyForbidden && isDesktopTextInputTool(meta.toolName, args)) {
+            return denyDesktopInstructionTool(call.id, meta, policy.tool?.risk, '用户明确禁止输入文字，因此桌面输入工具没有执行。请勿改用其他工具输入或粘贴文字。');
+          }
+          if (desktopCaptureExplicitlyForbidden && isDesktopScreenshotTool(meta.toolName)) {
+            return denyDesktopInstructionTool(call.id, meta, policy.tool?.risk, '用户明确禁止截图，因此 Screenshot 工具没有执行。请用 Snapshot 或 WaitFor 核验桌面操作。');
+          }
+        }
         const guard = guardMcpCall(meta, args);
         if (!guard.ok) { usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false }); auditMcpCall(meta, { risk: policy.tool?.risk, allowed: false, decision: 'guard', ok: false, summary: guard.error }); return { deny: guard.error }; }
         const rememberedToolPolicy = policy.tool?.id ? toolApprovalPolicy(policy.tool.id) : 'ask';
@@ -2207,8 +2269,41 @@ const auditMcpCall = (
       execute: async ({ call, policy, args, executionContext }) => executeToolCallAdapter({ call, policy, args, executionContext }),
       onExecuted: async ({ call, result }) => {
         webSearchData = toolExecutionState.webSearchData; webSearchError = toolExecutionState.webSearchError; canvasPatch = toolExecutionState.canvasPatch; mcpToolCallCount = toolExecutionState.mcpToolCallCount; mcpTurnBudget = toolExecutionState.mcpTurnBudget; browserRecoveryNeeded = toolExecutionState.browserRecoveryNeeded; browserDownloadCount = toolExecutionState.browserDownloadCount; stalledMcpReason = toolExecutionState.stalledMcpReason; preparedCaption = toolExecutionState.preparedCaption; skillToolCalls = toolExecutionState.skillToolCalls; skillInstalls = toolExecutionState.skillInstalls; generatedArtifactCount = toolExecutionState.generatedArtifactCount;
+        const mcpDefinition = mcpTools.find((candidate) => candidate.name === String(call.function.name));
+        const desktopMeta = mcpDefinition?.mcp;
+        if (desktopMeta && mcpServerById.get(desktopMeta.serverId)?.catalogId === 'windows-mcp') {
+          let args: Record<string, unknown> = {};
+          try {
+            const parsed = parseToolArguments(String(call.function.arguments || '{}'));
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) args = parsed as Record<string, unknown>;
+          } catch {}
+          let outcome: Record<string, unknown> | null = null;
+          const toolMessage = result.results.find((message) => message.tool_call_id === call.id);
+          try {
+            const parsed = JSON.parse(String(toolMessage?.content || ''));
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) outcome = parsed;
+          } catch {}
+          const normalizedName = desktopMeta.toolName.toLowerCase().replace(/[^a-z]/g, '');
+          const isTypingTool = /^(?:type|sendkeys|keyboardtype|keyboardinput)$/.test(normalizedName);
+          const isObservationTool = /^(?:snapshot|screenshot|waitfor)$/.test(normalizedName);
+          const observationText = typeof outcome?.content === 'string' ? outcome.content : '';
+          const normalizedEvidence = observationText.replace(/\s+/g, ' ').trim();
+          const normalizedRequestedText = (desktopRequestedInputText || '').replace(/\s+/g, ' ').trim();
+          desktopExecutionEvidence.push({
+            name: desktopMeta.toolName,
+            readOnly: desktopMeta.readOnly,
+            ok: outcome?.ok === true,
+            ...(isTypingTool && desktopRequestedInputText !== null
+              ? { inputMatchesRequestedText: typeof args.text === 'string' && args.text === desktopRequestedInputText }
+              : {}),
+            ...(isObservationTool && desktopRequestedInputText !== null
+              ? { observationShowsRequestedText: normalizedRequestedText.length > 0 && normalizedEvidence.includes(normalizedRequestedText) }
+              : {}),
+          });
+        }
         for (const message of result.results) {
           if (message.tool_call_id !== call.id) continue;
+          if (call.id && desktopInstructionDeniedCallIds.has(call.id)) continue;
           try { const outcome = JSON.parse(String(message.content || '')); if (typeof outcome.ok === 'boolean') toolOutcomes.push({ name: String(call.function.name), key: String(call.function.name) + ':' + String(call.function.arguments), ok: outcome.ok, error: outcome.error || (!outcome.ok ? outcome.content : undefined) }); } catch {}
         }
       },
@@ -2454,14 +2549,18 @@ const auditMcpCall = (
           return browserContinuationPrompt(recovery);
         },
         continueOnText: ({ text }) => {
-          if (desktopAutomationRequest && /(?:尚未|未完成|无法|失败|继续|正在|还需)/.test(text)) {
+          const verificationGap = desktopCompletionGap();
+          if (desktopAutomationRequest && (verificationGap || /(?:尚未|未完成|无法|失败|继续|正在|还需)/.test(text))) {
             if (stalledMcpReason || desktopCompletionPrompts >= MCP_DESKTOP_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
             desktopCompletionPrompts += 1;
-            return '请重新观察当前桌面状态，继续执行用户命令中尚未完成的步骤；全部验证成功后再回答。';
+            return verificationGap
+              ? desktopCompletionPrompt(verificationGap)
+              : '请重新观察当前桌面状态，继续执行用户命令中尚未完成的步骤；全部验证成功后再回答。';
           }
           if (!browserAutomationRequest || browserExternalBlocker(browserUses) || browserCompletionPrompts >= MCP_BROWSER_RECOVERY_PROMPT_MAX || mcpToolCallCount >= mcpToolCallLimit || mcpTurnBudget <= 0) return false;
           const submissionGap = browserTextSubmissionGap(latestInstruction, browserUses);
-          if (!browserTextNeedsContinuation(text) && !submissionGap && !hasInlineToolCallMarkup(text)) return false;
+          const mutationObservationGap = browserMutationObservationGap(browserUses);
+          if (!browserTextNeedsContinuation(text) && !submissionGap && !mutationObservationGap && !hasInlineToolCallMarkup(text)) return false;
           browserCompletionPrompts += 1;
           const recovery = browserRecoveryNeeded;
           browserRecoveryNeeded = false;
@@ -2480,8 +2579,11 @@ const auditMcpCall = (
           signal: '桌面操作已取消',
           stopped: '桌面操作达到调用或耗时上限',
         };
-        const failedDesktopTool = usedMcpTools.some((tool) => tool.server === mcpRuntime.servers.find((server) => server.catalogId === 'windows-mcp')?.name && !tool.ok);
-        const reason = stalledMcpReason || mcpFollowupFailure || stopReasons[mcpLoop.stopReason]
+        const failedDesktopTool = usedMcpTools.some((tool) => tool.server === mcpRuntime.servers.find((server) => server.catalogId === 'windows-mcp')?.name && !tool.ok && !desktopInstructionDeniedUses.has(tool));
+        const verificationGap = desktopCompletionGap();
+        const reason = verificationGap
+          ? desktopCompletionPrompt(verificationGap)
+          : stalledMcpReason || mcpFollowupFailure || stopReasons[mcpLoop.stopReason]
           || (failedDesktopTool ? '桌面工具调用失败，结果尚未核验' : '')
           || (!mcpLoop.text ? '模型未能继续或核验剩余桌面操作' : '');
         if (reason) mcpFollowupText = `${reason}。任务未完成；已执行 ${usedMcpTools.filter((tool) => tool.ok).length} 次桌面工具调用，剩余步骤尚未确认。`;
@@ -2489,6 +2591,7 @@ const auditMcpCall = (
       if (browserAutomationRequest && !deferredCalls.length) {
         const blocker = browserExternalBlocker(browserUses);
         const gap = browserTextSubmissionGap(latestInstruction, browserUses);
+        const mutationObservationGap = browserMutationObservationGap(browserUses);
         const stopReasons: Record<string, string> = {
           deadline: '浏览器执行达到总时长上限（包含模型思考时间）',
           max_steps: '浏览器执行达到规划轮数上限',
@@ -2497,9 +2600,9 @@ const auditMcpCall = (
           stopped: mcpTurnBudget <= 0 ? '浏览器工具执行耗时已达上限' : '浏览器执行达到调用次数上限',
         };
         const reason = blocker || stalledMcpReason || stopReasons[mcpLoop.stopReason]
-          || (gap || browserTextNeedsContinuation(mcpLoop.text) || !mcpLoop.text ? '模型未能继续执行剩余操作' : '');
+          || (gap || mutationObservationGap || browserTextNeedsContinuation(mcpLoop.text) || !mcpLoop.text ? '模型未能继续执行剩余操作' : '');
         if (reason) {
-          const remaining = gap === 'input' ? '评论尚未输入' : gap === 'submit' ? '评论尚未提交' : gap === 'verify' ? '评论提交结果尚未确认，请勿重复发送' : '尚未确认全部目标完成';
+          const remaining = gap === 'input' ? '评论尚未输入' : gap === 'submit' ? '评论尚未提交' : gap === 'verify' ? '评论提交结果尚未确认，请勿重复发送' : mutationObservationGap ? '最近一次页面变更后尚未重新观察页面状态' : '尚未确认全部目标完成';
           // Keep the executor's reason: a tool-free model summary must not hide it.
           mcpFollowupText = `${reason}。任务未完成：${remaining}。${blocker ? '请处理后继续。' : ''}`;
         }
