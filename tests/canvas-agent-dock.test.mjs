@@ -76,6 +76,7 @@ function writebackFixture() {
     ...model,
     ...load('./lib/canvas/node-placement'),
     ...load('./lib/canvas/patch'),
+    saveCreativeProjectsWithQuotaRecovery: creativeProjects.saveCreativeProjectsWithQuotaRecovery,
     canvasProjectSessionRef: { current: session }, canvasCoreRef: { current: core }, mountedRef: { current: true },
     updateDoc: (updater) => core.replace(updater(core.document())),
     commit: (updater) => core.apply({ id: 'writeback', label: 'writeback', apply: updater }),

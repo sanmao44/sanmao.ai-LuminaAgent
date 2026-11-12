@@ -3,6 +3,7 @@
 import type { AgentDeliverable } from "./agent-intent";
 import type { CreativeRoute } from "@/packages/contracts/creative";
 import type { CreativeProjectBrief } from "@/packages/contracts/creative";
+import type { AgentIntentPreview } from "@/packages/contracts/planning";
 import type { CreativeReference } from "./creative-references";
 import type { WorkspaceContext } from "./workspace-context";
 import type { CanvasDocument } from "./canvas/types";
@@ -139,6 +140,7 @@ export type AgentResponse = {
   providerName?: string;
   fallbackFrom?: string;
   deliverable?: AgentDeliverable;
+  intentPreview?: AgentIntentPreview;
   images?: AgentGeneratedImage[];
   batchItems?: Array<{
     batchId: string;

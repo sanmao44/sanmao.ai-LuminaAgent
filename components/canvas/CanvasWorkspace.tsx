@@ -103,6 +103,7 @@ import {
 } from "@/lib/canvas/asset-library";
 import type { GenerationLog } from "@/lib/generation-log";
 import {
+  archiveCanvasInlineImages,
   archiveCanvasImages,
   canvasInlineImageUrls,
   canvasMediaUrlsToArchive,
@@ -140,6 +141,7 @@ import {
   loadCanvasDocument,
   readCanvasProjects,
   renameCanvasProject,
+  takeCanvasStorageAutomaticCheckpointCleanupCount,
 } from "@/lib/canvas/storage";
 import { CanvasProjectSession } from "@/lib/canvas/project-session";
 import { parseCanvasProjectPackage, serializeCanvasProjectPackage } from "@/lib/canvas/project-package";
@@ -510,6 +512,7 @@ import {
   readCreativeProjects,
   removeCreativeProjectVersion,
   saveCreativeProjects,
+  saveCreativeProjectsWithQuotaRecovery,
   updateCreativeProjectBrief,
   updateCreativeProjectReferences,
   type CreativeProject,
@@ -1569,13 +1572,17 @@ export default function SuperCanvas() {
         snapshot: snapshot(document),
       }, [...checkpoint.triggerIds]);
       if (!next) continue;
-      if (!saveCreativeProjects(next)) {
+      const saveResult = saveCreativeProjectsWithQuotaRecovery(next);
+      if (!saveResult.saved) {
         notify("自动检查点保存失败，当前画布仍可继续使用。", "error");
         continue;
       }
-      const savedProject = next.find((item) => item.id === checkpoint.projectId);
+      if (saveResult.prunedAutomaticVersions) {
+        notify(`存储空间不足，已清理 ${saveResult.prunedAutomaticVersions} 个较早的自动检查点；手动版本和每个项目最新的自动版本已保留。`, "ok");
+      }
+      const savedProject = saveResult.projects.find((item) => item.id === checkpoint.projectId);
       if (mountedRef.current) {
-        setCreativeProjects(next);
+        setCreativeProjects(saveResult.projects);
         setProjectVersions(savedProject?.versions || []);
       }
       emitWorkspaceChange();
@@ -2379,7 +2386,7 @@ export default function SuperCanvas() {
         try {
           const inlineUrls = canvasInlineImageUrls(canvasCoreRef.current.document().nodes);
           if (inlineUrls.length) {
-            const archived = await archiveCanvasImages(inlineUrls);
+            const { archived } = await archiveCanvasInlineImages(canvasCoreRef.current.document().nodes);
             if (canvasProjectSessionRef.current.activeId !== activeProjectId) return;
             if (archived.size) {
               updateDoc((value) => ({
@@ -2390,12 +2397,22 @@ export default function SuperCanvas() {
                 }),
               }));
             }
+            const remaining = canvasInlineImageUrls(canvasCoreRef.current.document().nodes);
+            if (remaining.length) {
+              setSaving(false);
+              setSaveError(true);
+              notify(`仍有 ${remaining.length} 项内嵌图片未能归档，已暂停本地保存以避免占满浏览器存储。修复图片存储后编辑画布重试，或先导出工作流 JSON。`, "error");
+              return;
+            }
           }
           const ok = persistCurrentCanvas();
+          const prunedCheckpoints = takeCanvasStorageAutomaticCheckpointCleanupCount();
           setSaving(false);
           setSaveError(!ok);
           if (ok) setProjects(readCanvasProjects());
-          else notify(describeCanvasSaveFailure(), "error");
+          if (prunedCheckpoints) {
+            notify(`存储空间不足，已清理 ${prunedCheckpoints} 个较早的自动检查点；手动版本和每个项目最新的自动版本已保留。${ok ? "当前画布已保存。" : "当前画布仍未保存，请先导出工作流 JSON。"}`, ok ? "ok" : "error");
+          } else if (!ok) notify(describeCanvasSaveFailure(), "error");
         } catch {
           setSaving(false);
           setSaveError(true);

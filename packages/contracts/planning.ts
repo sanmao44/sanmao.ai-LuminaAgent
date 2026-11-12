@@ -21,6 +21,12 @@ export type AgentIntentContext = { messages?: AgentPlanningMessage[]; hasReferen
 export type AgentIntentDecision = { deliverable: AgentDeliverable; mode: AgentRequestMode; label: string; summary: string; reason: string; confidence: 'high' | 'medium' | 'low'; signals: string[] };
 export type AgentArtifactKind = 'none' | 'word' | 'excel' | 'ppt' | 'archive' | 'file';
 export type AgentRequestRoute = 'chat' | 'text' | 'image' | 'both' | 'word' | 'excel' | 'ppt' | 'archive' | 'file' | 'browser' | 'filesystem' | 'web' | 'clarify';
+export type AgentIntentPreviewRoute = AgentRequestRoute | 'mcp' | 'native-web' | 'skill';
+export type AgentIntentPreview = Pick<AgentIntentDecision, 'deliverable' | 'mode' | 'reason' | 'confidence'> & {
+  /** Sanitized final route label; internal candidates and tool plans stay server-side. */
+  route: AgentIntentPreviewRoute;
+  contextNeed: AgentContextNeed;
+};
 export type AgentWebPolicy = 'forbid' | 'allow' | 'require';
 export type AgentToolPlan = { useMcp: boolean; useBrowserMcp: boolean; useFilesystemMcp: boolean; useSkills: boolean; useNativeWeb: boolean; useNativeArtifact: boolean; reason: string };
 export type AgentRequestCandidate = { route: AgentRequestRoute; score: number; signals: string[] };

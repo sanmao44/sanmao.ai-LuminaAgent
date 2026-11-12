@@ -223,6 +223,68 @@ export function saveCreativeProjects(projects: readonly CreativeProject[]) {
   }
 }
 
+function isStorageQuotaError(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const name = (error as { name?: unknown }).name;
+  const code = (error as { code?: unknown }).code;
+  return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || code === 22 || code === 1014;
+}
+
+function writeCreativeProjects(projects: readonly CreativeProject[]) {
+  if (typeof window === 'undefined') return { saved: false, quotaExceeded: false };
+  try {
+    window.localStorage.setItem(CREATIVE_PROJECTS_KEY, JSON.stringify(normalizeCreativeProjects(projects)));
+    return { saved: true, quotaExceeded: false };
+  } catch (error) {
+    return { saved: false, quotaExceeded: isStorageQuotaError(error) };
+  }
+}
+
+export function saveCreativeProjectsWithQuotaRecovery(
+  projects: readonly CreativeProject[],
+  options: { quotaFailureObserved?: boolean } = {},
+) {
+  const original = normalizeCreativeProjects(projects);
+  let originalRaw: string | null = null;
+  try {
+    originalRaw = typeof window === 'undefined' ? null : window.localStorage.getItem(CREATIVE_PROJECTS_KEY);
+  } catch {
+    return { saved: false, projects: original, prunedAutomaticVersions: 0 };
+  }
+  let hasPrunedVersions = false;
+  const restoreOriginal = () => {
+    if (!hasPrunedVersions || typeof window === 'undefined') return;
+    try {
+      if (originalRaw === null) window.localStorage.removeItem(CREATIVE_PROJECTS_KEY);
+      else window.localStorage.setItem(CREATIVE_PROJECTS_KEY, originalRaw);
+    } catch { /* a concurrent writer may have consumed the freed quota */ }
+  };
+  if (!options.quotaFailureObserved) {
+    const initial = writeCreativeProjects(original);
+    if (initial.saved) return { saved: true, projects: original, prunedAutomaticVersions: 0 };
+    if (!initial.quotaExceeded) return { saved: false, projects: original, prunedAutomaticVersions: 0 };
+  }
+
+  let candidate = original;
+  let prunedAutomaticVersions = 0;
+  while (true) {
+    const pruned = pruneOldestAutomaticCreativeProjectVersion(candidate);
+    if (!pruned) {
+      restoreOriginal();
+      return { saved: false, projects: original, prunedAutomaticVersions: 0 };
+    }
+    candidate = pruned.projects;
+    prunedAutomaticVersions += 1;
+    hasPrunedVersions = true;
+    const attempt = writeCreativeProjects(candidate);
+    if (attempt.saved) return { saved: true, projects: candidate, prunedAutomaticVersions };
+    if (!attempt.quotaExceeded) {
+      restoreOriginal();
+      return { saved: false, projects: original, prunedAutomaticVersions: 0 };
+    }
+  }
+}
+
 export function appendCreativeProjectVersion(
   projects: readonly CreativeProject[],
   projectId: string,
@@ -283,6 +345,29 @@ export function appendAutomaticCreativeProjectVersion(
   return normalizeCreativeProjects(normalized.map((item) => item.id === project.id
     ? { ...item, updatedAt: version.createdAt, versions: nextVersions }
     : item));
+}
+
+export function pruneOldestAutomaticCreativeProjectVersion(projects: readonly CreativeProject[]) {
+  const normalized = normalizeCreativeProjects(projects);
+  const candidates = normalized.flatMap((project) => {
+    const automatic = (project.versions || []).filter((version) => version.id.startsWith('auto_'));
+    return automatic.length > 1 ? [{ projectId: project.id, version: automatic[0] }] : [];
+  }).sort((left, right) => left.version.createdAt - right.version.createdAt
+    || left.projectId.localeCompare(right.projectId)
+    || left.version.id.localeCompare(right.version.id));
+  const oldest = candidates[0];
+  if (!oldest) return null;
+
+  const next = normalizeCreativeProjects(normalized.map((project) => {
+    if (project.id !== oldest.projectId) return project;
+    const versions = (project.versions || [])
+      .filter((version) => version.id !== oldest.version.id)
+      .map((version) => version.parentVersionId === oldest.version.id
+        ? { ...version, parentVersionId: oldest.version.parentVersionId }
+        : version);
+    return { ...project, versions };
+  }));
+  return { projects: next, removed: { projectId: oldest.projectId, versionId: oldest.version.id } };
 }
 
 export function appendImportedCreativeProjectVersions(

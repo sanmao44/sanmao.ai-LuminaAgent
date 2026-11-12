@@ -17,6 +17,7 @@ import { type McpRepeatTracker, type ToolLoopMessage, type ToolLoopTraceStep } f
 import { createToolExecutionAdapter, type ToolExecutionAdapterDependencies } from '@/packages/tool-runtime/adapter';
 import { ToolRuntime, type ToolRuntimeCall } from '@/packages/tool-runtime/runtime';
 import type { RuntimeObserver } from '@/packages/contracts/observability';
+import type { AgentIntentPreview, AgentIntentPreviewRoute, AgentRequestMode } from '@/packages/contracts/planning';
 import type { VideoDownloadBrowserSession } from '@/packages/contracts/video-download';
 import { AGENT_INLINE_TEXT_MAX_CHARS, boundAgentContext, boundToolResult, modelInputCharBudget } from '@/lib/agent/context-budget';
 import { createBrowserMetricsCollector } from '@/lib/agent/browser-metrics';
@@ -49,7 +50,7 @@ import { creativeProjectBriefInstruction } from '@/packages/agent-core/project-b
 import { planAgentRequest } from '@/packages/agent-core/request-planning';
 import { runCapabilityFollowups, runMcpCapabilityFollowup } from '@/apps/api/agent-execution';
 import type { AgentHttpInput } from '@/apps/api/agent-http-contract';
-import { applicationJson } from '@/apps/api/agent-application-contract';
+import { applicationJson as createApplicationJson } from '@/apps/api/agent-application-contract';
 import { formatAgentCapabilitySnapshot } from '@/packages/agent-core/capability-snapshot';
 import type { YtDlpDownloadRequest } from '@/lib/yt-dlp-adapter';
 import { is65535ClaudeModelProvider } from '@/lib/providers';
@@ -387,6 +388,13 @@ const MCP_MANAGE_LABELS: Record<string, string> = { list: '列出服务', probe:
 export type AgentApplicationInput = AgentHttpInput;
 
 export async function runAgentApplication(input: AgentApplicationInput, infrastructure: AgentApplicationInfrastructure): Promise<AgentApplicationOutput> {
+  let buildIntentPreview: (() => AgentIntentPreview) | null = null;
+  const applicationJson = (body: Record<string, unknown>, options?: { status?: number }) => createApplicationJson(
+    buildIntentPreview && typeof body.message === 'string'
+      ? { ...body, intentPreview: buildIntentPreview() }
+      : body,
+    options,
+  );
   const {
     provider: providerInfrastructure,
     artifacts: artifactInfrastructure,
@@ -605,6 +613,30 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     let requestModeAllowsExecution = planning.requestModeAllowsExecution;
     let requestedDeliverable = plannedDeliverable;
     let requestedIntentReason = plannedIntentReason;
+    let intentPreviewMode: AgentRequestMode = intentDecision.mode;
+    let intentPreviewConfidence = intentDecision.confidence;
+    buildIntentPreview = () => {
+      let route: AgentIntentPreviewRoute;
+      if (requestedDeliverable === 'IMAGE') route = 'image';
+      else if (requestedDeliverable === 'BOTH') route = 'both';
+      else if (requestedDeliverable === 'CLARIFY') route = 'clarify';
+      else if (requestRoute.tools.useBrowserMcp) route = 'browser';
+      else if (requestRoute.tools.useFilesystemMcp) route = 'filesystem';
+      else if (requestRoute.tools.useNativeWeb) route = 'native-web';
+      else if (requestRoute.tools.useMcp) route = 'mcp';
+      else if (requestRoute.tools.useSkills) route = 'skill';
+      else if (requestRoute.route !== 'chat') route = requestRoute.route;
+      else if (requestedDeliverable === 'TEXT') route = 'text';
+      else route = 'chat';
+      return {
+        deliverable: requestedDeliverable,
+        mode: intentPreviewMode,
+        reason: String(requestedIntentReason || '').slice(0, 320),
+        confidence: intentPreviewConfidence,
+        route,
+        contextNeed: requestRoute.contextNeed,
+      };
+    };
     // A public URL plus an explicit download verb is an actionable native
     // capability request. Authorize it before semantic review so an ambiguous
     // deliverable classifier cannot downgrade it to ordinary chat.
@@ -615,12 +647,16 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       requestModeAllowsExecution = true;
       requestedDeliverable = 'TEXT';
       requestedIntentReason = '用户明确要求下载公开视频地址';
+      intentPreviewMode = 'execute';
+      intentPreviewConfidence = 'high';
     }
     const suppliedCreativeRoute = body.creativeRoute && typeof body.creativeRoute === 'object' ? body.creativeRoute as CreativeRoute : undefined;
     let creativeRoute: CreativeRoute;
     if (isCanvasNodeExecution) {
       requestedDeliverable = 'TEXT';
       requestedIntentReason = '左侧 Agent 节点仅允许文案输出，实施操作请交给右侧 Agent 助手。';
+      intentPreviewMode = 'execute';
+      intentPreviewConfidence = 'high';
     }
     const llmStartedAt = Date.now();
     let llmLogId: string | null = null;
@@ -689,7 +725,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       metadata: Omit<AgentStreamMetadata, 'deliverable'>,
     ) => {
       const release = releaseRuntimeRequest;
-      const response = createAgentStream(upstream, { ...metadata, ...oneTakeResponseFields, deliverable: requestedDeliverable }, requestController.signal, async (result) => {
+      const response = createAgentStream(upstream, { ...metadata, ...oneTakeResponseFields, deliverable: requestedDeliverable, ...(buildIntentPreview ? { intentPreview: buildIntentPreview() } : {}) }, requestController.signal, async (result) => {
         await finishAgentRun(agentRunId);
         await settleLlmLog?.(result);
         await release();
@@ -852,9 +888,16 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
           if (!hasDefinitiveLocalIntent) {
             requestedDeliverable = decision.deliverable;
             requestedIntentReason = decision.reason;
+            intentPreviewMode = decision.mode;
+            intentPreviewConfidence = decision.confidence;
           }
           if (videoDownloadCandidate) {
             videoDownloadIntentApproved = decision.mode === 'execute' || decision.mode === 'follow_up';
+            if (!videoDownloadIntentApproved) {
+              intentPreviewMode = decision.mode;
+              intentPreviewConfidence = decision.confidence;
+              requestedIntentReason = decision.reason;
+            }
           }
           // The semantic planner is only called for an ambiguous, non-tool
           // turn. A high-confidence IMAGE/TEXT/BOTH result is therefore the
@@ -870,7 +913,11 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       }
     }
     if (canvasDockIntentReview && !semanticDecisionResolved && intentDecision.confidence !== 'high' && !canvasImageCompositionIntent && canvasTargetNodeIds.length === 0) {
+      requestedDeliverable = 'CLARIFY';
+      intentPreviewMode = 'ask';
+      intentPreviewConfidence = 'low';
       const clarification = '我暂时无法可靠判断这句话是要生成图片还是继续讨论。请明确说“用选中素材生成一张海报”或告诉我你想先分析什么。';
+      requestedIntentReason = '当前请求含义不明确，需要先确认是生成图片还是继续讨论。';
       return wantsStream
         ? streamResult(null, { fallback: clarification, images: [], files: [], generations: [], model: agentRuntime.model.displayName })
         : applicationJson({ ok: true, message: clarification, images: [], files: [], deliverable: 'CLARIFY' });
@@ -880,11 +927,16 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     if (videoDownloadCandidate) {
       requestModeAllowsExecution = videoDownloadIntentApproved;
       requestedDeliverable = 'TEXT';
-      requestedIntentReason = '用户明确要求下载公开视频地址';
+      if (videoDownloadIntentApproved) {
+        requestedIntentReason = '用户明确要求下载公开视频地址';
+        intentPreviewMode = intentPreviewMode === 'follow_up' ? 'follow_up' : 'execute';
+      }
     }
     if ((previousImagePlan || continuesImageRequest) && (isBareImageExecution(latestInstruction) || isImageAspectRatioCorrection(latestInstruction))) {
       requestModeAllowsExecution = true;
       requestedDeliverable = 'IMAGE';
+      intentPreviewMode = 'follow_up';
+      intentPreviewConfidence = 'high';
       requestedIntentReason = previousImagePlan
         ? '承接上一轮已确认的编号生图方案，直接执行批量生成。'
         : isImageAspectRatioCorrection(latestInstruction)
@@ -916,6 +968,8 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       // clarification or an unavailable reviewer cannot discard the target.
       requestModeAllowsExecution = true;
       requestedDeliverable = 'IMAGE';
+      intentPreviewMode = 'execute';
+      intentPreviewConfidence = 'high';
       requestedIntentReason = 'Canvas 已选中图片，且本轮明确要求生成视觉产物';
       creativeRoute = {
         ...creativeRoute,
@@ -971,6 +1025,8 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       requestModeAllowsExecution = true;
       requestedDeliverable = 'IMAGE';
       requestedIntentReason = '当前选中的画布图片是本轮修改目标。';
+      intentPreviewMode = 'execute';
+      intentPreviewConfidence = 'high';
       creativeRoute = {
         ...creativeRoute,
         lane: 'image',
@@ -1062,7 +1118,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       && /(?:这张图|这幅图|原图|参考图|第[一二三四五六七八九十\d]+张|这几张|这些图)/.test(latestInstruction)
       && !/(?:不参考|不用|不要用).{0,8}(?:原图|上.{0,2}图|参考图)/.test(latestInstruction)) {
       requestedDeliverable = 'CLARIFY';
+      intentPreviewMode = 'ask';
       const clarification = '这次要用哪张图片？请选中要引用的图片后再发送，我不会猜测或从其他对话取图。';
+      requestedIntentReason = '请求依赖一张参考图片，但当前消息没有提供可用图片。';
       return wantsStream
         ? streamResult(null, { fallback: clarification, images: [], files: [], generations: [], model: agentRuntime.model.displayName })
         : applicationJson({ ok: true, message: clarification, images: [], files: [], deliverable: requestedDeliverable });
@@ -1074,7 +1132,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       || /(?:这张图|参考图|本条实际图片产物|海报|插画|画面|构图)/.test(messages.slice(-3, -1).map((message) => message.content).join('\n'));
     if (imageGenerationRequest && isBareImageExecution(latestInstruction) && !hasVisualTask && !latestReferenceImageCount) {
       requestedDeliverable = 'CLARIFY';
+      intentPreviewMode = 'ask';
       const clarification = messages.length === 1 ? '请告诉我要生成什么画面。新对话不会使用其他对话的内容。' : '这次要生成什么画面？当前话题还没有明确的图片要求。';
+      requestedIntentReason = '已识别为图片生成请求，但还缺少具体画面内容。';
       return wantsStream
         ? streamResult(null, { fallback: clarification, images: [], files: [], generations: [], model: agentRuntime.model.displayName })
         : applicationJson({ ok: true, message: clarification, images: [], files: [], deliverable: 'CLARIFY' });
@@ -1658,6 +1718,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const desktopInputExplicitlyForbidden = desktopInstructionPolicy.inputExplicitlyForbidden;
     const desktopCaptureRequested = desktopInstructionPolicy.screenshotRequested;
     const desktopCaptureExplicitlyForbidden = desktopInstructionPolicy.screenshotExplicitlyForbidden;
+
     const mcpServerById = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
 // 授权目录与数据目录在整轮里只读一次：中途用户在面板改授权，下一轮才生效。
 const mcpFilesystemRoots = mcpAllowedThisTurn ? listFilesystemRoots() : [];
@@ -1724,6 +1785,7 @@ const auditMcpCall = (
         : desktopCaptureExplicitlyForbidden ? 'Snapshot 或 WaitFor' : 'Snapshot、Screenshot 或 WaitFor';
       system += `\n\nWindows 桌面任务必须按顺序执行并核验：打开应用后获取新的 Snapshot，确认目标窗口，再点击或输入，最后重新获取 ${verificationTools} 核对结果。用户明确要求截图时，必须在最后一次操作后调用 Screenshot。${desktopCaptureExplicitlyForbidden ? '用户明确禁止截图，不得调用 Screenshot，只能用 Snapshot 或 WaitFor 核验。' : ''}${desktopInputExplicitlyForbidden ? '用户明确禁止输入文字，不得调用 Type、MultiEdit、Clipboard 或粘贴快捷键，也不要把未输入当成遗漏步骤。' : ''}Type 必须传入来自最新 Snapshot 的 loc=[x,y] 或 label，不能只传 text。任何工具错误或控制器不可用都表示任务未完成；不要把已打开窗口当作全部任务完成。`;
       if (desktopRequestedInputText !== null) system += '\n\nFor a user-specified input literal, the Type argument must match it exactly, and the latest desktop observation text must contain it; otherwise the task is incomplete.';
+
       llmMessages[0] = { role: 'system', content: system };
       llmMessages = boundAgentContext(llmMessages, contextMaxChars);
     }
@@ -2101,6 +2163,7 @@ const auditMcpCall = (
           : desktopCaptureExplicitlyForbidden
             ? '用户明确禁止截图。请勿调用 Screenshot；使用新的 Snapshot 或 WaitFor 核对最后一次桌面操作，再回复用户。'
             : '桌面操作后还没有成功获取新的 Snapshot、Screenshot 或 WaitFor。请核对最后一次操作的实际结果，再回复用户；不要猜测成功。'
+
         : '';
     let preparedCaption: Promise<string> | null = null;
     let skillToolCalls = 0;
@@ -2257,6 +2320,7 @@ const auditMcpCall = (
           if (desktopCaptureExplicitlyForbidden && isDesktopScreenshotTool(meta.toolName)) {
             return denyDesktopInstructionTool(call.id, meta, policy.tool?.risk, '用户明确禁止截图，因此 Screenshot 工具没有执行。请用 Snapshot 或 WaitFor 核验桌面操作。');
           }
+
         }
         const guard = guardMcpCall(meta, args);
         if (!guard.ok) { usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false }); auditMcpCall(meta, { risk: policy.tool?.risk, allowed: false, decision: 'guard', ok: false, summary: guard.error }); return { deny: guard.error }; }
@@ -2307,6 +2371,7 @@ const auditMcpCall = (
           if (message.tool_call_id !== call.id) continue;
           if (call.id && desktopInstructionDeniedCallIds.has(call.id)) continue;
           try { const outcome = JSON.parse(String(message.content || '')); if (typeof outcome.ok === 'boolean') toolOutcomes.push({ name: String(call.function.name), key: String(call.function.name) + ':' + String(call.function.arguments), ok: outcome.ok, error: outcome.error || (!outcome.ok ? outcome.content : undefined) }); } catch {}
+
         }
       },
     });
@@ -2582,6 +2647,7 @@ const auditMcpCall = (
           stopped: '桌面操作达到调用或耗时上限',
         };
         const failedDesktopTool = usedMcpTools.some((tool) => tool.server === mcpRuntime.servers.find((server) => server.catalogId === 'windows-mcp')?.name && !tool.ok && !desktopInstructionDeniedUses.has(tool));
+
         const verificationGap = desktopCompletionGap();
         const reason = verificationGap
           ? desktopCompletionPrompt(verificationGap)

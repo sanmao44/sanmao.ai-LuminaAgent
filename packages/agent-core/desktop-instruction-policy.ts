@@ -93,17 +93,23 @@ function extractDesktopRequestedInputText(instruction: string): string | null {
   if (!latest || classifyLatestIntent(instruction, DESKTOP_INPUT_PATTERN).requested !== true) return null;
 
   const remainder = instruction.slice(latest.index + latest[0].length);
-  const quoted = /["']([^"']+)["']|“([^”]+)”|‘([^’]+)’|「([^」]+)」|『([^』]+)』/.exec(remainder);
-  const quotedText = quoted?.slice(1).find((part) => typeof part === 'string');
-  if (quotedText) return quotedText;
-
-  const candidate = remainder
-    .trimStart()
-    .replace(/^(?:\s|[,，:：=])+/u, '')
-    .replace(/^(?:(?:the\s+)?(?:following\s+)?(?:text|content|message)|(?:以下|这段|這段)?(?:文字|文本|内容|內容)|如下)(?:\s|[:：，,])*/iu, '');
-  const continuation = candidate.search(/[\n,，。；;!?！？]|(?:然后|接着|之後|之后|并截图|再截图)|\s+(?:and\s+then|then|afterwards)\b/iu);
-  const text = (continuation >= 0 ? candidate.slice(0, continuation) : candidate).trim();
-  return text && text.length <= 2_000 ? text : null;
+  const quotePairs = [[34, 34], [39, 39], [96, 96], [0x201c, 0x201d], [0x2018, 0x2019], [0x300c, 0x300d], [0x300e, 0x300f]]
+    .map(([open, close]) => [String.fromCharCode(open), String.fromCharCode(close)] as const);
+  const quotedLiterals: Array<{ start: number; text: string }> = [];
+  for (const [open, close] of quotePairs) {
+    let searchFrom = 0;
+    while (searchFrom < remainder.length) {
+      const openAt = remainder.indexOf(open, searchFrom);
+      if (openAt < 0) break;
+      const textStart = openAt + open.length;
+      const closeAt = remainder.indexOf(close, textStart);
+      if (closeAt < 0) break;
+      if (closeAt > textStart) quotedLiterals.push({ start: openAt, text: remainder.slice(textStart, closeAt) });
+      searchFrom = closeAt + close.length;
+    }
+  }
+  if (quotedLiterals.length !== 1) return null;
+  return quotedLiterals[0].text;
 }
 
 export function isDesktopTextInputTool(toolName: string, args: unknown): boolean {

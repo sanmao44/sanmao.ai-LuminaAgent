@@ -404,6 +404,12 @@ test('普通问答绕过语义规划和 MCP 能力发现', async () => {
   assert.equal(agent.discoveryCalls.length, 0);
   assert.equal(agent.calls.length, 1);
   assert.equal(data.message, '已经完成。');
+  assert.equal(data.intentPreview.deliverable, data.deliverable);
+  assert.equal(data.intentPreview.route, 'chat');
+  assert.ok(['execute', 'ask', 'discuss', 'follow_up', 'unknown'].includes(data.intentPreview.mode));
+  assert.ok(['high', 'medium', 'low'].includes(data.intentPreview.confidence));
+  assert.ok(['none', 'recent', 'required'].includes(data.intentPreview.contextNeed));
+  assert.ok(data.intentPreview.reason.length > 0);
   assert.ok(agent.calls.every((call) => !String(call.messages?.[0]?.content || '').includes('只判断当前用户')));
 });
 
@@ -417,6 +423,7 @@ test('自然语言命中已安装技能后会强制读取技能正文并回传�
   const data = await agent.post([{ role: 'user', content: '用鲁迅的口吻赞美一位女生' }]);
   assert.equal(data.message, '大抵是赞美的；不过赞美若太热闹，也未免像广告。');
   assert.deepEqual(data.skills, [{ id: 'luxun-voice', name: 'luxun-voice' }]);
+  assert.equal(data.intentPreview.route, 'skill');
   assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function?.name === 'skill_read')));
 });
 
@@ -695,6 +702,89 @@ test('desktop Agent verifies specified input against Type arguments and fresh ob
       assert.doesNotMatch(result.message, /Verified EXACT_TOKEN/);
     }
     assert.doesNotMatch(JSON.stringify(result.mcpTools), /EXACT_TOKEN|WRONG_TOKEN/);
+  }
+});
+
+test('desktop Agent corrects mismatched quoted input and verifies the corrected observation', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:${server.id}:${name}`, name: `${server.id}__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+  const call = (id, name, args = {}) => ({
+    content: null,
+    tool_calls: [{ id, type: 'function', function: { name: `${server.id}__${name}`, arguments: JSON.stringify(args) } }],
+  });
+  let screenshotCalls = 0;
+  const responses = [
+    call('desktop-open', 'App'),
+    call('desktop-snapshot-before', 'Snapshot'),
+    call('desktop-type-wrong', 'Type', { text: 'WRONG_TOKEN', loc: [10, 20] }),
+    call('desktop-screenshot-wrong', 'Screenshot'),
+    { content: 'The requested text is present and the screenshot is verified.' },
+    call('desktop-type-correct', 'Type', { text: 'EXPECTED_TOKEN', loc: [10, 20] }),
+    call('desktop-screenshot-correct', 'Screenshot'),
+    { content: 'The exact requested text is now present in the verified screenshot.' },
+  ];
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [tool('App', false), tool('Snapshot', true), tool('Screenshot', true), tool('Type', false)],
+    callMcpTool: async (_server, name) => ({
+      isError: false,
+      text: name === 'Screenshot'
+        ? (++screenshotCalls === 1 ? 'Notepad screenshot does not contain EXPECTED_TOKEN' : 'Notepad screenshot shows EXPECTED_TOKEN')
+        : `${name} ok`,
+    }),
+    reply: (_payload, count) => responses[count - 1],
+  });
+
+  const result = await agent.post([{ role: 'user', content: '请打开记事本，输入 `EXPECTED_TOKEN`，然后截图核验' }]);
+
+  assert.deepEqual(agent.mcpCalls.map((entry) => entry.toolName), ['App', 'Snapshot', 'Type', 'Screenshot', 'Type', 'Screenshot']);
+  assert.deepEqual(agent.mcpCalls.filter((entry) => entry.toolName === 'Type').map((entry) => entry.args.text), ['WRONG_TOKEN', 'EXPECTED_TOKEN']);
+  const correctionPrompt = agent.calls[4].messages.map((message) => String(message.content || '')).join('\n');
+  assert.match(correctionPrompt, /输入内容与用户指定原文不一致/);
+  assert.match(correctionPrompt, /EXPECTED_TOKEN/);
+  assert.match(result.message, /exact requested text is now present/);
+});
+
+test('desktop Agent keeps completion behavior when input text is unquoted or ambiguous', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const tool = (name, readOnly) => ({
+    id: `mcp:${server.id}:${name}`, name: `${server.id}__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  });
+
+  for (const instruction of [
+    '请打开记事本，输入 EXPECTED_TOKEN，然后截图核验',
+    '请打开记事本，输入 `EXPECTED_TOKEN` 或 “ALTERNATE_TOKEN”，然后截图核验',
+  ]) {
+    const steps = [
+      { name: 'App', args: {} },
+      { name: 'Snapshot', args: {} },
+      { name: 'Type', args: { text: 'OTHER_TOKEN', loc: [10, 20] } },
+      { name: 'Screenshot', args: {} },
+    ];
+    const agent = harness({
+      mcpServers: [server],
+      mcpTools: [tool('App', false), tool('Snapshot', true), tool('Screenshot', true), tool('Type', false)],
+      callMcpTool: async (_server, name) => ({ isError: false, text: `${name} ok` }),
+      reply: (_payload, count) => {
+        const step = steps[count - 1];
+        return step
+          ? { content: null, tool_calls: [{ id: `desktop-${count}`, type: 'function', function: { name: `${server.id}__${step.name}`, arguments: JSON.stringify(step.args) } }] }
+          : { content: 'The desktop action and its screenshot are verified.' };
+      },
+    });
+
+    const result = await agent.post([{ role: 'user', content: instruction }]);
+    assert.deepEqual(agent.mcpCalls.map((entry) => entry.toolName), ['App', 'Snapshot', 'Type', 'Screenshot'], instruction);
+    assert.equal(result.message, 'The desktop action and its screenshot are verified.', instruction);
+    assert.ok(!agent.calls.some((call) => call.messages.some((message) => String(message.content || '').includes('输入内容与用户指定原文不一致'))), instruction);
   }
 });
 
@@ -1259,6 +1349,10 @@ test('Canvas semantic classification failure asks for clarification instead of i
   });
   assert.equal(data.deliverable, 'CLARIFY');
   assert.match(data.message, /无法可靠判断/);
+  assert.equal(data.intentPreview.deliverable, data.deliverable);
+  assert.equal(data.intentPreview.route, 'clarify');
+  assert.equal(data.intentPreview.mode, 'ask');
+  assert.equal(data.intentPreview.confidence, 'low');
   assert.equal(agent.images.length, 0);
   assert.equal(agent.modelCalls.filter((call) => call.model !== 'jev-1.14').length, 0);
 });
@@ -1895,6 +1989,27 @@ test('JEV can reject a video-shaped question without running the downloader', as
   assert.match(data.message, /支持下载/);
 });
 
+test('JEV rejection of an explicit download request is reflected in the intent preview', async () => {
+  const classifierRuntime = {
+    model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
+    provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
+  };
+  let downloads = 0;
+  const agent = harness({
+    intentClassifierRuntime: classifierRuntime,
+    downloadWithYtDlp: async () => { downloads += 1; return { filePath: 'C:\\media\\never.mp4', bytes: 1 }; },
+    reply: (_payload, _callCount, rawModel) => rawModel === 'jev-1.14'
+      ? { content: '{"mode":"ask","deliverable":"OTHER","confidence":"high","reason":"本轮是在询问下载能力"}' }
+      : { content: '这句是在询问是否能够下载，我可以说明能力但不会执行下载。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '下载 https://www.youtube.com/watch?v=question123' }]);
+  assert.equal(downloads, 0);
+  assert.equal(data.intentPreview.mode, 'ask');
+  assert.equal(data.intentPreview.reason, '本轮是在询问下载能力');
+  assert.equal(data.intentPreview.confidence, 'high');
+  assert.equal(data.intentPreview.deliverable, data.deliverable);
+});
+
 test('asking about an image does not grant permission to generate another one', async () => {
   const agent = harness();
   const data = await agent.post([...history, { role: 'user', content: '鲁迅看到这张图会怎么说？' }]);
@@ -2026,6 +2141,10 @@ test('unresolved image references ask a question instead of generating a guessed
   const agent = harness();
   const data = await agent.post([{ role: 'user', content: '根据第一张图生成海报' }]);
   assert.equal(data.deliverable, 'CLARIFY');
+  assert.equal(data.intentPreview.deliverable, 'CLARIFY');
+  assert.equal(data.intentPreview.route, 'clarify');
+  assert.equal(data.intentPreview.mode, 'ask');
+  assert.equal(data.intentPreview.reason, '请求依赖一张参考图片，但当前消息没有提供可用图片。');
   assert.equal(agent.images.length, 0);
   assert.match(data.message, /哪张图片/);
 });
