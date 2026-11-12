@@ -634,6 +634,7 @@ export default function CanvasAgentDock({
   const [skillQuery, setSkillQuery] = useState("");
   const [skillActive, setSkillActive] = useState(0);
   const [skills, setSkills] = useState<SkillPickerEntry[]>([]);
+  const skillTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [chipOrder, setChipOrder] = useState<string[]>([]);
   const [expandedMessages, setExpandedMessages] = useState<ReadonlySet<string>>(() => new Set());
   /* 改一改自己那条提问再问一次，比整段重打省事。 */
@@ -925,6 +926,10 @@ export default function CanvasAgentDock({
     skillMenuFromSlashRef.current = false;
     setSkillMenuOpen(false);
     setSkillQuery("");
+  }, []);
+
+  const restoreSkillTriggerFocus = useCallback(() => {
+    skillTriggerRef.current?.focus();
   }, []);
 
   const openSkillMenu = useCallback(
@@ -2388,12 +2393,14 @@ export default function CanvasAgentDock({
         <div className="canvas-agent-dock-composer-row">
           <div className="canvas-agent-dock-composer-selectors" role="group" aria-label="本轮设置">
             <button
+              ref={skillTriggerRef}
               type="button"
               className={`canvas-agent-dock-skill ${skillMenuOpen ? "is-active" : ""}`}
               onClick={() => (skillMenuOpen ? closeSkillMenu() : openSkillMenu(""))}
               title="选择技能：把某个技能指定给本轮任务"
               aria-haspopup="listbox"
               aria-expanded={skillMenuOpen}
+              aria-controls={skillMenuOpen ? "canvas-agent-dock-skill-menu" : undefined}
             >
               <SkillIcon size={14} />
               <span>技能</span>
@@ -2457,23 +2464,29 @@ export default function CanvasAgentDock({
           </div>
         </div>
         <AgentSkillMenu
+          id="canvas-agent-dock-skill-menu"
           open={skillMenuOpen && !skillMenuFromSlashRef.current}
           skills={skills}
           query={skillQuery}
           activeIndex={skillActive}
+          focusActiveOption={!skillMenuFromSlashRef.current}
           onActiveIndexChange={setSkillActive}
           onSelect={applySkill}
           onClose={closeSkillMenu}
+          onRestoreFocus={restoreSkillTriggerFocus}
           emptyHint="还没有启用中的技能。点右上角的「技能」按钮可以安装或启用。"
         />
         <AgentSkillMenu
+          id="canvas-agent-dock-skill-menu"
           open={skillMenuOpen && skillMenuFromSlashRef.current}
           skills={skills}
           query={skillQuery}
           activeIndex={skillActive}
+          focusActiveOption={!skillMenuFromSlashRef.current}
           onActiveIndexChange={setSkillActive}
           onSelect={applySkill}
           onClose={closeSkillMenu}
+          onRestoreFocus={restoreSkillTriggerFocus}
           emptyHint="还没有启用中的技能。点右上角的「技能」按钮可以安装或启用。"
         />
       </form>

@@ -5,6 +5,7 @@
  * 卡片、分栏和转场优先保留原片动态；声音用用户已配的 TTS，没有可用 TTS 时降级为本地语音或字幕。
  */
 import type { CanvasVideoEditorClip, CanvasVideoEditorState, CanvasVideoEditorMotionPath, CanvasVideoEditorLayout, CanvasVideoEditorWord } from '../canvas/types';
+import type { LocalTranscriptionResult, TimestampedTranscriptSegment, TimestampedTranscriptWord } from '@/packages/contracts/transcription';
 
 export type CloneStage =
   | 'queued'
@@ -135,27 +136,12 @@ export type CloneShotAnalysis = {
   events?: CloneVisualEvent[];
 };
 
-export type CloneTranscriptWord = {
-  start: number;
-  end: number;
-  text: string;
-};
+export type CloneTranscriptWord = TimestampedTranscriptWord;
 
-export type CloneTranscriptSegment = {
-  start: number;
-  end: number;
-  text: string;
-  words?: CloneTranscriptWord[];
-};
+export type CloneTranscriptSegment = TimestampedTranscriptSegment;
 
 /** Locally recovered speech from the reference video's original audio track. */
-export type CloneTranscript = {
-  text: string;
-  segments: CloneTranscriptSegment[];
-  words: CloneTranscriptWord[];
-  model: string;
-  language?: string;
-};
+export type CloneTranscript = LocalTranscriptionResult;
 
 /** Local, model-free rhythm cues recovered from the reference audio. */
 export type CloneBeatCue = {

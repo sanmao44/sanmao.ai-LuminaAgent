@@ -1398,7 +1398,20 @@ function EditorModal({ editor, editModelOptions, upscaleModelOptions, defaultUps
 }
 // 引用区可选的文件类型；助手输入框额外允许 Word/Excel/PPT/PDF。
 const referenceAccept = "image/png,image/jpeg,image/webp,video/mp4,video/webm,.txt,.md,.markdown,.json,.csv,.tsv,.html,.htm,.css,.js,.jsx,.ts,.tsx,.py,.java,.sql,.xml,.svg,.yaml,.yml,.sh,.ps1";
+const agentAudioAccept = "audio/*,.mp3,.wav,.m4a,.mp4,.aac,.flac,.ogg,.oga,.opus,.webm";
 const agentReferenceAccept = `${referenceAccept},.docx,.xlsx,.pptx,.pdf`;
+const agentUploadAccept = `${agentReferenceAccept},${agentAudioAccept}`;
+const agentAudioExtensions = new Set(['mp3', 'wav', 'm4a', 'mp4', 'aac', 'flac', 'ogg', 'oga', 'opus', 'webm']);
+function isAgentAudioAttachment(file) {
+    const mimeType = String(file?.mimeType || '').split(';', 1)[0].trim().toLowerCase();
+    const extension = String(file?.name || '').split('.').pop()?.toLowerCase() || '';
+    return mimeType.startsWith('audio/') || agentAudioExtensions.has(extension) && !mimeType.startsWith('video/');
+}
+function isAgentAudioFileInput(file) {
+    const mimeType = String(file?.type || '').split(';', 1)[0].trim().toLowerCase();
+    const extension = String(file?.name || '').split('.').pop()?.toLowerCase() || '';
+    return mimeType.startsWith('audio/') || agentAudioExtensions.has(extension) && !mimeType.startsWith('video/');
+}
 function OutpaintEditor({ item, model, onClose, onApply, onApplyLocal, onNotify }) {
     const stageRef = useRef(null);
     const [tool, setTool] = useState('outpaint');
@@ -2505,6 +2518,7 @@ export default function Page() {
     const [shareSelectionMode, setShareSelectionMode] = useState(false);
     const [selectedShareGroups, setSelectedShareGroups] = useState(new Set());
     const [agentFiles, setAgentFiles] = useState([]);
+    const [agentAudioUpload, setAgentAudioUpload] = useState(null);
     const [agentModelId, setAgentModelId] = useState('auto');
     const [agentImageModelId, setAgentImageModelId] = useState('auto');
     const [agentWebMode, setAgentWebMode] = useState('auto');
@@ -4937,11 +4951,69 @@ export default function Page() {
     async function addAgentAttachments(files) {
         const incoming = Array.from(files);
         const media = incoming.filter((file)=>file.type.startsWith('image/') || file.type.startsWith('video/'));
-        const documents = incoming.filter((file)=>!file.type.startsWith('image/') && !file.type.startsWith('video/'));
+        const audio = incoming.filter((file)=>isAgentAudioFileInput(file));
+        const documents = incoming.filter((file)=>!file.type.startsWith('image/') && !file.type.startsWith('video/') && !isAgentAudioFileInput(file));
+        let addedAudioCount = 0;
         if (media.length) await addReferences(media, 'agent');
+        if (audio.length) {
+            const room = Math.max(0, 8 - agentFiles.length);
+            if (room < audio.length) notify('最多同时分析 8 个文件，部分音频未添加');
+            for (const file of audio.slice(0, room)) {
+                if (!file.size) {
+                    notify(`${file.name || '音频文件'} 是空文件`);
+                    continue;
+                }
+                if (file.size > 50 * 1024 * 1024) {
+                    notify(`${file.name || '音频文件'} 超过 50MB`);
+                    continue;
+                }
+                try {
+                    setAgentAudioUpload({ name: file.name || '音频文件', loaded: 0, total: file.size });
+                    const uploaded = await new Promise((resolve, reject) => {
+                        const request = new XMLHttpRequest();
+                        request.open('POST', '/api/agent/audio');
+                        request.responseType = 'json';
+                        request.upload.onprogress = (event) => {
+                            setAgentAudioUpload({ name: file.name || '音频文件', loaded: event.loaded, total: event.total || file.size });
+                        };
+                        request.onerror = () => reject(new Error('音频上传失败，请检查网络连接'));
+                        request.onload = () => {
+                            const data = request.response && typeof request.response === 'object' ? request.response : (() => {
+                                try { return JSON.parse(request.responseText || '{}'); } catch { return {}; }
+                            })();
+                            if (request.status < 200 || request.status >= 300) {
+                                reject(new Error(typeof data?.error === 'string' ? data.error : '音频上传失败'));
+                                return;
+                            }
+                            resolve(data);
+                        };
+                        const form = new FormData();
+                        form.append('file', file);
+                        request.send(form);
+                    });
+                    const artifact = uploaded || {};
+                    if (typeof artifact.artifactId !== 'string' || !artifact.artifactId.trim()) throw new Error('音频上传响应无效，请重试');
+                    const chatFile = {
+                        id: uid('file'),
+                        name: typeof artifact.name === 'string' ? artifact.name : file.name || 'audio.mp3',
+                        mimeType: typeof artifact.mimeType === 'string' ? artifact.mimeType : file.type || 'audio/mpeg',
+                        artifactId: artifact.artifactId,
+                        downloadUrl: typeof artifact.downloadUrl === 'string' ? artifact.downloadUrl : `/api/artifacts/${artifact.artifactId}`,
+                        size: typeof artifact.size === 'number' ? artifact.size : file.size,
+                        sourceSize: file.size,
+                    };
+                    setAgentFiles((old)=>[...old, chatFile].slice(0, 8));
+                    addedAudioCount += 1;
+                } catch (error) {
+                    notify(error instanceof Error ? error.message : '音频上传失败');
+                } finally {
+                    setAgentAudioUpload(null);
+                }
+            }
+        }
         if (!documents.length) return;
         try {
-            const room = Math.max(0, 8 - agentFiles.length);
+            const room = Math.max(0, 8 - agentFiles.length - addedAudioCount);
             // 逐个解析：Office/PDF 要走服务端，并发解析几个大文件容易把内存顶满。
             const parsed = [];
             for (const file of documents.slice(0, room)) parsed.push(await readAgentChatFile(file, uid));
@@ -6988,6 +7060,7 @@ export default function Page() {
     async function sendAgent(text = agentInput, task, overrideRefs, deliverableOverride, durationSeconds) {
         closeAgentSkillMenu();
         const explicitSkillId = agentSkillId.trim();
+        if (agentAudioUpload) return notify('音频正在上传，请完成后再发送');
         if (agentMessageSelectionMode) return notify('请先完成或取消删除选择');
         if (shareSelectionMode) return notify('请先完成或取消分享选择');
         const rawContent = text.trim();
@@ -7017,7 +7090,7 @@ export default function Page() {
             }
         }
         if (refs.some((reference)=>reference.pending)) return notify('引用素材正在准备，请稍候片刻再发送');
-        const files = overrideRefs ? [] : agentFiles.filter((file)=>refs.some((reference)=>reference.id === file.id && reference.kind !== 'text'));
+        const files = overrideRefs ? [] : agentFiles.filter((file)=>isAgentAudioAttachment(file) || refs.some((reference)=>reference.id === file.id && reference.kind !== 'text'));
         const oneTakeDuration = task === 'one_take_video_prompt'
             ? normalizeOneTakeDuration(durationSeconds)
             : undefined;
@@ -8818,7 +8891,7 @@ export default function Page() {
                                                                      },
                                                                      onPreview: message.role === 'assistant' ? openChatFilePreview : undefined,
                                                                      isPreviewable: isPreviewableChatFile,
-                                                                     fileTypeLabel: chatFileTypeLabel,
+                                                                     fileTypeLabel: (file)=>isAgentAudioAttachment(file) ? '音频 ' : chatFileTypeLabel(file),
                                                                      formatSize: formatFileSize
                                                                  }) : null,
                                                                   !message.pending && !agentMessageSelectionActive && /*#__PURE__*/ _jsx(AgentMessageTools, {
@@ -9000,12 +9073,20 @@ export default function Page() {
                                                         void downloadChatFile(file).catch(()=>notify('文件下载失败'));
                                                     },
                                                     isPreviewable: isPreviewableChatFile,
-                                                    fileTypeLabel: chatFileTypeLabel,
+                                                    fileTypeLabel: (file)=>isAgentAudioAttachment(file) ? '音频 ' : chatFileTypeLabel(file),
                                                     formatSize: formatFileSize,
                                                     onRemove: (file)=>{
                                                         setAgentFiles((old)=>old.filter((item)=>item.id !== file.id));
                                                         setAgentRefs((old)=>old.filter((reference)=>reference.id !== file.id));
                                                     }
+                                                }),
+                                                agentAudioUpload && /*#__PURE__*/ _jsxs("div", {
+                                                    className: "agent-audio-upload-progress",
+                                                    role: "status",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsx("span", { children: `${agentAudioUpload.name} 上传中` }),
+                                                        /*#__PURE__*/ _jsx("span", { children: `${Math.round(agentAudioUpload.total ? agentAudioUpload.loaded / agentAudioUpload.total * 100 : 0)}%` })
+                                                    ]
                                                 }),
                                                 agentFollowUp && /*#__PURE__*/ _jsx(AgentFollowUpCard, {
                                                     role: agentFollowUp.role,
@@ -9115,7 +9196,7 @@ export default function Page() {
                                                                         /*#__PURE__*/ _jsx("input", {
                                                                             type: "file",
                                                                             hidden: true,
-                                                                            accept: agentReferenceAccept,
+                                                                            accept: agentUploadAccept,
                                                                             multiple: true,
                                                                             onChange: (e)=>{
                                                                                 if (e.target.files) void addAgentAttachments(e.target.files);

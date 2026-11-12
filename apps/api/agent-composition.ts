@@ -17,7 +17,9 @@ import {
   generateSpreadsheetArtifact,
   isValidArtifactId,
   artifactDownloadUrl,
+  artifactStore,
 } from '@/lib/artifacts';
+import { transcribeLocalAudioFile, formatSrt } from '@/lib/transcription/local-whisper';
 import { getStorageRoots, persistImageBuffer } from '@/lib/image-storage';
 import {
   getPublicState,
@@ -133,6 +135,12 @@ export type AgentApplicationInfrastructure = {
     artifactDownloadUrl: typeof artifactDownloadUrl;
     getStorageRoots: typeof getStorageRoots;
   };
+  transcription: {
+    readArtifact: typeof artifactStore.read;
+    saveArtifact: typeof artifactStore.save;
+    transcribeAudioFile: typeof transcribeLocalAudioFile;
+    formatSrt: typeof formatSrt;
+  };
   models: {
     getPublicState: typeof getPublicState;
     getRuntimeImageGenerationModel: typeof getRuntimeImageGenerationModel;
@@ -226,6 +234,12 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
   return {
     provider: { chatCompletion, intentClassificationCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth },
     artifacts: { collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact, isValidArtifactId, artifactDownloadUrl, getStorageRoots },
+    transcription: {
+      readArtifact: artifactStore.read,
+      saveArtifact: artifactStore.save,
+      transcribeAudioFile: transcribeLocalAudioFile,
+      formatSrt,
+    },
     models: { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, getRuntimeModel, getRuntimeModelCandidates, getRuntimeIntentClassifierModel, filterModelsByActiveProviders, getProviderPreset },
     persistence: { appendGenerationLog, finishGenerationLog, startGenerationLog, persistGenerationResult },
     web: { planSearch, searchWeb },

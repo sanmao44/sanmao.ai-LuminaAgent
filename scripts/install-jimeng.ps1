@@ -52,7 +52,15 @@ try {
   New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
   Write-Info '正在读取官方安装信息…'
-  $officialScript = (Invoke-WebRequest -UseBasicParsing -Uri $InstallerUrl -TimeoutSec 30).Content
+  $officialResponse = Invoke-WebRequest -UseBasicParsing -Uri $InstallerUrl -TimeoutSec 30
+  # Windows PowerShell 5.1 returns application/x-sh responses as byte[], while
+  # newer PowerShell versions usually expose the same response as a string.
+  $officialContent = $officialResponse.Content
+  $officialScript = if ($officialContent -is [byte[]]) {
+    [Text.Encoding]::UTF8.GetString($officialContent)
+  } else {
+    [string]$officialContent
+  }
   $readValue = {
     param([string]$Name)
     $pattern = '(?m)^' + [regex]::Escape($Name) + '="([^"]+)"'

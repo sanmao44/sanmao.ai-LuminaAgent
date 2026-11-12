@@ -19,6 +19,8 @@ function harness(options = {}) {
   const candidateCalls = [];
   const bundledSkillInstalls = [];
   const spreadsheetCalls = [];
+  const transcriptionCalls = [];
+  const savedSubtitleArtifacts = [];
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: options.chatCapabilities || [], kind: 'chat' };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
@@ -85,6 +87,18 @@ function harness(options = {}) {
             isValidArtifactId: mocks['@/lib/artifacts'].isValidArtifactId,
             artifactDownloadUrl: (id) => `/api/artifacts/${id}`,
             getStorageRoots: () => [],
+          },
+          transcription: {
+            readArtifact: options.readAudioArtifact || (async (id) => ({ descriptor: { id, name: 'interview.mp3', mimeType: 'audio/mpeg' }, filePath: '/tmp/interview.mp3' })),
+            saveArtifact: options.saveSubtitleArtifact || (async (input) => {
+              savedSubtitleArtifacts.push(input);
+              return { id: 'test-subtitle-artifact', kind: 'file', name: input.name, mimeType: input.mimeType, size: input.data.length, downloadUrl: '/api/artifacts/test-subtitle-artifact', createdAt: Date.now() };
+            }),
+            transcribeAudioFile: options.transcribeAudioFile || (async (...args) => {
+              transcriptionCalls.push(args);
+              return { text: 'Hello.', words: [], segments: [{ start: 1.25, end: 2.75, text: 'Hello.' }], model: 'test-whisper' };
+            }),
+            formatSrt: options.formatSrt || ((segments) => segments.map((segment, index) => `${index + 1}\n00:00:01,250 --> 00:00:02,750\n${segment.text}`).join('\n\n') + '\n'),
           },
           models: {
             getPublicState: storeApi.getPublicState,
@@ -311,7 +325,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-    calls, modelCalls, candidateCalls, mcpCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls,
+    calls, modelCalls, candidateCalls, mcpCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls, transcriptionCalls, savedSubtitleArtifacts,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -324,6 +338,30 @@ function harness(options = {}) {
     },
   };
 }
+
+test('audio attachments generate a timestamped SRT artifact through local transcription', async () => {
+  const agent = harness();
+  const result = await agent.post([{
+    role: 'user',
+    content: '请根据音频生成 SRT 字幕',
+    files: [
+      { name: 'interview.mp3', mimeType: 'audio/mpeg', artifactId: 'audio-artifact', size: 1024 },
+      { name: 'glossary.txt', mimeType: 'text/plain', artifactId: 'reference-artifact', size: 64 },
+    ],
+  }], { model: 'test-chat', deliverable: 'TEXT' });
+
+  assert.equal(agent.transcriptionCalls.length, 1);
+  assert.equal(agent.transcriptionCalls[0][0], '/tmp/interview.mp3');
+  assert.equal(agent.transcriptionCalls[0][2].signal instanceof AbortSignal, true);
+  assert.equal(agent.savedSubtitleArtifacts.length, 1);
+  assert.equal(agent.savedSubtitleArtifacts[0].name, 'interview.srt');
+  assert.equal(agent.savedSubtitleArtifacts[0].mimeType, 'application/x-subrip;charset=utf-8');
+  assert.equal(agent.savedSubtitleArtifacts[0].data.toString('utf8'), '1\n00:00:01,250 --> 00:00:02,750\nHello.\n');
+  assert.equal(result.files[0].artifactId, 'test-subtitle-artifact');
+  assert.equal(result.files[0].downloadUrl, '/api/artifacts/test-subtitle-artifact');
+  assert.match(result.message, /不会将其作为识别提示/);
+  assert.equal(agent.modelCalls.length, 0);
+});
 
 test('cinematic director passes custom requirements to a vision-capable model with an extended deadline', async () => {
   const visionProvider = { id: 'vision-provider', name: 'Vision', platform: 'openai', enabled: true };

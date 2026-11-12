@@ -1,21 +1,24 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { filterSkills, type SkillPickerEntry } from '@/lib/skill-picker';
 
 type AgentSkillMenuProps = {
+  id: string;
   open: boolean;
   skills: readonly SkillPickerEntry[];
   query: string;
   activeIndex: number;
+  focusActiveOption?: boolean;
   onActiveIndexChange: (index: number) => void;
   onSelect: (skill: SkillPickerEntry) => void;
   onClose: () => void;
+  onRestoreFocus?: () => void;
   emptyHint?: string;
   ignorePointerSelector?: string;
 };
 
-export default function AgentSkillMenu({ open, skills, query, activeIndex, onActiveIndexChange, onSelect, onClose, emptyHint, ignorePointerSelector = '.agent-composer-wrap, .canvas-agent-dock-composer' }: AgentSkillMenuProps) {
+export default function AgentSkillMenu({ id, open, skills, query, activeIndex, focusActiveOption = false, onActiveIndexChange, onSelect, onClose, onRestoreFocus, emptyHint, ignorePointerSelector = '.agent-composer-wrap, .canvas-agent-dock-composer' }: AgentSkillMenuProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const visible = useMemo(() => filterSkills(skills, query), [skills, query]);
 
@@ -28,7 +31,10 @@ export default function AgentSkillMenu({ open, skills, query, activeIndex, onAct
       onClose();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        onClose();
+        if (focusActiveOption) onRestoreFocus?.();
+      }
     };
     document.addEventListener('pointerdown', handlePointerDown, true);
     document.addEventListener('keydown', handleKeyDown);
@@ -36,7 +42,29 @@ export default function AgentSkillMenu({ open, skills, query, activeIndex, onAct
       document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [open, onClose, ignorePointerSelector]);
+  }, [open, onClose, onRestoreFocus, focusActiveOption, ignorePointerSelector]);
+
+  useEffect(() => {
+    if (!open || !focusActiveOption || !visible.length) return;
+    rootRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]')[activeIndex]?.focus({ preventScroll: true });
+  }, [open, focusActiveOption, visible.length]);
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!visible.length) return;
+      const next = (activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + visible.length) % visible.length;
+      onActiveIndexChange(next);
+      rootRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]')[next]?.focus();
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+      if (focusActiveOption) onRestoreFocus?.();
+    }
+  };
 
   /* 技能多时列表会滚动：键盘上下切换后让当前项始终留在视野里。 */
   useEffect(() => {
@@ -48,7 +76,7 @@ export default function AgentSkillMenu({ open, skills, query, activeIndex, onAct
   if (!open) return null;
 
   return (
-    <div ref={rootRef} className="reference-mention-menu agent-mention-menu agent-skill-menu" role="listbox" aria-label="选择技能">
+    <div id={id} ref={rootRef} onKeyDown={handleKeyDown} className="reference-mention-menu agent-mention-menu agent-skill-menu" role="listbox" aria-label="选择技能">
       <div className="reference-mention-title">{query ? `技能 · 匹配「${query}」` : '技能 · 点一下指定本轮使用'}</div>
       {visible.length ? visible.map((skill, index) => (
         <button

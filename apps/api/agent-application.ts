@@ -347,6 +347,7 @@ function videoDownloadSessionConsentQuestion(url: string, status: string, error:
 
 import { createAgentStream, type AgentStreamMetadata, type AgentStreamSettlement, type AgentUpstreamResponse } from '@/apps/api/agent-stream';
 import { applicationStream, type AgentApplicationOutput } from '@/apps/api/agent-application-contract';
+import { generateAudioSubtitle } from '@/apps/api/audio-transcription-application';
 function toChatContent(message: ClientMessage, allowVideo = false): string | ChatContentPart[] {
   const refs = normalizeCreativeReferences(message.references, 16).map((reference) => (
     reference.kind === 'text' && reference.text
@@ -381,6 +382,67 @@ function toChatContent(message: ClientMessage, allowVideo = false): string | Cha
   ];
 }
 
+function isAudioClientFile(file: ClientFile) {
+  if (typeof file.mimeType === 'string' && file.mimeType.toLowerCase().split(';', 1)[0].startsWith('audio/')) return true;
+  return /\.(?:mp3|wav|m4a|mp4|aac|flac|ogg|oga|opus|webm)$/i.test(file.name);
+}
+
+type AudioSubtitleResult = {
+  file: GeneratedFile;
+  model: string;
+  segmentCount: number;
+  referenceDocumentCount: number;
+};
+
+async function transcribeAudioAttachment(
+  message: ClientMessage,
+  transcription: AgentApplicationInfrastructure['transcription'],
+  onProgress: (message: string) => void,
+  signal: AbortSignal,
+): Promise<AudioSubtitleResult | null> {
+  const audio = (message.files || []).find((file) => isAudioClientFile(file) && file.artifactId);
+  if (!audio?.artifactId) return null;
+  onProgress('正在加载本地语音识别模型，首次使用会自动下载并缓存…');
+  const result = await generateAudioSubtitle({
+    audio: { artifactId: audio.artifactId, name: audio.name, mimeType: audio.mimeType || 'audio/mpeg', ...(audio.size ? { size: audio.size } : {}) },
+  }, {
+    transcribeAudio: async ({ artifactId, onProgress: stageProgress }) => {
+      const stored = await transcription.readArtifact(artifactId);
+      if (!stored) throw new Error('音频附件已过期，请重新上传后再生成字幕。');
+      return transcription.transcribeAudioFile(stored.filePath, 0, {
+        signal,
+        onProgress: (progress) => {
+          if (progress.stage === 'decoding-audio') onProgress('正在解码音频…');
+          else if (progress.stage === 'loading-model') {
+            onProgress('正在准备本地语音识别模型…');
+            stageProgress?.('loading-model');
+          } else if (progress.stage === 'transcribing') {
+            onProgress('正在识别语音并对齐时间戳…');
+            stageProgress?.('transcribing');
+          }
+        },
+      });
+    },
+    formatSrt: transcription.formatSrt,
+    saveSubtitle: async ({ name, mimeType, data }) => {
+      const saved = await transcription.saveArtifact({ kind: 'file', name, mimeType, data: Buffer.from(data) });
+      return { id: saved.id, name: saved.name, mimeType: saved.mimeType, size: saved.size, downloadUrl: saved.downloadUrl };
+    },
+  }, (stage) => {
+    onProgress(stage === 'loading-model' ? '正在准备本地语音识别模型…' : '正在识别语音并对齐时间戳…');
+  });
+  const descriptor = result.file;
+  const fileReferenceCount = (message.files || []).filter((file) => file !== audio && !isAudioClientFile(file) && (file.content || file.artifactId)).length;
+  const textReferenceCount = (message.references || []).filter((reference) => typeof reference === 'object' && reference.kind === 'text' && Boolean(reference.text?.trim())).length;
+  const referenceDocumentCount = fileReferenceCount + textReferenceCount;
+  return {
+    file: descriptor,
+    model: result.transcript.model,
+    segmentCount: result.transcript.segments.length,
+    referenceDocumentCount,
+  };
+}
+
 /** MCP 管理动作在界面徽标上的中文名。 */
 const MCP_MANAGE_LABELS: Record<string, string> = { list: '列出服务', probe: '连接自检', add: '添加服务', update: '修改配置', remove: '删除服务', install_from_repo: '安装 GitHub MCP', runtime_status: '查看本地运行时', runtime_start: '启动本地运行时', runtime_stop: '关闭本地运行时' };
 
@@ -407,6 +469,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     search: searchInfrastructure,
     data: dataInfrastructure,
     video: videoInfrastructure,
+    transcription: transcriptionInfrastructure,
   } = infrastructure;
   const { chatCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth } = providerInfrastructure;
   const { collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact, isValidArtifactId, getStorageRoots } = artifactInfrastructure;
@@ -493,6 +556,58 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       }));
     if (!messages.length) return applicationJson({ error: '消息不能为空。' }, { status: 400 });
 
+    // Subtitle generation is a local capability. Resolve it before chat-model
+    // selection so a user can use the first-run Whisper download without a
+    // configured provider API key.
+    const latestMessage = latestUser(messages);
+    const hasAudioAttachment = Boolean(latestMessage?.files?.some((file) => isAudioClientFile(file) && file.artifactId));
+    if (hasAudioAttachment && latestMessage) {
+      const audioSubtitle = await transcribeAudioAttachment(
+        latestMessage,
+        transcriptionInfrastructure,
+        (message) => reportProgress({ stage: 'artifact', message }),
+        requestController.signal,
+      );
+      if (audioSubtitle) {
+        const referenceNote = audioSubtitle.referenceDocumentCount
+          ? `已收到 ${audioSubtitle.referenceDocumentCount} 个参考文档，但当前自动转写不会将其作为识别提示，建议完成后人工核对专有名词。`
+          : '未附带参考文档；如需人工核对专有名词，可同时上传 TXT、MD 或其他文本资料。';
+        const message = `已生成 ${audioSubtitle.file.name}，包含 ${audioSubtitle.segmentCount} 个字幕片段。识别模型：${audioSubtitle.model}。${referenceNote}`;
+        const files = [audioSubtitle.file];
+        const modelLabel = `本地语音识别 · ${audioSubtitle.model}`;
+        if (wantsStream) {
+          const release = releaseRuntimeRequest;
+          const response = createAgentStream(null, {
+            fallback: message,
+            images: [],
+            files,
+            generations: [],
+            model: modelLabel,
+            deliverable: 'TEXT',
+            statuses: [
+              { type: 'status', stage: 'artifact', message: '字幕文件已生成，正在返回下载信息…' },
+            ],
+          }, requestController.signal, async () => {
+            await finishAgentRun(agentRunId);
+            await release();
+          });
+          streamOwnsRuntimeRequest = true;
+          releaseRuntimeRequest = async () => {};
+          return applicationStream(response);
+        }
+        return applicationJson({
+          ok: true,
+          message,
+          files,
+          images: [],
+          generations: [],
+          model: modelLabel,
+          deliverable: 'TEXT',
+          toolSupport: true,
+        });
+      }
+    }
+
     const requestedChatModelId = String(body.model || 'auto');
     const fallbackRuntime = typeof getRuntimeModelCandidates === 'function'
       ? null
@@ -542,7 +657,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       return state;
     };
     const nativeWebSearch = nativeSearchIsEnabled(agentRuntime.model);
-    const latest = latestUser(messages);
+    const latest = latestMessage;
     const selectedCanvasDocument = canvasDocument as ReturnType<typeof normalizeDocument> | null;
     const canvasTargetReferences: CreativeReference[] = isCanvasSource && body.executionMode === 'agent-dock' && selectedCanvasDocument
       ? canvasTargetNodeIds.flatMap<CreativeReference>((nodeId) => {
