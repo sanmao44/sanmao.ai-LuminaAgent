@@ -15,6 +15,28 @@ test('streamed answers post-process accumulated text before final delivery', asy
   assert.match(body, /draft finalized/);
 });
 
+test('stream final event carries the server-authoritative intent preview', async () => {
+  const { streamAgentResult } = load('./apps/api/agent-stream');
+  const preview = {
+    deliverable: 'IMAGE',
+    mode: 'execute',
+    reason: '明确的图片生成请求',
+    confidence: 'high',
+    route: 'image',
+    contextNeed: 'recent',
+  };
+  const response = streamAgentResult(null, {
+    images: [], files: [], generations: [], model: 'test', deliverable: 'IMAGE',
+    intentPreview: preview, fallback: '已完成',
+  });
+  const events = (await response.text())
+    .split('\n\n')
+    .filter(Boolean)
+    .map((frame) => JSON.parse(frame.replace(/^data: /, '')));
+  const final = events.find((event) => event.type === 'final');
+  assert.deepEqual(final.intentPreview, preview);
+});
+
 test('provider coordinator fails over automatic candidates', async () => {
   const { createProviderCoordinator } = load('./packages/model-runtime/provider-coordinator');
   const attempts = [];

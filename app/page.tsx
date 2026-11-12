@@ -122,6 +122,7 @@ import AgentMessageReferences from '@/components/AgentMessageReferences';
 import AgentMessageTools from '@/components/AgentMessageTools';
 import AgentMessagePending from '@/components/AgentMessagePending';
 import AgentMessageLabel from '@/components/AgentMessageLabel';
+import AgentIntentPreview from '@/components/AgentIntentPreview';
 import AgentChatFileList from '@/components/AgentChatFileList';
 import AgentApprovalResult from '@/components/AgentApprovalResult';
 import AgentMessageImages from '@/components/AgentMessageImages';
@@ -6937,6 +6938,7 @@ export default function Page() {
                         mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined,
                         approval: data.approval || undefined,
                         deliverable: data.deliverable || 'TEXT',
+                        intentPreview: data.intentPreview || undefined,
                         ...(message.task === 'one_take_video_prompt' ? { task: message.task, durationSeconds: data.durationSeconds || message.durationSeconds } : {})
                     } : version);
                 const completedItem = applyMessageVersion({ ...item, activity: undefined }, versions, versions.findIndex((version)=>version.id === retryVersionId));
@@ -7265,6 +7267,7 @@ export default function Page() {
                     fallbackFrom: data.fallbackFrom || undefined,
                     approval: data.approval || undefined,
                     deliverable: data.deliverable || selectedDeliverable,
+                    intentPreview: data.intentPreview || undefined,
                     ...(task === 'one_take_video_prompt' ? { task, durationSeconds: data.durationSeconds || oneTakeDuration } : {})
                 }
             ];
@@ -8717,7 +8720,10 @@ export default function Page() {
                                                                                 children: `MCP：${message.mcpTools.map((tool)=>`${tool.server} · ${tool.name}（${tool.ok ? '成功' : '失败'}）`).join('、')}`
                                                                             })
                                                                         }),
-                                                                         message.role === 'assistant' && !message.pending && message.deliverable && /*#__PURE__*/ _jsx("small", {
+                                                                         message.role === 'assistant' && !message.pending && message.intentPreview && /*#__PURE__*/ _jsx(AgentIntentPreview, {
+                                                                             preview: message.intentPreview
+                                                                         }),
+                                                                         message.role === 'assistant' && !message.pending && message.deliverable && !message.intentPreview && /*#__PURE__*/ _jsx("small", {
                                                                              className: `message-deliverable-badge ${String(message.deliverable).toLowerCase()}`,
                                                                              children: `交付：${agentDeliverableLabel(message.deliverable)}`
                                                                          }),

@@ -19,9 +19,10 @@ async function withFetch(handler, callback) {
 
 test('shared Agent client enforces the common context limit and stream contract', async () => {
   let request;
+  const intentPreview = { deliverable: 'TEXT', mode: 'execute', reason: '请求文案', confidence: 'high', route: 'text', contextNeed: 'none' };
   const result = await withFetch(async (input, options) => {
     request = { input, options };
-    return new Response(JSON.stringify({ ok: true, message: '完成', deliverable: 'TEXT' }), {
+    return new Response(JSON.stringify({ ok: true, message: '完成', deliverable: 'TEXT', intentPreview }), {
       headers: { 'content-type': 'application/json' },
     });
   }, () => client.requestAgent({
@@ -37,15 +38,17 @@ test('shared Agent client enforces the common context limit and stream contract'
   assert.equal(payload.stream, true);
   assert.equal(payload.deliverable, 'TEXT');
   assert.equal(result.deliverable, 'TEXT');
+  assert.deepEqual(result.intentPreview, intentPreview);
 });
 
 test('shared Agent client parses split CRLF SSE frames in order', async () => {
   const events = [];
+  const intentPreview = { deliverable: 'IMAGE', mode: 'execute', reason: '明确生图请求', confidence: 'high', route: 'image', contextNeed: 'recent' };
   const chunks = [
     'data: {"type":"status","message":"正在回答"}\r\n\r\n',
     'data: {"type":"delta","text":"第一段"}\r\n',
     '\r\ndata: {"type":"delta","text":"第二段"}\r\n\r\n',
-    'data: {"type":"final","message":"第一段第二段","deliverable":"TEXT"}\r\n\r\n',
+    `data: ${JSON.stringify({ type: 'final', message: '第一段第二段', deliverable: 'IMAGE', intentPreview })}\r\n\r\n`,
   ].map((value) => new TextEncoder().encode(value));
   const result = await withFetch(async () => new Response(new ReadableStream({
     pull(controller) {
@@ -55,10 +58,11 @@ test('shared Agent client parses split CRLF SSE frames in order', async () => {
     },
   }), { headers: { 'content-type': 'text/event-stream' } }), () => client.requestAgent({
     messages: [{ role: 'user', content: '描述图片' }],
-    deliverable: 'TEXT',
+    deliverable: 'IMAGE',
   }, { onEvent: (event) => events.push(event.type) }));
 
   assert.equal(result.message, '第一段第二段');
-  assert.equal(result.deliverable, 'TEXT');
+  assert.equal(result.deliverable, 'IMAGE');
+  assert.deepEqual(result.intentPreview, intentPreview);
   assert.deepEqual(events, ['status', 'delta', 'delta', 'final']);
 });
