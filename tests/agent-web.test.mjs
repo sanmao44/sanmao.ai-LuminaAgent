@@ -29,19 +29,14 @@ test('only offers the MCP manager when the turn is about MCP services', () => {
   assert.equal(web.extractGithubMcpInstallRequest(
     '安装',
     '这是一个 GitHub 项目的介绍。',
-    'https://github.com/owner/repo',
-  ), 'https://github.com/owner/repo');
+    '我想先聊聊 Node 版本管理。',
+    '用户之前发过 https://github.com/owner/repo，助手随后介绍了项目。',
+  ), null);
   assert.equal(web.extractGithubMcpInstallRequest(
     '安装',
     '这是一个 GitHub 项目的介绍。',
     '我也喜欢这个项目：https://github.com/owner/repo',
   ), null);
-  assert.equal(web.extractGithubMcpInstallRequest(
-    '安装',
-    '这是一个 GitHub 项目的介绍。',
-    '',
-    '用户之前发过 https://github.com/owner/repo，助手随后介绍了项目。',
-  ), 'https://github.com/owner/repo');
   assert.equal(web.isGithubMcpInstallHandoff(
     'https://github.com/owner/repo',
     '安装失败：请把 GitHub 仓库地址直接发给我，我只会安装你这次消息里提供的仓库。',
@@ -50,6 +45,22 @@ test('only offers the MCP manager when the turn is about MCP services', () => {
     'https://github.com/owner/repo',
     '这是一个 GitHub 仓库的介绍，地址在这里。',
   ), false);
+});
+
+test('安装确认只承接紧邻的独立仓库链接，不复用更早话题中的链接', () => {
+  assert.equal(web.extractGithubMcpInstallRequest(
+    '安装',
+    '这是一个 GitHub 项目的介绍。你希望我帮你做什么？',
+    'https://github.com/owner/repo',
+    '用户之前发过 https://github.com/owner/repo，助手随后介绍了项目。',
+  ), 'https://github.com/owner/repo');
+
+  assert.equal(web.extractGithubMcpInstallRequest(
+    '安装',
+    '这是一个 GitHub 项目的介绍。',
+    '我想先聊聊 Node 版本管理。',
+    '用户之前发过 https://github.com/owner/repo，助手随后介绍了项目。',
+  ), null);
 });
 
 test('本地运行时的问法也会放出 MCP 管理工具，但普通提问不会', () => {
@@ -178,6 +189,22 @@ test('识别浏览器连续操作请求，并排除普通联网搜索', () => {
   assert.equal(web.likelyBrowserAutomationRequest('搜索浏览器自动化的最新资料'), false);
   assert.equal(web.likelyBrowserAutomationRequest('在浏览器里搜索 OpenAI 最新 API 版本'), true);
   assert.equal(web.likelyBrowserAutomationRequest('打开网页看看这个页面'), true);
+
+  const englishNavigation = web.classifyBrowserAutomation('Open bilibili');
+  assert.equal(englishNavigation.shouldAutomate, true);
+  assert.equal(englishNavigation.destination, 'bilibili');
+  assert.equal(web.classifyBrowserAutomation('Please open the website').shouldAutomate, true);
+
+  const chainedNavigation = web.classifyBrowserAutomation('Open https://example.com and click submit');
+  assert.equal(chainedNavigation.shouldAutomate, true);
+  assert.equal(chainedNavigation.destination, 'https://example.com');
+  assert.ok(chainedNavigation.steps.includes('navigate'));
+  assert.ok(chainedNavigation.steps.includes('interact'));
+
+  for (const input of ['Can you open bilibili?', 'How do I open bilibili?', 'Search for the latest OpenAI API version']) {
+    assert.equal(web.likelyBrowserAutomationRequest(input), false, input);
+  }
+  assert.equal(web.shouldUseAgentWebSearch('auto', 'Search for the latest OpenAI API version').shouldSearch, true);
 });
 
 test('Windows 系统控制目标优先于未限定的浏览器导航', () => {

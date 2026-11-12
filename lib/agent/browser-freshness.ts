@@ -9,6 +9,13 @@ const BROWSER_OBSERVATION_TOOLS = new Set([
   'browser_wait_for',
 ]);
 
+const BROWSER_PAGE_OBSERVATION_TOOLS = new Set([
+  'browser_find',
+  'browser_snapshot',
+  'browser_take_screenshot',
+  'browser_wait_for',
+]);
+
 export function isBrowserObservationTool(toolName: unknown) {
   return BROWSER_OBSERVATION_TOOLS.has(String(toolName || ''));
 }
@@ -20,6 +27,37 @@ export function isBrowserObservationTool(toolName: unknown) {
 export function isBrowserMutationTool(toolName: unknown) {
   const name = String(toolName || '');
   return name.startsWith('browser_') && !isBrowserObservationTool(name);
+}
+
+/**
+ * A final page-changing action needs a fresh view before the Agent can report
+ * completion. Failed actions count too because timeouts can happen after the
+ * page has already changed. Diagnostic observations such as network logs do
+ * not show the current rendered page state.
+ */
+export function browserMutationObservationGap(uses: readonly { name?: unknown; ok?: unknown; args?: Record<string, unknown> }[]) {
+  let lastMutationIndex = -1;
+  let lastPageObservationIndex = -1;
+
+  uses.forEach((use, index) => {
+    const name = browserToolName(use.name);
+    if (name === 'tabbit_browser') {
+      if (use.args?.action !== 'nodejs') return;
+      if (use.args.readOnly === true) {
+        if (use.ok === true) lastPageObservationIndex = index;
+      } else {
+        lastMutationIndex = index;
+      }
+      return;
+    }
+    if (isBrowserMutationTool(name)) {
+      lastMutationIndex = index;
+      return;
+    }
+    if (use.ok === true && BROWSER_PAGE_OBSERVATION_TOOLS.has(name)) lastPageObservationIndex = index;
+  });
+
+  return lastMutationIndex >= 0 && lastMutationIndex > lastPageObservationIndex;
 }
 
 export function browserToolName(toolName: unknown) {

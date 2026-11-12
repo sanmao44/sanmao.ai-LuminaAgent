@@ -32,6 +32,7 @@ test('暴露给模型的 Tabbit schema 接受 create task 动作', () => {
   assert.ok(tabbitBrowserTool.schema.properties.action.enum.includes('create'));
   assert.match(tabbitBrowserTool.description, /新网址时直接用 nodejs/);
   assert.match(tabbitBrowserTool.schema.properties.requestId.description, /每个新的 nodejs 程序使用唯一 ID/);
+  assert.deepEqual(tabbitBrowserTool.schema.properties.commentStage.enum, ['prepare', 'fill', 'submit']);
 });
 
 test('创建任务和执行程序都拒绝缺少 task 的调用', () => {

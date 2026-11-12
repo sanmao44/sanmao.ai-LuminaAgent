@@ -33,6 +33,8 @@ export type BrowserAutomationIntent = {
 };
 
 const BROWSER_NAVIGATION_PATTERN = /(?:打开|访问|进入|前往|去到|跳转到|登陆|登录)\s*(?:一下\s*)?([^，,。！？!?；;\n]+)/i;
+const ENGLISH_BROWSER_NAVIGATION_PATTERN = /^\s*(?:please\s+)?(?:open|visit|go\s+to|navigate\s+to)\s+(.+)$/i;
+const ENGLISH_BROWSER_CHAIN_ACTION_PATTERN = /\s*(?:,|and)\s*(?:then\s+)?(?:search|find|look\s+up|click|like|dislike|comment|reply|fill|submit|play|scroll|download|save|export|select|choose|sort|inspect|read)\b[\s\S]*$/i;
 const BROWSER_CONTEXT_PATTERN = /(?:在|用|通过|从)[^，,。！？!?；;]{0,24}(?:浏览器|网页|网站|页面)(?:里|中|上)?|(?:浏览器|网页|网站|页面)(?:里|中|上)|当前(?:网页|页面)|这个(?:网页|页面|网站)/i;
 const DESKTOP_CONTEXT_PATTERN = /(?:windows|电脑|桌面|窗口|本地(?:软件|应用|程序)|软件|应用程序|记事本|计算器)/i;
 const WINDOWS_SYSTEM_TARGET_PATTERN = /(?:防火墙|windows\s*(?:defender|安全中心|更新)|安全中心|系统设置|控制面板|任务管理器|设备管理器|网络设置|网络适配器|个性化|辅助功能|终端|命令提示符|电源选项|蓝牙|音量|服务管理器|事件查看器|注册表|组策略|本地安全策略|系统信息|资源监视器|性能监视器|firewall|settings?|control panel|task manager|device manager|defender|registry|group policy|services?)/i;
@@ -68,8 +70,10 @@ export function classifyDesktopAutomation(input: string): DesktopAutomationInten
 }
 
 function browserDestinationFrom(text: string) {
-  const match = text.match(BROWSER_NAVIGATION_PATTERN);
-  const candidate = String(match?.[1] || '').replace(/^['"“”‘’\s]+|['"“”‘’\s]+$/g, '').trim();
+  const englishMatch = text.match(ENGLISH_BROWSER_NAVIGATION_PATTERN);
+  const match = englishMatch ? null : text.match(BROWSER_NAVIGATION_PATTERN);
+  const rawCandidate = englishMatch?.[1]?.replace(ENGLISH_BROWSER_CHAIN_ACTION_PATTERN, '') || match?.[1] || '';
+  const candidate = String(rawCandidate).replace(/[.!]+$/g, '').replace(/^['"“”‘’\s]+|['"“”‘’\s]+$/g, '').trim();
   if (!candidate || LOCAL_DESTINATION_PATTERN.test(candidate) || WINDOWS_SYSTEM_TARGET_PATTERN.test(candidate)) return '';
   return candidate;
 }
@@ -79,7 +83,8 @@ export function classifyBrowserAutomation(input: string): BrowserAutomationInten
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return { shouldAutomate: false, destination: '', steps: [], confidence: 'low', reason: 'empty-request' };
   const destination = browserDestinationFrom(text);
-  const genericNavigation = /(?:打开|访问|进入)\s*(?:浏览器|网页|网站|页面)/i.test(text);
+  const genericNavigation = /(?:打开|访问|进入)\s*(?:浏览器|网页|网站|页面)/i.test(text)
+    || /^\s*(?:please\s+)?(?:open|visit|go\s+to|navigate\s+to)\s+(?:the\s+)?(?:browser|web\s*page|website|page)\b/i.test(text);
   const browserContext = BROWSER_CONTEXT_PATTERN.test(text);
   const hasSearch = BROWSER_SEARCH_PATTERN.test(text);
   const hasSelection = BROWSER_SELECTION_PATTERN.test(text);
@@ -620,11 +625,11 @@ export function likelyMcpManagementRequest(input: string) {
  * 刚发过仓库地址，那么用户下一条只发送地址/“安装”也是同一个安装请求；普通
  * 聊天里分享 GitHub 链接不能触发安装。
  */
-export function extractGithubMcpInstallRequest(input: string, previousAssistantText = '', previousUserText = '', previousContextText = '') {
+export function extractGithubMcpInstallRequest(input: string, previousAssistantText = '', previousUserText = '') {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   // A repository named as the source for an Agent Skill is not an MCP
   // server.  Keep the direct MCP installer from pre-empting skill_install.
-  const skillContext = [text, previousAssistantText, previousUserText, previousContextText]
+  const skillContext = [text, previousAssistantText, previousUserText]
     .map((value) => String(value || '').replace(/\s+/g, ' '))
     .some((value) => /(?:skill|技能)/i.test(value)
       && /(?:github\.com\/|yt-dlp|仓库|repo)/i.test(value));
@@ -633,19 +638,18 @@ export function extractGithubMcpInstallRequest(input: string, previousAssistantT
   const previousUser = String(previousUserText || '').replace(/\s+/g, ' ').trim();
   const previousUserUrl = previousUser.match(githubRepositoryUrlPattern)?.[0] || '';
   const previousUserIsOnlyUrl = Boolean(previousUserUrl) && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(previousUser);
-  const previousContextUrl = String(previousContextText || '').replace(/\s+/g, ' ').trim().match(githubRepositoryUrlPattern)?.[0] || '';
   const isBareRepositoryUrl = Boolean(url)
     && /^https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/i.test(text);
   const shortInstall = githubMcpShortInstallPattern.test(text);
   if (isBareRepositoryUrl) return url;
-  if (!url && !(shortInstall && (previousUserIsOnlyUrl || previousContextUrl))) return null;
+  if (!url && !(shortInstall && previousUserIsOnlyUrl)) return null;
   const isExplicitInstallRequest = githubMcpInstallVerbPattern.test(text);
   const isInstallHandoff = /^\s*https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\s*$/i.test(text)
     && githubMcpInstallHandoffPattern.test(String(previousAssistantText || '').replace(/\s+/g, ' ').trim());
-  const isPreviousUserHandoff = shortInstall && (previousUserIsOnlyUrl || previousContextUrl);
+  const isPreviousUserHandoff = shortInstall && previousUserIsOnlyUrl;
   if (!isExplicitInstallRequest && !isInstallHandoff && !isPreviousUserHandoff) return null;
   if (/(?:怎么|如何|教程|步骤|方法).{0,24}(?:安装|接入|连接|添加|导入)/i.test(text) && !/(?:直接|帮我|请).{0,12}(?:安装|接入|连接|添加|导入)/i.test(text)) return null;
-  return url || (previousUserIsOnlyUrl ? previousUserUrl : '') || previousContextUrl;
+  return url || (previousUserIsOnlyUrl ? previousUserUrl : '');
 }
 
 /**

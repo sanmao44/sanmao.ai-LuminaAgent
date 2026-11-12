@@ -19,6 +19,98 @@ const artifactInfrastructure = {
   generateArchiveArtifact: artifacts.generateArchiveArtifact,
 };
 
+test('Tabbit page scripts enter the request-local browser freshness history without retaining source code', async () => {
+  const state = {
+    mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [], recentPageText: '',
+  };
+  const result = await mcpCapabilities.executeTabbitCapability({
+    state,
+    call: { id: 'tabbit-script' },
+    args: { action: 'nodejs', requestId: 'script-1', code: 'await page.click("button")', readOnly: false },
+    policy: { tool: { risk: 'external_side_effect' } },
+    requestController: new AbortController(),
+    mcpToolCallLimit: 12,
+    agentRunId: 'agent-run-test',
+    runTabbitBrowserAction: async () => ({ ok: true, response: { result: 'clicked' } }),
+    browserMetrics: { record: (_name, _ok, text) => text },
+    appendPageContext: (_current, _source, text) => text,
+    auditMcpCall: () => {},
+  });
+
+  assert.equal(result.results.length, 1);
+  assert.deepEqual(state.browserUses, [{
+    name: 'tabbit_browser', ok: true, args: { action: 'nodejs', readOnly: false },
+  }]);
+  assert.equal(JSON.stringify(state.browserUses).includes('page.click'), false);
+
+  const failedState = { ...state, mcpToolCallCount: 0, browserUses: [], usedMcpTools: [] };
+  await mcpCapabilities.executeTabbitCapability({
+    state: failedState,
+    call: { id: 'tabbit-script-timeout' },
+    args: { action: 'nodejs', requestId: 'script-timeout', code: 'await page.click("button")', readOnly: false },
+    policy: { tool: { risk: 'external_side_effect' } },
+    requestController: new AbortController(),
+    mcpToolCallLimit: 12,
+    agentRunId: 'agent-run-test',
+    runTabbitBrowserAction: async () => { throw new Error('execution timed out'); },
+    browserMetrics: { record: (_name, _ok, text) => text },
+    appendPageContext: (_current, _source, text) => text,
+    auditMcpCall: () => {},
+  });
+  assert.deepEqual(failedState.browserUses, [{
+    name: 'tabbit_browser', ok: false, args: { action: 'nodejs', readOnly: false },
+  }], 'a timeout may happen after the page action took effect');
+});
+
+test('Tabbit read-only scripts retain only bounded result evidence for submission verification', async () => {
+  const state = {
+    mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [], recentPageText: '',
+  };
+  const source = 'sensitive-script-source';
+  await mcpCapabilities.executeTabbitCapability({
+    state,
+    call: { id: 'tabbit-observation' },
+    args: { action: 'nodejs', requestId: 'observe-1', code: source, readOnly: true },
+    policy: { tool: { risk: 'read' } },
+    requestController: new AbortController(),
+    mcpToolCallLimit: 12,
+    agentRunId: 'agent-run-test',
+    runTabbitBrowserAction: async () => ({ ok: true, response: { comments: [{ text: 'requested phrase' }], pageText: 'x'.repeat(20_000) } }),
+    browserMetrics: { record: (_name, _ok, text) => text },
+    appendPageContext: (_current, _source, text) => text,
+    auditMcpCall: () => {},
+  });
+
+  assert.equal(state.browserUses.length, 1);
+  assert.equal(state.browserUses[0].args.readOnly, true);
+  assert.ok(state.browserUses[0].result.length <= 16_000, 'stored evidence is bounded');
+  assert.ok(state.browserUses[0].result.includes('requested phrase'));
+  assert.equal(JSON.stringify(state.browserUses).includes(source), false, 'script source is never retained');
+});
+
+test('Tabbit comment stage is request-local metadata and is not forwarded to the browser CLI', async () => {
+  const state = {
+    mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [], recentPageText: '',
+  };
+  let receivedArgs;
+  await mcpCapabilities.executeTabbitCapability({
+    state,
+    call: { id: 'tabbit-comment-fill' },
+    args: { action: 'nodejs', requestId: 'fill-1', code: 'await page.locator("textarea").fill("reply")', readOnly: false, commentStage: 'fill' },
+    policy: { tool: { risk: 'external_side_effect' } },
+    requestController: new AbortController(),
+    mcpToolCallLimit: 12,
+    agentRunId: 'agent-run-test',
+    runTabbitBrowserAction: async (args) => { receivedArgs = args; return { ok: true, response: { result: 'filled' } }; },
+    browserMetrics: { record: (_name, _ok, text) => text },
+    appendPageContext: (_current, _source, text) => text,
+    auditMcpCall: () => {},
+  });
+
+  assert.equal(receivedArgs.commentStage, undefined, 'only supported CLI arguments cross the adapter');
+  assert.equal(state.browserUses[0].args.commentStage, 'fill', 'the application retains the explicit action phase');
+});
+
 function createWindowsMcpTestContext({ mcpCall, waitForMcpRetry = async () => {}, mcpCallTimeoutMs = 10_000 }) {
   const state = {
     generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [],

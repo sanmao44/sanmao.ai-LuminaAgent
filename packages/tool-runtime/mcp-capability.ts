@@ -5,6 +5,8 @@ import type { ToolPolicyDecision } from '../contracts/tool';
 import type { RuntimeObserver } from '../contracts/observability';
 import type { GeneratedFile, ToolCall, ToolRuntimeState, ToolCallRun } from './capability-state';
 
+const TABBIT_PAGE_EVIDENCE_MAX_CHARS = 16_000;
+
 type TabbitResult = { ok: boolean; response?: unknown; error?: unknown };
 type McpMeta = { serverId: string; serverName: string; toolName: string; readOnly: boolean; blocked: boolean };
 type McpServer = Parameters<typeof executeMcpTool>[0]['server'];
@@ -172,14 +174,24 @@ export async function executeTabbitCapability(input: McpCapabilityDependencies):
   if (state.mcpToolCallCount >= input.mcpToolCallLimit || state.mcpTurnBudget <= 0) return { results: [toolMessage(call.id, { ok: false, error: `Tabbit 浏览器调用已达上限（最多 ${input.mcpToolCallLimit} 次）` })] };
   state.mcpToolCallCount += 1;
   const startedAt = Date.now();
-  const tabbitArgs = { ...args, ...(!args.task ? { task: `sanmao-browser-${input.agentRunId || 'session'}` } : {}), ...(!args.requestId && args.action === 'nodejs' ? { requestId: `call-${state.mcpToolCallCount}` } : {}) };
+  const { commentStage, ...browserArgs } = args;
+  const tabbitArgs = { ...browserArgs, ...(!args.task ? { task: `sanmao-browser-${input.agentRunId || 'session'}` } : {}), ...(!args.requestId && args.action === 'nodejs' ? { requestId: `call-${state.mcpToolCallCount}` } : {}) };
+  let browserUse: Record<string, unknown> | undefined;
   const execution = await executeTabbitTool({
     callId: call.id, args: tabbitArgs, signal: input.requestController.signal, decision: 'call', run: input.runTabbitBrowserAction,
-    onUsage: (ok) => { state.mcpTurnBudget -= Date.now() - startedAt; state.usedMcpTools.push({ server: 'Tabbit Browser', name: String(args.action || 'browser'), readOnly: args.readOnly === true, ok }); },
+    onUsage: (ok) => {
+      state.mcpTurnBudget -= Date.now() - startedAt;
+      state.usedMcpTools.push({ server: 'Tabbit Browser', name: String(args.action || 'browser'), readOnly: args.readOnly === true, ok });
+      if (args.action === 'nodejs') {
+        browserUse = { name: 'tabbit_browser', ok, args: { action: 'nodejs', readOnly: args.readOnly === true, ...(typeof commentStage === 'string' ? { commentStage } : {}) } };
+        state.browserUses.push(browserUse);
+      }
+    },
     onAudit: (audit) => input.auditMcpCall({ serverId: 'tabbit', serverName: 'Tabbit Browser', toolName: 'browser', readOnly: args.readOnly === true }, { risk: input.policy.tool?.risk, allowed: true, decision: 'call', ok: audit.ok, durationMs: audit.durationMs, summary: audit.summary }),
     decorateResult: (tabbitResult, durationMs) => {
       const resultText = JSON.stringify(tabbitResult.response ?? tabbitResult);
       const browserResult = input.browserMetrics.record('tabbit_browser', tabbitResult.ok, resultText, durationMs);
+      if (browserUse && args.readOnly === true && tabbitResult.ok) browserUse.result = browserResult.slice(0, TABBIT_PAGE_EVIDENCE_MAX_CHARS);
       if (tabbitResult.ok) state.recentPageText = input.appendPageContext(state.recentPageText, 'tabbit_browser', browserResult);
       return browserResult;
     },

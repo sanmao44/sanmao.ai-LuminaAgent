@@ -37,6 +37,35 @@ const selfContainedPattern = /(?:只根据这句话|只看本句|不要结合上
 const externalServiceActionPattern = /(?:mcp|model context protocol|接入|连接|调用|同步|提交|发送|发到|创建|更新|删除|读取|查看|列出|搜索|查询).{0,24}(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器|api)|(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器).{0,24}(?:接入|连接|调用|同步|提交|发送|创建|更新|删除|读取|查看|列出|搜索|查询)/i;
 const githubRepositoryEntityPattern = /(?:github(?:\.com)?|仓库|repo|pull request|\bpr\b|issue|commit|提交|分支|branch|release)/i;
 const githubRepositoryQueryActionPattern = /(?:我的|当前|这个|该|本|上述|上面|最近|最新|多少|几个|哪些|列表|列出|查看|看看|查询|搜索|状态|详情|有|谁|合并)/i;
+const contextualBrowserActionPattern = /^(?:(?:please|then|now|next)\s+)?(?:click|tap|select|choose|scroll|type|fill|submit|like|comment|reply|play)\b/i;
+const contextualBrowserActionZhPattern = /^(?:(?:请|麻烦|帮我|然后|接着|再)\s*)?(?:点击|点一下|点开|选择|选中|滚动|输入|填写|提交|点赞|收藏|评论|回复|播放)(?=\s|第|这|那|上|下|一|\d|[\u4e00-\u9fff])/i;
+const failedBrowserResponsePattern = /(?:navigation|page|browser).{0,28}(?:failed|not opened|not loaded|could not|unable to)|(?:failed|not completed|not executed|could not|unable to).{0,28}(?:open|navigate|load|browser|page)|(?:打开|访问|导航|页面|浏览器).{0,12}(?:失败|未执行|未完成|没成功|没有成功|无法|未能)|(?:失败|未执行|未完成|无法|未能).{0,12}(?:打开|访问|导航|页面|浏览器)|(?:操作|请求|任务).{0,16}(?:尚未执行|未执行|失败|未完成|无法完成)|(?:模型没有成功调用|没有成功调用所需工具)|没有打开的页面/i;
+
+function recentBrowserContinuation(input: string, messages: AgentIntentMessage[]) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text || /[?？]\s*$/.test(text) || !(contextualBrowserActionPattern.test(text) || contextualBrowserActionZhPattern.test(text))) return null;
+
+  let previousUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      previousUserIndex = index;
+      break;
+    }
+  }
+  if (previousUserIndex < 0) return null;
+
+  const previousInstruction = String(messages[previousUserIndex]?.content || '').trim();
+  if (!['execute', 'follow_up'].includes(inferAgentRequestMode(previousInstruction))) return null;
+  const previousBrowserIntent = classifyBrowserAutomation(previousInstruction);
+  if (!previousBrowserIntent.shouldAutomate) return null;
+  if (!previousBrowserIntent.destination && !['explicit-page-context', 'explicit-browser-navigation'].includes(previousBrowserIntent.reason)) return null;
+
+  const assistantResponse = messages.slice(previousUserIndex + 1).reverse().find((message) => message?.role === 'assistant');
+  const assistantText = String(assistantResponse?.content || '').trim();
+  if (!assistantText || failedBrowserResponsePattern.test(assistantText)) return null;
+
+  return previousBrowserIntent;
+}
 
 function isGithubRepositoryQuery(text: string, messages: AgentIntentMessage[]) {
   if (!githubRepositoryEntityPattern.test(text) || !githubRepositoryQueryActionPattern.test(text)) return false;
@@ -82,18 +111,30 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   // same regex classifier twice on every request.
   const intent = options.intent || classifyAgentDeliverable(text, context);
   const requestMode = intent.mode || inferAgentRequestMode(text);
-  const executable = requestMode === 'execute' || requestMode === 'follow_up';
+  const browserContinuation = recentBrowserContinuation(text, messages);
+  const executable = requestMode === 'execute' || requestMode === 'follow_up' || Boolean(browserContinuation);
   const fileDeliveryRequested = likelyFileGenerationRequest(text);
   const artifactKindCandidate = artifactKindFor(text, fileDeliveryRequested);
   const desktopIntent = classifyDesktopAutomation(text);
-  const browserIntent = classifyBrowserAutomation(text);
+  const currentBrowserIntent = classifyBrowserAutomation(text);
+  const browserIntent: BrowserAutomationIntent = browserContinuation && !currentBrowserIntent.shouldAutomate
+    ? {
+      ...currentBrowserIntent,
+      shouldAutomate: true,
+      destination: browserContinuation.destination,
+      confidence: 'high',
+      reason: 'browser-context-follow-up',
+    }
+    : currentBrowserIntent;
   const skillInstallation = executable && !/[?？]\s*$/.test(text) && /(?:skill|技能)/i.test(text)
     && /(?:安装|导入|创建|制作|做成|打包成|生成|沉淀|install|import|create|build)/i.test(text);
   const artifactKind = skillInstallation ? 'none' as const : artifactKindCandidate;
   const desktopAutomation = executable && !skillInstallation && desktopIntent.shouldAutomate;
   const browserAutomation = executable && !skillInstallation && !desktopAutomation && browserIntent.shouldAutomate;
   const filesystem = executable && !skillInstallation && likelyFilesystemRequest(text, options.previousAssistant || '');
-  const contextInfo = contextDecision(text, messages);
+  const contextInfo = browserContinuation
+    ? { need: 'required' as const, reason: '本轮是最近已成功浏览器任务的明确页面操作，需承接站点和页面上下文。' }
+    : contextDecision(text, messages);
   // `context.messages` is the prior conversation for callers from the Agent
   // route, so do not drop its newest item a second time. That item is often
   // exactly the topic needed to resolve a short web follow-up.

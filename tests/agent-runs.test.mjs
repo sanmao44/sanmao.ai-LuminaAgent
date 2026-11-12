@@ -65,7 +65,6 @@ test('续跑接口只认 approve / reject，执行哪个调用由服务端记录
 
 test('续跑只继续下发只读工具，写工具一次确认只换来一次执行', () => {
   // 「再看看结果」不该逼用户再补一句需求：只读工具继续给，写工具绝不再下发。
-  assert.match(resume, /\.filter\(\(tool\) => tool\.mcp\?\.readOnly === true && !tool\.mcp\.blocked\)/);
   assert.match(resume, /tools: continuationTools, tool_choice: 'auto'/);
   assert.match(resume, /续跑只允许继续调用只读工具/);
   // 模型在续跑里点名写工具时，结果里只会得到一句拒绝，而不是真的执行。

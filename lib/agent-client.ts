@@ -313,7 +313,10 @@ export function pollAgentProgress(
   },
 ): () => void {
   const intervalMs = options.intervalMs ?? 900;
-  const maxPolls = options.maxPolls ?? 400;
+  // The Agent tool loop can run for ten minutes; leave a small allowance for
+  // request setup and final stream settlement so visible progress does not
+  // freeze while the request is still active.
+  const maxPolls = options.maxPolls ?? Math.ceil(660_000 / intervalMs);
   let stopped = false;
   let polls = 0;
   let updatedAt = 0;

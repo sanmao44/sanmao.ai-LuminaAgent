@@ -30,6 +30,15 @@ test('treats perspective and role-voice questions as creative execution', () => 
   }
 });
 
+test('recognizes clear English browser commands without turning questions into execution', () => {
+  for (const input of ['Open bilibili', 'Please open bilibili', 'Visit example.com', 'Go to example.com', 'Navigate to example.com']) {
+    assert.equal(intent.inferAgentRequestMode(input), 'execute', input);
+  }
+  for (const input of ['Can you open bilibili?', 'How do I open bilibili?', 'Should I visit example.com?']) {
+    assert.equal(intent.inferAgentRequestMode(input), 'ask', input);
+  }
+});
+
 test('routes batch image commands to image delivery', () => {
   for (const input of ['套图', '详情图', '批量生图', '生成一套商品详情图']) {
     assert.equal(intent.classifyAgentDeliverable(input).deliverable, 'IMAGE', input);

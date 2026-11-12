@@ -1,3 +1,5 @@
+import { browserToolName, isBrowserMutationTool } from '../agent/browser-freshness';
+
 /**
  * 「浏览器工具怎么用」这件事得明确告诉模型——它拿到的只有上游那几句英文 schema。
  *
@@ -49,6 +51,102 @@ export function browserTextNeedsContinuation(text: unknown) {
 /** Only retained in this request; arguments and page text are not sent to the UI/audit log. */
 export type BrowserToolUse = { name?: unknown; ok?: unknown; args?: Record<string, unknown>; result?: string };
 
+const TABBIT_COMMENT_EVIDENCE_FIELDS = new Set([
+  'comments', 'replies', 'postedcomments', 'publishedcomments', 'commentlist', 'replylist',
+  'successmessage', 'status', 'notice', 'alert',
+]);
+const TABBIT_COMMENT_COLLECTION_FIELDS = new Set([
+  'comments', 'replies', 'postedcomments', 'publishedcomments', 'commentlist', 'replylist',
+]);
+const TABBIT_COMMENT_SUCCESS_FIELDS = new Set(['successmessage', 'status', 'notice', 'alert']);
+
+const TABBIT_PAGE_FIELDS = new Set([
+  'snapshot', 'page', 'pagetext', 'pagecontent', 'body', 'bodytext', 'bodycontent', 'visibletext', 'visiblecontent', 'text',
+  'status', 'notice', 'alert', 'message',
+]);
+
+const TABBIT_EDITABLE_FIELDS = /(?:input|editor|textbox|textarea|draft|composer|contenteditable|fieldvalue)/i;
+const COMMENT_POSTED_SUCCESS = /(?:(?:评论|回复)(?:(?:已)?(?:发表|发送|发布|提交)?成功|已成功(?:发表|发送|发布|提交)?)|successfully\s+(?:posted|submitted)|(?:comment|reply).{0,20}successfully\s+(?:posted|submitted))/i;
+
+function tabbitObservationTexts(result: unknown, fields: ReadonlySet<string>) {
+  let root: unknown = result;
+  for (let depth = 0; depth < 2 && typeof root === 'string'; depth += 1) {
+    try { root = JSON.parse(root); } catch { break; }
+  }
+  const texts: string[] = [];
+  const visit = (value: unknown, inEvidenceField = false) => {
+    if (typeof value === 'string') {
+      if (inEvidenceField && value.trim()) texts.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry, inEvidenceField);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    for (const [key, entry] of Object.entries(value)) {
+      if (TABBIT_EDITABLE_FIELDS.test(key)) continue;
+      const normalizedKey = key.toLowerCase().replace(/[^a-z]/g, '');
+      visit(entry, inEvidenceField || fields.has(normalizedKey));
+    }
+  };
+  visit(root);
+  return texts;
+}
+
+function tabbitEditableTexts(result: unknown) {
+  let root: unknown = result;
+  for (let depth = 0; depth < 2 && typeof root === 'string'; depth += 1) {
+    try { root = JSON.parse(root); } catch { break; }
+  }
+  const texts: string[] = [];
+  const visit = (value: unknown, inEditableField = false) => {
+    if (typeof value === 'string') {
+      if (inEditableField) texts.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry, inEditableField);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    for (const [key, entry] of Object.entries(value)) {
+      visit(entry, inEditableField || TABBIT_EDITABLE_FIELDS.test(key));
+    }
+  };
+  visit(root);
+  return texts;
+}
+
+function tabbitCommentObservation(result: unknown, expected: string) {
+  let root: unknown = result;
+  for (let depth = 0; depth < 2 && typeof root === 'string'; depth += 1) {
+    try { root = JSON.parse(root); } catch { break; }
+  }
+  let hasCommentCollection = false;
+  let hasSuccessSignal = false;
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== 'object') return;
+    for (const [key, entry] of Object.entries(value)) {
+      if (TABBIT_EDITABLE_FIELDS.test(key)) continue;
+      const normalizedKey = key.toLowerCase().replace(/[^a-z]/g, '');
+      if (TABBIT_COMMENT_COLLECTION_FIELDS.has(normalizedKey)) hasCommentCollection = true;
+      if (TABBIT_COMMENT_SUCCESS_FIELDS.has(normalizedKey)) hasSuccessSignal = true;
+      visit(entry);
+    }
+  };
+  visit(root);
+  const texts = tabbitObservationTexts(result, TABBIT_COMMENT_EVIDENCE_FIELDS);
+  const editableTexts = tabbitEditableTexts(result);
+  return {
+    hasCommentCollection,
+    hasExpectedComment: texts.some((text) => text.includes(expected)),
+    hasSuccessSignal: hasSuccessSignal && texts.some((text) => COMMENT_POSTED_SUCCESS.test(text)),
+    hasEditableField: editableTexts.length > 0,
+    hasExpectedDraft: editableTexts.some((text) => text.includes(expected)),
+  };
+}
+
 export const BROWSER_EXECUTION_LIMITS = {
   maxCalls: 32,
   recoveryPrompts: 8,
@@ -58,14 +156,61 @@ export const BROWSER_EXECUTION_LIMITS = {
   deadlineMs: 600_000,
 } as const;
 
-function requestedComment(instruction: unknown) {
-  return String(instruction ?? '').match(/(?:评论|回复|留言|comment|reply)[：:\s]*(?:["“「『‘'])([\s\S]+?)["”」』’']/i)?.[1] || '';
+function requestedComment(instruction: unknown): string | null {
+  const text = String(instruction ?? '');
+  const intents = [...text.matchAll(/(?:评论|回复|留言|comment|reply)/gi)];
+  const intent = intents.find((candidate) => {
+    const prefix = text.slice(0, candidate.index);
+    return !/(?:查看|浏览|阅读|显示|搜索|查找|总结|读取|列出|查询)\s*$/.test(prefix)
+      && !/\b(?:read|view|show|list|search|summari[sz]e)\s+(?:the\s+)?$/i.test(prefix);
+  });
+  if (!intent || intent.index === undefined) return null;
+
+  const remainder = text.slice(intent.index + intent[0].length).replace(/^\s+/, '');
+  const openToClose = new Map([['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』'], ['"', '"'], ["'", "'"]]);
+  let quoteStart = -1;
+  let quoteEnd = -1;
+  let quoteStack: string[] = [];
+  for (let index = 0; index < remainder.length; index += 1) {
+    if (openToClose.has(remainder[index])) {
+      quoteStart = index;
+      quoteStack = [openToClose.get(remainder[index])!];
+      for (let cursor = index + 1; cursor < remainder.length; cursor += 1) {
+        const character = remainder[cursor];
+        const previous = remainder[cursor - 1] || '';
+        const next = remainder[cursor + 1] || '';
+        if (character === "'" && /[\p{L}\p{N}]/u.test(previous) && /[\p{L}\p{N}]/u.test(next)) continue;
+        if (character === quoteStack.at(-1)) {
+          quoteStack.pop();
+          if (quoteStack.length === 0) { quoteEnd = cursor; break; }
+          continue;
+        }
+        const nestedClose = openToClose.get(character);
+        if (nestedClose && character !== nestedClose) quoteStack.push(nestedClose);
+      }
+      break;
+    }
+  }
+  if (quoteStart >= 0) return quoteEnd > quoteStart ? remainder.slice(quoteStart + 1, quoteEnd).trim() : '';
+
+  const colon = remainder.indexOf(':') >= 0 ? remainder.indexOf(':') : remainder.indexOf('：');
+  if (colon >= 0) return remainder.slice(colon + 1).trim();
+  return '';
 }
 
 /** Use page evidence, not the model's assertion, to recognize a user-only blocker. */
 export function browserExternalBlocker(uses: readonly BrowserToolUse[]) {
-  const page = [...uses].reverse().find((use) => use.ok && use.name === 'browser_snapshot');
-  const text = page?.result || '';
+  const lastMutationIndex = uses.findLastIndex((use) => {
+    if (use.name === 'tabbit_browser') return use.args?.action === 'nodejs' && use.args.readOnly !== true;
+    return isBrowserMutationTool(browserToolName(use.name));
+  });
+  const page = [...uses.entries()].reverse().find(([index, use]) => index > lastMutationIndex && use.ok && (
+    use.name === 'browser_snapshot'
+    || (use.name === 'tabbit_browser' && use.args?.action === 'nodejs' && use.args.readOnly === true)
+  ))?.[1];
+  const text = page?.name === 'tabbit_browser'
+    ? tabbitObservationTexts(page.result, TABBIT_PAGE_FIELDS).join('\n')
+    : page?.result || '';
   if (/(?:请先登录|登录后(?:才能|才可|可)(?:评论|回复|点赞)|log in to (?:comment|reply|like))/i.test(text)) return '页面要求先登录';
   if (/(?:请完成(?:安全|人机|滑块)验证|拖动滑块完成验证|verify you are human)/i.test(text)) return '页面要求完成人机验证';
   return '';
@@ -77,19 +222,50 @@ export function browserExternalBlocker(uses: readonly BrowserToolUse[]) {
  */
 export function browserTextSubmissionGap(instruction: unknown, uses: readonly BrowserToolUse[]) {
   const expected = requestedComment(instruction);
-  if (!expected) return '';
+  if (expected === null) return '';
+  if (!expected) return 'verify';
   const inputIndex = uses.findIndex((use) => {
     if (!use.ok) return false;
     if (use.name === 'browser_type') return use.args?.text === expected;
     return use.name === 'browser_fill_form' && Array.isArray(use.args?.fields)
       && use.args.fields.some((field) => field?.value === expected);
   });
-  if (inputIndex < 0) return 'input';
-  // A failed send may still have taken effect. Require verification before any replay.
-  const submitIndex = uses.findIndex((use, index) => index >= inputIndex && (
-    (index === inputIndex && use.args?.submit === true)
+  // A timeout can occur after Tabbit has already changed the page, so failed
+  // writes must be verified before the Agent is allowed to replay them.
+  const tabbitWriteIndex = uses.findLastIndex((use) =>
+    use.name === 'tabbit_browser' && use.args?.action === 'nodejs' && use.args.readOnly !== true);
+  const isPlaywrightSubmit = (use: BrowserToolUse) => (
+    ((use.name === 'browser_type' || use.name === 'browser_fill_form') && use.args?.submit === true)
     || (use.name === 'browser_click' && /发送|发表|提交|发布|send|submit|post/i.test(String(use.args?.element || '')))
     || (use.name === 'browser_press_key' && /^(?:Control\+|Meta\+)?Enter$/.test(String(use.args?.key || '')))
+  );
+  const laterPlaywrightSubmitIndex = tabbitWriteIndex >= 0
+    ? uses.findIndex((use, index) => index > tabbitWriteIndex && isPlaywrightSubmit(use))
+    : -1;
+  if (tabbitWriteIndex >= 0) {
+    const stage = uses[tabbitWriteIndex].args?.commentStage;
+    const before = [...uses.slice(0, tabbitWriteIndex)].reverse().find((use) => use.ok === true
+      && use.name === 'tabbit_browser' && use.args?.action === 'nodejs' && use.args.readOnly === true);
+    const previous = before ? tabbitCommentObservation(before.result, expected) : null;
+    const observations = uses.slice(tabbitWriteIndex + 1).filter((use) => use.ok === true
+      && use.name === 'tabbit_browser' && use.args?.action === 'nodejs' && use.args.readOnly === true
+    ).map((use) => tabbitCommentObservation(use.result, expected));
+    const verified = observations.some((observation) =>
+      (observation.hasExpectedComment && previous !== null && !previous.hasExpectedComment)
+      || (observation.hasSuccessSignal && !previous?.hasSuccessSignal));
+    if (verified) return '';
+    const latestObservation = observations.at(-1);
+    if (laterPlaywrightSubmitIndex < 0) {
+      if (stage === 'fill' && latestObservation?.hasExpectedDraft) return 'submit';
+      if (stage === 'fill' && latestObservation?.hasEditableField && !latestObservation.hasExpectedDraft) return 'input';
+      if (stage === 'prepare' && latestObservation?.hasCommentCollection && !latestObservation.hasExpectedComment) return 'input';
+      return 'verify';
+    }
+  }
+  if (inputIndex < 0 && laterPlaywrightSubmitIndex < 0) return 'input';
+  // A failed send may still have taken effect. Require verification before any replay.
+  const submitIndex = uses.findIndex((use, index) => index >= inputIndex && (
+    (index === inputIndex && use.args?.submit === true) || isPlaywrightSubmit(use)
   ));
   if (submitIndex < 0) return 'submit';
   const evidence = (use: BrowserToolUse) => {
@@ -107,7 +283,8 @@ export function browserTextSubmissionGap(instruction: unknown, uses: readonly Br
     }).map((line) => line.replace(/\[ref=[^\]]+\]/g, '').trim());
   };
   const before = [...uses.slice(0, submitIndex)].reverse().find((use) => use.ok && use.name === 'browser_snapshot');
-  const previousEvidence = before ? evidence(before) : [];
+  if (!before) return 'verify';
+  const previousEvidence = evidence(before);
   const verify = uses.slice(submitIndex + 1).some((use) => use.ok && use.name === 'browser_snapshot'
     && evidence(use).some((line) => !previousEvidence.includes(line)));
   if (!verify) return 'verify';
@@ -149,4 +326,5 @@ export const TABBIT_BROWSER_TOOL_GUIDE = [
   '6. 只读脚本才设置 readOnly=true；导航、点击、输入、聚焦、滚动、选择和其他会改变页面状态的操作必须设置 readOnly=false。',
   '7. 先观察再操作；导航或页面变化后重新获取页面状态。需要输入时使用原生 Playwright locator/action，不要调用网站私有 API。',
   '8. 登录、验证码、付款、发布、删除和其他不可逆动作在最后确认前停止；工具没有返回成功证据时不要声称完成。',
+  '9. 评论/回复任务中，readOnly=false 的 nodejs 必须标注 commentStage：页面导航或定位用 prepare，只填入完整原文用 fill，只点击一次发送用 submit；不确定时省略阶段并先观察，不能把它猜成 submit。fill 后用独立 readOnly=true 脚本同时返回 composerValue 与 comments/replies 列表：仅在编辑框确有原文且列表没有原文时进入 submit，编辑框内容不算发表成功。submit 后继续独立只读核验 comments/replies 中新出现的原文或明确 successMessage；不确定时只观察，不重复发送。',
 ].join('\n');

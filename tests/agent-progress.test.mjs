@@ -209,6 +209,50 @@ test("正文开始后进度仍持续更新，并在 done 快照后停止", async
   assert.ok(ticks.some((tick) => tick.message === "正在整理回复…"));
   assert.equal(ticks[ticks.length - 1].stage, "answering");
 });
+test("Agent progress polling remains active beyond the old 400-poll cutoff", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const scheduled = [];
+  globalThis.window = { setTimeout: (fn) => { scheduled.push(fn); return scheduled.length; } };
+  let calls = 0;
+  const updates = [];
+  globalThis.fetch = async () => {
+    calls += 1;
+    return {
+      ok: true,
+      json: async () => ({ progress: {
+        runId: "run-long-progress",
+        stage: calls > 400 ? "artifact" : "thinking",
+        message: calls > 400 ? "Generating long-running output" : "Working on request",
+        toolCalls: 1,
+        startedAt: Date.now() - 650_000,
+        updatedAt: calls > 400 ? 2 : 1,
+        done: calls > 405,
+      } }),
+    };
+  };
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  try {
+    clientModule.pollAgentProgress("run-long-progress", {
+      intervalMs: 900,
+      onProgress: (item) => updates.push(item),
+    });
+    await flush();
+    while (calls < 406) {
+      const next = scheduled.shift();
+      assert.equal(typeof next, "function", `polling stopped after ${calls} calls`);
+      next();
+      await flush();
+    }
+    assert.ok(calls > 400, "the long run is still polled beyond the previous cutoff");
+    assert.ok(updates.some((item) => item.stage === "artifact"), "a late stage update reaches the UI");
+    assert.ok(updates.some((item) => item.message === "Generating long-running output"));
+    assert.equal(scheduled.length, 0, "the final done snapshot stops future polling");
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+  }
+});
 
 test("用户取消后进度轮询停止读取快照", async () => {
   const originalWindow = globalThis.window;

@@ -17,6 +17,7 @@ export const tabbitBrowserTool = defineTool({
       requestId: { type: 'string', description: '每个新的 nodejs 程序使用唯一 ID；receipt 查询同一程序时复用该 ID。' },
       code: { type: 'string', description: 'nodejs 的 Browser-owned Playwright JavaScript，使用 page/context/pages()/tabbit helper，必须返回有界 JSON。' },
       readOnly: { type: 'boolean', description: '仅当脚本绝不会导航、聚焦、输入、点击或改变浏览器/网页状态时为 true。' },
+      commentStage: { type: 'string', enum: ['prepare', 'fill', 'submit'], description: '评论/回复任务中的非只读脚本阶段：prepare 只导航或定位；fill 只填写目标文字；submit 只发送一次。只用于评论任务，readOnly=true 时省略。' },
       timeoutMs: { type: 'integer', minimum: 60000, maximum: 180000 },
       state: { type: 'string', enum: ['available', 'owned', 'claimed'] },
       limit: { type: 'integer', minimum: 1, maximum: 50 },
