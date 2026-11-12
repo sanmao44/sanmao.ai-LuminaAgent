@@ -69,6 +69,8 @@ html[data-theme="light"], html[data-theme="dark"] {
   --space-6: 24px;
   --radius-control: 8px;
   --radius-surface: 12px;
+  --control-height-sm: 36px;
+  --control-focus-ring: color-mix(in srgb, var(--modern-focus) 28%, transparent);
   --focus-width: 2px;
   --focus-offset: 2px;
   --bg: var(--modern-bg);
@@ -152,10 +154,33 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 input, textarea { caret-color: var(--modern-accent); }
 input[type="checkbox"], input[type="radio"], progress { accent-color: var(--modern-accent); }
 
+/* Shared interactive control contract for global navigation and future workspace surfaces. */
+.ui-control {
+  min-height: var(--control-height-sm);
+  border: 1px solid var(--modern-line);
+  border-radius: var(--radius-control);
+  transition: border-color 160ms ease-out, background-color 160ms ease-out, color 160ms ease-out, box-shadow 160ms ease-out, transform 160ms ease-out;
+}
+.ui-control--icon {
+  width: var(--control-height-sm);
+  padding: 0;
+  justify-content: center;
+}
+.ui-control:focus-visible {
+  outline: var(--focus-width) solid var(--modern-focus);
+  outline-offset: var(--focus-offset);
+  box-shadow: 0 0 0 3px var(--control-focus-ring);
+}
+.ui-control:disabled {
+  cursor: not-allowed;
+  opacity: .52;
+}
+
 /* Stable desktop shell. The rail keeps its existing collapsed/expanded state. */
 .main-column { background: var(--modern-bg); }
 .topbar { height: var(--shell-header-height, 64px); background: color-mix(in srgb, var(--modern-bg) 92%, transparent); border-color: var(--modern-line); backdrop-filter: blur(18px); }
 .top-mode-nav { width: 388px; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; background: var(--modern-panel); border: 1px solid var(--modern-line); box-shadow: none; }
+.top-mode-nav .ui-control { min-height: 32px; border-color: transparent; }
 .top-mode-nav button { min-width: 0; padding-inline: 8px; color: var(--modern-secondary); font-size: var(--type-caption); }
 .top-mode-nav button.active { background: var(--modern-accent-soft); border-color: transparent; color: var(--modern-accent-ink); box-shadow: none; transform: none; }
 .top-mode-nav button.active::after { display: none; }
