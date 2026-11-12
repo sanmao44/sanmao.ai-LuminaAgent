@@ -19,9 +19,9 @@ export type CanvasWorkspaceHeaderProps = {
   onToggleAssetLibrary: () => void; agentDockOpen: boolean; agentDockBusy: boolean; onToggleAgentDock: () => void; theme: "light" | "dark"; onToggleTheme: () => void;
   saving: boolean; saveError: boolean; workspaceSyncStatus: WorkspaceSyncStatus; onOpenProject: (projectId: string) => void; onNewProject: () => void; onSaveProjectVersion: () => void;
   projectVersions: CreativeProjectVersion[]; onRestoreProjectVersion: (versionId: string) => void; onDeleteProjectVersion: (versionId: string) => void; onDeleteProject: (projectId: string) => void;
-  onSaveProjectName: (projectId: string, name: string) => boolean;
-  projectBrief?: CreativeProjectBrief | null; onSaveProjectBrief: (brief: CreativeProjectBrief) => boolean;
-  projectReferenceAssetIds?: readonly string[]; projectReferenceAssets?: readonly ProjectVisualReference[]; onRemoveProjectReference?: (assetId: string) => void;
+  onSaveProjectName: (projectId: string, name: string) => boolean | Promise<boolean>;
+  projectBrief?: CreativeProjectBrief | null; onSaveProjectBrief: (brief: CreativeProjectBrief) => boolean | Promise<boolean>;
+  projectReferenceAssetIds?: readonly string[]; projectReferenceAssets?: readonly ProjectVisualReference[]; onRemoveProjectReference?: (assetId: string) => void | Promise<void>;
 };
 
 export default function CanvasWorkspaceHeader({currentProject, projects, activeProjectId, projectMenuOpen, onProjectMenuOpenChange, topbarCollapsed, onToggleTopbar, canUndo, canRedo, onNavigateHome, onUndo, onRedo, snapEnabled, onToggleSnap, onOpenFilePicker, activePanel, onTogglePanel, onToggleAssetLibrary, agentDockOpen, agentDockBusy, onToggleAgentDock, theme, onToggleTheme, saving, saveError, workspaceSyncStatus, onOpenProject, onNewProject, onSaveProjectVersion, projectVersions, onRestoreProjectVersion, onDeleteProjectVersion, onDeleteProject, onSaveProjectName, projectBrief, onSaveProjectBrief, projectReferenceAssetIds, projectReferenceAssets, onRemoveProjectReference}: CanvasWorkspaceHeaderProps) {
@@ -79,7 +79,15 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
     };
   }, [onProjectMenuOpenChange, projectMenuOpen, projectSearchVisible]);
   const saveProjectName = () => {
-    if (projectRenameId && onSaveProjectName(projectRenameId, projectRenameValue)) setProjectRenameId(null);
+    if (!projectRenameId) return;
+    const result = onSaveProjectName(projectRenameId, projectRenameValue);
+    if (typeof result === "boolean") {
+      if (result) setProjectRenameId(null);
+      return;
+    }
+    void result.then((saved) => {
+      if (saved) setProjectRenameId(null);
+    });
   };
   return (<>
       <header className={`canvas-topbar ${topbarCollapsed ? "collapsed" : ""}`}>
@@ -367,12 +375,12 @@ export default function CanvasWorkspaceHeader({currentProject, projects, activeP
                     onChange={(event) => setProjectRenameValue(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                      if (event.key === "Enter") { event.preventDefault(); saveProjectName(); }
+                      if (event.key === "Enter") { event.preventDefault(); void saveProjectName(); }
                       if (event.key === "Escape") setProjectRenameId(null);
                     }}
                     autoFocus
                   />
-                  <button type="button" onClick={saveProjectName}>保存</button>
+                  <button type="button" onClick={() => void saveProjectName()}>保存</button>
                 </div>
               )}
             </div>

@@ -73,6 +73,35 @@ test('a recovered result is checkpointed only after the canvas update succeeds',
   assert.deepEqual(events, ['saved', 'checkpoint']);
 });
 
+for (const saved of [true, false]) {
+  test(`task recovery waits for asynchronous persistence ${saved ? 'commit' : 'failure'} before reporting its result`, async () => {
+    let finishSave;
+    const pendingSave = new Promise((resolve) => { finishSave = resolve; });
+    const events = [];
+    const recovery = applyCanvasTaskRecordRecovery({
+      record: { status: 'success', imageUrls: ['/recovered.png'] },
+      nodeId: 'pending', taskId: 'task-a', imageParams: params,
+      updateDocument: async (updater) => {
+        assert.equal(updater(fixture()).nodes[0].data.url, '/recovered.png');
+        events.push('saving');
+        return pendingSave;
+      },
+      queueCheckpoint: () => events.push('checkpoint'),
+    });
+    let reported = false;
+    void recovery.then(() => { reported = true; });
+    await Promise.resolve();
+    assert.equal(reported, false);
+    assert.deepEqual(events, ['saving']);
+
+    finishSave(saved);
+    assert.deepEqual(await recovery, saved
+      ? { kind: 'recovered', imageCount: 1 }
+      : { kind: 'save_failed', taskState: 'recovered' });
+    assert.deepEqual(events, saved ? ['saving', 'checkpoint'] : ['saving']);
+  });
+}
+
 test('unconfirmed task records remain pending and do not create checkpoints', async () => {
   let checkpointed = false;
   let updatedStatus;

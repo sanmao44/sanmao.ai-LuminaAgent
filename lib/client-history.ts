@@ -145,11 +145,40 @@ export type AssetCollection = {
 };
 
 const DB_NAME = 'sanmao-ai';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE = 'gallery';
 const CHAT_STORE = 'chat-sessions';
 const SETTINGS_STORE = 'app-settings';
 const ASSET_STORE = 'asset-index';
+const CANVAS_STORE = 'canvas-state';
+const CANVAS_CHANNEL_NAME = 'sanmao.canvas.storage.v1';
+let canvasStorageChannel: BroadcastChannel | null = null;
+let fallbackCanvasStorageSourceId = '';
+
+export function getCanvasStorageSourceId() {
+  try {
+    const key = 'sanmao.canvas.storage.source.v1';
+    const current = window.sessionStorage.getItem(key);
+    if (current) return current;
+    const next = crypto.randomUUID();
+    window.sessionStorage.setItem(key, next);
+    return next;
+  } catch {
+    fallbackCanvasStorageSourceId ||= `canvas-${Math.random().toString(36).slice(2)}`;
+    return fallbackCanvasStorageSourceId;
+  }
+}
+
+export type CanvasStorageEntry = { key: string; value: unknown };
+
+export type CanvasStorageMutation =
+  | { type: 'put'; key: string; value: unknown }
+  | { type: 'delete'; key: string };
+
+export type CanvasStorageUpdate<T> = {
+  result: T;
+  mutations: readonly CanvasStorageMutation[];
+};
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -172,10 +201,109 @@ function openDb(): Promise<IDBDatabase> {
         store.createIndex('kind', 'kind');
         store.createIndex('source', 'source');
       }
+      if (!db.objectStoreNames.contains(CANVAS_STORE)) db.createObjectStore(CANVAS_STORE, { keyPath: 'key' });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('本地历史数据库打开失败'));
   });
+}
+
+/** Read Canvas adapter records from the existing client database. */
+export async function listCanvasStorageEntries(prefix = ''): Promise<CanvasStorageEntry[]> {
+  const entries = await withNamedStore<CanvasStorageEntry[]>(CANVAS_STORE, 'readonly', (store) => store.getAll());
+  return entries.filter((entry) => entry.key.startsWith(prefix));
+}
+
+export function publishCanvasStorageChange() {
+  if (typeof window === 'undefined' || typeof document === 'undefined' || typeof BroadcastChannel === 'undefined') return;
+  try {
+    canvasStorageChannel ||= new BroadcastChannel(CANVAS_CHANNEL_NAME);
+    canvasStorageChannel.postMessage({ type: 'changed', source: getCanvasStorageSourceId() });
+  } catch { /* Cross-tab refresh is best effort; the committed record remains authoritative. */ }
+}
+
+/**
+ * Apply a synchronous read-modify-write transition to selected Canvas records.
+ * Reads, compare-and-swap checks, and writes share one IDB transaction; the
+ * promise resolves only after the transaction commits.
+ */
+export function transactCanvasStorage<T>(
+  keys: readonly string[],
+  transition: (current: ReadonlyMap<string, unknown>) => CanvasStorageUpdate<T>,
+): Promise<T> {
+  const uniqueKeys = [...new Set(keys)];
+  return openDb().then((db) => new Promise<T>((resolve, reject) => {
+    let tx: IDBTransaction;
+    try { tx = db.transaction(CANVAS_STORE, 'readwrite'); }
+    catch (error) { db.close(); reject(error); return; }
+
+    let settled = false;
+    let result!: T;
+    let operationError: unknown;
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      try { tx.abort(); } catch {}
+      reject(error instanceof Error ? error : new Error('Canvas 本地事务失败'));
+    };
+
+    tx.oncomplete = () => {
+      db.close();
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    tx.onerror = () => {
+      operationError = tx.error || new Error('Canvas 本地事务失败');
+    };
+    tx.onabort = () => {
+      db.close();
+      if (settled) return;
+      settled = true;
+      reject(operationError instanceof Error ? operationError : tx.error || new Error('Canvas 本地事务已取消'));
+    };
+
+    const store = tx.objectStore(CANVAS_STORE);
+    const current = new Map<string, unknown>();
+    let remaining = uniqueKeys.length;
+    const apply = () => {
+      if (settled) return;
+      try {
+        const update = transition(current);
+        result = update.result;
+        for (const mutation of update.mutations) {
+          if (mutation.type === 'delete') store.delete(mutation.key);
+          else store.put({ key: mutation.key, value: mutation.value });
+        }
+      } catch (error) {
+        operationError = error;
+        fail(error);
+      }
+    };
+
+    if (!remaining) {
+      apply();
+      return;
+    }
+    for (const key of uniqueKeys) {
+      try {
+        const request = store.get(key);
+        request.onsuccess = () => {
+          const entry = request.result as CanvasStorageEntry | undefined;
+          if (entry) current.set(key, entry.value);
+          remaining -= 1;
+          if (!remaining) apply();
+        };
+        request.onerror = () => {
+          operationError = request.error || new Error('Canvas 本地读取失败');
+        };
+      } catch (error) {
+        operationError = error;
+        fail(error);
+        return;
+      }
+    }
+  }));
 }
 
 function withNamedStore<T>(storeName: string, mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {

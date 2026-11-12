@@ -50,22 +50,61 @@ function canvasCallback(name, bindings) {
   return new Function(...Object.keys(bindings), `${compiled}; return callback;`)(...Object.values(bindings));
 }
 
-function writebackFixture() {
+async function writebackFixture(t) {
   const memory = () => {
     const entries = new Map();
     return { getItem: (key) => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, String(value)), removeItem: (key) => entries.delete(key) };
   };
+  const previousWindow = globalThis.window;
+  const previousChannel = globalThis.BroadcastChannel;
   globalThis.window = Object.assign(new EventTarget(), { localStorage: memory(), sessionStorage: memory() });
-  const load = createTsRequire(process.cwd());
+  globalThis.BroadcastChannel = undefined;
+  t.after(() => {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+    if (previousChannel === undefined) delete globalThis.BroadcastChannel;
+    else globalThis.BroadcastChannel = previousChannel;
+  });
+  const records = new Map();
+  let transactions = Promise.resolve();
+  const clientHistory = {
+    publishCanvasStorageChange() {},
+    async listCanvasStorageEntries(prefix = '') {
+      await transactions;
+      return [...records].filter(([key]) => key.startsWith(prefix))
+        .map(([key, value]) => ({ key, value: structuredClone(value) }));
+    },
+    transactCanvasStorage(keys, transition) {
+      const transaction = transactions.then(() => {
+        const current = new Map(keys.flatMap((key) => records.has(key)
+          ? [[key, structuredClone(records.get(key))]] : []));
+        const update = transition(current);
+        for (const mutation of update.mutations) {
+          if (mutation.type === 'delete') records.delete(mutation.key);
+          else records.set(mutation.key, structuredClone(mutation.value));
+        }
+        return update.result;
+      });
+      transactions = transaction.then(() => {}, () => {});
+      return transaction;
+    },
+  };
+  const load = createTsRequire(process.cwd(), {
+    './client-history': clientHistory,
+    '../client-history': clientHistory,
+  });
   const model = load('./lib/canvas/model');
   const storage = load('./lib/canvas/storage');
   const creativeProjects = load('./lib/creative-projects');
   const { CanvasProjectSession } = load('./lib/canvas/project-session');
   const { CanvasCore } = load('./packages/canvas-core/runtime');
   const project = (id) => ({ id, name: id, createdAt: 1, updatedAt: 1 });
-  storage.createCanvasProject(project('a'), model.normalizeDocument(null));
+  window.localStorage.setItem(storage.CANVAS_PROJECTS_KEY, JSON.stringify([project('a')]));
+  window.localStorage.setItem(storage.CANVAS_ACTIVE_KEY, JSON.stringify('a'));
+  window.localStorage.setItem(`${storage.CANVAS_PROJECT_PREFIX}a`, JSON.stringify(model.normalizeDocument(null)));
+  await storage.ensureCanvasStorage();
   const reconciled = creativeProjects.reconcileCreativeProjects(storage.readCanvasProjects(), []);
-  creativeProjects.saveCreativeProjects(reconciled.creativeProjects);
+  assert.equal(await creativeProjects.saveCreativeProjects(reconciled.creativeProjects), true);
   const creativeProjectId = reconciled.canvasProjects.find((item) => item.id === 'a').projectId;
   const session = new CanvasProjectSession();
   const core = new CanvasCore(session.open('a'));
@@ -88,7 +127,10 @@ function writebackFixture() {
     fitView: (ids) => focused.push(ids),
   };
   bindings.captureProjectTask = canvasCallback('captureProjectTask', bindings);
-  return { bindings, core, session, storage, model, creativeProjects, creativeProjectId, project, focused, queuedCheckpoints };
+  const flushPersistence = async () => {
+    await transactions;
+  };
+  return { bindings, core, session, storage, model, creativeProjects, creativeProjectId, project, focused, queuedCheckpoints, flushPersistence };
 }
 
 function enableAutomaticCheckpoints(h, intervalMinutes = 0) {
@@ -127,10 +169,10 @@ function enableAutomaticCheckpoints(h, intervalMinutes = 0) {
     h.queuedCheckpoints.push(args);
     enqueueAgentCheckpoint(...args);
   };
-  return () => {
+  return async () => {
     const callback = [...timers.values()].at(-1);
     timers.clear();
-    callback?.();
+    await callback?.();
   };
 }
 
@@ -820,8 +862,8 @@ test("an agent image can be dragged out of the dock and dropped where the pointe
   assert.ok(canvas.includes("已把这张图放到画布上"));
 });
 
-test("agent results land in free space instead of on top of existing nodes", () => {
-  const h = writebackFixture();
+test("agent results land in free space instead of on top of existing nodes", async (t) => {
+  const h = await writebackFixture(t);
   const first = h.model.createMedia('image', '/first.png', 'first', { x: 10, y: 20 });
   h.core.replace({ ...h.core.document(), nodes: [first] });
   const scope = h.bindings.captureProjectTask();
@@ -937,19 +979,20 @@ test("canvas overlays step aside for the open agent panel", () => {
   assert.match(canvas, /const visibleStage = \{ width: canvasVisibleStageWidth\(stage\), height: stageHeight \};/);
 });
 
-test("storing a reply as a node brings it into view", () => {
-  const h = writebackFixture();
+test("storing a reply as a node brings it into view", async (t) => {
+  const h = await writebackFixture(t);
   const apply = canvasCallback('applyAgentDockText', h.bindings);
-  const ids = apply('reply', { prompt: 'prompt', runContext: { canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-1' } });
+  const ids = await apply('reply', { prompt: 'prompt', runContext: { canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-1' } });
   assert.deepEqual(h.focused, [ids]);
   assert.equal(h.core.document().nodes[0].data.text, 'reply');
   assert.equal(h.queuedCheckpoints.length, 1);
   assert.deepEqual(h.queuedCheckpoints[0].slice(0, 4), [h.creativeProjectId, 'a', 'run-1', 'text']);
   assert.deepEqual(h.queuedCheckpoints[0][4].nodes.map((node) => node.id), ids);
-  assert.equal(h.session.save(h.core.document()), true);
-  h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
+  assert.equal(await h.session.save(h.core.document()), true);
+  await h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
   h.core.replace(h.session.open('b'));
-  const backgroundIds = apply('background reply', { prompt: 'prompt', runContext: { canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-2' } });
+  const backgroundIds = await apply('background reply', { prompt: 'prompt', runContext: { canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-2' } });
+  await h.flushPersistence();
   assert.equal(backgroundIds.length, 1);
   assert.equal(h.core.document().nodes.length, 0);
   assert.equal(h.storage.loadCanvasDocument('a').nodes.length, 2);
@@ -957,25 +1000,26 @@ test("storing a reply as a node brings it into view", () => {
   assert.deepEqual(h.queuedCheckpoints[1].slice(0, 4), [h.creativeProjectId, 'a', 'run-2', 'text']);
   assert.equal(h.queuedCheckpoints[1][4].nodes.length, 2);
   assert.deepEqual(h.focused, [ids]);
-  assert.equal(h.storage.deleteCanvasProject('a'), true);
-  const deletedIds = apply('late reply', { prompt: 'prompt', runContext: { canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-3' } });
+  assert.equal(await h.storage.deleteCanvasProject('a'), true);
+  const deletedIds = await apply('late reply', { prompt: 'prompt', runContext: { canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-3' } });
   assert.deepEqual(deletedIds, []);
   assert.equal(h.queuedCheckpoints.length, 2);
   assert.deepEqual(h.focused, [ids]);
 });
 
-test("Agent canvas patches checkpoint successful updates even when they add no nodes", () => {
-  const h = writebackFixture();
+test("Agent canvas patches checkpoint successful updates even when they add no nodes", async (t) => {
+  const h = await writebackFixture(t);
   const sourceNode = h.model.createPrompt({ x: 1, y: 2 }, 'before');
   h.core.replace({ ...h.core.document(), nodes: [sourceNode] });
-  assert.equal(h.session.save(h.core.document()), true);
-  h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
+  assert.equal(await h.session.save(h.core.document()), true);
+  await h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
   h.core.replace(h.session.open('b'));
 
   const apply = canvasCallback('applyAgentCanvasPatch', h.bindings);
-  const result = apply({ version: 1, operations: [{ op: 'update_node', id: sourceNode.id, patch: { x: 42 } }] }, {
+  const result = await apply({ version: 1, operations: [{ op: 'update_node', id: sourceNode.id, patch: { x: 42 } }] }, {
     canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-patch',
   });
+  await h.flushPersistence();
 
   assert.deepEqual(result.ids, []);
   assert.equal(h.core.document().nodes.length, 0);
@@ -984,29 +1028,30 @@ test("Agent canvas patches checkpoint successful updates even when they add no n
   assert.deepEqual(h.queuedCheckpoints[0].slice(0, 4), [h.creativeProjectId, 'a', 'run-patch', 'patch:update_node']);
   assert.equal(h.queuedCheckpoints[0][4].nodes[0].x, 42);
 
-  const failed = apply({ version: 1, operations: [{ op: 'update_node', id: 'missing-node', patch: { x: 50 } }] }, {
+  const failed = await apply({ version: 1, operations: [{ op: 'update_node', id: 'missing-node', patch: { x: 50 } }] }, {
     canvasId: 'a', creativeProjectId: 'creative_a', runId: 'run-failed',
   });
   assert.ok(failed.error);
   assert.equal(h.queuedCheckpoints.length, 1);
 });
 
-test("delayed Agent checkpoints preserve the source canvas after switching projects", () => {
-  const h = writebackFixture();
+test("delayed Agent checkpoints preserve the source canvas after switching projects", async (t) => {
+  const h = await writebackFixture(t);
   const flushCheckpoints = enableAutomaticCheckpoints(h);
   const apply = canvasCallback('applyAgentDockText', h.bindings);
-  const firstIds = apply('A canvas reply', { prompt: 'prompt', runContext: {
+  const firstIds = await apply('A canvas reply', { prompt: 'prompt', runContext: {
     canvasId: 'a', creativeProjectId: h.creativeProjectId, runId: 'run-active',
   } });
-  flushCheckpoints();
+  await flushCheckpoints();
 
-  assert.equal(h.session.save(h.core.document()), true);
-  h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
+  assert.equal(await h.session.save(h.core.document()), true);
+  await h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
   h.core.replace(h.session.open('b'));
-  const backgroundIds = apply('A later reply', { prompt: 'prompt', runContext: {
+  const backgroundIds = await apply('A later reply', { prompt: 'prompt', runContext: {
     canvasId: 'a', creativeProjectId: h.creativeProjectId, runId: 'run-background',
   } });
-  flushCheckpoints();
+  await h.flushPersistence();
+  await flushCheckpoints();
 
   const savedProject = h.creativeProjects.readCreativeProjects().find((item) => item.id === h.creativeProjectId);
   assert.deepEqual(savedProject.versions.map((version) => version.snapshot.nodes.map((node) => node.id)), [
@@ -1017,8 +1062,8 @@ test("delayed Agent checkpoints preserve the source canvas after switching proje
   assert.equal(h.core.document().nodes.length, 0);
 });
 
-test("automatic checkpoint interval batches Agent results until the cooldown expires", () => {
-  const h = writebackFixture();
+test("automatic checkpoint interval batches Agent results until the cooldown expires", async (t) => {
+  const h = await writebackFixture(t);
   const flushCheckpoints = enableAutomaticCheckpoints(h, 5);
   const initialProjects = h.creativeProjects.readCreativeProjects();
   const initialVersion = h.creativeProjects.appendAutomaticCreativeProjectVersion(
@@ -1033,16 +1078,16 @@ test("automatic checkpoint interval batches Agent results until the cooldown exp
     ['existing-task'],
   );
   assert.ok(initialVersion);
-  assert.equal(h.creativeProjects.saveCreativeProjects(initialVersion), true);
+  assert.equal(await h.creativeProjects.saveCreativeProjects(initialVersion), true);
 
   const apply = canvasCallback('applyAgentDockText', h.bindings);
-  apply('First result', { prompt: 'first', runContext: {
+  await apply('First result', { prompt: 'first', runContext: {
     canvasId: 'a', creativeProjectId: h.creativeProjectId, runId: 'run-first',
   } });
-  apply('Second result', { prompt: 'second', runContext: {
+  await apply('Second result', { prompt: 'second', runContext: {
     canvasId: 'a', creativeProjectId: h.creativeProjectId, runId: 'run-second',
   } });
-  flushCheckpoints();
+  await flushCheckpoints();
 
   assert.equal(h.creativeProjects.readCreativeProjects()[0].versions.length, 1);
   assert.equal(h.bindings.autoCheckpointQueueRef.current.size, 1);
@@ -1055,8 +1100,8 @@ test("automatic checkpoint interval batches Agent results until the cooldown exp
       ? { ...version, createdAt: Date.now() - 6 * 60_000 }
       : version),
   }));
-  assert.equal(h.creativeProjects.saveCreativeProjects(delayedProjects), true);
-  flushCheckpoints();
+  assert.equal(await h.creativeProjects.saveCreativeProjects(delayedProjects), true);
+  await flushCheckpoints();
 
   const savedProject = h.creativeProjects.readCreativeProjects().find((item) => item.id === h.creativeProjectId);
   assert.equal(savedProject.versions.length, 2);
@@ -1109,19 +1154,20 @@ test("canvas artifacts keep download and preview entry points", () => {
   assert.match(styles, /\.canvas-agent-dock-file-actions button\{/);
 });
 
-test("each remote canvas run carries an immutable context snapshot into write-back", () => {
+test("each remote canvas run carries an immutable context snapshot into write-back", async (t) => {
   assert.match(component, /createCanvasAgentRunContext\(\{[\s\S]*runId: progressRunId/);
   assert.match(component, /references: turnNodeReferences/);
   assert.match(component, /onApplyImages\(images, \{ prompt: mentionText, model: response\.model, runContext \}\)/);
   assert.match(canvas, /runContext\.anchorNodeId/);
   assert.match(canvas, /runContext\?\.operation === "edit" \? "edited_from" : "derived_from"/);
   assert.match(canvas, /taskId: runContext\.runId/);
-  const h = writebackFixture();
+  const h = await writebackFixture(t);
   const apply = canvasCallback('applyAgentCanvasPatch', h.bindings);
-  h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
+  await h.storage.createCanvasProject(h.project('b'), h.model.normalizeDocument(null));
   h.core.replace(h.session.open('b'));
   const reply = h.model.createPrompt({ x: 1, y: 2 }, 'original canvas reply');
-  const result = apply({ version: 1, operations: [{ op: 'add_node', node: reply }] }, { canvasId: 'a' });
+  const result = await apply({ version: 1, operations: [{ op: 'add_node', node: reply }] }, { canvasId: 'a' });
+  await h.flushPersistence();
   assert.deepEqual(result.ids, [reply.id]);
   assert.equal(h.core.document().nodes.length, 0);
   assert.equal(h.storage.loadCanvasDocument('a').nodes[0].id, reply.id);

@@ -19,7 +19,7 @@ export default function CanvasProjectBriefEditor({
   referenceAssetIds?: readonly string[];
   referenceAssets?: readonly ProjectVisualReference[];
   onRemoveReference?: (assetId: string) => void;
-  onSave: (value: CreativeProjectBrief) => boolean;
+  onSave: (value: CreativeProjectBrief) => boolean | Promise<boolean>;
 }) {
   const [draft, setDraft] = useState<CreativeProjectBrief>(brief || EMPTY_BRIEF);
 
@@ -32,9 +32,9 @@ export default function CanvasProjectBriefEditor({
     || draft.deliverable !== (brief?.deliverable || "auto");
   const selectedDeliverable = CREATIVE_PROJECT_DELIVERABLE_OPTIONS.find((option) => option.value === (draft.deliverable || "auto"));
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSave(draft);
+    await onSave(draft);
   }
 
   return (

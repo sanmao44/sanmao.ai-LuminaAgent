@@ -21,7 +21,8 @@ export async function applyCanvasTaskRecordRecovery(input: {
   nodeId: string;
   taskId: string;
   imageParams: CanvasNodeParams;
-  updateDocument(updater: (document: CanvasDocument) => CanvasDocument): boolean | void;
+  updateDocument(updater: (document: CanvasDocument) => CanvasDocument): boolean | void | Promise<boolean | void>;
+  waitForPersistence?: () => Promise<boolean>;
   queueCheckpoint(): void;
 }): Promise<CanvasTaskRecordRecoveryResult> {
   const urls = [...new Set((input.record.imageUrls || [])
@@ -33,7 +34,7 @@ export async function applyCanvasTaskRecordRecovery(input: {
   if (status !== 'success' && status !== 'pending') return { kind: 'terminal' };
 
   let changed = false;
-  const saved = input.updateDocument((document) => {
+  const saved = await input.updateDocument((document) => {
     const next = recoverCanvasTask(document, {
       nodeId: input.nodeId,
       taskId: input.taskId,
@@ -45,6 +46,8 @@ export async function applyCanvasTaskRecordRecovery(input: {
     changed = next !== document;
     return next;
   });
+  const persisted = input.waitForPersistence ? await input.waitForPersistence() : true;
+  if (!persisted) return { kind: 'save_failed', taskState: status === 'success' ? 'recovered' : 'pending' };
   if (saved === false) return { kind: 'save_failed', taskState: status === 'success' ? 'recovered' : 'pending' };
   if (!changed) return { kind: 'stale' };
 

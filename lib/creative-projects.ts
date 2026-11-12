@@ -1,9 +1,13 @@
 import type { CanvasProject, CanvasSnapshot } from './canvas/types';
 import { MAX_CREATIVE_PROJECT_REFERENCE_ASSETS, normalizeCreativeProjectBrief, type CreativeProjectBrief } from '../packages/contracts/creative';
+import { publishCanvasStorageChange, transactCanvasStorage } from './client-history';
 
 export const CREATIVE_PROJECTS_KEY = 'sanmao.creative.projects.v1';
+export const CREATIVE_PROJECTS_STORAGE_KEY = 'meta:creative-projects';
 export const CREATIVE_PROJECT_MAX_VERSIONS = 50;
 export const CREATIVE_PROJECT_MAX_AUTOMATIC_VERSIONS = 8;
+
+let creativeProjectsCache: CreativeProject[] | null = null;
 
 export type CreativeProjectVersion = {
   id: string;
@@ -205,21 +209,36 @@ export function reconcileCreativeProjects(
 }
 
 export function readCreativeProjects() {
+  if (creativeProjectsCache) return normalizeCreativeProjects(creativeProjectsCache);
   if (typeof window === 'undefined') return [];
   try {
-    return normalizeCreativeProjects(JSON.parse(window.localStorage.getItem(CREATIVE_PROJECTS_KEY) || '[]'));
+    creativeProjectsCache = normalizeCreativeProjects(JSON.parse(window.localStorage.getItem(CREATIVE_PROJECTS_KEY) || '[]'));
+    return creativeProjectsCache;
   } catch {
+    creativeProjectsCache = [];
     return [];
   }
 }
 
-export function saveCreativeProjects(projects: readonly CreativeProject[]) {
-  if (typeof window === 'undefined') return false;
+/** Hydrate the synchronous read projection after the browser store has loaded. */
+export function hydrateCreativeProjects(value: unknown) {
+  creativeProjectsCache = normalizeCreativeProjects(value);
+  return normalizeCreativeProjects(creativeProjectsCache);
+}
+
+async function writeCreativeProjects(projects: readonly CreativeProject[]) {
+  if (typeof window === 'undefined') return { saved: false, quotaExceeded: false };
+  const normalized = normalizeCreativeProjects(projects);
   try {
-    window.localStorage.setItem(CREATIVE_PROJECTS_KEY, JSON.stringify(normalizeCreativeProjects(projects)));
-    return true;
-  } catch {
-    return false;
+    await transactCanvasStorage([CREATIVE_PROJECTS_STORAGE_KEY], () => ({
+      result: undefined,
+      mutations: [{ type: 'put', key: CREATIVE_PROJECTS_STORAGE_KEY, value: normalized }],
+    }));
+    creativeProjectsCache = normalized;
+    publishCanvasStorageChange();
+    return { saved: true, quotaExceeded: false };
+  } catch (error) {
+    return { saved: false, quotaExceeded: isStorageQuotaError(error) };
   }
 }
 
@@ -230,37 +249,17 @@ function isStorageQuotaError(error: unknown) {
   return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || code === 22 || code === 1014;
 }
 
-function writeCreativeProjects(projects: readonly CreativeProject[]) {
-  if (typeof window === 'undefined') return { saved: false, quotaExceeded: false };
-  try {
-    window.localStorage.setItem(CREATIVE_PROJECTS_KEY, JSON.stringify(normalizeCreativeProjects(projects)));
-    return { saved: true, quotaExceeded: false };
-  } catch (error) {
-    return { saved: false, quotaExceeded: isStorageQuotaError(error) };
-  }
+export async function saveCreativeProjects(projects: readonly CreativeProject[]) {
+  return (await writeCreativeProjects(projects)).saved;
 }
 
-export function saveCreativeProjectsWithQuotaRecovery(
+export async function saveCreativeProjectsWithQuotaRecovery(
   projects: readonly CreativeProject[],
   options: { quotaFailureObserved?: boolean } = {},
 ) {
   const original = normalizeCreativeProjects(projects);
-  let originalRaw: string | null = null;
-  try {
-    originalRaw = typeof window === 'undefined' ? null : window.localStorage.getItem(CREATIVE_PROJECTS_KEY);
-  } catch {
-    return { saved: false, projects: original, prunedAutomaticVersions: 0 };
-  }
-  let hasPrunedVersions = false;
-  const restoreOriginal = () => {
-    if (!hasPrunedVersions || typeof window === 'undefined') return;
-    try {
-      if (originalRaw === null) window.localStorage.removeItem(CREATIVE_PROJECTS_KEY);
-      else window.localStorage.setItem(CREATIVE_PROJECTS_KEY, originalRaw);
-    } catch { /* a concurrent writer may have consumed the freed quota */ }
-  };
   if (!options.quotaFailureObserved) {
-    const initial = writeCreativeProjects(original);
+    const initial = await writeCreativeProjects(original);
     if (initial.saved) return { saved: true, projects: original, prunedAutomaticVersions: 0 };
     if (!initial.quotaExceeded) return { saved: false, projects: original, prunedAutomaticVersions: 0 };
   }
@@ -270,16 +269,13 @@ export function saveCreativeProjectsWithQuotaRecovery(
   while (true) {
     const pruned = pruneOldestAutomaticCreativeProjectVersion(candidate);
     if (!pruned) {
-      restoreOriginal();
       return { saved: false, projects: original, prunedAutomaticVersions: 0 };
     }
     candidate = pruned.projects;
     prunedAutomaticVersions += 1;
-    hasPrunedVersions = true;
-    const attempt = writeCreativeProjects(candidate);
+    const attempt = await writeCreativeProjects(candidate);
     if (attempt.saved) return { saved: true, projects: candidate, prunedAutomaticVersions };
     if (!attempt.quotaExceeded) {
-      restoreOriginal();
       return { saved: false, projects: original, prunedAutomaticVersions: 0 };
     }
   }

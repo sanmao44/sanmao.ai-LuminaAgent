@@ -6,6 +6,7 @@ import {
 } from './client-history';
 import {
   clearCanvasDeletionTombstones,
+  ensureCanvasStorage,
   readCanvasDeletionTombstones,
   readCanvasWorkspace,
   restoreCanvasWorkspace,
@@ -16,7 +17,6 @@ import {
   emitWorkspaceMutation,
   getWorkspaceMutationGeneration,
   hasWorkspaceDraftPending,
-  withWorkspaceRestoreSuppressed,
   withWorkspaceRestoreSuppressedAsync,
 } from './workspace-events';
 import {
@@ -333,6 +333,7 @@ export function mergeWorkspaceSnapshots(
 }
 
 export async function collectWorkspaceSnapshot(updatedAt = Date.now()): Promise<WorkspaceSnapshot> {
+  await ensureCanvasStorage();
   const [gallery, chatSessions, assetIndex, assetCollections] = await Promise.all([
     assetRepository.listGallery(),
     listChatSessions(),
@@ -402,6 +403,7 @@ async function requestWorkspaceMetadataInternal(): Promise<WorkspaceMetadataResp
 }
 
 export async function restoreWorkspaceSnapshot(snapshot: WorkspaceSnapshot) {
+  await ensureCanvasStorage();
   // Explicit backup restore is replacement, even if the old editor is dirty.
   // Invalidate any automatic GET/PUT still awaiting a response.
   explicitRestoreGeneration += 1;
@@ -423,13 +425,13 @@ async function restoreWorkspaceSnapshotInternal(
     const currentRevision = readMeta()?.revision ?? 0;
     return currentRevision <= revision || currentRevision === allowRevisionRewindFrom;
   };
-  const restoreCanvas = () => withWorkspaceRestoreSuppressed(() => {
-    if (!restoreCanvasWorkspace(snapshot.canvas)) throw new Error('恢复画布失败');
-  });
+  const restoreCanvas = async (canWrite?: () => boolean) => {
+    if (!await restoreCanvasWorkspace(snapshot.canvas, canWrite)) throw new Error('恢复画布失败');
+  };
   return withWorkspaceRestoreSuppressedAsync(async () => {
     // Explicit backup replacement keeps its existing semantics. Automatic sync
     // must leave the editor's optimistic-save baseline untouched during I/O.
-    if (!automaticState) restoreCanvas();
+    if (!automaticState) await restoreCanvas();
     const canWrite = automaticState ? () => !localStateChanged(automaticState) && !stopped()
       && restoreGeneration === explicitRestoreGeneration && revisionIsRestorable() : undefined;
     await assetRepository.replaceGallery(snapshot.gallery, canWrite);
@@ -447,7 +449,14 @@ async function restoreWorkspaceSnapshotInternal(
       return false;
     }
     // No await between this guard, canvas replacement and baseline metadata.
-    if (automaticState) restoreCanvas();
+    if (automaticState) {
+      try {
+        await restoreCanvas(canWrite);
+      } catch {
+        preserveLocalChanges(automaticState);
+        return false;
+      }
+    }
     for (const key of WORKSPACE_PREFERENCE_KEYS) {
       try { window.localStorage.removeItem(key); } catch {}
     }
@@ -467,7 +476,7 @@ async function restoreWorkspaceSnapshotInternal(
       pending: changed,
       contentSignature: workspaceContentSignature(snapshot),
     });
-    if (!changed) clearCanvasDeletionTombstones();
+    if (!changed) await clearCanvasDeletionTombstones();
     acknowledgedMutationGeneration = generation;
     return !changed;
   });
@@ -495,7 +504,7 @@ async function saveWorkspace(snapshot: WorkspaceSnapshot, meta: WorkspaceMeta, g
     pending,
     contentSignature: workspaceContentSignature(snapshot),
   });
-  if (!pending) clearCanvasDeletionTombstones();
+  if (!pending) await clearCanvasDeletionTombstones();
   acknowledgedMutationGeneration = generation;
   return !pending;
 }
@@ -618,6 +627,7 @@ async function bootstrapWorkspaceInternal() {
 
 /** Automatic sync only replaces a stable, persisted local baseline. */
 async function reconcileWorkspace(onRestored?: () => void, stopped = () => false, onSyncing?: () => void) {
+  await ensureCanvasStorage();
   const meta = currentWorkspaceMeta();
   if (hasWorkspaceDraftPending() || stopped()) return false;
   const state = captureLocalState();

@@ -5,6 +5,36 @@ import { createTsRequire } from './ts-require.mjs';
 const load = createTsRequire(process.cwd());
 const projects = load('./lib/creative-projects');
 
+function storageHarness(t, failWrite = () => false) {
+  const values = new Map();
+  const previousWindow = globalThis.window;
+  globalThis.window = Object.assign(new EventTarget(), { localStorage: { getItem: () => null } });
+  t.after(() => {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  });
+  const moduleLoad = createTsRequire(process.cwd(), {
+    './client-history': {
+      publishCanvasStorageChange() {},
+      async transactCanvasStorage(keys, transition) {
+        const current = new Map(keys.flatMap((key) => values.has(key) ? [[key, values.get(key)]] : []));
+        const update = transition(current);
+        for (const mutation of update.mutations) {
+          if (mutation.type === 'put' && failWrite(mutation.key, mutation.value)) {
+            throw Object.assign(new Error('quota'), { name: 'QuotaExceededError' });
+          }
+        }
+        for (const mutation of update.mutations) {
+          if (mutation.type === 'delete') values.delete(mutation.key);
+          else values.set(mutation.key, mutation.value);
+        }
+        return update.result;
+      },
+    },
+  });
+  return { projects: moduleLoad('./lib/creative-projects'), values };
+}
+
 function canvas(id, name = id, projectId) {
   return { id, name, ...(projectId ? { projectId } : {}), createdAt: 10, updatedAt: 20 };
 }
@@ -219,7 +249,24 @@ test('quota pruning removes the oldest automatic checkpoint and preserves manual
   assert.equal(versions.find((version) => version.id === 'auto_task-2').parentVersionId, 'manual-1');
 });
 
-test('quota recovery retries with fewer automatic snapshots and keeps the newest checkpoint', () => {
+test('creative project versions persist in the IndexedDB adapter and read from its hydrated cache', async (t) => {
+  const h = storageHarness(t);
+  const base = h.projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const projectId = base.canvasProjects[0].projectId;
+  const versioned = h.projects.appendCreativeProjectVersion(base.creativeProjects, projectId, {
+    id: 'manual-1', canvasId: 'canvas-a', label: '手动版本', createdAt: 10, snapshot: snapshot('manual'),
+  });
+  assert.equal(await h.projects.saveCreativeProjects(versioned), true);
+  assert.equal(h.values.get(h.projects.CREATIVE_PROJECTS_STORAGE_KEY)[0].versions[0].snapshot.nodes[0].id, 'manual');
+  assert.deepEqual(h.projects.readCreativeProjects(), versioned);
+
+  h.projects.hydrateCreativeProjects([]);
+  assert.deepEqual(h.projects.readCreativeProjects(), []);
+  assert.equal(await h.projects.saveCreativeProjects(versioned), true);
+  assert.equal(h.values.has(h.projects.CREATIVE_PROJECTS_STORAGE_KEY), true);
+});
+
+test('quota recovery retries with fewer automatic snapshots and keeps the newest checkpoint', async (t) => {
   const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
   const projectId = base.canvasProjects[0].projectId;
   let current = projects.appendCreativeProjectVersion(base.creativeProjects, projectId, {
@@ -230,35 +277,19 @@ test('quota recovery retries with fewer automatic snapshots and keeps the newest
       canvasId: 'canvas-a', label: `自动 ${index}`, createdAt: 20 + index, snapshot: snapshot(`auto-${index}`),
     }, [`task-${index}`]);
   }
-  const previousWindow = globalThis.window;
-  const savedValues = new Map();
-  globalThis.window = { localStorage: {
-    getItem: (key) => savedValues.get(key) ?? null,
-    setItem: (key, value) => {
-      const normalized = projects.normalizeCreativeProjects(JSON.parse(value));
-      const automaticCount = normalized[0]?.versions?.filter((version) => version.id.startsWith('auto_')).length || 0;
-      if (key === projects.CREATIVE_PROJECTS_KEY && automaticCount > 2) {
-        throw Object.assign(new Error('full'), { name: 'QuotaExceededError' });
-      }
-      savedValues.set(key, String(value));
-    },
-  } };
-
-  try {
-    const result = projects.saveCreativeProjectsWithQuotaRecovery(current);
-    assert.equal(result.saved, true);
-    assert.equal(result.prunedAutomaticVersions, 1);
-    const versions = result.projects[0].versions;
-    assert.equal(versions.some((version) => version.id === 'manual-1'), true);
-    assert.equal(versions.some((version) => version.id === 'auto_task-1'), false);
-    assert.equal(versions.at(-1).id, 'auto_task-3');
-  } finally {
-    if (previousWindow === undefined) delete globalThis.window;
-    else globalThis.window = previousWindow;
-  }
+  const h = storageHarness(t, (key, value) => key === 'meta:creative-projects'
+    && value[0]?.versions?.filter((version) => version.id.startsWith('auto_')).length > 2);
+  const result = await h.projects.saveCreativeProjectsWithQuotaRecovery(current);
+  assert.equal(result.saved, true);
+  assert.equal(result.prunedAutomaticVersions, 1);
+  const versions = result.projects[0].versions;
+  assert.equal(versions.some((version) => version.id === 'manual-1'), true);
+  assert.equal(versions.some((version) => version.id === 'auto_task-1'), false);
+  assert.equal(versions.at(-1).id, 'auto_task-3');
+  assert.equal(h.projects.readCreativeProjects()[0].versions.length, 3);
 });
 
-test('failed quota recovery restores the original version history after pruning attempts', () => {
+test('failed quota recovery leaves the IndexedDB value and in-memory projection unchanged', async (t) => {
   const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
   const projectId = base.canvasProjects[0].projectId;
   let stored = projects.appendCreativeProjectVersion(base.creativeProjects, projectId, {
@@ -269,32 +300,18 @@ test('failed quota recovery restores the original version history after pruning 
       canvasId: 'canvas-a', label: `自动 ${index}`, createdAt: 20 + index, snapshot: snapshot(`auto-${index}`),
     }, [`task-${index}`]);
   }
-  const originalRaw = JSON.stringify(stored);
   const current = projects.appendAutomaticCreativeProjectVersion(stored, projectId, {
     canvasId: 'canvas-a', label: '较大的新快照', createdAt: 30, snapshot: snapshot('cannot-fit'),
   }, ['task-3']);
-  const previousWindow = globalThis.window;
-  const savedValues = new Map([[projects.CREATIVE_PROJECTS_KEY, originalRaw]]);
-  globalThis.window = { localStorage: {
-    getItem: (key) => savedValues.get(key) ?? null,
-    setItem: (key, value) => {
-      if (key === projects.CREATIVE_PROJECTS_KEY && String(value).includes('cannot-fit')) {
-        throw Object.assign(new Error('still full'), { name: 'QuotaExceededError' });
-      }
-      savedValues.set(key, String(value));
-    },
-    removeItem: (key) => savedValues.delete(key),
-  } };
-
-  try {
-    const result = projects.saveCreativeProjectsWithQuotaRecovery(current);
-    assert.equal(result.saved, false);
-    assert.equal(result.prunedAutomaticVersions, 0);
-    assert.equal(savedValues.get(projects.CREATIVE_PROJECTS_KEY), originalRaw);
-  } finally {
-    if (previousWindow === undefined) delete globalThis.window;
-    else globalThis.window = previousWindow;
-  }
+  const h = storageHarness(t, (key, value) => key === 'meta:creative-projects'
+    && value[0]?.versions?.some((version) => version.snapshot.nodes[0].id === 'cannot-fit'));
+  await h.projects.saveCreativeProjects(stored);
+  const originalStored = h.values.get(h.projects.CREATIVE_PROJECTS_STORAGE_KEY);
+  const result = await h.projects.saveCreativeProjectsWithQuotaRecovery(current);
+  assert.equal(result.saved, false);
+  assert.equal(result.prunedAutomaticVersions, 0);
+  assert.deepEqual(h.values.get(h.projects.CREATIVE_PROJECTS_STORAGE_KEY), originalStored);
+  assert.deepEqual(h.projects.readCreativeProjects(), stored);
 });
 
 test('project package import keeps automatic checkpoints eligible for automatic retention', () => {

@@ -10,7 +10,9 @@ function harness(t) {
   let closed = 0;
   const db = {
     close() { closed += 1; },
-    transaction(name) {
+    objectStoreNames: { contains: () => false },
+    createObjectStore() { return { createIndex() {} }; },
+    transaction(name, mode) {
       const requests = [];
       const operations = [];
       const request = (operation, value) => {
@@ -20,9 +22,10 @@ function harness(t) {
         return pending;
       };
       const tx = {
-        name, requests, operations, error: null,
+        name, mode, requests, operations, error: null,
         objectStore: () => ({
-          put: (value) => request('put', value), delete: (id) => request('delete', id),
+          get: (key) => request('get', key), getAll: () => request('getAll'),
+          put: (value) => request('put', value), delete: (key) => request('delete', key),
           clear: () => request('clear'), count: () => request('count'),
         }),
         abort() { queueMicrotask(() => tx.onabort?.()); },
@@ -33,7 +36,7 @@ function harness(t) {
   };
   globalThis.indexedDB = { open() {
     const request = { result: db };
-    queueMicrotask(() => request.onsuccess());
+    queueMicrotask(() => { request.onupgradeneeded?.(); request.onsuccess(); });
     return request;
   } };
   t.after(() => { if (previous === undefined) delete globalThis.indexedDB; else globalThis.indexedDB = previous; });
@@ -108,4 +111,80 @@ test('a rejected restore guard aborts and rejects instead of hanging', async (t)
   h.transactions[0].requests[0].onsuccess();
   await rejected;
   assert.equal(h.mutations, 0);
+});
+
+test('Canvas record compare-and-swap reads and writes in one transaction and waits for commit', async (t) => {
+  const h = harness(t);
+  let settled = false;
+  const saving = h.history.transactCanvasStorage(['document:a', 'project-index'], (current) => {
+    assert.deepEqual(current.get('document:a'), { revision: 4 });
+    assert.deepEqual(current.get('project-index'), ['a']);
+    return {
+      result: true,
+      mutations: [
+        { type: 'put', key: 'document:a', value: { revision: 5 } },
+        { type: 'put', key: 'project-index', value: ['a', 'b'] },
+      ],
+    };
+  }).then((result) => { settled = true; return result; });
+  await new Promise((resolve) => setImmediate(resolve));
+  const tx = h.transactions[0];
+  assert.equal(tx.name, 'canvas-state');
+  assert.equal(tx.mode, 'readwrite');
+  assert.deepEqual(tx.operations, [
+    { operation: 'get', value: 'document:a' },
+    { operation: 'get', value: 'project-index' },
+  ]);
+  tx.requests[0].result = { key: 'document:a', value: { revision: 4 } };
+  tx.requests[1].result = { key: 'project-index', value: ['a'] };
+  tx.requests.forEach((request) => request.onsuccess());
+  assert.deepEqual(tx.operations.slice(2), [
+    { operation: 'put', value: { key: 'document:a', value: { revision: 5 } } },
+    { operation: 'put', value: { key: 'project-index', value: ['a', 'b'] } },
+  ]);
+  assert.equal(settled, false);
+  tx.oncomplete();
+  assert.equal(await saving, true);
+  assert.equal(settled, true);
+  assert.equal(h.closed, 1);
+});
+
+test('Canvas record listing filters prefixes after the read transaction commits', async (t) => {
+  const h = harness(t);
+  let settled = false;
+  const listing = h.history.listCanvasStorageEntries('document:').then((entries) => { settled = true; return entries; });
+  await new Promise((resolve) => setImmediate(resolve));
+  const tx = h.transactions[0];
+  assert.equal(tx.name, 'canvas-state');
+  tx.requests[0].result = [
+    { key: 'document:a', value: { id: 'a' } },
+    { key: 'project-index', value: ['a'] },
+    { key: 'document:b', value: { id: 'b' } },
+  ];
+  tx.requests[0].onsuccess();
+  assert.equal(settled, false);
+  tx.oncomplete();
+  assert.deepEqual(await listing, [
+    { key: 'document:a', value: { id: 'a' } },
+    { key: 'document:b', value: { id: 'b' } },
+  ]);
+  assert.equal(h.closed, 1);
+});
+
+test('Canvas transaction rejects quota abort after requests succeeded', async (t) => {
+  const h = harness(t);
+  const saving = h.history.transactCanvasStorage(['document:a'], () => ({
+    result: 'saved',
+    mutations: [{ type: 'put', key: 'document:a', value: { large: true } }],
+  }));
+  const rejected = assert.rejects(saving, /quota/i);
+  await new Promise((resolve) => setImmediate(resolve));
+  const tx = h.transactions[0];
+  tx.requests[0].onsuccess();
+  tx.requests[1].error = Object.assign(new Error('quota'), { name: 'QuotaExceededError' });
+  tx.error = tx.requests[1].error;
+  tx.onerror();
+  tx.onabort();
+  await rejected;
+  assert.equal(h.closed, 1);
 });

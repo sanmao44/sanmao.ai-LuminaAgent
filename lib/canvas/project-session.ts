@@ -70,6 +70,7 @@ function mergeCanvasDocuments(local: CanvasDocument, remote: CanvasDocument, bas
 export class CanvasProjectSession {
   activeId = '';
   private persisted: CanvasDocument | null = null;
+  private capturedWrites = new Map<string, { document: CanvasDocument; promise: Promise<boolean> }>();
 
   /** Bind late media/task callbacks to their originating project, not the displayed tab. */
   capture(view: {
@@ -80,7 +81,7 @@ export class CanvasProjectSession {
     onFailure(): void;
   }, projectId = this.activeId) {
     const isActive = () => view.mounted() && this.activeId === projectId;
-    const readDocument = () => isActive() ? view.document() : loadCanvasDocument(projectId);
+    const readDocument = () => isActive() ? view.document() : this.capturedWrites.get(projectId)?.document || loadCanvasDocument(projectId);
     const apply = (updater: (document: CanvasDocument) => CanvasDocument, record: boolean) => {
       if (!projectId || !readCanvasProjects().some((project) => project.id === projectId)) return false;
       if (isActive()) {
@@ -89,14 +90,20 @@ export class CanvasProjectSession {
       }
       // Apply to the latest persisted document via the existing Core, preserving
       // edits from other pages. No stale whole-document snapshot is written back.
-      const previous = loadCanvasDocument(projectId);
+      const pending = this.capturedWrites.get(projectId);
+      const previous = pending?.document || loadCanvasDocument(projectId);
       const core = new CanvasCore(previous);
       const result = core.apply({ id: 'background-result', label: 'canvas.background-result', apply: updater });
       if (!result.changed) return true;
-      if (!saveCanvasDocument(projectId, result.document, previous)) {
-        view.onFailure();
-        return false;
-      }
+      const priorWrite = pending?.promise || Promise.resolve(true);
+      const write = { document: result.document, promise: Promise.resolve(false) };
+      write.promise = priorWrite.then(async () => {
+        const saved = await saveCanvasDocument(projectId, result.document, previous);
+        if (this.capturedWrites.get(projectId) === write) this.capturedWrites.delete(projectId);
+        if (!saved) view.onFailure();
+        return saved;
+      });
+      this.capturedWrites.set(projectId, write);
       return true;
     };
     return { projectId, isActive, readDocument,
@@ -109,16 +116,21 @@ export class CanvasProjectSession {
     return Boolean(this.activeId && this.persisted && documentSignature(document) !== documentSignature(this.persisted));
   }
 
+  /** Wait for a captured background write before reporting a durable result. */
+  waitForPersistence(projectId = this.activeId) {
+    return this.capturedWrites.get(projectId)?.promise || Promise.resolve(true);
+  }
+
   open(id: string) {
     this.activeId = id;
     this.persisted = loadCanvasDocument(id);
-    saveCanvasActiveProject(id);
-    return this.persisted;
+    void Promise.resolve(saveCanvasActiveProject(id)).catch(() => {});
+    return this.capturedWrites.get(id)?.document || this.persisted;
   }
 
-  save(document: CanvasDocument) {
+  async save(document: CanvasDocument) {
     if (!this.activeId || !this.persisted) return true;
-    if (!saveCanvasDocument(this.activeId, document, this.persisted)) return false;
+    if (!await saveCanvasDocument(this.activeId, document, this.persisted)) return false;
     this.persisted = normalizeDocument(document);
     return true;
   }
@@ -133,9 +145,9 @@ export class CanvasProjectSession {
    * against that freshly read document. Returning the merged document lets the
    * Core projection adopt the rows retained from the other tab as well.
    */
-  saveRecoveringConflict(document: CanvasDocument) {
+  async saveRecoveringConflict(document: CanvasDocument) {
     const normalized = normalizeDocument(document);
-    if (this.save(normalized)) return { saved: true, document: normalized, rebased: false };
+    if (await this.save(normalized)) return { saved: true, document: normalized, rebased: false };
     if (!this.activeId || !readCanvasProjects().some((project) => project.id === this.activeId)) {
       return { saved: false, document: normalizeDocument(document), rebased: false };
     }
@@ -147,15 +159,15 @@ export class CanvasProjectSession {
     // caused by session timing rather than a concurrent document write. The
     // storage adapter still rejects quota and metadata failures.
     const merged = mergeCanvasDocuments(normalized, latest, baseline);
-    if (!saveCanvasDocument(this.activeId, merged, latest)) {
+    if (!await saveCanvasDocument(this.activeId, merged, latest)) {
       return { saved: false, document: normalized, rebased: false };
     }
     this.persisted = merged;
     return { saved: true, document: merged, rebased: true };
   }
 
-  refresh(document: CanvasDocument) {
-    const storage = ensureCanvasStorage();
+  async refresh(document: CanvasDocument) {
+    const storage = await ensureCanvasStorage();
     const activeId = retainedCanvasProjectId(storage.projects, this.activeId, storage.activeId)!;
     // A refresh must not replace an editing document, nor reset its undo history.
     if (this.hasUnsavedChanges(document)) return { projects: storage.projects, activeId: this.activeId, migrated: storage.migrated };

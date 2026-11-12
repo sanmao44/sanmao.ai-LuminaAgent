@@ -56,8 +56,30 @@ function harness(t, { remote = snapshot(), revision = 1, realCanvas = false } = 
   let localGallery = [];
   let galleryRestore;
   let galleryRead;
+  let canvasHydration;
+  let canvasRestore;
   let fetchHook;
   let canvasStorage;
+  const canvasRecords = new Map();
+  const clientHistoryMock = {
+    publishCanvasStorageChange() {},
+    DEFAULT_ASSET_COLLECTIONS: [],
+    listChatSessions: async () => [],
+    replaceChatSessions: async () => events.emitWorkspaceChange(),
+    listCanvasStorageEntries: async (prefix = '') => [...canvasRecords]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, value]) => ({ key, value: copy(value) })),
+    transactCanvasStorage: async (keys, transition) => {
+      await Promise.resolve();
+      const current = new Map(keys.flatMap((key) => canvasRecords.has(key) ? [[key, copy(canvasRecords.get(key))]] : []));
+      const update = transition(current);
+      for (const mutation of update.mutations) {
+        if (mutation.type === 'delete') canvasRecords.delete(mutation.key);
+        else canvasRecords.set(mutation.key, copy(mutation.value));
+      }
+      return update.result;
+    },
+  };
   const window = Object.assign(new EventTarget(), {
     localStorage: new MemoryStorage(stored),
     sessionStorage: new MemoryStorage(),
@@ -67,9 +89,15 @@ function harness(t, { remote = snapshot(), revision = 1, realCanvas = false } = 
     clearInterval: (id) => intervals.delete(id),
   });
   t.mock.method(Date, 'now', () => 1000);
-  const previousGlobals = { window: globalThis.window, document: globalThis.document, fetch: globalThis.fetch };
+  const previousGlobals = {
+    window: globalThis.window,
+    document: globalThis.document,
+    fetch: globalThis.fetch,
+    BroadcastChannel: globalThis.BroadcastChannel,
+  };
   globalThis.window = window;
   globalThis.document = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+  globalThis.BroadcastChannel = undefined;
   t.after(() => {
     stop?.();
     for (const [key, value] of Object.entries(previousGlobals)) {
@@ -78,17 +106,21 @@ function harness(t, { remote = snapshot(), revision = 1, realCanvas = false } = 
     }
   });
   const load = createTsRequire(path.resolve(lib), {
-    './client-history': {
-      DEFAULT_ASSET_COLLECTIONS: [], listChatSessions: async () => [],
-      replaceChatSessions: async () => events.emitWorkspaceChange(),
-    },
+    './client-history': clientHistoryMock,
+    '../client-history': clientHistoryMock,
     './canvas/storage': {
       clearCanvasDeletionTombstones: () => realCanvas ? canvasStorage.clearCanvasDeletionTombstones() : true,
+      ensureCanvasStorage: async () => {
+        await canvasHydration?.();
+        return realCanvas ? canvasStorage.ensureCanvasStorage() : undefined;
+      },
       readCanvasDeletionTombstones: () => realCanvas ? canvasStorage.readCanvasDeletionTombstones() : {},
       readCanvasWorkspace: () => realCanvas ? canvasStorage.readCanvasWorkspace() : copy(localCanvas),
-      restoreCanvasWorkspace: (canvas) => {
+      restoreCanvasWorkspace: async (canvas, canWrite) => {
         restoreCount += 1;
-        if (realCanvas) return canvasStorage.restoreCanvasWorkspace(canvas);
+        if (canvasRestore) await canvasRestore();
+        if (canWrite && !canWrite()) return false;
+        if (realCanvas) return canvasStorage.restoreCanvasWorkspace(canvas, canWrite);
         localCanvas = copy(canvas);
         events.emitWorkspaceChange();
         return true;
@@ -139,10 +171,18 @@ function harness(t, { remote = snapshot(), revision = 1, realCanvas = false } = 
     get meta() { return JSON.parse(stored.get(metaKey) || 'null'); },
     seedBaseline(value = remoteWorkspace, baselineRevision = remoteRevision, pending = false) {
       localCanvas = copy(value.canvas);
-      if (realCanvas) assert.equal(canvasStorage.restoreCanvasWorkspace(value.canvas), true);
-      localGallery = copy(value.gallery);
-      const baseline = realCanvas ? { ...value, canvas: canvasStorage.readCanvasWorkspace() } : value;
-      stored.set(metaKey, JSON.stringify({ clientId: 'local', localUpdatedAt: value.updatedAt, serverUpdatedAt: value.updatedAt, revision: baselineRevision, pending, contentSignature: format.workspaceContentSignature(baseline) }));
+      const finish = () => {
+        localGallery = copy(value.gallery);
+        const baseline = realCanvas ? { ...value, canvas: canvasStorage.readCanvasWorkspace() } : value;
+        stored.set(metaKey, JSON.stringify({ clientId: 'local', localUpdatedAt: value.updatedAt, serverUpdatedAt: value.updatedAt, revision: baselineRevision, pending, contentSignature: format.workspaceContentSignature(baseline) }));
+      };
+      if (realCanvas) return canvasStorage.ensureCanvasStorage()
+        .then(() => events.withWorkspaceRestoreSuppressedAsync(() => canvasStorage.restoreCanvasWorkspace(value.canvas)))
+        .then((saved) => {
+          assert.equal(saved, true);
+          finish();
+        });
+      finish();
     },
     writeMeta(value) { stored.set(metaKey, JSON.stringify(value)); },
     mutateCanvas(signal = true) {
@@ -155,6 +195,8 @@ function harness(t, { remote = snapshot(), revision = 1, realCanvas = false } = 
     preferenceWithoutEvent() { stored.set('sanmao-theme', 'dark'); },
     setRemote(value, nextRevision) { remoteWorkspace = copy(value); remoteRevision = nextRevision; },
     setFetchHook(value) { fetchHook = value; },
+    setCanvasHydration(value) { canvasHydration = value; },
+    setCanvasRestore(value) { canvasRestore = value; },
     setGalleryRestore(value) { galleryRestore = value; },
     setGalleryRead(value) { galleryRead = value; },
     get gallery() { return copy(localGallery); },
@@ -440,7 +482,7 @@ test('a fresh canvas created during LAN startup does not replace the saved works
   }];
   const h = harness(t, { remote, revision: 3, realCanvas: true });
 
-  h.canvasStorage.ensureCanvasStorage();
+  await h.canvasStorage.ensureCanvasStorage();
   assert.equal(h.events.getWorkspaceMutationGeneration(), 0, 'initial empty canvas setup is not a user edit');
 
   assert.deepEqual(await h.workspace.bootstrapWorkspace(), { offline: false });
@@ -457,7 +499,7 @@ test('an old LAN placeholder pending at revision zero is recovered from the serv
     data: { kind: 'image', url: '/api/storage/file?name=shared.png' },
   }];
   const h = harness(t, { remote, revision: 3, realCanvas: true });
-  h.canvasStorage.ensureCanvasStorage();
+  await h.canvasStorage.ensureCanvasStorage();
   h.writeMeta({ clientId: 'old-browser', localUpdatedAt: 150, serverUpdatedAt: 0, revision: 0, pending: true });
 
   assert.deepEqual(await h.workspace.bootstrapWorkspace(), { offline: false });
@@ -475,7 +517,7 @@ test('default canvas UI settings do not block recovery of a pending LAN placehol
     data: { kind: 'image', url: '/api/storage/file?name=shared.png' },
   }];
   const h = harness(t, { remote, revision: 3, realCanvas: true });
-  h.canvasStorage.ensureCanvasStorage();
+  await h.canvasStorage.ensureCanvasStorage();
   window.localStorage.setItem('sanmao.canvas.settings', JSON.stringify({
     connectionStyle: 'curve', edgesVisible: true, snapEnabled: true, depthQuality: 'medium',
   }));
@@ -496,7 +538,7 @@ test('ordinary browser preferences do not block recovery of a pending LAN placeh
     data: { kind: 'image', url: '/api/storage/file?name=shared.png' },
   }];
   const h = harness(t, { remote, revision: 3, realCanvas: true });
-  h.canvasStorage.ensureCanvasStorage();
+  await h.canvasStorage.ensureCanvasStorage();
   window.localStorage.setItem('sanmao-theme', 'dark');
   window.localStorage.setItem('sanmao-generate-settings', JSON.stringify({ modelId: 'auto', ratio: '16:9' }));
   window.localStorage.setItem('sanmao-model-preferences', JSON.stringify({ favorites: ['image-model'] }));
@@ -534,7 +576,7 @@ test('a stale LAN browser rebases its newer canvas onto the shared workspace wit
 test('project timestamps choose the newer same-id canvas during a LAN rebase', async (t) => {
   const base = snapshot('shared-project', 200);
   const h = harness(t, { remote: base, revision: 1 });
-  h.seedBaseline(base, 1);
+  await h.seedBaseline(base, 1);
   h.canvas.projects[0].updatedAt = 400;
   h.canvas.documents['shared-project'].nodes = [{
     id: 'shared-image', type: 'media', x: 12, y: 18,
@@ -563,7 +605,7 @@ test('a LAN rebase does not resurrect a locally deleted image when the remote pr
     { id: 'kept-image', type: 'media', x: 360, y: 0, data: { kind: 'image', url: '/stored/kept.png' } },
   ];
   const h = harness(t, { remote: base, revision: 1, realCanvas: true });
-  h.seedBaseline(base, 1);
+  await h.seedBaseline(base, 1);
   const baselineDocument = h.canvasStorage.loadCanvasDocument('shared-project');
   const localDocument = {
     ...baselineDocument,
@@ -572,7 +614,7 @@ test('a LAN rebase does not resurrect a locally deleted image when the remote pr
       { id: 'local-image', type: 'media', x: 720, y: 0, data: { kind: 'image', url: '/stored/local.png' } },
     ].filter(Boolean),
   };
-  assert.equal(h.canvasStorage.saveCanvasDocument('shared-project', localDocument, baselineDocument), true);
+  assert.equal(await h.canvasStorage.saveCanvasDocument('shared-project', localDocument, baselineDocument), true);
 
   const remote = copy(base);
   remote.canvas.projects[0].updatedAt = 1200;
@@ -620,9 +662,23 @@ test('local mutation during snapshot collection aborts a mixed PUT', async (t) =
   assert.equal(h.meta.pending, true);
 });
 
+test('workspace bootstrap waits for Canvas storage hydration before reading or syncing', async (t) => {
+  const h = harness(t);
+  const hydration = deferred();
+  h.setCanvasHydration(() => hydration.promise);
+
+  const boot = h.workspace.bootstrapWorkspace();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(h.requests, []);
+
+  hydration.resolve();
+  await boot;
+  assert.ok(h.requests.length > 0);
+});
+
 test('async restore suppresses repository echoes but preserves real Core and persisted canvas edits', async (t) => {
   const h = harness(t);
-  h.seedBaseline(snapshot(), 1);
+  await h.seedBaseline(snapshot(), 1);
   h.setRemote(snapshot('remote-new', 200), 2);
   const history = deferred();
   let restoringHistory = false;
@@ -663,14 +719,31 @@ test('async restore completion never rolls back a baseline advanced by another t
   assert.equal(h.canvas.activeId, 'old');
 });
 
+test('automatic Canvas restore rechecks local edits when the storage transaction commits', async (t) => {
+  const h = harness(t, { remote: snapshot('remote', 200), revision: 2 });
+  const transaction = deferred();
+  let restoring = false;
+  h.setCanvasRestore(() => { restoring = true; return transaction.promise; });
+
+  const boot = h.workspace.bootstrapWorkspace();
+  await waitFor(() => restoring);
+  h.mutateCanvas();
+  transaction.resolve();
+  await boot;
+
+  assert.equal(h.canvas.activeId, 'new');
+  assert.equal(h.canvas.projects.some((project) => project.id === 'remote'), false);
+  assert.equal(h.meta.pending, true);
+});
+
 test('images generated during automatic async restore save against the unchanged baseline and survive reload', async (t) => {
   const h = harness(t, { realCanvas: true });
-  h.seedBaseline(snapshot(), 1);
+  await h.seedBaseline(snapshot(), 1);
   const { CanvasProjectSession } = h.load('./canvas/project-session');
   const { CanvasCore } = h.load('../packages/canvas-core/runtime');
   const { normalizeDocument } = h.load('./canvas/model');
   const session = new CanvasProjectSession();
-  const core = new CanvasCore(session.open('old'));
+  const core = new CanvasCore(await session.open('old'));
   const editor = h.events.registerWorkspaceDraft();
   const unsubscribe = core.subscribe(() => {
     if (session.hasUnsavedChanges(core.document())) editor.markDirty();
@@ -697,11 +770,11 @@ test('images generated during automatic async restore save against the unchanged
   assert.equal(h.restoreCount, 0);
   assert.equal(h.restoredCallbacks, 0);
   assert.equal(h.meta.revision, 1);
-  assert.equal(session.save(core.document()), true);
+  assert.equal(await session.save(core.document()), true);
   editor.markSaved();
   assert.equal(h.events.hasWorkspaceDraftPending(), false);
   const reloaded = new CanvasProjectSession();
-  assert.deepEqual(reloaded.open('old').nodes.map((node) => node.id), ['one', 'two', 'three']);
+  assert.deepEqual((await reloaded.open('old')).nodes.map((node) => node.id), ['one', 'two', 'three']);
   assert.equal(h.meta.pending, true);
   h.runDebounce();
   await waitFor(() => h.statuses.at(-1) === 'synced');
