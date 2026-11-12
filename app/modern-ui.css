@@ -191,6 +191,7 @@ input[type="checkbox"], input[type="radio"], progress { accent-color: var(--mode
 .topbar-task-status:hover, .topbar-task-status.active { border-color: var(--modern-accent); background: var(--modern-accent-soft); color: var(--modern-accent-ink); transform: none; }
 .theme-toggle { width: 38px; padding: 0; justify-content: center; border-color: var(--modern-line); background: var(--modern-panel); }
 .theme-toggle span { display: none; }
+.mobile-sidebar-toggle.ui-control--icon { width: 44px; }
 
 /* Super Canvas remains the high-salience product differentiator. */
 .super-canvas-entry { border-color: color-mix(in srgb, var(--modern-accent) 72%, var(--modern-line)); background: linear-gradient(135deg, var(--modern-canvas-from), var(--modern-canvas-to)); color: #fff; box-shadow: 0 8px 22px color-mix(in srgb, var(--modern-accent) 27%, transparent), inset 0 1px 0 rgb(255 255 255 / 26%); }
