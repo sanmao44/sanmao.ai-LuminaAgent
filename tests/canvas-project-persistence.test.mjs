@@ -254,6 +254,69 @@ test('quota failure while creating a canvas does not publish an empty replacemen
   assert.match(storage.describeCanvasSaveFailure(), /存储已满/);
 });
 
+test('canvas autosave prunes old automatic checkpoints on quota failure and retries without losing current work', () => {
+  const { storage, model, empty, imageDocument } = fixture();
+  const creative = createTsRequire(path.join(process.cwd(), 'lib'))('./creative-projects');
+  const projectId = storage.readCanvasProjects()[0].projectId;
+  let versions = creative.appendCreativeProjectVersion(storage.readCanvasWorkspace().creativeProjects, projectId, {
+    id: 'manual-1', canvasId: 'a', label: '手动版本', createdAt: 10, snapshot: model.snapshot(empty),
+  });
+  for (let index = 1; index <= 3; index += 1) {
+    versions = creative.appendAutomaticCreativeProjectVersion(versions, projectId, {
+      canvasId: 'a', label: `自动 ${index}`, createdAt: 20 + index, snapshot: model.snapshot(imageDocument(`auto-${index}`)),
+    }, [`task-${index}`]);
+  }
+  assert.equal(creative.saveCreativeProjects(versions), true);
+
+  const setItem = window.localStorage.setItem;
+  window.localStorage.setItem = function (key, value) {
+    const storedProjects = JSON.parse(window.localStorage.getItem(creative.CREATIVE_PROJECTS_KEY) || '[]');
+    const automaticCount = storedProjects[0]?.versions?.filter((version) => version.id.startsWith('auto_')).length || 0;
+    if (key === `${storage.CANVAS_PROJECT_PREFIX}a` && automaticCount > 2) {
+      throw Object.assign(new Error('full'), { name: 'QuotaExceededError' });
+    }
+    setItem.call(this, key, value);
+  };
+
+  assert.equal(storage.saveCanvasDocument('a', imageDocument('saved-after-recovery'), empty), true);
+  assert.deepEqual(storage.loadCanvasDocument('a').nodes.map((node) => node.id), ['saved-after-recovery']);
+  const savedVersions = storage.readCanvasWorkspace().creativeProjects[0].versions;
+  assert.equal(savedVersions.some((version) => version.id === 'manual-1'), true);
+  assert.equal(savedVersions.some((version) => version.id === 'auto_task-1'), false);
+  assert.equal(savedVersions.some((version) => version.id === 'auto_task-3'), true);
+  assert.equal(storage.takeCanvasStorageAutomaticCheckpointCleanupCount(), 1);
+});
+
+test('canvas autosave restores automatic checkpoints when quota recovery cannot save the document', () => {
+  const { storage, model, empty, imageDocument } = fixture();
+  const creative = createTsRequire(path.join(process.cwd(), 'lib'))('./creative-projects');
+  const projectId = storage.readCanvasProjects()[0].projectId;
+  let versions = creative.appendCreativeProjectVersion(storage.readCanvasWorkspace().creativeProjects, projectId, {
+    id: 'manual-1', canvasId: 'a', label: '手动版本', createdAt: 10, snapshot: model.snapshot(empty),
+  });
+  for (let index = 1; index <= 3; index += 1) {
+    versions = creative.appendAutomaticCreativeProjectVersion(versions, projectId, {
+      canvasId: 'a', label: `自动 ${index}`, createdAt: 20 + index, snapshot: model.snapshot(imageDocument(`auto-${index}`)),
+    }, [`task-${index}`]);
+  }
+  assert.equal(creative.saveCreativeProjects(versions), true);
+
+  const setItem = window.localStorage.setItem;
+  window.localStorage.setItem = function (key, value) {
+    if (key === `${storage.CANVAS_PROJECT_PREFIX}a`) {
+      throw Object.assign(new Error('document too large'), { name: 'QuotaExceededError' });
+    }
+    setItem.call(this, key, value);
+  };
+
+  assert.equal(storage.saveCanvasDocument('a', imageDocument('unsaved'), empty), false);
+  assert.deepEqual(storage.loadCanvasDocument('a'), empty);
+  const savedVersions = storage.readCanvasWorkspace().creativeProjects[0].versions;
+  assert.equal(savedVersions.filter((version) => version.id.startsWith('auto_')).length, 3);
+  assert.equal(savedVersions.some((version) => version.id === 'manual-1'), true);
+  assert.equal(storage.takeCanvasStorageAutomaticCheckpointCleanupCount(), 0);
+});
+
 test('canvas persistence refuses inline images and preserves the last saved document', () => {
   const { storage, model, empty, imageDocument } = fixture();
   const previous = imageDocument('already-saved');

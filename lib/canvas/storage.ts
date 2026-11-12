@@ -8,6 +8,7 @@ import {
   normalizeCreativeProjects,
   readCreativeProjects,
   reconcileCreativeProjects,
+  saveCreativeProjectsWithQuotaRecovery,
 } from '../creative-projects';
 
 export const CANVAS_PROJECTS_KEY = 'sanmao.canvas.projects';
@@ -40,6 +41,13 @@ function readJson<T>(key: string, fallback: T): T {
 let storageQuotaExceeded = false;
 let storageConflict = false;
 let storageInlineImagesPending = false;
+let storagePrunedAutomaticCheckpoints = 0;
+
+export function takeCanvasStorageAutomaticCheckpointCleanupCount() {
+  const count = storagePrunedAutomaticCheckpoints;
+  storagePrunedAutomaticCheckpoints = 0;
+  return count;
+}
 
 function isQuotaExceededError(error: unknown) {
   if (!error || typeof error !== 'object') return false;
@@ -386,14 +394,28 @@ export function saveCanvasDocument(id: string, document: CanvasDocument, expecte
   const tombstones = expectedDocument
     ? updateDeletionTombstones(readCanvasDeletionTombstones(), id, normalizeDocument(expectedDocument), normalized)
     : readCanvasDeletionTombstones();
-  const ok = persistProjectIdentity(
-    projects.map((project) => project.id === id ? { ...project, updatedAt: Date.now() } : project),
-    readCreativeProjects(),
-    new Map([
-      [key, JSON.stringify(normalized)],
-      [CANVAS_DELETION_TOMBSTONES_KEY, JSON.stringify(tombstones)],
-    ]),
-  ).saved;
+  const updatedProjects = projects.map((project) => project.id === id ? { ...project, updatedAt: Date.now() } : project);
+  const entries = new Map([
+    [key, JSON.stringify(normalized)],
+    [CANVAS_DELETION_TOMBSTONES_KEY, JSON.stringify(tombstones)],
+  ]);
+  let identity = persistProjectIdentity(updatedProjects, readCreativeProjects(), entries);
+  if (!identity.saved && storageQuotaExceeded) {
+    const creativeProjectsBeforePruning = identity.creativeProjects;
+    const recovered = saveCreativeProjectsWithQuotaRecovery(identity.creativeProjects, { quotaFailureObserved: true });
+    if (recovered.saved && recovered.prunedAutomaticVersions) {
+      identity = persistProjectIdentity(updatedProjects, recovered.projects, entries);
+      if (identity.saved) {
+        storagePrunedAutomaticCheckpoints += recovered.prunedAutomaticVersions;
+      } else {
+        try {
+          window.localStorage.setItem(CREATIVE_PROJECTS_KEY, JSON.stringify(normalizeCreativeProjects(creativeProjectsBeforePruning)));
+        } catch { /* the canvas transaction has already restored its previous document and metadata */ }
+        storageQuotaExceeded = true;
+      }
+    }
+  }
+  const ok = identity.saved;
   if (ok) emitWorkspaceChange();
   if (ok) storageInlineImagesPending = false;
   return ok;

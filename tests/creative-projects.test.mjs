@@ -198,6 +198,105 @@ test('automatic checkpoints preserve manual versions and respect the shared vers
   assert.equal(current[0].versions[0].id, 'version-1');
 });
 
+test('quota pruning removes the oldest automatic checkpoint and preserves manual and latest versions', () => {
+  const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const projectId = base.canvasProjects[0].projectId;
+  let current = projects.appendCreativeProjectVersion(base.creativeProjects, projectId, {
+    id: 'manual-1', canvasId: 'canvas-a', label: '手动版本', createdAt: 10, snapshot: snapshot('manual'),
+  });
+  for (let index = 1; index <= 3; index += 1) {
+    current = projects.appendAutomaticCreativeProjectVersion(current, projectId, {
+      canvasId: 'canvas-a', label: `自动 ${index}`, createdAt: 20 + index, snapshot: snapshot(`auto-${index}`),
+    }, [`task-${index}`]);
+  }
+
+  const result = projects.pruneOldestAutomaticCreativeProjectVersion(current);
+  const versions = result.projects[0].versions;
+  assert.equal(result.removed.versionId, 'auto_task-1');
+  assert.equal(versions.some((version) => version.id === 'manual-1'), true);
+  assert.equal(versions.some((version) => version.id === 'auto_task-1'), false);
+  assert.equal(versions.some((version) => version.id === 'auto_task-3'), true);
+  assert.equal(versions.find((version) => version.id === 'auto_task-2').parentVersionId, 'manual-1');
+});
+
+test('quota recovery retries with fewer automatic snapshots and keeps the newest checkpoint', () => {
+  const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const projectId = base.canvasProjects[0].projectId;
+  let current = projects.appendCreativeProjectVersion(base.creativeProjects, projectId, {
+    id: 'manual-1', canvasId: 'canvas-a', label: '手动版本', createdAt: 10, snapshot: snapshot('manual'),
+  });
+  for (let index = 1; index <= 3; index += 1) {
+    current = projects.appendAutomaticCreativeProjectVersion(current, projectId, {
+      canvasId: 'canvas-a', label: `自动 ${index}`, createdAt: 20 + index, snapshot: snapshot(`auto-${index}`),
+    }, [`task-${index}`]);
+  }
+  const previousWindow = globalThis.window;
+  const savedValues = new Map();
+  globalThis.window = { localStorage: {
+    getItem: (key) => savedValues.get(key) ?? null,
+    setItem: (key, value) => {
+      const normalized = projects.normalizeCreativeProjects(JSON.parse(value));
+      const automaticCount = normalized[0]?.versions?.filter((version) => version.id.startsWith('auto_')).length || 0;
+      if (key === projects.CREATIVE_PROJECTS_KEY && automaticCount > 2) {
+        throw Object.assign(new Error('full'), { name: 'QuotaExceededError' });
+      }
+      savedValues.set(key, String(value));
+    },
+  } };
+
+  try {
+    const result = projects.saveCreativeProjectsWithQuotaRecovery(current);
+    assert.equal(result.saved, true);
+    assert.equal(result.prunedAutomaticVersions, 1);
+    const versions = result.projects[0].versions;
+    assert.equal(versions.some((version) => version.id === 'manual-1'), true);
+    assert.equal(versions.some((version) => version.id === 'auto_task-1'), false);
+    assert.equal(versions.at(-1).id, 'auto_task-3');
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
+test('failed quota recovery restores the original version history after pruning attempts', () => {
+  const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
+  const projectId = base.canvasProjects[0].projectId;
+  let stored = projects.appendCreativeProjectVersion(base.creativeProjects, projectId, {
+    id: 'manual-1', canvasId: 'canvas-a', label: '手动版本', createdAt: 10, snapshot: snapshot('manual'),
+  });
+  for (let index = 1; index <= 2; index += 1) {
+    stored = projects.appendAutomaticCreativeProjectVersion(stored, projectId, {
+      canvasId: 'canvas-a', label: `自动 ${index}`, createdAt: 20 + index, snapshot: snapshot(`auto-${index}`),
+    }, [`task-${index}`]);
+  }
+  const originalRaw = JSON.stringify(stored);
+  const current = projects.appendAutomaticCreativeProjectVersion(stored, projectId, {
+    canvasId: 'canvas-a', label: '较大的新快照', createdAt: 30, snapshot: snapshot('cannot-fit'),
+  }, ['task-3']);
+  const previousWindow = globalThis.window;
+  const savedValues = new Map([[projects.CREATIVE_PROJECTS_KEY, originalRaw]]);
+  globalThis.window = { localStorage: {
+    getItem: (key) => savedValues.get(key) ?? null,
+    setItem: (key, value) => {
+      if (key === projects.CREATIVE_PROJECTS_KEY && String(value).includes('cannot-fit')) {
+        throw Object.assign(new Error('still full'), { name: 'QuotaExceededError' });
+      }
+      savedValues.set(key, String(value));
+    },
+    removeItem: (key) => savedValues.delete(key),
+  } };
+
+  try {
+    const result = projects.saveCreativeProjectsWithQuotaRecovery(current);
+    assert.equal(result.saved, false);
+    assert.equal(result.prunedAutomaticVersions, 0);
+    assert.equal(savedValues.get(projects.CREATIVE_PROJECTS_KEY), originalRaw);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
 test('project package import keeps automatic checkpoints eligible for automatic retention', () => {
   const base = projects.reconcileCreativeProjects([canvas('canvas-a')], []);
   const projectId = base.canvasProjects[0].projectId;
