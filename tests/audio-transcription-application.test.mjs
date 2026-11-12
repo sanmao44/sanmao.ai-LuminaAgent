@@ -11,10 +11,10 @@ const formatSrt = (segments) => {
   const cues = segments
     .filter((segment) => segment.text.trim() && Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start)
     .map((segment, index) => {
-    const milliseconds = Math.round(segment.start * 1000);
-    const endMilliseconds = Math.round(segment.end * 1000);
-    const stamp = (value) => `${String(Math.floor(value / 3600000)).padStart(2, '0')}:${String(Math.floor((value % 3600000) / 60000)).padStart(2, '0')}:${String(Math.floor((value % 60000) / 1000)).padStart(2, '0')},${String(value % 1000).padStart(3, '0')}`;
-    return `${index + 1}\n${stamp(milliseconds)} --> ${stamp(endMilliseconds)}\n${segment.text.trim()}`;
+      const milliseconds = Math.round(segment.start * 1000);
+      const endMilliseconds = Math.round(segment.end * 1000);
+      const stamp = (value) => `${String(Math.floor(value / 3600000)).padStart(2, '0')}:${String(Math.floor((value % 3600000) / 60000)).padStart(2, '0')}:${String(Math.floor((value % 60000) / 1000)).padStart(2, '0')},${String(value % 1000).padStart(3, '0')}`;
+      return `${index + 1}\n${stamp(milliseconds)} --> ${stamp(endMilliseconds)}\n${segment.text.trim()}`;
     });
   return cues.length ? `${cues.join('\n\n')}\n` : '';
 };
@@ -79,6 +79,6 @@ test('audio transcription fails without usable timed speech and rejects expired 
     formatSrt,
     saveSubtitle: async () => { throw new Error('should not save'); },
   };
-  await assert.rejects(application.generateAudioSubtitle({ audio: { artifactId: 'audio-id', name: 'voice.mp3', mimeType: 'audio/mpeg' } }, ports), /娌℃湁浠庨煶棰戜腑璇嗗埆/);
-  await assert.rejects(application.generateAudioSubtitle({ audio: { artifactId: ' ', name: 'voice.mp3', mimeType: 'audio/mpeg' } }, ports), /闊抽闄勪欢/);
+  await assert.rejects(application.generateAudioSubtitle({ audio: { artifactId: 'audio-id', name: 'voice.mp3', mimeType: 'audio/mpeg' } }, ports), /No usable speech segments/);
+  await assert.rejects(application.generateAudioSubtitle({ audio: { artifactId: ' ', name: 'voice.mp3', mimeType: 'audio/mpeg' } }, ports), /Audio attachment is missing/);
 });

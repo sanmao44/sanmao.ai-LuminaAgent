@@ -105,9 +105,9 @@ function harness(options = {}) {
             getRuntimeImageGenerationModel: storeApi.getRuntimeImageGenerationModel,
             getRuntimeImageModelCandidates: storeApi.getRuntimeImageModelCandidates,
             getRuntimeImageModelForCapability: storeApi.getRuntimeImageModelForCapability,
-            getRuntimeModel: storeApi.getRuntimeModel,
+            getRuntimeModel: async (id, kind) => kind === 'image' ? storeApi.getRuntimeModel(id, kind) : options.noChatModel ? null : storeApi.getRuntimeModel(id, kind),
             getRuntimeIntentClassifierModel: options.intentClassifierRuntime ? async () => options.intentClassifierRuntime : async () => null,
-            getRuntimeModelCandidates: async () => [runtime],
+            getRuntimeModelCandidates: async () => options.noChatModel ? [] : [runtime],
             filterModelsByActiveProviders: (models) => models,
             getProviderPreset: () => ({ label: 'Test' }),
           },
@@ -339,27 +339,29 @@ function harness(options = {}) {
   };
 }
 
-test('audio attachments generate a timestamped SRT artifact through local transcription', async () => {
-  const agent = harness();
+test('audio attachments generate a timestamped SRT artifact locally without a chat model', async () => {
+  const agent = harness({ noChatModel: true });
   const result = await agent.post([{
     role: 'user',
     content: '请根据音频生成 SRT 字幕',
     files: [
       { name: 'interview.mp3', mimeType: 'audio/mpeg', artifactId: 'audio-artifact', size: 1024 },
-      { name: 'glossary.txt', mimeType: 'text/plain', artifactId: 'reference-artifact', size: 64 },
+      { name: 'glossary.txt', mimeType: 'text/plain', artifactId: 'reference-artifact', content: 'Product glossary: SANMAO', size: 64 },
     ],
-  }], { model: 'test-chat', deliverable: 'TEXT' });
+    references: [{ id: 'reference-file', kind: 'text', name: 'glossary.txt', text: 'Product glossary: SANMAO' }],
+  }], { model: 'auto', deliverable: 'TEXT' });
 
   assert.equal(agent.transcriptionCalls.length, 1);
   assert.equal(agent.transcriptionCalls[0][0], '/tmp/interview.mp3');
   assert.equal(agent.transcriptionCalls[0][2].signal instanceof AbortSignal, true);
+  assert.equal(agent.transcriptionCalls[0][2].referenceText, '[glossary.txt]\nProduct glossary: SANMAO');
   assert.equal(agent.savedSubtitleArtifacts.length, 1);
   assert.equal(agent.savedSubtitleArtifacts[0].name, 'interview.srt');
   assert.equal(agent.savedSubtitleArtifacts[0].mimeType, 'application/x-subrip;charset=utf-8');
   assert.equal(agent.savedSubtitleArtifacts[0].data.toString('utf8'), '1\n00:00:01,250 --> 00:00:02,750\nHello.\n');
   assert.equal(result.files[0].artifactId, 'test-subtitle-artifact');
   assert.equal(result.files[0].downloadUrl, '/api/artifacts/test-subtitle-artifact');
-  assert.match(result.message, /不会将其作为识别提示/);
+  assert.match(result.message, /已将 1 个参考文档作为专有名词提示/);
   assert.equal(agent.modelCalls.length, 0);
 });
 

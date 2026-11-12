@@ -4953,12 +4953,19 @@ export default function Page() {
         const media = incoming.filter((file)=>file.type.startsWith('image/') || file.type.startsWith('video/'));
         const audio = incoming.filter((file)=>isAgentAudioFileInput(file));
         const documents = incoming.filter((file)=>!file.type.startsWith('image/') && !file.type.startsWith('video/') && !isAgentAudioFileInput(file));
+        const existingAudioCount = agentFiles.filter((file)=>isAgentAudioAttachment(file)).length;
+        if (audio.length && agentAudioUpload) {
+            notify('音频正在上传，请完成后再添加另一条音频');
+            return;
+        }
+        const audioToUpload = existingAudioCount ? [] : audio.slice(0, 1);
+        if (audio.length > audioToUpload.length) notify('每条消息只支持一个音频文件，已忽略多余音频');
         let addedAudioCount = 0;
         if (media.length) await addReferences(media, 'agent');
-        if (audio.length) {
+        if (audioToUpload.length) {
             const room = Math.max(0, 8 - agentFiles.length);
-            if (room < audio.length) notify('最多同时分析 8 个文件，部分音频未添加');
-            for (const file of audio.slice(0, room)) {
+            if (room < audioToUpload.length) notify('最多同时分析 8 个文件，音频未添加');
+            for (const file of audioToUpload.slice(0, room)) {
                 if (!file.size) {
                     notify(`${file.name || '音频文件'} 是空文件`);
                     continue;
@@ -5018,7 +5025,7 @@ export default function Page() {
             const parsed = [];
             for (const file of documents.slice(0, room)) parsed.push(await readAgentChatFile(file, uid));
             const totalBytes = [
-                ...agentFiles,
+                ...agentFiles.filter((file)=>!isAgentAudioAttachment(file)),
                 ...parsed
             ].reduce((total, file)=>total + (file.size || new TextEncoder().encode(file.content).length), 0);
             if (totalBytes > 4 * 1024 * 1024) throw new Error('本轮文本文件总大小不能超过 4MB，请减少文件数量或拆分后上传');
@@ -7065,7 +7072,8 @@ export default function Page() {
         if (shareSelectionMode) return notify('请先完成或取消分享选择');
         const rawContent = text.trim();
         if (!rawContent && !agentFiles.length && !agentRefs.length) return;
-        if (!availableChatModels.length) return notify('还没有可用对话模型，请先去模型库勾选');
+        const hasAudioAttachment = agentFiles.some((file)=>isAgentAudioAttachment(file));
+        if (!availableChatModels.length && !hasAudioAttachment) return notify('还没有可用对话模型，请先去模型库勾选');
         const sessionId = activeChatId || uid('chat');
         if (busyChatIdsRef.current.has(sessionId)) return notify('当前对话正在回答，可点击左侧“新对话”并行进行');
         const currentSessionMessages = pendingChatMessagesRef.current.get(sessionId) || messages;

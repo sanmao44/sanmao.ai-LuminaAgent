@@ -402,15 +402,29 @@ async function transcribeAudioAttachment(
 ): Promise<AudioSubtitleResult | null> {
   const audio = (message.files || []).find((file) => isAudioClientFile(file) && file.artifactId);
   if (!audio?.artifactId) return null;
+  const referenceParts = new Map<string, string>();
+  for (const file of message.files || []) {
+    if (file === audio || isAudioClientFile(file) || typeof file.content !== 'string' || !file.content.trim()) continue;
+    referenceParts.set(`${file.name}\u0000${file.content}`, `[${file.name}]\n${file.content}`);
+  }
+  for (const reference of message.references || []) {
+    if (typeof reference !== 'object' || reference.kind !== 'text' || typeof reference.text !== 'string' || !reference.text.trim()) continue;
+    referenceParts.set(`${reference.name}\u0000${reference.text}`, `[${reference.name}]\n${reference.text}`);
+  }
+  const referenceText = [...referenceParts.values()].join('\n\n').trim().slice(0, 12_000);
+  const referenceDocumentCount = referenceParts.size;
   onProgress('正在加载本地语音识别模型，首次使用会自动下载并缓存…');
   const result = await generateAudioSubtitle({
     audio: { artifactId: audio.artifactId, name: audio.name, mimeType: audio.mimeType || 'audio/mpeg', ...(audio.size ? { size: audio.size } : {}) },
+    ...(referenceText ? { referenceText } : {}),
   }, {
-    transcribeAudio: async ({ artifactId, onProgress: stageProgress }) => {
+    transcribeAudio: async ({ artifactId, referenceText: promptText, onProgress: stageProgress }) => {
       const stored = await transcription.readArtifact(artifactId);
       if (!stored) throw new Error('音频附件已过期，请重新上传后再生成字幕。');
       return transcription.transcribeAudioFile(stored.filePath, 0, {
         signal,
+        language: String(process.env.SANMAO_ASR_LANGUAGE || '').trim() || 'zh',
+        ...(promptText ? { referenceText: promptText } : {}),
         onProgress: (progress) => {
           if (progress.stage === 'decoding-audio') onProgress('正在解码音频…');
           else if (progress.stage === 'loading-model') {
@@ -432,9 +446,6 @@ async function transcribeAudioAttachment(
     onProgress(stage === 'loading-model' ? '正在准备本地语音识别模型…' : '正在识别语音并对齐时间戳…');
   });
   const descriptor = result.file;
-  const fileReferenceCount = (message.files || []).filter((file) => file !== audio && !isAudioClientFile(file) && (file.content || file.artifactId)).length;
-  const textReferenceCount = (message.references || []).filter((reference) => typeof reference === 'object' && reference.kind === 'text' && Boolean(reference.text?.trim())).length;
-  const referenceDocumentCount = fileReferenceCount + textReferenceCount;
   return {
     file: descriptor,
     model: result.transcript.model,
@@ -570,7 +581,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       );
       if (audioSubtitle) {
         const referenceNote = audioSubtitle.referenceDocumentCount
-          ? `已收到 ${audioSubtitle.referenceDocumentCount} 个参考文档，但当前自动转写不会将其作为识别提示，建议完成后人工核对专有名词。`
+          ? `已将 ${audioSubtitle.referenceDocumentCount} 个参考文档作为专有名词提示；字幕时间来自音频词级时间戳，仍建议人工核对听不清的片段。`
           : '未附带参考文档；如需人工核对专有名词，可同时上传 TXT、MD 或其他文本资料。';
         const message = `已生成 ${audioSubtitle.file.name}，包含 ${audioSubtitle.segmentCount} 个字幕片段。识别模型：${audioSubtitle.model}。${referenceNote}`;
         const files = [audioSubtitle.file];

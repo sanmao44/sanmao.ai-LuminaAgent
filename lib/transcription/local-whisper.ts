@@ -7,12 +7,23 @@ import { resolveLocalDataDir } from '@/lib/data-paths';
 import { decodeAudioToPcmWav } from './ffmpeg-decoder';
 
 export const DEFAULT_LOCAL_ASR_MODEL = 'Xenova/whisper-small';
-const MAX_TRANSCRIPT_WORDS = 4_000;
-const MAX_TRANSCRIPT_SEGMENTS = 1_000;
 const ASR_SAMPLE_RATE = 16_000;
 
 type RawChunk = { text?: unknown; timestamp?: unknown };
-type LocalTranscriber = (audio: Float32Array, options: Record<string, unknown>) => Promise<AutomaticSpeechRecognitionOutput>;
+type WhisperTokenizer = {
+  encode?: (text: string, options?: { add_special_tokens?: boolean }) => number[];
+  convert_tokens_to_ids?: (tokens: string | string[]) => number | number[];
+};
+type WhisperGenerationConfig = {
+  decoder_start_token_id?: unknown;
+  is_multilingual?: unknown;
+  lang_to_id?: Record<string, unknown>;
+  task_to_id?: Record<string, unknown>;
+};
+export type LocalTranscriber = ((audio: Float32Array, options: Record<string, unknown>) => Promise<AutomaticSpeechRecognitionOutput>) & {
+  tokenizer?: WhisperTokenizer;
+  model?: { generation_config?: WhisperGenerationConfig | null; config?: WhisperGenerationConfig };
+};
 
 export type LocalTranscriptionProgress = {
   stage: 'decoding-audio' | 'loading-model' | 'transcribing';
@@ -23,12 +34,16 @@ export type LocalTranscriptionProgress = {
 export type LocalTranscriptionOptions = {
   model?: string;
   language?: string;
+  /** Optional glossary text used as a bounded Whisper decoder prompt when supported. */
+  referenceText?: string;
   localOnly?: boolean;
   signal?: AbortSignal;
   onProgress?: (progress: LocalTranscriptionProgress) => void;
 };
 
 const transcriberPromises = new Map<string, Promise<LocalTranscriber>>();
+const promptedTranscriberQueues = new WeakMap<LocalTranscriber, Promise<void>>();
+const MAX_PROMPT_TOKENS = 224;
 
 function finite(value: unknown, fallback = 0) {
   const number = Number(value);
@@ -43,12 +58,85 @@ function cleanText(value: unknown) {
   return String(value ?? '').replace(/\s+/gu, ' ').trim();
 }
 
+function finiteTokenId(value: unknown) {
+  const id = Number(value);
+  return Number.isInteger(id) && id >= 0 ? id : undefined;
+}
+
+function specialTokenId(tokenizer: WhisperTokenizer, token: string) {
+  if (typeof tokenizer.convert_tokens_to_ids !== 'function') return undefined;
+  try {
+    return finiteTokenId(tokenizer.convert_tokens_to_ids(token));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Transformers.js 4.2.0 documents `prompt_ids` but does not consume it in
+ * Whisper's generation path. Build the equivalent decoder prefix explicitly.
+ */
+export function buildWhisperDecoderInputIds(transcriber: LocalTranscriber, referenceText?: string, language?: string) {
+  const text = cleanText(referenceText).slice(0, 2_000);
+  const tokenizer = transcriber.tokenizer;
+  const encode = tokenizer?.encode;
+  if (!text || !tokenizer || typeof encode !== 'function') return undefined;
+  try {
+    const promptIds = encode.call(tokenizer, `<|startofprev|> ${text}`, { add_special_tokens: false })
+      .filter((id) => Number.isInteger(id) && id >= 0)
+      .slice(0, MAX_PROMPT_TOKENS);
+    if (!promptIds.length) return undefined;
+
+    const generation = transcriber.model?.generation_config || transcriber.model?.config;
+    const prefix: number[] = [];
+    const decoderStart = finiteTokenId(generation?.decoder_start_token_id) ?? specialTokenId(tokenizer, '<|startoftranscript|>');
+    if (decoderStart !== undefined) prefix.push(decoderStart);
+
+    const requestedLanguage = String(language || '').trim().toLowerCase();
+    const languageToken = requestedLanguage ? `<|${requestedLanguage}|>` : '<|en|>';
+    const languageId = finiteTokenId(generation?.lang_to_id?.[languageToken]) ?? specialTokenId(tokenizer, languageToken);
+    const multilingual = generation?.is_multilingual !== false;
+    if (multilingual && languageId !== undefined) prefix.push(languageId);
+
+    const taskId = finiteTokenId(generation?.task_to_id?.['transcribe']) ?? specialTokenId(tokenizer, '<|transcribe|>');
+    if (multilingual && taskId !== undefined) prefix.push(taskId);
+
+    // Hugging Face prepends prompt_ids before the normal Whisper language/task prefix.
+    return [...promptIds, ...prefix];
+  } catch {
+    // Tokenizer prompt support is optional across Transformers.js model versions.
+    return undefined;
+  }
+}
+
+/** Serialize prompted calls per pipeline instance so mutable model state cannot mix prompts. */
+export async function runPromptedLocalTranscriber(
+  transcriber: LocalTranscriber,
+  audio: Float32Array,
+  options: Record<string, unknown>,
+) {
+  const previous = promptedTranscriberQueues.get(transcriber) || Promise.resolve();
+  let release: () => void = () => undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  promptedTranscriberQueues.set(transcriber, current);
+  await previous.catch(() => undefined);
+  try {
+    return await transcriber(audio, options);
+  } finally {
+    release();
+    if (promptedTranscriberQueues.get(transcriber) === current) promptedTranscriberQueues.delete(transcriber);
+  }
+}
+
 function timestampPair(value: unknown): [number, number] | null {
   if (!Array.isArray(value) || value.length < 2) return null;
-  const start = Math.max(0, finite(value[0], NaN));
-  const end = finite(value[1], NaN);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-  return [round3(start), round3(Math.max(start, end))];
+  const numeric = (item: unknown) => item === null || item === undefined || item === '' ? NaN : finite(item, NaN);
+  const start = Math.max(0, numeric(value[0]));
+  const end = numeric(value[1]);
+  if (!Number.isFinite(start)) return null;
+  return [round3(start), Number.isFinite(end) ? round3(Math.max(start, end)) : NaN];
 }
 
 function readPcm16Wav(buffer: Buffer) {
@@ -89,12 +177,19 @@ function readPcm16Wav(buffer: Buffer) {
 
 function normalizeWords(chunks: readonly RawChunk[], durationSeconds: number): TimestampedTranscriptWord[] {
   const words: TimestampedTranscriptWord[] = [];
-  for (const chunk of chunks.slice(0, MAX_TRANSCRIPT_WORDS)) {
+  let lastTextIndex = -1;
+  for (let index = 0; index < chunks.length; index += 1) {
+    if (cleanText(chunks[index].text)) lastTextIndex = index;
+  }
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
     const text = cleanText(chunk.text);
     const pair = timestampPair(chunk.timestamp);
     if (!text || !pair) continue;
     const start = round3(Math.min(Math.max(0, pair[0]), durationSeconds));
-    const end = round3(Math.min(Math.max(start, pair[1]), durationSeconds));
+    const rawEnd = Number.isFinite(pair[1]) ? pair[1] : index === lastTextIndex ? durationSeconds : NaN;
+    if (!Number.isFinite(rawEnd)) continue;
+    const end = round3(Math.min(Math.max(start, rawEnd), durationSeconds));
     if (end <= start) continue;
     words.push({ start, end, text });
   }
@@ -133,7 +228,7 @@ export function groupTranscriptWords(words: readonly TimestampedTranscriptWord[]
     current.words?.push(word);
   }
   if (current) segments.push(current);
-  return segments.slice(0, MAX_TRANSCRIPT_SEGMENTS).map((segment) => ({
+  return segments.map((segment) => ({
     ...segment,
     start: round3(segment.start),
     end: round3(segment.end),
@@ -203,12 +298,17 @@ export async function transcribeLocalPcmWav(filePath: string, durationSeconds: n
   const transcriber = await getLocalTranscriber(resolved.model, resolved.localOnly, options.onProgress);
   if (options.signal?.aborted) throw options.signal.reason || new Error('Transcription cancelled');
   options.onProgress?.({ stage: 'transcribing' });
-  const result = await transcriber(audio, {
+  const decoderInputIds = buildWhisperDecoderInputIds(transcriber, options.referenceText, resolved.language);
+  const transcribeOptions = {
     return_timestamps: 'word',
     chunk_length_s: 30,
     stride_length_s: 5,
+    ...(decoderInputIds ? { decoder_input_ids: decoderInputIds } : {}),
     ...(resolved.language ? { language: resolved.language, task: 'transcribe' } : {}),
-  });
+  };
+  const result = decoderInputIds
+    ? await runPromptedLocalTranscriber(transcriber, audio, transcribeOptions)
+    : await transcriber(audio, transcribeOptions);
   return normalizeLocalAsrResult(result, duration, resolved.model, resolved.language);
 }
 

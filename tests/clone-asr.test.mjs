@@ -100,4 +100,111 @@ test('SRT serialization keeps ASR timings and emits stable cue numbering and tim
   ].join('\r\n'));
 });
 
+test('reference text becomes an explicit Whisper decoder prefix', () => {
+  const encodedCalls = [];
+  const decoderInputIds = transcriptionModule.buildWhisperDecoderInputIds({
+    tokenizer: {
+      encode(text, options) {
+        encodedCalls.push({ text, options });
+        return [40, 41];
+      },
+      convert_tokens_to_ids(token) {
+        return {
+          '<|startoftranscript|>': 1,
+          '<|zh|>': 2,
+          '<|transcribe|>': 3,
+        }[token];
+      },
+    },
+    model: {
+      generation_config: {
+        decoder_start_token_id: 1,
+        is_multilingual: true,
+        lang_to_id: { '<|zh|>': 2 },
+        task_to_id: { transcribe: 3 },
+      },
+    },
+  }, 'SANMAO.AI', 'zh');
+
+  assert.deepEqual(encodedCalls, [{ text: '<|startofprev|> SANMAO.AI', options: { add_special_tokens: false } }]);
+  assert.deepEqual(decoderInputIds, [40, 41, 1, 2, 3]);
+});
+
+test('prompted transcriber calls are serialized without sharing decoder prompts', async () => {
+  const calls = [];
+  let active = 0;
+  const tokenizer = {
+    encode(text) {
+      return text.endsWith('Alpha') ? [40] : [41];
+    },
+    convert_tokens_to_ids(token) {
+      return { '<|startoftranscript|>': 1, '<|zh|>': 2, '<|transcribe|>': 3 }[token];
+    },
+  };
+  const pipeline = async (_audio, options) => {
+    active += 1;
+    calls.push({ prompt: options.decoder_input_ids, active });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active -= 1;
+    return { text: '你好', chunks: [{ text: '你好', timestamp: [0.25, 0.75] }] };
+  };
+  pipeline.tokenizer = tokenizer;
+  pipeline.model = { generation_config: {
+    decoder_start_token_id: 1,
+    is_multilingual: true,
+    lang_to_id: { '<|zh|>': 2 },
+    task_to_id: { transcribe: 3 },
+  } };
+  const transcriber = async (_audio, options) => {
+    return pipeline(_audio, options);
+  };
+  transcriber.tokenizer = tokenizer;
+  transcriber.model = pipeline.model;
+
+  const results = await Promise.all([
+    Promise.resolve().then(() => {
+      const decoder_input_ids = transcriptionModule.buildWhisperDecoderInputIds(transcriber, 'Alpha', 'zh');
+      return transcriptionModule.runPromptedLocalTranscriber(transcriber, new Float32Array([0]), { decoder_input_ids });
+    }),
+    Promise.resolve().then(() => {
+      const decoder_input_ids = transcriptionModule.buildWhisperDecoderInputIds(transcriber, 'Beta', 'zh');
+      return transcriptionModule.runPromptedLocalTranscriber(transcriber, new Float32Array([0]), { decoder_input_ids });
+    }),
+  ]);
+
+  assert.deepEqual(calls, [
+    { prompt: [40, 1, 2, 3], active: 1 },
+    { prompt: [41, 1, 2, 3], active: 1 },
+  ]);
+  assert.deepEqual(results.map((result) => result.chunks[0].timestamp), [[0.25, 0.75], [0.25, 0.75]]);
+});
+
+test('normalization keeps long transcripts beyond the historical silent limits', () => {
+  const chunks = Array.from({ length: 4_001 }, (_, index) => ({
+    text: `word-${index}`,
+    timestamp: [index * 2, index * 2 + 0.5],
+  }));
+  const normalized = transcriptionModule.normalizeLocalAsrResult({ text: '', chunks }, 10_000, 'test-model');
+
+  assert.equal(normalized.words.length, 4_001);
+  assert.equal(normalized.segments.length, 4_001);
+  assert.equal(normalized.words.at(-1).text, 'word-4000');
+  assert.equal(normalized.segments.at(-1).text, 'word-4000');
+});
+
+test('normalization closes a final word with the known audio duration when Whisper omits its end', () => {
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: 'one two',
+    chunks: [
+      { text: 'one', timestamp: [0, 0.5] },
+      { text: 'two', timestamp: [0.6, null] },
+    ],
+  }, 1.2, 'test-model');
+
+  assert.deepEqual(normalized.words, [
+    { text: 'one', start: 0, end: 0.5 },
+    { text: 'two', start: 0.6, end: 1.2 },
+  ]);
+});
+
 await rm(moduleRoot, { recursive: true, force: true });
