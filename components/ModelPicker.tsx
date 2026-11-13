@@ -29,6 +29,7 @@ type ModelPickerProps = {
   automaticHint?: string;
   /** Optional context label for compact, task-specific pickers. */
   triggerPrefix?: string;
+  triggerLabelMode?: 'full' | 'model';
   health?: AgentModelHealthRecord[];
   disabled?: boolean;
 };
@@ -55,6 +56,21 @@ export function uniqueModels(models: Array<RegistryModel | null | undefined>) {
   return [...new Map(models.filter((model): model is RegistryModel => Boolean(model)).map((model) => [model.id, model])).values()];
 }
 
+export function resolveModelPickerTriggerValueLabel(input: {
+  mode: 'full' | 'model';
+  fullLabel: string;
+  modelLabel?: string;
+  unavailableLabel?: string;
+  value: string;
+  automaticModelLabel?: string;
+}) {
+  if (input.mode === 'full') return input.fullLabel;
+  return input.modelLabel
+    || input.unavailableLabel
+    || (input.value === 'auto' ? input.automaticModelLabel : undefined)
+    || input.fullLabel;
+}
+
 function selectCloneAutomaticModel(models: RegistryModel[]) {
   const candidates = models.filter((model) => model.capabilities.includes('video-generate'));
   const score = (model: RegistryModel) => {
@@ -72,7 +88,25 @@ function selectCloneAutomaticModel(models: RegistryModel[]) {
   return [...candidates].sort((left, right) => score(right) - score(left))[0];
 }
 
-export default function ModelPicker({ models, value, onChange, capability, defaultProviderId, defaultProviderName, defaultModelId, placeholder = '选择模型', className = '', portalZIndex = CANVAS_Z_INDEX.portalPopover, dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog, automaticMode = 'default', automaticHint, triggerPrefix, health = [], disabled = false }: ModelPickerProps) {
+export default function ModelPicker({
+  models,
+  value,
+  onChange,
+  capability,
+  defaultProviderId,
+  defaultProviderName,
+  defaultModelId,
+  placeholder = '选择模型',
+  className = '',
+  portalZIndex = CANVAS_Z_INDEX.portalPopover,
+  dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog,
+  automaticMode = 'default',
+  automaticHint,
+  triggerPrefix,
+  triggerLabelMode = 'full',
+  health = [],
+  disabled = false,
+}: ModelPickerProps) {
   const requiredCapabilities: readonly ModelCapability[] = typeof capability === 'string' ? [capability] : capability;
   const capabilityLabel = requiredCapabilities.map((item) => capabilityLabels[item] || item).join(' + ');
   const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
@@ -248,6 +282,22 @@ export default function ModelPicker({ models, value, onChange, capability, defau
         : autoModel
       ? `${triggerPrefix || '自动'} · ${automaticMode === 'clone' ? '克隆主要使用 Seedance' : defaultProviderName || '默认厂商'} · ${autoModel.displayName}`
       : placeholder;
+  const fullTriggerValueLabel = triggerPrefix && triggerLabel.startsWith(`${triggerPrefix} · `)
+    ? triggerLabel.slice(triggerPrefix.length + 3)
+    : triggerLabel.replace(/^(自动|手动|生图|换模型) · /, '');
+  const unavailableLabel = unavailableSelectedModel
+    ? `${unavailableSelectedModel.enabled && unavailableSelectedModel.published && !modelSupportsCapabilityRequirements(unavailableSelectedModel, requiredCapabilities) ? `不支持${capabilityLabel}` : '模型不可用'} · ${unavailableSelectedModel.displayName}`
+    : value && value !== 'auto'
+      ? '所选模型不可用'
+      : undefined;
+  const triggerValueLabel = resolveModelPickerTriggerValueLabel({
+    mode: triggerLabelMode,
+    fullLabel: fullTriggerValueLabel,
+    modelLabel: selected?.displayName,
+    unavailableLabel,
+    value,
+    automaticModelLabel: autoModel?.displayName,
+  });
   const quickShowsAll = availableModels.length <= 8;
   const quickModels = quickShowsAll ? availableModels.filter((model) => model.id !== autoModel?.id) : [];
 
@@ -312,8 +362,8 @@ export default function ModelPicker({ models, value, onChange, capability, defau
   ) : null;
 
   return <div className={`model-picker ${className}`} ref={rootRef}>
-    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} data-tooltip={triggerLabel} disabled={disabled}>
-      <span className="model-picker-trigger-copy"><b>{triggerPrefix || (value === 'auto' ? '自动' : '手动')}</b><span>{triggerLabel.replace(/^(自动|手动|生图|换模型) · /, '')}</span></span><i aria-hidden="true"/>
+    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} aria-label={triggerLabel} data-tooltip={triggerLabel} disabled={disabled}>
+      <span className="model-picker-trigger-copy"><b>{triggerPrefix || (value === 'auto' ? '自动' : '手动')}</b><span>{triggerValueLabel}</span></span><i aria-hidden="true"/>
     </button>
     {quickPanel}
     {fullDialog}

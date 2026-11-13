@@ -2416,6 +2416,7 @@ export default function CanvasAgentDock({
                 defaultProviderId={runtime?.settings.defaultProviderId}
                 defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
                 defaultModelId={runtime?.settings.agentModelId}
+                triggerLabelMode="model"
                 placeholder="选择对话模型"
                 onChange={setModel}
                 className="canvas-agent-dock-model"
@@ -2433,6 +2434,7 @@ export default function CanvasAgentDock({
                 defaultModelId={runtime?.settings.defaultImageModelId}
                 automaticHint="自动按当前生图或改图任务选择模型"
                 triggerPrefix="创作"
+                triggerLabelMode="model"
                 placeholder="选择创作模型"
                 onChange={setImageModelId}
                 className="canvas-agent-dock-model canvas-agent-dock-creative-model"

@@ -20,3 +20,44 @@ test('model picker accepts an empty automatic recommendation', () => {
   assert.deepEqual(picker.uniqueModels([undefined, null, model, model]), [model]);
   assert.deepEqual(picker.uniqueModels([undefined]), []);
 });
+
+test('model picker keeps the full trigger label by default', () => {
+  assert.equal(picker.resolveModelPickerTriggerValueLabel({
+    mode: 'full',
+    fullLabel: 'OpenAI / GPT-5',
+    modelLabel: 'GPT-5',
+    value: 'gpt-5',
+  }), 'OpenAI / GPT-5');
+});
+
+test('model picker can show a compact model label', () => {
+  assert.equal(picker.resolveModelPickerTriggerValueLabel({
+    mode: 'model',
+    fullLabel: 'OpenAI / GPT-5',
+    modelLabel: 'GPT-5',
+    value: 'gpt-5',
+  }), 'GPT-5');
+});
+
+test('model picker uses the automatic recommendation and falls back when none exists', () => {
+  assert.equal(picker.resolveModelPickerTriggerValueLabel({
+    mode: 'model',
+    fullLabel: 'Default provider',
+    value: 'auto',
+    automaticModelLabel: 'GPT-5',
+  }), 'GPT-5');
+  assert.equal(picker.resolveModelPickerTriggerValueLabel({
+    mode: 'model',
+    fullLabel: 'Automatic selection',
+    value: 'auto',
+  }), 'Automatic selection');
+});
+
+test('model picker preserves an unavailable model label in compact mode', () => {
+  assert.equal(picker.resolveModelPickerTriggerValueLabel({
+    mode: 'model',
+    fullLabel: 'Selected model is unavailable',
+    unavailableLabel: 'Model unavailable / GPT-5',
+    value: 'gpt-5',
+  }), 'Model unavailable / GPT-5');
+});
