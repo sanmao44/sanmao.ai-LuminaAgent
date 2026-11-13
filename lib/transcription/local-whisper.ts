@@ -47,6 +47,30 @@ const MAX_PROMPT_TOKENS = 224;
 const MODEL_TEMP_FILE_PATTERN = /\.tmp\.[^/\\]+$/u;
 const MODEL_TEMP_MAX_AGE_MS = 60 * 60 * 1_000;
 const LOCAL_MODEL_LOAD_ERROR = '本地语音识别模型下载或加载失败，请检查网络连接后重试。首次使用会自动下载并缓存模型。';
+const DEFAULT_LOCAL_MODEL_MIRROR = 'https://hf-mirror.com/';
+let modelLoadQueue = Promise.resolve();
+
+function isLocalModelNetworkFailure(error: unknown) {
+  const messages: string[] = [];
+  for (let current: unknown = error; current instanceof Error; current = current.cause) messages.push(current.message);
+  return /fetch failed|network|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|certificate/i.test(messages.join(' '));
+}
+
+async function withExclusiveModelLoad<T>(work: () => Promise<T>) {
+  const previous = modelLoadQueue;
+  let release: () => void = () => undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  modelLoadQueue = current;
+  await previous.catch(() => undefined);
+  try {
+    return await work();
+  } finally {
+    release();
+    if (modelLoadQueue === current) modelLoadQueue = Promise.resolve();
+  }
+}
 
 async function removeInterruptedModelDownloads(modelDirectory: string, now = Date.now()): Promise<number> {
   let removed = 0;
@@ -89,6 +113,7 @@ export async function loadWithLocalModelCacheRecovery<T>(
   modelDirectory: string,
   localOnly: boolean,
   load: () => Promise<T>,
+  onRetry?: (error: unknown) => void | Promise<void>,
 ) {
   await removeInterruptedModelDownloads(modelDirectory);
   try {
@@ -99,10 +124,7 @@ export async function loadWithLocalModelCacheRecovery<T>(
       error.name = 'LocalTranscriptionModelError';
       throw error;
     }
-    const errorChain: unknown[] = [];
-    for (let current: unknown = firstError; current instanceof Error; current = current.cause) errorChain.push(current.message);
-    const networkFailure = /fetch failed|network|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|certificate/i.test(errorChain.join(' '));
-    if (!networkFailure) {
+    if (!isLocalModelNetworkFailure(firstError)) {
       const onnxDirectory = path.join(modelDirectory, 'onnx');
       try {
         const entries = await readdir(onnxDirectory, { withFileTypes: true });
@@ -113,6 +135,7 @@ export async function loadWithLocalModelCacheRecovery<T>(
         // The model may have failed before creating its ONNX cache directory.
       }
     }
+    await onRetry?.(firstError);
     try {
       return await load();
     } catch (secondError) {
@@ -340,15 +363,15 @@ async function getLocalTranscriber(model: string, localOnly: boolean, onProgress
     pending = (async () => {
       const modelCache = path.join(resolveLocalDataDir(), 'models', 'transformers');
       const modelDirectory = path.resolve(modelCache, ...model.split(/[\\/]+/u).filter(Boolean));
-      const modelRelativePath = path.relative(modelCache, modelDirectory);
-      const modelIsInCache = Boolean(modelRelativePath)
-        && modelRelativePath !== '..'
-        && !modelRelativePath.startsWith(`..${path.sep}`)
-        && !path.isAbsolute(modelRelativePath);
       const { env, pipeline } = await import('@huggingface/transformers');
       env.cacheDir = modelCache;
       env.allowLocalModels = true;
       env.allowRemoteModels = !localOnly;
+      const defaultRemoteHost = String(env.remoteHost || '').trim();
+      const configuredMirror = String(process.env.SANMAO_ASR_MODEL_MIRROR || DEFAULT_LOCAL_MODEL_MIRROR).trim();
+      const mirrorRemoteHost = configuredMirror && configuredMirror.toLowerCase() !== 'off'
+        ? `${configuredMirror.replace(/\/+$/u, '')}/`
+        : '';
       const load = () => pipeline('automatic-speech-recognition', model, {
         cache_dir: modelCache,
         local_files_only: localOnly,
@@ -356,9 +379,20 @@ async function getLocalTranscriber(model: string, localOnly: boolean, onProgress
         dtype: 'q8',
         progress_callback: progressFromTransformers(onProgress),
       });
-      const loaded = modelIsInCache
-        ? await loadWithLocalModelCacheRecovery(modelDirectory, localOnly, load)
-        : await load();
+      // Serialize every remote load, including a first download. Transformers.js
+      // stores the remote host on a shared env object, so a concurrent request
+      // could otherwise restore it while another request is retrying through
+      // the mirror. The recovery helper is safe when the cache directory does
+      // not exist yet and gives first-time users the same fallback path.
+      const loaded = await withExclusiveModelLoad(async () => {
+        try {
+          return await loadWithLocalModelCacheRecovery(modelDirectory, localOnly, load, (error) => {
+            if (isLocalModelNetworkFailure(error) && mirrorRemoteHost && mirrorRemoteHost !== defaultRemoteHost) env.remoteHost = mirrorRemoteHost;
+          });
+        } finally {
+          env.remoteHost = defaultRemoteHost;
+        }
+      });
       return loaded as unknown as LocalTranscriber;
     })().catch((error) => {
       transcriberPromises.delete(cacheKey);

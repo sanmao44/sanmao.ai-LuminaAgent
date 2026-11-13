@@ -6,6 +6,17 @@
   return (Join-Path $dataDir 'free-relay')
 }
 
+function Test-SanmaoFreeRelayRequested {
+  param(
+    [bool]$ExplicitlyRequested,
+    [bool]$MediaRelayRequired,
+    [bool]$SharedMediaRelayConfigured,
+    [bool]$PreviouslyConfigured
+  )
+
+  return $MediaRelayRequired -and -not $SharedMediaRelayConfigured -and ($ExplicitlyRequested -or $PreviouslyConfigured)
+}
+
 function Stop-SanmaoFreeRelayTunnel {
   param([Parameter(Mandatory = $true)][string]$Root)
 

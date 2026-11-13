@@ -239,13 +239,20 @@ test('local model cache recovery preserves weights when the failure is network-r
   await mkdir(path.dirname(weightFile), { recursive: true });
   await writeFile(weightFile, 'complete weight');
   let attempts = 0;
-  const result = await transcriptionModule.loadWithLocalModelCacheRecovery(modelDirectory, false, async () => {
-    attempts += 1;
-    if (attempts === 1) throw new TypeError('fetch failed');
-    assert.equal(existsSync(weightFile), true);
-    return 'loaded';
-  });
+  let retryError;
+  const result = await transcriptionModule.loadWithLocalModelCacheRecovery(
+    modelDirectory,
+    false,
+    async () => {
+      attempts += 1;
+      if (attempts === 1) throw new TypeError('fetch failed');
+      assert.equal(existsSync(weightFile), true);
+      return 'loaded';
+    },
+    (error) => { retryError = error; },
+  );
   assert.equal(result, 'loaded');
+  assert.match(retryError.message, /fetch failed/);
   await rm(modelDirectory, { recursive: true, force: true });
 });
 

@@ -8,6 +8,42 @@ import { fileURLToPath } from 'node:url';
 
 const relayHelper = fileURLToPath(new URL('../scripts/free-relay-common.ps1', import.meta.url));
 
+test('Windows direct restarts preserve an already configured required media relay', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const script = `
+$ErrorActionPreference = 'Stop'
+. $env:SANMAO_RELAY_TEST_HELPER
+$cases = @(
+  @{ Name = 'explicit opt-in'; Explicit = $true; Required = $true; Shared = $false; Previous = $false; Expected = $true },
+  @{ Name = 'previously active relay'; Explicit = $false; Required = $true; Shared = $false; Previous = $true; Expected = $true },
+  @{ Name = 'shared relay configured'; Explicit = $false; Required = $true; Shared = $true; Previous = $true; Expected = $false },
+  @{ Name = 'relay not required'; Explicit = $false; Required = $false; Shared = $false; Previous = $true; Expected = $false },
+  @{ Name = 'no previous relay'; Explicit = $false; Required = $true; Shared = $false; Previous = $false; Expected = $false }
+)
+foreach ($case in $cases) {
+  $parameters = @{
+    ExplicitlyRequested = $case.Explicit
+    MediaRelayRequired = $case.Required
+    SharedMediaRelayConfigured = $case.Shared
+    PreviouslyConfigured = $case.Previous
+  }
+  $actual = Test-SanmaoFreeRelayRequested @parameters
+  if ($actual -ne $case.Expected) { throw "Unexpected relay decision for $($case.Name): $actual" }
+}
+Write-Output 'PASS'
+`;
+  const output = execFileSync('powershell.exe', [
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand',
+    Buffer.from(script, 'utf16le').toString('base64'),
+  ], {
+    encoding: 'utf8',
+    timeout: 15_000,
+    env: { ...process.env, SANMAO_RELAY_TEST_HELPER: relayHelper },
+  });
+  assert.match(output, /PASS/);
+});
+
 test('Windows launcher publishes a quick tunnel only after the health probe passes', {
   skip: process.platform !== 'win32',
 }, async () => {

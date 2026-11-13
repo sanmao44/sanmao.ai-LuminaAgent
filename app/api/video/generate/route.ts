@@ -39,7 +39,10 @@ export async function POST(request: Request) {
     };
     const key = request.headers.get('Idempotency-Key') || String(body.idempotencyKey || '');
     const task = await runVideoGeneration({ modelId: String(body.model || 'auto'), input, idempotencyKey: key, source: normalizeGenerationSource(body.source, 'workspace') });
-    return Response.json({ ok: true, task }, { status: task?.status === 'failed' ? 502 : 202 });
+    if (task?.status === 'failed') {
+      return Response.json({ ok: false, error: task.error || '视频生成失败', task }, { status: 502 });
+    }
+    return Response.json({ ok: true, task }, { status: 202 });
   } catch (error) {
     if (error instanceof RuntimeDrainingError) return Response.json({ error: error.message, retryable: true }, { status: 409 });
     return Response.json({ error: error instanceof Error ? error.message : '视频生成失败' }, { status: 400 });

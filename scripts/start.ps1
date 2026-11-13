@@ -502,11 +502,13 @@ function Get-SanmaoServerInfo([int]$port) {
     $data = $health.Content | ConvertFrom-Json
     if ($data.service -ne 'sanmao-ai-studio') { return $null }
     $relayMode = 'unknown'
+    $relayConfigured = $false
     $relay = Invoke-SanmaoLocalHttp -Port $port -Path '/api/relay/status' -TimeoutMs 1000
     if ($relay.Ok -and $relay.StatusCode -ge 200 -and $relay.StatusCode -lt 300) {
       try {
         $relayData = $relay.Content | ConvertFrom-Json
         if ($relayData.mode -in @('relay', 'self-hosted', 'unavailable')) { $relayMode = [string]$relayData.mode }
+        $relayConfigured = [bool]$relayData.relayConfigured
       } catch {}
     }
     return [pscustomobject]@{
@@ -516,6 +518,7 @@ function Get-SanmaoServerInfo([int]$port) {
       NetworkMode = if ($data.networkMode -eq 'lan') { 'lan' } else { 'local' }
       LifecycleEnabled = [bool]$data.lifecycleEnabled
       MediaRelayMode = $relayMode
+      MediaRelayConfigured = $relayConfigured
     }
   } catch { return $null }
 }
@@ -1348,7 +1351,15 @@ if (Test-Port $port) {
   Fail "固定端口 $port 已被占用。为避免启动到另一套浏览器数据，已停止自动换端口；请关闭占用进程后重试。"
 }
 
-$freeRelayRequested = $FreeRelay.IsPresent -and $script:MediaRelayRequired -and -not $script:SharedMediaRelayConfigured
+$previousRelayConfigured = $false
+if ($existing) {
+  $previousRelayConfigured = $existing.MediaRelayMode -eq 'relay' -or [bool]$existing.MediaRelayConfigured
+}
+$freeRelayRequested = Test-SanmaoFreeRelayRequested `
+  -ExplicitlyRequested ([bool]$FreeRelay.IsPresent) `
+  -MediaRelayRequired ([bool]$script:MediaRelayRequired) `
+  -SharedMediaRelayConfigured ([bool]$script:SharedMediaRelayConfigured) `
+  -PreviouslyConfigured ([bool]$previousRelayConfigured)
 if ($freeRelayRequested) {
   # Set relay mode before the Next process starts. The tunnel itself is
   # created after the local health endpoint is ready; otherwise cloudflared
