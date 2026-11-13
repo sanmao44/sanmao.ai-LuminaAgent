@@ -101,8 +101,9 @@ export function hasDefaultMediaRelay(env = process.env, releaseDefault = release
   return Boolean(getDefaultMediaRelayUrl(env, releaseDefault));
 }
 
-export function hasReleaseMediaRelayConfig(config) {
-  return isPublicMediaRelayUrl(config?.defaultMediaRelayUrl);
+export function isReleaseMediaRelayConfigValid(config) {
+  const configuredUrl = String(config?.defaultMediaRelayUrl || '').trim();
+  return !configuredUrl || isPublicMediaRelayUrl(configuredUrl);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

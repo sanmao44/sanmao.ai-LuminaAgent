@@ -22,7 +22,7 @@ const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher,
   readFile(new URL("../scripts/media-relay-policy.mjs", import.meta.url), "utf8"),
 ]);
 
-const { requiresMediaRelay, hasDefaultMediaRelay, getDefaultMediaRelayUrl, isPublicMediaRelayUrl, hasReleaseMediaRelayConfig } = await import('../scripts/media-relay-policy.mjs');
+const { requiresMediaRelay, hasDefaultMediaRelay, getDefaultMediaRelayUrl, isPublicMediaRelayUrl, isReleaseMediaRelayConfigValid } = await import('../scripts/media-relay-policy.mjs');
 
 test("local lifecycle is mounted once for both the app and canvas routes", () => {
   assert.match(layout, /import LocalLifecycle from ['"]@\/components\/LocalLifecycle['"]/);
@@ -146,8 +146,9 @@ test('media relay policy includes enabled vision chats and keeps native video lo
   assert.equal(getDefaultMediaRelayUrl({ SANMAO_DEFAULT_MEDIA_RELAY_URL: 'http://invalid.example' }, 'https://release-relay.example'), 'https://release-relay.example');
   assert.equal(isPublicMediaRelayUrl('https://user:pass@relay.example'), false);
   assert.equal(isPublicMediaRelayUrl('https://relay.example/worker'), false);
-  assert.equal(hasReleaseMediaRelayConfig({ defaultMediaRelayUrl: '' }), false);
-  assert.equal(hasReleaseMediaRelayConfig({ defaultMediaRelayUrl: 'https://relay.example' }), true);
+  assert.equal(isReleaseMediaRelayConfigValid({ defaultMediaRelayUrl: '' }), true);
+  assert.equal(isReleaseMediaRelayConfigValid({ defaultMediaRelayUrl: 'https://relay.example' }), true);
+  assert.equal(isReleaseMediaRelayConfigValid({ defaultMediaRelayUrl: 'http://relay.example' }), false);
   assert.match(relayPolicySource, /capabilities\.includes\('vision'\)/);
 });
 

@@ -17,22 +17,15 @@ $ErrorActionPreference = 'Stop'
 . $env:SANMAO_RELAY_TEST_HELPER
 $root = $env:SANMAO_RELAY_TEST_ROOT
 $env:SANMAO_DATA_DIR = Join-Path $root 'data'
-Set-SanmaoFreeRelayPreference -Root $root
-if (-not (Test-SanmaoFreeRelayPreference -Root $root)) { throw 'explicit relay opt-in was not persisted' }
 $cases = @(
-  @{ Name = 'explicit opt-in'; Explicit = $true; Required = $true; Shared = $false; Previous = $false; Expected = $true },
-  @{ Name = 'previously active relay'; Explicit = $false; Required = $true; Shared = $false; Previous = $true; Expected = $true },
-  @{ Name = 'saved relay opt-in'; Explicit = $false; Required = $true; Shared = $false; Previous = (Test-SanmaoFreeRelayPreference -Root $root); Expected = $true },
-  @{ Name = 'shared relay configured'; Explicit = $false; Required = $true; Shared = $true; Previous = $true; Expected = $false },
-  @{ Name = 'relay not required'; Explicit = $false; Required = $false; Shared = $false; Previous = $true; Expected = $false },
-  @{ Name = 'no previous relay'; Explicit = $false; Required = $true; Shared = $false; Previous = $false; Expected = $false }
+  @{ Name = 'required relay without prior opt-in'; Required = $true; Shared = $false; Expected = $true },
+  @{ Name = 'shared relay configured'; Required = $true; Shared = $true; Expected = $false },
+  @{ Name = 'relay not required'; Required = $false; Shared = $false; Expected = $false }
 )
 foreach ($case in $cases) {
   $parameters = @{
-    ExplicitlyRequested = $case.Explicit
     MediaRelayRequired = $case.Required
     SharedMediaRelayConfigured = $case.Shared
-    PreviouslyConfigured = $case.Previous
   }
   $actual = Test-SanmaoFreeRelayRequested @parameters
   if ($actual -ne $case.Expected) { throw "Unexpected relay decision for $($case.Name): $actual" }

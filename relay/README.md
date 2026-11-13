@@ -1,18 +1,18 @@
 # SANMAO.AI 临时媒体中转服务
 
-中转服务让远程模型读取用户电脑上的参考图片。客户端先用 `sharp` 校验图片，再以原始流上传；Worker 将图片写入 R2。服务不接收模型 API Key 或提示词。图片链接 30 分钟后失效，R2 生命周期规则负责随后删除对象。
+公共媒体中转让远程模型读取用户电脑上的参考图片。发行版在确有需要时会按需启动免费临时通道，不要求用户订阅、注册账号或配置域名。Cloudflare Worker + R2 是可选的稳定共享部署方案，不是发布或使用本应用的前置条件。
 
 ## 面向普通用户
 
-项目维护者部署并发布一个共享 Worker 后，只需将它的 HTTPS 地址设为发行版的 `SANMAO_DEFAULT_MEDIA_RELAY_URL`。Windows 本机、Windows 局域网、macOS 和 Linux 启动器会识别这个默认值并跳过本机 Quick Tunnel。用户无需 Cloudflare 账号、域名或服务器。
+Windows 本机、Windows 局域网、macOS 和 Linux 启动器会检查已配置的服务商是否需要公网媒体地址。需要时，如果没有配置共享中转地址，启动器会自动建立临时 Quick Tunnel；服务停止时通道也会关闭，网络不可用时文本和普通图片功能仍可使用。
 
-当前仓库提供 Worker 和客户端接入，但还没有已部署的共享地址。`relay/default-config.json` 是发行版共享地址的唯一来源；部署并验证 Worker 后，将其稳定 HTTPS 根地址写入 `defaultMediaRelayUrl`。Windows、macOS 和 Linux 启动器会把该地址传给应用，并跳过本机 Quick Tunnel。
+如果项目之后部署了共享 Worker，可将它的 HTTPS 根地址写入 `relay/default-config.json` 的 `defaultMediaRelayUrl`，让所有用户共用稳定地址并跳过本机临时通道。留空即使用按需临时通道。
 
-发布 ZIP 时，`scripts/build-release-zip.mjs` 会验证所选 Git ref 中的共享地址；macOS DMG 工作流也执行相同检查。地址缺失或不是公网 HTTPS 时，打包会失败，防止发行版仍要求用户自行配置。不要把 `MEDIA_SIGNING_KEY` 写入该文件或任何应用包，它只应保存在 Cloudflare Worker secret 中。
+发布 ZIP 和 macOS DMG 时，打包校验允许共享地址留空；非空时必须是公网 HTTPS 根地址。不要把 `MEDIA_SIGNING_KEY` 写入该文件或任何应用包，它只应保存在自托管 Worker secret 中。
 
-## Cloudflare Worker + R2 部署
+## 可选：Cloudflare Worker + R2 部署
 
-此部署由项目维护者完成一次，所有发行版用户共用。Workers Free 当前有每日 100,000 次请求和每次 HTTP 请求 10 ms CPU 限制；公开共享服务建议使用 Workers Paid，并观察真实请求的 CPU 和 R2 用量。详见 [Workers limits](https://developers.cloudflare.com/workers/platform/limits/)。
+以下步骤只适用于希望维护稳定共享中转服务的项目维护者。普通用户安装和使用发行版无需完成这些步骤。
 
 1. 安装 Wrangler 并登录目标 Cloudflare 账号：
 

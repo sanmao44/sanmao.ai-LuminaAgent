@@ -5,7 +5,8 @@ import { join, resolve } from 'node:path';
 import { constants } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasReleaseMediaRelayConfig } from '../scripts/media-relay-policy.mjs';
+import { unzipSync } from 'fflate';
+import { isReleaseMediaRelayConfigValid } from '../scripts/media-relay-policy.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -36,15 +37,18 @@ function readCentralDirectory(buffer) {
   return entries;
 }
 
-test('发布 ZIP 拒绝缺少共享中转地址的源码 ref', async () => {
+test('发布 ZIP 允许无共享 Worker 并保留空地址配置', async () => {
   const temporaryDirectory = await mkdtemp(join(resolve('.data'), 'release-zip-test-'));
   const output = join(temporaryDirectory, 'release.zip');
   try {
     const previousCommit = (await execFileAsync('git', ['rev-parse', 'HEAD^'], { cwd: resolve('.') })).stdout.trim();
-    await assert.rejects(execFileAsync(process.execPath, [
+    await execFileAsync(process.execPath, [
       'scripts/build-release-zip.mjs', '--ref', previousCommit, '--output', output,
-    ], { cwd: resolve('.') }), /共享中转配置|HTTPS 共享中转地址/u);
-    await assert.rejects(access(output, constants.F_OK), { code: 'ENOENT' });
+    ], { cwd: resolve('.') });
+    await access(output, constants.F_OK);
+    const entries = unzipSync(await readFile(output));
+    const relayConfig = JSON.parse(new TextDecoder().decode(entries['relay/default-config.json']));
+    assert.equal(relayConfig.defaultMediaRelayUrl, '');
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
@@ -57,7 +61,7 @@ try {
 } catch {}
 
 test('发布 ZIP 为中文文件名设置 UTF-8 标志', {
-  skip: !hasReleaseMediaRelayConfig(committedRelayConfig),
+  skip: !isReleaseMediaRelayConfigValid(committedRelayConfig),
 }, async () => {
   const temporaryDirectory = await mkdtemp(join(resolve('.data'), 'release-zip-test-'));
   const output = join(temporaryDirectory, 'release.zip');

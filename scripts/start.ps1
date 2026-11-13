@@ -1039,9 +1039,9 @@ if ($existing) {
   $buildStale = (Test-SanmaoBuildStale -or Test-SanmaoServedBuildStale -or $identityStale)
   if (($modeMismatch -or $lifecycleMismatch -or $buildStale -or $ForceRestart.IsPresent) -and $Lan.IsPresent) { Ensure-SanmaoLanPassword }
   $freeRelayMismatch =
-    ($FreeRelay.IsPresent -and $script:MediaRelayRequired -and -not $script:SharedMediaRelayConfigured -and (
+    ($script:MediaRelayRequired -and -not $script:SharedMediaRelayConfigured -and (
       $existing.MediaRelayMode -in @('unknown', 'unavailable') -or
-      ($existing.MediaRelayMode -eq 'relay' -and (
+      ($FreeRelay.IsPresent -and $existing.MediaRelayMode -eq 'relay' -and (
         -not (Test-SanmaoFreeRelayTunnel -Root $root) -or
         -not (Test-SanmaoFreeRelayReachable -Root $root)
       ))
@@ -1363,22 +1363,10 @@ if (Test-Port $port) {
   Fail "固定端口 $port 已被占用。为避免启动到另一套浏览器数据，已停止自动换端口；请关闭占用进程后重试。"
 }
 
-$previousRelayConfigured = $false
-if ($existing) {
-  $previousRelayConfigured = $existing.MediaRelayMode -eq 'relay' -or [bool]$existing.MediaRelayConfigured
-}
-$freeRelayPreferenceWritten = $false
-if ($FreeRelay.IsPresent -and $script:MediaRelayRequired -and -not $script:SharedMediaRelayConfigured) {
-  Set-SanmaoFreeRelayPreference -Root $root
-  $freeRelayPreferenceWritten = $true
-}
-$previousRelayConfigured = $previousRelayConfigured -or (Test-SanmaoFreeRelayPreference -Root $root)
 $freeRelayRequested = Test-SanmaoFreeRelayRequested `
-  -ExplicitlyRequested ([bool]$FreeRelay.IsPresent) `
   -MediaRelayRequired ([bool]$script:MediaRelayRequired) `
-  -SharedMediaRelayConfigured ([bool]$script:SharedMediaRelayConfigured) `
-  -PreviouslyConfigured ([bool]$previousRelayConfigured)
-Write-SanmaoLauncherLog "媒体中转启动决策：required=$($script:MediaRelayRequired)，shared=$($script:SharedMediaRelayConfigured)，explicit=$($FreeRelay.IsPresent)，saved=$($previousRelayConfigured)，preferenceWritten=$freeRelayPreferenceWritten，enabled=$freeRelayRequested" 'INFO'
+  -SharedMediaRelayConfigured ([bool]$script:SharedMediaRelayConfigured)
+Write-SanmaoLauncherLog "媒体中转启动决策：required=$($script:MediaRelayRequired)，shared=$($script:SharedMediaRelayConfigured)，enabled=$freeRelayRequested" 'INFO'
 if ($freeRelayRequested) {
   # Set relay mode before the Next process starts. The tunnel itself is
   # created after the local health endpoint is ready; otherwise cloudflared

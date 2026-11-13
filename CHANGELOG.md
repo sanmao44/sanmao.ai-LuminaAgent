@@ -1,3 +1,13 @@
+# 0.7.105 Agent、音频与 Canvas 稳定性改进
+
+- 新增 Agent 意图预览，并加强桌面操作的输入核对和完成验证。
+- 新增本地音频转写与字幕流程，增强长音频处理和中断下载恢复。
+- 加固 Canvas 保存、同步与空间不足时的恢复，并优化移动端操作。
+- 新增加密 Provider 配置导入与导出。
+- 视觉媒体需要公网访问时按需启用免费临时通道，无需部署共享 Worker/R2。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.105](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.105)。
+
 # 0.7.104 Canvas 图片与界面体验改进
 
 - 改进 Canvas 图片生成连续性、任务恢复与图片持久化，提升长流程的稳定性。

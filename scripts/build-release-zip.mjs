@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { hasReleaseMediaRelayConfig } from './media-relay-policy.mjs';
+import { isReleaseMediaRelayConfigValid } from './media-relay-policy.mjs';
 
 function usage() {
   console.log('用法: node scripts/build-release-zip.mjs --ref <git ref> --output <zip路径>');
@@ -58,8 +58,8 @@ try {
 } catch {
   throw new Error(`发布源码 ${ref} 缺少 relay/default-config.json，无法验证共享中转配置`);
 }
-if (!hasReleaseMediaRelayConfig(releaseRelayConfig)) {
-  throw new Error(`发布源码 ${ref} 未配置有效的 HTTPS 共享中转地址；部署 Worker 后填写 relay/default-config.json 再打包`);
+if (!isReleaseMediaRelayConfigValid(releaseRelayConfig)) {
+  throw new Error(`发布源码 ${ref} 的共享中转地址无效；配置时必须使用公网 HTTPS 根地址`);
 }
 
 const output = resolve(outputArgument);

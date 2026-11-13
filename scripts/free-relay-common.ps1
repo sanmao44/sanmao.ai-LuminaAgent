@@ -8,13 +8,11 @@
 
 function Test-SanmaoFreeRelayRequested {
   param(
-    [bool]$ExplicitlyRequested,
     [bool]$MediaRelayRequired,
-    [bool]$SharedMediaRelayConfigured,
-    [bool]$PreviouslyConfigured
+    [bool]$SharedMediaRelayConfigured
   )
 
-  return $MediaRelayRequired -and -not $SharedMediaRelayConfigured -and ($ExplicitlyRequested -or $PreviouslyConfigured)
+  return $MediaRelayRequired -and -not $SharedMediaRelayConfigured
 }
 
 function Get-SanmaoFreeRelayPreferencePath {

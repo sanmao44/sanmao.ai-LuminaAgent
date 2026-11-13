@@ -107,7 +107,7 @@ git push origin main                 # 这样别人 pull main 才能拿到
 - ZIP 供应用内自动更新，`update.json.packageUrl` 必须指向 ZIP；发布后必须用实际 ZIP 校验 SHA-256。
 - DMG 供 macOS 用户首次安装，作为同一个 GitHub Release 的附件与 ZIP 一起上传。
 - DMG 不提交到源码仓库；优先使用 macOS runner/CI 构建。发布前确认 DMG 内的应用拖入“应用程序”后可以独立启动。
-- 发布前必须部署并验证共享媒体 Worker，把它的 HTTPS 根地址写入 `relay/default-config.json`；ZIP 构建和 DMG workflow 会拒绝缺少有效公网地址的发布源。
+- 共享媒体 Worker / R2 是可选部署，不是发布前提。`relay/default-config.json` 留空时，各平台启动器会在已配置服务商需要公网媒体地址时按需使用免费临时通道；如配置共享地址，则必须是公网 HTTPS 根地址。ZIP 和 DMG workflow 均验证该配置。
 
 ```powershell
 # 1) 确认 main 是最新、改动都在
@@ -137,7 +137,7 @@ gh release create v0.7.25 `
 > ```powershell
 > npm run build:release-zip -- --ref <发布源 commit 或 tag> --output "C:\path\to\SANMAO.AI-x.y.z.zip"
 > ```
-> 该脚本使用 `git archive` 并在生成后检查 ZIP 中文文件名的 UTF-8 标志；校验失败时不会保留错误压缩包。打包前还会校验所选 ref 的 `relay/default-config.json`；DMG workflow 执行相同检查。
+> 该脚本使用 `git archive` 并在生成后检查 ZIP 中文文件名的 UTF-8 标志；校验失败时不会保留错误压缩包。打包前还会校验所选 ref 的 `relay/default-config.json`（允许留空；非空时必须是有效公网 HTTPS 地址）；DMG workflow 执行相同检查。
 > **发布前必做校验（避免“SHA-256 校验失败”）：**
 > `npm run check` 和 GitHub CI 会强制检查 `update.json`：`latestVersion` 必须与 `package.json` 一致，`packageUrl`、`releaseUrl` 和非全零 SHA-256 必须完整且版本一致。未生成真实 ZIP 校验值前，不要把发布准备提交推到 `main`。
 > 上传 zip 后，在仓库根目录运行：
