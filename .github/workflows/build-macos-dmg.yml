@@ -57,10 +57,15 @@ jobs:
             --exclude 'dev.log' \
             --exclude 'temp_edit*.py' \
             ./ "$app_root/"
+          perl -pi -e 's/\r$//' "$app/Contents/MacOS/SANMAO.AI"
           find "$app_root" -type f \( -name '*.sh' -o -name '*.command' \) -exec perl -pi -e 's/\r$//' {} +
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $RELEASE_VERSION" "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $RELEASE_VERSION" "$app/Contents/Info.plist"
           chmod +x "$app/Contents/MacOS/SANMAO.AI"
 
           test -x "$app/Contents/MacOS/SANMAO.AI"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$RELEASE_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" = "$RELEASE_VERSION"
           test -f "$app/Contents/Resources/AppRoot/scripts/start-macos.sh"
           test -f "$app/Contents/Resources/AppRoot/package.json"
           sh -n "$app/Contents/MacOS/SANMAO.AI"
