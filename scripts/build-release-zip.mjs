@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { hasReleaseMediaRelayConfig } from './media-relay-policy.mjs';
 
 function usage() {
   console.log('用法: node scripts/build-release-zip.mjs --ref <git ref> --output <zip路径>');
@@ -48,6 +49,17 @@ const outputArgument = argValue('--output');
 if (!ref || !outputArgument) {
   usage();
   process.exit(1);
+}
+
+let releaseRelayConfig;
+try {
+  const serialized = execFileSync('git', ['show', `${ref}:relay/default-config.json`], { encoding: 'utf8' });
+  releaseRelayConfig = JSON.parse(serialized);
+} catch {
+  throw new Error(`发布源码 ${ref} 缺少 relay/default-config.json，无法验证共享中转配置`);
+}
+if (!hasReleaseMediaRelayConfig(releaseRelayConfig)) {
+  throw new Error(`发布源码 ${ref} 未配置有效的 HTTPS 共享中转地址；部署 Worker 后填写 relay/default-config.json 再打包`);
 }
 
 const output = resolve(outputArgument);

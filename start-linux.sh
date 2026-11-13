@@ -70,6 +70,10 @@ resolve_provider_config_dir() {
 }
 
 export SANMAO_PROVIDER_CONFIG_DIR=`resolve_provider_config_dir`
+if [ -z "${SANMAO_DEFAULT_MEDIA_RELAY_URL:-}" ]; then
+  SANMAO_DEFAULT_MEDIA_RELAY_URL=$(node "$SCRIPT_DIR/scripts/media-relay-policy.mjs" --print-default-relay-url 2>/dev/null || true)
+  if [ -n "$SANMAO_DEFAULT_MEDIA_RELAY_URL" ]; then export SANMAO_DEFAULT_MEDIA_RELAY_URL; fi
+fi
 DATA_ROOT="$SANMAO_PROVIDER_CONFIG_DIR"
 MEDIA_RELAY_REQUIRED=0
 if [ -f "$DATA_ROOT/state.json" ] && node "$SCRIPT_DIR/scripts/media-relay-policy.mjs" "$DATA_ROOT/state.json"; then

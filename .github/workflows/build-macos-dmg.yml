@@ -27,6 +27,9 @@ jobs:
       - name: Validate update manifest before packaging
         run: node scripts/validate-update-manifest.mjs --strict
 
+      - name: Validate shared media relay before packaging
+        run: node scripts/validate-release-media-relay.mjs
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22.13.0

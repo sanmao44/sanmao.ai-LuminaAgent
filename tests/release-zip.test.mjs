@@ -1,9 +1,11 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, access } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join, resolve } from 'node:path';
+import { constants } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { hasReleaseMediaRelayConfig } from '../scripts/media-relay-policy.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -34,16 +36,34 @@ function readCentralDirectory(buffer) {
   return entries;
 }
 
-test('发布 ZIP 为中文文件名设置 UTF-8 标志', async () => {
+test('发布 ZIP 拒绝缺少共享中转地址的源码 ref', async () => {
+  const temporaryDirectory = await mkdtemp(join(resolve('.data'), 'release-zip-test-'));
+  const output = join(temporaryDirectory, 'release.zip');
+  try {
+    const previousCommit = (await execFileAsync('git', ['rev-parse', 'HEAD^'], { cwd: resolve('.') })).stdout.trim();
+    await assert.rejects(execFileAsync(process.execPath, [
+      'scripts/build-release-zip.mjs', '--ref', previousCommit, '--output', output,
+    ], { cwd: resolve('.') }), /共享中转配置|HTTPS 共享中转地址/u);
+    await assert.rejects(access(output, constants.F_OK), { code: 'ENOENT' });
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+let committedRelayConfig = {};
+try {
+  const committedConfig = await execFileAsync('git', ['show', 'HEAD:relay/default-config.json'], { cwd: resolve('.') });
+  committedRelayConfig = JSON.parse(committedConfig.stdout);
+} catch {}
+
+test('发布 ZIP 为中文文件名设置 UTF-8 标志', {
+  skip: !hasReleaseMediaRelayConfig(committedRelayConfig),
+}, async () => {
   const temporaryDirectory = await mkdtemp(join(resolve('.data'), 'release-zip-test-'));
   const output = join(temporaryDirectory, 'release.zip');
   try {
     await execFileAsync(process.execPath, [
-      'scripts/build-release-zip.mjs',
-      '--ref',
-      'HEAD',
-      '--output',
-      output,
+      'scripts/build-release-zip.mjs', '--ref', 'HEAD', '--output', output,
     ], { cwd: resolve('.') });
 
     const entries = readCentralDirectory(await readFile(output));

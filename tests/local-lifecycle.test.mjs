@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from 'node:child_process';
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from 'node:url';
 
 const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher, linuxLauncher, lanLauncher, freeRelayPs, freeRelayWatchPs, freeRelaySh, readme, videoStudio, relayPolicySource] = await Promise.all([
   readFile(new URL("../components/LocalLifecycle.tsx", import.meta.url), "utf8"),
@@ -20,7 +22,7 @@ const [component, layout, page, lifecycle, health, windowsLauncher, macLauncher,
   readFile(new URL("../scripts/media-relay-policy.mjs", import.meta.url), "utf8"),
 ]);
 
-const { requiresMediaRelay, hasDefaultMediaRelay } = await import('../scripts/media-relay-policy.mjs');
+const { requiresMediaRelay, hasDefaultMediaRelay, getDefaultMediaRelayUrl, isPublicMediaRelayUrl, hasReleaseMediaRelayConfig } = await import('../scripts/media-relay-policy.mjs');
 
 test("local lifecycle is mounted once for both the app and canvas routes", () => {
   assert.match(layout, /import LocalLifecycle from ['"]@\/components\/LocalLifecycle['"]/);
@@ -139,7 +141,23 @@ test('media relay policy includes enabled vision chats and keeps native video lo
   assert.equal(hasDefaultMediaRelay({ SANMAO_DEFAULT_MEDIA_RELAY_URL: 'https://relay.example' }), true);
   assert.equal(hasDefaultMediaRelay({ SANMAO_DEFAULT_MEDIA_RELAY_URL: 'http://relay.example' }), false);
   assert.equal(hasDefaultMediaRelay({ SANMAO_DEFAULT_MEDIA_RELAY_URL: 'https://localhost' }), false);
+  assert.equal(getDefaultMediaRelayUrl({}, 'https://release-relay.example/'), 'https://release-relay.example');
+  assert.equal(getDefaultMediaRelayUrl({ SANMAO_DEFAULT_MEDIA_RELAY_URL: 'https://override.example/' }, 'https://release-relay.example'), 'https://override.example');
+  assert.equal(getDefaultMediaRelayUrl({ SANMAO_DEFAULT_MEDIA_RELAY_URL: 'http://invalid.example' }, 'https://release-relay.example'), 'https://release-relay.example');
+  assert.equal(isPublicMediaRelayUrl('https://user:pass@relay.example'), false);
+  assert.equal(isPublicMediaRelayUrl('https://relay.example/worker'), false);
+  assert.equal(hasReleaseMediaRelayConfig({ defaultMediaRelayUrl: '' }), false);
+  assert.equal(hasReleaseMediaRelayConfig({ defaultMediaRelayUrl: 'https://relay.example' }), true);
   assert.match(relayPolicySource, /capabilities\.includes\('vision'\)/);
+});
+
+test('launcher policy exposes the bundled relay URL to the application process', () => {
+  const policyPath = new URL('../scripts/media-relay-policy.mjs', import.meta.url);
+  const url = execFileSync(process.execPath, [fileURLToPath(policyPath), '--print-default-relay-url'], {
+    encoding: 'utf8',
+    env: { ...process.env, SANMAO_DEFAULT_MEDIA_RELAY_URL: 'https://release-relay.example/' },
+  });
+  assert.equal(url, 'https://release-relay.example');
 });
 
 test('media relay policy enables the public relay for URL-based image references', () => {

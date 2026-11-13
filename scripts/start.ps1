@@ -483,6 +483,18 @@ function Test-SanmaoDefaultMediaRelayConfigured {
   try { & node $policyPath --has-default-relay; return $LASTEXITCODE -eq 0 } catch { return $false }
 }
 
+function Import-SanmaoDefaultMediaRelayUrl {
+  $policyPath = Join-Path $PSScriptRoot 'media-relay-policy.mjs'
+  if (-not (Test-Path -LiteralPath $policyPath -PathType Leaf)) { return }
+  try {
+    $value = [string](& node $policyPath --print-default-relay-url | Select-Object -Last 1)
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($value)) {
+      $env:SANMAO_DEFAULT_MEDIA_RELAY_URL = $value.Trim()
+    }
+  } catch {}
+}
+
+Import-SanmaoDefaultMediaRelayUrl
 $script:MediaRelayRequired = Test-SanmaoMediaRelayRequired
 $script:SharedMediaRelayConfigured = Test-SanmaoDefaultMediaRelayConfigured
 

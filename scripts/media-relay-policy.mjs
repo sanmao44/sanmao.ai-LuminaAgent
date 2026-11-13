@@ -2,6 +2,13 @@ import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+const RELEASE_RELAY_CONFIG_URL = new URL('../relay/default-config.json', import.meta.url);
+let releaseDefaultMediaRelayUrl = '';
+try {
+  const config = JSON.parse(readFileSync(RELEASE_RELAY_CONFIG_URL, 'utf8'));
+  releaseDefaultMediaRelayUrl = String(config.defaultMediaRelayUrl || '').trim();
+} catch {}
+
 function hasProviderCredential(provider) {
   return Boolean(String(provider?.encryptedApiKey || provider?.encryptedVideoApiKey || provider?.apiKey || '').trim());
 }
@@ -60,14 +67,16 @@ export function requiresMediaRelay(state) {
   });
 }
 
-export function hasDefaultMediaRelay(env = process.env) {
+export function isPublicMediaRelayUrl(value) {
   try {
-    const value = String(env.SANMAO_DEFAULT_MEDIA_RELAY_URL || '').trim();
-    const parsed = new URL(value);
+    const parsed = new URL(String(value || '').trim());
     const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
     return parsed.protocol === 'https:'
       && !parsed.username
       && !parsed.password
+      && parsed.pathname === '/'
+      && !parsed.search
+      && !parsed.hash
       && host !== 'localhost'
       && host !== '::1'
       && !host.endsWith('.local')
@@ -81,12 +90,29 @@ export function hasDefaultMediaRelay(env = process.env) {
   }
 }
 
+export function getDefaultMediaRelayUrl(env = process.env, releaseDefault = releaseDefaultMediaRelayUrl) {
+  const override = String(env.SANMAO_DEFAULT_MEDIA_RELAY_URL || '').trim();
+  if (override && isPublicMediaRelayUrl(override)) return override.replace(/\/+$/, '');
+  const configured = String(releaseDefault || '').trim();
+  return isPublicMediaRelayUrl(configured) ? configured.replace(/\/+$/, '') : '';
+}
+
+export function hasDefaultMediaRelay(env = process.env, releaseDefault = releaseDefaultMediaRelayUrl) {
+  return Boolean(getDefaultMediaRelayUrl(env, releaseDefault));
+}
+
+export function hasReleaseMediaRelayConfig(config) {
+  return isPublicMediaRelayUrl(config?.defaultMediaRelayUrl);
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const { loadEnvConfig } = (await import('@next/env')).default;
     loadEnvConfig(dirname(dirname(fileURLToPath(import.meta.url))), false);
     if (process.argv[2] === '--has-default-relay') {
       process.exitCode = hasDefaultMediaRelay() ? 0 : 1;
+    } else if (process.argv[2] === '--print-default-relay-url') {
+      process.stdout.write(getDefaultMediaRelayUrl());
     } else {
       const state = JSON.parse(readFileSync(process.argv[2], 'utf8'));
       process.exitCode = requiresMediaRelay(state) ? 0 : 1;

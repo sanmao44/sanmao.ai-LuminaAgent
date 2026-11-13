@@ -6,7 +6,9 @@
 
 项目维护者部署并发布一个共享 Worker 后，只需将它的 HTTPS 地址设为发行版的 `SANMAO_DEFAULT_MEDIA_RELAY_URL`。Windows 本机、Windows 局域网、macOS 和 Linux 启动器会识别这个默认值并跳过本机 Quick Tunnel。用户无需 Cloudflare 账号、域名或服务器。
 
-当前仓库提供 Worker 和客户端接入，但还没有已部署的共享地址。填入并分发真实地址之前，发行版仍会沿用现有的本机临时隧道，或使用用户配置的自托管服务。
+当前仓库提供 Worker 和客户端接入，但还没有已部署的共享地址。`relay/default-config.json` 是发行版共享地址的唯一来源；部署并验证 Worker 后，将其稳定 HTTPS 根地址写入 `defaultMediaRelayUrl`。Windows、macOS 和 Linux 启动器会把该地址传给应用，并跳过本机 Quick Tunnel。
+
+发布 ZIP 时，`scripts/build-release-zip.mjs` 会验证所选 Git ref 中的共享地址；macOS DMG 工作流也执行相同检查。地址缺失或不是公网 HTTPS 时，打包会失败，防止发行版仍要求用户自行配置。不要把 `MEDIA_SIGNING_KEY` 写入该文件或任何应用包，它只应保存在 Cloudflare Worker secret 中。
 
 ## Cloudflare Worker + R2 部署
 
@@ -53,7 +55,7 @@ npx wrangler r2 bucket lifecycle list sanmao-media-relay
 
 7. 检查 `https://<worker-host>/api/health` 返回 `200` 和 `"ok":true`，再用 SANMAO.AI 测试一张参考图的上传及回读。
 
-8. 将 Worker 的 HTTPS 根地址作为发布配置注入 `SANMAO_DEFAULT_MEDIA_RELAY_URL`。启动器和 Next.js 会从进程环境或项目根目录的 `.env` 加载此变量。有默认地址时启动器会关闭旧 Quick Tunnel；空缺时仍使用原启动流程。确认配置随 Windows、macOS、Linux 和局域网发行包分发后，再向用户发布。
+8. 将 Worker 的稳定 HTTPS 根地址写入仓库根目录 `relay/default-config.json` 的 `defaultMediaRelayUrl` 字段。它是公开地址，不包含签名密钥。先确认 `/api/health`、上传和签名图片回读均成功，再从包含该配置的 `main` 构建 ZIP 和 DMG。
 
 ## 费用、滥用与停用
 

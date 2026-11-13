@@ -105,6 +105,11 @@ shared_media_relay_configured() {
   node "$SCRIPT_DIR/media-relay-policy.mjs" --has-default-relay
 }
 
+if [ -z "${SANMAO_DEFAULT_MEDIA_RELAY_URL:-}" ] && command -v node >/dev/null 2>&1; then
+  SANMAO_DEFAULT_MEDIA_RELAY_URL=$(node "$SCRIPT_DIR/media-relay-policy.mjs" --print-default-relay-url 2>/dev/null || true)
+  if [ -n "$SANMAO_DEFAULT_MEDIA_RELAY_URL" ]; then export SANMAO_DEFAULT_MEDIA_RELAY_URL; fi
+fi
+
 MEDIA_RELAY_REQUIRED=0
 if media_relay_required; then MEDIA_RELAY_REQUIRED=1; fi
 SHARED_MEDIA_RELAY_CONFIGURED=0
