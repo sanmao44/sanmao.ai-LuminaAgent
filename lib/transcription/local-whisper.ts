@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { AutomaticSpeechRecognitionOutput, ProgressInfo } from '@huggingface/transformers';
@@ -44,6 +44,84 @@ export type LocalTranscriptionOptions = {
 const transcriberPromises = new Map<string, Promise<LocalTranscriber>>();
 const promptedTranscriberQueues = new WeakMap<LocalTranscriber, Promise<void>>();
 const MAX_PROMPT_TOKENS = 224;
+const MODEL_TEMP_FILE_PATTERN = /\.tmp\.[^/\\]+$/u;
+const MODEL_TEMP_MAX_AGE_MS = 60 * 60 * 1_000;
+const LOCAL_MODEL_LOAD_ERROR = '本地语音识别模型下载或加载失败，请检查网络连接后重试。首次使用会自动下载并缓存模型。';
+
+async function removeInterruptedModelDownloads(modelDirectory: string, now = Date.now()): Promise<number> {
+  let removed = 0;
+  let entries;
+  try {
+    entries = await readdir(modelDirectory, { withFileTypes: true });
+  } catch {
+    return removed;
+  }
+  for (const entry of entries) {
+    const entryPath = path.join(modelDirectory, entry.name);
+    if (entry.isDirectory()) {
+      removed += await removeInterruptedModelDownloads(entryPath, now);
+      continue;
+    }
+    if (!entry.isFile() || !MODEL_TEMP_FILE_PATTERN.test(entry.name)) continue;
+    try {
+      const details = await stat(entryPath);
+      if (now - details.mtimeMs < MODEL_TEMP_MAX_AGE_MS) continue;
+      const processId = Number(entry.name.match(/\.tmp\.(\d+)\./u)?.[1]);
+      if (Number.isInteger(processId) && processId > 0 && processId <= 2_147_483_647) {
+        try {
+          process.kill(processId, 0);
+          continue;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'EPERM') continue;
+        }
+      }
+      await rm(entryPath, { force: true });
+      removed += 1;
+    } catch {
+      // A concurrent process may finish or remove the temporary file first.
+    }
+  }
+  return removed;
+}
+
+/** Load a local model and recover once from an interrupted or corrupt cache. */
+export async function loadWithLocalModelCacheRecovery<T>(
+  modelDirectory: string,
+  localOnly: boolean,
+  load: () => Promise<T>,
+) {
+  await removeInterruptedModelDownloads(modelDirectory);
+  try {
+    return await load();
+  } catch (firstError) {
+    if (localOnly) {
+      const error = new Error('本地语音识别模型缓存不可用，请允许首次联网下载模型后重试。', { cause: firstError });
+      error.name = 'LocalTranscriptionModelError';
+      throw error;
+    }
+    const errorChain: unknown[] = [];
+    for (let current: unknown = firstError; current instanceof Error; current = current.cause) errorChain.push(current.message);
+    const networkFailure = /fetch failed|network|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|certificate/i.test(errorChain.join(' '));
+    if (!networkFailure) {
+      const onnxDirectory = path.join(modelDirectory, 'onnx');
+      try {
+        const entries = await readdir(onnxDirectory, { withFileTypes: true });
+        await Promise.all(entries
+          .filter((entry) => entry.isFile() && entry.name.endsWith('.onnx'))
+          .map((entry) => rm(path.join(onnxDirectory, entry.name), { force: true })));
+      } catch {
+        // The model may have failed before creating its ONNX cache directory.
+      }
+    }
+    try {
+      return await load();
+    } catch (secondError) {
+      const error = new Error(LOCAL_MODEL_LOAD_ERROR, { cause: secondError });
+      error.name = 'LocalTranscriptionModelError';
+      throw error;
+    }
+  }
+}
 
 function finite(value: unknown, fallback = 0) {
   const number = Number(value);
@@ -261,17 +339,26 @@ async function getLocalTranscriber(model: string, localOnly: boolean, onProgress
   if (!pending) {
     pending = (async () => {
       const modelCache = path.join(resolveLocalDataDir(), 'models', 'transformers');
+      const modelDirectory = path.resolve(modelCache, ...model.split(/[\\/]+/u).filter(Boolean));
+      const modelRelativePath = path.relative(modelCache, modelDirectory);
+      const modelIsInCache = Boolean(modelRelativePath)
+        && modelRelativePath !== '..'
+        && !modelRelativePath.startsWith(`..${path.sep}`)
+        && !path.isAbsolute(modelRelativePath);
       const { env, pipeline } = await import('@huggingface/transformers');
       env.cacheDir = modelCache;
       env.allowLocalModels = true;
       env.allowRemoteModels = !localOnly;
-      const loaded = await pipeline('automatic-speech-recognition', model, {
+      const load = () => pipeline('automatic-speech-recognition', model, {
         cache_dir: modelCache,
         local_files_only: localOnly,
         device: 'cpu',
         dtype: 'q8',
         progress_callback: progressFromTransformers(onProgress),
       });
+      const loaded = modelIsInCache
+        ? await loadWithLocalModelCacheRecovery(modelDirectory, localOnly, load)
+        : await load();
       return loaded as unknown as LocalTranscriber;
     })().catch((error) => {
       transcriberPromises.delete(cacheKey);

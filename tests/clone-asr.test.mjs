@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, utimes, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -205,6 +205,76 @@ test('normalization closes a final word with the known audio duration when Whisp
     { text: 'one', start: 0, end: 0.5 },
     { text: 'two', start: 0.6, end: 1.2 },
   ]);
+});
+
+test('local model cache recovery removes stale downloads and retries once', async () => {
+  const modelDirectory = await mkdtemp(path.join(repoRoot, 'tests', '.local-model-cache-'));
+  const staleFile = path.join(modelDirectory, 'onnx', 'decoder_model.onnx.tmp.2147483000.abcd');
+  const weightFile = path.join(modelDirectory, 'onnx', 'encoder_model.onnx');
+  const configFile = path.join(modelDirectory, 'config.json');
+  await mkdir(path.dirname(staleFile), { recursive: true });
+  await writeFile(staleFile, 'partial');
+  await writeFile(weightFile, 'corrupt weight');
+  await writeFile(configFile, 'model config');
+  const old = new Date(Date.now() - 11 * 60 * 1_000);
+  await utimes(staleFile, old, old);
+
+  let attempts = 0;
+  const result = await transcriptionModule.loadWithLocalModelCacheRecovery(modelDirectory, false, async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error('Invalid protobuf model');
+    assert.equal(existsSync(weightFile), false);
+    assert.equal(existsSync(configFile), true);
+    return 'loaded';
+  });
+
+  assert.equal(result, 'loaded');
+  assert.equal(attempts, 2);
+  await rm(modelDirectory, { recursive: true, force: true });
+});
+
+test('local model cache recovery preserves weights when the failure is network-related', async () => {
+  const modelDirectory = await mkdtemp(path.join(repoRoot, 'tests', '.local-model-cache-'));
+  const weightFile = path.join(modelDirectory, 'onnx', 'encoder_model.onnx');
+  await mkdir(path.dirname(weightFile), { recursive: true });
+  await writeFile(weightFile, 'complete weight');
+  let attempts = 0;
+  const result = await transcriptionModule.loadWithLocalModelCacheRecovery(modelDirectory, false, async () => {
+    attempts += 1;
+    if (attempts === 1) throw new TypeError('fetch failed');
+    assert.equal(existsSync(weightFile), true);
+    return 'loaded';
+  });
+  assert.equal(result, 'loaded');
+  await rm(modelDirectory, { recursive: true, force: true });
+});
+
+test('local model cache recovery returns an actionable error after retry failure', async () => {
+  const modelDirectory = await mkdtemp(path.join(repoRoot, 'tests', '.local-model-cache-'));
+  let attempts = 0;
+  await assert.rejects(
+    transcriptionModule.loadWithLocalModelCacheRecovery(modelDirectory, false, async () => {
+      attempts += 1;
+      throw new Error('fetch failed');
+    }),
+    /本地语音识别模型下载或加载失败/,
+  );
+  assert.equal(attempts, 2);
+  await rm(modelDirectory, { recursive: true, force: true });
+});
+
+test('local-only model loading does not retry and asks for the first-run download', async () => {
+  const modelDirectory = await mkdtemp(path.join(repoRoot, 'tests', '.local-model-cache-'));
+  let attempts = 0;
+  await assert.rejects(
+    transcriptionModule.loadWithLocalModelCacheRecovery(modelDirectory, true, async () => {
+      attempts += 1;
+      throw new Error('missing model');
+    }),
+    /允许首次联网下载模型/,
+  );
+  assert.equal(attempts, 1);
+  await rm(modelDirectory, { recursive: true, force: true });
 });
 
 await rm(moduleRoot, { recursive: true, force: true });
