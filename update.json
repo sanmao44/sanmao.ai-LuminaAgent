@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.105/SANMAO.AI-0.7.105.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.105/SANMAO.AI-0.7.105.zip"
   ],
-  "sha256": "228d05c580e23808eba23f7ba219a3406a3aee987ae17f8100bdbb0f24dd25b6",
+  "sha256": "d23fba58ef41f3cb09c666cd508d6a1ce51e3fb1e00ab090c0c96b78559c0f00",
   "notes": [
     "新增 Agent 意图预览与桌面操作核对，改进任务完成验证。",
     "新增本地音频转写和字幕流程，增强长音频下载恢复。",
