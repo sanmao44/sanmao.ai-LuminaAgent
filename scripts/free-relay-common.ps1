@@ -17,6 +17,26 @@ function Test-SanmaoFreeRelayRequested {
   return $MediaRelayRequired -and -not $SharedMediaRelayConfigured -and ($ExplicitlyRequested -or $PreviouslyConfigured)
 }
 
+function Get-SanmaoFreeRelayPreferencePath {
+  param([Parameter(Mandatory = $true)][string]$Root)
+
+  return (Join-Path (Get-SanmaoFreeRelayStateRoot -Root $Root) 'enabled')
+}
+
+function Test-SanmaoFreeRelayPreference {
+  param([Parameter(Mandatory = $true)][string]$Root)
+
+  return Test-Path -LiteralPath (Get-SanmaoFreeRelayPreferencePath -Root $Root) -PathType Leaf
+}
+
+function Set-SanmaoFreeRelayPreference {
+  param([Parameter(Mandatory = $true)][string]$Root)
+
+  $stateRoot = Get-SanmaoFreeRelayStateRoot -Root $Root
+  New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
+  [System.IO.File]::WriteAllText((Get-SanmaoFreeRelayPreferencePath -Root $Root), "enabled`n", [System.Text.Encoding]::ASCII)
+}
+
 function Stop-SanmaoFreeRelayTunnel {
   param([Parameter(Mandatory = $true)][string]$Root)
 

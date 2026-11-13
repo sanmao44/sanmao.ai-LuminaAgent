@@ -10,10 +10,11 @@
 .provider-search-box input{min-width:0;flex:1;border:0;background:transparent;font-size:10px}
 .provider-search-box button{width:24px;height:24px;flex:none;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:15px;line-height:1}
 .provider-search-box button:hover{background:var(--danger-soft);color:var(--danger)}
-.provider-list-toolbar>span{flex:none;color:var(--muted);font-size:9px;font-variant-numeric:tabular-nums}.provider-list-toolbar>span b{color:var(--accent-text);font-size:11px}
+.provider-list-toolbar-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;flex-wrap:wrap}.provider-list-toolbar-actions>span{flex:none;color:var(--muted);font-size:9px;font-variant-numeric:tabular-nums}.provider-list-toolbar-actions>span b{color:var(--accent-text);font-size:11px}
+.provider-transfer-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}.provider-transfer-actions .ghost-button{min-height:32px;padding:0 9px;font-size:9px}.provider-transfer-actions .ghost-button svg{flex:none}.provider-transfer-file-input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;clip-path:inset(50%)}.provider-transfer-message{flex-basis:100%;color:var(--success);font-size:8px;text-align:right}.provider-transfer-message.error{color:var(--danger)}
 .provider-search-empty{min-height:180px;display:grid;place-items:center;align-content:center;gap:8px;padding:24px;text-align:center;color:var(--muted)}
 .provider-search-empty strong{color:var(--text);font-size:13px}.provider-search-empty span{font-size:9px}.provider-search-empty button{margin-top:4px}
-@media(max-width:620px){.provider-list-toolbar{align-items:stretch;flex-direction:column}.provider-search-box{width:100%;min-width:0;max-width:none}.provider-list-toolbar>span{align-self:flex-end}}
+@media(max-width:620px){.provider-list-toolbar{align-items:stretch;flex-direction:column}.provider-search-box{width:100%;min-width:0;max-width:none}.provider-list-toolbar-actions{justify-content:space-between}.provider-transfer-actions{justify-content:flex-start}.provider-transfer-message{text-align:left}}
 
 .provider-library-toggle {
   display: inline-flex;

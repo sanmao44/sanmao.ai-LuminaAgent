@@ -14,6 +14,7 @@ import { providerStateRepository } from './repositories/server-provider-reposito
 import { isIntentClassifierEnabledByDefault, isIntentClassifierModel, isInternalIntentModel } from './intent-classifier';
 import { isRetiredAgnesModel } from './agnes';
 import { prepareImageStoragePath } from './image-storage';
+import type { ProviderTransferBundle } from '@/packages/contracts/provider-transfer';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -533,6 +534,93 @@ export async function getProviderWithKey(id: string) {
   const provider = state.providers.find((p) => p.id === id);
   if (!provider) return null;
   return { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined };
+}
+
+export async function mergeProviderTransferConfiguration(bundle: Pick<ProviderTransferBundle, 'providers' | 'models'>) {
+  return mutateState(async (state) => {
+    const existingById = new Map(state.providers.map((provider) => [provider.id, provider]));
+    const providerById = new Map<string, StoredProvider>();
+    let addedProviders = 0;
+    let updatedProviders = 0;
+    for (const provider of bundle.providers) {
+      const existing = existingById.get(provider.id);
+      const stored: StoredProvider = {
+        id: provider.id,
+        name: provider.name.trim(),
+        type: provider.type as ProviderType,
+        platform: provider.platform as ProviderPlatform,
+        modelLibraryEnabled: provider.modelLibraryEnabled,
+        baseUrl: provider.baseUrl.replace(/\/+$/, ''),
+        modelsPath: provider.modelsPath,
+        chatPath: provider.chatPath,
+        imageGenerationPath: provider.imageGenerationPath,
+        imageEditPath: provider.imageEditPath,
+        imageUpscalePath: provider.imageUpscalePath,
+        imageUpscaleStatusPath: provider.imageUpscaleStatusPath,
+        responsesPath: provider.responsesPath,
+        textProtocol: provider.textProtocol as ProviderTextProtocol,
+        videoTransport: provider.videoTransport as ProviderConnection['videoTransport'],
+        videoBaseUrl: provider.videoBaseUrl.replace(/\/+$/, ''),
+        videoTaskPath: provider.videoTaskPath,
+        videoTaskStatusPath: provider.videoTaskStatusPath,
+        videoGenerationPath: provider.videoGenerationPath,
+        videoQueryPath: provider.videoQueryPath,
+        videoModelsPath: provider.videoModelsPath,
+        videoPricingPath: provider.videoPricingPath,
+        jimengCliPath: provider.jimengCliPath,
+        jimengCliPollSeconds: provider.jimengCliPollSeconds,
+        authHeader: provider.authHeader,
+        authPrefix: provider.authPrefix,
+        encryptedApiKey: await encryptSecret(provider.apiKey),
+        ...(provider.videoApiKey ? { encryptedVideoApiKey: await encryptSecret(provider.videoApiKey) } : {}),
+        status: 'idle',
+        lastSyncedAt: '已导入，待测试连接',
+        createdAt: existing?.createdAt || new Date().toISOString(),
+      };
+      providerById.set(provider.id, stored);
+      if (existing) updatedProviders += 1;
+      else addedProviders += 1;
+    }
+
+    const importedModelKeys = new Set(bundle.models.map((model) => `${model.providerId}\u0000${model.rawId}`));
+    const existingModelsByKey = new Map(state.models.map((model) => [`${model.providerId}\u0000${model.rawId}`, model]));
+    const usedModelIds = new Set(state.models.filter((model) => !importedModelKeys.has(`${model.providerId}\u0000${model.rawId}`)).map((model) => model.id));
+    const importedModels: RegistryModel[] = bundle.models.map((model) => {
+      const key = `${model.providerId}\u0000${model.rawId}`;
+      const existing = existingModelsByKey.get(key);
+      const id = existing?.id || (usedModelIds.has(model.id) ? randomUUID() : model.id);
+      usedModelIds.add(id);
+      const provider = providerById.get(model.providerId)!;
+      const next: RegistryModel = {
+        id,
+        providerId: model.providerId,
+        providerName: provider.name,
+        rawId: model.rawId,
+        ...(model.source ? { source: model.source as RegistryModel['source'] } : {}),
+        displayName: model.displayName,
+        kind: model.kind as ModelKind,
+        capabilities: [...model.capabilities] as ModelCapability[],
+        enabled: model.enabled,
+        published: model.published,
+        ...(model.billing ? { billing: model.billing as ModelBilling } : {}),
+        ...(model.enabledByDefault !== undefined ? { enabledByDefault: model.enabledByDefault } : {}),
+        ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+        ...(model.maxInputTokens !== undefined ? { maxInputTokens: model.maxInputTokens } : {}),
+        ...(model.maxOutputTokens !== undefined ? { maxOutputTokens: model.maxOutputTokens } : {}),
+        ...(model.nativeSearchProtocol ? { nativeSearchProtocol: model.nativeSearchProtocol as NativeSearchProtocol } : {}),
+        ...(model.nativeSearchOverride ? { nativeSearchOverride: model.nativeSearchOverride as NativeSearchOverride } : {}),
+        ...(model.nativeSearchDetection ? { nativeSearchDetection: model.nativeSearchDetection as NativeSearchDetection } : {}),
+      };
+      return normalizeModel(next, provider.platform as ProviderPlatform);
+    });
+
+    state.providers = [...state.providers.filter((provider) => !providerById.has(provider.id)), ...providerById.values()];
+    state.models = [
+      ...state.models.filter((model) => !importedModelKeys.has(`${model.providerId}\u0000${model.rawId}`)),
+      ...importedModels,
+    ];
+    return { addedProviders, updatedProviders, importedModels: importedModels.length };
+  });
 }
 
 export async function setProviderStatus(id: string, status: ProviderStatus, lastSyncedAt?: string) {

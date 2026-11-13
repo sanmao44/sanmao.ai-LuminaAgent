@@ -1,6 +1,7 @@
 "use client";
 
 import type { ComponentType } from "react";
+import ProviderTransferActions from "@/components/ProviderTransferActions";
 
 export type ProviderListToolbarProps = {
   search: string;
@@ -28,9 +29,12 @@ export default function ProviderListToolbar({ search, visibleCount, totalCount, 
           </button>
         )}
       </label>
-      <span>
-        显示 <b>{visibleCount}</b> / {totalCount} 个
-      </span>
+      <div className="provider-list-toolbar-actions">
+        <ProviderTransferActions Icon={Icon} />
+        <span>
+          显示 <b>{visibleCount}</b> / {totalCount} 个
+        </span>
+      </div>
     </div>
   );
 }

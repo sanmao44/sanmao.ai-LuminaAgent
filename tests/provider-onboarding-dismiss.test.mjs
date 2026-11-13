@@ -53,6 +53,7 @@ vm.runInNewContext(providerToolbarCompiled, {
   exports: providerToolbarModule.exports,
   require(id) {
     if (id === 'react/jsx-runtime') return require('react/jsx-runtime');
+    if (id === '@/components/ProviderTransferActions') return { default: () => null };
     throw new Error(`Unexpected ProviderListToolbar dependency: ${id}`);
   },
 });

@@ -1355,11 +1355,18 @@ $previousRelayConfigured = $false
 if ($existing) {
   $previousRelayConfigured = $existing.MediaRelayMode -eq 'relay' -or [bool]$existing.MediaRelayConfigured
 }
+$freeRelayPreferenceWritten = $false
+if ($FreeRelay.IsPresent -and $script:MediaRelayRequired -and -not $script:SharedMediaRelayConfigured) {
+  Set-SanmaoFreeRelayPreference -Root $root
+  $freeRelayPreferenceWritten = $true
+}
+$previousRelayConfigured = $previousRelayConfigured -or (Test-SanmaoFreeRelayPreference -Root $root)
 $freeRelayRequested = Test-SanmaoFreeRelayRequested `
   -ExplicitlyRequested ([bool]$FreeRelay.IsPresent) `
   -MediaRelayRequired ([bool]$script:MediaRelayRequired) `
   -SharedMediaRelayConfigured ([bool]$script:SharedMediaRelayConfigured) `
   -PreviouslyConfigured ([bool]$previousRelayConfigured)
+Write-SanmaoLauncherLog "媒体中转启动决策：required=$($script:MediaRelayRequired)，shared=$($script:SharedMediaRelayConfigured)，explicit=$($FreeRelay.IsPresent)，saved=$($previousRelayConfigured)，preferenceWritten=$freeRelayPreferenceWritten，enabled=$freeRelayRequested" 'INFO'
 if ($freeRelayRequested) {
   # Set relay mode before the Next process starts. The tunnel itself is
   # created after the local health endpoint is ready; otherwise cloudflared
