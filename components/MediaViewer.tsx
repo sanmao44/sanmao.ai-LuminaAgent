@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from "@/lib/creation/settings";
 import type { ImageVersionInfo, MediaViewerItem, MediaViewerReference } from "@/lib/canvas/media-viewer";
+import { handleMediaViewerWheel } from "@/components/canvas/trackpad-input";
 
 export type MediaViewerSurface = "workspace" | "canvas";
 
@@ -133,6 +134,8 @@ export default function MediaViewer({
   const [selectedReferenceId, setSelectedReferenceId] = useState(references[0]?.id || "");
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [mediaSizes, setMediaSizes] = useState<Record<MediaViewerSide, MediaViewerSize>>({
@@ -170,7 +173,9 @@ export default function MediaViewer({
     setComparePosition(50);
     setSelectedReferenceId(references[0]?.id || "");
     setZoom(1);
+    zoomRef.current = 1;
     setPan({ x: 0, y: 0 });
+    panRef.current = { x: 0, y: 0 };
     setMediaSizes({
       item: { width: 0, height: 0 },
       reference: { width: 0, height: 0 },
@@ -303,35 +308,48 @@ export default function MediaViewer({
     sliderPointerId.current = null;
     setDragging(false);
     setZoom(1);
+    zoomRef.current = 1;
     setPan({ x: 0, y: 0 });
+    panRef.current = { x: 0, y: 0 };
   };
 
   const updateZoom = (next: number, focus?: { x: number; y: number }) => {
-    const previous = zoom;
+    const previous = zoomRef.current;
     const value = Math.max(1, Math.min(8, Number(next.toFixed(2))));
     setZoom(value);
+    zoomRef.current = value;
     if (value <= 1) {
       pointerStart.current = null;
       setDragging(false);
       setPan({ x: 0, y: 0 });
+      panRef.current = { x: 0, y: 0 };
       return;
     }
     const rect = stageRef.current?.getBoundingClientRect();
     if (focus && rect && previous > 0) {
       const pointerX = focus.x - rect.left - rect.width / 2;
       const pointerY = focus.y - rect.top - rect.height / 2;
-      const nextPan = {
-        x: pointerX - (pointerX - pan.x) * (value / previous),
-        y: pointerY - (pointerY - pan.y) * (value / previous),
+      const focusedPan = {
+        x: pointerX - (pointerX - panRef.current.x) * (value / previous),
+        y: pointerY - (pointerY - panRef.current.y) * (value / previous),
       };
-      setPan(clampPan(nextPan, getPanLimits(value)));
+      const nextPan = clampPan(focusedPan, getPanLimits(value));
+      setPan(nextPan);
+      panRef.current = nextPan;
     }
   };
+  const wheelZoomHandlerRef = useRef(updateZoom);
+  wheelZoomHandlerRef.current = updateZoom;
 
-  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    updateZoom(zoom + (event.deltaY < 0 ? 0.1 : -0.1), { x: event.clientX, y: event.clientY });
-  };
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const handleWheel = (event: WheelEvent) => {
+      handleMediaViewerWheel(event, zoomRef.current, wheelZoomHandlerRef.current);
+    };
+    stage.addEventListener("wheel", handleWheel, { capture: true, passive: false });
+    return () => stage.removeEventListener("wheel", handleWheel, true);
+  }, []);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (zoom <= 1 || event.button !== 0) return;
@@ -351,10 +369,12 @@ export default function MediaViewer({
     const drag = pointerStart.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     event.preventDefault();
-    setPan(clampPan({
+    const nextPan = clampPan({
       x: drag.panX + event.clientX - drag.x,
       y: drag.panY + event.clientY - drag.y,
-    }));
+    });
+    setPan(nextPan);
+    panRef.current = nextPan;
   };
 
   const stopDragging = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -503,7 +523,6 @@ export default function MediaViewer({
         <div
           ref={stageRef}
           className={`canvas-lightbox-stage media-viewer-stage ${zoom > 1 ? "can-pan" : ""} ${showComparison ? "compare" : ""} ${showComparison && compareMode === "slider" ? "slider" : ""} ${showComparison && compareMode === "side-by-side" ? "side-by-side" : ""} ${dragging ? "dragging" : ""}`}
-          onWheel={handleWheel}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={stopDragging}

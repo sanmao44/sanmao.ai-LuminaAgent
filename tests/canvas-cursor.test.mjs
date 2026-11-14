@@ -78,8 +78,8 @@ test("middle-button presses stay on canvas pan instead of node gestures", () => 
     component.indexOf("const handleStagePointerDown = useCallback"),
     component.indexOf("const startNodeDrag = useCallback"),
   );
-  assert.match(stageHandler, /if \(event\.button !== 0 && event\.button !== 1\) return;/);
-  assert.match(stageHandler, /const panIntent = event\.button === 1 \|\| spaceHeldRef\.current;/);
+  assert.match(stageHandler, /const middleButtonDown = event\.button === 1 \|\| \(event\.buttons & 4\) !== 0;/);
+  assert.match(stageHandler, /const panIntent = middleButtonDown \|\| spaceHeldRef\.current;/);
   assert.match(stageHandler, /interactionRef\.current = \{\s*kind: "pan"/);
 
   for (const handlerName of ["startGroupResize", "startResize", "startConnection"]) {
