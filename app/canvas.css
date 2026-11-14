@@ -4419,3 +4419,7 @@ html:not([data-theme="light"]) .canvas-group-label-layer>.canvas-group-world-lab
   .canvas-node-editor-popover.is-image-dock:not(.is-prompt-expanded) .canvas-node-editor-dock-chips{flex-wrap:wrap}
   .canvas-node-editor-popover .canvas-node-editor-head button{width:38px;height:38px}
 }
+
+@media(min-width:1001px) and (max-width:1815px){
+  .canvas-minimap{width:244px}
+}
