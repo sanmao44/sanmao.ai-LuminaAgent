@@ -54,7 +54,7 @@ export function handleCanvasTrackpadPanWheel(
   return true;
 }
 
-export const TRACKPAD_PINCH_ZOOM_SENSITIVITY = 0.0024;
+export const TRACKPAD_PINCH_ZOOM_SENSITIVITY = 0.0032;
 
 export function trackpadPinchZoomFactor(deltaY: number) {
   return Math.exp(-deltaY * TRACKPAD_PINCH_ZOOM_SENSITIVITY);

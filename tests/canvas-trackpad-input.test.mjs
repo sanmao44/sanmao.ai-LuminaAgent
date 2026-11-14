@@ -69,7 +69,8 @@ test("canvas consumes trackpad pan before browser navigation and forwards its de
 });
 
 test("trackpad pinch scales continuously while a mouse wheel keeps its step", () => {
-  assert.equal(gestures.trackpadPinchZoomFactor(-20), Math.exp(20 * 0.0024));
+  assert.equal(gestures.trackpadPinchZoomFactor(-20), Math.exp(20 * 0.0032));
+  assert.ok(gestures.trackpadPinchZoomFactor(-20) > Math.exp(20 * 0.0024));
   assert.ok(gestures.trackpadPinchZoomFactor(-20) > Math.exp(20 * 0.0014));
   assert.ok(gestures.mediaViewerWheelZoom(1, -20, true) > 1);
   assert.ok(gestures.mediaViewerWheelZoom(1, 20, true) < 1);
