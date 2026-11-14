@@ -31,10 +31,6 @@ if [ ! -x node_modules/.bin/next ] || [ ! -x node_modules/ffmpeg-static/ffmpeg ]
   printf '%s' "$DEPENDENCY_FINGERPRINT" > node_modules/.sanmao-deps.sha256
 fi
 if [ ! -f .next/BUILD_ID ]; then npm run build; fi
-if [ -f "$SCRIPT_DIR/scripts/ensure-ytdlp.mjs" ]; then
-  printf '%s\n' '准备视频下载依赖…'
-  node "$SCRIPT_DIR/scripts/ensure-ytdlp.mjs" --data-dir "$(sanmao_data_dir "$ROOT_DIR")" || printf '%s\n' '视频下载依赖暂未准备好；应用仍会启动，下载时会再次自动尝试。'
-fi
 PORT="${SANMAO_PORT:-3210}"
 case "$PORT" in
   ''|*[!0-9]*) PORT=3210 ;;

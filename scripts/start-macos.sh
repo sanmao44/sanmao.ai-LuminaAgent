@@ -152,28 +152,7 @@ build_served_stale() {
 }
 
 source_fingerprint() {
-  node - "$ROOT_DIR" <<'NODE'
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const root = path.resolve(process.argv[2]);
-const files = [];
-function visit(dir) {
-  if (!fs.existsSync(dir)) return;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) visit(full);
-    else if (entry.isFile()) files.push(full);
-  }
-}
-for (const name of ['app', 'components', 'lib', 'public']) visit(path.join(root, name));
-for (const name of ['next.config.ts', 'next.config.js', 'tsconfig.json', 'package.json', 'package-lock.json']) if (fs.existsSync(path.join(root, name))) files.push(path.join(root, name));
-for (const name of fs.readdirSync(root)) if (name.startsWith('.env') && fs.statSync(path.join(root, name)).isFile()) files.push(path.join(root, name));
-files.sort();
-const hash = crypto.createHash('sha256');
-for (const file of files) { hash.update(path.relative(root, file).split(path.sep).join('/')); hash.update('\0'); hash.update(fs.readFileSync(file)); hash.update('\0'); }
-process.stdout.write(hash.digest('hex'));
-NODE
+  node "$SCRIPT_DIR/source-fingerprint.mjs" --root "$ROOT_DIR"
 }
 
 server_is_ready() {
@@ -561,17 +540,6 @@ if [ "$NEED_INSTALL" -eq 1 ]; then
   rm -f node_modules/.sanmao-package-lock.sha256
 else
   printf '%s\n' '依赖已安装。'
-fi
-
-# Video downloads use the app-owned yt-dlp runtime. Prepare it on first launch
-# so a fresh computer does not require Python or a manually edited PATH.
-if [ -f "$SCRIPT_DIR/ensure-ytdlp.mjs" ]; then
-  printf '%s\n' '准备视频下载依赖…'
-  if node "$SCRIPT_DIR/ensure-ytdlp.mjs" --data-dir "$(sanmao_data_dir "$ROOT_DIR")"; then
-    printf '%s\n' '视频下载依赖已就绪。'
-  else
-    printf '%s\n' '视频下载依赖暂未准备好；应用仍会启动，下载时会再次自动尝试。'
-  fi
 fi
 
 if [ ! -x node_modules/.bin/next ]; then

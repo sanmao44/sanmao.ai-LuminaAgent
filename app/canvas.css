@@ -1019,6 +1019,14 @@ html[data-theme="dark"] .canvas-workspace{
 @media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-agent-dock,html:not([data-motion="on"]) .canvas-agent-dock-rail{transition:none!important}html:not([data-motion="on"]) .canvas-agent-dock-message.is-streaming p::after,html:not([data-motion="on"]) .canvas-agent-button.is-busy i{animation:none}}
 .canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 230px);width:min(880px,calc(100% - 512px))}
 @media(max-width:1280px){:root{--canvas-panel-width:min(430px,calc(100vw - 32px))}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 210px);width:min(820px,calc(100% - 472px))}}
+@media(min-width:1281px) and (max-width:1440px){
+  :root{--canvas-panel-top:72px;--canvas-panel-right:12px;--canvas-panel-bottom:12px;--canvas-panel-width:min(400px,calc(100vw - 32px))}
+  .canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:calc(50% - 218px);width:min(820px,calc(100% - 436px))}
+}
+@media(min-width:1001px) and (max-width:1440px){
+  .canvas-workspace:has(.canvas-agent-dock) .canvas-topbar{left:16px;right:calc(var(--canvas-panel-width) + var(--canvas-panel-right) + 16px)}
+  .canvas-workspace:has(.canvas-agent-dock) .canvas-topbar-main{justify-content:flex-start;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;overscroll-behavior-x:contain}
+}
 @media(max-width:1000px){.canvas-agent-dock{left:10px;right:10px;top:auto;bottom:10px;height:min(64vh,540px);width:auto}.canvas-agent-dock-rail{right:10px;top:auto;bottom:96px;transform:none}.canvas-workspace:has(.canvas-agent-dock) .canvas-deck:not(.collapsed){left:50%;width:calc(100% - 32px)}}
 @media(max-width:620px){
   .canvas-agent-dock-head{min-height:44px}
