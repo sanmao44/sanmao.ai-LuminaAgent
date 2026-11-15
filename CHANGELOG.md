@@ -1,3 +1,12 @@
+# 0.7.106 启动与 Canvas 导航改进
+
+- 优化重复启动速度，减少启动阶段的等待。
+- 改进 Canvas 触控板缩放、平移和中键导航体验。
+- 修复 Canvas 工具栏与小地图布局问题。
+- 修复代理网络环境下的 Windows 技能安装。
+
+完整安装包、校验值和构建来源见 [GitHub Release v0.7.106](https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.106)。
+
 # 0.7.105 Agent、音频与 Canvas 稳定性改进
 
 - 新增 Agent 意图预览，并加强桌面操作的输入核对和完成验证。
