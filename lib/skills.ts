@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import type { EnvHttpProxyAgent } from 'undici';
 import { resolveLocalDataDir } from './data-paths';
 
 /**
@@ -32,6 +33,34 @@ export const SKILL_FETCH_HOPS_MAX = 3;
 export const SKILL_TOOL_MAX_CALLS = 6;
 export const SKILL_INSTALL_MAX_PER_REQUEST = 2;
 export const SKILL_ARCHIVE_MAX_BYTES = 24 * 1024 * 1024;
+
+// Node's built-in fetch does not honor HTTP_PROXY/HTTPS_PROXY on every
+// supported Node 22 release. The launcher populates these from system proxy
+// settings, so use Undici's env-aware dispatcher for remote downloads.
+let environmentProxyAgent: EnvHttpProxyAgent | undefined;
+type SkillFetchOptions = {
+  maxBytes?: number;
+  accept?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  fetcher?: (input: string | URL, init: RequestInit & { dispatcher?: EnvHttpProxyAgent }) => Promise<Response>;
+};
+
+async function skillDownloadProxyAgent() {
+  const httpProxy = process.env.HTTP_PROXY || process.env.http_proxy;
+  const httpsProxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+  const noProxy = process.env.NO_PROXY || process.env.no_proxy;
+  if (!httpProxy && !httpsProxy) return null;
+  if (!environmentProxyAgent) {
+    const { EnvHttpProxyAgent } = await import('undici');
+    environmentProxyAgent = new EnvHttpProxyAgent({
+      httpProxy,
+      httpsProxy,
+      noProxy,
+    });
+  }
+  return environmentProxyAgent;
+}
 
 export const SKILL_SOURCES: SkillSource[] = ['local', 'url', 'github', 'zip', 'agent'];
 
@@ -1068,7 +1097,7 @@ function skillFetchFailure(error: unknown, callerSignal: AbortSignal | undefined
   return error instanceof Error ? error : new Error('下载失败');
 }
 
-export async function fetchSkillBytes(target: string | URL, options: { maxBytes?: number; accept?: string; signal?: AbortSignal; timeoutMs?: number } = {}) {
+export async function fetchSkillBytes(target: string | URL, options: SkillFetchOptions = {}) {
   const limit = options.maxBytes ?? SKILL_FILE_MAX_BYTES;
   const timeoutMs = options.timeoutMs ?? SKILL_FETCH_TIMEOUT_MS;
   let url = target instanceof URL ? target : assertSkillImportUrl(target);
@@ -1076,14 +1105,21 @@ export async function fetchSkillBytes(target: string | URL, options: { maxBytes?
   for (let hop = 0; hop <= SKILL_FETCH_HOPS_MAX; hop += 1) {
     let response: Response;
     try {
-      response = await fetch(url, {
+      const init = {
         redirect: 'manual',
         signal,
         headers: {
           'user-agent': 'SANMAO.AI-Skills/1.0',
           accept: options.accept || 'text/plain, text/markdown, application/json;q=0.9, */*;q=0.5',
         },
-      });
+      } as const;
+      const proxyAgent = await skillDownloadProxyAgent();
+      const fetched = options.fetcher
+        ? await options.fetcher(url, { ...init, dispatcher: proxyAgent || undefined })
+        : proxyAgent
+          ? await (await import('undici')).fetch(url, { ...init, dispatcher: proxyAgent }) as unknown as Response
+          : await fetch(url, init);
+      response = fetched as unknown as Response;
     } catch (error) {
       throw skillFetchFailure(error, options.signal, timeoutMs);
     }
