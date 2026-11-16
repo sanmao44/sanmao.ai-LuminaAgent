@@ -12,15 +12,28 @@ export type VideoModelLimits = {
   minSeconds: number;
   maxSeconds: number;
   fixedSeconds?: number;
+  durationScope?: 'total' | 'per-transition';
+  aspectRatioSource?: 'first-reference';
   resolutions: string[];
   maxReferenceImages: number;
   maxReferenceVideos: number;
   maxAudios: number;
+  maxTotalInputs?: number;
+  requiresVisualInput?: boolean;
   referenceMaxResolution?: string;
   inheritVideoSettingsFor?: Array<'edit' | 'extend'>;
   omitAspectRatioResolutionFor?: Array<'edit' | 'extend'>;
   allowedSeconds?: number[];
   notes: string[];
+};
+
+export type VideoModelInputContext = {
+  hasFirstFrame?: boolean;
+  hasLastFrame?: boolean;
+  referenceImageCount?: number;
+  referenceVideoCount?: number;
+  audioCount?: number;
+  referenceMode?: 'multiframe' | 'multimodal';
 };
 
 export const VIDEO_INPUT_SAFETY_LIMITS = {
@@ -78,6 +91,7 @@ function agnesLimits(rawId: string): VideoModelLimits {
 }
 
 function jimengLimits(rawId: string): VideoModelLimits {
+  const normalized = rawId.replace(/[ _-]+/g, '').toLowerCase();
   const base: VideoModelLimits = {
     ...defaults,
     minSeconds: 4,
@@ -86,23 +100,49 @@ function jimengLimits(rawId: string): VideoModelLimits {
     resolutions: ['720p'],
     notes: ['即梦 CLI：4–15 秒', '当前模型支持 720p', '视频生成需要明确指定模型版本和分辨率', '首次使用视频前需先在即梦网页端完成一次生成授权'],
   };
+  if (normalized.includes('seedance1.0fast')) {
+    return {
+      ...base,
+      minSeconds: 5,
+      maxSeconds: 10,
+      allowedSeconds: jimengDurations(5, 10),
+      resolutions: ['720p'],
+      notes: [...base.notes, 'image2video/frames2video：Seedance 1.0 Fast 支持 5–10 秒；不支持文生视频和全能参考模式'],
+    };
+  }
+  if (normalized.includes('seedance1.5pro')) {
+    return {
+      ...base,
+      minSeconds: 5,
+      maxSeconds: 12,
+      allowedSeconds: jimengDurations(5, 12),
+      resolutions: ['720p'],
+      notes: [...base.notes, 'image2video/frames2video：Seedance 1.5 Pro 支持 5–12 秒；不支持文生视频和全能参考模式'],
+    };
+  }
   if (/seedance[-_. ]?2\.5/.test(rawId)) {
     return {
       ...base,
       maxSeconds: 30,
       allowedSeconds: jimengDurations(4, 30),
       resolutions: ['480p', '720p', '1080p'],
-      notes: ['Seedance 2.5：4–30 秒', '支持 480p/720p/1080p', '多模态参考音视频和纯音频需使用 2–30 秒素材', '视频生成需要明确指定模型版本和分辨率', '首次使用视频前需先在即梦网页端完成一次生成授权'],
+      maxReferenceImages: 30,
+      maxReferenceVideos: 10,
+      maxAudios: 10,
+      maxTotalInputs: 50,
+      notes: ['Seedance 2.5：4–30 秒', '支持 480p/720p/1080p', '全能参考最多图片 30 张、视频 10 个、音频 10 段，总输入最多 50 个；音视频素材需使用 2–30 秒', '视频生成需要明确指定模型版本和分辨率', '首次使用视频前需先在即梦网页端完成一次生成授权'],
     };
   }
   if (/seedance[-_. ]?2\.0/.test(rawId)) {
-    const vip = /seedance[-_. ]?2\.0(?:.*_vip|.*vip)/.test(rawId);
+    const vip = /^seedance[-_. ]?2\.0(?:[-_. ]?vip)$/.test(rawId);
     const mini = /seedance[-_. ]?2\.0(?:.*mini|mini)/.test(rawId);
     return {
       ...base,
       maxReferenceImages: 9,
       maxReferenceVideos: 3,
       maxAudios: 3,
+      maxTotalInputs: 12,
+      requiresVisualInput: true,
       resolutions: vip ? ['720p', '1080p', '4k'] : ['720p'],
       notes: [
         mini ? 'Seedance 2.0 Mini：4–15 秒' : 'Seedance 2.0 系列：4–15 秒',
@@ -208,6 +248,91 @@ export function getVideoModelLimits(model?: { rawId?: string; displayName?: stri
     ...defaults,
     notes: ['参考媒体必须是服务商可访问的公网 URL'],
   };
+}
+
+export function getVideoModelLimitsForInput(
+  model: { rawId?: string; displayName?: string } | undefined,
+  provider: VideoProviderIdentity | string | undefined,
+  input: VideoModelInputContext,
+): VideoModelLimits {
+  const limits = getVideoModelLimits(model, provider);
+  const providerIdentity: VideoProviderIdentity = typeof provider === 'string' ? { platform: provider } : (provider || {});
+  const referenceImageCount = Number.isFinite(input.referenceImageCount)
+    ? Math.max(0, Math.floor(input.referenceImageCount || 0))
+    : 0;
+  const referenceVideoCount = Number.isFinite(input.referenceVideoCount)
+    ? Math.max(0, Math.floor(input.referenceVideoCount || 0))
+    : 0;
+  const audioCount = Number.isFinite(input.audioCount)
+    ? Math.max(0, Math.floor(input.audioCount || 0))
+    : 0;
+  const isMultiframe = isJimengProvider(providerIdentity)
+    && input.referenceMode === 'multiframe'
+    && !input.hasFirstFrame
+    && !input.hasLastFrame
+    && referenceVideoCount === 0
+    && audioCount === 0
+    && referenceImageCount > 1;
+  if (isMultiframe) {
+    const exactlyTwoImages = referenceImageCount === 2;
+    const minSeconds = exactlyTwoImages ? 2 : 1;
+    return {
+      ...limits,
+      minSeconds,
+      maxSeconds: 8,
+      allowedSeconds: jimengDurations(minSeconds, 8),
+      durationScope: exactlyTwoImages ? 'total' : 'per-transition',
+      aspectRatioSource: 'first-reference',
+      resolutions: ['720p', '1080p'],
+      maxReferenceImages: 20,
+      maxReferenceVideos: 0,
+      maxAudios: 0,
+      maxTotalInputs: 20,
+      notes: [
+        exactlyTwoImages
+          ? '即梦 CLI multiframe2video：双图总时长 2–8 秒'
+          : '即梦 CLI multiframe2video：每段转场时长 1–8 秒',
+        '分辨率仅支持 720p/1080p，画面比例由首张参考图推断',
+        '该命令使用固定后端模型，不传入所选 Seedance 版本',
+      ],
+    };
+  }
+
+  const hasMultimodalInput = referenceVideoCount > 0 || audioCount > 0;
+  if (!hasMultimodalInput || !isJimengProvider(providerIdentity)) {
+    if (!hasMultimodalInput) {
+      const isSeedance25Frame = /seedance[-_. ]?2\.5/i.test(String(model?.rawId || model?.displayName || ''))
+        && Boolean(input.hasFirstFrame || input.hasLastFrame || referenceImageCount > 0);
+      if (isSeedance25Frame) return { ...limits, aspectRatioSource: 'first-reference' };
+    }
+    return limits;
+  }
+
+  const rawId = String(model?.rawId || model?.displayName || '').toLowerCase();
+  const seedance25 = /seedance[-_. ]?2\.5/.test(rawId);
+  const seedance20 = /seedance[-_. ]?2\.0/.test(rawId);
+  if (seedance25) {
+    return {
+      ...limits,
+      maxReferenceImages: 30,
+      maxReferenceVideos: 10,
+      maxAudios: 10,
+      maxTotalInputs: 50,
+      notes: [...limits.notes, '即梦 CLI multimodal2video：图片最多 30 张、视频最多 10 个、音频最多 10 段，总输入最多 50 个；音视频素材 2–30 秒'],
+    };
+  }
+  if (seedance20) {
+    return {
+      ...limits,
+      maxReferenceImages: 9,
+      maxReferenceVideos: 3,
+      maxAudios: 3,
+      maxTotalInputs: 12,
+      requiresVisualInput: true,
+      notes: [...limits.notes, '即梦 CLI multimodal2video：至少一张图片或一个视频；图片最多 9 张、视频最多 3 个、音频最多 3 段，总输入最多 12 个；音视频素材 2–15 秒'],
+    };
+  }
+  return limits;
 }
 
 export { allRatios };

@@ -77,6 +77,7 @@ function createHarness(submissionErrors) {
     },
     './video-model-limits': {
       getVideoModelLimits: () => limits,
+      getVideoModelLimitsForInput: () => limits,
       VIDEO_INPUT_SAFETY_LIMITS: { maxReferenceImages: 16, maxReferenceVideos: 10, maxAudios: 10 },
     },
     './video-platform': {

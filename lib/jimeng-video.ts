@@ -2,8 +2,6 @@ import type { ModelCapability } from './types';
 
 const jimengVideoCapabilities: ModelCapability[] = [
   'video-generate',
-  'video-edit',
-  'video-extend',
   'video-first-frame',
   'video-reference',
   'video-audio',
@@ -16,6 +14,8 @@ const jimengVideoCapabilities: ModelCapability[] = [
  */
 export const jimengVideoModels = [
   { id: 'jimeng-cli-video', name: '即梦 · CLI 视频自动选择', capabilities: [...jimengVideoCapabilities] },
+  { id: 'seedance1.0fast', name: 'Seedance 1.0 Fast', capabilities: ['video-generate', 'video-first-frame'] as ModelCapability[] },
+  { id: 'seedance1.5pro', name: 'Seedance 1.5 Pro', capabilities: ['video-generate', 'video-first-frame'] as ModelCapability[] },
   { id: 'seedance2.0', name: 'Seedance 2.0', capabilities: [...jimengVideoCapabilities] },
   { id: 'seedance2.0fast', name: 'Seedance 2.0 Fast', capabilities: [...jimengVideoCapabilities] },
   { id: 'seedance2.0mini', name: 'Seedance 2.0 Mini', capabilities: [...jimengVideoCapabilities] },

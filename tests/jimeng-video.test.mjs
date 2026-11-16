@@ -13,9 +13,9 @@ const video = await import(`data:text/javascript;base64,${Buffer.from(compiled).
 
 test('exposes documented Jimeng video model versions with shared capabilities', () => {
   assert.deepEqual(video.jimengVideoModels.map((model) => model.id), [
-    'jimeng-cli-video', 'seedance2.0', 'seedance2.0fast', 'seedance2.0mini', 'seedance2.0_vip', 'seedance2.0fast_vip', 'seedance2.5',
+    'jimeng-cli-video', 'seedance1.0fast', 'seedance1.5pro', 'seedance2.0', 'seedance2.0fast', 'seedance2.0mini', 'seedance2.0_vip', 'seedance2.0fast_vip', 'seedance2.5',
   ]);
   assert.deepEqual(video.jimengVideoModels.find((model) => model.id === 'seedance2.5').capabilities, [
-    'video-generate', 'video-edit', 'video-extend', 'video-first-frame', 'video-reference', 'video-audio',
+    'video-generate', 'video-first-frame', 'video-reference', 'video-audio',
   ]);
 });

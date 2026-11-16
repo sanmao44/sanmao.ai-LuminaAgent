@@ -130,6 +130,27 @@ test('reference text becomes an explicit Whisper decoder prefix', () => {
   assert.deepEqual(decoderInputIds, [40, 41, 1, 2, 3]);
 });
 
+test('long reference prose is not sent as a Whisper decoder prompt', () => {
+  let encoded = false;
+  const transcriber = {
+    tokenizer: {
+      encode() {
+        encoded = true;
+        return [40];
+      },
+    },
+  };
+
+  const decoderInputIds = transcriptionModule.buildWhisperDecoderInputIds(
+    transcriber,
+    `产品介绍。${'当 AI 融入千行百业，网络建设持续推进。'.repeat(20)}`,
+    'zh',
+  );
+
+  assert.equal(decoderInputIds, undefined);
+  assert.equal(encoded, false);
+});
+
 test('prompted transcriber calls are serialized without sharing decoder prompts', async () => {
   const calls = [];
   let active = 0;
@@ -190,6 +211,49 @@ test('normalization keeps long transcripts beyond the historical silent limits',
   assert.equal(normalized.segments.length, 4_001);
   assert.equal(normalized.words.at(-1).text, 'word-4000');
   assert.equal(normalized.segments.at(-1).text, 'word-4000');
+});
+
+test('normalization splits long unspaced Chinese ASR chunks into readable timed cues', () => {
+  const text = '当AI融入千行百业，背后，是通信网络24小时的分秒守护。'.repeat(4);
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text,
+    chunks: [{ text, timestamp: [0.4, 40.4] }],
+  }, 45, 'test-model', 'zh');
+
+  assert.ok(normalized.segments.length > 4);
+  assert.ok(normalized.segments.every((segment) => Array.from(segment.text).length <= 20));
+  assert.ok(normalized.segments.every((segment) => segment.end - segment.start <= 5.001));
+  assert.equal(normalized.segments[0].start, 0.4);
+  assert.equal(normalized.segments.at(-1).end, 40.4);
+  assert.equal(normalized.segments.map((segment) => segment.text).join(''), text);
+
+  const sparseWords = transcriptionModule.normalizeLocalAsrResult({
+    text: '你好世界',
+    chunks: [{ text: '你好世界', timestamp: [0, 20] }],
+  }, 20, 'test-model', 'zh');
+  assert.equal(sparseWords.segments.length, 4);
+  assert.ok(sparseWords.segments.every((segment) => segment.end - segment.start <= 5));
+});
+
+test('transcription quality gate rejects dominant repetition and abnormally long cues', () => {
+  const repeated = '组织'.repeat(100);
+  const result = {
+    text: repeated,
+    words: [],
+    segments: [{ start: 0.92, end: 46.26, text: repeated }],
+    model: 'test-model',
+  };
+
+  assert.throws(
+    () => transcriptionModule.assertLocalTranscriptionQuality(result),
+    { name: 'LocalTranscriptionQualityError', message: /大段重复文本或异常长字幕时间段/ },
+  );
+  assert.doesNotThrow(() => transcriptionModule.assertLocalTranscriptionQuality({
+    text: '本地语音识别正在稳定运行。',
+    words: [],
+    segments: [{ start: 0, end: 2.4, text: '本地语音识别正在稳定运行。' }],
+    model: 'test-model',
+  }));
 });
 
 test('normalization closes a final word with the known audio duration when Whisper omits its end', () => {

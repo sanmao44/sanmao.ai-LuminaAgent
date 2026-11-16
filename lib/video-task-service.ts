@@ -4,14 +4,18 @@ import { persistGeneratedVideos } from './video-storage';
 import { createVideoTask, findVideoTask, updateActiveVideoTask, updateVideoTask, type VideoTask } from './video-task-store';
 import { idempotencyKey, pollJimengVideo, pollRemoteVideo, runJimengVideo, submitRemoteVideo, VideoProviderError, type VideoProviderTask } from './video-providers';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
-import { getVideoModelLimits, VIDEO_INPUT_SAFETY_LIMITS } from './video-model-limits';
+import { getVideoModelLimits, getVideoModelLimitsForInput, VIDEO_INPUT_SAFETY_LIMITS } from './video-model-limits';
 import { is65535Provider, isJimengProvider, isAgnesProvider } from './video-platform';
 import { prepareVideoInputMedia } from './video-input-media';
 import type { GenerationSource } from './generation-source';
 import { canRetryVideoTask, isStaleVideoTask, videoTaskRuntime } from './video-task-runtime';
 import { BufferedRuntimeObserver, type RuntimeObserver } from '@/packages/contracts/observability';
 
-function cleanInput(input: VideoGenerationInput, defaultSeconds = 5): VideoGenerationInput {
+function cleanInput(
+  input: VideoGenerationInput,
+  defaultSeconds = 5,
+  maxReferenceImages: number = VIDEO_INPUT_SAFETY_LIMITS.maxReferenceImages,
+): VideoGenerationInput {
   const prompt = String(input.prompt || '').trim();
   const operation = input.operation === 'edit' || input.operation === 'extend' ? input.operation : 'generate';
   const requestedSeconds = Number(input.seconds);
@@ -41,7 +45,7 @@ function cleanInput(input: VideoGenerationInput, defaultSeconds = 5): VideoGener
   const normalizedAudios = audios.length
     ? audios
     : singleAudio ? [singleAudio] : [];
-  const referenceImages = cleanList(input.referenceImages, 16);
+  const referenceImages = cleanList(input.referenceImages, maxReferenceImages);
   return {
     prompt,
     operation,
@@ -74,21 +78,53 @@ function effectiveMediaCount(values: unknown, single: unknown) {
   return arrayCount > 0 ? arrayCount : (typeof single === 'string' && Boolean(single.trim()) ? 1 : 0);
 }
 
-function assertGenericInputLimits(input: VideoGenerationInput) {
-  const referenceImages = validItemCount(input.referenceImages);
+function videoModelInputContext(input: VideoGenerationInput) {
+  return {
+    hasFirstFrame: Boolean(input.firstFrame),
+    hasLastFrame: Boolean(input.lastFrame),
+    referenceMode: input.referenceMode,
+    // The official multimodal command receives first/last frames as repeated
+    // image flags too, so they count toward its image and total-input limits.
+    referenceImageCount: validItemCount(input.referenceImages)
+      + (input.firstFrame ? 1 : 0)
+      + (input.lastFrame ? 1 : 0),
+    referenceVideoCount: effectiveMediaCount(input.referenceVideos, input.referenceVideo),
+    audioCount: effectiveMediaCount(input.audios, input.audio),
+    referenceMode: input.referenceMode,
+  };
+}
+
+function assertGenericInputLimits(input: VideoGenerationInput, limits?: ReturnType<typeof getVideoModelLimits>) {
+  const referenceImages = validItemCount(input.referenceImages)
+    + (input.firstFrame ? 1 : 0)
+    + (input.lastFrame ? 1 : 0);
   const referenceVideos = effectiveMediaCount(input.referenceVideos, input.referenceVideo);
   const audios = effectiveMediaCount(input.audios, input.audio);
-  if (referenceImages > VIDEO_INPUT_SAFETY_LIMITS.maxReferenceImages) throw new Error(`参考图最多支持 ${VIDEO_INPUT_SAFETY_LIMITS.maxReferenceImages} 张，请减少后再提交。`);
-  if (referenceVideos > VIDEO_INPUT_SAFETY_LIMITS.maxReferenceVideos) throw new Error(`参考视频最多支持 ${VIDEO_INPUT_SAFETY_LIMITS.maxReferenceVideos} 个，请减少后再提交。`);
-  if (audios > VIDEO_INPUT_SAFETY_LIMITS.maxAudios) throw new Error(`音频最多支持 ${VIDEO_INPUT_SAFETY_LIMITS.maxAudios} 段，请减少后再提交。`);
+  const maxReferenceImages = limits?.maxReferenceImages ?? VIDEO_INPUT_SAFETY_LIMITS.maxReferenceImages;
+  const maxReferenceVideos = limits?.maxReferenceVideos ?? VIDEO_INPUT_SAFETY_LIMITS.maxReferenceVideos;
+  const maxAudios = limits?.maxAudios ?? VIDEO_INPUT_SAFETY_LIMITS.maxAudios;
+  if (referenceImages > maxReferenceImages) throw new Error(`参考图最多支持 ${maxReferenceImages} 张，请减少后再提交。`);
+  if (referenceVideos > maxReferenceVideos) throw new Error(`参考视频最多支持 ${maxReferenceVideos} 个，请减少后再提交。`);
+  if (audios > maxAudios) throw new Error(`音频最多支持 ${maxAudios} 段，请减少后再提交。`);
+  const totalInputs = referenceImages + referenceVideos + audios;
+  if (limits?.maxTotalInputs !== undefined && totalInputs > limits.maxTotalInputs) {
+    throw new Error(`当前模型总输入最多 ${limits.maxTotalInputs} 个（图片、视频和音频合计），请减少素材后再提交。`);
+  }
+  if (limits?.requiresVisualInput && referenceImages + referenceVideos === 0) {
+    throw new Error('Seedance 2.0 multimodal2video 至少需要一张图片或一个视频，不能只提交音频。');
+  }
 }
 
 function validateModelInput(input: VideoGenerationInput, rawInput: VideoGenerationInput, limits: ReturnType<typeof getVideoModelLimits>, providerLabel: '65535' | '即梦' | 'Agnes') {
-  if (input.referenceImages && input.referenceImages.length > limits.maxReferenceImages) throw new Error(`当前${providerLabel}模型最多接收 ${limits.maxReferenceImages} 张参考图，请减少后再提交。`);
+  const imageCount = (input.referenceImages?.length || 0) + (input.firstFrame ? 1 : 0) + (input.lastFrame ? 1 : 0);
+  if (imageCount > limits.maxReferenceImages) throw new Error(`当前${providerLabel}模型最多接收 ${limits.maxReferenceImages} 张参考图，请减少后再提交。`);
   const referenceVideos = input.referenceVideos || (input.referenceVideo ? [input.referenceVideo] : []);
   if (referenceVideos.length > limits.maxReferenceVideos) throw new Error(`当前${providerLabel}模型最多接收 ${limits.maxReferenceVideos} 个参考视频，请减少后再提交。`);
   const audios = input.audios || (input.audio ? [input.audio] : []);
   if (audios.length > limits.maxAudios) throw new Error(`当前${providerLabel}模型最多接收 ${limits.maxAudios} 段音频，请减少后再提交。`);
+  const totalInputs = imageCount + referenceVideos.length + audios.length;
+  if (limits.maxTotalInputs !== undefined && totalInputs > limits.maxTotalInputs) throw new Error(`当前${providerLabel}模型总输入最多 ${limits.maxTotalInputs} 个（图片、视频和音频合计），请减少素材后再提交。`);
+  if (limits.requiresVisualInput && imageCount + referenceVideos.length === 0) throw new Error(`当前${providerLabel}模型的多模态视频至少需要一张图片或一个视频，不能只提交音频。`);
 
   const operation = input.operation || 'generate';
   const inheritsVideoSettings = operation !== 'generate' && Boolean(limits.inheritVideoSettingsFor?.includes(operation));
@@ -150,20 +186,6 @@ function validateAgnesInput(input: VideoGenerationInput, rawInput: VideoGenerati
 function isRetryableAgnesPollError(error: unknown) {
   if (!(error instanceof VideoProviderError)) return false;
   return error.status === undefined || error.status === 429 || error.status >= 500;
-}
-
-function effectiveJimengLimits(input: VideoGenerationInput, limits: ReturnType<typeof getVideoModelLimits>) {
-  const hasReferenceVideo = effectiveMediaCount(input.referenceVideos, input.referenceVideo) > 0;
-  const hasAudio = effectiveMediaCount(input.audios, input.audio) > 0;
-  const isMultiframe = !input.firstFrame && !input.lastFrame && !hasReferenceVideo && !hasAudio && (input.referenceImages?.length || 0) > 1;
-  if (!isMultiframe) return limits;
-  return {
-    ...limits,
-    minSeconds: 1,
-    maxSeconds: 8,
-    allowedSeconds: Array.from({ length: 8 }, (_, index) => index + 1),
-    resolutions: ['720p', '1080p'],
-  };
 }
 
 function isNativeTaskProvider(provider: { videoTransport?: string; platform?: string }) {
@@ -328,9 +350,14 @@ async function keepVideoSubmissionPending(task: VideoTask, error: unknown, provi
 export async function createVideoGeneration(options: { modelId?: string; input: VideoGenerationInput; idempotencyKey?: string; source?: GenerationSource; retryOf?: string }) {
   const runtime = await getRuntimeVideoModel(options.modelId || 'auto');
   if (!runtime) throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
-  assertGenericInputLimits(options.input);
   const baseModelLimits = getVideoModelLimits(runtime.model, runtime.provider);
-  const cleanedInput = cleanInput(options.input, baseModelLimits.fixedSeconds || 5);
+  const requestedModelLimits = getVideoModelLimitsForInput(runtime.model, runtime.provider, videoModelInputContext(options.input));
+  assertGenericInputLimits(options.input, requestedModelLimits);
+  const cleanedInput = cleanInput(
+    options.input,
+    baseModelLimits.fixedSeconds || 5,
+    requestedModelLimits.maxReferenceImages,
+  );
   const input = await prepareVideoInputMedia(cleanedInput, {
     // Agnes 2.5 gives reference media a strong composition prior.  Put the
     // source on the requested canvas before submission so a landscape source
@@ -339,7 +366,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
       ? cleanedInput.aspectRatio
       : undefined,
   });
-  const modelLimits = isJimengProvider(runtime.provider) ? effectiveJimengLimits(input, baseModelLimits) : baseModelLimits;
+  const modelLimits = getVideoModelLimitsForInput(runtime.model, runtime.provider, videoModelInputContext(input));
   if (!input.prompt) throw new Error('请输入视频提示词');
   if (is65535Provider(runtime.provider) || isJimengProvider(runtime.provider)) validateModelInput(input, options.input, modelLimits, isJimengProvider(runtime.provider) ? '即梦' : '65535');
   if (isAgnesProvider(runtime.provider) || runtime.provider.videoTransport === 'agnes-videos') validateAgnesInput(input, options.input, runtime.model.rawId);

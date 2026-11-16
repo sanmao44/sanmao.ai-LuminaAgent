@@ -368,7 +368,7 @@ test('audio attachments generate a timestamped SRT artifact locally without a ch
   assert.equal(agent.savedSubtitleArtifacts[0].data.toString('utf8'), '1\n00:00:01,250 --> 00:00:02,750\nHello.\n');
   assert.equal(result.files[0].artifactId, 'test-subtitle-artifact');
   assert.equal(result.files[0].downloadUrl, '/api/artifacts/test-subtitle-artifact');
-  assert.match(result.message, /已将 1 个参考文档作为专有名词提示/);
+  assert.match(result.message, /已读取 1 个参考文档；短术语表可辅助识别/);
   assert.equal(agent.modelCalls.length, 0);
 });
 

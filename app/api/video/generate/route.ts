@@ -27,6 +27,7 @@ export async function POST(request: Request) {
       referenceVideo: raw.referenceVideo || raw.video,
       audios: raw.audios || raw.audio_urls,
       audio: raw.audio,
+      referenceMode: raw.referenceMode === 'multiframe' || raw.referenceMode === 'multimodal' ? raw.referenceMode : undefined,
       videoMode: raw.videoMode || raw.mode,
       width: raw.width,
       height: raw.height,

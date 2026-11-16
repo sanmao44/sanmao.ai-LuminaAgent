@@ -17,7 +17,7 @@ import {
   type VideoInputMode,
 } from "@/lib/creation/settings";
 import { resolveAvailableCreationModel } from "@/lib/creation/settings";
-import { getVideoModelLimits } from "@/lib/video-model-limits";
+import { getVideoModelLimitsForInput, type VideoModelInputContext } from "@/lib/video-model-limits";
 import { is65535Provider } from "@/lib/video-platform";
 import type { ModelCapability, PublicState } from "@/lib/types";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
@@ -27,6 +27,7 @@ type Props = {
   runtime: PublicState | null;
   unavailableModelId?: string;
   referenceCount?: number;
+  videoModelInput?: VideoModelInputContext;
   modelCapabilities?: readonly ModelCapability[];
   variant?: "default" | "canvas-flat" | "dock";
   portalZIndex?: number;
@@ -649,6 +650,7 @@ function VideoEditor({
   settings,
   runtime,
   unavailableModelId,
+  videoModelInput,
   variant,
   onChange,
   onVideoInputModeChange,
@@ -658,6 +660,7 @@ function VideoEditor({
   settings: VideoCreationSettings;
   runtime: PublicState | null;
   unavailableModelId?: string;
+  videoModelInput?: VideoModelInputContext;
   variant?: Props["variant"];
   portalZIndex?: number;
   dialogPortalZIndex?: number;
@@ -683,8 +686,16 @@ function VideoEditor({
     (item) => item.id === operationModel?.providerId,
   );
   const limits = useMemo(
-    () => getVideoModelLimits(model || undefined, provider),
-    [model, provider],
+    () => getVideoModelLimitsForInput(model || undefined, provider, videoModelInput || {}),
+    [
+      model,
+      provider,
+      videoModelInput?.hasFirstFrame,
+      videoModelInput?.hasLastFrame,
+      videoModelInput?.referenceImageCount,
+      videoModelInput?.referenceVideoCount,
+      videoModelInput?.audioCount,
+    ],
   );
   const supports = (capability: ModelCapability) =>
     !model || model.capabilities.includes(capability);
@@ -766,12 +777,21 @@ function VideoEditor({
       limits.allowedSeconds,
       settings.duration,
     ),
-    [limits],
+    [limits, settings.duration],
   );
+  const normalizedDuration = allowedDurations.includes(settings.duration)
+    ? settings.duration
+    : allowedDurations.reduce((nearest, value) =>
+        Math.abs(value - settings.duration) < Math.abs(nearest - settings.duration) ? value : nearest,
+      allowedDurations[0] || limits.minSeconds);
   const selectedResolution =
     limits.resolutions.find(
       (value) => value.toLowerCase() === settings.resolution.toLowerCase(),
     ) || limits.resolutions[0] || "720p";
+  const normalizedResolution = limits.resolutions.some(
+    (value) => value.toLowerCase() === settings.resolution.toLowerCase(),
+  ) ? settings.resolution : selectedResolution;
+  const normalizedAspect = limits.aspectRatioSource === "first-reference" ? "auto" : settings.aspect;
   const selectedAgnesV20Duration = AGNES_V20_DURATION_PRESETS.find(
     (preset) =>
       preset.frames === settings.agnesNumFrames &&
@@ -845,15 +865,34 @@ function VideoEditor({
     if (nextOperation !== settings.operation)
       onChange({ ...settings, operation: nextOperation });
   }, [onChange, settings, supportsOperationEdit, supportsOperationExtend]);
+  useEffect(() => {
+    if (!limits.durationScope && !limits.aspectRatioSource) return;
+    if (
+      settings.duration === normalizedDuration &&
+      settings.resolution === normalizedResolution &&
+      settings.aspect === normalizedAspect
+    ) return;
+    onChange({
+      ...settings,
+      duration: normalizedDuration,
+      resolution: normalizedResolution,
+      aspect: normalizedAspect,
+    });
+  }, [limits.durationScope, normalizedAspect, normalizedDuration, normalizedResolution, onChange, settings]);
   const inheritSettings =
     settings.operation !== "generate" &&
     Boolean(limits.inheritVideoSettingsFor?.includes(settings.operation));
   const omitRatio =
     inheritSettings ||
+    limits.aspectRatioSource === "first-reference" ||
     (settings.operation !== "generate" &&
       Boolean(
         limits.omitAspectRatioResolutionFor?.includes(settings.operation),
       ));
+  const omitResolution =
+    inheritSettings ||
+    (settings.operation !== "generate" &&
+      Boolean(limits.omitAspectRatioResolutionFor?.includes(settings.operation)));
   return (
     <div className={`creation-parameter-editor video${canvasCompact ? " canvas-compact" : ""}`}>
       {unavailableModelId && (
@@ -909,7 +948,7 @@ function VideoEditor({
           />
         </label>
         {!usesAgnesV20 && <label className="creation-field">
-          <small>时长</small>
+          <small>{limits.durationScope === "per-transition" ? "每段转场时长" : limits.durationScope === "total" ? "总时长" : "时长"}</small>
           <SelectMenu
             portalZIndex={portalZIndex}
             disabled={inheritSettings}
@@ -924,7 +963,7 @@ function VideoEditor({
           <SelectMenu
             portalZIndex={portalZIndex}
             disabled={omitRatio}
-            value={settings.aspect}
+            value={normalizedAspect}
             onChange={(value) => update("aspect", value)}
             options={VIDEO_RATIOS.map((value) => ({
               value,
@@ -938,7 +977,7 @@ function VideoEditor({
           <small>分辨率</small>
           <SelectMenu
             portalZIndex={portalZIndex}
-            disabled={omitRatio}
+            disabled={omitResolution}
             value={selectedResolution}
             onChange={(value) => update("resolution", value)}
             options={limits.resolutions.map((value) => ({
@@ -1119,6 +1158,7 @@ export default function CreationParameterEditor({
   runtime,
   unavailableModelId,
   modelCapabilities,
+  videoModelInput,
   variant,
   portalZIndex = CANVAS_Z_INDEX.portalPopover,
   dialogPortalZIndex = CANVAS_Z_INDEX.modelDialog,
@@ -1130,6 +1170,7 @@ export default function CreationParameterEditor({
       settings={settings}
       runtime={runtime}
       unavailableModelId={unavailableModelId}
+      videoModelInput={videoModelInput}
       variant={variant}
       portalZIndex={portalZIndex}
       dialogPortalZIndex={dialogPortalZIndex}

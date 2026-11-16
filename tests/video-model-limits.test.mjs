@@ -72,7 +72,60 @@ test('uses the official Jimeng parameter profile instead of generic defaults', (
   assert.equal(vip.maxSeconds, 15);
   assert.deepEqual(vip.resolutions, ['720p', '1080p', '4k']);
 
+  const fastVip = limits.getVideoModelLimits({ rawId: 'seedance2.0fast_vip' }, { platform: 'custom', videoTransport: 'jimeng-cli' });
+  assert.deepEqual(fastVip.resolutions, ['720p']);
+
   const other = limits.getVideoModelLimits({ rawId: 'seedance-2.5' }, { platform: 'custom', videoTransport: 'openai-videos' });
   assert.equal(other.allowedSeconds, undefined);
   assert.deepEqual(other.resolutions, ['480p', '720p', '1080p']);
+});
+
+test('applies official multiframe CLI limits from the actual input shape', () => {
+  const provider = { platform: 'jimeng-cli', videoTransport: 'jimeng-cli' };
+  const twoImages = limits.getVideoModelLimitsForInput(
+    { rawId: 'seedance2.0fast' },
+    provider,
+    { referenceImageCount: 2, referenceMode: 'multiframe' },
+  );
+  assert.equal(twoImages.minSeconds, 2);
+  assert.equal(twoImages.maxSeconds, 8);
+  assert.deepEqual(twoImages.allowedSeconds, [2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(twoImages.resolutions, ['720p', '1080p']);
+  assert.equal(twoImages.durationScope, 'total');
+  assert.equal(twoImages.aspectRatioSource, 'first-reference');
+  assert.match(twoImages.notes.join(' '), /固定后端模型/);
+
+  const threeImages = limits.getVideoModelLimitsForInput(
+    { rawId: 'seedance2.0fast' },
+    provider,
+    { referenceImageCount: 3, referenceMode: 'multiframe' },
+  );
+  assert.equal(threeImages.minSeconds, 1);
+  assert.equal(threeImages.maxSeconds, 8);
+  assert.deepEqual(threeImages.allowedSeconds, [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal(threeImages.durationScope, 'per-transition');
+
+  const firstFrame = limits.getVideoModelLimitsForInput(
+    { rawId: 'seedance2.0fast' },
+    provider,
+    { hasFirstFrame: true, referenceImageCount: 2 },
+  );
+  assert.equal(firstFrame.minSeconds, 4);
+  assert.equal(firstFrame.maxSeconds, 15);
+
+  const multimodal = limits.getVideoModelLimitsForInput(
+    { rawId: 'seedance2.0fast' },
+    provider,
+    { referenceImageCount: 2, audioCount: 1 },
+  );
+  assert.equal(multimodal.minSeconds, 4);
+  assert.equal(multimodal.maxSeconds, 15);
+
+  const allAround = limits.getVideoModelLimitsForInput(
+    { rawId: 'seedance2.0fast' },
+    provider,
+    { referenceImageCount: 2 },
+  );
+  assert.equal(allAround.minSeconds, 4);
+  assert.equal(allAround.maxSeconds, 15);
 });

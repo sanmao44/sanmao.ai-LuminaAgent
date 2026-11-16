@@ -432,7 +432,7 @@ async function transcribeAudioAttachment(
             onProgress('正在准备本地语音识别模型…');
             stageProgress?.('loading-model');
           } else if (progress.stage === 'transcribing') {
-            onProgress('正在识别语音并对齐时间戳…');
+            onProgress('正在识别语音并整理字幕时间戳…');
             stageProgress?.('transcribing');
           }
         },
@@ -444,7 +444,7 @@ async function transcribeAudioAttachment(
       return { id: saved.id, name: saved.name, mimeType: saved.mimeType, size: saved.size, downloadUrl: saved.downloadUrl };
     },
   }, (stage) => {
-    onProgress(stage === 'loading-model' ? '正在准备本地语音识别模型…' : '正在识别语音并对齐时间戳…');
+    onProgress(stage === 'loading-model' ? '正在准备本地语音识别模型…' : '正在识别语音并整理字幕时间戳…');
   });
   const descriptor = result.file;
   return {
@@ -582,8 +582,8 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       );
       if (audioSubtitle) {
         const referenceNote = audioSubtitle.referenceDocumentCount
-          ? `已将 ${audioSubtitle.referenceDocumentCount} 个参考文档作为专有名词提示；字幕时间来自音频词级时间戳，仍建议人工核对听不清的片段。`
-          : '未附带参考文档；如需人工核对专有名词，可同时上传 TXT、MD 或其他文本资料。';
+          ? `已读取 ${audioSubtitle.referenceDocumentCount} 个参考文档；短术语表可辅助识别，长篇文档不会直接作为解码提示，避免模型复读。当前不支持按参考稿逐字强制对齐，字幕仍建议人工核对。`
+          : '未附带参考文档；如需辅助识别专有名词，可同时上传短术语表。';
         const message = `已生成 ${audioSubtitle.file.name}，包含 ${audioSubtitle.segmentCount} 个字幕片段。识别模型：${audioSubtitle.model}。${referenceNote}`;
         const files = [audioSubtitle.file];
         const modelLabel = `本地语音识别 · ${audioSubtitle.model}`;
