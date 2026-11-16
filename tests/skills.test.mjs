@@ -12,7 +12,7 @@ const dataPathsCompiled = ts.transpileModule(dataPathsSource, { compilerOptions:
 const skillRoutingCompiled = ts.transpileModule(skillRoutingSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const dataPathsUrl = `data:text/javascript;base64,${Buffer.from(dataPathsCompiled).toString('base64')}`;
 const skillRoutingUrl = `data:text/javascript;base64,${Buffer.from(skillRoutingCompiled).toString('base64')}`;
-const compiled = ts.transpileModule(source.replace("from './data-paths'", `from '${dataPathsUrl}'`).replace("from '../packages/agent-core/skill-routing'", `from '${skillRoutingUrl}'`), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const compiled = ts.transpileModule(source.replace("from './data-paths'", `from '${dataPathsUrl}'`).replace("from '../packages/agent-core/skill-routing'", `from '${skillRoutingUrl}'`).replaceAll("import('undici')", `import('${import.meta.resolve('undici')}')`), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const skills = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const skillRouting = await import(`data:text/javascript;base64,${Buffer.from(skillRoutingCompiled).toString('base64')}`);
 
@@ -727,4 +727,32 @@ test('来源接口状态码转成可读提示', () => {
   assert.equal(skills.skillHttpErrorMessage(404), '下载失败：来源地址不存在（HTTP 404）');
   assert.equal(skills.skillHttpErrorMessage(500), '下载失败（HTTP 500）');
   assert.equal(skills.skillHttpErrorMessage(500, 'GitHub 目录接口失败'), 'GitHub 目录接口失败（HTTP 500）');
+});
+
+test('来源下载使用 Undici 环境代理以兼容受支持的旧 Node 22 版本', async () => {
+  const previousHttpProxy = process.env.HTTP_PROXY;
+  const previousHttpsProxy = process.env.HTTPS_PROXY;
+  const previousNoProxy = process.env.NO_PROXY;
+  let requestInit;
+  process.env.HTTP_PROXY = 'http://127.0.0.1:8080';
+  process.env.HTTPS_PROXY = 'http://127.0.0.1:8080';
+  process.env.NO_PROXY = 'localhost,127.0.0.1';
+  try {
+    const result = await skills.fetchSkillBytes('https://example.com/file.txt', {
+      maxBytes: 64,
+      fetcher: async (_url, init) => {
+        requestInit = init;
+        return new Response('ok');
+      },
+    });
+    assert.equal(result.data.toString(), 'ok');
+    assert.ok(requestInit.dispatcher, 'remote downloads must use the environment-aware proxy dispatcher');
+  } finally {
+    if (previousHttpProxy === undefined) delete process.env.HTTP_PROXY;
+    else process.env.HTTP_PROXY = previousHttpProxy;
+    if (previousHttpsProxy === undefined) delete process.env.HTTPS_PROXY;
+    else process.env.HTTPS_PROXY = previousHttpsProxy;
+    if (previousNoProxy === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = previousNoProxy;
+  }
 });

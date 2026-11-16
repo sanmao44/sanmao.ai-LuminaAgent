@@ -1,6 +1,6 @@
 {
   "name": "sanmao-ai-studio",
-  "version": "0.7.105",
+  "version": "0.7.106",
   "private": true,
   "engines": {
     "node": ">=22.13.0"

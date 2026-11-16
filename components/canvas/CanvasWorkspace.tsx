@@ -477,6 +477,13 @@ import {
   isEditableTarget,
 } from "@/lib/canvas/interaction-targets";
 import {
+  shouldCanvasInterceptModifiedWheel,
+  handleCanvasTrackpadPanWheel,
+  panCanvasCameraByWheel,
+  startCanvasMiddleButtonPan,
+  trackpadPinchZoomFactor,
+} from "@/components/canvas/trackpad-input";
+import {
   CANVAS_ALIGNMENT_OPTIONS,
   CANVAS_ARRANGE_MODE_OPTIONS,
   CANVAS_DISTRIBUTION_OPTIONS,
@@ -769,6 +776,7 @@ export default function SuperCanvas() {
   }, []);
   const deckPromptRef = useRef<HTMLDivElement | null>(null);
   const interactionRef = useRef<Interaction | null>(null);
+  const middleButtonPanPointerIdRef = useRef<number | null>(null);
   const lastNodePressRef = useRef<{ nodeId: string; at: number } | null>(null);
   const canvasPointerDownRef = useRef<{ pointerId: number; interactive: boolean } | null>(null);
   const canvasClipboardRef = useRef<CanvasClipboardPayload | null>(null);
@@ -2929,10 +2937,11 @@ export default function SuperCanvas() {
   );
   const handleStagePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0 && event.button !== 1) return;
+      const middleButtonDown = event.button === 1 || (event.buttons & 4) !== 0;
+      if (event.button !== 0 && !middleButtonDown) return;
       const target = event.target as HTMLElement;
       setContextMenu(null);
-      const panIntent = event.button === 1 || spaceHeldRef.current;
+      const panIntent = middleButtonDown || spaceHeldRef.current;
       const overCanvasContent = target.closest(
         ".canvas-node,.canvas-group,.canvas-group-label,.canvas-floating,.canvas-deck",
       );
@@ -2969,8 +2978,8 @@ export default function SuperCanvas() {
       setDraggingNodeIds(new Set());
       setQuickToolbarNodeId(null);
       if (
+        !panIntent &&
         event.button === 0 &&
-        !spaceHeldRef.current &&
         !referencePicker
       )
         return startMarquee(event);
@@ -2983,9 +2992,9 @@ export default function SuperCanvas() {
         camera: document.camera,
         changed: false,
         clearSelectionOnClick:
+          !panIntent &&
           event.button === 0 &&
           !event.shiftKey &&
-          !spaceHeldRef.current &&
           !referencePicker,
       };
       setCursorTask("panning");
@@ -3282,7 +3291,7 @@ export default function SuperCanvas() {
   );
 
   const moveInteraction = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
+    (event: Pick<PointerEvent, "pointerId" | "clientX" | "clientY">) => {
       let interaction = interactionRef.current;
       if (!interaction || interaction.pointerId !== event.pointerId) return;
       const dx =
@@ -3534,7 +3543,7 @@ export default function SuperCanvas() {
   );
 
   const finishInteraction = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
+    (event: Pick<PointerEvent, "pointerId" | "clientX" | "clientY">) => {
       const interaction = interactionRef.current;
       if (!interaction || interaction.pointerId !== event.pointerId) return;
       if (interaction.kind === "nodePress") {
@@ -3714,6 +3723,8 @@ export default function SuperCanvas() {
       setPanActive(false);
       setCursorTask(referencePicker ? "referencing" : "idle");
       setMarquee(null);
+      if (middleButtonPanPointerIdRef.current === event.pointerId)
+        middleButtonPanPointerIdRef.current = null;
       try {
         stageRef.current?.releasePointerCapture(event.pointerId);
       } catch {
@@ -3746,6 +3757,8 @@ export default function SuperCanvas() {
         return;
       }
       interactionRef.current = null;
+      if (middleButtonPanPointerIdRef.current === event.pointerId)
+        middleButtonPanPointerIdRef.current = null;
       setNodeGestureActive(false);
       setDraggingNodeIds(new Set());
       setSnapGuides([]);
@@ -3764,9 +3777,70 @@ export default function SuperCanvas() {
     [referencePicker],
   );
 
+  const nativeMouseInteractionRef = useRef({ moveInteraction, finishInteraction });
+  nativeMouseInteractionRef.current = { moveInteraction, finishInteraction };
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const beginMiddlePan = (event: MouseEvent) => {
+      if (event.button !== 1 || middleButtonPanPointerIdRef.current !== null) return;
+      if (!stage.contains(event.target as Node) || interactionRef.current) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest(
+        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-node-quick-toolbar,.canvas-minimap,.canvas-minimap-fit-mobile,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-status-chip,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+      )) return;
+      event.preventDefault();
+      event.stopPropagation();
+      middleButtonPanPointerIdRef.current = -1;
+      interactionRef.current = {
+        kind: "pan",
+        pointerId: -1,
+        startX: event.clientX,
+        startY: event.clientY,
+        camera: canvasCoreRef.current.document().camera,
+        changed: false,
+        clearSelectionOnClick: false,
+      };
+      setContextMenu(null);
+      setConnectionNodePicker(null);
+      setDraggingNodeIds(new Set());
+      setQuickToolbarNodeId(null);
+      setCursorTask("panning");
+      setPanActive(true);
+    };
+    const moveMiddlePan = (event: MouseEvent) => {
+      const pointerId = middleButtonPanPointerIdRef.current;
+      if (pointerId !== -1 || interactionRef.current?.kind !== "pan") return;
+      nativeMouseInteractionRef.current.moveInteraction({
+        pointerId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+    };
+    const finishMiddlePan = (event: MouseEvent) => {
+      if (event.button !== 1) return;
+      const pointerId = middleButtonPanPointerIdRef.current;
+      if (pointerId === null) return;
+      nativeMouseInteractionRef.current.finishInteraction({
+        pointerId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+    };
+    stage.addEventListener("mousedown", beginMiddlePan, true);
+    window.addEventListener("mousemove", moveMiddlePan, true);
+    window.addEventListener("mouseup", finishMiddlePan, true);
+    return () => {
+      stage.removeEventListener("mousedown", beginMiddlePan, true);
+      window.removeEventListener("mousemove", moveMiddlePan, true);
+      window.removeEventListener("mouseup", finishMiddlePan, true);
+    };
+  }, []);
+
   useEffect(() => {
     const handleWindowBlur = () => {
       interactionRef.current = null;
+      middleButtonPanPointerIdRef.current = null;
       setNodeGestureActive(false);
       setDraggingNodeIds(new Set());
       setSnapGuides([]);
@@ -3831,14 +3905,28 @@ export default function SuperCanvas() {
     const stage = stageRef.current;
     if (!stage) return;
     const handleModifiedWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return;
-      // Ctrl+wheel is reserved by browsers for page zoom. Capture it with a
-      // non-passive listener while the pointer is over the canvas so the same
-      // gesture consistently controls the canvas camera instead.
-      event.preventDefault();
-      event.stopPropagation();
+      const overMediaViewer =
+        event.target instanceof Element &&
+        Boolean(event.target.closest(".media-viewer-stage"));
+      if (overMediaViewer) return;
+      const modified = event.ctrlKey || event.metaKey;
+      if (modified) {
+        if (!shouldCanvasInterceptModifiedWheel(modified, overMediaViewer)) return;
+        // Ctrl+wheel is reserved by browsers for page zoom. Capture it with a
+        // non-passive listener so pinch zoom stays inside the canvas.
+        event.preventDefault();
+        event.stopPropagation();
+        if (isCanvasWheelIsolatedTargetWithOptions(event.target, true)) return;
+        zoomAt(event.clientX, event.clientY, trackpadPinchZoomFactor(event.deltaY));
+        return;
+      }
       if (isCanvasWheelIsolatedTargetWithOptions(event.target, true)) return;
-      zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0014));
+      handleCanvasTrackpadPanWheel(event, (deltaX, deltaY) => {
+        updateDoc((value) => ({
+          ...value,
+          camera: panCanvasCameraByWheel(value.camera, deltaX, deltaY),
+        }));
+      });
     };
     stage.addEventListener("wheel", handleModifiedWheel, {
       capture: true,
@@ -3846,7 +3934,7 @@ export default function SuperCanvas() {
     });
     return () =>
       stage.removeEventListener("wheel", handleModifiedWheel, true);
-  }, [zoomAt]);
+  }, [updateDoc, zoomAt]);
   useEffect(() => {
     return () => {
       if (zoomFrameRef.current !== null)
@@ -13801,7 +13889,18 @@ export default function SuperCanvas() {
         className={`canvas-stage ${panReady ? "is-pan-ready" : ""} ${panActive ? "is-panning" : ""} ${fileDropActive ? "is-file-drop-target" : ""} ${cursorTask !== "idle" ? `is-cursor-${cursorTask}` : ""}`}
         cursorTask={cursorTask}
         onPointerDown={handleStagePointerDown}
-        onPointerDownCapture={handleStagePointerDownCapture}
+        onPointerDownCapture={(event) => {
+          if (event.button === 1 || (event.buttons & 4) !== 0) {
+            const started = startCanvasMiddleButtonPan(event, () => {
+              handleStagePointerDown(event);
+              const interaction = interactionRef.current;
+              return interaction?.kind === "pan" && interaction.pointerId === event.pointerId;
+            });
+            if (started) middleButtonPanPointerIdRef.current = event.pointerId;
+            return;
+          }
+          handleStagePointerDownCapture(event);
+        }}
         onPointerMove={(event) => {
           if (referencePicker) {
             const hit = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-canvas-node-id]");

@@ -64,7 +64,7 @@ export type YtDlpProbeResult = {
 type PublicMediaHeaders = Readonly<{ Range?: string; Referer: string; 'User-Agent'?: string }>;
 
 export class YtDlpUnavailableError extends Error {
-  constructor(message = '视频下载技能已启用，但本机下载器未就绪。启动器会自动准备 yt-dlp；请重新启动 SANMAO.AI 后再试。') {
+  constructor(message = '视频下载技能已启用，但本机下载器未就绪。请检查网络后重试下载。') {
     super(message);
     this.name = 'YtDlpUnavailableError';
   }
@@ -488,7 +488,7 @@ export async function downloadWithYtDlp(request: YtDlpDownloadRequest, dependenc
         const preparedCommand = bundledYtDlpCommand() || configuredCommand();
         processResult = await run({ command: preparedCommand, args, cwd: outputDirectory, signal: request.signal, onOutput: request.onProgress });
       } else {
-        throw new YtDlpUnavailableError('视频下载技能已启用，但自动准备 yt-dlp 失败。请检查网络后重新启动 SANMAO.AI，或将 yt-dlp.exe 放入 .data/tools/。');
+        throw new YtDlpUnavailableError('视频下载技能已启用，但自动准备 yt-dlp 失败。请检查网络后重试下载，或将 yt-dlp.exe 放入 .data/tools/。');
       }
     } else if (code === 'ENOENT') {
       throw new YtDlpUnavailableError();

@@ -1,20 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.105",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.105",
+  "latestVersion": "0.7.106",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.106",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.105/SANMAO.AI-0.7.105.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.106/SANMAO.AI-0.7.106.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.105/SANMAO.AI-0.7.105.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.105/SANMAO.AI-0.7.105.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.105/SANMAO.AI-0.7.105.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.106/SANMAO.AI-0.7.106.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.106/SANMAO.AI-0.7.106.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.106/SANMAO.AI-0.7.106.zip"
   ],
-  "sha256": "d23fba58ef41f3cb09c666cd508d6a1ce51e3fb1e00ab090c0c96b78559c0f00",
+  "sha256": "228d05c580e23808eba23f7ba219a3406a3aee987ae17f8100bdbb0f24dd25b6",
   "notes": [
-    "新增 Agent 意图预览与桌面操作核对，改进任务完成验证。",
-    "新增本地音频转写和字幕流程，增强长音频下载恢复。",
-    "加固 Canvas 保存、同步与空间不足时的恢复，并改进移动端操作。",
-    "新增加密 Provider 配置导入与导出。",
-    "视觉媒体需要公网访问时按需启用免费临时通道，无需共享 Worker/R2。"
+    "优化重复启动速度，减少启动阶段的等待。",
+    "改进 Canvas 触控板缩放、平移和中键导航体验。",
+    "修复 Canvas 工具栏与小地图布局问题。",
+    "修复代理网络环境下的 Windows 技能安装。"
   ]
 }

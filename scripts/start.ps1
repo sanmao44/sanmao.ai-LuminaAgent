@@ -390,6 +390,16 @@ function Install-SanmaoFfmpegBinary([string]$TargetPath) {
 
 
 function Get-SanmaoSourceFingerprint {
+  if (Get-Command node -ErrorAction SilentlyContinue) {
+    $scriptPath = Join-Path $PSScriptRoot 'source-fingerprint.mjs'
+    $commandOutput = & node $scriptPath --root $root 2>$null
+    if ($LASTEXITCODE -eq 0) {
+      $fingerprint = [string]($commandOutput | Select-Object -Last 1)
+      $fingerprint = $fingerprint.Trim()
+      if ($fingerprint -match '^[a-f0-9]{64}$') { return $fingerprint }
+    }
+  }
+
   $files = @()
   foreach ($directory in @('app', 'components', 'lib', 'public')) {
     $path = Join-Path $root $directory
@@ -1251,19 +1261,6 @@ if ($SkipBuild.IsPresent) {
   if (-not (Test-SanmaoFfmpegBinary $ffmpegBinaryPath)) {
     Write-Host '警告：FFmpeg 组件不完整，视频裁剪/深度功能可能不可用；再次运行启动器会自动重装。' -ForegroundColor Yellow
   }
-  }
-}
-
-# Video downloads use the app-owned yt-dlp runtime. Prepare it on first launch
-# so a fresh computer does not require Python or a manually edited PATH.
-Write-Step '准备视频下载依赖'
-$ytDlpPrepare = Join-Path $root 'scripts\ensure-ytdlp.mjs'
-if (Test-Path -LiteralPath $ytDlpPrepare -PathType Leaf) {
-  & node $ytDlpPrepare --data-dir $dataDir
-  if ($LASTEXITCODE -eq 0) {
-    Write-Host '视频下载依赖已就绪。' -ForegroundColor Green
-  } else {
-    Write-Host '视频下载依赖暂未准备好；应用仍会启动，下载时会再次自动尝试。' -ForegroundColor Yellow
   }
 }
 

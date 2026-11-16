@@ -2091,9 +2091,6 @@ export default function CanvasAgentDock({
                       );
                     }}
                     onClick={() => onPreviewImages(message.images || [], index)}
-                    title={image.batchPrompt
-                      ? `第 ${(image.batchIndex ?? index) + 1} 项：${image.batchPrompt}`
-                      : "点开看大图；也可以把这张图拖到画布上"}
                   >
                     <img src={image.url} alt={image.revisedPrompt || "Agent 图片"} />
                     {image.batchId ? (

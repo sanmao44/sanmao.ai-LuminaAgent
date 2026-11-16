@@ -1,2 +1,3 @@
 scripts/free-relay-common.sh text eol=lf
 SANMAO.AI.app/Contents/MacOS/SANMAO.AI text eol=lf
+public/local-models/** -text

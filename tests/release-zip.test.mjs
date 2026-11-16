@@ -41,9 +41,10 @@ test('发布 ZIP 允许无共享 Worker 并保留空地址配置', async () => {
   const temporaryDirectory = await mkdtemp(join(resolve('.data'), 'release-zip-test-'));
   const output = join(temporaryDirectory, 'release.zip');
   try {
-    const previousCommit = (await execFileAsync('git', ['rev-parse', 'HEAD^'], { cwd: resolve('.') })).stdout.trim();
+    const sourceRef = await execFileAsync('git', ['rev-parse', '--verify', 'HEAD^'], { cwd: resolve('.') })
+      .then(({ stdout }) => stdout.trim(), () => 'HEAD');
     await execFileAsync(process.execPath, [
-      'scripts/build-release-zip.mjs', '--ref', previousCommit, '--output', output,
+      'scripts/build-release-zip.mjs', '--ref', sourceRef, '--output', output,
     ], { cwd: resolve('.') });
     await access(output, constants.F_OK);
     const entries = unzipSync(await readFile(output));
