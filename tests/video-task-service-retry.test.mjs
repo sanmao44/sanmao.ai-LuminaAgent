@@ -56,6 +56,11 @@ function createHarness(submissionErrors) {
         currentTask = { ...currentTask, ...patch };
         return currentTask;
       },
+      updateActiveVideoTask: async (_id, patch) => {
+        if (!currentTask || !['pending', 'running'].includes(currentTask.status)) return null;
+        currentTask = { ...currentTask, ...patch };
+        return currentTask;
+      },
     },
     './video-providers': {
       idempotencyKey: () => 'generated-key',

@@ -109,6 +109,7 @@ test('更新与删除保留 id，并支持取消/重试需要的字段', async (
   assert.equal(cancelled.id, created.task.id);
   assert.equal(cancelled.status, 'cancelled');
   assert.equal(cancelled.cancelledAt, cancelledAt);
+  assert.equal(await videoStore.updateActiveVideoTask(created.task.id, { status: 'running', error: undefined }), null);
   assert.equal((await videoStore.findVideoTask(created.task.id)).status, 'cancelled');
 
   const retried = await videoStore.createVideoTask(videoTask('重试', 31));
@@ -123,6 +124,7 @@ test('更新与删除保留 id，并支持取消/重试需要的字段', async (
 
 test('批量视频重试 claim 原子地限制状态、结果和并发请求', async () => {
   const failed = await videoStore.createVideoTask({ ...videoTask('明确失败', 40), status: 'failed' });
+  assert.equal(await videoStore.updateActiveVideoTask(failed.task.id, { status: 'pending' }), null);
   const claimTime = Date.now();
   const claims = await Promise.all([
     videoStore.claimFailedVideoTaskRetry(failed.task.id, claimTime),

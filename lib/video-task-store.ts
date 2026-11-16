@@ -143,4 +143,13 @@ export async function listVideoTasksPage(options: {
 
 export async function findVideoTaskByIdempotencyKey(key: string) { return store.findByIdempotencyKey(key); }
 export async function updateVideoTask(id: string, patch: Partial<VideoTask>) { return store.update(id, patch); }
+/** Ignore late provider responses after cancellation or another terminal update. */
+export async function updateActiveVideoTask(id: string, patch: Partial<VideoTask>) {
+  return store.mutate((tasks) => {
+    const task = tasks.find((item) => item.id === id);
+    if (!task || (task.status !== 'pending' && task.status !== 'running')) return null;
+    Object.assign(task, patch, { id });
+    return task;
+  });
+}
 export async function removeVideoTask(id: string) { return store.remove(id); }
