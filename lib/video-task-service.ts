@@ -1,7 +1,7 @@
 import { finishGenerationLog, startGenerationLog } from './generation-log';
 import { getPublicState, getProviderWithKey, getRuntimeVideoModel, markProviderCredentialFailure } from './store';
 import { persistGeneratedVideos } from './video-storage';
-import { createVideoTask, findVideoTask, updateVideoTask, type VideoTask } from './video-task-store';
+import { createVideoTask, findVideoTask, updateActiveVideoTask, updateVideoTask, type VideoTask } from './video-task-store';
 import { idempotencyKey, pollJimengVideo, pollRemoteVideo, runJimengVideo, submitRemoteVideo, VideoProviderError, type VideoProviderTask } from './video-providers';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
 import { getVideoModelLimits, VIDEO_INPUT_SAFETY_LIMITS } from './video-model-limits';
@@ -197,6 +197,10 @@ async function callPoll(provider: Awaited<ReturnType<typeof getProviderWithKey>>
   return isJimengProvider(provider) ? pollJimengVideo(provider, taskId) : pollRemoteVideo(provider, taskId, undefined, rawModelId);
 }
 
+async function applyProviderUpdate(id: string, patch: Partial<VideoTask>) {
+  return await updateActiveVideoTask(id, patch) || await findVideoTask(id);
+}
+
 async function persistResult(task: VideoTask, result: VideoProviderTask) {
   const state = await getPublicState();
   const shouldNormalizeAspect = /agnes-video-2\.5/i.test(task.providerModel || '');
@@ -218,7 +222,7 @@ async function persistResult(task: VideoTask, result: VideoProviderTask) {
     ? stored.videos.map((video) => video.url)
     : remoteVideoUrls;
   const completedAt = new Date().toISOString();
-  const updated = await updateVideoTask(task.id, {
+  const updated = await updateActiveVideoTask(task.id, {
     status: 'done',
     videoUrls,
     remoteVideoUrls,
@@ -231,6 +235,7 @@ async function persistResult(task: VideoTask, result: VideoProviderTask) {
     completedAt,
     nextPollAt: undefined,
   });
+  if (!updated) return findVideoTask(task.id);
   await finishGenerationLog(task.id, {
     status: 'success',
     durationMs: Date.now() - new Date(task.createdAt).getTime(),
@@ -266,7 +271,8 @@ export async function saveVideoTaskLocally(id: string) {
 
 async function failTask(task: VideoTask, error: unknown, code?: string, providerResponse?: unknown) {
   const message = error instanceof Error ? error.message : String(error || '视频任务失败');
-  const updated = await updateVideoTask(task.id, { status: 'failed', error: message, errorCode: code, ...(providerResponse !== undefined ? { providerResponse } : {}), completedAt: new Date().toISOString(), nextPollAt: undefined });
+  const updated = await updateActiveVideoTask(task.id, { status: 'failed', error: message, errorCode: code, ...(providerResponse !== undefined ? { providerResponse } : {}), completedAt: new Date().toISOString(), nextPollAt: undefined });
+  if (!updated) return findVideoTask(task.id);
   await finishGenerationLog(task.id, { status: 'error', durationMs: Date.now() - new Date(task.createdAt).getTime(), error: message, errorCode: code }).catch(() => undefined);
   return updated;
 }
@@ -308,7 +314,7 @@ function submissionRetryDelayMs(task: Pick<VideoTask, 'pollCount'>, error: unkno
 
 async function keepVideoSubmissionPending(task: VideoTask, error: unknown, providerStatus?: string, providerResponse?: unknown) {
   const providerError = error instanceof VideoProviderError ? error : undefined;
-  return updateVideoTask(task.id, {
+  return applyProviderUpdate(task.id, {
     status: 'pending',
     pollCount: task.pollCount + 1,
     nextPollAt: Date.now() + submissionRetryDelayMs(task, error),
@@ -367,7 +373,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
       return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
     }
     if (result.status === 'done') return failTask(task, '服务商已完成任务，但没有返回可下载的视频地址', 'VIDEO_RESULT_MISSING');
-    const updated = await updateVideoTask(task.id, { status: result.status === 'running' ? 'running' : 'pending', providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, startedAt: new Date().toISOString(), nextPollAt: Date.now() + (isAgnesProvider(runtime.provider) ? 1500 : 2000), costUsd: result.costUsd });
+    const updated = await applyProviderUpdate(task.id, { status: result.status === 'running' ? 'running' : 'pending', providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, startedAt: new Date().toISOString(), nextPollAt: Date.now() + (isAgnesProvider(runtime.provider) ? 1500 : 2000), costUsd: result.costUsd });
     return updated;
   } catch (error) {
     const upstreamStatus = Number((error as VideoProviderError & { status?: number }).status || 0);
@@ -383,7 +389,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
         }
         if (recovered.status === 'failed') return failTask(task, recovered.error || '视频任务失败', recovered.errorCode, recovered.raw);
         if (recovered.status === 'done') return failTask(task, recovered.error || '服务商已完成任务，但没有返回可下载的视频地址', recovered.errorCode || 'VIDEO_RESULT_MISSING', recovered.raw);
-        return updateVideoTask(task.id, {
+        return applyProviderUpdate(task.id, {
           status: recovered.status === 'running' ? 'running' : 'pending',
           providerTaskId: recovered.providerTaskId,
           videoId: recovered.videoId,
@@ -396,7 +402,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
           costUsd: recovered.costUsd,
         });
       } catch {
-        return updateVideoTask(task.id, {
+        return applyProviderUpdate(task.id, {
           status: 'pending',
           error: '服务商可能已接收任务，正在等待任务状态。',
           nextPollAt: Date.now() + 15_000,
@@ -465,7 +471,7 @@ async function refreshVideoTaskOnce(id: string) {
         return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
       }
       if (result.status === 'done') return failTask(task, result.error || '服务商已完成任务，但没有返回可下载的视频地址', result.errorCode || 'VIDEO_RESULT_MISSING', result.raw);
-      return updateVideoTask(id, {
+      return applyProviderUpdate(id, {
         status: result.status === 'running' ? 'running' : 'pending',
         providerTaskId: result.providerTaskId,
         videoId: result.videoId,
@@ -481,7 +487,7 @@ async function refreshVideoTaskOnce(id: string) {
     } catch (error) {
       if (isRetryableVideoProviderError(error)) {
         const providerError = error as VideoProviderError;
-        return updateVideoTask(id, {
+        return applyProviderUpdate(id, {
           status: task.status,
           nextPollAt: Date.now() + 15_000,
           providerStatus: providerError.status ? `HTTP ${providerError.status}` : 'submission_pending',
@@ -501,7 +507,7 @@ async function refreshVideoTaskOnce(id: string) {
     if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
     const pollCount = task.pollCount + 1;
     const interval = isAgnesProvider(provider) ? Math.round(1000 + Math.random() * 1000) : Math.min(5000, 2000 + Math.max(0, pollCount - 2) * 500);
-    return updateVideoTask(id, { status: result.status, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, pollCount, nextPollAt: Date.now() + interval });
+    return applyProviderUpdate(id, { status: result.status, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, pollCount, nextPollAt: Date.now() + interval });
   } catch (error) {
     if (isRetryableVideoProviderError(error) || (isAgnesProvider(provider) && isRetryableAgnesPollError(error))) {
       const pollCount = task.pollCount + 1;
@@ -510,7 +516,7 @@ async function refreshVideoTaskOnce(id: string) {
         ? providerError.retryAfterMs
         : Math.min(60_000, 2000 * 2 ** Math.min(5, pollCount - 1));
       const backoff = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
-      return updateVideoTask(id, { status: task.status, pollCount, nextPollAt: Date.now() + backoff, providerStatus: providerError.status ? `HTTP ${providerError.status}` : 'network_error', error: undefined });
+      return applyProviderUpdate(id, { status: task.status, pollCount, nextPollAt: Date.now() + backoff, providerStatus: providerError.status ? `HTTP ${providerError.status}` : 'network_error', error: undefined });
     }
     const upstreamStatus = Number((error as VideoProviderError & { status?: number }).status || 0);
     if (isAgnesProvider(provider) && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(provider.id).catch(() => undefined);

@@ -14,6 +14,8 @@ export type DesktopExecutionEvidence = {
   name: string;
   readOnly: boolean;
   ok: boolean;
+  /** A successful App launch is already a concrete completion signal for an open-only request. */
+  appLaunch?: boolean;
   inputMatchesRequestedText?: boolean;
   observationShowsRequestedText?: boolean;
 };
@@ -75,6 +77,17 @@ export function desktopCompletionGap(input: {
   if (input.requestedInputText !== null && typingUses.at(-1)?.inputMatchesRequestedText !== true) return 'input-mismatch';
 
   const lastActionIndex = input.evidence.findLastIndex((tool) => !tool.readOnly);
+  const actionEvidence = input.evidence.filter((tool) => !tool.readOnly);
+  // Opening an application is the requested state change itself. Requiring a
+  // second desktop observation for this narrow case creates an unnecessary
+  // model round trip and can leave the request looking stuck after App returns
+  // a successful launch result. Clicks, typing, and other writes still require
+  // a fresh observation below.
+  if (!input.inputRequested
+    && !input.screenshotRequested
+    && actionEvidence.length > 0
+    && actionEvidence.every((tool) => tool.appLaunch === true)) return '';
+
   const observationPattern = input.screenshotRequested
     ? /^(?:screenshot)$/
     : input.screenshotExplicitlyForbidden ? /^(?:snapshot|waitfor)$/ : /^(?:snapshot|screenshot|waitfor)$/;

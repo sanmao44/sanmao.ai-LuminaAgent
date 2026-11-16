@@ -322,6 +322,14 @@ test('Windows-MCP routes Device Manager requests and documents the safe App laun
   assert.match(type.description, /requires text and either loc=\[x,y\] or label from a fresh Snapshot/);
 });
 
+test('Windows-MCP missing user-specific executable falls back to Start Menu lookup by application name', () => {
+  const server = { catalogId: 'windows-mcp' };
+  const original = { mode: 'launch_executable', executable: 'C:\\Users\\someone\\Desktop\\Bilibili.exe', args: [] };
+  assert.deepEqual(mcp.normalizeWindowsMcpAppArgs(server, 'App', original), { mode: 'launch', name: 'Bilibili' });
+  assert.equal(mcp.normalizeWindowsMcpAppArgs(server, 'App', { mode: 'launch', name: 'Firewall' }).name, 'Firewall');
+  assert.equal(mcp.normalizeWindowsMcpAppArgs({ catalogId: 'playwright' }, 'App', original), original);
+});
+
 test('a desktop-intent priority selects lazy Windows-MCP without loading the browser connector', () => {
   const windows = {
     id: 'windows-mcp', name: 'Windows Desktop', catalogId: 'windows-mcp',

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { browserExtensionHint } from './browser-extension';
 import { browserTargetHint } from './browser-guidance';
 import { BROWSER_EDITOR_PROBE, browserEditorHints } from './browser-editors';
@@ -41,6 +42,34 @@ export const MCP_TURN_TIME_BUDGET_MS = 180_000;
 type JsonRpcMessage = { jsonrpc?: string; id?: unknown; result?: any; error?: { code?: number; message?: string }; method?: string };
 type McpClientOptions = { fetchImpl?: typeof fetch; now?: () => number; timeouts?: McpTimeouts };
 type McpCallOptions = McpClientOptions & McpRequestOptions;
+
+/**
+ * Models sometimes turn an application name into a path copied from the
+ * current developer checkout. That path is not portable to another user's
+ * machine. When the path is missing, let Windows-MCP resolve the same basename
+ * through the user's Start Menu instead of failing before launch.
+ */
+export function normalizeWindowsMcpAppArgs(
+  server: McpServerConfig,
+  toolName: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  if (server.catalogId !== 'windows-mcp' || toolName !== 'App' || args.mode !== 'launch_executable') return args;
+  const executable = typeof args.executable === 'string' ? args.executable.trim() : '';
+  if (!executable || existsSync(executable)) return args;
+  const basename = executable.replace(/[\\/]+/g, '/').split('/').at(-1) || '';
+  const name = basename.replace(/\.exe$/i, '').trim();
+  if (!name) return args;
+  return { mode: 'launch', name };
+}
+
+function windowsMcpAppHint(toolName: string, args: Record<string, unknown>, text: string) {
+  if (toolName !== 'App') return text;
+  if (/WinError\s*740|requested operation requires elevation|requires elevation/i.test(text)) {
+    return `${text}\n\nWindows 已拒绝启动该程序（需要管理员权限，WinError 740）。请在目标程序自身允许的情况下确认 UAC；SANMAO.AI 不会绕过 Windows 权限边界。`;
+  }
+  return text;
+}
 
 /** 已建立的会话（initialize 拿到的 mcp-session-id），按「地址 + 凭据」缓存。 */
 const sessions = new Map<string, string>();
@@ -279,9 +308,10 @@ export async function callMcpTool(
   args: Record<string, unknown>,
   options: McpCallOptions = {},
 ): Promise<{ text: string; isError: boolean }> {
+  const effectiveArgs = normalizeWindowsMcpAppArgs(server, toolName, args);
   if (server.transport === 'stdio') {
     try {
-      const result = await callStdioTool(server, toolName, args, options);
+      const result = await callStdioTool(server, toolName, effectiveArgs, options);
       if (isRecoverableWindowsMcpControlFailure(server, result) && !options.signal?.aborted) {
         // Windows-MCP's control gate rejects the call before invoking the tool
         // when no input step has run. Recreate the local process once so a
@@ -304,9 +334,17 @@ export async function callMcpTool(
         }
       }
       // 浏览器条目的报错原文说清了原因，但没说清「现在该做什么」，这里补一段中文指引。
-      return result.isError ? withBrowserHint(result, server) : result;
+      const hinted = result.isError
+        ? { ...result, text: windowsMcpAppHint(toolName, effectiveArgs, result.text) }
+        : result;
+      return hinted.isError ? withBrowserHint(hinted, server) : hinted;
     } catch (error) {
       // 等不到扩展连上来时是「超时异常」而不是错误结果：这种情况更需要那句话。
+      if (server.catalogId === 'windows-mcp' && toolName === 'App') {
+        const original = error instanceof Error ? error.message : String(error ?? '');
+        const hinted = windowsMcpAppHint(toolName, effectiveArgs, original);
+        if (hinted !== original) throw new Error(hinted);
+      }
       throw withBrowserHintError(error, server);
     }
   }

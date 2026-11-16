@@ -698,6 +698,35 @@ test('desktop Agent keeps calling tools after launch until typing and a fresh sc
   assert.match(agent.calls[0].messages[0].content, /Type 必须传入.*loc=\[x,y\] 或 label/);
 });
 
+test('desktop Agent completes an open-only request after a successful App launch without a redundant snapshot', async () => {
+  const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
+  const app = {
+    id: 'mcp:windows-test:App', name: 'windows-test__App', source: 'mcp',
+    description: 'Open a Windows application', schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: 'external_side_effect', permissions: ['process'], gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: 'App', readOnly: false, blocked: false },
+  };
+  const snapshot = {
+    id: 'mcp:windows-test:Snapshot', name: 'windows-test__Snapshot', source: 'mcp',
+    description: 'Inspect the current desktop', schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: 'read', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: 'Snapshot', readOnly: true, blocked: false },
+  };
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [app, snapshot],
+    callMcpTool: async (_server, name) => ({ isError: false, text: `${name} launched Firewall settings` }),
+    reply: (_payload, count) => count === 1
+      ? { content: null, tool_calls: [{ id: 'open-firewall', type: 'function', function: { name: app.name, arguments: JSON.stringify({ mode: 'launch', name: 'Firewall' }) } }] }
+      : { content: 'Windows Firewall settings opened successfully.' },
+  });
+
+  const result = await agent.post([{ role: 'user', content: '打开防火墙' }]);
+  assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App']);
+  assert.match(result.message, /opened successfully/);
+  assert.equal(agent.calls.length, 2, 'successful App launch should avoid a redundant verification model call');
+});
+
 test('desktop Agent verifies specified input against Type arguments and fresh observation text', async () => {
   const server = { id: 'windows-test', name: 'windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true, lazyLoad: true };
   const tool = (name, readOnly) => ({

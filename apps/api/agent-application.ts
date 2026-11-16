@@ -1909,7 +1909,7 @@ const auditMcpCall = (
       const verificationTools = desktopCaptureRequested
         ? 'Screenshot'
         : desktopCaptureExplicitlyForbidden ? 'Snapshot 或 WaitFor' : 'Snapshot、Screenshot 或 WaitFor';
-      system += `\n\nWindows 桌面任务必须按顺序执行并核验：打开应用后获取新的 Snapshot，确认目标窗口，再点击或输入，最后重新获取 ${verificationTools} 核对结果。用户明确要求截图时，必须在最后一次操作后调用 Screenshot。${desktopCaptureExplicitlyForbidden ? '用户明确禁止截图，不得调用 Screenshot，只能用 Snapshot 或 WaitFor 核验。' : ''}${desktopInputExplicitlyForbidden ? '用户明确禁止输入文字，不得调用 Type、MultiEdit、Clipboard 或粘贴快捷键，也不要把未输入当成遗漏步骤。' : ''}Type 必须传入来自最新 Snapshot 的 loc=[x,y] 或 label，不能只传 text。任何工具错误或控制器不可用都表示任务未完成；不要把已打开窗口当作全部任务完成。`;
+      system += `\n\nWindows 桌面任务必须按顺序执行并核验：打开应用后，如还要点击或输入，先获取新的 Snapshot 确认目标窗口；完成点击或输入后重新获取 ${verificationTools} 核对结果。单纯“打开/启动应用”的请求，如果 App 工具已成功返回，可直接结束，不要为了形式再发一次观察调用。用户明确要求截图时，必须在最后一次操作后调用 Screenshot。${desktopCaptureExplicitlyForbidden ? '用户明确禁止截图，不得调用 Screenshot，只能用 Snapshot 或 WaitFor 核验。' : ''}${desktopInputExplicitlyForbidden ? '用户明确禁止输入文字，不得调用 Type、MultiEdit、Clipboard 或粘贴快捷键，也不要把未输入当成遗漏步骤。' : ''}Type 必须传入来自最新 Snapshot 的 loc=[x,y] 或 label，不能只传 text。任何工具错误或控制器不可用都表示任务未完成；不要把点击或输入当作已完成。`;
       if (desktopRequestedInputText !== null) system += '\n\nFor a user-specified input literal, the Type argument must match it exactly, and the latest desktop observation text must contain it; otherwise the task is incomplete.';
 
       llmMessages[0] = { role: 'system', content: system };
@@ -2473,9 +2473,16 @@ const auditMcpCall = (
             const parsed = JSON.parse(String(toolMessage?.content || ''));
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) outcome = parsed;
           } catch {}
+          const appError = typeof outcome?.error === 'string' ? outcome.error : '';
+          if (desktopMeta.toolName === 'App' && /WinError\s*740|requested operation requires elevation|requires elevation/i.test(appError)) {
+            stalledMcpReason = '目标应用需要 Windows 管理员权限，SANMAO.AI 无法替用户绕过 UAC；请由用户确认系统权限提示后再继续';
+            toolExecutionState.stalledMcpReason = stalledMcpReason;
+          }
           const normalizedName = desktopMeta.toolName.toLowerCase().replace(/[^a-z]/g, '');
           const isTypingTool = /^(?:type|sendkeys|keyboardtype|keyboardinput)$/.test(normalizedName);
           const isObservationTool = /^(?:snapshot|screenshot|waitfor)$/.test(normalizedName);
+          const appLaunch = normalizedName === 'app'
+            && (args.mode === 'launch' || args.mode === 'launch_executable');
           const observationText = typeof outcome?.content === 'string' ? outcome.content : '';
           const normalizedEvidence = observationText.replace(/\s+/g, ' ').trim();
           const normalizedRequestedText = (desktopRequestedInputText || '').replace(/\s+/g, ' ').trim();
@@ -2484,6 +2491,7 @@ const auditMcpCall = (
               name: desktopMeta.toolName,
               readOnly: desktopMeta.readOnly,
               ok: outcome?.ok === true,
+              ...(appLaunch ? { appLaunch } : {}),
               ...(isTypingTool && desktopRequestedInputText !== null
                 ? { inputMatchesRequestedText: typeof args.text === 'string' && args.text === desktopRequestedInputText }
                 : {}),

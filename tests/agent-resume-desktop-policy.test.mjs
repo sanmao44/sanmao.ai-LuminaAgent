@@ -224,6 +224,28 @@ test('approved desktop write without an available observation cannot be reported
   assert.doesNotMatch(String(result.body.message), /Done, the button was clicked/);
 });
 
+test('successful App launch alone satisfies an open-only desktop instruction', () => {
+  assert.equal(desktopInstructionPolicy.desktopCompletionGap({
+    active: true,
+    inputRequested: false,
+    requestedInputText: null,
+    screenshotRequested: false,
+    screenshotExplicitlyForbidden: false,
+    evidence: [{ name: 'App', readOnly: false, ok: true, appLaunch: true }],
+  }), '');
+});
+
+test('App launch does not satisfy a desktop request that also requires a screenshot', () => {
+  assert.equal(desktopInstructionPolicy.desktopCompletionGap({
+    active: true,
+    inputRequested: false,
+    requestedInputText: null,
+    screenshotRequested: true,
+    screenshotExplicitlyForbidden: false,
+    evidence: [{ name: 'App', readOnly: false, ok: true, appLaunch: true }],
+  }), 'verify');
+});
+
 test('approved desktop write can finish only after a fresh Snapshot observation', async () => {
   const windows = { id: SERVER_ID, name: SERVER_NAME, catalogId: 'windows-mcp' };
   const click = mcpTool('Click', false);
