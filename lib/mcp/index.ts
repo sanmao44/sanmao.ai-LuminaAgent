@@ -10,6 +10,7 @@ export {
   McpError,
   callMcpTool,
   listMcpServerTools,
+  normalizeWindowsMcpAppArgs,
   probeMcpServer,
   resetMcpSessions,
   resolveMcpProtocolNegotiation,
