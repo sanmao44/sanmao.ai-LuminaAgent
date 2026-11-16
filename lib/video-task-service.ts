@@ -90,7 +90,6 @@ function videoModelInputContext(input: VideoGenerationInput) {
       + (input.lastFrame ? 1 : 0),
     referenceVideoCount: effectiveMediaCount(input.referenceVideos, input.referenceVideo),
     audioCount: effectiveMediaCount(input.audios, input.audio),
-    referenceMode: input.referenceMode,
   };
 }
 

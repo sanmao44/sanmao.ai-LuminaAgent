@@ -1,4 +1,5 @@
 import { isAdminRequest } from '@/lib/auth';
+import { discoverJimengCanvasModels, resolveJimengCanvasCliCommand } from '@/lib/jimeng-cli';
 import { jimengImageModels } from '@/lib/jimeng-image';
 import { jimengVideoModels } from '@/lib/jimeng-video';
 import { discoverModels } from '@/lib/providers';
@@ -6,6 +7,15 @@ import { enableProviderModels, getProviderWithKey, getPublicState, replaceProvid
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
+
+async function discoverJimengModels(provider: { jimengCliPath?: string }) {
+  const command = resolveJimengCanvasCliCommand(provider.jimengCliPath);
+  const [images, videos] = await Promise.all([
+    discoverJimengCanvasModels(command, 'image').catch(() => jimengImageModels),
+    discoverJimengCanvasModels(command, 'video').catch(() => jimengVideoModels),
+  ]);
+  return [...images, ...videos];
+}
 
 export async function POST(_request: Request, context: { params: Promise<{ id: string }> }) {
   if (!isAdminRequest(_request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
@@ -18,7 +28,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     const originalBaseUrl = provider.baseUrl;
     const originalVideoTransport = provider.videoTransport;
     const models = provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli'
-      ? [...jimengImageModels, ...jimengVideoModels]
+      ? await discoverJimengModels(provider)
       : await discoverModels(provider);
     if (provider.baseUrl !== originalBaseUrl || provider.videoTransport !== originalVideoTransport) {
       await updateProvider(provider.id, {
