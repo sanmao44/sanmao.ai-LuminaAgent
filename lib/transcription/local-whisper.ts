@@ -719,6 +719,9 @@ function toSrtTime(seconds: number) {
 export function formatSrt(segments: readonly TimestampedTranscriptSegment[]) {
   const cues = segments
     .filter((segment) => Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start && cleanText(segment.text))
-    .map((segment, index) => `${index + 1}\r\n${toSrtTime(segment.start)} --> ${toSrtTime(segment.end)}\r\n${cleanText(segment.text)}`);
+    .map((segment, index) => {
+      const text = cleanText(segment.text).replace(/(\d)\s+%/gu, '$1%');
+      return `${index + 1}\r\n${toSrtTime(segment.start)} --> ${toSrtTime(segment.end)}\r\n${text}`;
+    });
   return cues.length ? `${cues.join('\r\n\r\n')}\r\n` : '';
 }

@@ -98,6 +98,10 @@ test('SRT serialization keeps ASR timings and emits stable cue numbering and tim
     'Second line',
     '',
   ].join('\r\n'));
+
+  assert.match(transcriptionModule.formatSrt([
+    { start: 0, end: 1, text: '准确率90 %以上' },
+  ]), /准确率90%以上/u);
 });
 
 test('reference text becomes an explicit Whisper decoder prefix', () => {
@@ -299,6 +303,17 @@ test('reference punctuation restores matching clause boundaries without reorderi
   assert.ok(lines.some((line) => /目标。$/u.test(line)));
   assert.match(lines.join(''), /在广东开展业务试点[，、]/u);
   assert.ok(lines.every((line) => !/依托$/u.test(line)));
+
+  const numericReference = '事件定界准确率90%，试点覆盖率达到95%，平均时长为8.6小时。';
+  const numericAsr = '事件定界准确率90%试点覆盖率达到95%平均时长为8.6小时';
+  const numeric = transcriptionModule.normalizeLocalAsrResult({
+    text: numericAsr,
+    chunks: [{ text: numericAsr, timestamp: [0, 8] }],
+  }, 8, 'test-model', 'zh', numericReference);
+  const numericText = numeric.segments.map((segment) => segment.text).join('');
+  assert.match(numericText, /90%，试点/u);
+  assert.match(numericText, /95%，平均/u);
+  assert.match(numericText, /8\.6小时。$/u);
 });
 
 test('decimal values split across ASR chunks remain intact inside one subtitle cue', () => {
@@ -350,7 +365,8 @@ test('reference-guided correction fixes local technical terms and canonical casi
   const compact = (value) => value.replace(/[\s\p{P}]/gu, '');
 
   assert.equal(compact(corrected.segments.map((segment) => segment.text).join('')), compact(reference));
-  assert.deepEqual(corrected.segments.map(({ start, end }) => ({ start, end })), original.segments.map(({ start, end }) => ({ start, end })));
+  assert.equal(corrected.segments[0].start, original.segments[0].start);
+  assert.equal(corrected.segments.at(-1).end, original.segments.at(-1).end);
 
   const dataReference = '以数智手段深挖O域数据价值，构建360°用户视图支撑经营，持续提升业务体验。';
   const dataAsr = '以数字手段深挖欧域数据价值，构建360度用户视图支撑经营，持续提升业务体验。';

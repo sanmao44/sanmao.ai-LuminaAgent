@@ -12,14 +12,14 @@ type SegmentRange = { start: number; end: number };
 type TextAlignment = { distance: number; replacements: Map<number, string> };
 type TranscriptPoint = { value: string; wordIndex: number; charIndex: number };
 
-const REFERENCE_PUNCTUATION = /^[，,。.!?！？；;：:]$/u;
+const REFERENCE_PUNCTUATION = /^[，,、。.!?！？；;：:]$/u;
 
 function roundTimestamp(value: number) {
   return Math.round(value * 1_000) / 1_000;
 }
 
 function isMatchable(character: string) {
-  return /[\p{L}\p{N}\p{S}]/u.test(character);
+  return /[\p{L}\p{N}\p{S}%]/u.test(character);
 }
 
 function isLatinCaseMismatch(source: MatchPoint, target: MatchPoint) {
@@ -288,13 +288,16 @@ function patchWords(words: readonly TimestampedTranscriptWord[] | undefined, sta
 
 function referencePunctuationBoundaries(referenceText: string) {
   const documentText = referenceText.replace(/^\s*\[[^\]\r\n]{1,160}\]\s*/gmu, '');
+  const characters = Array.from(documentText);
   const points: string[] = [];
   const boundaries: Array<{ position: number; punctuation: string }> = [];
-  for (const character of Array.from(documentText)) {
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index];
     const normalized = matchPoints(character);
     if (normalized.length) {
       points.push(...normalized.map((point) => point.value));
     } else if (REFERENCE_PUNCTUATION.test(character) && points.length) {
+      if (/[.,]/u.test(character) && /\d/u.test(characters[index - 1] || '') && /\d/u.test(characters[index + 1] || '')) continue;
       boundaries.push({ position: points.length, punctuation: character });
     }
   }
@@ -387,14 +390,14 @@ export function projectReferencePunctuation(words: readonly TimestampedTranscrip
 
   const marksByWord = new Map<number, Map<number, string[]>>();
   for (const boundary of boundaries) {
-    if (boundary.position < 5 || boundary.position >= reference.length) continue;
+    if (boundary.position < 5 || boundary.position > reference.length) continue;
     const position = findUniquePunctuationPosition(source, reference, boundary.position);
-    if (position === undefined || position <= 0 || position >= source.length) continue;
+    if (position === undefined || position <= 0 || position > source.length) continue;
     const left = source[position - 1];
     const right = source[position];
     const wordIndex = left.wordIndex;
     const word = words[wordIndex];
-    const offset = left.wordIndex === right.wordIndex
+    const offset = right && left.wordIndex === right.wordIndex
       ? left.charIndex + 1
       : Array.from(word.text).length;
     const marks = marksByWord.get(wordIndex) || new Map<number, string[]>();
