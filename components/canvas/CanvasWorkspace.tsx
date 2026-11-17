@@ -14388,6 +14388,10 @@ export default function SuperCanvas() {
                 setCustomImagePresets(next);
                 writeCustomImagePresets(next);
               }}
+              onImportImagePresets={(presets) => {
+                setCustomImagePresets(presets);
+                writeCustomImagePresets(presets);
+              }}
               onDeleteImagePreset={(presetId) => {
                 const next = customImagePresets.filter((item) => item.id !== presetId);
                 setCustomImagePresets(next);

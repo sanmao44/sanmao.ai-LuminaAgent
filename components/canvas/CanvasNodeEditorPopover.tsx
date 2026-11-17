@@ -49,7 +49,7 @@ import {
 } from "@/lib/canvas/image-reference-request";
 import { modelSupportsCapabilityRequirements } from "@/lib/model-picker";
 import { MAX_IMAGE_REFERENCES } from "@/packages/contracts/creative";
-import { getVideoModelLimits } from "@/lib/video-model-limits";
+import { getVideoModelLimits, type VideoModelInputContext } from "@/lib/video-model-limits";
 import type { ModelCapability } from "@/lib/types";
 import { canvasMentionOption } from "@/components/canvas/mention-options";
 import CanvasReferenceDraftStrip from "@/components/CanvasReferenceDraftStrip";
@@ -77,6 +77,7 @@ export type CanvasNodeEditorPopoverProps = {
   onImagePresetSelect: (preset: ImagePreset | CustomImagePreset) => void;
   onImagePresetClear: () => void;
   onSaveImagePreset: (preset: CustomImagePreset) => void;
+  onImportImagePresets: (presets: CustomImagePreset[]) => void;
   onDeleteImagePreset: (presetId: string) => void;
   currentImageReference?: boolean;
   projectVisualReferences?: readonly ProjectVisualReference[];
@@ -123,6 +124,30 @@ export type CanvasNodeEditorPopoverProps = {
   resolveInputRoles: (document: CanvasDocument, targetId: string) => ReadonlyMap<string, CanvasInputRole | undefined>;
   resolveVideoCapabilities: (settings: VideoCreationSettings, runtime: CanvasRuntimeState | null) => { supportsAudio: boolean };
 };
+
+function videoModelInputForDrafts(
+  inputMode: VideoCreationSettings["inputMode"],
+  references: readonly CanvasReferenceDraft[],
+): VideoModelInputContext {
+  const counts = references.reduce(
+    (result, reference) => {
+      if (reference.kind === "image") result.images += 1;
+      if (reference.kind === "video") result.videos += 1;
+      if (reference.kind === "audio") result.audios += 1;
+      return result;
+    },
+    { images: 0, videos: 0, audios: 0 },
+  );
+  return {
+    hasFirstFrame:
+      (inputMode === "first-frame" || inputMode === "frames") &&
+      counts.images > 0,
+    hasLastFrame: inputMode === "frames" && counts.images > 1,
+    referenceImageCount: inputMode === "reference" ? counts.images : 0,
+    referenceVideoCount: inputMode === "text" ? 0 : counts.videos,
+    audioCount: inputMode === "reference" ? counts.audios : 0,
+  };
+}
 
 function CanvasNodeEditorPopover({
   smartVariantAction,
@@ -173,6 +198,7 @@ function CanvasNodeEditorPopover({
   onImagePresetSelect,
   onImagePresetClear,
   onSaveImagePreset,
+  onImportImagePresets,
   onDeleteImagePreset,
   currentImageReference,
   onCurrentImageReferenceChange,
@@ -444,6 +470,17 @@ function CanvasNodeEditorPopover({
         resolveInputRoles(document, node.id),
         { maxReferenceImages: videoPreviewLimits?.maxReferenceImages },
       )
+    : undefined;
+  const videoModelInput: VideoModelInputContext | undefined = videoEditorParams
+    ? branchDraft
+      ? videoModelInputForDrafts(videoEditorParams.inputMode, branchReferences)
+      : {
+          hasFirstFrame: Boolean(videoPreviewInputs?.firstFrame),
+          hasLastFrame: Boolean(videoPreviewInputs?.lastFrame),
+          referenceImageCount: videoPreviewInputs?.referenceImages.length || 0,
+          referenceVideoCount: videoPreviewInputs?.referenceVideos.length || 0,
+          audioCount: videoPreviewInputs?.audios.length || 0,
+        }
     : undefined;
   const imagePreviewReferences: GenerationReference[] = submittedImageReferences
     .filter((reference) => reference.kind === "image" && Boolean(reference.url))
@@ -829,6 +866,7 @@ function CanvasNodeEditorPopover({
                 onSelect={chooseImagePreset}
                 onClear={clearImagePreset}
                 onSave={onSaveImagePreset}
+                onImport={onImportImagePresets}
                 onDelete={onDeleteImagePreset}
                 onNotify={onNotify}
               />
@@ -1043,6 +1081,7 @@ function CanvasNodeEditorPopover({
                         runtime={runtime}
                         modelCapabilities={imageRequiredCapabilities}
                         referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
+                        videoModelInput={videoModelInput}
                         variant={isDockNode ? "dock" : undefined}
                         portalZIndex={CANVAS_Z_INDEX.modalPopover}
                         dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
@@ -1174,6 +1213,7 @@ function CanvasNodeEditorPopover({
                 runtime={runtime}
                 modelCapabilities={imageRequiredCapabilities}
                 referenceCount={branchDraft ? branchReferences.length : editorReferences.length}
+                videoModelInput={videoModelInput}
                 variant="canvas-flat"
                 portalZIndex={CANVAS_Z_INDEX.modalPopover}
                 dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}

@@ -225,6 +225,8 @@ export type VideoGenerationInput = {
   referenceVideo?: string;
   audios?: string[];
   audio?: string;
+  /** Selects the legacy Dreamina multi-frame story command explicitly. */
+  referenceMode?: 'multiframe' | 'multimodal';
   videoMode?: 'text' | 'keyframe' | 'reference';
   width?: number;
   height?: number;

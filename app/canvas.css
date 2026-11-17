@@ -4423,3 +4423,17 @@ html:not([data-theme="light"]) .canvas-group-label-layer>.canvas-group-world-lab
 @media(min-width:1001px) and (max-width:1815px){
   .canvas-minimap{width:244px}
 }
+
+.canvas-preset-actions{display:flex;align-items:center;gap:8px}
+.canvas-preset-actions>button:not(.canvas-preset-add){padding:3px 5px;border:0;border-radius:5px;background:transparent;color:var(--text-2);font:inherit;font-size:9px;font-weight:750;cursor:pointer}
+.canvas-preset-actions>button:not(.canvas-preset-add):hover,.canvas-preset-actions>button:not(.canvas-preset-add):focus-visible{background:var(--accent-soft);color:var(--accent-text);outline:none}
+.canvas-preset-actions>button:not(.canvas-preset-add):disabled{opacity:.45;cursor:not-allowed}
+.canvas-preset-file-input{display:none}
+.canvas-preset-import-dialog{gap:14px}
+.canvas-preset-import-summary{display:grid;gap:8px;color:var(--text-2);font-size:11px;line-height:1.5}
+.canvas-preset-import-summary p{margin:0}
+.canvas-preset-import-summary strong{color:var(--accent-text);font-variant-numeric:tabular-nums}
+.canvas-preset-import-list{max-height:180px;overflow:auto;margin:0;padding:0 0 0 18px;color:var(--text);font-size:10px;line-height:1.6}
+.canvas-preset-editor-head small[title]{overflow-wrap:anywhere}
+.canvas-preset-import-summary .error-note{color:var(--danger)}
+.canvas-preset-editor-actions button:disabled{opacity:.45;cursor:not-allowed}

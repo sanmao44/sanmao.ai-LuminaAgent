@@ -15,9 +15,36 @@ import { replaceNaturalReferenceLabels } from "@/lib/creative-references";
 import type { CanvasReferenceDraft, CanvasReuseDraft } from "@/lib/canvas/reuse";
 import type { SmartVariantSourceUnit } from "@/lib/canvas/model";
 import type { CreationSettings } from "@/lib/creation/settings";
+import type { VideoModelInputContext } from "@/lib/video-model-limits";
 
 type CanvasGenerationMode = Exclude<CanvasMediaKind, "audio">;
 export type CanvasDeckMode = CanvasGenerationMode | "text";
+
+function videoModelInputForReferences(
+  settings: CreationSettings,
+  references: readonly (CanvasNode | CanvasReferenceDraft)[],
+): VideoModelInputContext | undefined {
+  if (settings.kind !== "video") return undefined;
+  const counts = references.reduce(
+    (result, reference) => {
+      const kind = "data" in reference ? reference.data.kind : reference.kind;
+      if (kind === "image") result.images += 1;
+      if (kind === "video") result.videos += 1;
+      if (kind === "audio") result.audios += 1;
+      return result;
+    },
+    { images: 0, videos: 0, audios: 0 },
+  );
+  return {
+    hasFirstFrame:
+      (settings.inputMode === "first-frame" || settings.inputMode === "frames") &&
+      counts.images > 0,
+    hasLastFrame: settings.inputMode === "frames" && counts.images > 1,
+    referenceImageCount: settings.inputMode === "reference" ? counts.images : 0,
+    referenceVideoCount: settings.inputMode === "text" ? 0 : counts.videos,
+    audioCount: settings.inputMode === "reference" ? counts.audios : 0,
+  };
+}
 
 export type CanvasDeckProps = {
   deckCollapsed: boolean;
@@ -100,6 +127,7 @@ const CanvasDeck = forwardRef<HTMLDivElement, CanvasDeckProps>(function CanvasDe
     onChangeVariantRequirements, onUndoSmartVariant, onChangeSettings, onVideoInputModeChange,
   } = props;
   const mentionOptions = mentionCandidates.map((node, index) => canvasMentionOption(document, node, index));
+  const videoModelInput = videoModelInputForReferences(settings, composerReferences);
   return (
         <div ref={deckRef} className={`canvas-deck legacy-deck-hidden ${deckCollapsed ? "collapsed" : ""}${selectedAudioNode ? " audio-node-selected" : ""}`}>
           <div className="canvas-deck-top">
@@ -349,6 +377,7 @@ const CanvasDeck = forwardRef<HTMLDivElement, CanvasDeckProps>(function CanvasDe
                   runtime={runtime}
                   unavailableModelId={deckModelState.unavailableModelId}
                   referenceCount={composerReferences.length}
+                  videoModelInput={videoModelInput}
                   portalZIndex={CANVAS_Z_INDEX.portalPopover}
                   dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
                   onChange={onChangeSettings}

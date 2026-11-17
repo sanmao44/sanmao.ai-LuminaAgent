@@ -19,6 +19,24 @@ export type CustomImagePreset = Pick<ImagePreset, "id" | "label" | "description"
 export const IMAGE_PRESET_ICONS = ["◎", "♙", "↔", "⌂", "▣", "▦", "◌", "☼", "◉", "+3", "-5", "✦", "✎", "✧", "◆"] as const;
 
 export const IMAGE_PRESETS_STORAGE_KEY = "sanmao-image-presets-v1";
+export const IMAGE_PRESET_PACKAGE_SCHEMA = "sanmao.image-presets";
+export const IMAGE_PRESET_PACKAGE_VERSION = 1;
+export const MAX_CUSTOM_IMAGE_PRESETS = 50;
+
+export type ParsedCustomImagePresetPackage = {
+  presets: CustomImagePreset[];
+  skippedCount: number;
+};
+
+export type CustomImagePresetImportPlan = {
+  nextPresets: CustomImagePreset[];
+  importedCount: number;
+  alreadyPresentCount: number;
+  idConflictCount: number;
+  nameConflictCount: number;
+  skippedCount: number;
+  exceedsLimit: boolean;
+};
 
 const preserve = "必须保持参考图中的主体身份、核心结构、材质、颜色、构图和视觉风格一致；除非任务明确要求，不得添加水印、Logo、乱码或无关元素。";
 
@@ -223,7 +241,123 @@ export function normalizeCustomImagePresets(value: unknown): CustomImagePreset[]
     if (!id || seen.has(id) || !label || !prompt) return [];
     seen.add(id);
     return [{ id, label, description: "自定义图片预设", icon: icon || "✦", prompt, builtin: false }];
-  }).slice(0, 50);
+  }).slice(0, MAX_CUSTOM_IMAGE_PRESETS);
+}
+
+export function serializeCustomImagePresetPackage(presets: readonly CustomImagePreset[], exportedAt = new Date().toISOString()) {
+  return JSON.stringify({
+    schema: IMAGE_PRESET_PACKAGE_SCHEMA,
+    version: IMAGE_PRESET_PACKAGE_VERSION,
+    exportedAt,
+    presets: normalizeCustomImagePresets([...presets]).map(({ id, label, description, icon, prompt }) => ({
+      id,
+      label,
+      description,
+      icon,
+      prompt,
+    })),
+  }, null, 2);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+export function parseCustomImagePresetPackage(value: unknown): ParsedCustomImagePresetPackage | null {
+  if (!isRecord(value)
+    || value.schema !== IMAGE_PRESET_PACKAGE_SCHEMA
+    || value.version !== IMAGE_PRESET_PACKAGE_VERSION
+    || !Array.isArray(value.presets)) return null;
+
+  const presets: CustomImagePreset[] = [];
+  const seen = new Set<string>();
+  let skippedCount = Math.max(0, value.presets.length - MAX_CUSTOM_IMAGE_PRESETS);
+  for (const item of value.presets.slice(0, MAX_CUSTOM_IMAGE_PRESETS)) {
+    if (!isRecord(item)
+      || typeof item.id !== "string"
+      || !/^custom_[a-z0-9_-]{4,80}$/.test(item.id)
+      || typeof item.label !== "string"
+      || !item.label.trim()
+      || item.label.trim().length > 40
+      || typeof item.prompt !== "string"
+      || !item.prompt.trim()
+      || item.prompt.trim().length > 12000) {
+      skippedCount += 1;
+      continue;
+    }
+    const preset = normalizeCustomImagePresets([item])[0];
+    if (!preset || seen.has(preset.id)) {
+      skippedCount += 1;
+      continue;
+    }
+    seen.add(preset.id);
+    presets.push(preset);
+  }
+  return { presets, skippedCount };
+}
+
+function sameCustomImagePresetContent(left: CustomImagePreset, right: CustomImagePreset) {
+  return left.label === right.label
+    && left.description === right.description
+    && left.icon === right.icon
+    && left.prompt === right.prompt;
+}
+
+function newCustomImagePresetId() {
+  const random = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID().replaceAll("-", "")
+    : Math.random().toString(36).slice(2, 14);
+  return `custom_${random}`;
+}
+
+function uniqueCustomImagePresetId(usedIds: Set<string>, idFactory: () => string) {
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const id = idFactory();
+    if (/^custom_[a-z0-9_-]{4,80}$/.test(id) && !usedIds.has(id)) return id;
+  }
+  throw new Error("无法为导入预设生成唯一 ID");
+}
+
+export function planCustomImagePresetImport(
+  currentPresets: readonly CustomImagePreset[],
+  incomingPresets: readonly CustomImagePreset[],
+  skippedCount = 0,
+  idFactory = newCustomImagePresetId,
+): CustomImagePresetImportPlan {
+  const nextPresets = normalizeCustomImagePresets([...currentPresets]);
+  const usedIds = new Set(nextPresets.map((preset) => preset.id));
+  let alreadyPresentCount = 0;
+  let idConflictCount = 0;
+  let nameConflictCount = 0;
+
+  for (const preset of normalizeCustomImagePresets([...incomingPresets])) {
+    if (nextPresets.some((current) => sameCustomImagePresetContent(current, preset))) {
+      alreadyPresentCount += 1;
+      continue;
+    }
+
+    const idConflict = usedIds.has(preset.id);
+    if (idConflict) idConflictCount += 1;
+    if (nextPresets.some((current) => current.label.toLocaleLowerCase() === preset.label.toLocaleLowerCase())) {
+      nameConflictCount += 1;
+    }
+
+    const imported = idConflict
+      ? { ...preset, id: uniqueCustomImagePresetId(usedIds, idFactory) }
+      : preset;
+    usedIds.add(imported.id);
+    nextPresets.push(imported);
+  }
+
+  return {
+    nextPresets,
+    importedCount: nextPresets.length - normalizeCustomImagePresets([...currentPresets]).length,
+    alreadyPresentCount,
+    idConflictCount,
+    nameConflictCount,
+    skippedCount,
+    exceedsLimit: nextPresets.length > MAX_CUSTOM_IMAGE_PRESETS,
+  };
 }
 
 export function readCustomImagePresets() {

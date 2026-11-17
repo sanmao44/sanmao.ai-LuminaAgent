@@ -7,7 +7,7 @@ import SelectMenu from '@/components/SelectMenu';
 import ModelPicker from '@/components/ModelPicker';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
-import { allRatios, getVideoModelLimits } from '@/lib/video-model-limits';
+import { allRatios, getVideoModelLimits, getVideoModelLimitsForInput } from '@/lib/video-model-limits';
 import { clearVideoStudioDraft, hasVideoStudioDraftContent, loadVideoStudioDraft, saveVideoStudioDraft } from '@/lib/video-studio-draft';
 import { is65535Provider, isJimengProvider, isAgnesProvider, requiresPublicMediaRelay } from '@/lib/video-platform';
 import { replaceNaturalReferenceLabels, selectCreativeReferences, type CreativeReference } from '@/lib/creative-references';
@@ -337,14 +337,13 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   if (provider?.videoTransport === 'cangyuan-videos' && (referenceVideos.length || audios.length)) inputMode = 'reference';
 
   const baseLimits = getVideoModelLimits(modelForLimits, provider);
-  const usesJimengMultiframe = usesJimengCli && inputMode === 'reference' && referenceImages.length > 1 && !referenceVideo && !audios.length;
-  const limits = usesJimengMultiframe ? {
-    ...baseLimits,
-    minSeconds: 1,
-    maxSeconds: 8,
-    allowedSeconds: Array.from({ length: 8 }, (_, index) => index + 1),
-    resolutions: ['720p', '1080p'],
-  } : baseLimits;
+  const limits = getVideoModelLimitsForInput(modelForLimits, provider, {
+    hasFirstFrame: Boolean(firstFrame),
+    hasLastFrame: Boolean(lastFrame),
+    referenceImageCount: inputMode === 'reference' ? referenceImages.length : 0,
+    referenceVideoCount: referenceVideo ? 1 : 0,
+    audioCount: audios.length,
+  });
   const durationValues = limits.fixedSeconds ? [limits.fixedSeconds] : limits.allowedSeconds || [1, 3, 5, 8, 10, 15, 30, 60];
   const requestedSeconds = Number(input.seconds || 5);
   const seconds = durationValues.includes(requestedSeconds) && requestedSeconds >= limits.minSeconds && requestedSeconds <= limits.maxSeconds
@@ -354,7 +353,9 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
 
   const requestedRatio = provider?.videoTransport === 'cangyuan-videos'
     ? typeof input.aspectRatio === 'string' && input.aspectRatio.trim() ? input.aspectRatio : '16:9'
-    : typeof input.aspectRatio === 'string' && allRatios.includes(input.aspectRatio) ? input.aspectRatio : '16:9';
+    : limits.aspectRatioSource === 'first-reference'
+      ? 'auto'
+      : typeof input.aspectRatio === 'string' && allRatios.includes(input.aspectRatio) ? input.aspectRatio : '16:9';
   if (input.aspectRatio && requestedRatio !== input.aspectRatio) warnings.push('比例已调整为当前支持的选项');
   const requestedResolution = typeof input.resolution === 'string'
     ? input.resolution
@@ -625,15 +626,28 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   }, [usesMediaRelay, selectedProvider?.id]);
 
   const baseModelLimits = useMemo(() => getVideoModelLimits(selectedModel, selectedProvider), [selectedModel?.rawId, selectedModel?.displayName, selectedProvider?.platform, selectedProvider?.videoTransport, selectedProvider?.baseUrl, selectedProvider?.videoBaseUrl]);
-  const usesJimengMultiframe = usesJimengCli && inputMode === 'reference' && referenceImages.length > 1 && !referenceVideo && !audios.length;
-  const modelLimits = useMemo(() => usesJimengMultiframe ? {
-    ...baseModelLimits,
-    minSeconds: 1,
-    maxSeconds: 8,
-    allowedSeconds: Array.from({ length: 8 }, (_, index) => index + 1),
-    resolutions: ['720p', '1080p'],
-    notes: [...baseModelLimits.notes, '即梦多帧模式：2–20 张图片；3 张以上图片按转场提示处理', '多帧模式仅支持 720p/1080p'],
-  } : baseModelLimits, [baseModelLimits, usesJimengMultiframe]);
+  const modelLimits = useMemo(() => getVideoModelLimitsForInput(selectedModel, selectedProvider, {
+    hasFirstFrame: Boolean(firstFrame),
+    hasLastFrame: Boolean(lastFrame),
+    referenceImageCount: inputMode === 'reference' ? referenceImages.length : 0,
+    referenceVideoCount: referenceVideo ? 1 : 0,
+    audioCount: audios.length,
+  }), [
+    baseModelLimits,
+    selectedModel?.rawId,
+    selectedModel?.displayName,
+    selectedProvider?.platform,
+    selectedProvider?.videoTransport,
+    selectedProvider?.baseUrl,
+    selectedProvider?.videoBaseUrl,
+    firstFrame,
+    lastFrame,
+    inputMode,
+    referenceImages.length,
+    referenceVideo,
+    audios.length,
+  ]);
+  const usesJimengMultiframe = modelLimits.durationScope === 'total' || modelLimits.durationScope === 'per-transition';
   const capabilities = selectedModel?.capabilities || [];
   const can = (name: string) => capabilities.includes(name as never);
   const supportsEdit = !usesCangyuan && can('video-edit');
@@ -726,6 +740,10 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setReferenceVideos((old) => old.length > modelLimits.maxReferenceVideos ? old.slice(0, modelLimits.maxReferenceVideos) : old);
     setAudios((old) => !supportsAudio ? [] : old.length > modelLimits.maxAudios ? old.slice(0, modelLimits.maxAudios) : old);
   }, [durationOptions, modelLimits, resolution, seconds, supportsAudio]);
+
+  useEffect(() => {
+    if (modelLimits.aspectRatioSource === 'first-reference' && ratio !== 'auto') setRatio('auto');
+  }, [modelLimits.aspectRatioSource, ratio]);
 
   // Consume reference images pushed from the record view and map them to the
   // best-supported video input mode, degrading gracefully when the selected
@@ -1082,12 +1100,16 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setBusy(true);
     try {
       const inheritsVideoSettings = operation !== 'generate' && (modelLimits.inheritVideoSettingsFor?.includes(operation) || false);
-      const omitsAspectRatioResolution = inheritsVideoSettings || (operation !== 'generate' && (modelLimits.omitAspectRatioResolutionFor?.includes(operation) || false));
+      const omitsAspectRatio = modelLimits.aspectRatioSource === 'first-reference'
+        || inheritsVideoSettings
+        || (operation !== 'generate' && (modelLimits.omitAspectRatioResolutionFor?.includes(operation) || false));
+      const omitsResolution = inheritsVideoSettings || (operation !== 'generate' && (modelLimits.omitAspectRatioResolutionFor?.includes(operation) || false));
       const input: VideoGenerationInput = {
         prompt: submittedPrompt,
         operation,
         ...(!usesAgnesV20 && (!usesCangyuan || Boolean(cangyuanProfile)) && !inheritsVideoSettings ? { seconds } : {}),
-        ...(!usesAgnesV20 && (!usesCangyuan || Boolean(cangyuanProfile)) && !omitsAspectRatioResolution ? { aspectRatio: ratio, resolution } : {}),
+        ...(!usesAgnesV20 && (!usesCangyuan || Boolean(cangyuanProfile)) && !omitsAspectRatio ? { aspectRatio: ratio } : {}),
+        ...(!usesAgnesV20 && (!usesCangyuan || Boolean(cangyuanProfile)) && !omitsResolution ? { resolution } : {}),
         firstFrame: (inputMode === 'first-frame' || inputMode === 'frames') ? selectedFirstFrame?.url : undefined,
         lastFrame: inputMode === 'frames' ? selectedLastFrame?.url : undefined,
         referenceImages: inputMode === 'reference' ? selectedReferenceImages.map((item) => item.url).filter((value): value is string => Boolean(value)) : [],
@@ -1235,7 +1257,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         {nativeTask && <div className="video-model-notice"><strong>{uses65535Policy ? '本地素材已自动处理' : '原生任务素材处理'}</strong><span>{uses65535Policy ? '65535 仅接受 first_frame 或 reference；首尾帧会按两张参考图提交。本地视频在 64 MiB 内会自动直传，超过限制时会在提交前拦截，不会扣费。' : '本地素材会按当前原生异步接口的要求处理；超出接口安全上限时会在提交前拦截，不会扣费。'}</span></div>}
         {operation !== 'generate' && modelLimits.inheritVideoSettingsFor?.includes(operation) && <div className="video-model-notice warning"><strong>参数沿用原视频</strong><span>当前操作不会使用自定义时长、比例和分辨率，输出将继承输入视频设置。</span></div>}
         {operation !== 'generate' && !modelLimits.inheritVideoSettingsFor?.includes(operation) && modelLimits.omitAspectRatioResolutionFor?.includes(operation) && <div className="video-model-notice warning"><strong>比例与分辨率沿用原视频</strong><span>当前续写操作不提交自定义比例和分辨率，仅使用续写时长。</span></div>}
-          {!usesAgnesV20 && !usesCangyuan && <div className="video-option-segment"><span>{usesJimengMultiframe ? '转场参数' : '基础参数'}</span><div><label>{usesJimengMultiframe ? '转场时长' : '时长'}<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel={usesJimengMultiframe ? '转场时长' : '视频时长'} /></label><label>比例<SelectMenu value={ratio} onChange={setRatio} options={ratioOptions} ariaLabel="视频比例" /></label><label>分辨率<SelectMenu value={resolution} onChange={setResolution} options={resolutionOptions} ariaLabel="视频分辨率" /></label></div></div>}
+          {!usesAgnesV20 && !usesCangyuan && <div className="video-option-segment"><span>{usesJimengMultiframe ? '转场参数' : '基础参数'}</span><div><label>{modelLimits.durationScope === 'per-transition' ? '每段转场时长' : modelLimits.durationScope === 'total' ? '总时长' : '时长'}<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel={modelLimits.durationScope === 'per-transition' ? '每段转场时长' : '视频时长'} /></label><label>比例<SelectMenu value={modelLimits.aspectRatioSource === 'first-reference' ? 'auto' : ratio} onChange={setRatio} disabled={modelLimits.aspectRatioSource === 'first-reference'} options={ratioOptions} ariaLabel="视频比例" /></label><label>分辨率<SelectMenu value={resolution} onChange={setResolution} options={resolutionOptions} ariaLabel="视频分辨率" /></label></div></div>}
           {usesCangyuan && cangyuanProfile && <div className="video-option-segment cangyuan-video-parameters"><span>{selectedModel?.displayName || cangyuanProfile.publicModel} 参数</span><div>
             <label>时长<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel="沧元视频时长" /></label>
             <label>比例建议，可自定义<input aria-label="沧元视频比例" list="video-studio-cangyuan-ratios" value={ratio} onChange={(event) => setRatio(event.target.value)} placeholder="例如 16:9" /><datalist id="video-studio-cangyuan-ratios">{cangyuanProfile.suggestedAspectRatios.map((value) => <option key={value} value={value} />)}</datalist></label>

@@ -10,34 +10,31 @@ const macLauncher = await read('一键安装即梦 CLI - macOS.command');
 const providerCard = await read('components/JimengProviderCard.tsx');
 
 test('ships a native Windows Dreamina installer with official-source verification', () => {
-  assert.match(windowsInstaller, /https:\/\/jimeng\.jianying\.com\/cli/);
-  assert.match(windowsInstaller, /DOWNLOAD_BASE/);
-  assert.match(windowsInstaller, /function Resolve-OfficialUrl/);
-  assert.match(windowsInstaller, /\$\{DOWNLOAD_BASE\}/);
-  assert.match(windowsInstaller, /Resolve-OfficialUrl \(& \$readValue 'SKILL_URL'\) \$downloadBase/);
-  assert.match(windowsInstaller, /dreamina_cli_windows_amd64\.exe/);
+  assert.match(windowsInstaller, /https:\/\/jimeng\.jianying\.com\/canvas-cli\/install\.ps1/);
+  assert.match(windowsInstaller, /Invoke-WebRequest/);
+  assert.match(windowsInstaller, /& \$InstallerPath/);
+  assert.match(windowsInstaller, /dreamina-canvas\.exe/);
   assert.match(windowsInstaller, /USERPROFILE.*bin/);
-  assert.match(windowsInstaller, /SetEnvironmentVariable\('Path',/);
-  assert.match(windowsInstaller, /--version/);
+  assert.match(windowsInstaller, /--format json version/);
   assert.match(windowsInstaller, /Is64BitOperatingSystem/);
-  assert.doesNotMatch(windowsInstaller, /Start-Process.*-Verb\s+RunAs/);
+  assert.doesNotMatch(windowsInstaller, /Start-Process/);
 });
 
 test('ships a macOS and Linux installer that delegates to the official platform-aware installer', () => {
-  assert.match(unixInstaller, /https:\/\/jimeng\.jianying\.com\/cli/);
+  assert.match(unixInstaller, /https:\/\/jimeng\.jianying\.com\/canvas-cli\/install\.sh/);
   assert.match(unixInstaller, /uname -s/);
   assert.match(unixInstaller, /uname -m/);
-  assert.match(unixInstaller, /curl .* -o .*install\.sh/);
-  assert.match(unixInstaller, /\/bin\/bash .*install\.sh/);
-  assert.match(unixInstaller, /\.local\/bin\/dreamina/);
-  assert.match(unixInstaller, /--version/);
+  assert.match(unixInstaller, /curl .* -o .*INSTALLER_PATH/);
+  assert.match(unixInstaller, /\/bin\/bash .*INSTALLER_PATH/);
+  assert.match(unixInstaller, /\.local\/bin\/dreamina-canvas/);
+  assert.match(unixInstaller, /--format json version/);
   assert.match(windowsLauncher, /scripts\\install-jimeng\.ps1/);
   assert.match(macLauncher, /scripts\/install-jimeng\.sh/);
 });
 
 test('shows the bundled platform-specific installer command in the provider card', () => {
-  assert.match(providerCard, /install-jimeng\.ps1/);
-  assert.match(providerCard, /install-jimeng\.sh/);
+  assert.match(providerCard, /canvas-cli\/install\.ps1/);
+  assert.match(providerCard, /canvas-cli\/install\.sh/);
   assert.match(providerCard, /navigator\.userAgent/);
   assert.match(providerCard, /一键安装即梦 CLI - Windows\.cmd/);
   assert.match(providerCard, /一键安装即梦 CLI - macOS\.command/);

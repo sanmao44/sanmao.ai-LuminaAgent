@@ -43,7 +43,9 @@ export type LocalTranscriptionOptions = {
 
 const transcriberPromises = new Map<string, Promise<LocalTranscriber>>();
 const promptedTranscriberQueues = new WeakMap<LocalTranscriber, Promise<void>>();
-const MAX_PROMPT_TOKENS = 224;
+const MAX_PROMPT_TOKENS = 64;
+const MAX_REFERENCE_PROMPT_CHARS = 160;
+const MAX_UNSPACED_CUE_CHARS = 20;
 const MODEL_TEMP_FILE_PATTERN = /\.tmp\.[^/\\]+$/u;
 const MODEL_TEMP_MAX_AGE_MS = 60 * 60 * 1_000;
 const LOCAL_MODEL_LOAD_ERROR = '本地语音识别模型下载或加载失败，请检查网络连接后重试。首次使用会自动下载并缓存模型。';
@@ -178,10 +180,11 @@ function specialTokenId(tokenizer: WhisperTokenizer, token: string) {
  * Whisper's generation path. Build the equivalent decoder prefix explicitly.
  */
 export function buildWhisperDecoderInputIds(transcriber: LocalTranscriber, referenceText?: string, language?: string) {
-  const text = cleanText(referenceText).slice(0, 2_000);
+  const text = cleanText(referenceText);
+  if (!text || Array.from(text).length > MAX_REFERENCE_PROMPT_CHARS || /[。！？!?；;，,]/u.test(text)) return undefined;
   const tokenizer = transcriber.tokenizer;
   const encode = tokenizer?.encode;
-  if (!text || !tokenizer || typeof encode !== 'function') return undefined;
+  if (!tokenizer || typeof encode !== 'function') return undefined;
   try {
     const promptIds = encode.call(tokenizer, `<|startofprev|> ${text}`, { add_special_tokens: false })
       .filter((id) => Number.isInteger(id) && id >= 0)
@@ -240,6 +243,46 @@ function timestampPair(value: unknown): [number, number] | null {
   return [round3(start), Number.isFinite(end) ? round3(Math.max(start, end)) : NaN];
 }
 
+function isUnspacedScript(text: string) {
+  return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(text);
+}
+
+function splitUnspacedChunk(text: string, start: number, end: number): TimestampedTranscriptWord[] {
+  const characters = Array.from(text);
+  const duration = Math.max(0, end - start);
+  const pieceCount = Math.min(characters.length, Math.max(
+    Math.ceil(characters.length / MAX_UNSPACED_CUE_CHARS),
+    Math.ceil(duration / 5),
+  ));
+  const targetSize = Math.max(1, Math.ceil(characters.length / pieceCount));
+  const pieces: string[] = [];
+  let remaining = characters;
+  while (remaining.length > targetSize) {
+    let cut = Math.min(targetSize, remaining.length);
+    const earliestPunctuationCut = Math.ceil(targetSize / 2);
+    for (let index = cut - 1; index >= earliestPunctuationCut; index -= 1) {
+      if (/[，。！？；：,.!?;:]/u.test(remaining[index])) {
+        cut = index + 1;
+        break;
+      }
+    }
+    pieces.push(remaining.slice(0, cut).join(''));
+    remaining = remaining.slice(cut);
+  }
+  if (remaining.length) pieces.push(remaining.join(''));
+
+  const totalWeight = pieces.reduce((sum, piece) => sum + Array.from(piece).length, 0);
+  let elapsedWeight = 0;
+  return pieces.map((piece, index) => {
+    const pieceStart = start + duration * elapsedWeight / totalWeight;
+    elapsedWeight += Array.from(piece).length;
+    const pieceEnd = index === pieces.length - 1
+      ? end
+      : start + duration * elapsedWeight / totalWeight;
+    return { start: round3(pieceStart), end: round3(pieceEnd), text: piece };
+  });
+}
+
 function readPcm16Wav(buffer: Buffer) {
   if (buffer.length < 44 || buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') {
     throw new Error('Local ASR expected a WAV file');
@@ -292,7 +335,11 @@ function normalizeWords(chunks: readonly RawChunk[], durationSeconds: number): T
     if (!Number.isFinite(rawEnd)) continue;
     const end = round3(Math.min(Math.max(start, rawEnd), durationSeconds));
     if (end <= start) continue;
-    words.push({ start, end, text });
+    if (isUnspacedScript(text) && (Array.from(text).length > MAX_UNSPACED_CUE_CHARS || end - start > 5)) {
+      words.push(...splitUnspacedChunk(text, start, end));
+    } else {
+      words.push({ start, end, text });
+    }
   }
   return words;
 }
@@ -304,8 +351,7 @@ function endsSentence(text: string) {
 function needsWordSpace(previous: string, next: string) {
   if (/^[，。！？；：,.!?;:、）】》」』]/u.test(next)) return false;
   if (/[（【《「『]$/u.test(previous)) return false;
-  const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
-  return !cjk.test(previous.slice(-1)) && !cjk.test(next.slice(0, 1));
+  return !isUnspacedScript(previous.slice(-1)) && !isUnspacedScript(next.slice(0, 1));
 }
 
 /** Group timestamped ASR words into stable subtitle-sized segments. */
@@ -319,7 +365,10 @@ export function groupTranscriptWords(words: readonly TimestampedTranscriptWord[]
     }
     const gap = Math.max(0, word.start - current.end);
     const longEnough = word.end - current.start >= maxSegmentSeconds;
-    if (endsSentence(current.text) || gap > 1.2 || longEnough) {
+    const unspacedTextTooLong = isUnspacedScript(current.text) &&
+      isUnspacedScript(word.text) &&
+      Array.from(`${current.text}${word.text}`).length > MAX_UNSPACED_CUE_CHARS;
+    if (endsSentence(current.text) || gap > 1.2 || longEnough || unspacedTextTooLong) {
       segments.push(current);
       current = { start: word.start, end: word.end, text: word.text, words: [word] };
       continue;
@@ -343,6 +392,40 @@ export function normalizeLocalAsrResult(raw: AutomaticSpeechRecognitionOutput, d
   const segments = groupTranscriptWords(words);
   const text = cleanText(raw.text || segments.map((segment) => segment.text).join(' '));
   return { text, segments, words, model, ...(language ? { language } : {}) };
+}
+
+function hasDominantRepeatedPhrase(text: string) {
+  const characters = Array.from(text.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, ''));
+  if (characters.length < 48) return false;
+
+  for (let phraseLength = 1; phraseLength <= 12; phraseLength += 1) {
+    for (let start = 0; start + phraseLength * 6 <= characters.length; start += 1) {
+      let repeats = 1;
+      for (let cursor = start + phraseLength; cursor + phraseLength <= characters.length; cursor += phraseLength) {
+        let matches = true;
+        for (let index = 0; index < phraseLength; index += 1) {
+          if (characters[start + index] !== characters[cursor + index]) {
+            matches = false;
+            break;
+          }
+        }
+        if (!matches) break;
+        repeats += 1;
+        const repeatedLength = repeats * phraseLength;
+        if (repeats >= 6 && repeatedLength >= 48 && repeatedLength / characters.length >= 0.4) return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function assertLocalTranscriptionQuality(result: LocalTranscriptionResult) {
+  const text = result.text || result.segments.map((segment) => segment.text).join(' ');
+  const hasLongCue = result.segments.some((segment) => segment.end - segment.start > 15);
+  if (!hasLongCue && !hasDominantRepeatedPhrase(text)) return;
+  const error = new Error('识别结果出现大段重复文本或异常长字幕时间段，已停止导出字幕。请重试，或缩短参考文档后再生成。');
+  error.name = 'LocalTranscriptionQualityError';
+  throw error;
 }
 
 function progressFromTransformers(onProgress?: LocalTranscriptionOptions['onProgress']) {
@@ -430,7 +513,9 @@ export async function transcribeLocalPcmWav(filePath: string, durationSeconds: n
   const result = decoderInputIds
     ? await runPromptedLocalTranscriber(transcriber, audio, transcribeOptions)
     : await transcriber(audio, transcribeOptions);
-  return normalizeLocalAsrResult(result, duration, resolved.model, resolved.language);
+  const transcript = normalizeLocalAsrResult(result, duration, resolved.model, resolved.language);
+  assertLocalTranscriptionQuality(transcript);
+  return transcript;
 }
 
 /** Decode MP3, M4A, WAV and other FFmpeg-supported audio before local transcription. */

@@ -5,10 +5,10 @@ import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operati
 
 export const runtime = 'nodejs';
 
-const OFFICIAL_CLI_URL = 'https://bytedance.larkoffice.com/wiki/FVTwwm0bGiishxkKOoScdHR2nsg';
+const OFFICIAL_CLI_URL = 'https://bytedance.larkoffice.com/wiki/QO66wGahSiakEHkJbxIcNBtDnAc';
 const INSTALL_COMMAND = process.platform === 'win32'
-  ? 'powershell -NoProfile -ExecutionPolicy Bypass -File ".\\scripts\\install-jimeng.ps1"'
-  : 'bash "./scripts/install-jimeng.sh"';
+  ? 'irm https://jimeng.jianying.com/canvas-cli/install.ps1 | iex'
+  : 'curl -fsSL https://jimeng.jianying.com/canvas-cli/install.sh | bash';
 
 function commandFor(provider: { jimengCliPath?: string }) {
   return resolveJimengCliCommand(provider.jimengCliPath);

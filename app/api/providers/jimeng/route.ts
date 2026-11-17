@@ -1,5 +1,5 @@
 import { isAdminRequest } from '@/lib/auth';
-import { extractJimengAuthChallenge, inspectJimengCli, isJimengAuthenticatedOutput, isJimengAuthorizationPendingOutput, parseJimengJsonLines, queryJimengAccount, resolveJimengCliCommand, runJimengCli } from '@/lib/jimeng-cli';
+import { discoverJimengCanvasModels, extractJimengAuthChallenge, inspectJimengCli, isJimengAuthenticatedOutput, isJimengAuthorizationPendingOutput, parseJimengJsonLines, queryJimengAccount, resolveJimengCanvasCliCommand, resolveJimengCliCommand, runJimengCli } from '@/lib/jimeng-cli';
 import { jimengImageModels } from '@/lib/jimeng-image';
 import { jimengVideoModels } from '@/lib/jimeng-video';
 import { addProvider, enableProviderModels, getProviderWithKey, getPublicState, replaceProviderModels, setProviderStatus } from '@/lib/store';
@@ -7,10 +7,10 @@ import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operati
 
 export const runtime = 'nodejs';
 
-const OFFICIAL_GUIDE_URL = 'https://bytedance.larkoffice.com/wiki/FVTwwm0bGiishxkKOoScdHR2nsg';
+const OFFICIAL_GUIDE_URL = 'https://bytedance.larkoffice.com/wiki/QO66wGahSiakEHkJbxIcNBtDnAc';
 const INSTALL_COMMAND = process.platform === 'win32'
-  ? 'powershell -NoProfile -ExecutionPolicy Bypass -File ".\\scripts\\install-jimeng.ps1"'
-  : 'bash "./scripts/install-jimeng.sh"';
+  ? 'irm https://jimeng.jianying.com/canvas-cli/install.ps1 | iex'
+  : 'curl -fsSL https://jimeng.jianying.com/canvas-cli/install.sh | bash';
 
 async function ensureProvider() {
   const state = await getPublicState();
@@ -28,9 +28,14 @@ async function ensureProvider() {
   return (await getPublicState()).providers.find((provider) => provider.id === id)!;
 }
 
-async function syncJimengProvider(provider: { id: string; name: string }) {
+async function syncJimengProvider(provider: { id: string; name: string; jimengCliPath?: string }) {
   try {
-    await replaceProviderModels(provider.id, provider.name, [...jimengImageModels, ...jimengVideoModels]);
+    const command = resolveJimengCanvasCliCommand(provider.jimengCliPath);
+    const [images, videos] = await Promise.all([
+      discoverJimengCanvasModels(command, 'image').catch(() => jimengImageModels),
+      discoverJimengCanvasModels(command, 'video').catch(() => jimengVideoModels),
+    ]);
+    await replaceProviderModels(provider.id, provider.name, [...images, ...videos]);
     await enableProviderModels(provider.id);
     await setProviderStatus(provider.id, 'healthy', new Date().toLocaleString('zh-CN', { hour12: false }));
     return { ok: true, state: await getPublicState(), error: '' };

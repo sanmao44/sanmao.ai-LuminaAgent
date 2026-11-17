@@ -5,12 +5,12 @@ import type { ProviderConnection, PublicState } from '@/lib/types';
 import type { JimengAccount } from '@/lib/jimeng-cli';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 
-const OFFICIAL_URL = 'https://bytedance.larkoffice.com/wiki/FVTwwm0bGiishxkKOoScdHR2nsg';
-const INSTALL_COMMAND = 'curl -fsSL https://jimeng.jianying.com/cli | bash';
+const OFFICIAL_URL = 'https://bytedance.larkoffice.com/wiki/QO66wGahSiakEHkJbxIcNBtDnAc';
+const INSTALL_COMMAND = 'curl -fsSL https://jimeng.jianying.com/canvas-cli/install.sh | bash';
 const INSTALL_COMMANDS = {
-  windows: 'powershell -NoProfile -ExecutionPolicy Bypass -File ".\\scripts\\install-jimeng.ps1"',
-  macos: 'bash "./scripts/install-jimeng.sh"',
-  unix: 'bash "./scripts/install-jimeng.sh"',
+  windows: 'irm https://jimeng.jianying.com/canvas-cli/install.ps1 | iex',
+  macos: 'curl -fsSL https://jimeng.jianying.com/canvas-cli/install.sh | bash',
+  unix: 'curl -fsSL https://jimeng.jianying.com/canvas-cli/install.sh | bash',
 } as const;
 type InstallPlatform = keyof typeof INSTALL_COMMANDS | 'other';
 
@@ -150,7 +150,7 @@ export default function JimengProviderCard({ providers, onStateChanged, onNotify
       <div className="jimeng-provider-mark"><img src="/brand/jimeng-official.ico" alt="即梦官方 Logo" /></div>
       <div className="jimeng-provider-copy">
         <div className="jimeng-provider-title"><strong>即梦 CLI · 本地图片与视频</strong><span className={`jimeng-provider-status ${connected ? 'success' : installed ? 'ready' : 'muted'}`}>{connected ? '已连接' : installed ? '已安装，待授权' : '等待检测'}</span></div>
-        <p>连接一次即梦账号，图片和视频工作台都可以直接使用。不需要 API Key，也不需要填写接口路径。</p>
+        <p>连接一次即梦账号，图片和视频工作台都可以直接使用。优先使用官方 dreamina-canvas，旧版 dreamina 会自动兼容。</p>
         {auth.version && <small>已检测到 {auth.version}{auth.command ? ` · ${auth.command}` : ''}</small>}
         {auth.error && <small className="jimeng-provider-error">{auth.error}</small>}
         {auth.message && <small className="jimeng-provider-success">{auth.message}</small>}
@@ -162,6 +162,6 @@ export default function JimengProviderCard({ providers, onStateChanged, onNotify
     </div>
     <JimengAccountSummary account={auth.account} checkedAt={auth.accountCheckedAt} error={auth.accountError} loading={accountBusy || auth.status === 'detecting' || auth.status === 'starting' || auth.status === 'checking'} onRefresh={provider ? () => void refreshAccount() : undefined} />
     {auth.verificationUri && <div className="jimeng-provider-auth-box"><div><span>授权窗口已准备</span><a href={auth.verificationUri} target="_blank" rel="noreferrer">如果没有自动打开，点击这里继续授权 ↗</a></div><b>{auth.userCode || '—'}</b></div>}
-    {!installed && <div className="jimeng-provider-install"><span>{installLauncher ? `未找到即梦 CLI？请双击安装包中的“${installLauncher}”。` : '未找到即梦 CLI？请按官方说明安装。'}</span><a href={OFFICIAL_URL} target="_blank" rel="noreferrer">官方安装说明 ↗</a><button type="button" onClick={() => void copyInstallCommand()}>复制安装命令</button><code>{installCommand}</code></div>}
+    {!installed && <div className="jimeng-provider-install"><span>{installLauncher ? `未找到即梦画布 CLI？请双击安装包中的“${installLauncher}”，或执行官方安装命令。` : '未找到即梦画布 CLI？请按官方说明安装。'}</span><a href={OFFICIAL_URL} target="_blank" rel="noreferrer">官方 CLI 说明 ↗</a><button type="button" onClick={() => void copyInstallCommand()}>复制安装命令</button><code>{installCommand}</code></div>}
   </article>;
 }

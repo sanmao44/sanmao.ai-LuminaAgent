@@ -417,19 +417,35 @@ test('maps Dreamina array media to repeated multimodal flags', () => {
   ]);
 });
 
+test('routes selected-model multi-image references through multimodal CLI', () => {
+  assert.deepEqual(video.buildJimengCliArgs({
+    prompt: 'preserve the subject', referenceImages: ['a.png', 'b.png'], seconds: 15, aspectRatio: '16:9', resolution: '720p',
+  }, 'seedance2.0fast'), [
+    'multimodal2video', '--model_version', 'seedance2.0fast', '--image', 'a.png', '--image', 'b.png', '--prompt', 'preserve the subject', '--duration', '15', '--ratio', '16:9', '--video_resolution', '720p',
+  ]);
+});
+
 test('matches the official Dreamina multi-frame image list format', () => {
   assert.deepEqual(video.buildJimengCliArgs({
-    prompt: 'from day to night', referenceImages: ['a.png', 'b.png'], seconds: 5, aspectRatio: '16:9', resolution: '720p',
+    prompt: 'from day to night', referenceImages: ['a.png', 'b.png'], referenceMode: 'multiframe', seconds: 5, aspectRatio: '16:9', resolution: '720p',
   }), [
     'multiframe2video', '--images', 'a.png,b.png', '--prompt', 'from day to night', '--duration', '5', '--video_resolution', '720p',
   ]);
 });
 
+test('routes ordinary multi-image references through the selected multimodal model', () => {
+  assert.deepEqual(video.buildJimengCliArgs({
+    prompt: 'keep the subject and style', referenceImages: ['a.png', 'b.png'], seconds: 15, aspectRatio: '9:16', resolution: '720p',
+  }, 'seedance2.0fast'), [
+    'multimodal2video', '--model_version', 'seedance2.0fast', '--image', 'a.png', '--image', 'b.png', '--prompt', 'keep the subject and style', '--duration', '15', '--ratio', '9:16', '--video_resolution', '720p',
+  ]);
+});
+
 test('does not send unsupported model and ratio flags to multi-frame CLI', () => {
   assert.deepEqual(video.buildJimengCliArgs({
-    prompt: 'transition', referenceImages: ['a.png', 'b.png', 'c.png'], seconds: 5, aspectRatio: '16:9', resolution: '1080p',
+    prompt: 'transition', referenceImages: ['a.png', 'b.png', 'c.png'], referenceMode: 'multiframe', seconds: 4, aspectRatio: '16:9', resolution: '1080p',
   }, 'seedance2.5'), [
-    'multiframe2video', '--images', 'a.png,b.png,c.png', '--transition-prompt', 'transition', '--transition-prompt', 'transition', '--video_resolution', '1080p',
+    'multiframe2video', '--images', 'a.png,b.png,c.png', '--transition-prompt', 'transition', '--transition-duration', '4', '--transition-prompt', 'transition', '--transition-duration', '4', '--video_resolution', '1080p',
   ]);
 });
 

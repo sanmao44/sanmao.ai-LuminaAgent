@@ -642,8 +642,31 @@ export function resolveVideoTransport(provider: Pick<RuntimeProvider, 'videoTran
 function jimengCliShell(command: string) { return process.platform === 'win32' && command.toLowerCase().endsWith('.cmd'); }
 function cliCommand(provider: RuntimeProvider) {
   const profile = process.env.USERPROFILE || os.homedir();
-  const candidates = [provider.jimengCliPath, process.env.JIMENG_CLI_PATH, path.join(profile, 'bin', 'dreamina.exe'), path.join(profile, 'bin', 'dreamina.cmd'), path.join(profile, '.local', 'bin', 'dreamina.exe'), path.join(profile, '.local', 'bin', 'dreamina.cmd'), process.platform === 'win32' ? 'dreamina.exe' : 'dreamina', process.platform === 'win32' ? 'dreamina.cmd' : 'dreamina'].map((value) => String(value || '').trim()).filter(Boolean);
-  return candidates.find((value) => path.isAbsolute(value) ? existsSync(value) : value === provider.jimengCliPath || value === process.env.JIMENG_CLI_PATH || /^(dreamina)(\.exe|\.cmd)?$/i.test(value)) || candidates[0] || 'dreamina';
+  const candidates = [
+    provider.jimengCliPath,
+    process.env.JIMENG_CLI_PATH,
+    path.join(profile, 'bin', 'dreamina-canvas.exe'),
+    path.join(profile, 'bin', 'dreamina-canvas.cmd'),
+    path.join(profile, '.local', 'bin', 'dreamina-canvas.exe'),
+    path.join(profile, '.local', 'bin', 'dreamina-canvas.cmd'),
+    path.join(profile, 'bin', 'dreamina.exe'),
+    path.join(profile, 'bin', 'dreamina.cmd'),
+    path.join(profile, '.local', 'bin', 'dreamina.exe'),
+    path.join(profile, '.local', 'bin', 'dreamina.cmd'),
+    process.platform === 'win32' ? 'dreamina-canvas.exe' : 'dreamina-canvas',
+    process.platform === 'win32' ? 'dreamina-canvas.cmd' : 'dreamina-canvas',
+    process.platform === 'win32' ? 'dreamina.exe' : 'dreamina',
+    process.platform === 'win32' ? 'dreamina.cmd' : 'dreamina',
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+  return candidates.find((value) => path.isAbsolute(value)
+    ? existsSync(value)
+    : value === provider.jimengCliPath || value === process.env.JIMENG_CLI_PATH || /^(?:dreamina)(?:\.exe|\.cmd)?$/i.test(value))
+    || candidates[0]
+    || (process.platform === 'win32' ? 'dreamina.exe' : 'dreamina');
+}
+
+function isJimengCanvasCommand(command: string) {
+  return /(?:^|[\\/])dreamina-canvas(?:\.exe|\.cmd)?$/i.test(command);
 }
 
 export type JimengVideoCommand = 'text2video' | 'image2video' | 'frames2video' | 'multiframe2video' | 'multimodal2video';
@@ -664,7 +687,11 @@ export function jimengVideoCommand(input: VideoGenerationInput): JimengVideoComm
   const referenceCount = input.referenceImages?.length || 0;
   if (videoReferenceValues(input).length || audioValues(input).length) return 'multimodal2video';
   if (input.firstFrame && input.lastFrame) return 'frames2video';
-  if (referenceCount > 1) return 'multiframe2video';
+  // The normal "reference image" UI is the all-around reference workflow,
+  // which preserves the selected Seedance model. The fixed-model story
+  // command is opt-in for callers that explicitly request multi-frame mode.
+  if (referenceCount > 1 && input.referenceMode === 'multiframe') return 'multiframe2video';
+  if (referenceCount > 1) return 'multimodal2video';
   if (input.firstFrame || referenceCount === 1) return 'image2video';
   return 'text2video';
 }
@@ -681,6 +708,7 @@ export function buildJimengCliArgs(input: VideoGenerationInput, rawModelId?: str
     if (value !== undefined && value !== null && String(value).trim()) args.push(flag, String(value));
   };
   const modelVersion = jimengModelVersion(rawModelId);
+  const referenceFrameFollowsSource = /seedance[-_. ]?2\.5/i.test(String(rawModelId || ''));
 
   switch (command) {
     case 'text2video':
@@ -695,6 +723,7 @@ export function buildJimengCliArgs(input: VideoGenerationInput, rawModelId?: str
       add('--image', input.firstFrame || input.referenceImages?.[0]);
       add('--prompt', input.prompt);
       add('--duration', input.seconds);
+      if (!referenceFrameFollowsSource) add('--ratio', input.aspectRatio);
       add('--video_resolution', input.resolution);
       break;
     case 'frames2video':
@@ -703,6 +732,7 @@ export function buildJimengCliArgs(input: VideoGenerationInput, rawModelId?: str
       add('--last', input.lastFrame);
       add('--prompt', input.prompt);
       add('--duration', input.seconds);
+      if (!referenceFrameFollowsSource) add('--ratio', input.aspectRatio);
       add('--video_resolution', input.resolution);
       break;
     case 'multiframe2video':
@@ -714,13 +744,21 @@ export function buildJimengCliArgs(input: VideoGenerationInput, rawModelId?: str
         add('--prompt', input.prompt);
         add('--duration', input.seconds);
       } else {
-        for (let index = 1; index < (input.referenceImages || []).length; index += 1) add('--transition-prompt', input.prompt);
+        for (let index = 1; index < (input.referenceImages || []).length; index += 1) {
+          add('--transition-prompt', input.prompt);
+          add('--transition-duration', input.seconds);
+        }
       }
       add('--video_resolution', input.resolution);
       break;
     case 'multimodal2video':
       add('--model_version', modelVersion);
-      add('--image', input.firstFrame || input.referenceImages?.[0]);
+      const imageInputs = Array.from(new Set([
+        input.firstFrame,
+        input.lastFrame,
+        ...(input.referenceImages || []),
+      ].filter((value): value is string => Boolean(value))));
+      for (const image of imageInputs) add('--image', image);
       for (const video of videoReferenceValues(input)) add('--video', video);
       for (const audio of audioValues(input)) add('--audio', audio);
       add('--prompt', input.prompt);
@@ -837,6 +875,9 @@ async function downloadedVideoFiles(directory: string): Promise<GeneratedVideo[]
 
 export async function runJimengVideo(provider: RuntimeProvider, rawModelId: string, input: VideoGenerationInput, signal?: AbortSignal): Promise<VideoProviderTask> {
   const command = cliCommand(provider);
+  if (isJimengCanvasCommand(command)) {
+    return (await import('./jimeng-canvas-video')).runJimengCanvasVideo(provider, rawModelId, input, signal);
+  }
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-'));
   const tempFiles: string[] = [];
   const materialize = async (value: string | undefined, name: string) => {
@@ -883,6 +924,9 @@ export async function runJimengVideo(provider: RuntimeProvider, rawModelId: stri
 
 export async function pollJimengVideo(provider: RuntimeProvider, providerTaskId: string, signal?: AbortSignal): Promise<VideoProviderTask> {
   const command = cliCommand(provider);
+  if (isJimengCanvasCommand(command) || providerTaskId.startsWith('canvas:')) {
+    return (await import('./jimeng-canvas-video')).pollJimengCanvasVideo(provider, providerTaskId, signal);
+  }
   const outputDirectory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-result-'));
   try {
     const downloadedOutput = await runJimengVideoCli(command, ['query_result', `--submit_id=${providerTaskId}`, `--download_dir=${outputDirectory}`], 120_000, signal);
