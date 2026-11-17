@@ -263,6 +263,30 @@ test('normalization splits long unspaced Chinese ASR chunks into readable timed 
   assert.ok(sparseWords.segments.every((segment) => segment.end - segment.start <= 5));
 });
 
+test('decimal values split across ASR chunks remain intact inside one subtitle cue', () => {
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: '试点范围内覆盖问题处理时长由8.6小时降至5小时以内',
+    chunks: [
+      { text: '试点范围内覆盖问题处理时长由8', timestamp: [0, 3.78] },
+      { text: '.6小时降至5小时以内', timestamp: [3.78, 8.2] },
+    ],
+  }, 8.2, 'test-model', 'zh');
+
+  const cues = normalized.segments;
+  assert.equal(cues.map((segment) => segment.text).join(''), '试点范围内覆盖问题处理时长由8.6小时降至5小时以内');
+  assert.ok(cues.some((segment) => segment.text.includes('8.6小时')));
+  assert.ok(cues.every((segment) => segment.end - segment.start <= 5));
+
+  const sentenceBoundary = transcriptionModule.normalizeLocalAsrResult({
+    text: '产品。2倍',
+    chunks: [
+      { text: '产品。', timestamp: [0, 1] },
+      { text: '2倍', timestamp: [1, 2] },
+    ],
+  }, 2, 'test-model', 'zh');
+  assert.deepEqual(sentenceBoundary.segments.map((segment) => segment.text), ['产品。', '2倍']);
+});
+
 test('reference-guided correction fixes high-confidence substitutions and keeps ASR timestamps', () => {
   const reference = '今天我们使用本地语音识别模型，根据参考文档校正产品名称和常见错字，同时保留原始字幕时间戳，方便用户检查识别结果。';
   const recognized = '今天我们使用本地语音识别模型，根据参考文档校正产品名称和常见错子，同时保留原始字幕时间戳，放便用户检查识别结果。';
@@ -277,6 +301,73 @@ test('reference-guided correction fixes high-confidence substitutions and keeps 
   assert.deepEqual(corrected.segments.map(({ start, end }) => ({ start, end })), original.segments.map(({ start, end }) => ({ start, end })));
   assert.deepEqual(corrected.words.map(({ start, end }) => ({ start, end })), original.words.map(({ start, end }) => ({ start, end })));
   assert.equal(corrected.text, reference);
+});
+
+test('reference-guided correction fixes local technical terms and canonical casing', () => {
+  const reference = '依托Agentic AI、大模型与大数据创新技术，进一步锚定网络和业务目标。';
+  const recognized = '依托AgenTik AI大模型与大数据创新技术进一步锚定网络和业务目标。';
+  const input = { text: recognized, chunks: [{ text: recognized, timestamp: [0, 8] }] };
+  const original = transcriptionModule.normalizeLocalAsrResult(input, 8, 'test-model', 'zh');
+  const corrected = transcriptionModule.normalizeLocalAsrResult(input, 8, 'test-model', 'zh', reference);
+  const compact = (value) => value.replace(/[\s\p{P}]/gu, '');
+
+  assert.equal(compact(corrected.segments.map((segment) => segment.text).join('')), compact(reference));
+  assert.deepEqual(corrected.segments.map(({ start, end }) => ({ start, end })), original.segments.map(({ start, end }) => ({ start, end })));
+
+  const dataReference = '以数智手段深挖O域数据价值，构建360°用户视图支撑经营，持续提升业务体验。';
+  const dataAsr = '以数字手段深挖欧域数据价值，构建360度用户视图支撑经营，持续提升业务体验。';
+  const dataCorrected = transcriptionModule.normalizeLocalAsrResult({
+    text: dataAsr,
+    chunks: [{ text: dataAsr, timestamp: [0, 8] }],
+  }, 8, 'test-model', 'zh', dataReference);
+  assert.equal(compact(dataCorrected.segments.map((segment) => segment.text).join('')), compact(dataReference));
+
+  const orderReference = '今年方案先在山东、广东、河南三省开展高阶自智试点，随后总结经验并提升业务体验。';
+  const orderAsr = '今年方案先在广东、山东、河南三省开展高阶自智试点，随后总结经验并提升业务体验。';
+  const orderCorrected = transcriptionModule.normalizeLocalAsrResult({
+    text: orderAsr,
+    chunks: [{ text: orderAsr, timestamp: [0, 8] }],
+  }, 8, 'test-model', 'zh', orderReference);
+  const orderText = compact(orderCorrected.segments.map((segment) => segment.text).join(''));
+  assert.match(orderText, /今年方案先在广东山东河南三省/u);
+
+  const distantOrderReference = '今年方案先在山东试点，经过两个月的测试，然后部署到广东，并持续优化业务体验。';
+  const distantOrderAsr = '今年方案先在广东试点，经过两个月的测试，然后部署到山东，并持续优化业务体验。';
+  const distantOrderCorrected = transcriptionModule.normalizeLocalAsrResult({
+    text: distantOrderAsr,
+    chunks: [{ text: distantOrderAsr, timestamp: [0, 8] }],
+  }, 8, 'test-model', 'zh', distantOrderReference);
+  const distantOrderText = compact(distantOrderCorrected.segments.map((segment) => segment.text).join(''));
+  assert.match(distantOrderText, /今年方案先在广东试点.*然后部署到山东/u);
+});
+
+test('overlapping near-identical ASR segments are stitched while later repeated speech remains', () => {
+  const clipped = '可实现应急事件识别分析时长小于3分';
+  const complete = '可实现应急事件识别分析时长小于三分钟';
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: `${clipped} ${complete} ${complete}`,
+    chunks: [
+      { text: clipped, timestamp: [10, 14.34] },
+      { text: complete, timestamp: [10.04, 14.62] },
+      { text: complete, timestamp: [20, 24.58] },
+    ],
+  }, 30, 'test-model', 'zh');
+
+  assert.deepEqual(normalized.segments.map((segment) => segment.text), [complete, complete]);
+  assert.deepEqual(normalized.segments.map(({ start, end }) => ({ start, end })), [
+    { start: 10, end: 14.62 },
+    { start: 20, end: 24.58 },
+  ]);
+  assert.equal(normalized.text, `${complete} ${complete}`);
+
+  const repeatedSpeech = transcriptionModule.normalizeLocalAsrResult({
+    text: `${complete} ${complete}`,
+    chunks: [
+      { text: complete, timestamp: [10, 14.5] },
+      { text: complete, timestamp: [11, 15.5] },
+    ],
+  }, 20, 'test-model', 'zh');
+  assert.deepEqual(repeatedSpeech.segments.map((segment) => segment.text), [complete, complete]);
 });
 
 test('reference correction preserves ambiguous wording and never inserts omitted words', () => {

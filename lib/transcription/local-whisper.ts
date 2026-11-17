@@ -360,7 +360,34 @@ function normalizeWords(chunks: readonly RawChunk[], durationSeconds: number): T
       words.push({ start, end, text });
     }
   }
-  return words;
+  return stitchDecimalContinuations(words);
+}
+
+function stitchDecimalContinuations(words: readonly TimestampedTranscriptWord[]) {
+  const stitched: TimestampedTranscriptWord[] = [];
+  for (const word of words) {
+    const previous = stitched.at(-1);
+    const gap = previous ? word.start - previous.end : Infinity;
+    const decimalContinuation = previous && (
+      (/\d$/u.test(previous.text) && /^[.,]\d/u.test(word.text))
+      || (/\d[.,]$/u.test(previous.text) && /^\d/u.test(word.text))
+    );
+    if (!previous || !decimalContinuation || gap > 0.35) {
+      stitched.push(word);
+      continue;
+    }
+
+    stitched.pop();
+    const text = `${previous.text}${word.text}`;
+    const start = previous.start;
+    const end = Math.max(previous.end, word.end);
+    if (isUnspacedScript(text) && (Array.from(text).length > MAX_UNSPACED_CUE_CHARS || end - start > 5)) {
+      stitched.push(...splitUnspacedChunk(text, start, end));
+    } else {
+      stitched.push({ start, end, text });
+    }
+  }
+  return stitched;
 }
 
 function endsSentence(text: string) {
@@ -405,12 +432,85 @@ export function groupTranscriptWords(words: readonly TimestampedTranscriptWord[]
   }));
 }
 
+function transcriptionCharacters(value: string) {
+  return Array.from(value.normalize('NFKC').toLowerCase()).filter((character) => /[\p{L}\p{N}\p{S}]/u.test(character));
+}
+
+function transcriptionTextSimilarity(left: string, right: string) {
+  const source = transcriptionCharacters(left);
+  const target = transcriptionCharacters(right);
+  const maxLength = Math.max(source.length, target.length);
+  if (Math.min(source.length, target.length) < 8 || !maxLength) return 0;
+
+  let previous = Array.from({ length: target.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= source.length; row += 1) {
+    const current = new Array<number>(target.length + 1);
+    current[0] = row;
+    for (let column = 1; column <= target.length; column += 1) {
+      current[column] = Math.min(
+        previous[column] + 1,
+        current[column - 1] + 1,
+        previous[column - 1] + (source[row - 1] === target[column - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return 1 - previous[target.length] / maxLength;
+}
+
+function areOverlappingDuplicateSegments(left: TimestampedTranscriptSegment, right: TimestampedTranscriptSegment) {
+  const shortestDuration = Math.min(left.end - left.start, right.end - right.start);
+  if (shortestDuration <= 0) return false;
+  if (Math.abs(left.start - right.start) > 0.25) return false;
+  const overlap = Math.max(0, Math.min(left.end, right.end) - Math.max(left.start, right.start));
+  return overlap / shortestDuration >= 0.75 && transcriptionTextSimilarity(left.text, right.text) >= 0.84;
+}
+
+function stitchOverlappingDuplicateSegments(segments: readonly TimestampedTranscriptSegment[]) {
+  const stitched: TimestampedTranscriptSegment[] = [];
+  let removedDuplicate = false;
+
+  for (const segment of segments) {
+    let duplicateIndex = -1;
+    for (let index = stitched.length - 1; index >= 0; index -= 1) {
+      const previous = stitched[index];
+      if (segment.start >= previous.end) break;
+      if (areOverlappingDuplicateSegments(previous, segment)) {
+        duplicateIndex = index;
+        break;
+      }
+    }
+
+    if (duplicateIndex < 0) {
+      stitched.push(segment);
+      continue;
+    }
+
+    const previous = stitched[duplicateIndex];
+    const previousLength = transcriptionCharacters(previous.text).length;
+    const segmentLength = transcriptionCharacters(segment.text).length;
+    const preferred = segmentLength > previousLength ? segment : previous;
+    stitched[duplicateIndex] = {
+      ...preferred,
+      start: Math.min(previous.start, segment.start),
+      end: Math.max(previous.end, segment.end),
+    };
+    removedDuplicate = true;
+  }
+
+  return { segments: stitched, removedDuplicate };
+}
+
 export function normalizeLocalAsrResult(raw: AutomaticSpeechRecognitionOutput, durationSeconds: number, model: string, language?: string, referenceText?: string): LocalTranscriptionResult {
   const chunks = Array.isArray(raw.chunks) ? raw.chunks as RawChunk[] : [];
   const words = normalizeWords(chunks, Math.max(0, durationSeconds));
-  const segments = groupTranscriptWords(words);
-  const text = cleanText(raw.text || segments.map((segment) => segment.text).join(' '));
-  const result = { text, segments, words, model, ...(language ? { language } : {}) };
+  const grouped = groupTranscriptWords(words);
+  const stitched = stitchOverlappingDuplicateSegments(grouped);
+  const segments = stitched.segments;
+  const normalizedWords = segments.flatMap((segment) => segment.words || []);
+  const segmentText = segments.map((segment) => segment.text).join(' ');
+  const text = cleanText(stitched.removedDuplicate ? segmentText : raw.text || segmentText);
+  const result = { text, segments, words: normalizedWords, model, ...(language ? { language } : {}) };
   return referenceText ? correctTranscriptWithReference(result, referenceText) : result;
 }
 
