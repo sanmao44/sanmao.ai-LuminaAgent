@@ -61,3 +61,8 @@ test('model picker preserves an unavailable model label in compact mode', () => 
     value: 'gpt-5',
   }), 'Model unavailable / GPT-5');
 });
+
+test('model picker labels music and 3D generation capabilities', () => {
+  assert.equal(picker.modelCapabilityLabel('music-generate'), '音乐');
+  assert.equal(picker.modelCapabilityLabel('3d-generate'), '三维');
+});

@@ -45,7 +45,7 @@ export type McpCatalogBrowserMode = 'managed' | 'extension';
 /** stdio：本机子进程；http：远端 Streamable HTTP。 */
 export type McpCatalogTransport = 'stdio' | 'http';
 
-export type McpCatalogInstallMode = 'optional-npm' | 'optional-uv' | 'remote';
+export type McpCatalogInstallMode = 'optional-npm' | 'optional-uv' | 'optional-archive' | 'remote';
 
 /** 维护方等级：official 是厂商官方项目，curated 是我们挑过、但不是厂商自营。 */
 export type McpCatalogTrust = 'trusted-official' | 'trusted-curated';
@@ -127,7 +127,7 @@ export type McpCatalogEntry = {
   defaultEnabled: boolean;
   setup: McpCatalogSetup;
   toolSelection: McpCatalogToolSelection;
-  /** stdio 专用：npm 包名与固定版本。 */
+  /** npm / uv 安装条目的包名。 */
   pkg?: string;
   version?: string;
   installNote?: string;
@@ -154,12 +154,15 @@ export type McpCatalogEntry = {
   readOnlyTools?: readonly string[];
   /** Python/uv 运行时的固定规格；仅 optional-uv 条目使用。 */
   runtime?: { kind: 'node' | 'uv'; python?: string; uv?: string };
+  /** 自包含的、按平台架构固定校验值的 ZIP；仅 optional-archive 条目使用。 */
+  archive?: {
+    assets: Partial<Record<'x64' | 'arm64', { url: string; size: number; sha256: string; executable: string }>>;
+  };
 };
 
 /** stdio 条目：字段收窄，调用方不用再判空。 */
 export type McpStdioCatalogEntry = McpCatalogEntry & {
   transport: 'stdio';
-  pkg: string;
   version: string;
   installNote: string;
   needsBrowser: boolean;
@@ -167,8 +170,10 @@ export type McpStdioCatalogEntry = McpCatalogEntry & {
   args: (context: McpCatalogArgs) => string[];
 };
 
-export function catalogEntryAvailable(entry: McpCatalogEntry, platform: string = process.platform) {
-  return !entry.platforms?.length || entry.platforms.includes(platform);
+export function catalogEntryAvailable(entry: McpCatalogEntry, platform: string = process.platform, architecture: string = process.arch) {
+  if (entry.platforms?.length && !entry.platforms.includes(platform)) return false;
+  if (entry.installMode === 'optional-archive' && !entry.archive?.assets[architecture as 'x64' | 'arm64']) return false;
+  return true;
 }
 
 export type McpRemoteCatalogEntry = McpCatalogEntry & {
@@ -248,14 +253,13 @@ const FILESYSTEM_TOOLS: readonly string[] = [
   'list_allowed_directories',
 ];
 
-/** Windows-MCP 0.8.8 tools reviewed against its published wheel. */
-const WINDOWS_MCP_TOOLS: readonly string[] = [
-  'ControlStatus', 'App', 'DisplayInventory', 'FileSystem', 'Snapshot', 'Screenshot',
-  'Click', 'Type', 'Scroll', 'Move', 'Shortcut', 'Wait', 'WaitFor', 'Scrape',
-  'MultiSelect', 'MultiEdit', 'Clipboard', 'Process', 'Notification',
+/** FlaUI-MCP 0.2.1 tools reviewed against the pinned Windows release assets. */
+const FLAUI_MCP_TOOLS: readonly string[] = [
+  'windows_snapshot', 'windows_screenshot', 'windows_get_text', 'windows_list_windows',
+  'windows_launch', 'windows_close', 'windows_click', 'windows_fill',
 ];
-const WINDOWS_MCP_READ_ONLY_TOOLS: readonly string[] = [
-  'ControlStatus', 'DisplayInventory', 'Snapshot', 'Screenshot', 'Wait', 'WaitFor', 'Scrape',
+const FLAUI_MCP_READ_ONLY_TOOLS: readonly string[] = [
+  'windows_snapshot', 'windows_screenshot', 'windows_get_text', 'windows_list_windows',
 ];
 
 /**
@@ -327,11 +331,11 @@ export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
     intentKeywords: ['桌面', '窗口', '点击', '输入', '截图', '屏幕', '打开应用', '应用', '滚动', '剪贴板', '设备管理器', '管理控制台', 'Device Manager', 'devmgmt.msc', 'desktop', 'window', 'click', 'type', 'screenshot', 'screen', 'launch app', 'clipboard'],
     examples: ['截一张当前桌面截图', '打开桌面上的应用并切换窗口', '在当前窗口输入文字'],
     name: 'Windows 桌面控制',
-    summary: '读取 Windows 桌面状态、窗口和截图；开启桌面操作后才允许点击、输入和启动应用。',
-    publisher: 'CursorTouch',
-    homepage: 'https://github.com/CursorTouch/Windows-MCP',
+    summary: '通过 Windows UI Automation 读取窗口、文字与截图；控件支持时可后台操作，减少鼠标和键盘接管。',
+    publisher: 'FlaUI-MCP',
+    homepage: 'https://github.com/shanselman/FlaUI-MCP',
     transport: 'stdio',
-    installMode: 'optional-uv',
+    installMode: 'optional-archive',
     trust: 'trusted-curated',
     capabilities: ['桌面状态', '窗口管理', '截图', '显示器信息', '条件等待', '桌面操作'],
     permissions: ['process', 'fs:read', 'fs:write', 'external:write'],
@@ -339,15 +343,30 @@ export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
     defaultEnabled: false,
     setup: { requiresAuth: false, requiresLocalRuntime: true },
     toolSelection: { mode: 'allowlist', lazy: true },
-    pkg: 'windows-mcp',
-    version: '0.8.8',
-    installNote: 'Windows 专用；首次使用时通过受控 uv 环境安装 Python 3.14 依赖。',
+    version: '0.2.1',
+    installNote: 'Windows 专用；首次安装下载经 SHA-256 校验的自包含 x64 / ARM64 运行包，不需要另装 .NET。UIA 不支持的控件仍可能回退到鼠标或键盘模拟。',
     needsBrowser: false,
     platforms: ['win32'],
-    runtime: { kind: 'uv', python: '3.14', uv: '0.12.19' },
-    readOnlyTools: WINDOWS_MCP_READ_ONLY_TOOLS,
-    allowedTools: WINDOWS_MCP_TOOLS,
-    args: ({ installRoot }) => ['--directory', installRoot, 'run', '--no-project', '--python', path.join(installRoot, '.venv', 'Scripts', 'python.exe'), 'windows-mcp', 'serve'],
+    runtime: { kind: 'node' },
+    archive: {
+      assets: {
+        x64: {
+          url: 'https://github.com/shanselman/FlaUI-MCP/releases/download/v0.2.1/FlaUI-MCP-win-x64-0.2.1-self-contained.zip',
+          size: 67_720_045,
+          sha256: 'f0936ebec75772064d52492d07b774dee8c9a9e19bef55324888e30976a67ff5',
+          executable: 'FlaUI.Mcp.exe',
+        },
+        arm64: {
+          url: 'https://github.com/shanselman/FlaUI-MCP/releases/download/v0.2.1/FlaUI-MCP-win-arm64-0.2.1-self-contained.zip',
+          size: 63_169_089,
+          sha256: 'a148ab0d3ddfc0c44bd5075e4a264171279a6df4ec235c9f6dcdaef742c999fc',
+          executable: 'FlaUI.Mcp.exe',
+        },
+      },
+    },
+    readOnlyTools: FLAUI_MCP_READ_ONLY_TOOLS,
+    allowedTools: FLAUI_MCP_TOOLS,
+    args: () => [],
   },
   {
     id: 'playwright',
@@ -551,7 +570,23 @@ export function resolveCatalogUvExecutable(dataDir?: string) {
   return path.join(dataDir || catalogDataDir(), 'runtime', 'uv', process.platform === 'win32' ? 'uv.exe' : 'uv');
 }
 
+export function catalogArchiveAsset(entry: McpStdioCatalogEntry, architecture: string = process.arch) {
+  if (entry.installMode !== 'optional-archive') return null;
+  return entry.archive?.assets[architecture as 'x64' | 'arm64'] || null;
+}
+
+export function catalogArchiveInstallDir(entry: McpStdioCatalogEntry) {
+  return `runtime-${entry.version}`;
+}
+
+export function catalogArchiveExecutablePath(entry: McpStdioCatalogEntry, options: { dataDir?: string } = {}) {
+  const asset = catalogArchiveAsset(entry);
+  if (!asset) return '';
+  return path.join(resolveCatalogInstallRoot(entry.id, options), catalogArchiveInstallDir(entry), asset.executable);
+}
+
 export function catalogEntryBinPath(entry: McpStdioCatalogEntry, options: { dataDir?: string } = {}) {
+  if (!entry.pkg) return '';
   return path.join(resolveCatalogInstallRoot(entry.id, options), 'node_modules', entry.pkg.replace('/', path.sep), 'cli.js');
 }
 
@@ -560,11 +595,34 @@ export function catalogEntryBinPath(entry: McpStdioCatalogEntry, options: { data
  * 两者都没有就当没装好——不能只看目录存在，半截安装会让服务起不来。
  */
 export function isCatalogInstalled(entry: McpStdioCatalogEntry, options: { dataDir?: string } = {}) {
+  if (entry.installMode === 'optional-archive') {
+    const asset = catalogArchiveAsset(entry);
+    if (!asset) return false;
+    const installDir = path.join(resolveCatalogInstallRoot(entry.id, options), catalogArchiveInstallDir(entry));
+    try {
+      const marker = JSON.parse(readFileSync(path.join(installDir, '.sanmao-install.json'), 'utf8')) as Record<string, unknown>;
+      return marker.version === entry.version
+        && marker.sha256 === asset.sha256
+        && existsSync(path.join(installDir, asset.executable));
+    } catch {
+      return false;
+    }
+  }
   if (entry.installMode === 'optional-uv') {
     const root = resolveCatalogInstallRoot(entry.id, options);
-    return existsSync(path.join(root, '.venv', 'Scripts', 'python.exe'))
-      && existsSync(path.join(root, '.venv', 'Scripts', 'windows-mcp.exe'));
+    const venvRoot = path.join(root, '.venv');
+    const metadataPath = path.join(venvRoot, 'Lib', 'site-packages', `windows_mcp-${entry.version}.dist-info`, 'METADATA');
+    if (!existsSync(path.join(venvRoot, 'Scripts', 'python.exe'))
+      || !existsSync(path.join(venvRoot, 'Scripts', 'windows-mcp.exe'))
+      || !existsSync(metadataPath)) return false;
+    try {
+      const escapedVersion = entry.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`^Version:\\s*${escapedVersion}\\s*$`, 'mi').test(readFileSync(metadataPath, 'utf8'));
+    } catch {
+      return false;
+    }
   }
+  if (!entry.pkg) return false;
   const packageRoot = path.join(resolveCatalogInstallRoot(entry.id, options), 'node_modules', entry.pkg.replace('/', path.sep));
   if (!existsSync(packageRoot)) return false;
   if (existsSync(catalogEntryBinPath(entry, options))) return true;
@@ -1062,9 +1120,11 @@ export function catalogServerConfig(
     catalogId: entry.id,
     command: entry.installMode === 'optional-uv'
       ? resolveCatalogUvExecutable(dataDir)
-      : process.execPath,
+      : entry.installMode === 'optional-archive'
+        ? catalogArchiveExecutablePath(entry, options)
+        : process.execPath,
     args: entry.installMode === 'optional-uv'
-    ? ['--directory', installRoot, 'run', '--no-project', '--python', path.join(installRoot, '.venv', 'Scripts', 'python.exe'), 'windows-mcp', 'serve']
+      ? ['--directory', installRoot, 'run', '--no-project', '--python', path.join(installRoot, '.venv', 'Scripts', 'python.exe'), 'windows-mcp', 'serve', '--control-policy', 'relaxed']
       : entry.args({
       installRoot,
       dataDir,

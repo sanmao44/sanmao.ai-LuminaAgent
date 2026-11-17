@@ -7,6 +7,8 @@ import path from 'node:path';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
 import type { RuntimeProvider } from './providers';
 import { is65535Provider, isAgnesProvider, requiresPublicMediaRelay } from './video-platform';
+import { buildCangyuanVideoPayload } from './cangyuan-video-capabilities';
+import { isCangyuanProvider } from './cangyuan-provider';
 
 export type VideoProviderTask = {
   providerTaskId?: string;
@@ -144,6 +146,19 @@ function videosFrom(data: any): GeneratedVideo[] {
   const output: GeneratedVideo[] = [];
   addVideo(data, output, new Set());
   return output;
+}
+
+function cangyuanVideosFrom(value: unknown): GeneratedVideo[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const response = value as Record<string, unknown>;
+  const firstDataItem = Array.isArray(response.data) ? response.data[0] : undefined;
+  const dataUrl = firstDataItem && typeof firstDataItem === 'object' && !Array.isArray(firstDataItem)
+    ? (firstDataItem as Record<string, unknown>).url
+    : undefined;
+  const resultUrl = typeof response.video_url === 'string' ? response.video_url : dataUrl;
+  if (typeof resultUrl !== 'string') return [];
+  const url = resultUrl.trim();
+  return /^https?:\/\//i.test(url) || /^data:video\//i.test(url) ? [{ url }] : [];
 }
 
 function errorFrom(data: any, fallback: string) {
@@ -561,6 +576,22 @@ async function pollAgnesVideo(provider: RuntimeProvider, videoId: string, rawMod
 export async function submitRemoteVideo(provider: RuntimeProvider, rawModelId: string, input: VideoGenerationInput, idempotencyKey: string, signal?: AbortSignal): Promise<VideoProviderTask> {
   if (isAgnesVideoProvider(provider)) return submitAgnesVideo(provider, rawModelId, input, idempotencyKey, signal);
   const transport = resolveVideoTransport(provider);
+  if (transport === 'cangyuan-videos') {
+    const url = endpoint(provider, provider.videoGenerationPath, '/v1/videos');
+    const response = await requestJson(url, {
+      method: 'POST',
+      headers: headers(provider, idempotencyKey),
+      body: JSON.stringify(buildCangyuanVideoPayload(rawModelId, input)),
+    }, signal);
+    const data = response.data;
+    const providerTaskId = taskIdFrom(data);
+    const statusFromResponse = statusFrom(data);
+    const videos = statusFromResponse === 'failed' ? [] : cangyuanVideosFrom(data);
+    const status = videos.length ? 'done' : statusFromResponse;
+    if (status === 'failed') return { providerTaskId, status, videos, error: errorFrom(data, '沧元算力视频任务失败'), errorCode: 'CANGYUAN_VIDEO_FAILED', raw: data };
+    if (!videos.length && !providerTaskId) throw new VideoProviderError('沧元算力视频接口已响应，但没有返回视频地址或 task_id。', { code: 'CANGYUAN_VIDEO_TASK_ID_MISSING' });
+    return { providerTaskId: providerTaskId || undefined, status, videos, raw: data };
+  }
   const preparedInput = transport === 'openai-videos' && requiresPublicMediaRelay(provider, { hasVideoModel: true })
     ? await prepareRemoteVideoMedia(provider, input)
     : input;
@@ -582,25 +613,29 @@ export async function submitRemoteVideo(provider: RuntimeProvider, rawModelId: s
 export async function pollRemoteVideo(provider: RuntimeProvider, providerTaskId: string, signal?: AbortSignal, rawModelId?: string): Promise<VideoProviderTask> {
   if (isAgnesVideoProvider(provider)) return pollAgnesVideo(provider, providerTaskId, rawModelId, signal);
   const transport = resolveVideoTransport(provider);
+  const cangyuan = transport === 'cangyuan-videos';
   // Old configurations stored /v1/tasks/{id} for every provider. In auto
   // mode that value must not override the standard OpenAI-compatible status
   // endpoint; explicit transports and custom paths remain authoritative.
-  const configured = provider.videoTaskStatusPath && !(provider.videoTransport === 'auto' && !is65535Provider(provider) && provider.videoTaskStatusPath.replaceAll('{taskId}', '{id}').replaceAll('{task_id}', '{id}') === '/v1/tasks/{id}')
-    ? provider.videoTaskStatusPath
-    : (transport === 'native-task' ? '/v1/tasks/{id}' : '/v1/videos/{id}');
+  const configured = cangyuan
+    ? provider.videoTaskStatusPath || '/v1/videos/{id}'
+    : provider.videoTaskStatusPath && !(provider.videoTransport === 'auto' && !is65535Provider(provider) && provider.videoTaskStatusPath.replaceAll('{taskId}', '{id}').replaceAll('{task_id}', '{id}') === '/v1/tasks/{id}')
+      ? provider.videoTaskStatusPath
+      : (transport === 'native-task' ? '/v1/tasks/{id}' : '/v1/videos/{id}');
   if (!configured) throw new VideoProviderError('未配置视频任务查询地址');
   const pathValue = configured.replaceAll('{id}', encodeURIComponent(providerTaskId)).replaceAll('{taskId}', encodeURIComponent(providerTaskId)).replaceAll('{task_id}', encodeURIComponent(providerTaskId));
   const url = endpoint(provider, pathValue, pathValue);
   const response = await requestJson(url, { method: 'GET', headers: headers(provider) }, signal);
   const data = response.data;
   const statusFromResponse = statusFrom(data);
-  const videos = statusFromResponse === 'failed' ? [] : videosFrom(data);
+  const videos = statusFromResponse === 'failed' ? [] : cangyuan ? cangyuanVideosFrom(data) : videosFrom(data);
   const status = videos.length ? 'done' : statusFromResponse;
   return { providerTaskId, status, videos, costUsd: Number(data?.cost_usd || data?.costUsd || data?.data?.cost_usd || 0) || undefined, raw: data, ...(status === 'failed' ? { error: errorFrom(data, '视频任务失败') } : {}) };
 }
 
-export function resolveVideoTransport(provider: Pick<RuntimeProvider, 'videoTransport' | 'platform' | 'baseUrl' | 'videoBaseUrl'>): 'native-task' | 'openai-videos' {
-  if (provider.videoTransport === 'native-task' || provider.videoTransport === 'openai-videos') return provider.videoTransport;
+export function resolveVideoTransport(provider: Pick<RuntimeProvider, 'videoTransport' | 'platform' | 'baseUrl' | 'videoBaseUrl'>): 'native-task' | 'openai-videos' | 'cangyuan-videos' {
+  if (provider.videoTransport === 'native-task' || provider.videoTransport === 'openai-videos' || provider.videoTransport === 'cangyuan-videos') return provider.videoTransport;
+  if (isCangyuanProvider(provider)) return 'cangyuan-videos';
   return is65535Provider(provider as RuntimeProvider) ? 'native-task' : 'openai-videos';
 }
 

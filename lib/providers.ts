@@ -1,12 +1,17 @@
-import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderTextProtocol, ProviderType } from './types';
+import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderTextProtocol, ProviderType, VideoTransport } from './types';
 import type { ModelProviderFailure } from '@/packages/contracts/model';
 import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';
+import type { ImageOutputFormat } from '@/packages/contracts/creative';
 import type { ImageDownloadAuth } from './image-storage';
 import { inferNativeSearch } from './native-search-detection';
 import { inferModelKind } from './model-kind';
 import { agnesModelCatalog } from './agnes';
+import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';
+import type { CangyuanImageModelProfile } from './cangyuan-image-capabilities';
+import { isCangyuanProvider } from './cangyuan-provider';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -25,7 +30,7 @@ export type RuntimeProvider = {
   imageUpscaleStatusPath?: string;
   responsesPath?: string;
   textProtocol?: ProviderTextProtocol;
-  videoTransport?: 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli' | 'agnes-videos';
+  videoTransport?: VideoTransport;
   videoBaseUrl?: string;
   videoApiKey?: string;
   videoTaskPath?: string;
@@ -724,6 +729,68 @@ async function prepareProviderImageInputs(provider: RuntimeProvider, values: str
   return Promise.all(values.map((value) => prepareProviderImageInput(provider, value, signal)));
 }
 
+const CANGYUAN_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+const CANGYUAN_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+async function uploadCangyuanImage(provider: RuntimeProvider, value: string, signal?: AbortSignal) {
+  const materialized = await materializeProviderImageInput(provider, value, signal);
+  const dataUrl = /^https?:\/\//i.test(materialized)
+    ? await fetchProviderImageDataUrl(materialized, signal)
+    : materialized;
+  const parsed = imageDataUrlBytes(dataUrl);
+  if (!parsed || !CANGYUAN_IMAGE_MIME_TYPES.has(parsed.mime)) {
+    throw providerImageInputError('沧元参考图仅支持 PNG、JPEG、WebP，请转换格式后重新上传。');
+  }
+  if (!parsed.bytes.length || parsed.bytes.length > CANGYUAN_IMAGE_MAX_BYTES) {
+    throw providerImageInputError('沧元参考图不能超过 20 MB，请压缩后重新上传。');
+  }
+
+  const uploadResponse = await fetchJson(providerEndpoint(provider, undefined, '/images/uploads'), {
+    method: 'POST',
+    headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      bytes: parsed.bytes.length,
+      content_type: parsed.mime,
+      content_md5: createHash('md5').update(parsed.bytes).digest('base64'),
+    }),
+  }, 30000, signal);
+  const uploadData = uploadResponse?.data && typeof uploadResponse.data === 'object'
+    ? uploadResponse.data
+    : uploadResponse;
+  const uploadUrl = String(uploadData?.upload_url || '').trim();
+  const imageUrl = String(uploadData?.url || '').trim();
+  const headers = uploadData?.headers && typeof uploadData.headers === 'object' && !Array.isArray(uploadData.headers)
+    ? uploadData.headers as Record<string, unknown>
+    : {};
+  let parsedUploadUrl: URL;
+  try { parsedUploadUrl = new URL(uploadUrl); }
+  catch { throw new Error('沧元图片上传接口没有返回有效的 upload_url。'); }
+  if (parsedUploadUrl.protocol !== 'https:' || isPrivateImageReferenceUrl(uploadUrl) || !/^https:\/\//i.test(imageUrl) || isPrivateImageReferenceUrl(imageUrl)) {
+    throw new Error('沧元图片上传接口没有返回 HTTPS 上传地址或参考图 URL。');
+  }
+
+  const uploadHeaders = new Headers();
+  for (const [key, headerValue] of Object.entries(headers)) {
+    if (typeof headerValue === 'string' || typeof headerValue === 'number') uploadHeaders.set(key, String(headerValue));
+  }
+  let putResponse: Response;
+  try {
+    putResponse = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: uploadHeaders,
+      body: parsed.bytes,
+      cache: 'no-store',
+      redirect: 'error',
+      signal: combineSignals(signal, 30000),
+    });
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason || error;
+    throw new Error(`沧元参考图上传失败：${error instanceof Error ? error.message : '上传连接中断'}`);
+  }
+  if (!putResponse.ok) throw new Error(`沧元参考图上传失败：HTTP ${putResponse.status}`);
+  return imageUrl;
+}
+
 /**
  * Some image-model families expose high-fidelity input handling as a fixed
  * default rather than accepting the legacy input_fidelity request field.
@@ -1368,6 +1435,214 @@ async function waitForImageTask(provider: RuntimeProvider, initial: any, signal?
   throw acceptedProviderTaskError(new Error(`图片任务 ${taskId} 等待超时，请稍后到服务商控制台查看任务状态`), taskId);
 }
 
+async function waitForCangyuanImageTask(provider: RuntimeProvider, initial: any, endpoint: 'generations' | 'edits', signal?: AbortSignal) {
+  const taskId = taskIdFrom(initial);
+  if (!taskId) return normalizeImages(initial);
+  const statusUrl = providerEndpoint(provider, `/images/${endpoint}/${encodeURIComponent(taskId)}`, `/images/${endpoint}/${encodeURIComponent(taskId)}`);
+  const deadline = Date.now() + IMAGE_REQUEST_TIMEOUT;
+  let detachedFromCaller = false;
+  while (Date.now() < deadline) {
+    detachedFromCaller ||= Boolean(signal?.aborted);
+    const pollSignal = detachedFromCaller ? undefined : signal;
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 5000);
+      pollSignal?.addEventListener('abort', () => { clearTimeout(timer); reject(pollSignal.reason || new Error('GENERATION_CANCELLED')); }, { once: true });
+    });
+    let data: any;
+    try {
+      data = await fetchJson(statusUrl, { method: 'GET', headers: authHeaders(provider) }, 30000, pollSignal);
+    } catch (error) {
+      throw acceptedProviderTaskError(error, taskId);
+    }
+    const images = extractImages(data);
+    if (images.length) return normalizeImages(data);
+    const status = taskStatusFrom(data);
+    if (/(fail|error|cancel|reject|expired)/.test(status)) {
+      throw terminalProviderTaskError(String(data?.error?.message || data?.error_message || data?.error || data?.message || `沧元图片任务失败：${status}`));
+    }
+    if (/(complete|success|succeed|finished)/.test(status)) {
+      throw terminalProviderTaskError(`沧元图片任务 ${taskId} 已完成，但响应中没有可用图片结果。`);
+    }
+  }
+  throw acceptedProviderTaskError(new Error(`沧元图片任务 ${taskId} 等待超时，请稍后到服务商控制台查看任务状态`), taskId);
+}
+
+type CangyuanImageRequestInput = {
+  prompt: string;
+  references: string[];
+  mask?: string;
+  count?: number;
+  aspectRatio?: string;
+  width?: number;
+  height?: number;
+  sizeMode?: 'system' | 'custom';
+  quality?: string;
+  resolution?: string;
+  outputFormat?: ImageOutputFormat;
+  responseFormat?: 'url' | 'b64_json';
+  background?: 'transparent' | 'opaque' | 'auto';
+  fidelity?: 'high' | 'low';
+};
+
+function cangyuanParameterError(model: string, parameter: string, value: string) {
+  return new Error(`沧元模型 ${model} 的文档未确认参数 ${parameter}=${value}，请改用该模型支持的选项。`);
+}
+
+function cangyuanAspectRatioMatchesDimensions(width: number, height: number, ratio: string) {
+  const match = ratio.match(/^(\d+):(\d+)$/);
+  return Boolean(match && width * Number(match[2]) === height * Number(match[1]));
+}
+
+function isCangyuanImageSize(value: string, profile: CangyuanImageModelProfile) {
+  if (profile.sizeEnum.length) return profile.sizeEnum.includes(value);
+  return /^(?:auto|\d+(?:\.\d+)?k(?:-max)?|\d+:\d+(?:-max)?|\d{2,5}x\d{2,5})$/i.test(value);
+}
+
+function isCangyuanAspectRatio(value: string, profile: CangyuanImageModelProfile) {
+  if (profile.aspectRatioEnum.length) return profile.aspectRatioEnum.includes(value);
+  return /^\d+:\d+$/.test(value);
+}
+
+function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRequestInput) {
+  const requestedCount = Number(input.count ?? 1);
+  if (!Number.isInteger(requestedCount) || requestedCount < 1) {
+    throw new Error('沧元图片生成数量必须是正整数。');
+  }
+  const count = requestedCount;
+  const profile = getCangyuanImageModelProfile(rawModelId);
+  if (!profile) {
+    if (input.references.length) throw new Error(`沧元图片模型 ${rawModelId} 未在公开模型文档中登记，无法确认参考图支持；请改用已登记模型。`);
+    if (input.mask) throw new Error(`沧元图片模型 ${rawModelId} 未在公开模型文档中登记，无法确认蒙版支持；请改用已登记模型。`);
+    if (count > 1) throw new Error('沧元图片模型的可用参数由具体模型文档决定；当前未确认该模型支持批量 n 参数，请将生成数量设为 1。');
+    if (input.sizeMode === 'custom') throw cangyuanParameterError(rawModelId, 'size', 'custom');
+    if (input.aspectRatio && !['1:1', 'auto', '自动'].includes(input.aspectRatio)) throw cangyuanParameterError(rawModelId, 'aspect_ratio/size', input.aspectRatio);
+    if (input.resolution && !['1K', 'auto', '自动'].includes(input.resolution)) throw cangyuanParameterError(rawModelId, 'size', input.resolution);
+    if (input.quality && !['自动', 'auto'].includes(input.quality)) throw cangyuanParameterError(rawModelId, 'quality', input.quality);
+    if (input.outputFormat && input.outputFormat !== 'png') throw cangyuanParameterError(rawModelId, 'output_format', input.outputFormat);
+    if (input.background && input.background !== 'auto') throw cangyuanParameterError(rawModelId, 'background', input.background);
+    if (input.responseFormat && input.responseFormat !== 'url') throw cangyuanParameterError(rawModelId, 'response_format', input.responseFormat);
+    if (input.fidelity && input.fidelity !== 'high') throw cangyuanParameterError(rawModelId, 'input_fidelity', input.fidelity);
+    return { count, parameters: {} as Record<string, unknown> };
+  }
+
+  if (count > (profile.nMax ?? 1)) {
+    throw new Error(`沧元模型 ${rawModelId} 文档中的 n 最大值为 ${profile.nMax ?? 1}，请将生成数量调低。`);
+  }
+  if (input.references.length > (profile.imagesMaxItems ?? 0)) {
+    throw new Error(profile.imagesMaxItems
+      ? `沧元模型 ${rawModelId} 的参考图最多 ${profile.imagesMaxItems} 张。`
+      : `沧元模型 ${rawModelId} 的文档没有确认参考图输入，请移除参考图。`);
+  }
+  if (input.mask && !profile.supportsMask) throw new Error(`沧元模型 ${rawModelId} 的文档未声明支持蒙版，请移除蒙版或更换支持蒙版的模型。`);
+
+  const parameters: Record<string, unknown> = {};
+  const requestedRatio = !input.aspectRatio
+    ? '1:1'
+    : ['auto', '自动'].includes(input.aspectRatio)
+      ? undefined
+      : input.aspectRatio;
+  const customSize = input.sizeMode === 'custom';
+
+  if (customSize) {
+    if (!profile.supportsSize) throw cangyuanParameterError(rawModelId, 'size', 'custom');
+    if (!Number.isInteger(input.width) || !Number.isInteger(input.height) || Number(input.width) < 1 || Number(input.height) < 1) {
+      throw new Error(`沧元模型 ${rawModelId} 的自定义尺寸无效，请提供正整数宽高。`);
+    }
+    const size = `${input.width}x${input.height}`;
+    if (!isCangyuanImageSize(size, profile)) throw cangyuanParameterError(rawModelId, 'size', size);
+    parameters.size = size;
+    if (profile.supportsAspectRatio && requestedRatio && !['1:1', '自定义'].includes(requestedRatio)) {
+      if (!isCangyuanAspectRatio(requestedRatio, profile)) throw cangyuanParameterError(rawModelId, 'aspect_ratio', requestedRatio);
+      if (!cangyuanAspectRatioMatchesDimensions(Number(input.width), Number(input.height), requestedRatio)) {
+        throw new Error(`沧元模型 ${rawModelId} 的 aspect_ratio 与自定义尺寸不一致。`);
+      }
+      parameters.aspect_ratio = requestedRatio;
+    }
+  } else if (profile.supportsSize) {
+    const requestedValue = input.aspectRatio && !['auto', '自动', '自定义'].includes(input.aspectRatio)
+      ? input.aspectRatio.trim()
+      : undefined;
+    if (requestedValue && !profile.supportsAspectRatio && !isCangyuanImageSize(requestedValue, profile)) {
+      throw cangyuanParameterError(rawModelId, 'size', requestedValue);
+    }
+    const requestedSize = requestedValue && !profile.supportsAspectRatio && isCangyuanImageSize(requestedValue, profile)
+      ? requestedValue
+      : undefined;
+    const hasNonDefaultRatio = Boolean(requestedSize && /^\d+:\d+$/.test(requestedSize) && requestedSize !== '1:1');
+    const hasExplicitSize = Boolean(requestedSize && !/^\d+:\d+$/.test(requestedSize));
+    const resolution = input.resolution || '1K';
+    const hasNonDefaultResolution = !['1K', '自动'].includes(resolution);
+    if (profile.supportsAspectRatio && requestedValue && requestedValue !== '1:1') {
+      if (!isCangyuanAspectRatio(requestedValue, profile)) throw cangyuanParameterError(rawModelId, 'aspect_ratio', requestedValue);
+      parameters.aspect_ratio = requestedValue;
+    }
+    if (input.aspectRatio && ['auto', '自动'].includes(input.aspectRatio) && isCangyuanImageSize('auto', profile)) {
+      parameters.size = 'auto';
+    } else if (hasNonDefaultRatio && requestedSize) {
+      parameters.size = requestedSize;
+    } else if (hasExplicitSize && requestedSize) {
+      parameters.size = requestedSize;
+    } else if (hasNonDefaultResolution) {
+      if (!isCangyuanImageSize(resolution, profile)) throw cangyuanParameterError(rawModelId, 'size', resolution);
+      parameters.size = resolution;
+    } else if (!input.aspectRatio && isCangyuanImageSize('1:1', profile) && !profile.supportsAspectRatio) {
+      parameters.size = '1:1';
+    } else if (input.aspectRatio === '1:1' && isCangyuanImageSize('1:1', profile) && !profile.supportsAspectRatio) {
+      parameters.size = '1:1';
+    } else if (isCangyuanImageSize(resolution, profile)) {
+      parameters.size = '1K';
+    }
+  } else {
+    if (requestedRatio && requestedRatio !== '1:1') throw cangyuanParameterError(rawModelId, 'aspect_ratio/size', requestedRatio);
+    if (input.resolution && !['1K', 'auto', '自动'].includes(input.resolution)) throw cangyuanParameterError(rawModelId, 'size', input.resolution);
+  }
+
+  if (input.quality && input.quality !== '自动') {
+    if (!profile.qualityEnum.includes(input.quality)) throw cangyuanParameterError(rawModelId, 'quality', input.quality);
+    parameters.quality = input.quality;
+  }
+  if (input.outputFormat) {
+    if (profile.outputFormatEnum.includes(input.outputFormat)) parameters.output_format = input.outputFormat;
+    else if (input.outputFormat !== 'png') throw cangyuanParameterError(rawModelId, 'output_format', input.outputFormat);
+  }
+  if (input.background) {
+    if (profile.backgroundEnum.includes(input.background)) parameters.background = input.background;
+    else if (input.background !== 'auto') throw cangyuanParameterError(rawModelId, 'background', input.background);
+  }
+  if (input.responseFormat && input.responseFormat !== 'url') throw cangyuanParameterError(rawModelId, 'response_format', input.responseFormat);
+  if (input.fidelity && input.fidelity !== 'high') throw cangyuanParameterError(rawModelId, 'input_fidelity', input.fidelity);
+  if (count > 1) parameters.n = count;
+  return { count, parameters };
+}
+
+async function generateCangyuanImage(
+  provider: RuntimeProvider,
+  rawModelId: string,
+  input: CangyuanImageRequestInput,
+  endpoint: 'generations' | 'edits',
+  signal?: AbortSignal,
+) {
+  const { count, parameters } = buildCangyuanImageParameters(rawModelId, input);
+  const references = await Promise.all(input.references.map((reference) => uploadCangyuanImage(provider, reference, signal)));
+  const mask = input.mask ? await uploadCangyuanImage(provider, input.mask, signal) : undefined;
+  const body: Record<string, unknown> = {
+    model: rawModelId,
+    prompt: input.prompt,
+    async: true,
+    ...parameters,
+    ...(references.length ? { images: references } : {}),
+    ...(mask ? { mask } : {}),
+  };
+  const data = await fetchJson(providerEndpoint(provider, `/images/${endpoint}`, `/images/${endpoint}`), {
+    method: 'POST',
+    headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }, IMAGE_REQUEST_TIMEOUT, signal);
+  if (extractImages(data).length) return normalizeImages(data);
+  if (taskIdFrom(data)) return waitForCangyuanImageTask(provider, data, endpoint, signal);
+  return normalizeImages(data);
+}
+
 async function waitForApimartTask(provider: RuntimeProvider, initial: any, signal?: AbortSignal) {
   const taskId = taskIdFrom(initial);
   if (!taskId) throw new Error('APIMart 没有返回图片任务编号');
@@ -1423,14 +1698,33 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
   throw new Error('图片超分任务等待超时，请稍后到服务商控制台查看任务状态');
 }
 
-export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque'; references?: string[] }, signal?: AbortSignal): Promise<GeneratedImage[]> {
+export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp' | 'gif' | 'svg'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' | 'auto'; references?: string[] }, signal?: AbortSignal): Promise<GeneratedImage[]> {
   const rawReferences = input.references || [];
   if (rawReferences.some((reference) => typeof reference !== 'string' || !reference.trim())) throw new Error('参考图数据格式无效，请重新添加参考图后再提交。');
   const references = rawReferences.map(normalizeReference);
   if (references.length > MAX_IMAGE_REFERENCES) throw new Error(`图片参考最多 ${MAX_IMAGE_REFERENCES} 张，请移除多余参考后再提交。`);
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
-  if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
+  if (isCangyuanProvider(provider)) return generateCangyuanImage(provider, rawModelId, {
+    prompt: input.prompt,
+    references,
+    count: input.count,
+    aspectRatio: input.aspectRatio,
+    width: input.width,
+    height: input.height,
+    sizeMode: input.sizeMode,
+    quality: input.quality,
+    resolution: input.resolution,
+    outputFormat: input.outputFormat,
+    responseFormat: input.responseFormat,
+    background: input.background,
+  }, 'generations', signal);
+  if (isAgnesProvider(provider)) {
+    const outputFormat = input.outputFormat;
+    if (outputFormat === 'gif' || outputFormat === 'svg') throw new Error(`Agnes 图片模型不支持 ${outputFormat} 输出格式。`);
+    const background = input.background === 'auto' ? undefined : input.background;
+    return generateAgnesImage(provider, rawModelId, { ...input, count, outputFormat, background }, references, signal);
+  }
   const providerReferences = references.length ? await prepareProviderImageInputs(provider, references, signal) : [];
   const body: Record<string, unknown> = {
     model: rawModelId,
@@ -1522,7 +1816,7 @@ async function refToBlob(ref: string, index: number) {
   throw new Error(`第 ${index + 1} 张参考图格式无效`);
 }
 
-export type ImageEditInput = { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; resolution?: string; fidelity?: 'high' | 'low'; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' };
+export type ImageEditInput = { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; resolution?: string; fidelity?: 'high' | 'low'; outputFormat?: 'png' | 'jpeg' | 'webp' | 'gif' | 'svg'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' | 'auto' };
 
 export function buildImageEditRequestBody(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, references: string[], count: number, size: string) {
   const jsonBody: Record<string, unknown> = {
@@ -1550,7 +1844,16 @@ async function editImageFromProvider(provider: RuntimeProvider, rawModelId: stri
   if (references.length > MAX_IMAGE_REFERENCES) throw new Error(`图片参考最多 ${MAX_IMAGE_REFERENCES} 张，请移除多余参考后再提交。`);
   if (!references.length) throw new Error('修改图片至少需要一张参考图');
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
-  if (isAgnesProvider(provider)) return generateAgnesImage(provider, rawModelId, input, references, signal);
+  if (isCangyuanProvider(provider)) return generateCangyuanImage(provider, rawModelId, {
+    ...input,
+    references,
+  }, 'edits', signal);
+  if (isAgnesProvider(provider)) {
+    const outputFormat = input.outputFormat;
+    if (outputFormat === 'gif' || outputFormat === 'svg') throw new Error(`Agnes 图片模型不支持 ${outputFormat} 输出格式。`);
+    const background = input.background === 'auto' ? undefined : input.background;
+    return generateAgnesImage(provider, rawModelId, { ...input, outputFormat, background }, references, signal);
+  }
   const providerReferences = await prepareProviderImageInputs(provider, references, signal);
   const providerMask = input.mask ? await prepareProviderImageInput(provider, input.mask, signal) : undefined;
   const providerInput = providerMask ? { ...input, mask: providerMask } : input;

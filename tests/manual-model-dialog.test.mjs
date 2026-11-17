@@ -40,3 +40,18 @@ test('manual model dialog exposes the busy submit state', () => {
   assert.match(markup, /disabled=""/);
   assert.match(markup, />登记中…<\/button>/);
 });
+
+test('manual model dialog exposes audio and 3D categories', () => {
+  const markup = renderToStaticMarkup(createElement(ManualModelDialog, {
+    providerName: '沧元算力',
+    form: { rawId: 'vendor/song-to-3d', displayName: '', kind: '3d' },
+    busy: false,
+    Icon,
+    onChange: () => {},
+    onClose: () => {},
+    onSubmit: () => {},
+  }));
+  assert.match(markup, /class="active"[^>]*>三维<\/button>/);
+  assert.match(markup, />音频<\/button>/);
+  assert.match(markup, /按所选类型补齐通用能力/);
+});

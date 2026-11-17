@@ -19,6 +19,7 @@ import { assetRepository } from '@/lib/repositories/asset-repository';
 import Link from 'next/link';
 import LocalEditEditor from '@/components/MaskEditor';
 import VideoStudio from '@/components/VideoStudio';
+import CangyuanMediaStudio from '@/components/CangyuanMediaStudio';
 import SelectMenu from '@/components/SelectMenu';
 import JimengProviderCard from '@/components/JimengProviderCard';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
@@ -8681,6 +8682,10 @@ export default function Page() {
                             setSection('video');
                             closeSidebarOnMobile();
                         },
+                        onGoAudio: ()=>{
+                            setSection('audio');
+                            closeSidebarOnMobile();
+                        },
                         onGoTasks: ()=>{
                             setRecordTab('tasks');
                             markLogErrorNoticeSeen();
@@ -9388,6 +9393,10 @@ export default function Page() {
                                 agentModelId: activeAgentModelId,
                                 onOpenModels: ()=>setSection('models'),
                                 onOpenProviders: ()=>setSection('providers'),
+                                onNotify: notify
+                            }),
+                            section === 'audio' && /*#__PURE__*/ _jsx(CangyuanMediaStudio, {
+                                onOpenModels: ()=>setSection('models'),
                                 onNotify: notify
                             }),
                             section === 'generate' && /*#__PURE__*/ _jsxs("section", {

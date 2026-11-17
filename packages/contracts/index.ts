@@ -14,3 +14,4 @@ export * from './planning';
 export * from './video-download';
 export * from './audio-synthesis';
 export * from './provider-transfer';
+export * from './cangyuan-media';

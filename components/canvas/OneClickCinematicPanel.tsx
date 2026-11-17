@@ -52,7 +52,12 @@ export default function OneClickCinematicPanel({
   const [agnesNumFrames, setAgnesNumFrames] = useState<number>(AGNES_V20_DEFAULT_PARAMS.numFrames);
   const [agnesFrameRate, setAgnesFrameRate] = useState<number>(AGNES_V20_DEFAULT_PARAMS.frameRate);
   const [selectionError, setSelectionError] = useState("");
-  const availableModels = useMemo(() => videoModelOptions(runtime), [runtime]);
+  const availableModels = useMemo(
+    () => videoModelOptions(runtime).filter((model) =>
+      runtime?.providers.find((provider) => provider.id === model.providerId)?.videoTransport !== "cangyuan-videos",
+    ),
+    [runtime],
+  );
   const providerOptions = useMemo(() => {
     const providers = new Map<string, { id: string; name: string; count: number }>();
     for (const model of availableModels) {
@@ -227,7 +232,7 @@ export default function OneClickCinematicPanel({
             ) : (
               <small className="canvas-one-click-model-hint">
                 {!availableModels.length
-                  ? runtime ? "模型库中暂无已启用的视频模型，请先在模型库配置服务商。" : "正在读取视频模型列表…"
+                  ? runtime ? "暂无可用于图片参考的一键成片模型；仅支持提示词的视频模型可在视频工作台使用。" : "正在读取视频模型列表…"
                   : "仅显示模型库中已启用且已发布的视频模型。"}
               </small>
             )}

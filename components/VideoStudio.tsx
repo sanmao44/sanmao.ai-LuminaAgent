@@ -15,6 +15,12 @@ import { nearestOneTakeVideoDuration, normalizeOneTakeDuration } from '@/lib/one
 import { requestPromptOptimization } from '@/lib/creation/agent';
 import { AGNES_V20_DIMENSION_PRESETS, AGNES_V20_DURATION_PRESETS } from '@/lib/creation/settings';
 import { videoTaskOutputUrl, videoTaskStatus } from '@/lib/video-task-output';
+import {
+  cangyuanVideoImageDataUrlBytes,
+  cangyuanVideoImageSizeError,
+  getCangyuanVideoModelProfile,
+  isPublicHttpsUrl,
+} from '@/lib/cangyuan-video-capabilities';
 
 type VideoTask = {
   id: string;
@@ -193,7 +199,9 @@ type VideoRestorePlan = {
   lastFrame: UploadSlot | null;
   referenceImages: UploadSlot[];
   referenceVideo: UploadSlot | null;
+  referenceVideos: UploadSlot[];
   audios: UploadSlot[];
+  seed: string;
   agnesWidth: number;
   agnesHeight: number;
   agnesNumFrames: number;
@@ -219,9 +227,18 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   const usesJimengCli = isJimengProvider(provider);
   const supportsEdit = can('video-edit');
   const supportsExtend = can('video-extend');
-  const supportsFirst = can('video-first-frame') || can('video-generate') || uses65535Policy;
-  const supportsReference = can('video-reference') || can('video-generate') || uses65535Policy;
-  const supportsAudio = !usesAgnesV20 && (can('video-audio') || !uses65535Policy);
+  const cangyuanProfile = provider?.videoTransport === 'cangyuan-videos'
+    ? getCangyuanVideoModelProfile(modelForLimits?.rawId || '')
+    : null;
+  const supportsFirst = provider?.videoTransport === 'cangyuan-videos'
+    ? Boolean(cangyuanProfile?.supportsFirstLastFrames)
+    : can('video-first-frame') || can('video-generate') || uses65535Policy;
+  const supportsReference = provider?.videoTransport === 'cangyuan-videos'
+    ? Boolean(cangyuanProfile?.maxReferenceImages)
+    : can('video-reference') || can('video-generate') || uses65535Policy;
+  const supportsAudio = provider?.videoTransport === 'cangyuan-videos'
+    ? Boolean(cangyuanProfile?.maxReferenceAudios)
+    : !usesAgnesV20 && (can('video-audio') || !uses65535Policy);
   const warnings: string[] = [];
 
   if (requestedModelId && requestedModelId !== 'auto' && !targetModel) warnings.push('历史模型已不可用，已切换到当前默认模型');
@@ -247,6 +264,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   let firstFrame: UploadSlot | null = null;
   let lastFrame: UploadSlot | null = null;
   let referenceImages: UploadSlot[] = [];
+  let referenceVideos: UploadSlot[] = [];
 
   if (firstUrl && lastUrl) {
     if (supportsFirst) {
@@ -263,7 +281,9 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
       warnings.push('当前模型不支持图片输入，已切换为纯文本');
     }
   } else if (firstUrl) {
-    if (supportsFirst) {
+    if (provider?.videoTransport === 'cangyuan-videos') {
+      warnings.push('沧元算力要求首尾帧成对提供，当前仅恢复了首帧，请补充尾帧后再提交');
+    } else if (supportsFirst) {
       inputMode = 'first-frame';
       firstFrame = uploadSlot(firstUrl, '首帧', 'image');
     } else if (supportsReference) {
@@ -294,6 +314,12 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   const inputReferenceVideo = cleanUrl(input.referenceVideo)
     || (Array.isArray(input.referenceVideos) ? input.referenceVideos.map(cleanUrl).find(Boolean) || '' : '');
   const referenceVideo = inputReferenceVideo && (operation !== 'generate' || (usesAgnes25 && !usesAgnesFlash && inputMode === 'reference')) ? uploadSlot(inputReferenceVideo, '参考视频', 'video') : null;
+  if (provider?.videoTransport === 'cangyuan-videos') {
+    const cangyuanVideoUrls = input.referenceVideos?.length
+      ? input.referenceVideos.map(cleanUrl).filter(Boolean)
+      : inputReferenceVideo ? [inputReferenceVideo] : [];
+    referenceVideos = cangyuanVideoUrls.map((url, index) => uploadSlot(url, `参考视频 ${index + 1}`, 'video'));
+  }
   if (inputReferenceVideo && !referenceVideo) warnings.push('当前操作不使用参考视频，已清除该素材');
 
   const sourceAudioUrls = Array.isArray(input.audios) && input.audios.length
@@ -307,6 +333,8 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   } else if (sourceAudioUrls.length) {
     warnings.push('当前模型不支持音频输入，已清除音频素材');
   }
+
+  if (provider?.videoTransport === 'cangyuan-videos' && (referenceVideos.length || audios.length)) inputMode = 'reference';
 
   const baseLimits = getVideoModelLimits(modelForLimits, provider);
   const usesJimengMultiframe = usesJimengCli && inputMode === 'reference' && referenceImages.length > 1 && !referenceVideo && !audios.length;
@@ -324,16 +352,18 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
     : durationValues.find((value) => value >= limits.minSeconds && value <= limits.maxSeconds) || limits.minSeconds;
   if (input.seconds !== undefined && seconds !== requestedSeconds) warnings.push(`时长已调整为当前模型支持的 ${seconds} 秒`);
 
-  const requestedRatio = typeof input.aspectRatio === 'string' && allRatios.includes(input.aspectRatio) ? input.aspectRatio : '16:9';
+  const requestedRatio = provider?.videoTransport === 'cangyuan-videos'
+    ? typeof input.aspectRatio === 'string' && input.aspectRatio.trim() ? input.aspectRatio : '16:9'
+    : typeof input.aspectRatio === 'string' && allRatios.includes(input.aspectRatio) ? input.aspectRatio : '16:9';
   if (input.aspectRatio && requestedRatio !== input.aspectRatio) warnings.push('比例已调整为当前支持的选项');
   const requestedResolution = typeof input.resolution === 'string'
     ? input.resolution
     : typeof input.videoSize === 'string'
       ? input.videoSize
       : '720p';
-  const resolution = limits.resolutions.find(
-    (value) => value.toLowerCase() === requestedResolution.trim().toLowerCase(),
-  ) || limits.resolutions[0] || '720p';
+  const resolution = provider?.videoTransport === 'cangyuan-videos'
+    ? requestedResolution
+    : limits.resolutions.find((value) => value.toLowerCase() === requestedResolution.trim().toLowerCase()) || limits.resolutions[0] || '720p';
   if (input.resolution && resolution.toLowerCase() !== input.resolution.trim().toLowerCase()) warnings.push(`分辨率已调整为 ${resolution}`);
 
   return {
@@ -348,7 +378,9 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
     lastFrame,
     referenceImages,
     referenceVideo,
+    referenceVideos,
     audios,
+    seed: Number.isInteger(Number(input.seed)) ? String(input.seed) : '',
     agnesWidth: usesAgnesV20 && Number.isInteger(Number(input.width)) && Number(input.width) > 0 ? Number(input.width) : 1152,
     agnesHeight: usesAgnesV20 && Number.isInteger(Number(input.height)) && Number(input.height) > 0 ? Number(input.height) : 768,
     agnesNumFrames: usesAgnesV20 && Number.isInteger(Number(input.numFrames)) && Number(input.numFrames) >= 1 && Number(input.numFrames) <= 441 && (Number(input.numFrames) - 1) % 8 === 0 ? Number(input.numFrames) : 81,
@@ -369,6 +401,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [seconds, setSeconds] = useState(5);
   const [ratio, setRatio] = useState('16:9');
   const [resolution, setResolution] = useState('720p');
+  const [cangyuanSeed, setCangyuanSeed] = useState('');
   const [agnesWidth, setAgnesWidth] = useState(1152);
   const [agnesHeight, setAgnesHeight] = useState(768);
   const [agnesNumFrames, setAgnesNumFrames] = useState(81);
@@ -382,7 +415,11 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [lastFrame, setLastFrame] = useState<UploadSlot | null>(null);
   const [referenceImages, setReferenceImages] = useState<UploadSlot[]>([]);
   const [referenceVideo, setReferenceVideo] = useState<UploadSlot | null>(null);
+  const [referenceVideos, setReferenceVideos] = useState<UploadSlot[]>([]);
   const [audios, setAudios] = useState<UploadSlot[]>([]);
+  const [cangyuanImageUrl, setCangyuanImageUrl] = useState('');
+  const [cangyuanVideoUrl, setCangyuanVideoUrl] = useState('');
+  const [cangyuanAudioUrl, setCangyuanAudioUrl] = useState('');
   const [previewImage, setPreviewImage] = useState<UploadSlot | null>(null);
   const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [taskStatusFilter, setTaskStatusFilter] = useState<VideoTaskStatusFilter>('all');
@@ -550,6 +587,10 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
 
   const nativeTask = selectedProvider?.videoTransport === 'native-task' || selectedProvider?.platform === '65535';
   const uses65535Policy = is65535Provider(selectedProvider);
+  const usesCangyuan = selectedProvider?.videoTransport === 'cangyuan-videos';
+  const cangyuanProfile = usesCangyuan && selectedModel
+    ? getCangyuanVideoModelProfile(selectedModel.rawId)
+    : null;
   const usesJimengCli = isJimengProvider(selectedProvider);
   const usesAgnes = isAgnesProvider(selectedProvider) || selectedModel?.rawId?.toLowerCase().startsWith('agnes-');
   const usesAgnesV20 = usesAgnes && /agnes-video-v2\.0/i.test(selectedModel?.rawId || '');
@@ -595,26 +636,33 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   } : baseModelLimits, [baseModelLimits, usesJimengMultiframe]);
   const capabilities = selectedModel?.capabilities || [];
   const can = (name: string) => capabilities.includes(name as never);
-  const supportsEdit = can('video-edit');
-  const supportsExtend = can('video-extend');
+  const supportsEdit = !usesCangyuan && can('video-edit');
+  const supportsExtend = !usesCangyuan && can('video-extend');
   // A plain video-generate capability means the provider did not publish
   // granular input metadata. Keep the common image-to-video controls visible
   // in that case; only an explicit capability response should narrow them.
-  const supportsFirst = can('video-first-frame') || can('video-generate') || uses65535Policy;
-  const supportsReference = can('video-reference') || can('video-generate') || uses65535Policy;
+  const supportsFirst = usesCangyuan
+    ? Boolean(cangyuanProfile?.supportsFirstLastFrames)
+    : can('video-first-frame') || can('video-generate') || uses65535Policy;
+  const supportsReference = usesCangyuan
+    ? Boolean(cangyuanProfile?.maxReferenceImages)
+    : can('video-reference') || can('video-generate') || uses65535Policy;
   const referenceCandidates = useMemo<CreativeReference[]>(() => [
     ...(firstFrame ? [{ id: firstFrame.id || 'video-first-frame', kind: 'image' as const, name: firstFrame.name, url: firstFrame.url }] : []),
     ...(lastFrame ? [{ id: lastFrame.id || 'video-last-frame', kind: 'image' as const, name: lastFrame.name, url: lastFrame.url }] : []),
     ...referenceImages.map((item, index) => ({ id: item.id || `video-image-${index + 1}`, kind: 'image' as const, name: item.name, url: item.url })),
+    ...referenceVideos.map((item, index) => ({ id: item.id || `video-reference-video-${index + 1}`, kind: 'video' as const, name: item.name, url: item.url })),
     ...(referenceVideo ? [{ id: referenceVideo.id || 'video-reference-video', kind: 'video' as const, name: referenceVideo.name, url: referenceVideo.url }] : []),
-  ], [firstFrame, lastFrame, referenceImages, referenceVideo]);
+  ], [firstFrame, lastFrame, referenceImages, referenceVideos, referenceVideo]);
   // 65535's documented native task schema currently has no audio input field.
   // Only expose audio there when the model metadata explicitly advertises it;
   // other compatible providers keep the existing flexible control.
-  const supportsAudio = !usesAgnesV20 && (can('video-audio') || !uses65535Policy);
+  const supportsAudio = usesCangyuan
+    ? Boolean(cangyuanProfile?.maxReferenceAudios)
+    : !usesAgnesV20 && (can('video-audio') || !uses65535Policy);
   const operationOptions = [{ value: 'generate' as const, label: '生成视频', description: '根据提示词和画面输入生成视频' }, ...(supportsEdit ? [{ value: 'edit' as const, label: '视频编辑', description: '参考已有视频进行修改' }] : []), ...(supportsExtend ? [{ value: 'extend' as const, label: '视频扩展', description: '延续已有视频的镜头' }] : [])];
   const showOperationField = operationOptions.length > 1;
-  const inputModeOptions = useMemo(() => [{ value: 'text' as const, label: '纯文本 · 不使用图片', description: '从提示词直接生成' }, ...(supportsFirst ? [{ value: 'first-frame' as const, label: '首帧 · 控制开场画面', description: '上传一张开场参考图' }, { value: 'frames' as const, label: uses65535Policy ? '双参考图 · 控制起止' : '首尾帧 · 约束镜头起止', description: uses65535Policy ? '65535 将首帧和尾帧按两张参考图提交' : '上传首帧和尾帧' }] : []), ...(supportsReference ? [{ value: 'reference' as const, label: '参考图 · 保持主体风格', description: `最多添加 ${modelLimits.maxReferenceImages} 张参考图` }] : [])], [modelLimits.maxReferenceImages, supportsFirst, supportsReference, uses65535Policy]);
+  const inputModeOptions = useMemo(() => [{ value: 'text' as const, label: '纯文本 · 不使用图片', description: '从提示词直接生成' }, ...(supportsFirst ? (usesCangyuan ? [{ value: 'frames' as const, label: '首尾帧', description: '必须同时提供公网 HTTPS 首帧和尾帧' }] : [{ value: 'first-frame' as const, label: '首帧 · 控制开场画面', description: '上传一张开场参考图' }, { value: 'frames' as const, label: uses65535Policy ? '双参考图 · 控制起止' : '首尾帧 · 约束镜头起止', description: uses65535Policy ? '65535 将首帧和尾帧按两张参考图提交' : '上传首帧和尾帧' }]) : []), ...(supportsReference ? [{ value: 'reference' as const, label: usesCangyuan ? '参考素材' : '参考图 · 保持主体风格', description: usesCangyuan ? `图片最多 ${modelLimits.maxReferenceImages} 张，可添加参考视频和音频` : `最多添加 ${modelLimits.maxReferenceImages} 张参考图` }] : [])], [modelLimits.maxReferenceImages, supportsFirst, supportsReference, uses65535Policy, usesCangyuan]);
   const durationOptions = useMemo(() => {
     const values = modelLimits.fixedSeconds
       ? [modelLimits.fixedSeconds]
@@ -624,7 +672,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       );
     return values.filter((value) => value >= modelLimits.minSeconds && value <= modelLimits.maxSeconds).map((value) => ({ value, label: `${value} 秒` }));
   }, [modelLimits]);
-  const ratioOptions = allRatios.map((value) => ({ value, label: value === 'auto' ? 'Auto' : value, description: value === 'auto' ? '模型自选 / 跟随首帧' : value.includes(':') ? (value.split(':')[0] === value.split(':')[1] ? '方形' : Number(value.split(':')[0]) > Number(value.split(':')[1]) ? '横屏' : '竖屏') : '模型自选' }));
+  const ratioOptions = (usesCangyuan && cangyuanProfile ? cangyuanProfile.suggestedAspectRatios : allRatios).map((value) => ({ value, label: value === 'auto' ? 'Auto' : value, description: value === 'auto' ? '模型自选 / 跟随首帧' : value.includes(':') ? (value.split(':')[0] === value.split(':')[1] ? '方形' : Number(value.split(':')[0]) > Number(value.split(':')[1]) ? '横屏' : '竖屏') : '模型自选' }));
   const resolutionOptions = modelLimits.resolutions.map((value) => ({ value, label: value, description: value === '480p' ? '快速生成' : value === '1080p' ? '高清' : '推荐' }));
   const selectedAgnesV20Duration = AGNES_V20_DURATION_PRESETS.find((preset) => preset.frames === agnesNumFrames && preset.frameRate === agnesFrameRate);
   const selectedAgnesV20Dimensions = AGNES_V20_DIMENSION_PRESETS.find((preset) => preset.width === agnesWidth && preset.height === agnesHeight);
@@ -675,6 +723,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     if (!durationOptions.some((option) => option.value === seconds)) setSeconds(durationOptions[0]?.value || modelLimits.minSeconds);
     if (!modelLimits.resolutions.includes(resolution)) setResolution(modelLimits.resolutions[0] || '720p');
     setReferenceImages((old) => old.length > modelLimits.maxReferenceImages ? old.slice(0, modelLimits.maxReferenceImages) : old);
+    setReferenceVideos((old) => old.length > modelLimits.maxReferenceVideos ? old.slice(0, modelLimits.maxReferenceVideos) : old);
     setAudios((old) => !supportsAudio ? [] : old.length > modelLimits.maxAudios ? old.slice(0, modelLimits.maxAudios) : old);
   }, [durationOptions, modelLimits, resolution, seconds, supportsAudio]);
 
@@ -773,6 +822,14 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     if (!input?.files?.[0]) return;
     try {
       const file = input.files[0];
+      if (usesCangyuan && kind === 'image' && cangyuanProfile) {
+        const sizeError = cangyuanVideoImageSizeError(cangyuanProfile.publicModel, file.size);
+        if (sizeError) {
+          onNotify(`${file.name}：${sizeError}`);
+          input.value = '';
+          return;
+        }
+      }
       onChange({ name: file.name, url: await readFile(file), kind });
     } catch (error) { onNotify(error instanceof Error ? error.message : '读取文件失败'); }
     input.value = '';
@@ -783,6 +840,13 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     const next = [...referenceImages];
     for (const file of Array.from(files).slice(0, Math.max(0, modelLimits.maxReferenceImages - next.length))) {
       if (!file.type.startsWith('image/')) continue;
+      if (usesCangyuan && cangyuanProfile) {
+        const sizeError = cangyuanVideoImageSizeError(cangyuanProfile.publicModel, file.size);
+        if (sizeError) {
+          onNotify(`${file.name}：${sizeError}`);
+          continue;
+        }
+      }
       next.push({ name: file.name, url: await readFile(file), kind: 'image' });
     }
     setReferenceImages(next);
@@ -817,6 +881,24 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setPrompt((value) => value.replace(/@[0-9]+\s*/g, '').replace(/[ \t]{2,}/g, ' '));
   }
 
+  function addCangyuanUrl(kind: 'image' | 'video' | 'audio') {
+    const value = (kind === 'image' ? cangyuanImageUrl : kind === 'video' ? cangyuanVideoUrl : cangyuanAudioUrl).trim();
+    if (!isPublicHttpsUrl(value)) return onNotify('沧元算力参考素材必须使用公网 HTTPS URL；本地文件和内网地址不可用。');
+    if (kind === 'image') {
+      if (referenceImages.length >= (cangyuanProfile?.maxReferenceImages || 0)) return onNotify(`参考图片最多添加 ${cangyuanProfile?.maxReferenceImages || 0} 张。`);
+      setReferenceImages((old) => [...old, uploadSlot(value, `参考图 ${old.length + 1}`, 'image')]);
+      setCangyuanImageUrl('');
+    } else if (kind === 'video') {
+      if (referenceVideos.length >= (cangyuanProfile?.maxReferenceVideos || 0)) return onNotify(`参考视频最多添加 ${cangyuanProfile?.maxReferenceVideos || 0} 个。`);
+      setReferenceVideos((old) => [...old, uploadSlot(value, `参考视频 ${old.length + 1}`, 'video')]);
+      setCangyuanVideoUrl('');
+    } else {
+      if (audios.length >= (cangyuanProfile?.maxReferenceAudios || 0)) return onNotify(`参考音频最多添加 ${cangyuanProfile?.maxReferenceAudios || 0} 段。`);
+      setAudios((old) => [...old, uploadSlot(value, `参考音频 ${old.length + 1}`, 'audio')]);
+      setCangyuanAudioUrl('');
+    }
+  }
+
   function hasDraft() {
     return hasVideoStudioDraftContent({
       prompt,
@@ -830,7 +912,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       agnesHeight,
       agnesNumFrames,
       agnesFrameRate,
-      hasUnpersistedMedia: Boolean(firstFrame || lastFrame || referenceImages.length || referenceVideo || audios.length || draftHadMedia),
+      seed: cangyuanSeed,
+      hasUnpersistedMedia: Boolean(firstFrame || lastFrame || referenceImages.length || referenceVideo || referenceVideos.length || audios.length || draftHadMedia),
     }, defaultModelId || 'auto');
   }
 
@@ -854,7 +937,9 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     setLastFrame(plan.lastFrame);
     setReferenceImages(plan.referenceImages);
     setReferenceVideo(plan.referenceVideo);
+    setReferenceVideos(plan.referenceVideos);
     setAudios(plan.audios);
+    setCangyuanSeed(plan.seed);
     setAgnesWidth(plan.agnesWidth);
     setAgnesHeight(plan.agnesHeight);
     setAgnesNumFrames(plan.agnesNumFrames);
@@ -893,6 +978,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       setAgnesHeight(draft.agnesHeight);
       setAgnesNumFrames(draft.agnesNumFrames);
       setAgnesFrameRate(draft.agnesFrameRate);
+      setCangyuanSeed(draft.seed === undefined ? '' : String(draft.seed));
       setDraftHadMedia(draft.hasUnpersistedMedia);
       setDraftNoticeVisible(draft.hasUnpersistedMedia);
     }
@@ -902,7 +988,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   useEffect(() => {
     if (!draftReady) return;
     if (explicitPrefillAtMount.current && !draftInteractionStarted.current) return;
-    const hasMedia = Boolean(firstFrame || lastFrame || referenceImages.length || referenceVideo || audios.length);
+    const hasMedia = Boolean(firstFrame || lastFrame || referenceImages.length || referenceVideo || referenceVideos.length || audios.length);
     const hasMediaIntent = hasMedia || inputMode !== 'text' || draftHadMedia;
     const hasContent = Boolean(
       prompt.trim()
@@ -916,6 +1002,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       || agnesHeight !== 768
       || agnesNumFrames !== 81
       || agnesFrameRate !== 24
+      || cangyuanSeed !== ''
       || hasMediaIntent
       || draftHadMedia,
     );
@@ -937,10 +1024,11 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       agnesHeight,
       agnesNumFrames,
       agnesFrameRate,
+      seed: cangyuanSeed,
       hasUnpersistedMedia: hasMediaIntent,
     });
     setDraftStatus(saved ? 'saved' : 'error');
-  }, [draftReady, prompt, modelId, operation, inputMode, seconds, ratio, resolution, agnesWidth, agnesHeight, agnesNumFrames, agnesFrameRate, firstFrame, lastFrame, referenceImages, referenceVideo, audios, draftHadMedia, defaultModelId]);
+  }, [draftReady, prompt, modelId, operation, inputMode, seconds, ratio, resolution, agnesWidth, agnesHeight, agnesNumFrames, agnesFrameRate, cangyuanSeed, firstFrame, lastFrame, referenceImages, referenceVideo, referenceVideos, audios, draftHadMedia, defaultModelId]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -948,22 +1036,48 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     if (!models.length) return onNotify('请先在模型库启用一个视频模型');
     if (inputMode === 'first-frame' && !firstFrame) return onNotify('请先添加首帧图片');
     if (inputMode === 'frames' && (!firstFrame || !lastFrame)) return onNotify(`${uses65535Policy ? '双参考图' : '首尾帧'}模式请先添加首帧和尾帧图片`);
-    if (inputMode === 'reference' && !referenceImages.length && !(usesAgnes25 && (referenceVideo || audios.length))) return onNotify('参考图模式请先添加图片、视频或音频素材');
+    if (inputMode === 'reference' && !referenceImages.length && !referenceVideos.length && !referenceVideo && !audios.length) return onNotify('参考素材模式请先添加图片、视频或音频素材');
     if (referenceImages.length > modelLimits.maxReferenceImages) return onNotify(`当前模型最多接收 ${modelLimits.maxReferenceImages} 张参考图`);
     if (audios.length > modelLimits.maxAudios) return onNotify(`当前模型最多接收 ${modelLimits.maxAudios} 段音频`);
     if (usesAgnesV20 && (!Number.isInteger(agnesNumFrames) || agnesNumFrames < 1 || agnesNumFrames > 441 || (agnesNumFrames - 1) % 8 !== 0)) return onNotify('Agnes V2.0 帧数必须不超过 441 且满足 8n + 1');
     if (usesAgnesV20 && (!Number.isInteger(agnesWidth) || !Number.isInteger(agnesHeight) || agnesWidth < 64 || agnesHeight < 64 || agnesWidth > 3840 || agnesHeight > 3840 || agnesWidth % 64 !== 0 || agnesHeight % 64 !== 0)) return onNotify('Agnes V2.0 宽度和高度必须是 64 的倍数，范围为 64–3840');
     if (usesAgnesV20 && (!Number.isInteger(agnesFrameRate) || agnesFrameRate < 1 || agnesFrameRate > 60)) return onNotify('Agnes V2.0 帧率必须在 1–60 之间');
     if (uses65535Policy && audios.length && !can('video-audio')) return onNotify('当前 65535 视频模型未声明音频输入，已自动阻止提交；移除音频即可继续生成。');
+    if (usesCangyuan && !cangyuanProfile && inputMode !== 'text') return onNotify('该沧元型号尚未核实参考素材能力，请改用文生视频。');
+    if (usesCangyuan && cangyuanProfile) {
+      const localImages = [firstFrame?.url, lastFrame?.url, ...referenceImages.map((item) => item.url)]
+        .filter((value): value is string => Boolean(value));
+      for (const value of localImages) {
+        const byteLength = cangyuanVideoImageDataUrlBytes(value);
+        if (byteLength === null) continue;
+        const sizeError = cangyuanVideoImageSizeError(cangyuanProfile.publicModel, byteLength);
+        if (sizeError) return onNotify(sizeError);
+      }
+      if (!Number.isInteger(seconds) || seconds < cangyuanProfile.minSeconds || seconds > cangyuanProfile.maxSeconds) return onNotify(`时长必须是 ${cangyuanProfile.minSeconds}–${cangyuanProfile.maxSeconds} 秒的整数。`);
+      if (!ratio.trim() || !resolution.trim()) return onNotify('比例和分辨率不能为空。');
+      if (cangyuanSeed.trim() && !Number.isSafeInteger(Number(cangyuanSeed))) return onNotify('随机种子必须是整数。');
+      if (inputMode === 'frames') {
+        if (!firstFrame || !lastFrame) return onNotify('沧元算力首帧和尾帧必须成对提供。');
+        if ([...referenceImages, ...referenceVideos, ...audios].length) return onNotify('首尾帧不能与参考图、参考视频或参考音频同时使用。');
+        if (![firstFrame.url, lastFrame.url].every(isPublicHttpsUrl)) return onNotify('首帧和尾帧必须使用公网 HTTPS URL。');
+      }
+      if (inputMode === 'reference') {
+        if (!referenceImages.length && !referenceVideos.length && !audios.length) return onNotify('请至少添加一项参考素材。');
+        if (referenceImages.length > cangyuanProfile.maxReferenceImages || referenceVideos.length > cangyuanProfile.maxReferenceVideos || audios.length > cangyuanProfile.maxReferenceAudios) return onNotify('参考素材数量超过 Seedance 2.0 Fast 的文档上限。');
+        if (![...referenceImages, ...referenceVideos, ...audios].every((item) => isPublicHttpsUrl(item.url))) return onNotify('参考图片、视频和音频必须使用公网 HTTPS URL。');
+      }
+    }
     const naturalReferenceReplacement = replaceNaturalReferenceLabels(prompt, referenceCandidates);
     const referenceSelection = selectCreativeReferences(naturalReferenceReplacement.value, referenceCandidates);
     if (referenceSelection.invalidNumbers.length) return onNotify(`提示词中的引用编号无效：${referenceSelection.invalidNumbers.map((number) => `@${number}`).join('、')}`);
     const selectedReferences = referenceSelection.references;
     const usesSelectedReferences = (id?: string) => !referenceSelection.hasMentions || Boolean(id && selectedReferences.some((reference) => reference.id === id));
-    const selectedFirstFrame = firstFrame && usesSelectedReferences(firstFrame.id) ? firstFrame : null;
-    const selectedLastFrame = lastFrame && usesSelectedReferences(lastFrame.id) ? lastFrame : null;
+    const selectedFirstFrame = firstFrame && (usesCangyuan || usesSelectedReferences(firstFrame.id)) ? firstFrame : null;
+    const selectedLastFrame = lastFrame && (usesCangyuan || usesSelectedReferences(lastFrame.id)) ? lastFrame : null;
     const selectedReferenceImages = referenceImages.filter((item) => usesSelectedReferences(item.id));
-    const selectedReferenceVideos = referenceCandidates.filter((reference) => reference.kind === 'video' && (!referenceSelection.hasMentions || selectedReferences.some((item) => item.id === reference.id)));
+    const selectedReferenceVideos = referenceCandidates.filter((reference) => reference.kind === 'video'
+      && (!referenceSelection.hasMentions || selectedReferences.some((item) => item.id === reference.id))
+      && (!usesCangyuan || referenceVideos.some((item) => item.id === reference.id)));
     const submittedPrompt = naturalReferenceReplacement.value;
     setBusy(true);
     try {
@@ -972,17 +1086,20 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       const input: VideoGenerationInput = {
         prompt: submittedPrompt,
         operation,
-        ...(!usesAgnesV20 && !inheritsVideoSettings ? { seconds } : {}),
-        ...(!usesAgnesV20 && !omitsAspectRatioResolution ? { aspectRatio: ratio, resolution } : {}),
+        ...(!usesAgnesV20 && (!usesCangyuan || Boolean(cangyuanProfile)) && !inheritsVideoSettings ? { seconds } : {}),
+        ...(!usesAgnesV20 && (!usesCangyuan || Boolean(cangyuanProfile)) && !omitsAspectRatioResolution ? { aspectRatio: ratio, resolution } : {}),
         firstFrame: (inputMode === 'first-frame' || inputMode === 'frames') ? selectedFirstFrame?.url : undefined,
         lastFrame: inputMode === 'frames' ? selectedLastFrame?.url : undefined,
         referenceImages: inputMode === 'reference' ? selectedReferenceImages.map((item) => item.url).filter((value): value is string => Boolean(value)) : [],
         referenceVideos: (inputMode === 'reference' || operation !== 'generate') ? selectedReferenceVideos.map((item) => item.url).filter((value): value is string => Boolean(value)) : [],
-        referenceVideo: usesAgnes
+        referenceVideo: usesCangyuan ? undefined : usesAgnes
           ? (!usesAgnesV20 && !usesAgnesFlash && inputMode === 'reference' ? selectedReferenceVideos[0]?.url : undefined)
           : (inputMode === 'reference' || operation !== 'generate') ? selectedReferenceVideos[0]?.url || (!referenceSelection.hasMentions ? referenceVideo?.url : undefined) : undefined,
-        audios: usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios.map((item) => item.url) : []) : audios.map((item) => item.url),
-        audio: usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios[0]?.url : undefined) : audios[0]?.url,
+        audios: usesCangyuan ? (inputMode === 'reference' ? audios.map((item) => item.url) : []) : usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios.map((item) => item.url) : []) : audios.map((item) => item.url),
+        audio: usesCangyuan ? undefined : usesAgnes ? (usesAgnes25 && inputMode === 'reference' ? audios[0]?.url : undefined) : audios[0]?.url,
+        ...(usesCangyuan && cangyuanProfile ? {
+          ...(cangyuanSeed.trim() ? { seed: Number(cangyuanSeed) } : {}),
+        } : {}),
         ...(usesAgnes && !usesAgnesV20 ? { videoMode: inputMode === 'text' ? 'text' as const : inputMode === 'reference' ? 'reference' as const : 'keyframe' as const } : {}),
         ...(usesAgnesV20 ? { width: agnesWidth, height: agnesHeight, numFrames: agnesNumFrames, frameRate: agnesFrameRate } : {}),
         ...(usesAgnes25 ? { videoSize: resolution.toUpperCase() as '720P' | '960P' | '2K' } : {}),
@@ -1096,12 +1213,20 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
               />
             </label>
             {showOperationField && <label className="video-field"><span>操作类型</span><SelectMenu value={operation} onChange={setOperation} options={operationOptions} ariaLabel="操作类型" /></label>}
-            {inputModeOptions.length > 1 && <label className="video-field video-input-mode-field"><span>生成方式</span><SelectMenu value={inputMode} onChange={setInputMode} options={inputModeOptions.map((option) => ({ ...option, label: option.value === 'text' ? '文生视频' : option.value === 'first-frame' ? '图生视频 · 首帧' : option.value === 'frames' ? (uses65535Policy ? '图生视频 · 双参考图' : '图生视频 · 首尾帧') : '参考图生视频' }))} ariaLabel="生成方式" /></label>}
+          {inputModeOptions.length > 1 && <label className="video-field video-input-mode-field"><span>生成方式</span><SelectMenu value={inputMode} onChange={(value) => {
+            setInputMode(value);
+            if (usesCangyuan) {
+              if (value === 'frames') { setReferenceImages([]); setReferenceVideos([]); setAudios([]); }
+              else if (value === 'reference') { setFirstFrame(null); setLastFrame(null); }
+              else { setFirstFrame(null); setLastFrame(null); setReferenceImages([]); setReferenceVideos([]); setAudios([]); }
+            }
+          }} options={inputModeOptions.map((option) => ({ ...option, label: option.value === 'text' ? '文生视频' : option.value === 'first-frame' ? '图生视频 · 首帧' : option.value === 'frames' ? (uses65535Policy ? '图生视频 · 双参考图' : '图生视频 · 首尾帧') : usesCangyuan ? '参考素材' : '参考图生视频' }))} ariaLabel="生成方式" /></label>}
           </div>
+          {usesCangyuan && <div className={`video-model-notice${cangyuanProfile ? '' : ' warning'}`}><strong>沧元算力视频模型</strong><span>{cangyuanProfile ? `${cangyuanProfile.publicModel}：时长 ${cangyuanProfile.minSeconds}–${cangyuanProfile.maxSeconds} 秒；比例和分辨率为建议值；参考图最多 ${cangyuanProfile.maxReferenceImages} 张、视频和音频各 ${cangyuanProfile.maxReferenceVideos} 个。素材需要公网 HTTPS，首尾帧必须成对且不能与参考素材同时使用。每张参考图及首尾帧不超过 30 MiB；本地上传会预检，已有 HTTPS 图片的大小无法在提交前确认，由服务商校验。` : '该型号尚未核实专属参数，目前仅提交模型和提示词。'}</span></div>}
           <details className="video-advanced-details">
             <summary><span>模型提示与高级参数</span><small>限制说明、媒体处理和特殊模型参数</small></summary>
             <div className="video-advanced-body">
-         {modelLimits.notes.length > 0 && <div className="video-model-notice"><strong>当前模型限制</strong><span>{modelLimits.notes.join(' · ')}{usesAgnes25 && inputMode === 'reference' ? ' · 提示词中的素材请使用 <Picture N>、<Audio N>、<Video N>' : ''}</span></div>}
+         {modelLimits.notes.length > 0 && !usesCangyuan && <div className="video-model-notice"><strong>当前模型限制</strong><span>{modelLimits.notes.join(' · ')}{usesAgnes25 && inputMode === 'reference' ? ' · 提示词中的素材请使用 <Picture N>、<Audio N>、<Video N>' : ''}</span></div>}
          {usesMediaRelay && inputMode !== 'text' && <div className={`video-model-notice video-media-relay-notice ${mediaStatus?.mode === 'unavailable' ? 'warning' : ''}`}>
            <div><strong>{mediaStatus?.mode === 'relay' ? '本地图片会自动安全处理' : mediaStatus?.mode === 'self-hosted' ? '本地图片已配置安全访问' : mediaStatus?.relayConfigured ? '自动图片中转暂不可达' : '正在检查图片处理服务'}</strong>
            <span>{mediaStatus?.mode === 'relay' ? '上传图片只会短暂保存，约 30 分钟后自动失效；公网图片不会重复上传。' : mediaStatus?.mode === 'self-hosted' ? '当前使用已配置的自托管媒体地址，提交前会自动生成临时访问链接。' : mediaStatus?.relayConfigured ? '后台正在重建临时通道，恢复后无需重启；也可以点击重新检查。' : '普通用户无需配置地址；如果检查失败，请稍后点击重试，或联系管理员。'}</span></div>
@@ -1110,7 +1235,13 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         {nativeTask && <div className="video-model-notice"><strong>{uses65535Policy ? '本地素材已自动处理' : '原生任务素材处理'}</strong><span>{uses65535Policy ? '65535 仅接受 first_frame 或 reference；首尾帧会按两张参考图提交。本地视频在 64 MiB 内会自动直传，超过限制时会在提交前拦截，不会扣费。' : '本地素材会按当前原生异步接口的要求处理；超出接口安全上限时会在提交前拦截，不会扣费。'}</span></div>}
         {operation !== 'generate' && modelLimits.inheritVideoSettingsFor?.includes(operation) && <div className="video-model-notice warning"><strong>参数沿用原视频</strong><span>当前操作不会使用自定义时长、比例和分辨率，输出将继承输入视频设置。</span></div>}
         {operation !== 'generate' && !modelLimits.inheritVideoSettingsFor?.includes(operation) && modelLimits.omitAspectRatioResolutionFor?.includes(operation) && <div className="video-model-notice warning"><strong>比例与分辨率沿用原视频</strong><span>当前续写操作不提交自定义比例和分辨率，仅使用续写时长。</span></div>}
-          {!usesAgnesV20 && <div className="video-option-segment"><span>{usesJimengMultiframe ? '转场参数' : '基础参数'}</span><div><label>{usesJimengMultiframe ? '转场时长' : '时长'}<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel={usesJimengMultiframe ? '转场时长' : '视频时长'} /></label><label>比例<SelectMenu value={ratio} onChange={setRatio} options={ratioOptions} ariaLabel="视频比例" /></label><label>分辨率<SelectMenu value={resolution} onChange={setResolution} options={resolutionOptions} ariaLabel="视频分辨率" /></label></div></div>}
+          {!usesAgnesV20 && !usesCangyuan && <div className="video-option-segment"><span>{usesJimengMultiframe ? '转场参数' : '基础参数'}</span><div><label>{usesJimengMultiframe ? '转场时长' : '时长'}<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel={usesJimengMultiframe ? '转场时长' : '视频时长'} /></label><label>比例<SelectMenu value={ratio} onChange={setRatio} options={ratioOptions} ariaLabel="视频比例" /></label><label>分辨率<SelectMenu value={resolution} onChange={setResolution} options={resolutionOptions} ariaLabel="视频分辨率" /></label></div></div>}
+          {usesCangyuan && cangyuanProfile && <div className="video-option-segment cangyuan-video-parameters"><span>{selectedModel?.displayName || cangyuanProfile.publicModel} 参数</span><div>
+            <label>时长<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel="沧元视频时长" /></label>
+            <label>比例建议，可自定义<input aria-label="沧元视频比例" list="video-studio-cangyuan-ratios" value={ratio} onChange={(event) => setRatio(event.target.value)} placeholder="例如 16:9" /><datalist id="video-studio-cangyuan-ratios">{cangyuanProfile.suggestedAspectRatios.map((value) => <option key={value} value={value} />)}</datalist></label>
+            <label>分辨率建议，可自定义<input aria-label="沧元视频分辨率" list="video-studio-cangyuan-resolutions" value={resolution} onChange={(event) => setResolution(event.target.value)} placeholder="例如 720p" /><datalist id="video-studio-cangyuan-resolutions">{cangyuanProfile.suggestedResolutions.map((value) => <option key={value} value={value} />)}</datalist></label>
+            <label>随机种子（可选）<input aria-label="沧元视频随机种子" type="number" step={1} value={cangyuanSeed} onChange={(event) => setCangyuanSeed(event.target.value)} placeholder="留空使用随机种子" /></label>
+          </div></div>}
          {usesAgnesV20 && <div className="video-option-segment video-v20-parameter-panel">
           <div className="video-v20-heading"><span>V2.0 专属参数</span><small>旧版接口用帧数控制时长，不能直接填写秒数。</small></div>
           <div className="video-v20-preset-group">
@@ -1138,11 +1269,24 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
           </details>
         <div className="video-input-heading"><span>画面与素材</span><small>模型不支持的输入会自动收起</small></div>
           <div className="video-upload-grid">
-          {(inputMode === 'first-frame' || inputMode === 'frames') && <UploadSlot label="首帧" value={firstFrame} onClick={() => inputRefs.current.first?.click()} onRemove={() => setFirstFrame(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.first = node; }} accept="image/*" onChange={() => void selectFile('first', setFirstFrame, 'image')} />}
-          {inputMode === 'frames' && <UploadSlot label="尾帧" value={lastFrame} onClick={() => inputRefs.current.last?.click()} onRemove={() => setLastFrame(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.last = node; }} accept="image/*" onChange={() => void selectFile('last', setLastFrame, 'image')} />}
-          {inputMode === 'reference' && <ReferenceImageTray items={referenceImages} maxItems={modelLimits.maxReferenceImages} onAdd={addReferences} onRemove={(index) => setReferenceImages((old) => old.filter((_, itemIndex) => itemIndex !== index))} onClear={clearReferences} onMove={moveReference} onReorder={reorderReferences} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.refs = node; }} />}
+          {usesCangyuan && cangyuanProfile && inputMode === 'frames' && <div className="video-cangyuan-frames">
+            <label>首帧公网 HTTPS URL<input aria-label="沧元首帧 URL" type="url" value={firstFrame?.url || ''} onChange={(event) => setFirstFrame(event.target.value ? { id: 'cangyuan-first-frame', name: '首帧', url: event.target.value, kind: 'image' } : null)} placeholder="https://..." /></label>
+            <label>尾帧公网 HTTPS URL<input aria-label="沧元尾帧 URL" type="url" value={lastFrame?.url || ''} onChange={(event) => setLastFrame(event.target.value ? { id: 'cangyuan-last-frame', name: '尾帧', url: event.target.value, kind: 'image' } : null)} placeholder="https://..." /></label>
+          </div>}
+          {!usesCangyuan && (inputMode === 'first-frame' || inputMode === 'frames') && <UploadSlot label="首帧" value={firstFrame} onClick={() => inputRefs.current.first?.click()} onRemove={() => setFirstFrame(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.first = node; }} accept="image/*" onChange={() => void selectFile('first', setFirstFrame, 'image')} />}
+          {!usesCangyuan && inputMode === 'frames' && <UploadSlot label="尾帧" value={lastFrame} onClick={() => inputRefs.current.last?.click()} onRemove={() => setLastFrame(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.last = node; }} accept="image/*" onChange={() => void selectFile('last', setLastFrame, 'image')} />}
+          {!usesCangyuan && inputMode === 'reference' && <ReferenceImageTray items={referenceImages} maxItems={modelLimits.maxReferenceImages} onAdd={addReferences} onRemove={(index) => setReferenceImages((old) => old.filter((_, itemIndex) => itemIndex !== index))} onClear={clearReferences} onMove={moveReference} onReorder={reorderReferences} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.refs = node; }} />}
+          {usesCangyuan && cangyuanProfile && inputMode === 'reference' && <div className="video-cangyuan-reference-fields">
+            <div className="video-cangyuan-url-control"><label>参考图片 URL<input aria-label="沧元参考图片 URL" type="url" value={cangyuanImageUrl} onChange={(event) => setCangyuanImageUrl(event.target.value)} placeholder="https://..." /></label><button type="button" disabled={referenceImages.length >= cangyuanProfile.maxReferenceImages} onClick={() => addCangyuanUrl('image')}>添加图片</button></div>
+            {referenceImages.map((item, index) => <div className="video-cangyuan-reference-item" key={item.id || item.url}><span>图片 {index + 1}</span><a href={item.url} target="_blank" rel="noreferrer">{item.url}</a><button type="button" aria-label={`移除参考图片 ${index + 1}`} onClick={() => setReferenceImages((old) => old.filter((_, itemIndex) => itemIndex !== index))}>移除</button></div>)}
+            <div className="video-cangyuan-url-control"><label>参考视频 URL<input aria-label="沧元参考视频 URL" type="url" value={cangyuanVideoUrl} onChange={(event) => setCangyuanVideoUrl(event.target.value)} placeholder="https://..." /></label><button type="button" disabled={referenceVideos.length >= cangyuanProfile.maxReferenceVideos} onClick={() => addCangyuanUrl('video')}>添加视频</button></div>
+            {referenceVideos.map((item, index) => <div className="video-cangyuan-reference-item" key={item.id || item.url}><span>视频 {index + 1}</span><a href={item.url} target="_blank" rel="noreferrer">{item.url}</a><button type="button" aria-label={`移除参考视频 ${index + 1}`} onClick={() => setReferenceVideos((old) => old.filter((_, itemIndex) => itemIndex !== index))}>移除</button></div>)}
+            <div className="video-cangyuan-url-control"><label>参考音频 URL<input aria-label="沧元参考音频 URL" type="url" value={cangyuanAudioUrl} onChange={(event) => setCangyuanAudioUrl(event.target.value)} placeholder="https://..." /></label><button type="button" disabled={audios.length >= cangyuanProfile.maxReferenceAudios} onClick={() => addCangyuanUrl('audio')}>添加音频</button></div>
+            {audios.map((item, index) => <div className="video-cangyuan-reference-item" key={item.id || item.url}><span>音频 {index + 1}</span><a href={item.url} target="_blank" rel="noreferrer">{item.url}</a><button type="button" aria-label={`移除参考音频 ${index + 1}`} onClick={() => setAudios((old) => old.filter((_, itemIndex) => itemIndex !== index))}>移除</button></div>)}
+            <small>参考素材必须能被公网访问；图片、视频、音频上限分别为 {cangyuanProfile.maxReferenceImages}、{cangyuanProfile.maxReferenceVideos}、{cangyuanProfile.maxReferenceAudios} 个。</small>
+          </div>}
            {((operation === 'edit' || operation === 'extend') || (usesAgnes25 && !usesAgnesFlash && inputMode === 'reference')) && <UploadSlot label="参考视频" value={referenceVideo} onClick={() => inputRefs.current.video?.click()} onRemove={() => setReferenceVideo(null)} onPreview={setPreviewImage} inputRef={(node) => { inputRefs.current.video = node; }} accept="video/*" onChange={() => void selectFile('video', setReferenceVideo, 'video')} />}
-          {supportsAudio && <AudioUploadTray items={audios} maxItems={modelLimits.maxAudios} onAdd={addAudios} onRemove={(index) => setAudios((old) => old.filter((_, itemIndex) => itemIndex !== index))} inputRef={(node) => { inputRefs.current.audio = node; }} />}
+          {supportsAudio && !usesCangyuan && <AudioUploadTray items={audios} maxItems={modelLimits.maxAudios} onAdd={addAudios} onRemove={(index) => setAudios((old) => old.filter((_, itemIndex) => itemIndex !== index))} inputRef={(node) => { inputRefs.current.audio = node; }} />}
           </div>
         </div>
         <button className="video-primary-button video-submit" type="submit" disabled={busy}><span>{busy ? '提交中…' : '开始生成视频'}</span><b>↗</b></button>

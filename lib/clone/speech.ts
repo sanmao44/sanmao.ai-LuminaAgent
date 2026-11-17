@@ -9,7 +9,9 @@
  *    落盘前按响应头 + 魔数判断真实格式，避免把 wav 存成 .mp3 导致时长探测失败。
  */
 import { authHeaders, runtimeBaseUrl, type RuntimeProvider } from '../providers';
+import { isCangyuanProvider } from '../cangyuan-provider';
 import { getRuntimeModel } from '../store';
+import { getCangyuanSpeechModelProfile, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
 
 export type SpeechRuntime = NonNullable<Awaited<ReturnType<typeof getRuntimeModel>>>;
 
@@ -24,7 +26,16 @@ export function speechEndpoint(provider: RuntimeProvider) {
 }
 
 /** 判断音频容器：优先响应头，响应头不靠谱时按文件头兜底。 */
-export function speechContentType(buffer: Buffer, headerType?: string | null) {
+const SPEECH_FORMAT_CONTENT_TYPES: Readonly<Record<SpeechOutputFormat, string>> = Object.freeze({
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  opus: 'audio/opus',
+  aac: 'audio/aac',
+  flac: 'audio/flac',
+  pcm: 'audio/pcm',
+});
+
+export function speechContentType(buffer: Buffer, headerType?: string | null, fallbackFormat?: SpeechOutputFormat) {
   const header = String(headerType || '').split(';', 1)[0].trim().toLowerCase();
   if (header.startsWith('audio/')) return header === 'audio/x-wav' ? 'audio/wav' : header;
   const head = buffer.subarray(0, 12);
@@ -34,7 +45,9 @@ export function speechContentType(buffer: Buffer, headerType?: string | null) {
   if (ascii.startsWith('fLaC')) return 'audio/flac';
   if (ascii.slice(4, 8) === 'ftyp') return 'audio/mp4';
   if (ascii.startsWith('ID3') || (head[0] === 0xff && (head[1] & 0xe0) === 0xe0)) return 'audio/mpeg';
-  return header || 'audio/mpeg';
+  return header && header !== 'application/octet-stream'
+    ? header
+    : fallbackFormat ? SPEECH_FORMAT_CONTENT_TYPES[fallbackFormat] : header || 'audio/mpeg';
 }
 
 export function audioExtension(contentType: string) {
@@ -45,6 +58,7 @@ export function audioExtension(contentType: string) {
   if (mime === 'audio/aac') return 'aac';
   if (mime === 'audio/flac') return 'flac';
   if (mime === 'audio/opus') return 'opus';
+  if (mime === 'audio/pcm' || mime === 'audio/l16') return 'pcm';
   if (mime === 'audio/webm') return 'webm';
   return 'mp3';
 }
@@ -58,7 +72,8 @@ export type SpeechRequest = {
   text: string;
   /** 留空表示用服务商默认音色（Gitee 这类没有 voice 参数的服务商必须留空）。 */
   voice?: string;
-  format?: 'mp3' | 'wav';
+  format?: SpeechOutputFormat;
+  speed?: number;
   signal?: AbortSignal;
 };
 
@@ -79,6 +94,44 @@ function looksLikeTextPayload(buffer: Buffer) {
 export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequest): Promise<SpeechAudio> {
   const text = String(input.text || '').trim();
   if (!text) throw new Error('配音文本为空。');
+  if (isCangyuanProvider(runtime.provider)) {
+    const profile = getCangyuanSpeechModelProfile(runtime.model.rawId);
+    if (!profile) throw new Error(`沧元语音模型尚未接入：${runtime.model.rawId}。`);
+    if (input.format && !profile.responseFormats.includes(input.format)) {
+      throw new Error(`沧元语音模型 ${profile.publicModel} 不支持 ${input.format} 格式。`);
+    }
+    if (input.speed !== undefined && !profile.speedRange) {
+      throw new Error(`沧元语音模型 ${profile.publicModel} 不支持速度参数。`);
+    }
+    if (input.speed !== undefined && profile.speedRange && (input.speed < profile.speedRange.min || input.speed > profile.speedRange.max)) {
+      throw new Error(`沧元语音模型 ${profile.publicModel} 的速度必须在 ${profile.speedRange.min}–${profile.speedRange.max} 之间。`);
+    }
+    const body: Record<string, unknown> = { model: runtime.model.rawId, input: text };
+    const voice = String(input.voice || '').trim();
+    if (voice) body.voice = voice;
+    if (input.format) body.response_format = input.format;
+    if (input.speed !== undefined) body.speed = input.speed;
+    const response = await fetch(speechEndpoint(runtime.provider), {
+      method: 'POST',
+      headers: { ...authHeaders(runtime.provider), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: input.signal,
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`配音接口失败：HTTP ${response.status}${detail ? `（${detail.replace(/\s+/g, ' ').slice(0, 180)}）` : ''}`);
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.byteLength) throw new Error('配音接口没有返回音频数据。');
+    if (looksLikeTextPayload(buffer)) {
+      throw new Error(`配音接口没有返回音频：${buffer.subarray(0, 180).toString('utf8').replace(/\s+/g, ' ').trim()}`);
+    }
+    return { buffer, contentType: speechContentType(buffer, response.headers.get('content-type'), input.format) };
+  }
+  if (input.format && input.format !== 'mp3' && input.format !== 'wav') {
+    throw new Error('当前配音服务商仅支持 MP3 或 WAV 格式。');
+  }
+  if (input.speed !== undefined) throw new Error('当前配音服务商不支持速度参数。');
   const body: Record<string, unknown> = {
     model: runtime.model.rawId,
     input: text,
@@ -122,5 +175,5 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
   if (looksLikeTextPayload(buffer)) {
     throw new Error(`配音接口没有返回音频：${buffer.subarray(0, 180).toString('utf8').replace(/\s+/g, ' ').trim()}`);
   }
-  return { buffer, contentType: speechContentType(buffer, response.headers.get('content-type')) };
+  return { buffer, contentType: speechContentType(buffer, response.headers.get('content-type'), input.format || 'mp3') };
 }

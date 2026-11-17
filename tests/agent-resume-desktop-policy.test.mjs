@@ -235,6 +235,59 @@ test('successful App launch alone satisfies an open-only desktop instruction', (
   }), '');
 });
 
+test('FlaUI tool names satisfy desktop verification without another wait round trip', () => {
+  assert.equal(desktopInstructionPolicy.desktopCompletionGap({
+    active: true,
+    inputRequested: false,
+    requestedInputText: null,
+    screenshotRequested: false,
+    screenshotExplicitlyForbidden: false,
+    evidence: [
+      { name: 'windows_click', readOnly: false, ok: true },
+      { name: 'windows_snapshot', readOnly: true, ok: true },
+    ],
+  }), '');
+  assert.equal(desktopInstructionPolicy.desktopCompletionGap({
+    active: true,
+    inputRequested: false,
+    requestedInputText: null,
+    screenshotRequested: false,
+    screenshotExplicitlyForbidden: false,
+    evidence: [{ name: 'windows_launch', readOnly: false, ok: true, appLaunch: true }],
+  }), '');
+  assert.equal(desktopInstructionPolicy.desktopCompletionGap({
+    active: true,
+    inputRequested: true,
+    requestedInputText: 'hello',
+    screenshotRequested: false,
+    screenshotExplicitlyForbidden: false,
+    evidence: [
+      { name: 'windows_fill', readOnly: false, ok: true, inputMatchesRequestedText: desktopInstructionPolicy.desktopInputMatchesRequestedText('windows_fill', { ref: 'w1e1', value: 'hello' }, 'hello') },
+      { name: 'windows_snapshot', readOnly: true, ok: true, observationShowsRequestedText: true },
+    ],
+  }), '');
+});
+
+test('FlaUI screenshot requests require the screenshot tool itself', () => {
+  assert.equal(desktopInstructionPolicy.desktopCompletionGap({
+    active: true,
+    inputRequested: false,
+    requestedInputText: null,
+    screenshotRequested: true,
+    screenshotExplicitlyForbidden: false,
+    evidence: [{ name: 'windows_screenshot', readOnly: true, ok: true }],
+  }), '');
+});
+
+test('FlaUI fill and screenshot names obey explicit desktop restrictions', () => {
+  assert.equal(desktopInstructionPolicy.desktopInstructionToolDenial({
+    instruction: '不要输入任何文字。', catalogId: 'windows-mcp', toolName: 'windows_fill', args: { text: 'secret' },
+  }), '用户明确禁止输入文字，因此桌面输入工具没有执行。请勿改用其他工具输入或粘贴文字。');
+  assert.equal(desktopInstructionPolicy.desktopInstructionToolDenial({
+    instruction: '不要截图。', catalogId: 'windows-mcp', toolName: 'windows_screenshot', args: {},
+  }), '用户明确禁止截图，因此 Screenshot 工具没有执行。请用 Snapshot 或 WaitFor 核验桌面操作。');
+});
+
 test('App launch does not satisfy a desktop request that also requires a screenshot', () => {
   assert.equal(desktopInstructionPolicy.desktopCompletionGap({
     active: true,
@@ -268,6 +321,29 @@ test('approved desktop write can finish only after a fresh Snapshot observation'
   assert.deepEqual(harness.state.executeCalls.map(({ name }) => name), ['Click', 'Snapshot']);
   assert.match(String(result.body.message), /fresh desktop snapshot confirms/i);
   assert.ok(harness.state.continuationPrompts.some((prompt) => /桌面操作后尚无新的成功观察/.test(prompt)));
+});
+
+test('FlaUI snapshot ends desktop verification after an approved UIA click', async () => {
+  const windows = { id: SERVER_ID, name: SERVER_NAME, catalogId: 'windows-mcp' };
+  const click = mcpTool('windows_click', false);
+  const snapshot = mcpTool('windows_snapshot', true);
+  const harness = createResumeHarness({
+    instruction: '请点击桌面上的开始按钮。',
+    pendingTools: [click],
+    availableTools: [click, snapshot],
+    servers: [windows],
+    continuationReplies: [
+      { text: 'The button was activated.' },
+      { toolCall: { id: 'uia-snapshot', function: { name: snapshot.name, arguments: '{}' } } },
+      { text: 'The fresh UI Automation snapshot confirms the result.' },
+    ],
+  });
+
+  const result = await harness.run();
+
+  assert.deepEqual(harness.state.executeCalls.map(({ name }) => name), ['windows_click', 'windows_snapshot']);
+  assert.match(String(result.body.message), /fresh UI Automation snapshot confirms/i);
+  assert.equal(harness.state.continuationPrompts.length, 1, 'a fresh FlaUI snapshot closes the verification gap');
 });
 
 test('approved desktop write with a screenshot request requires Screenshot rather than Snapshot', async () => {

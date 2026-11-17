@@ -1,27 +1,8 @@
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
-const sourceUrl = new URL('../lib/video-model-limits.ts', import.meta.url);
-const source = await readFile(sourceUrl, 'utf8');
-// Keep this focused unit test runnable without a TypeScript runtime loader.
-// The production module imports the same helper from lib/video-platform.ts.
-const standaloneSource = source.replace(
-  "import { is65535Provider, isJimengProvider, type VideoProviderIdentity } from './video-platform';",
-  `type VideoProviderIdentity = { platform?: string; videoTransport?: string; baseUrl?: string; videoBaseUrl?: string };
-function is65535Provider(provider) {
-  return Boolean(provider && (provider.platform === '65535' || /65535\\.space/i.test(provider.baseUrl || '') || /65535\\.space/i.test(provider.videoBaseUrl || '')));
-}
-function isJimengProvider(provider) {
-  return Boolean(provider && (provider.platform === 'jimeng-cli' || provider.videoTransport === 'jimeng-cli'));
-}`,
-);
-const compiled = ts.transpileModule(standaloneSource, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  fileName: sourceUrl.pathname,
-}).outputText;
-const limits = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const limits = createTsRequire(process.cwd())('./lib/video-model-limits');
 
 test('applies documented model limits only to 65535', () => {
   const seedance65535 = limits.getVideoModelLimits({ rawId: 'seedance-2.0' }, { platform: '65535' });
@@ -75,4 +56,34 @@ test('uses the official Jimeng parameter profile instead of generic defaults', (
   const other = limits.getVideoModelLimits({ rawId: 'seedance-2.5' }, { platform: 'custom', videoTransport: 'openai-videos' });
   assert.equal(other.allowedSeconds, undefined);
   assert.deepEqual(other.resolutions, ['480p', '720p', '1080p']);
+});
+
+test('uses a precise Cangyuan video profile only for the verified public model', () => {
+  const seedanceFast = limits.getVideoModelLimits(
+    { rawId: 'doubao-seedance-2-0-fast-260128' },
+    { platform: 'custom', videoTransport: 'cangyuan-videos' },
+  );
+  assert.equal(seedanceFast.minSeconds, 4);
+  assert.equal(seedanceFast.maxSeconds, 15);
+  assert.deepEqual(seedanceFast.resolutions, ['480p', '720p', '1080p', '4k']);
+  assert.equal(seedanceFast.maxReferenceImages, 9);
+  assert.equal(seedanceFast.maxReferenceVideos, 3);
+  assert.equal(seedanceFast.maxAudios, 3);
+  assert.match(seedanceFast.notes.join(' '), /建议值，不是完整允许枚举/);
+  assert.match(seedanceFast.notes.join(' '), /doubao-seedance-2-0-fast-260128/);
+
+  const caseMismatch = limits.getVideoModelLimits(
+    { rawId: 'DOUBAO-SEEDANCE-2-0-FAST-260128' },
+    { platform: 'custom', videoTransport: 'cangyuan-videos' },
+  );
+  assert.equal(caseMismatch.maxReferenceImages, 0);
+
+  const unverified = limits.getVideoModelLimits(
+    { rawId: 'doubao-seedance-2-0-unverified' },
+    { platform: 'custom', videoTransport: 'cangyuan-videos' },
+  );
+  assert.equal(unverified.maxReferenceImages, 0);
+  assert.equal(unverified.maxReferenceVideos, 0);
+  assert.equal(unverified.maxAudios, 0);
+  assert.match(unverified.notes.join(' '), /只允许提交模型和提示词/);
 });

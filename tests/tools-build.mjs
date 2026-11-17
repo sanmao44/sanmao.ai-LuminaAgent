@@ -44,6 +44,7 @@ const MODULES = [
   'lib/mcp/protocol',
   'lib/mcp/store',
   'lib/mcp/catalog',
+  'lib/mcp/catalog-archive-installer',
   'lib/mcp/browser-extension',
   'lib/mcp/browser-guidance',
   'lib/mcp/browser-editors',
@@ -148,6 +149,10 @@ export async function buildToolPolicyModule() {
 /** 同一套转译结果里的 MCP 模块，测试要用真实的 store / client / 工具翻译逻辑。 */
 export async function buildMcpModule() {
   return load('lib/mcp/index.mjs');
+}
+
+export async function buildMcpCatalogArchiveInstallerModule() {
+  return load('lib/mcp/catalog-archive-installer.mjs');
 }
 
 export async function buildBrowserGuidanceModule() {

@@ -14,11 +14,39 @@ export type DesktopExecutionEvidence = {
   name: string;
   readOnly: boolean;
   ok: boolean;
-  /** A successful App launch is already a concrete completion signal for an open-only request. */
+  /** A successful application launch is a concrete completion signal for an open-only request. */
   appLaunch?: boolean;
   inputMatchesRequestedText?: boolean;
   observationShowsRequestedText?: boolean;
 };
+
+export function normalizeDesktopToolName(toolName: string): string {
+  const normalized = toolName.toLowerCase().replace(/[^a-z]/g, '');
+  return normalized.startsWith('windows') ? normalized.slice('windows'.length) : normalized;
+}
+
+export function isDesktopTypingTool(toolName: string): boolean {
+  return /^(?:type|fill|sendkeys|keyboardtype|keyboardinput)$/.test(normalizeDesktopToolName(toolName));
+}
+
+export function desktopInputMatchesRequestedText(toolName: string, args: unknown, requestedText: string): boolean {
+  if (!isDesktopTypingTool(toolName) || !args || typeof args !== 'object' || Array.isArray(args)) return false;
+  const normalizedName = normalizeDesktopToolName(toolName);
+  const field = normalizedName === 'fill' ? 'value' : 'text';
+  return (args as Record<string, unknown>)[field] === requestedText;
+}
+
+export function isDesktopObservationTool(toolName: string): boolean {
+  return /^(?:snapshot|screenshot|waitfor)$/.test(normalizeDesktopToolName(toolName));
+}
+
+export function isDesktopAppLaunchTool(toolName: string, args: unknown): boolean {
+  const normalizedName = normalizeDesktopToolName(toolName);
+  if (normalizedName === 'launch') return true;
+  if (normalizedName !== 'app' || !args || typeof args !== 'object' || Array.isArray(args)) return false;
+  const mode = (args as Record<string, unknown>).mode;
+  return mode === 'launch' || mode === 'launch_executable';
+}
 
 const DESKTOP_INPUT_PATTERN = /(?:输入(?!法|设置)|键入|打字|录入|填写|(?:^|[^a-z0-9_])(?:type(?:\s+in)?|typing|enter(?:ing)?\s+(?:(?:any|some|the|a)\s+)?(?:text|anything|content|a\s+message)|input(?:ting)?\s+(?:(?:any|some)\s+)?(?:text|anything|content|a\s+message))(?=$|[^a-z0-9_]))/ig;
 const DESKTOP_CAPTURE_PATTERN = /(?:屏幕截图|截图|截屏|screenshot|screen\s*shot|screen\s*capture|capture\s+(?:the\s+)?screen)/ig;
@@ -70,9 +98,8 @@ export function desktopCompletionGap(input: {
   evidence: readonly DesktopExecutionEvidence[];
 }): DesktopCompletionGap {
   if (!input.active) return '';
-  const normalizeToolName = (name: string) => name.toLowerCase().replace(/[^a-z]/g, '');
   if (input.evidence.some((tool) => !tool.readOnly && !tool.ok)) return 'action-failed';
-  const typingUses = input.evidence.filter((tool) => tool.ok && /^(?:type|sendkeys|keyboardtype|keyboardinput)$/.test(normalizeToolName(tool.name)));
+  const typingUses = input.evidence.filter((tool) => tool.ok && isDesktopTypingTool(tool.name));
   if (input.inputRequested && !typingUses.length) return 'input';
   if (input.requestedInputText !== null && typingUses.at(-1)?.inputMatchesRequestedText !== true) return 'input-mismatch';
 
@@ -93,7 +120,7 @@ export function desktopCompletionGap(input: {
     : input.screenshotExplicitlyForbidden ? /^(?:snapshot|waitfor)$/ : /^(?:snapshot|screenshot|waitfor)$/;
   const freshObservations = input.evidence.filter((tool, index) => tool.ok
     && tool.readOnly
-    && observationPattern.test(normalizeToolName(tool.name))
+    && observationPattern.test(normalizeDesktopToolName(tool.name))
     && (lastActionIndex < 0 || index > lastActionIndex));
   if (!freshObservations.length) return 'verify';
   if (input.requestedInputText !== null && !freshObservations.some((tool) => tool.observationShowsRequestedText === true)) return 'observation-mismatch';
@@ -126,8 +153,8 @@ function extractDesktopRequestedInputText(instruction: string): string | null {
 }
 
 export function isDesktopTextInputTool(toolName: string, args: unknown): boolean {
-  const normalizedName = toolName.toLowerCase().replace(/[^a-z]/g, '');
-  if (/^(?:type|sendkeys|keyboardtype|keyboardinput|keyboardwrite|multiedit|clipboard)$/.test(normalizedName)) return true;
+  const normalizedName = normalizeDesktopToolName(toolName);
+  if (/^(?:type|fill|sendkeys|keyboardtype|keyboardinput|keyboardwrite|multiedit|clipboard)$/.test(normalizedName)) return true;
   if (normalizedName !== 'shortcut') return false;
 
   const shortcut = JSON.stringify(args ?? {}).toLowerCase().replace(/[^a-z0-9]+/g, ' ');
@@ -135,8 +162,7 @@ export function isDesktopTextInputTool(toolName: string, args: unknown): boolean
 }
 
 export function isDesktopScreenshotTool(toolName: string): boolean {
-  const normalizedName = toolName.toLowerCase().replace(/[^a-z]/g, '');
-  return /^(?:screenshot|takescreenshot|capturescreenshot|screencapture|capturescreen)$/.test(normalizedName);
+  return /^(?:screenshot|takescreenshot|capturescreenshot|screencapture|capturescreen)$/.test(normalizeDesktopToolName(toolName));
 }
 
 /** Re-checks explicit desktop restrictions at every execution boundary. */

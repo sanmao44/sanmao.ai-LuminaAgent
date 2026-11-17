@@ -3,7 +3,7 @@
 import type { ComponentType, FormEvent } from "react";
 import type { ModelKind } from "@/lib/types";
 
-export type ManualModelKind = "auto" | Extract<ModelKind, "chat" | "image" | "video">;
+export type ManualModelKind = "auto" | Extract<ModelKind, "chat" | "image" | "video" | "audio" | "3d">;
 
 export type ManualModelFormState = {
   rawId: string;
@@ -70,12 +70,14 @@ export default function ManualModelDialog({
               <button type="button" className={form.kind === "chat" ? "active" : ""} onClick={() => onChange({ kind: "chat" })}>对话</button>
               <button type="button" className={form.kind === "image" ? "active" : ""} onClick={() => onChange({ kind: "image" })}>图片</button>
               <button type="button" className={form.kind === "video" ? "active" : ""} onClick={() => onChange({ kind: "video" })}>视频</button>
+              <button type="button" className={form.kind === "audio" ? "active" : ""} onClick={() => onChange({ kind: "audio" })}>音频</button>
+              <button type="button" className={form.kind === "3d" ? "active" : ""} onClick={() => onChange({ kind: "3d" })}>三维</button>
             </div>
           </div>
         </div>
         <div className="manual-model-notice">
           <Icon name="agent" size={16} />
-          <p>启用后会把这个模型 ID 接入 SANMAO 的真实生图调用链，并原样发送给服务商；手动登记不代表服务商已授权。APIKL 当前 Key 未授权 Pro/4K 时，调用仍会返回权限错误，不会自动降级到其他模型。</p>
+          <p>手动登记只添加模型 ID 并按所选类型补齐通用能力；模型是否支持对应任务取决于上游模型和接口。登记后仍需启用并发布，服务商拒绝或不支持时会显示错误，不会自动替换成其他模型。</p>
         </div>
         <div className="form-actions">
           <button type="button" className="secondary-action" onClick={onClose}>取消</button>

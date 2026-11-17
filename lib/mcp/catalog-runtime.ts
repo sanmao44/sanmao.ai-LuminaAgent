@@ -28,9 +28,12 @@ import {
   type McpStdioCatalogEntry,
 } from './catalog';
 import { ensureUvPath } from './repo-installer';
+import { installCatalogArchive, type CatalogArchiveInstallerDependencies } from './catalog-archive-installer';
 import type { McpBrowserExtensionBridge } from './browser-extension';
 
 export const MCP_CATALOG_INSTALL_TIMEOUT_MS = 10 * 60_000;
+const MCP_CATALOG_UV_INSTALL_TIMEOUT_MS = 20 * 60_000;
+const MCP_CATALOG_ARCHIVE_INSTALL_TIMEOUT_MS = 30 * 60_000;
 const LOG_TAIL_CHARS = 4000;
 const NPM_MIRROR = 'https://registry.npmmirror.com';
 
@@ -74,7 +77,7 @@ export type McpCatalogRuntimeStatus = {
   startedBrowserPath: string | null;
 };
 
-type InstallJob = { child: ChildProcess | null; log: string; error: string | null; finished: boolean };
+type InstallJob = { child: ChildProcess | null; controller: AbortController; log: string; error: string | null; finished: boolean };
 
 const installs = new Map<string, InstallJob>();
 
@@ -159,7 +162,8 @@ export function uvCatalogInstallPlan(entry: McpStdioCatalogEntry, options: { dat
 
 type CatalogRuntimeDependencies = {
   spawnProcess?: typeof spawn;
-  prepareUv?: (dataDir: string) => Promise<unknown>;
+  prepareUv?: (dataDir: string, onProgress?: (receivedBytes: number, totalBytes: number | null) => void) => Promise<unknown>;
+  archive?: CatalogArchiveInstallerDependencies;
 };
 
 function runUvCommand(
@@ -194,8 +198,8 @@ function runUvCommand(
     };
     const timer = setTimeout(() => {
       try { child.kill(); } catch {}
-      finish(new Error(`${label}超时（10 分钟），请检查网络后重试`));
-    }, MCP_CATALOG_INSTALL_TIMEOUT_MS);
+      finish(new Error(`${label}超时（20 分钟），请检查网络后重试`));
+    }, MCP_CATALOG_UV_INSTALL_TIMEOUT_MS);
     timer.unref?.();
     child.on('error', (error) => finish(new Error(`${label}：${error.message}`)));
     child.on('exit', (code) => code === 0
@@ -282,13 +286,37 @@ export async function installCatalogServer(
   if (isCatalogInstalled(entry, options)) return catalogRuntimeStatus(entry.id, options);
   const current = installs.get(entry.id);
   if (current && !current.finished) throw new Error('这个服务正在安装中，请稍候');
-  installs.set(entry.id, { child: null, log: '', error: null, finished: false });
+  const controller = new AbortController();
+  installs.set(entry.id, { child: null, controller, log: '', error: null, finished: false });
   let failure: Error | null = null;
+  let archiveTimer: ReturnType<typeof setTimeout> | null = null;
   try {
-    if (entry.installMode === 'optional-uv') {
+    if (entry.installMode === 'optional-archive') {
+      if (!catalogEntryAvailable(entry)) throw new Error('这个桌面控制运行包不适用于当前 Windows 架构');
+      appendLog(entry, '[安装器] 正在下载并校验 Windows UI Automation 运行包；断线后可续传。\n', options);
+      let lastProgressBytes = 0;
+      const reportProgress = (receivedBytes: number, totalBytes: number) => {
+        if (receivedBytes - lastProgressBytes < 2 * 1024 * 1024 && receivedBytes !== totalBytes) return;
+        lastProgressBytes = receivedBytes;
+        appendLog(entry, `[安装器] 运行包下载进度：${(receivedBytes / (1024 * 1024)).toFixed(1)} / ${(totalBytes / (1024 * 1024)).toFixed(1)} MB\n`, options);
+      };
+      archiveTimer = setTimeout(() => controller.abort(new Error('桌面控制运行包安装超过 30 分钟，请检查网络后重试')), MCP_CATALOG_ARCHIVE_INSTALL_TIMEOUT_MS);
+      archiveTimer.unref?.();
+      await installCatalogArchive(entry, { dataDir: catalogDataDir(options), signal: controller.signal, onProgress: reportProgress }, dependencies.archive);
+      appendLog(entry, '[安装器] 下载校验和安装完成。\n', options);
+    } else if (entry.installMode === 'optional-uv') {
       if (!catalogEntryAvailable(entry)) throw new Error('这个 Windows MCP 只适用于 Windows');
       const dataDir = catalogDataDir(options);
-      await (dependencies.prepareUv || ((root) => ensureUvPath(root, undefined, { preferBundled: true })))(dataDir);
+      appendLog(entry, '[安装器] 正在准备受校验的 uv 运行时；首次下载期间会持续记录进度。\n', options);
+      let lastProgressBytes = 0;
+      const reportProgress = (receivedBytes: number, totalBytes: number | null) => {
+        if (receivedBytes - lastProgressBytes < 1024 * 1024 && receivedBytes !== totalBytes) return;
+        lastProgressBytes = receivedBytes;
+        const received = (receivedBytes / (1024 * 1024)).toFixed(1);
+        const total = totalBytes === null ? '未知' : `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
+        appendLog(entry, `[安装器] uv 运行时下载进度：${received} / ${total}\n`, options);
+      };
+      await (dependencies.prepareUv || ((root, onProgress) => ensureUvPath(root, undefined, { preferBundled: true, onProgress })))(dataDir, reportProgress);
       await runUvCatalogInstall(entry, options, dependencies.spawnProcess || spawn);
     } else {
       await runNpmInstall(entry, options);
@@ -306,6 +334,7 @@ export async function installCatalogServer(
       }
     }
   } finally {
+    if (archiveTimer) clearTimeout(archiveTimer);
     const job = installs.get(entry.id);
     if (job) {
       job.finished = true;
@@ -326,6 +355,7 @@ export function cancelCatalogInstall(id: unknown) {
   try {
     job.child?.kill();
   } catch {}
+  job.controller.abort(new Error('安装已取消'));
   job.finished = true;
   job.error = '安装已取消';
   return true;

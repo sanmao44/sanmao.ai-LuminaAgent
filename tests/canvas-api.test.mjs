@@ -174,6 +174,22 @@ test('canvas image generation follows SANMAO response protocol', async () => {
   });
 });
 
+test('canvas image generation preserves Cangyuan counts up to ten', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ images: [] });
+  }, () => api.generateCanvasImage({
+    prompt: '多张图片',
+    model: 'nano-banana2.1',
+    count: 10,
+    imageOperation: 'generate',
+  }));
+
+  assert.equal(request.input, '/api/generate');
+  assert.equal(JSON.parse(request.options.body).count, 10);
+});
+
 test('canvas image generation includes saved project style and constraints in its prompt', async () => {
   let request;
   await withFetch(async (input, options) => {
@@ -418,6 +434,70 @@ test('canvas video generation creates a task without leaking boolean audio', asy
   assert.equal(payload.model, 'video-model');
   assert.deepEqual(payload.input, { prompt: '镜头推进', seconds: 8, aspectRatio: '16:9', resolution: '720p', referenceImages: [] });
   assert.equal('audio' in payload.input, false);
+});
+
+test('canvas Cangyuan video generation omits default controls and only sends prompt to its task input', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ task: { id: 'cangyuan-video-1', status: 'pending' } });
+  }, () => api.generateCanvasVideo({
+    prompt: 'a paper boat',
+    model: 'cangyuan-video-model',
+    videoTransport: 'cangyuan-videos',
+    operation: 'generate',
+    inputMode: 'text',
+    duration: 5,
+    aspect: '16:9',
+    resolution: '720p',
+  }));
+
+  const payload = JSON.parse(request.options.body);
+  assert.equal(request.input, '/api/video/generate');
+  assert.equal(payload.model, 'cangyuan-video-model');
+  assert.deepEqual(payload.input, { prompt: 'a paper boat', referenceImages: [] });
+  assert.equal('videoTransport' in payload, false);
+});
+
+test('canvas Cangyuan video generation blocks connected media before encoding or network submission', async () => {
+  const mocks = withImageCanvas();
+  let fetchCalled = false;
+  try {
+    await assert.rejects(
+      () => withFetch(async () => {
+        fetchCalled = true;
+        return jsonResponse({ task: { id: 'should-not-submit', status: 'pending' } });
+      }, () => api.generateCanvasVideo({
+        prompt: 'animate the connected image',
+        model: 'cangyuan-video-model',
+        videoTransport: 'cangyuan-videos',
+        inputMode: 'reference',
+        references: [{ url: 'data:image/png;base64,SOURCE' }],
+      })),
+      /只提交模型和提示词/,
+    );
+    assert.equal(fetchCalled, false);
+    assert.deepEqual(mocks.encodedTypes, []);
+  } finally {
+    mocks.restore();
+  }
+});
+
+test('canvas Cangyuan video generation rejects non-default parameters before submission', async () => {
+  let fetchCalled = false;
+  await assert.rejects(
+    () => withFetch(async () => {
+      fetchCalled = true;
+      return jsonResponse({ task: { id: 'should-not-submit', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: 'a paper boat',
+      model: 'cangyuan-video-model',
+      videoTransport: 'cangyuan-videos',
+      duration: 8,
+    })),
+    /只提交模型和提示词/,
+  );
+  assert.equal(fetchCalled, false);
 });
 
 test('canvas video generation includes saved project style and constraints in its prompt', async () => {

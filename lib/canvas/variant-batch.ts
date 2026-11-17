@@ -52,6 +52,7 @@ export function canvasVariantVideoRequest(input: {
   params: VideoCreationSettings;
   model: string;
   modelRawId?: string;
+  videoTransport?: string;
   references: readonly { url: string; name?: string }[];
   referenceVideos: readonly { url: string; name?: string }[];
   firstFrame?: string;
@@ -64,6 +65,7 @@ export function canvasVariantVideoRequest(input: {
     prompt: input.prompt,
     model: input.model,
     modelRawId: input.modelRawId,
+    ...(input.videoTransport ? { videoTransport: input.videoTransport } : {}),
     operation: params.operation,
     inputMode: params.inputMode,
     duration: params.duration,

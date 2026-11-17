@@ -6,7 +6,9 @@ import ts from 'typescript';
 
 const sourceUrl = new URL('../lib/video-providers.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
+const cangyuanCapabilitiesSource = await readFile(new URL('../lib/cangyuan-video-capabilities.ts', import.meta.url), 'utf8');
 const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
+const cangyuanProviderSource = await readFile(new URL('../lib/cangyuan-provider.ts', import.meta.url), 'utf8');
 const signedSource = await readFile(new URL('../lib/signed-media.ts', import.meta.url), 'utf8');
 globalThis.__providerTestSharp = sharp;
 const signedCompiled = ts.transpileModule(signedSource
@@ -21,8 +23,10 @@ const signedCompiled = ts.transpileModule(signedSource
   fileName: new URL('../lib/signed-media.ts', import.meta.url).pathname,
 }).outputText;
 const signedModuleUrl = `data:text/javascript;base64,${Buffer.from(signedCompiled).toString('base64')}`;
-const bundledSource = `const __signedMedia = await import(${JSON.stringify(signedModuleUrl)});\n${videoPlatformSource}\n${source
+const bundledSource = `const __signedMedia = await import(${JSON.stringify(signedModuleUrl)});\n${videoPlatformSource}\n${cangyuanCapabilitiesSource}\n${cangyuanProviderSource}\n${source
   .replace("import { is65535Provider, isAgnesProvider, requiresPublicMediaRelay } from './video-platform';", '')
+  .replace("import { buildCangyuanVideoPayload } from './cangyuan-video-capabilities';", '')
+  .replace("import { isCangyuanProvider } from './cangyuan-provider';", '')
   .replace("(await import('./signed-media')).preparePublicMediaUrl", '__signedMedia.preparePublicMediaUrl')}`;
 const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -112,6 +116,142 @@ test('normalizes done results from common video URL fields', async () => {
   assert.equal(result.status, 'done');
   assert.equal(result.videos[0].url, 'https://cdn.example/a.mp4');
   assert.equal(result.costUsd, 0.42);
+});
+
+test('Cangyuan video submission keeps unprofiled models to the model and prompt contract', async () => {
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), init };
+    return new Response(JSON.stringify({ task_id: 'cangyuan-task-1', status: 'queued' }), { status: 202, headers: { 'content-type': 'application/json' } });
+  };
+  const result = await video.submitRemoteVideo(provider({
+    platform: 'custom',
+    videoTransport: 'cangyuan-videos',
+    videoBaseUrl: 'https://api.cangyuan.example/v1',
+    videoGenerationPath: undefined,
+  }), 'cangyuan-video-model', { prompt: 'a paper boat' }, 'cangyuan-idem-1');
+
+  assert.equal(request.url, 'https://api.cangyuan.example/v1/videos');
+  assert.equal(request.init.headers['Idempotency-Key'], 'cangyuan-idem-1');
+  assert.deepEqual(JSON.parse(request.init.body), {
+    model: 'cangyuan-video-model',
+    prompt: 'a paper boat',
+  });
+  assert.equal(result.providerTaskId, 'cangyuan-task-1');
+  assert.equal(result.status, 'pending');
+});
+
+test('recognizes an existing Cangyuan API hostname when its provider was saved as a generic platform', async () => {
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), init };
+    return new Response(JSON.stringify({ task_id: 'legacy-cangyuan-task', status: 'queued' }), { status: 202, headers: { 'content-type': 'application/json' } });
+  };
+  const result = await video.submitRemoteVideo(provider({
+    platform: 'custom',
+    baseUrl: 'https://ai.cangyuansuanli.cn/v1',
+    videoTransport: undefined,
+    videoBaseUrl: '',
+    videoGenerationPath: undefined,
+  }), 'cangyuan-video-model', { prompt: 'a paper boat' }, 'legacy-cangyuan-idem');
+
+  assert.equal(request.url, 'https://ai.cangyuansuanli.cn/v1/videos');
+  assert.deepEqual(JSON.parse(request.init.body), { model: 'cangyuan-video-model', prompt: 'a paper boat' });
+  assert.equal(result.providerTaskId, 'legacy-cangyuan-task');
+});
+
+test('Cangyuan Seedance Fast maps only its documented video fields', async () => {
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), init };
+    return new Response(JSON.stringify({ task_id: 'cangyuan-seedance-task', status: 'queued' }), { status: 202, headers: { 'content-type': 'application/json' } });
+  };
+  const result = await video.submitRemoteVideo(provider({
+    platform: 'custom',
+    videoTransport: 'cangyuan-videos',
+    videoBaseUrl: 'https://api.cangyuan.example/v1',
+    videoGenerationPath: undefined,
+  }), 'doubao-seedance-2-0-fast-260128', {
+    prompt: 'slow camera move through a garden',
+    seconds: 8,
+    aspectRatio: '4:3',
+    resolution: '1080p',
+    seed: 7,
+    referenceImages: ['https://assets.example/reference.png'],
+    referenceVideos: ['https://assets.example/reference.mp4'],
+    audios: ['https://assets.example/reference.wav'],
+  }, 'cangyuan-seedance-idem');
+
+  assert.equal(request.url, 'https://api.cangyuan.example/v1/videos');
+  assert.deepEqual(JSON.parse(request.init.body), {
+    model: 'doubao-seedance-2-0-fast-260128',
+    prompt: 'slow camera move through a garden',
+    duration: 8,
+    aspect_ratio: '4:3',
+    resolution: '1080p',
+    seed: '7',
+    reference_image_urls: ['https://assets.example/reference.png'],
+    reference_videos: ['https://assets.example/reference.mp4'],
+    reference_audios: ['https://assets.example/reference.wav'],
+  });
+  assert.equal(result.providerTaskId, 'cangyuan-seedance-task');
+});
+
+test('Cangyuan video polling uses the video task endpoint and parses data URL results', async () => {
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), init };
+    return new Response(JSON.stringify({
+      task_id: 'cangyuan-task-2',
+      status: 'completed',
+      data: [{ url: 'https://cdn.example/cangyuan.mp4' }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const result = await video.pollRemoteVideo(provider({
+    platform: 'custom',
+    videoTransport: 'cangyuan-videos',
+    videoBaseUrl: 'https://api.cangyuan.example/v1',
+    videoTaskStatusPath: undefined,
+  }), 'cangyuan-task-2');
+
+  assert.equal(request.url, 'https://api.cangyuan.example/v1/videos/cangyuan-task-2');
+  assert.equal(request.init.method, 'GET');
+  assert.equal(result.status, 'done');
+  assert.deepEqual(result.videos, [{ url: 'https://cdn.example/cangyuan.mp4' }]);
+});
+
+test('Cangyuan video polling also accepts the documented video_url result field', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    task_id: 'cangyuan-task-3',
+    status: 'completed',
+    video_url: 'https://cdn.example/cangyuan-video-url.mp4',
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const result = await video.pollRemoteVideo(provider({
+    platform: 'custom',
+    videoTransport: 'cangyuan-videos',
+    videoBaseUrl: 'https://api.cangyuan.example/v1',
+    videoTaskStatusPath: undefined,
+  }), 'cangyuan-task-3');
+
+  assert.equal(result.status, 'done');
+  assert.deepEqual(result.videos, [{ url: 'https://cdn.example/cangyuan-video-url.mp4' }]);
+});
+
+test('Cangyuan queued responses do not treat echoed reference media as generated videos', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    task_id: 'cangyuan-task-queued',
+    status: 'queued',
+    reference_videos: ['https://assets.example/reference.mp4'],
+  }), { status: 202, headers: { 'content-type': 'application/json' } });
+  const result = await video.pollRemoteVideo(provider({
+    platform: 'custom',
+    videoTransport: 'cangyuan-videos',
+    videoBaseUrl: 'https://api.cangyuan.example/v1',
+    videoTaskStatusPath: undefined,
+  }), 'cangyuan-task-queued');
+
+  assert.equal(result.status, 'pending');
+  assert.deepEqual(result.videos, []);
 });
 
 test('relays local images for a non-Agnes OpenAI-compatible video provider', async () => {

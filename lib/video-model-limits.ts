@@ -1,4 +1,5 @@
 import { is65535Provider, isJimengProvider, type VideoProviderIdentity } from './video-platform';
+import { getCangyuanVideoModelProfile } from './cangyuan-video-capabilities';
 
 function isAgnesProvider(provider?: VideoProviderIdentity | null) {
   if (!provider) return false;
@@ -146,7 +147,36 @@ function seedanceLimits(rawId: string): VideoModelLimits | null {
 
 export function getVideoModelLimits(model?: { rawId?: string; displayName?: string }, provider?: VideoProviderIdentity | string): VideoModelLimits {
   const providerIdentity: VideoProviderIdentity = typeof provider === 'string' ? { platform: provider } : (provider || {});
-  const rawId = String(model?.rawId || model?.displayName || '').toLowerCase();
+  const originalRawId = String(model?.rawId || model?.displayName || '');
+  const rawId = originalRawId.toLowerCase();
+  if (providerIdentity.videoTransport === 'cangyuan-videos') {
+    const profile = getCangyuanVideoModelProfile(originalRawId);
+    if (profile) {
+      return {
+        ...defaults,
+        minSeconds: profile.minSeconds,
+        maxSeconds: profile.maxSeconds,
+        allowedSeconds: Array.from({ length: profile.maxSeconds - profile.minSeconds + 1 }, (_, index) => profile.minSeconds + index),
+        resolutions: [...profile.suggestedResolutions],
+        maxReferenceImages: profile.maxReferenceImages,
+        maxReferenceVideos: profile.maxReferenceVideos,
+        maxAudios: profile.maxReferenceAudios,
+        notes: [
+          `沧元 ${profile.publicModel}：${profile.minSeconds}–${profile.maxSeconds} 秒整数时长`,
+          '比例和分辨率清单是建议值，不是完整允许枚举',
+          '首尾帧必须成对，且不能与参考图、参考视频或参考音频同时使用',
+          '参考素材必须是公网 HTTPS URL；每张参考图或首尾帧文件上限 30 MiB',
+        ],
+      };
+    }
+    return {
+      ...defaults,
+      maxReferenceImages: 0,
+      maxReferenceVideos: 0,
+      maxAudios: 0,
+      notes: ['该沧元视频型号未核实专属参数文档，只允许提交模型和提示词'],
+    };
+  }
   if (isAgnesProvider(providerIdentity) || rawId.startsWith('agnes-video-')) return agnesLimits(rawId);
   if (isJimengProvider(providerIdentity)) return jimengLimits(rawId);
   if (!is65535Provider(providerIdentity)) return { ...defaults };

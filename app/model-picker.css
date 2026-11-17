@@ -42,3 +42,7 @@
   transform:translate(-50%,0);
 }
 
+.model-picker-capabilities em.music{background:#e2f5e8;color:#25814a}
+.model-picker-capabilities em.three-dimensional{background:#e5edff;color:#335fc7}
+.manual-model-kind{grid-template-columns:repeat(6,minmax(0,1fr))}
+

@@ -32,7 +32,7 @@ import { browserMutationObservationGap, browserToolName, isBrowserMutationTool }
 import { isTabbitCliAvailable, runTabbitBrowserAction } from '@/lib/tabbit-cli';
 import { tabbitBrowserTool } from '@/lib/tools';
 import { executeMcpTool, executeTabbitTool } from '@/packages/tool-runtime/mcp-executor';
-import { classifyDesktopInstruction, desktopCompletionGap, desktopInstructionToolDenial, type DesktopCompletionGap, type DesktopExecutionEvidence } from '@/packages/agent-core/desktop-instruction-policy';
+import { classifyDesktopInstruction, desktopCompletionGap, desktopInputMatchesRequestedText, desktopInstructionToolDenial, isDesktopObservationTool, isDesktopTypingTool, type DesktopCompletionGap, type DesktopExecutionEvidence } from '@/packages/agent-core/desktop-instruction-policy';
 
 /** 续跑的整体上限：比一轮 MCP 预算再多一点拿来整理回答。 */
 export const RESUME_TIMEOUT_MS = MCP_TURN_TIME_BUDGET_MS + 30_000;
@@ -133,9 +133,8 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       const parsed = JSON.parse(String(message.content || ''));
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) outcome = parsed;
     } catch {}
-    const normalizedName = meta.toolName.toLowerCase().replace(/[^a-z]/g, '');
-    const isTypingTool = /^(?:type|sendkeys|keyboardtype|keyboardinput)$/.test(normalizedName);
-    const isObservationTool = /^(?:snapshot|screenshot|waitfor)$/.test(normalizedName);
+    const isTypingTool = isDesktopTypingTool(meta.toolName);
+    const isObservationTool = isDesktopObservationTool(meta.toolName);
     const observationText = typeof outcome?.content === 'string' ? outcome.content.replace(/\s+/g, ' ').trim() : '';
     const requestedText = (desktopInstructionPolicy.requestedInputText || '').replace(/\s+/g, ' ').trim();
     desktopExecutionEvidence.push({
@@ -143,7 +142,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       readOnly: meta.readOnly,
       ok: outcome?.ok === true,
       ...(isTypingTool && desktopInstructionPolicy.requestedInputText !== null
-        ? { inputMatchesRequestedText: typeof args.text === 'string' && args.text === desktopInstructionPolicy.requestedInputText }
+        ? { inputMatchesRequestedText: desktopInputMatchesRequestedText(meta.toolName, args, desktopInstructionPolicy.requestedInputText) }
         : {}),
       ...(isObservationTool && desktopInstructionPolicy.requestedInputText !== null
         ? { observationShowsRequestedText: requestedText.length > 0 && observationText.includes(requestedText) }
@@ -151,9 +150,9 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     });
   };
   const desktopCompletionPrompt = (gap: DesktopCompletionGap) => gap === 'input'
-    ? '已批准的桌面步骤尚未成功输入用户要求的文字；续跑阶段只能调用只读工具，不能代替用户再次确认输入。请重新发起输入步骤。'
+    ? '已批准的桌面步骤尚未成功输入用户要求的文字；续跑阶段只能调用只读工具，不能代替用户再次确认输入。请重新发起 Fill/Type 输入步骤。'
     : gap === 'input-mismatch'
-      ? '已批准的 Type 参数与用户指定原文不一致。当前续跑只能读取桌面，不能修正写入；请不要报告完成，并重新发起正确的输入步骤。'
+      ? '已批准的 Fill/Type 参数与用户指定原文不一致。当前续跑只能读取桌面，不能修正写入；请不要报告完成，并重新发起正确的输入步骤。'
       : gap === 'action-failed'
         ? '已批准的桌面写操作返回失败，结果不能按成功处理。请如实说明操作失败，不要报告任务完成。'
       : gap === 'observation-mismatch'

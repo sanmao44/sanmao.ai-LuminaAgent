@@ -19,6 +19,7 @@ function renderTopbar(overrides = {}) {
     onGoAgent: () => {},
     onGoGenerate: () => {},
     onGoVideo: () => {},
+    onGoAudio: () => {},
     onGoTasks: () => {},
     onToggleTheme: () => {},
     onCanvasClick: () => {},
@@ -33,9 +34,12 @@ test('WorkspaceTopbar renders one active mode and shared control hooks', () => {
   assert.match(markup, /aria-label="打开任务记录，任务记录：1 项进行中；工作区已保存"/);
 });
 
-test('WorkspaceTopbar exposes stateful labels and disables the upcoming mode', () => {
+test('WorkspaceTopbar exposes stateful labels and keeps the audio mode available', () => {
   const markup = renderTopbar({ theme: 'dark', syncStatus: 'conflict', taskSummary: { total: 0, pending: 0, error: 0 } });
   assert.match(markup, /aria-label="切换浅色主题"/);
-  assert.match(markup, /aria-label="音频，即将上线"[^>]*disabled=""/);
+  const audioButton = markup.match(/<button[^>]*><i data-icon="audio"[^>]*><\/i><span>音频<\/span><\/button>/)?.[0];
+  assert.ok(audioButton, 'audio navigation button should render');
+  assert.match(audioButton, /aria-pressed="false"/);
+  assert.doesNotMatch(audioButton, /disabled/);
   assert.match(markup, /aria-label="打开任务记录，任务记录：暂无任务；工作区同步冲突"/);
 });

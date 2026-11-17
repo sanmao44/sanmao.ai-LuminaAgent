@@ -32,7 +32,7 @@ export async function buildLibModules(modules, entry) {
       const rewritten = compiled.replace(/(from\s+)(["'])(\.[^"']*)(["'])/g, (match, keyword, open, specifier, close) => (
         specifier.endsWith('.mjs') ? match : `${keyword}${open}${specifier}.mjs${close}`
       ));
-      const relativeTarget = target.startsWith('lib/') ? target.slice('lib/'.length) : path.basename(target);
+      const relativeTarget = target.startsWith('lib/') ? target.slice('lib/'.length) : target;
       const file = path.join(outDir, `${relativeTarget}.mjs`);
       await mkdir(path.dirname(file), { recursive: true });
       await writeFile(file, rewritten);

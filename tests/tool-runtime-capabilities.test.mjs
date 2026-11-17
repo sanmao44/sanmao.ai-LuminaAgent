@@ -282,7 +282,7 @@ test('reference image generation keeps its operation on an accepted async task',
   assert.equal(finished[1].patch.operation, 'reference-generate');
 });
 
-test('Windows-MCP waits for a ready control state and recovers from repeated handoffs', async () => {
+test('Windows-MCP stops immediately after user input takes control instead of polling for 30 seconds', async () => {
   const state = {
     generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [],
     browserRecoveryNeeded: false, generated: [], browserDownloadCount: 0, stalledMcpReason: '',
@@ -292,10 +292,7 @@ test('Windows-MCP waits for a ready control state and recovers from repeated han
   const server = { id: 'cursortouch-windows-mcp', name: 'Windows MCP', url: 'stdio://windows-mcp', catalogId: 'windows-mcp', enabled: true, allowWrite: true };
   const meta = { serverId: server.id, serverName: server.name, toolName: 'App', readOnly: false, blocked: false };
   const calls = [{ id: 'desktop-current' }, { id: 'desktop-following' }];
-  let actionCalls = 0;
-  let statusCalls = 0;
-  const waits = [];
-  const progress = [];
+  const invokedTools = [];
   const result = await mcpCapabilities.executeMcpCapability({
     state,
     call: calls[0],
@@ -323,23 +320,10 @@ test('Windows-MCP waits for a ready control state and recovers from repeated han
     ARTIFACT_MAX_PER_TURN: 10,
     appendPageContext: (_current, _source, text) => text,
     mcpCall: async (_targetServer, toolName) => {
-      if (toolName === 'ControlStatus') {
-        statusCalls += 1;
-        const states = [
-          { state: 'user', wait_seconds: 2 },
-          { state: 'ready', wait_seconds: 0 },
-          { state: 'user', wait_seconds: 1 },
-          { state: 'ready', wait_seconds: 0 },
-        ];
-        return { isError: false, text: JSON.stringify(states[statusCalls - 1]) };
-      }
-      actionCalls += 1;
-      if (actionCalls === 1) return { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 7 } }) };
-      if (actionCalls === 2) return { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 4 } }) };
-      return { isError: false, text: 'Device Manager launched' };
+      invokedTools.push(toolName);
+      return { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 7 } }) };
     },
-    waitForMcpRetry: async (milliseconds) => { waits.push(milliseconds); },
-    reportProgress: (patch) => progress.push(patch),
+    reportProgress: () => {},
     mcpCallTimeoutMs: 10_000,
     importBrowserArtifacts: async () => ({ files: [], skipped: 0 }),
     shouldImportBrowserArtifacts: () => false,
@@ -352,18 +336,15 @@ test('Windows-MCP waits for a ready control state and recovers from repeated han
     isBrowserMutationTool: () => false,
   });
 
-  assert.equal(actionCalls, 3);
-  assert.equal(statusCalls, 4);
-  assert.deepEqual(waits, [7_000, 2_000, 4_000, 1_000]);
-  assert.equal(state.mcpToolCallCount, 7);
-  assert.equal(state.stalledMcpReason, '');
-  assert.equal(result.stalled, undefined);
-  assert.equal(result.results.length, 1);
-  assert.match(JSON.parse(result.results[0].content).content, /Device Manager launched/);
-  assert.ok(progress.some((patch) => /检查状态/.test(patch.message)));
+  assert.deepEqual(invokedTools, ['App']);
+  assert.equal(state.mcpToolCallCount, 1);
+  assert.match(state.stalledMcpReason, /立即停止，不会继续等待或自动重放/);
+  assert.equal(result.stalled, true);
+  assert.equal(result.results.length, 2);
+  assert.equal(result.results[1].tool_call_id, 'desktop-following');
 });
 
-test('Windows-MCP user-control retry respects call and time budgets and stops further calls', async () => {
+test('Windows-MCP user-control handoff stops without waiting even when the turn budget is low', async () => {
   const state = {
     generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 8_000, usedMcpTools: [], browserUses: [],
     browserRecoveryNeeded: false, generated: [], browserDownloadCount: 0, stalledMcpReason: '',
@@ -374,7 +355,6 @@ test('Windows-MCP user-control retry respects call and time budgets and stops fu
   const meta = { serverId: server.id, serverName: server.name, toolName: 'App', readOnly: false, blocked: false };
   const calls = [{ id: 'desktop-current' }, { id: 'desktop-following' }];
   let invoked = 0;
-  let waited = false;
   const result = await mcpCapabilities.executeMcpCapability({
     state,
     call: calls[0],
@@ -407,7 +387,6 @@ test('Windows-MCP user-control retry respects call and time budgets and stops fu
       return { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 7 } }) };
     },
     mcpCallTimeoutMs: 10_000,
-    waitForMcpRetry: async () => { waited = true; },
     importBrowserArtifacts: async () => ({ files: [], skipped: 0 }),
     shouldImportBrowserArtifacts: () => false,
     noteRemoteCatalogCallFailure: () => {},
@@ -420,9 +399,8 @@ test('Windows-MCP user-control retry respects call and time budgets and stops fu
   });
 
   assert.equal(invoked, 1);
-  assert.equal(waited, false);
   assert.equal(result.stalled, true);
-  assert.match(state.stalledMcpReason, /剩余时间或调用额度不足以安全等待重试/);
+  assert.match(state.stalledMcpReason, /立即停止，不会继续等待或自动重放/);
   assert.equal(result.results.length, 2);
   assert.equal(result.results[1].tool_call_id, 'desktop-following');
 });
@@ -569,39 +547,25 @@ test('Windows-MCP stops immediately when CONTROL_PREEMPTED reports an unavailabl
   assert.equal(result.results[1].tool_call_id, 'desktop-following');
 });
 
-test('Windows-MCP handoff polling shares a 30-second total call budget', async () => {
-  const originalNow = Date.now;
-  let now = originalNow();
-  Date.now = () => now;
-  try {
-    const calls = [];
-    const timeouts = [];
-    const waits = [];
-    const { state, input } = createWindowsMcpTestContext({
-      mcpCallTimeoutMs: 120_000,
-      mcpCall: async (_server, toolName, _args, options) => {
-        calls.push(toolName);
-        timeouts.push(options.timeouts.call);
-        return toolName === 'App'
-          ? { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 20 } }) }
-          : { isError: false, text: JSON.stringify({ state: 'user', wait_seconds: 20 }) };
-      },
-      waitForMcpRetry: async (milliseconds) => {
-        waits.push(milliseconds);
-        now += milliseconds;
-      },
-    });
+test('Windows-MCP user-control errors do not trigger delayed status polling or replay', async () => {
+  const calls = [];
+  const waits = [];
+  const { state, input } = createWindowsMcpTestContext({
+    mcpCallTimeoutMs: 120_000,
+    mcpCall: async (_server, toolName, _args, options) => {
+      calls.push(toolName);
+      assert.equal(options.timeouts.call, 30_000);
+      return { isError: true, text: JSON.stringify({ code: 'USER_CONTROL', status: { state: 'user', wait_seconds: 20 } }) };
+    },
+    waitForMcpRetry: async (milliseconds) => waits.push(milliseconds),
+  });
 
-    const result = await mcpCapabilities.executeMcpCapability(input);
+  const result = await mcpCapabilities.executeMcpCapability(input);
 
-    assert.deepEqual(calls, ['App', 'ControlStatus']);
-    assert.deepEqual(timeouts, [30_000, 5_000]);
-    assert.deepEqual(waits, [20_000, 10_000]);
-    assert.equal(result.stalled, true);
-    assert.match(state.stalledMcpReason, /30 秒总时限/);
-  } finally {
-    Date.now = originalNow;
-  }
+  assert.deepEqual(calls, ['App']);
+  assert.deepEqual(waits, []);
+  assert.equal(result.stalled, true);
+  assert.match(state.stalledMcpReason, /立即停止，不会继续等待或自动重放/);
 });
 
 
