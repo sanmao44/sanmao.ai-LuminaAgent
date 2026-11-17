@@ -12091,7 +12091,7 @@ export default function Page() {
                                                 ]
                                             }),
                                             /*#__PURE__*/ _jsx(ProviderPlatformPicker, {
-                                                presets: providerPresets.filter((preset)=>preset.showInPicker !== false),
+                                                presets: providerPresets.filter((preset)=>preset.showInPicker !== false || Boolean(providerEditId && preset.value === providerForm.platform)),
                                                 selectedPlatform: providerForm.platform,
                                                 Icon: Icon,
                                                 onSelect: applyProviderPreset

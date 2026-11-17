@@ -31,8 +31,9 @@ const presets = await import(`data:text/javascript;base64,${Buffer.from(presetCo
 
 test('provider picker uses real local logos for visible providers', async () => {
   const visiblePresets = presets.providerPresets.filter((preset) => preset.showInPicker !== false && preset.value !== 'custom');
-  assert.equal(visiblePresets.length, 16);
-  const presetsWithLogo = visiblePresets.filter((preset) => preset.value !== 'cangyuan');
+  assert.equal(visiblePresets.length, 15);
+  assert.equal(visiblePresets.some((preset) => preset.value === '65535-claude-code'), false);
+  const presetsWithLogo = visiblePresets;
   const a6api = presets.providerPresets.find((preset) => preset.value === 'a6api');
   assert.deepEqual({ baseUrl: a6api.baseUrl, apiKeyUrl: a6api.apiKeyUrl, type: a6api.type }, {
     baseUrl: 'https://api.a6api.vip/v1',
@@ -48,7 +49,7 @@ test('provider picker uses real local logos for visible providers', async () => 
     assert.ok(logo.byteLength > 0, `${preset.value} logo should not be empty`);
   }
   const cangyuan = presets.providerPresets.find((preset) => preset.value === 'cangyuan');
-  assert.equal(cangyuan.logo, undefined);
+  assert.equal(cangyuan.logo, '/brand/providers/cangyuan.webp');
   assert.deepEqual({ baseUrl: cangyuan.baseUrl, apiKeyUrl: cangyuan.apiKeyUrl, type: cangyuan.type }, {
     baseUrl: 'https://direct-api.cangyuansuanli.cn/v1',
     apiKeyUrl: 'https://ai.cangyuansuanli.cn/keys',
@@ -76,6 +77,7 @@ test('provider picker uses real local logos for visible providers', async () => 
     type: 'openai-compatible',
     needsBaseUrl: false,
   });
+  assert.equal(claudeStd.showInPicker, false);
   const claudeModels = await providers.discoverModels({ platform: '65535-claude-code' });
   assert.deepEqual(claudeModels.map((model) => model.id), [
     'claude-haiku-5-5', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-opus-5-5',
