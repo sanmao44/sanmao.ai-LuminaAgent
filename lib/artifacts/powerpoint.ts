@@ -1,4 +1,5 @@
 import PptxGenJS from 'pptxgenjs';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import {
   PRESENTATION_MAX_BULLETS_PER_SLIDE,
   PRESENTATION_MAX_CHART_CATEGORIES,
@@ -26,7 +27,13 @@ export type PresentationChartInput = {
   series?: Array<{ name?: string; values?: Array<number | null> }>;
 };
 
-export type PresentationSlideLayout = 'title' | 'section' | 'bullets' | 'two-column' | 'table' | 'chart' | 'image';
+export type PresentationMetricInput = {
+  label: string;
+  value: string | number;
+  context?: string;
+};
+
+export type PresentationSlideLayout = 'title' | 'section' | 'bullets' | 'two-column' | 'table' | 'chart' | 'image' | 'metrics';
 
 export type PresentationSlideInput = {
   layout?: PresentationSlideLayout;
@@ -40,6 +47,7 @@ export type PresentationSlideInput = {
   columns?: string[];
   rows?: Array<Array<string | number | null>>;
   chart?: PresentationChartInput;
+  metrics?: PresentationMetricInput[];
   image?: ArtifactImageInput;
   notes?: string;
 };
@@ -224,6 +232,77 @@ function drawCards(slide: PptxGenJS.Slide, theme: DeckTheme, items: string[], bo
     });
     y += height + CARD_GAP;
   }
+}
+
+/** KPI 页只展示模型明确提供的数字，不从自然语言中猜值或正负含义。 */
+function drawMetrics(slide: PptxGenJS.Slide, theme: DeckTheme, rawMetrics: PresentationMetricInput[], warnings: string[], context: string, bodyTop: number) {
+  if (rawMetrics.length > 4) warnings.push(`${context}指标超过 4 项，已截断`);
+  const metrics = rawMetrics.slice(0, 4).flatMap((metric, index) => {
+    const label = clip(metric?.label, warnings, `${context}指标名称`, 32);
+    const value = clip(metric?.value, warnings, `${context}指标值`, 32);
+    const note = clip(metric?.context, warnings, `${context}指标说明`, 72);
+    if (!label || !value) {
+      warnings.push(`${context}第 ${index + 1} 项指标缺少名称或数值，已跳过`);
+      return [];
+    }
+    return [{ label, value, note }];
+  });
+  if (!metrics.length) {
+    warnings.push(`${context}指标数据为空`);
+    slide.addText('（指标数据为空）', {
+      x: MARGIN, y: bodyTop + 0.4, w: CONTENT_WIDTH, h: 0.6,
+      fontSize: 14, color: theme.body, fontFace: theme.font, align: 'center',
+    });
+    return;
+  }
+
+  const gap = 0.2;
+  const width = (CONTENT_WIDTH - gap * (metrics.length - 1)) / metrics.length;
+  const height = Math.min(2.75, BODY_BOTTOM - bodyTop - 0.5);
+  const top = bodyTop + Math.max(0.25, (BODY_BOTTOM - bodyTop - height) / 2);
+  metrics.forEach((metric, index) => {
+    const x = MARGIN + index * (width + gap);
+    const color = theme.chartPalette[index % theme.chartPalette.length];
+    const innerWidth = width - 0.44;
+    const valueHeight = 1.05;
+    const valueSize = [34, 30, 26, 22, 18, 16, 14, 12].find((size) => (
+      wrapText(metric.value, emWidthFor(innerWidth, size)).length * lineHeightIn(size) + 0.04 <= valueHeight
+    )) || 12;
+    const labelSize = [12, 11, 10].find((size) => (
+      wrapText(metric.label, emWidthFor(innerWidth, size)).length * lineHeightIn(size) + 0.04 <= 0.46
+    )) || 10;
+    const labelLines = wrapText(metric.label, emWidthFor(innerWidth, labelSize));
+    const valueLines = wrapText(metric.value, emWidthFor(innerWidth, valueSize));
+    const wrappedNotes = metric.note ? wrapText(metric.note, emWidthFor(innerWidth, 11)) : [];
+    const noteLines = wrappedNotes.slice(0, 2);
+    if (wrappedNotes.length > 2) {
+      noteLines[1] = wrapText(noteLines[1], emWidthFor(innerWidth, 11) - 1)[0] + '…';
+      warnings.push(context + '指标「' + metric.label + '」说明超出卡片容量，已省略部分内容');
+    }
+
+    slide.addShape('roundRect', {
+      x, y: top, w: width, h: height, rectRadius: 0.06,
+      fill: { color: theme.surface }, line: { color: theme.border, width: 0.75 },
+    });
+    slide.addShape('rect', { x: x + 0.22, y: top + 0.2, w: 0.44, h: 0.055, fill: { color } });
+    slide.addText(labelLines.join('\n'), {
+      x: x + 0.22, y: top + 0.38, w: innerWidth, h: 0.46,
+      fontSize: labelSize, color: theme.body, fontFace: theme.font, valign: 'middle', margin: 0,
+      lineSpacing: labelSize * LINE_HEIGHT_FACTOR,
+    });
+    slide.addText(valueLines.join('\n'), {
+      x: x + 0.22, y: top + 0.9, w: innerWidth, h: valueHeight,
+      fontSize: valueSize, bold: true, color, fontFace: theme.font, valign: 'middle', margin: 0,
+      lineSpacing: valueSize * LINE_HEIGHT_FACTOR,
+    });
+    if (noteLines.length) {
+      slide.addText(noteLines.join('\n'), {
+        x: x + 0.22, y: top + height - 0.7, w: innerWidth, h: 0.48,
+        fontSize: 11, color: theme.body, fontFace: theme.font, valign: 'middle', margin: 0,
+        lineSpacing: 11 * LINE_HEIGHT_FACTOR,
+      });
+    }
+  });
 }
 
 function columnInnerWidth() {
@@ -589,6 +668,59 @@ function drawSectionSlide(slide: PptxGenJS.Slide, theme: DeckTheme, title: strin
   }
 }
 
+function repairChartXml(xml: string) {
+  const axisBlocks = [...xml.matchAll(/<c:(?:catAx|valAx|dateAx|serAx)\b[\s\S]*?<\/c:(?:catAx|valAx|dateAx|serAx)>/g)].map((match) => match[0]);
+  const axisIds = new Set(axisBlocks.flatMap((block) => {
+    const id = /<c:axId\b[^>]*\bval="(\d+)"/.exec(block)?.[1];
+    return id ? [id] : [];
+  }));
+
+  return xml
+    .replace(/<c:(barChart|lineChart|areaChart|scatterChart|radarChart)\b[\s\S]*?<\/c:\1>/g, (chart) => (
+      chart.replace(/<c:axId\b[^>]*\bval="(\d+)"[^>]*\/>/g, (tag, id: string) => axisIds.has(id) ? tag : '')
+    ))
+    .replace(/<c:ser\b[\s\S]*?<\/c:ser>/g, (series) => {
+      const dataPoints = [...series.matchAll(/<c:dPt\b[\s\S]*?<\/c:dPt>/g)].map((match) => match[0]);
+      if (!dataPoints.length) return series;
+      const withoutPoints = series.replace(/<c:dPt\b[\s\S]*?<\/c:dPt>/g, '');
+      const marker = withoutPoints.indexOf('<c:dLbls');
+      const fallback = withoutPoints.indexOf('<c:cat>');
+      const index = marker >= 0 ? marker : fallback;
+      if (index < 0) return series;
+      return `${withoutPoints.slice(0, index)}${dataPoints.join('')}${withoutPoints.slice(index)}`;
+    });
+}
+
+/** PptxGenJS emits stale package references and schema-order quirks; normalize its generated parts before delivery. */
+function repairPresentationPackage(buffer: Buffer) {
+  const entries = unzipSync(new Uint8Array(buffer));
+  const contentTypes = entries['[Content_Types].xml'];
+  if (contentTypes) {
+    const xml = strFromU8(contentTypes).replace(
+      /<Override\b[^>]*\bPartName="\/ppt\/slideMasters\/slideMaster(\d+)\.xml"[^>]*\/>/g,
+      (override, number: string) => entries[`ppt/slideMasters/slideMaster${number}.xml`] ? override : '',
+    );
+    entries['[Content_Types].xml'] = strToU8(xml);
+  }
+
+  const presentation = entries['ppt/presentation.xml'];
+  if (presentation) {
+    let xml = strFromU8(presentation);
+    const notes = /<p:notesMasterIdLst\b[^>]*>[\s\S]*?<\/p:notesMasterIdLst>/.exec(xml)?.[0];
+    if (notes) {
+      xml = xml.replace(notes, '');
+      const slideListIndex = xml.indexOf('<p:sldIdLst');
+      if (slideListIndex >= 0) xml = `${xml.slice(0, slideListIndex)}${notes}${xml.slice(slideListIndex)}`;
+    }
+    entries['ppt/presentation.xml'] = strToU8(xml);
+  }
+
+  for (const name of Object.keys(entries).filter((part) => /^ppt\/charts\/chart\d+\.xml$/.test(part))) {
+    entries[name] = strToU8(repairChartXml(strFromU8(entries[name])));
+  }
+  return Buffer.from(zipSync(entries, { level: 6 }));
+}
+
 export async function buildPresentation(input: PresentationInput, options: ArtifactGenerateOptions = {}): Promise<ArtifactBuild> {
   const warnings: string[] = [];
   const theme = themeFor(input.theme);
@@ -689,6 +821,9 @@ export async function buildPresentation(input: PresentationInput, options: Artif
           fontSize: 14, color: theme.body, fontFace: theme.font, align: 'center',
         });
       }
+    } else if (layout === 'metrics') {
+      const bodyTop = drawHeader(slide, theme, clip(slideInput.title, warnings, context, 80));
+      drawMetrics(slide, theme, slideInput.metrics || [], warnings, context, bodyTop);
     } else if (layout === 'two-column') {
       const bodyTop = drawHeader(slide, theme, clip(slideInput.title, warnings, context, 80));
       const available = BODY_BOTTOM - bodyTop;
@@ -713,7 +848,8 @@ export async function buildPresentation(input: PresentationInput, options: Artif
   }
 
   const output = await pptx.write({ outputType: 'nodebuffer' });
-  const buffer = Buffer.isBuffer(output) ? output : Buffer.from(output as ArrayBuffer);
+  const rawBuffer = Buffer.isBuffer(output) ? output : Buffer.from(output as ArrayBuffer);
+  const buffer = repairPresentationPackage(rawBuffer);
   assertArchiveParts(buffer, ['ppt/presentation.xml', 'ppt/slides/slide1.xml'], 'PPT 演示文稿');
   return { buffer, warnings };
 }
