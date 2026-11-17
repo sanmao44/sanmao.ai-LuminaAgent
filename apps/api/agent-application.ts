@@ -76,9 +76,9 @@ const AGENT_CLAUDE_MODEL_CALL_TIMEOUT_MS = 180_000;
 const CINEMATIC_DIRECTOR_CANDIDATE_TIMEOUT_MS = 75_000;
 // Search is a pre-answer dependency. It must not inherit the provider's long
 // request timeout, otherwise a stalled search blocks the whole chat surface.
-const AGENT_WEB_SEARCH_TOTAL_TIMEOUT_MS = 30_000;
+const AGENT_WEB_SEARCH_TOTAL_TIMEOUT_MS = 50_000;
 const AGENT_NATIVE_SEARCH_TIMEOUT_MS = 20_000;
-const AGENT_EXTERNAL_SEARCH_TIMEOUT_MS = 18_000;
+const AGENT_EXTERNAL_SEARCH_TIMEOUT_MS = 35_000;
 
 async function withAgentOperationDeadline<T>(signal: AbortSignal, timeoutMs: number, label: string, operation: (callSignal: AbortSignal) => Promise<T>) {
   const controller = new AbortController();
@@ -1979,6 +1979,30 @@ const auditMcpCall = (
       if (webSearchData) return `已使用外部搜索 API${nativeSearchError ? '（原生搜索失败后回退）' : ''}，获得 ${webSearchData.resultCount} 条来源，正在整理回答…`;
       return '联网搜索失败，正在如实回答…';
     };
+    const searchFailureReason = () => {
+      if (webSearchData?.status === 'SEARCH_TIMEOUT' || /timeout|timed out|超时/i.test(webSearchError)) return '搜索请求超时';
+      if (webSearchData?.status === 'SEARCH_ZERO_RESULTS') return '搜索服务没有返回相关结果';
+      if (webSearchData?.status === 'SEARCH_API_ERROR' || nativeSearchError || webSearchError) return '搜索服务暂不可用';
+      return '未获得可靠搜索结果';
+    };
+    if (requestRoute.route === 'web' && needsWebSearch && !nativeSearchData && !webSearchData?.resultCount) {
+      const reason = searchFailureReason();
+      const message = `联网搜索失败：${reason}。本轮没有获取到可核验来源，无法可靠回答。请稍后重试。`;
+      llmResponseChars = message.length;
+      await settleLlmLog?.({ status: 'error', responseChars: message.length, error: reason });
+      const metadata = {
+        images: [],
+        files: [],
+        generations: [],
+        model: agentRuntime.model.displayName,
+        webSearch: searchMetadata(),
+        webSearchDecision: searchDecisionMetadata(),
+        statuses: [{ type: 'status' as const, stage: 'web_search' as const, message: '联网搜索失败，未生成未经核验的回答。' }],
+      };
+      return wantsStream
+        ? streamResult(null, { ...metadata, fallback: message })
+        : applicationJson({ ok: true, message, ...metadata, deliverable: requestedDeliverable, toolSupport: false });
+    }
     // 检索成功却回答“找不到来源”时，重新要求模型基于检索结果作答；流式与整段两种收尾共用这段逻辑。
     const rewriteSearchRefusal = async (text: string) => {
       const searchData = webSearchData;

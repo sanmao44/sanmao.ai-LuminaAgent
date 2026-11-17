@@ -8,6 +8,7 @@ const realSkills = requireTs('./skills');
 const realBrowserGuidance = requireTs('./mcp/browser-guidance');
 function harness(options = {}) {
   const calls = [];
+  const searchCalls = [];
   const mcpCalls = [];
   const mcpAuditCalls = [];
   const discoveryCalls = [];
@@ -139,7 +140,11 @@ function harness(options = {}) {
           },
           web: {
             planSearch: webApi.planSearch,
-            searchWeb: async () => ({ query: '', intent: { entities: [] }, results: [], status: 'empty', resultCount: 0, rounds: 0 }),
+            searchWeb: async (...args) => {
+              searchCalls.push(args);
+              if (typeof options.searchWeb === 'function') return options.searchWeb(...args);
+              return { query: '', intent: { entities: [] }, results: [], status: 'empty', resultCount: 0, rounds: 0 };
+            },
           },
           mcp: {
             callMcpTool: async (server, toolName, args) => {
@@ -356,7 +361,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-	    calls, modelCalls, candidateCalls, mcpCalls, mcpAuditCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageModelCalls, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls, presentationCalls, transcriptionCalls, savedSubtitleArtifacts,
+	    calls, searchCalls, modelCalls, candidateCalls, mcpCalls, mcpAuditCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageModelCalls, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls, presentationCalls, transcriptionCalls, savedSubtitleArtifacts,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -369,6 +374,19 @@ function harness(options = {}) {
     },
   };
 }
+
+test('always-mode news search calls the search adapter and reports failure without a model denial', async () => {
+  const agent = harness({ searchWeb: async () => { throw new Error('外部搜索请求超时'); } });
+  const result = await agent.post([{ role: 'user', content: '推送今日军事新闻' }], { webMode: 'always' });
+
+  assert.equal(agent.searchCalls.length, 1);
+  assert.equal(agent.searchCalls[0][0], '推送今日军事新闻');
+  assert.equal(agent.modelCalls.length, 0);
+  assert.equal(result.webSearchDecision.status, 'failed');
+  assert.match(result.message, /联网搜索失败：搜索请求超时/);
+  assert.match(result.message, /没有获取到可核验来源/);
+  assert.doesNotMatch(result.message, /无法直接访问实时互联网/);
+});
 
 test('audio attachments generate a timestamped SRT artifact locally without a chat model', async () => {
   const agent = harness({ noChatModel: true });
