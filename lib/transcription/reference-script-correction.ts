@@ -1,8 +1,8 @@
 import type { LocalTranscriptionResult, TimestampedTranscriptSegment, TimestampedTranscriptWord } from '@/packages/contracts/transcription';
 
 const MIN_ALIGNMENT_CHARS = 28;
-const MAX_ALIGNMENT_CHARS = 96;
-const MAX_EDIT_RATIO = 0.08;
+const MAX_ALIGNMENT_CHARS = 48;
+const MAX_EDIT_RATIO = 0.16;
 const NGRAM_SIZE = 4;
 const MAX_NGRAM_POSITIONS = 40;
 const MAX_ALIGNMENT_CENTERS = 48;
@@ -12,7 +12,14 @@ type SegmentRange = { start: number; end: number };
 type TextAlignment = { distance: number; replacements: Map<number, string> };
 
 function isMatchable(character: string) {
-  return /[\p{L}\p{N}]/u.test(character);
+  return /[\p{L}\p{N}\p{S}]/u.test(character);
+}
+
+function isLatinCaseMismatch(source: MatchPoint, target: MatchPoint) {
+  return source.value === target.value
+    && source.original !== target.original
+    && /^[A-Za-z]$/u.test(source.original)
+    && /^[A-Za-z]$/u.test(target.original);
 }
 
 function matchPoints(value: string): MatchPoint[] {
@@ -120,7 +127,9 @@ function alignText(source: readonly MatchPoint[], targetWindow: readonly MatchPo
     if (row > 0 && column > 0) {
       const substitutionCost = source[row - 1].value === targetWindow[column - 1].value ? 0 : 1;
       if (costs[row][column] === costs[row - 1][column - 1] + substitutionCost) {
-        if (substitutionCost) replacements.set(row - 1, targetWindow[column - 1].original);
+        if (substitutionCost || isLatinCaseMismatch(source[row - 1], targetWindow[column - 1])) {
+          replacements.set(row - 1, targetWindow[column - 1].original);
+        }
         row -= 1;
         column -= 1;
         continue;
@@ -134,6 +143,46 @@ function alignText(source: readonly MatchPoint[], targetWindow: readonly MatchPo
   }
 
   return { distance, replacements };
+}
+
+function removeReorderedReplacementSpans(source: readonly MatchPoint[], replacements: Map<number, string>) {
+  const filtered = new Map(replacements);
+  const offsets = [...replacements.keys()].sort((left, right) => left - right);
+  let start = 0;
+
+  while (start < offsets.length) {
+    let end = start + 1;
+    while (end < offsets.length && offsets[end] - offsets[end - 1] <= 2) end += 1;
+    const run = offsets.slice(start, end);
+    if (run.length >= 2) {
+      const spanStart = run[0];
+      const spanEnd = run.at(-1) ?? spanStart;
+      const original = source.slice(spanStart, spanEnd + 1).map((point) => point.value).sort().join('');
+      const replacement = source.slice(spanStart, spanEnd + 1)
+        .map((point, index) => (replacements.get(spanStart + index) || point.original).toLowerCase())
+        .sort()
+        .join('');
+      if (original === replacement) for (const offset of run) filtered.delete(offset);
+    }
+    start = end;
+  }
+
+  return filtered;
+}
+
+function isReorderedInsteadOfCorrected(source: readonly MatchPoint[], replacements: ReadonlyMap<number, string>) {
+  const original = source.map((point) => point.value);
+  const corrected = source.map((point, offset) => {
+    const replacement = replacements.get(offset);
+    if (!replacement) return point.value;
+    const normalized = Array.from(replacement.normalize('NFKC').toLowerCase());
+    return normalized.length === 1 ? normalized[0] : replacement;
+  });
+  if (original.every((character, index) => character === corrected[index])) return false;
+  if (original.length !== corrected.length) return false;
+  const originalMultiset = [...original].sort();
+  const correctedMultiset = [...corrected].sort();
+  return originalMultiset.every((character, index) => character === correctedMultiset[index]);
 }
 
 function findCorrections(source: readonly MatchPoint[], reference: readonly MatchPoint[], index: Map<string, number[]>) {
@@ -165,7 +214,9 @@ function findCorrections(source: readonly MatchPoint[], reference: readonly Matc
     }
   }
 
-  return bestDistance > maxEdits || ambiguous || !bestReplacements.size ? new Map<number, string>() : bestReplacements;
+  if (bestDistance > maxEdits || ambiguous || !bestReplacements.size) return new Map<number, string>();
+  if (isReorderedInsteadOfCorrected(source, bestReplacements)) return new Map<number, string>();
+  return removeReorderedReplacementSpans(source, bestReplacements);
 }
 
 function replacementProposals(segments: readonly TimestampedTranscriptSegment[], referenceText: string) {
