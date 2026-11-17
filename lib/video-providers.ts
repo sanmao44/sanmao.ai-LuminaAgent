@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
 import type { RuntimeProvider } from './providers';
-import { is65535Provider, isAgnesProvider, requiresPublicMediaRelay } from './video-platform';
+import { is65535Provider, isAgnesProvider, isJimengProvider, requiresPublicMediaRelay } from './video-platform';
+import { isJimengCanvasCliAvailable, resolveJimengCanvasCliCommand } from './jimeng-cli';
 
 export type VideoProviderTask = {
   providerTaskId?: string;
@@ -606,6 +607,11 @@ export function resolveVideoTransport(provider: Pick<RuntimeProvider, 'videoTran
 
 function jimengCliShell(command: string) { return process.platform === 'win32' && command.toLowerCase().endsWith('.cmd'); }
 function cliCommand(provider: RuntimeProvider) {
+  if (isJimengProvider(provider)) {
+    const configured = provider.jimengCliPath || process.env.JIMENG_CANVAS_CLI_PATH || process.env.JIMENG_CLI_PATH;
+    const resolvedCanvas = resolveJimengCanvasCliCommand(configured);
+    if (isJimengCanvasCliAvailable(resolvedCanvas)) return resolvedCanvas;
+  }
   const profile = process.env.USERPROFILE || os.homedir();
   const candidates = [
     provider.jimengCliPath,
@@ -625,7 +631,10 @@ function cliCommand(provider: RuntimeProvider) {
   ].map((value) => String(value || '').trim()).filter(Boolean);
   return candidates.find((value) => path.isAbsolute(value)
     ? existsSync(value)
-    : value === provider.jimengCliPath || value === process.env.JIMENG_CLI_PATH || /^(?:dreamina)(?:\.exe|\.cmd)?$/i.test(value))
+    : (value === provider.jimengCliPath && !isJimengCanvasCommand(value))
+      || (value === process.env.JIMENG_CLI_PATH && !isJimengCanvasCommand(value))
+      || /^(?:dreamina)(?:\.exe|\.cmd)?$/i.test(value)
+      || isJimengCanvasCliAvailable(value))
     || candidates[0]
     || (process.platform === 'win32' ? 'dreamina.exe' : 'dreamina');
 }

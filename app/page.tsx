@@ -12139,7 +12139,7 @@ export default function Page() {
                                                                             { value: '', label: "未启用视频", description: "暂不启用视频生成" },
                                                                             { value: "native-task", label: "原生异步任务 · 65535", description: "适用于 /v1/tasks 异步接口" },
                                                                             { value: "openai-videos", label: "OpenAI 兼容 · /v1/videos", description: "适用于兼容视频任务接口" },
-                                                                            { value: "jimeng-cli", label: "即梦 CLI · 本地调用", description: "使用本机 dreamina CLI" }
+                                                                            { value: "jimeng-cli", label: "即梦画布 CLI · 本地调用", description: "优先使用官方 dreamina-canvas，兼容旧 dreamina" }
                                                                         ], ariaLabel: "视频传输方式" })
                                                                     ] }),
                                                                     /*#__PURE__*/ _jsxs("label", { children: [
@@ -12168,11 +12168,11 @@ export default function Page() {
                                                                      ] }),
                                                                      /*#__PURE__*/ _jsxs("label", { children: [
                                                                          /*#__PURE__*/ _jsx("span", { children: "即梦 CLI 路径（可选）" }),
-                                                                        /*#__PURE__*/ _jsx("input", { value: providerForm.jimengCliPath || '', onChange: (e)=>setProviderForm({ ...providerForm, jimengCliPath: e.target.value }), placeholder: "dreamina.cmd 或 dreamina" })
+                                                                         /*#__PURE__*/ _jsx("input", { value: providerForm.jimengCliPath || '', onChange: (e)=>setProviderForm({ ...providerForm, jimengCliPath: e.target.value }), placeholder: "dreamina-canvas.cmd 或 dreamina-canvas" })
                                                                     ] })
                                                                 ]
                                                             }),
-                                                            /*#__PURE__*/ _jsx("small", { className: "provider-video-hint", children: "即梦 CLI 需要先在网页端完成一次视频生成授权；应用不会自动执行远程安装脚本。" }),
+                                                            /*#__PURE__*/ _jsx("small", { className: "provider-video-hint", children: "即梦画布 CLI 会按官方模型列表读取动态时长；应用不会自动执行远程安装脚本。" }),
                                                             providerForm.videoTransport === 'jimeng-cli' && /*#__PURE__*/ _jsxs("div", {
                                                                 className: "jimeng-login-panel",
                                                                 children: [

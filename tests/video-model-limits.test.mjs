@@ -8,13 +8,17 @@ const source = await readFile(sourceUrl, 'utf8');
 // Keep this focused unit test runnable without a TypeScript runtime loader.
 // The production module imports the same helper from lib/video-platform.ts.
 const standaloneSource = source.replace(
-  "import { is65535Provider, isJimengProvider, type VideoProviderIdentity } from './video-platform';",
-  `type VideoProviderIdentity = { platform?: string; videoTransport?: string; baseUrl?: string; videoBaseUrl?: string };
+  "import { is65535Provider, isJimengLegacyCli, isJimengProvider, type VideoProviderIdentity } from './video-platform';",
+  `type VideoProviderIdentity = { platform?: string; videoTransport?: string; baseUrl?: string; videoBaseUrl?: string; jimengCliPath?: string };
 function is65535Provider(provider) {
   return Boolean(provider && (provider.platform === '65535' || /65535\\.space/i.test(provider.baseUrl || '') || /65535\\.space/i.test(provider.videoBaseUrl || '')));
 }
 function isJimengProvider(provider) {
   return Boolean(provider && (provider.platform === 'jimeng-cli' || provider.videoTransport === 'jimeng-cli'));
+}
+function isJimengLegacyCli(provider) {
+  const configured = String(provider?.jimengCliPath || '').trim();
+  return Boolean(configured && /(?:^|[\\\\/])dreamina(?:\\.exe|\\.cmd)?$/i.test(configured));
 }`,
 );
 const compiled = ts.transpileModule(standaloneSource, {
@@ -81,7 +85,7 @@ test('uses the official Jimeng parameter profile instead of generic defaults', (
 });
 
 test('applies official multiframe CLI limits from the actual input shape', () => {
-  const provider = { platform: 'jimeng-cli', videoTransport: 'jimeng-cli' };
+  const provider = { platform: 'jimeng-cli', videoTransport: 'jimeng-cli', jimengCliPath: 'dreamina.exe' };
   const twoImages = limits.getVideoModelLimitsForInput(
     { rawId: 'seedance2.0fast' },
     provider,
@@ -128,4 +132,16 @@ test('applies official multiframe CLI limits from the actual input shape', () =>
   );
   assert.equal(allAround.minSeconds, 4);
   assert.equal(allAround.maxSeconds, 15);
+});
+
+test('does not apply legacy multiframe limits to the official Canvas CLI', () => {
+  const provider = { platform: 'jimeng-cli', videoTransport: 'jimeng-cli', jimengCliPath: 'dreamina-canvas.exe' };
+  const canvasM2v = limits.getVideoModelLimitsForInput(
+    { rawId: 'seedance2.0' },
+    provider,
+    { referenceImageCount: 3, referenceMode: 'multiframe' },
+  );
+  assert.equal(canvasM2v.minSeconds, 4);
+  assert.equal(canvasM2v.maxSeconds, 15);
+  assert.equal(canvasM2v.durationScope, undefined);
 });

@@ -77,3 +77,14 @@ test('does not confuse wrapper metadata with a model record', () => {
   }), 'video');
   assert.deepEqual(models, []);
 });
+
+test('does not treat an uninstalled Canvas command name as available', () => {
+  assert.equal(jimengCli.isJimengCanvasCliAvailable('C:/path/that/does/not/exist/dreamina-canvas.exe'), false);
+  assert.equal(jimengCli.isJimengCanvasCliAvailable('dreamina.exe'), false);
+});
+
+test('does not reuse a legacy dreamina path as the Canvas command', () => {
+  const resolved = jimengCli.resolveJimengCanvasCliCommand('C:/path/that/does/not/exist/dreamina.exe');
+  assert.equal(jimengCli.isJimengCanvasCommand(resolved), true);
+  assert.notEqual(resolved.toLowerCase(), 'c:/path/that/does/not/exist/dreamina.exe');
+});

@@ -1,10 +1,12 @@
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import type { GeneratedImage } from './types';
 import type { RuntimeProvider } from './providers';
 import { resolveStoredImageReference } from './image-storage';
-import { parseJimengJsonLines, resolveJimengCliCommand, runJimengCli } from './jimeng-cli';
+import { discoverJimengCanvasModels, inspectJimengCli, parseJimengJsonLines, resolveJimengCanvasCliCommand, resolveJimengCliCommand, runJimengCanvasCli, runJimengCli } from './jimeng-cli';
 
 type ImageInput = {
   prompt: string;
@@ -219,8 +221,318 @@ async function waitForResult(command: string, taskId: string, outputDirectory: s
   throw new Error('即梦图片任务等待超时，请稍后重试');
 }
 
+type CanvasResult = { values: unknown[]; latest: unknown; output: string };
+
+function canvasRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function canvasValues(output: string): CanvasResult {
+  const values: unknown[] = [];
+  for (const line of output.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+    try {
+      const parsed = JSON.parse(line);
+      if (!values.some((item) => JSON.stringify(item) === JSON.stringify(parsed))) values.push(parsed);
+    } catch {}
+  }
+  const trimmed = output.trim();
+  if (trimmed) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!values.some((item) => JSON.stringify(item) === JSON.stringify(parsed))) values.push(parsed);
+    } catch {}
+  }
+  const start = output.indexOf('{');
+  const end = output.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      const parsed = JSON.parse(output.slice(start, end + 1));
+      if (!values.some((item) => JSON.stringify(item) === JSON.stringify(parsed))) values.push(parsed);
+    } catch {}
+  }
+  return { values, latest: values[values.length - 1] || {}, output };
+}
+
+function canvasFind(value: unknown, key: RegExp, output: unknown[] = [], depth = 0): unknown[] {
+  if (depth > 14 || value === null || value === undefined) return output;
+  if (Array.isArray(value)) {
+    value.forEach((item) => canvasFind(item, key, output, depth + 1));
+    return output;
+  }
+  if (typeof value !== 'object') return output;
+  for (const [name, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key.test(name)) output.push(child);
+    canvasFind(child, key, output, depth + 1);
+  }
+  return output;
+}
+
+function canvasFirst(result: CanvasResult, key: RegExp) {
+  return canvasFind(result.values, key)
+    .map((value) => String(value || '').trim())
+    .find(Boolean) || '';
+}
+
+function canvasError(result: CanvasResult, fallback: string) {
+  for (const value of result.values.slice().reverse()) {
+    const error = canvasRecord(value).error;
+    if (error) {
+      const record = canvasRecord(error);
+      const message = typeof error === 'string' ? error : record.message || record.detail || record.code;
+      if (message) return String(message);
+    }
+  }
+  return result.output.trim().slice(-1200) || fallback;
+}
+
+async function invokeCanvas(command: string, args: string[], timeoutMs: number, signal?: AbortSignal, options: { allowIncomplete?: boolean; confirm?: boolean } = {}) {
+  const globalArgs = ['--format', 'json', '--non-interactive', ...(options.confirm ? ['--yes'] : [])];
+  const result = await runJimengCanvasCli(command, [...globalArgs, ...args], timeoutMs, signal);
+  const output = `${result.stdout}\n${result.stderr}`.trim();
+  const parsed = canvasValues(output);
+  if (result.timedOut) throw new Error('即梦画布图片任务等待超时，请稍后重试。');
+  const code = canvasFirst(parsed, /^code$/i);
+  const incomplete = options.allowIncomplete && (result.code === 20 || code === '20' || code === '40012');
+  if (!incomplete && (result.code !== 0 || parsed.values.some((value) => canvasRecord(value).ok === false))) {
+    throw new Error(canvasError(parsed, '即梦画布图片操作失败'));
+  }
+  return parsed;
+}
+
+type CanvasImageResource = {
+  id: string;
+  state: string;
+  mediaType: 'image' | 'video' | 'audio' | 'unknown';
+};
+
+function canvasResourceState(record: Record<string, unknown>) {
+  return String(record.state || record.status || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+function canvasResourceMediaType(record: Record<string, unknown>): CanvasImageResource['mediaType'] {
+  const explicit = String(
+    record.type || record.mediaType || record.media_type || record.kind || record.contentType || record.mimeType || '',
+  ).toLowerCase();
+  const format = String(record.format || record.extension || '').toLowerCase();
+  const text = `${explicit} ${format} ${String(record.name || record.title || '')}`;
+  if (/video|mp4|m4v|mov|webm|avi|mkv/.test(text)) return 'video';
+  if (/image|png|jpe?g|webp|gif|avif|bmp/.test(text)) return 'image';
+  if (/audio|mp3|wav|m4a|aac|flac|ogg/.test(text)) return 'audio';
+  if (record.video && typeof record.video === 'object') return 'video';
+  if (record.image && typeof record.image === 'object') return 'image';
+  if (record.audio && typeof record.audio === 'object') return 'audio';
+  return 'unknown';
+}
+
+function canvasImageResources(result: CanvasResult): CanvasImageResource[] {
+  const resources: CanvasImageResource[] = [];
+  const visit = (value: unknown, depth = 0) => {
+    if (depth > 14 || value === null || value === undefined || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, depth + 1));
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    const resourceId = String(record.resourceId || record.resource_id || '').trim();
+    if (resourceId) {
+      const candidate: CanvasImageResource = {
+        id: resourceId,
+        state: canvasResourceState(record),
+        mediaType: canvasResourceMediaType(record),
+      };
+      const existing = resources.find((item) => item.id === candidate.id);
+      if (!existing || (existing.mediaType === 'unknown' && candidate.mediaType !== 'unknown')) {
+        if (existing) resources.splice(resources.indexOf(existing), 1);
+        resources.push(candidate);
+      }
+    }
+    for (const item of Object.values(record)) {
+      visit(item, depth + 1);
+    }
+  };
+  result.values.forEach((value) => visit(value));
+  return resources;
+}
+
+export function canvasImageResourceIds(result: CanvasResult) {
+  return Array.from(new Set(canvasImageResources(result)
+    .filter((item) => (item.mediaType === 'image' || item.mediaType === 'unknown')
+      && /^(success|succeeded|complete|completed|done|finished|ready|terminal)$/.test(item.state))
+    .map((item) => item.id)));
+}
+
+export function canvasSubmitId(result: CanvasResult) {
+  const visit = (value: unknown, depth = 0): string => {
+    if (depth > 14 || value === null || value === undefined || typeof value !== 'object') return '';
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const nested = visit(item, depth + 1);
+        if (nested) return nested;
+      }
+      return '';
+    }
+    const record = value as Record<string, unknown>;
+    const submission = canvasRecord(record.submission);
+    const identity = canvasRecord(submission.identity);
+    const nested = String(
+      identity.value
+      || submission.submitId
+      || submission.submit_id
+      || submission.operationRef
+      || submission.operation_ref
+      || '',
+    ).trim();
+    if (nested) return nested;
+    // Resource records also carry a submitId. They identify the resource
+    // upload/generation source, not the resumable node operation.
+    const isResource = Boolean(record.resourceId || record.resource_id);
+    if (!isResource) {
+      const direct = String(
+        record.submitId
+        || record.submit_id
+        || record.operationRef
+        || record.operation_ref
+        || '',
+      ).trim();
+      if (direct) return direct;
+    }
+    for (const child of Object.values(record)) {
+      const found = visit(child, depth + 1);
+      if (found) return found;
+    }
+    return '';
+  };
+  return visit(result.values);
+}
+
+function canvasProjectId(result: CanvasResult, fallback: string) {
+  return canvasFirst(result, /^projectId$/i) || canvasFirst(result, /^project_id$/i) || fallback;
+}
+
+function normalizeCanvasModelId(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+async function resolveCanvasImageModel(command: string, rawModelId: string, mode: 't2i' | 'i2i', signal?: AbortSignal) {
+  const requested = String(rawModelId || '').trim();
+  let models: Awaited<ReturnType<typeof discoverJimengCanvasModels>>;
+  try {
+    models = await discoverJimengCanvasModels(command, 'image', signal);
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : '即梦画布图片模型列表查询失败，请先刷新模型列表。');
+  }
+  if (!models.length) throw new Error('即梦画布没有返回可用的图片模型，请检查登录状态和账户权限。');
+  if (requested && requested.toLowerCase() !== 'auto' && requested.toLowerCase() !== 'jimeng-cli-image') {
+    const normalized = normalizeCanvasModelId(requested);
+    const exact = models.find((item) => normalizeCanvasModelId(item.model) === normalized
+      || item.aliases.some((alias) => normalizeCanvasModelId(alias) === normalized));
+    if (exact) return exact.model;
+    throw new Error(`即梦画布当前图片模型列表中没有“${rawModelId}”，请先刷新模型列表。`);
+  }
+  const compatible = models.find((item) => item.modes.some((itemMode) => itemMode.name === mode || itemMode.scenario === mode));
+  return compatible?.model || models[0]?.model || '';
+}
+
+function canvasImageTitle(prompt: string) {
+  const title = String(prompt || '').trim().replace(/\s+/g, ' ');
+  return (title || 'SANMAO 图片生成').slice(0, 512);
+}
+
+function canvasAspectRatio(input: ImageInput) {
+  if (input.aspectRatio && /^\d+:\d+$/.test(input.aspectRatio)) return input.aspectRatio;
+  const width = Math.round(Number(input.width || 0));
+  const height = Math.round(Number(input.height || 0));
+  if (width <= 0 || height <= 0) return '';
+  let a = width;
+  let b = height;
+  while (b) [a, b] = [b, a % b];
+  return `${width / a}:${height / a}`;
+}
+
+function imageCount(input: ImageInput) {
+  const count = Number(input.count || 1);
+  if (!Number.isInteger(count) || count <= 0) throw new Error('即梦画布图片数量必须是正整数。');
+  return count;
+}
+
+function buildCanvasImageArgs(projectId: string, input: ImageInput, model: string, refs: string[], submitId: string) {
+  const mode = refs.length ? 'i2i' : 't2i';
+  const args = ['node', 'create', 'image', '--project-id', projectId, '--run', '--mode', mode, '--title', canvasImageTitle(input.prompt), '--prompt', input.prompt, '--count', String(imageCount(input))];
+  if (model) args.push('--model', model);
+  const ratio = canvasAspectRatio(input);
+  if (ratio) args.push('--ratio', ratio);
+  if (input.resolution && !/^(?:auto|自动)$/i.test(input.resolution)) args.push('--resolution', String(input.resolution).toUpperCase());
+  if (submitId) args.push('--submit-id', submitId);
+  refs.forEach((resourceId) => args.push('--ref', `res:${resourceId}`));
+  return args;
+}
+
+export function buildJimengCanvasImageArgs(projectId: string, input: ImageInput, model: string, refs: string[], submitId: string) {
+  return buildCanvasImageArgs(projectId, input, model, refs, submitId);
+}
+
+function canvasImageMime(bytes: Buffer) {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP') return 'image/webp';
+  return 'image/png';
+}
+
+async function downloadCanvasImages(command: string, projectId: string, resources: string[], directory: string, signal?: AbortSignal) {
+  const images: GeneratedImage[] = [];
+  for (const [index, resourceId] of Array.from(new Set(resources)).entries()) {
+    const file = path.join(directory, `result-${index + 1}.png`);
+    await invokeCanvas(command, ['resource', 'download', resourceId, '--project-id', projectId, '--output', file], 120_000, signal);
+    if (existsSync(file)) {
+      const bytes = await readFile(file);
+      if (bytes.byteLength) images.push({ url: `data:${canvasImageMime(bytes)};base64,${bytes.toString('base64')}` });
+    }
+  }
+  return images;
+}
+
+async function runJimengCanvasImage(provider: RuntimeProvider, rawModelId: string, input: ImageInput, references: string[], signal?: AbortSignal, canvasCommand?: string) {
+  const command = canvasCommand || resolveJimengCanvasCliCommand(provider.jimengCliPath || process.env.JIMENG_CANVAS_CLI_PATH || process.env.JIMENG_CLI_PATH);
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-canvas-image-'));
+  const requestedProjectId = randomUUID();
+  try {
+    const created = await invokeCanvas(command, ['canvas', 'create', `SANMAO ${requestedProjectId.slice(0, 8)}`, '--project-id', requestedProjectId, '--use'], 60_000, signal);
+    const projectId = canvasProjectId(created, requestedProjectId);
+    const resourceIds: string[] = [];
+    for (const [index, reference] of references.entries()) {
+      const file = await materialize(reference, directory, index);
+      const uploaded = await invokeCanvas(command, ['resource', 'upload', '--project-id', projectId, '--file', file, '--type', 'image', '--import-kind', 'local_upload'], 120_000, signal);
+      const resourceId = canvasFirst(uploaded, /^resourceId$/i) || canvasFirst(uploaded, /^resource_id$/i);
+      if (!resourceId) throw new Error('即梦画布图片素材上传成功但没有返回 resourceId。');
+      resourceIds.push(resourceId);
+    }
+    const mode = resourceIds.length ? 'i2i' : 't2i';
+    const model = await resolveCanvasImageModel(command, rawModelId, mode, signal);
+    const submitId = randomUUID();
+    const submitted = await invokeCanvas(command, buildCanvasImageArgs(projectId, input, model, resourceIds, submitId), 120_000, signal, { confirm: true });
+    const operationId = canvasSubmitId(submitted) || submitId;
+    let images = await downloadCanvasImages(command, projectId, canvasImageResourceIds(submitted).filter((id) => !resourceIds.includes(id)), directory, signal);
+    if (!images.length) {
+      const completed = await invokeCanvas(command, ['operation', 'wait', operationId, '--project-id', projectId, '--timeout', '30m'], 31 * 60_000, signal, { allowIncomplete: true });
+      images = await downloadCanvasImages(command, projectId, canvasImageResourceIds(completed).filter((id) => !resourceIds.includes(id)), directory, signal);
+      if (!images.length) {
+        const state = canvasFirst(completed, /^(state|status|submissionOutcome)$/i).toLowerCase();
+        const failed = /fail|error|cancel|reject/.test(state)
+          || completed.values.some((value) => /fail|error|cancel|reject/.test(String(canvasRecord(value).state || canvasRecord(value).status || '').toLowerCase()));
+        if (failed) throw new Error(canvasError(completed, '即梦画布图片任务失败'));
+        if (!/success|succeed|complete|done|finished|terminal/.test(state)) throw new Error('即梦画布图片任务仍在运行，请稍后查询原任务。');
+      }
+    }
+    if (!images.length) throw new Error('即梦画布任务已完成，但没有返回可下载的图片资源。');
+    return images.slice(0, imageCount(input));
+  } finally {
+    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 export async function runJimengImage(provider: RuntimeProvider, rawModelId: string, input: ImageInput, references: string[] = [], signal?: AbortSignal) {
-  const command = resolveJimengCliCommand(provider.jimengCliPath);
+  const inspected = await inspectJimengCli(provider);
+  if (inspected.canvas) return runJimengCanvasImage(provider, rawModelId, input, references, signal, inspected.command);
+  const command = inspected.command || resolveJimengCliCommand(provider.jimengCliPath);
   const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-'));
   const outputDirectory = path.join(directory, 'results');
   try {
@@ -240,7 +552,11 @@ export async function runJimengImage(provider: RuntimeProvider, rawModelId: stri
 }
 
 export async function runJimengImageUpscale(provider: RuntimeProvider, input: { reference: string; size: string }, signal?: AbortSignal) {
-  const command = resolveJimengCliCommand(provider.jimengCliPath);
+  const inspected = await inspectJimengCli(provider);
+  if (inspected.canvas) {
+    throw new Error('即梦画布 CLI 的图片超分需要 Canvas node-id；当前图片接口没有可安全映射的 node-id，请先使用图片生成结果的画布节点。');
+  }
+  const command = inspected.command || resolveJimengCliCommand(provider.jimengCliPath);
   const directory = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-upscale-'));
   const outputDirectory = path.join(directory, 'results');
   try {

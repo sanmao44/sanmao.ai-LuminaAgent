@@ -34,6 +34,7 @@ const providers = await importTypeScript(providersUrl, [
     .replace("import { inferNativeSearch } from './native-search-detection';", '')
     .replace("import { inferModelKind } from './model-kind';", '')
     .replace("import { agnesModelCatalog } from './agnes';", '')
+    .replace("import { inspectJimengCli } from './jimeng-cli';", "const inspectJimengCli = async () => ({ installed: false, version: '', loginHint: 'stub' });")
     .replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;'),
 ].join('\n').replace(signedMediaImport, `Promise.resolve({ preparePublicMediaUrl: async (value, kind) => {
   const signed = await globalThis.__providerTestSignedMedia.preparePublicMediaUrl(value, kind);
@@ -42,7 +43,10 @@ const providers = await importTypeScript(providersUrl, [
 
 const videoUrl = new URL('../lib/video-providers.ts', import.meta.url);
 const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
-const video = await importTypeScript(videoUrl, `${videoPlatformSource}\n${(await readFile(videoUrl, 'utf8')).replace("import { is65535Provider, isAgnesProvider, requiresPublicMediaRelay } from './video-platform';", '')}`);
+const videoSource = (await readFile(videoUrl, 'utf8'))
+  .replace(/import \{[^}]+\} from '\.\/video-platform';\r?\n/, '')
+  .replace(/import \{[^}]+\} from '\.\/jimeng-cli';\r?\n/, "const isJimengCanvasCliAvailable = () => false; const resolveJimengCanvasCliCommand = (value) => value || 'dreamina-canvas';\n");
+const video = await importTypeScript(videoUrl, `${videoPlatformSource}\n${videoSource}`);
 
 const signedUrl = new URL('../lib/signed-media.ts', import.meta.url);
 const signedSource = await readFile(signedUrl, 'utf8');

@@ -1,4 +1,4 @@
-import { is65535Provider, isJimengProvider, type VideoProviderIdentity } from './video-platform';
+import { is65535Provider, isJimengLegacyCli, isJimengProvider, type VideoProviderIdentity } from './video-platform';
 
 function isAgnesProvider(provider?: VideoProviderIdentity | null) {
   if (!provider) return false;
@@ -267,6 +267,7 @@ export function getVideoModelLimitsForInput(
     ? Math.max(0, Math.floor(input.audioCount || 0))
     : 0;
   const isMultiframe = isJimengProvider(providerIdentity)
+    && isJimengLegacyCli(providerIdentity)
     && input.referenceMode === 'multiframe'
     && !input.hasFirstFrame
     && !input.hasLastFrame
