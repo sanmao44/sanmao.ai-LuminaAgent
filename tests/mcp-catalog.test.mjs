@@ -64,6 +64,8 @@ test('Windows 桌面目录项固定 FlaUI 版本、平台资产和安全白名�
   assert.equal(entry.version, '0.2.1');
   assert.equal(entry.archive.assets.x64.size, 67_720_045);
   assert.equal(entry.archive.assets.arm64.size, 63_169_089);
+  assert.equal(entry.archive.assets.x64.sha256, 'f0936ebec75772064d52492d07b774dee9c8a9e19bef55324888e30976a67ff5');
+  assert.equal(entry.archive.assets.arm64.sha256, 'a148ab0d3ddfc0c44bd5075e4a264171279a6df4ec235c9f6dcdaef742c999fc');
   assert.deepEqual(entry.platforms, ['win32']);
   assert.equal(entry.defaultReadOnly, true);
   assert.ok(entry.allowedTools.includes('windows_snapshot'));

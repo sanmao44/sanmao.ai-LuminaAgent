@@ -353,7 +353,7 @@ export const MCP_CATALOG_ENTRIES: readonly McpCatalogEntry[] = [
         x64: {
           url: 'https://github.com/shanselman/FlaUI-MCP/releases/download/v0.2.1/FlaUI-MCP-win-x64-0.2.1-self-contained.zip',
           size: 67_720_045,
-          sha256: 'f0936ebec75772064d52492d07b774dee8c9a9e19bef55324888e30976a67ff5',
+          sha256: 'f0936ebec75772064d52492d07b774dee9c8a9e19bef55324888e30976a67ff5',
           executable: 'FlaUI.Mcp.exe',
         },
         arm64: {
