@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { AutomaticSpeechRecognitionOutput, ProgressInfo } from '@huggingface/transformers';
 import type { LocalTranscriptionResult, TimestampedTranscriptSegment, TimestampedTranscriptWord } from '@/packages/contracts/transcription';
 import { resolveLocalDataDir } from '@/lib/data-paths';
+import { correctTranscriptWithReference } from './reference-script-correction';
 import { decodeAudioToPcmWav } from './ffmpeg-decoder';
 
 export const DEFAULT_LOCAL_ASR_MODEL = 'Xenova/whisper-small';
@@ -161,6 +162,24 @@ function cleanText(value: unknown) {
   return String(value ?? '').replace(/\s+/gu, ' ').trim();
 }
 
+function buildReferencePrompt(referenceText?: string) {
+  const text = cleanText(referenceText);
+  if (!text) return '';
+  if (Array.from(text).length <= MAX_REFERENCE_PROMPT_CHARS && !/[。！？!?；;，,]/u.test(text)) return text;
+
+  const terms = new Set<string>();
+  for (const match of text.matchAll(/[《「『“【]([^》」』”】\r\n]{2,20})[》」』”】]/gu)) {
+    const term = cleanText(match[1]);
+    if (term && !/[。！？!?；;，,]/u.test(term)) terms.add(term);
+  }
+  for (const match of text.matchAll(/[A-Za-z][A-Za-z0-9]*(?:[._+-][A-Za-z0-9]+)*/gu)) {
+    const term = match[0];
+    const uppercaseCount = Array.from(term).filter((character) => /[A-Z]/u.test(character)).length;
+    if (/[0-9._+-]/u.test(term) || uppercaseCount >= 2) terms.add(term);
+  }
+  return Array.from(terms).join(' ').slice(0, MAX_REFERENCE_PROMPT_CHARS);
+}
+
 function finiteTokenId(value: unknown) {
   const id = Number(value);
   return Number.isInteger(id) && id >= 0 ? id : undefined;
@@ -180,7 +199,7 @@ function specialTokenId(tokenizer: WhisperTokenizer, token: string) {
  * Whisper's generation path. Build the equivalent decoder prefix explicitly.
  */
 export function buildWhisperDecoderInputIds(transcriber: LocalTranscriber, referenceText?: string, language?: string) {
-  const text = cleanText(referenceText);
+  const text = buildReferencePrompt(referenceText);
   if (!text || Array.from(text).length > MAX_REFERENCE_PROMPT_CHARS || /[。！？!?；;，,]/u.test(text)) return undefined;
   const tokenizer = transcriber.tokenizer;
   const encode = tokenizer?.encode;
@@ -386,12 +405,13 @@ export function groupTranscriptWords(words: readonly TimestampedTranscriptWord[]
   }));
 }
 
-export function normalizeLocalAsrResult(raw: AutomaticSpeechRecognitionOutput, durationSeconds: number, model: string, language?: string): LocalTranscriptionResult {
+export function normalizeLocalAsrResult(raw: AutomaticSpeechRecognitionOutput, durationSeconds: number, model: string, language?: string, referenceText?: string): LocalTranscriptionResult {
   const chunks = Array.isArray(raw.chunks) ? raw.chunks as RawChunk[] : [];
   const words = normalizeWords(chunks, Math.max(0, durationSeconds));
   const segments = groupTranscriptWords(words);
   const text = cleanText(raw.text || segments.map((segment) => segment.text).join(' '));
-  return { text, segments, words, model, ...(language ? { language } : {}) };
+  const result = { text, segments, words, model, ...(language ? { language } : {}) };
+  return referenceText ? correctTranscriptWithReference(result, referenceText) : result;
 }
 
 function hasDominantRepeatedPhrase(text: string) {
@@ -513,7 +533,7 @@ export async function transcribeLocalPcmWav(filePath: string, durationSeconds: n
   const result = decoderInputIds
     ? await runPromptedLocalTranscriber(transcriber, audio, transcribeOptions)
     : await transcriber(audio, transcribeOptions);
-  const transcript = normalizeLocalAsrResult(result, duration, resolved.model, resolved.language);
+  const transcript = normalizeLocalAsrResult(result, duration, resolved.model, resolved.language, options.referenceText);
   assertLocalTranscriptionQuality(transcript);
   return transcript;
 }

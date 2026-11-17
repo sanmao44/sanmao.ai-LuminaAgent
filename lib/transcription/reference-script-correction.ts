@@ -1,0 +1,253 @@
+import type { LocalTranscriptionResult, TimestampedTranscriptSegment, TimestampedTranscriptWord } from '@/packages/contracts/transcription';
+
+const MIN_ALIGNMENT_CHARS = 28;
+const MAX_ALIGNMENT_CHARS = 96;
+const MAX_EDIT_RATIO = 0.08;
+const NGRAM_SIZE = 4;
+const MAX_NGRAM_POSITIONS = 40;
+const MAX_ALIGNMENT_CENTERS = 48;
+
+type MatchPoint = { value: string; original: string };
+type SegmentRange = { start: number; end: number };
+type TextAlignment = { distance: number; replacements: Map<number, string> };
+
+function isMatchable(character: string) {
+  return /[\p{L}\p{N}]/u.test(character);
+}
+
+function matchPoints(value: string): MatchPoint[] {
+  return Array.from(value).filter(isMatchable).map((original) => {
+    const normalized = Array.from(original.normalize('NFKC'));
+    const comparable = normalized.length === 1 ? normalized[0] : original;
+    const lowercase = comparable.toLowerCase();
+    return { original, value: Array.from(lowercase).length === 1 ? lowercase : comparable };
+  });
+}
+
+function referencePoints(value: string) {
+  const documentText = value.replace(/^\s*\[[^\]\r\n]{1,160}\]\s*/gmu, '');
+  return matchPoints(documentText);
+}
+
+function buildNgramIndex(points: readonly MatchPoint[]) {
+  const index = new Map<string, number[]>();
+  const uninformative = new Set<string>();
+  for (let offset = 0; offset + NGRAM_SIZE <= points.length; offset += 1) {
+    const gram = points.slice(offset, offset + NGRAM_SIZE).map((point) => point.value).join('');
+    if (uninformative.has(gram)) continue;
+    const positions = index.get(gram) || [];
+    if (positions.length >= MAX_NGRAM_POSITIONS) {
+      index.delete(gram);
+      uninformative.add(gram);
+      continue;
+    }
+    positions.push(offset);
+    index.set(gram, positions);
+  }
+  return index;
+}
+
+function candidateStarts(source: readonly MatchPoint[], reference: readonly MatchPoint[], index: Map<string, number[]>, maxEdits: number) {
+  const votes = new Map<number, number>();
+  for (let sourceOffset = 0; sourceOffset + NGRAM_SIZE <= source.length; sourceOffset += 1) {
+    const gram = source.slice(sourceOffset, sourceOffset + NGRAM_SIZE).map((point) => point.value).join('');
+    for (const referenceOffset of index.get(gram) || []) {
+      const start = referenceOffset - sourceOffset;
+      if (start < 0 || start + source.length - maxEdits > reference.length) continue;
+      votes.set(start, (votes.get(start) || 0) + 1);
+    }
+  }
+
+  const ranked = [...votes]
+    .filter(([, count]) => count >= 2)
+    .sort((left, right) => right[1] - left[1])
+    .map(([start]) => start);
+  const centers: number[] = [];
+  for (const start of ranked) {
+    if (centers.some((center) => Math.abs(center - start) <= maxEdits * 2)) continue;
+    if (centers.length >= MAX_ALIGNMENT_CENTERS) return null;
+    centers.push(start);
+  }
+  const starts = new Set<number>();
+  for (const center of centers) {
+    for (let delta = -maxEdits; delta <= maxEdits; delta += 1) {
+      const start = center + delta;
+      if (start >= 0 && start < reference.length) starts.add(start);
+    }
+  }
+  return starts;
+}
+
+function alignText(source: readonly MatchPoint[], targetWindow: readonly MatchPoint[], maxEdits: number): TextAlignment {
+  const rows = source.length + 1;
+  const columns = targetWindow.length + 1;
+  const infinity = maxEdits + 1;
+  const costs = Array.from({ length: rows }, () => {
+    const row = new Uint8Array(columns);
+    row.fill(infinity);
+    return row;
+  });
+  for (let column = 0; column <= Math.min(maxEdits, targetWindow.length); column += 1) costs[0][column] = column;
+
+  for (let row = 1; row < rows; row += 1) {
+    if (row <= maxEdits) costs[row][0] = row;
+    const firstColumn = Math.max(1, row - maxEdits);
+    const lastColumn = Math.min(targetWindow.length, row + maxEdits);
+    for (let column = firstColumn; column <= lastColumn; column += 1) {
+      const substitution = costs[row - 1][column - 1] + (source[row - 1].value === targetWindow[column - 1].value ? 0 : 1);
+      costs[row][column] = Math.min(infinity,
+        substitution,
+        costs[row - 1][column] + 1,
+        costs[row][column - 1] + 1,
+      );
+    }
+  }
+
+  const minEnd = Math.max(0, source.length - maxEdits);
+  const maxEnd = Math.min(targetWindow.length, source.length + maxEdits);
+  let endColumn = minEnd;
+  for (let column = minEnd + 1; column <= maxEnd; column += 1) {
+    if (costs[source.length][column] < costs[source.length][endColumn]) endColumn = column;
+  }
+
+  const replacements = new Map<number, string>();
+  const distance = costs[source.length][endColumn];
+  if (distance > maxEdits) return { distance, replacements };
+
+  let row = source.length;
+  let column = endColumn;
+  while (row > 0 || column > 0) {
+    if (row > 0 && column > 0) {
+      const substitutionCost = source[row - 1].value === targetWindow[column - 1].value ? 0 : 1;
+      if (costs[row][column] === costs[row - 1][column - 1] + substitutionCost) {
+        if (substitutionCost) replacements.set(row - 1, targetWindow[column - 1].original);
+        row -= 1;
+        column -= 1;
+        continue;
+      }
+    }
+    if (row > 0 && costs[row][column] === costs[row - 1][column] + 1) {
+      row -= 1;
+      continue;
+    }
+    column -= 1;
+  }
+
+  return { distance, replacements };
+}
+
+function findCorrections(source: readonly MatchPoint[], reference: readonly MatchPoint[], index: Map<string, number[]>) {
+  const maxEdits = Math.max(1, Math.floor(source.length * MAX_EDIT_RATIO));
+  const starts = candidateStarts(source, reference, index, maxEdits);
+  if (!starts?.size) return new Map<number, string>();
+  let bestDistance = maxEdits + 1;
+  let bestSignature: string | null = null;
+  let ambiguous = false;
+  let bestReplacements = new Map<number, string>();
+
+  for (const start of starts) {
+    const targetWindow = reference.slice(start, start + source.length + maxEdits);
+    if (targetWindow.length < source.length - maxEdits) continue;
+    const alignment = alignText(source, targetWindow, maxEdits);
+    if (alignment.distance > maxEdits) continue;
+    const signature = [...alignment.replacements]
+      .sort(([left], [right]) => left - right)
+      .map(([offset, character]) => `${offset}:${character}`)
+      .join('|');
+
+    if (alignment.distance < bestDistance) {
+      bestDistance = alignment.distance;
+      bestSignature = signature;
+      bestReplacements = alignment.replacements;
+      ambiguous = false;
+    } else if (alignment.distance === bestDistance && signature !== bestSignature) {
+      ambiguous = true;
+    }
+  }
+
+  return bestDistance > maxEdits || ambiguous || !bestReplacements.size ? new Map<number, string>() : bestReplacements;
+}
+
+function replacementProposals(segments: readonly TimestampedTranscriptSegment[], referenceText: string) {
+  const reference = referencePoints(referenceText);
+  const segmentPoints = segments.map((segment) => matchPoints(segment.text));
+  const ranges: SegmentRange[] = [];
+  let total = 0;
+  for (const points of segmentPoints) {
+    ranges.push({ start: total, end: total + points.length });
+    total += points.length;
+  }
+  if (total < MIN_ALIGNMENT_CHARS || reference.length < MIN_ALIGNMENT_CHARS) return new Map<number, string>();
+
+  const flattened = segmentPoints.flat();
+  const index = buildNgramIndex(reference);
+  const proposals = new Map<number, Set<string>>();
+  let firstSegment = 0;
+
+  while (firstSegment < segments.length) {
+    let lastSegment = firstSegment;
+    while (lastSegment < segments.length && ranges[lastSegment].end - ranges[firstSegment].start < MAX_ALIGNMENT_CHARS) lastSegment += 1;
+    if (lastSegment === firstSegment) lastSegment += 1;
+    const start = ranges[firstSegment].start;
+    const end = ranges[lastSegment - 1].end;
+    const source = flattened.slice(start, end);
+    if (source.length >= MIN_ALIGNMENT_CHARS) {
+      for (const [offset, character] of findCorrections(source, reference, index)) {
+        const globalOffset = start + offset;
+        const candidates = proposals.get(globalOffset) || new Set<string>();
+        candidates.add(character);
+        proposals.set(globalOffset, candidates);
+      }
+    }
+    if (lastSegment >= segments.length) break;
+    firstSegment = Math.max(firstSegment + 1, lastSegment - 2);
+  }
+
+  return new Map([...proposals]
+    .filter(([, candidates]) => candidates.size === 1)
+    .map(([offset, candidates]) => [offset, [...candidates][0]]));
+}
+
+function patchText(value: string, startOffset: number, replacements: ReadonlyMap<number, string>) {
+  let matchOffset = 0;
+  return Array.from(value, (character) => {
+    if (!isMatchable(character)) return character;
+    const replacement = replacements.get(startOffset + matchOffset);
+    matchOffset += 1;
+    return replacement || character;
+  }).join('');
+}
+
+function patchWords(words: readonly TimestampedTranscriptWord[] | undefined, startOffset: number, replacements: ReadonlyMap<number, string>) {
+  if (!words) return undefined;
+  let matchOffset = startOffset;
+  return words.map((word) => {
+    const text = patchText(word.text, matchOffset, replacements);
+    matchOffset += matchPoints(word.text).length;
+    return text === word.text ? word : { ...word, text };
+  });
+}
+
+/** Correct only same-length character substitutions supported by a strong local script match. */
+export function correctTranscriptWithReference(result: LocalTranscriptionResult, referenceText?: string): LocalTranscriptionResult {
+  if (!referenceText?.trim() || !result.segments.length) return result;
+  const replacements = replacementProposals(result.segments, referenceText);
+  if (!replacements.size) return result;
+
+  let offset = 0;
+  const segments = result.segments.map((segment) => {
+    const start = offset;
+    offset += matchPoints(segment.text).length;
+    const text = patchText(segment.text, start, replacements);
+    const words = patchWords(segment.words, start, replacements);
+    return text === segment.text && words === segment.words
+      ? segment
+      : { ...segment, text, ...(words ? { words } : {}) };
+  });
+
+  const words = patchWords(result.words, 0, replacements) || [];
+  const text = matchPoints(result.text).length === offset
+    ? patchText(result.text, 0, replacements)
+    : result.text;
+  return { ...result, text, segments, words };
+}

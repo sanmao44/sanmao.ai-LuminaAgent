@@ -582,7 +582,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       );
       if (audioSubtitle) {
         const referenceNote = audioSubtitle.referenceDocumentCount
-          ? `已读取 ${audioSubtitle.referenceDocumentCount} 个参考文档；短术语表可辅助识别，长篇文档不会直接作为解码提示，避免模型复读。当前不支持按参考稿逐字强制对齐，字幕仍建议人工核对。`
+          ? `已读取 ${audioSubtitle.referenceDocumentCount} 个参考文档；会用其中的专名提示识别，并谨慎校正与参考稿上下文高度匹配的错字，无法确认处保留识别原文。时间戳仍来自音频识别，并非按参考稿逐字强制对齐，字幕建议人工核对。`
           : '未附带参考文档；如需辅助识别专有名词，可同时上传短术语表。';
         const message = `已生成 ${audioSubtitle.file.name}，包含 ${audioSubtitle.segmentCount} 个字幕片段。识别模型：${audioSubtitle.model}。${referenceNote}`;
         const files = [audioSubtitle.file];
