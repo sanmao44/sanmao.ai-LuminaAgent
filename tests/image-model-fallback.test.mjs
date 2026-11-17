@@ -8,7 +8,7 @@ const { MEDIA_MODEL_INPUT_NOT_SUBMITTED } = createTsRequire(process.cwd())('./pa
 const runtime = (id) => ({ model: { id } });
 const providerRejection = (status, message = `HTTP ${status}`) => Object.assign(new Error(message), { providerFailureKind: 'http', providerStatus: status });
 
-test('switches automatic image models only after an explicit compatibility rejection', async () => {
+test('switches image models after a definitive provider rejection', async () => {
   const calls = [];
   let loaded = 0;
   const first = runtime('default-image');
@@ -18,7 +18,7 @@ test('switches automatic image models only after an explicit compatibility rejec
     return [first, second];
   }, async (candidate) => {
     calls.push(candidate.model.id);
-    if (candidate.model.id === 'default-image') throw providerRejection(422, 'The selected model is not supported for image generation');
+    if (candidate.model.id === 'default-image') throw providerRejection(429, 'rate limit exceeded');
     return candidate.model.id;
   });
   assert.equal(result, 'fallback-image');
@@ -41,13 +41,16 @@ test('does not switch after transport or ambiguous server failures', async () =>
 });
 
 test('recognizes only safe compatibility statuses for fallback', () => {
-  assert.equal(isSafeMediaModelFallbackError(providerRejection(400)), false);
-  assert.equal(isSafeMediaModelFallbackError(providerRejection(415)), false);
-  assert.equal(isSafeMediaModelFallbackError(providerRejection(422)), false);
+  for (const status of [400, 401, 403, 404, 413, 415, 422, 429]) {
+    assert.equal(isSafeMediaModelFallbackError(providerRejection(status)), true, `HTTP ${status} is a definitive rejection`);
+  }
   assert.equal(isSafeMediaModelFallbackError(providerRejection(500)), false);
-  assert.equal(isSafeMediaModelFallbackError(providerRejection(422, 'The selected model is not supported for image generation')), true);
-  assert.equal(isSafeMediaModelFallbackError(providerRejection(404, 'Model "gpt-image-2.5-exact" is not supported by any configured account')), true);
-  assert.equal(isSafeMediaModelFallbackError(providerRejection(404, 'HTTP 404')), false);
+  assert.equal(isSafeMediaModelFallbackError(providerRejection(408)), false);
+  assert.equal(isSafeMediaModelFallbackError(providerRejection(409)), false);
+  assert.equal(isSafeMediaModelFallbackError(Object.assign(providerRejection(422), { providerPossiblyAccepted: true })), false);
+  assert.equal(isSafeMediaModelFallbackError(Object.assign(providerRejection(422), { providerAcceptedTask: true })), false);
+  assert.equal(isSafeMediaModelFallbackError(Object.assign(new Error('terminal failure'), { providerTaskTerminalFailure: true })), true);
+  assert.equal(isSafeMediaModelFallbackError(Object.assign(new Error('no images'), { mediaModelNoOutput: true })), true);
 });
 
 test('automatic media routing falls back when a public media relay is unavailable before provider submission', async () => {

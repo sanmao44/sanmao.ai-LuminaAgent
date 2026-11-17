@@ -3,20 +3,22 @@ import { MEDIA_MODEL_INPUT_NOT_SUBMITTED, type ModelProviderFailure } from '../c
 
 type ProviderFailure = ModelProviderFailure;
 
-/**
- * A media model may be replaced only when the provider explicitly rejects the
- * selected model or capability. Transport failures and ambiguous server
- * errors must remain visible to the caller instead of silently switching
- * providers.
+/** Transport failures and possibly accepted tasks must not trigger a second
+ * paid generation request. Definitive provider rejections and terminal task
+ * failures can safely move to another configured model.
  */
 export function isSafeMediaModelFallbackError(error: unknown): boolean {
-  const failure = error as ProviderFailure | null;
+  const failure = error as (ProviderFailure & {
+    providerPossiblyAccepted?: boolean;
+    providerAcceptedTask?: boolean;
+    providerTaskTerminalFailure?: boolean;
+    mediaModelNoOutput?: boolean;
+  }) | null;
+  if (failure?.providerPossiblyAccepted || failure?.providerAcceptedTask) return false;
+  if (failure?.providerTaskTerminalFailure || failure?.mediaModelNoOutput) return true;
   const status = Number(failure?.providerStatus || failure?.status);
-  const message = String(failure?.message || '').toLowerCase();
-  const explicitCompatibility = /unsupported\s+(?:model|image|edit|generation)|(?:model|image|edit|generation)\s+(?:not found|does not exist|is not supported|unsupported)|unknown model|model .*not supported|configured account|does not support (?:this )?(?:model|image|image generation|image editing)|不支持(?:此模型|该模型|这个模型|图片生成|图片修改)|未找到模型|模型不存在|模型不支持|账号未配置(?:该模型)?/.test(message);
   return failure?.providerFailureKind === 'http'
-    && [400, 404, 415, 422].includes(status)
-    && explicitCompatibility;
+    && [400, 401, 403, 404, 413, 415, 422, 429].includes(status);
 }
 
 export function isSafeMediaInputFallbackError(error: unknown): boolean {

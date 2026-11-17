@@ -1,6 +1,7 @@
 import {
   AlignmentType,
-  Bookmark,
+  BookmarkEnd,
+  BookmarkStart,
   BorderStyle,
   Document,
   ExternalHyperlink,
@@ -446,7 +447,7 @@ function headingLevel(level: number) {
   return HeadingLevel.HEADING_3;
 }
 
-function headingParagraph(level: 1 | 2 | 3, text: string, warnings: string[], bookmarkId?: string) {
+function headingParagraph(level: 1 | 2 | 3, text: string, warnings: string[], bookmarkId?: string, bookmarkNumber?: number) {
   const runs = textRuns(text, warnings, '小标题');
   return new Paragraph({
     heading: headingLevel(level),
@@ -455,7 +456,9 @@ function headingParagraph(level: 1 | 2 | 3, text: string, warnings: string[], bo
       ? { bottom: { style: BorderStyle.SINGLE, size: 6, color: HEADER_FILL, space: 4 } }
       : undefined,
     // 目录的缓存条目靠书签才能在域刷新前跳转。
-    children: bookmarkId ? [new Bookmark({ id: bookmarkId, children: runs })] : runs,
+    children: bookmarkId && bookmarkNumber !== undefined
+      ? [new BookmarkStart(bookmarkId, bookmarkNumber), ...runs, new BookmarkEnd(bookmarkNumber)]
+      : runs,
   });
 }
 
@@ -563,7 +566,7 @@ export async function buildWordDocument(input: DocumentInput, options: ArtifactG
     if (section.heading?.trim()) {
       const level = section.level === 1 || section.level === 2 || section.level === 3 ? section.level : 1;
       const bookmarkId = `sanmao-h-${sectionIndex + 1}`;
-      children.push(headingParagraph(level, section.heading, warnings, input.toc ? bookmarkId : undefined));
+      children.push(headingParagraph(level, section.heading, warnings, input.toc ? bookmarkId : undefined, sectionIndex + 1));
       if (input.toc) tocEntries.push({ title: section.heading.trim().slice(0, 120), level, href: bookmarkId });
     }
     for (const paragraph of (section.paragraphs || []).slice(0, DOCUMENT_MAX_PARAGRAPHS_PER_SECTION)) {
@@ -630,7 +633,7 @@ export async function buildWordDocument(input: DocumentInput, options: ArtifactG
           level: 0,
           format: LevelFormat.DECIMAL,
           text: '%1.',
-          alignment: AlignmentType.START,
+          alignment: AlignmentType.LEFT,
           style: { paragraph: { indent: { left: 720, hanging: 360 } } },
         }],
       }],
@@ -645,6 +648,17 @@ export async function buildWordDocument(input: DocumentInput, options: ArtifactG
         heading2: { run: { font: BODY_FONT, size: 26, bold: true, color: COLOR_TITLE } },
         heading3: { run: { font: BODY_FONT, size: 23, bold: true, color: COLOR_BODY } },
       },
+      paragraphStyles: [{
+        id: 'Normal',
+        name: 'Normal',
+        run: { font: BODY_FONT, size: 21, color: COLOR_BODY },
+        paragraph: { spacing: { line: 320, after: 120 } },
+      }],
+      characterStyles: [{
+        id: 'DefaultParagraphFont',
+        name: 'Default Paragraph Font',
+        run: { font: BODY_FONT, size: 21, color: COLOR_BODY },
+      }],
     },
     sections: [{
       properties: {

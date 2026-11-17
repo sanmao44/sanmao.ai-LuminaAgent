@@ -1032,9 +1032,10 @@ export async function getRuntimeImageGenerationModel(id: string | null | undefin
 
 /**
  * Return the automatic image-model order used by the runtime, with the
- * configured default first.  Callers use this only after a provider has
- * explicitly rejected a request; transport failures and ambiguous upstream
- * failures must not trigger a second paid generation request.
+ * configured default first. Callers try remaining candidates only when the
+ * current provider definitively rejected the request or confirmed task failure;
+ * transport failures and ambiguous upstream failures must not trigger another
+ * potentially billable generation request.
  */
 export async function getRuntimeImageModelCandidates(
   id: string | null | undefined,

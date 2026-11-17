@@ -32,6 +32,9 @@ test('门控由注册表统一决定：普通对话不下发任何工具', () =>
   assert.deepEqual(namesFor({ ...NONE, skillsEnabled: true }), ['skill_search', 'skill_read', 'skill_install']);
   assert.deepEqual(namesFor({ ...NONE, fileGeneration: true }), ['file_generate']);
   assert.deepEqual(namesFor({ ...NONE, deliveryRequest: true }), ['document_generate', 'spreadsheet_generate', 'presentation_generate', 'file_generate', 'archive_generate']);
+  const pptWithGeneratedImage = namesFor({ ...NONE, deliveryRequest: true, imageAllowed: true });
+  assert.ok(pptWithGeneratedImage.includes('image_generate'));
+  assert.ok(pptWithGeneratedImage.includes('presentation_generate'));
   assert.deepEqual(namesFor({ ...NONE, mcpAdmin: true }), ['mcp_manage']);
   assert.deepEqual(namesFor({ ...NONE, canvas: true }), ['canvas_patch']);
   assert.deepEqual(namesFor({ ...NONE, videoDownload: true }), ['video_download']);

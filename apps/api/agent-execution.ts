@@ -20,6 +20,8 @@ export type CapabilityFollowupOptions = {
   skillToolCalls: number;
   artifactRequested: boolean;
   skipArtifactFollowup?: boolean;
+  continueAfterImage?: boolean;
+  imageAttemptUnavailable?: boolean;
   initialToolCalls: readonly ToolLoopCall[];
   hasGenerated: boolean;
   hasGeneratedFiles: boolean;
@@ -91,6 +93,8 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
   let skillText = '';
   let artifactText = '';
   let skillToolCalls = options.skillToolCalls;
+  let artifactDelivered = false;
+  const artifactToolNames = new Set(options.artifactTools.map(modelToolName));
 
   const runCalls = async (calls: ToolLoopCall[], allowedTools: readonly unknown[]) => {
     const allowedNames = new Set(allowedTools.map(modelToolName).filter(Boolean));
@@ -99,6 +103,16 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
     const execution = runtimeCalls.length
       ? await options.toolRuntime.executeCalls(runtimeCalls)
       : { results: [], deferredCalls: [], stalled: false };
+    if (allowedTools === options.artifactTools) {
+      for (const result of execution.results) {
+        const call = runtimeCalls.find((candidate) => candidate.id === result.tool_call_id);
+        if (!call || !artifactToolNames.has(String(call.function?.name || ''))) continue;
+        try {
+          const outcome = JSON.parse(String(result.content || '')) as { ok?: unknown; file?: unknown };
+          if (outcome.ok === true && outcome.file) artifactDelivered = true;
+        } catch { /* A malformed artifact result does not establish delivery. */ }
+      }
+    }
     if (runtimeCalls.length && runtimeCalls.every((call) => String(call.function.name).startsWith('skill_'))) {
       skillToolCalls += runtimeCalls.length;
     }
@@ -123,7 +137,13 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
     trace.push(...outcome.trace);
   }
 
-  if (!options.skipArtifactFollowup && options.artifactRequested && options.artifactTools.length && options.initialToolCalls.some((call) => isArchiveToolCall(call) || String(call?.function?.name || '').startsWith('document_') || String(call?.function?.name || '').startsWith('spreadsheet_') || String(call?.function?.name || '').startsWith('presentation_')) && !options.hasGenerated && !options.hasWebSearch) {
+  const initialArtifactCall = options.initialToolCalls.some((call) => isArchiveToolCall(call) || String(call?.function?.name || '').startsWith('document_') || String(call?.function?.name || '').startsWith('spreadsheet_') || String(call?.function?.name || '').startsWith('presentation_'));
+  const generatedImageCall = options.initialToolCalls.some((call) => String(call?.function?.name || '').startsWith('image_'));
+  const continueAfterGeneratedImage = Boolean(options.continueAfterImage && options.hasGenerated && generatedImageCall);
+  const continueAfterUnavailableImage = Boolean(options.continueAfterImage && options.imageAttemptUnavailable && generatedImageCall);
+  if (!options.skipArtifactFollowup && options.artifactRequested && options.artifactTools.length
+    && (continueAfterGeneratedImage || continueAfterUnavailableImage || (initialArtifactCall && !options.hasGenerated && !options.hasGeneratedFiles))
+    && (!options.hasWebSearch || continueAfterGeneratedImage || continueAfterUnavailableImage)) {
     const outcome = await options.toolRuntime.runLoop({
       messages: options.messages,
       contextMaxChars: options.contextMaxChars,
@@ -134,6 +154,7 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
       callModel: async ({ step, messages }) => options.callModel({ step, messages: messages as ChatMessage[], tools: [...options.artifactTools] }),
       runCalls: async (calls) => runCalls(calls, options.artifactTools),
       orderCalls: (calls) => [...calls].sort((left, right) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right))),
+      shouldContinue: () => !artifactDelivered,
       finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
     });
     artifactText = outcome.text;

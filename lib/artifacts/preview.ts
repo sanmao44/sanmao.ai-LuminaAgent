@@ -889,10 +889,12 @@ function slideBackground(xml: string, masterXml: string) {
   return '';
 }
 
-/** 标题优先取占位符，其次取字号最大的文本框：页脚页码/品牌字号都比正文小。 */
-function slideTitleShape(shapes: SlideShape[]) {
+/** 标题优先取占位符和页眉标题，避免将字号更大的 KPI 数值当作页面标题。 */
+function slideTitleShape(shapes: SlideShape[], heightEmu: number) {
   const placeholder = shapes.find((shape) => shape.placeholderTitle);
   if (placeholder) return placeholder;
+  const header = shapes.find((shape) => shape.top !== null && shape.top < heightEmu * 0.12 && shape.size >= 2000);
+  if (header) return header;
   const largest = shapes.reduce<SlideShape | null>((best, shape) => (shape.size > (best?.size ?? 0) ? shape : best), null);
   return largest && largest.size > 0 ? largest : shapes[0] || null;
 }
@@ -1191,7 +1193,7 @@ function presentationPreview(data: Buffer) {
     const xml = strFromU8(entries[name]);
     const rels = partRelationships(entries, name);
     const shapes = slideShapes(xml);
-    const titleShape = slideTitleShape(shapes);
+    const titleShape = slideTitleShape(shapes, heightEmu);
     const title = titleShape ? titleShape.lines.join('') : '';
     const lines = slideContentLines(shapes, titleShape, heightEmu);
     const bands = slideColumnGroups(slideContentShapes(shapes, titleShape, heightEmu), widthEmu);
