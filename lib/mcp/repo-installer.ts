@@ -7,7 +7,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { unzipSync, type UnzipFileInfo } from 'fflate';
 import { fetchSkillBytes, githubArchiveUrls, parseGithubSkillTarget, type GithubSkillTarget } from '@/lib/skills';
@@ -27,6 +27,8 @@ const UV_VERSION = '0.12.19';
 const UV_ARCHIVE_URL = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-pc-windows-msvc.zip`;
 const UV_ARCHIVE_SHA256 = '6dbb02d79e419522f1c500f0adb1cddcff0cda7d59b0d66ea7f5e3b4a1b2f5f0';
 const UV_ARCHIVE_MAX_BYTES = 32 * 1024 * 1024;
+const UV_DOWNLOAD_CHUNK_BYTES = 1024 * 1024;
+const UV_DOWNLOAD_ATTEMPTS = 3;
 
 export type GithubMcpInstallResult = {
   server: McpServerConfig;
@@ -140,29 +142,100 @@ function resolveUvPath() {
   }) || null;
 }
 
-export async function ensureUvPath(dataDir: string, signal?: AbortSignal, options: { preferBundled?: boolean } = {}) {
+export async function ensureUvPath(dataDir: string, signal?: AbortSignal, options: {
+  preferBundled?: boolean;
+  onProgress?: (receivedBytes: number, totalBytes: number | null) => void;
+} = {}) {
   const installed = options.preferBundled ? null : resolveUvPath();
   if (installed) return installed;
   if (process.platform !== 'win32') throw new Error('这个 Windows MCP 只能在 Windows 上安装');
   const runtimeDir = path.join(dataDir, 'runtime', 'uv');
   const uvPath = path.join(runtimeDir, 'uv.exe');
   if (existsSync(uvPath)) return uvPath;
-  const archive = await fetchSkillBytes(UV_ARCHIVE_URL, {
-    maxBytes: UV_ARCHIVE_MAX_BYTES,
+  mkdirSync(runtimeDir, { recursive: true });
+  const archivePath = path.join(runtimeDir, 'uv-windows-x64.zip.part');
+  const requestRange = async (start: number, end: number, totalBytes: number | null, reportProgress = true) => fetchSkillBytes(UV_ARCHIVE_URL, {
+    maxBytes: end - start + 1,
     accept: 'application/zip, application/octet-stream;q=0.9, */*;q=0.5',
     signal,
-    // 固定版本包有 17MB，慢线路要留足时间，否则第一次安装会被判成超时。
-    timeoutMs: 300_000,
+    range: { start, end },
+    // 固定版本包有 17MB，慢线路要留足时间，否则首次下载会被判为超时。
+    timeoutMs: 900_000,
+    onProgress: reportProgress ? (receivedBytes) => options.onProgress?.(start + receivedBytes, totalBytes) : undefined,
   });
-  const digest = createHash('sha256').update(archive.data).digest('hex');
-  if (digest !== UV_ARCHIVE_SHA256) throw new Error('uv 下载包校验失败，已停止安装');
-  const files = unzipSync(archive.data);
+  let probe: Awaited<ReturnType<typeof requestRange>> | null = null;
+  let probeError: unknown;
+  for (let attempt = 0; attempt < UV_DOWNLOAD_ATTEMPTS; attempt += 1) {
+    try {
+      probe = await requestRange(0, 0, null, false);
+      break;
+    } catch (error) {
+      probeError = error;
+      if (signal?.aborted) throw error;
+    }
+  }
+  if (!probe) throw probeError instanceof Error ? probeError : new Error('uv 下载探测失败，请检查网络后重试');
+  const totalBytes = probe.rangeTotalBytes;
+  if (!totalBytes || totalBytes > UV_ARCHIVE_MAX_BYTES) {
+    rmSync(archivePath, { force: true });
+    throw new Error('uv 下载包大小无效，已停止安装');
+  }
+  let offset = existsSync(archivePath) ? statSync(archivePath).size : 0;
+  if (offset > totalBytes || (offset !== totalBytes && offset % UV_DOWNLOAD_CHUNK_BYTES !== 0)) {
+    rmSync(archivePath, { force: true });
+    offset = 0;
+  }
+  let progressFloor = offset;
+  options.onProgress?.(offset, totalBytes);
+  while (offset < totalBytes) {
+    const end = Math.min(offset + UV_DOWNLOAD_CHUNK_BYTES, totalBytes) - 1;
+    let chunk: Buffer | null = null;
+    let lastError: unknown;
+    let chunkProgressFloor = offset;
+    for (let attempt = 0; attempt < UV_DOWNLOAD_ATTEMPTS; attempt += 1) {
+      try {
+        const result = await fetchSkillBytes(UV_ARCHIVE_URL, {
+          maxBytes: end - offset + 1,
+          accept: 'application/zip, application/octet-stream;q=0.9, */*;q=0.5',
+          signal,
+          range: { start: offset, end },
+          timeoutMs: 900_000,
+          onProgress: (receivedBytes) => {
+            chunkProgressFloor = Math.max(chunkProgressFloor, offset + receivedBytes);
+            options.onProgress?.(chunkProgressFloor, totalBytes);
+          },
+        });
+        if (result.rangeTotalBytes !== totalBytes) throw new Error('uv 下载包大小在传输期间发生变化');
+        chunk = result.data;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (signal?.aborted) throw error;
+      }
+    }
+    if (!chunk) throw lastError instanceof Error ? lastError : new Error('uv 下载失败，请检查网络后重试');
+    if (offset === 0) writeFileSync(archivePath, chunk);
+    else appendFileSync(archivePath, chunk);
+    offset += chunk.byteLength;
+    progressFloor = Math.max(progressFloor, offset);
+    options.onProgress?.(progressFloor, totalBytes);
+  }
+  const archive = readFileSync(archivePath);
+  const digest = createHash('sha256').update(archive).digest('hex');
+  if (digest !== UV_ARCHIVE_SHA256) {
+    rmSync(archivePath, { force: true });
+    throw new Error('uv 下载包校验失败，已停止安装');
+  }
+  const files = unzipSync(archive);
   const entry = Object.entries(files).find(([name]) => path.posix.basename(name).toLowerCase() === 'uv.exe')?.[1];
-  if (!entry) throw new Error('uv 下载包缺少启动文件，已停止安装');
-  mkdirSync(runtimeDir, { recursive: true });
+  if (!entry) {
+    rmSync(archivePath, { force: true });
+    throw new Error('uv 下载包缺少启动文件，已停止安装');
+  }
   writeFileSync(`${uvPath}.download`, entry);
   const temporary = `${uvPath}.download`;
   renameSync(temporary, uvPath);
+  rmSync(archivePath, { force: true });
   const check = spawnSync(uvPath, ['--version'], { shell: false, windowsHide: true, encoding: 'utf8' });
   if (check.status !== 0) throw new Error('应用准备 uv 失败，请稍后重试');
   return uvPath;
@@ -251,12 +324,12 @@ export function extractMcpRepoArchive(data: Uint8Array) {
   } satisfies ExtractedRepo;
 }
 
-async function downloadGithubArchive(target: GithubSkillTarget, signal?: AbortSignal) {
+async function downloadGithubArchive(target: GithubSkillTarget, signal?: AbortSignal, fetcher?: typeof fetch) {
   let lastError: unknown = null;
   for (const url of githubArchiveUrls(target)) {
     try {
       // 慢线路下 1.7MB 的仓库包实测要 40 秒以上，60 秒会把正常安装判成超时。
-      return await fetchSkillBytes(url, { maxBytes: REPO_ARCHIVE_MAX_BYTES, accept: 'application/zip, application/octet-stream;q=0.9, */*;q=0.5', signal, timeoutMs: 180_000 });
+      return await fetchSkillBytes(url, { maxBytes: REPO_ARCHIVE_MAX_BYTES, accept: 'application/zip, application/octet-stream;q=0.9, */*;q=0.5', signal, timeoutMs: 180_000, fetcher });
     } catch (error) {
       lastError = error;
       if (!(error instanceof Error) || !error.message.includes('HTTP 404')) break;
@@ -301,13 +374,14 @@ async function resolveLatestGithubCommit(
   return { sha: sha.toLowerCase(), ref: branch };
 }
 
-async function downloadGithubCommitArchive(target: GithubSkillTarget, commit: string, signal?: AbortSignal) {
+async function downloadGithubCommitArchive(target: GithubSkillTarget, commit: string, signal?: AbortSignal, fetcher?: typeof fetch) {
   const url = `https://codeload.github.com/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/zip/${commit}`;
   return fetchSkillBytes(url, {
     maxBytes: REPO_ARCHIVE_MAX_BYTES,
     accept: 'application/zip, application/octet-stream;q=0.9, */*;q=0.5',
     signal,
     timeoutMs: 180_000,
+    fetcher,
   });
 }
 
@@ -371,12 +445,12 @@ function runUvSync(uvPath: string, projectRoot: string, dataDir: string) {
 }
 
 /** 下载、安装并生成受控 stdio 配置；不会执行 README 或 package scripts。 */
-export async function installGithubMcpFromRepo(value: unknown, options: { dataDir?: string; signal?: AbortSignal } = {}): Promise<GithubMcpInstallResult> {
+export async function installGithubMcpFromRepo(value: unknown, options: { dataDir?: string; signal?: AbortSignal; fetcher?: typeof fetch } = {}): Promise<GithubMcpInstallResult> {
   const parsedTarget = parseGithubSkillTarget(value);
   if (!parsedTarget) throw new Error('请提供 GitHub 仓库地址，例如 https://github.com/owner/repo');
-  const latest = await resolveLatestGithubCommit(parsedTarget.owner, parsedTarget.repo, parsedTarget.ref, { signal: options.signal });
+  const latest = await resolveLatestGithubCommit(parsedTarget.owner, parsedTarget.repo, parsedTarget.ref, { signal: options.signal, fetchImpl: options.fetcher });
   const target = { ...parsedTarget, ref: latest.ref };
-  const archive = await downloadGithubCommitArchive(target, latest.sha, options.signal);
+  const archive = await downloadGithubCommitArchive(target, latest.sha, options.signal, options.fetcher);
   const extracted = extractMcpRepoArchive(archive.data);
   const dataDir = options.dataDir || resolveLocalDataDir();
   const used = new Set(listMcpServers({ dataDir }).map((server) => server.id));

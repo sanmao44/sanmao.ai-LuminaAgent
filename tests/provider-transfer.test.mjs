@@ -116,3 +116,43 @@ test('encrypted provider transfer moves provider keys and models while preservin
   assert.equal(target.repository.snapshot().providers.length, 2);
   assert.equal(target.repository.snapshot().models.length, 2);
 });
+
+test('transfers Cangyuan video settings and music/3D model taxonomy', async () => {
+  const cangyuanSource = createContext(path.join(root, 'cangyuan-source'));
+  const cangyuanTarget = createContext(path.join(root, 'cangyuan-target'));
+  const providerId = await cangyuanSource.store.addProvider({
+    name: '沧元算力',
+    type: 'openai-compatible',
+    platform: 'cangyuan',
+    baseUrl: 'https://direct-api.cangyuansuanli.cn/v1',
+    apiKey: 'cangyuan-secret',
+    videoTransport: 'cangyuan-videos',
+    videoBaseUrl: 'https://direct-api.cangyuansuanli.cn',
+    videoGenerationPath: '/v1/videos',
+    videoTaskPath: '/v1/videos',
+    videoTaskStatusPath: '/v1/videos/{id}',
+  });
+  await cangyuanSource.store.replaceProviderModels(providerId, '沧元算力', [
+    { id: 'music-generation-v1' },
+    { id: 'Hunyuan3D-2.1' },
+  ]);
+  const sourceModels = cangyuanSource.repository.snapshot().models;
+  assert.deepEqual(sourceModels.map(({ kind, capabilities }) => ({ kind, capabilities })), [
+    { kind: 'audio', capabilities: ['music-generate'] },
+    { kind: '3d', capabilities: ['3d-generate'] },
+  ]);
+
+  const file = await cangyuanSource.app.exportProviderTransfer('cangyuan-transfer-password');
+  const result = await cangyuanTarget.app.importProviderTransfer(file, 'cangyuan-transfer-password');
+  assert.deepEqual(result, { addedProviders: 1, updatedProviders: 0, importedModels: 2 });
+  const imported = await cangyuanTarget.store.getProviderWithKey(providerId);
+  assert.equal(imported.apiKey, 'cangyuan-secret');
+  assert.equal(imported.videoTransport, 'cangyuan-videos');
+  assert.equal(imported.videoBaseUrl, 'https://direct-api.cangyuansuanli.cn');
+  assert.equal(imported.videoGenerationPath, '/v1/videos');
+  assert.equal(imported.videoTaskStatusPath, '/v1/videos/{id}');
+  assert.deepEqual(cangyuanTarget.repository.snapshot().models.map(({ kind, capabilities }) => ({ kind, capabilities })), [
+    { kind: 'audio', capabilities: ['music-generate'] },
+    { kind: '3d', capabilities: ['3d-generate'] },
+  ]);
+});

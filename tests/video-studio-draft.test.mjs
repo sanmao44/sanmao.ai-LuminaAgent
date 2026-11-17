@@ -77,6 +77,7 @@ test('video studio draft drops media payload fields and normalizes invalid setti
   storage.setItem(STORAGE_KEY, JSON.stringify({
     version: 1,
     savedAt: 1,
+    generateAudio: true,
     ...draft({ seconds: 120, ratio: 'invalid', agnesNumFrames: 82 }),
     firstFrame: { name: 'frame.png', url: 'data:image/png;base64,AAAA' },
     referenceImages: [{ url: 'data:image/png;base64,BBBB' }],
@@ -88,6 +89,7 @@ test('video studio draft drops media payload fields and normalizes invalid setti
   assert.equal(restored.ratio, '16:9');
   assert.equal(restored.agnesNumFrames, 81);
   assert.equal(restored.inputMode, 'reference');
+  assert.equal('generateAudio' in restored, false);
   assert.equal('firstFrame' in restored, false);
   assert.equal('referenceImages' in restored, false);
 });

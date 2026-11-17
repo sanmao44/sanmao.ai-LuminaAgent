@@ -37,6 +37,7 @@ type ModelPickerProps = {
 const capabilityLabels: Partial<Record<ModelCapability, string>> = {
   chat: '对话', generate: '生图', edit: '改图', upscale: '超分', reference: '参考图', vision: '视觉', typography: '文字', 'web-search': '联网',
   'video-generate': '视频', 'video-edit': '视频编辑', 'video-extend': '视频续写', 'video-first-frame': '首尾帧', 'video-reference': '视频参考', 'video-audio': '音频', speech: '配音',
+  'music-generate': '音乐', '3d-generate': '三维',
 };
 
 const capabilityClasses: Partial<Record<ModelCapability, string>> = {
@@ -51,7 +52,13 @@ const capabilityClasses: Partial<Record<ModelCapability, string>> = {
   'video-reference': 'video-reference',
   'video-audio': 'video-audio',
   speech: 'speech',
+  'music-generate': 'music',
+  '3d-generate': 'three-dimensional',
 };
+
+export function modelCapabilityLabel(capability: ModelCapability) {
+  return capabilityLabels[capability];
+}
 export function uniqueModels(models: Array<RegistryModel | null | undefined>) {
   return [...new Map(models.filter((model): model is RegistryModel => Boolean(model)).map((model) => [model.id, model])).values()];
 }
@@ -253,7 +260,7 @@ export default function ModelPicker({
           : '';
     return <div className={`model-picker-option ${isSelected ? 'selected' : ''}`} key={model.id}>
       <button type="button" className="model-picker-option-main" onClick={() => choose(model.id)} role="option" aria-selected={isSelected}>
-        <span className="model-picker-option-copy"><strong>{model.displayName}</strong><small>{model.providerName} · {model.rawId}</small><span className="model-picker-capabilities">{model.capabilities.filter((item) => capabilityLabels[item]).slice(0, 4).map((item) => <em className={capabilityClasses[item] || ''} key={item}>{capabilityLabels[item]}</em>)}{healthLabel && <em className={`model-picker-health ${modelHealth?.state || ''}`}>{healthLabel}</em>}</span></span>
+        <span className="model-picker-option-copy"><strong>{model.displayName}</strong><small>{model.providerName} · {model.rawId}</small><span className="model-picker-capabilities">{model.capabilities.filter((item) => modelCapabilityLabel(item)).slice(0, 4).map((item) => <em className={capabilityClasses[item] || ''} key={item}>{modelCapabilityLabel(item)}</em>)}{healthLabel && <em className={`model-picker-health ${modelHealth?.state || ''}`}>{healthLabel}</em>}</span></span>
         {isSelected && <b className="model-picker-check">✓</b>}
       </button>
       <button type="button" className={`model-picker-favorite ${isFavorite ? 'active' : ''}`} aria-label={isFavorite ? `取消收藏 ${model.displayName}` : `收藏 ${model.displayName}`} onClick={() => toggleFavorite(model.id)}>★</button>

@@ -2,15 +2,15 @@ import type { McpApprovalPolicy } from '@/lib/agent/approval';
 import type { AgentModelHealthRecord } from '@/lib/agent/model-health';
 
 export type ProviderType = 'openai-compatible' | 'google-gemini';
-export type ProviderPlatform = 'custom' | '65535' | '65535-claude-code' | 'apikl' | 'a6api' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli' | 'agnes' | 'gitee';
+export type ProviderPlatform = 'custom' | '65535' | '65535-claude-code' | 'apikl' | 'a6api' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli' | 'agnes' | 'gitee' | 'cangyuan';
 export type ProviderStatus = 'healthy' | 'idle' | 'error';
 export type UpscaleProviderId = 'tencent-ci' | 'aliyun-viapi';
 export type UpscaleModelId = 'tencent-super-resolution' | 'aliyun-standard-super-resolution' | 'aliyun-generative-super-resolution';
 export type UpscaleOutputFormat = 'png' | 'jpg' | 'bmp';
 export type UpscaleConnectionStatus = 'healthy' | 'idle' | 'error' | 'needs-bucket' | 'needs-authorization';
-export type ModelKind = 'chat' | 'image' | 'video' | 'audio' | 'unknown';
+export type ModelKind = 'chat' | 'image' | 'video' | 'audio' | '3d' | 'unknown';
 export type MediaKind = 'image' | 'video' | 'audio';
-export type VideoTransport = 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli' | 'agnes-videos';
+export type VideoTransport = 'auto' | 'native-task' | 'openai-videos' | 'jimeng-cli' | 'agnes-videos' | 'cangyuan-videos';
 export type ProviderTextProtocol = 'chat-completions' | 'responses' | 'messages';
 export type ModelBilling = 'free' | 'paid' | 'temporary-free';
 export type WebSearchApiProvider = 'anysearch' | 'baidu-qianfan';
@@ -94,6 +94,8 @@ export type ModelCapability =
   | 'upscale'
   | 'fast'
   | 'speech'
+  | 'music-generate'
+  | '3d-generate'
   | 'web-search'
   | 'video-generate'
   | 'video-edit'
@@ -213,6 +215,7 @@ export type VideoGenerationInput = {
   model?: string;
   operation?: 'generate' | 'edit' | 'extend';
   seconds?: number;
+  seed?: number;
   aspectRatio?: string;
   resolution?: string;
   firstFrame?: string;

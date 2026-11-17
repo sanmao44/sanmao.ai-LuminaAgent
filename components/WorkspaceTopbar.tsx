@@ -15,6 +15,7 @@ type WorkspaceTopbarProps = {
   onGoAgent: () => void;
   onGoGenerate: () => void;
   onGoVideo: () => void;
+  onGoAudio: () => void;
   onGoTasks: () => void;
   onToggleTheme: () => void;
   onCanvasClick: () => void;
@@ -32,6 +33,7 @@ export default function WorkspaceTopbar({
   onGoAgent,
   onGoGenerate,
   onGoVideo,
+  onGoAudio,
   onGoTasks,
   onToggleTheme,
   onCanvasClick,
@@ -61,8 +63,8 @@ export default function WorkspaceTopbar({
         <button type="button" className={`ui-control ${videoActive ? 'active' : ''}`} aria-label="视频工作台" aria-pressed={videoActive} onClick={onGoVideo}>
           <Icon name="video" size={15} /><span>视频</span>
         </button>
-        <button type="button" className="ui-control coming-soon-mode" aria-label="音频，即将上线" disabled title="音频工作台即将上线">
-          <Icon name="audio" size={15} /><span>音频</span><small className="mode-status">即将上线</small>
+        <button type="button" className={`ui-control ${section === 'audio' ? 'active' : ''}`} aria-pressed={section === 'audio'} onClick={onGoAudio}>
+          <Icon name="audio" size={15} /><span>音频</span>
         </button>
         <button type="button" className={`ui-control ${agentActive ? 'active' : ''}`} aria-pressed={agentActive} onClick={onGoAgent}>
           <Icon name="agent" size={15} /><span>Agent</span>

@@ -5,7 +5,9 @@ import { createVideoTask, findVideoTask, updateActiveVideoTask, updateVideoTask,
 import { idempotencyKey, pollJimengVideo, pollRemoteVideo, runJimengVideo, submitRemoteVideo, VideoProviderError, type VideoProviderTask } from './video-providers';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
 import { getVideoModelLimits, getVideoModelLimitsForInput, VIDEO_INPUT_SAFETY_LIMITS } from './video-model-limits';
+import { validateCangyuanVideoInput } from './cangyuan-video-capabilities';
 import { is65535Provider, isJimengProvider, isAgnesProvider } from './video-platform';
+import { isCangyuanProvider } from './cangyuan-provider';
 import { prepareVideoInputMedia } from './video-input-media';
 import type { GenerationSource } from './generation-source';
 import { canRetryVideoTask, isStaleVideoTask, videoTaskRuntime } from './video-task-runtime';
@@ -13,14 +15,18 @@ import { BufferedRuntimeObserver, type RuntimeObserver } from '@/packages/contra
 
 function cleanInput(
   input: VideoGenerationInput,
-  defaultSeconds = 5,
+  defaultSeconds?: number,
   maxReferenceImages: number = VIDEO_INPUT_SAFETY_LIMITS.maxReferenceImages,
 ): VideoGenerationInput {
   const prompt = String(input.prompt || '').trim();
   const operation = input.operation === 'edit' || input.operation === 'extend' ? input.operation : 'generate';
   const requestedSeconds = Number(input.seconds);
-  const fallbackSeconds = Number.isFinite(defaultSeconds) ? Math.max(1, Math.min(60, defaultSeconds)) : 5;
-  const seconds = Number.isFinite(requestedSeconds) ? Math.max(1, Math.min(60, requestedSeconds)) : fallbackSeconds;
+  const fallbackSeconds = defaultSeconds === undefined
+    ? undefined
+    : Number.isFinite(defaultSeconds) ? Math.max(1, Math.min(60, defaultSeconds)) : 5;
+  const seconds = Number.isFinite(requestedSeconds)
+    ? Math.max(1, Math.min(60, requestedSeconds))
+    : fallbackSeconds;
   const cleanString = (value: unknown) => {
     if (typeof value !== 'string') return undefined;
     const cleaned = value.trim();
@@ -49,7 +55,8 @@ function cleanInput(
   return {
     prompt,
     operation,
-    seconds,
+    ...(seconds !== undefined ? { seconds } : {}),
+    ...(Number.isFinite(Number(input.seed)) ? { seed: Math.round(Number(input.seed)) } : {}),
     ...(input.aspectRatio ? { aspectRatio: String(input.aspectRatio) } : {}),
     ...(input.resolution ? { resolution: String(input.resolution).trim().toLowerCase() } : {}),
     ...(firstFrame ? { firstFrame } : {}),
@@ -112,6 +119,36 @@ function assertGenericInputLimits(input: VideoGenerationInput, limits?: ReturnTy
   if (limits?.requiresVisualInput && referenceImages + referenceVideos === 0) {
     throw new Error('Seedance 2.0 multimodal2video 至少需要一张图片或一个视频，不能只提交音频。');
   }
+}
+
+function isCangyuanVideoProvider(provider: { videoTransport?: string; platform?: string; baseUrl?: string; videoBaseUrl?: string }) {
+  if (provider.videoTransport && provider.videoTransport !== 'auto') {
+    return provider.videoTransport === 'cangyuan-videos';
+  }
+  return isCangyuanProvider(provider);
+}
+
+async function prepareCangyuanVideoMedia(input: VideoGenerationInput): Promise<VideoGenerationInput> {
+  const { preparePublicMediaUrl } = await import('./signed-media');
+  const [firstFrame, lastFrame, referenceImages, referenceVideos, audios] = await Promise.all([
+    input.firstFrame ? preparePublicMediaUrl(input.firstFrame, 'image') : undefined,
+    input.lastFrame ? preparePublicMediaUrl(input.lastFrame, 'image') : undefined,
+    Promise.all((input.referenceImages || []).map((value) => preparePublicMediaUrl(value, 'image'))),
+    Promise.all((input.referenceVideos || []).map((value) => preparePublicMediaUrl(value, 'video'))),
+    Promise.all((input.audios || []).map((value) => preparePublicMediaUrl(value, 'audio'))),
+  ]);
+  return {
+    ...input,
+    ...(firstFrame ? { firstFrame } : {}),
+    ...(lastFrame ? { lastFrame } : {}),
+    referenceImages,
+    ...(referenceVideos.length ? { referenceVideos, referenceVideo: referenceVideos[0] } : {}),
+    ...(audios.length ? { audios, audio: audios[0] } : {}),
+  };
+}
+
+function cangyuanUnconfirmedSubmissionMessage() {
+  return '沧元算力请求已发送但连接中断，无法确认任务是否创建。为避免重复计费，系统没有自动重提；请先到沧元算力控制台核实任务状态，再决定是否重新提交。';
 }
 
 function validateModelInput(input: VideoGenerationInput, rawInput: VideoGenerationInput, limits: ReturnType<typeof getVideoModelLimits>, providerLabel: '65535' | '即梦' | 'Agnes') {
@@ -349,15 +386,17 @@ async function keepVideoSubmissionPending(task: VideoTask, error: unknown, provi
 export async function createVideoGeneration(options: { modelId?: string; input: VideoGenerationInput; idempotencyKey?: string; source?: GenerationSource; retryOf?: string }) {
   const runtime = await getRuntimeVideoModel(options.modelId || 'auto');
   if (!runtime) throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
+  const cangyuanVideo = isCangyuanVideoProvider(runtime.provider);
+  if (cangyuanVideo) validateCangyuanVideoInput(runtime.model.rawId, options.input, { requirePublicMedia: false });
   const baseModelLimits = getVideoModelLimits(runtime.model, runtime.provider);
   const requestedModelLimits = getVideoModelLimitsForInput(runtime.model, runtime.provider, videoModelInputContext(options.input));
   assertGenericInputLimits(options.input, requestedModelLimits);
   const cleanedInput = cleanInput(
     options.input,
-    baseModelLimits.fixedSeconds || 5,
+    cangyuanVideo ? undefined : baseModelLimits.fixedSeconds || 5,
     requestedModelLimits.maxReferenceImages,
   );
-  const input = await prepareVideoInputMedia(cleanedInput, {
+  const preparedMediaInput = await prepareVideoInputMedia(cleanedInput, {
     // Agnes 2.5 gives reference media a strong composition prior.  Put the
     // source on the requested canvas before submission so a landscape source
     // cannot silently override an explicit portrait request.
@@ -365,6 +404,8 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
       ? cleanedInput.aspectRatio
       : undefined,
   });
+  const input = cangyuanVideo ? await prepareCangyuanVideoMedia(preparedMediaInput) : preparedMediaInput;
+  if (cangyuanVideo) validateCangyuanVideoInput(runtime.model.rawId, input);
   const modelLimits = getVideoModelLimitsForInput(runtime.model, runtime.provider, videoModelInputContext(input));
   if (!input.prompt) throw new Error('请输入视频提示词');
   if (is65535Provider(runtime.provider) || isJimengProvider(runtime.provider)) validateModelInput(input, options.input, modelLimits, isJimengProvider(runtime.provider) ? '即梦' : '65535');
@@ -399,12 +440,16 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
       return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
     }
     if (result.status === 'done') return failTask(task, '服务商已完成任务，但没有返回可下载的视频地址', 'VIDEO_RESULT_MISSING');
-    const updated = await applyProviderUpdate(task.id, { status: result.status === 'running' ? 'running' : 'pending', providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, startedAt: new Date().toISOString(), nextPollAt: Date.now() + (isAgnesProvider(runtime.provider) ? 1500 : 2000), costUsd: result.costUsd });
+    const pollInterval = isAgnesProvider(runtime.provider) ? 1500 : isCangyuanVideoProvider(runtime.provider) ? 5000 : 2000;
+    const updated = await applyProviderUpdate(task.id, { status: result.status === 'running' ? 'running' : 'pending', providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, startedAt: new Date().toISOString(), nextPollAt: Date.now() + pollInterval, costUsd: result.costUsd });
     return updated;
   } catch (error) {
     const upstreamStatus = Number((error as VideoProviderError & { status?: number }).status || 0);
     if (isAgnesProvider(runtime.provider) && (upstreamStatus === 401 || upstreamStatus === 403)) await markProviderCredentialFailure(runtime.provider.id).catch(() => undefined);
     if (error instanceof VideoProviderError && error.possiblyAccepted) {
+      if (isCangyuanVideoProvider(runtime.provider)) {
+        return failTask(task, cangyuanUnconfirmedSubmissionMessage(), 'CANGYUAN_SUBMISSION_UNCONFIRMED');
+      }
       // The POST may have reached the provider even though its response was
       // lost. Re-submit once with the same idempotency key to recover the
       // provider task handle without creating a second task.
@@ -511,6 +556,9 @@ async function refreshVideoTaskOnce(id: string) {
         error: undefined,
       });
     } catch (error) {
+      if (isCangyuanVideoProvider(runtime.provider) && error instanceof VideoProviderError && error.possiblyAccepted) {
+        return failTask(task, cangyuanUnconfirmedSubmissionMessage(), 'CANGYUAN_SUBMISSION_UNCONFIRMED');
+      }
       if (isRetryableVideoProviderError(error)) {
         const providerError = error as VideoProviderError;
         return applyProviderUpdate(id, {
@@ -532,7 +580,7 @@ async function refreshVideoTaskOnce(id: string) {
     if (result.status === 'done') return failTask(task, result.error || '服务商已完成任务，但没有返回可下载的视频地址', result.errorCode || 'VIDEO_RESULT_MISSING', result.raw);
     if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
     const pollCount = task.pollCount + 1;
-    const interval = isAgnesProvider(provider) ? Math.round(1000 + Math.random() * 1000) : Math.min(5000, 2000 + Math.max(0, pollCount - 2) * 500);
+    const interval = isCangyuanVideoProvider(provider) ? 5000 : isAgnesProvider(provider) ? Math.round(1000 + Math.random() * 1000) : Math.min(5000, 2000 + Math.max(0, pollCount - 2) * 500);
     return applyProviderUpdate(id, { status: result.status, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, pollCount, nextPollAt: Date.now() + interval });
   } catch (error) {
     if (isRetryableVideoProviderError(error) || (isAgnesProvider(provider) && isRetryableAgnesPollError(error))) {

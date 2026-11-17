@@ -3,7 +3,7 @@ import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
-import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeProjectBrief, type CreativeRoute, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
+import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeProjectBrief, type CreativeRoute, type ImageOutputFormat, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import { canvasInlineImageUrls, replaceCanvasMediaUrls } from './inline-images';
@@ -715,7 +715,7 @@ export async function generateCanvasImage(input: {
   width?: number;
   height?: number;
   sizeMode?: "system" | "custom";
-  outputFormat?: "png" | "jpeg" | "webp";
+  outputFormat?: ImageOutputFormat;
   background?: "transparent" | "opaque";
   /** Optional dedicated angle-console payload; ordinary canvas image calls omit it. */
   camera?: AngleCameraState;
@@ -798,7 +798,7 @@ export async function generateCanvasImage(input: {
       ...(input.presetId ? { presetId: input.presetId } : {}),
       ...(input.presetName ? { presetName: input.presetName } : {}),
       model: input.model || "auto",
-      count: Math.max(1, Math.min(8, Number(input.count || 1))),
+      count: Math.max(1, Math.min(10, Number(input.count || 1))),
       aspectRatio: input.aspect || "自动",
       resolution: input.resolution || "自动",
       quality: input.quality || "自动",
@@ -862,6 +862,7 @@ export async function generateCanvasVideo(input: {
   idempotencyKey?: string;
   model?: string;
   modelRawId?: string;
+  videoTransport?: string;
   operation?: "generate" | "edit" | "extend";
   inputMode?: "text" | "first-frame" | "frames" | "reference";
   duration?: number;
@@ -881,25 +882,46 @@ export async function generateCanvasVideo(input: {
   /** Reference audio files supplied by the canvas connection resolver. */
   audios?: Array<{ url: string; name?: string }>;
 }) {
+  const usesCangyuan = input.videoTransport === "cangyuan-videos";
+  if (usesCangyuan) {
+    const hasReferences = [input.references, input.referenceVideos, input.audios].some(
+      (values) => values?.some((item) => Boolean(item.url.trim())),
+    );
+    const hasFrameInput = Boolean(input.firstFrame?.trim() || input.lastFrame?.trim() || input.referenceVideo?.trim());
+    const hasCustomSettings =
+      (input.operation && input.operation !== "generate") ||
+      (input.inputMode && input.inputMode !== "text") ||
+      (input.duration !== undefined && Number(input.duration) !== 5) ||
+      (input.aspect && !["16:9", "auto", "自动"].includes(input.aspect.trim().toLowerCase())) ||
+      (input.resolution && !["720p", "auto", "自动"].includes(input.resolution.trim().toLowerCase())) ||
+      Boolean(input.audio) ||
+      (input.agnesWidth !== undefined && input.agnesWidth !== 1152) ||
+      (input.agnesHeight !== undefined && input.agnesHeight !== 768) ||
+      (input.agnesNumFrames !== undefined && input.agnesNumFrames !== 81) ||
+      (input.agnesFrameRate !== undefined && input.agnesFrameRate !== 24);
+    if (hasReferences || hasFrameInput || hasCustomSettings) {
+      throw new Error("沧元算力视频接口当前只提交模型和提示词；请移除画布连接的图片、视频或音频素材，并恢复默认视频参数后再生成。");
+    }
+  }
   const referenceData = await Promise.all(
-    (input.references || [])
+    (usesCangyuan ? [] : input.references || [])
       .slice(0, 16)
       .map(async (item) => compressReferenceDataUrl(await asDataUrl(item.url))),
   );
   const firstFrame =
-    input.inputMode === "first-frame" || input.inputMode === "frames"
+      !usesCangyuan && (input.inputMode === "first-frame" || input.inputMode === "frames")
       ? input.firstFrame
         ? await compressReferenceDataUrl(await asDataUrl(input.firstFrame))
         : referenceData[0]
       : undefined;
   const lastFrame =
-    input.inputMode === "frames"
+      !usesCangyuan && input.inputMode === "frames"
       ? input.lastFrame
         ? await compressReferenceDataUrl(await asDataUrl(input.lastFrame))
         : referenceData[1]
       : undefined;
   const audioData = await Promise.all(
-    (input.audios || []).slice(0, 10).map(async (item) => ({
+    (usesCangyuan ? [] : input.audios || []).slice(0, 10).map(async (item) => ({
       ...item,
       url: await asDataUrl(item.url),
     })),
@@ -910,7 +932,7 @@ export async function generateCanvasVideo(input: {
   if (input.inputMode === "frames" && (!firstFrame || !lastFrame)) {
     throw new Error("首尾帧模式请先添加首帧和尾帧图片。");
   }
-  const videoMode = input.inputMode === "reference"
+  const videoMode = usesCangyuan ? undefined : input.inputMode === "reference"
     ? "reference"
     : input.inputMode === "frames"
       ? "keyframe"
@@ -920,7 +942,7 @@ export async function generateCanvasVideo(input: {
   const usesAgnesV20 = /agnes(?:-video| video)?[- ]?(?:v2\.0|v20)/i.test(
     `${input.modelRawId || ""} ${input.model || ""}`,
   );
-  const referenceVideo = input.inputMode === "reference" || input.operation === "edit" || input.operation === "extend"
+  const referenceVideo = !usesCangyuan && (input.inputMode === "reference" || input.operation === "edit" || input.operation === "extend")
     ? input.referenceVideo
     : undefined;
   const idempotencyKey = input.idempotencyKey || crypto.randomUUID();
@@ -950,9 +972,9 @@ export async function generateCanvasVideo(input: {
       operation: input.operation || "generate",
       input: {
         prompt,
-        ...(input.operation ? { operation: input.operation } : {}),
+        ...(!usesCangyuan && input.operation ? { operation: input.operation } : {}),
         ...(videoMode ? { videoMode } : {}),
-        ...(!usesAgnesV20
+        ...(!usesAgnesV20 && !usesCangyuan
           ? {
               seconds: Number(input.duration || 5),
               aspectRatio: input.aspect || "16:9",

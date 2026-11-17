@@ -85,6 +85,20 @@ test('keeps an explicit category and the speech capability authoritative', () =>
   assert.equal(modelKind.resolveModelKind('chat', 'audio', ['speech']), 'chat');
 });
 
+test('classifies music and 3D generators independently from chat and image models', () => {
+  for (const rawId of ['musicgen-large', 'Suno-v5', 'cangyuan/song-generation-v2', 'ace-step-1.5']) {
+    assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
+  }
+  for (const rawId of ['Hunyuan3D-2.1', 'Qwen3D-2B', 'Tripo3D', 'Tripo3D-v2', 'TripoSR', 'text-to-3d-v1', 'Trellis.2']) {
+    assert.equal(modelKind.inferModelKind({ rawId }), '3d', rawId);
+  }
+  assert.equal(modelKind.inferModelKind({ rawId: 'vendor/model', capabilities: ['music-generate'] }), 'audio');
+  assert.equal(modelKind.inferModelKind({ rawId: 'vendor/model', capabilities: ['3d-generate'] }), '3d');
+  assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['music-generate']), 'audio');
+  assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['3d-generate']), '3d');
+  assert.equal(modelKind.inferModelKind({ rawId: 'qwen3-embedding-8b' }), 'unknown');
+});
+
 test('认出国内平台把 TTS 关键词黏在词尾或带厂商前缀的配音模型', () => {
   // Gitee 模力方舟 / 硅基流动的语音合成清单：改名前只有一半能被识别成「配音」，
   // 结果就是模型库里明明有配音模型，克隆弹窗的配音下拉框却是空的。

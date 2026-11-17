@@ -2,6 +2,7 @@ import type { GalleryItem, GalleryLocalEditMask, GallerySource } from '../client
 import type { ReferenceImageRecord, UpscaleOutputFormat } from '../types';
 import type { LocalEditAnnotation } from '../local-edit';
 import type { ProvenanceEdge, ProvenanceEdgeDraft } from '../provenance/types';
+import type { ImageOutputFormat } from '@/packages/contracts/creative';
 
 export type GalleryImageInput = {
   url: string;
@@ -21,7 +22,7 @@ export type GalleryRecordMeta = {
   providerName?: string;
   aspectRatio?: string;
   outputSize?: string;
-  outputFormat?: 'png' | 'jpeg' | 'webp' | 'bmp';
+  outputFormat?: ImageOutputFormat | 'bmp';
   generationMs?: number;
   references?: ReferenceImageRecord[];
   compareReference?: ReferenceImageRecord;

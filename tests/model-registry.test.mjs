@@ -43,6 +43,31 @@ test('builds a disabled manual image model with generation capability', () => {
   assert.ok(created.capabilities.includes('generate'));
 });
 
+test('builds manual music and 3D models with their specific generation capabilities', () => {
+  const music = registry.buildManualModelRecord({
+    id: 'manual-music',
+    providerId: 'provider-1',
+    providerName: '沧元算力',
+    rawId: 'song-generation-v2',
+    displayName: 'Music v2',
+    kind: 'audio',
+    inferred: { kind: 'audio', capabilities: ['music-generate'] },
+  });
+  const threeD = registry.buildManualModelRecord({
+    id: 'manual-3d',
+    providerId: 'provider-1',
+    providerName: '沧元算力',
+    rawId: 'shape-3d-v1',
+    displayName: '3D v1',
+    kind: '3d',
+    inferred: { kind: '3d', capabilities: [] },
+  });
+
+  assert.ok(music.capabilities.includes('music-generate'));
+  assert.ok(!music.capabilities.includes('speech'));
+  assert.ok(threeD.capabilities.includes('3d-generate'));
+});
+
 test('preserves manual models and enabled state when upstream returns the same ID', () => {
   const existing = model({ id: 'manual-1', source: 'manual', enabled: true, published: true });
   const discovered = model({ id: 'discovered-1', source: 'discovered', enabled: false, published: false, displayName: 'Upstream name' });

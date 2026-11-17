@@ -848,8 +848,10 @@ function CanvasNodeEditorPopover({
              onDurationChange={onAudioDurationChange}
              onNotify={onNotify}
              models={runtime?.models || []}
+             providers={runtime?.providers || []}
              defaultProviderId={runtime?.settings.defaultProviderId}
              defaultProviderName={runtime?.providers.find((item) => item.id === runtime?.settings.defaultProviderId)?.name}
+             defaultModelId={runtime?.settings.defaultImageModelId}
              projectId={projectId}
              canvasId={canvasId}
            />

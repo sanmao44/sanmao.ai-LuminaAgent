@@ -29,7 +29,6 @@ test('builds the official Canvas CLI text-to-video node command', () => {
     '--model', 'seedance_2.0_fast_vip', '--ratio', '16:9', '--resolution', '720p', '--duration', '8', '--count', '1',
   ]);
 });
-
 test('maps Canvas reference inputs to m2v and typed resource references', () => {
   assert.deepEqual(canvas.buildJimengCanvasVideoArgs('project-2', {
     prompt: '保持主体稳定', seconds: 5, aspectRatio: '9:16', resolution: '720p', referenceImages: ['img-1', 'img-2'],

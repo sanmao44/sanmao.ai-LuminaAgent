@@ -13,7 +13,7 @@ async function loadCanvasPatch() {
     const url = new URL(relative, import.meta.url);
     return { url, source: await readFile(url, 'utf8') };
   };
-  const [model, settings, mask, layers, videoEditor, videoClip, localEdit, patch] = await Promise.all([
+  const [model, settings, mask, layers, videoEditor, videoClip, localEdit, patch, cangyuanImage, cangyuanProvider] = await Promise.all([
     read('../lib/canvas/model.ts'),
     read('../lib/creation/settings.ts'),
     read('../lib/canvas/mask.ts'),
@@ -22,13 +22,19 @@ async function loadCanvasPatch() {
     read('../lib/canvas/video-clip.ts'),
     read('../lib/local-edit.ts'),
     read('../lib/canvas/patch.ts'),
+    read('../lib/cangyuan-image-capabilities.ts'),
+    read('../lib/cangyuan-provider.ts'),
   ]);
 
   const localEditRuntime = compile(localEdit.source, localEdit.url.pathname).replace(/\bexport\s+/g, '');
+  const cangyuanImageRuntime = compile(cangyuanImage.source, cangyuanImage.url.pathname).replace(/\bexport\s+/g, '');
+  const cangyuanProviderRuntime = compile(cangyuanProvider.source, cangyuanProvider.url.pathname).replace(/\bexport\s+/g, '');
   const settingsCompiled = compile(settings.source, settings.url.pathname)
     .replace(/^\s*import\s+\{\s*getLastModelCall\s*\}\s+from\s+["']\.\.\/model-preferences["'];?\s*$/m, 'const getLastModelCall = () => null;')
     .replace(/^\s*import\s+\{\s*selectAutomaticModel\s*\}\s+from\s+["']\.\.\/model-selection["'];?\s*$/m, 'const selectAutomaticModel = (models, defaultProviderId, defaultModelId) => models.find((model) => model.id === defaultModelId) || models[0];')
-    .replace(/^\s*import\s+\{\s*normalizeLocalEditAnnotations\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m, '');
+    .replace(/^\s*import\s+\{\s*normalizeLocalEditAnnotations\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m, '')
+    .replace(/^\s*import\s+\{\s*getCangyuanImageModelProfile\s*\}\s+from\s+["']\.\.\/cangyuan-image-capabilities["'];?\s*$/m, '')
+    .replace(/^\s*import\s+\{\s*isCangyuanProvider\s*\}\s+from\s+["']\.\.\/cangyuan-provider["'];?\s*$/m, '');
   const maskCompiled = compile(mask.source, mask.url.pathname)
     .replace(/\bobjectValue\b/g, 'maskObjectValue')
     .replace(/\bfiniteNumber\b/g, 'maskFiniteNumber')
@@ -43,10 +49,10 @@ async function loadCanvasPatch() {
     .replace(/^\s*import\s+\{[\s\S]*?\}\s+from\s+["']\.\/video-editor["'];?\s*$/m, '')
     .replace(/^\s*import\s+\{[\s\S]*?\}\s+from\s+["']\.\/video-clip["'];?\s*$/m, '');
 
-  const modelModule = await import(`data:text/javascript;base64,${Buffer.from(`${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${videoEditorCompiled}\n${videoClipCompiled}\n${modelCompiled}`).toString('base64')}`);
+  const modelModule = await import(`data:text/javascript;base64,${Buffer.from(`${cangyuanImageRuntime}\n${cangyuanProviderRuntime}\n${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${videoEditorCompiled}\n${videoClipCompiled}\n${modelCompiled}`).toString('base64')}`);
   const patchCompiled = compile(patch.source, patch.url.pathname)
     .replace(/^\s*import\s+\{[\s\S]*?\}\s+from\s+["']\.\/model["'];?\s*$/m, '');
-  const patchModule = await import(`data:text/javascript;base64,${Buffer.from(`${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${videoEditorCompiled}\n${videoClipCompiled}\n${modelCompiled}\n${patchCompiled}`).toString('base64')}`);
+  const patchModule = await import(`data:text/javascript;base64,${Buffer.from(`${cangyuanImageRuntime}\n${cangyuanProviderRuntime}\n${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${videoEditorCompiled}\n${videoClipCompiled}\n${modelCompiled}\n${patchCompiled}`).toString('base64')}`);
   return { model: modelModule, patch: patchModule };
 }
 

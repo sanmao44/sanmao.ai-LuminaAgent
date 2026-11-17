@@ -43,6 +43,8 @@ type SkillFetchOptions = {
   accept?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
+  range?: { start: number; end: number };
+  onProgress?: (receivedBytes: number, totalBytes: number | null) => void;
   fetcher?: (input: string | URL, init: RequestInit & { dispatcher?: EnvHttpProxyAgent }) => Promise<Response>;
 };
 
@@ -50,13 +52,13 @@ async function skillDownloadProxyAgent() {
   const httpProxy = process.env.HTTP_PROXY || process.env.http_proxy;
   const httpsProxy = process.env.HTTPS_PROXY || process.env.https_proxy;
   const noProxy = process.env.NO_PROXY || process.env.no_proxy;
-  if (!httpProxy && !httpsProxy) return null;
   if (!environmentProxyAgent) {
     const { EnvHttpProxyAgent } = await import('undici');
     environmentProxyAgent = new EnvHttpProxyAgent({
       httpProxy,
       httpsProxy,
       noProxy,
+      autoSelectFamily: true,
     });
   }
   return environmentProxyAgent;
@@ -1111,6 +1113,7 @@ export async function fetchSkillBytes(target: string | URL, options: SkillFetchO
         headers: {
           'user-agent': 'SANMAO.AI-Skills/1.0',
           accept: options.accept || 'text/plain, text/markdown, application/json;q=0.9, */*;q=0.5',
+          ...(options.range ? { range: `bytes=${options.range.start}-${options.range.end}` } : {}),
         },
       } as const;
       const proxyAgent = await skillDownloadProxyAgent();
@@ -1129,8 +1132,17 @@ export async function fetchSkillBytes(target: string | URL, options: SkillFetchO
       url = assertSkillImportUrl(new URL(location, url).toString());
       continue;
     }
+    if (options.range && response.status !== 206) throw new Error('下载源不支持安全的分段续传');
     if (!response.ok) throw new Error(skillHttpErrorMessage(response.status));
+    const contentRange = response.headers.get('content-range') || '';
+    const rangeMatch = contentRange.match(/^bytes (\d+)-(\d+)\/(\d+)$/i);
+    if (options.range && (!rangeMatch
+      || Number(rangeMatch[1]) !== options.range.start
+      || Number(rangeMatch[2]) !== options.range.end)) {
+      throw new Error('下载源返回了不匹配的分段范围');
+    }
     const declared = Number(response.headers.get('content-length') || 0);
+    const totalBytes = declared > 0 ? declared : null;
     if (declared && declared > limit) throw new Error('远端文件超过大小限制');
     let data: Buffer;
     try {
@@ -1150,6 +1162,7 @@ export async function fetchSkillBytes(target: string | URL, options: SkillFetchO
             throw new Error('远端文件超过大小限制');
           }
           chunks.push(Buffer.from(value));
+          options.onProgress?.(received, totalBytes);
         }
         data = Buffer.concat(chunks);
       }
@@ -1157,7 +1170,15 @@ export async function fetchSkillBytes(target: string | URL, options: SkillFetchO
       throw skillFetchFailure(error, options.signal, timeoutMs);
     }
     if (data.byteLength > limit) throw new Error('远端文件超过大小限制');
-    return { url: response.url || url.toString(), data };
+    if (options.range && data.byteLength !== options.range.end - options.range.start + 1) {
+      throw new Error('下载分段长度不完整');
+    }
+    if (!response.body?.getReader) options.onProgress?.(data.byteLength, totalBytes);
+    return {
+      url: response.url || url.toString(),
+      data,
+      ...(rangeMatch ? { rangeTotalBytes: Number(rangeMatch[3]) } : {}),
+    };
   }
   throw new Error('重定向次数过多');
 }

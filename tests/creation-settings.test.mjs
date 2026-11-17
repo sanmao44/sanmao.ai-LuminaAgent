@@ -19,6 +19,14 @@ const compiled = await compileTypeScript('../lib/creation/settings.ts', (source)
   .replace(
     /^import\s+\{\s*normalizeLocalEditAnnotations\s*,\s*type\s+LocalEditAnnotation\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m,
     localEditRuntime,
+  )
+  .replace(
+    /^import\s+\{\s*getCangyuanImageModelProfile\s*\}\s+from\s+["']\.\.\/cangyuan-image-capabilities["'];?\s*$/m,
+    'const getCangyuanImageModelProfile = () => null;',
+  )
+  .replace(
+    /^import\s+\{\s*isCangyuanProvider\s*\}\s+from\s+["']\.\.\/cangyuan-provider["'];?\s*$/m,
+    'const isCangyuanProvider = () => false;',
   ));
 const compiledWithMocks = compiled
   .replace(
@@ -171,6 +179,17 @@ test('image settings retain local-edit annotations in the persisted mask', () =>
   assert.equal(result.mask?.sourceImageDataUrl, 'data:image/png;base64,legacy-source');
   assert.equal(result.mask?.moveSourceMaskAssetId, 'legacy-source-mask-asset');
   assert.equal(result.mask?.moveSourceMaskUrl, '/legacy-source-mask.png');
+});
+
+test('image settings preserve documented Cangyuan quality and output format values', () => {
+  const result = settings.normalizeImageCreationSettings({
+    kind: 'image',
+    quality: 'xhigh',
+    outputFormat: 'svg',
+  }, runtime);
+
+  assert.equal(result.quality, 'xhigh');
+  assert.equal(result.outputFormat, 'svg');
 });
 
 test('legacy string masks remain readable while new feather metadata is normalized', () => {

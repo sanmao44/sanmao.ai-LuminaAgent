@@ -38,7 +38,13 @@ function mcpToolDescription(server: McpServerConfig, tool: McpRemoteTool) {
   const upstream = String(tool.description || tool.title || tool.name).trim();
   const serverIdentity = `${server.catalogId || ''} ${server.id} ${server.name}`.replace(/[^a-z0-9]/gi, '').toLowerCase();
   const isWindowsMcp = serverIdentity.includes('windowsmcp');
-  const guidance = isWindowsMcp && tool.name === 'App'
+  const guidance = isWindowsMcp && tool.name === 'windows_click'
+    ? 'FlaUI windows_click: use the ref from a fresh windows_snapshot; omit coordinates so UI Automation can use Invoke/Toggle/Selection patterns in the background. If the target exposes no supported pattern, the upstream tool may fall back to real mouse input. '
+    : isWindowsMcp && tool.name === 'windows_fill'
+      ? 'FlaUI windows_fill: prefer a fresh snapshot ref and ValuePattern for background entry. Some controls fall back to keyboard focus and typing; verify the returned value and do not claim background-only execution when the provider lacks UIA support. '
+      : isWindowsMcp && tool.name === 'windows_launch'
+        ? 'FlaUI windows_launch starts an application without moving the mouse. Confirm the new window with a fresh windows_snapshot. '
+        : isWindowsMcp && tool.name === 'App'
     ? 'Windows-MCP App: for a known absolute .exe, prefer mode="launch_executable" with executable set to that file and args as a string array. The executable must exist and be a real application; never pass PowerShell, a shell command, or a relative path. .msc and .cpl files are not executable paths: launch them through C:\\Windows\\System32\\mmc.exe with the file as an argument. Device Manager example: executable="C:\\Windows\\System32\\mmc.exe", args=["C:\\Windows\\System32\\devmgmt.msc"]. Use mode="launch" with a Start Menu name only when no executable path is known. Verify with a fresh Snapshot or WaitFor before claiming success. '
     : isWindowsMcp && tool.name === 'Type'
       ? 'Windows-MCP Type requires text and either loc=[x,y] or label from a fresh Snapshot. It cannot type into the focused window without a target. Refresh Snapshot after changing windows, then choose the editor target before typing. '
@@ -100,7 +106,7 @@ export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpR
       && isValidToolName(mcpToolId(server.id, tool.name)))
     .slice(0, MCP_MAX_TOOLS_PER_SERVER);
   return selected.map((tool) => {
-    const readOnly = isMcpReadOnlyTool(tool);
+    const readOnly = isMcpReadOnlyTool(tool) || Boolean(readOnlyAllowlist?.has(tool.name));
     let blocked = !readOnly && !server.allowWrite;
     let blockedReason = '';
     if (!readOnly) {

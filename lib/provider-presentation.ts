@@ -5,7 +5,8 @@ export function modelKindLabel(kind: ModelKind | string | null | undefined) {
   if (kind === 'chat') return '对话模型';
   if (kind === 'image') return '图片模型';
   if (kind === 'video') return '视频模型';
-  if (kind === 'audio') return '配音模型';
+  if (kind === 'audio') return '音频模型';
+  if (kind === '3d') return '三维模型';
   return '未分类';
 }
 

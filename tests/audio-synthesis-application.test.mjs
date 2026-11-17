@@ -3,7 +3,7 @@ import test from 'node:test';
 import { buildLibModules } from './lib-build.mjs';
 
 const { main: application } = await buildLibModules(
-  ['apps/api/audio-synthesis-application'],
+  ['apps/api/audio-synthesis-application', 'packages/contracts/audio-synthesis'],
   'audio-synthesis-application',
 );
 
@@ -31,14 +31,32 @@ test('audio synthesis trims the script and optional voice before calling the pro
   assert.equal(result.engine, 'offline');
 });
 
+test('audio synthesis preserves model-specific format and speed options through the shared contract', async () => {
+  let received;
+  await application.synthesizeAudioRequest(
+    { text: '语音参数', modelId: 'gemini-id', voice: 'Ursa', format: 'flac', speed: 1.25 },
+    { synthesize: async (input) => {
+      received = input;
+      return { data: new Uint8Array([1]), contentType: 'audio/flac', extension: 'flac', engine: 'provider' };
+    } },
+  );
+  assert.deepEqual(received, {
+    text: '语音参数', modelId: 'gemini-id', voice: 'Ursa', format: 'flac', speed: 1.25,
+  });
+});
+
 test('audio generation log metadata preserves the requested voice and automatic model preference', () => {
   assert.deepEqual(application.audioSynthesisLogMetadata({
     text: '  配音草稿  ',
     voice: ' 温柔女声 ',
+    format: 'wav',
+    speed: 1.5,
   }), {
     prompt: '配音草稿',
     requestedModelId: 'auto',
     voice: '温柔女声',
+    format: 'wav',
+    speed: 1.5,
   });
 });
 
@@ -99,6 +117,8 @@ test('audio synthesis rejects empty and oversized scripts before contacting the 
   await assert.rejects(application.synthesizeAudioRequest({ text: '有效文本', voice: 'v'.repeat(101) }, port), /音色名称最多 100 个字符/);
   await assert.rejects(application.synthesizeAudioRequest({ text: '有效文本', modelId: 12 }, port), /配音模型无效/);
   await assert.rejects(application.synthesizeAudioRequest({ text: '有效文本', modelId: 'm'.repeat(161) }, port), /模型 ID 最多 160 个字符/);
+  await assert.rejects(application.synthesizeAudioRequest({ text: '有效文本', format: 'ogg' }, port), /格式无效/);
+  await assert.rejects(application.synthesizeAudioRequest({ text: '有效文本', speed: Number.NaN }, port), /速度必须是有限数字/);
   assert.equal(calls, 0);
 });
 

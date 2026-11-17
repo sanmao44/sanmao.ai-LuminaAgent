@@ -17,6 +17,9 @@ import {
   type VideoInputMode,
 } from "@/lib/creation/settings";
 import { resolveAvailableCreationModel } from "@/lib/creation/settings";
+import { getCangyuanImageModelProfile } from "@/lib/cangyuan-image-capabilities";
+import { isCangyuanProvider } from "@/lib/cangyuan-provider";
+import { getCangyuanVideoModelProfile } from "@/lib/cangyuan-video-capabilities";
 import { getVideoModelLimitsForInput, type VideoModelInputContext } from "@/lib/video-model-limits";
 import { is65535Provider } from "@/lib/video-platform";
 import type { ModelCapability, PublicState } from "@/lib/types";
@@ -60,6 +63,7 @@ function ImageEditor({
   settings,
   runtime,
   unavailableModelId,
+  referenceCount = 0,
   modelCapabilities,
   variant,
   portalZIndex = CANVAS_Z_INDEX.portalPopover,
@@ -69,6 +73,7 @@ function ImageEditor({
   settings: ImageCreationSettings;
   runtime: PublicState | null;
   unavailableModelId?: string;
+  referenceCount?: number;
   modelCapabilities?: readonly ModelCapability[];
   variant?: Props["variant"];
   portalZIndex?: number;
@@ -101,9 +106,150 @@ function ImageEditor({
     value: ImageCreationSettings[K],
   ) => onChange({ ...settings, [key]: value });
   const models = runtime?.models || [];
-  const provider = runtime?.providers.find(
+  const defaultProvider = runtime?.providers.find(
     (item) => item.id === runtime.settings.defaultProviderId,
   );
+  const selectedModel = resolveAvailableCreationModel(settings, runtime).model;
+  const selectedProvider = runtime?.providers.find((item) => item.id === selectedModel?.providerId);
+  const usesCangyuan = isCangyuanProvider(selectedProvider);
+  const cangyuanProfile = usesCangyuan && selectedModel
+    ? getCangyuanImageModelProfile(selectedModel.rawId)
+    : null;
+  const cangyuanSizeSuggestions = (cangyuanProfile?.sizeRecommendations || []).filter((value) =>
+    (value.toLowerCase() === "auto" || /^(?:\d+:\d+(?:-max)?|\d+(?:\.\d+)?k|\d+x\d+)$/i.test(value))
+      && (!cangyuanProfile?.supportsAspectRatio || !/^\d+:\d+$/.test(value)),
+  );
+  const cangyuanAspectSize = cangyuanSizeSuggestions.find((value) => value.toLowerCase() === settings.aspect.toLowerCase());
+  const cangyuanResolutionSize = cangyuanSizeSuggestions.find((value) => value.toLowerCase() === settings.resolution.toLowerCase());
+  const hasNonDefaultCangyuanAspect = settings.aspect !== "1:1" && Boolean(cangyuanAspectSize);
+  const hasNonDefaultCangyuanResolution = settings.resolution !== "1K" && Boolean(cangyuanResolutionSize);
+  const requestedCangyuanSize = (settings.sizeMode === "custom"
+    ? `${settings.width}x${settings.height}`
+    : cangyuanProfile?.supportsAspectRatio
+      ? settings.resolution
+      : hasNonDefaultCangyuanAspect
+        ? cangyuanAspectSize
+        : hasNonDefaultCangyuanResolution
+          ? cangyuanResolutionSize
+          : cangyuanAspectSize || cangyuanResolutionSize || settings.aspect) || "1:1";
+  const cangyuanSizeValue = cangyuanSizeSuggestions.includes(requestedCangyuanSize)
+    ? requestedCangyuanSize
+    : cangyuanSizeSuggestions.find((value) => value.toLowerCase() === "auto") || cangyuanSizeSuggestions[0] || "";
+  const imageRatioOptions = usesCangyuan
+    ? ["自动", ...(cangyuanProfile?.supportsAspectRatio ? cangyuanProfile.aspectRatioRecommendations : [])]
+    : [...IMAGE_RATIOS];
+  const imageSizeOptions = usesCangyuan
+    ? IMAGE_SIZE_TIERS.filter((item) => cangyuanProfile?.sizeRecommendations.includes(item.value))
+    : [...IMAGE_SIZE_TIERS];
+  const imageQualityOptions = usesCangyuan
+    ? (cangyuanProfile?.qualityEnum || []).map((value) => ({
+        value: (value === "auto" ? "自动" : value) as ImageCreationSettings["quality"],
+        label: value === "auto" ? "自动" : value.toUpperCase(),
+        description: "沧元算力模型文档支持的质量参数",
+      }))
+    : IMAGE_QUALITY_OPTIONS;
+  const imageFormatOptions = usesCangyuan
+    ? (cangyuanProfile?.outputFormatEnum || []).map((value) => ({
+        value: value as ImageCreationSettings["outputFormat"],
+        label: value.toUpperCase(),
+      }))
+    : [
+        { value: "png" as const, label: "PNG · 无损" },
+        { value: "jpeg" as const, label: "JPEG · 体积更小" },
+        { value: "webp" as const, label: "WebP · 适合网页" },
+      ];
+  const imageBackgroundOptions = usesCangyuan
+    ? [
+        { value: "auto" as const, label: "模型默认" },
+        ...(cangyuanProfile?.backgroundEnum.includes("transparent") ? [{ value: "api-transparent" as const, label: "API 透明" }] : []),
+        { value: "local-transparent" as const, label: "本地透明", description: "自动去白底并输出 PNG" },
+        ...(cangyuanProfile?.backgroundEnum.includes("opaque") ? [{ value: "opaque" as const, label: "不透明" }] : []),
+      ]
+    : [
+        { value: "auto" as const, label: "自动" },
+        { value: "api-transparent" as const, label: "API 透明", description: "仅支持部分模型" },
+        { value: "local-transparent" as const, label: "本地透明", description: "自动去白底并输出 PNG" },
+        { value: "opaque" as const, label: "不透明" },
+      ];
+  const imageCountLimit = usesCangyuan
+    ? Math.min(10, Math.max(1, cangyuanProfile?.nMax ?? 1))
+    : 8;
+  const imageCountOptions = Array.from({ length: imageCountLimit }, (_, index) => index + 1);
+  const selectedImageCount = imageCountOptions.includes(settings.count) ? settings.count : imageCountOptions[0] || 1;
+  const referenceLimitExceeded = Boolean(cangyuanProfile?.imagesMaxItems && referenceCount > cangyuanProfile.imagesMaxItems);
+  const withCangyuanSize = (base: ImageCreationSettings, value: string): ImageCreationSettings => {
+    if (value.toLowerCase() === "auto") return { ...base, sizeMode: "system", aspect: "自动", resolution: "1K" };
+    if (/^\d+:\d+$/.test(value)) return { ...base, sizeMode: "system", aspect: value, resolution: "1K" };
+    const dimensions = /^(\d+)x(\d+)$/i.exec(value);
+    if (dimensions) return { ...base, sizeMode: "custom", width: Number(dimensions[1]), height: Number(dimensions[2]) };
+    const sizeTier = IMAGE_SIZE_TIERS.find((item) => item.value.toLowerCase() === value.toLowerCase());
+    if (sizeTier) return { ...base, sizeMode: "system", aspect: "1:1", resolution: sizeTier.value };
+    return { ...base, sizeMode: "system", aspect: value, resolution: "1K" };
+  };
+  const applyCangyuanSize = (value: string) => {
+    onChange(withCangyuanSize(settings, value));
+  };
+  const updateImageBackground = (backgroundMode: ImageCreationSettings["backgroundMode"]) => {
+    const needsPng = backgroundMode === "api-transparent" || backgroundMode === "local-transparent";
+    const supportsPng = imageFormatOptions.some((option) => option.value === "png");
+    onChange({
+      ...settings,
+      backgroundMode,
+      ...(needsPng && supportsPng ? { outputFormat: "png" as const } : {}),
+    });
+  };
+  const updateImageModel = (modelId: string) => {
+    const nextSettings = { ...settings, model: modelId };
+    const nextModel = resolveAvailableCreationModel(nextSettings, runtime).model;
+    const nextProvider = runtime?.providers.find((item) => item.id === nextModel?.providerId);
+    if (isCangyuanProvider(nextProvider)) {
+      const profile = nextModel ? getCangyuanImageModelProfile(nextModel.rawId) : null;
+      const options = profile?.sizeRecommendations.filter((value) =>
+        value.toLowerCase() === "auto" || /^(?:\d+:\d+(?:-max)?|\d+(?:\.\d+)?k|\d+x\d+)$/i.test(value),
+      ) || [];
+      const currentSize = settings.sizeMode === "custom"
+        ? `${settings.width}x${settings.height}`
+        : settings.aspect !== "1:1" && options.some((value) => value.toLowerCase() === settings.aspect.toLowerCase())
+          ? settings.aspect
+          : settings.resolution !== "1K" && options.some((value) => value.toLowerCase() === settings.resolution.toLowerCase())
+            ? settings.resolution
+            : settings.aspect;
+      const selectedSize = options.find((value) => value.toLowerCase() === currentSize.toLowerCase()) || options[0];
+      const countLimit = Math.min(10, Math.max(1, profile?.nMax ?? 1));
+      const nextModelSettings = {
+        ...nextSettings,
+        count: Math.min(settings.count, countLimit),
+        quality: profile?.qualityEnum.includes(settings.quality) ? settings.quality : "自动",
+        outputFormat: profile?.outputFormatEnum.includes(settings.outputFormat) ? settings.outputFormat : "png",
+        backgroundMode: settings.backgroundMode === "api-transparent" && !profile?.backgroundEnum.includes("transparent")
+          || settings.backgroundMode === "opaque" && !profile?.backgroundEnum.includes("opaque")
+          ? "auto"
+          : settings.backgroundMode,
+      };
+      onChange(selectedSize ? withCangyuanSize(nextModelSettings, selectedSize) : nextModelSettings);
+      return;
+    }
+    onChange({
+      ...nextSettings,
+      count: Math.min(settings.count, 8),
+      quality: IMAGE_QUALITY_OPTIONS.some((option) => option.value === settings.quality) ? settings.quality : "自动",
+      outputFormat: ["png", "jpeg", "webp"].includes(settings.outputFormat) ? settings.outputFormat : "png",
+      backgroundMode: settings.backgroundMode === "api-transparent" ? "auto" : settings.backgroundMode,
+    });
+  };
+  const cangyuanSizeSelect = cangyuanSizeSuggestions.length > 0 ? (
+    <SelectMenu
+      portalZIndex={portalZIndex}
+      value={cangyuanSizeValue}
+      onChange={applyCangyuanSize}
+      options={cangyuanSizeSuggestions.map((value) => ({
+        value,
+        label: value.toLowerCase() === "auto" ? "自动" : value.replace("x", " × "),
+        description: "沧元算力模型文档中的建议尺寸",
+      }))}
+      ariaLabel="沧元模型建议尺寸"
+    />
+  ) : null;
   const qualityLabel = IMAGE_QUALITY_OPTIONS.find(
     (option) => option.value === settings.quality,
   )?.label.replace("质量", "") || settings.quality;
@@ -111,6 +257,29 @@ function ImageEditor({
     ? settings.resolution
     : `${settings.width}×${settings.height}`;
   const parameterSummary = `${settings.aspect} · ${qualityLabel} · ${sizeLabel} · ${settings.count} 张`;
+  const cangyuanWarnings: string[] = [];
+  if (usesCangyuan) {
+    if (!cangyuanProfile) cangyuanWarnings.push("该模型未登记在官方能力清单中，当前仅能确认基础提示词请求；请改用已登记模型，或先恢复默认参数。");
+    else {
+      if (settings.count > (cangyuanProfile.nMax || 1)) cangyuanWarnings.push(`该模型最多生成 ${cangyuanProfile.nMax || 1} 张，请调整生成数量。`);
+      if (settings.mask && !cangyuanProfile.supportsMask) cangyuanWarnings.push("该模型不支持蒙版编辑，请移除蒙版或切换支持编辑的模型。");
+      if (referenceLimitExceeded) cangyuanWarnings.push(`该模型最多接收 ${cangyuanProfile.imagesMaxItems} 张参考图。`);
+      if ((settings.quality !== "自动" && settings.quality !== "auto" && !cangyuanProfile.qualityEnum.includes(settings.quality))
+        || (cangyuanProfile.qualityEnum.length > 0 && settings.quality === "自动" && !cangyuanProfile.qualityEnum.includes("auto"))) {
+        cangyuanWarnings.push("当前质量值不受所选模型支持，请选择文档列出的质量值。");
+      }
+      if (!cangyuanProfile.outputFormatEnum.includes(settings.outputFormat)
+        && (settings.outputFormat !== "png" || cangyuanProfile.outputFormatEnum.length > 0)) {
+        cangyuanWarnings.push("当前输出格式不受所选模型支持，请选择文档列出的格式。");
+      }
+      if (settings.backgroundMode === "api-transparent" && !cangyuanProfile.backgroundEnum.includes("transparent")) cangyuanWarnings.push("该模型不支持 API 透明背景；可改用本地透明处理。");
+      if (settings.backgroundMode === "opaque" && !cangyuanProfile.backgroundEnum.includes("opaque")) cangyuanWarnings.push("该模型不支持指定不透明背景，请改用自动背景。");
+      if (cangyuanSizeSuggestions.length && !cangyuanSizeSuggestions.some((value) => value.toLowerCase() === requestedCangyuanSize.toLowerCase())
+        && !(settings.sizeMode === "system" && settings.aspect === "1:1" && settings.resolution === "1K")) {
+        cangyuanWarnings.push("当前尺寸不在模型文档的推荐值中，请选择一个模型建议尺寸。");
+      }
+    }
+  }
   return (
     <div className={`creation-parameter-editor image${flat ? " canvas-flat" : ""}${dock ? " canvas-dock" : ""}`}>
       {unavailableModelId && (
@@ -122,12 +291,23 @@ function ImageEditor({
           </span>
         </div>
       )}
+      {usesCangyuan && (
+        <div className={`creation-model-warning${cangyuanWarnings.length ? " warning" : ""}`}>
+          <b>{cangyuanWarnings.length ? "沧元模型参数提示" : "沧元模型参数"}</b>
+          <span>
+            {cangyuanProfile
+              ? `单次最多 ${cangyuanProfile.nMax || 1} 张 · 参考图最多 ${cangyuanProfile.imagesMaxItems ?? "未注明"} 张 · ${cangyuanProfile.supportsMask ? "支持蒙版" : "不支持蒙版"}`
+              : "仅发送文档可确认的基础字段；此模型的专属参数能力尚未登记。"}
+            {cangyuanWarnings.length > 0 && ` ${cangyuanWarnings.join(" ")}`}
+          </span>
+        </div>
+      )}
       {dock ? (
         <div className="canvas-parameter-groups">
-          <div className="canvas-parameter-group">
+          {imageQualityOptions.length > 0 && <div className="canvas-parameter-group">
             <span className="canvas-parameter-group-label">画质</span>
             <div className="canvas-parameter-options quality" role="group" aria-label="图片质量">
-              {IMAGE_QUALITY_OPTIONS.map((option) => (
+              {imageQualityOptions.map((option) => (
                 <button
                   type="button"
                   key={option.value}
@@ -140,12 +320,17 @@ function ImageEditor({
                 </button>
               ))}
             </div>
-          </div>
-          {settings.sizeMode === "system" ? (
+          </div>}
+          {usesCangyuan ? (
+            <div className="canvas-parameter-group">
+              <span className="canvas-parameter-group-label">模型建议尺寸</span>
+              {cangyuanSizeSelect || <small>文档未列出建议尺寸，使用模型默认值</small>}
+            </div>
+          ) : settings.sizeMode === "system" ? (
             <div className="canvas-parameter-group">
               <span className="canvas-parameter-group-label">清晰度</span>
               <div className="canvas-parameter-options resolution" role="group" aria-label="图片分辨率">
-                {IMAGE_SIZE_TIERS.map((item) => (
+                {imageSizeOptions.map((item) => (
                   <button type="button" key={item.value} className={settings.resolution === item.value ? "active" : ""} aria-pressed={settings.resolution === item.value} title={`长边约 ${item.longEdge}px`} onClick={() => update("resolution", item.value)}>{item.label}</button>
                 ))}
               </div>
@@ -160,18 +345,18 @@ function ImageEditor({
               </div>
             </div>
           )}
-          <div className="canvas-parameter-group">
+          {(!usesCangyuan || cangyuanProfile?.supportsAspectRatio) && <div className="canvas-parameter-group">
             <span className="canvas-parameter-group-label">比例</span>
             <div className="canvas-parameter-options aspect" role="group" aria-label="图片比例">
-              {IMAGE_RATIOS.map((value) => (
+              {imageRatioOptions.map((value) => (
                 <button type="button" key={value} className={settings.aspect === value ? "active" : ""} aria-pressed={settings.aspect === value} data-ratio={value} title={ratioDescriptions[value]} onClick={() => update("aspect", value)}>
                   <i className="canvas-parameter-ratio-icon" aria-hidden="true" />
                   <span>{value === "自动" ? "自动" : value}</span>
                 </button>
               ))}
             </div>
-          </div>
-          {settings.aspect === "自定义" && (
+          </div>}
+          {!usesCangyuan && settings.aspect === "自定义" && (
             <div className="creation-custom-ratio canvas-parameter-custom-ratio">
               <span>自定义比例</span>
               <input type="number" min={1} value={settings.customAspectWidth} onChange={(event) => update("customAspectWidth", Math.max(1, Number(event.target.value) || 1))} />
@@ -182,8 +367,8 @@ function ImageEditor({
           <div className="canvas-parameter-group">
             <span className="canvas-parameter-group-label">生成数量</span>
             <div className="canvas-parameter-options count" role="group" aria-label="生成数量">
-              {[1, 2, 3, 4, 5, 6, 7, 8].map((value) => (
-                <button type="button" key={value} className={settings.count === value ? "active" : ""} aria-pressed={settings.count === value} onClick={() => update("count", value)}>{value} 张</button>
+              {imageCountOptions.map((value) => (
+                <button type="button" key={value} className={selectedImageCount === value ? "active" : ""} aria-pressed={selectedImageCount === value} onClick={() => update("count", value)}>{value} 张</button>
               ))}
             </div>
           </div>
@@ -200,39 +385,30 @@ function ImageEditor({
           </button>
           {advanced && (
             <div className="creation-parameter-grid advanced canvas-parameter-extra-grid">
-              <div className="canvas-parameter-group">
+              {!usesCangyuan && <div className="canvas-parameter-group">
                 <span className="canvas-parameter-group-label">尺寸方式</span>
                 <div className="canvas-parameter-options size-mode" role="group" aria-label="图片尺寸方式">
                   <button type="button" className={settings.sizeMode === "system" ? "active" : ""} aria-pressed={settings.sizeMode === "system"} onClick={() => update("sizeMode", "system")}>标准尺寸</button>
                   <button type="button" className={settings.sizeMode === "custom" ? "active" : ""} aria-pressed={settings.sizeMode === "custom"} onClick={() => update("sizeMode", "custom")}>自定义</button>
                 </div>
-              </div>
-              <label className="creation-field">
+              </div>}
+              {imageFormatOptions.length > 0 && <label className="creation-field">
                 <small>输出格式</small>
                 <SelectMenu
                   portalZIndex={portalZIndex}
                   value={settings.outputFormat}
                   onChange={(value) => update("outputFormat", value)}
-                  options={[
-                    { value: "png", label: "PNG · 无损" },
-                    { value: "jpeg", label: "JPEG · 体积更小" },
-                    { value: "webp", label: "WebP · 适合网页" },
-                  ]}
+                options={imageFormatOptions}
                   ariaLabel="输出格式"
                 />
-              </label>
+              </label>}
               <label className="creation-field">
                 <small>背景限制</small>
                 <SelectMenu
                   portalZIndex={portalZIndex}
                   value={settings.backgroundMode}
-                  onChange={(value) => onChange({ ...settings, backgroundMode: value, ...(value === "api-transparent" || value === "local-transparent" ? { outputFormat: "png" as const } : {}) })}
-                  options={[
-                    { value: "auto", label: "自动" },
-                    { value: "api-transparent", label: "API 透明", description: "仅支持部分模型" },
-                    { value: "local-transparent", label: "本地透明", description: "自动去白底并输出 PNG" },
-                    { value: "opaque", label: "不透明" },
-                  ]}
+                  onChange={updateImageBackground}
+                options={imageBackgroundOptions}
                   ariaLabel="背景限制"
                 />
               </label>
@@ -251,9 +427,9 @@ function ImageEditor({
                 portalZIndex={portalZIndex}
                 dialogPortalZIndex={dialogPortalZIndex}
                 defaultProviderId={runtime?.settings.defaultProviderId}
-                defaultProviderName={provider?.name}
+                defaultProviderName={defaultProvider?.name}
                 defaultModelId={runtime?.settings.defaultImageModelId}
-                onChange={(value) => update("model", value)}
+                onChange={updateImageModel}
               />
             </label>
           </div>
@@ -280,10 +456,10 @@ function ImageEditor({
                   </span>
                   <em>可随时调整</em>
                 </div>
-                <div className="canvas-parameter-group">
+                {imageQualityOptions.length > 0 && <div className="canvas-parameter-group">
                   <span className="canvas-parameter-group-label">质量</span>
                   <div className="canvas-parameter-options quality" role="group" aria-label="图片质量">
-                    {IMAGE_QUALITY_OPTIONS.map((option) => (
+                    {imageQualityOptions.map((option) => (
                       <button
                         type="button"
                         key={option.value}
@@ -296,24 +472,29 @@ function ImageEditor({
                       </button>
                     ))}
                   </div>
-                </div>
-                <div className="canvas-parameter-group">
+                </div>}
+                {usesCangyuan ? (
+                  <div className="canvas-parameter-group">
+                    <span className="canvas-parameter-group-label">模型建议尺寸</span>
+                    {cangyuanSizeSelect || <small>文档未列出建议尺寸，使用模型默认值</small>}
+                  </div>
+                ) : <div className="canvas-parameter-group">
                   <span className="canvas-parameter-group-label">尺寸方式</span>
                   <div className="canvas-parameter-options size-mode" role="group" aria-label="图片尺寸方式">
                     <button type="button" className={settings.sizeMode === "system" ? "active" : ""} aria-pressed={settings.sizeMode === "system"} onClick={() => update("sizeMode", "system")}>标准尺寸</button>
                     <button type="button" className={settings.sizeMode === "custom" ? "active" : ""} aria-pressed={settings.sizeMode === "custom"} onClick={() => update("sizeMode", "custom")}>自定义</button>
                   </div>
-                </div>
-                {settings.sizeMode === "system" ? (
+                </div>}
+                {!usesCangyuan && settings.sizeMode === "system" ? (
                   <div className="canvas-parameter-group">
                     <span className="canvas-parameter-group-label">清晰度</span>
                     <div className="canvas-parameter-options resolution" role="group" aria-label="图片分辨率">
-                      {IMAGE_SIZE_TIERS.map((item) => (
+                      {imageSizeOptions.map((item) => (
                         <button type="button" key={item.value} className={settings.resolution === item.value ? "active" : ""} aria-pressed={settings.resolution === item.value} title={`长边约 ${item.longEdge}px`} onClick={() => update("resolution", item.value)}>{item.label}</button>
                       ))}
                     </div>
                   </div>
-                ) : (
+                ) : !usesCangyuan ? (
                   <div className="canvas-parameter-group">
                     <span className="canvas-parameter-group-label">自定义尺寸</span>
                     <div className="creation-pixel-fields canvas-parameter-pixels">
@@ -322,19 +503,19 @@ function ImageEditor({
                       <label><small>高度</small><input type="number" min={1} max={16384} value={settings.height} onChange={(event) => update("height", Math.max(1, Number(event.target.value) || 1))} /></label>
                     </div>
                   </div>
-                )}
-                <div className="canvas-parameter-group">
+                ) : null}
+                {(!usesCangyuan || cangyuanProfile?.supportsAspectRatio) && <div className="canvas-parameter-group">
                   <span className="canvas-parameter-group-label">比例</span>
                   <div className="canvas-parameter-options aspect" role="group" aria-label="图片比例">
-                    {IMAGE_RATIOS.map((value) => (
+                    {imageRatioOptions.map((value) => (
                       <button type="button" key={value} className={settings.aspect === value ? "active" : ""} aria-pressed={settings.aspect === value} data-ratio={value} title={ratioDescriptions[value]} onClick={() => update("aspect", value)}>
                         <i className="canvas-parameter-ratio-icon" aria-hidden="true" />
                         <span>{value === "自动" ? "自动" : value}</span>
                       </button>
                     ))}
                   </div>
-                </div>
-                {settings.aspect === "自定义" && (
+                </div>}
+                {!usesCangyuan && settings.aspect === "自定义" && (
                   <div className="creation-custom-ratio canvas-parameter-custom-ratio">
                     <span>自定义比例</span>
                     <input type="number" min={1} value={settings.customAspectWidth} onChange={(event) => update("customAspectWidth", Math.max(1, Number(event.target.value) || 1))} />
@@ -345,8 +526,8 @@ function ImageEditor({
                 <div className="canvas-parameter-group">
                   <span className="canvas-parameter-group-label">生成数量</span>
                   <div className="canvas-parameter-options count" role="group" aria-label="生成数量">
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((value) => (
-                      <button type="button" key={value} className={settings.count === value ? "active" : ""} aria-pressed={settings.count === value} onClick={() => update("count", value)}>{value} 张</button>
+                    {imageCountOptions.map((value) => (
+                    <button type="button" key={value} className={selectedImageCount === value ? "active" : ""} aria-pressed={selectedImageCount === value} onClick={() => update("count", value)}>{value} 张</button>
                     ))}
                   </div>
                 </div>
@@ -363,32 +544,23 @@ function ImageEditor({
                 </button>
                 {advanced && (
                   <div className="creation-parameter-grid advanced canvas-parameter-extra-grid">
-                    <label className="creation-field">
+                    {imageFormatOptions.length > 0 && <label className="creation-field">
                       <small>输出格式</small>
                       <SelectMenu
                         portalZIndex={portalZIndex}
                         value={settings.outputFormat}
                         onChange={(value) => update("outputFormat", value)}
-                        options={[
-                          { value: "png", label: "PNG · 无损" },
-                          { value: "jpeg", label: "JPEG · 体积更小" },
-                          { value: "webp", label: "WebP · 适合网页" },
-                        ]}
+                        options={imageFormatOptions}
                         ariaLabel="输出格式"
                       />
-                    </label>
+                    </label>}
                     <label className="creation-field">
                       <small>背景限制</small>
                       <SelectMenu
                         portalZIndex={portalZIndex}
                         value={settings.backgroundMode}
-                        onChange={(value) => onChange({ ...settings, backgroundMode: value, ...(value === "api-transparent" || value === "local-transparent" ? { outputFormat: "png" as const } : {}) })}
-                        options={[
-                          { value: "auto", label: "自动" },
-                          { value: "api-transparent", label: "API 透明", description: "仅支持部分模型" },
-                          { value: "local-transparent", label: "本地透明", description: "自动去白底并输出 PNG" },
-                          { value: "opaque", label: "不透明" },
-                        ]}
+                        onChange={updateImageBackground}
+                        options={imageBackgroundOptions}
                         ariaLabel="背景限制"
                       />
                     </label>
@@ -410,26 +582,31 @@ function ImageEditor({
             portalZIndex={portalZIndex}
             dialogPortalZIndex={dialogPortalZIndex}
             defaultProviderId={runtime?.settings.defaultProviderId}
-            defaultProviderName={provider?.name}
+            defaultProviderName={defaultProvider?.name}
             defaultModelId={runtime?.settings.defaultImageModelId}
-            onChange={(value) => update("model", value)}
+            onChange={updateImageModel}
           />
         </label>
-        <label className="creation-field">
+        {(!usesCangyuan || cangyuanProfile?.supportsAspectRatio) && <label className="creation-field">
           <small>比例</small>
           <SelectMenu
             portalZIndex={portalZIndex}
             value={settings.aspect}
             onChange={(value) => update("aspect", value)}
-            options={IMAGE_RATIOS.map((value) => ({
+            options={imageRatioOptions.map((value) => ({
               value,
               label: value,
               description: ratioDescriptions[value],
             }))}
             ariaLabel="图片比例"
           />
-        </label>
-        <label className="creation-field">
+        </label>}
+        {usesCangyuan ? (
+          <label className="creation-field">
+            <small>模型建议尺寸</small>
+            {cangyuanSizeSelect || <span>使用模型默认值</span>}
+          </label>
+        ) : <label className="creation-field">
           <small>尺寸方式</small>
           <SelectMenu
             portalZIndex={portalZIndex}
@@ -449,15 +626,15 @@ function ImageEditor({
             ]}
             ariaLabel="图片尺寸方式"
           />
-        </label>
-        {settings.sizeMode === "system" ? (
+        </label>}
+        {!usesCangyuan && settings.sizeMode === "system" ? (
           <label className="creation-field">
             <small>分辨率</small>
             <SelectMenu
               portalZIndex={portalZIndex}
               value={settings.resolution}
               onChange={(value) => update("resolution", value)}
-              options={IMAGE_SIZE_TIERS.map((item) => ({
+              options={imageSizeOptions.map((item) => ({
                 value: item.value,
                 label: item.label,
                 description: `长边约 ${item.longEdge}px`,
@@ -465,7 +642,7 @@ function ImageEditor({
               ariaLabel="图片分辨率"
             />
           </label>
-        ) : (
+        ) : !usesCangyuan ? (
           <div className="creation-pixel-fields">
             <label>
               <small>宽度</small>
@@ -493,34 +670,34 @@ function ImageEditor({
               />
             </label>
           </div>
-        )}
+        ) : null}
         <label className="creation-field compact">
           <small>数量</small>
           <SelectMenu
             portalZIndex={portalZIndex}
-            value={settings.count}
+            value={selectedImageCount}
             onChange={(value) => update("count", value)}
-            options={[1, 2, 3, 4, 5, 6, 7, 8].map((value) => ({
+            options={imageCountOptions.map((value) => ({
               value,
               label: `${value} 张`,
             }))}
             ariaLabel="生成数量"
           />
         </label>
-        {flat && (
+        {flat && imageQualityOptions.length > 0 && (
           <label className="creation-field compact">
             <small>质量</small>
             <SelectMenu
               portalZIndex={portalZIndex}
               value={settings.quality}
               onChange={(value) => update("quality", value)}
-              options={IMAGE_QUALITY_OPTIONS}
+              options={imageQualityOptions}
               ariaLabel="图片质量"
             />
           </label>
         )}
       </div>
-      {settings.aspect === "自定义" && (
+      {!usesCangyuan && settings.aspect === "自定义" && (
         <div className="creation-custom-ratio">
           <span>自定义比例</span>
           <input
@@ -561,61 +738,35 @@ function ImageEditor({
       </button>
       {advanced && (
         <div className="creation-parameter-grid advanced">
-          {!flat && (
+          {!flat && imageQualityOptions.length > 0 && (
             <label className="creation-field">
               <small>质量</small>
               <SelectMenu
                 portalZIndex={portalZIndex}
                 value={settings.quality}
                 onChange={(value) => update("quality", value)}
-                options={IMAGE_QUALITY_OPTIONS}
+                options={imageQualityOptions}
                 ariaLabel="图片质量"
               />
             </label>
           )}
-          <label className="creation-field">
+          {imageFormatOptions.length > 0 && <label className="creation-field">
             <small>输出格式</small>
             <SelectMenu
               portalZIndex={portalZIndex}
               value={settings.outputFormat}
               onChange={(value) => update("outputFormat", value)}
-              options={[
-                { value: "png", label: "PNG · 无损" },
-                { value: "jpeg", label: "JPEG · 体积更小" },
-                { value: "webp", label: "WebP · 适合网页" },
-              ]}
+              options={imageFormatOptions}
               ariaLabel="输出格式"
             />
-          </label>
+          </label>}
           <label className="creation-field">
             <small>背景限制</small>
             <SelectMenu
               portalZIndex={portalZIndex}
               value={settings.backgroundMode}
-              onChange={(value) =>
-                onChange({
-                  ...settings,
-                  backgroundMode: value,
-                  ...(value === "api-transparent" ||
-                  value === "local-transparent"
-                    ? { outputFormat: "png" as const }
-                    : {}),
-                })
-              }
-              options={[
-                { value: "auto", label: "自动" },
-                {
-                  value: "api-transparent",
-                  label: "API 透明",
-                  description: "仅支持部分模型",
-                },
-                {
-                  value: "local-transparent",
-                  label: "本地透明",
-                  description: "自动去白底并输出 PNG",
-                },
-                { value: "opaque", label: "不透明" },
-              ]}
+              onChange={updateImageBackground}
+              options={imageBackgroundOptions}
               ariaLabel="背景限制"
             />
           </label>
@@ -685,6 +836,10 @@ function VideoEditor({
   const provider = runtime?.providers.find(
     (item) => item.id === operationModel?.providerId,
   );
+  const usesCangyuan = provider?.videoTransport === "cangyuan-videos";
+  const cangyuanProfile = usesCangyuan && model
+    ? getCangyuanVideoModelProfile(model.rawId)
+    : null;
   const limits = useMemo(
     () => getVideoModelLimitsForInput(model || undefined, provider, videoModelInput || {}),
     [
@@ -704,19 +859,19 @@ function VideoEditor({
   // and main video panels consistent by treating it as image-input capable;
   // audio remains gated by its explicit capability below.
   const supportsImageInput =
-    !model ||
-    model.capabilities.includes("video-generate") ||
-    model.capabilities.includes("video-first-frame");
+    usesCangyuan
+      ? Boolean(cangyuanProfile?.supportsFirstLastFrames)
+      : (!model || model.capabilities.includes("video-generate") || model.capabilities.includes("video-first-frame"));
   const supportsReferenceImages =
-    !model ||
-    model.capabilities.includes("video-generate") ||
-    model.capabilities.includes("video-reference");
+    usesCangyuan
+      ? Boolean(cangyuanProfile?.maxReferenceImages)
+      : (!model || model.capabilities.includes("video-generate") || model.capabilities.includes("video-reference"));
   const usesAgnesV20 = Boolean(model?.rawId && /agnes-video-v2\.0/i.test(model.rawId));
   const supportsAudio = !usesAgnesV20 && (supports("video-audio") || !is65535Provider(provider));
   const supportsOperationEdit =
-    !operationModel || operationModel.capabilities.includes("video-edit");
+    !usesCangyuan && (!operationModel || operationModel.capabilities.includes("video-edit"));
   const supportsOperationExtend =
-    !operationModel || operationModel.capabilities.includes("video-extend");
+    !usesCangyuan && (!operationModel || operationModel.capabilities.includes("video-extend"));
   const operationOptions = [
     {
       value: "generate" as const,
@@ -744,7 +899,7 @@ function VideoEditor({
   ];
   const inputOptions = [
     { value: "text" as const, label: "文生视频", description: "仅使用提示词" },
-    ...(supportsImageInput
+    ...(!usesCangyuan && supportsImageInput
       ? [
           {
             value: "first-frame" as const,
@@ -757,6 +912,9 @@ function VideoEditor({
             description: "第 1、2 张图约束起止",
           },
         ]
+      : []),
+    ...(usesCangyuan && supportsImageInput
+      ? [{ value: "frames" as const, label: "首尾帧", description: "必须同时提供公网 HTTPS 首帧与尾帧" }]
       : []),
     ...(supportsReferenceImages
       ? [
@@ -934,7 +1092,7 @@ function VideoEditor({
             />
           </label>
         )}
-        <label className="creation-field">
+        {inputOptions.length > 1 && <label className="creation-field">
           <small>生成方式</small>
           <SelectMenu
             portalZIndex={portalZIndex}
@@ -946,8 +1104,8 @@ function VideoEditor({
             options={inputOptions}
             ariaLabel="视频生成方式"
           />
-        </label>
-        {!usesAgnesV20 && <label className="creation-field">
+        </label>}
+        {!usesAgnesV20 && !usesCangyuan && <label className="creation-field">
           <small>{limits.durationScope === "per-transition" ? "每段转场时长" : limits.durationScope === "total" ? "总时长" : "时长"}</small>
           <SelectMenu
             portalZIndex={portalZIndex}
@@ -958,7 +1116,7 @@ function VideoEditor({
             ariaLabel="视频时长"
           />
         </label>}
-        {!usesAgnesV20 && <label className="creation-field">
+        {!usesAgnesV20 && !usesCangyuan && <label className="creation-field">
           <small>比例</small>
           <SelectMenu
             portalZIndex={portalZIndex}
@@ -973,7 +1131,7 @@ function VideoEditor({
             ariaLabel="视频比例"
           />
         </label>}
-        {!usesAgnesV20 && <label className="creation-field">
+        {!usesAgnesV20 && !usesCangyuan && <label className="creation-field">
           <small>分辨率</small>
           <SelectMenu
             portalZIndex={portalZIndex}
@@ -993,7 +1151,45 @@ function VideoEditor({
             ariaLabel="视频分辨率"
           />
         </label>}
-        <label className="creation-field creation-toggle">
+        {usesCangyuan && cangyuanProfile && <>
+          <label className="creation-field">
+            <small>时长</small>
+            <SelectMenu
+              portalZIndex={portalZIndex}
+              value={settings.duration}
+              onChange={(value) => update("duration", value)}
+              options={allowedDurations.map((value) => ({ value, label: `${value} 秒` }))}
+              ariaLabel="沧元视频时长"
+            />
+          </label>
+          <label className="creation-field">
+            <small>比例（建议值，可自定义）</small>
+            <input
+              aria-label="沧元视频比例"
+              list="creation-cangyuan-video-ratios"
+              value={settings.aspect}
+              onChange={(event) => update("aspect", event.target.value)}
+              placeholder="例如 16:9"
+            />
+            <datalist id="creation-cangyuan-video-ratios">
+              {cangyuanProfile.suggestedAspectRatios.map((value) => <option key={value} value={value} />)}
+            </datalist>
+          </label>
+          <label className="creation-field">
+            <small>分辨率（建议值，可自定义）</small>
+            <input
+              aria-label="沧元视频分辨率"
+              list="creation-cangyuan-video-resolutions"
+              value={settings.resolution}
+              onChange={(event) => update("resolution", event.target.value)}
+              placeholder="例如 720p"
+            />
+            <datalist id="creation-cangyuan-video-resolutions">
+              {cangyuanProfile.suggestedResolutions.map((value) => <option key={value} value={value} />)}
+            </datalist>
+          </label>
+        </>}
+        {!usesCangyuan && <label className="creation-field creation-toggle">
           <small>原生音频</small>
           <button
             type="button"
@@ -1005,7 +1201,7 @@ function VideoEditor({
             <span>{settings.audio ? "已开启" : "关闭"}</span>
             <i />
           </button>
-        </label>
+        </label>}
       </div>
       {usesAgnesV20 && (
         canvasCompact ? (
@@ -1056,7 +1252,7 @@ function VideoEditor({
           </div>
         )
       )}
-      {(limits.notes.length > 0 || inheritSettings || omitRatio) && (
+      {(limits.notes.length > 0 || inheritSettings || omitRatio || usesCangyuan) && (
         <div className="creation-model-notes">
           <b>
             {inheritSettings
@@ -1066,7 +1262,11 @@ function VideoEditor({
                 : "当前模型限制"}
           </b>
           <span>
-            {limits.notes.join(" · ") || "当前操作不会提交自定义比例和分辨率。"}
+            {usesCangyuan
+              ? cangyuanProfile
+                ? `仅对已核实型号开放扩展参数。时长 ${cangyuanProfile.minSeconds}–${cangyuanProfile.maxSeconds} 秒；比例和分辨率为建议值。首尾帧必须成对，并且不能与参考素材同时提交。`
+                : "该沧元型号尚未核实专属参数，仅支持模型和提示词。"
+              : limits.notes.join(" · ") || "当前操作不会提交自定义比例和分辨率。"}
           </span>
         </div>
       )}
@@ -1157,6 +1357,7 @@ export default function CreationParameterEditor({
   settings,
   runtime,
   unavailableModelId,
+  referenceCount,
   modelCapabilities,
   videoModelInput,
   variant,
@@ -1191,6 +1392,7 @@ export default function CreationParameterEditor({
       settings={settings}
       runtime={runtime}
       unavailableModelId={unavailableModelId}
+      referenceCount={referenceCount}
       modelCapabilities={modelCapabilities}
       variant={variant}
       portalZIndex={portalZIndex}

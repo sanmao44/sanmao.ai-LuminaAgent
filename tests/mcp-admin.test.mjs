@@ -209,7 +209,7 @@ test('仓库安装：归档的顶层目录不会被算成工作目录，装完�
     return new Response(archive, { status: 200, headers: { 'content-type': 'application/zip' } });
   };
   try {
-    const installed = await mcp.installGithubMcpFromRepo('https://github.com/demo/demo-mcp', { dataDir });
+    const installed = await mcp.installGithubMcpFromRepo('https://github.com/demo/demo-mcp', { dataDir, fetcher: globalThis.fetch });
     assert.equal(installed.server.cwd, installed.projectRoot, '启动工作目录必须是归档解出来的项目目录');
     assert.equal(existsSync(path.join(installed.projectRoot, 'package.json')), true);
     assert.equal(existsSync(path.join(installed.projectRoot, 'index.js')), true);

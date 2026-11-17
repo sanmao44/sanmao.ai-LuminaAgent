@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { PassThrough } from 'node:stream';
 import test from 'node:test';
-import { buildMcpModule } from './tools-build.mjs';
+import { zipSync } from 'fflate';
+import { buildMcpCatalogArchiveInstallerModule, buildMcpModule } from './tools-build.mjs';
 
 const mcp = await buildMcpModule();
+const archiveInstaller = await buildMcpCatalogArchiveInstallerModule();
 
 async function withDataDir(run) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-mcp-catalog-'));
@@ -26,33 +27,6 @@ async function fakeInstall(dataDir, id = 'playwright') {
   return bin;
 }
 
-function fakeUvSpawn(runCommand) {
-  const calls = [];
-  const spawnProcess = (command, args, options) => {
-    calls.push({ command, args: [...args], options });
-    const child = new EventEmitter();
-    child.stdout = new PassThrough();
-    child.stderr = new PassThrough();
-    child.kill = () => {};
-    queueMicrotask(async () => {
-      try {
-        const result = await runCommand({ command, args, options });
-        if (result?.stdout) child.stdout.write(result.stdout);
-        if (result?.stderr) child.stderr.write(result.stderr);
-        child.stdout.end();
-        child.stderr.end();
-        child.emit('exit', result?.code ?? 0);
-      } catch (error) {
-        child.stderr.end(error instanceof Error ? error.message : String(error));
-        child.stdout.end();
-        child.emit('exit', 1);
-      }
-    });
-    return child;
-  };
-  return { calls, spawnProcess };
-}
-
 test('目录里只有写死的条目，版本固定不用 latest', () => {
   const ids = mcp.MCP_CATALOG_ENTRIES.map((entry) => entry.id);
   assert.deepEqual(ids, ['windows-mcp', 'playwright', 'filesystem', 'github', 'context7']);
@@ -63,7 +37,9 @@ test('目录里只有写死的条目，版本固定不用 latest', () => {
     assert.ok(entry.permissions.length > 0, '每个条目都要声明权限');
     assert.ok(entry.capabilities.length > 0, '面板要有一句话能力摘要');
     if (entry.transport === 'stdio') {
+    if (entry.installMode === 'optional-npm' || entry.installMode === 'optional-uv') {
       assert.match(entry.pkg, /^@?[a-z0-9-]+(\/[a-z0-9-]+)?$/);
+    }
       assert.match(entry.version, /^\d+\.\d+\.\d+(\.\d+)?$/, '版本必须写死，不能是 latest 或 ^ 范围');
       assert.ok(entry.installNote.length > 4, '要提前告诉用户安装要等多久');
     } else {
@@ -81,111 +57,92 @@ test('目录里只有写死的条目，版本固定不用 latest', () => {
   assert.ok(mcp.findCatalogEntry('context7').auth.optional, 'Context7 允许匿名连接');
 });
 
-test('Windows-MCP 目录项固定版本、平台和安全白名单', async () => {
+test('Windows 桌面目录项固定 FlaUI 版本、平台资产和安全白名单', async () => {
   const entry = mcp.findCatalogEntry('windows-mcp');
-  assert.equal(entry.installMode, 'optional-uv');
-  assert.equal(entry.pkg, 'windows-mcp');
-  assert.equal(entry.version, '0.8.8');
+  assert.equal(entry.installMode, 'optional-archive');
+  assert.equal(entry.publisher, 'FlaUI-MCP');
+  assert.equal(entry.version, '0.2.1');
+  assert.equal(entry.archive.assets.x64.size, 67_720_045);
+  assert.equal(entry.archive.assets.arm64.size, 63_169_089);
+  assert.equal(entry.archive.assets.x64.sha256, 'f0936ebec75772064d52492d07b774dee9c8a9e19bef55324888e30976a67ff5');
+  assert.equal(entry.archive.assets.arm64.sha256, 'a148ab0d3ddfc0c44bd5075e4a264171279a6df4ec235c9f6dcdaef742c999fc');
   assert.deepEqual(entry.platforms, ['win32']);
   assert.equal(entry.defaultReadOnly, true);
-  assert.ok(entry.allowedTools.includes('Screenshot'));
+  assert.ok(entry.allowedTools.includes('windows_snapshot'));
+  assert.ok(entry.allowedTools.includes('windows_click'));
+  assert.ok(entry.allowedTools.includes('windows_fill'));
+  assert.ok(!entry.allowedTools.includes('windows_send_keys'));
+  assert.ok(!entry.allowedTools.includes('windows_batch'));
   assert.ok(!entry.allowedTools.includes('PowerShell'));
   assert.ok(!entry.allowedTools.includes('Registry'));
   assert.equal(mcp.catalogEntryAvailable(entry, 'linux'), false);
-  assert.equal(mcp.catalogEntryAvailable(entry, 'win32'), true);
+  assert.equal(mcp.catalogEntryAvailable(entry, 'win32', 'x64'), true);
+  assert.equal(mcp.catalogEntryAvailable(entry, 'win32', 'arm64'), true);
+  assert.equal(mcp.catalogEntryAvailable(entry, 'win32', 'ia32'), false);
   await withDataDir(async (dataDir) => {
     const server = mcp.catalogServerConfig(entry, { dataDir, enabled: true });
     assert.equal(server.transport, 'stdio');
-    assert.equal(server.command, mcp.resolveCatalogUvExecutable(dataDir));
-    assert.deepEqual(server.args, ['--directory', path.join(dataDir, 'mcp', 'windows-mcp'), 'run', '--no-project', '--python', path.join(dataDir, 'mcp', 'windows-mcp', '.venv', 'Scripts', 'python.exe'), 'windows-mcp', 'serve']);
+    assert.equal(server.command, path.join(dataDir, 'mcp', 'windows-mcp', 'runtime-0.2.1', 'FlaUI.Mcp.exe'));
+    assert.deepEqual(server.args, []);
     assert.equal(server.cwd, mcp.resolveCatalogWorkspace('windows-mcp', { dataDir }));
     const definitions = mcp.mcpToolDefinitions(server, [
-      { name: 'Screenshot', annotations: { readOnlyHint: true } },
-      { name: 'Click', annotations: { readOnlyHint: false } },
+      { name: 'windows_screenshot' },
+      { name: 'windows_click', annotations: { readOnlyHint: false } },
       { name: 'PowerShell', annotations: { readOnlyHint: false } },
     ]);
-    assert.deepEqual(definitions.map((tool) => tool.mcp.toolName), ['Screenshot']);
+    assert.deepEqual(definitions.map((tool) => tool.mcp.toolName), ['windows_screenshot']);
+    assert.equal(Boolean(definitions[0].blocked), false, 'catalog read-only tools remain usable without write access even if upstream omits readOnlyHint');
+    assert.deepEqual(definitions[0].permissions, ['network']);
     const writable = { ...server, allowWrite: true };
     const writableDefinitions = mcp.mcpToolDefinitions(writable, [
-      { name: 'Screenshot', annotations: { readOnlyHint: true } },
-      { name: 'Click', annotations: { readOnlyHint: false } },
+      { name: 'windows_screenshot' },
+      { name: 'windows_click', annotations: { readOnlyHint: false } },
+      { name: 'windows_fill', annotations: { readOnlyHint: false } },
       { name: 'PowerShell', annotations: { readOnlyHint: false } },
       { name: 'Registry', annotations: { readOnlyHint: false } },
     ]);
-    assert.deepEqual(writableDefinitions.map((tool) => tool.mcp.toolName), ['Screenshot', 'Click']);
+    assert.deepEqual(writableDefinitions.map((tool) => tool.mcp.toolName), ['windows_screenshot', 'windows_click', 'windows_fill']);
   });
 });
 
-test('Windows-MCP uv 安装会复用已有 Python 并补装固定包', { skip: process.platform !== 'win32' }, async () => {
+test('FlaUI 运行包支持断点续传、SHA 校验和暂存安装', async () => {
+  const chunkSize = 4 * 1024 * 1024;
+  const bytes = Buffer.from(zipSync({
+    'FlaUI.Mcp.exe': new Uint8Array([77, 90, 1, 2]),
+    'runtime.dll': randomBytes(chunkSize + 128),
+  }, { level: 0 }));
+  const asset = {
+    url: 'https://example.test/FlaUI.zip',
+    size: bytes.byteLength,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    executable: 'FlaUI.Mcp.exe',
+  };
+  const entry = { ...mcp.findCatalogEntry('windows-mcp'), archive: { assets: { x64: asset } } };
   await withDataDir(async (dataDir) => {
-    const entry = mcp.findCatalogEntry('windows-mcp');
-    const installRoot = mcp.resolveCatalogInstallRoot(entry.id, { dataDir });
-    const pythonPath = path.join(installRoot, '.venv', 'Scripts', 'python.exe');
-    await mkdir(path.dirname(pythonPath), { recursive: true });
-    await writeFile(pythonPath, 'python');
-    const { calls, spawnProcess } = fakeUvSpawn(async ({ args }) => {
-      assert.equal(args[0], 'pip', '已有 Python 环境不应再次运行 uv venv');
-      const executable = path.join(installRoot, '.venv', 'Scripts', 'windows-mcp.exe');
-      await writeFile(executable, 'entry point');
-      return {};
+    const progress = [];
+    const options = { dataDir, onProgress: (received, total) => progress.push([received, total]) };
+    const partPath = path.join(dataDir, 'mcp', 'windows-mcp', '.runtime-0.2.1.zip.part');
+    await assert.rejects(() => archiveInstaller.installCatalogArchive(entry, options, {
+      fetchBytes: async (_url, request) => {
+        if (request.range.start >= chunkSize) throw new Error('simulated connection reset');
+        return { url: 'https://example.test/FlaUI.zip', data: bytes.subarray(request.range.start, request.range.end + 1), rangeTotalBytes: bytes.byteLength };
+      },
+    }), /simulated connection reset/);
+    assert.equal((await stat(partPath)).size, chunkSize, 'a failed later chunk keeps complete earlier chunks');
+
+    const resumedRanges = [];
+    await archiveInstaller.installCatalogArchive(entry, options, {
+      fetchBytes: async (_url, request) => {
+        resumedRanges.push(request.range.start);
+        return { url: 'https://example.test/FlaUI.zip', data: bytes.subarray(request.range.start, request.range.end + 1), rangeTotalBytes: bytes.byteLength };
+      },
     });
-
-    const status = await mcp.installCatalogServer(entry.id, { dataDir }, { prepareUv: async () => {}, spawnProcess });
-    assert.equal(status.installed, true);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].command, mcp.resolveCatalogUvExecutable(dataDir));
-    assert.deepEqual(calls[0].args, ['pip', 'install', '--python', pythonPath, 'windows-mcp==0.8.8']);
-    assert.equal(calls[0].options.cwd, installRoot);
-    assert.equal(calls[0].options.shell, false);
-  });
-});
-
-test('Windows-MCP uv 安装会清理并重建缺少 Python 的半成品环境', { skip: process.platform !== 'win32' }, async () => {
-  await withDataDir(async (dataDir) => {
-    const entry = mcp.findCatalogEntry('windows-mcp');
-    const installRoot = mcp.resolveCatalogInstallRoot(entry.id, { dataDir });
-    const venvRoot = path.join(installRoot, '.venv');
-    await mkdir(venvRoot, { recursive: true });
-    const { calls, spawnProcess } = fakeUvSpawn(async ({ args }) => {
-      if (args[0] === 'venv') {
-        assert.ok(args.includes('--clear'));
-        const pythonPath = path.join(venvRoot, 'Scripts', 'python.exe');
-        await mkdir(path.dirname(pythonPath), { recursive: true });
-        await writeFile(pythonPath, 'python');
-        return {};
-      }
-      const executable = path.join(venvRoot, 'Scripts', 'windows-mcp.exe');
-      await writeFile(executable, 'entry point');
-      return {};
-    });
-
-    const status = await mcp.installCatalogServer(entry.id, { dataDir }, { prepareUv: async () => {}, spawnProcess });
-    assert.equal(status.installed, true);
-    assert.equal(calls.length, 2);
-    assert.deepEqual(calls[0].args.slice(0, 4), ['venv', '--clear', '--python', '3.14']);
-    assert.equal(calls[0].options.shell, false);
-    assert.equal(calls[1].args.at(-1), 'windows-mcp==0.8.8');
-    assert.ok(calls.every((call) => call.options.cwd === installRoot));
-  });
-});
-
-test('Windows-MCP uv 安装失败会保留可读错误状态和日志', { skip: process.platform !== 'win32' }, async () => {
-  await withDataDir(async (dataDir) => {
-    const entry = mcp.findCatalogEntry('windows-mcp');
-    const installRoot = mcp.resolveCatalogInstallRoot(entry.id, { dataDir });
-    const pythonPath = path.join(installRoot, '.venv', 'Scripts', 'python.exe');
-    await mkdir(path.dirname(pythonPath), { recursive: true });
-    await writeFile(pythonPath, 'python');
-    const { spawnProcess } = fakeUvSpawn(async () => ({ code: 1, stderr: 'No matching distribution found' }));
-
-    await assert.rejects(
-      () => mcp.installCatalogServer(entry.id, { dataDir }, { prepareUv: async () => {}, spawnProcess }),
-      /uv 包安装失败（退出码 1）/,
-    );
-    const status = mcp.catalogRuntimeStatus(entry.id, { dataDir });
-    assert.equal(status.state, 'error');
-    assert.match(status.error, /uv 包安装失败（退出码 1）/);
-    assert.match(status.logTail, /No matching distribution found/);
+    assert.ok(resumedRanges.includes(chunkSize), 'retry resumes at the first missing chunk');
+    const installRoot = path.join(dataDir, 'mcp', 'windows-mcp', 'runtime-0.2.1');
+    assert.deepEqual([...await readFile(path.join(installRoot, asset.executable))], [77, 90, 1, 2]);
+    assert.deepEqual(JSON.parse(await readFile(path.join(installRoot, '.sanmao-install.json'), 'utf8')), { version: '0.2.1', sha256: asset.sha256 });
+    assert.ok(progress.length >= 2);
+    assert.equal(mcp.isCatalogInstalled(entry, { dataDir }), true);
   });
 });
 
@@ -301,25 +258,27 @@ test('手动 MCP 连接也永远不下发 PowerShell 或 Registry 原始系统�
   assert.deepEqual(unrelated.map((tool) => tool.mcp.toolName), ['Registry']);
 });
 
-test('Windows-MCP routes Device Manager requests and documents the safe App launch modes', () => {
+test('Windows desktop routing documents FlaUI control patterns and fallback limits', () => {
   const server = {
     id: 'windows-mcp', name: 'Windows Desktop', catalogId: 'windows-mcp',
-    url: 'stdio://windows-mcp', enabled: true, allowWrite: true, lazy: true, enabledTools: ['App'],
+    url: 'stdio://windows-mcp', enabled: true, allowWrite: true, lazy: true,
+    enabledTools: ['windows_click', 'windows_fill', 'windows_launch', 'windows_snapshot'],
   };
   assert.deepEqual(mcp.mcpServersForTurn([server], '打开设备管理器'), [server]);
   assert.deepEqual(mcp.mcpServersForTurn([server], '今天天气怎么样'), []);
 
-  const [app] = mcp.mcpToolDefinitions(server, [{
-    name: 'App', description: 'Open/start/launch applications and manage windows.',
-    inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: false },
-  }]);
-  assert.match(app.description, /mode="launch_executable"/);
-  assert.match(app.description, /\.msc and \.cpl files are not executable paths/);
-  assert.match(app.description, /mmc\.exe/);
-  assert.match(app.description, /devmgmt\.msc/);
-  assert.match(app.description, /Device Manager/);
-  const [type] = mcp.mcpToolDefinitions({ ...server, enabledTools: ['Type'] }, [{ name: 'Type', description: 'Type text into an application.', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: false } }]);
-  assert.match(type.description, /requires text and either loc=\[x,y\] or label from a fresh Snapshot/);
+  const tools = mcp.mcpToolDefinitions(server, [
+    { name: 'windows_click', description: 'Click a UI element.', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: false } },
+    { name: 'windows_fill', description: 'Fill a UI element.', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: false } },
+    { name: 'windows_launch', description: 'Launch an application.', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: false } },
+    { name: 'windows_snapshot', description: 'Read the UI tree.', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
+  ]);
+  const byName = new Map(tools.map((tool) => [tool.mcp.toolName, tool]));
+  assert.match(byName.get('windows_click').description, /Invoke\/Toggle\/Selection/);
+  assert.match(byName.get('windows_click').description, /real mouse input/);
+  assert.match(byName.get('windows_fill').description, /ValuePattern/);
+  assert.match(byName.get('windows_fill').description, /keyboard focus and typing/);
+  assert.match(byName.get('windows_launch').description, /without moving the mouse/);
 });
 
 test('Windows-MCP missing user-specific executable falls back to Start Menu lookup by application name', () => {
@@ -354,18 +313,19 @@ test('旧版 Windows-MCP 手动副本不会与内置连接器并行运行', asyn
         { id: 'my-service', name: 'My service', url: 'https://example.com/mcp', enabled: true, allowWrite: false },
       ],
     }));
-    const installRoot = mcp.resolveCatalogInstallRoot('windows-mcp', { dataDir });
-    const pythonBin = path.join(installRoot, '.venv', 'Scripts', 'python.exe');
-    const windowsBin = path.join(installRoot, '.venv', 'Scripts', 'windows-mcp.exe');
+    const entry = mcp.findCatalogEntry('windows-mcp');
+    const asset = entry.archive.assets[process.arch];
+    const installRoot = path.join(mcp.resolveCatalogInstallRoot('windows-mcp', { dataDir }), 'runtime-0.2.1');
+    const windowsBin = path.join(installRoot, asset?.executable || 'FlaUI.Mcp.exe');
     await mkdir(path.dirname(windowsBin), { recursive: true });
-    await writeFile(pythonBin, 'fake');
     await writeFile(windowsBin, 'fake');
+    await writeFile(path.join(installRoot, '.sanmao-install.json'), JSON.stringify({ version: entry.version, sha256: asset?.sha256 }));
     mcp.setCatalogEntryEnabled('windows-mcp', true, { dataDir });
 
     const servers = mcp.listMcpServers({ dataDir });
-    const expectedIds = ['my-service', ...(process.platform === 'win32' ? ['windows-mcp'] : [])];
+    const expectedIds = ['my-service', ...(process.platform === 'win32' && asset ? ['windows-mcp'] : [])];
     assert.deepEqual(servers.map((server) => server.id), expectedIds);
-    assert.equal(servers.filter((server) => server.catalogId === 'windows-mcp').length, process.platform === 'win32' ? 1 : 0);
+    assert.equal(servers.filter((server) => server.catalogId === 'windows-mcp').length, process.platform === 'win32' && asset ? 1 : 0);
   });
 });
 

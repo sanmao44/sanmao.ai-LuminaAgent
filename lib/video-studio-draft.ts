@@ -10,6 +10,7 @@ export type VideoStudioDraftInput = {
   agnesHeight: number;
   agnesNumFrames: number;
   agnesFrameRate: number;
+  seed?: string;
   hasUnpersistedMedia: boolean;
 };
 
@@ -31,6 +32,7 @@ export function hasVideoStudioDraftContent(draft: VideoStudioDraftInput, default
     || draft.agnesHeight !== 768
     || draft.agnesNumFrames !== 81
     || draft.agnesFrameRate !== 24
+    || Boolean(draft.seed)
     || draft.hasUnpersistedMedia,
   );
 }
@@ -91,6 +93,7 @@ function normalizeDraft(value: unknown): VideoStudioDraft | null {
     agnesHeight: agnesHeight % 64 === 0 ? agnesHeight : 768,
     agnesNumFrames: (agnesNumFrames - 1) % 8 === 0 ? agnesNumFrames : 81,
     agnesFrameRate: boundedInteger(value.agnesFrameRate, 24, 1, 60),
+    ...(typeof value.seed === 'string' && /^-?\d+$/.test(value.seed) && Number.isSafeInteger(Number(value.seed)) ? { seed: value.seed } : {}),
     hasUnpersistedMedia: value.hasUnpersistedMedia === true || inputMode !== 'text',
   };
 }

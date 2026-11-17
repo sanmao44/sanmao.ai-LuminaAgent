@@ -15,7 +15,6 @@ type CanvasResult = { values: unknown[]; latest: unknown; output: string };
 function objectValue(value: unknown): JsonObject {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
 }
-
 function parseJsonValues(output: string): CanvasResult {
   const values: unknown[] = [];
   for (const line of output.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
@@ -356,7 +355,6 @@ export async function runJimengCanvasVideo(provider: RuntimeProvider, rawModelId
     await rm(directory, { recursive: true, force: true }).catch(() => undefined);
   }
 }
-
 export async function pollJimengCanvasVideo(provider: RuntimeProvider, providerTaskId: string, signal?: AbortSignal): Promise<VideoProviderTask> {
   const command = resolveJimengCanvasCliCommand(provider.jimengCliPath || process.env.JIMENG_CANVAS_CLI_PATH || process.env.JIMENG_CLI_PATH);
   const { projectId, submitId } = decodeTaskId(providerTaskId);
@@ -383,4 +381,3 @@ export async function pollJimengCanvasVideo(provider: RuntimeProvider, providerT
     await rm(directory, { recursive: true, force: true }).catch(() => undefined);
   }
 }
-

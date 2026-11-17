@@ -17,11 +17,11 @@ function parseProviderTransferBundle(value: unknown): ProviderTransferBundle {
   if (!bundle.providers.length || bundle.providers.length > 500 || bundle.models.length > 100_000) throw new Error('迁移文件中的服务商或模型数量无效');
 
   const providerTypes = ['openai-compatible', 'google-gemini'];
-  const providerPlatforms = ['custom', '65535', '65535-claude-code', 'apikl', 'a6api', 'openai', 'new-api', 'one-api', 'openrouter', 'siliconflow', 'deepseek', 'dashscope', 'volcengine', 'modelscope', 'google-gemini', 'apimart', 'jimeng-cli', 'agnes', 'gitee'];
+  const providerPlatforms = ['custom', '65535', '65535-claude-code', 'apikl', 'a6api', 'openai', 'new-api', 'one-api', 'openrouter', 'siliconflow', 'deepseek', 'dashscope', 'volcengine', 'modelscope', 'google-gemini', 'apimart', 'jimeng-cli', 'agnes', 'gitee', 'cangyuan'];
   const textProtocols = ['chat-completions', 'responses', 'messages'];
-  const videoTransports = ['auto', 'native-task', 'openai-videos', 'jimeng-cli', 'agnes-videos'];
-  const modelKinds = ['chat', 'image', 'video', 'audio', 'unknown'];
-  const modelCapabilities = ['chat', 'vision', 'generate', 'edit', 'reference', 'typography', 'transparent', 'upscale', 'fast', 'speech', 'web-search', 'video-generate', 'video-edit', 'video-extend', 'video-first-frame', 'video-reference', 'video-input', 'video-audio'];
+  const videoTransports = ['auto', 'native-task', 'openai-videos', 'jimeng-cli', 'agnes-videos', 'cangyuan-videos'];
+  const modelKinds = ['chat', 'image', 'video', 'audio', '3d', 'unknown'];
+  const modelCapabilities = ['chat', 'vision', 'generate', 'edit', 'reference', 'typography', 'transparent', 'upscale', 'fast', 'speech', 'music-generate', '3d-generate', 'web-search', 'video-generate', 'video-edit', 'video-extend', 'video-first-frame', 'video-reference', 'video-input', 'video-audio'];
   const modelIds = new Set<string>();
   const providerIds = new Set<string>();
   const providerModelIds = new Set<string>();

@@ -1,10 +1,12 @@
 import type { PublicState, RegistryModel } from "../types";
+import type { ImageOutputFormat } from "@/packages/contracts/creative";
 import { getLastModelCall } from "../model-preferences";
 import { selectAutomaticModel } from "../model-selection";
 import { normalizeLocalEditAnnotations, type LocalEditAnnotation } from "../local-edit";
+import { getCangyuanImageModelProfile } from "../cangyuan-image-capabilities";
+import { isCangyuanProvider } from "../cangyuan-provider";
 
 export type ImageSizeMode = "system" | "custom";
-export type ImageOutputFormat = "png" | "jpeg" | "webp";
 export type ImageBackgroundMode =
   | "auto"
   | "api-transparent"
@@ -41,7 +43,7 @@ export type ImageCreationSettings = {
   width: number;
   height: number;
   count: number;
-  quality: "自动" | "low" | "medium" | "high";
+  quality: "自动" | "auto" | "low" | "medium" | "high" | "xhigh" | "max" | "1" | "4" | "1k" | "2k" | "4k";
   outputFormat: ImageOutputFormat;
   backgroundMode: ImageBackgroundMode;
   mask?: CanvasMaskAsset;
@@ -281,6 +283,22 @@ export function normalizeImageCreationSettings(
 ): ImageCreationSettings {
   const raw = objectValue(value);
   const fallback = defaultImageCreationSettings(runtime);
+  const modelId = availableModel(runtime, "image", raw.model || raw.modelId);
+  const model = modelId === "auto"
+    ? selectAutomaticModel(
+        imageModelOptions(runtime),
+        runtime?.settings.defaultProviderId,
+        runtime?.settings.defaultImageModelId,
+      )
+    : runtime?.models.find((candidate) => candidate.id === modelId && candidate.kind === "image");
+  const provider = runtime?.providers?.find((candidate) => candidate.id === model?.providerId);
+  const isCangyuan = isCangyuanProvider(provider);
+  const cangyuanProfile = isCangyuan && model
+    ? getCangyuanImageModelProfile(model.rawId)
+    : null;
+  const imageCountLimit = isCangyuan
+    ? Math.min(10, Math.max(1, cangyuanProfile?.nMax ?? 1))
+    : 8;
   const aspectCandidate = String(raw.aspect || raw.ratio || fallback.aspect);
   const resolutionCandidate = String(
     raw.resolution || raw.sizeTier || fallback.resolution,
@@ -291,20 +309,24 @@ export function normalizeImageCreationSettings(
     ? (resolutionCandidate as ImageCreationSettings["resolution"])
     : fallback.resolution;
   const sizeMode = raw.sizeMode === "custom" ? "custom" : "system";
-  const outputFormat =
-    raw.outputFormat === "jpeg" || raw.outputFormat === "webp"
-      ? raw.outputFormat
-      : "png";
+  const outputFormat = raw.outputFormat === "jpeg" || raw.outputFormat === "webp" || raw.outputFormat === "gif" || raw.outputFormat === "svg"
+    ? raw.outputFormat
+    : "png";
   const backgroundMode =
     raw.backgroundMode === "api-transparent" ||
     raw.backgroundMode === "local-transparent" ||
     raw.backgroundMode === "opaque"
       ? raw.backgroundMode
       : "auto";
-  const quality =
-    raw.quality === "low" || raw.quality === "medium" || raw.quality === "high"
-      ? raw.quality
-      : "自动";
+  const qualityValues = ["auto", "low", "medium", "high", "xhigh", "max", "1", "4", "1k", "2k", "4k"] as const;
+  const quality = typeof raw.quality === "string" && qualityValues.includes(raw.quality as (typeof qualityValues)[number])
+    ? raw.quality as ImageCreationSettings["quality"]
+    : "自动";
+  const cangyuanSizeValues = new Set([
+    ...(cangyuanProfile?.sizeRecommendations || []),
+    ...(cangyuanProfile?.aspectRatioRecommendations || []),
+    ...(cangyuanProfile?.aspectRatioEnum || []),
+  ].map((candidate) => candidate.toLowerCase()));
   const maskRaw = typeof raw.mask === "string"
     ? { url: raw.mask }
     : objectValue(raw.mask);
@@ -346,10 +368,10 @@ export function normalizeImageCreationSettings(
       : undefined;
   return {
     kind: "image",
-    model: availableModel(runtime, "image", raw.model || raw.modelId),
+    model: modelId,
     aspect: IMAGE_RATIOS.includes(
       aspectCandidate as (typeof IMAGE_RATIOS)[number],
-    )
+    ) || (isCangyuan && cangyuanSizeValues.has(aspectCandidate.toLowerCase()))
       ? aspectCandidate
       : fallback.aspect,
     customAspectWidth: clampInteger(
@@ -373,7 +395,7 @@ export function normalizeImageCreationSettings(
       16384,
       fallback.height,
     ),
-    count: clampInteger(raw.count, 1, 8, fallback.count),
+    count: clampInteger(raw.count, 1, imageCountLimit, fallback.count),
     quality,
     outputFormat,
     backgroundMode,

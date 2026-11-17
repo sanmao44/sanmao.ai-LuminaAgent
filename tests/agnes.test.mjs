@@ -31,6 +31,8 @@ const providers = await importTypeScript(providersUrl, [
   modelKindSource,
   agnesSource.replace(/^import .+;\r?\n/gm, ''),
   providersSource
+    .replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", 'const getCangyuanImageModelProfile = () => null;')
+    .replace("import { isCangyuanProvider } from './cangyuan-provider';", 'const isCangyuanProvider = () => false;')
     .replace("import { inferNativeSearch } from './native-search-detection';", '')
     .replace("import { inferModelKind } from './model-kind';", '')
     .replace("import { agnesModelCatalog } from './agnes';", '')
@@ -43,10 +45,13 @@ const providers = await importTypeScript(providersUrl, [
 
 const videoUrl = new URL('../lib/video-providers.ts', import.meta.url);
 const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
+const cangyuanProviderSource = await readFile(new URL('../lib/cangyuan-provider.ts', import.meta.url), 'utf8');
 const videoSource = (await readFile(videoUrl, 'utf8'))
   .replace(/import \{[^}]+\} from '\.\/video-platform';\r?\n/, '')
-  .replace(/import \{[^}]+\} from '\.\/jimeng-cli';\r?\n/, "const isJimengCanvasCliAvailable = () => false; const resolveJimengCanvasCliCommand = (value) => value || 'dreamina-canvas';\n");
-const video = await importTypeScript(videoUrl, `${videoPlatformSource}\n${videoSource}`);
+  .replace(/import \{[^}]+\} from '\.\/jimeng-cli';\r?\n/, "const isJimengCanvasCliAvailable = () => false; const resolveJimengCanvasCliCommand = (value) => value || 'dreamina-canvas';\n")
+  .replace("import { buildCangyuanVideoPayload } from './cangyuan-video-capabilities';", 'const buildCangyuanVideoPayload = () => ({});')
+  .replace("import { isCangyuanProvider } from './cangyuan-provider';", '');
+const video = await importTypeScript(videoUrl, `${videoPlatformSource}\n${videoSource}\n${cangyuanProviderSource}`);
 
 const signedUrl = new URL('../lib/signed-media.ts', import.meta.url);
 const signedSource = await readFile(signedUrl, 'utf8');

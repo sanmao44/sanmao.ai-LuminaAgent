@@ -1,0 +1,216 @@
+import { randomUUID } from 'node:crypto';
+import type { TaskRepository } from './repositories/types';
+import { getCangyuan3DModelProfile, parseCangyuan3DOptions, validateCangyuanMusicInput, type Cangyuan3DOptions, type CangyuanMediaKind, type CangyuanMediaTask, type CangyuanMediaTaskInput, type CangyuanMediaTaskStatus, type CangyuanMusicOptions } from '../packages/contracts/cangyuan-media';
+import { cangyuanMediaBaseUrl, isCangyuanProvider } from './cangyuan-provider';
+import { authHeaders, runtimeBaseUrl, type RuntimeProvider } from './providers';
+import { getProviderWithKey, getRuntimeModel } from './store';
+import { cangyuanCreativeTaskRepository } from './cangyuan-media-task-store';
+import { buildCangyuanThreeDPayload, isRetryableCangyuanProviderError, pollCangyuanMediaTask, submitCangyuanMediaTask, type CangyuanMediaClient, type CangyuanProviderTask } from './cangyuan-media-provider';
+import { cangyuanMediaTaskPollIntervalMs } from './cangyuan-media-task-polling';
+
+export type CreateCangyuanCreativeTaskInput =
+  | { kind: 'music'; modelId: string; input: { prompt: string } & CangyuanMusicOptions; idempotencyKey?: string }
+  | { kind: '3d'; modelId: string; input: { prompt: string } & Cangyuan3DOptions; idempotencyKey?: string };
+
+type CangyuanMediaTaskRepository = Pick<TaskRepository<CangyuanMediaTask>, 'find' | 'findByIdempotencyKey' | 'insert' | 'list' | 'mutate'>;
+type CangyuanResolvedModel = NonNullable<Awaited<ReturnType<typeof getRuntimeModel>>>;
+type CangyuanResolvedProvider = NonNullable<Awaited<ReturnType<typeof getProviderWithKey>>>;
+
+export type CangyuanMediaTaskServiceDependencies = {
+  repository: CangyuanMediaTaskRepository;
+  resolveModel: typeof getRuntimeModel;
+  resolveProvider: typeof getProviderWithKey;
+  createClient: (provider: RuntimeProvider) => CangyuanMediaClient;
+  provider: {
+    buildThreeDPayload: typeof buildCangyuanThreeDPayload;
+    submit: typeof submitCangyuanMediaTask;
+    poll: typeof pollCangyuanMediaTask;
+    isRetryable: typeof isRetryableCangyuanProviderError;
+  };
+  now?: () => number;
+  newId?: () => string;
+};
+
+export function createCangyuanMediaTaskService(dependencies: CangyuanMediaTaskServiceDependencies) {
+  const refreshing = new Map<string, Promise<CangyuanMediaTask | null>>();
+  const now = dependencies.now || Date.now;
+  const newId = dependencies.newId || randomUUID;
+
+  async function create(options: CreateCangyuanCreativeTaskInput): Promise<CangyuanMediaTask> {
+    const modelKind = options.kind === 'music' ? 'audio' : '3d';
+    const runtime = await dependencies.resolveModel(options.modelId, modelKind);
+    if (!runtime || !isCangyuanProvider(runtime.provider)) {
+      throw new Error(`请选择已启用的沧元${options.kind === 'music' ? '音乐' : '三维'}模型`);
+    }
+    const requiredCapability = options.kind === 'music' ? 'music-generate' : '3d-generate';
+    if (!runtime.model.capabilities.includes(requiredCapability)) {
+      throw new Error(`所选沧元模型不支持${options.kind === 'music' ? '音乐' : '三维'}生成能力`);
+    }
+
+    const idempotencyKey = `cangyuan:${options.kind}:${runtime.provider.id}:${options.idempotencyKey?.trim() || newId()}`;
+    const existing = await dependencies.repository.findByIdempotencyKey(idempotencyKey);
+    if (existing) return existing;
+
+    const common = {
+      id: newId(),
+      providerId: runtime.provider.id,
+      providerModel: runtime.model.rawId,
+      modelId: runtime.model.id,
+      modelName: runtime.model.displayName,
+      status: 'pending' as const,
+      outputs: [],
+      idempotencyKey,
+      createdAt: new Date(now()).toISOString(),
+      pollCount: 0,
+    };
+
+    let task: CangyuanMediaTask;
+    let input: CangyuanMediaTaskInput;
+    if (options.kind === 'music') {
+      input = validateCangyuanMusicInput(runtime.model.rawId, options.input);
+      task = { ...common, kind: 'music', input };
+    } else {
+      input = validate3DInput(runtime.model.rawId, options.input);
+      dependencies.provider.buildThreeDPayload(runtime.model.rawId, input);
+      task = { ...common, kind: '3d', input };
+    }
+
+    const inserted = await dependencies.repository.insert(task);
+    if (!inserted.created) return inserted.task;
+
+    try {
+      const result = await dependencies.provider.submit(
+        dependencies.createClient(runtime.provider),
+        options.kind,
+        runtime.model.rawId,
+        input,
+      );
+      return await applySubmissionResult(task, result, updateActive, now) || task;
+    } catch (error) {
+      const uncertain = dependencies.provider.isRetryable(error);
+      return await updateActive(task.id, {
+        status: 'failed',
+        error: uncertain
+          ? '提交结果未能确认，沧元可能已经接收并计费。请先在沧元控制台核对任务，再决定是否重新提交。'
+          : errorMessage(error),
+        submissionUncertain: uncertain,
+        completedAt: new Date(now()).toISOString(),
+      }) || task;
+    }
+  }
+
+  async function get(id: string, refresh = true): Promise<CangyuanMediaTask | null> {
+    const task = await dependencies.repository.find(id);
+    if (!task || !refresh || !isActive(task.status)) return task;
+    if (task.nextPollAt && task.nextPollAt > now()) return task;
+    const inFlight = refreshing.get(id);
+    if (inFlight) return inFlight;
+    const operation = refreshTask(task).finally(() => refreshing.delete(id));
+    refreshing.set(id, operation);
+    return operation;
+  }
+
+  async function list(kind: CangyuanMediaKind, limit = 50): Promise<CangyuanMediaTask[]> {
+    const tasks = await dependencies.repository.list(Math.max(1, Math.min(100, Math.round(limit))));
+    return tasks.filter((task) => task.kind === kind);
+  }
+
+  async function updateActive(id: string, patch: Partial<CangyuanMediaTask>) {
+    const updated = await dependencies.repository.mutate((tasks) => {
+      const index = tasks.findIndex((item) => item.id === id);
+      if (index < 0 || !isActive(tasks[index].status)) return null;
+      Object.assign(tasks[index], patch, { id });
+      return tasks[index];
+    });
+    return updated || await dependencies.repository.find(id);
+  }
+
+  async function refreshTask(task: CangyuanMediaTask): Promise<CangyuanMediaTask | null> {
+    if (!task.providerTaskId) return task;
+    const provider = await dependencies.resolveProvider(task.providerId);
+    if (!provider || !isCangyuanProvider(provider)) {
+      return updateActive(task.id, { status: 'failed', error: '沧元算力服务商配置已删除或类型已变更', completedAt: new Date(now()).toISOString() });
+    }
+    try {
+      const result = await dependencies.provider.poll(dependencies.createClient(provider), task.kind, task.providerTaskId);
+      const missingOutput = result.status === 'succeeded' && !result.outputs.length;
+      const status = missingOutput ? 'failed' : result.status;
+      return updateActive(task.id, {
+        status,
+        providerStatus: result.providerStatus,
+        outputs: result.outputs.length ? result.outputs : task.outputs,
+        pollCount: task.pollCount + 1,
+        ...(status === 'running' && !task.startedAt ? { startedAt: new Date(now()).toISOString() } : {}),
+        ...(status === 'succeeded' || status === 'failed' ? { completedAt: new Date(now()).toISOString() } : {}),
+        ...(status === 'failed' ? { error: missingOutput ? '沧元已完成任务，但没有返回可用的媒体下载地址' : result.error } : { error: undefined }),
+        nextPollAt: isActive(status) ? now() + cangyuanMediaTaskPollIntervalMs(task.kind) : undefined,
+      });
+    } catch (error) {
+      if (!dependencies.provider.isRetryable(error)) {
+        return updateActive(task.id, { status: 'failed', error: errorMessage(error), completedAt: new Date(now()).toISOString() });
+      }
+      const pollCount = task.pollCount + 1;
+      const backoff = Math.min(60_000, cangyuanMediaTaskPollIntervalMs(task.kind) * 2 ** Math.min(4, Math.max(0, pollCount - 1)));
+      return updateActive(task.id, { pollCount, nextPollAt: now() + backoff });
+    }
+  }
+
+  return { create, get, list };
+}
+
+const defaultService = createCangyuanMediaTaskService({
+  repository: cangyuanCreativeTaskRepository,
+  resolveModel: getRuntimeModel,
+  resolveProvider: getProviderWithKey,
+  createClient: (provider) => ({ baseUrl: cangyuanMediaBaseUrl(provider) || runtimeBaseUrl(provider), headers: authHeaders(provider) }),
+  provider: {
+    buildThreeDPayload: buildCangyuanThreeDPayload,
+    submit: submitCangyuanMediaTask,
+    poll: pollCangyuanMediaTask,
+    isRetryable: isRetryableCangyuanProviderError,
+  },
+});
+
+export const createCangyuanCreativeTask = defaultService.create;
+export const getCangyuanCreativeTask = defaultService.get;
+export const listCangyuanCreativeTasks = defaultService.list;
+
+async function applySubmissionResult(
+  task: CangyuanMediaTask,
+  result: CangyuanProviderTask,
+  updateActive: (id: string, patch: Partial<CangyuanMediaTask>) => Promise<CangyuanMediaTask | null>,
+  now: () => number,
+) {
+  const missingOutput = result.status === 'succeeded' && !result.outputs.length;
+  const missingTaskId = !result.id && (result.status === 'pending' || result.status === 'running');
+  const status = missingOutput || missingTaskId ? 'failed' : result.status;
+  return updateActive(task.id, {
+    providerTaskId: result.id,
+    providerStatus: result.providerStatus,
+    outputs: result.outputs,
+    status,
+    ...(status === 'running' || status === 'succeeded' ? { startedAt: new Date(now()).toISOString() } : {}),
+    ...(status === 'succeeded' || status === 'failed' ? { completedAt: new Date(now()).toISOString() } : {}),
+    ...(status === 'failed' ? { error: missingOutput ? '沧元已完成任务，但没有返回可用的媒体下载地址' : missingTaskId ? '沧元响应未提供任务编号。请先核对沧元控制台，确认任务状态后再重试。' : result.error } : {}),
+    ...(missingTaskId ? { submissionUncertain: true } : {}),
+    nextPollAt: status === 'pending' || status === 'running' ? now() + cangyuanMediaTaskPollIntervalMs(task.kind) : undefined,
+  });
+}
+
+function validate3DInput(modelId: string, input: { prompt: string } & Cangyuan3DOptions) {
+  const profile = getCangyuan3DModelProfile(modelId);
+  if (!profile) throw new Error(`沧元三维模型尚未接入：${modelId}`);
+  if (typeof input.prompt !== 'string') throw new Error('物体描述必须是字符串');
+  const prompt = input.prompt.trim();
+  if (profile.modelId !== 'trellis' && !prompt) throw new Error('Tripo3D 必须提供物体描述');
+  const { prompt: _prompt, ...rawOptions } = input;
+  return { prompt, ...parseCangyuan3DOptions(rawOptions) };
+}
+
+function isActive(status: CangyuanMediaTaskStatus) {
+  return status === 'pending' || status === 'running';
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : '沧元任务处理失败';
+}

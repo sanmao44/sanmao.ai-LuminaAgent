@@ -24,6 +24,8 @@ export function isImageEditOnlyModel({ rawId = '', displayName = '' }: ModelKind
 const SPEECH_MODEL_PATTERN = /(?:^|[-_.\/\s+:])(?:tts|text[-_ ]?to[-_ ]?speech|speech[-_ ]?(?:synth|synthesis|model|generation|v\d)|speech|cosyvoice|elevenlabs|fish[-_ ]?speech|mimo[-_ ]?(?:tts|audio)|audio[-_ ]?speech|sovits|vits|xtts|melo[-_ ]?tts|index[-_ ]?tts|chat[-_ ]?tts|tele[-_ ]?tts|spark[-_ ]?tts|kitten[-_ ]?tts|voxcpm|mega[-_ ]?tts|f5[-_ ]?tts|qwen[-_ ]?tts|hunyuan[-_ ]?tts|kokoro|orpheus|higgs[-_ ]?audio|audiofly|vibevoice)/;
 /** 转写 / 实时语音这类模型虽然带 audio、speech 字样，但不是配音模型，必须排除。 */
 const SPEECH_HOST_PATTERN = /whisper|transcri|\basr\b|\bstt\b|realtime|audio[-_ ]?preview|speech[-_ ]?to[-_ ]?text|sense[-_ ]?voice/;
+const MUSIC_GENERATION_PATTERN = /(?:^|[^a-z0-9])(?:music(?:[-_ ]?(?:gen(?:eration)?|create|maker))?|song[-_ ]?(?:gen(?:eration)?|create)|text[-_ ]?to[-_ ]?music|suno|udio|ace[-_ ]?step|riffusion|mureka|melody[-_ ]?generation)(?:[^a-z0-9]|$)/;
+const THREE_D_GENERATION_PATTERN = /(?:^|[^a-z0-9])(?:3d(?:[-_ ]?(?:gen(?:eration)?|create|model|asset))?|text[-_ ]?to[-_ ]?3d|image[-_ ]?to[-_ ]?3d|mesh(?:[-_ ]?generation)?|tripo(?:3d|sr)?|trellis|rodin|meshy|instant[-_ ]?mesh|stable[-_ ]?fast[-_ ]?3d|unique[-_ ]?3d|craftsman)(?:[^a-z0-9]|$)|(?:hunyuan|qwen)[-_ ]?3d(?:[-_.]|$)/;
 
 /**
  * 视频模型家族。原来的 \b…\b 写法在带版本号后缀时会失效：
@@ -49,6 +51,14 @@ export function isSpeechModelId(value: unknown) {
   return SPEECH_MODEL_PATTERN.test(text) && !SPEECH_HOST_PATTERN.test(text);
 }
 
+export function isMusicGenerationModelId(value: unknown) {
+  return MUSIC_GENERATION_PATTERN.test(String(value ?? '').toLowerCase());
+}
+
+export function isThreeDGenerationModelId(value: unknown) {
+  return THREE_D_GENERATION_PATTERN.test(String(value ?? '').toLowerCase());
+}
+
 /**
  * Infer the primary model category from provider metadata and common model
  * family names. This is deliberately conservative: embeddings, speech and
@@ -56,11 +66,15 @@ export function isSpeechModelId(value: unknown) {
  */
 export function inferModelKind({ rawId = '', displayName = '', capabilities = [] }: ModelKindSignals): ModelKind {
   const text = `${rawId} ${displayName}`.toLowerCase();
+  if (capabilities.includes('3d-generate')) return '3d';
+  if (capabilities.includes('music-generate')) return 'audio';
   if (isSpeechModelId(text)) return 'audio';
   if (capabilities.some((capability) => capability.startsWith('video-')) || VIDEO_FAMILY_PATTERN.test(text)) return 'video';
   // 向量 / 重排 / OCR / 语音转写这类模型命中对话家族关键词（qwen3-embedding 里有 qwen），
   // 不先拦掉就会一股脑塞进「对话模型」下拉，把真正能聊天的模型淹掉。
   if (isNonConversationalModelId(text)) return 'unknown';
+  if (isThreeDGenerationModelId(text)) return '3d';
+  if (isMusicGenerationModelId(text)) return 'audio';
   if (capabilities.includes('generate') || capabilities.includes('upscale') || /image|imagen|flux|sdxl|stable[-_ ]?diffusion|dall[-_ ]?e|ideogram|recraft|seedream|nano[-_ ]?banana|pixart|kolors|midjourney|upscal|super[-_ ]?resolution|real[-_ ]?esrgan|swinir/.test(text)) return 'image';
   const chatFamily = /(?:gpt|codex|gemini|claude|deepseek|qwen|llama|mistral|glm|kimi|command[-_ ]?r|o[134](?:[-_.]|$)|sonar|perplexity|intern|step[-_.]?\d|(?:hiy|hy)\d*|hunyuan|chatglm|yi|baichuan|minimax|longcat|ernie|doubao|phi|gemma|nemotron|jamba|cohere|aya|llava|pixtral|granite|smollm|falcon|wizardlm|agnes(?:[-_.]|$))/.test(text);
   const chatRole = /\b(?:instruct|instruction|chat|thinking|reasoning|coder|assistant)\b/.test(text);
@@ -82,6 +96,8 @@ export function resolveModelKind(
   capabilities: ModelCapability[],
 ): ModelKind {
   if (selectedKind !== 'unknown') return selectedKind;
+  if (capabilities.includes('3d-generate')) return '3d';
+  if (capabilities.includes('music-generate')) return 'audio';
   if (capabilities.includes('speech')) return 'audio';
   if (capabilities.some((capability) => capability.startsWith('video-'))) return 'video';
   if (inferredKind !== 'unknown') return inferredKind;

@@ -250,8 +250,8 @@ test("管线包含抽帧、拆解、配音、生图、生视频五步与三条�
 
 test("模型库把 TTS 归类为配音模型并给出配音能力", () => {
   assert.match(storeLib, /if \(isSpeechModelId\(id\) \|\| inferredKind === 'audio'\) return \{ kind: 'audio', capabilities: \['speech'\] \};/);
-  assert.match(storeLib, /!\['chat', 'image', 'video', 'audio'\]\.includes\(selectedKind\)/);
-  assert.match(match_types, /export type ModelKind = 'chat' \| 'image' \| 'video' \| 'audio' \| 'unknown';/);
+  assert.match(storeLib, /!\['chat', 'image', 'video', 'audio', '3d'\]\.includes\(selectedKind\)/);
+  assert.match(match_types, /export type ModelKind = 'chat' \| 'image' \| 'video' \| 'audio' \| '3d' \| 'unknown';/);
   assert.match(match_types, /\| 'speech'/);
 });
 

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { createElement } from "react";
 import { readFile } from "node:fs/promises";
+import { renderToStaticMarkup } from "react-dom/server";
 import test from "node:test";
 import ts from "typescript";
 import { createTsRequire } from "./ts-require.mjs";
@@ -14,6 +16,16 @@ const localEditPrompt = createTsRequire(process.cwd())("./lib/canvas/local-edit-
 const generationParams = createTsRequire(process.cwd())("./lib/canvas/generation-params");
 const layoutOptions = createTsRequire(process.cwd())("./lib/canvas/layout-options");
 const interactionTargets = createTsRequire(process.cwd())("./lib/canvas/interaction-targets");
+const editorUi = createTsRequire(process.cwd(), {
+  "./ModelPicker": { __esModule: true, default: () => null },
+  "./SelectMenu": {
+    __esModule: true,
+    default: ({ options, ariaLabel }) => createElement("div", { "aria-label": ariaLabel },
+      ...options.map((option) => createElement("span", { key: String(option.value) }, option.label))),
+  },
+});
+const CreationParameterEditor = editorUi("./components/CreationParameterEditor").default;
+const defaultImageCreationSettings = createTsRequire(process.cwd())("./lib/creation/settings").defaultImageCreationSettings;
 const connectionOverlay = await readFile(
   new URL("../components/canvas/CanvasConnectionOverlay.tsx", import.meta.url),
   "utf8",
@@ -1090,7 +1102,32 @@ test("canvas image parameters collapse into a compact one-line collection", () =
   assert.match(parameterEditor, /canvas-parameter-options resolution/);
   assert.match(parameterEditor, /canvas-parameter-options aspect/);
   assert.match(parameterEditor, /canvas-parameter-options count/);
-  assert.match(parameterEditor, /\[1, 2, 3, 4, 5, 6, 7, 8\]\.map/);
+  const provider = { id: "image-provider", name: "Image provider", platform: "openai" };
+  const model = {
+    id: "image-model",
+    providerId: provider.id,
+    providerName: provider.name,
+    rawId: "image-model",
+    displayName: "Image model",
+    kind: "image",
+    enabled: true,
+    published: true,
+    capabilities: ["generate"],
+  };
+  const runtime = {
+    providers: [provider],
+    models: [model],
+    settings: { defaultProviderId: provider.id, defaultImageModelId: model.id },
+  };
+  const markup = renderToStaticMarkup(createElement(CreationParameterEditor, {
+    settings: { ...defaultImageCreationSettings(runtime), model: model.id },
+    runtime,
+    variant: "canvas-flat",
+    onChange: () => undefined,
+  }));
+  assert.match(markup, /aria-expanded="false"/);
+  assert.match(markup, /生成参数[\s\S]*?1:1[\s\S]*?1 张/);
+  assert.doesNotMatch(markup, /aria-label="生成数量"/);
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-trigger\{[^}]*min-height:38px/);
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-trigger>span\{display:flex;align-items:baseline/);
   assert.match(styles, /\.canvas-node-editor-popover \.canvas-parameter-options\.aspect\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);

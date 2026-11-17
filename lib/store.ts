@@ -5,7 +5,7 @@ import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, Provi
 import { modelSupportsCapabilities, selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
-import { inferModelKind, isImageEditOnlyModel, isNonConversationalModelId, isSpeechModelId, resolveModelKind } from './model-kind';
+import { inferModelKind, isImageEditOnlyModel, isMusicGenerationModelId, isNonConversationalModelId, isSpeechModelId, isThreeDGenerationModelId, resolveModelKind } from './model-kind';
 import { buildManualModelRecord, mergeProviderModelRecords } from './model-registry';
 import { buildPublicUpscaleModels } from './upscale-catalog';
 import { resolveProviderConfigDir } from './data-paths';
@@ -195,6 +195,12 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
   // would otherwise mark a discovered `jev-1.14` record as unknown and the
   // runtime resolver could never select it after a model refresh.
   if (isIntentClassifierModel({ rawId })) return { kind: 'chat', capabilities: ['chat'] };
+  if (isMusicGenerationModelId(`${rawId} ${hints.displayName || ''}`) || hints.capabilities?.includes('music-generate')) {
+    return { kind: 'audio', capabilities: ['music-generate'] };
+  }
+  if (isThreeDGenerationModelId(`${rawId} ${hints.displayName || ''}`) || hints.capabilities?.includes('3d-generate')) {
+    return { kind: '3d', capabilities: ['3d-generate'] };
+  }
   if (isSpeechModelId(id) || inferredKind === 'audio') return { kind: 'audio', capabilities: ['speech'] };
   // 向量 / OCR / ASR 这一类即使命中 chatish（qwen3-embedding）也不能当对话模型。
   if (isNonConversationalModelId(id)) return { kind: 'unknown', capabilities: [] };
@@ -653,7 +659,7 @@ export async function markProviderCredentialFailure(id: string) {
 }
 
 function normalizeVideoTransport(value: ProviderConnection['videoTransport']) {
-  return value === 'auto' || value === 'native-task' || value === 'openai-videos' || value === 'jimeng-cli' || value === 'agnes-videos' ? value : 'auto';
+  return value === 'auto' || value === 'native-task' || value === 'openai-videos' || value === 'jimeng-cli' || value === 'agnes-videos' || value === 'cangyuan-videos' ? value : 'auto';
 }
 
 export async function setProviderModelLibraryEnabled(id: string, enabled: boolean) {
@@ -718,7 +724,7 @@ export async function addManualProviderModel(providerId: string, input: ManualMo
     if (state.models.some((model) => model.providerId === providerId && model.rawId === rawId)) throw new Error('该服务商已存在相同模型 ID');
     const displayName = typeof input.displayName === 'string' ? input.displayName.trim() || rawId : rawId;
     const selectedKind = input.kind === undefined || input.kind === 'auto' ? undefined : input.kind;
-    if (selectedKind && !['chat', 'image', 'video', 'audio'].includes(selectedKind)) throw new Error('模型类型无效');
+    if (selectedKind && !['chat', 'image', 'video', 'audio', '3d'].includes(selectedKind)) throw new Error('模型类型无效');
     const inferred = inferModel(rawId, provider.platform, undefined, { displayName });
     const model = normalizeModel(buildManualModelRecord({
       id: randomUUID(),

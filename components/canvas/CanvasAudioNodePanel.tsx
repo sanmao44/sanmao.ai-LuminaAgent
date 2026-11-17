@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CanvasAudioDraft, CanvasAudioGenerationMeta, CanvasNode } from "@/lib/canvas/types";
-import type { RegistryModel } from "@/lib/types";
+import type { ProviderConnection, RegistryModel } from "@/lib/types";
+import { selectAutomaticModel } from "@/lib/model-selection";
 import { formatCanvasAudioDuration } from "@/lib/canvas/media";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
@@ -15,8 +16,10 @@ export type CanvasAudioNodePanelProps = {
   onDurationChange: (nodeId: string, durationSeconds: number) => void;
   onNotify: (message: string, kind?: "ok" | "error") => void;
   models: RegistryModel[];
+  providers: ProviderConnection[];
   defaultProviderId?: string | null;
   defaultProviderName?: string;
+  defaultModelId?: string | null;
   projectId?: string;
   canvasId?: string;
 };
@@ -28,8 +31,10 @@ export default function CanvasAudioNodePanel({
   onDurationChange,
   onNotify,
   models,
+  providers,
   defaultProviderId,
   defaultProviderName,
+  defaultModelId,
   projectId,
   canvasId,
 }: CanvasAudioNodePanelProps) {
@@ -41,6 +46,12 @@ export default function CanvasAudioNodePanel({
   const [speechError, setSpeechError] = useState("");
   const data = node.data;
   const hasAudio = Boolean(data.url);
+  const speechModels = models.filter((model) => model.kind === "audio" && model.enabled && model.published && model.capabilities.includes("speech"));
+  const selectedModel = speechModelId !== "auto"
+    ? speechModels.find((model) => model.id === speechModelId)
+    : selectAutomaticModel(speechModels, defaultProviderId, defaultModelId);
+  const selectedProvider = selectedModel ? providers.find((provider) => provider.id === selectedModel.providerId) : undefined;
+  const supportsVoiceOption = selectedProvider?.platform !== "cangyuan";
   const speechServiceLabel = data.speechGeneration?.engine === "offline"
     ? "本机离线语音"
     : data.speechGeneration?.modelName || "尚未生成";
@@ -72,7 +83,7 @@ export default function CanvasAudioNodePanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text,
-          ...(voice.trim() ? { voice: voice.trim() } : {}),
+          ...(supportsVoiceOption && voice.trim() ? { voice: voice.trim() } : {}),
           ...(speechModelId !== "auto" ? { modelId: speechModelId } : {}),
           source: "canvas",
           ...(projectId ? { projectId } : {}),
@@ -100,7 +111,7 @@ export default function CanvasAudioNodePanel({
         requestedModelId: speechModelId,
         ...(modelName ? { modelName } : {}),
         ...(modelId ? { modelId } : {}),
-        ...(voice.trim() ? { voice: voice.trim() } : {}),
+        ...(supportsVoiceOption && voice.trim() ? { voice: voice.trim() } : {}),
         createdAt: Date.now(),
       };
       const replaced = await onReplaceAudio(node.id, file, generation);
@@ -165,7 +176,7 @@ export default function CanvasAudioNodePanel({
           }}
           disabled={generatingSpeech}
         />
-        <details className="canvas-audio-advanced">
+        {supportsVoiceOption && <details className="canvas-audio-advanced">
           <summary>音色设置（可选）</summary>
           <label htmlFor={`canvas-audio-voice-${node.id}`}>音色名称</label>
           <input
@@ -181,7 +192,7 @@ export default function CanvasAudioNodePanel({
             }}
             disabled={generatingSpeech}
           />
-        </details>
+        </details>}
         </section>
         <aside className="canvas-audio-panel-source" aria-label="音频素材与生成记录">
           <div className="canvas-audio-panel-intro">

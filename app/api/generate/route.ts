@@ -7,7 +7,7 @@ import { renderAngleOutput } from '@/lib/angle-image';
 import type { GeneratedImage } from '@/lib/types';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
-import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type ImageRequestMode, type ImageRequestOperation } from '@/packages/contracts/creative';
+import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type ImageOutputFormat, type ImageRequestMode, type ImageRequestOperation } from '@/packages/contracts/creative';
 import { resolveCanvasImageRequestIntent } from '@/apps/api/image-intent-composition';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { enforceLocalEditMask } from '@/lib/local-edit-composite';
@@ -285,9 +285,17 @@ export async function POST(request: Request) {
       && !mask
       && !moveGuide;
     const providerReferences = moveGuide ? [moveGuide, ...references.slice(1)] : references;
-    const outputFormat = ['png', 'jpeg', 'webp'].includes(String(body.outputFormat || '').toLowerCase()) ? String(body.outputFormat).toLowerCase() as 'png' | 'jpeg' | 'webp' : 'png';
+    const requestedOutputFormat = String(body.outputFormat || '').toLowerCase();
+    const outputFormat: ImageOutputFormat = ['png', 'jpeg', 'webp'].includes(requestedOutputFormat)
+      || (runtime.provider.platform === 'cangyuan' && ['gif', 'svg'].includes(requestedOutputFormat))
+      ? requestedOutputFormat as ImageOutputFormat
+      : 'png';
     const responseFormat = ['url', 'b64_json'].includes(String(body.responseFormat || '').toLowerCase()) ? String(body.responseFormat).toLowerCase() as 'url' | 'b64_json' : undefined;
-    const background = ['transparent', 'opaque'].includes(String(body.background || '').toLowerCase()) ? String(body.background).toLowerCase() as 'transparent' | 'opaque' : undefined;
+    const requestedBackground = String(body.background || '').toLowerCase();
+    const background = ['transparent', 'opaque'].includes(requestedBackground)
+      || (runtime.provider.platform === 'cangyuan' && requestedBackground === 'auto')
+      ? requestedBackground as 'transparent' | 'opaque' | 'auto'
+      : undefined;
     const input = {
       prompt: generationPrompt,
       aspectRatio: String(body.aspectRatio || '自动'),

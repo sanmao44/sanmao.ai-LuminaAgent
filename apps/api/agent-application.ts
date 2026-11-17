@@ -54,7 +54,7 @@ import { applicationJson as createApplicationJson } from '@/apps/api/agent-appli
 import { formatAgentCapabilitySnapshot } from '@/packages/agent-core/capability-snapshot';
 import type { YtDlpDownloadRequest } from '@/lib/yt-dlp-adapter';
 import { is65535ClaudeModelProvider } from '@/lib/providers';
-import { classifyDesktopInstruction, desktopCompletionGap as evaluateDesktopCompletion, isDesktopScreenshotTool, isDesktopTextInputTool, type DesktopCompletionGap, type DesktopExecutionEvidence } from '@/packages/agent-core/desktop-instruction-policy';
+import { classifyDesktopInstruction, desktopCompletionGap as evaluateDesktopCompletion, desktopInputMatchesRequestedText, isDesktopAppLaunchTool, isDesktopObservationTool, isDesktopScreenshotTool, isDesktopTextInputTool, isDesktopTypingTool, normalizeDesktopToolName, type DesktopCompletionGap, type DesktopExecutionEvidence } from '@/packages/agent-core/desktop-instruction-policy';
 
 async function safeDiscoverMcpForRequest(discover: AgentMcpDiscovery, options: Parameters<AgentMcpDiscovery>[0]) {
   try {
@@ -2474,15 +2474,14 @@ const auditMcpCall = (
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) outcome = parsed;
           } catch {}
           const appError = typeof outcome?.error === 'string' ? outcome.error : '';
-          if (desktopMeta.toolName === 'App' && /WinError\s*740|requested operation requires elevation|requires elevation/i.test(appError)) {
+          const normalizedName = normalizeDesktopToolName(desktopMeta.toolName);
+          if ((normalizedName === 'app' || normalizedName === 'launch') && /WinError\s*740|requested operation requires elevation|requires elevation/i.test(appError)) {
             stalledMcpReason = '目标应用需要 Windows 管理员权限，SANMAO.AI 无法替用户绕过 UAC；请由用户确认系统权限提示后再继续';
             toolExecutionState.stalledMcpReason = stalledMcpReason;
           }
-          const normalizedName = desktopMeta.toolName.toLowerCase().replace(/[^a-z]/g, '');
-          const isTypingTool = /^(?:type|sendkeys|keyboardtype|keyboardinput)$/.test(normalizedName);
-          const isObservationTool = /^(?:snapshot|screenshot|waitfor)$/.test(normalizedName);
-          const appLaunch = normalizedName === 'app'
-            && (args.mode === 'launch' || args.mode === 'launch_executable');
+          const isTypingTool = isDesktopTypingTool(desktopMeta.toolName);
+          const isObservationTool = isDesktopObservationTool(desktopMeta.toolName);
+          const appLaunch = isDesktopAppLaunchTool(desktopMeta.toolName, args);
           const observationText = typeof outcome?.content === 'string' ? outcome.content : '';
           const normalizedEvidence = observationText.replace(/\s+/g, ' ').trim();
           const normalizedRequestedText = (desktopRequestedInputText || '').replace(/\s+/g, ' ').trim();
@@ -2493,7 +2492,7 @@ const auditMcpCall = (
               ok: outcome?.ok === true,
               ...(appLaunch ? { appLaunch } : {}),
               ...(isTypingTool && desktopRequestedInputText !== null
-                ? { inputMatchesRequestedText: typeof args.text === 'string' && args.text === desktopRequestedInputText }
+                ? { inputMatchesRequestedText: desktopInputMatchesRequestedText(desktopMeta.toolName, args, desktopRequestedInputText) }
                 : {}),
               ...(isObservationTool && desktopRequestedInputText !== null
                 ? { observationShowsRequestedText: normalizedRequestedText.length > 0 && normalizedEvidence.includes(normalizedRequestedText) }

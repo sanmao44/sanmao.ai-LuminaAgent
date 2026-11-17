@@ -18,6 +18,8 @@ const audioSynthesisPort: AudioSynthesisPort = {
       const audio = await synthesizeSpeech(runtime, {
         text: input.text,
         ...(input.voice ? { voice: input.voice } : {}),
+        ...(input.format ? { format: input.format } : {}),
+        ...(input.speed !== undefined ? { speed: input.speed } : {}),
         signal,
       });
       return {

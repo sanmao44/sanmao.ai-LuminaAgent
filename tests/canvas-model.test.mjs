@@ -18,15 +18,27 @@ async function loadTypeScript(path) {
     const videoEditorUrl = new URL('../lib/canvas/video-editor.ts', import.meta.url);
     const videoClipUrl = new URL('../lib/canvas/video-clip.ts', import.meta.url);
     const localEditUrl = new URL('../lib/local-edit.ts', import.meta.url);
+    const cangyuanImageUrl = new URL('../lib/cangyuan-image-capabilities.ts', import.meta.url);
+    const cangyuanProviderUrl = new URL('../lib/cangyuan-provider.ts', import.meta.url);
     const settingsSource = await readFile(settingsUrl, 'utf8');
     const maskSource = await readFile(maskUrl, 'utf8');
     const layersSource = await readFile(layersUrl, 'utf8');
     const videoEditorSource = await readFile(videoEditorUrl, 'utf8');
     const videoClipSource = await readFile(videoClipUrl, 'utf8');
     const localEditSource = await readFile(localEditUrl, 'utf8');
+    const cangyuanImageSource = await readFile(cangyuanImageUrl, 'utf8');
+    const cangyuanProviderSource = await readFile(cangyuanProviderUrl, 'utf8');
     const localEditRuntime = ts.transpileModule(localEditSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
       fileName: localEditUrl.pathname,
+    }).outputText.replace(/\bexport\s+/g, '');
+    const cangyuanImageRuntime = ts.transpileModule(cangyuanImageSource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: cangyuanImageUrl.pathname,
+    }).outputText.replace(/\bexport\s+/g, '');
+    const cangyuanProviderRuntime = ts.transpileModule(cangyuanProviderSource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: cangyuanProviderUrl.pathname,
     }).outputText.replace(/\bexport\s+/g, '');
     const settingsCompiled = ts.transpileModule(settingsSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -45,6 +57,12 @@ async function loadTypeScript(path) {
       };`,
     ).replace(
       /^\s*import\s+\{\s*normalizeLocalEditAnnotations\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m,
+      '',
+    ).replace(
+      /^\s*import\s+\{\s*getCangyuanImageModelProfile\s*\}\s+from\s+["']\.\.\/cangyuan-image-capabilities["'];?\s*$/m,
+      '',
+    ).replace(
+      /^\s*import\s+\{\s*isCangyuanProvider\s*\}\s+from\s+["']\.\.\/cangyuan-provider["'];?\s*$/m,
       '',
     );
     const maskCompiled = ts.transpileModule(maskSource, {
@@ -85,7 +103,7 @@ async function loadTypeScript(path) {
       /^\s*import\s+\{[\s\S]*?\}\s+from\s+["']\.\/video-clip["'];?\s*$/m,
       '',
     );
-    return import(`data:text/javascript;base64,${Buffer.from(`${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${videoEditorCompiled}\n${videoClipCompiled}\n${modelCompiled}`).toString('base64')}`);
+    return import(`data:text/javascript;base64,${Buffer.from(`${cangyuanImageRuntime}\n${cangyuanProviderRuntime}\n${localEditRuntime}\n${settingsCompiled}\n${maskCompiled}\n${layersCompiled}\n${videoEditorCompiled}\n${videoClipCompiled}\n${modelCompiled}`).toString('base64')}`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }

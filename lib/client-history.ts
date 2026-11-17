@@ -28,7 +28,7 @@ export type GalleryItem = {
   providerName?: string;
   aspectRatio?: string;
   outputSize?: string;
-  outputFormat?: 'png' | 'jpeg' | 'webp' | 'bmp';
+  outputFormat?: 'png' | 'jpeg' | 'webp' | 'gif' | 'svg' | 'bmp';
   generationMs?: number;
   source: GallerySource;
   createdAt: number;

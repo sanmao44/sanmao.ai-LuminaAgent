@@ -13,7 +13,8 @@ const skillRoutingCompiled = ts.transpileModule(skillRoutingSource, { compilerOp
 const dataPathsUrl = `data:text/javascript;base64,${Buffer.from(dataPathsCompiled).toString('base64')}`;
 const skillRoutingUrl = `data:text/javascript;base64,${Buffer.from(skillRoutingCompiled).toString('base64')}`;
 const compiled = ts.transpileModule(source.replace("from './data-paths'", `from '${dataPathsUrl}'`).replace("from '../packages/agent-core/skill-routing'", `from '${skillRoutingUrl}'`).replaceAll("import('undici')", `import('${import.meta.resolve('undici')}')`), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-const skills = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const skillsModuleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`;
+const skills = await import(skillsModuleUrl);
 const skillRouting = await import(`data:text/javascript;base64,${Buffer.from(skillRoutingCompiled).toString('base64')}`);
 
 async function tempStore() {
@@ -754,5 +755,81 @@ test('来源下载使用 Undici 环境代理以兼容受支持的旧 Node 22 版
     else process.env.HTTPS_PROXY = previousHttpsProxy;
     if (previousNoProxy === undefined) delete process.env.NO_PROXY;
     else process.env.NO_PROXY = previousNoProxy;
+  }
+});
+
+test('没有代理环境变量时远程下载仍使用 Undici 地址族自动选择', async () => {
+  const keys = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'];
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  try {
+    const isolatedSkills = await import(`${skillsModuleUrl}#without-proxy`);
+    let requestInit;
+    const result = await isolatedSkills.fetchSkillBytes('https://example.com/file.txt', {
+      maxBytes: 64,
+      fetcher: async (_url, init) => {
+        requestInit = init;
+        return new Response('ok');
+      },
+    });
+    assert.equal(result.data.toString(), 'ok');
+    assert.ok(requestInit.dispatcher, 'downloads without proxy settings must use the configured Undici agent');
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('来源下载按流式分块报告已收取字节数与总大小', async () => {
+  const progress = [];
+  const result = await skills.fetchSkillBytes('https://example.com/file.bin', {
+    maxBytes: 16,
+    onProgress: (receivedBytes, totalBytes) => progress.push([receivedBytes, totalBytes]),
+    fetcher: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+        controller.enqueue(new Uint8Array([3, 4]));
+        controller.enqueue(new Uint8Array([5]));
+        controller.close();
+      },
+    }), { headers: { 'content-length': '5' } }),
+  });
+
+  assert.deepEqual([...result.data], [1, 2, 3, 4, 5]);
+  assert.deepEqual(progress, [[2, 5], [4, 5], [5, 5]]);
+});
+
+test('来源下载校验 Range 响应并返回归档总长度', async () => {
+  let requestedRange = '';
+  const result = await skills.fetchSkillBytes('https://example.com/archive.zip', {
+    maxBytes: 3,
+    range: { start: 4, end: 6 },
+    fetcher: async (_url, init) => {
+      requestedRange = init.headers.range;
+      return new Response(new Uint8Array([4, 5, 6]), {
+        status: 206,
+        headers: { 'content-range': 'bytes 4-6/10', 'content-length': '3' },
+      });
+    },
+  });
+
+  assert.equal(requestedRange, 'bytes=4-6');
+  assert.deepEqual([...result.data], [4, 5, 6]);
+  assert.equal(result.rangeTotalBytes, 10);
+});
+
+test('来源下载拒绝不匹配或被忽略的 Range 响应', async () => {
+  for (const response of [
+    new Response('full response'),
+    new Response(new Uint8Array([1, 2, 3]), { status: 206, headers: { 'content-range': 'bytes 0-2/10' } }),
+  ]) {
+    await assert.rejects(() => skills.fetchSkillBytes('https://example.com/archive.zip', {
+      maxBytes: 3,
+      range: { start: 4, end: 6 },
+      fetcher: async () => response,
+    }), /不支持安全的分段续传|不匹配的分段范围/);
   }
 });
