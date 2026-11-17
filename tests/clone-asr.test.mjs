@@ -263,6 +263,44 @@ test('normalization splits long unspaced Chinese ASR chunks into readable timed 
   assert.ok(sparseWords.segments.every((segment) => segment.end - segment.start <= 5));
 });
 
+test('unspaced Chinese chunks prefer clause boundaries over splitting a phrase', () => {
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: '中国移动与中兴通讯持续深化协作依托Agentic AI大模型',
+    chunks: [{ text: '中国移动与中兴通讯持续深化协作依托Agentic AI大模型', timestamp: [0, 5.5] }],
+  }, 5.5, 'test-model', 'zh');
+  assert.ok(normalized.segments.some((segment) => /协作$/u.test(segment.text)));
+  assert.ok(normalized.segments.every((segment) => !/依托$/u.test(segment.text)));
+
+  const emergency = transcriptionModule.normalizeLocalAsrResult({
+    text: '在广东广东移动针对汛期网络应急保障强化网络多智能体协同能力',
+    chunks: [{ text: '在广东广东移动针对汛期网络应急保障强化网络多智能体协同能力', timestamp: [0, 5.5] }],
+  }, 5.5, 'test-model', 'zh');
+  assert.ok(emergency.segments.some((segment) => segment.text.includes('应急保障')));
+  assert.ok(emergency.segments.every((segment) => !/应急保$/u.test(segment.text)));
+
+  const closedLoop = transcriptionModule.normalizeLocalAsrResult({
+    text: '实现风险预警资源调度保障处置全链路闭环灾害场景下',
+    chunks: [{ text: '实现风险预警资源调度保障处置全链路闭环灾害场景下', timestamp: [0, 5.5] }],
+  }, 5.5, 'test-model', 'zh');
+  assert.ok(closedLoop.segments.some((segment) => segment.text.includes('全链路闭环')));
+  assert.ok(closedLoop.segments.every((segment) => !/闭环灾害$/u.test(segment.text)));
+});
+
+test('reference punctuation restores matching clause boundaries without reordering audio', () => {
+  const reference = '中国移动与中兴通讯持续深化协作，依托Agentic AI、大模型等创新技术，锚定商业闭环目标。在山东开展业务试点，随后在广东推广。';
+  const recognized = '中国移动与中兴通讯持续深化协作依托Agentic AI大模型等创新技术锚定商业闭环目标在广东开展业务试点随后在山东推广';
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: recognized,
+    chunks: [{ text: recognized, timestamp: [0, 12] }],
+  }, 12, 'test-model', 'zh', reference);
+  const lines = normalized.segments.map((segment) => segment.text);
+
+  assert.ok(lines.some((line) => /协作，$/u.test(line)));
+  assert.ok(lines.some((line) => /目标。$/u.test(line)));
+  assert.match(lines.join(''), /在广东开展业务试点[，、]/u);
+  assert.ok(lines.every((line) => !/依托$/u.test(line)));
+});
+
 test('decimal values split across ASR chunks remain intact inside one subtitle cue', () => {
   const normalized = transcriptionModule.normalizeLocalAsrResult({
     text: '试点范围内覆盖问题处理时长由8.6小时降至5小时以内',

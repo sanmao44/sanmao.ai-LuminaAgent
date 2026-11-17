@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { AutomaticSpeechRecognitionOutput, ProgressInfo } from '@huggingface/transformers';
 import type { LocalTranscriptionResult, TimestampedTranscriptSegment, TimestampedTranscriptWord } from '@/packages/contracts/transcription';
 import { resolveLocalDataDir } from '@/lib/data-paths';
-import { correctTranscriptWithReference } from './reference-script-correction';
+import { correctTranscriptWithReference, projectReferencePunctuation } from './reference-script-correction';
 import { decodeAudioToPcmWav } from './ffmpeg-decoder';
 
 export const DEFAULT_LOCAL_ASR_MODEL = 'Xenova/whisper-small';
@@ -47,6 +47,7 @@ const promptedTranscriberQueues = new WeakMap<LocalTranscriber, Promise<void>>()
 const MAX_PROMPT_TOKENS = 64;
 const MAX_REFERENCE_PROMPT_CHARS = 160;
 const MAX_UNSPACED_CUE_CHARS = 20;
+const SOFT_UNSPACED_CUE_CHARS = 24;
 const MODEL_TEMP_FILE_PATTERN = /\.tmp\.[^/\\]+$/u;
 const MODEL_TEMP_MAX_AGE_MS = 60 * 60 * 1_000;
 const LOCAL_MODEL_LOAD_ERROR = '本地语音识别模型下载或加载失败，请检查网络连接后重试。首次使用会自动下载并缓存模型。';
@@ -266,6 +267,46 @@ function isUnspacedScript(text: string) {
   return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(text);
 }
 
+function startsChineseClause(value: string) {
+  return /^(?:依托|针对|构建|实现|在(?!上)|并|同时|进一步|强化|推动|提升|释放|让|灾害|事件|全链路|中国移动|随后|然后)/u.test(value);
+}
+
+function endsChinesePhrase(value: string) {
+  return /(?:协作|保障|处置|闭环|能力|目标|体系|经营|体验|方向|步伐|未来|以上|以内|三省)$/u.test(value);
+}
+
+function softBoundaryScore(characters: readonly string[], cut: number, targetSize: number) {
+  if (cut <= 0 || cut >= characters.length) return Number.NEGATIVE_INFINITY;
+  const left = characters.slice(0, cut).join('');
+  const right = characters.slice(cut).join('');
+  if ((/\d$/u.test(left) && /^[.,]\d/u.test(right)) || (/\d[.,]$/u.test(left) && /^\d/u.test(right))) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  let score = -Math.abs(cut - targetSize) * 2;
+  if (/[，。！？；：,.!?;:]$/u.test(left)) score += 100;
+  if (startsChineseClause(right)) score += 42;
+  if (endsChinesePhrase(left)) score += 18;
+  if (/^[，。！？；：,.!?;:、）】》」』]/u.test(right)) score -= 100;
+  if (/(?:的|和|与|及|等|了|着|地|得|在|于|向|为)$/u.test(left)) score -= 18;
+  if (/^(?:的|和|与|及|等|了|着|地|得|于|向|为)/u.test(right)) score -= 18;
+  return score;
+}
+
+function chooseUnspacedCut(characters: readonly string[], targetSize: number, allowSoftExpansion: boolean) {
+  const lowerBound = Math.max(1, Math.floor(targetSize * 0.65));
+  const upperBound = Math.min(characters.length - 1, targetSize + (allowSoftExpansion ? 4 : 0));
+  let bestCut = Math.min(targetSize, characters.length - 1);
+  let bestScore = softBoundaryScore(characters, bestCut, targetSize);
+  for (let cut = lowerBound; cut <= upperBound; cut += 1) {
+    const score = softBoundaryScore(characters, cut, targetSize);
+    if (score > bestScore) {
+      bestScore = score;
+      bestCut = cut;
+    }
+  }
+  return bestCut;
+}
+
 function splitUnspacedChunk(text: string, start: number, end: number): TimestampedTranscriptWord[] {
   const characters = Array.from(text);
   const duration = Math.max(0, end - start);
@@ -276,15 +317,9 @@ function splitUnspacedChunk(text: string, start: number, end: number): Timestamp
   const targetSize = Math.max(1, Math.ceil(characters.length / pieceCount));
   const pieces: string[] = [];
   let remaining = characters;
+  const allowSoftExpansion = duration <= 6;
   while (remaining.length > targetSize) {
-    let cut = Math.min(targetSize, remaining.length);
-    const earliestPunctuationCut = Math.ceil(targetSize / 2);
-    for (let index = cut - 1; index >= earliestPunctuationCut; index -= 1) {
-      if (/[，。！？；：,.!?;:]/u.test(remaining[index])) {
-        cut = index + 1;
-        break;
-      }
-    }
+    const cut = chooseUnspacedCut(remaining, targetSize, allowSoftExpansion);
     pieces.push(remaining.slice(0, cut).join(''));
     remaining = remaining.slice(cut);
   }
@@ -394,8 +429,13 @@ function endsSentence(text: string) {
   return /[。！？.!?;；]$/u.test(text);
 }
 
+function endsSubtitleClause(text: string) {
+  return /[，、：,]$/u.test(text) && Array.from(text).length >= 8;
+}
+
 function needsWordSpace(previous: string, next: string) {
   if (/^[，。！？；：,.!?;:、）】》」』]/u.test(next)) return false;
+  if (/[，。！？；：,.!?;:、]$/u.test(previous)) return false;
   if (/[（【《「『]$/u.test(previous)) return false;
   return !isUnspacedScript(previous.slice(-1)) && !isUnspacedScript(next.slice(0, 1));
 }
@@ -414,7 +454,7 @@ export function groupTranscriptWords(words: readonly TimestampedTranscriptWord[]
     const unspacedTextTooLong = isUnspacedScript(current.text) &&
       isUnspacedScript(word.text) &&
       Array.from(`${current.text}${word.text}`).length > MAX_UNSPACED_CUE_CHARS;
-    if (endsSentence(current.text) || gap > 1.2 || longEnough || unspacedTextTooLong) {
+    if (endsSentence(current.text) || endsSubtitleClause(current.text) || gap > 1.2 || longEnough || unspacedTextTooLong) {
       segments.push(current);
       current = { start: word.start, end: word.end, text: word.text, words: [word] };
       continue;
@@ -511,7 +551,21 @@ export function normalizeLocalAsrResult(raw: AutomaticSpeechRecognitionOutput, d
   const segmentText = segments.map((segment) => segment.text).join(' ');
   const text = cleanText(stitched.removedDuplicate ? segmentText : raw.text || segmentText);
   const result = { text, segments, words: normalizedWords, model, ...(language ? { language } : {}) };
-  return referenceText ? correctTranscriptWithReference(result, referenceText) : result;
+  if (!referenceText) return result;
+
+  const corrected = correctTranscriptWithReference(result, referenceText);
+  const punctuatedWords = projectReferencePunctuation(corrected.words, referenceText);
+  if (punctuatedWords === corrected.words) return corrected;
+  const punctuatedSegments = stitchOverlappingDuplicateSegments(groupTranscriptWords(punctuatedWords)).segments;
+  const punctuatedText = cleanText(punctuatedWords.reduce((value, word) => (
+    `${value}${needsWordSpace(value, word.text) ? ' ' : ''}${word.text}`
+  ), ''));
+  return {
+    ...corrected,
+    text: punctuatedText,
+    segments: punctuatedSegments,
+    words: punctuatedSegments.flatMap((segment) => segment.words || []),
+  };
 }
 
 function hasDominantRepeatedPhrase(text: string) {

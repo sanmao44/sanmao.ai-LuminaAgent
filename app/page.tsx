@@ -8803,7 +8803,7 @@ export default function Page() {
                                                                             },
                                                                             children: /*#__PURE__*/ _jsx("small", {
                                                                                 className: "message-mcp-badge",
-                                                                                children: `MCP：${message.mcpTools.map((tool)=>`${tool.server} · ${tool.name}（${tool.ok ? '成功' : '失败'}）`).join('、')}`
+                                                                                children: `MCP · ${message.mcpTools.length} 次调用${message.mcpTools.some((tool)=>!tool.ok) ? ' · 含失败' : ''}`
                                                                             })
                                                                         }),
                                                                          message.role === 'assistant' && !message.pending && message.intentPreview && /*#__PURE__*/ _jsx(AgentIntentPreview, {

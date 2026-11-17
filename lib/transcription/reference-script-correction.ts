@@ -10,6 +10,13 @@ const MAX_ALIGNMENT_CENTERS = 48;
 type MatchPoint = { value: string; original: string };
 type SegmentRange = { start: number; end: number };
 type TextAlignment = { distance: number; replacements: Map<number, string> };
+type TranscriptPoint = { value: string; wordIndex: number; charIndex: number };
+
+const REFERENCE_PUNCTUATION = /^[，,。.!?！？；;：:]$/u;
+
+function roundTimestamp(value: number) {
+  return Math.round(value * 1_000) / 1_000;
+}
 
 function isMatchable(character: string) {
   return /[\p{L}\p{N}\p{S}]/u.test(character);
@@ -277,6 +284,140 @@ function patchWords(words: readonly TimestampedTranscriptWord[] | undefined, sta
     matchOffset += matchPoints(word.text).length;
     return text === word.text ? word : { ...word, text };
   });
+}
+
+function referencePunctuationBoundaries(referenceText: string) {
+  const documentText = referenceText.replace(/^\s*\[[^\]\r\n]{1,160}\]\s*/gmu, '');
+  const points: string[] = [];
+  const boundaries: Array<{ position: number; punctuation: string }> = [];
+  for (const character of Array.from(documentText)) {
+    const normalized = matchPoints(character);
+    if (normalized.length) {
+      points.push(...normalized.map((point) => point.value));
+    } else if (REFERENCE_PUNCTUATION.test(character) && points.length) {
+      boundaries.push({ position: points.length, punctuation: character });
+    }
+  }
+  return { points, boundaries };
+}
+
+function transcriptPoints(words: readonly TimestampedTranscriptWord[]) {
+  const points: TranscriptPoint[] = [];
+  words.forEach((word, wordIndex) => {
+    Array.from(word.text).forEach((character, charIndex) => {
+      for (const point of matchPoints(character)) points.push({ value: point.value, wordIndex, charIndex });
+    });
+  });
+  return points;
+}
+
+function findUniquePunctuationPosition(source: readonly TranscriptPoint[], reference: readonly string[], boundary: number) {
+  for (let anchorLength = Math.min(10, boundary); anchorLength >= 5; anchorLength -= 1) {
+    const anchorStart = boundary - anchorLength;
+    const anchor = reference.slice(anchorStart, boundary);
+    let referenceOccurrences = 0;
+    for (let referenceStart = 0; referenceStart + anchorLength <= reference.length; referenceStart += 1) {
+      if (anchor.every((character, offset) => reference[referenceStart + offset] === character)) referenceOccurrences += 1;
+      if (referenceOccurrences > 1) break;
+    }
+    if (referenceOccurrences !== 1) continue;
+    const matches: number[] = [];
+    for (let sourceStart = 0; sourceStart + anchorLength <= source.length; sourceStart += 1) {
+      if (anchor.every((character, offset) => source[sourceStart + offset].value === character)) {
+        matches.push(sourceStart + anchorLength);
+      }
+    }
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+      const following = reference.slice(boundary, boundary + 5);
+      if (!following.length) return undefined;
+      const contextualMatches = matches.filter((position) => (
+        following.every((character, offset) => source[position + offset]?.value === character)
+      ));
+      if (contextualMatches.length === 1) return contextualMatches[0];
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function splitTranscriptWordAtPunctuation(
+  word: TimestampedTranscriptWord,
+  marks: ReadonlyMap<number, readonly string[]>,
+) {
+  const characters = Array.from(word.text);
+  const internalOffsets = [...marks.keys()].filter((offset) => offset > 0 && offset < characters.length).sort((left, right) => left - right);
+  const pieces: string[] = [];
+  let cursor = 0;
+  for (const offset of internalOffsets) {
+    const source = characters.slice(cursor, offset).join('');
+    const text = (cursor > 0 ? source.replace(/^[，,。.!?！？；;：:]+/u, '') : source)
+      .replace(/[，,。.!?！？；;：:]+$/u, '');
+    const punctuation = marks.get(offset) || [];
+    pieces.push(`${text.replace(/\s+$/u, '')}${punctuation.join('')}`);
+    cursor = offset;
+  }
+  const sourceTail = characters.slice(cursor).join('');
+  const tail = (cursor > 0 ? sourceTail.replace(/^[，,。.!?！？；;：:]+/u, '') : sourceTail)
+    .replace(/[，,。.!?！？；;：:]+$/u, '');
+  const endingMarks = marks.get(characters.length) || [];
+  pieces.push(`${tail.replace(/\s+$/u, '')}${endingMarks.join('')}`);
+  if (pieces.length === 1) return [{ ...word, text: pieces[0] }];
+
+  const weights = pieces.map((piece) => Math.max(1, matchPoints(piece).length));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const duration = Math.max(0, word.end - word.start);
+  let elapsedWeight = 0;
+  return pieces.map((text, index) => {
+    const start = word.start + duration * elapsedWeight / totalWeight;
+    elapsedWeight += weights[index];
+    const end = index === pieces.length - 1
+      ? word.end
+      : word.start + duration * elapsedWeight / totalWeight;
+    return { start: roundTimestamp(start), end: roundTimestamp(end), text };
+  });
+}
+
+/** Apply reference punctuation only where a unique local text anchor exists. */
+export function projectReferencePunctuation(words: readonly TimestampedTranscriptWord[], referenceText?: string) {
+  if (!referenceText?.trim() || !words.length) return words;
+  const { points: reference, boundaries } = referencePunctuationBoundaries(referenceText);
+  const source = transcriptPoints(words);
+  if (source.length < 10 || !boundaries.length) return words;
+
+  const marksByWord = new Map<number, Map<number, string[]>>();
+  for (const boundary of boundaries) {
+    if (boundary.position < 5 || boundary.position >= reference.length) continue;
+    const position = findUniquePunctuationPosition(source, reference, boundary.position);
+    if (position === undefined || position <= 0 || position >= source.length) continue;
+    const left = source[position - 1];
+    const right = source[position];
+    const wordIndex = left.wordIndex;
+    const word = words[wordIndex];
+    const offset = left.wordIndex === right.wordIndex
+      ? left.charIndex + 1
+      : Array.from(word.text).length;
+    const marks = marksByWord.get(wordIndex) || new Map<number, string[]>();
+    const atOffset = marks.get(offset) || [];
+    if (!atOffset.includes(boundary.punctuation)) atOffset.push(boundary.punctuation);
+    marks.set(offset, atOffset);
+    marksByWord.set(wordIndex, marks);
+  }
+
+  if (!marksByWord.size) return words;
+  const projected = words.flatMap((word, index) => {
+    const marks = marksByWord.get(index);
+    return marks ? splitTranscriptWordAtPunctuation(word, marks) : [word];
+  });
+  let changed = false;
+  const normalized = projected.map((word, index) => {
+    const original = words[index];
+    if (original && /[，,。.!?！？；;：:]$/u.test(original.text) && word.text === original.text) return word;
+    const text = word.text.replace(/([，,。.!?！？；;：:])\s+/gu, '$1').replace(/([，,。.!?！？；;：:])\1+/gu, '$1');
+    if (text !== word.text) changed = true;
+    return text === word.text ? word : { ...word, text };
+  });
+  return changed ? normalized : projected;
 }
 
 /** Correct only same-length character substitutions supported by a strong local script match. */
