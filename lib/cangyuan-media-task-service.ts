@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { TaskRepository } from './repositories/types';
 import { validateCangyuan3DInput, validateCangyuanMusicInput, type Cangyuan3DOptions, type CangyuanMediaKind, type CangyuanMediaTask, type CangyuanMediaTaskInput, type CangyuanMediaTaskStatus, type CangyuanMusicOptions } from '../packages/contracts/cangyuan-media';
-import { cangyuanMediaBaseUrl, isCangyuanProvider } from './cangyuan-provider';
+import { cangyuanMediaBaseUrl } from './cangyuan-provider';
 import { authHeaders, runtimeBaseUrl, type RuntimeProvider } from './providers';
 import { getProviderWithKey, getRuntimeModel } from './store';
 import { cangyuanCreativeTaskRepository } from './cangyuan-media-task-store';
@@ -39,12 +39,12 @@ export function createCangyuanMediaTaskService(dependencies: CangyuanMediaTaskSe
   async function create(options: CreateCangyuanCreativeTaskInput): Promise<CangyuanMediaTask> {
     const modelKind = options.kind === 'music' ? 'audio' : '3d';
     const runtime = await dependencies.resolveModel(options.modelId, modelKind);
-    if (!runtime || !isCangyuanProvider(runtime.provider)) {
-      throw new Error(`请选择已启用的沧元${options.kind === 'music' ? '音乐' : '三维'}模型`);
+    if (!runtime || runtime.provider.type !== 'openai-compatible') {
+      throw new Error(`请选择已启用且使用兼容任务接口的${options.kind === 'music' ? '音乐' : '三维'}模型`);
     }
     const requiredCapability = options.kind === 'music' ? 'music-generate' : '3d-generate';
     if (!runtime.model.capabilities.includes(requiredCapability)) {
-      throw new Error(`所选沧元模型不支持${options.kind === 'music' ? '音乐' : '三维'}生成能力`);
+      throw new Error(`所选模型不支持${options.kind === 'music' ? '音乐' : '三维'}生成能力`);
     }
 
     const idempotencyKey = `cangyuan:${options.kind}:${runtime.provider.id}:${options.idempotencyKey?.trim() || newId()}`;
@@ -92,7 +92,7 @@ export function createCangyuanMediaTaskService(dependencies: CangyuanMediaTaskSe
       return await updateActive(task.id, {
         status: 'failed',
         error: uncertain
-          ? '提交结果未能确认，沧元可能已经接收并计费。请先在沧元控制台核对任务，再决定是否重新提交。'
+          ? '提交结果未能确认，服务商可能已接收并计费。请先核对任务状态，再决定是否重新提交。'
           : errorMessage(error),
         submissionUncertain: uncertain,
         completedAt: new Date(now()).toISOString(),
@@ -134,8 +134,8 @@ export function createCangyuanMediaTaskService(dependencies: CangyuanMediaTaskSe
   async function refreshTask(task: CangyuanMediaTask): Promise<CangyuanMediaTask | null> {
     if (!task.providerTaskId) return task;
     const provider = await dependencies.resolveProvider(task.providerId);
-    if (!provider || !isCangyuanProvider(provider)) {
-      return updateActive(task.id, { status: 'failed', error: '沧元算力服务商配置已删除或类型已变更', completedAt: new Date(now()).toISOString() });
+    if (!provider || provider.type !== 'openai-compatible') {
+      return updateActive(task.id, { status: 'failed', error: '任务对应的兼容服务商配置已删除或接口协议已变更', completedAt: new Date(now()).toISOString() });
     }
     try {
       const result = await dependencies.provider.poll(dependencies.createClient(provider), task.kind, task.providerTaskId);
@@ -148,7 +148,7 @@ export function createCangyuanMediaTaskService(dependencies: CangyuanMediaTaskSe
         pollCount: task.pollCount + 1,
         ...(status === 'running' && !task.startedAt ? { startedAt: new Date(now()).toISOString() } : {}),
         ...(status === 'succeeded' || status === 'failed' ? { completedAt: new Date(now()).toISOString() } : {}),
-        ...(status === 'failed' ? { error: missingOutput ? '沧元已完成任务，但没有返回可用的媒体下载地址' : result.error } : { error: undefined }),
+        ...(status === 'failed' ? { error: missingOutput ? '服务商已完成任务，但没有返回可用的媒体下载地址' : result.error } : { error: undefined }),
         nextPollAt: isActive(status) ? now() + cangyuanMediaTaskPollIntervalMs(task.kind) : undefined,
       });
     } catch (error) {
@@ -197,7 +197,7 @@ async function applySubmissionResult(
     status,
     ...(status === 'running' || status === 'succeeded' ? { startedAt: new Date(now()).toISOString() } : {}),
     ...(status === 'succeeded' || status === 'failed' ? { completedAt: new Date(now()).toISOString() } : {}),
-    ...(status === 'failed' ? { error: missingOutput ? '沧元已完成任务，但没有返回可用的媒体下载地址' : missingTaskId ? '沧元响应未提供任务编号。请先核对沧元控制台，确认任务状态后再重试。' : result.error } : {}),
+    ...(status === 'failed' ? { error: missingOutput ? '服务商已完成任务，但没有返回可用的媒体下载地址' : missingTaskId ? '服务商响应未提供任务编号。请先核对任务状态，再决定是否重试。' : result.error } : {}),
     ...(missingTaskId ? { submissionUncertain: true } : {}),
     nextPollAt: status === 'pending' || status === 'running' ? now() + cangyuanMediaTaskPollIntervalMs(task.kind) : undefined,
   });
@@ -221,5 +221,5 @@ function isActive(status: CangyuanMediaTaskStatus) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : '沧元任务处理失败';
+  return error instanceof Error ? error.message : '媒体任务处理失败';
 }

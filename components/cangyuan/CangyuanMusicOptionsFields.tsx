@@ -110,7 +110,7 @@ export default function CangyuanMusicOptionsFields({ profile, options, onChange,
     const taskIdField = (label = '源作品任务编号') => (
       <label className="cangyuan-music-text-field" key="sourceTaskId">
         <span>{label}</span>
-        <input maxLength={200} value={options.sourceTaskId ?? ''} onChange={(event) => update({ sourceTaskId: event.target.value || undefined, sourceAudioId: undefined, sourceTrack: undefined })} placeholder="可从作品记录中的操作自动带入" />
+        <input maxLength={200} value={options.sourceTaskId ?? ''} onChange={(event) => update({ sourceTaskId: event.target.value || undefined, sourceAudioId: undefined, sourceTrack: undefined })} placeholder="粘贴结果卡中的任务编号" />
       </label>
     );
     const uploadUrlField = (label = '参考音频') => (
@@ -294,15 +294,15 @@ function workflowNote(modelId: string) {
   if (modelId === 'suno-extend-audio') return '上传本地音频后会生成沧元可访问的链接；续写位置以秒为单位。';
   if (modelId === 'suno-add-instrumental') return '上传要添加伴奏的原曲音频，或在高级选项中填写公网 URL。';
   if (modelId === 'suno-add-vocals') return '上传原曲音频；人声性别可选。';
-  if (modelId === 'suno-cover-audio') return '可上传音频，也可从本项目已完成的曲目操作中选用任务 ID。';
-  if (modelId === 'suno-cover-generate') return '使用本项目曲目生成封面版本；请从曲目操作中选用任务 ID。';
+  if (modelId === 'suno-cover-audio') return '可上传音频，或粘贴结果卡中的任务编号。';
+  if (modelId === 'suno-cover-generate') return '请粘贴已完成作品结果卡中的任务编号。';
   if (modelId === 'suno-mashup') return '分别上传两段音频，或在各自的高级选项中填写公网 URL。';
   if (modelId === 'suno-replace-section') return '从已有曲目中替换指定区间，起止位置均以秒为单位。';
   if (modelId === 'suno-stem') return '上传待处理音频，并选择需要的人声或分轨类型。';
-  if (modelId === 'suno-persona') return '从已生成曲目的操作菜单中创建 Persona，使用其任务 ID。';
-  if (modelId === 'suno-midi') return '导出已生成曲目的 MIDI 文件，使用曲目任务 ID。';
-  if (modelId === 'suno-wav') return '导出已生成曲目的 WAV 文件，使用曲目任务 ID。';
-  if (modelId === 'suno-timestamped-lyrics') return '为已生成曲目对齐歌词时间戳，使用曲目任务 ID。';
+  if (modelId === 'suno-persona') return '请粘贴已完成作品结果卡中的任务编号。';
+  if (modelId === 'suno-midi') return '导出已完成作品的 MIDI 文件，请粘贴结果卡中的任务编号。';
+  if (modelId === 'suno-wav') return '导出已完成作品的 WAV 文件，请粘贴结果卡中的任务编号。';
+  if (modelId === 'suno-timestamped-lyrics') return '为已完成作品对齐歌词时间戳，请粘贴结果卡中的任务编号。';
   if (modelId === 'suno-style-boost') return '提供风格描述文本以扩写为更详细的音乐风格提示。';
   return '将文字生成结构化歌词文本。';
 }

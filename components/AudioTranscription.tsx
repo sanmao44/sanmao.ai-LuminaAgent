@@ -3,13 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ModelPicker from '@/components/ModelPicker';
 import SelectMenu from '@/components/SelectMenu';
-import CangyuanSuggestionInput from '@/components/cangyuan/CangyuanSuggestionInput';
+import { supportedTranscriptionModels } from '@/components/audio/model-options';
 import type { AudioTranscriptionResult } from '@/packages/contracts/audio-transcription';
 import type { GenerationLog } from '@/lib/generation-log';
 import { listGenerationLogs } from '@/lib/generation-log-client';
-import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import type { PublicState } from '@/lib/types';
-import styles from './CangyuanAudioTranscription.module.css';
+import styles from './AudioTranscription.module.css';
 
 const LANGUAGES = [
   { value: '', label: '自动识别' }, { value: 'zh', label: '中文' },
@@ -25,7 +24,7 @@ const FORMATS = [
 ];
 
 export function audioTranscriptionModels(state: PublicState | null) {
-  return state ? filterModelsByActiveProviders(state.models, state.providers, { capability: 'transcription' }) : [];
+  return supportedTranscriptionModels(state);
 }
 
 function downloadTranscript(text: string, name: string) {
@@ -64,7 +63,7 @@ export function AudioTranscriptionHistory({ logs, onCopy }: { logs: readonly Gen
   ))}</div>;
 }
 
-export default function CangyuanAudioTranscription({ state, onOpenModels, onNotify }: { state: PublicState; onOpenModels?: () => void; onNotify?: (message: string) => void }) {
+export default function AudioTranscription({ state, onOpenModels, onNotify }: { state: PublicState; onOpenModels?: () => void; onNotify?: (message: string) => void }) {
   const models = useMemo(() => audioTranscriptionModels(state), [state]);
   const [modelId, setModelId] = useState('');
   const model = models.find((item) => item.id === modelId) || models[0];
@@ -153,7 +152,7 @@ export default function CangyuanAudioTranscription({ state, onOpenModels, onNoti
         {language === '__custom' && <label className="cangyuan-speech-field"><span>语言代码</span><input value={customLanguage} onChange={(event) => setCustomLanguage(event.target.value)} placeholder="例如 it（意大利语）" maxLength={30} /></label>}
         <details className={styles.details}><summary>识别提示与更多设置</summary><div className={styles.advanced}>
           <label className="cangyuan-music-text-field"><span>专有名词提示（可选）</span><textarea rows={3} value={prompt} maxLength={12000} onChange={(event) => setPrompt(event.target.value)} placeholder="例如：人名、品牌名、行业术语或口头禅" /><small>帮助准确识别，填写原音频中可能出现的词语。</small></label>
-          <div className="cangyuan-speech-field"><span>结果内容</span><CangyuanSuggestionInput ariaLabel="转写结果格式" value={format} onChange={setFormat} options={FORMATS} placeholder="选择结果内容，或填写服务商支持的格式" /></div>
+          <div className="cangyuan-speech-field"><span>结果内容</span><SelectMenu value={format} onChange={setFormat} ariaLabel="转写结果格式" options={FORMATS} className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" /></div>
           <label className={styles.temperature}><span>识别稳定性</span><input type="range" min={0} max={1} step={0.05} value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} /><output>{temperature === 0 ? '最稳定' : temperature.toFixed(2)}</output><small>默认最稳定；提高后结果会更灵活。</small></label>
         </div></details>
         {error && <p className="cangyuan-task-error" role="alert">{error}</p>}

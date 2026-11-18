@@ -133,13 +133,16 @@ test('带版本号后缀的视频模型不再被当成对话模型', () => {
   assert.equal(modelKind.inferModelKind({ rawId: 'veomax-chat' }), 'chat');
 });
 
-test('向量 / 重排 / OCR / ASR 不再被当成对话模型', () => {
+test('向量 / 重排 / OCR 不再被当成对话模型，ASR 单独归为音频', () => {
   for (const rawId of [
     'Qwen3-Embedding-8B', 'Qwen3-Reranker-4B', 'bge-reranker-v2-m3', 'bge-m3', 'qwen3.5-ocr',
-    'HunyuanOCR', 'DeepSeek-OCR', 'GLM-ASR', 'FunASR', 'TeleASR-MultiDialect', 'whisper-large-v3',
+    'HunyuanOCR', 'DeepSeek-OCR',
     'SenseVoiceSmall', 'clip-vit', 'resnet-50', 'YOLOv8', 'jina-embeddings-v4',
   ]) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'unknown', rawId);
+  }
+  for (const rawId of ['GLM-ASR', 'FunASR', 'TeleASR-MultiDialect', 'whisper-large-v3']) {
+    assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
   // 正常对话模型不能被误伤（这三个名字里都带容易误伤的片段）。
   for (const rawId of ['MiniMax-M3', 'GLM-5.3', 'Qwen3.5-Plus', 'deepseek-v4-flash', 'kimi-k3']) {

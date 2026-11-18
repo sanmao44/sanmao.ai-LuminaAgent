@@ -9,6 +9,7 @@ import { agnesModelCatalog } from './agnes';
 import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';
 import type { CangyuanImageAdvancedParameter, CangyuanImageModelProfile } from './cangyuan-image-capabilities';
 import { isCangyuanProvider } from './cangyuan-provider';
+import { isSvgImageBytes } from './svg-image';
 import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';
 import { isIP } from 'node:net';
 import { spawn } from 'node:child_process';
@@ -263,6 +264,10 @@ export function imageMimeFromBytes(bytes: Uint8Array) {
   return '';
 }
 
+function imageOutputMimeFromBytes(bytes: Uint8Array, allowSvgOutput: boolean) {
+  return imageMimeFromBytes(bytes) || (allowSvgOutput && isSvgImageBytes(bytes) ? 'image/svg+xml' : '');
+}
+
 export class ProviderImageFormatError extends Error {
   readonly providerImageFormat = true;
 
@@ -357,11 +362,11 @@ function decorateProviderFailure<T extends Error>(error: T, details: Partial<Pro
   return error as T & ProviderFailure;
 }
 
-async function parseResponse(response: Response) {
+async function parseResponse(response: Response, allowSvgOutput = false) {
   const contentType = response.headers.get('content-type') || '';
   const bytes = new Uint8Array(await response.arrayBuffer());
   const requestId = requestIdFrom(null, '', response.headers);
-  const detectedImageMime = imageMimeFromBytes(bytes);
+  const detectedImageMime = imageOutputMimeFromBytes(bytes, allowSvgOutput);
   if (response.ok && detectedImageMime && bytes.length) {
     return attachProviderResponseMeta(`data:${detectedImageMime};base64,${Buffer.from(bytes).toString('base64')}`, { contentType, byteLength: bytes.byteLength, status: response.status, requestId });
   }
@@ -385,7 +390,7 @@ async function parseResponse(response: Response) {
     if (encoded && /^[A-Za-z0-9+/=_-]+$/.test(encoded)) {
       try {
         const decoded = Buffer.from(encoded, 'base64');
-        const decodedMime = imageMimeFromBytes(decoded);
+        const decodedMime = imageOutputMimeFromBytes(decoded, allowSvgOutput);
         if (decodedMime) data = `data:${decodedMime};base64,${decoded.toString('base64')}`;
       } catch { /* normalizeProviderImages will surface a provider-format error. */ }
     }
@@ -482,11 +487,11 @@ function providerTimeoutFailure(url: string, timeout: number, method = 'GET') {
   });
 }
 
-async function fetchJson(url: string, init: RequestInit, timeout = 120000, signal?: AbortSignal) {
+async function fetchJson(url: string, init: RequestInit, timeout = 120000, signal?: AbortSignal, allowSvgOutput = false) {
   const method = String(init.method || 'GET').toUpperCase();
   try {
     const response = await fetch(url, { ...init, cache: 'no-store', signal: combineSignals(signal || init.signal || undefined, timeout) });
-    const data = await parseResponse(response);
+    const data = await parseResponse(response, allowSvgOutput);
     if (signal?.aborted) throw signal.reason || new Error('请求已取消');
     return data;
   } catch (error) {
@@ -1193,7 +1198,7 @@ function embeddedImageReferences(value: string) {
   return references;
 }
 
-function imageReferenceFromString(value: string, key: string, parent: any, forceImage: boolean) {
+function imageReferenceFromString(value: string, key: string, parent: any, forceImage: boolean, allowSvgOutput: boolean) {
   const text = value.trim();
   if (!text) return [];
   const references = embeddedImageReferences(text);
@@ -1204,12 +1209,17 @@ function imageReferenceFromString(value: string, key: string, parent: any, force
   }
   const parentType = String(parent?.type || parent?.object || '').toLowerCase();
   if (forceImage || /image[_-]?(generation|generation_call|data)|inline[_-]?data/.test(parentType)) {
-    if (isRawBase64(text)) return [`data:${objectMimeType(parent)};base64,${text.replace(/\s/g, '')}`];
+    if (isRawBase64(text)) {
+      const compact = text.replace(/\s/g, '');
+      const bytes = Buffer.from(compact, 'base64');
+      const mime = allowSvgOutput && isSvgImageBytes(bytes) ? 'image/svg+xml' : objectMimeType(parent);
+      return [`data:${mime};base64,${compact}`];
+    }
   }
   return [];
 }
 
-function extractImages(data: any): GeneratedImage[] {
+function extractImages(data: any, allowSvgOutput = false): GeneratedImage[] {
   const images: GeneratedImage[] = [];
   const seen = new Set<string>();
   const add = (url: string, revisedPrompt?: unknown) => {
@@ -1221,7 +1231,7 @@ function extractImages(data: any): GeneratedImage[] {
   const walk = (value: any, key = '', parent: any = null, forceImage = false, depth = 0, inheritedPrompt?: unknown): void => {
     if (value === null || value === undefined || depth > 10) return;
     if (typeof value === 'string') {
-      for (const reference of imageReferenceFromString(value, key, parent, forceImage)) add(reference, inheritedPrompt);
+      for (const reference of imageReferenceFromString(value, key, parent, forceImage, allowSvgOutput)) add(reference, inheritedPrompt);
       return;
     }
     if (typeof value !== 'object') return;
@@ -1258,13 +1268,16 @@ function responseShape(value: any, depth = 0): string {
   return `{${keys.map((key) => `${key}:${responseShape(value[key], depth + 1)}`).join(', ')}}`;
 }
 
-export function normalizeProviderImages(data: any): GeneratedImage[] {
-  const images = extractImages(data);
-  const validImages = images.filter((image) => !/^data:image\//i.test(image.url) || isSupportedImageDataUrl(image.url));
+export function normalizeProviderImages(data: any, options: { allowSvgOutput?: boolean } = {}): GeneratedImage[] {
+  const allowSvgOutput = options.allowSvgOutput === true;
+  const images = extractImages(data, allowSvgOutput);
+  const validImages = images.filter((image) => !/^data:image\//i.test(image.url)
+    || isSupportedImageDataUrl(image.url)
+    || (allowSvgOutput && /^data:image\/svg\+xml(?:;|,)/i.test(image.url) && isSvgImageBytes(dataUrlBytes(image.url) || new Uint8Array())));
   const meta = data && typeof data === 'object' ? (data as any)[providerResponseMeta] as ProviderResponseMeta | undefined : undefined;
   const successfulProviderResponse = Number(meta?.status) >= 200 && Number(meta?.status) < 300;
   if (images.length && !validImages.length) {
-    const error = new ProviderImageFormatError('服务商返回了图片字段，但内容不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片。请检查服务商的 image_url/b64_json 响应格式；任务可能已经提交，请先核对服务商后台状态后再重试。');
+    const error = new ProviderImageFormatError(`服务商返回了图片字段，但内容不是有效的 PNG、JPEG、WebP、GIF 或 BMP${allowSvgOutput ? '、SVG' : ''} 图片。请检查服务商的 image_url/b64_json 响应格式；任务可能已经提交，请先核对服务商后台状态后再重试。`);
     throw decorateProviderFailure(error, {
       providerResponse: true,
       providerStatus: meta?.status,
@@ -1292,8 +1305,8 @@ export function normalizeProviderImages(data: any): GeneratedImage[] {
   return validImages;
 }
 
-function normalizeImages(data: any): GeneratedImage[] {
-  return normalizeProviderImages(data);
+function normalizeImages(data: any, allowSvgOutput = false): GeneratedImage[] {
+  return normalizeProviderImages(data, { allowSvgOutput });
 }
 
 export function buildAgnesImagePayload(rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' }, references: string[] = []) {
@@ -1435,9 +1448,9 @@ async function waitForImageTask(provider: RuntimeProvider, initial: any, signal?
   throw acceptedProviderTaskError(new Error(`图片任务 ${taskId} 等待超时，请稍后到服务商控制台查看任务状态`), taskId);
 }
 
-async function waitForCangyuanImageTask(provider: RuntimeProvider, initial: any, endpoint: 'generations' | 'edits', signal?: AbortSignal) {
+async function waitForCangyuanImageTask(provider: RuntimeProvider, initial: any, endpoint: 'generations' | 'edits', signal?: AbortSignal, allowSvgOutput = false) {
   const taskId = taskIdFrom(initial);
-  if (!taskId) return normalizeImages(initial);
+  if (!taskId) return normalizeImages(initial, allowSvgOutput);
   const statusUrl = providerEndpoint(provider, `/images/${endpoint}/${encodeURIComponent(taskId)}`, `/images/${endpoint}/${encodeURIComponent(taskId)}`);
   const deadline = Date.now() + IMAGE_REQUEST_TIMEOUT;
   let detachedFromCaller = false;
@@ -1450,12 +1463,12 @@ async function waitForCangyuanImageTask(provider: RuntimeProvider, initial: any,
     });
     let data: any;
     try {
-      data = await fetchJson(statusUrl, { method: 'GET', headers: authHeaders(provider) }, 30000, pollSignal);
+      data = await fetchJson(statusUrl, { method: 'GET', headers: authHeaders(provider) }, 30000, pollSignal, allowSvgOutput);
     } catch (error) {
       throw acceptedProviderTaskError(error, taskId);
     }
-    const images = extractImages(data);
-    if (images.length) return normalizeImages(data);
+    const images = extractImages(data, allowSvgOutput);
+    if (images.length) return normalizeImages(data, allowSvgOutput);
     const status = taskStatusFrom(data);
     if (/(fail|error|cancel|reject|expired)/.test(status)) {
       throw terminalProviderTaskError(String(data?.error?.message || data?.error_message || data?.error || data?.message || `沧元图片任务失败：${status}`));
@@ -1514,7 +1527,7 @@ function isCangyuanAspectRatio(value: string, profile: CangyuanImageModelProfile
   return /^\d+:\d+$/.test(value);
 }
 
-function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRequestInput) {
+function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRequestInput, endpoint: 'generations' | 'edits') {
   const requestedCount = Number(input.count ?? 1);
   if (!Number.isInteger(requestedCount) || requestedCount < 1) {
     throw new Error('沧元图片生成数量必须是正整数。');
@@ -1833,7 +1846,8 @@ async function generateCangyuanImage(
   endpoint: 'generations' | 'edits',
   signal?: AbortSignal,
 ) {
-  const { count, parameters } = buildCangyuanImageParameters(rawModelId, input);
+  const { count, parameters } = buildCangyuanImageParameters(rawModelId, input, endpoint);
+  const allowSvgOutput = endpoint === 'generations' && input.outputFormat === 'svg';
   if (input.markupImage && endpoint !== 'edits') throw cangyuanParameterError(rawModelId, 'markup', '仅支持改图');
   if (input.markupImage && input.mask) throw cangyuanParameterError(rawModelId, 'markup', '不能与蒙版同时使用');
   if (input.markupImage && !input.references.length) throw cangyuanParameterError(rawModelId, 'markup', '需要首张参考图');
@@ -1896,10 +1910,10 @@ async function generateCangyuanImage(
     method: 'POST',
     headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  }, IMAGE_REQUEST_TIMEOUT, signal);
-  if (extractImages(data).length) return normalizeImages(data);
-  if (taskIdFrom(data)) return waitForCangyuanImageTask(provider, data, endpoint, signal);
-  return normalizeImages(data);
+  }, IMAGE_REQUEST_TIMEOUT, signal, allowSvgOutput);
+  if (extractImages(data, allowSvgOutput).length) return normalizeImages(data, allowSvgOutput);
+  if (taskIdFrom(data)) return waitForCangyuanImageTask(provider, data, endpoint, signal, allowSvgOutput);
+  return normalizeImages(data, allowSvgOutput);
 }
 
 async function waitForApimartTask(provider: RuntimeProvider, initial: any, signal?: AbortSignal) {

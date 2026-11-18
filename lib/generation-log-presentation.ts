@@ -1,5 +1,5 @@
 import type { GenerationLog } from "@/lib/generation-log";
-import { cangyuanSpeechVoiceLabel } from "@/packages/contracts/audio-synthesis";
+import { speechVoiceLabel } from "@/packages/contracts/audio-synthesis";
 import { normalizeReferenceRecords } from "@/lib/reference-images";
 import { IMAGE_RATIOS } from "@/lib/creation/settings";
 
@@ -180,7 +180,7 @@ export function logAspectRatioLabel(log: GenerationLog, spec?: ImageSpec): strin
 export function generationLogParameterRows(log: GenerationLog): Array<{ label: string; value: string }> {
     if (generationMediaKind(log) === 'audio') {
         return [
-            { label: '音色', value: log.voice ? cangyuanSpeechVoiceLabel(log.voice) : '模型默认音色' },
+            { label: '音色', value: log.voice ? speechVoiceLabel(log.voice) : '模型默认音色' },
             { label: '输出格式', value: log.format ? log.format.toUpperCase() : '服务商默认' },
             { label: '语速', value: log.speed === undefined ? '默认' : `${log.speed} 倍` },
         ];

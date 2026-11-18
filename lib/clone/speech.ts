@@ -9,9 +9,8 @@
  *    落盘前按响应头 + 魔数判断真实格式，避免把 wav 存成 .mp3 导致时长探测失败。
  */
 import { authHeaders, runtimeBaseUrl, type RuntimeProvider } from '../providers';
-import { isCangyuanProvider } from '../cangyuan-provider';
 import { getRuntimeModelCandidates } from '../store';
-import { getCangyuanSpeechModelProfile, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
+import { getSpeechModelProfile, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
 
 export type SpeechRuntime = NonNullable<Awaited<ReturnType<typeof getRuntimeModelCandidates>>[number]>;
 
@@ -94,17 +93,19 @@ function looksLikeTextPayload(buffer: Buffer) {
 export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequest): Promise<SpeechAudio> {
   const text = String(input.text || '').trim();
   if (!text) throw new Error('配音文本为空。');
-  if (isCangyuanProvider(runtime.provider)) {
-    const profile = getCangyuanSpeechModelProfile(runtime.model.rawId);
-    if (!profile) throw new Error(`沧元语音模型尚未接入：${runtime.model.rawId}。`);
+  if (runtime.provider.type !== 'openai-compatible') {
+    throw new Error('所选服务商暂不支持兼容的语音生成接口。');
+  }
+  const profile = getSpeechModelProfile(runtime.model.rawId);
+  if (profile) {
     if (input.format && !profile.responseFormats.includes(input.format)) {
-      throw new Error(`沧元语音模型 ${profile.publicModel} 不支持 ${input.format} 格式。`);
+      throw new Error(`语音模型 ${profile.publicModel} 不支持 ${input.format} 格式。`);
     }
     if (input.speed !== undefined && !profile.speedRange) {
-      throw new Error(`沧元语音模型 ${profile.publicModel} 不支持速度参数。`);
+      throw new Error(`语音模型 ${profile.publicModel} 不支持速度参数。`);
     }
     if (input.speed !== undefined && profile.speedRange && (input.speed < profile.speedRange.min || input.speed > profile.speedRange.max)) {
-      throw new Error(`沧元语音模型 ${profile.publicModel} 的速度必须在 ${profile.speedRange.min}–${profile.speedRange.max} 之间。`);
+      throw new Error(`语音模型 ${profile.publicModel} 的速度必须在 ${profile.speedRange.min}–${profile.speedRange.max} 之间。`);
     }
     const body: Record<string, unknown> = { model: runtime.model.rawId, input: text };
     const voice = String(input.voice || '').trim();
@@ -129,9 +130,9 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
     return { buffer, contentType: speechContentType(buffer, response.headers.get('content-type'), input.format) };
   }
   if (input.format && input.format !== 'mp3' && input.format !== 'wav') {
-    throw new Error('当前配音服务商仅支持 MP3 或 WAV 格式。');
+    throw new Error('当前语音模型仅支持 MP3 或 WAV 格式。');
   }
-  if (input.speed !== undefined) throw new Error('当前配音服务商不支持速度参数。');
+  if (input.speed !== undefined) throw new Error('当前语音模型不支持速度参数。');
   const body: Record<string, unknown> = {
     model: runtime.model.rawId,
     input: text,
@@ -148,14 +149,11 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
   let response = await send();
   let detail = '';
   const retryable = () => !response.ok && RETRY_STATUS.has(response.status);
-  // 1) 服务商没有 voice 参数（Gitee 模力方舟）→ 去掉 voice 再试一次。
   if (retryable() && voice) {
     detail = await response.text().catch(() => '');
     delete body.voice;
     response = await send();
   }
-  // 2) OpenAI 这类把 voice 当必填：留空会被拒单 → 补默认音色再试一次。
-  //    与 1) 互斥（一个只在带了 voice 时走，一个只在没带时走），最多两次请求。
   if (retryable() && !voice) {
     const attemptDetail = await response.text().catch(() => '');
     if (/voice/i.test(attemptDetail)) {

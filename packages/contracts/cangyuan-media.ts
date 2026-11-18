@@ -155,7 +155,7 @@ export function parseCangyuanMusicOptions(value: unknown): CangyuanMusicOptions 
 
 export function validateCangyuanMusicInput(modelId: string, input: { prompt?: string } & CangyuanMusicOptions) {
   const profile = getCangyuanMusicModelProfile(modelId);
-  if (!profile) throw new Error(`沧元音乐模型尚未接入：${modelId}`);
+  if (!profile) throw new Error(`音乐模型尚未接入：${modelId}`);
   if (typeof input.prompt !== 'string' && input.prompt !== undefined) throw new Error('音乐描述必须是字符串');
   const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
   if (profile.promptRequired && (!prompt || profile.promptMaxLength !== undefined && prompt.length > profile.promptMaxLength)) {
@@ -454,7 +454,7 @@ export function parseCangyuan3DOptions(value: unknown): Cangyuan3DOptions {
 
 export function validateCangyuan3DInput(modelId: string, value: { prompt?: string } & Cangyuan3DOptions) {
   const profile = getCangyuan3DModelProfile(modelId);
-  if (!profile) throw new Error(`沧元三维模型尚未接入：${modelId}`);
+  if (!profile) throw new Error(`三维模型尚未接入：${modelId}`);
   if (value.prompt !== undefined && typeof value.prompt !== 'string') throw new Error('物体描述必须是字符串');
   const prompt = (value.prompt || '').trim();
   const { prompt: _prompt, ...rawOptions } = value;

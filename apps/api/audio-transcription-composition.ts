@@ -11,6 +11,9 @@ const ports: AudioTranscriptionApplicationPorts = {
     const runtime = candidates.find((candidate) => candidate.model.id === input.modelId
       && candidate.model.capabilities.includes('transcription'));
     if (!runtime) throw new AudioTranscriptionInputError('所选模型不可用或不支持音频转写，请在模型库检查其分类和能力。');
+    if (runtime.provider.type !== 'openai-compatible') {
+      throw new AudioTranscriptionInputError('所选语音模型使用的接口协议尚未接入，请选择兼容语音转写接口的模型。');
+    }
     return transcribeOpenAiCompatibleAudio(runtime, input, signal);
   },
   startLog: (input) => startGenerationLog(input),

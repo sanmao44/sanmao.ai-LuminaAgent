@@ -1,5 +1,5 @@
 /** Synchronous speech generation used by interactive audio creation surfaces. */
-export const CANGYUAN_SPEECH_OUTPUT_FORMATS = Object.freeze([
+export const SPEECH_OUTPUT_FORMATS = Object.freeze([
   'mp3',
   'wav',
   'opus',
@@ -8,16 +8,16 @@ export const CANGYUAN_SPEECH_OUTPUT_FORMATS = Object.freeze([
   'pcm',
 ] as const);
 
-export type SpeechOutputFormat = typeof CANGYUAN_SPEECH_OUTPUT_FORMATS[number];
+export type SpeechOutputFormat = typeof SPEECH_OUTPUT_FORMATS[number];
 
-export type CangyuanSpeechModelProfile = {
+export type SpeechModelProfile = {
   publicModel: string;
   suggestedVoices: readonly string[];
   responseFormats: readonly SpeechOutputFormat[];
   speedRange?: { min: number; max: number };
 };
 
-const CANGYUAN_SPEECH_VOICE_LABELS: Readonly<Record<string, string>> = Object.freeze({
+const SPEECH_VOICE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   Capella: '五车二',
   Ursa: '大熊',
   Vega: '织女星',
@@ -39,11 +39,11 @@ const CANGYUAN_SPEECH_VOICE_LABELS: Readonly<Record<string, string>> = Object.fr
   fable: '寓言',
 });
 
-export function cangyuanSpeechVoiceLabel(voice: string): string {
-  return CANGYUAN_SPEECH_VOICE_LABELS[voice] || voice;
+export function speechVoiceLabel(voice: string): string {
+  return SPEECH_VOICE_LABELS[voice] || voice;
 }
 
-const CANGYUAN_SPEECH_PROFILES: Readonly<Record<string, CangyuanSpeechModelProfile>> = Object.freeze({
+const SPEECH_MODEL_PROFILES: Readonly<Record<string, SpeechModelProfile>> = Object.freeze({
   'gemini-tts': Object.freeze({
     publicModel: 'gemini-tts',
     suggestedVoices: Object.freeze(['Capella', 'Ursa', 'Vega', 'Eclipse', 'Lyra', 'Orbit', 'Dipper', 'Nova', 'Pegasus'] as const),
@@ -57,8 +57,8 @@ const CANGYUAN_SPEECH_PROFILES: Readonly<Record<string, CangyuanSpeechModelProfi
   }),
 });
 
-export function getCangyuanSpeechModelProfile(publicModel: string): CangyuanSpeechModelProfile | null {
-  return CANGYUAN_SPEECH_PROFILES[String(publicModel || '')] || null;
+export function getSpeechModelProfile(publicModel: string): SpeechModelProfile | null {
+  return SPEECH_MODEL_PROFILES[String(publicModel || '')] || null;
 }
 
 export type AudioSynthesisRequest = {

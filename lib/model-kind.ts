@@ -24,7 +24,7 @@ export function isImageEditOnlyModel({ rawId = '', displayName = '' }: ModelKind
 const SPEECH_MODEL_PATTERN = /(?:^|[-_.\/\s+:])(?:tts|text[-_ ]?to[-_ ]?speech|speech[-_ ]?(?:synth|synthesis|model|generation|v\d)|speech|cosyvoice|elevenlabs|fish[-_ ]?speech|mimo[-_ ]?(?:tts|audio)|audio[-_ ]?speech|sovits|vits|xtts|melo[-_ ]?tts|index[-_ ]?tts|chat[-_ ]?tts|tele[-_ ]?tts|spark[-_ ]?tts|kitten[-_ ]?tts|voxcpm|mega[-_ ]?tts|f5[-_ ]?tts|qwen[-_ ]?tts|hunyuan[-_ ]?tts|kokoro|orpheus|higgs[-_ ]?audio|audiofly|vibevoice)/;
 /** 转写 / 实时语音这类模型虽然带 audio、speech 字样，但不是配音模型，必须排除。 */
 const SPEECH_HOST_PATTERN = /whisper|transcri|\basr\b|\bstt\b|realtime|audio[-_ ]?preview|speech[-_ ]?to[-_ ]?text|sense[-_ ]?voice/;
-const AUDIO_TRANSCRIPTION_PATTERN = /whisper|transcri|\basr\b|\bstt\b|speech[-_ ]?to[-_ ]?text/;
+const AUDIO_TRANSCRIPTION_PATTERN = /whisper|transcri|asr(?![a-z])|\bstt\b|speech[-_ ]?to[-_ ]?text/;
 const MUSIC_GENERATION_PATTERN = /(?:^|[^a-z0-9])(?:music(?:[-_ ]?(?:gen(?:eration)?|create|maker))?|song[-_ ]?(?:gen(?:eration)?|create)|text[-_ ]?to[-_ ]?music|suno|su2[-_ ]?suno|lyria|udio|ace[-_ ]?step|riffusion|mureka|melody[-_ ]?generation)(?:[^a-z0-9]|$)/;
 const THREE_D_GENERATION_PATTERN = /(?:^|[^a-z0-9])(?:3d(?:[-_ ]?(?:gen(?:eration)?|create|model|asset))?|text[-_ ]?to[-_ ]?3d|image[-_ ]?to[-_ ]?3d|mesh(?:[-_ ]?generation)?|tripo(?:3d|sr)?|trellis|rodin|meshy|instant[-_ ]?mesh|stable[-_ ]?fast[-_ ]?3d|unique[-_ ]?3d|craftsman)(?:[^a-z0-9]|$)|(?:hunyuan|qwen)[-_ ]?3d(?:[-_.]|$)/;
 

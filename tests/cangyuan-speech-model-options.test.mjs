@@ -4,7 +4,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const { supportedSpeechModels } = createTsRequire(process.cwd())('./components/cangyuan/speech-model-options');
 
-test('speech picker excludes the Cangyuan ASR model without filtering other vendors', () => {
+test('speech picker excludes transcription models from every provider', () => {
   const state = {
     providers: [
       { id: 'cangyuan', platform: 'cangyuan' },
@@ -19,6 +19,6 @@ test('speech picker excludes the Cangyuan ASR model without filtering other vend
   };
 
   assert.deepEqual(supportedSpeechModels(state).map((model) => model.id), [
-    'cangyuan-tts', 'other-asr-name', 'other-tts',
+    'cangyuan-tts', 'other-tts',
   ]);
 });

@@ -16,7 +16,7 @@ export type CangyuanProviderTask = {
 
 export function cangyuanMediaUrl(baseUrl: string, kind: CangyuanMediaKind, taskId?: string) {
   const root = String(baseUrl || '').trim().replace(/\/+$/, '').replace(/\/v1$/i, '');
-  if (!/^https?:\/\//i.test(root)) throw new Error('沧元算力 API 地址无效');
+  if (!/^https?:\/\//i.test(root)) throw new Error('服务商 API 地址无效');
   const path = kind === 'music' ? '/v1/music' : '/v1/3d/generations';
   return `${root}${path}${taskId ? `/${encodeURIComponent(taskId)}` : ''}`;
 }
@@ -67,7 +67,7 @@ export function buildCangyuanMusicPayload(model: string, input: { prompt?: strin
 export function buildCangyuanThreeDPayload(model: string, input: { prompt?: string } & Cangyuan3DOptions) {
   if (model.toLowerCase() === 'tripo3d' && model !== 'tripo3d') throw new Error('请使用精确公共模型名 tripo3d');
   const profile = getCangyuan3DModelProfile(model);
-  if (!profile) throw new Error(`沧元三维模型尚未接入：${model}`);
+  if (!profile) throw new Error(`三维模型尚未接入：${model}`);
   const normalized = validateCangyuan3DInput(model, input);
   const { prompt, ...options } = normalized;
   const mode = options.mode || profile.defaultMode;
@@ -126,7 +126,7 @@ export function normalizeCangyuanTask(kind: CangyuanMediaKind, value: unknown): 
     outputs: hasResultText && outputs.length === 0
       ? [{ text: firstText(response.text, nested.text, asRecord(response.result).text), artifactType: 'text' }]
       : outputs,
-    ...(status === 'failed' ? { error: error || `沧元${kind === 'music' ? '音乐' : '三维'}任务失败${rawStatus ? `：${rawStatus}` : ''}` } : {}),
+    ...(status === 'failed' ? { error: error || `${kind === 'music' ? '音乐' : '三维'}任务失败${rawStatus ? `：${rawStatus}` : ''}` } : {}),
   };
 }
 
@@ -157,7 +157,7 @@ async function requestTask(client: CangyuanMediaClient, kind: CangyuanMediaKind,
   if (!response.ok) {
     const errorValue = asRecord(data).error;
     const detail = firstText(asRecord(errorValue).message, typeof errorValue === 'string' ? errorValue : '', asRecord(data).message, text);
-    const error = new Error(`沧元算力任务接口失败：HTTP ${response.status}${detail ? `（${detail.slice(0, 200)}）` : ''}`) as Error & { status: number };
+    const error = new Error(`媒体任务接口失败：HTTP ${response.status}${detail ? `（${detail.slice(0, 200)}）` : ''}`) as Error & { status: number };
     error.status = response.status;
     throw error;
   }

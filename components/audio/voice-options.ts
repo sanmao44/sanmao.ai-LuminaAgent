@@ -1,5 +1,5 @@
-import type { CangyuanSpeechModelProfile } from '@/packages/contracts/audio-synthesis';
-import { cangyuanSpeechVoiceLabel } from '@/packages/contracts/audio-synthesis';
+import type { SpeechModelProfile } from '@/packages/contracts/audio-synthesis';
+import { speechVoiceLabel } from '@/packages/contracts/audio-synthesis';
 
 const VOICE_CHARACTERISTICS: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
   'mu1-muse-tts': Object.freeze({
@@ -9,12 +9,12 @@ const VOICE_CHARACTERISTICS: Readonly<Record<string, Readonly<Record<string, str
   }),
 });
 
-export function cangyuanSpeechVoiceOptions(profile: CangyuanSpeechModelProfile) {
+export function speechVoiceOptions(profile: SpeechModelProfile) {
   const characteristics = VOICE_CHARACTERISTICS[profile.publicModel] || {};
   return profile.suggestedVoices.map((voice) => ({
     value: voice,
     label: characteristics[voice]
-      ? `${cangyuanSpeechVoiceLabel(voice)}（${characteristics[voice]}）`
-      : cangyuanSpeechVoiceLabel(voice),
+      ? `${speechVoiceLabel(voice)}（${characteristics[voice]}）`
+      : speechVoiceLabel(voice),
   }));
 }

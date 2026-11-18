@@ -9,13 +9,15 @@ import SelectMenu from '@/components/SelectMenu';
 import CangyuanSuggestionInput from '@/components/cangyuan/CangyuanSuggestionInput';
 import CangyuanMediaUploadField from '@/components/cangyuan/CangyuanMediaUploadField';
 import CangyuanMusicOptionsFields from '@/components/cangyuan/CangyuanMusicOptionsFields';
-import CangyuanAudioTranscription from '@/components/cangyuan/CangyuanAudioTranscription';
+import AudioTranscription from '@/components/AudioTranscription';
 import CangyuanThreeDScenarioPicker from '@/components/cangyuan/CangyuanThreeDScenarioPicker';
 import CangyuanTripoQualityOptions, { applyTripoQualityOptions } from '@/components/cangyuan/CangyuanTripoQualityOptions';
 import CangyuanReferenceImagePreview from '@/components/cangyuan/CangyuanReferenceImagePreview';
-import { cangyuanSpeechVoiceOptions } from '@/components/cangyuan/speech-voice-options';
-import { supportedSpeechModels } from '@/components/cangyuan/speech-model-options';
+import { speechVoiceOptions } from '@/components/audio/voice-options';
+import { supportedMusicModels, supportedSpeechModels, supportedThreeDModels } from '@/components/audio/model-options';
 import { GenerationLogAudioPlayer, GenerationLogAudioWorks } from '@/components/GenerationLogAudio';
+import MediaTaskAudioOutput, { type MediaTaskAudioOutputValue } from '@/components/MediaTaskAudioOutput';
+import { mediaTaskModeLabel, mediaTaskProviderStatusLabel } from '@/components/media-task-presentation';
 import type { CangyuanThreeDScenario } from '@/components/cangyuan/three-d-presets';
 import type {
   CangyuanMediaCreateInput,
@@ -29,12 +31,10 @@ import type {
 } from '@/packages/contracts/cangyuan-media';
 import { CANGYUAN_TRIPO3D_V31_PUBLIC_MODEL, getCangyuan3DModelProfile, getCangyuanMusicModelProfile, reconcileCangyuan3DMode } from '@/packages/contracts/cangyuan-media';
 import type { SpeechOutputFormat } from '@/packages/contracts/audio-synthesis';
-import { getCangyuanSpeechModelProfile } from '@/packages/contracts/audio-synthesis';
+import { getSpeechModelProfile } from '@/packages/contracts/audio-synthesis';
 import type { PublicState, RegistryModel } from '@/lib/types';
 import { listGenerationLogs } from '@/lib/generation-log-client';
 import type { GenerationLog } from '@/lib/generation-log';
-import { isCangyuanProvider } from '@/lib/cangyuan-provider';
-import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { CANGYUAN_3D_TASK_POLL_INTERVAL_MS, CANGYUAN_MEDIA_TASK_POLL_INTERVAL_MS, nextCangyuanTaskPollBatch } from '@/lib/cangyuan-media-task-polling';
 import './CangyuanMediaStudio.css';
 
@@ -59,21 +59,6 @@ function taskStatusLabel(task: CangyuanMediaTask) {
 
 function taskSort(left: CangyuanMediaTask, right: CangyuanMediaTask) {
   return Date.parse(right.createdAt) - Date.parse(left.createdAt);
-}
-
-function providerModels(state: PublicState | null, capabilities: string[]) {
-  if (!state) return [];
-  return filterModelsByActiveProviders(state.models, state.providers.filter(isCangyuanProvider)).filter((model) =>
-    model.enabled && model.published
-    && capabilities.every((capability) => model.capabilities.includes(capability as RegistryModel['capabilities'][number])));
-}
-
-function threeDModels(state: PublicState | null) {
-  return providerModels(state, ['3d-generate']).filter((model) => getCangyuan3DModelProfile(model.rawId) !== null);
-}
-
-function supportedMusicModels(state: PublicState | null) {
-  return providerModels(state, ['music-generate']).filter((model) => getCangyuanMusicModelProfile(model.rawId) !== null);
 }
 
 function isLegacyTripoModel(model: RegistryModel | undefined) {
@@ -312,9 +297,9 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
 
   const speechModels = useMemo(() => supportedSpeechModels(publicState), [publicState]);
   const musicModels = useMemo(() => supportedMusicModels(publicState), [publicState]);
-  const models3d = useMemo(() => threeDModels(publicState), [publicState]);
+  const models3d = useMemo(() => supportedThreeDModels(publicState), [publicState]);
   const speechModel = useMemo(() => speechModels.find((model) => model.id === speechModelId) || speechModels[0], [speechModelId, speechModels]);
-  const speechProfile = useMemo(() => getCangyuanSpeechModelProfile(speechModel?.rawId || ''), [speechModel]);
+  const speechProfile = useMemo(() => getSpeechModelProfile(speechModel?.rawId || ''), [speechModel]);
   const musicModel = useMemo(() => musicModels.find((model) => model.id === musicModelId) || musicModels[0], [musicModelId, musicModels]);
   const musicProfile = useMemo(() => getCangyuanMusicModelProfile(musicModel?.rawId || ''), [musicModel]);
   const model3d = useMemo(() => models3d.find((model) => model.id === model3dId) || models3d[0], [model3dId, models3d]);
@@ -593,7 +578,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
           },
         };
       } else {
-        setNotice({ kind: 'error', text: '当前沧元三维型号尚未接入。' });
+        setNotice({ kind: 'error', text: '当前三维型号尚未接入。' });
         return;
       }
       const response = await fetch(`/api/cangyuan/${kind === 'music' ? 'music' : '3d'}`, {
@@ -650,7 +635,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
     }
   }
 
-  function chooseContinuation(task: CangyuanMediaTask, output: CangyuanMediaOutput) {
+  function chooseContinuation(task: CangyuanMediaTask, output: MediaTaskAudioOutputValue) {
     if (!output.url || !isPublicHttpsUrl(output.url) || output.artifactType === 'midi' || output.artifactType === 'wav' || output.artifactType === 'text') {
       setNotice({ kind: 'error', text: '该结果没有可供续写的公开音频地址。' });
       return;
@@ -667,6 +652,16 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
     setMusicPrompt((current) => current.trim() ? current : '延续原曲风格，自然展开后续段落');
     setMode('music');
     setNotice({ kind: 'info', text: continueAt ? `已选中音频，续写位置预填为 ${continueAt} 秒，可在提交前调整。` : '已选中音频，请确认续写位置后生成。' });
+  }
+
+  async function copyTaskId(task: CangyuanMediaTask) {
+    if (!task.providerTaskId) return;
+    try {
+      await navigator.clipboard.writeText(task.providerTaskId);
+      setNotice({ kind: 'success', text: '任务编号已复制，可粘贴到其他创作工作流。' });
+    } catch {
+      setNotice({ kind: 'error', text: `复制失败，请手动复制任务编号：${task.providerTaskId}` });
+    }
   }
 
   function clearContinuation() {
@@ -713,7 +708,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
 
       {!loadingState && !stateError && (
         mode === 'transcription' && publicState
-          ? <CangyuanAudioTranscription state={publicState} onOpenModels={onOpenModels} onNotify={onNotify} />
+          ? <AudioTranscription state={publicState} onOpenModels={onOpenModels} onNotify={onNotify} />
           : <div className="cangyuan-studio-layout">
           <section className="cangyuan-studio-form" aria-label={`${mode === 'speech' ? '配音' : mode === 'music' ? '音乐' : '三维'}生成设置`}>
             <div className="cangyuan-form-heading">
@@ -775,7 +770,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                         menuClassName="cangyuan-field-select-menu"
                         options={[
                           { value: '', label: '使用模型默认音色' },
-                          ...cangyuanSpeechVoiceOptions(speechProfile),
+                          ...speechVoiceOptions(speechProfile),
                           { value: 'custom', label: '自定义音色名称' },
                         ]}
                         onChange={setSpeechVoiceChoice}
@@ -944,18 +939,19 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                         <div><strong>{task.modelName}</strong><small>{formatCreatedAt(task.createdAt)}</small></div>
                         <span className={`cangyuan-task-status ${isActiveTask(task) ? 'active' : task.status}`}>{taskStatusLabel(task)}</span>
                       </div>
-                      <p className="cangyuan-task-prompt">{task.input.prompt || (task.kind === '3d' ? task.input.mode || '三维生成任务' : '')}</p>
-                      {isActiveTask(task) && <p className="cangyuan-task-progress">{task.providerStatus || (task.status === 'queued' || task.status === 'pending' ? '等待服务商开始处理…' : '服务商正在生成…')}</p>}
+                      <p className="cangyuan-task-prompt">{task.input.prompt || (task.kind === '3d' ? mediaTaskModeLabel(task.input.mode) : '音乐生成任务')}</p>
+                      {task.providerTaskId && task.status === 'succeeded' && <div className="cangyuan-output-actions"><button type="button" onClick={() => void copyTaskId(task)}>复制任务编号</button></div>}
+                      {isActiveTask(task) && <p className="cangyuan-task-progress">{mediaTaskProviderStatusLabel(task.providerStatus, task.status)}</p>}
                       {task.error && <p className="cangyuan-task-error" role="alert">{task.error}</p>}
                       {task.status === 'succeeded' && task.outputs.length === 0 && <p className="cangyuan-task-error">任务完成，但服务商没有返回结果地址。</p>}
                       {task.outputs.map((output, index) => mode === 'music' ? (
-                        <div className="cangyuan-music-output" key={`${task.id}-${output.audioId || index}`}>
-                          <div className="cangyuan-output-meta"><b>{output.title || (output.audioId ? `曲目 ${index + 1}` : `音乐 ${index + 1}`)}</b><span>{[output.duration ? `${output.duration} 秒` : '', output.audioId ? `曲目编号 ${output.audioId}` : '完成'].filter(Boolean).join(' · ')}</span></div>
-                          {output.url ? <GenerationLogAudioPlayer src={output.url} /> : <p className="cangyuan-task-error">服务商未返回可播放的音频地址。</p>}
-                          <div className="cangyuan-output-actions">
-                            {output.artifactType !== 'midi' && output.artifactType !== 'wav' && output.artifactType !== 'text' && <button type="button" disabled={!output.url || !isPublicHttpsUrl(output.url)} title={!output.url || !isPublicHttpsUrl(output.url) ? '需要服务商返回公开可访问的音频地址' : '将音频带入官方续写工作流'} onClick={() => chooseContinuation(task, output)}>续写此曲</button>}
-                          </div>
-                        </div>
+                        <MediaTaskAudioOutput
+                          key={`${task.id}-${output.audioId || index}`}
+                          output={output}
+                          index={index}
+                          canContinue={Boolean(output.url && isPublicHttpsUrl(output.url) && output.artifactType !== 'midi' && output.artifactType !== 'wav' && output.artifactType !== 'text' && output.artifactType !== 'file')}
+                          onContinue={(selectedOutput) => chooseContinuation(task, selectedOutput)}
+                        />
                       ) : (
                         <div className="cangyuan-3d-output" key={`${task.id}-${index}`}>
                           <div className="cangyuan-output-meta"><b>{output.artifactType === 'fbx' ? `FBX 模型 ${index + 1}` : `GLB 模型 ${index + 1}`}</b><span>{output.artifactType === 'fbx' ? 'FBX 网格文件' : 'GLTF Binary'}</span></div>

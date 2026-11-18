@@ -132,6 +132,11 @@
 .cangyuan-task-progress,.cangyuan-task-error{margin:0;color:var(--muted);font-size:10px;line-height:1.5}
 .cangyuan-task-error{color:var(--danger,#d74646)}
 .cangyuan-music-output,.cangyuan-3d-output{display:grid;gap:8px;padding-top:10px;border-top:1px solid var(--line)}
+.media-task-output-text{max-height:260px;overflow:auto;margin:0;padding:10px;border:1px solid var(--line);border-radius:5px;background:var(--surface,var(--panel));color:var(--text-2);font:inherit;font-size:11px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.media-task-output-file{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:5px;background:var(--surface,var(--panel));color:var(--text-2);font-size:11px}
+.media-task-output-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.media-task-output-file a{flex:none;color:var(--accent-text);font-weight:700;text-decoration:none}
+.media-task-output-file a:hover{text-decoration:underline}
 .cangyuan-output-actions{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
 .cangyuan-output-actions button{min-height:29px;padding:0 9px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--text-2);font:inherit;font-size:10px;cursor:pointer}
 .cangyuan-output-actions button:hover:not(:disabled){border-color:var(--accent);color:var(--accent-text)}
